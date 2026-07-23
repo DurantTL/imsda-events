@@ -16,16 +16,16 @@ What happens on `docker compose up`:
 
 The reverse proxy (xCloud's Nginx) forwards your domain to the app's published port.
 
-## Why the port matters (the "port is already allocated" error)
+## Why the port collision can't happen here (the "port is already allocated" error)
 
-Postgres is reached by the app **internally** as host `postgres`, so it does **not**
-need a published host port. It publishes one (bound to `127.0.0.1`, default `5432`)
-only for convenience. If another database already uses `5432` on the host — e.g. a
-separate app's Postgres container — set `POSTGRES_HOST_PORT=5433` (below). The app is
-unaffected either way because it never uses the host port.
+Postgres is reached by the app **internally** as host `postgres`, so `docker-compose.yml`
+publishes **no host port for the database at all**. That means it can never collide with
+another Postgres already using `5432` on the host (a common shared-server situation).
+Local development, which needs host access to the database, layers in
+`docker-compose.dev.yml` to publish `5432` — deploy hosts never load that file.
 
-Likewise, if `3000` is already taken on the host, set `APP_PORT` to a free port and
-point the proxy at that.
+The **app** does publish a web port for the reverse proxy. If `3000` is already taken on
+the host, set `APP_PORT` to a free port and point the proxy at that.
 
 ## Environment variables (set these in the xCloud env panel)
 
@@ -53,12 +53,14 @@ RUN_DB_SEED=true
 **Optional / conditional:**
 
 ```
-POSTGRES_HOST_PORT=5433          # only if host 5432 is already in use
 APP_PORT=3100                    # only if host 3000 is already in use
 POSTGRES_PASSWORD=<strong>       # overrides the default dev password
 RATE_LIMIT_TRUSTED_PROXY_HOPS=1  # 1 for a single Nginx; 2 if Cloudflare is also in front
 RATE_LIMIT_CLIENT_IP_HEADER=x-forwarded-for   # cf-connecting-ip behind Cloudflare
 ```
+
+(There is no `POSTGRES_HOST_PORT` to set for deployment — the database is not published
+to the host at all. That variable only matters for the local `docker-compose.dev.yml` overlay.)
 
 Email (Resend) and Square are left disabled unless you supply their credentials;
 Square stays in Sandbox until `SQUARE_ENVIRONMENT=production` **and**

@@ -25,12 +25,12 @@ IMSDA Events is the new multi-event operations platform for the Iowa-Missouri Co
 2. Start PostgreSQL:
 
    ```bash
-   docker compose up -d postgres
+   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres
    ```
 
-   (Naming the `postgres` service starts only the database, which is what local
-   development needs. `docker compose up` alone now also builds and runs the app
-   container — see [`docs/DEPLOY-DOCKER.md`](docs/DEPLOY-DOCKER.md).)
+   The dev overlay publishes the database on `localhost:5432` for host access.
+   The base `docker-compose.yml` keeps Postgres internal-only and also builds and
+   runs the app container for deployment — see [`docs/DEPLOY-DOCKER.md`](docs/DEPLOY-DOCKER.md).
 
 3. Apply the committed migrations, load fictitious seed data, and publish the current local demo form:
 
