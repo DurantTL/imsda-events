@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { loadEnvConfig } from "@next/env";
 import { PrismaClient } from "@prisma/client";
 import {
   createOpaqueToken,
   hashOpaqueToken,
 } from "../modules/access/tokens";
+
+loadEnvConfig(process.cwd());
 
 const prisma = new PrismaClient();
 const baseUrl = process.env.PUBLIC_REGISTRATION_TEST_URL

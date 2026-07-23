@@ -1,5 +1,8 @@
+import { loadEnvConfig } from "@next/env";
 import { PrismaClient, RegistrationFormStatus } from "@prisma/client";
 import { registrationFormDefinitionSchema } from "../modules/forms/definition";
+
+loadEnvConfig(process.cwd());
 
 const prisma = new PrismaClient();
 const baseUrl = process.env.PUBLIC_REGISTRATION_TEST_URL ?? "http://localhost:3000";
