@@ -55,7 +55,7 @@ services:
     # Host web port for the reverse proxy (xCloud's Nginx) to forward to. Override
     # with APP_PORT if 3000 is already taken on the host.
     ports:
-      - "${APP_PORT:-3000}:3000"
+      - "${APP_PORT:-3000}:3100"
     healthcheck:
       test:
         - CMD
