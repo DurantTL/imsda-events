@@ -4,12 +4,7 @@ services:
     environment:
       POSTGRES_DB: imsda_events
       POSTGRES_USER: imsda
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-imsda_dev}
-    # No host port is published on purpose: the app connects over the internal
-    # Docker network as host "postgres", so this can never collide with another
-    # Postgres already using 5432 on the host. For local host access (e.g. running
-    # `npm run dev` on the host), layer in docker-compose.dev.yml, which publishes
-    # 5432 — see docs/DEPLOY-DOCKER.md.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - imsda_events_postgres:/var/lib/postgresql/data
     healthcheck:
@@ -26,14 +21,13 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
-      # Internal connection to the postgres service above (not the host port).
-      DATABASE_URL: postgresql://imsda:${POSTGRES_PASSWORD:-imsda_dev}@postgres:5432/imsda_events?schema=public
-      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
-      MANAGE_LINK_DERIVATION_SECRET: ${MANAGE_LINK_DERIVATION_SECRET:-}
+      DATABASE_URL: postgresql://imsda:${POSTGRES_PASSWORD}@postgres:5432/imsda_events?schema=public
+      APP_BASE_URL: ${APP_BASE_URL}
+      MANAGE_LINK_DERIVATION_SECRET: ${MANAGE_LINK_DERIVATION_SECRET}
       MANAGE_LINK_DERIVATION_SECRET_PREVIOUS: ${MANAGE_LINK_DERIVATION_SECRET_PREVIOUS:-}
-      ATTENDEE_PASS_SIGNING_SECRET: ${ATTENDEE_PASS_SIGNING_SECRET:-}
+      ATTENDEE_PASS_SIGNING_SECRET: ${ATTENDEE_PASS_SIGNING_SECRET}
       ATTENDEE_PASS_SIGNING_SECRET_PREVIOUS: ${ATTENDEE_PASS_SIGNING_SECRET_PREVIOUS:-}
-      RATE_LIMIT_HASH_SECRET: ${RATE_LIMIT_HASH_SECRET:-}
+      RATE_LIMIT_HASH_SECRET: ${RATE_LIMIT_HASH_SECRET}
       RATE_LIMIT_TRUSTED_PROXY_HOPS: ${RATE_LIMIT_TRUSTED_PROXY_HOPS:-1}
       RATE_LIMIT_CLIENT_IP_HEADER: ${RATE_LIMIT_CLIENT_IP_HEADER:-x-forwarded-for}
       EMBED_ALLOWED_ORIGINS: ${EMBED_ALLOWED_ORIGINS:-}
@@ -49,13 +43,9 @@ services:
       SQUARE_WEBHOOK_SIGNATURE_KEY: ${SQUARE_WEBHOOK_SIGNATURE_KEY:-}
       SQUARE_WEBHOOK_NOTIFICATION_URL: ${SQUARE_WEBHOOK_NOTIFICATION_URL:-}
       SQUARE_ENABLE_PRODUCTION: ${SQUARE_ENABLE_PRODUCTION:-false}
-      # Set to "true" for the first deploy to load the fictitious starter data
-      # (admin login + demo event); the seed is idempotent (upserts).
       RUN_DB_SEED: ${RUN_DB_SEED:-false}
-    # Host web port for the reverse proxy (xCloud's Nginx) to forward to. Override
-    # with APP_PORT if 3000 is already taken on the host.
     ports:
-      - "${APP_PORT:-3000}:3100"
+      - "3100:3000"
     healthcheck:
       test:
         - CMD
