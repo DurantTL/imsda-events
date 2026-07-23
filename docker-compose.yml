@@ -4,9 +4,14 @@ services:
     environment:
       POSTGRES_DB: imsda_events
       POSTGRES_USER: imsda
-      POSTGRES_PASSWORD: imsda_dev
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-imsda_dev}
+    # The app reaches Postgres over the internal network as host "postgres", so a
+    # published host port is only needed for local access (e.g. running `npm run
+    # dev` on the host). It is bound to loopback and defaults to 5432; if another
+    # Postgres already uses 5432 on the host (a common deploy collision), override
+    # with POSTGRES_HOST_PORT=5433 — the app is unaffected either way.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - imsda_events_postgres:/var/lib/postgresql/data
     healthcheck:
@@ -14,6 +19,56 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
+
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      # Internal connection to the postgres service above (not the host port).
+      DATABASE_URL: postgresql://imsda:${POSTGRES_PASSWORD:-imsda_dev}@postgres:5432/imsda_events?schema=public
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
+      MANAGE_LINK_DERIVATION_SECRET: ${MANAGE_LINK_DERIVATION_SECRET:-}
+      MANAGE_LINK_DERIVATION_SECRET_PREVIOUS: ${MANAGE_LINK_DERIVATION_SECRET_PREVIOUS:-}
+      ATTENDEE_PASS_SIGNING_SECRET: ${ATTENDEE_PASS_SIGNING_SECRET:-}
+      ATTENDEE_PASS_SIGNING_SECRET_PREVIOUS: ${ATTENDEE_PASS_SIGNING_SECRET_PREVIOUS:-}
+      RATE_LIMIT_HASH_SECRET: ${RATE_LIMIT_HASH_SECRET:-}
+      RATE_LIMIT_TRUSTED_PROXY_HOPS: ${RATE_LIMIT_TRUSTED_PROXY_HOPS:-1}
+      RATE_LIMIT_CLIENT_IP_HEADER: ${RATE_LIMIT_CLIENT_IP_HEADER:-x-forwarded-for}
+      EMBED_ALLOWED_ORIGINS: ${EMBED_ALLOWED_ORIGINS:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_API_URL: ${RESEND_API_URL:-https://api.resend.com}
+      RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
+      SQUARE_ENVIRONMENT: ${SQUARE_ENVIRONMENT:-sandbox}
+      SQUARE_APPLICATION_ID: ${SQUARE_APPLICATION_ID:-}
+      SQUARE_ACCESS_TOKEN: ${SQUARE_ACCESS_TOKEN:-}
+      SQUARE_LOCATION_ID: ${SQUARE_LOCATION_ID:-}
+      SQUARE_API_URL: ${SQUARE_API_URL:-https://connect.squareupsandbox.com}
+      SQUARE_API_VERSION: ${SQUARE_API_VERSION:-2026-07-15}
+      SQUARE_WEBHOOK_SIGNATURE_KEY: ${SQUARE_WEBHOOK_SIGNATURE_KEY:-}
+      SQUARE_WEBHOOK_NOTIFICATION_URL: ${SQUARE_WEBHOOK_NOTIFICATION_URL:-}
+      SQUARE_ENABLE_PRODUCTION: ${SQUARE_ENABLE_PRODUCTION:-false}
+      # Set to "true" for the first deploy to load the fictitious starter data
+      # (admin login + demo event); the seed is idempotent (upserts).
+      RUN_DB_SEED: ${RUN_DB_SEED:-false}
+    # Host web port for the reverse proxy (xCloud's Nginx) to forward to. Override
+    # with APP_PORT if 3000 is already taken on the host.
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
 
 volumes:
   imsda_events_postgres:
