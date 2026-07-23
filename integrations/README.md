@@ -12,4 +12,4 @@ The builder and public registration transaction calculate and snapshot server-au
 
 ## Resend
 
-`modules/communications/resend-adapter.ts` sends committed outbox snapshots when an event selects external email and `RESEND_API_KEY` is configured. Provider idempotency, claim locks, backoff, delivery-event reconciliation, and in-memory private-link insertion prevent duplicate sends and keep raw bearer links out of storage.
+`integrations/email/resend.ts` is the server-only Resend provider boundary; `modules/communications/email-delivery.ts` calls it to send committed outbox snapshots when an event selects external email and `RESEND_API_KEY` is configured. Provider idempotency, claim locks, backoff, delivery-event reconciliation, and in-memory private-link insertion prevent duplicate sends and keep raw bearer links out of storage. Inbound provider events are verified in `integrations/email/resend-webhook.ts`.

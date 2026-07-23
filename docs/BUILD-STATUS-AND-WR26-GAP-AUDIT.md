@@ -113,4 +113,4 @@ IMSDA Events implements the shared versioned-template, outbox, idempotency, retr
 
 ## Repository delivery status
 
-The local workspace is on `foundation/project-scaffold`, has no configured Git remote, and the project files are not committed yet. CI exists under `.github/workflows/ci.yml`, but remote checks and branch protection cannot operate until the repository is committed and connected to its intended GitHub repository.
+The project is committed and connected to its GitHub repository `DurantTL/imsda-events`. CI runs under `.github/workflows/ci.yml` on pushes to `main` and on pull requests (PostgreSQL service, migrate, seed, then `npm run verify`). Configure branch protection on `main` to require the `verify` check before merge.
