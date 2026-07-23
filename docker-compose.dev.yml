@@ -1,0 +1,13 @@
+# Local development overlay. Publishes the Postgres port to the host so you can run
+# `npm run dev` (or Prisma commands) directly on your machine against the container.
+#
+# This file is NOT auto-loaded — deploy hosts that run a plain `docker compose up`
+# use only docker-compose.yml (Postgres stays internal, no host-port collision).
+# Opt in explicitly for local work:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres
+#   npm run dev
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"

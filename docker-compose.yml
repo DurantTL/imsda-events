@@ -5,13 +5,11 @@ services:
       POSTGRES_DB: imsda_events
       POSTGRES_USER: imsda
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-imsda_dev}
-    # The app reaches Postgres over the internal network as host "postgres", so a
-    # published host port is only needed for local access (e.g. running `npm run
-    # dev` on the host). It is bound to loopback and defaults to 5432; if another
-    # Postgres already uses 5432 on the host (a common deploy collision), override
-    # with POSTGRES_HOST_PORT=5433 — the app is unaffected either way.
-    ports:
-      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+    # No host port is published on purpose: the app connects over the internal
+    # Docker network as host "postgres", so this can never collide with another
+    # Postgres already using 5432 on the host. For local host access (e.g. running
+    # `npm run dev` on the host), layer in docker-compose.dev.yml, which publishes
+    # 5432 — see docs/DEPLOY-DOCKER.md.
     volumes:
       - imsda_events_postgres:/var/lib/postgresql/data
     healthcheck:
