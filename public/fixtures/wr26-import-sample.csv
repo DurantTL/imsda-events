@@ -1,0 +1,5 @@
+source_id,confirmation_code,first_name,last_name,email,phone,attendee_type,status,total_amount,submitted_at
+WR26-001,TEST-1001,Alicia,Smith,alicia@example.test,+1-555-0101,ATTENDEE,CONFIRMED,175.00,2026-07-20T15:00:00.000Z
+WR26-002,TEST-1002,Jennifer,Miller,jennifer@example.test,+1-555-0102,ATTENDEE,SUBMITTED,525.00,2026-07-21T16:00:00.000Z
+WR26-004,IMPT-2001,Marisol,Reed,marisol.reed@example.test,+1-555-0141,ATTENDEE,CONFIRMED,175.00,2026-07-22T15:00:00.000Z
+WR26-005,IMPT-2002,Noah,Volunteer,,+1-555-0142,WORKER,SUBMITTED,0.00,2026-07-22T15:10:00.000Z

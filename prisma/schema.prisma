@@ -1,0 +1,1107 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum GlobalRole {
+  SYSTEM_ADMIN
+}
+
+enum EventRole {
+  EVENT_ADMIN
+  REGISTRATION_MANAGER
+  FINANCE_MANAGER
+  COMMUNICATIONS_MANAGER
+  CHECK_IN_STAFF
+  READ_ONLY_STAFF
+}
+
+enum EventPermission {
+  VIEW_EVENT
+  CONFIGURE_EVENT
+  MANAGE_REGISTRATION
+  MANAGE_FINANCE
+  MANAGE_COMMUNICATIONS
+  MANAGE_CHECK_IN
+  VIEW_REPORTS
+  MANAGE_STAFF
+  VIEW_SENSITIVE_DATA
+  MANAGE_IMPORTS
+  MANAGE_FORMS
+}
+
+enum MembershipStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum RegistrationStatus {
+  DRAFT
+  SUBMITTED
+  CONFIRMED
+  WAITLISTED
+  CANCELLED
+}
+
+enum RegistrationAccessTokenPurpose {
+  MANAGE_REGISTRATION
+}
+
+enum RegistrationOperationType {
+  TRANSFER
+  ATTENDEE_SUBSTITUTION
+}
+
+enum WaitlistEntryStatus {
+  WAITING
+  PROMOTED
+  REMOVED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  VOIDED
+}
+
+enum PaymentMethod {
+  CARD_REFERENCE
+  CASH
+  CHECK
+  MANUAL
+}
+
+enum RefundStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+enum PaymentAttemptStatus {
+  PROCESSING
+  PENDING
+  SUCCEEDED
+  FAILED
+  CANCELED
+}
+
+enum RegistrationPaymentChoice {
+  CARD
+  PAY_LATER
+}
+
+enum SquareWebhookEventStatus {
+  PROCESSED
+  IGNORED
+}
+
+enum PromoDiscountType {
+  FIXED_CENTS
+  PERCENT_BPS
+}
+
+enum AnnouncementStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHED
+  ARCHIVED
+}
+
+enum AnnouncementPriority {
+  NORMAL
+  IMPORTANT
+  URGENT
+}
+
+enum ImportRunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum ImportRecordStatus {
+  READY
+  WARNING
+  ERROR
+  CREATED
+  UPDATED
+  SKIPPED
+}
+
+enum RegistrationFormStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum MessageTemplateKey {
+  REGISTRATION_CONFIRMATION_PAID
+  REGISTRATION_CONFIRMATION_UNPAID
+  WORKER_CONFIRMATION
+  INTERNAL_NEW_REGISTRATION
+  WAITLIST_JOINED
+  WAITLIST_PROMOTED
+  REGISTRATION_CANCELLED
+  REGISTRATION_CONTACT_UPDATED
+  PAYMENT_RECEIPT
+  BALANCE_REMINDER
+  REGISTRATION_TRANSFERRED_NEW_CONTACT
+  REGISTRATION_TRANSFERRED_PRIOR_CONTACT
+  ATTENDEE_SUBSTITUTED
+}
+
+enum MessageTemplateStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum MessageDeliveryMode {
+  DISABLED
+  LOCAL_CAPTURE
+  EXTERNAL_EMAIL
+}
+
+enum MessageRecipientKind {
+  REGISTRANT
+  INTERNAL
+  TEST
+}
+
+enum MessageOutboxStatus {
+  PENDING
+  PROCESSING
+  CAPTURED
+  SENT
+  FAILED
+  SUPPRESSED
+  CANCELLED
+}
+
+enum MessageAttemptStatus {
+  CAPTURED
+  SENT
+  FAILED
+}
+
+enum MessageProviderDeliveryStatus {
+  ACCEPTED
+  SENT
+  DELIVERED
+  BOUNCED
+  FAILED
+  COMPLAINED
+  SUPPRESSED
+}
+
+enum ProgramAssignmentOutcome {
+  ASSIGNED
+  UNASSIGNED
+}
+
+enum ProgramUnassignedReason {
+  NO_RANKED_CHOICES
+  CAPACITY_FULL
+}
+
+model User {
+  id          String      @id @default(cuid())
+  email       String      @unique
+  displayName String
+  globalRole  GlobalRole?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  memberships               EventMembership[]
+  credential                AuthCredential?
+  sessions                  UserSession[]
+  resetTokens               PasswordResetToken[]
+  announcements             Announcement[]
+  auditLogs                 AuditLog[]
+  importRuns                ImportRun[]
+  createdRegistrationForms  RegistrationForm[]        @relation("RegistrationFormCreatedBy")
+  createdFormVersions       RegistrationFormVersion[] @relation("RegistrationFormVersionCreatedBy")
+  formTestSubmissions       FormTestSubmission[]      @relation("FormTestSubmissionSubmittedBy")
+  createdMessageVersions    MessageTemplateVersion[]  @relation("MessageTemplateVersionCreatedBy")
+  appliedProgramAssignments ProgramAssignmentRun[]    @relation("ProgramAssignmentAppliedBy")
+  registrationOperations    RegistrationOperation[]   @relation("RegistrationOperationActor")
+}
+
+model AuthCredential {
+  id                String    @id @default(cuid())
+  userId            String    @unique
+  passwordHash      String
+  passwordUpdatedAt DateTime  @default(now())
+  failedAttempts    Int       @default(0)
+  lockedUntil       DateTime?
+  disabledAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model UserSession {
+  id            String    @id @default(cuid())
+  userId        String
+  tokenHash     String    @unique
+  expiresAt     DateTime
+  lastSeenAt    DateTime  @default(now())
+  revokedAt     DateTime?
+  userAgentHash String?
+  createdAt     DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt, revokedAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model RateLimitBucket {
+  id              String   @id @default(cuid())
+  policy          String
+  subjectHash     String
+  count           Int
+  windowStartedAt DateTime
+  windowEndsAt    DateTime
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([policy, subjectHash, windowStartedAt])
+  @@index([expiresAt])
+  @@index([policy, windowEndsAt])
+}
+
+model Event {
+  id                   String   @id @default(cuid())
+  slug                 String   @unique
+  name                 String
+  startsAt             DateTime
+  endsAt               DateTime
+  timezone             String   @default("America/Chicago")
+  location             String?
+  capacity             Int?
+  publicInfoUrl        String?
+  supportContact       String?
+  isPublished          Boolean  @default(false)
+  registrationOpensOn  String?
+  registrationClosesOn String?
+  waitlistEnabled      Boolean  @default(false)
+  autoPromoteWaitlist  Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  memberships                         EventMembership[]
+  registrations                       Registration[]
+  attendees                           RegistrationAttendee[]
+  payments                            Payment[]
+  refunds                             Refund[]
+  checkIns                            CheckIn[]
+  announcements                       Announcement[]
+  auditLogs                           AuditLog[]
+  importRuns                          ImportRun[]
+  registrationForms                   RegistrationForm[]
+  formTestSubmissions                 FormTestSubmission[]
+  publicFormSubmissions               PublicRegistrationSubmission[]
+  capacityReservations                RegistrationCapacityReservation[]
+  messageSettings                     EventMessageSettings?
+  messageTemplates                    EventMessageTemplate[]
+  messageOutbox                       MessageOutbox[]
+  waitlistEntries                     RegistrationWaitlistEntry[]
+  paymentAttempts                     PaymentAttempt[]
+  squareWebhookEvents                 SquareWebhookEvent[]
+  promoCodes                          PromoCode[]
+  promoCodeRedemptions                PromoCodeRedemption[]
+  programAssignmentRuns               ProgramAssignmentRun[]
+  registrationOperations              RegistrationOperation[]
+  registrationPaymentChoiceOperations RegistrationPaymentChoiceOperation[]
+}
+
+model EventMembership {
+  id          String            @id @default(cuid())
+  eventId     String
+  userId      String
+  role        EventRole
+  permissions EventPermission[] @default([])
+  status      MembershipStatus  @default(ACTIVE)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
+  @@index([userId, status])
+}
+
+model Person {
+  id              String   @id @default(cuid())
+  firstName       String
+  lastName        String
+  normalizedEmail String?  @unique
+  phone           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  householdMembers   HouseholdMember[]
+  heldRegistrations  Registration[]
+  registrationEvents RegistrationAttendee[]
+
+  @@index([lastName, firstName])
+}
+
+model Household {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members       HouseholdMember[]
+  registrations Registration[]
+}
+
+model HouseholdMember {
+  id           String   @id @default(cuid())
+  householdId  String
+  personId     String
+  relationship String?
+  canManage    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  person    Person    @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@unique([householdId, personId])
+  @@index([personId])
+}
+
+model Registration {
+  id                    String             @id @default(cuid())
+  eventId               String
+  accountHolderPersonId String
+  householdId           String?
+  confirmationCode      String
+  status                RegistrationStatus @default(DRAFT)
+  totalAmount           Decimal            @db.Decimal(12, 2)
+  contactSnapshot       Json               @default("{}")
+  submittedAt           DateTime?
+  cancelledAt           DateTime?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  event                   Event                                @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  accountHolderPerson     Person                               @relation(fields: [accountHolderPersonId], references: [id])
+  household               Household?                           @relation(fields: [householdId], references: [id])
+  attendees               RegistrationAttendee[]
+  payments                Payment[]
+  publicFormSubmission    PublicRegistrationSubmission?
+  capacityReservations    RegistrationCapacityReservation[]
+  messages                MessageOutbox[]
+  waitlistEntry           RegistrationWaitlistEntry?
+  accessTokens            RegistrationAccessToken[]
+  paymentAttempts         PaymentAttempt[]
+  promoCodeRedemption     PromoCodeRedemption?
+  operations              RegistrationOperation[]
+  paymentChoiceOperations RegistrationPaymentChoiceOperation[]
+
+  @@unique([eventId, confirmationCode])
+  @@index([eventId, status])
+  @@index([accountHolderPersonId])
+}
+
+model RegistrationPaymentChoiceOperation {
+  id                       String                    @id
+  eventId                  String
+  registrationId           String
+  sequence                 Int
+  clientRequestId          String
+  requestFingerprint       String
+  expectedPriorOperationId String?
+  choice                   RegistrationPaymentChoice
+  baseSubtotalCents        Int
+  processingFeeCents       Int
+  resultingTotalCents      Int
+  responseSnapshot         Json
+  createdAt                DateTime                  @default(now())
+
+  event        Event        @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Restrict)
+
+  @@unique([registrationId, sequence])
+  @@unique([registrationId, clientRequestId])
+  @@index([eventId, createdAt])
+  @@index([registrationId, createdAt])
+}
+
+model PromoCode {
+  id                   String            @id @default(cuid())
+  eventId              String
+  code                 String
+  normalizedCode       String
+  isActive             Boolean           @default(true)
+  discountType         PromoDiscountType
+  discountValue        Int
+  startsOn             String?
+  endsOn               String?
+  minimumSubtotalCents Int?
+  maximumUses          Int?
+  maximumDiscountCents Int?
+  redeemedCount        Int               @default(0)
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  event       Event                 @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  redemptions PromoCodeRedemption[]
+
+  @@unique([eventId, normalizedCode])
+  @@index([eventId, isActive, updatedAt])
+}
+
+model PromoCodeRedemption {
+  id                           String            @id @default(cuid())
+  eventId                      String
+  promoCodeId                  String
+  registrationId               String            @unique
+  codeSnapshot                 String
+  discountTypeSnapshot         PromoDiscountType
+  discountValueSnapshot        Int
+  startsOnSnapshot             String?
+  endsOnSnapshot               String?
+  minimumSubtotalCentsSnapshot Int?
+  maximumUsesSnapshot          Int?
+  maximumDiscountCentsSnapshot Int?
+  eligibleSubtotalCents        Int
+  discountAmountCents          Int
+  pricingDate                  String
+  createdAt                    DateTime          @default(now())
+
+  event        Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  promoCode    PromoCode    @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+
+  @@unique([promoCodeId, registrationId])
+  @@index([eventId, createdAt])
+  @@index([promoCodeId, createdAt])
+}
+
+model RegistrationAccessToken {
+  id             String                         @id @default(cuid())
+  registrationId String
+  tokenHash      String                         @unique
+  purpose        RegistrationAccessTokenPurpose @default(MANAGE_REGISTRATION)
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  createdAt      DateTime                       @default(now())
+
+  registration    Registration     @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  paymentAttempts PaymentAttempt[]
+
+  @@index([registrationId, purpose, revokedAt, expiresAt])
+  @@index([expiresAt, revokedAt])
+}
+
+model RegistrationWaitlistEntry {
+  id                String              @id @default(cuid())
+  eventId           String
+  registrationId    String              @unique
+  position          Int
+  attendeeCount     Int
+  status            WaitlistEntryStatus @default(WAITING)
+  lastBlockedReason String?
+  joinedAt          DateTime            @default(now())
+  promotedAt        DateTime?
+  removedAt         DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  event        Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, position])
+  @@index([eventId, status, position])
+}
+
+model RegistrationAttendee {
+  id              String   @id @default(cuid())
+  eventId         String
+  registrationId  String
+  personId        String
+  attendeeType    String
+  position        Int      @default(0)
+  profileSnapshot Json
+  formResponses   Json     @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  event                  Event                             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration           Registration                      @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  person                 Person                            @relation(fields: [personId], references: [id])
+  checkIns               CheckIn[]
+  capacityReservations   RegistrationCapacityReservation[]
+  substitutionOperations RegistrationOperation[]
+
+  @@unique([registrationId, personId])
+  @@index([registrationId, position])
+  @@index([eventId, attendeeType])
+}
+
+model RegistrationOperation {
+  id                 String                    @id @default(cuid())
+  eventId            String
+  registrationId     String
+  attendeeId         String?
+  type               RegistrationOperationType
+  clientRequestId    String
+  requestFingerprint String
+  actorUserId        String
+  actorNameSnapshot  String
+  beforeSnapshot     Json
+  afterSnapshot      Json
+  responseSnapshot   Json
+  createdAt          DateTime                  @default(now())
+
+  event        Event                 @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  registration Registration          @relation(fields: [registrationId], references: [id], onDelete: Restrict)
+  attendee     RegistrationAttendee? @relation(fields: [attendeeId], references: [id], onDelete: Restrict)
+  actor        User                  @relation("RegistrationOperationActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@unique([eventId, clientRequestId])
+  @@index([registrationId, createdAt])
+  @@index([attendeeId, createdAt])
+  @@index([actorUserId, createdAt])
+}
+
+model Payment {
+  id                String        @id @default(cuid())
+  eventId           String
+  registrationId    String
+  amount            Decimal       @db.Decimal(12, 2)
+  status            PaymentStatus
+  method            PaymentMethod
+  externalReference String?
+  receivedAt        DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  event          Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration   Registration    @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  refunds        Refund[]
+  paymentAttempt PaymentAttempt?
+
+  @@index([eventId, status])
+  @@index([registrationId])
+}
+
+model PaymentAttempt {
+  id                        String               @id @default(cuid())
+  eventId                   String
+  registrationId            String
+  registrationAccessTokenId String?
+  paymentId                 String?              @unique
+  provider                  String               @default("SQUARE")
+  environment               String
+  clientIdempotencyKey      String               @unique
+  providerIdempotencyKey    String               @unique
+  activeRegistrationKey     String?              @unique
+  amountCents               Int
+  currency                  String               @default("USD")
+  status                    PaymentAttemptStatus @default(PROCESSING)
+  providerPaymentId         String?              @unique
+  providerStatus            String?
+  providerStatusAt          DateTime?
+  failureCode               String?
+  failureMessage            String?
+  requestCount              Int                  @default(1)
+  lastRequestedAt           DateTime?
+  completedAt               DateTime?
+  createdAt                 DateTime             @default(now())
+  updatedAt                 DateTime             @updatedAt
+
+  event                   Event                    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration            Registration             @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  registrationAccessToken RegistrationAccessToken? @relation(fields: [registrationAccessTokenId], references: [id], onDelete: SetNull)
+  payment                 Payment?                 @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  webhookEvents           SquareWebhookEvent[]
+
+  @@index([eventId, status, createdAt])
+  @@index([registrationId, createdAt])
+}
+
+model Refund {
+  id                String       @id @default(cuid())
+  eventId           String
+  paymentId         String
+  amount            Decimal      @db.Decimal(12, 2)
+  status            RefundStatus
+  externalReference String?
+  reason            String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  event   Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@unique([paymentId, externalReference])
+  @@index([eventId, status])
+  @@index([paymentId])
+}
+
+model SquareWebhookEvent {
+  id               String                   @id @default(cuid())
+  eventId          String?
+  paymentAttemptId String?
+  providerEventId  String                   @unique
+  eventType        String
+  objectId         String?
+  payloadHash      String
+  status           SquareWebhookEventStatus
+  reason           String?
+  occurredAt       DateTime
+  receivedAt       DateTime                 @default(now())
+  processedAt      DateTime
+
+  event          Event?          @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  paymentAttempt PaymentAttempt? @relation(fields: [paymentAttemptId], references: [id], onDelete: SetNull)
+
+  @@index([eventType, objectId, occurredAt])
+  @@index([paymentAttemptId, occurredAt])
+  @@index([eventId, occurredAt])
+}
+
+model CheckIn {
+  id                     String    @id @default(cuid())
+  eventId                String
+  registrationAttendeeId String
+  idempotencyKey         String
+  checkedInAt            DateTime  @default(now())
+  undoneAt               DateTime?
+  undoReason             String?
+  createdAt              DateTime  @default(now())
+
+  event    Event                @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  attendee RegistrationAttendee @relation(fields: [registrationAttendeeId], references: [id], onDelete: Cascade)
+
+  /// Migration-level partial unique index permits history but allows only one
+  /// row with `undoneAt IS NULL` for each registration attendee.
+  @@unique([eventId, idempotencyKey])
+  @@index([eventId, checkedInAt])
+  @@index([registrationAttendeeId])
+}
+
+model Announcement {
+  id              String               @id @default(cuid())
+  eventId         String
+  createdByUserId String
+  title           String
+  body            String
+  audience        Json
+  placement       String
+  status          AnnouncementStatus   @default(DRAFT)
+  priority        AnnouncementPriority @default(NORMAL)
+  publishedAt     DateTime?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  event     Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  createdBy User  @relation(fields: [createdByUserId], references: [id])
+
+  @@index([eventId, status, publishedAt])
+}
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  eventId       String?
+  actorUserId   String?
+  action        String
+  entityType    String
+  entityId      String?
+  correlationId String
+  summary       String
+  metadata      Json?
+  createdAt     DateTime @default(now())
+
+  event Event? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  actor User?  @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([eventId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([correlationId])
+}
+
+model ImportRun {
+  id              String          @id @default(cuid())
+  eventId         String
+  startedByUserId String
+  sourceSystem    String
+  sourceRunKey    String
+  fileName        String?
+  sourceChecksum  String?
+  status          ImportRunStatus @default(PENDING)
+  recordsCreated  Int             @default(0)
+  recordsUpdated  Int             @default(0)
+  recordsSkipped  Int             @default(0)
+  warnings        Int             @default(0)
+  errors          Int             @default(0)
+  summary         Json?
+  startedAt       DateTime        @default(now())
+  completedAt     DateTime?
+
+  event     Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  startedBy User           @relation(fields: [startedByUserId], references: [id])
+  records   ImportRecord[]
+
+  @@unique([sourceSystem, sourceRunKey])
+  @@index([eventId, startedAt])
+}
+
+model ImportRecord {
+  id                    String             @id @default(cuid())
+  importRunId           String
+  sourceRow             Int
+  sourceRecordKey       String
+  confirmationCode      String?
+  status                ImportRecordStatus
+  proposedAction        String
+  matchedPersonId       String?
+  matchedRegistrationId String?
+  committedEntityId     String?
+  rawSnapshot           Json
+  normalizedData        Json?
+  differences           Json?
+  warnings              Json?
+  errors                Json?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  importRun ImportRun @relation(fields: [importRunId], references: [id], onDelete: Cascade)
+
+  @@unique([importRunId, sourceRow])
+  @@index([importRunId, status])
+  @@index([sourceRecordKey])
+}
+
+model RegistrationForm {
+  id              String                 @id @default(cuid())
+  eventId         String
+  createdByUserId String
+  name            String
+  slug            String
+  status          RegistrationFormStatus @default(DRAFT)
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  event                 Event                             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  createdBy             User                              @relation("RegistrationFormCreatedBy", fields: [createdByUserId], references: [id])
+  versions              RegistrationFormVersion[]
+  capacityReservations  RegistrationCapacityReservation[]
+  programAssignmentRuns ProgramAssignmentRun[]
+
+  @@unique([eventId, slug])
+  @@index([eventId, status, updatedAt])
+}
+
+model RegistrationFormVersion {
+  id              String                 @id @default(cuid())
+  formId          String
+  createdByUserId String
+  versionNumber   Int
+  status          RegistrationFormStatus @default(DRAFT)
+  definition      Json
+  publishedAt     DateTime?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  form                  RegistrationForm                  @relation(fields: [formId], references: [id], onDelete: Cascade)
+  createdBy             User                              @relation("RegistrationFormVersionCreatedBy", fields: [createdByUserId], references: [id])
+  testSubmissions       FormTestSubmission[]
+  publicSubmissions     PublicRegistrationSubmission[]
+  capacityReservations  RegistrationCapacityReservation[]
+  programAssignmentRuns ProgramAssignmentRun[]
+
+  @@unique([formId, versionNumber])
+  @@index([formId, status, versionNumber])
+}
+
+model FormTestSubmission {
+  id                String   @id @default(cuid())
+  eventId           String
+  formVersionId     String
+  submittedByUserId String
+  responses         Json
+  validation        Json
+  isValid           Boolean
+  createdAt         DateTime @default(now())
+
+  event       Event                   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  formVersion RegistrationFormVersion @relation(fields: [formVersionId], references: [id], onDelete: Cascade)
+  submittedBy User                    @relation("FormTestSubmissionSubmittedBy", fields: [submittedByUserId], references: [id])
+
+  @@index([eventId, createdAt])
+  @@index([formVersionId, createdAt])
+}
+
+model PublicRegistrationSubmission {
+  id                String   @id @default(cuid())
+  eventId           String
+  formVersionId     String
+  registrationId    String   @unique
+  idempotencyKey    String
+  requestHash       String
+  responses         Json
+  attendeeResponses Json     @default("[]")
+  pricingSnapshot   Json
+  createdAt         DateTime @default(now())
+
+  event        Event                   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  formVersion  RegistrationFormVersion @relation(fields: [formVersionId], references: [id], onDelete: Restrict)
+  registration Registration            @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+
+  @@unique([formVersionId, idempotencyKey])
+  @@index([eventId, createdAt])
+  @@index([formVersionId, createdAt])
+}
+
+model RegistrationCapacityReservation {
+  id                     String    @id @default(cuid())
+  eventId                String
+  formId                 String
+  formVersionId          String
+  registrationId         String
+  registrationAttendeeId String?
+  participantKey         String    @default("registration")
+  fieldId                String
+  fieldKey               String
+  optionValue            String
+  rank                   Int?
+  releasedAt             DateTime?
+  createdAt              DateTime  @default(now())
+
+  event                Event                   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  form                 RegistrationForm        @relation(fields: [formId], references: [id], onDelete: Restrict)
+  formVersion          RegistrationFormVersion @relation(fields: [formVersionId], references: [id], onDelete: Restrict)
+  registration         Registration            @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  registrationAttendee RegistrationAttendee?   @relation(fields: [registrationAttendeeId], references: [id], onDelete: Cascade)
+
+  @@unique([registrationId, participantKey, fieldId, optionValue], map: "RegistrationCapacityReservation_scoped_choice_key")
+  @@index([registrationAttendeeId])
+  @@index([formId, fieldId, optionValue, releasedAt])
+  @@index([eventId, createdAt])
+}
+
+model EventMessageSettings {
+  id                         String              @id @default(cuid())
+  eventId                    String              @unique
+  deliveryMode               MessageDeliveryMode @default(LOCAL_CAPTURE)
+  senderName                 String
+  senderEmail                String?
+  replyToEmail               String?
+  internalNotificationEmails Json                @default("[]")
+  createdAt                  DateTime            @default(now())
+  updatedAt                  DateTime            @updatedAt
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+}
+
+model EventMessageTemplate {
+  id        String             @id @default(cuid())
+  eventId   String
+  key       MessageTemplateKey
+  isEnabled Boolean            @default(true)
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  event    Event                    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  versions MessageTemplateVersion[]
+
+  @@unique([eventId, key])
+  @@index([eventId, updatedAt])
+}
+
+model MessageTemplateVersion {
+  id              String                @id @default(cuid())
+  templateId      String
+  createdByUserId String?
+  versionNumber   Int
+  status          MessageTemplateStatus @default(DRAFT)
+  subjectTemplate String
+  bodyTemplate    String
+  publishedAt     DateTime?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  template  EventMessageTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  createdBy User?                @relation("MessageTemplateVersionCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  messages  MessageOutbox[]
+
+  @@unique([templateId, versionNumber])
+  @@index([templateId, status, versionNumber])
+}
+
+model MessageOutbox {
+  id                     String                         @id @default(cuid())
+  eventId                String
+  registrationId         String?
+  templateVersionId      String?
+  templateKey            MessageTemplateKey
+  recipientKind          MessageRecipientKind
+  recipientEmail         String
+  recipientName          String?
+  senderNameSnapshot     String
+  senderEmailSnapshot    String?
+  replyToEmailSnapshot   String?
+  subjectSnapshot        String
+  bodyTextSnapshot       String
+  metadata               Json?
+  idempotencyKey         String                         @unique
+  correlationId          String
+  status                 MessageOutboxStatus            @default(PENDING)
+  availableAt            DateTime                       @default(now())
+  lockedAt               DateTime?
+  lockToken              String?
+  attemptCount           Int                            @default(0)
+  capturedAt             DateTime?
+  sentAt                 DateTime?
+  provider               String?
+  providerMessageId      String?                        @unique
+  providerDeliveryStatus MessageProviderDeliveryStatus?
+  providerStatusAt       DateTime?
+  deliveredAt            DateTime?
+  failedAt               DateTime?
+  lastError              String?
+  retryOfMessageId       String?
+  createdAt              DateTime                       @default(now())
+  updatedAt              DateTime                       @updatedAt
+
+  event           Event                    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration    Registration?            @relation(fields: [registrationId], references: [id], onDelete: SetNull)
+  templateVersion MessageTemplateVersion?  @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  retryOf         MessageOutbox?           @relation("MessageRetry", fields: [retryOfMessageId], references: [id], onDelete: SetNull)
+  retries         MessageOutbox[]          @relation("MessageRetry")
+  attempts        MessageDeliveryAttempt[]
+  providerEvents  MessageProviderEvent[]
+
+  @@index([status, availableAt, createdAt])
+  @@index([eventId, createdAt])
+  @@index([registrationId, createdAt])
+  @@index([retryOfMessageId])
+  @@index([provider, providerDeliveryStatus, providerStatusAt])
+}
+
+model MessageDeliveryAttempt {
+  id                String               @id @default(cuid())
+  messageOutboxId   String
+  attemptNumber     Int
+  provider          String
+  status            MessageAttemptStatus
+  providerMessageId String?
+  errorCode         String?
+  errorMessage      String?
+  providerMetadata  Json?
+  startedAt         DateTime             @default(now())
+  completedAt       DateTime?
+
+  message MessageOutbox @relation(fields: [messageOutboxId], references: [id], onDelete: Cascade)
+
+  @@unique([messageOutboxId, attemptNumber])
+  @@index([status, startedAt])
+}
+
+model MessageProviderEvent {
+  id                   String                         @id @default(cuid())
+  messageOutboxId      String?
+  provider             String
+  providerEventId      String
+  providerMessageId    String
+  eventType            String
+  mappedDeliveryStatus MessageProviderDeliveryStatus?
+  occurredAt           DateTime
+  payload              Json
+  receivedAt           DateTime                       @default(now())
+
+  message MessageOutbox? @relation(fields: [messageOutboxId], references: [id], onDelete: SetNull)
+
+  @@unique([provider, providerEventId])
+  @@index([provider, providerMessageId, occurredAt])
+  @@index([messageOutboxId, occurredAt])
+}
+
+model ProgramAssignmentRun {
+  id                     String   @id @default(cuid())
+  eventId                String
+  formId                 String
+  formVersionId          String
+  fieldId                String
+  fieldKeySnapshot       String
+  fieldLabelSnapshot     String
+  formNameSnapshot       String
+  formVersionNumber      Int
+  optionsSnapshot        Json
+  limitsSnapshot         Json
+  summarySnapshot        Json
+  sourceFingerprint      String
+  sourceParticipantCount Int
+  clientRequestId        String
+  appliedByUserId        String?
+  appliedByNameSnapshot  String
+  supersedesRunId        String?
+  appliedAt              DateTime @default(now())
+  createdAt              DateTime @default(now())
+
+  event        Event                       @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  form         RegistrationForm            @relation(fields: [formId], references: [id], onDelete: Cascade)
+  formVersion  RegistrationFormVersion     @relation(fields: [formVersionId], references: [id], onDelete: Cascade)
+  appliedBy    User?                       @relation("ProgramAssignmentAppliedBy", fields: [appliedByUserId], references: [id], onDelete: SetNull)
+  supersedes   ProgramAssignmentRun?       @relation("ProgramAssignmentSupersession", fields: [supersedesRunId], references: [id], onDelete: SetNull)
+  supersededBy ProgramAssignmentRun[]      @relation("ProgramAssignmentSupersession")
+  assignments  ProgramAttendeeAssignment[]
+
+  @@unique([eventId, clientRequestId])
+  @@index([eventId, formVersionId, fieldId, appliedAt])
+  @@index([supersedesRunId])
+}
+
+model ProgramAttendeeAssignment {
+  id                       String                   @id @default(cuid())
+  runId                    String
+  attendeeIdSnapshot       String
+  registrationIdSnapshot   String
+  confirmationCodeSnapshot String
+  registrationSubmittedAt  DateTime?
+  attendeePositionSnapshot Int
+  stableOrder              Int
+  firstNameSnapshot        String
+  lastNameSnapshot         String
+  attendeeTypeSnapshot     String
+  preferencesSnapshot      Json
+  optionValue              String?
+  preferenceRank           Int?
+  outcome                  ProgramAssignmentOutcome
+  unassignedReason         ProgramUnassignedReason?
+  createdAt                DateTime                 @default(now())
+
+  run ProgramAssignmentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, attendeeIdSnapshot])
+  @@index([runId, optionValue, stableOrder])
+  @@index([runId, outcome, stableOrder])
+}

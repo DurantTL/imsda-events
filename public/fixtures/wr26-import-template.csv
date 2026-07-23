@@ -1,0 +1,2 @@
+source_id,confirmation_code,first_name,last_name,email,phone,attendee_type,status,total_amount,submitted_at
+WR26-EXAMPLE-001,WR26-1001,Example,Attendee,example.attendee@example.test,+1-555-0199,ATTENDEE,CONFIRMED,175.00,2026-07-22T15:00:00.000Z
