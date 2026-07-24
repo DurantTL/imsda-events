@@ -27,6 +27,7 @@ export type LogContext = Record<string, string | number | boolean | null | undef
 const MESSAGE_SAFE_ERROR_NAMES: ReadonlySet<string> = new Set([
   "AccessDeniedError",
   "AccountEmailNotConfiguredError",
+  "AlertConditionError",
   "AttendeePassResolutionError",
   "AttendeePassTokenError",
   "CheckInOperationError",

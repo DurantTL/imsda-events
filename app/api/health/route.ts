@@ -1,6 +1,7 @@
 import { getPrisma } from "@/lib/prisma";
 import { getOutboxQueueHealth } from "@/modules/communications/outbox-sweep";
 import { logError } from "@/lib/logger";
+import { dispatchUnsuppressedAlert } from "@/modules/operations/alerting";
 import { withRequestContext } from "@/lib/request-context";
 
 /**
@@ -18,6 +19,16 @@ async function getHandler() {
     await getPrisma().$queryRaw`SELECT 1`;
   } catch (error) {
     logError("Health check failed", error);
+    // There is nowhere to record suppression when the database is the thing
+    // that is down, so this always attempts delivery. An orchestrator polling
+    // this endpoint will repeat it, which is the correct amount of noise for a
+    // total outage.
+    await dispatchUnsuppressedAlert({
+      key: "system.database.unavailable",
+      severity: "URGENT",
+      summary: "The database is unreachable",
+      detail: "Registrations, check-in, and payment cannot be recorded until it returns.",
+    }).catch(() => undefined);
     return Response.json(
       {
         status: "degraded",

@@ -5,6 +5,7 @@ import {
 } from "@/integrations/email/resend-webhook";
 import { recordResendWebhookEvent } from "@/modules/communications/resend-webhook-repository";
 import { logError } from "@/lib/logger";
+import { dispatchAlerts } from "@/modules/operations/alerting";
 import { withRequestContext } from "@/lib/request-context";
 
 export const runtime = "nodejs";
@@ -32,6 +33,14 @@ async function postHandler(request: Request) {
       );
     }
     if (error instanceof ResendWebhookVerificationError) {
+      // A mismatched signing secret means every bounce and complaint is being
+      // discarded, which is invisible from the application's own state.
+      await dispatchAlerts([{
+        key: "system.email.webhook-rejected",
+        severity: "WATCH",
+        summary: "A Resend webhook failed verification",
+        detail: "Check RESEND_WEBHOOK_SECRET. Until it matches, delivery, bounce, and complaint results are being discarded.",
+      }]).catch(() => undefined);
       return Response.json(
         {
           error: "INVALID_RESEND_WEBHOOK",

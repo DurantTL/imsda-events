@@ -4,9 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getSquareConfiguration: vi.fn(),
   processSquareWebhook: vi.fn(),
+  dispatchAlerts: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
+vi.mock("@/modules/operations/alerting", () => ({ dispatchAlerts: mocks.dispatchAlerts }));
 vi.mock("@/modules/payments/square-config", async (importOriginal) => {
   const original = await importOriginal<
     typeof import("@/modules/payments/square-config")
@@ -69,6 +71,7 @@ function request(body = rawBody, signedBody = body) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.dispatchAlerts.mockResolvedValue({ sent: [], suppressed: [], undelivered: [] });
   mocks.getSquareConfiguration.mockReturnValue({
     environment: "sandbox",
     applicationId: "sandbox-sq0idb-example",
@@ -119,6 +122,11 @@ describe("Square webhook route", () => {
       error: "INVALID_SQUARE_SIGNATURE",
     });
     expect(mocks.processSquareWebhook).not.toHaveBeenCalled();
+    // Either forged payment events, or a signature key that no longer matches
+    // Square — in which case every real payment result is being rejected.
+    expect(mocks.dispatchAlerts).toHaveBeenCalledWith([
+      expect.objectContaining({ key: "system.payments.webhook-rejected" }),
+    ]);
   });
 
   it("acknowledges a deduplicated provider event", async () => {

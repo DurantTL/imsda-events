@@ -374,6 +374,25 @@ model PasswordResetToken {
   @@index([userId, expiresAt])
 }
 
+/**
+ * One row per alert condition, so a condition that persists pages once an hour
+ * rather than every time the monitor runs. Without this, a backed-up queue
+ * would send an alert every five minutes and be muted by whoever receives it.
+ */
+model AlertNotification {
+  id         String    @id @default(cuid())
+  key        String    @unique
+  severity   String
+  summary    String
+  firstSeenAt DateTime @default(now())
+  lastSentAt DateTime
+  sendCount  Int       @default(1)
+  resolvedAt DateTime?
+
+  @@index([lastSentAt])
+  @@index([resolvedAt])
+}
+
 model RateLimitBucket {
   id              String   @id @default(cuid())
   policy          String

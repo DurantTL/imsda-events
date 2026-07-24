@@ -71,6 +71,11 @@ provide `DATABASE_URL` here.
 
 ```
 APP_PORT=3100                    # only if host 3100 is already in use
+ALERT_WEBHOOK_URL=               # Slack/Teams incoming webhook; see Alerting below
+ALERT_REPEAT_MINUTES=60          # how long the same condition stays quiet after paging
+PASSWORD_BREACH_CHECK=           # enabled/disabled; unset means on in production
+ACCOUNT_EMAIL_SENDER_NAME=IMSDA Events
+ACCOUNT_EMAIL_REPLY_TO=
 RATE_LIMIT_TRUSTED_PROXY_HOPS=1  # 1 for a single Nginx; 2 if Cloudflare is also in front
 RATE_LIMIT_CLIENT_IP_HEADER=x-forwarded-for   # cf-connecting-ip behind Cloudflare
 OUTBOX_SWEEP_INTERVAL_SECONDS=300
@@ -130,6 +135,34 @@ Square stays in Sandbox until `SQUARE_ENVIRONMENT=production` **and**
 writes fictitious events, people, registrations, payments and a refund, and gives
 every account one shared password that is published in this repository. It refuses
 to run with `NODE_ENV=production` or against any non-loopback database host.
+
+## Alerting
+
+Set `ALERT_WEBHOOK_URL` to a Slack or Teams incoming webhook — or anything that
+accepts a JSON POST — and the deployment will tell you when it is in trouble
+instead of waiting for someone to notice.
+
+What pages, and when:
+
+| Condition | Severity | Raised by |
+| --- | --- | --- |
+| The database is unreachable | urgent | `/api/health`, on every failed check |
+| Email delivery is falling behind (25+ due, or 30 minutes waiting) | urgent | the sweep, every run |
+| A message gave up after all five attempts | urgent | the sweep |
+| A card payment failed | urgent | the sweep |
+| A card payment never reached a result after 15 minutes | urgent | the sweep — this is usually the Square webhook not arriving |
+| A Square webhook failed signature verification | urgent | the webhook, immediately |
+| A Resend webhook failed verification | watch | the webhook, immediately |
+
+The scan runs at the end of the outbox sweep, so its frequency is
+`OUTBOX_SWEEP_INTERVAL_SECONDS` (300 by default). A condition that persists pages
+once per `ALERT_REPEAT_MINUTES` (60 by default) rather than every run; when it
+stops being true it is cleared, so a recurrence pages immediately.
+
+Every alert is also written to the log as a JSON line carrying `alertKey` and
+`severity`, at error level for urgent ones. A deployment with no webhook set
+still leaves that trail for a log aggregator to match on — but nothing will be
+watching it, which is the state this replaced.
 
 ## Two-factor authentication
 

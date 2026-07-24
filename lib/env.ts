@@ -83,6 +83,19 @@ const serverEnvSchema = z
     // TOTP secrets. Required in production, where MFA is enforced for admins.
     SECRET_ENCRYPTION_KEY: optionalTrimmed,
 
+    // Where alerts go. Any endpoint that accepts a JSON POST — a Slack or
+    // Teams incoming webhook, or a small relay. Blank means alerts are only
+    // written to the log, where nothing is watching them.
+    ALERT_WEBHOOK_URL: optionalTrimmed,
+    // How long the same condition stays quiet after paging once.
+    ALERT_REPEAT_MINUTES: z
+      .string()
+      .trim()
+      .regex(/^\d+$/, "must be a whole number of minutes")
+      .transform(Number)
+      .refine((value) => value >= 1 && value <= 1440, "must be between 1 and 1440 minutes")
+      .default(60),
+
     // Checks a chosen password against a public breach corpus, sending only a
     // five-character hash prefix. Unset means on in production, off elsewhere.
     PASSWORD_BREACH_CHECK: z.enum(["enabled", "disabled"]).optional(),
@@ -170,6 +183,18 @@ const serverEnvSchema = z
       });
     }
 
+    if (value.ALERT_WEBHOOK_URL) {
+      try {
+        new URL(value.ALERT_WEBHOOK_URL);
+      } catch {
+        context.addIssue({
+          code: "custom",
+          path: ["ALERT_WEBHOOK_URL"],
+          message: "must be a valid URL",
+        });
+      }
+    }
+
     if (value.SQUARE_API_URL) {
       try {
         new URL(value.SQUARE_API_URL);
@@ -248,6 +273,8 @@ function readSource(source: Record<string, string | undefined>) {
     "SQUARE_ENABLE_PRODUCTION",
     "OUTBOX_SWEEP_TOKEN",
     "SECRET_ENCRYPTION_KEY",
+    "ALERT_WEBHOOK_URL",
+    "ALERT_REPEAT_MINUTES",
     "PASSWORD_BREACH_CHECK",
     "PASSWORD_BREACH_CHECK_URL",
   ] as const;

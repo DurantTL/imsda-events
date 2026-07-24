@@ -3,6 +3,7 @@ import {
   isAuthorizedSweepRequest,
   sweepOutbox,
 } from "@/modules/communications/outbox-sweep";
+import { runAlertScan } from "@/modules/operations/alert-scan";
 import { withRequestContext } from "@/lib/request-context";
 
 /**
@@ -23,11 +24,25 @@ async function postHandler(request: Request) {
 
   try {
     const result = await sweepOutbox();
+    // The sweep already runs every few minutes, which makes it the natural
+    // place to read the system's signals: one cron, one credential, and the
+    // queue's state is known here anyway. A scan failure must not make a
+    // successful sweep look failed.
+    const alerts = await runAlertScan().catch((error) => {
+      logError("The alert scan failed after a successful sweep", error);
+      return null;
+    });
     return Response.json({
       sweptEventCount: result.sweptEventIds.length,
       sweptAccountMessages: result.sweptAccountMessages,
       skipped: result.skipped,
       queueBefore: result.snapshotBefore,
+      alerts: alerts && {
+        sent: alerts.sent.map((alert) => alert.key),
+        suppressed: alerts.suppressed.map((alert) => alert.key),
+        undelivered: alerts.undelivered.map((alert) => alert.key),
+        cleared: alerts.cleared,
+      },
     });
   } catch (error) {
     logError("Outbox sweep failed", error);
