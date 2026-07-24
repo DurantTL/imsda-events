@@ -5,9 +5,9 @@ Tracks implementation against the ten-step sequence in
 has to be true before this system holds real attendee, medical, and payment data. This
 document says how far along that is, and is updated as work lands.
 
-**Status: items 1, 3, 4 and 6 are done; item 2 is partly done; items 5 and 7–10 are not
-started.** All three P0 blocking findings are addressed. What remains before real data is
-principally observability (item 5), MFA and session hardening (item 7), and the
+**Status: items 1, 3, 4 and 6 are done; items 2 and 7 are partly done; items 5 and 8–10
+are not started.** All three P0 blocking findings are addressed. What remains before real
+data is principally observability (item 5), MFA and the password policy (item 7), and the
 medical-data encryption decision (item 8).
 
 ---
@@ -22,7 +22,7 @@ medical-data encryption decision (item 8).
 | 4 | Backups, off-host retention, verified restore | **Done**, with one operator decision outstanding |
 | 5 | Structured logs with correlation IDs and redaction; error tracking; alerts | Not started |
 | 6 | Scheduled outbox sweep; health check covers queue depth | **Done** |
-| 7 | MFA for admin roles; real password policy; session idle timeout and revocation | Not started |
+| 7 | MFA for admin roles; real password policy; session idle timeout and revocation | **Partly done** — session hardening ships; MFA and the password policy do not |
 | 8 | Medical-data encryption decision; retention/deletion/export procedure | Not started |
 | 9 | Staging environment; go-live checklist; cutover rehearsal; Square production unlock | Not started |
 | 10 | Printable passes and rosters, then resume Phase 6/7/8 breadth | Not started |
@@ -165,14 +165,32 @@ It is.
 
 Alerting on these signals is part of item 5 and is not done.
 
-## 7. MFA, password policy, session hardening — not started
+## 7. MFA, password policy, session hardening — partly done
 
-Sessions are still fixed 8-hour, non-sliding, non-rotating, with no idle timeout and no
-user-facing revocation. `modules/access/passwords.ts` still enforces twelve characters
-against a five-entry denylist. There is no MFA.
+Shipped — **session hardening**:
 
-One piece of this landed as a side effect: `setGlobalRole` revokes the target's sessions,
-so a privilege change is not carried by an older session.
+- A 60-minute idle timeout alongside the 8-hour absolute expiry. `lastSeenAt` was
+  recorded but never read; `getCurrentSession` now checks it and rejects an idle session
+  even while its absolute expiry is hours away. Walking away from a shared check-in
+  tablet no longer leaves a session usable for the rest of the day.
+- `lastSeenAt` is advanced at most once a minute, guarded on the observed value so
+  concurrent requests do not race, and on `revokedAt` so a session revoked in between is
+  not resurrected.
+- `GET`/`DELETE /api/auth/sessions` and a **Signed-in devices** panel in **More** list
+  the sessions that can currently sign in as the account and sign out the others.
+  `revokeAllUserSessions` already existed but was only ever called by the password reset
+  path, so nobody could end a session they had left open somewhere.
+- Session rotation on privilege change: `setGlobalRole` revokes the target's sessions, so
+  a change of privilege is never carried by a session that predates it.
+- `getCurrentSession` also rejects a session whose account is not `ACTIVE`, so
+  de-activating an account takes effect on the next request.
+
+Not shipped: **MFA** for `SYSTEM_ADMIN`/`EVENT_ADMIN`, and the **password policy**.
+`modules/access/passwords.ts` still enforces twelve characters against a five-entry
+denylist. The review is right that twelve characters plus five blocked strings is a demo
+policy; a real answer means either a breached-password check or a substantially higher
+length floor, and MFA is the more valuable of the two for accounts that can export a full
+attendee roster.
 
 ## 8. Medical-data encryption — not started
 
@@ -200,8 +218,8 @@ Against a local PostgreSQL 16 with all migrations applied:
 npx prisma migrate deploy                    ✅ 25 migrations, no drift on changed models
 npm run lint                                 ✅
 npm run typecheck                            ✅
-npx vitest run                               ✅ 453 passed (90 files), 51 new
-npx vitest run  (with no DATABASE_URL set)   ✅ 453 passed — was 30 failures before
+npx vitest run                               ✅ 462 passed (91 files), 60 new
+npx vitest run  (with no DATABASE_URL set)   ✅ 462 passed — was 30 failures before
 npm run admin:create                         ✅ created and promoted; both guards exercised
 npx prisma db seed  (NODE_ENV=production)    ✅ refused
 npx prisma db seed  (remote host)            ✅ refused
@@ -220,6 +238,10 @@ Exercised against a running production build:
 - Malformed `APP_BASE_URL` → **500 `SERVER_MISCONFIGURED`**, the review's exact symptom,
   which previously returned 403 `INVALID_REQUEST_ORIGIN` on every mutation route.
 - Production `/login` contains no occurrence of the shared demo password.
+- Signing in from two devices listed both with the caller's marked current; signing out
+  the others revoked exactly one and left the caller signed in.
+- A session aged past 60 minutes of inactivity was rejected with 401 while its absolute
+  expiry was still hours away.
 
 The database-backed `npm run test:public-*` scripts were not run; they need a running dev
 server as well as a database.
