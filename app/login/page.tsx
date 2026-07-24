@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { BrandMark } from "@/components/brand-mark";
 import { LOCAL_DEMO_EMAIL, LOCAL_DEMO_PASSWORD, LoginForm } from "@/components/login-form";
-import { getServerEnv } from "@/lib/env";
 import { getCurrentSession } from "@/modules/access/current-session";
 
 export const metadata: Metadata = { title: "Sign in" };
@@ -13,7 +12,7 @@ export default async function LoginPage() {
   // The seeded account exists only in a local database (`prisma/seed.ts`
   // refuses to run anywhere else). A production sign-in page shows no
   // credential at all.
-  const showLocalCredentials = getServerEnv().NODE_ENV !== "production";
+  const showLocalCredentials = process.env.NODE_ENV !== "production";
 
   return (
     <main className="auth-page">

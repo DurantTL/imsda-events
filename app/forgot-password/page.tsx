@@ -1,14 +1,16 @@
 import type { Metadata } from "next";
 import { BrandMark } from "@/components/brand-mark";
 import { PasswordResetRequestForm } from "@/components/password-reset-request-form";
-import { getServerEnv } from "@/lib/env";
 
 export const metadata: Metadata = { title: "Reset password" };
 
 export default function ForgotPasswordPage() {
   // Email delivery for account recovery is not wired yet. Say so plainly
   // rather than promising a link that production will never show or send.
-  const linkShownOnPage = getServerEnv().NODE_ENV !== "production";
+  //
+  // Read NODE_ENV directly rather than through getServerEnv(): this page is
+  // prerendered, and a build has no deployment secrets to validate against.
+  const linkShownOnPage = process.env.NODE_ENV !== "production";
 
   return (
     <main className="auth-page">
