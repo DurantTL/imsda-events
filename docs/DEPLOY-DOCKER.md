@@ -48,7 +48,14 @@ OUTBOX_SWEEP_TOKEN=<openssl rand -base64 48>
 
 Each secret needs at least 32 characters. If one is missing or malformed the
 container exits at startup with the offending variable named in its log, rather
-than serving pages and failing later on a QR pass or a private link.
+than serving pages and failing later on a QR pass or a private link. A variable
+that is absent from the panel altogether stops `docker compose up` before it
+builds, naming the variable in the deploy output.
+
+> **Upgrading an existing deployment:** `OUTBOX_SWEEP_TOKEN` became required
+> when the scheduled outbox sweeper was added. A deployment that predates it
+> must add the variable before its next deploy, or the app container will
+> refuse to start.
 
 `NODE_ENV` and `DATABASE_URL` are set by `docker-compose.yml` — you do **not**
 provide `DATABASE_URL` here.
@@ -99,6 +106,41 @@ Square stays in Sandbox until `SQUARE_ENVIRONMENT=production` **and**
 writes fictitious events, people, registrations, payments and a refund, and gives
 every account one shared password that is published in this repository. It refuses
 to run with `NODE_ENV=production` or against any non-loopback database host.
+
+## Troubleshooting a failed deploy
+
+### `dependency failed to start: container ...-app-1 is unhealthy`
+
+The app container started but never passed its health check, so the services that
+wait on it (`outbox-sweeper`) stayed in `created`. The deploy output does not
+carry the reason — the app log does:
+
+```bash
+docker compose logs app --tail 50
+```
+
+In xCloud, the same thing is under **Logs → Docker Compose Log →
+`...-app-1`**.
+
+The two things that put it there:
+
+- **A missing or too-short environment variable.** The log opens with
+  `Refusing to start: the environment is not valid for production.` followed by
+  one line per offending variable. Add it in the env panel and deploy again.
+  `OUTBOX_SWEEP_TOKEN` is the one that catches deployments created before the
+  outbox sweeper existed.
+- **A migration that could not be applied.** The log stops after
+  `Applying database migrations (prisma migrate deploy)...` with a Prisma error.
+
+The health check itself allows 40 seconds of start-up before its first probe and
+then retries for a further two and a half minutes, so a slow first boot is not
+the cause.
+
+### `error: OUTBOX_SWEEP_TOKEN: set this to at least 32 random characters ...`
+
+`docker compose` refused to build at all because a required variable is absent
+from the environment. This is the same fault as above, caught earlier and stated
+plainly. Add the named variable and deploy again.
 
 ## Backups and restore rehearsals
 
