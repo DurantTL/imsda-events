@@ -15,6 +15,34 @@ import {
 import { hashPassword } from "../modules/access/passwords";
 import { formTemplates } from "../modules/forms/definition";
 
+/**
+ * Fictitious demo data for local work and CI. It writes fabricated events,
+ * people, registrations, payments and a refund, and gives every account one
+ * shared password that is published in the README — none of which belongs in a
+ * real database. The guard below is modelled on `scripts/refresh-local-demo.ts`.
+ *
+ * The supported way to reach a first real administrator is `npm run admin:create`.
+ */
+function assertLocalDatabase() {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "Refusing to seed fictitious demo data with NODE_ENV=production. Use `npm run admin:create` to bootstrap a real administrator.",
+    );
+  }
+
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) throw new Error("DATABASE_URL is required.");
+
+  const hostname = new URL(databaseUrl).hostname;
+  if (!["localhost", "127.0.0.1", "::1"].includes(hostname)) {
+    throw new Error(
+      `Refusing to seed fictitious demo data outside a local database (received ${hostname}).`,
+    );
+  }
+}
+
+assertLocalDatabase();
+
 const prisma = new PrismaClient();
 const localPassword = "IMSDA-Local-2026!";
 

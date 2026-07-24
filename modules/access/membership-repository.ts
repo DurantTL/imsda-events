@@ -10,7 +10,14 @@ import { createOpaqueToken } from "@/modules/access/tokens";
 import { rolePermissions } from "@/modules/access/permissions";
 
 export class MembershipOperationError extends Error {
-  constructor(public readonly code: "MEMBERSHIP_NOT_FOUND" | "LAST_EVENT_ADMIN", message: string) {
+  constructor(
+    public readonly code:
+      | "MEMBERSHIP_NOT_FOUND"
+      | "LAST_EVENT_ADMIN"
+      | "USER_NOT_FOUND"
+      | "LAST_SYSTEM_ADMIN",
+    message: string,
+  ) {
     super(message);
     this.name = "MembershipOperationError";
   }
@@ -55,7 +62,7 @@ export async function listStaffMemberships(eventId: string) {
       permissions: true,
       createdAt: true,
       updatedAt: true,
-      user: { select: { id: true, displayName: true, email: true, globalRole: true, credential: { select: { disabledAt: true } } } },
+      user: { select: { id: true, displayName: true, email: true, globalRole: true, accountStatus: true, credential: { select: { disabledAt: true } } } },
     },
   });
   return rows.map((row) => ({
@@ -70,6 +77,7 @@ export async function listStaffMemberships(eventId: string) {
       displayName: row.user.displayName,
       email: row.user.email,
       globalRole: row.user.globalRole,
+      accountStatus: row.user.accountStatus,
       accountDisabled: Boolean(row.user.credential?.disabledAt),
     },
   }));
@@ -77,20 +85,31 @@ export async function listStaffMemberships(eventId: string) {
 
 export async function addStaffMembership(eventId: string, actorUserId: string, input: { email: string; displayName: string; role: EventRole }) {
   const email = input.email.trim().toLowerCase();
-  const placeholderHash = await hashPassword(`${createOpaqueToken()}-local-setup`);
+  // Nobody — not even the inviting administrator — is handed a password. The
+  // account is created PENDING_ACTIVATION and its owner sets the first one.
+  const unusableHash = await hashPassword(`${createOpaqueToken()}-pending-activation`);
   const result = await getPrisma().$transaction(async (tx) => {
     let user = await tx.user.findUnique({ where: { email }, select: { id: true, credential: { select: { id: true } } } });
     let credentialCreated = false;
     if (!user) {
       user = await tx.user.create({
-        data: { email, displayName: input.displayName.trim(), credential: { create: { passwordHash: placeholderHash } } },
+        data: {
+          email,
+          displayName: input.displayName.trim(),
+          accountStatus: "PENDING_ACTIVATION",
+          credential: { create: { passwordHash: unusableHash } },
+        },
         select: { id: true, credential: { select: { id: true } } },
       });
       credentialCreated = true;
     } else {
       await tx.user.update({ where: { id: user.id }, data: { displayName: input.displayName.trim() } });
       if (!user.credential) {
-        await tx.authCredential.create({ data: { userId: user.id, passwordHash: placeholderHash } });
+        await tx.authCredential.create({ data: { userId: user.id, passwordHash: unusableHash } });
+        await tx.user.update({
+          where: { id: user.id },
+          data: { accountStatus: "PENDING_ACTIVATION", activatedAt: null },
+        });
         credentialCreated = true;
       }
     }
@@ -145,4 +164,70 @@ export async function updateStaffMembership(eventId: string, membershipId: strin
     }, tx);
   });
   return (await listStaffMemberships(eventId)).find((row) => row.id === membershipId)!;
+}
+
+/**
+ * Grants or removes `SYSTEM_ADMIN`. Before this existed, `globalRole` was
+ * settable only by `prisma/seed.ts`, which made the seeded fictitious admin
+ * load-bearing and impossible to retire. Callers must already have established
+ * that the actor is a system administrator.
+ *
+ * Removing the last one is refused: `SYSTEM_ADMIN` is required to create an
+ * event, so an empty set is unrecoverable without shell access.
+ */
+export async function setGlobalRole(
+  targetUserId: string,
+  actorUserId: string,
+  globalRole: "SYSTEM_ADMIN" | null,
+  eventId?: string,
+) {
+  return getPrisma().$transaction(async (tx) => {
+    const target = await tx.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, email: true, displayName: true, globalRole: true },
+    });
+    if (!target) {
+      throw new MembershipOperationError("USER_NOT_FOUND", "That account no longer exists.");
+    }
+    if (target.globalRole === globalRole) return target;
+
+    if (target.globalRole === "SYSTEM_ADMIN" && globalRole === null) {
+      const remaining = await tx.user.count({
+        where: { globalRole: "SYSTEM_ADMIN", id: { not: target.id } },
+      });
+      if (remaining === 0) {
+        throw new MembershipOperationError(
+          "LAST_SYSTEM_ADMIN",
+          "Grant another account system administrator access before removing this one.",
+        );
+      }
+    }
+
+    const updated = await tx.user.update({
+      where: { id: target.id },
+      data: { globalRole },
+      select: { id: true, email: true, displayName: true, globalRole: true },
+    });
+
+    // A change of privilege must not be carried by a session that predates it.
+    await tx.userSession.updateMany({
+      where: { userId: target.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+
+    await writeAuditLog({
+      eventId,
+      actorUserId,
+      action: globalRole ? "SYSTEM_ADMIN_GRANTED" : "SYSTEM_ADMIN_REVOKED",
+      entityType: "User",
+      entityId: target.id,
+      correlationId: randomUUID(),
+      summary: globalRole
+        ? `${target.displayName} was granted system administrator access.`
+        : `${target.displayName} no longer has system administrator access.`,
+      metadata: { email: target.email, before: target.globalRole, after: globalRole },
+    }, tx);
+
+    return updated;
+  });
 }

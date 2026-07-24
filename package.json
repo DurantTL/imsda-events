@@ -20,6 +20,7 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "db:refresh-demo": "tsx scripts/refresh-local-demo.ts",
+    "admin:create": "tsx scripts/create-admin.ts",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate"
   },

@@ -1,7 +1,8 @@
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
+import { getServerEnv } from "@/lib/env";
 import { AccessDeniedError, requirePermission } from "@/modules/access/authorization";
-import { issuePasswordReset } from "@/modules/access/auth-service";
+import { issueAccountToken } from "@/modules/access/auth-service";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { addStaffMembership, listStaffMemberships } from "@/modules/access/membership-repository";
 import { eventRoles } from "@/modules/access/permissions";
@@ -38,8 +39,21 @@ export async function POST(request: Request, context: { params: Promise<{ eventI
     const access = await requirePermission(await getCurrentSession(), eventId, "MANAGE_STAFF", findActiveMembership);
     const input = membershipSchema.parse(await request.json());
     const result = await addStaffMembership(eventId, access.user.id, input);
-    const token = result.credentialCreated ? await issuePasswordReset(input.email) : null;
-    const setupUrl = token && process.env.NODE_ENV !== "production" ? `${new URL(request.url).origin}/reset-password?token=${encodeURIComponent(token)}` : undefined;
-    return Response.json({ membership: result.membership, setupUrl }, { status: 201 });
+    // The link is returned only to the authenticated administrator who just
+    // created the account, and only when an account was actually created. That
+    // is an out-of-band handoff, so it is shown in production too — otherwise
+    // an invited colleague has no way to obtain a credential at all.
+    const issued = result.credentialCreated ? await issueAccountToken(input.email) : null;
+    const setupUrl = issued
+      ? new URL(
+          `/reset-password?token=${encodeURIComponent(issued.token)}`,
+          getServerEnv().APP_BASE_URL,
+        ).toString()
+      : undefined;
+    return Response.json({
+      membership: result.membership,
+      setupUrl,
+      setupExpiresAt: issued?.expiresAt.toISOString(),
+    }, { status: 201 });
   } catch (error) { return apiError(error); }
 }

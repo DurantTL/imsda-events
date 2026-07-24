@@ -11,6 +11,18 @@ enum GlobalRole {
   SYSTEM_ADMIN
 }
 
+/// An invited account holds an unusable random hash until its owner activates
+/// it. Without this the schema cannot tell that account apart from a live one.
+enum UserAccountStatus {
+  PENDING_ACTIVATION
+  ACTIVE
+}
+
+enum AccountTokenPurpose {
+  PASSWORD_RESET
+  ACCOUNT_ACTIVATION
+}
+
 enum EventRole {
   EVENT_ADMIN
   REGISTRATION_MANAGER
@@ -211,12 +223,14 @@ enum ProgramUnassignedReason {
 }
 
 model User {
-  id          String      @id @default(cuid())
-  email       String      @unique
-  displayName String
-  globalRole  GlobalRole?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  id            String            @id @default(cuid())
+  email         String            @unique
+  displayName   String
+  globalRole    GlobalRole?
+  accountStatus UserAccountStatus @default(ACTIVE)
+  activatedAt   DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
 
   memberships               EventMembership[]
   credential                AuthCredential?
@@ -231,6 +245,8 @@ model User {
   createdMessageVersions    MessageTemplateVersion[]  @relation("MessageTemplateVersionCreatedBy")
   appliedProgramAssignments ProgramAssignmentRun[]    @relation("ProgramAssignmentAppliedBy")
   registrationOperations    RegistrationOperation[]   @relation("RegistrationOperationActor")
+
+  @@index([accountStatus])
 }
 
 model AuthCredential {
@@ -264,12 +280,13 @@ model UserSession {
 }
 
 model PasswordResetToken {
-  id        String    @id @default(cuid())
+  id        String              @id @default(cuid())
   userId    String
-  tokenHash String    @unique
+  tokenHash String              @unique
+  purpose   AccountTokenPurpose @default(PASSWORD_RESET)
   expiresAt DateTime
   usedAt    DateTime?
-  createdAt DateTime  @default(now())
+  createdAt DateTime            @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
