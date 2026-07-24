@@ -79,6 +79,10 @@ const serverEnvSchema = z
     // sweep endpoint is never reachable without a credential.
     OUTBOX_SWEEP_TOKEN: optionalTrimmed,
 
+    // Encrypts the values that must be recoverable rather than hashed — today,
+    // TOTP secrets. Required in production, where MFA is enforced for admins.
+    SECRET_ENCRYPTION_KEY: optionalTrimmed,
+
     // Checks a chosen password against a public breach corpus, sending only a
     // five-character hash prefix. Unset means on in production, off elsewhere.
     PASSWORD_BREACH_CHECK: z.enum(["enabled", "disabled"]).optional(),
@@ -95,6 +99,7 @@ const serverEnvSchema = z
       "ATTENDEE_PASS_SIGNING_SECRET",
       "RATE_LIMIT_HASH_SECRET",
       "OUTBOX_SWEEP_TOKEN",
+      "SECRET_ENCRYPTION_KEY",
     ] as const;
 
     for (const key of requiredInProduction) {
@@ -242,6 +247,7 @@ function readSource(source: Record<string, string | undefined>) {
     "SQUARE_WEBHOOK_NOTIFICATION_URL",
     "SQUARE_ENABLE_PRODUCTION",
     "OUTBOX_SWEEP_TOKEN",
+    "SECRET_ENCRYPTION_KEY",
     "PASSWORD_BREACH_CHECK",
     "PASSWORD_BREACH_CHECK_URL",
   ] as const;

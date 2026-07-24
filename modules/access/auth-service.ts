@@ -4,6 +4,7 @@ import type { AccountTokenPurpose } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { hashPassword, spendPasswordCheck, verifyPassword } from "@/modules/access/passwords";
 import { createDatabaseSession } from "@/modules/access/session-store";
+import { mfaGateFor } from "@/modules/access/mfa-rules";
 import { createOpaqueToken, hashOpaqueToken } from "@/modules/access/tokens";
 
 const MAX_FAILED_ATTEMPTS = 5;
@@ -21,13 +22,31 @@ export type AccountTokenIssue = {
   expiresAt: Date;
 };
 
-export async function authenticateWithPassword(email: string, password: string, userAgent: string | null) {
+/**
+ * A correct password is not, on its own, a session.
+ *
+ * For an account that carries a second factor — or that must, by role, and has
+ * not enrolled one — this returns a gate instead. The caller turns that into a
+ * challenge. Nothing downstream ever sees a session that skipped the gate.
+ */
+export type PasswordAuthentication =
+  | { outcome: "session"; userId: string; session: { token: string; expiresAt: Date } }
+  | { outcome: "mfa"; userId: string; gate: "challenge" | "enrol" };
+
+export async function authenticateWithPassword(
+  email: string,
+  password: string,
+  userAgent: string | null,
+): Promise<PasswordAuthentication | null> {
   const normalizedEmail = email.trim().toLowerCase();
   const user = await getPrisma().user.findUnique({
     where: { email: normalizedEmail },
     select: {
       id: true,
       accountStatus: true,
+      globalRole: true,
+      memberships: { where: { status: "ACTIVE" }, select: { role: true } },
+      mfaEnrollment: { select: { status: true } },
       credential: {
         select: { id: true, passwordHash: true, failedAttempts: true, lockedUntil: true, disabledAt: true },
       },
@@ -71,7 +90,23 @@ export async function authenticateWithPassword(email: string, password: string, 
     where: { id: credential.id },
     data: { failedAttempts: 0, lockedUntil: null },
   });
-  return createDatabaseSession(user.id, userAgent);
+
+  const gate = mfaGateFor(
+    {
+      globalRole: user.globalRole,
+      activeEventRoles: user.memberships.map((membership) => membership.role),
+    },
+    user.mfaEnrollment,
+  );
+  if (gate.kind !== "not_required") {
+    return { outcome: "mfa", userId: user.id, gate: gate.kind };
+  }
+
+  return {
+    outcome: "session",
+    userId: user.id,
+    session: await createDatabaseSession(user.id, userAgent),
+  };
 }
 
 /**

@@ -21,6 +21,7 @@
     "db:seed": "prisma db seed",
     "db:refresh-demo": "tsx scripts/refresh-local-demo.ts",
     "admin:create": "tsx scripts/create-admin.ts",
+    "admin:reset-mfa": "tsx scripts/reset-mfa.ts",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate"
   },

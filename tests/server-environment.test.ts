@@ -17,6 +17,7 @@ const productionEnv = {
   ATTENDEE_PASS_SIGNING_SECRET: longSecret,
   RATE_LIMIT_HASH_SECRET: longSecret,
   OUTBOX_SWEEP_TOKEN: longSecret,
+  SECRET_ENCRYPTION_KEY: longSecret,
   RESEND_API_KEY: "re_a_production_key",
   ACCOUNT_EMAIL_SENDER_ADDRESS: "events@imsda.org",
 };
@@ -43,14 +44,16 @@ describe("server environment contract", () => {
       ATTENDEE_PASS_SIGNING_SECRET: undefined,
       RATE_LIMIT_HASH_SECRET: undefined,
       OUTBOX_SWEEP_TOKEN: undefined,
+      SECRET_ENCRYPTION_KEY: undefined,
     });
 
-    expect(issues).toHaveLength(4);
+    expect(issues).toHaveLength(5);
     for (const key of [
       "MANAGE_LINK_DERIVATION_SECRET",
       "ATTENDEE_PASS_SIGNING_SECRET",
       "RATE_LIMIT_HASH_SECRET",
       "OUTBOX_SWEEP_TOKEN",
+      "SECRET_ENCRYPTION_KEY",
     ]) {
       expect(issues.some((issue) => issue.startsWith(`${key}:`))).toBe(true);
     }

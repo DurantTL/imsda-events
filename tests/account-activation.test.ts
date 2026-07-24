@@ -81,6 +81,9 @@ describe("invited accounts stay pending until activated", () => {
       user: {
         id: "user-1",
         accountStatus: "ACTIVE",
+        globalRole: null,
+        memberships: [],
+        mfaEnrollment: null,
         credential: {
           id: "cred-1",
           passwordHash,
@@ -91,8 +94,11 @@ describe("invited accounts stay pending until activated", () => {
       },
     });
 
-    const session = await authenticateWithPassword("staff@imsda.org", knownPassword, null);
-    expect(session?.token).toEqual(expect.any(String));
+    const authentication = await authenticateWithPassword("staff@imsda.org", knownPassword, null);
+    expect(authentication).toMatchObject({
+      outcome: "session",
+      session: { token: expect.any(String) },
+    });
     expect(prisma.userSession.create).toHaveBeenCalledOnce();
   });
 });

@@ -44,6 +44,7 @@ MANAGE_LINK_DERIVATION_SECRET=<openssl rand -base64 48>
 ATTENDEE_PASS_SIGNING_SECRET=<openssl rand -base64 48>
 RATE_LIMIT_HASH_SECRET=<openssl rand -base64 48>
 OUTBOX_SWEEP_TOKEN=<openssl rand -base64 48>
+SECRET_ENCRYPTION_KEY=<openssl rand -base64 48>
 RESEND_API_KEY=<from the Resend dashboard>
 ACCOUNT_EMAIL_SENDER_ADDRESS=<a verified sender, e.g. no-reply@imsda.org>
 ```
@@ -51,6 +52,10 @@ ACCOUNT_EMAIL_SENDER_ADDRESS=<a verified sender, e.g. no-reply@imsda.org>
 Each secret needs at least 32 characters. If one is missing or malformed the
 container exits at startup with the offending variable named in its log, rather
 than serving pages and failing later on a QR pass or a private link.
+
+`SECRET_ENCRYPTION_KEY` seals the TOTP secrets behind two-factor
+authentication. **Changing it makes every enrolled authenticator unreadable** —
+rotate it only together with `npm run admin:reset-mfa` for each affected account.
 
 The last two are what send activation and password-reset email. They are
 required rather than optional because there is no manual substitute at scale: an
@@ -125,6 +130,27 @@ Square stays in Sandbox until `SQUARE_ENVIRONMENT=production` **and**
 writes fictitious events, people, registrations, payments and a refund, and gives
 every account one shared password that is published in this repository. It refuses
 to run with `NODE_ENV=production` or against any non-loopback database host.
+
+## Two-factor authentication
+
+System administrators and event administrators must carry a second factor. The
+enforcement is at sign-in: a correct password for one of those accounts produces
+a **challenge**, not a session, and an account that has never enrolled is sent to
+enrol inside that challenge. There is no state in which one of these accounts is
+signed in on a password alone.
+
+Everyone else may enrol voluntarily from **More → Two-factor authentication**.
+
+Each enrolment issues ten single-use recovery codes, shown once. If an
+administrator loses both their authenticator and their codes, an operator with
+shell access can clear the enrolment:
+
+```bash
+docker compose exec app npm run admin:reset-mfa -- --email them@imsda.org
+```
+
+That signs out every session for the account and requires a fresh enrolment on
+its next sign-in, because the role still demands one.
 
 ## Backups and restore rehearsals
 

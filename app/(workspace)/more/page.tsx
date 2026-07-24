@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import Link from "next/link";
 import { Activity, ChartNoAxesCombined, FileUp, HeartPulse, ListChecks, PanelsTopLeft, Settings2, TicketPercent, UserCog } from "lucide-react";
+import { MfaManager, type MfaStatus } from "@/components/mfa-manager";
 import { SessionManager } from "@/components/session-manager";
+import { getMfaStatus } from "@/modules/access/mfa-service";
 import { listUserSessions, SESSION_COOKIE_NAME, SESSION_IDLE_TIMEOUT_SECONDS } from "@/modules/access/session-store";
 import { listRecentAuditActivity } from "@/modules/audit/audit-service";
 import { resolveEventContext } from "@/modules/events/selection";
@@ -17,6 +19,7 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
   const activity = permissions.includes("VIEW_REPORTS") ? await listRecentAuditActivity(event.id) : [];
   const sessionToken = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
   const sessions = await listUserSessions(user.id, sessionToken);
+  const mfaStatus = await getMfaStatus(user.id) as MfaStatus;
 
   return (
     <section className="page-stack">
@@ -32,6 +35,7 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
         {permissions.includes("MANAGE_STAFF") && <Link className="panel foundation-card" href={`/staff?event=${event.id}`}><span><UserCog aria-hidden="true" size={21} /></span><h3>Team access</h3><p>Add staff and choose what each person can do for this event.</p><small>Manage team</small></Link>}
       </div>
       {permissions.includes("VIEW_REPORTS") && <section className="panel"><div className="section-heading"><div><p className="eyebrow">Audit trail</p><h2>Recent activity</h2></div><span className="count-badge"><Activity aria-hidden="true" size={16} /> {activity.length} entries</span></div><div className="activity-list">{activity.map((entry) => <article className="activity-row" key={entry.id}><span className="activity-icon"><Activity aria-hidden="true" size={16} /></span><span><strong>{entry.summary}</strong><small>{entry.actorName} · {new Date(entry.createdAt).toLocaleString()}</small></span><code>{entry.action}</code></article>)}{activity.length === 0 && <p className="quiet-copy">No activity has been recorded for this event.</p>}</div></section>}
+      <MfaManager initialStatus={mfaStatus} />
       <SessionManager initialSessions={sessions} idleTimeoutSeconds={SESSION_IDLE_TIMEOUT_SECONDS} />
       {process.env.NODE_ENV !== "production" && <section className="panel review-gate"><div><p className="eyebrow">Testing status</p><h2>This local workspace uses test data</h2><p>Changes stay in the local IMSDA Events database. Live card charging and external delivery remain off until their configured test connections are ready.</p></div><span className="review-badge">Local testing</span></section>}
     </section>

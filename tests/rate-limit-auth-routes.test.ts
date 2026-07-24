@@ -9,6 +9,10 @@ const accountEmailMocks = vi.hoisted(() => ({
   sendAccountRecoveryEmail: vi.fn(),
 }));
 
+const mfaMocks = vi.hoisted(() => ({
+  issueMfaChallenge: vi.fn(),
+}));
+
 const rateLimitMocks = vi.hoisted(() => ({
   checkLoginAccountRateLimit: vi.fn(),
   checkLoginClientRateLimit: vi.fn(),
@@ -23,6 +27,7 @@ vi.mock("@/modules/access/session-store", () => ({
 }));
 vi.mock("@/modules/rate-limit/service", () => rateLimitMocks);
 vi.mock("@/modules/communications/account-email-dispatch", () => accountEmailMocks);
+vi.mock("@/modules/access/mfa-service", () => mfaMocks);
 
 import { POST as login } from "@/app/api/auth/login/route";
 import { POST as requestPasswordReset } from "@/app/api/auth/password-reset/request/route";

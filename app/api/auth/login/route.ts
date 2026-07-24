@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { z } from "zod";
 import { authenticateWithPassword } from "@/modules/access/auth-service";
+import { issueMfaChallenge } from "@/modules/access/mfa-service";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { SESSION_COOKIE_NAME, SESSION_LIFETIME_SECONDS } from "@/modules/access/session-store";
 import { logError } from "@/lib/logger";
@@ -51,11 +52,31 @@ export async function POST(request: Request) {
       ), rateLimit);
     }
 
-    const session = await authenticateWithPassword(input.email, input.password, request.headers.get("user-agent"));
-    if (!session) {
+    const userAgent = request.headers.get("user-agent");
+    const authentication = await authenticateWithPassword(input.email, input.password, userAgent);
+    if (!authentication) {
       return applyRateLimitHeaders(Response.json({ error: "INVALID_CREDENTIALS", message: "The email or password is incorrect, or the account is temporarily unavailable." }, { status: 401 }), rateLimit);
     }
 
+    // A correct password for an account that carries a second factor produces a
+    // challenge, not a session. No cookie is set here, so there is no state in
+    // which a privileged account is signed in on a password alone.
+    if (authentication.outcome === "mfa") {
+      const challenge = await issueMfaChallenge(authentication.userId, authentication.gate, {
+        userAgent,
+      });
+      return applyRateLimitHeaders(Response.json({
+        ok: true,
+        mfa: {
+          required: true,
+          gate: authentication.gate,
+          challengeToken: challenge.challengeToken,
+          expiresAt: challenge.expiresAt.toISOString(),
+        },
+      }), rateLimit);
+    }
+
+    const session = authentication.session;
     (await cookies()).set(SESSION_COOKIE_NAME, session.token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",

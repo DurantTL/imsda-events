@@ -90,6 +90,24 @@ card data nor Square's short-lived source token.
 See [`modules/payments/README.md`](modules/payments/README.md) for the
 idempotency, webhook, refund, and production-safety boundary.
 
+### Two-factor authentication
+
+`SYSTEM_ADMIN` and `EVENT_ADMIN` accounts must carry a TOTP second factor.
+Enforcement happens at sign-in rather than in permission checks: a correct
+password yields a challenge, not a session, and an account that has not enrolled
+is sent to enrol inside that challenge — so no privileged session can exist
+behind a password alone, and no authorization check has to know MFA exists.
+
+Secrets are sealed with AES-256-GCM under a key derived from
+`SECRET_ENCRYPTION_KEY` (`lib/secret-box.ts`), because verifying a code needs the
+secret itself and it therefore cannot be stored as a digest like everything else
+in `modules/access`. An accepted time step is recorded, so a code cannot be
+replayed inside its own thirty seconds. Ten single-use recovery codes are issued
+per enrolment and stored as digests; `npm run admin:reset-mfa -- --email <address>`
+is the operator's way back for an account that has lost both.
+
+Other roles may enrol voluntarily from **More → Two-factor authentication**.
+
 ### Account email
 
 Activation and password-reset email travel the same outbox as registration
