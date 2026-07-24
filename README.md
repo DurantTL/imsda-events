@@ -241,4 +241,6 @@ The format template is available at `/fixtures/wr26-import-template.csv`; a whol
 
 The detailed built-versus-remaining matrix and the behavior comparison with `DurantTL/WR26-IMSDA` are in [the build status and WR26 gap audit](docs/BUILD-STATUS-AND-WR26-GAP-AUDIT.md).
 
+Before this workspace holds real attendee, medical, or payment data, read [the production readiness review](docs/PRODUCTION-READINESS-REVIEW.md). It reviews the build plan and the shipped features against what a real deployment requires, and identifies the blocking gaps — chiefly that there is no supported path from a fresh deploy to a real administrator account, and that the seeded shared demo password documented above is currently the only usable production login.
+
 Signed attendee QR passes, camera/manual staff resolution, the recoverable offline check-in conflict queue, reviewed balance reminders, corrected-address confirmation copies, bounded promo-code administration, whole-registration transfer, and in-place attendee substitution are complete. Printable passes and group rosters are the remaining event-day release gate. Scheduled/targeted announcements remain later work. Production Square activation remains gated behind approved credentials, an exact public webhook URL, operational refund testing, and the explicit production unlock.
