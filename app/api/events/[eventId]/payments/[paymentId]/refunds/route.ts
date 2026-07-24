@@ -6,8 +6,9 @@ import { findActiveMembership } from "@/modules/events/repository";
 import { PaymentOperationError, recordRefund } from "@/modules/payments/repository";
 import { refundInputSchema } from "@/modules/payments/schemas";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
-export async function POST(
+async function postHandler(
   request: Request,
   context: { params: Promise<{ eventId: string; paymentId: string }> },
 ) {
@@ -34,3 +35,5 @@ export async function POST(
     return Response.json({ error: "REFUND_CREATE_FAILED" }, { status: 500 });
   }
 }
+
+export const POST = withRequestContext(postHandler);

@@ -16,6 +16,11 @@ import {
   providerTransitionUpdate,
 } from "@/modules/communications/provider-events";
 import { REGISTRATION_MANAGE_LINK_SENTINEL } from "@/modules/communications/manage-link";
+import {
+  AccountEmailNotConfiguredError,
+  getAccountEmailSender,
+  prepareAccountEmailBodyForDelivery,
+} from "@/modules/communications/account-email";
 import { logError } from "@/lib/logger";
 import {
   createStableRegistrationAccessToken,
@@ -38,7 +43,7 @@ export type ExternalEmailDeliveryDependencies = {
   now?: () => Date;
   configuration?: ResendEmailConfiguration;
   sendEmail?: typeof sendEmailWithResend;
-  prepareBodyText?: typeof prepareEmailBodyForDelivery;
+  prepareBodyText?: (input: EmailBodyPreparationInput) => Promise<PreparedEmailBody>;
 };
 
 export type ExternalEmailQueueResult = {
@@ -48,9 +53,19 @@ export type ExternalEmailQueueResult = {
   rescheduledIds: string[];
 };
 
+/**
+ * Which slice of the outbox a run owns. Event messages take their sender from
+ * the event's settings; account messages have no event and take theirs from the
+ * `ACCOUNT_EMAIL_*` variables. Everything between claiming and finalising is
+ * identical, so both share this worker.
+ */
+export type OutboxScope = { eventId: string } | { eventId: null };
+
 type ClaimedMessage = {
   id: string;
-  eventId: string;
+  eventId: string | null;
+  accountUserId: string | null;
+  templateKey: string;
   registrationId: string | null;
   recipientEmail: string;
   senderNameSnapshot: string;
@@ -68,12 +83,18 @@ export type PreparedEmailBody = {
   revokeOnDefinitiveFailure?: () => Promise<void>;
 };
 
-export async function prepareEmailBodyForDelivery(input: {
+export type EmailBodyPreparationInput = {
   messageId: string;
   registrationId: string | null;
+  accountUserId?: string | null;
+  templateKey?: string;
   bodyText: string;
   now: Date;
-}): Promise<PreparedEmailBody> {
+};
+
+export async function prepareEmailBodyForDelivery(
+  input: EmailBodyPreparationInput,
+): Promise<PreparedEmailBody> {
   if (!input.bodyText.includes(REGISTRATION_MANAGE_LINK_SENTINEL)) {
     return { bodyText: input.bodyText };
   }
@@ -111,7 +132,8 @@ export class ExternalEmailDeliveryError extends Error {
   constructor(
     public readonly code:
       | "EXTERNAL_EMAIL_NOT_ENABLED"
-      | "EXTERNAL_EMAIL_NOT_CONFIGURED",
+      | "EXTERNAL_EMAIL_NOT_CONFIGURED"
+      | "ACCOUNT_EMAIL_NOT_CONFIGURED",
     message: string,
   ) {
     super(message);
@@ -173,14 +195,14 @@ function resolveConfiguration(dependencies: ExternalEmailDeliveryDependencies) {
 
 async function recoverStaleClaims(
   prisma: DeliveryPrisma,
-  eventId: string,
+  scope: OutboxScope,
   messageIds: string[] | undefined,
   now: Date,
 ) {
   const staleBefore = new Date(now.getTime() - EMAIL_DELIVERY_LOCK_TIMEOUT_MS);
   const candidates = await prisma.messageOutbox.findMany({
     where: {
-      eventId,
+      ...scope,
       status: "PROCESSING",
       lockedAt: { lte: staleBefore },
       ...(messageIds ? { id: { in: messageIds } } : {}),
@@ -257,7 +279,7 @@ async function recoverStaleClaims(
 
 async function claimNextMessage(
   prisma: DeliveryPrisma,
-  eventId: string,
+  scope: OutboxScope,
   messageIds: string[] | undefined,
   now: Date,
 ): Promise<ClaimedMessage | null> {
@@ -266,7 +288,7 @@ async function claimNextMessage(
     const claimed = await prisma.$transaction(async (tx) => {
       const message = await tx.messageOutbox.findFirst({
         where: {
-          eventId,
+          ...scope,
           status: "PENDING",
           availableAt: { lte: now },
           attemptCount: { lt: MAX_EMAIL_DELIVERY_ATTEMPTS },
@@ -276,6 +298,8 @@ async function claimNextMessage(
         select: {
           id: true,
           eventId: true,
+          accountUserId: true,
+          templateKey: true,
           registrationId: true,
           recipientEmail: true,
           senderNameSnapshot: true,
@@ -449,32 +473,16 @@ async function finalizeFailedAttempt(
   return { finalized, rescheduled: finalized && reschedule };
 }
 
-export async function processExternalEmailQueue(
-  eventId: string,
+async function runDeliveryLoop(
+  scope: OutboxScope,
   options: {
     messageIds?: string[];
     limit?: number;
     dependencies?: ExternalEmailDeliveryDependencies;
-  } = {},
+  },
 ): Promise<ExternalEmailQueueResult> {
   const dependencies = options.dependencies ?? {};
   const prisma = resolvePrisma(dependencies);
-  const settings = await prisma.eventMessageSettings.findUnique({
-    where: { eventId },
-    select: { deliveryMode: true, senderEmail: true },
-  });
-  if (settings?.deliveryMode !== "EXTERNAL_EMAIL") {
-    throw new ExternalEmailDeliveryError(
-      "EXTERNAL_EMAIL_NOT_ENABLED",
-      "Real email delivery is not enabled for this event."
-    );
-  }
-  if (!settings.senderEmail?.trim()) {
-    throw new ExternalEmailDeliveryError(
-      "EXTERNAL_EMAIL_NOT_CONFIGURED",
-      "Add a verified sender email before sending real email."
-    );
-  }
   const configuration = resolveConfiguration(dependencies);
   const sendEmail = dependencies.sendEmail ?? sendEmailWithResend;
   const now = dependencies.now ?? (() => new Date());
@@ -488,7 +496,7 @@ export async function processExternalEmailQueue(
 
   const recoveredIds = await recoverStaleClaims(
     prisma,
-    eventId,
+    scope,
     uniqueMessageIds,
     now()
   );
@@ -501,7 +509,7 @@ export async function processExternalEmailQueue(
   for (let processed = 0; processed < limit; processed += 1) {
     const message = await claimNextMessage(
       prisma,
-      eventId,
+      scope,
       uniqueMessageIds,
       now()
     );
@@ -509,10 +517,14 @@ export async function processExternalEmailQueue(
     let preparedBody: PreparedEmailBody | null = null;
     try {
       const prepareBodyText = dependencies.prepareBodyText
-        ?? prepareEmailBodyForDelivery;
+        ?? (scope.eventId === null
+          ? prepareAccountEmailBody
+          : prepareEmailBodyForDelivery);
       preparedBody = await prepareBodyText({
         messageId: message.id,
         registrationId: message.registrationId,
+        accountUserId: message.accountUserId,
+        templateKey: message.templateKey,
         bodyText: message.bodyTextSnapshot,
         now: message.startedAt,
       });
@@ -554,4 +566,71 @@ export async function processExternalEmailQueue(
     }
   }
   return result;
+}
+
+async function prepareAccountEmailBody(
+  input: EmailBodyPreparationInput,
+): Promise<PreparedEmailBody> {
+  return prepareAccountEmailBodyForDelivery({
+    messageId: input.messageId,
+    accountUserId: input.accountUserId ?? null,
+    templateKey: input.templateKey ?? "",
+    bodyText: input.bodyText,
+    now: input.now,
+  });
+}
+
+export async function processExternalEmailQueue(
+  eventId: string,
+  options: {
+    messageIds?: string[];
+    limit?: number;
+    dependencies?: ExternalEmailDeliveryDependencies;
+  } = {},
+): Promise<ExternalEmailQueueResult> {
+  const prisma = resolvePrisma(options.dependencies ?? {});
+  const settings = await prisma.eventMessageSettings.findUnique({
+    where: { eventId },
+    select: { deliveryMode: true, senderEmail: true },
+  });
+  if (settings?.deliveryMode !== "EXTERNAL_EMAIL") {
+    throw new ExternalEmailDeliveryError(
+      "EXTERNAL_EMAIL_NOT_ENABLED",
+      "Real email delivery is not enabled for this event."
+    );
+  }
+  if (!settings.senderEmail?.trim()) {
+    throw new ExternalEmailDeliveryError(
+      "EXTERNAL_EMAIL_NOT_CONFIGURED",
+      "Add a verified sender email before sending real email."
+    );
+  }
+  return runDeliveryLoop({ eventId }, options);
+}
+
+/**
+ * The account slice of the outbox: activation and password reset, which have no
+ * event to be enabled by and are therefore governed by the `ACCOUNT_EMAIL_*`
+ * variables alone. Production requires those at startup, so an unconfigured
+ * account queue is a development state, not a silent production one.
+ */
+export async function processAccountEmailQueue(
+  options: {
+    messageIds?: string[];
+    limit?: number;
+    dependencies?: ExternalEmailDeliveryDependencies;
+  } = {},
+): Promise<ExternalEmailQueueResult> {
+  try {
+    getAccountEmailSender();
+  } catch (error) {
+    if (error instanceof AccountEmailNotConfiguredError) {
+      throw new ExternalEmailDeliveryError(
+        "ACCOUNT_EMAIL_NOT_CONFIGURED",
+        error.message,
+      );
+    }
+    throw error;
+  }
+  return runDeliveryLoop({ eventId: null }, options);
 }

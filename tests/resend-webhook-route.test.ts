@@ -8,8 +8,11 @@ const mocks = vi.hoisted(() => {
     VerificationError,
     verifyResendWebhook: vi.fn(),
     recordResendWebhookEvent: vi.fn(),
+    dispatchAlerts: vi.fn(),
   };
 });
+
+vi.mock("@/modules/operations/alerting", () => ({ dispatchAlerts: mocks.dispatchAlerts }));
 
 vi.mock("@/integrations/email/resend-webhook", () => ({
   ResendWebhookConfigurationError: mocks.ConfigurationError,
@@ -37,6 +40,7 @@ beforeEach(() => {
     matchedMessageId: "message-1",
     mappedStatus: "DELIVERED",
   });
+  mocks.dispatchAlerts.mockResolvedValue({ sent: [], suppressed: [], undelivered: [] });
 });
 
 describe("Resend webhook route", () => {
@@ -79,5 +83,10 @@ describe("Resend webhook route", () => {
     ));
     expect(response.status).toBe(400);
     expect(mocks.recordResendWebhookEvent).not.toHaveBeenCalled();
+    // A mismatched secret means every bounce and complaint is discarded, which
+    // is invisible from the application's own state.
+    expect(mocks.dispatchAlerts).toHaveBeenCalledWith([
+      expect.objectContaining({ key: "system.email.webhook-rejected" }),
+    ]);
   });
 });

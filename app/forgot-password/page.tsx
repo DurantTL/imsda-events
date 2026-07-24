@@ -1,16 +1,16 @@
 import type { Metadata } from "next";
 import { BrandMark } from "@/components/brand-mark";
 import { PasswordResetRequestForm } from "@/components/password-reset-request-form";
+import { isAccountEmailConfigured } from "@/modules/communications/account-email";
 
 export const metadata: Metadata = { title: "Reset password" };
 
+// This page describes what the deployment will actually do with the request, so
+// it cannot be decided at build time — a build has no sender address set.
+export const dynamic = "force-dynamic";
+
 export default function ForgotPasswordPage() {
-  // Email delivery for account recovery is not wired yet. Say so plainly
-  // rather than promising a link that production will never show or send.
-  //
-  // Read NODE_ENV directly rather than through getServerEnv(): this page is
-  // prerendered, and a build has no deployment secrets to validate against.
-  const linkShownOnPage = process.env.NODE_ENV !== "production";
+  const linkShownOnPage = !isAccountEmailConfigured();
 
   return (
     <main className="auth-page">
@@ -24,8 +24,8 @@ export default function ForgotPasswordPage() {
           <h1>Reset your password</h1>
           <p>
             {linkShownOnPage
-              ? "Enter your staff email. In this local build, the reset link appears on this page instead of being emailed."
-              : "Enter your staff email. Recovery email is not yet enabled, so ask an event administrator to send you a new one-time link."}
+              ? "Enter your staff email. This build has no account email configured, so the reset link appears on this page instead of being sent."
+              : "Enter your staff email. If an account exists, a one-time link is on its way — it expires thirty minutes after it is sent."}
           </p>
         </div>
         <PasswordResetRequestForm />

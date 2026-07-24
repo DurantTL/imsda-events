@@ -2,16 +2,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
+import { resetServerEnvCache } from "@/lib/env";
 import { EmailProviderRequestError } from "@/integrations/email/resend";
 import {
   EMAIL_DELIVERY_LOCK_TIMEOUT_MS,
   emailRetryDelayMs,
+  processAccountEmailQueue,
   processExternalEmailQueue,
 } from "@/modules/communications/email-delivery";
 
 type MutableMessage = {
   id: string;
-  eventId: string;
+  eventId: string | null;
+  accountUserId: string | null;
+  templateKey: string;
   registrationId: string | null;
   recipientEmail: string;
   senderNameSnapshot: string;
@@ -32,6 +36,8 @@ function fakeDeliveryStore(overrides: Partial<MutableMessage> = {}) {
   const message: MutableMessage = {
     id: "message-1",
     eventId: "event-1",
+    accountUserId: null,
+    templateKey: "REGISTRATION_CONFIRMATION_PAID",
     registrationId: "registration-1",
     recipientEmail: "attendee@example.test",
     senderNameSnapshot: "IMSDA Events",
@@ -64,6 +70,8 @@ function fakeDeliveryStore(overrides: Partial<MutableMessage> = {}) {
         ? {
             id: message.id,
             eventId: message.eventId,
+            accountUserId: message.accountUserId,
+            templateKey: message.templateKey,
             registrationId: message.registrationId,
             recipientEmail: message.recipientEmail,
             senderNameSnapshot: message.senderNameSnapshot,
@@ -118,6 +126,13 @@ function fakeDeliveryStore(overrides: Partial<MutableMessage> = {}) {
     $transaction: vi.fn(async (operation: (client: typeof tx) => unknown) => operation(tx)),
   };
   return { prisma, message, attempts };
+}
+
+/** The `where` of every claim query the run issued. */
+function claimQueries(store: { prisma: { messageOutbox: { findFirst: { mock: { calls: unknown[][] } } } } }) {
+  return store.prisma.messageOutbox.findFirst.mock.calls.map(
+    (call) => call[0] as { where: Record<string, unknown> },
+  );
 }
 
 const dependencies = {
@@ -201,6 +216,8 @@ describe("external email queue", () => {
     expect(prepareBodyText).toHaveBeenCalledWith({
       messageId: "message-1",
       registrationId: "registration-1",
+      accountUserId: null,
+      templateKey: "REGISTRATION_CONFIRMATION_PAID",
       bodyText: `Manage: ${sentinel}`,
       now: new Date("2026-07-23T12:00:00.000Z"),
     });
@@ -301,6 +318,22 @@ describe("external email queue", () => {
     });
   });
 
+  it("leaves account messages alone: they belong to no event", async () => {
+    const store = fakeDeliveryStore();
+    const sendEmail = vi.fn(async () => ({
+      provider: "RESEND" as const,
+      providerMessageId: "email-provider-1",
+    }));
+
+    await processExternalEmailQueue("event-1", {
+      dependencies: { ...dependencies, prisma: store.prisma as never, sendEmail },
+    });
+
+    for (const call of claimQueries(store)) {
+      expect(call.where).toMatchObject({ eventId: "event-1" });
+    }
+  });
+
   it("recovers stale locks as failed attempts before retrying", async () => {
     const now = new Date("2026-07-23T12:00:00.000Z");
     const store = fakeDeliveryStore({
@@ -329,5 +362,90 @@ describe("external email queue", () => {
       status: "FAILED",
       errorCode: "STALE_DELIVERY_LOCK",
     });
+  });
+});
+
+describe("account email queue", () => {
+  function configureAccountEmail(senderAddress: string | undefined) {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("RESEND_API_KEY", "re_test_only");
+    vi.stubEnv("APP_BASE_URL", "https://events.imsda.test");
+    vi.stubEnv("ACCOUNT_EMAIL_SENDER_ADDRESS", senderAddress ?? "");
+    resetServerEnvCache();
+  }
+
+  function accountStore() {
+    return fakeDeliveryStore({
+      eventId: null,
+      accountUserId: "user-1",
+      templateKey: "ACCOUNT_PASSWORD_RESET",
+      registrationId: null,
+      recipientEmail: "alex@imsda.org",
+      senderNameSnapshot: "IMSDA Events",
+      senderEmailSnapshot: "no-reply@imsda.org",
+      subjectSnapshot: "Reset your IMSDA Events password",
+      bodyTextSnapshot: "Choose a new one: {{account_action_link}}",
+    });
+  }
+
+  afterEach(() => {
+    resetServerEnvCache();
+  });
+
+  it("claims only the messages that name no event", async () => {
+    configureAccountEmail("no-reply@imsda.org");
+    const store = accountStore();
+    const sendEmail = vi.fn(async () => ({
+      provider: "RESEND" as const,
+      providerMessageId: "email-provider-account",
+    }));
+    const prepareBodyText = vi.fn(async () => ({
+      bodyText: "Choose a new one: https://events.imsda.test/reset-password?token=raw",
+    }));
+
+    const result = await processAccountEmailQueue({
+      dependencies: {
+        ...dependencies,
+        prisma: store.prisma as never,
+        prepareBodyText,
+        sendEmail,
+      },
+    });
+
+    expect(result.sentIds).toEqual(["message-1"]);
+    for (const call of claimQueries(store)) {
+      expect(call.where).toMatchObject({ eventId: null });
+    }
+    // The account it belongs to has to reach the body preparer, which is what
+    // mints the link.
+    expect(prepareBodyText).toHaveBeenCalledWith(expect.objectContaining({
+      accountUserId: "user-1",
+      templateKey: "ACCOUNT_PASSWORD_RESET",
+    }));
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fromEmail: "no-reply@imsda.org",
+        toEmail: "alex@imsda.org",
+        bodyText: "Choose a new one: https://events.imsda.test/reset-password?token=raw",
+      }),
+      dependencies.configuration,
+    );
+  });
+
+  it("refuses to run, rather than send from nowhere, with no sender configured", async () => {
+    configureAccountEmail(undefined);
+    const store = accountStore();
+    const sendEmail = vi.fn();
+
+    await expect(processAccountEmailQueue({
+      dependencies: {
+        ...dependencies,
+        prisma: store.prisma as never,
+        sendEmail,
+      },
+    })).rejects.toMatchObject({ code: "ACCOUNT_EMAIL_NOT_CONFIGURED" });
+
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(store.message).toMatchObject({ status: "PENDING", attemptCount: 0 });
   });
 });

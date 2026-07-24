@@ -13,6 +13,7 @@ import {
 } from "@/modules/registrations/lifecycle-repository";
 import { registrationLifecycleReasonSchema } from "@/modules/registrations/schemas";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 const lifecycleActionSchema = z.enum(["cancel", "reactivate", "waitlist", "promote"]);
 const noStoreHeaders = { "Cache-Control": "no-store" };
@@ -59,7 +60,7 @@ function errorResponse(error: unknown) {
   );
 }
 
-export async function POST(
+async function postHandler(
   request: Request,
   context: {
     params: Promise<{ eventId: string; registrationId: string; action: string }>;
@@ -123,3 +124,5 @@ export async function POST(
     return errorResponse(error);
   }
 }
+
+export const POST = withRequestContext(postHandler);

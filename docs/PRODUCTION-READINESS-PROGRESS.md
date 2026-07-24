@@ -5,10 +5,11 @@ Tracks implementation against the ten-step sequence in
 has to be true before this system holds real attendee, medical, and payment data. This
 document says how far along that is, and is updated as work lands.
 
-**Status: items 1, 3, 4 and 6 are done; items 2, 5 and 7 are partly done; items 8–10
-are not started.** All three P0 blocking findings are addressed. What remains before real
-data is principally error tracking and alerting (item 5), MFA and the password policy
-(item 7), and the medical-data encryption decision (item 8).
+**Status: items 1–7 are done; items 8–10 are not started.** All three P0 blocking
+findings are addressed, and every P1 and P2 finding with code behind it has landed. What
+remains is the medical-data encryption decision (item 8), a staging environment and
+cutover rehearsal (item 9), and the printable passes and rosters that gate event day
+(item 10). Items 8 and 9 need a decision from IMSDA before they need code.
 
 ---
 
@@ -17,12 +18,12 @@ data is principally error tracking and alerting (item 5), MFA and the password p
 | # | Work | Status |
 | --- | --- | --- |
 | 1 | Admin bootstrap script; seed guarded to non-production; `SYSTEM_ADMIN` promotion in UI | **Done** |
-| 2 | Password reset + staff invitation email through the outbox; account activation state | **Partly done** — activation state and one-time links ship; email delivery does not |
+| 2 | Password reset + staff invitation email through the outbox; account activation state | **Done** |
 | 3 | Startup env validation for every variable; config errors surface as 500, not 403 | **Done** |
 | 4 | Backups, off-host retention, verified restore | **Done**, with one operator decision outstanding |
-| 5 | Structured logs with correlation IDs and redaction; error tracking; alerts | **Partly done** — structured logging and redaction ship; error tracking and alerts do not |
+| 5 | Structured logs with correlation IDs and redaction; error tracking; alerts | **Done** |
 | 6 | Scheduled outbox sweep; health check covers queue depth | **Done** |
-| 7 | MFA for admin roles; real password policy; session idle timeout and revocation | **Partly done** — session hardening ships; MFA and the password policy do not |
+| 7 | MFA for admin roles; real password policy; session idle timeout and revocation | **Done** |
 | 8 | Medical-data encryption decision; retention/deletion/export procedure | Not started |
 | 9 | Staging environment; go-live checklist; cutover rehearsal; Square production unlock | Not started |
 | 10 | Printable passes and rosters, then resume Phase 6/7/8 breadth | Not started |
@@ -49,10 +50,10 @@ rows in the database. It does.
 - The sign-in page no longer prefills or displays the shared demo password in
   production, and the forgot-password form no longer defaults to the seeded address.
 
-## 2. Account lifecycle — partly done
+## 2. Account lifecycle — done
 
 **Done when:** an invited colleague activates and signs in without an operator touching
-the database. **They can — but the link still has to be handed over by a person.**
+the database. They can, and the link now reaches them by email.
 
 Shipped:
 
@@ -71,17 +72,34 @@ Shipped:
   development, which is what made an invited colleague unable to obtain a credential at
   all.
 
-Not shipped — **email delivery for activation and reset**:
+Also shipped — **email delivery for activation and reset**:
 
-`MessageOutbox.eventId` is non-null and `processExternalEmailQueue` is event-scoped,
+`MessageOutbox.eventId` was non-null and `processExternalEmailQueue` was event-scoped,
 taking its sender identity from `EventMessageSettings`. Account email belongs to no
-event, so routing it through the existing outbox means making `eventId` nullable,
-generalising the worker, and adding global sender configuration. That is a real change
-to the delivery path that carries the registration confirmations, and it was not worth
-bundling into this branch. Until it lands, the forgot-password page says plainly that
-recovery email is not connected rather than promising a link it never shows.
+event, so it had nowhere to go. That is now fixed rather than worked around:
 
-Also not started: MFA and the password policy (both sit under item 7).
+- `eventId` is nullable (`prisma/migrations/20260724120000_account_email_delivery`), and
+  the delivery worker is **scoped** rather than event-bound. Claiming, backoff, attempt
+  history, stale-lock recovery, and provider events are identical for both slices;
+  `processAccountEmailQueue` is the account entry point, governed by
+  `ACCOUNT_EMAIL_SENDER_ADDRESS` instead of a per-event setting.
+- The scheduled sweep processes the null-event group alongside every event, so an account
+  email that fails its first attempt is retried with no staff action.
+- **The queued row stores a sentinel, never a token.** The one-time link is minted at
+  delivery — the same thing `prepareEmailBodyForDelivery` already does for private
+  registration links — so a database read yields nothing usable, and a reset link's
+  thirty minutes start when it is sent rather than when it is queued. An attempt that
+  fails definitively retires the token it minted.
+- `RESEND_API_KEY` and `ACCOUNT_EMAIL_SENDER_ADDRESS` are now required in production by
+  the startup contract. Account recovery is the one email path with no manual
+  alternative, so a deployment that cannot send it is one where an invited colleague can
+  never obtain a credential.
+- Where they are unset — development only — the previous behaviour stands: the link is
+  shown on the page, or returned to the inviting administrator. Both surfaces say which
+  of the two is happening.
+
+Account template keys are kept out of the event Communications page by two guards at the
+query boundary, so the record types the UI reads stay narrow.
 
 ## 3. Startup environment contract — done
 
@@ -131,7 +149,7 @@ land in a Docker volume on the same host as the database. Bind `imsda_events_bac
 off-host storage or set `BACKUP_OFFSITE_COMMAND`. A dump that shares a host with its
 source does not survive losing that host.
 
-## 5. Structured logging and alerting — partly done
+## 5. Structured logging and alerting — done
 
 Shipped — **structured logging with an explicit redaction rule**:
 
@@ -157,16 +175,44 @@ Verified: with an unreachable database, `/api/health` logged exactly
 `{"level":"error",...,"error":{"name":"PrismaClientInitializationError","redacted":true}}`
 and the connection string's password appeared nowhere in the output.
 
-Not shipped:
+Also shipped — **request-scoped correlation IDs**:
 
-- **Per-route correlation IDs.** `onRequestError` records an inbound one, but the
-  ~30 route-level `apiError` helpers do not yet thread a request-scoped ID into their own
-  log lines or echo it back in a response header. Doing that properly means either an
-  `AsyncLocalStorage` request context or a parameter through every handler.
-- **Error tracking and alerting.** Nothing aggregates these lines, and nothing alerts on
-  the health endpoint, outbox depth, webhook failure rate, or 5xx rate. The signals now
-  exist (item 6 added outbox depth and oldest-due age to `/api/health`); what is missing
-  is something watching them. A failed payment webhook still pages nobody.
+- `lib/request-context.ts` holds one ID per request in an `AsyncLocalStorage` store, and
+  the logger reads it through an injected accessor rather than importing the store — a
+  cycle between the logger and the request context would resolve differently in each
+  runtime. Every line written anywhere inside a request now carries `correlationId`,
+  `method`, and `path` without a single signature changing, which was the alternative.
+- `withRequestContext` wraps all 60 API route handlers. It reuses an inbound
+  `x-correlation-id` when a proxy supplied one — bounded and character-checked, because it
+  is attacker-controlled — and sets the header on the response, so someone reporting a
+  failed registration can quote a value that appears in the logs.
+- `writeAuditLog` defaults `correlationId` to the request's own, so an audit entry, the
+  log lines around it, and the response header all carry one value.
+
+Also shipped — **alerting**:
+
+- `modules/operations/alerting.ts` dispatches to `ALERT_WEBHOOK_URL` (a Slack or Teams
+  incoming webhook, or anything accepting a JSON POST) and logs every alert at its
+  severity, so a deployment without a webhook still leaves a trail to match on.
+- Suppression is the part that decides whether alerting survives contact with an
+  operator: `AlertNotification` holds one row per **condition**, so a persistent problem
+  pages once per `ALERT_REPEAT_MINUTES` (60 by default) rather than every five minutes. A
+  condition that stops being true is cleared, so a recurrence pages at once. A page that
+  failed to deliver is deliberately not recorded — a dropped page must not mute the hour.
+- `modules/operations/alert-scan.ts` reads the system-wide signals and raises: queue
+  backed up, a message that gave up after all five attempts, a failed card payment, and a
+  card payment that never reached a result after fifteen minutes — **which is what a
+  missing Square webhook looks like from the inside**. It runs at the end of the outbox
+  sweep, which already runs every few minutes: one cron, one credential, and the queue's
+  state is known there anyway.
+- Raised immediately rather than on the next scan: a Square webhook that fails signature
+  verification (urgent — either forged events or a key that no longer matches, in which
+  case no payment result is being recorded at all), a Resend webhook that fails
+  verification (watch), and a database that cannot be reached, which is dispatched without
+  suppression because there is nowhere to record it.
+
+Per-event operational health remains a page someone reads. What is alerted on is the
+subset nobody will be looking at when it matters.
 
 ## 6. Outbox sweep and health readiness — done
 
@@ -191,9 +237,9 @@ It is.
   problem does not make the orchestrator restart a container that is still serving
   registrations.
 
-Alerting on these signals is part of item 5 and is not done.
+Alerting on these signals landed with item 5.
 
-## 7. MFA, password policy, session hardening — partly done
+## 7. MFA, password policy, session hardening — done
 
 Shipped — **session hardening**:
 
@@ -213,17 +259,67 @@ Shipped — **session hardening**:
 - `getCurrentSession` also rejects a session whose account is not `ACTIVE`, so
   de-activating an account takes effect on the next request.
 
-Not shipped: **MFA** for `SYSTEM_ADMIN`/`EVENT_ADMIN`, and the **password policy**.
-`modules/access/passwords.ts` still enforces twelve characters against a five-entry
-denylist. The review is right that twelve characters plus five blocked strings is a demo
-policy; a real answer means either a breached-password check or a substantially higher
-length floor, and MFA is the more valuable of the two for accounts that can export a full
-attendee roster.
+Also shipped — **MFA for `SYSTEM_ADMIN` and `EVENT_ADMIN`**:
+
+- Enforcement is at sign-in, not in permission checks. A correct password for one of these
+  accounts produces a **challenge**, not a session, and an account that has never enrolled
+  is sent to enrol inside that same challenge. So no privileged session can exist behind a
+  password alone, and no authorization check anywhere else has to know MFA exists.
+- `modules/access/totp.ts` is RFC 6238, pure and clock-injected, tested against the
+  published appendix B vectors — the only way to know it agrees with the authenticator apps
+  rather than with itself. Drift is one step either side. An accepted step is recorded and
+  spent, which stops a code being replayed inside its own thirty seconds; the same rule
+  refuses an earlier step, so drift cannot be used to rewind.
+- A TOTP secret is the one credential here that cannot be a digest, since verifying a code
+  needs the secret itself. `lib/secret-box.ts` seals it with AES-256-GCM under a key
+  derived per purpose from `SECRET_ENCRYPTION_KEY` through HKDF, with a fresh nonce per
+  value, so a dump yields nothing usable and a sealed value cannot be moved between
+  columns. `SECRET_ENCRYPTION_KEY` joins the production startup contract.
+- Ten single-use recovery codes per enrolment, stored as digests. Five wrong codes locks
+  verification for fifteen minutes; a challenge expires in ten minutes, allows five
+  attempts, and is single-use. Removing a second factor is refused for an account whose
+  role requires one.
+- Because enforcement can lock an administrator out, `npm run admin:reset-mfa` clears an
+  enrolment from the command line and revokes every session for the account. It requires
+  shell access deliberately: whoever has that is already trusted with the database, and the
+  next sign-in enrols again anyway.
+- `MFA_REQUIRED_EVENT_ROLES` is left at the two roles the review named, even though
+  `REGISTRATION_MANAGER` and `FINANCE_MANAGER` also hold `VIEW_REPORTS` and
+  `VIEW_SENSITIVE_DATA`. Widening it is one line, and it is IMSDA's call: each role added
+  is a role a lost phone can lock out of an event.
+
+Also shipped — **a real password policy**:
+
+- Fourteen characters counted in code points, no composition rules — requiring a digit and
+  a symbol is what produces `Password1!`, and NIST has recommended against them since SP
+  800-63B.
+- Structural rules that see through padding. A password is reduced to the word behind it by
+  stripping the padding at either end, then undoing letter substitutions, then keeping the
+  letters; each candidate is checked against a denylist of corpus base words, keyboard runs,
+  and words specific to this deployment. `P@ssw0rd1234!!`, `Sunshine!!!!!!!!`,
+  `letmein-letmein-letmein`, and `imsda-events-2026` are all caught by the entry they are
+  built from. Repetition, straight runs, and anything containing the account holder's own
+  name or email address are refused.
+- A live check against a public breach corpus by the k-anonymity range protocol: only the
+  first five hex characters of the password's SHA-1 leave the process. **It fails open** — a
+  password set is the last step of every activation and recovery, and refusing to complete
+  it because a third-party API is down would lock people out to prevent a weaker password.
+  Unset means on in production and off elsewhere.
+- `npm run admin:create --password-from-env` sets a bootstrap administrator's password
+  directly from `IMSDA_ADMIN_PASSWORD` and activates the account, for a first deploy where
+  account email is not configured or no browser can reach the domain. The password is read
+  from the environment rather than an argument so it stays out of shell history and `ps`,
+  is held to the same policy, and is stored only as its scrypt hash.
 
 ## 8. Medical-data encryption — not started
 
 Answers remain plaintext JSON snapshots. This needs a policy decision before code, and
 the review is right that it gets harder with every registration recorded.
+
+One piece of the groundwork now exists: `lib/secret-box.ts` is authenticated encryption
+with per-purpose key derivation, written for TOTP secrets but not specific to them. What
+is still missing is the decision — which field keys, whether they stay searchable, and
+what the retention and deletion procedure is — not the primitive.
 
 ## 9. Staging environment — not started
 
@@ -243,12 +339,14 @@ Unchanged; still the event-day release gate.
 Against a local PostgreSQL 16 with all migrations applied:
 
 ```
-npx prisma migrate deploy                    ✅ 25 migrations, no drift on changed models
+npx prisma migrate deploy                    ✅ 28 migrations, no drift on changed models
 npm run lint                                 ✅
 npm run typecheck                            ✅
-npx vitest run                               ✅ 473 passed (92 files), 71 new
-npx vitest run  (with no DATABASE_URL set)   ✅ 473 passed — was 30 failures before
+npx vitest run                               ✅ 579 passed (101 files), 177 new
+npx vitest run  (with no DATABASE_URL set)   ✅ 579 passed — was 30 failures before
 npm run admin:create                         ✅ created and promoted; both guards exercised
+npm run admin:create --password-from-env     ✅ ACTIVE with a scrypt hash and no token row
+npm run admin:reset-mfa                      ✅ enrolment removed, sessions revoked
 npx prisma db seed  (NODE_ENV=production)    ✅ refused
 npx prisma db seed  (remote host)            ✅ refused
 scripts/backup/pg-backup.sh                  ✅ 159 KB dump written and pruned
@@ -256,9 +354,24 @@ scripts/backup/pg-restore-verify.sh          ✅ rehearsal passed with row count
 npm run build                                ✅
 ```
 
+The identity and alerting paths were exercised against that database directly, since they
+are the ones a unit test can only approximate:
+
+- A correct password for a `SYSTEM_ADMIN` returned the **enrol** gate and left **zero**
+  live sessions. The stored enrolment contained no plaintext secret. A wrong code issued
+  nothing; the real code signed in and returned ten recovery codes. The consumed challenge
+  was refused. The next sign-in demanded a code, and the code just used was refused as
+  spent. A recovery code signed in once and was refused on reuse.
+- A weak `IMSDA_ADMIN_PASSWORD` was refused before any row was written; a good one produced
+  an `ACTIVE` account whose right password verified and whose near-miss did not.
+- An alert posted to a stub webhook once, was suppressed on the immediate repeat, was
+  cleared when the condition stopped being true, and paged again at once on recurrence. Its
+  log line carried `alertKey`, `severity`, and the operator-facing detail.
+
 Exercised against a running production build:
 
-- Production start with a secret missing → **refused**, naming all four variables.
+- Production start with a secret missing → **refused**, naming every one of them —
+  including `SECRET_ENCRYPTION_KEY`, `RESEND_API_KEY`, and `ACCOUNT_EMAIL_SENDER_ADDRESS`.
 - Production start with secrets set → ready; `/api/health` `ok` with the outbox reported.
 - `POST /api/internal/outbox/sweep` → 401 with no token, 401 with a wrong token, 200 with
   the right one.

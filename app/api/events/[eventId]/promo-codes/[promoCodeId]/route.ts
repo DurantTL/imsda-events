@@ -5,8 +5,9 @@ import { findActiveMembership } from "@/modules/events/repository";
 import { promoCodeApiError } from "@/modules/promo-codes/api-errors";
 import { updatePromoCode } from "@/modules/promo-codes/repository";
 import { updatePromoCodeInputSchema } from "@/modules/promo-codes/schemas";
+import { withRequestContext } from "@/lib/request-context";
 
-export async function PATCH(
+async function patchHandler(
   request: Request,
   context: {
     params: Promise<{ eventId: string; promoCodeId: string }>;
@@ -35,3 +36,5 @@ export async function PATCH(
   }
 }
 
+
+export const PATCH = withRequestContext(patchHandler);

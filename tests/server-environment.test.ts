@@ -17,6 +17,9 @@ const productionEnv = {
   ATTENDEE_PASS_SIGNING_SECRET: longSecret,
   RATE_LIMIT_HASH_SECRET: longSecret,
   OUTBOX_SWEEP_TOKEN: longSecret,
+  SECRET_ENCRYPTION_KEY: longSecret,
+  RESEND_API_KEY: "re_a_production_key",
+  ACCOUNT_EMAIL_SENDER_ADDRESS: "events@imsda.org",
 };
 
 function issuesFor(source: Record<string, string | undefined>) {
@@ -41,14 +44,16 @@ describe("server environment contract", () => {
       ATTENDEE_PASS_SIGNING_SECRET: undefined,
       RATE_LIMIT_HASH_SECRET: undefined,
       OUTBOX_SWEEP_TOKEN: undefined,
+      SECRET_ENCRYPTION_KEY: undefined,
     });
 
-    expect(issues).toHaveLength(4);
+    expect(issues).toHaveLength(5);
     for (const key of [
       "MANAGE_LINK_DERIVATION_SECRET",
       "ATTENDEE_PASS_SIGNING_SECRET",
       "RATE_LIMIT_HASH_SECRET",
       "OUTBOX_SWEEP_TOKEN",
+      "SECRET_ENCRYPTION_KEY",
     ]) {
       expect(issues.some((issue) => issue.startsWith(`${key}:`))).toBe(true);
     }
@@ -64,6 +69,37 @@ describe("server environment contract", () => {
       "ATTENDEE_PASS_SIGNING_SECRET: must contain at least 32 characters in production",
     ]);
     expect(issues.join(" ")).not.toContain("short-secret");
+  });
+
+  it("requires somewhere to send account email from in production", () => {
+    // An invited colleague who never receives a link cannot obtain a credential
+    // at all, and no operator action substitutes for it at scale. So this is a
+    // startup requirement, not a runtime disappointment.
+    const issues = issuesFor({
+      ...productionEnv,
+      RESEND_API_KEY: undefined,
+      ACCOUNT_EMAIL_SENDER_ADDRESS: undefined,
+    });
+
+    expect(issues).toHaveLength(2);
+    expect(issues.some((issue) => issue.startsWith("ACCOUNT_EMAIL_SENDER_ADDRESS:"))).toBe(true);
+    expect(issues.some((issue) => issue.startsWith("RESEND_API_KEY:"))).toBe(true);
+  });
+
+  it("rejects a sender or reply-to that is not an address", () => {
+    expect(issuesFor({ ...productionEnv, ACCOUNT_EMAIL_SENDER_ADDRESS: "events" })).toEqual([
+      "ACCOUNT_EMAIL_SENDER_ADDRESS: must be an email address",
+    ]);
+    expect(issuesFor({ ...productionEnv, ACCOUNT_EMAIL_REPLY_TO: "help at imsda" })).toEqual([
+      "ACCOUNT_EMAIL_REPLY_TO: must be an email address",
+    ]);
+  });
+
+  it("names the account sender by default so the recipient recognises it", () => {
+    const result = validateServerEnv(productionEnv);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.env.ACCOUNT_EMAIL_SENDER_NAME).toBe("IMSDA Events");
   });
 
   it("leaves the same secrets optional outside production", () => {

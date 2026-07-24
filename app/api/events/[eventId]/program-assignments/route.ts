@@ -14,6 +14,7 @@ import {
   programAssignmentSelectionSchema,
 } from "@/modules/program-assignments/schemas";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 function programAssignmentApiError(error: unknown) {
   if (error instanceof z.ZodError) {
@@ -49,7 +50,7 @@ function programAssignmentApiError(error: unknown) {
   );
 }
 
-export async function GET(
+async function getHandler(
   request: Request,
   context: { params: Promise<{ eventId: string }> },
 ) {
@@ -75,7 +76,7 @@ export async function GET(
   }
 }
 
-export async function POST(
+async function postHandler(
   request: Request,
   context: { params: Promise<{ eventId: string }> },
 ) {
@@ -101,3 +102,6 @@ export async function POST(
     return programAssignmentApiError(error);
   }
 }
+
+export const GET = withRequestContext(getHandler);
+export const POST = withRequestContext(postHandler);

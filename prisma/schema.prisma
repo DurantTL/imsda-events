@@ -152,6 +152,19 @@ enum RegistrationFormStatus {
   ARCHIVED
 }
 
+enum MfaMethod {
+  TOTP
+}
+
+enum MfaStatus {
+  PENDING
+  ACTIVE
+}
+
+enum MfaChallengeKind {
+  SIGN_IN
+}
+
 enum MessageTemplateKey {
   REGISTRATION_CONFIRMATION_PAID
   REGISTRATION_CONFIRMATION_UNPAID
@@ -166,6 +179,8 @@ enum MessageTemplateKey {
   REGISTRATION_TRANSFERRED_NEW_CONTACT
   REGISTRATION_TRANSFERRED_PRIOR_CONTACT
   ATTENDEE_SUBSTITUTED
+  ACCOUNT_ACTIVATION
+  ACCOUNT_PASSWORD_RESET
 }
 
 enum MessageTemplateStatus {
@@ -184,6 +199,7 @@ enum MessageRecipientKind {
   REGISTRANT
   INTERNAL
   TEST
+  ACCOUNT
 }
 
 enum MessageOutboxStatus {
@@ -245,6 +261,9 @@ model User {
   createdMessageVersions    MessageTemplateVersion[]  @relation("MessageTemplateVersionCreatedBy")
   appliedProgramAssignments ProgramAssignmentRun[]    @relation("ProgramAssignmentAppliedBy")
   registrationOperations    RegistrationOperation[]   @relation("RegistrationOperationActor")
+  accountMessages           MessageOutbox[]           @relation("AccountMessageRecipient")
+  mfaEnrollment             UserMfaEnrollment?
+  mfaChallenges             MfaChallenge[]
 
   @@index([accountStatus])
 }
@@ -279,6 +298,68 @@ model UserSession {
   @@index([expiresAt, revokedAt])
 }
 
+/**
+ * Second-factor enrolment. The TOTP secret is the one credential in this schema
+ * that cannot be a digest — verifying a code needs the secret itself — so it is
+ * sealed with AES-256-GCM instead (`lib/secret-box.ts`).
+ */
+model UserMfaEnrollment {
+  id             String        @id @default(cuid())
+  userId         String        @unique
+  method         MfaMethod     @default(TOTP)
+  status         MfaStatus     @default(PENDING)
+  sealedSecret   String
+  // The last accepted time step. A code, and everything before it, is spent —
+  // this is what stops one being replayed inside its own thirty seconds.
+  lastUsedStep   BigInt?
+  failedAttempts Int           @default(0)
+  lockedUntil    DateTime?
+  confirmedAt    DateTime?
+  lastVerifiedAt DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recoveryCodes MfaRecoveryCode[]
+
+  @@index([status])
+}
+
+/** Single-use fallbacks, stored as digests exactly like a session token. */
+model MfaRecoveryCode {
+  id           String    @id @default(cuid())
+  enrollmentId String
+  codeHash     String    @unique
+  usedAt       DateTime?
+  createdAt    DateTime  @default(now())
+
+  enrollment UserMfaEnrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+
+  @@index([enrollmentId, usedAt])
+}
+
+/**
+ * The state between a correct password and a completed second factor. Holding
+ * it here rather than issuing a provisional session means a challenge can never
+ * be mistaken for a signed-in session by any other code path.
+ */
+model MfaChallenge {
+  id         String            @id @default(cuid())
+  userId     String
+  tokenHash  String            @unique
+  purpose    MfaChallengeKind  @default(SIGN_IN)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int               @default(0)
+  userAgent  String?
+  createdAt  DateTime          @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
+}
+
 model PasswordResetToken {
   id        String              @id @default(cuid())
   userId    String
@@ -291,6 +372,25 @@ model PasswordResetToken {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, expiresAt])
+}
+
+/**
+ * One row per alert condition, so a condition that persists pages once an hour
+ * rather than every time the monitor runs. Without this, a backed-up queue
+ * would send an alert every five minutes and be muted by whoever receives it.
+ */
+model AlertNotification {
+  id         String    @id @default(cuid())
+  key        String    @unique
+  severity   String
+  summary    String
+  firstSeenAt DateTime @default(now())
+  lastSentAt DateTime
+  sendCount  Int       @default(1)
+  resolvedAt DateTime?
+
+  @@index([lastSentAt])
+  @@index([resolvedAt])
 }
 
 model RateLimitBucket {
@@ -976,8 +1076,13 @@ model MessageTemplateVersion {
 
 model MessageOutbox {
   id                     String                         @id @default(cuid())
-  eventId                String
+  // Null for account email — activation and password reset belong to a person,
+  // not to an event, and must be deliverable before any event exists.
+  eventId                String?
   registrationId         String?
+  // Set only on account email. The delivery step mints the one-time link from
+  // this, so the raw token is never written to the outbox.
+  accountUserId          String?
   templateVersionId      String?
   templateKey            MessageTemplateKey
   recipientKind          MessageRecipientKind
@@ -1009,8 +1114,9 @@ model MessageOutbox {
   createdAt              DateTime                       @default(now())
   updatedAt              DateTime                       @updatedAt
 
-  event           Event                    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event           Event?                   @relation(fields: [eventId], references: [id], onDelete: Cascade)
   registration    Registration?            @relation(fields: [registrationId], references: [id], onDelete: SetNull)
+  accountUser     User?                    @relation("AccountMessageRecipient", fields: [accountUserId], references: [id], onDelete: Cascade)
   templateVersion MessageTemplateVersion?  @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
   retryOf         MessageOutbox?           @relation("MessageRetry", fields: [retryOfMessageId], references: [id], onDelete: SetNull)
   retries         MessageOutbox[]          @relation("MessageRetry")
@@ -1020,6 +1126,7 @@ model MessageOutbox {
   @@index([status, availableAt, createdAt])
   @@index([eventId, createdAt])
   @@index([registrationId, createdAt])
+  @@index([accountUserId, createdAt])
   @@index([retryOfMessageId])
   @@index([provider, providerDeliveryStatus, providerStatusAt])
 }

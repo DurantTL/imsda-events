@@ -4,8 +4,9 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { messagingApiError } from "@/modules/communications/api-errors";
 import { processPendingMessagesLocally } from "@/modules/communications/messaging-repository";
 import { findActiveMembership } from "@/modules/events/repository";
+import { withRequestContext } from "@/lib/request-context";
 
-export async function POST(
+async function postHandler(
   request: Request,
   context: { params: Promise<{ eventId: string }> },
 ) {
@@ -25,3 +26,5 @@ export async function POST(
     return messagingApiError(error, "Processing the local message queue");
   }
 }
+
+export const POST = withRequestContext(postHandler);

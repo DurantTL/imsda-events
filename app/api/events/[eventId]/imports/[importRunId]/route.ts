@@ -3,8 +3,9 @@ import { getCurrentSession } from "@/modules/access/current-session";
 import { getImportRun } from "@/modules/imports/repository";
 import { findActiveMembership } from "@/modules/events/repository";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
-export async function GET(_request: Request, context: { params: Promise<{ eventId: string; importRunId: string }> }) {
+async function getHandler(_request: Request, context: { params: Promise<{ eventId: string; importRunId: string }> }) {
   try {
     const { eventId, importRunId } = await context.params;
     await requirePermission(await getCurrentSession(), eventId, "MANAGE_IMPORTS", findActiveMembership);
@@ -16,3 +17,5 @@ export async function GET(_request: Request, context: { params: Promise<{ eventI
     return Response.json({ error: "IMPORT_DETAIL_FAILED", message: "The import run could not be loaded." }, { status: 500 });
   }
 }
+
+export const GET = withRequestContext(getHandler);

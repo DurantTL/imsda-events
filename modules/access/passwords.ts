@@ -1,20 +1,15 @@
 import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
+import { checkPasswordAgainstBreachCorpus } from "@/modules/access/password-breach";
+import {
+  validatePasswordShape,
+  type PasswordOwner,
+} from "@/modules/access/password-policy";
 
 const KEY_LENGTH = 64;
 const SCRYPT_N = 131_072;
 const SCRYPT_R = 8;
 const SCRYPT_P = 1;
 const SCRYPT_MAX_MEMORY = 192 * 1024 * 1024;
-const MIN_PASSWORD_LENGTH = 12;
-const MAX_PASSWORD_LENGTH = 128;
-
-const blockedPasswords = new Set([
-  "123456789012",
-  "password1234",
-  "password123!",
-  "qwertyuiop12",
-  "letmein123456",
-]);
 
 function derivePassword(password: string, salt: Buffer, n = SCRYPT_N, r = SCRYPT_R, p = SCRYPT_P) {
   return new Promise<Buffer>((resolve, reject) => {
@@ -25,15 +20,29 @@ function derivePassword(password: string, salt: Buffer, n = SCRYPT_N, r = SCRYPT
   });
 }
 
-export function validatePassword(password: string) {
-  if (password.length < MIN_PASSWORD_LENGTH) {
-    return `Use at least ${MIN_PASSWORD_LENGTH} characters.`;
-  }
-  if (password.length > MAX_PASSWORD_LENGTH) {
-    return `Use no more than ${MAX_PASSWORD_LENGTH} characters.`;
-  }
-  if (blockedPasswords.has(password.toLowerCase())) {
-    return "Choose a less common password.";
+/**
+ * The offline rules, which is all `hashPassword` can enforce. Callers that are
+ * setting a password a person chose should use {@link validateChosenPassword},
+ * which also consults the breach corpus.
+ */
+export function validatePassword(password: string, owner: PasswordOwner = {}) {
+  return validatePasswordShape(password, owner);
+}
+
+/**
+ * The full policy: the offline rules, then the breach corpus. Returns
+ * operator-facing text naming the rule that was broken, or null.
+ */
+export async function validateChosenPassword(
+  password: string,
+  owner: PasswordOwner = {},
+): Promise<string | null> {
+  const shapeError = validatePasswordShape(password, owner);
+  if (shapeError) return shapeError;
+
+  const breach = await checkPasswordAgainstBreachCorpus(password);
+  if (breach.breached) {
+    return "This password has appeared in a public data breach. Even a strong-looking password is unusable once it is on a public list — choose another.";
   }
   return null;
 }

@@ -4,6 +4,7 @@ import { timingSafeEqual } from "node:crypto";
 import { getServerEnv } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
 import { processPendingMessages } from "@/modules/communications/messaging-repository";
+import { processAccountEmailQueue } from "@/modules/communications/email-delivery";
 
 /**
  * A message that fails its first attempt is rescheduled with backoff, and a
@@ -25,6 +26,8 @@ export type OutboxQueueSnapshot = {
   failed: number;
   oldestDueAgeMs: number | null;
   eventsWithDueMessages: number;
+  /** Activation and password reset waiting to go out. These have no event. */
+  accountMessagesDue: number;
 };
 
 export type OutboxQueueHealth = OutboxQueueSnapshot & {
@@ -34,7 +37,9 @@ export type OutboxQueueHealth = OutboxQueueSnapshot & {
 
 export type OutboxSweepResult = {
   sweptEventIds: string[];
-  skipped: Array<{ eventId: string; reason: string }>;
+  /** Null identifies the account queue, which belongs to no event. */
+  skipped: Array<{ eventId: string | null; reason: string }>;
+  sweptAccountMessages: boolean;
   snapshotBefore: OutboxQueueSnapshot;
 };
 
@@ -63,18 +68,20 @@ export async function getOutboxQueueSnapshot(now = new Date()): Promise<OutboxQu
   const prisma = getPrisma();
   const dueWhere = { status: "PENDING" as const, availableAt: { lte: now } };
 
-  const [pending, due, processing, failed, oldestDue, dueEvents] = await Promise.all([
-    prisma.messageOutbox.count({ where: { status: "PENDING" } }),
-    prisma.messageOutbox.count({ where: dueWhere }),
-    prisma.messageOutbox.count({ where: { status: "PROCESSING" } }),
-    prisma.messageOutbox.count({ where: { status: "FAILED" } }),
-    prisma.messageOutbox.findFirst({
-      where: dueWhere,
-      orderBy: { availableAt: "asc" },
-      select: { availableAt: true },
-    }),
-    prisma.messageOutbox.groupBy({ by: ["eventId"], where: dueWhere }),
-  ]);
+  const [pending, due, processing, failed, oldestDue, dueEvents, accountMessagesDue] =
+    await Promise.all([
+      prisma.messageOutbox.count({ where: { status: "PENDING" } }),
+      prisma.messageOutbox.count({ where: dueWhere }),
+      prisma.messageOutbox.count({ where: { status: "PROCESSING" } }),
+      prisma.messageOutbox.count({ where: { status: "FAILED" } }),
+      prisma.messageOutbox.findFirst({
+        where: dueWhere,
+        orderBy: { availableAt: "asc" },
+        select: { availableAt: true },
+      }),
+      prisma.messageOutbox.groupBy({ by: ["eventId"], where: dueWhere }),
+      prisma.messageOutbox.count({ where: { ...dueWhere, eventId: null } }),
+    ]);
 
   return {
     pending,
@@ -84,7 +91,8 @@ export async function getOutboxQueueSnapshot(now = new Date()): Promise<OutboxQu
     oldestDueAgeMs: oldestDue
       ? Math.max(0, now.getTime() - oldestDue.availableAt.getTime())
       : null,
-    eventsWithDueMessages: dueEvents.length,
+    eventsWithDueMessages: dueEvents.filter((group) => group.eventId !== null).length,
+    accountMessagesDue,
   };
 }
 
@@ -131,9 +139,26 @@ export async function sweepOutbox(
   });
 
   const sweptEventIds: string[] = [];
-  const skipped: Array<{ eventId: string; reason: string }> = [];
+  const skipped: Array<{ eventId: string | null; reason: string }> = [];
+  let sweptAccountMessages = false;
 
   for (const { eventId } of dueEvents) {
+    // A null group is the account queue — activation and password reset, which
+    // belong to no event and are delivered by their own processor.
+    if (eventId === null) {
+      try {
+        await processAccountEmailQueue();
+        sweptAccountMessages = true;
+      } catch (error) {
+        skipped.push({
+          eventId: null,
+          reason: error instanceof Error
+            ? error.message
+            : "The account email queue could not be processed.",
+        });
+      }
+      continue;
+    }
     try {
       await processPendingMessages(eventId, options.actorUserId);
       sweptEventIds.push(eventId);
@@ -145,5 +170,5 @@ export async function sweepOutbox(
     }
   }
 
-  return { sweptEventIds, skipped, snapshotBefore };
+  return { sweptEventIds, skipped, sweptAccountMessages, snapshotBefore };
 }

@@ -44,11 +44,25 @@ MANAGE_LINK_DERIVATION_SECRET=<openssl rand -base64 48>
 ATTENDEE_PASS_SIGNING_SECRET=<openssl rand -base64 48>
 RATE_LIMIT_HASH_SECRET=<openssl rand -base64 48>
 OUTBOX_SWEEP_TOKEN=<openssl rand -base64 48>
+SECRET_ENCRYPTION_KEY=<openssl rand -base64 48>
+RESEND_API_KEY=<from the Resend dashboard>
+ACCOUNT_EMAIL_SENDER_ADDRESS=<a verified sender, e.g. no-reply@imsda.org>
 ```
 
 Each secret needs at least 32 characters. If one is missing or malformed the
 container exits at startup with the offending variable named in its log, rather
 than serving pages and failing later on a QR pass or a private link.
+
+`SECRET_ENCRYPTION_KEY` seals the TOTP secrets behind two-factor
+authentication. **Changing it makes every enrolled authenticator unreadable** —
+rotate it only together with `npm run admin:reset-mfa` for each affected account.
+
+The last two are what send activation and password-reset email. They are
+required rather than optional because there is no manual substitute at scale: an
+invited colleague who never receives a link cannot obtain a credential at all.
+The address must be verified with Resend, or every account email fails at the
+provider. `ACCOUNT_EMAIL_SENDER_NAME` defaults to `IMSDA Events`, and
+`ACCOUNT_EMAIL_REPLY_TO` is optional.
 
 `NODE_ENV` and `DATABASE_URL` are set by `docker-compose.yml` — you do **not**
 provide `DATABASE_URL` here.
@@ -57,6 +71,11 @@ provide `DATABASE_URL` here.
 
 ```
 APP_PORT=3100                    # only if host 3100 is already in use
+ALERT_WEBHOOK_URL=               # Slack/Teams incoming webhook; see Alerting below
+ALERT_REPEAT_MINUTES=60          # how long the same condition stays quiet after paging
+PASSWORD_BREACH_CHECK=           # enabled/disabled; unset means on in production
+ACCOUNT_EMAIL_SENDER_NAME=IMSDA Events
+ACCOUNT_EMAIL_REPLY_TO=
 RATE_LIMIT_TRUSTED_PROXY_HOPS=1  # 1 for a single Nginx; 2 if Cloudflare is also in front
 RATE_LIMIT_CLIENT_IP_HEADER=x-forwarded-for   # cf-connecting-ip behind Cloudflare
 OUTBOX_SWEEP_INTERVAL_SECONDS=300
@@ -90,15 +109,81 @@ Square stays in Sandbox until `SQUARE_ENVIRONMENT=production` **and**
    It prints a one-time activation URL. Open it and choose a password. The link is
    shown once — only its digest is stored — and expires after seven days. The
    account cannot sign in until it is activated.
+
+   If opening a link is impractical — the domain is not live yet, or account
+   email is not configured — set the password directly instead:
+
+   ```bash
+   docker compose exec -e IMSDA_ADMIN_PASSWORD='<a long passphrase>' app \
+     npm run admin:create -- --email you@imsda.org --name "Your Name" \
+     --password-from-env
+   ```
+
+   That account is `ACTIVE` immediately. The password is read from the
+   environment rather than an argument so it stays out of shell history and
+   `ps`, is held to the same policy as any other, and is stored only as its
+   scrypt hash. Clear `IMSDA_ADMIN_PASSWORD` afterwards, and change the password
+   from the workspace once account email works.
 5. Invite colleagues from **Staff access** in the workspace. Each invitation
-   produces its own one-time activation link, shown once to you. Recovery email is
-   not connected yet, so pass the link on yourself.
+   emails its own one-time activation link to the person invited; if they lose it
+   they can request another from **Forgot password**. (Where account email is not
+   configured — development only, since production requires it — the link is
+   shown to you once instead, to pass on yourself.)
 6. Confirm `APP_BASE_URL` is the final `https` domain before sending any real links.
 
 **There is no seed step, and `RUN_DB_SEED` is no longer supported.** `prisma/seed.ts`
 writes fictitious events, people, registrations, payments and a refund, and gives
 every account one shared password that is published in this repository. It refuses
 to run with `NODE_ENV=production` or against any non-loopback database host.
+
+## Alerting
+
+Set `ALERT_WEBHOOK_URL` to a Slack or Teams incoming webhook — or anything that
+accepts a JSON POST — and the deployment will tell you when it is in trouble
+instead of waiting for someone to notice.
+
+What pages, and when:
+
+| Condition | Severity | Raised by |
+| --- | --- | --- |
+| The database is unreachable | urgent | `/api/health`, on every failed check |
+| Email delivery is falling behind (25+ due, or 30 minutes waiting) | urgent | the sweep, every run |
+| A message gave up after all five attempts | urgent | the sweep |
+| A card payment failed | urgent | the sweep |
+| A card payment never reached a result after 15 minutes | urgent | the sweep — this is usually the Square webhook not arriving |
+| A Square webhook failed signature verification | urgent | the webhook, immediately |
+| A Resend webhook failed verification | watch | the webhook, immediately |
+
+The scan runs at the end of the outbox sweep, so its frequency is
+`OUTBOX_SWEEP_INTERVAL_SECONDS` (300 by default). A condition that persists pages
+once per `ALERT_REPEAT_MINUTES` (60 by default) rather than every run; when it
+stops being true it is cleared, so a recurrence pages immediately.
+
+Every alert is also written to the log as a JSON line carrying `alertKey` and
+`severity`, at error level for urgent ones. A deployment with no webhook set
+still leaves that trail for a log aggregator to match on — but nothing will be
+watching it, which is the state this replaced.
+
+## Two-factor authentication
+
+System administrators and event administrators must carry a second factor. The
+enforcement is at sign-in: a correct password for one of those accounts produces
+a **challenge**, not a session, and an account that has never enrolled is sent to
+enrol inside that challenge. There is no state in which one of these accounts is
+signed in on a password alone.
+
+Everyone else may enrol voluntarily from **More → Two-factor authentication**.
+
+Each enrolment issues ten single-use recovery codes, shown once. If an
+administrator loses both their authenticator and their codes, an operator with
+shell access can clear the enrolment:
+
+```bash
+docker compose exec app npm run admin:reset-mfa -- --email them@imsda.org
+```
+
+That signs out every session for the account and requires a fresh enrolment on
+its next sign-in, because the role still demands one.
 
 ## Backups and restore rehearsals
 

@@ -12,43 +12,67 @@
  *
  * The activation URL is printed once, to stdout. Nothing stores it: only the
  * SHA-256 digest of the token reaches the database.
+ *
+ * Where opening a link is impractical — a first deploy before account email is
+ * configured, or a headless host with no browser reaching it — the password can
+ * be set directly instead:
+ *
+ *   IMSDA_ADMIN_PASSWORD='...' npm run admin:create -- \
+ *     --email you@imsda.org --name "Your Name" --password-from-env
+ *
+ * That account is ACTIVE immediately and can sign in. The password is read from
+ * the environment rather than the command line so it does not land in shell
+ * history or in `ps` output, and it must satisfy the same policy as any other.
  */
 import { randomUUID } from "node:crypto";
 import { loadEnvConfig } from "@next/env";
 import { PrismaClient } from "@prisma/client";
 import { hashPassword } from "../modules/access/passwords";
+import { validatePasswordShape } from "../modules/access/password-policy";
 import { createOpaqueToken, hashOpaqueToken } from "../modules/access/tokens";
 
 loadEnvConfig(process.cwd());
 
 const ACTIVATION_LIFETIME_MINUTES = 7 * 24 * 60;
 
+const PASSWORD_ENV_VARIABLE = "IMSDA_ADMIN_PASSWORD";
+
 type Options = {
   email: string;
   displayName: string;
   promoteExisting: boolean;
+  password: string | null;
 };
 
 function usage(message: string): never {
   console.error(`${message}
 
 Usage:
-  npm run admin:create -- --email <address> --name "<display name>" [--promote-existing]
+  npm run admin:create -- --email <address> --name "<display name>" [--promote-existing] [--password-from-env]
 
-  --email             The administrator's real email address.
-  --name              The name shown in the workspace and in audit entries.
-  --promote-existing  Allow promoting an account that already exists.`);
+  --email               The administrator's real email address.
+  --name                The name shown in the workspace and in audit entries.
+  --promote-existing    Allow promoting an account that already exists.
+  --password-from-env   Set the password directly from ${PASSWORD_ENV_VARIABLE} and
+                        activate the account, instead of printing an activation
+                        link. For a first deploy, before account email is
+                        configured.`);
   process.exit(1);
 }
 
 function parseOptions(argv: string[]): Options {
   const values = new Map<string, string>();
   let promoteExisting = false;
+  let passwordFromEnv = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--promote-existing") {
       promoteExisting = true;
+      continue;
+    }
+    if (argument === "--password-from-env") {
+      passwordFromEnv = true;
       continue;
     }
     const match = /^--([a-z-]+)(?:=(.*))?$/.exec(argument);
@@ -66,7 +90,20 @@ function parseOptions(argv: string[]): Options {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) usage(`--email is not a valid address: ${email}`);
   if (displayName.length < 2) usage("--name is required and must be at least 2 characters.");
 
-  return { email, displayName, promoteExisting };
+  let password: string | null = null;
+  if (passwordFromEnv) {
+    password = process.env[PASSWORD_ENV_VARIABLE] ?? "";
+    if (!password) {
+      usage(`--password-from-env needs ${PASSWORD_ENV_VARIABLE} set to the password to use.`);
+    }
+    // The same policy every other account is held to. The breach check is not
+    // run here: this path exists for hosts that may have no outbound network
+    // yet, and failing a bootstrap on that would leave no way in at all.
+    const policyError = validatePasswordShape(password, { email, displayName });
+    if (policyError) usage(`${PASSWORD_ENV_VARIABLE} does not meet the password policy. ${policyError}`);
+  }
+
+  return { email, displayName, promoteExisting, password };
 }
 
 function appBaseUrl() {
@@ -81,7 +118,8 @@ function appBaseUrl() {
 
 async function main() {
   const options = parseOptions(process.argv.slice(2));
-  const baseUrl = appBaseUrl();
+  // Only the link path needs a base URL to point at.
+  const baseUrl = options.password ? null : appBaseUrl();
   const prisma = new PrismaClient();
 
   try {
@@ -96,13 +134,16 @@ async function main() {
       );
     }
 
-    // Nobody is ever handed a password. The account is created
+    // With no password given, nobody is handed one: the account is created
     // PENDING_ACTIVATION holding a random hash that no one knows, and its owner
     // sets the first password through the activation link below.
-    const unusableHash = await hashPassword(`${createOpaqueToken()}-pending-activation`);
+    const passwordHash = await hashPassword(
+      options.password ?? `${createOpaqueToken()}-pending-activation`,
+    );
     const token = createOpaqueToken();
     const now = new Date();
     const expiresAt = new Date(now.getTime() + ACTIVATION_LIFETIME_MINUTES * 60 * 1000);
+    const accountStatus = options.password ? "ACTIVE" as const : "PENDING_ACTIVATION" as const;
 
     const user = await prisma.$transaction(async (tx) => {
       const record = existing
@@ -111,8 +152,8 @@ async function main() {
             data: {
               displayName: options.displayName,
               globalRole: "SYSTEM_ADMIN",
-              accountStatus: "PENDING_ACTIVATION",
-              activatedAt: null,
+              accountStatus,
+              activatedAt: options.password ? now : null,
             },
             select: { id: true, email: true, displayName: true },
           })
@@ -121,7 +162,8 @@ async function main() {
               email: options.email,
               displayName: options.displayName,
               globalRole: "SYSTEM_ADMIN",
-              accountStatus: "PENDING_ACTIVATION",
+              accountStatus,
+              activatedAt: options.password ? now : null,
             },
             select: { id: true, email: true, displayName: true },
           });
@@ -129,29 +171,33 @@ async function main() {
       await tx.authCredential.upsert({
         where: { userId: record.id },
         update: {
-          passwordHash: unusableHash,
+          passwordHash,
           passwordUpdatedAt: now,
           failedAttempts: 0,
           lockedUntil: null,
           disabledAt: null,
         },
-        create: { userId: record.id, passwordHash: unusableHash },
+        create: { userId: record.id, passwordHash },
       });
 
       // Any activation or reset link already outstanding for this account is
-      // consumed, so exactly one link is live at a time.
+      // consumed, so exactly one credential path is live at a time — including
+      // when a password is set directly, which must retire an old link rather
+      // than leave it usable.
       await tx.passwordResetToken.updateMany({
         where: { userId: record.id, usedAt: null },
         data: { usedAt: now },
       });
-      await tx.passwordResetToken.create({
-        data: {
-          userId: record.id,
-          tokenHash: hashOpaqueToken(token),
-          purpose: "ACCOUNT_ACTIVATION",
-          expiresAt,
-        },
-      });
+      if (!options.password) {
+        await tx.passwordResetToken.create({
+          data: {
+            userId: record.id,
+            tokenHash: hashOpaqueToken(token),
+            purpose: "ACCOUNT_ACTIVATION",
+            expiresAt,
+          },
+        });
+      }
 
       await tx.userSession.updateMany({
         where: { userId: record.id, revokedAt: null },
@@ -166,16 +212,36 @@ async function main() {
           entityId: record.id,
           correlationId: randomUUID(),
           summary: `${record.displayName} was granted SYSTEM_ADMIN from the command line.`,
-          metadata: { email: record.email, viaBootstrapScript: true, promotedExisting: Boolean(existing) },
+          metadata: {
+            email: record.email,
+            viaBootstrapScript: true,
+            promotedExisting: Boolean(existing),
+            // Recorded because it is a materially different event: an account
+            // activated by whoever ran the command, not by its owner.
+            passwordSetDirectly: Boolean(options.password),
+          },
         },
       });
 
       return record;
     });
 
+    if (options.password) {
+      console.log(`
+${existing ? "Promoted" : "Created"} system administrator: ${user.displayName} <${user.email}>
+
+The account is ACTIVE and can sign in now with the password from ${PASSWORD_ENV_VARIABLE}.
+Only its scrypt hash was stored; the password itself was not written anywhere.
+
+Change it from the workspace once account email is configured, and clear
+${PASSWORD_ENV_VARIABLE} from the environment so it does not sit in the deploy panel.
+`);
+      return;
+    }
+
     const activationUrl = new URL(
       `/reset-password?token=${encodeURIComponent(token)}`,
-      baseUrl,
+      baseUrl!,
     ).toString();
 
     console.log(`
