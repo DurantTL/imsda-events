@@ -99,6 +99,21 @@ Square stays in Sandbox until `SQUARE_ENVIRONMENT=production` **and**
    It prints a one-time activation URL. Open it and choose a password. The link is
    shown once — only its digest is stored — and expires after seven days. The
    account cannot sign in until it is activated.
+
+   If opening a link is impractical — the domain is not live yet, or account
+   email is not configured — set the password directly instead:
+
+   ```bash
+   docker compose exec -e IMSDA_ADMIN_PASSWORD='<a long passphrase>' app \
+     npm run admin:create -- --email you@imsda.org --name "Your Name" \
+     --password-from-env
+   ```
+
+   That account is `ACTIVE` immediately. The password is read from the
+   environment rather than an argument so it stays out of shell history and
+   `ps`, is held to the same policy as any other, and is stored only as its
+   scrypt hash. Clear `IMSDA_ADMIN_PASSWORD` afterwards, and change the password
+   from the workspace once account email works.
 5. Invite colleagues from **Staff access** in the workspace. Each invitation
    emails its own one-time activation link to the person invited; if they lose it
    they can request another from **Forgot password**. (Where account email is not

@@ -128,6 +128,13 @@ function fakeDeliveryStore(overrides: Partial<MutableMessage> = {}) {
   return { prisma, message, attempts };
 }
 
+/** The `where` of every claim query the run issued. */
+function claimQueries(store: { prisma: { messageOutbox: { findFirst: { mock: { calls: unknown[][] } } } } }) {
+  return store.prisma.messageOutbox.findFirst.mock.calls.map(
+    (call) => call[0] as { where: Record<string, unknown> },
+  );
+}
+
 const dependencies = {
   configuration: {
     apiKey: "re_test_only",
@@ -322,8 +329,8 @@ describe("external email queue", () => {
       dependencies: { ...dependencies, prisma: store.prisma as never, sendEmail },
     });
 
-    for (const call of store.prisma.messageOutbox.findFirst.mock.calls) {
-      expect(call[0].where).toMatchObject({ eventId: "event-1" });
+    for (const call of claimQueries(store)) {
+      expect(call.where).toMatchObject({ eventId: "event-1" });
     }
   });
 
@@ -406,8 +413,8 @@ describe("account email queue", () => {
     });
 
     expect(result.sentIds).toEqual(["message-1"]);
-    for (const call of store.prisma.messageOutbox.findFirst.mock.calls) {
-      expect(call[0].where).toMatchObject({ eventId: null });
+    for (const call of claimQueries(store)) {
+      expect(call.where).toMatchObject({ eventId: null });
     }
     // The account it belongs to has to reach the body preparer, which is what
     // mints the link.

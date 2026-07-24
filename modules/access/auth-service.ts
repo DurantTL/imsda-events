@@ -149,16 +149,32 @@ export async function issuePasswordReset(email: string) {
 }
 
 /**
- * Describes a token to the page that will consume it, without revealing whose
- * it is. An unknown, used, or expired token is reported the same way.
+ * Describes a live token: what it is for, and whose account it belongs to. An
+ * unknown, used, or expired token is reported the same way — null.
+ *
+ * `owner` is for server-side use only — the password policy rejects a password
+ * containing the account holder's name or address, which it cannot do without
+ * knowing them. It must not be sent to the browser; the page that consumes a
+ * token reads `purpose` alone.
  */
 export async function describeAccountToken(token: string) {
   const record = await getPrisma().passwordResetToken.findUnique({
     where: { tokenHash: hashOpaqueToken(token) },
-    select: { purpose: true, expiresAt: true, usedAt: true },
+    select: {
+      purpose: true,
+      expiresAt: true,
+      usedAt: true,
+      user: { select: { email: true, displayName: true } },
+    },
   });
   if (!record || record.usedAt || record.expiresAt <= new Date()) return null;
-  return { purpose: record.purpose };
+  return {
+    purpose: record.purpose,
+    owner: {
+      email: record.user?.email ?? null,
+      displayName: record.user?.displayName ?? null,
+    },
+  };
 }
 
 export async function resetPassword(token: string, password: string) {

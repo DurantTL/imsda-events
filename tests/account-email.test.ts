@@ -99,7 +99,11 @@ describe("account email configuration", () => {
 
 describe("queueing an account email", () => {
   function outboxFixture() {
-    const create = vi.fn(async () => ({ id: "message-1" }));
+    const queries: Array<{ data: Record<string, unknown> }> = [];
+    const create = vi.fn(async (query: { data: Record<string, unknown> }) => {
+      queries.push(query);
+      return { id: "message-1" };
+    });
     dependencies.getPrisma.mockReturnValue({ messageOutbox: { create } });
     return create;
   }

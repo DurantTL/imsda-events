@@ -210,16 +210,23 @@ describe("completing a token activates the account", () => {
 });
 
 describe("describing a token for the page that consumes it", () => {
-  it("reports the purpose of a live token", async () => {
+  it("reports the purpose of a live token, and its owner for the policy check", async () => {
     prismaFixture({
       resetToken: {
         purpose: "ACCOUNT_ACTIVATION",
         expiresAt: new Date(Date.now() + 60_000),
         usedAt: null,
+        user: { email: "alex@imsda.org", displayName: "Alex Staff" },
       },
     });
 
-    expect(await describeAccountToken("raw-token")).toEqual({ purpose: "ACCOUNT_ACTIVATION" });
+    // The owner is server-side only: the password policy rejects a password
+    // containing the account holder's own name or address, which it cannot do
+    // without knowing them. The page that consumes a token reads purpose alone.
+    expect(await describeAccountToken("raw-token")).toEqual({
+      purpose: "ACCOUNT_ACTIVATION",
+      owner: { email: "alex@imsda.org", displayName: "Alex Staff" },
+    });
   });
 
   it("treats unknown, used, and expired tokens identically", async () => {

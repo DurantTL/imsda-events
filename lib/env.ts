@@ -78,6 +78,14 @@ const serverEnvSchema = z
     // Authorises the scheduled outbox sweep. Required in production so the
     // sweep endpoint is never reachable without a credential.
     OUTBOX_SWEEP_TOKEN: optionalTrimmed,
+
+    // Checks a chosen password against a public breach corpus, sending only a
+    // five-character hash prefix. Unset means on in production, off elsewhere.
+    PASSWORD_BREACH_CHECK: z.enum(["enabled", "disabled"]).optional(),
+    PASSWORD_BREACH_CHECK_URL: z
+      .string()
+      .url()
+      .default("https://api.pwnedpasswords.com/range/"),
   })
   .superRefine((value, context) => {
     const isProduction = value.NODE_ENV === "production";
@@ -234,6 +242,8 @@ function readSource(source: Record<string, string | undefined>) {
     "SQUARE_WEBHOOK_NOTIFICATION_URL",
     "SQUARE_ENABLE_PRODUCTION",
     "OUTBOX_SWEEP_TOKEN",
+    "PASSWORD_BREACH_CHECK",
+    "PASSWORD_BREACH_CHECK_URL",
   ] as const;
 
   return Object.fromEntries(
