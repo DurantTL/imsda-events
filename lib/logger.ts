@@ -85,11 +85,26 @@ export function describeError(error: unknown): DescribedError {
   return described;
 }
 
+/**
+ * Set once by `lib/request-context`, which cannot be imported here: it imports
+ * this module for `requestCorrelationId`, and a cycle between the logger and
+ * the request store would be resolved differently in every runtime.
+ */
+let requestFieldSource: (() => Record<string, unknown> | undefined) | undefined;
+
+export function setLogRequestFieldSource(
+  source: () => Record<string, unknown> | undefined,
+) {
+  requestFieldSource = source;
+}
+
 function emit(level: LogLevel, message: string, fields: Record<string, unknown>) {
   const line = JSON.stringify({
     level,
     time: new Date().toISOString(),
     msg: message,
+    // Request fields first, so an explicit context value of the same name wins.
+    ...requestFieldSource?.(),
     ...fields,
   });
   if (level === "error") console.error(line);

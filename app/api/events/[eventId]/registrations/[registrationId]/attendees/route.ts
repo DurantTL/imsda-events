@@ -10,8 +10,9 @@ import {
 } from "@/modules/registrations/repository";
 import { attendeeInputSchema } from "@/modules/registrations/schemas";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
-export async function POST(
+async function postHandler(
   request: Request,
   context: { params: Promise<{ eventId: string; registrationId: string }> },
 ) {
@@ -48,3 +49,5 @@ export async function POST(
     return Response.json({ error: "ATTENDEE_CREATE_FAILED" }, { status: 500 });
   }
 }
+
+export const POST = withRequestContext(postHandler);

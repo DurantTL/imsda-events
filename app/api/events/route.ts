@@ -11,6 +11,7 @@ import {
 } from "@/modules/events/repository";
 import { eventSettingsInputSchema } from "@/modules/events/schemas";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 function eventApiError(error: unknown) {
   if (error instanceof z.ZodError) {
@@ -42,7 +43,7 @@ function eventApiError(error: unknown) {
   }, { status: 500 });
 }
 
-export async function GET() {
+async function getHandler() {
   try {
     const user = requireAuthenticatedUser(await getCurrentSession());
     const events = await listEventsForUser(user.id, user.globalRole === "SYSTEM_ADMIN");
@@ -50,7 +51,7 @@ export async function GET() {
   } catch (error) { return eventApiError(error); }
 }
 
-export async function POST(request: Request) {
+async function postHandler(request: Request) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
   try {
@@ -60,3 +61,6 @@ export async function POST(request: Request) {
     return Response.json({ event }, { status: 201 });
   } catch (error) { return eventApiError(error); }
 }
+
+export const GET = withRequestContext(getHandler);
+export const POST = withRequestContext(postHandler);

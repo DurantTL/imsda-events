@@ -5,10 +5,11 @@ import {
 } from "@/integrations/email/resend-webhook";
 import { recordResendWebhookEvent } from "@/modules/communications/resend-webhook-repository";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 export const runtime = "nodejs";
 
-export async function POST(request: Request) {
+async function postHandler(request: Request) {
   const rawBody = await request.text();
   try {
     const verified = verifyResendWebhook(rawBody, request.headers);
@@ -49,3 +50,5 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export const POST = withRequestContext(postHandler);

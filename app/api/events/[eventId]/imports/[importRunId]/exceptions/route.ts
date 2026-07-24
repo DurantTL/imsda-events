@@ -4,8 +4,9 @@ import { ImportOperationError, listImportExceptions } from "@/modules/imports/re
 import { findActiveMembership } from "@/modules/events/repository";
 import { toCsv } from "@/modules/reporting/csv";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
-export async function GET(_request: Request, context: { params: Promise<{ eventId: string; importRunId: string }> }) {
+async function getHandler(_request: Request, context: { params: Promise<{ eventId: string; importRunId: string }> }) {
   try {
     const { eventId, importRunId } = await context.params;
     await requirePermission(await getCurrentSession(), eventId, "MANAGE_IMPORTS", findActiveMembership);
@@ -20,3 +21,5 @@ export async function GET(_request: Request, context: { params: Promise<{ eventI
     return Response.json({ error: "EXCEPTION_EXPORT_FAILED", message: "The exception report could not be created." }, { status: 500 });
   }
 }
+
+export const GET = withRequestContext(getHandler);

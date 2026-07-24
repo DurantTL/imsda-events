@@ -11,6 +11,7 @@ import {
 } from "@/modules/events/repository";
 import { eventSettingsInputSchema } from "@/modules/events/schemas";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 function eventApiError(error: unknown) {
   if (error instanceof z.ZodError) {
@@ -51,7 +52,7 @@ async function authorize(eventId: string) {
   );
 }
 
-export async function GET(
+async function getHandler(
   _request: Request,
   context: { params: Promise<{ eventId: string }> },
 ) {
@@ -65,7 +66,7 @@ export async function GET(
   } catch (error) { return eventApiError(error); }
 }
 
-export async function PATCH(
+async function patchHandler(
   request: Request,
   context: { params: Promise<{ eventId: string }> },
 ) {
@@ -79,3 +80,6 @@ export async function PATCH(
     return Response.json({ event });
   } catch (error) { return eventApiError(error); }
 }
+
+export const GET = withRequestContext(getHandler);
+export const PATCH = withRequestContext(patchHandler);

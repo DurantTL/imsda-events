@@ -8,12 +8,13 @@ import {
 } from "@/modules/reporting/operational-reports";
 import { getOperationalReport } from "@/modules/reporting/repository";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 function isOperationalReportKind(value: string | null): value is OperationalReportKind {
   return operationalReportKinds.includes(value as OperationalReportKind);
 }
 
-export async function GET(
+async function getHandler(
   request: Request,
   context: { params: Promise<{ eventId: string }> },
 ) {
@@ -60,3 +61,5 @@ export async function GET(
     );
   }
 }
+
+export const GET = withRequestContext(getHandler);

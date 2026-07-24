@@ -12,10 +12,11 @@ import {
   checkPasswordResetAccountRateLimit,
   checkPasswordResetClientRateLimit,
 } from "@/modules/rate-limit/service";
+import { withRequestContext } from "@/lib/request-context";
 
 const requestSchema = z.object({ email: z.string().trim().email().max(254) });
 
-export async function POST(request: Request) {
+async function postHandler(request: Request) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
 
@@ -66,3 +67,5 @@ export async function POST(request: Request) {
     return rateLimit ? applyRateLimitHeaders(response, rateLimit) : response;
   }
 }
+
+export const POST = withRequestContext(postHandler);

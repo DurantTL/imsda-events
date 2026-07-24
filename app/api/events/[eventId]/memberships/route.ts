@@ -10,6 +10,7 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { findActiveMembership } from "@/modules/events/repository";
 import { sendStaffInvitationEmail } from "@/modules/communications/account-email-dispatch";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 const membershipSchema = z.object({
   email: z.string().trim().email().max(254),
@@ -25,7 +26,7 @@ function apiError(error: unknown) {
   return Response.json({ error: "MEMBERSHIP_REQUEST_FAILED", message: "The staff assignment could not be saved." }, { status: 500 });
 }
 
-export async function GET(_request: Request, context: { params: Promise<{ eventId: string }> }) {
+async function getHandler(_request: Request, context: { params: Promise<{ eventId: string }> }) {
   try {
     const { eventId } = await context.params;
     await requirePermission(await getCurrentSession(), eventId, "MANAGE_STAFF", findActiveMembership);
@@ -33,7 +34,7 @@ export async function GET(_request: Request, context: { params: Promise<{ eventI
   } catch (error) { return apiError(error); }
 }
 
-export async function POST(request: Request, context: { params: Promise<{ eventId: string }> }) {
+async function postHandler(request: Request, context: { params: Promise<{ eventId: string }> }) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
   try {
@@ -68,3 +69,6 @@ export async function POST(request: Request, context: { params: Promise<{ eventI
     }, { status: 201 });
   } catch (error) { return apiError(error); }
 }
+
+export const GET = withRequestContext(getHandler);
+export const POST = withRequestContext(postHandler);

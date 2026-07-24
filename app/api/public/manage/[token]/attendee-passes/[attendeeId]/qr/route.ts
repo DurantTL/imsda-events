@@ -6,6 +6,7 @@ import {
 } from "@/modules/rate-limit/domain";
 import { checkPublicManageRateLimit } from "@/modules/rate-limit/service";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 const privateHeaders = {
   "Cache-Control": "private, no-store, max-age=0",
@@ -36,7 +37,7 @@ function privateJson(
     : response;
 }
 
-export async function GET(request: Request, context: RouteContext) {
+async function getHandler(request: Request, context: RouteContext) {
   let rateLimit: RateLimitOutcome | undefined;
   try {
     const { token, attendeeId } = await context.params;
@@ -84,3 +85,5 @@ export async function GET(request: Request, context: RouteContext) {
     }, { status: 500 }, rateLimit);
   }
 }
+
+export const GET = withRequestContext(getHandler);

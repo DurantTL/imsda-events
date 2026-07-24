@@ -6,6 +6,7 @@ import { findActiveMembership } from "@/modules/events/repository";
 import { createFormSchema } from "@/modules/forms/definition";
 import { createRegistrationForm, FormOperationError, listFormTemplates, listRegistrationForms } from "@/modules/forms/repository";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 function apiError(error: unknown) {
   if (error instanceof z.ZodError) return Response.json({ error: "INVALID_FORM", message: error.issues[0]?.message, issues: error.issues }, { status: 400 });
@@ -15,7 +16,7 @@ function apiError(error: unknown) {
   return Response.json({ error: "FORM_REQUEST_FAILED", message: "The registration form request could not be completed." }, { status: 500 });
 }
 
-export async function GET(_request: Request, context: { params: Promise<{ eventId: string }> }) {
+async function getHandler(_request: Request, context: { params: Promise<{ eventId: string }> }) {
   try {
     const { eventId } = await context.params;
     await requirePermission(await getCurrentSession(), eventId, "MANAGE_FORMS", findActiveMembership);
@@ -23,7 +24,7 @@ export async function GET(_request: Request, context: { params: Promise<{ eventI
   } catch (error) { return apiError(error); }
 }
 
-export async function POST(request: Request, context: { params: Promise<{ eventId: string }> }) {
+async function postHandler(request: Request, context: { params: Promise<{ eventId: string }> }) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
   try {
@@ -33,3 +34,6 @@ export async function POST(request: Request, context: { params: Promise<{ eventI
     return Response.json({ form: await createRegistrationForm(eventId, access.user.id, input.templateKey) }, { status: 201 });
   } catch (error) { return apiError(error); }
 }
+
+export const GET = withRequestContext(getHandler);
+export const POST = withRequestContext(postHandler);

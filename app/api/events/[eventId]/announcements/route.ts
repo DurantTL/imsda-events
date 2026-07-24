@@ -5,6 +5,7 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { createAnnouncement, listAnnouncements } from "@/modules/communications/repository";
 import { findActiveMembership } from "@/modules/events/repository";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 const announcementSchema = z.object({
   title: z.string().trim().min(3).max(120),
@@ -19,7 +20,7 @@ function apiError(error: unknown) {
   return Response.json({ error: "ANNOUNCEMENT_REQUEST_FAILED" }, { status: 500 });
 }
 
-export async function GET(_request: Request, context: { params: Promise<{ eventId: string }> }) {
+async function getHandler(_request: Request, context: { params: Promise<{ eventId: string }> }) {
   try {
     const { eventId } = await context.params;
     await requirePermission(await getCurrentSession(), eventId, "VIEW_EVENT", findActiveMembership);
@@ -29,7 +30,7 @@ export async function GET(_request: Request, context: { params: Promise<{ eventI
   }
 }
 
-export async function POST(request: Request, context: { params: Promise<{ eventId: string }> }) {
+async function postHandler(request: Request, context: { params: Promise<{ eventId: string }> }) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
   try {
@@ -42,3 +43,6 @@ export async function POST(request: Request, context: { params: Promise<{ eventI
     return apiError(error);
   }
 }
+
+export const GET = withRequestContext(getHandler);
+export const POST = withRequestContext(postHandler);

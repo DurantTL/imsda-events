@@ -1,8 +1,9 @@
 import { cookies } from "next/headers";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { revokeDatabaseSession, SESSION_COOKIE_NAME } from "@/modules/access/session-store";
+import { withRequestContext } from "@/lib/request-context";
 
-export async function POST(request: Request) {
+async function postHandler(request: Request) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
 
@@ -17,3 +18,5 @@ export async function POST(request: Request) {
   });
   return Response.json({ ok: true });
 }
+
+export const POST = withRequestContext(postHandler);

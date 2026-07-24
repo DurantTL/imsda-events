@@ -14,6 +14,7 @@ import {
   type RateLimitOutcome,
 } from "@/modules/rate-limit/domain";
 import { checkLoginClientRateLimit } from "@/modules/rate-limit/service";
+import { withRequestContext } from "@/lib/request-context";
 
 /**
  * The second half of sign-in.
@@ -34,7 +35,7 @@ function mfaErrorResponse(error: MfaError) {
   return Response.json({ error: error.code, message: error.message }, { status });
 }
 
-export async function POST(request: Request) {
+async function postHandler(request: Request) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
 
@@ -105,3 +106,5 @@ export async function POST(request: Request) {
     return rateLimit ? applyRateLimitHeaders(response, rateLimit) : response;
   }
 }
+
+export const POST = withRequestContext(postHandler);

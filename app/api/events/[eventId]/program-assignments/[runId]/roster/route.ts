@@ -5,8 +5,9 @@ import { requireProgramAssignmentAccess } from "@/modules/program-assignments/ac
 import { programAssignmentRosterCsv } from "@/modules/program-assignments/domain";
 import { getAppliedAssignmentRoster } from "@/modules/program-assignments/repository";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
-export async function GET(
+async function getHandler(
   _request: Request,
   context: { params: Promise<{ eventId: string; runId: string }> },
 ) {
@@ -50,3 +51,5 @@ export async function GET(
     );
   }
 }
+
+export const GET = withRequestContext(getHandler);

@@ -7,6 +7,7 @@ import { findActiveMembership } from "@/modules/events/repository";
 import { getRegistrationById, updateRegistration } from "@/modules/registrations/repository";
 import { registrationUpdateSchema } from "@/modules/registrations/schemas";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 function apiError(error: unknown) {
   if (error instanceof z.ZodError) return Response.json({ error: "INVALID_REGISTRATION", issues: error.issues }, { status: 400 });
@@ -18,7 +19,7 @@ function apiError(error: unknown) {
   return Response.json({ error: "REGISTRATION_DETAIL_FAILED" }, { status: 500 });
 }
 
-export async function GET(_request: Request, context: { params: Promise<{ eventId: string; registrationId: string }> }) {
+async function getHandler(_request: Request, context: { params: Promise<{ eventId: string; registrationId: string }> }) {
   try {
     const { eventId, registrationId } = await context.params;
     await requirePermission(await getCurrentSession(), eventId, "VIEW_SENSITIVE_DATA", findActiveMembership);
@@ -29,7 +30,7 @@ export async function GET(_request: Request, context: { params: Promise<{ eventI
   }
 }
 
-export async function PATCH(request: Request, context: { params: Promise<{ eventId: string; registrationId: string }> }) {
+async function patchHandler(request: Request, context: { params: Promise<{ eventId: string; registrationId: string }> }) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
   try {
@@ -42,3 +43,6 @@ export async function PATCH(request: Request, context: { params: Promise<{ event
     return apiError(error);
   }
 }
+
+export const GET = withRequestContext(getHandler);
+export const PATCH = withRequestContext(patchHandler);

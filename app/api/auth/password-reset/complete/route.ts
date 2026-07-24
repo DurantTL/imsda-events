@@ -3,6 +3,7 @@ import { describeAccountToken, resetPassword } from "@/modules/access/auth-servi
 import { validateChosenPassword } from "@/modules/access/passwords";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 const resetSchema = z.object({
   token: z.string().min(32).max(256),
@@ -14,7 +15,7 @@ const resetSchema = z.object({
   }
 });
 
-export async function POST(request: Request) {
+async function postHandler(request: Request) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
 
@@ -51,3 +52,5 @@ export async function POST(request: Request) {
     return Response.json({ error: "RESET_FAILED", message: "The password could not be reset." }, { status: 500 });
   }
 }
+
+export const POST = withRequestContext(postHandler);

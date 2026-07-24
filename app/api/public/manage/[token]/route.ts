@@ -12,6 +12,7 @@ import {
 } from "@/modules/rate-limit/domain";
 import { checkPublicManageRateLimit } from "@/modules/rate-limit/service";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 const maximumBodyBytes = 16 * 1_024;
 const privateHeaders = {
@@ -94,7 +95,7 @@ function errorResponse(error: unknown, rateLimit?: RateLimitOutcome) {
   );
 }
 
-export async function GET(request: Request, context: RouteContext) {
+async function getHandler(request: Request, context: RouteContext) {
   let rateLimit: RateLimitOutcome | undefined;
   try {
     const { token } = await context.params;
@@ -118,7 +119,7 @@ export async function GET(request: Request, context: RouteContext) {
   }
 }
 
-export async function PATCH(request: Request, context: RouteContext) {
+async function patchHandler(request: Request, context: RouteContext) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return applyPrivateHeaders(originError);
 
@@ -177,3 +178,6 @@ export async function PATCH(request: Request, context: RouteContext) {
     return errorResponse(error, rateLimit);
   }
 }
+
+export const GET = withRequestContext(getHandler);
+export const PATCH = withRequestContext(patchHandler);

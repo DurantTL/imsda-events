@@ -1,6 +1,7 @@
 import { getPrisma } from "@/lib/prisma";
 import { getOutboxQueueHealth } from "@/modules/communications/outbox-sweep";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 /**
  * Liveness and readiness in one response.
@@ -10,7 +11,7 @@ import { logError } from "@/lib/logger";
  * `unavailable`: the container should stay up and keep serving registrations
  * while somebody investigates, so only a database failure returns 503.
  */
-export async function GET() {
+async function getHandler() {
   const checkedAt = new Date().toISOString();
 
   try {
@@ -56,3 +57,5 @@ export async function GET() {
       : null,
   });
 }
+
+export const GET = withRequestContext(getHandler);

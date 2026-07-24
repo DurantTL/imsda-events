@@ -10,6 +10,7 @@ import {
 } from "@/modules/checkin/repository";
 import { findActiveMembership } from "@/modules/events/repository";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 const maximumBodyBytes = 1_024;
 const privateHeaders = {
@@ -68,7 +69,7 @@ async function authorize(eventId: string) {
   return requirePermission(await getCurrentSession(), eventId, "MANAGE_CHECK_IN", findActiveMembership);
 }
 
-export async function POST(request: Request, context: { params: Promise<{ eventId: string; attendeeId: string }> }) {
+async function postHandler(request: Request, context: { params: Promise<{ eventId: string; attendeeId: string }> }) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return applyPrivateHeaders(originError);
   try {
@@ -101,7 +102,7 @@ export async function POST(request: Request, context: { params: Promise<{ eventI
   }
 }
 
-export async function DELETE(request: Request, context: { params: Promise<{ eventId: string; attendeeId: string }> }) {
+async function deleteHandler(request: Request, context: { params: Promise<{ eventId: string; attendeeId: string }> }) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return applyPrivateHeaders(originError);
   try {
@@ -118,3 +119,6 @@ export async function DELETE(request: Request, context: { params: Promise<{ even
     return apiError(error);
   }
 }
+
+export const POST = withRequestContext(postHandler);
+export const DELETE = withRequestContext(deleteHandler);

@@ -14,13 +14,14 @@ import {
   checkLoginAccountRateLimit,
   checkLoginClientRateLimit,
 } from "@/modules/rate-limit/service";
+import { withRequestContext } from "@/lib/request-context";
 
 const loginSchema = z.object({
   email: z.string().trim().email().max(254),
   password: z.string().min(1).max(128),
 });
 
-export async function POST(request: Request) {
+async function postHandler(request: Request) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
 
@@ -97,3 +98,5 @@ export async function POST(request: Request) {
     return rateLimit ? applyRateLimitHeaders(response, rateLimit) : response;
   }
 }
+
+export const POST = withRequestContext(postHandler);

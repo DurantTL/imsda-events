@@ -14,6 +14,7 @@ import {
   regenerateRecoveryCodes,
 } from "@/modules/access/mfa-service";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
+import { withRequestContext } from "@/lib/request-context";
 
 /**
  * Managing the second factor from inside a signed-in session: the enrolment a
@@ -51,7 +52,7 @@ function apiError(error: unknown) {
   );
 }
 
-export async function GET() {
+async function getHandler() {
   try {
     const user = requireAuthenticatedUser(await getCurrentSession());
     return Response.json(await getMfaStatus(user.id));
@@ -60,7 +61,7 @@ export async function GET() {
   }
 }
 
-export async function POST(request: Request) {
+async function postHandler(request: Request) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
 
@@ -88,3 +89,6 @@ export async function POST(request: Request) {
     return apiError(error);
   }
 }
+
+export const GET = withRequestContext(getHandler);
+export const POST = withRequestContext(postHandler);

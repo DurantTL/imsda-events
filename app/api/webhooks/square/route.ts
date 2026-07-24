@@ -10,6 +10,7 @@ import {
   processSquareWebhook,
   SquarePaymentOperationError,
 } from "@/modules/payments/square-repository";
+import { withRequestContext } from "@/lib/request-context";
 
 export const runtime = "nodejs";
 
@@ -23,7 +24,7 @@ function json(body: unknown, status: number) {
   return Response.json(body, { status, headers: noStoreHeaders });
 }
 
-export async function POST(request: Request) {
+async function postHandler(request: Request) {
   const configuration = getSquareConfiguration();
   if (!configuration.webhookConfigured) {
     return json({
@@ -84,3 +85,5 @@ export async function POST(request: Request) {
     return json({ error: "SQUARE_WEBHOOK_FAILED" }, 500);
   }
 }
+
+export const POST = withRequestContext(postHandler);

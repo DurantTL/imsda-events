@@ -5,8 +5,9 @@ import { messagingApiError } from "@/modules/communications/api-errors";
 import { updateMessagingSettings } from "@/modules/communications/messaging-repository";
 import { messagingSettingsInputSchema } from "@/modules/communications/schemas";
 import { findActiveMembership } from "@/modules/events/repository";
+import { withRequestContext } from "@/lib/request-context";
 
-export async function PATCH(
+async function patchHandler(
   request: Request,
   context: { params: Promise<{ eventId: string }> },
 ) {
@@ -27,3 +28,5 @@ export async function PATCH(
     return messagingApiError(error, "Updating message settings");
   }
 }
+
+export const PATCH = withRequestContext(patchHandler);

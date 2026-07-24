@@ -6,6 +6,7 @@ import { findActiveMembership } from "@/modules/events/repository";
 import { testSubmissionSchema } from "@/modules/forms/definition";
 import { createTestSubmission, FormOperationError } from "@/modules/forms/repository";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 function apiError(error: unknown) {
   if (error instanceof z.ZodError) return Response.json({ error: "INVALID_TEST_SUBMISSION", message: error.issues[0]?.message, issues: error.issues }, { status: 400 });
@@ -15,7 +16,7 @@ function apiError(error: unknown) {
   return Response.json({ error: "TEST_SUBMISSION_FAILED", message: "The test submission could not be saved." }, { status: 500 });
 }
 
-export async function POST(request: Request, context: { params: Promise<{ eventId: string; formId: string }> }) {
+async function postHandler(request: Request, context: { params: Promise<{ eventId: string; formId: string }> }) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
   try {
@@ -25,3 +26,5 @@ export async function POST(request: Request, context: { params: Promise<{ eventI
     return Response.json({ submission: await createTestSubmission(eventId, formId, access.user.id, input) }, { status: 201 });
   } catch (error) { return apiError(error); }
 }
+
+export const POST = withRequestContext(postHandler);

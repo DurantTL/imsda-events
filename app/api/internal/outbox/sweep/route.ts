@@ -3,6 +3,7 @@ import {
   isAuthorizedSweepRequest,
   sweepOutbox,
 } from "@/modules/communications/outbox-sweep";
+import { withRequestContext } from "@/lib/request-context";
 
 /**
  * The scheduled caller for the message outbox.
@@ -12,7 +13,7 @@ import {
  * cookie-authenticated routes from a browser. Without a configured
  * `OUTBOX_SWEEP_TOKEN` it is always 401 — never open by omission.
  */
-export async function POST(request: Request) {
+async function postHandler(request: Request) {
   if (!isAuthorizedSweepRequest(request)) {
     return Response.json(
       { error: "SWEEP_NOT_AUTHORIZED", message: "A valid sweep credential is required." },
@@ -36,3 +37,5 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export const POST = withRequestContext(postHandler);

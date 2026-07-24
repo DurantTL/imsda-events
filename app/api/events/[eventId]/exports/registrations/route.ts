@@ -4,8 +4,9 @@ import { findActiveMembership } from "@/modules/events/repository";
 import { listRegistrations } from "@/modules/registrations/repository";
 import { toCsv } from "@/modules/reporting/csv";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
-export async function GET(
+async function getHandler(
   _request: Request,
   context: { params: Promise<{ eventId: string }> },
 ) {
@@ -50,3 +51,5 @@ export async function GET(
     return Response.json({ error: "REGISTRATION_EXPORT_FAILED" }, { status: 500 });
   }
 }
+
+export const GET = withRequestContext(getHandler);

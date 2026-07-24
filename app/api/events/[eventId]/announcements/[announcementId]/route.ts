@@ -4,8 +4,9 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { publishAnnouncement } from "@/modules/communications/repository";
 import { findActiveMembership } from "@/modules/events/repository";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
-export async function PATCH(request: Request, context: { params: Promise<{ eventId: string; announcementId: string }> }) {
+async function patchHandler(request: Request, context: { params: Promise<{ eventId: string; announcementId: string }> }) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
   try {
@@ -19,3 +20,5 @@ export async function PATCH(request: Request, context: { params: Promise<{ event
     return Response.json({ error: "ANNOUNCEMENT_PUBLISH_FAILED" }, { status: 500 });
   }
 }
+
+export const PATCH = withRequestContext(patchHandler);

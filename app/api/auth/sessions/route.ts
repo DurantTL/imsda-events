@@ -13,6 +13,7 @@ import {
   SESSION_IDLE_TIMEOUT_SECONDS,
   SESSION_LIFETIME_SECONDS,
 } from "@/modules/access/session-store";
+import { withRequestContext } from "@/lib/request-context";
 
 function apiError(error: unknown, action: string) {
   if (error instanceof AccessDeniedError) {
@@ -26,7 +27,7 @@ function apiError(error: unknown, action: string) {
 }
 
 /** The sessions that can currently sign in as this account. */
-export async function GET() {
+async function getHandler() {
   try {
     const user = requireAuthenticatedUser(await getCurrentSession());
     const token = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
@@ -45,7 +46,7 @@ export async function GET() {
  * only ever called by the password reset path, so a person who suspected a
  * session had been left open somewhere had no way to end it.
  */
-export async function DELETE(request: Request) {
+async function deleteHandler(request: Request) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
 
@@ -58,3 +59,6 @@ export async function DELETE(request: Request) {
     return apiError(error, "Revoking sessions");
   }
 }
+
+export const GET = withRequestContext(getHandler);
+export const DELETE = withRequestContext(deleteHandler);
