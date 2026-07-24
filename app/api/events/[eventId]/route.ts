@@ -10,6 +10,7 @@ import {
   updateEventSettings,
 } from "@/modules/events/repository";
 import { eventSettingsInputSchema } from "@/modules/events/schemas";
+import { logError } from "@/lib/logger";
 
 function eventApiError(error: unknown) {
   if (error instanceof z.ZodError) {
@@ -25,7 +26,7 @@ function eventApiError(error: unknown) {
   if (error instanceof EventOperationError) {
     return Response.json(
       { error: error.code, message: error.message },
-      { status: error.code === "EVENT_NOT_FOUND" ? 404 : 409 },
+      { status: error.code === "EVENT_NOT_FOUND" ? 404 : 409 }
     );
   }
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -34,7 +35,7 @@ function eventApiError(error: unknown) {
       message: "That event web address is already in use. Choose another short address.",
     }, { status: 409 });
   }
-  console.error("Event settings request failed", error);
+  logError("Event settings request failed", error);
   return Response.json({
     error: "EVENT_REQUEST_FAILED",
     message: "The event settings could not be saved.",
@@ -46,7 +47,7 @@ async function authorize(eventId: string) {
     await getCurrentSession(),
     eventId,
     "CONFIGURE_EVENT",
-    findActiveMembership,
+    findActiveMembership
   );
 }
 

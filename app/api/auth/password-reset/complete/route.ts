@@ -2,6 +2,7 @@ import { z } from "zod";
 import { resetPassword } from "@/modules/access/auth-service";
 import { validatePassword } from "@/modules/access/passwords";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
+import { logError } from "@/lib/logger";
 
 const resetSchema = z.object({
   token: z.string().min(32).max(256),
@@ -28,7 +29,7 @@ export async function POST(request: Request) {
     if (error instanceof z.ZodError) {
       return Response.json({ error: "INVALID_PASSWORD", message: error.issues[0]?.message ?? "Choose a valid password." }, { status: 400 });
     }
-    console.error("Password reset failed", error);
+    logError("Password reset failed", error);
     return Response.json({ error: "RESET_FAILED", message: "The password could not be reset." }, { status: 500 });
   }
 }

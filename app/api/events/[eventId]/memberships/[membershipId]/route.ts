@@ -5,6 +5,7 @@ import { MembershipOperationError, updateStaffMembership } from "@/modules/acces
 import { eventRoles } from "@/modules/access/permissions";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { findActiveMembership } from "@/modules/events/repository";
+import { logError } from "@/lib/logger";
 
 const updateSchema = z.object({ role: z.enum(eventRoles), status: z.enum(["ACTIVE", "INACTIVE"]) });
 
@@ -20,7 +21,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ event
     if (error instanceof z.ZodError) return Response.json({ error: "INVALID_MEMBERSHIP", message: error.issues[0]?.message }, { status: 400 });
     if (error instanceof AccessDeniedError) return Response.json({ error: error.code, message: error.message }, { status: error.status });
     if (error instanceof MembershipOperationError) return Response.json({ error: error.code, message: error.message }, { status: error.code === "MEMBERSHIP_NOT_FOUND" ? 404 : 409 });
-    console.error("Staff membership update failed", error);
+    logError("Staff membership update failed", error);
     return Response.json({ error: "MEMBERSHIP_UPDATE_FAILED", message: "The staff assignment could not be updated." }, { status: 500 });
   }
 }

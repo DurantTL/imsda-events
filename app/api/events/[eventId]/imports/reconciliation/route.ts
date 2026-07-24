@@ -2,6 +2,7 @@ import { AccessDeniedError, requirePermission } from "@/modules/access/authoriza
 import { getCurrentSession } from "@/modules/access/current-session";
 import { getImportReconciliation } from "@/modules/imports/repository";
 import { findActiveMembership } from "@/modules/events/repository";
+import { logError } from "@/lib/logger";
 
 export async function GET(_request: Request, context: { params: Promise<{ eventId: string }> }) {
   try {
@@ -10,7 +11,7 @@ export async function GET(_request: Request, context: { params: Promise<{ eventI
     return Response.json(await getImportReconciliation(eventId));
   } catch (error) {
     if (error instanceof AccessDeniedError) return Response.json({ error: error.code, message: error.message }, { status: error.status });
-    console.error("Import reconciliation failed", error);
+    logError("Import reconciliation failed", error);
     return Response.json({ error: "RECONCILIATION_FAILED", message: "Reconciliation totals could not be loaded." }, { status: 500 });
   }
 }

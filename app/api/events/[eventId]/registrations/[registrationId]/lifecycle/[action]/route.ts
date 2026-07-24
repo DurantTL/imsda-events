@@ -12,6 +12,7 @@ import {
   RegistrationLifecycleError,
 } from "@/modules/registrations/lifecycle-repository";
 import { registrationLifecycleReasonSchema } from "@/modules/registrations/schemas";
+import { logError } from "@/lib/logger";
 
 const lifecycleActionSchema = z.enum(["cancel", "reactivate", "waitlist", "promote"]);
 const noStoreHeaders = { "Cache-Control": "no-store" };
@@ -21,10 +22,7 @@ async function processMessagesAfterCommit(messageIds: string[]) {
   try {
     await processQueuedMessageIdsAfterCommit(messageIds);
   } catch (error) {
-    console.error(
-      "Lifecycle message processing failed after the registration commit",
-      error instanceof Error ? error.name : "UnknownError",
-    );
+    logError("Lifecycle message processing failed after the registration commit", error);
   }
 }
 
@@ -36,13 +34,13 @@ function errorResponse(error: unknown) {
         message: "Use a supported lifecycle action and an optional reason of 500 characters or fewer.",
         ...(error instanceof z.ZodError ? { issues: error.issues } : {}),
       },
-      { status: 400, headers: noStoreHeaders },
+      { status: 400, headers: noStoreHeaders }
     );
   }
   if (error instanceof AccessDeniedError) {
     return Response.json(
       { error: error.code, message: error.message },
-      { status: error.status, headers: noStoreHeaders },
+      { status: error.status, headers: noStoreHeaders }
     );
   }
   if (error instanceof RegistrationLifecycleError) {
@@ -51,13 +49,13 @@ function errorResponse(error: unknown) {
       {
         status: error.code === "REGISTRATION_NOT_FOUND" ? 404 : 409,
         headers: noStoreHeaders,
-      },
+      }
     );
   }
-  console.error("Registration lifecycle action failed", error);
+  logError("Registration lifecycle action failed", error);
   return Response.json(
     { error: "REGISTRATION_LIFECYCLE_FAILED" },
-    { status: 500, headers: noStoreHeaders },
+    { status: 500, headers: noStoreHeaders }
   );
 }
 
@@ -79,18 +77,18 @@ export async function POST(
     if (!action.success) {
       return Response.json(
         { error: "LIFECYCLE_ACTION_NOT_FOUND" },
-        { status: 404, headers: noStoreHeaders },
+        { status: 404, headers: noStoreHeaders }
       );
     }
     const access = await requirePermission(
       await getCurrentSession(),
       eventId,
       "MANAGE_REGISTRATION",
-      findActiveMembership,
+      findActiveMembership
     );
     const body = await request.text();
     const { reason } = registrationLifecycleReasonSchema.parse(
-      body.trim() ? JSON.parse(body) : {},
+      body.trim() ? JSON.parse(body) : {}
     );
 
     if (action.data === "cancel") {
@@ -98,7 +96,7 @@ export async function POST(
         eventId,
         registrationId,
         access.user.id,
-        reason,
+        reason
       );
       await processMessagesAfterCommit(result.pendingMessageIds);
       return Response.json({
@@ -111,7 +109,7 @@ export async function POST(
         eventId,
         registrationId,
         access.user.id,
-        reason,
+        reason
       );
       return Response.json({ registration }, { status: 200, headers: noStoreHeaders });
     }

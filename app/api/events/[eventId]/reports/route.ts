@@ -7,6 +7,7 @@ import {
   type OperationalReportKind,
 } from "@/modules/reporting/operational-reports";
 import { getOperationalReport } from "@/modules/reporting/repository";
+import { logError } from "@/lib/logger";
 
 function isOperationalReportKind(value: string | null): value is OperationalReportKind {
   return operationalReportKinds.includes(value as OperationalReportKind);
@@ -25,7 +26,7 @@ export async function GET(
           error: "INVALID_REPORT",
           message: "Choose roster, meals, housing, or seminars.",
         },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -33,7 +34,7 @@ export async function GET(
       await getCurrentSession(),
       eventId,
       "VIEW_REPORTS",
-      findActiveMembership,
+      findActiveMembership
     );
     const report = await getOperationalReport(eventId);
     const safeEventId = eventId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 100) || "event";
@@ -49,13 +50,13 @@ export async function GET(
     if (error instanceof AccessDeniedError) {
       return Response.json(
         { error: error.code, message: error.message },
-        { status: error.status },
+        { status: error.status }
       );
     }
-    console.error("Unable to export operational report", error);
+    logError("Unable to export operational report", error);
     return Response.json(
       { error: "OPERATIONAL_REPORT_EXPORT_FAILED" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }

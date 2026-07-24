@@ -11,6 +11,7 @@ import {
   type RateLimitOutcome,
 } from "@/modules/rate-limit/domain";
 import { checkPublicRegistrationRateLimit } from "@/modules/rate-limit/service";
+import { logError } from "@/lib/logger";
 
 const maximumBodyBytes = 512 * 1024;
 const noStoreHeaders = { "Cache-Control": "no-store" };
@@ -20,12 +21,12 @@ function errorResponse(error: unknown, rateLimit?: RateLimitOutcome) {
   if (error instanceof z.ZodError) {
     response = Response.json(
       { error: "INVALID_REQUEST", message: error.issues[0]?.message ?? "The registration request is invalid.", issues: error.issues },
-      { status: 400, headers: noStoreHeaders },
+      { status: 400, headers: noStoreHeaders }
     );
   } else if (error instanceof SyntaxError) {
     response = Response.json(
       { error: "INVALID_JSON", message: "The registration request is not valid JSON." },
-      { status: 400, headers: noStoreHeaders },
+      { status: 400, headers: noStoreHeaders }
     );
   } else if (error instanceof PublicRegistrationError) {
     let status = 409;
@@ -34,16 +35,13 @@ function errorResponse(error: unknown, rateLimit?: RateLimitOutcome) {
     if (error.code === "INVALID_SUBMISSION") status = 422;
     response = Response.json(
       { error: error.code, message: error.message, issues: error.issues },
-      { status, headers: noStoreHeaders },
+      { status, headers: noStoreHeaders }
     );
   } else {
-    console.error(
-      "Public registration request failed",
-      error instanceof Error ? error.name : "UnknownError",
-    );
+    logError("Public registration request failed", error);
     response = Response.json(
       { error: "PUBLIC_REGISTRATION_FAILED", message: "The registration could not be completed. Nothing was charged or sent." },
-      { status: 500, headers: noStoreHeaders },
+      { status: 500, headers: noStoreHeaders }
     );
   }
   return rateLimit
@@ -61,7 +59,7 @@ export async function GET(
     if (!experience) {
       return Response.json(
         { error: "FORM_NOT_FOUND", message: "That public registration form is not available." },
-        { status: 404, headers: noStoreHeaders },
+        { status: 404, headers: noStoreHeaders }
       );
     }
     return Response.json({ experience }, { status: 200, headers: noStoreHeaders });
@@ -80,7 +78,7 @@ export async function POST(request: Request, context: { params: Promise<{ eventS
     rateLimit = await checkPublicRegistrationRateLimit(
       request,
       eventSlug,
-      formSlug,
+      formSlug
     );
     if (!rateLimit.allowed) {
       return applyRateLimitHeaders(Response.json(
@@ -111,7 +109,7 @@ export async function POST(request: Request, context: { params: Promise<{ eventS
     const confirmation = await submitPublicRegistration(eventSlug, formSlug, input);
     return applyRateLimitHeaders(
       Response.json({ confirmation }, { status: 201, headers: noStoreHeaders }),
-      rateLimit,
+      rateLimit
     );
   } catch (error) {
     return errorResponse(error, rateLimit);

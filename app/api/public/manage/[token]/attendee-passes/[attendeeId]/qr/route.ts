@@ -5,6 +5,7 @@ import {
   type RateLimitOutcome,
 } from "@/modules/rate-limit/domain";
 import { checkPublicManageRateLimit } from "@/modules/rate-limit/service";
+import { logError } from "@/lib/logger";
 
 const privateHeaders = {
   "Cache-Control": "private, no-store, max-age=0",
@@ -76,10 +77,7 @@ export async function GET(request: Request, context: RouteContext) {
     });
     return applyRateLimitHeaders(response, rateLimit);
   } catch (error) {
-    console.error(
-      "Private attendee pass rendering failed.",
-      error instanceof Error ? error.name : "UnknownError",
-    );
+    logError("Private attendee pass rendering failed.", error);
     return privateJson({
       error: "ATTENDEE_PASS_RENDER_FAILED",
       message: "The attendee pass could not be displayed. Try again.",

@@ -12,6 +12,7 @@ import {
   substituteRegistrationAttendee,
 } from "@/modules/registrations/operations-repository";
 import { attendeeSubstitutionInputSchema } from "@/modules/registrations/schemas";
+import { logError } from "@/lib/logger";
 
 const noStoreHeaders = { "Cache-Control": "no-store" };
 
@@ -23,13 +24,13 @@ function errorResponse(error: unknown) {
         message: "Review the replacement attendee details and submit the two-step substitution again.",
         ...(error instanceof z.ZodError ? { issues: error.issues } : {}),
       },
-      { status: 400, headers: noStoreHeaders },
+      { status: 400, headers: noStoreHeaders }
     );
   }
   if (error instanceof AccessDeniedError) {
     return Response.json(
       { error: error.code, message: error.message },
-      { status: error.status, headers: noStoreHeaders },
+      { status: error.status, headers: noStoreHeaders }
     );
   }
   if (error instanceof RegistrationOperationError) {
@@ -41,16 +42,13 @@ function errorResponse(error: unknown) {
           ? 404
           : 409,
         headers: noStoreHeaders,
-      },
+      }
     );
   }
-  console.error(
-    "Attendee substitution failed",
-    error instanceof Error ? error.name : "UnknownError",
-  );
+  logError("Attendee substitution failed", error);
   return Response.json(
     { error: "ATTENDEE_SUBSTITUTION_FAILED" },
-    { status: 500, headers: noStoreHeaders },
+    { status: 500, headers: noStoreHeaders }
   );
 }
 
@@ -79,7 +77,7 @@ export async function POST(
         error: "JSON_CONTENT_TYPE_REQUIRED",
         message: "Send this request as application/json.",
       },
-      { status: 415, headers: noStoreHeaders },
+      { status: 415, headers: noStoreHeaders }
     );
   }
 
@@ -89,7 +87,7 @@ export async function POST(
       await getCurrentSession(),
       eventId,
       "MANAGE_REGISTRATION",
-      findActiveMembership,
+      findActiveMembership
     );
     const input = attendeeSubstitutionInputSchema.parse(await request.json());
     await ensureEventMessagingDefaults(eventId);
@@ -101,15 +99,12 @@ export async function POST(
       {
         id: access.user.id,
         displayName: access.user.displayName,
-      },
+      }
     );
     try {
       await processQueuedMessageIdsAfterCommit(result.pendingMessageIds);
     } catch (error) {
-      console.error(
-        "Substitution notice processing failed after commit",
-        error instanceof Error ? error.name : "UnknownError",
-      );
+      logError("Substitution notice processing failed after commit", error);
     }
     return Response.json(result.response, {
       status: 200,

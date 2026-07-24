@@ -10,6 +10,7 @@ import {
   resolveAttendeePassForEvent,
 } from "@/modules/checkin/attendee-pass-repository";
 import { findActiveMembership } from "@/modules/events/repository";
+import { logError } from "@/lib/logger";
 
 const maximumBodyBytes = 4 * 1_024;
 const privateHeaders = {
@@ -55,7 +56,7 @@ function errorResponse(error: unknown) {
   if (error instanceof AccessDeniedError) {
     return json(
       { error: error.code, message: error.message },
-      { status: error.status },
+      { status: error.status }
     );
   }
   if (error instanceof AttendeePassResolutionError) {
@@ -66,7 +67,7 @@ function errorResponse(error: unknown) {
         : 404;
     return json(
       { error: error.code, message: error.message },
-      { status },
+      { status }
     );
   }
   if (error instanceof z.ZodError) {
@@ -83,10 +84,7 @@ function errorResponse(error: unknown) {
       message: "The attendee pass lookup is not valid JSON.",
     }, { status: 400 });
   }
-  console.error(
-    "Attendee pass lookup failed.",
-    error instanceof Error ? error.name : "UnknownError",
-  );
+  logError("Attendee pass lookup failed.", error);
   return json({
     error: "ATTENDEE_PASS_LOOKUP_FAILED",
     message: "The attendee pass could not be checked. Try again.",
@@ -103,7 +101,7 @@ export async function POST(request: Request, context: RouteContext) {
       await getCurrentSession(),
       eventId,
       "MANAGE_CHECK_IN",
-      findActiveMembership,
+      findActiveMembership
     );
 
     const declaredLength = Number(request.headers.get("content-length") ?? 0);

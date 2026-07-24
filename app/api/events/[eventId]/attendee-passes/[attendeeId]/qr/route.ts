@@ -6,6 +6,7 @@ import {
 import { getCurrentSession } from "@/modules/access/current-session";
 import { createStaffAttendeePass } from "@/modules/checkin/attendee-pass-repository";
 import { findActiveMembership } from "@/modules/events/repository";
+import { logError } from "@/lib/logger";
 
 const privateHeaders = {
   "Cache-Control": "private, no-store, max-age=0",
@@ -36,7 +37,7 @@ export async function GET(_request: Request, context: RouteContext) {
       await getCurrentSession(),
       eventId,
       "MANAGE_CHECK_IN",
-      findActiveMembership,
+      findActiveMembership
     );
 
     const pass = await createStaffAttendeePass(eventId, attendeeId);
@@ -70,13 +71,10 @@ export async function GET(_request: Request, context: RouteContext) {
     if (error instanceof AccessDeniedError) {
       return privateJson(
         { error: error.code, message: error.message },
-        { status: error.status },
+        { status: error.status }
       );
     }
-    console.error(
-      "Staff attendee pass rendering failed.",
-      error instanceof Error ? error.name : "UnknownError",
-    );
+    logError("Staff attendee pass rendering failed.", error);
     return privateJson({
       error: "ATTENDEE_PASS_RENDER_FAILED",
       message: "The attendee pass could not be displayed. Try again.",

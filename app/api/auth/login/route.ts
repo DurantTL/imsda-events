@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authenticateWithPassword } from "@/modules/access/auth-service";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { SESSION_COOKIE_NAME, SESSION_LIFETIME_SECONDS } from "@/modules/access/session-store";
+import { logError } from "@/lib/logger";
 import {
   applyRateLimitHeaders,
   mergeRateLimitOutcomes,
@@ -38,7 +39,7 @@ export async function POST(request: Request) {
     const input = loginSchema.parse(await request.json());
     rateLimit = mergeRateLimitOutcomes(
       rateLimit,
-      await checkLoginAccountRateLimit(request, input.email),
+      await checkLoginAccountRateLimit(request, input.email)
     );
     if (!rateLimit.allowed) {
       return applyRateLimitHeaders(Response.json(
@@ -70,7 +71,7 @@ export async function POST(request: Request) {
       const response = Response.json({ error: "INVALID_LOGIN", message: "Enter a valid email address and password." }, { status: 400 });
       return rateLimit ? applyRateLimitHeaders(response, rateLimit) : response;
     }
-    console.error("Login failed", error instanceof Error ? error.name : "UnknownError");
+    logError("Login failed", error);
     const response = Response.json({ error: "LOGIN_FAILED", message: "Sign-in is temporarily unavailable." }, { status: 500 });
     return rateLimit ? applyRateLimitHeaders(response, rateLimit) : response;
   }

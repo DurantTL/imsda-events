@@ -5,12 +5,13 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { findActiveMembership } from "@/modules/events/repository";
 import { createFormSchema } from "@/modules/forms/definition";
 import { createRegistrationForm, FormOperationError, listFormTemplates, listRegistrationForms } from "@/modules/forms/repository";
+import { logError } from "@/lib/logger";
 
 function apiError(error: unknown) {
   if (error instanceof z.ZodError) return Response.json({ error: "INVALID_FORM", message: error.issues[0]?.message, issues: error.issues }, { status: 400 });
   if (error instanceof AccessDeniedError) return Response.json({ error: error.code, message: error.message }, { status: error.status });
   if (error instanceof FormOperationError) return Response.json({ error: error.code, message: error.message }, { status: error.code.endsWith("NOT_FOUND") ? 404 : 409 });
-  console.error("Registration form request failed", error);
+  logError("Registration form request failed", error);
   return Response.json({ error: "FORM_REQUEST_FAILED", message: "The registration form request could not be completed." }, { status: 500 });
 }
 

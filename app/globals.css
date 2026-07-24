@@ -1434,6 +1434,7 @@ select:focus-visible {
 .auth-success p { margin: 0; font-size: 0.68rem; line-height: 1.55; }
 .auth-success .primary-button { margin-top: 4px; text-decoration: none; }
 .auth-success.warning { border-color: #eadca9; background: var(--imsda-gold-soft); color: #69501a; }
+.copy-field { width: 100%; border: 1px solid #b8d7ca; border-radius: 9px; background: #fff; color: var(--ink); padding: 8px 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.66rem; }
 .field-help { margin: -9px 0 0; color: var(--muted); font-size: 0.63rem; }
 .auth-back-link { justify-self: center; margin-top: 3px; }
 .no-access-card { text-align: center; }

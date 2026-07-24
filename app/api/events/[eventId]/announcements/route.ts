@@ -4,6 +4,7 @@ import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { createAnnouncement, listAnnouncements } from "@/modules/communications/repository";
 import { findActiveMembership } from "@/modules/events/repository";
+import { logError } from "@/lib/logger";
 
 const announcementSchema = z.object({
   title: z.string().trim().min(3).max(120),
@@ -14,7 +15,7 @@ const announcementSchema = z.object({
 function apiError(error: unknown) {
   if (error instanceof z.ZodError) return Response.json({ error: "INVALID_ANNOUNCEMENT", issues: error.issues }, { status: 400 });
   if (error instanceof AccessDeniedError) return Response.json({ error: error.code, message: error.message }, { status: error.status });
-  console.error("Announcement request failed", error);
+  logError("Announcement request failed", error);
   return Response.json({ error: "ANNOUNCEMENT_REQUEST_FAILED" }, { status: 500 });
 }
 

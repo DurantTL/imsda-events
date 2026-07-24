@@ -9,6 +9,7 @@ import {
   RegistrationAttendeeOperationError,
 } from "@/modules/registrations/repository";
 import { attendeeInputSchema } from "@/modules/registrations/schemas";
+import { logError } from "@/lib/logger";
 
 export async function POST(
   request: Request,
@@ -22,7 +23,7 @@ export async function POST(
       await getCurrentSession(),
       eventId,
       "MANAGE_REGISTRATION",
-      findActiveMembership,
+      findActiveMembership
     );
     const input = attendeeInputSchema.parse(await request.json());
     const registration = await addRegistrationAttendee(eventId, registrationId, input, access.user.id);
@@ -37,13 +38,13 @@ export async function POST(
     if (error instanceof RegistrationAttendeeOperationError) {
       return Response.json(
         { error: error.code, message: error.message, details: error.details },
-        { status: error.code === "REGISTRATION_NOT_FOUND" ? 404 : 409 },
+        { status: error.code === "REGISTRATION_NOT_FOUND" ? 404 : 409 }
       );
     }
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       return Response.json({ error: "ATTENDEE_ALREADY_REGISTERED", message: "That person is already attached to this registration." }, { status: 409 });
     }
-    console.error("Unable to add registration attendee", error);
+    logError("Unable to add registration attendee", error);
     return Response.json({ error: "ATTENDEE_CREATE_FAILED" }, { status: 500 });
   }
 }

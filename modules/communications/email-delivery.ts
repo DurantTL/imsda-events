@@ -16,6 +16,7 @@ import {
   providerTransitionUpdate,
 } from "@/modules/communications/provider-events";
 import { REGISTRATION_MANAGE_LINK_SENTINEL } from "@/modules/communications/manage-link";
+import { logError } from "@/lib/logger";
 import {
   createStableRegistrationAccessToken,
   revokeRegistrationAccessToken,
@@ -78,7 +79,7 @@ export async function prepareEmailBodyForDelivery(input: {
   }
   if (!input.registrationId) {
     throw new Error(
-      "A registration message cannot insert a private link without a registration.",
+      "A registration message cannot insert a private link without a registration."
     );
   }
 
@@ -163,7 +164,7 @@ function resolveConfiguration(dependencies: ExternalEmailDeliveryDependencies) {
     if (error instanceof EmailProviderConfigurationError) {
       throw new ExternalEmailDeliveryError(
         "EXTERNAL_EMAIL_NOT_CONFIGURED",
-        error.message,
+        error.message
       );
     }
     throw error;
@@ -465,13 +466,13 @@ export async function processExternalEmailQueue(
   if (settings?.deliveryMode !== "EXTERNAL_EMAIL") {
     throw new ExternalEmailDeliveryError(
       "EXTERNAL_EMAIL_NOT_ENABLED",
-      "Real email delivery is not enabled for this event.",
+      "Real email delivery is not enabled for this event."
     );
   }
   if (!settings.senderEmail?.trim()) {
     throw new ExternalEmailDeliveryError(
       "EXTERNAL_EMAIL_NOT_CONFIGURED",
-      "Add a verified sender email before sending real email.",
+      "Add a verified sender email before sending real email."
     );
   }
   const configuration = resolveConfiguration(dependencies);
@@ -482,14 +483,14 @@ export async function processExternalEmailQueue(
     : undefined;
   const limit = Math.max(
     1,
-    Math.min(EMAIL_DELIVERY_BATCH_SIZE, options.limit ?? EMAIL_DELIVERY_BATCH_SIZE),
+    Math.min(EMAIL_DELIVERY_BATCH_SIZE, options.limit ?? EMAIL_DELIVERY_BATCH_SIZE)
   );
 
   const recoveredIds = await recoverStaleClaims(
     prisma,
     eventId,
     uniqueMessageIds,
-    now(),
+    now()
   );
   const result: ExternalEmailQueueResult = {
     recoveredIds,
@@ -502,7 +503,7 @@ export async function processExternalEmailQueue(
       prisma,
       eventId,
       uniqueMessageIds,
-      now(),
+      now()
     );
     if (!message) break;
     let preparedBody: PreparedEmailBody | null = null;
@@ -539,17 +540,14 @@ export async function processExternalEmailQueue(
         try {
           await preparedBody.revokeOnDefinitiveFailure();
         } catch (revokeError) {
-          console.error(
-            "Unable to revoke an unused private registration link after a definitive email failure.",
-            revokeError instanceof Error ? revokeError.name : "UnknownError",
-          );
+          logError("Unable to revoke an unused private registration link after a definitive email failure.", revokeError);
         }
       }
       const failure = await finalizeFailedAttempt(
         prisma,
         message,
         normalized,
-        now(),
+        now()
       );
       if (failure.rescheduled) result.rescheduledIds.push(message.id);
       else if (failure.finalized) result.failedIds.push(message.id);

@@ -57,6 +57,13 @@ IMSDA Events is the new multi-event operations platform for the Iowa-Missouri Co
 
    The same password is seeded for the `registration@`, `finance@`, `communications@`, `checkin@`, `readonly@`, and `system@imsda-events.test` role-test accounts. All are fictitious and local-only.
 
+   **This password is for local work only and can never reach a real
+   deployment.** `npm run db:seed` refuses to run with `NODE_ENV=production` or
+   against any non-loopback database host, and the sign-in page shows and
+   prefills these credentials only outside production. A real deployment
+   bootstraps its first administrator with `npm run admin:create` — see
+   [`docs/DEPLOY-DOCKER.md`](docs/DEPLOY-DOCKER.md).
+
    The public Women’s Retreat form includes the fictitious promo code
    `LOCAL10` after `npm run db:seed` or `npm run db:refresh-demo`. It applies
    10% off with a $50 maximum, $100 minimum subtotal, and at least 25 local
@@ -241,6 +248,8 @@ The format template is available at `/fixtures/wr26-import-template.csv`; a whol
 
 The detailed built-versus-remaining matrix and the behavior comparison with `DurantTL/WR26-IMSDA` are in [the build status and WR26 gap audit](docs/BUILD-STATUS-AND-WR26-GAP-AUDIT.md).
 
-Before this workspace holds real attendee, medical, or payment data, read [the production readiness review](docs/PRODUCTION-READINESS-REVIEW.md). It reviews the build plan and the shipped features against what a real deployment requires, and identifies the blocking gaps — chiefly that there is no supported path from a fresh deploy to a real administrator account, and that the seeded shared demo password documented above is currently the only usable production login.
+Before this workspace holds real attendee, medical, or payment data, read [the production readiness review](docs/PRODUCTION-READINESS-REVIEW.md). It reviews the build plan and the shipped features against what a real deployment requires, and sequences the remaining work into ten items.
+
+[The production readiness progress log](docs/PRODUCTION-READINESS-PROGRESS.md) tracks that sequence: what has been implemented, what is deliberately deferred, and why. The review's three blocking findings — no path to a real administrator account, a single bad environment variable silently 403ing every write, and no backups — are addressed; MFA, medical-data encryption, and a staging environment are not yet.
 
 Signed attendee QR passes, camera/manual staff resolution, the recoverable offline check-in conflict queue, reviewed balance reminders, corrected-address confirmation copies, bounded promo-code administration, whole-registration transfer, and in-place attendee substitution are complete. Printable passes and group rosters are the remaining event-day release gate. Scheduled/targeted announcements remain later work. Production Square activation remains gated behind approved credentials, an exact public webhook URL, operational refund testing, and the explicit production unlock.

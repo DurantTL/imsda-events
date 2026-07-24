@@ -5,6 +5,7 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { findActiveMembership } from "@/modules/events/repository";
 import { PaymentOperationError, recordManualPayment } from "@/modules/payments/repository";
 import { manualPaymentSchema } from "@/modules/payments/schemas";
+import { logError } from "@/lib/logger";
 
 export async function POST(
   request: Request,
@@ -29,7 +30,7 @@ export async function POST(
           : 404;
       return Response.json({ error: error.code, message: error.message }, { status });
     }
-    console.error("Unable to record manual payment", error);
+    logError("Unable to record manual payment", error);
     return Response.json({ error: "PAYMENT_CREATE_FAILED" }, { status: 500 });
   }
 }

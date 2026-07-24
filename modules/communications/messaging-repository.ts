@@ -766,7 +766,7 @@ export async function captureMessageIdsLocally(messageIds: string[]) {
   return capturedIds;
 }
 
-export async function processPendingMessagesLocally(eventId: string, actorUserId: string) {
+export async function processPendingMessagesLocally(eventId: string, actorUserId?: string) {
   const prisma = getPrisma();
   const settings = await prisma.eventMessageSettings.findUnique({ where: { eventId } });
   if (settings?.deliveryMode !== "LOCAL_CAPTURE") {
@@ -815,9 +815,13 @@ function asMessagingDeliveryError(error: unknown): never {
   throw error;
 }
 
+/**
+ * `actorUserId` is omitted by the unattended sweep: the audit entry then
+ * records no actor rather than attributing the work to a fabricated account.
+ */
 export async function processPendingMessages(
   eventId: string,
-  actorUserId: string,
+  actorUserId?: string,
   dependencies?: ExternalEmailDeliveryDependencies,
 ) {
   await ensureEventMessagingDefaults(eventId);

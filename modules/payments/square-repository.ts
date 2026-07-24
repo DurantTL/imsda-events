@@ -36,6 +36,7 @@ import {
 import { processQueuedMessageIdsAfterCommit } from "@/modules/communications/messaging-repository";
 import { enqueuePaymentReceiptMessage } from "@/modules/communications/transactional-messages";
 import { authorizeRegistrationAccessToken } from "@/modules/public-access/repository";
+import { logError } from "@/lib/logger";
 
 type PaymentClient = Prisma.TransactionClient | PrismaClient;
 
@@ -203,7 +204,7 @@ function checkoutFromRegistration(
           === latestPaymentChoice.baseSubtotalCents
             + latestPaymentChoice.processingFeeCents
       )
-    ),
+    )
   );
   const paymentChoice: PromotedWaitlistPaymentChoiceView | null =
     promotedWaitlist && promotedQuote
@@ -330,12 +331,12 @@ export async function getPublicSquareCheckout(
   if (!access) return null;
   const registration = await loadCheckoutRegistration(
     client,
-    access.registrationId,
+    access.registrationId
   );
   if (!registration || registration.eventId !== access.eventId) return null;
   return checkoutFromRegistration(
     registration,
-    options.configuration ?? getSquareConfiguration(),
+    options.configuration ?? getSquareConfiguration()
   );
 }
 
@@ -343,7 +344,7 @@ function operationErrorForCheckout(checkout: SquareCheckoutView): never {
   if (checkout.state === "NOT_CONFIGURED") {
     throw new SquarePaymentOperationError(
       "SQUARE_NOT_CONFIGURED",
-      checkout.message,
+      checkout.message
     );
   }
   if (
@@ -353,18 +354,18 @@ function operationErrorForCheckout(checkout: SquareCheckoutView): never {
   ) {
     throw new SquarePaymentOperationError(
       "CARD_PAYMENT_NOT_SELECTED",
-      checkout.message,
+      checkout.message
     );
   }
   if (checkout.state === "NO_BALANCE") {
     throw new SquarePaymentOperationError(
       "PAYMENT_ALREADY_COMPLETE",
-      checkout.message,
+      checkout.message
     );
   }
   throw new SquarePaymentOperationError(
     "PAYMENT_NOT_ELIGIBLE",
-    checkout.message,
+    checkout.message
   );
 }
 
@@ -389,7 +390,7 @@ async function runSerializable<T>(
   throw new SquarePaymentOperationError(
     "PAYMENT_OPERATION_CONFLICT",
     "Another payment changed this registration at the same time. Refresh and try again.",
-    true,
+    true
   );
 }
 
@@ -432,7 +433,7 @@ async function preparePaymentAttempt(
   if (!access) {
     throw new SquarePaymentOperationError(
       "REGISTRATION_ACCESS_UNAVAILABLE",
-      "This private registration link is invalid or no longer active.",
+      "This private registration link is invalid or no longer active."
     );
   }
 
@@ -448,14 +449,14 @@ async function preparePaymentAttempt(
     ) {
       throw new SquarePaymentOperationError(
         "PAYMENT_IDEMPOTENCY_CONFLICT",
-        "That payment request key belongs to a different operation.",
+        "That payment request key belongs to a different operation."
       );
     }
     if (existing.status === "FAILED" || existing.status === "CANCELED") {
       throw new SquarePaymentOperationError(
         "PAYMENT_ATTEMPT_FAILED",
         existing.failureMessage
-          ?? "That payment attempt has finished. Start a new payment attempt.",
+          ?? "That payment attempt has finished. Start a new payment attempt."
       );
     }
     if (existing.status !== "PROCESSING") {
@@ -474,12 +475,12 @@ async function preparePaymentAttempt(
 
   const registration = await loadCheckoutRegistration(
     tx,
-    access.registrationId,
+    access.registrationId
   );
   if (!registration || registration.eventId !== access.eventId) {
     throw new SquarePaymentOperationError(
       "REGISTRATION_ACCESS_UNAVAILABLE",
-      "This private registration link is invalid or no longer active.",
+      "This private registration link is invalid or no longer active."
     );
   }
   const checkout = checkoutFromRegistration(registration, configuration);
@@ -494,13 +495,13 @@ async function preparePaymentAttempt(
       "PAYMENT_IN_PROGRESS",
       "A card payment is already being confirmed for this registration. Wait for that result before trying again.",
       true,
-      { attemptStatus: activeAttempt.status },
+      { attemptStatus: activeAttempt.status }
     );
   }
 
   const providerKey = providerIdempotencyKey(
     registration.id,
-    input.idempotencyKey,
+    input.idempotencyKey
   );
   const attempt = await tx.paymentAttempt.create({
     data: {
@@ -564,7 +565,7 @@ async function applyProviderPayment(
   const state = internalPaymentState(provider.status);
   const stale = Boolean(
     attempt.providerStatusAt
-    && attempt.providerStatusAt.getTime() > providerStatusAt.getTime(),
+    && attempt.providerStatusAt.getTime() > providerStatusAt.getTime()
   );
   const terminalRegression = attempt.status === "SUCCEEDED"
     && state.attemptStatus !== "SUCCEEDED";
@@ -671,10 +672,7 @@ async function processPaymentMessagesAfterCommit(messageIds: string[]) {
   try {
     await processQueuedMessageIdsAfterCommit(messageIds);
   } catch (error) {
-    console.error(
-      "Payment receipt processing failed after payment commit",
-      error instanceof Error ? error.name : "UnknownError",
-    );
+    logError("Payment receipt processing failed after payment commit", error);
   }
 }
 
@@ -692,7 +690,7 @@ async function recordAdapterFailure(
       throw new SquarePaymentOperationError(
         "PAYMENT_OPERATION_CONFLICT",
         "The durable payment attempt could not be reloaded.",
-        true,
+        true
       );
     }
     if (attempt.status !== "PROCESSING") return attempt;
@@ -755,7 +753,7 @@ async function markAmountMismatchForReview(
       throw new SquarePaymentOperationError(
         "PAYMENT_OPERATION_CONFLICT",
         "The durable payment attempt could not be reloaded.",
-        true,
+        true
       );
     }
     const updated = await tx.paymentAttempt.update({
@@ -807,7 +805,7 @@ export async function createPublicSquarePayment(
   if (!configuration.paymentConfigured) {
     throw new SquarePaymentOperationError(
       "SQUARE_NOT_CONFIGURED",
-      "Online card payment is not configured for this site.",
+      "Online card payment is not configured for this site."
     );
   }
   const prepared = await runSerializable((tx) => (
@@ -829,7 +827,7 @@ export async function createPublicSquarePayment(
         locationId: configuration.locationId,
         referenceId: prepared.attempt.id,
         note: `IMSDA registration ${prepared.attempt.registration.confirmationCode}`,
-      },
+      }
     );
   } catch (error) {
     if (!(error instanceof SquareAdapterError)) throw error;
@@ -838,7 +836,7 @@ export async function createPublicSquarePayment(
     throw new SquarePaymentOperationError(
       "PAYMENT_RESULT_UNCERTAIN",
       error.message,
-      true,
+      true
     );
   }
 
@@ -849,7 +847,7 @@ export async function createPublicSquarePayment(
     await markAmountMismatchForReview(prepared.attempt.id, provider, now);
     throw new SquarePaymentOperationError(
       "PAYMENT_REQUIRES_REVIEW",
-      "Square returned a result that does not match the registration balance. No additional payment should be attempted until the event team reviews it.",
+      "Square returned a result that does not match the registration balance. No additional payment should be attempted until the event team reviews it."
     );
   }
 
@@ -862,7 +860,7 @@ export async function createPublicSquarePayment(
       throw new SquarePaymentOperationError(
         "PAYMENT_OPERATION_CONFLICT",
         "The durable payment attempt could not be reloaded.",
-        true,
+        true
       );
     }
     return applyProviderPayment(
@@ -871,7 +869,7 @@ export async function createPublicSquarePayment(
       provider,
       providerTimestamp(provider.updatedAt ?? provider.createdAt, now),
       now,
-      "CREATE_PAYMENT",
+      "CREATE_PAYMENT"
     );
   });
   await processPaymentMessagesAfterCommit(applied.pendingMessageIds);
@@ -879,7 +877,7 @@ export async function createPublicSquarePayment(
   if (result.status === "FAILED" || result.status === "CANCELED") {
     throw new SquarePaymentOperationError(
       "PAYMENT_DECLINED",
-      result.message,
+      result.message
     );
   }
   return result;
@@ -927,7 +925,7 @@ async function applyPaymentWebhook(
       payloadHash,
       receivedAt,
       "The Square location does not match this application.",
-      payment.id,
+      payment.id
     );
   }
   const attempt = await tx.paymentAttempt.findFirst({
@@ -948,7 +946,7 @@ async function applyPaymentWebhook(
       payloadHash,
       receivedAt,
       "No IMSDA Square payment attempt matches this provider payment.",
-      payment.id,
+      payment.id
     );
   }
   if (
@@ -1006,7 +1004,7 @@ async function applyPaymentWebhook(
       event.occurredAt,
     ),
     receivedAt,
-    "WEBHOOK",
+    "WEBHOOK"
   );
   await tx.squareWebhookEvent.create({
     data: {
@@ -1066,7 +1064,7 @@ async function applyRefundWebhook(
       payloadHash,
       receivedAt,
       "The Square location does not match this application.",
-      providerRefund.id,
+      providerRefund.id
     );
   }
   const payment = await tx.payment.findFirst({
@@ -1094,7 +1092,7 @@ async function applyRefundWebhook(
       payloadHash,
       receivedAt,
       "No IMSDA Square payment matches this provider refund.",
-      providerRefund.id,
+      providerRefund.id
     );
   }
   const existing = await tx.refund.findFirst({
@@ -1121,7 +1119,7 @@ async function applyRefundWebhook(
       payloadHash,
       receivedAt,
       "The provider refund amount or currency was invalid for this payment.",
-      providerRefund.id,
+      providerRefund.id
     );
   }
 
@@ -1202,7 +1200,7 @@ export async function processSquareWebhook(
   if (!configuration.webhookConfigured) {
     throw new SquarePaymentOperationError(
       "SQUARE_NOT_CONFIGURED",
-      "Square webhook verification is not configured.",
+      "Square webhook verification is not configured."
     );
   }
   const result = await runSerializable(async (tx) => {
@@ -1223,7 +1221,7 @@ export async function processSquareWebhook(
         payloadHash,
         receivedAt,
         "The webhook event type is not used by IMSDA Events.",
-        null,
+        null
       );
     }
     return event.kind === "PAYMENT"
@@ -1239,7 +1237,7 @@ export async function processSquareWebhook(
           event,
           payloadHash,
           configuration,
-          receivedAt,
+          receivedAt
         );
   });
   const pendingMessageIds = "pendingMessageIds" in result

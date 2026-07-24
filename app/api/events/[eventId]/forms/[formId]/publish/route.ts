@@ -3,6 +3,7 @@ import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { findActiveMembership } from "@/modules/events/repository";
 import { FormOperationError, publishRegistrationForm } from "@/modules/forms/repository";
+import { logError } from "@/lib/logger";
 
 function apiError(error: unknown) {
   if (error instanceof AccessDeniedError) return Response.json({ error: error.code, message: error.message }, { status: error.status });
@@ -10,7 +11,7 @@ function apiError(error: unknown) {
     const status = error.code === "FORM_NOT_FOUND" ? 404 : error.code === "TEST_REQUIRED" ? 422 : 409;
     return Response.json({ error: error.code, message: error.message }, { status });
   }
-  console.error("Registration form publish failed", error);
+  logError("Registration form publish failed", error);
   return Response.json({ error: "FORM_PUBLISH_FAILED", message: "The registration form could not be published." }, { status: 500 });
 }
 

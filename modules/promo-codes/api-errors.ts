@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { AccessDeniedError } from "@/modules/access/authorization";
 import { PromoCodeOperationError } from "@/modules/promo-codes/repository";
+import { logError } from "@/lib/logger";
 
 export function promoCodeApiError(error: unknown, operation: string) {
   if (error instanceof AccessDeniedError) {
     return Response.json(
       { error: error.code, message: error.message },
-      { status: error.status },
+      { status: error.status }
     );
   }
   if (error instanceof z.ZodError) {
@@ -16,7 +17,7 @@ export function promoCodeApiError(error: unknown, operation: string) {
         message: error.issues[0]?.message ?? "Review the promo-code details.",
         issues: error.issues,
       },
-      { status: 400 },
+      { status: 400 }
     );
   }
   if (error instanceof PromoCodeOperationError) {
@@ -26,19 +27,16 @@ export function promoCodeApiError(error: unknown, operation: string) {
       : 409;
     return Response.json(
       { error: error.code, message: error.message },
-      { status },
+      { status }
     );
   }
-  console.error(
-    `${operation} failed`,
-    error instanceof Error ? error.name : "UnknownError",
-  );
+  logError(`${operation} failed`, error);
   return Response.json(
     {
       error: "PROMO_CODE_OPERATION_FAILED",
       message: `${operation} could not be completed.`,
     },
-    { status: 500 },
+    { status: 500 }
   );
 }
 

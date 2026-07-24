@@ -5,12 +5,13 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { findActiveMembership } from "@/modules/events/repository";
 import { testSubmissionSchema } from "@/modules/forms/definition";
 import { createTestSubmission, FormOperationError } from "@/modules/forms/repository";
+import { logError } from "@/lib/logger";
 
 function apiError(error: unknown) {
   if (error instanceof z.ZodError) return Response.json({ error: "INVALID_TEST_SUBMISSION", message: error.issues[0]?.message, issues: error.issues }, { status: 400 });
   if (error instanceof AccessDeniedError) return Response.json({ error: error.code, message: error.message }, { status: error.status });
   if (error instanceof FormOperationError) return Response.json({ error: error.code, message: error.message }, { status: 404 });
-  console.error("Registration form test submission failed", error);
+  logError("Registration form test submission failed", error);
   return Response.json({ error: "TEST_SUBMISSION_FAILED", message: "The test submission could not be saved." }, { status: 500 });
 }
 
