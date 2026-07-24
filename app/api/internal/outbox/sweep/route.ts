@@ -1,3 +1,4 @@
+import { logError } from "@/lib/logger";
 import {
   isAuthorizedSweepRequest,
   sweepOutbox,
@@ -15,7 +16,7 @@ export async function POST(request: Request) {
   if (!isAuthorizedSweepRequest(request)) {
     return Response.json(
       { error: "SWEEP_NOT_AUTHORIZED", message: "A valid sweep credential is required." },
-      { status: 401, headers: { "WWW-Authenticate": "Bearer" } },
+      { status: 401, headers: { "WWW-Authenticate": "Bearer" } }
     );
   }
 
@@ -27,13 +28,10 @@ export async function POST(request: Request) {
       queueBefore: result.snapshotBefore,
     });
   } catch (error) {
-    console.error(
-      "Outbox sweep failed",
-      error instanceof Error ? error.name : "UnknownError",
-    );
+    logError("Outbox sweep failed", error);
     return Response.json(
       { error: "SWEEP_FAILED", message: "The outbox sweep could not complete." },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }

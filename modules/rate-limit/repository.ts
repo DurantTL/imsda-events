@@ -3,6 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { logError } from "@/lib/logger";
 import type {
   RateLimitDecision,
   RateLimitOutcome,
@@ -58,13 +59,13 @@ export async function consumeRateLimitRule(
   const client = options.client ?? getPrisma();
   const windowMilliseconds = rule.windowSeconds * 1_000;
   const windowStartedAt = new Date(
-    Math.floor(now.getTime() / windowMilliseconds) * windowMilliseconds,
+    Math.floor(now.getTime() / windowMilliseconds) * windowMilliseconds
   );
   const windowEndsAt = new Date(
-    windowStartedAt.getTime() + windowMilliseconds,
+    windowStartedAt.getTime() + windowMilliseconds
   );
   const expiresAt = new Date(
-    windowEndsAt.getTime() + cleanupRetentionSeconds * 1_000,
+    windowEndsAt.getTime() + cleanupRetentionSeconds * 1_000
   );
 
   // PostgreSQL performs the increment while holding the unique-key conflict
@@ -128,7 +129,7 @@ export async function enforceRateLimitRules(
   const client = options.client ?? getPrisma();
   await deleteExpiredRateLimitBucketsIfDue(now, client);
   const decisions = await Promise.all(
-    rules.map((rule) => consumeRateLimitRule(rule, { now, client })),
+    rules.map((rule) => consumeRateLimitRule(rule, { now, client }))
   );
   return {
     allowed: decisions.every((decision) => decision.allowed),
@@ -156,7 +157,7 @@ async function deleteExpiredRateLimitBucketsIfDue(
   // application instance do not all start the same indexed delete.
   nextCleanupAtByClient.set(
     clientKey,
-    now.getTime() + cleanupIntervalMilliseconds,
+    now.getTime() + cleanupIntervalMilliseconds
   );
   try {
     await deleteExpiredRateLimitBuckets(now, client);
@@ -165,11 +166,8 @@ async function deleteExpiredRateLimitBucketsIfDue(
     // an outage. Retry soon and expose no request identifier in the log.
     nextCleanupAtByClient.set(
       clientKey,
-      now.getTime() + cleanupRetryMilliseconds,
+      now.getTime() + cleanupRetryMilliseconds
     );
-    console.error(
-      "Expired rate-limit bucket cleanup failed.",
-      error instanceof Error ? error.name : "UnknownError",
-    );
+    logError("Expired rate-limit bucket cleanup failed.", error);
   }
 }

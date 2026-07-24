@@ -2,6 +2,7 @@ import { AccessDeniedError, requirePermission } from "@/modules/access/authoriza
 import { getCurrentSession } from "@/modules/access/current-session";
 import { getImportRun } from "@/modules/imports/repository";
 import { findActiveMembership } from "@/modules/events/repository";
+import { logError } from "@/lib/logger";
 
 export async function GET(_request: Request, context: { params: Promise<{ eventId: string; importRunId: string }> }) {
   try {
@@ -11,7 +12,7 @@ export async function GET(_request: Request, context: { params: Promise<{ eventI
     return run ? Response.json({ run }) : Response.json({ error: "IMPORT_NOT_FOUND", message: "That import run was not found." }, { status: 404 });
   } catch (error) {
     if (error instanceof AccessDeniedError) return Response.json({ error: error.code, message: error.message }, { status: error.status });
-    console.error("Import detail request failed", error);
+    logError("Import detail request failed", error);
     return Response.json({ error: "IMPORT_DETAIL_FAILED", message: "The import run could not be loaded." }, { status: 500 });
   }
 }

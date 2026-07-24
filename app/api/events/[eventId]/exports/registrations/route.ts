@@ -3,6 +3,7 @@ import { getCurrentSession } from "@/modules/access/current-session";
 import { findActiveMembership } from "@/modules/events/repository";
 import { listRegistrations } from "@/modules/registrations/repository";
 import { toCsv } from "@/modules/reporting/csv";
+import { logError } from "@/lib/logger";
 
 export async function GET(
   _request: Request,
@@ -45,7 +46,7 @@ export async function GET(
     if (error instanceof AccessDeniedError) {
       return Response.json({ error: error.code, message: error.message }, { status: error.status });
     }
-    console.error("Unable to export registrations", error);
+    logError("Unable to export registrations", error);
     return Response.json({ error: "REGISTRATION_EXPORT_FAILED" }, { status: 500 });
   }
 }

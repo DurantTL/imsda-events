@@ -5,6 +5,7 @@ import {
 } from "@/modules/access/authorization";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
+import { logError } from "@/lib/logger";
 import {
   listUserSessions,
   revokeOtherUserSessions,
@@ -17,10 +18,10 @@ function apiError(error: unknown, action: string) {
   if (error instanceof AccessDeniedError) {
     return Response.json({ error: error.code, message: error.message }, { status: error.status });
   }
-  console.error(`${action} failed`, error instanceof Error ? error.name : "UnknownError");
+  logError(`${action} failed`, error);
   return Response.json(
     { error: "SESSION_REQUEST_FAILED", message: "Your signed-in devices could not be loaded." },
-    { status: 500 },
+    { status: 500 }
   );
 }
 

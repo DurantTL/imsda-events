@@ -6,6 +6,7 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { findActiveMembership } from "@/modules/events/repository";
 import { getRegistrationById, updateRegistration } from "@/modules/registrations/repository";
 import { registrationUpdateSchema } from "@/modules/registrations/schemas";
+import { logError } from "@/lib/logger";
 
 function apiError(error: unknown) {
   if (error instanceof z.ZodError) return Response.json({ error: "INVALID_REGISTRATION", issues: error.issues }, { status: 400 });
@@ -13,7 +14,7 @@ function apiError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
     return Response.json({ error: "EMAIL_ALREADY_IN_USE", message: "That email is already assigned to another person." }, { status: 409 });
   }
-  console.error("Registration detail request failed", error);
+  logError("Registration detail request failed", error);
   return Response.json({ error: "REGISTRATION_DETAIL_FAILED" }, { status: 500 });
 }
 

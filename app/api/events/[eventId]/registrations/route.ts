@@ -6,6 +6,7 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { findActiveMembership } from "@/modules/events/repository";
 import { createRegistration, listRegistrations } from "@/modules/registrations/repository";
 import { registrationInputSchema } from "@/modules/registrations/schemas";
+import { logError } from "@/lib/logger";
 
 async function authorize(eventId: string, permission: "VIEW_SENSITIVE_DATA" | "MANAGE_REGISTRATION") {
   return requirePermission(await getCurrentSession(), eventId, permission, findActiveMembership);
@@ -21,7 +22,7 @@ function apiError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
     return Response.json({ error: "EMAIL_ALREADY_IN_USE", message: "That email is already assigned to another person." }, { status: 409 });
   }
-  console.error("Registration request failed", error);
+  logError("Registration request failed", error);
   return Response.json({ error: "REGISTRATION_REQUEST_FAILED" }, { status: 500 });
 }
 

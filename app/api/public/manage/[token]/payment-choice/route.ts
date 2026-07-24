@@ -10,6 +10,7 @@ import {
   type RateLimitOutcome,
 } from "@/modules/rate-limit/domain";
 import { checkPublicManageRateLimit } from "@/modules/rate-limit/service";
+import { logError } from "@/lib/logger";
 
 const maximumBodyBytes = 8 * 1_024;
 const privateHeaders = {
@@ -88,10 +89,7 @@ function errorResponse(
   if (error instanceof PaymentChoiceOperationError) {
     return operationErrorResponse(error, rateLimit);
   }
-  console.error(
-    "Promoted waitlist payment-choice request failed.",
-    error instanceof Error ? error.name : "UnknownError",
-  );
+  logError("Promoted waitlist payment-choice request failed.", error);
   return json({
     error: "PAYMENT_CHOICE_FAILED",
     message: "The payment choice could not be saved. Your registration is still saved.",
@@ -109,7 +107,7 @@ export async function POST(request: Request, context: RouteContext) {
     rateLimit = await checkPublicManageRateLimit(
       request,
       token,
-      "update",
+      "update"
     );
     if (!rateLimit.allowed) {
       return json({
@@ -119,7 +117,7 @@ export async function POST(request: Request, context: RouteContext) {
     }
 
     const declaredLength = Number(
-      request.headers.get("content-length") ?? 0,
+      request.headers.get("content-length") ?? 0
     );
     if (declaredLength > maximumBodyBytes) {
       return json({
@@ -138,7 +136,7 @@ export async function POST(request: Request, context: RouteContext) {
     const input = paymentChoiceInputSchema.parse(JSON.parse(rawBody));
     const paymentChoice = await choosePublicPromotedWaitlistPayment(
       token,
-      input,
+      input
     );
     return json({ paymentChoice }, undefined, rateLimit);
   } catch (error) {

@@ -4,6 +4,7 @@ import { findActiveMembership } from "@/modules/events/repository";
 import { requireProgramAssignmentAccess } from "@/modules/program-assignments/access";
 import { programAssignmentRosterCsv } from "@/modules/program-assignments/domain";
 import { getAppliedAssignmentRoster } from "@/modules/program-assignments/repository";
+import { logError } from "@/lib/logger";
 
 export async function GET(
   _request: Request,
@@ -14,7 +15,7 @@ export async function GET(
     await requireProgramAssignmentAccess(
       await getCurrentSession(),
       eventId,
-      findActiveMembership,
+      findActiveMembership
     );
     const roster = await getAppliedAssignmentRoster(eventId, runId);
     if (!roster) {
@@ -23,7 +24,7 @@ export async function GET(
           error: "RUN_NOT_FOUND",
           message: "That applied assignment run was not found for this event.",
         },
-        { status: 404 },
+        { status: 404 }
       );
     }
     const safeRunId = runId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 100) || "run";
@@ -39,13 +40,13 @@ export async function GET(
     if (error instanceof AccessDeniedError) {
       return Response.json(
         { error: error.code, message: error.message },
-        { status: error.status },
+        { status: error.status }
       );
     }
-    console.error("Unable to export program assignment roster", error);
+    logError("Unable to export program assignment roster", error);
     return Response.json(
       { error: "PROGRAM_ASSIGNMENT_EXPORT_FAILED" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }

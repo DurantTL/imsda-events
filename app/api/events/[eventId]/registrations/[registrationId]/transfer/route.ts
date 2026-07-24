@@ -13,6 +13,7 @@ import {
   transferRegistration,
 } from "@/modules/registrations/operations-repository";
 import { registrationTransferInputSchema } from "@/modules/registrations/schemas";
+import { logError } from "@/lib/logger";
 
 const noStoreHeaders = { "Cache-Control": "no-store" };
 
@@ -24,13 +25,13 @@ function errorResponse(error: unknown) {
         message: "Review the new contact details and submit the two-step transfer again.",
         ...(error instanceof z.ZodError ? { issues: error.issues } : {}),
       },
-      { status: 400, headers: noStoreHeaders },
+      { status: 400, headers: noStoreHeaders }
     );
   }
   if (error instanceof AccessDeniedError) {
     return Response.json(
       { error: error.code, message: error.message },
-      { status: error.status, headers: noStoreHeaders },
+      { status: error.status, headers: noStoreHeaders }
     );
   }
   if (error instanceof RegistrationOperationError) {
@@ -39,16 +40,13 @@ function errorResponse(error: unknown) {
       {
         status: error.code === "REGISTRATION_NOT_FOUND" ? 404 : 409,
         headers: noStoreHeaders,
-      },
+      }
     );
   }
-  console.error(
-    "Registration transfer failed",
-    error instanceof Error ? error.name : "UnknownError",
-  );
+  logError("Registration transfer failed", error);
   return Response.json(
     { error: "REGISTRATION_TRANSFER_FAILED" },
-    { status: 500, headers: noStoreHeaders },
+    { status: 500, headers: noStoreHeaders }
   );
 }
 
@@ -73,7 +71,7 @@ export async function POST(
         error: "JSON_CONTENT_TYPE_REQUIRED",
         message: "Send this request as application/json.",
       },
-      { status: 415, headers: noStoreHeaders },
+      { status: 415, headers: noStoreHeaders }
     );
   }
 
@@ -83,7 +81,7 @@ export async function POST(
       await getCurrentSession(),
       eventId,
       "MANAGE_REGISTRATION",
-      findActiveMembership,
+      findActiveMembership
     );
     const input = registrationTransferInputSchema.parse(await request.json());
     await ensureEventMessagingDefaults(eventId);
@@ -94,7 +92,7 @@ export async function POST(
       {
         id: access.user.id,
         displayName: access.user.displayName,
-      },
+      }
     );
     const accessDeliveryMessageId = result.response.operation.noticeMessageIds[0];
     if (accessDeliveryMessageId) {
@@ -104,19 +102,13 @@ export async function POST(
           deliveryKey: `message:${accessDeliveryMessageId}`,
         });
       } catch (error) {
-        console.error(
-          "Post-commit transfer access issuance failed",
-          error instanceof Error ? error.name : "UnknownError",
-        );
+        logError("Post-commit transfer access issuance failed", error);
       }
     }
     try {
       await processQueuedMessageIdsAfterCommit(result.pendingMessageIds);
     } catch (error) {
-      console.error(
-        "Transfer notice processing failed after commit",
-        error instanceof Error ? error.name : "UnknownError",
-      );
+      logError("Transfer notice processing failed after commit", error);
     }
     return Response.json(result.response, {
       status: 200,

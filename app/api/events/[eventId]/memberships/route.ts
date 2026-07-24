@@ -8,6 +8,7 @@ import { addStaffMembership, listStaffMemberships } from "@/modules/access/membe
 import { eventRoles } from "@/modules/access/permissions";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { findActiveMembership } from "@/modules/events/repository";
+import { logError } from "@/lib/logger";
 
 const membershipSchema = z.object({
   email: z.string().trim().email().max(254),
@@ -19,7 +20,7 @@ function apiError(error: unknown) {
   if (error instanceof z.ZodError) return Response.json({ error: "INVALID_MEMBERSHIP", message: error.issues[0]?.message, issues: error.issues }, { status: 400 });
   if (error instanceof AccessDeniedError) return Response.json({ error: error.code, message: error.message }, { status: error.status });
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return Response.json({ error: "MEMBERSHIP_CONFLICT", message: "That staff account is already assigned." }, { status: 409 });
-  console.error("Staff membership request failed", error);
+  logError("Staff membership request failed", error);
   return Response.json({ error: "MEMBERSHIP_REQUEST_FAILED", message: "The staff assignment could not be saved." }, { status: 500 });
 }
 

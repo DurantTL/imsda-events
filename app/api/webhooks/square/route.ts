@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { getSquareConfiguration } from "@/modules/payments/square-config";
+import { logError } from "@/lib/logger";
 import {
   parseSquareWebhookEvent,
   squareWebhookPayloadHash,
@@ -63,7 +64,7 @@ export async function POST(request: Request) {
     const result = await processSquareWebhook(
       event,
       squareWebhookPayloadHash(rawBody),
-      { configuration },
+      { configuration }
     );
     return json({ received: true, ...result }, 200);
   } catch (error) {
@@ -79,10 +80,7 @@ export async function POST(request: Request) {
         message: error.message,
       }, error.retryable ? 503 : 500);
     }
-    console.error(
-      "Square webhook processing failed.",
-      error instanceof Error ? error.name : "UnknownError",
-    );
+    logError("Square webhook processing failed.", error);
     return json({ error: "SQUARE_WEBHOOK_FAILED" }, 500);
   }
 }

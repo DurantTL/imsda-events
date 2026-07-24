@@ -9,6 +9,7 @@ import {
   setGlobalRole,
 } from "@/modules/access/membership-repository";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
+import { logError } from "@/lib/logger";
 
 const globalRoleSchema = z.object({
   globalRole: z.union([z.literal("SYSTEM_ADMIN"), z.null()]),
@@ -19,7 +20,7 @@ function apiError(error: unknown) {
   if (error instanceof z.ZodError) {
     return Response.json(
       { error: "INVALID_GLOBAL_ROLE", message: "Choose a valid system role." },
-      { status: 400 },
+      { status: 400 }
     );
   }
   if (error instanceof AccessDeniedError) {
@@ -28,16 +29,13 @@ function apiError(error: unknown) {
   if (error instanceof MembershipOperationError) {
     return Response.json(
       { error: error.code, message: error.message },
-      { status: error.code === "USER_NOT_FOUND" ? 404 : 409 },
+      { status: error.code === "USER_NOT_FOUND" ? 404 : 409 }
     );
   }
-  console.error(
-    "Global role change failed",
-    error instanceof Error ? error.name : "UnknownError",
-  );
+  logError("Global role change failed", error);
   return Response.json(
     { error: "GLOBAL_ROLE_REQUEST_FAILED", message: "The system role could not be changed." },
-    { status: 500 },
+    { status: 500 }
   );
 }
 
@@ -55,7 +53,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ userI
       throw new AccessDeniedError(
         "System administrator access is required to change a system role.",
         403,
-        "PERMISSION_DENIED",
+        "PERMISSION_DENIED"
       );
     }
 

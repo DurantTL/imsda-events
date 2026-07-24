@@ -5,10 +5,10 @@ Tracks implementation against the ten-step sequence in
 has to be true before this system holds real attendee, medical, and payment data. This
 document says how far along that is, and is updated as work lands.
 
-**Status: items 1, 3, 4 and 6 are done; items 2 and 7 are partly done; items 5 and 8–10
+**Status: items 1, 3, 4 and 6 are done; items 2, 5 and 7 are partly done; items 8–10
 are not started.** All three P0 blocking findings are addressed. What remains before real
-data is principally observability (item 5), MFA and the password policy (item 7), and the
-medical-data encryption decision (item 8).
+data is principally error tracking and alerting (item 5), MFA and the password policy
+(item 7), and the medical-data encryption decision (item 8).
 
 ---
 
@@ -20,7 +20,7 @@ medical-data encryption decision (item 8).
 | 2 | Password reset + staff invitation email through the outbox; account activation state | **Partly done** — activation state and one-time links ship; email delivery does not |
 | 3 | Startup env validation for every variable; config errors surface as 500, not 403 | **Done** |
 | 4 | Backups, off-host retention, verified restore | **Done**, with one operator decision outstanding |
-| 5 | Structured logs with correlation IDs and redaction; error tracking; alerts | Not started |
+| 5 | Structured logs with correlation IDs and redaction; error tracking; alerts | **Partly done** — structured logging and redaction ship; error tracking and alerts do not |
 | 6 | Scheduled outbox sweep; health check covers queue depth | **Done** |
 | 7 | MFA for admin roles; real password policy; session idle timeout and revocation | **Partly done** — session hardening ships; MFA and the password policy do not |
 | 8 | Medical-data encryption decision; retention/deletion/export procedure | Not started |
@@ -131,14 +131,42 @@ land in a Docker volume on the same host as the database. Bind `imsda_events_bac
 off-host storage or set `BACKUP_OFFSITE_COMMAND`. A dump that shares a host with its
 source does not survive losing that host.
 
-## 5. Structured logging and alerting — not started
+## 5. Structured logging and alerting — partly done
 
-56 `console.*` calls still go to stdout as plain strings with no correlation ID and
-nothing aggregating them. Two things were fixed opportunistically —
-`app/api/health/route.ts` and the new routes log `error.name` rather than a full error
-object, matching the careful pattern in the auth routes — but
-`app/api/auth/password-reset/complete/route.ts:31` still logs a whole error object that
-can carry a Prisma query with parameters, and there is no error tracking or alerting.
+Shipped — **structured logging with an explicit redaction rule**:
+
+- `lib/logger.ts` emits one JSON object per event with a level, timestamp, message, and
+  arbitrary context fields.
+- Redaction is **deny-by-default**. An error contributes its class name and a short code;
+  its `message` is included only for the application's own error classes, whose text is
+  authored for an operator. This is the fix for the review's specific finding: a Prisma
+  error's `message` embeds the failing query **and its parameters**, so
+  `console.error("...", error)` could put attendee data — including medical answers — into
+  the container log. `ZodError` is excluded for the same reason, since its issues can echo
+  the submitted value.
+- All 61 `console.*` call sites across `app/`, `modules/`, `integrations/` and `lib/` now
+  go through the logger. There are none left in application code.
+- `onRequestError` in `instrumentation.ts` catches every server error Next.js sees,
+  including ones no handler caught, and records the route path, method, route type, and
+  any inbound correlation ID.
+- `requestCorrelationId` reuses a proxy-supplied `x-correlation-id` so one registration
+  can be followed end to end, and mints a UUID otherwise. The inbound value is length- and
+  character-bounded, because it is attacker-controlled and lands in a log line.
+
+Verified: with an unreachable database, `/api/health` logged exactly
+`{"level":"error",...,"error":{"name":"PrismaClientInitializationError","redacted":true}}`
+and the connection string's password appeared nowhere in the output.
+
+Not shipped:
+
+- **Per-route correlation IDs.** `onRequestError` records an inbound one, but the
+  ~30 route-level `apiError` helpers do not yet thread a request-scoped ID into their own
+  log lines or echo it back in a response header. Doing that properly means either an
+  `AsyncLocalStorage` request context or a parameter through every handler.
+- **Error tracking and alerting.** Nothing aggregates these lines, and nothing alerts on
+  the health endpoint, outbox depth, webhook failure rate, or 5xx rate. The signals now
+  exist (item 6 added outbox depth and oldest-due age to `/api/health`); what is missing
+  is something watching them. A failed payment webhook still pages nobody.
 
 ## 6. Outbox sweep and health readiness — done
 
@@ -218,8 +246,8 @@ Against a local PostgreSQL 16 with all migrations applied:
 npx prisma migrate deploy                    ✅ 25 migrations, no drift on changed models
 npm run lint                                 ✅
 npm run typecheck                            ✅
-npx vitest run                               ✅ 462 passed (91 files), 60 new
-npx vitest run  (with no DATABASE_URL set)   ✅ 462 passed — was 30 failures before
+npx vitest run                               ✅ 473 passed (92 files), 71 new
+npx vitest run  (with no DATABASE_URL set)   ✅ 473 passed — was 30 failures before
 npm run admin:create                         ✅ created and promoted; both guards exercised
 npx prisma db seed  (NODE_ENV=production)    ✅ refused
 npx prisma db seed  (remote host)            ✅ refused
@@ -242,6 +270,9 @@ Exercised against a running production build:
   the others revoked exactly one and left the caller signed in.
 - A session aged past 60 minutes of inactivity was rejected with 401 while its absolute
   expiry was still hours away.
+- With an unreachable database, the health check logged one JSON line naming only
+  `PrismaClientInitializationError` and `redacted: true`; the connection string's password
+  appeared nowhere in the output.
 
 The database-backed `npm run test:public-*` scripts were not run; they need a running dev
 server as well as a database.

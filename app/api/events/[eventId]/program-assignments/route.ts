@@ -13,6 +13,7 @@ import {
   applyProgramAssignmentsSchema,
   programAssignmentSelectionSchema,
 } from "@/modules/program-assignments/schemas";
+import { logError } from "@/lib/logger";
 
 function programAssignmentApiError(error: unknown) {
   if (error instanceof z.ZodError) {
@@ -22,29 +23,29 @@ function programAssignmentApiError(error: unknown) {
         message: error.issues[0]?.message ?? "Review the assignment request.",
         issues: error.issues,
       },
-      { status: 400 },
+      { status: 400 }
     );
   }
   if (error instanceof AccessDeniedError) {
     return Response.json(
       { error: error.code, message: error.message },
-      { status: error.status },
+      { status: error.status }
     );
   }
   if (error instanceof ProgramAssignmentError) {
     const status = error.code.endsWith("NOT_FOUND") ? 404 : 409;
     return Response.json(
       { error: error.code, message: error.message, details: error.details },
-      { status },
+      { status }
     );
   }
-  console.error("Program assignment request failed", error);
+  logError("Program assignment request failed", error);
   return Response.json(
     {
       error: "PROGRAM_ASSIGNMENT_REQUEST_FAILED",
       message: "The program assignment request could not be completed.",
     },
-    { status: 500 },
+    { status: 500 }
   );
 }
 
@@ -57,7 +58,7 @@ export async function GET(
     await requireProgramAssignmentAccess(
       await getCurrentSession(),
       eventId,
-      findActiveMembership,
+      findActiveMembership
     );
     const search = new URL(request.url).searchParams;
     const selection = programAssignmentSelectionSchema.parse({
@@ -67,7 +68,7 @@ export async function GET(
     const preview = await getProgramAssignmentPreview(eventId, selection);
     return Response.json(
       { preview },
-      { headers: { "Cache-Control": "private, no-store, max-age=0" } },
+      { headers: { "Cache-Control": "private, no-store, max-age=0" } }
     );
   } catch (error) {
     return programAssignmentApiError(error);
@@ -85,7 +86,7 @@ export async function POST(
     const access = await requireProgramAssignmentAccess(
       await getCurrentSession(),
       eventId,
-      findActiveMembership,
+      findActiveMembership
     );
     const input = applyProgramAssignmentsSchema.parse(await request.json());
     const run = await applyProgramAssignments(eventId, input, access.user.id);
@@ -94,7 +95,7 @@ export async function POST(
       {
         status: 201,
         headers: { "Cache-Control": "private, no-store, max-age=0" },
-      },
+      }
     );
   } catch (error) {
     return programAssignmentApiError(error);

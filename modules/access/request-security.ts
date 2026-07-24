@@ -1,4 +1,5 @@
 import { getServerEnv, isServerEnvironmentError } from "@/lib/env";
+import { logError } from "@/lib/logger";
 
 /**
  * A cross-origin request and a misconfigured deployment are different events
@@ -34,9 +35,10 @@ export function rejectCrossOriginRequest(request: Request) {
     sameOrigin = isSameOriginRequest(request);
   } catch (error) {
     if (!isServerEnvironmentError(error)) throw error;
-    console.error(
+    logError(
       "Request origin could not be checked because the server environment is invalid.",
-      { issues: error.issues },
+      error,
+      { issueCount: error.issues.length },
     );
     return Response.json(
       {
@@ -44,7 +46,7 @@ export function rejectCrossOriginRequest(request: Request) {
         message:
           "The server is not configured correctly. Contact the event technology team.",
       },
-      { status: 500 },
+      { status: 500 }
     );
   }
 
@@ -55,6 +57,6 @@ export function rejectCrossOriginRequest(request: Request) {
           error: "INVALID_REQUEST_ORIGIN",
           message: "This request must come from the IMSDA Events workspace.",
         },
-        { status: 403 },
+        { status: 403 }
       );
 }

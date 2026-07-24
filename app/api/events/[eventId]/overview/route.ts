@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AccessDeniedError, requirePermission } from "@/modules/access/authorization";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { findActiveMembership, getEventOverview } from "@/modules/events/repository";
+import { logError } from "@/lib/logger";
 
 const eventIdSchema = z.string().min(3).max(64).regex(/^[a-zA-Z0-9_-]+$/);
 
@@ -16,7 +17,7 @@ export async function GET(
       await getCurrentSession(),
       eventId,
       "VIEW_EVENT",
-      findActiveMembership,
+      findActiveMembership
     );
 
     const overview = await getEventOverview(eventId);
@@ -32,7 +33,7 @@ export async function GET(
     if (error instanceof AccessDeniedError) {
       return Response.json({ error: error.code, message: error.message }, { status: error.status });
     }
-    console.error("Unable to load event overview", error);
+    logError("Unable to load event overview", error);
     return Response.json({ error: "EVENT_OVERVIEW_FAILED" }, { status: 500 });
   }
 }

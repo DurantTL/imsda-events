@@ -3,6 +3,7 @@ import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { CsvImportError, previewCsvImport } from "@/modules/imports/repository";
 import { findActiveMembership } from "@/modules/events/repository";
+import { logError } from "@/lib/logger";
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 
@@ -22,7 +23,7 @@ export async function POST(request: Request, context: { params: Promise<{ eventI
   } catch (error) {
     if (error instanceof CsvImportError) return Response.json({ error: error.code, message: error.message }, { status: 400 });
     if (error instanceof AccessDeniedError) return Response.json({ error: error.code, message: error.message }, { status: error.status });
-    console.error("Import preview failed", error);
+    logError("Import preview failed", error);
     return Response.json({ error: "IMPORT_PREVIEW_FAILED", message: "The CSV preview could not be created." }, { status: 500 });
   }
 }

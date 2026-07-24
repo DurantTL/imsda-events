@@ -11,6 +11,7 @@ import {
 } from "@/modules/events/public-domain";
 import { activeRegistrationStatuses } from "@/modules/events/lifecycle";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
+import { logWarn } from "@/lib/logger";
 
 async function loadPublicEventLanding(
   eventSlug: string,
@@ -91,13 +92,13 @@ async function loadPublicEventLanding(
   const schedule = formatPublicEventSchedule(
     event.startsAt,
     event.endsAt,
-    event.timezone,
+    event.timezone
   );
   const links = publicEventWebsiteLinks(event.slug, event.publicInfoUrl);
   const announcements = buildPublicEventAnnouncementFeed(
     event.announcements,
     event.timezone,
-    now,
+    now
   );
 
   const forms = event.registrationForms.flatMap((form) => {
@@ -105,8 +106,9 @@ async function loadPublicEventLanding(
     if (!version) return [];
     const parsed = registrationFormDefinitionSchema.safeParse(version.definition);
     if (!parsed.success) {
-      console.error(
-        `Published registration form ${form.id} has an invalid definition and was omitted from the public event page.`,
+      logWarn(
+        "A published registration form has an invalid definition and was omitted from the public event page.",
+        { formId: form.id },
       );
       return [];
     }

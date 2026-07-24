@@ -35,6 +35,7 @@ import {
   type EventRegistrationPhase,
 } from "@/modules/events/lifecycle";
 import { issueRegistrationAccessToken } from "@/modules/public-access/repository";
+import { logError } from "@/lib/logger";
 import {
   applyPromoCodeToCalculation,
   promoCodeField,
@@ -408,7 +409,7 @@ export async function getPublicRegistrationExperience(eventSlug: string, formSlu
   const admission = evaluateEventRegistrationAdmission(
     form.event,
     { occupied, requested: getAttendeeRosterConfig(definition).minAttendees },
-    now,
+    now
   );
 
   return {
@@ -515,7 +516,7 @@ async function createPublicRegistrationTransaction(
       : "";
     throw new PublicRegistrationError(
       "REGISTRATION_NOT_OPEN",
-      `Registration for this event is not open yet.${opening}`,
+      `Registration for this event is not open yet.${opening}`
     );
   }
   if (phase === "CLOSED") {
@@ -524,7 +525,7 @@ async function createPublicRegistrationTransaction(
       : "";
     throw new PublicRegistrationError(
       "REGISTRATION_CLOSED",
-      `Registration for this event is closed.${closing}`,
+      `Registration for this event is closed.${closing}`
     );
   }
   if (phase !== "OPEN") {
@@ -542,13 +543,13 @@ async function createPublicRegistrationTransaction(
   const admission = evaluateEventRegistrationAdmission(
     form.event,
     { occupied, requested: requestedAttendees },
-    now,
+    now
   );
   if (admission.capacityDecision === "FULL") {
     const remaining = admission.remainingSpots ?? 0;
     throw new PublicRegistrationError(
       "EVENT_FULL",
-      `Only ${remaining} attendee spot${remaining === 1 ? "" : "s"} remain for this event, and its waitlist is not enabled.`,
+      `Only ${remaining} attendee spot${remaining === 1 ? "" : "s"} remain for this event, and its waitlist is not enabled.`
     );
   }
   const isWaitlisted = admission.capacityDecision === "WAITLIST";
@@ -586,7 +587,7 @@ async function createPublicRegistrationTransaction(
     throw new PublicRegistrationError(
       capacityIssue ? "CAPACITY_REACHED" : "INVALID_SUBMISSION",
       capacityIssue ? "One of your selections just became full. Review the highlighted choice and submit again." : "Review the highlighted fields and submit again.",
-      prepared.issues,
+      prepared.issues
     );
   }
 
@@ -617,7 +618,7 @@ async function createPublicRegistrationTransaction(
         definition,
         prepared.registrationResponses,
         prepared.calculation,
-        claimedPromo.evaluation,
+        claimedPromo.evaluation
       );
     } catch (error) {
       if (!(error instanceof PublicPromoCodeError)) throw error;
@@ -632,7 +633,7 @@ async function createPublicRegistrationTransaction(
           path: `responses.${configuredPromoField.key}`,
           attendeeIndex: null,
           message: error.message,
-        }],
+        }]
       );
     }
   }
@@ -909,7 +910,7 @@ export async function submitPublicRegistration(
     try {
       const result = await prisma.$transaction(
         (tx) => createPublicRegistrationTransaction(tx, eventSlug, formSlug, input, now),
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
       );
       let processed = {
         capturedIds: [] as string[],
@@ -920,13 +921,10 @@ export async function submitPublicRegistration(
       };
       try {
         processed = await processQueuedMessageIdsAfterCommit(
-          result.pendingMessageIds,
+          result.pendingMessageIds
         );
       } catch (error) {
-        console.error(
-          "Confirmation processing failed after registration commit",
-          error instanceof Error ? error.name : "UnknownError",
-        );
+        logError("Confirmation processing failed after registration commit", error);
       }
       const registrantSent = result.registrantMessageIds.some((messageId) => (
         processed.sentIds.includes(messageId)

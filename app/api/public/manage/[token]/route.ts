@@ -11,6 +11,7 @@ import {
   type RateLimitOutcome,
 } from "@/modules/rate-limit/domain";
 import { checkPublicManageRateLimit } from "@/modules/rate-limit/service";
+import { logError } from "@/lib/logger";
 
 const maximumBodyBytes = 16 * 1_024;
 const privateHeaders = {
@@ -55,7 +56,7 @@ function unavailableResponse(rateLimit?: RateLimitOutcome) {
       message: "This private registration link is invalid or no longer active.",
     },
     { status: 404 },
-    rateLimit,
+    rateLimit
   );
 }
 
@@ -68,7 +69,7 @@ function errorResponse(error: unknown, rateLimit?: RateLimitOutcome) {
         issues: error.issues,
       },
       { status: 400 },
-      rateLimit,
+      rateLimit
     );
   }
   if (error instanceof SyntaxError) {
@@ -78,21 +79,18 @@ function errorResponse(error: unknown, rateLimit?: RateLimitOutcome) {
         message: "The contact update is not valid JSON.",
       },
       { status: 400 },
-      rateLimit,
+      rateLimit
     );
   }
 
-  console.error(
-    "Private registration access request failed.",
-    error instanceof Error ? error.name : "UnknownError",
-  );
+  logError("Private registration access request failed.", error);
   return json(
     {
       error: "REGISTRATION_ACCESS_FAILED",
       message: "The registration could not be loaded. Try again in a moment.",
     },
     { status: 500 },
-    rateLimit,
+    rateLimit
   );
 }
 
@@ -108,7 +106,7 @@ export async function GET(request: Request, context: RouteContext) {
           message: "Too many requests for this private registration link. Try again later.",
         },
         { status: 429 },
-        rateLimit,
+        rateLimit
       );
     }
     const registration = await resolveRegistrationAccessToken(token);
@@ -135,7 +133,7 @@ export async function PATCH(request: Request, context: RouteContext) {
           message: "Too many updates for this private registration link. Try again later.",
         },
         { status: 429 },
-        rateLimit,
+        rateLimit
       );
     }
 
@@ -147,7 +145,7 @@ export async function PATCH(request: Request, context: RouteContext) {
           message: "The contact update is too large.",
         },
         { status: 413 },
-        rateLimit,
+        rateLimit
       );
     }
 
@@ -159,7 +157,7 @@ export async function PATCH(request: Request, context: RouteContext) {
           message: "The contact update is too large.",
         },
         { status: 413 },
-        rateLimit,
+        rateLimit
       );
     }
 
@@ -169,10 +167,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       try {
         await processQueuedMessageIdsAfterCommit(result.pendingMessageIds);
       } catch (error) {
-        console.error(
-          "Contact-update message processing failed after the registration commit",
-          error instanceof Error ? error.name : "UnknownError",
-        );
+        logError("Contact-update message processing failed after the registration commit", error);
       }
     }
     return result

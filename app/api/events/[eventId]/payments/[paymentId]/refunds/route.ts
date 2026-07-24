@@ -5,6 +5,7 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { findActiveMembership } from "@/modules/events/repository";
 import { PaymentOperationError, recordRefund } from "@/modules/payments/repository";
 import { refundInputSchema } from "@/modules/payments/schemas";
+import { logError } from "@/lib/logger";
 
 export async function POST(
   request: Request,
@@ -29,7 +30,7 @@ export async function POST(
           : 404;
       return Response.json({ error: error.code, message: error.message }, { status });
     }
-    console.error("Unable to record refund", error);
+    logError("Unable to record refund", error);
     return Response.json({ error: "REFUND_CREATE_FAILED" }, { status: 500 });
   }
 }

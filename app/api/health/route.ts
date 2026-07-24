@@ -1,5 +1,6 @@
 import { getPrisma } from "@/lib/prisma";
 import { getOutboxQueueHealth } from "@/modules/communications/outbox-sweep";
+import { logError } from "@/lib/logger";
 
 /**
  * Liveness and readiness in one response.
@@ -15,14 +16,14 @@ export async function GET() {
   try {
     await getPrisma().$queryRaw`SELECT 1`;
   } catch (error) {
-    console.error("Health check failed", error instanceof Error ? error.name : "UnknownError");
+    logError("Health check failed", error);
     return Response.json(
       {
         status: "degraded",
         checkedAt,
         services: { application: "ok", database: "unavailable" },
       },
-      { status: 503 },
+      { status: 503 }
     );
   }
 
@@ -30,10 +31,7 @@ export async function GET() {
   try {
     outbox = await getOutboxQueueHealth();
   } catch (error) {
-    console.error(
-      "Outbox health check failed",
-      error instanceof Error ? error.name : "UnknownError",
-    );
+    logError("Outbox health check failed", error);
   }
 
   return Response.json({

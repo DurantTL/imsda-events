@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { issuePasswordReset } from "@/modules/access/auth-service";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
+import { logError } from "@/lib/logger";
 import {
   applyRateLimitHeaders,
   mergeRateLimitOutcomes,
@@ -30,7 +31,7 @@ export async function POST(request: Request) {
     const { email } = requestSchema.parse(await request.json());
     rateLimit = mergeRateLimitOutcomes(
       rateLimit,
-      await checkPasswordResetAccountRateLimit(request, email),
+      await checkPasswordResetAccountRateLimit(request, email)
     );
     if (!rateLimit.allowed) {
       return applyRateLimitHeaders(Response.json({
@@ -53,7 +54,7 @@ export async function POST(request: Request) {
       const response = Response.json({ error: "INVALID_EMAIL", message: "Enter a valid email address." }, { status: 400 });
       return rateLimit ? applyRateLimitHeaders(response, rateLimit) : response;
     }
-    console.error("Password reset request failed", error instanceof Error ? error.name : "UnknownError");
+    logError("Password reset request failed", error);
     const response = Response.json({ error: "RESET_REQUEST_FAILED", message: "Password reset is temporarily unavailable." }, { status: 500 });
     return rateLimit ? applyRateLimitHeaders(response, rateLimit) : response;
   }

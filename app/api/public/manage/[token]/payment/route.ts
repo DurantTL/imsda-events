@@ -11,6 +11,7 @@ import {
   type RateLimitOutcome,
 } from "@/modules/rate-limit/domain";
 import { checkPublicPaymentRateLimit } from "@/modules/rate-limit/service";
+import { logError } from "@/lib/logger";
 
 const maximumBodyBytes = 16 * 1_024;
 const privateHeaders = {
@@ -96,10 +97,7 @@ function errorResponse(error: unknown, rateLimit?: RateLimitOutcome) {
   if (error instanceof SquarePaymentOperationError) {
     return operationErrorResponse(error, rateLimit);
   }
-  console.error(
-    "Private Square payment request failed.",
-    error instanceof Error ? error.name : "UnknownError",
-  );
+  logError("Private Square payment request failed.", error);
   return json({
     error: "SQUARE_PAYMENT_FAILED",
     message: "Online payment could not be completed. Your registration is still saved.",
@@ -152,7 +150,7 @@ export async function POST(request: Request, context: RouteContext) {
     return json(
       { payment },
       { status: payment.status === "PENDING" ? 202 : 200 },
-      rateLimit,
+      rateLimit
     );
   } catch (error) {
     return errorResponse(error, rateLimit);

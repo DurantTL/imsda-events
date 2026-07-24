@@ -10,6 +10,7 @@ import {
   type RateLimitOutcome,
 } from "@/modules/rate-limit/domain";
 import { checkPublicPromoQuoteRateLimit } from "@/modules/rate-limit/service";
+import { logError } from "@/lib/logger";
 
 const maximumBodyBytes = 512 * 1024;
 const noStoreHeaders = { "Cache-Control": "no-store" };
@@ -22,12 +23,12 @@ function promoQuoteError(error: unknown, rateLimit?: RateLimitOutcome) {
         error: "INVALID_REQUEST",
         message: error.issues[0]?.message ?? "Review the promo code.",
       },
-      { status: 400, headers: noStoreHeaders },
+      { status: 400, headers: noStoreHeaders }
     );
   } else if (error instanceof SyntaxError) {
     response = Response.json(
       { error: "INVALID_JSON", message: "The promo-code request is not valid JSON." },
-      { status: 400, headers: noStoreHeaders },
+      { status: 400, headers: noStoreHeaders }
     );
   } else if (error instanceof PublicPromoCodeError) {
     const status = error.reason === "FORM_NOT_FOUND" ? 404 : 422;
@@ -43,19 +44,16 @@ function promoQuoteError(error: unknown, rateLimit?: RateLimitOutcome) {
           message: error.message,
         },
       },
-      { status, headers: noStoreHeaders },
+      { status, headers: noStoreHeaders }
     );
   } else {
-    console.error(
-      "Public promo-code quote failed",
-      error instanceof Error ? error.name : "UnknownError",
-    );
+    logError("Public promo-code quote failed", error);
     response = Response.json(
       {
         error: "PROMO_QUOTE_FAILED",
         message: "The promo code could not be checked right now. Try again.",
       },
-      { status: 500, headers: noStoreHeaders },
+      { status: 500, headers: noStoreHeaders }
     );
   }
   return rateLimit ? applyRateLimitHeaders(response, rateLimit) : response;
@@ -75,7 +73,7 @@ export async function POST(
     rateLimit = await checkPublicPromoQuoteRateLimit(
       request,
       eventSlug,
-      formSlug,
+      formSlug
     );
     if (!rateLimit.allowed) {
       return applyRateLimitHeaders(Response.json(
@@ -104,11 +102,11 @@ export async function POST(
     const quote = await getPublicPromoCodeQuote(
       eventSlug,
       formSlug,
-      input,
+      input
     );
     return applyRateLimitHeaders(
       Response.json({ quote }, { headers: noStoreHeaders }),
-      rateLimit,
+      rateLimit
     );
   } catch (error) {
     return promoQuoteError(error, rateLimit);

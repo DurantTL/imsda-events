@@ -9,6 +9,7 @@ import {
   undoCheckIn,
 } from "@/modules/checkin/repository";
 import { findActiveMembership } from "@/modules/events/repository";
+import { logError } from "@/lib/logger";
 
 const maximumBodyBytes = 1_024;
 const privateHeaders = {
@@ -40,7 +41,7 @@ function apiError(error: unknown) {
   if (error instanceof CheckInOperationError) {
     return json(
       { error: error.code, message: error.message },
-      { status: error.code === "ATTENDEE_NOT_FOUND" ? 404 : 409 },
+      { status: error.code === "ATTENDEE_NOT_FOUND" ? 404 : 409 }
     );
   }
   if (error instanceof z.ZodError) {
@@ -56,7 +57,7 @@ function apiError(error: unknown) {
       message: "The check-in request is not valid JSON.",
     }, { status: 400 });
   }
-  console.error("Check-in request failed", error);
+  logError("Check-in request failed", error);
   return json({
     error: "CHECK_IN_REQUEST_FAILED",
     message: "The server could not confirm this check-in. Retry with the same saved action.",
@@ -92,7 +93,7 @@ export async function POST(request: Request, context: { params: Promise<{ eventI
       eventId,
       attendeeId,
       access.user.id,
-      input.idempotencyKey,
+      input.idempotencyKey
     );
     return json(operation);
   } catch (error) {
