@@ -8,6 +8,7 @@ import { addStaffMembership, listStaffMemberships } from "@/modules/access/membe
 import { eventRoles } from "@/modules/access/permissions";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { findActiveMembership } from "@/modules/events/repository";
+import { sendStaffInvitationEmail } from "@/modules/communications/account-email-dispatch";
 import { logError } from "@/lib/logger";
 
 const membershipSchema = z.object({
@@ -40,11 +41,19 @@ export async function POST(request: Request, context: { params: Promise<{ eventI
     const access = await requirePermission(await getCurrentSession(), eventId, "MANAGE_STAFF", findActiveMembership);
     const input = membershipSchema.parse(await request.json());
     const result = await addStaffMembership(eventId, access.user.id, input);
-    // The link is returned only to the authenticated administrator who just
-    // created the account, and only when an account was actually created. That
-    // is an out-of-band handoff, so it is shown in production too — otherwise
-    // an invited colleague has no way to obtain a credential at all.
-    const issued = result.credentialCreated ? await issueAccountToken(input.email) : null;
+    // An invited colleague is emailed their activation link. Only where email
+    // is not configured — development, since production requires it at startup
+    // — is a link handed back for the administrator to pass on out of band.
+    const invited = result.credentialCreated
+      ? await sendStaffInvitationEmail({
+          userId: result.membership.user.id,
+          email: input.email,
+          displayName: input.displayName,
+        })
+      : { configured: true, queued: false };
+    const issued = result.credentialCreated && !invited.configured
+      ? await issueAccountToken(input.email)
+      : null;
     const setupUrl = issued
       ? new URL(
           `/reset-password?token=${encodeURIComponent(issued.token)}`,
@@ -53,6 +62,7 @@ export async function POST(request: Request, context: { params: Promise<{ eventI
       : undefined;
     return Response.json({
       membership: result.membership,
+      invitationEmailed: invited.queued,
       setupUrl,
       setupExpiresAt: issued?.expiresAt.toISOString(),
     }, { status: 201 });

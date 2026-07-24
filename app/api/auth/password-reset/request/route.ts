@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { issuePasswordReset } from "@/modules/access/auth-service";
+import { sendAccountRecoveryEmail } from "@/modules/communications/account-email-dispatch";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { logError } from "@/lib/logger";
 import {
@@ -40,7 +41,13 @@ export async function POST(request: Request) {
       }), rateLimit);
     }
 
-    const token = await issuePasswordReset(email);
+    // With email configured the link is emailed and never returned — the
+    // response is identical whether or not the account exists. Without it, the
+    // development fallback still shows the link, because otherwise there is no
+    // way to obtain one at all. Production cannot reach that branch: the
+    // startup contract requires the sender address and the Resend key.
+    const emailed = await sendAccountRecoveryEmail(email);
+    const token = emailed.configured ? null : await issuePasswordReset(email);
     const resetUrl = token && process.env.NODE_ENV !== "production"
       ? `${new URL(request.url).origin}/reset-password?token=${encodeURIComponent(token)}`
       : undefined;

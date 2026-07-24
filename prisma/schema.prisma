@@ -166,6 +166,8 @@ enum MessageTemplateKey {
   REGISTRATION_TRANSFERRED_NEW_CONTACT
   REGISTRATION_TRANSFERRED_PRIOR_CONTACT
   ATTENDEE_SUBSTITUTED
+  ACCOUNT_ACTIVATION
+  ACCOUNT_PASSWORD_RESET
 }
 
 enum MessageTemplateStatus {
@@ -184,6 +186,7 @@ enum MessageRecipientKind {
   REGISTRANT
   INTERNAL
   TEST
+  ACCOUNT
 }
 
 enum MessageOutboxStatus {
@@ -245,6 +248,7 @@ model User {
   createdMessageVersions    MessageTemplateVersion[]  @relation("MessageTemplateVersionCreatedBy")
   appliedProgramAssignments ProgramAssignmentRun[]    @relation("ProgramAssignmentAppliedBy")
   registrationOperations    RegistrationOperation[]   @relation("RegistrationOperationActor")
+  accountMessages           MessageOutbox[]           @relation("AccountMessageRecipient")
 
   @@index([accountStatus])
 }
@@ -976,8 +980,13 @@ model MessageTemplateVersion {
 
 model MessageOutbox {
   id                     String                         @id @default(cuid())
-  eventId                String
+  // Null for account email — activation and password reset belong to a person,
+  // not to an event, and must be deliverable before any event exists.
+  eventId                String?
   registrationId         String?
+  // Set only on account email. The delivery step mints the one-time link from
+  // this, so the raw token is never written to the outbox.
+  accountUserId          String?
   templateVersionId      String?
   templateKey            MessageTemplateKey
   recipientKind          MessageRecipientKind
@@ -1009,8 +1018,9 @@ model MessageOutbox {
   createdAt              DateTime                       @default(now())
   updatedAt              DateTime                       @updatedAt
 
-  event           Event                    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event           Event?                   @relation(fields: [eventId], references: [id], onDelete: Cascade)
   registration    Registration?            @relation(fields: [registrationId], references: [id], onDelete: SetNull)
+  accountUser     User?                    @relation("AccountMessageRecipient", fields: [accountUserId], references: [id], onDelete: Cascade)
   templateVersion MessageTemplateVersion?  @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
   retryOf         MessageOutbox?           @relation("MessageRetry", fields: [retryOfMessageId], references: [id], onDelete: SetNull)
   retries         MessageOutbox[]          @relation("MessageRetry")
@@ -1020,6 +1030,7 @@ model MessageOutbox {
   @@index([status, availableAt, createdAt])
   @@index([eventId, createdAt])
   @@index([registrationId, createdAt])
+  @@index([accountUserId, createdAt])
   @@index([retryOfMessageId])
   @@index([provider, providerDeliveryStatus, providerStatusAt])
 }

@@ -24,6 +24,7 @@ export async function POST(request: Request) {
     const result = await sweepOutbox();
     return Response.json({
       sweptEventCount: result.sweptEventIds.length,
+      sweptAccountMessages: result.sweptAccountMessages,
       skipped: result.skipped,
       queueBefore: result.snapshotBefore,
     });

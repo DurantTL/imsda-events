@@ -4,6 +4,7 @@ const dependencies = vi.hoisted(() => ({
   getPrisma: vi.fn(),
   getServerEnv: vi.fn(),
   processPendingMessages: vi.fn(),
+  processAccountEmailQueue: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -11,6 +12,9 @@ vi.mock("@/lib/prisma", () => ({ getPrisma: dependencies.getPrisma }));
 vi.mock("@/lib/env", () => ({ getServerEnv: dependencies.getServerEnv }));
 vi.mock("@/modules/communications/messaging-repository", () => ({
   processPendingMessages: dependencies.processPendingMessages,
+}));
+vi.mock("@/modules/communications/email-delivery", () => ({
+  processAccountEmailQueue: dependencies.processAccountEmailQueue,
 }));
 
 import {
@@ -31,14 +35,15 @@ const healthySnapshot: OutboxQueueSnapshot = {
   failed: 0,
   oldestDueAgeMs: 30_000,
   eventsWithDueMessages: 1,
+  accountMessagesDue: 0,
 };
 
 function prismaFixture(options: {
   counts?: number[];
   oldestDue?: { availableAt: Date } | null;
-  dueEvents?: Array<{ eventId: string }>;
+  dueEvents?: Array<{ eventId: string | null }>;
 } = {}) {
-  const counts = options.counts ?? [2, 1, 0, 0];
+  const counts = options.counts ?? [2, 1, 0, 0, 0];
   const count = vi.fn();
   for (const value of counts) count.mockResolvedValueOnce(value);
   const prisma = {
@@ -86,9 +91,9 @@ describe("outbox queue readiness", () => {
   it("measures the age of the oldest due message", async () => {
     const now = new Date("2026-07-24T12:00:00.000Z");
     prismaFixture({
-      counts: [7, 4, 1, 2],
+      counts: [7, 4, 1, 2, 1],
       oldestDue: { availableAt: new Date("2026-07-24T11:40:00.000Z") },
-      dueEvents: [{ eventId: "evt_a" }, { eventId: "evt_b" }],
+      dueEvents: [{ eventId: "evt_a" }, { eventId: "evt_b" }, { eventId: null }],
     });
 
     expect(await getOutboxQueueSnapshot(now)).toEqual({
@@ -97,12 +102,15 @@ describe("outbox queue readiness", () => {
       processing: 1,
       failed: 2,
       oldestDueAgeMs: 20 * 60 * 1000,
+      // The account group is counted separately: it names no event, so folding
+      // it into the event count would report an event that does not exist.
       eventsWithDueMessages: 2,
+      accountMessagesDue: 1,
     });
   });
 
   it("reports no age when nothing is due", async () => {
-    prismaFixture({ counts: [0, 0, 0, 0], oldestDue: null });
+    prismaFixture({ counts: [0, 0, 0, 0, 0], oldestDue: null });
 
     expect((await getOutboxQueueSnapshot()).oldestDueAgeMs).toBeNull();
   });
@@ -175,5 +183,38 @@ describe("sweeping the queue", () => {
 
     expect((await sweepOutbox()).sweptEventIds).toEqual([]);
     expect(dependencies.processPendingMessages).not.toHaveBeenCalled();
+    expect(dependencies.processAccountEmailQueue).not.toHaveBeenCalled();
+  });
+
+  it("sweeps account email, which belongs to no event", async () => {
+    prismaFixture({ dueEvents: [{ eventId: null }, { eventId: "evt_a" }] });
+
+    const result = await sweepOutbox();
+
+    expect(result.sweptAccountMessages).toBe(true);
+    expect(result.sweptEventIds).toEqual(["evt_a"]);
+    expect(dependencies.processAccountEmailQueue).toHaveBeenCalledOnce();
+    // The account queue must never be handed to the event processor: there is
+    // no event id to give it.
+    expect(dependencies.processPendingMessages).toHaveBeenCalledExactlyOnceWith(
+      "evt_a",
+      undefined,
+    );
+  });
+
+  it("keeps sweeping events when account email is not configured", async () => {
+    prismaFixture({ dueEvents: [{ eventId: null }, { eventId: "evt_a" }] });
+    dependencies.processAccountEmailQueue.mockRejectedValueOnce(
+      new Error("Set ACCOUNT_EMAIL_SENDER_ADDRESS before account email can be sent."),
+    );
+
+    const result = await sweepOutbox();
+
+    expect(result.sweptAccountMessages).toBe(false);
+    expect(result.sweptEventIds).toEqual(["evt_a"]);
+    expect(result.skipped).toEqual([{
+      eventId: null,
+      reason: "Set ACCOUNT_EMAIL_SENDER_ADDRESS before account email can be sent.",
+    }]);
   });
 });

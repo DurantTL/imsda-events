@@ -90,6 +90,24 @@ card data nor Square's short-lived source token.
 See [`modules/payments/README.md`](modules/payments/README.md) for the
 idempotency, webhook, refund, and production-safety boundary.
 
+### Account email
+
+Activation and password-reset email travel the same outbox as registration
+messages — with backoff, attempt history, and the scheduled sweep — but belong
+to a person rather than to an event, so they take their sender from
+`ACCOUNT_EMAIL_SENDER_ADDRESS` (plus `ACCOUNT_EMAIL_SENDER_NAME` and the
+optional `ACCOUNT_EMAIL_REPLY_TO`) instead of an event's message settings.
+Production requires that address and `RESEND_API_KEY`: a colleague who never
+receives an invitation cannot obtain a credential at all.
+
+Locally, leaving them blank keeps the previous behaviour — **Forgot password**
+shows the one-time link on the page, and an invitation returns it to the
+administrator — and the page says which of the two is happening.
+
+The queued message stores a sentinel, never a token. The one-time link is minted
+when the message is actually sent, so a database read yields nothing usable and a
+reset link's thirty minutes start on delivery rather than in the queue.
+
 ## Verification
 
 ```bash

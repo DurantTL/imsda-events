@@ -47,10 +47,18 @@ const serverEnvSchema = z
 
     EMBED_ALLOWED_ORIGINS: optionalTrimmed,
 
-    // Optional external email delivery. Blank keeps local capture only.
+    // External email delivery. Blank keeps event messaging on local capture —
+    // but it is required in production, because account recovery email has no
+    // other path and an operator cannot hand-deliver a link to every colleague.
     RESEND_API_KEY: optionalTrimmed,
     RESEND_API_URL: z.string().url().default("https://api.resend.com"),
     RESEND_WEBHOOK_SECRET: optionalTrimmed,
+
+    // Sender identity for account email. Event messages take theirs from
+    // EventMessageSettings; activation and password reset belong to no event.
+    ACCOUNT_EMAIL_SENDER_NAME: z.string().trim().min(1).max(100).default("IMSDA Events"),
+    ACCOUNT_EMAIL_SENDER_ADDRESS: optionalTrimmed,
+    ACCOUNT_EMAIL_REPLY_TO: optionalTrimmed,
 
     // Square stays in Sandbox unless production is separately unlocked.
     SQUARE_ENVIRONMENT: z.enum(["sandbox", "production"]).default("sandbox"),
@@ -106,6 +114,36 @@ const serverEnvSchema = z
           message: `must contain at least ${SECRET_MIN_LENGTH} characters when configured`,
         });
       }
+    }
+
+    // Account recovery is the one email path with no manual alternative: an
+    // invited colleague who never receives a link cannot obtain a credential at
+    // all. Production therefore has to have somewhere to send from.
+    const emailAddress = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    for (const key of ["ACCOUNT_EMAIL_SENDER_ADDRESS", "ACCOUNT_EMAIL_REPLY_TO"] as const) {
+      const address = value[key];
+      if (address && !emailAddress.test(address)) {
+        context.addIssue({
+          code: "custom",
+          path: [key],
+          message: "must be an email address",
+        });
+      }
+    }
+    if (isProduction && !value.ACCOUNT_EMAIL_SENDER_ADDRESS) {
+      context.addIssue({
+        code: "custom",
+        path: ["ACCOUNT_EMAIL_SENDER_ADDRESS"],
+        message:
+          "is required in production so activation and password reset email can be sent",
+      });
+    }
+    if (isProduction && !value.RESEND_API_KEY) {
+      context.addIssue({
+        code: "custom",
+        path: ["RESEND_API_KEY"],
+        message: "is required in production so account recovery email can be delivered",
+      });
     }
 
     if (
@@ -182,6 +220,9 @@ function readSource(source: Record<string, string | undefined>) {
     "RESEND_API_KEY",
     "RESEND_API_URL",
     "RESEND_WEBHOOK_SECRET",
+    "ACCOUNT_EMAIL_SENDER_NAME",
+    "ACCOUNT_EMAIL_SENDER_ADDRESS",
+    "ACCOUNT_EMAIL_REPLY_TO",
     "SQUARE_ENVIRONMENT",
     "SQUARE_APPLICATION_ID",
     "SQUARE_ACCESS_TOKEN",

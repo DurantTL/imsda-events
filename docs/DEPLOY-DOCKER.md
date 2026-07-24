@@ -44,11 +44,20 @@ MANAGE_LINK_DERIVATION_SECRET=<openssl rand -base64 48>
 ATTENDEE_PASS_SIGNING_SECRET=<openssl rand -base64 48>
 RATE_LIMIT_HASH_SECRET=<openssl rand -base64 48>
 OUTBOX_SWEEP_TOKEN=<openssl rand -base64 48>
+RESEND_API_KEY=<from the Resend dashboard>
+ACCOUNT_EMAIL_SENDER_ADDRESS=<a verified sender, e.g. no-reply@imsda.org>
 ```
 
 Each secret needs at least 32 characters. If one is missing or malformed the
 container exits at startup with the offending variable named in its log, rather
 than serving pages and failing later on a QR pass or a private link.
+
+The last two are what send activation and password-reset email. They are
+required rather than optional because there is no manual substitute at scale: an
+invited colleague who never receives a link cannot obtain a credential at all.
+The address must be verified with Resend, or every account email fails at the
+provider. `ACCOUNT_EMAIL_SENDER_NAME` defaults to `IMSDA Events`, and
+`ACCOUNT_EMAIL_REPLY_TO` is optional.
 
 `NODE_ENV` and `DATABASE_URL` are set by `docker-compose.yml` — you do **not**
 provide `DATABASE_URL` here.
@@ -91,8 +100,10 @@ Square stays in Sandbox until `SQUARE_ENVIRONMENT=production` **and**
    shown once — only its digest is stored — and expires after seven days. The
    account cannot sign in until it is activated.
 5. Invite colleagues from **Staff access** in the workspace. Each invitation
-   produces its own one-time activation link, shown once to you. Recovery email is
-   not connected yet, so pass the link on yourself.
+   emails its own one-time activation link to the person invited; if they lose it
+   they can request another from **Forgot password**. (Where account email is not
+   configured — development only, since production requires it — the link is
+   shown to you once instead, to pass on yourself.)
 6. Confirm `APP_BASE_URL` is the final `https` domain before sending any real links.
 
 **There is no seed step, and `RUN_DB_SEED` is no longer supported.** `prisma/seed.ts`

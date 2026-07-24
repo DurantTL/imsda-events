@@ -8,12 +8,12 @@ import { createOpaqueToken, hashOpaqueToken } from "@/modules/access/tokens";
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_MINUTES = 15;
-const RESET_LIFETIME_MINUTES = 30;
+export const RESET_LIFETIME_MINUTES = 30;
 /**
- * An invitation is handed over out of band and may sit unopened over a weekend,
- * so it outlives a reset link — but it still expires.
+ * An invitation may sit unopened over a weekend, so it outlives a reset link —
+ * but it still expires.
  */
-const ACTIVATION_LIFETIME_MINUTES = 7 * 24 * 60;
+export const ACTIVATION_LIFETIME_MINUTES = 7 * 24 * 60;
 
 export type AccountTokenIssue = {
   token: string;
@@ -96,9 +96,24 @@ export async function issueAccountToken(
     return null;
   }
 
-  const purpose = options.purpose
-    ?? (user.accountStatus === "PENDING_ACTIVATION" ? "ACCOUNT_ACTIVATION" : "PASSWORD_RESET");
-  const lifetimeMinutes = purpose === "ACCOUNT_ACTIVATION"
+  return issueAccountTokenForUser(user.id, {
+    purpose: options.purpose
+      ?? (user.accountStatus === "PENDING_ACTIVATION" ? "ACCOUNT_ACTIVATION" : "PASSWORD_RESET"),
+    now: options.now,
+  });
+}
+
+/**
+ * Issues against a known user id, skipping the address lookup and the dummy
+ * password work that only exists to keep {@link issueAccountToken} constant
+ * time for an unknown address. Email delivery calls this at send time so the
+ * raw token never has to be stored in the outbox alongside the message.
+ */
+export async function issueAccountTokenForUser(
+  userId: string,
+  options: { purpose: AccountTokenPurpose; now?: Date },
+): Promise<AccountTokenIssue> {
+  const lifetimeMinutes = options.purpose === "ACCOUNT_ACTIVATION"
     ? ACTIVATION_LIFETIME_MINUTES
     : RESET_LIFETIME_MINUTES;
 
@@ -107,14 +122,25 @@ export async function issueAccountToken(
   const expiresAt = new Date(now.getTime() + lifetimeMinutes * 60 * 1000);
   await getPrisma().$transaction([
     getPrisma().passwordResetToken.updateMany({
-      where: { userId: user.id, usedAt: null },
+      where: { userId, usedAt: null },
       data: { usedAt: now },
     }),
     getPrisma().passwordResetToken.create({
-      data: { userId: user.id, tokenHash: hashOpaqueToken(token), purpose, expiresAt },
+      data: { userId, tokenHash: hashOpaqueToken(token), purpose: options.purpose, expiresAt },
     }),
   ]);
-  return { token, purpose, expiresAt };
+  return { token, purpose: options.purpose, expiresAt };
+}
+
+/**
+ * Retires a token that was issued but never handed over — an email that failed
+ * definitively, for instance. Spending it is safe to repeat.
+ */
+export async function revokeAccountToken(token: string, now = new Date()) {
+  await getPrisma().passwordResetToken.updateMany({
+    where: { tokenHash: hashOpaqueToken(token), usedAt: null },
+    data: { usedAt: now },
+  });
 }
 
 /** Back-compatible wrapper: returns the raw token only. */
