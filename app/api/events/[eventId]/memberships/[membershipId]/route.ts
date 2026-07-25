@@ -6,10 +6,11 @@ import { eventRoles } from "@/modules/access/permissions";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { findActiveMembership } from "@/modules/events/repository";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 const updateSchema = z.object({ role: z.enum(eventRoles), status: z.enum(["ACTIVE", "INACTIVE"]) });
 
-export async function PATCH(request: Request, context: { params: Promise<{ eventId: string; membershipId: string }> }) {
+async function patchHandler(request: Request, context: { params: Promise<{ eventId: string; membershipId: string }> }) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
   try {
@@ -25,3 +26,5 @@ export async function PATCH(request: Request, context: { params: Promise<{ event
     return Response.json({ error: "MEMBERSHIP_UPDATE_FAILED", message: "The staff assignment could not be updated." }, { status: 500 });
   }
 }
+
+export const PATCH = withRequestContext(patchHandler);

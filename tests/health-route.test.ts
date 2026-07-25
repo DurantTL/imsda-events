@@ -30,9 +30,14 @@ beforeEach(() => {
   dependencies.getOutboxQueueHealth.mockResolvedValue(healthyQueue);
 });
 
+/** The wrapper needs a request: Next always supplies one. */
+function healthRequest() {
+  return new Request("https://events.imsda.test/api/health");
+}
+
 describe("health endpoint", () => {
   it("reports ok when the database and the outbox are both healthy", async () => {
-    const response = await GET();
+    const response = await GET(healthRequest());
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
@@ -49,7 +54,7 @@ describe("health endpoint", () => {
       reasons: ["90 messages are due and undelivered"],
     });
 
-    const response = await GET();
+    const response = await GET(healthRequest());
     const body = await response.json();
 
     // Still 200: a backed-up queue must not make the orchestrator restart a
@@ -64,7 +69,7 @@ describe("health endpoint", () => {
       $queryRaw: vi.fn().mockRejectedValue(new Error("connection refused")),
     });
 
-    const response = await GET();
+    const response = await GET(healthRequest());
 
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({
@@ -75,7 +80,7 @@ describe("health endpoint", () => {
   it("stays up and marks the outbox unknown when its own check fails", async () => {
     dependencies.getOutboxQueueHealth.mockRejectedValue(new Error("query failed"));
 
-    const response = await GET();
+    const response = await GET(healthRequest());
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({

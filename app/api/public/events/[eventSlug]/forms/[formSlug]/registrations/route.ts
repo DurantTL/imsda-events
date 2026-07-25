@@ -12,6 +12,7 @@ import {
 } from "@/modules/rate-limit/domain";
 import { checkPublicRegistrationRateLimit } from "@/modules/rate-limit/service";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 const maximumBodyBytes = 512 * 1024;
 const noStoreHeaders = { "Cache-Control": "no-store" };
@@ -49,7 +50,7 @@ function errorResponse(error: unknown, rateLimit?: RateLimitOutcome) {
     : response;
 }
 
-export async function GET(
+async function getHandler(
   _request: Request,
   context: { params: Promise<{ eventSlug: string; formSlug: string }> },
 ) {
@@ -68,7 +69,7 @@ export async function GET(
   }
 }
 
-export async function POST(request: Request, context: { params: Promise<{ eventSlug: string; formSlug: string }> }) {
+async function postHandler(request: Request, context: { params: Promise<{ eventSlug: string; formSlug: string }> }) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
 
@@ -115,3 +116,6 @@ export async function POST(request: Request, context: { params: Promise<{ eventS
     return errorResponse(error, rateLimit);
   }
 }
+
+export const GET = withRequestContext(getHandler);
+export const POST = withRequestContext(postHandler);

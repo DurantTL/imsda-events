@@ -7,6 +7,7 @@ import { findActiveMembership } from "@/modules/events/repository";
 import { createRegistration, listRegistrations } from "@/modules/registrations/repository";
 import { registrationInputSchema } from "@/modules/registrations/schemas";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 async function authorize(eventId: string, permission: "VIEW_SENSITIVE_DATA" | "MANAGE_REGISTRATION") {
   return requirePermission(await getCurrentSession(), eventId, permission, findActiveMembership);
@@ -26,7 +27,7 @@ function apiError(error: unknown) {
   return Response.json({ error: "REGISTRATION_REQUEST_FAILED" }, { status: 500 });
 }
 
-export async function GET(_request: Request, context: { params: Promise<{ eventId: string }> }) {
+async function getHandler(_request: Request, context: { params: Promise<{ eventId: string }> }) {
   try {
     const { eventId } = await context.params;
     await authorize(eventId, "VIEW_SENSITIVE_DATA");
@@ -36,7 +37,7 @@ export async function GET(_request: Request, context: { params: Promise<{ eventI
   }
 }
 
-export async function POST(request: Request, context: { params: Promise<{ eventId: string }> }) {
+async function postHandler(request: Request, context: { params: Promise<{ eventId: string }> }) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
   try {
@@ -49,3 +50,6 @@ export async function POST(request: Request, context: { params: Promise<{ eventI
     return apiError(error);
   }
 }
+
+export const GET = withRequestContext(getHandler);
+export const POST = withRequestContext(postHandler);

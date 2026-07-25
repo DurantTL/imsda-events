@@ -5,8 +5,9 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { commitImportRun, ImportOperationError } from "@/modules/imports/repository";
 import { findActiveMembership } from "@/modules/events/repository";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
-export async function POST(request: Request, context: { params: Promise<{ eventId: string; importRunId: string }> }) {
+async function postHandler(request: Request, context: { params: Promise<{ eventId: string; importRunId: string }> }) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
   try {
@@ -21,3 +22,5 @@ export async function POST(request: Request, context: { params: Promise<{ eventI
     return Response.json({ error: "IMPORT_COMMIT_FAILED", message: "The staging import could not be committed." }, { status: 500 });
   }
 }
+
+export const POST = withRequestContext(postHandler);

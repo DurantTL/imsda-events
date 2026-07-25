@@ -4,10 +4,11 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { CsvImportError, previewCsvImport } from "@/modules/imports/repository";
 import { findActiveMembership } from "@/modules/events/repository";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 
-export async function POST(request: Request, context: { params: Promise<{ eventId: string }> }) {
+async function postHandler(request: Request, context: { params: Promise<{ eventId: string }> }) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
   try {
@@ -27,3 +28,5 @@ export async function POST(request: Request, context: { params: Promise<{ eventI
     return Response.json({ error: "IMPORT_PREVIEW_FAILED", message: "The CSV preview could not be created." }, { status: 500 });
   }
 }
+
+export const POST = withRequestContext(postHandler);

@@ -11,6 +11,7 @@ import {
 } from "@/modules/rate-limit/domain";
 import { checkPublicManageRateLimit } from "@/modules/rate-limit/service";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 const maximumBodyBytes = 8 * 1_024;
 const privateHeaders = {
@@ -97,7 +98,7 @@ function errorResponse(
   }, { status: 500 }, rateLimit);
 }
 
-export async function POST(request: Request, context: RouteContext) {
+async function postHandler(request: Request, context: RouteContext) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return applyPrivateHeaders(originError);
 
@@ -143,3 +144,5 @@ export async function POST(request: Request, context: RouteContext) {
     return errorResponse(error, rateLimit);
   }
 }
+
+export const POST = withRequestContext(postHandler);

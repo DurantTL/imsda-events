@@ -8,7 +8,9 @@ import { addStaffMembership, listStaffMemberships } from "@/modules/access/membe
 import { eventRoles } from "@/modules/access/permissions";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { findActiveMembership } from "@/modules/events/repository";
+import { sendStaffInvitationEmail } from "@/modules/communications/account-email-dispatch";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 const membershipSchema = z.object({
   email: z.string().trim().email().max(254),
@@ -24,7 +26,7 @@ function apiError(error: unknown) {
   return Response.json({ error: "MEMBERSHIP_REQUEST_FAILED", message: "The staff assignment could not be saved." }, { status: 500 });
 }
 
-export async function GET(_request: Request, context: { params: Promise<{ eventId: string }> }) {
+async function getHandler(_request: Request, context: { params: Promise<{ eventId: string }> }) {
   try {
     const { eventId } = await context.params;
     await requirePermission(await getCurrentSession(), eventId, "MANAGE_STAFF", findActiveMembership);
@@ -32,7 +34,7 @@ export async function GET(_request: Request, context: { params: Promise<{ eventI
   } catch (error) { return apiError(error); }
 }
 
-export async function POST(request: Request, context: { params: Promise<{ eventId: string }> }) {
+async function postHandler(request: Request, context: { params: Promise<{ eventId: string }> }) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
   try {
@@ -40,11 +42,19 @@ export async function POST(request: Request, context: { params: Promise<{ eventI
     const access = await requirePermission(await getCurrentSession(), eventId, "MANAGE_STAFF", findActiveMembership);
     const input = membershipSchema.parse(await request.json());
     const result = await addStaffMembership(eventId, access.user.id, input);
-    // The link is returned only to the authenticated administrator who just
-    // created the account, and only when an account was actually created. That
-    // is an out-of-band handoff, so it is shown in production too — otherwise
-    // an invited colleague has no way to obtain a credential at all.
-    const issued = result.credentialCreated ? await issueAccountToken(input.email) : null;
+    // An invited colleague is emailed their activation link. Only where email
+    // is not configured — development, since production requires it at startup
+    // — is a link handed back for the administrator to pass on out of band.
+    const invited = result.credentialCreated
+      ? await sendStaffInvitationEmail({
+          userId: result.membership.user.id,
+          email: input.email,
+          displayName: input.displayName,
+        })
+      : { configured: true, queued: false };
+    const issued = result.credentialCreated && !invited.configured
+      ? await issueAccountToken(input.email)
+      : null;
     const setupUrl = issued
       ? new URL(
           `/reset-password?token=${encodeURIComponent(issued.token)}`,
@@ -53,8 +63,12 @@ export async function POST(request: Request, context: { params: Promise<{ eventI
       : undefined;
     return Response.json({
       membership: result.membership,
+      invitationEmailed: invited.queued,
       setupUrl,
       setupExpiresAt: issued?.expiresAt.toISOString(),
     }, { status: 201 });
   } catch (error) { return apiError(error); }
 }
+
+export const GET = withRequestContext(getHandler);
+export const POST = withRequestContext(postHandler);

@@ -5,6 +5,14 @@ const authMocks = vi.hoisted(() => ({
   issuePasswordReset: vi.fn(),
 }));
 
+const accountEmailMocks = vi.hoisted(() => ({
+  sendAccountRecoveryEmail: vi.fn(),
+}));
+
+const mfaMocks = vi.hoisted(() => ({
+  issueMfaChallenge: vi.fn(),
+}));
+
 const rateLimitMocks = vi.hoisted(() => ({
   checkLoginAccountRateLimit: vi.fn(),
   checkLoginClientRateLimit: vi.fn(),
@@ -18,6 +26,8 @@ vi.mock("@/modules/access/session-store", () => ({
   SESSION_LIFETIME_SECONDS: 28_800,
 }));
 vi.mock("@/modules/rate-limit/service", () => rateLimitMocks);
+vi.mock("@/modules/communications/account-email-dispatch", () => accountEmailMocks);
+vi.mock("@/modules/access/mfa-service", () => mfaMocks);
 
 import { POST as login } from "@/app/api/auth/login/route";
 import { POST as requestPasswordReset } from "@/app/api/auth/password-reset/request/route";
@@ -68,6 +78,12 @@ beforeEach(() => {
   );
   authMocks.authenticateWithPassword.mockResolvedValue(null);
   authMocks.issuePasswordReset.mockResolvedValue(null);
+  // Unconfigured account email is the development shape: the route then falls
+  // back to issuing a link itself, which is what these tests assert on.
+  accountEmailMocks.sendAccountRecoveryEmail.mockResolvedValue({
+    configured: false,
+    queued: false,
+  });
 });
 
 afterEach(() => {

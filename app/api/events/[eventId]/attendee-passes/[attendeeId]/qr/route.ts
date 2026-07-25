@@ -7,6 +7,7 @@ import { getCurrentSession } from "@/modules/access/current-session";
 import { createStaffAttendeePass } from "@/modules/checkin/attendee-pass-repository";
 import { findActiveMembership } from "@/modules/events/repository";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 const privateHeaders = {
   "Cache-Control": "private, no-store, max-age=0",
@@ -30,7 +31,7 @@ function privateJson(body: unknown, init?: ResponseInit) {
   });
 }
 
-export async function GET(_request: Request, context: RouteContext) {
+async function getHandler(_request: Request, context: RouteContext) {
   try {
     const { eventId, attendeeId } = await context.params;
     await requirePermission(
@@ -81,3 +82,5 @@ export async function GET(_request: Request, context: RouteContext) {
     }, { status: 500 });
   }
 }
+
+export const GET = withRequestContext(getHandler);

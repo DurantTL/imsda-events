@@ -35,6 +35,7 @@ import {
   DEFAULT_MESSAGE_TEMPLATES,
   MESSAGE_TEMPLATE_KEYS,
   SAMPLE_MESSAGE_TEMPLATE_CONTEXT,
+  isEventMessageTemplateKey,
   formatMessageDateRange,
   formatMessageMoney,
   renderMessageTemplate,
@@ -217,10 +218,38 @@ function settingsRecord(settings: {
   };
 }
 
+/**
+ * Account email — activation and password reset — shares the outbox table but
+ * has no event, no editable template, and no place in the event Communications
+ * page. These two guards are where it is filtered out, so the record types the
+ * UI reads stay narrow rather than growing cases that can never render.
+ */
+function isEventTemplateRow<T extends { key: PrismaMessageTemplateKey }>(
+  row: T,
+): row is T & { key: MessageTemplateKey } {
+  return isEventMessageTemplateKey(row.key);
+}
+
+function isEventScopedMessage<T extends {
+  eventId: string | null;
+  templateKey: PrismaMessageTemplateKey;
+  recipientKind: MessageRecipientKind;
+}>(
+  row: T,
+): row is T & {
+  eventId: string;
+  templateKey: MessageTemplateKey;
+  recipientKind: "REGISTRANT" | "INTERNAL" | "TEST";
+} {
+  return row.eventId !== null
+    && isEventMessageTemplateKey(row.templateKey)
+    && row.recipientKind !== "ACCOUNT";
+}
+
 function serializeTemplate(
   template: {
     id: string;
-    key: PrismaMessageTemplateKey;
+    key: MessageTemplateKey;
     isEnabled: boolean;
     versions: Array<{
       id: string;
@@ -261,8 +290,8 @@ function serializeMessage(message: {
   eventId: string;
   registrationId: string | null;
   templateVersionId: string | null;
-  templateKey: PrismaMessageTemplateKey;
-  recipientKind: MessageRecipientKind;
+  templateKey: MessageTemplateKey;
+  recipientKind: "REGISTRANT" | "INTERNAL" | "TEST";
   recipientEmail: string;
   recipientName: string | null;
   senderNameSnapshot: string;
@@ -592,11 +621,12 @@ export async function getMessagingWorkspace(eventId: string): Promise<MessagingW
   return {
     settings: settingsRecord(settings),
     templates: templates
+      .filter(isEventTemplateRow)
       .map(serializeTemplate)
       .sort((left, right) => (keyOrder.get(left.key) ?? 99) - (keyOrder.get(right.key) ?? 99)),
-    messages: messages.map((message) => (
-      serializeMessage(message, settings.deliveryMode)
-    )),
+    messages: messages
+      .filter(isEventScopedMessage)
+      .map((message) => serializeMessage(message, settings.deliveryMode)),
     counts,
     reminderPreview: reminderState.preview,
   };
@@ -721,7 +751,7 @@ async function captureOneMessageLocally(messageId: string, eventId?: string) {
       },
     });
     if (!message || message.status !== "PENDING") return false;
-    if (message.event.messageSettings?.deliveryMode === "DISABLED") return false;
+    if (message.event?.messageSettings?.deliveryMode === "DISABLED") return false;
 
     const lockToken = randomUUID();
     const claimed = await tx.messageOutbox.updateMany({
@@ -1838,7 +1868,13 @@ export async function processQueuedMessageIdsAfterCommit(
   });
   const externalByEvent = new Map<string, string[]>();
   for (const message of messages) {
-    const mode = message.event.messageSettings?.deliveryMode ?? "LOCAL_CAPTURE";
+    // Account email has no event and no per-event delivery mode. It is
+    // delivered by processAccountEmailQueue, not from here.
+    if (message.eventId === null) {
+      result.skippedIds.push(message.id);
+      continue;
+    }
+    const mode = message.event?.messageSettings?.deliveryMode ?? "LOCAL_CAPTURE";
     if (mode === "LOCAL_CAPTURE") {
       if (await captureOneMessageLocally(message.id, message.eventId)) {
         result.capturedIds.push(message.id);

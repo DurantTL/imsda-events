@@ -8,8 +8,9 @@ import {
   listPromoCodes,
 } from "@/modules/promo-codes/repository";
 import { promoCodeInputSchema } from "@/modules/promo-codes/schemas";
+import { withRequestContext } from "@/lib/request-context";
 
-export async function GET(
+async function getHandler(
   request: Request,
   context: { params: Promise<{ eventId: string }> },
 ) {
@@ -29,7 +30,7 @@ export async function GET(
   }
 }
 
-export async function POST(
+async function postHandler(
   request: Request,
   context: { params: Promise<{ eventId: string }> },
 ) {
@@ -55,3 +56,6 @@ export async function POST(
   }
 }
 
+
+export const GET = withRequestContext(getHandler);
+export const POST = withRequestContext(postHandler);

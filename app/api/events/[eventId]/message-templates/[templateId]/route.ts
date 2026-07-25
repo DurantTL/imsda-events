@@ -5,8 +5,9 @@ import { messagingApiError } from "@/modules/communications/api-errors";
 import { publishMessageTemplateVersion } from "@/modules/communications/messaging-repository";
 import { messageTemplateInputSchema } from "@/modules/communications/schemas";
 import { findActiveMembership } from "@/modules/events/repository";
+import { withRequestContext } from "@/lib/request-context";
 
-export async function PUT(
+async function putHandler(
   request: Request,
   context: { params: Promise<{ eventId: string; templateId: string }> },
 ) {
@@ -32,3 +33,5 @@ export async function PUT(
     return messagingApiError(error, "Publishing the message template");
   }
 }
+
+export const PUT = withRequestContext(putHandler);

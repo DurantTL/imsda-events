@@ -11,6 +11,7 @@ import {
 } from "@/modules/checkin/attendee-pass-repository";
 import { findActiveMembership } from "@/modules/events/repository";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 const maximumBodyBytes = 4 * 1_024;
 const privateHeaders = {
@@ -91,7 +92,7 @@ function errorResponse(error: unknown) {
   }, { status: 500 });
 }
 
-export async function POST(request: Request, context: RouteContext) {
+async function postHandler(request: Request, context: RouteContext) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return applyPrivateHeaders(originError);
 
@@ -127,3 +128,5 @@ export async function POST(request: Request, context: RouteContext) {
   }
 }
 
+
+export const POST = withRequestContext(postHandler);

@@ -11,6 +11,7 @@ import {
 } from "@/modules/rate-limit/domain";
 import { checkPublicPromoQuoteRateLimit } from "@/modules/rate-limit/service";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 const maximumBodyBytes = 512 * 1024;
 const noStoreHeaders = { "Cache-Control": "no-store" };
@@ -59,7 +60,7 @@ function promoQuoteError(error: unknown, rateLimit?: RateLimitOutcome) {
   return rateLimit ? applyRateLimitHeaders(response, rateLimit) : response;
 }
 
-export async function POST(
+async function postHandler(
   request: Request,
   context: {
     params: Promise<{ eventSlug: string; formSlug: string }>;
@@ -113,3 +114,5 @@ export async function POST(
   }
 }
 
+
+export const POST = withRequestContext(postHandler);

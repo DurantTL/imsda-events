@@ -9,6 +9,7 @@ import {
 } from "@/modules/communications/messaging-repository";
 import { balanceReminderBatchInputSchema } from "@/modules/communications/schemas";
 import { findActiveMembership } from "@/modules/events/repository";
+import { withRequestContext } from "@/lib/request-context";
 
 async function authorize(eventId: string) {
   return requirePermission(
@@ -19,7 +20,7 @@ async function authorize(eventId: string) {
   );
 }
 
-export async function GET(
+async function getHandler(
   _request: Request,
   context: { params: Promise<{ eventId: string }> },
 ) {
@@ -33,7 +34,7 @@ export async function GET(
   }
 }
 
-export async function POST(
+async function postHandler(
   request: Request,
   context: { params: Promise<{ eventId: string }> },
 ) {
@@ -54,3 +55,6 @@ export async function POST(
     return messagingApiError(error, "Creating the balance-reminder batch");
   }
 }
+
+export const GET = withRequestContext(getHandler);
+export const POST = withRequestContext(postHandler);

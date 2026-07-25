@@ -13,6 +13,7 @@ import {
 } from "@/modules/registrations/operations-repository";
 import { attendeeSubstitutionInputSchema } from "@/modules/registrations/schemas";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 const noStoreHeaders = { "Cache-Control": "no-store" };
 
@@ -52,7 +53,7 @@ function errorResponse(error: unknown) {
   );
 }
 
-export async function POST(
+async function postHandler(
   request: Request,
   context: {
     params: Promise<{
@@ -114,3 +115,5 @@ export async function POST(
     return errorResponse(error);
   }
 }
+
+export const POST = withRequestContext(postHandler);

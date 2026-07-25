@@ -10,6 +10,8 @@ import {
   processSquareWebhook,
   SquarePaymentOperationError,
 } from "@/modules/payments/square-repository";
+import { dispatchAlerts } from "@/modules/operations/alerting";
+import { withRequestContext } from "@/lib/request-context";
 
 export const runtime = "nodejs";
 
@@ -23,7 +25,7 @@ function json(body: unknown, status: number) {
   return Response.json(body, { status, headers: noStoreHeaders });
 }
 
-export async function POST(request: Request) {
+async function postHandler(request: Request) {
   const configuration = getSquareConfiguration();
   if (!configuration.webhookConfigured) {
     return json({
@@ -56,6 +58,15 @@ export async function POST(request: Request) {
     signatureKey: configuration.webhookSignatureKey,
     signatureHeader: signature,
   })) {
+    // Either somebody is posting forged payment events, or the signature key or
+    // notification URL does not match what Square is using — in which case
+    // every real payment result is being rejected right now. Both page.
+    await dispatchAlerts([{
+      key: "system.payments.webhook-rejected",
+      severity: "URGENT",
+      summary: "A Square webhook failed signature verification",
+      detail: "Confirm SQUARE_WEBHOOK_SIGNATURE_KEY and SQUARE_WEBHOOK_NOTIFICATION_URL match Square exactly. Until they do, no payment result is being recorded.",
+    }]).catch(() => undefined);
     return json({ error: "INVALID_SQUARE_SIGNATURE" }, 403);
   }
 
@@ -84,3 +95,5 @@ export async function POST(request: Request) {
     return json({ error: "SQUARE_WEBHOOK_FAILED" }, 500);
   }
 }
+
+export const POST = withRequestContext(postHandler);

@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { currentCorrelationId } from "@/lib/request-context";
 
 export type AuditEntry = {
   eventId?: string;
@@ -7,7 +9,12 @@ export type AuditEntry = {
   action: string;
   entityType: string;
   entityId?: string;
-  correlationId: string;
+  /**
+   * Omit it inside a request: the request's own ID is used, which is what ties
+   * an audit entry to the log lines and the response header for the same call.
+   * Callers that already mint one keep working unchanged.
+   */
+  correlationId?: string;
   summary: string;
   metadata?: Prisma.InputJsonValue;
 };
@@ -18,7 +25,12 @@ export async function writeAuditLog(
   entry: AuditEntry,
   client: AuditClient = getPrisma(),
 ) {
-  return client.auditLog.create({ data: entry });
+  return client.auditLog.create({
+    data: {
+      ...entry,
+      correlationId: entry.correlationId ?? currentCorrelationId() ?? randomUUID(),
+    },
+  });
 }
 
 export async function listRecentAuditActivity(eventId: string, take = 12) {

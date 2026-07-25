@@ -10,6 +10,7 @@ import {
 } from "@/modules/access/membership-repository";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
 const globalRoleSchema = z.object({
   globalRole: z.union([z.literal("SYSTEM_ADMIN"), z.null()]),
@@ -43,7 +44,7 @@ function apiError(error: unknown) {
  * Only a system administrator may grant or remove `SYSTEM_ADMIN`. This is what
  * lets a bootstrap account be retired once a real one exists.
  */
-export async function PATCH(request: Request, context: { params: Promise<{ userId: string }> }) {
+async function patchHandler(request: Request, context: { params: Promise<{ userId: string }> }) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
 
@@ -65,3 +66,5 @@ export async function PATCH(request: Request, context: { params: Promise<{ userI
     return apiError(error);
   }
 }
+
+export const PATCH = withRequestContext(patchHandler);

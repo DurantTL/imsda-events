@@ -8,8 +8,9 @@ import {
 } from "@/modules/communications/messaging-repository";
 import { confirmationResendInputSchema } from "@/modules/communications/schemas";
 import { findActiveMembership } from "@/modules/events/repository";
+import { withRequestContext } from "@/lib/request-context";
 
-export async function POST(
+async function postHandler(
   request: Request,
   context: { params: Promise<{ eventId: string; messageId: string }> },
 ) {
@@ -36,3 +37,5 @@ export async function POST(
     return messagingApiError(error, "Creating the confirmation resend");
   }
 }
+
+export const POST = withRequestContext(postHandler);

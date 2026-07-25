@@ -16,6 +16,17 @@ export const MESSAGE_TEMPLATE_KEYS = [
 
 export type MessageTemplateKey = (typeof MESSAGE_TEMPLATE_KEYS)[number];
 
+const EVENT_TEMPLATE_KEYS: ReadonlySet<string> = new Set(MESSAGE_TEMPLATE_KEYS);
+
+/**
+ * The database enum also carries the account keys — activation and password
+ * reset — which are not event templates: they are not editable, not versioned,
+ * and belong to no event. This is the boundary that keeps them out.
+ */
+export function isEventMessageTemplateKey(key: string): key is MessageTemplateKey {
+  return EVENT_TEMPLATE_KEYS.has(key);
+}
+
 export const MESSAGE_TEMPLATE_TOKEN_KEYS = [
   "recipient_name",
   "registrant_name",

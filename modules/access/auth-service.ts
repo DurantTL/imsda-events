@@ -4,16 +4,17 @@ import type { AccountTokenPurpose } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { hashPassword, spendPasswordCheck, verifyPassword } from "@/modules/access/passwords";
 import { createDatabaseSession } from "@/modules/access/session-store";
+import { mfaGateFor } from "@/modules/access/mfa-rules";
 import { createOpaqueToken, hashOpaqueToken } from "@/modules/access/tokens";
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_MINUTES = 15;
-const RESET_LIFETIME_MINUTES = 30;
+export const RESET_LIFETIME_MINUTES = 30;
 /**
- * An invitation is handed over out of band and may sit unopened over a weekend,
- * so it outlives a reset link — but it still expires.
+ * An invitation may sit unopened over a weekend, so it outlives a reset link —
+ * but it still expires.
  */
-const ACTIVATION_LIFETIME_MINUTES = 7 * 24 * 60;
+export const ACTIVATION_LIFETIME_MINUTES = 7 * 24 * 60;
 
 export type AccountTokenIssue = {
   token: string;
@@ -21,13 +22,31 @@ export type AccountTokenIssue = {
   expiresAt: Date;
 };
 
-export async function authenticateWithPassword(email: string, password: string, userAgent: string | null) {
+/**
+ * A correct password is not, on its own, a session.
+ *
+ * For an account that carries a second factor — or that must, by role, and has
+ * not enrolled one — this returns a gate instead. The caller turns that into a
+ * challenge. Nothing downstream ever sees a session that skipped the gate.
+ */
+export type PasswordAuthentication =
+  | { outcome: "session"; userId: string; session: { token: string; expiresAt: Date } }
+  | { outcome: "mfa"; userId: string; gate: "challenge" | "enrol" };
+
+export async function authenticateWithPassword(
+  email: string,
+  password: string,
+  userAgent: string | null,
+): Promise<PasswordAuthentication | null> {
   const normalizedEmail = email.trim().toLowerCase();
   const user = await getPrisma().user.findUnique({
     where: { email: normalizedEmail },
     select: {
       id: true,
       accountStatus: true,
+      globalRole: true,
+      memberships: { where: { status: "ACTIVE" }, select: { role: true } },
+      mfaEnrollment: { select: { status: true } },
       credential: {
         select: { id: true, passwordHash: true, failedAttempts: true, lockedUntil: true, disabledAt: true },
       },
@@ -71,7 +90,23 @@ export async function authenticateWithPassword(email: string, password: string, 
     where: { id: credential.id },
     data: { failedAttempts: 0, lockedUntil: null },
   });
-  return createDatabaseSession(user.id, userAgent);
+
+  const gate = mfaGateFor(
+    {
+      globalRole: user.globalRole,
+      activeEventRoles: user.memberships.map((membership) => membership.role),
+    },
+    user.mfaEnrollment,
+  );
+  if (gate.kind !== "not_required") {
+    return { outcome: "mfa", userId: user.id, gate: gate.kind };
+  }
+
+  return {
+    outcome: "session",
+    userId: user.id,
+    session: await createDatabaseSession(user.id, userAgent),
+  };
 }
 
 /**
@@ -96,9 +131,24 @@ export async function issueAccountToken(
     return null;
   }
 
-  const purpose = options.purpose
-    ?? (user.accountStatus === "PENDING_ACTIVATION" ? "ACCOUNT_ACTIVATION" : "PASSWORD_RESET");
-  const lifetimeMinutes = purpose === "ACCOUNT_ACTIVATION"
+  return issueAccountTokenForUser(user.id, {
+    purpose: options.purpose
+      ?? (user.accountStatus === "PENDING_ACTIVATION" ? "ACCOUNT_ACTIVATION" : "PASSWORD_RESET"),
+    now: options.now,
+  });
+}
+
+/**
+ * Issues against a known user id, skipping the address lookup and the dummy
+ * password work that only exists to keep {@link issueAccountToken} constant
+ * time for an unknown address. Email delivery calls this at send time so the
+ * raw token never has to be stored in the outbox alongside the message.
+ */
+export async function issueAccountTokenForUser(
+  userId: string,
+  options: { purpose: AccountTokenPurpose; now?: Date },
+): Promise<AccountTokenIssue> {
+  const lifetimeMinutes = options.purpose === "ACCOUNT_ACTIVATION"
     ? ACTIVATION_LIFETIME_MINUTES
     : RESET_LIFETIME_MINUTES;
 
@@ -107,14 +157,25 @@ export async function issueAccountToken(
   const expiresAt = new Date(now.getTime() + lifetimeMinutes * 60 * 1000);
   await getPrisma().$transaction([
     getPrisma().passwordResetToken.updateMany({
-      where: { userId: user.id, usedAt: null },
+      where: { userId, usedAt: null },
       data: { usedAt: now },
     }),
     getPrisma().passwordResetToken.create({
-      data: { userId: user.id, tokenHash: hashOpaqueToken(token), purpose, expiresAt },
+      data: { userId, tokenHash: hashOpaqueToken(token), purpose: options.purpose, expiresAt },
     }),
   ]);
-  return { token, purpose, expiresAt };
+  return { token, purpose: options.purpose, expiresAt };
+}
+
+/**
+ * Retires a token that was issued but never handed over — an email that failed
+ * definitively, for instance. Spending it is safe to repeat.
+ */
+export async function revokeAccountToken(token: string, now = new Date()) {
+  await getPrisma().passwordResetToken.updateMany({
+    where: { tokenHash: hashOpaqueToken(token), usedAt: null },
+    data: { usedAt: now },
+  });
 }
 
 /** Back-compatible wrapper: returns the raw token only. */
@@ -123,16 +184,32 @@ export async function issuePasswordReset(email: string) {
 }
 
 /**
- * Describes a token to the page that will consume it, without revealing whose
- * it is. An unknown, used, or expired token is reported the same way.
+ * Describes a live token: what it is for, and whose account it belongs to. An
+ * unknown, used, or expired token is reported the same way — null.
+ *
+ * `owner` is for server-side use only — the password policy rejects a password
+ * containing the account holder's name or address, which it cannot do without
+ * knowing them. It must not be sent to the browser; the page that consumes a
+ * token reads `purpose` alone.
  */
 export async function describeAccountToken(token: string) {
   const record = await getPrisma().passwordResetToken.findUnique({
     where: { tokenHash: hashOpaqueToken(token) },
-    select: { purpose: true, expiresAt: true, usedAt: true },
+    select: {
+      purpose: true,
+      expiresAt: true,
+      usedAt: true,
+      user: { select: { email: true, displayName: true } },
+    },
   });
   if (!record || record.usedAt || record.expiresAt <= new Date()) return null;
-  return { purpose: record.purpose };
+  return {
+    purpose: record.purpose,
+    owner: {
+      email: record.user?.email ?? null,
+      displayName: record.user?.displayName ?? null,
+    },
+  };
 }
 
 export async function resetPassword(token: string, password: string) {

@@ -40,9 +40,21 @@ services:
       RATE_LIMIT_TRUSTED_PROXY_HOPS: ${RATE_LIMIT_TRUSTED_PROXY_HOPS:-1}
       RATE_LIMIT_CLIENT_IP_HEADER: ${RATE_LIMIT_CLIENT_IP_HEADER:-x-forwarded-for}
       EMBED_ALLOWED_ORIGINS: ${EMBED_ALLOWED_ORIGINS:-}
-      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      # Activation and password-reset email have no manual substitute at scale,
+      # so these two are required in production rather than optional.
+      RESEND_API_KEY: ${RESEND_API_KEY?set this to a Resend API key; account email has no other path}
       RESEND_API_URL: ${RESEND_API_URL:-https://api.resend.com}
       RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
+      ACCOUNT_EMAIL_SENDER_NAME: ${ACCOUNT_EMAIL_SENDER_NAME:-IMSDA Events}
+      ACCOUNT_EMAIL_SENDER_ADDRESS: ${ACCOUNT_EMAIL_SENDER_ADDRESS?set this to a sender address verified with Resend}
+      ACCOUNT_EMAIL_REPLY_TO: ${ACCOUNT_EMAIL_REPLY_TO:-}
+      # Seals the TOTP secrets behind two-factor authentication. Changing it
+      # makes every enrolled authenticator unreadable.
+      SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY?set this to at least 32 random characters (openssl rand -base64 48)}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      ALERT_REPEAT_MINUTES: ${ALERT_REPEAT_MINUTES:-60}
+      PASSWORD_BREACH_CHECK: ${PASSWORD_BREACH_CHECK:-}
+      PASSWORD_BREACH_CHECK_URL: ${PASSWORD_BREACH_CHECK_URL:-https://api.pwnedpasswords.com/range/}
       SQUARE_ENVIRONMENT: ${SQUARE_ENVIRONMENT:-sandbox}
       SQUARE_APPLICATION_ID: ${SQUARE_APPLICATION_ID:-}
       SQUARE_ACCESS_TOKEN: ${SQUARE_ACCESS_TOKEN:-}

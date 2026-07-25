@@ -3,8 +3,9 @@ import { getCurrentSession } from "@/modules/access/current-session";
 import { getImportReconciliation } from "@/modules/imports/repository";
 import { findActiveMembership } from "@/modules/events/repository";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
-export async function GET(_request: Request, context: { params: Promise<{ eventId: string }> }) {
+async function getHandler(_request: Request, context: { params: Promise<{ eventId: string }> }) {
   try {
     const { eventId } = await context.params;
     await requirePermission(await getCurrentSession(), eventId, "MANAGE_IMPORTS", findActiveMembership);
@@ -15,3 +16,5 @@ export async function GET(_request: Request, context: { params: Promise<{ eventI
     return Response.json({ error: "RECONCILIATION_FAILED", message: "Reconciliation totals could not be loaded." }, { status: 500 });
   }
 }
+
+export const GET = withRequestContext(getHandler);

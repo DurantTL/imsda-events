@@ -6,8 +6,9 @@ import { findActiveMembership } from "@/modules/events/repository";
 import { PaymentOperationError, recordManualPayment } from "@/modules/payments/repository";
 import { manualPaymentSchema } from "@/modules/payments/schemas";
 import { logError } from "@/lib/logger";
+import { withRequestContext } from "@/lib/request-context";
 
-export async function POST(
+async function postHandler(
   request: Request,
   context: { params: Promise<{ eventId: string; registrationId: string }> },
 ) {
@@ -34,3 +35,5 @@ export async function POST(
     return Response.json({ error: "PAYMENT_CREATE_FAILED" }, { status: 500 });
   }
 }
+
+export const POST = withRequestContext(postHandler);

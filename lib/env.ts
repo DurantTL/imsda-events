@@ -47,10 +47,18 @@ const serverEnvSchema = z
 
     EMBED_ALLOWED_ORIGINS: optionalTrimmed,
 
-    // Optional external email delivery. Blank keeps local capture only.
+    // External email delivery. Blank keeps event messaging on local capture —
+    // but it is required in production, because account recovery email has no
+    // other path and an operator cannot hand-deliver a link to every colleague.
     RESEND_API_KEY: optionalTrimmed,
     RESEND_API_URL: z.string().url().default("https://api.resend.com"),
     RESEND_WEBHOOK_SECRET: optionalTrimmed,
+
+    // Sender identity for account email. Event messages take theirs from
+    // EventMessageSettings; activation and password reset belong to no event.
+    ACCOUNT_EMAIL_SENDER_NAME: z.string().trim().min(1).max(100).default("IMSDA Events"),
+    ACCOUNT_EMAIL_SENDER_ADDRESS: optionalTrimmed,
+    ACCOUNT_EMAIL_REPLY_TO: optionalTrimmed,
 
     // Square stays in Sandbox unless production is separately unlocked.
     SQUARE_ENVIRONMENT: z.enum(["sandbox", "production"]).default("sandbox"),
@@ -70,6 +78,31 @@ const serverEnvSchema = z
     // Authorises the scheduled outbox sweep. Required in production so the
     // sweep endpoint is never reachable without a credential.
     OUTBOX_SWEEP_TOKEN: optionalTrimmed,
+
+    // Encrypts the values that must be recoverable rather than hashed — today,
+    // TOTP secrets. Required in production, where MFA is enforced for admins.
+    SECRET_ENCRYPTION_KEY: optionalTrimmed,
+
+    // Where alerts go. Any endpoint that accepts a JSON POST — a Slack or
+    // Teams incoming webhook, or a small relay. Blank means alerts are only
+    // written to the log, where nothing is watching them.
+    ALERT_WEBHOOK_URL: optionalTrimmed,
+    // How long the same condition stays quiet after paging once.
+    ALERT_REPEAT_MINUTES: z
+      .string()
+      .trim()
+      .regex(/^\d+$/, "must be a whole number of minutes")
+      .transform(Number)
+      .refine((value) => value >= 1 && value <= 1440, "must be between 1 and 1440 minutes")
+      .default(60),
+
+    // Checks a chosen password against a public breach corpus, sending only a
+    // five-character hash prefix. Unset means on in production, off elsewhere.
+    PASSWORD_BREACH_CHECK: z.enum(["enabled", "disabled"]).optional(),
+    PASSWORD_BREACH_CHECK_URL: z
+      .string()
+      .url()
+      .default("https://api.pwnedpasswords.com/range/"),
   })
   .superRefine((value, context) => {
     const isProduction = value.NODE_ENV === "production";
@@ -79,6 +112,7 @@ const serverEnvSchema = z
       "ATTENDEE_PASS_SIGNING_SECRET",
       "RATE_LIMIT_HASH_SECRET",
       "OUTBOX_SWEEP_TOKEN",
+      "SECRET_ENCRYPTION_KEY",
     ] as const;
 
     for (const key of requiredInProduction) {
@@ -108,6 +142,36 @@ const serverEnvSchema = z
       }
     }
 
+    // Account recovery is the one email path with no manual alternative: an
+    // invited colleague who never receives a link cannot obtain a credential at
+    // all. Production therefore has to have somewhere to send from.
+    const emailAddress = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    for (const key of ["ACCOUNT_EMAIL_SENDER_ADDRESS", "ACCOUNT_EMAIL_REPLY_TO"] as const) {
+      const address = value[key];
+      if (address && !emailAddress.test(address)) {
+        context.addIssue({
+          code: "custom",
+          path: [key],
+          message: "must be an email address",
+        });
+      }
+    }
+    if (isProduction && !value.ACCOUNT_EMAIL_SENDER_ADDRESS) {
+      context.addIssue({
+        code: "custom",
+        path: ["ACCOUNT_EMAIL_SENDER_ADDRESS"],
+        message:
+          "is required in production so activation and password reset email can be sent",
+      });
+    }
+    if (isProduction && !value.RESEND_API_KEY) {
+      context.addIssue({
+        code: "custom",
+        path: ["RESEND_API_KEY"],
+        message: "is required in production so account recovery email can be delivered",
+      });
+    }
+
     if (
       value.RATE_LIMIT_TRUSTED_PROXY_HOPS > 1
       && value.RATE_LIMIT_CLIENT_IP_HEADER !== "x-forwarded-for"
@@ -117,6 +181,18 @@ const serverEnvSchema = z
         path: ["RATE_LIMIT_CLIENT_IP_HEADER"],
         message: "only x-forwarded-for can represent more than one trusted proxy hop",
       });
+    }
+
+    if (value.ALERT_WEBHOOK_URL) {
+      try {
+        new URL(value.ALERT_WEBHOOK_URL);
+      } catch {
+        context.addIssue({
+          code: "custom",
+          path: ["ALERT_WEBHOOK_URL"],
+          message: "must be a valid URL",
+        });
+      }
     }
 
     if (value.SQUARE_API_URL) {
@@ -182,6 +258,9 @@ function readSource(source: Record<string, string | undefined>) {
     "RESEND_API_KEY",
     "RESEND_API_URL",
     "RESEND_WEBHOOK_SECRET",
+    "ACCOUNT_EMAIL_SENDER_NAME",
+    "ACCOUNT_EMAIL_SENDER_ADDRESS",
+    "ACCOUNT_EMAIL_REPLY_TO",
     "SQUARE_ENVIRONMENT",
     "SQUARE_APPLICATION_ID",
     "SQUARE_ACCESS_TOKEN",
@@ -193,6 +272,11 @@ function readSource(source: Record<string, string | undefined>) {
     "SQUARE_WEBHOOK_NOTIFICATION_URL",
     "SQUARE_ENABLE_PRODUCTION",
     "OUTBOX_SWEEP_TOKEN",
+    "SECRET_ENCRYPTION_KEY",
+    "ALERT_WEBHOOK_URL",
+    "ALERT_REPEAT_MINUTES",
+    "PASSWORD_BREACH_CHECK",
+    "PASSWORD_BREACH_CHECK_URL",
   ] as const;
 
   return Object.fromEntries(
