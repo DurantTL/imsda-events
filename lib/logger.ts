@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-
 /**
  * Structured logging with an explicit redaction rule.
  *
@@ -132,11 +130,15 @@ const CORRELATION_HEADER = "x-correlation-id";
  * registration can be followed end to end, and mints one otherwise. The
  * inbound value is bounded and constrained because it is attacker-controlled
  * and ends up in a log line.
+ *
+ * The ID comes from the Web Crypto global rather than `node:crypto`:
+ * `instrumentation.ts` imports this module, so it is bundled for the Edge
+ * runtime as well, where a Node built-in fails to compile.
  */
 export function requestCorrelationId(request: Request): string {
   const supplied = request.headers.get(CORRELATION_HEADER)?.trim();
   if (supplied && supplied.length <= 64 && /^[A-Za-z0-9_.:-]+$/.test(supplied)) {
     return supplied;
   }
-  return randomUUID();
+  return crypto.randomUUID();
 }

@@ -1,10 +1,19 @@
+# Variables the deployment cannot run without are guarded with `?` below, so a
+# missing one stops `docker compose up` in a second with the variable named.
+# Without the guard the stack builds for minutes and then reports only
+# "container ... is unhealthy", with the real reason buried in the app log.
+#
+# `?` (unset) rather than `:?` (unset or blank) is deliberate: a blank value is
+# caught by the application's own startup contract in lib/env.ts, which reports
+# every offending variable at once, and `.env.example` ships these keys blank
+# for local work.
 services:
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: imsda_events
       POSTGRES_USER: imsda
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD?set this in the deployment environment; it is the database superuser password}
     volumes:
       - imsda_events_postgres:/var/lib/postgresql/data
     healthcheck:
@@ -22,22 +31,26 @@ services:
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://imsda:${POSTGRES_PASSWORD}@postgres:5432/imsda_events?schema=public
-      APP_BASE_URL: ${APP_BASE_URL}
-      MANAGE_LINK_DERIVATION_SECRET: ${MANAGE_LINK_DERIVATION_SECRET}
+      APP_BASE_URL: ${APP_BASE_URL?set this to the public https origin; it is written into emailed links}
+      MANAGE_LINK_DERIVATION_SECRET: ${MANAGE_LINK_DERIVATION_SECRET?set this to at least 32 random characters (openssl rand -base64 48)}
       MANAGE_LINK_DERIVATION_SECRET_PREVIOUS: ${MANAGE_LINK_DERIVATION_SECRET_PREVIOUS:-}
-      ATTENDEE_PASS_SIGNING_SECRET: ${ATTENDEE_PASS_SIGNING_SECRET}
+      ATTENDEE_PASS_SIGNING_SECRET: ${ATTENDEE_PASS_SIGNING_SECRET?set this to at least 32 random characters (openssl rand -base64 48)}
       ATTENDEE_PASS_SIGNING_SECRET_PREVIOUS: ${ATTENDEE_PASS_SIGNING_SECRET_PREVIOUS:-}
-      RATE_LIMIT_HASH_SECRET: ${RATE_LIMIT_HASH_SECRET}
+      RATE_LIMIT_HASH_SECRET: ${RATE_LIMIT_HASH_SECRET?set this to at least 32 random characters (openssl rand -base64 48)}
       RATE_LIMIT_TRUSTED_PROXY_HOPS: ${RATE_LIMIT_TRUSTED_PROXY_HOPS:-1}
       RATE_LIMIT_CLIENT_IP_HEADER: ${RATE_LIMIT_CLIENT_IP_HEADER:-x-forwarded-for}
       EMBED_ALLOWED_ORIGINS: ${EMBED_ALLOWED_ORIGINS:-}
-      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      # Activation and password-reset email have no manual substitute at scale,
+      # so these two are required in production rather than optional.
+      RESEND_API_KEY: ${RESEND_API_KEY?set this to a Resend API key; account email has no other path}
       RESEND_API_URL: ${RESEND_API_URL:-https://api.resend.com}
       RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
       ACCOUNT_EMAIL_SENDER_NAME: ${ACCOUNT_EMAIL_SENDER_NAME:-IMSDA Events}
-      ACCOUNT_EMAIL_SENDER_ADDRESS: ${ACCOUNT_EMAIL_SENDER_ADDRESS:-}
+      ACCOUNT_EMAIL_SENDER_ADDRESS: ${ACCOUNT_EMAIL_SENDER_ADDRESS?set this to a sender address verified with Resend}
       ACCOUNT_EMAIL_REPLY_TO: ${ACCOUNT_EMAIL_REPLY_TO:-}
-      SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY}
+      # Seals the TOTP secrets behind two-factor authentication. Changing it
+      # makes every enrolled authenticator unreadable.
+      SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY?set this to at least 32 random characters (openssl rand -base64 48)}
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
       ALERT_REPEAT_MINUTES: ${ALERT_REPEAT_MINUTES:-60}
       PASSWORD_BREACH_CHECK: ${PASSWORD_BREACH_CHECK:-}
@@ -51,7 +64,9 @@ services:
       SQUARE_WEBHOOK_SIGNATURE_KEY: ${SQUARE_WEBHOOK_SIGNATURE_KEY:-}
       SQUARE_WEBHOOK_NOTIFICATION_URL: ${SQUARE_WEBHOOK_NOTIFICATION_URL:-}
       SQUARE_ENABLE_PRODUCTION: ${SQUARE_ENABLE_PRODUCTION:-false}
-      OUTBOX_SWEEP_TOKEN: ${OUTBOX_SWEEP_TOKEN}
+      # New requirement. An existing deployment that has never set this will not
+      # start until it is added — the sweep endpoint is never open by omission.
+      OUTBOX_SWEEP_TOKEN: ${OUTBOX_SWEEP_TOKEN?set this to at least 32 random characters (openssl rand -base64 48); it authorises the scheduled outbox sweep}
     ports:
       - "${APP_PORT:-3100}:3000"
     healthcheck:
