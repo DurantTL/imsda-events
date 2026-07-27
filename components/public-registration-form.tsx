@@ -11,6 +11,8 @@ import {
   CheckCircle2,
   ClipboardCheck,
   Clock3,
+  Download,
+  FileUp,
   LockKeyhole,
   MapPin,
   Plus,
@@ -32,6 +34,11 @@ import {
   type RegistrationFormDefinition,
   type RegistrationFormField,
 } from "@/modules/forms/definition";
+import {
+  AttendeeRosterCsvError,
+  createAttendeeRosterCsvTemplate,
+  parseAttendeeRosterCsv,
+} from "@/modules/forms/attendee-roster-csv";
 import {
   formatPublicRegistrationAnswer,
   getPublicRegistrationStepPlan,
@@ -280,6 +287,7 @@ export function PublicRegistrationForm({
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
   const errorSummaryRef = useRef<HTMLDivElement>(null);
   const stepHeadingRef = useRef<HTMLHeadingElement>(null);
+  const rosterCsvInputRef = useRef<HTMLInputElement>(null);
 
   const issueByPath = useMemo(
     () => new Map(issues.flatMap((issue) => [
@@ -347,7 +355,7 @@ export function PublicRegistrationForm({
     [definition, visibleFieldKeys],
   );
   const [currentStepId, setCurrentStepId] = useState<PublicRegistrationStepId>(
-    () => registrationSteps[0]?.id ?? "review",
+    () => registrationSteps[0]?.id ?? "__review",
   );
   const currentStepIndex = Math.max(
     registrationSteps.findIndex((step) => step.id === currentStepId),
@@ -387,7 +395,7 @@ export function PublicRegistrationForm({
   function stepForIssue(issue: FormIssue | undefined) {
     if (!issue) return undefined;
     if (issue.key === "attendees" || issue.path === "attendees") {
-      return registrationSteps.find((step) => step.id === "attendees");
+      return registrationSteps.find((step) => step.managesAttendees);
     }
     return registrationSteps.find((step) => step.fieldKeys.includes(issue.key));
   }
@@ -540,7 +548,7 @@ export function PublicRegistrationForm({
 
   function issueBelongsToStep(issue: FormIssue, step: PublicRegistrationStep) {
     if (issue.key === "attendees" || issue.path === "attendees") {
-      return step.id === "attendees";
+      return step.managesAttendees;
     }
     return step.fieldKeys.includes(issue.key);
   }
@@ -656,6 +664,59 @@ export function PublicRegistrationForm({
     setIdempotencyKey(null);
     setRosterAnnouncement(`${roster.attendeeLabel} ${nextNumber} added.`);
     window.requestAnimationFrame(() => document.getElementById(`public_attendee_${safeId(clientId)}`)?.focus());
+  }
+
+  function downloadRosterCsvTemplate() {
+    const csv = createAttendeeRosterCsvTemplate(definition);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${event.slug}-attendee-roster.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setRosterAnnouncement("Attendee CSV template downloaded.");
+  }
+
+  async function importRosterCsv(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setError("");
+    try {
+      if (file.size > 512_000) {
+        throw new AttendeeRosterCsvError("The CSV must be smaller than 500 KB.");
+      }
+      const importedResponses = parseAttendeeRosterCsv(
+        await file.text(),
+        definition,
+      );
+      if (
+        attendees.some((attendee) => hasResponses(attendee.responses))
+        && !window.confirm(
+          `Replace the ${attendees.length} attendee${attendees.length === 1 ? "" : "s"} currently entered with the ${importedResponses.length} in this CSV?`,
+        )
+      ) return;
+      setAttendees(importedResponses.map((responses) => ({
+        clientId: crypto.randomUUID(),
+        responses,
+      })));
+      setIssues([]);
+      setPromoCodeQuote(null);
+      setPromoCodeNotice("");
+      setIdempotencyKey(null);
+      setRosterAnnouncement(
+        `${importedResponses.length} attendee${importedResponses.length === 1 ? "" : "s"} loaded from the CSV. Review every person before continuing.`,
+      );
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Unable to read the attendee CSV.",
+      );
+      window.requestAnimationFrame(() => errorSummaryRef.current?.focus());
+    } finally {
+      if (rosterCsvInputRef.current) rosterCsvInputRef.current.value = "";
+    }
   }
 
   function removeAttendee(index: number) {
@@ -797,6 +858,9 @@ export function PublicRegistrationForm({
     const wrapperClass = `public-registration-field${issue ? " public-registration-field-invalid" : ""}`;
     const description = describedBy(field, context);
     const id = controlId(field, context.idContext);
+    const optionDescription = (option: string) => (
+      field.optionDescriptions?.[option]?.trim() ?? ""
+    );
 
     if (
       joiningWaitlist
@@ -909,7 +973,11 @@ export function PublicRegistrationForm({
                     disabled={full && !checked}
                     onChange={() => context.setValue(field.key, option)}
                   />
-                  <span><strong>{option}</strong>{details && <small>{details}</small>}</span>
+                  <span>
+                    <strong>{option}</strong>
+                    {optionDescription(option) && <small className="public-registration-option-description">{optionDescription(option)}</small>}
+                    {details && <small className="public-registration-option-details">{details}</small>}
+                  </span>
                 </label>
               );
             })}
@@ -938,7 +1006,11 @@ export function PublicRegistrationForm({
                     disabled={!checked && (full || selectedValues.length >= maximum)}
                     onChange={() => toggleChoice(option)}
                   />
-                  <span><strong>{option}</strong>{details && <small>{details}</small>}</span>
+                  <span>
+                    <strong>{option}</strong>
+                    {optionDescription(option) && <small className="public-registration-option-description">{optionDescription(option)}</small>}
+                    {details && <small className="public-registration-option-details">{details}</small>}
+                  </span>
                 </label>
               );
             })}
@@ -968,7 +1040,11 @@ export function PublicRegistrationForm({
                   disabled={rank < 0 && (full || selectedValues.length >= maximum)}
                   onClick={() => toggleChoice(option)}
                 >
-                  <span><strong>{option}</strong>{details && <small>{details}</small>}</span>
+                  <span>
+                    <strong>{option}</strong>
+                    {optionDescription(option) && <small className="public-registration-option-description">{optionDescription(option)}</small>}
+                    {details && <small className="public-registration-option-details">{details}</small>}
+                  </span>
                   <b>{rank < 0 ? (full ? "Full" : "Choose") : rank === 0 ? "1st choice" : rank === 1 ? "2nd choice" : `#${rank + 1}`}</b>
                 </button>
               );
@@ -1017,6 +1093,15 @@ export function PublicRegistrationForm({
               return <option value={option} disabled={rosterEnabled ? full && !selected : full} key={option}>{option}{details ? ` — ${details}` : ""}</option>;
             })}
           </select>
+          {field.options.some((option) => Boolean(optionDescription(option))) && (
+            <span className="public-registration-select-descriptions">
+              {field.options.flatMap((option) => (
+                optionDescription(option)
+                  ? [<small key={option}><strong>{option}:</strong> {optionDescription(option)}</small>]
+                  : []
+              ))}
+            </span>
+          )}
           {fieldSupport(field, context)}
         </label>
       );
@@ -1228,12 +1313,8 @@ export function PublicRegistrationForm({
                     <section
                       className="public-registration-attendee-section"
                       key={section.id}
-                      aria-labelledby={`public_attendee_${safeId(attendee.clientId)}_${safeId(section.id)}`}
+                      aria-label={`${section.title} for ${displayName}`}
                     >
-                      <div className="public-registration-attendee-section-heading">
-                        <h4 id={`public_attendee_${safeId(attendee.clientId)}_${safeId(section.id)}`}>{section.title}</h4>
-                        {section.description && <p>{section.description}</p>}
-                      </div>
                       <div className="public-registration-fields">
                         {section.fields.map((field) => renderField(field, context))}
                       </div>
@@ -1252,20 +1333,40 @@ export function PublicRegistrationForm({
 
         {manageRoster && (
           <footer className="public-registration-roster-footer">
-            <button
-              id="public_registration_add_attendee"
-              type="button"
-              disabled={attendees.length >= roster.maxAttendees}
-              onClick={addAttendee}
-            >
-              <Plus size={18} aria-hidden="true" />
-              {attendees.length >= roster.maxAttendees ? "Roster limit reached" : roster.addButtonLabel}
-            </button>
-            <small>
-              {attendees.length < roster.maxAttendees
-                ? `${roster.maxAttendees - attendees.length} more can be added.`
-                : `Maximum of ${roster.maxAttendees} reached.`}
-            </small>
+            <div className="public-registration-roster-actions">
+              <button
+                id="public_registration_add_attendee"
+                type="button"
+                disabled={attendees.length >= roster.maxAttendees}
+                onClick={addAttendee}
+              >
+                <Plus size={18} aria-hidden="true" />
+                {attendees.length >= roster.maxAttendees ? "Roster limit reached" : roster.addButtonLabel}
+              </button>
+              <button type="button" onClick={downloadRosterCsvTemplate}>
+                <Download size={18} aria-hidden="true" />
+                Download CSV template
+              </button>
+              <button type="button" onClick={() => rosterCsvInputRef.current?.click()}>
+                <FileUp size={18} aria-hidden="true" />
+                Import attendee CSV
+              </button>
+              <input
+                ref={rosterCsvInputRef}
+                className="sr-only"
+                type="file"
+                accept=".csv,text/csv"
+                onChange={importRosterCsv}
+              />
+            </div>
+            <div className="public-registration-roster-help">
+              <small>
+                {attendees.length < roster.maxAttendees
+                  ? `${roster.maxAttendees - attendees.length} more can be added.`
+                  : `Maximum of ${roster.maxAttendees} reached.`}
+              </small>
+              <small>For multiple or ranked choices, separate selections with a | character. Review every attendee before submitting.</small>
+            </div>
           </footer>
         )}
       </section>
@@ -1278,61 +1379,45 @@ export function PublicRegistrationForm({
       ? registrationFieldContext()
       : legacyFieldContext();
     const blocks: React.ReactNode[] = [];
-    let blockNumber = 0;
-    let rosterInserted = false;
+    const section = step.sectionId
+      ? definition.sections.find((candidate) => candidate.id === step.sectionId)
+      : null;
+    if (!section) return blocks;
 
-    for (const section of definition.sections) {
-      const sectionFields = section.fields.filter((field) => (
-        allowedFieldKeys.has(field.key)
-        && (!rosterEnabled || field.scope === "REGISTRATION")
-        && isFieldVisible(
-          field,
-          rosterEnabled ? registrationResponses : responses,
-        )
-      ));
-      if (sectionFields.length > 0) {
-        blockNumber += 1;
-        blocks.push(
-          <section
-            className="public-registration-section"
-            key={`${step.id}_${section.id}`}
-            aria-labelledby={`public_section_${step.id}_${section.id}`}
-          >
-            <header>
-              <span>{blockNumber}</span>
-              <div>
-                <h2 id={`public_section_${step.id}_${section.id}`}>
-                  {section.title}
-                </h2>
-                {section.description && <p>{section.description}</p>}
-              </div>
-            </header>
-            <div className="public-registration-fields">
-              {sectionFields.map((field) => renderField(field, context))}
-            </div>
-          </section>,
-        );
-      }
+    const sectionFields = section.fields.filter((field) => (
+      allowedFieldKeys.has(field.key)
+      && (!rosterEnabled || field.scope === "REGISTRATION")
+      && isFieldVisible(
+        field,
+        rosterEnabled ? registrationResponses : responses,
+      )
+    ));
+    if (sectionFields.length > 0) {
+      blocks.push(
+        <section
+          className="public-registration-section public-registration-linked-section"
+          key={`${step.id}_${section.id}`}
+          aria-label={section.title}
+        >
+          <div className="public-registration-fields">
+            {sectionFields.map((field) => renderField(field, context))}
+          </div>
+        </section>,
+      );
+    }
 
-      const hasAttendeeFields = rosterEnabled && section.fields.some((field) => (
-        field.scope === "ATTENDEE" && allowedFieldKeys.has(field.key)
-      ));
-      if (hasAttendeeFields && !rosterInserted) {
-        blockNumber += 1;
-        blocks.push(
-          <div
-            className="public-registration-roster-block"
-            key={`${step.id}_attendee_roster`}
-          >
-            {renderRoster(
-              blockNumber,
-              allowedFieldKeys,
-              step.id === "attendees",
-            )}
-          </div>,
-        );
-        rosterInserted = true;
-      }
+    const hasAttendeeFields = rosterEnabled && section.fields.some((field) => (
+      field.scope === "ATTENDEE" && allowedFieldKeys.has(field.key)
+    ));
+    if (hasAttendeeFields) {
+      blocks.push(
+        <div
+          className="public-registration-roster-block"
+          key={`${step.id}_attendee_roster`}
+        >
+          {renderRoster(1, allowedFieldKeys, step.managesAttendees)}
+        </div>,
+      );
     }
     return blocks;
   }
@@ -1605,7 +1690,7 @@ export function PublicRegistrationForm({
 
   async function submit(submitEvent: React.FormEvent<HTMLFormElement>) {
     submitEvent.preventDefault();
-    if (currentStep.id !== "review") {
+    if (!currentStep.isReview) {
       continueRegistration();
       return;
     }
@@ -1686,7 +1771,7 @@ export function PublicRegistrationForm({
     setPromoCodeApplying(false);
     setPromoCodeNotice("");
     setIdempotencyKey(null);
-    setCurrentStepId(registrationSteps[0]?.id ?? "review");
+    setCurrentStepId(registrationSteps[0]?.id ?? "__review");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -1902,7 +1987,7 @@ export function PublicRegistrationForm({
                 ref={stepHeadingRef}
                 tabIndex={-1}
               >
-                {joiningWaitlist && currentStep.id === "review"
+                {joiningWaitlist && currentStep.isReview
                   ? "Review your waitlist request"
                   : currentStep.title}
               </h2>
@@ -1910,7 +1995,7 @@ export function PublicRegistrationForm({
             </header>
             <div className="public-registration-step-content">
               {renderStepFields(currentStep)}
-              {currentStep.id === "review" && renderReview()}
+              {currentStep.isReview && renderReview()}
             </div>
           </section>
 
@@ -1933,7 +2018,7 @@ export function PublicRegistrationForm({
                 Back
               </button>
             ) : <span />}
-            {currentStep.id !== "review" && (
+            {!currentStep.isReview && (
               <button
                 className="is-continue"
                 type="button"
@@ -1945,7 +2030,7 @@ export function PublicRegistrationForm({
             )}
           </nav>
 
-          {currentStep.id === "review" && (
+          {currentStep.isReview && (
             <section className="public-registration-submit-card">
               <div><ShieldCheck size={21} aria-hidden="true" /><span><strong>Server-verified registration</strong><small>Pricing and remaining capacity are checked again when you submit.</small></span></div>
               {cardSelected && !joiningWaitlist && <p>Submitting saves the registration first. Your private registration page will then offer secure Square checkout when Sandbox or Production payments are configured.</p>}

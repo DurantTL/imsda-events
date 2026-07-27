@@ -73,6 +73,7 @@ function differenceLabel(field: string) {
     totalAmountCents: "Registration total",
     submittedAt: "Submitted date",
     attendeeType: "Attendee type",
+    legacyDetails: "WR26 linked records",
   };
   return labels[field] ?? field.replaceAll("_", " ");
 }
@@ -113,7 +114,7 @@ export function ImportWorkspace({ eventId, eventName, initialRuns, initialReconc
   const [runs, setRuns] = useState(initialRuns);
   const [selected, setSelected] = useState<ImportRunView | null>(initialRuns.find((run) => run.status === "PENDING") ?? null);
   const [reconciliation, setReconciliation] = useState(initialReconciliation);
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [filter, setFilter] = useState("ALL");
   const [busy, setBusy] = useState<"preview" | "commit" | null>(null);
   const [error, setError] = useState("");
@@ -149,10 +150,10 @@ export function ImportWorkspace({ eventId, eventName, initialRuns, initialReconc
 
   async function preview(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!file) { setError("Choose a CSV file first."); return; }
+    if (files.length === 0) { setError("Choose one or more CSV files first."); return; }
     setBusy("preview"); setError(""); setNotice("");
     const payload = new FormData();
-    payload.set("file", file);
+    for (const file of files) payload.append("files", file);
     try {
       const response = await fetch(`/api/events/${eventId}/imports/preview`, { method: "POST", body: payload });
       const result = await response.json();
@@ -196,7 +197,7 @@ export function ImportWorkspace({ eventId, eventName, initialRuns, initialReconc
     <div className="page-intro"><div><p className="eyebrow">Build 5 staging</p><h2>Import & reconcile</h2><p>Preview a CSV snapshot, inspect matching decisions, and commit validated records to {eventName} locally.</p></div><span className="count-badge"><ShieldCheck size={16} /> Read-only source</span></div>
 
     <div className="import-top-grid">
-      <section className="panel import-upload-panel"><div className="section-heading"><div><p className="eyebrow">Step 1</p><h2>Choose a source snapshot</h2></div><FileUp size={21} /></div><p className="quiet-copy">Required columns: source ID, confirmation code, name, and total amount. Up to 2,000 rows or 2 MB.</p><form className="import-upload-form" onSubmit={preview}><label className={file ? "file-drop selected" : "file-drop"}><input ref={inputRef} type="file" accept=".csv,text/csv" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /><FileCheck2 size={24} /><span><strong>{file?.name ?? "Choose a CSV file"}</strong><small>{file ? `${Math.max(1, Math.round(file.size / 1024))} KB ready to preview` : "Click to browse local files"}</small></span></label><div className="template-links"><a href="/fixtures/wr26-import-template.csv" download><Download size={14} /> CSV template</a><a href="/fixtures/wr26-import-sample.csv" download><Download size={14} /> Fictitious sample</a></div><button className="primary-button full-button" type="submit" disabled={busy !== null}>{busy === "preview" ? <><RefreshCw className="spin" size={16} /> Validating and matching…</> : <><FileCheck2 size={16} /> Preview import</>}</button></form></section>
+      <section className="panel import-upload-panel"><div className="section-heading"><div><p className="eyebrow">Step 1</p><h2>Choose a source snapshot</h2></div><FileUp size={21} /></div><p className="quiet-copy">Choose the standard flat CSV, or select the WR26 Registrations and Attendees exports together. Add Seminars, SeminarPreferences, PromoCodes, Refunds, Waitlist, CheckIns, and TransferLog to preserve the complete history.</p><form className="import-upload-form" onSubmit={preview}><label className={files.length > 0 ? "file-drop selected" : "file-drop"}><input ref={inputRef} type="file" multiple accept=".csv,text/csv" onChange={(event) => setFiles(Array.from(event.target.files ?? []))} /><FileCheck2 size={24} /><span><strong>{files.length === 0 ? "Choose CSV files" : files.length === 1 ? files[0].name : `${files.length} WR26 sheet exports selected`}</strong><small>{files.length > 0 ? `${Math.max(1, Math.round(files.reduce((total, file) => total + file.size, 0) / 1024))} KB ready to preview` : "Select multiple files at once for a full WR26 migration"}</small></span></label><div className="template-links"><a href="/fixtures/wr26-import-template.csv" download><Download size={14} /> Flat CSV template</a><a href="/fixtures/wr26-import-sample.csv" download><Download size={14} /> Fictitious sample</a></div><button className="primary-button full-button" type="submit" disabled={busy !== null}>{busy === "preview" ? <><RefreshCw className="spin" size={16} /> Validating and matching…</> : <><FileCheck2 size={16} /> Preview import</>}</button></form></section>
 
       <section className="panel reconciliation-panel"><div className="section-heading"><div><p className="eyebrow">Live local database</p><h2>Reconciliation totals</h2></div></div><div className="reconciliation-grid"><span><small>Registrations</small><strong>{reconciliation.target.registrations}</strong></span><span><small>Attendees</small><strong>{reconciliation.target.attendees}</strong></span><span><small>Registration value</small><strong>{money(reconciliation.target.totalAmountCents)}</strong></span></div>{reconciliation.latestRun ? <p className="reconciliation-note"><CheckCircle2 size={15} /> Last committed: {reconciliation.latestRun.fileName} · {reconciliation.latestRun.completedAt ? new Date(reconciliation.latestRun.completedAt).toLocaleString() : "complete"}</p> : <p className="reconciliation-note muted">No staging import has been committed yet.</p>}<div className="boundary-callout"><ShieldCheck size={18} /><span><strong>Production boundary intact</strong><small>No Google Sheets, Apps Script, payment, or legacy-system write is performed.</small></span></div></section>
     </div>

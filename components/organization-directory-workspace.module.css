@@ -1,0 +1,174 @@
+.directory {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.organizationCard {
+  display: grid;
+  gap: 13px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fbfcfd;
+  padding: 15px;
+}
+
+.organizationCard.inactive {
+  background: #f5f7f8;
+  opacity: 0.75;
+}
+
+.organizationHeading {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.organizationIcon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 11px;
+  background: var(--imsda-purple-soft);
+  color: var(--imsda-purple);
+}
+
+.organizationHeading strong,
+.organizationHeading small {
+  display: block;
+}
+
+.organizationHeading strong {
+  color: var(--ink);
+  font-size: 0.74rem;
+}
+
+.organizationHeading small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.58rem;
+}
+
+.organizationHeading em {
+  border-radius: 999px;
+  padding: 4px 7px;
+  font-size: 0.52rem;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.active {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.inactiveStatus {
+  background: var(--paper);
+  color: var(--muted);
+}
+
+.identities {
+  display: grid;
+  gap: 7px;
+  min-height: 38px;
+}
+
+.identities > button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 7px;
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  background: white;
+  color: inherit;
+  cursor: pointer;
+  padding: 8px 9px;
+  text-align: left;
+}
+
+.identities > button:hover {
+  background: var(--imsda-navy-soft);
+}
+
+.identities > button > svg:first-child {
+  color: var(--green);
+}
+
+.identities > button > svg:last-child {
+  color: var(--muted);
+}
+
+.identities strong,
+.identities small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.identities strong {
+  color: var(--imsda-navy);
+  font-size: 0.57rem;
+}
+
+.identities small,
+.identities p {
+  color: var(--muted);
+  font-size: 0.52rem;
+}
+
+.identities p {
+  margin: 0;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  border-top: 1px solid var(--line);
+  padding-top: 11px;
+}
+
+.formHelp {
+  margin: -2px 0 0;
+  color: var(--muted);
+  font-size: 0.64rem;
+  line-height: 1.55;
+}
+
+.checkbox {
+  display: flex !important;
+  align-items: center;
+  grid-template-columns: auto 1fr;
+}
+
+.checkbox input {
+  width: auto !important;
+}
+
+@media (max-width: 820px) {
+  .directory {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .organizationHeading {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .organizationHeading em {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

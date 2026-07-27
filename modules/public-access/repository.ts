@@ -16,6 +16,11 @@ import {
   type PublicContactUpdateInput,
 } from "@/modules/public-access/domain";
 import {
+  shirtSizeConfirmedAtFromResponses,
+  shirtSizeFromResponses,
+  type PublicShirtSizeConfirmationInput,
+} from "@/modules/registrations/shirt-sizes";
+import {
   formatPublicEventSchedule,
   publicEventWebsiteLinks,
 } from "@/modules/events/public-domain";
@@ -58,6 +63,7 @@ const registrationAccessInclude = {
         orderBy: [{ position: "asc" as const }, { createdAt: "asc" as const }],
         select: {
           id: true,
+          formResponses: true,
           profileSnapshot: true,
           person: {
             select: {
@@ -243,6 +249,11 @@ function jsonRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function eventUsesConventionShirts(event: { name: string; slug: string }) {
+  return event.slug.includes("womens-retreat")
+    || /\bwomen(?:'|’)?s?\s+retreat\b/i.test(event.name);
+}
+
 function serializeRegistrationAccess(
   access: RegistrationAccessRecord,
   now: Date,
@@ -347,6 +358,7 @@ function serializeRegistrationAccess(
       detailsUrl: links.detailsUrl,
       supportUrl: links.supportUrl,
       supportContact: event.supportContact,
+      shirtSizesAvailable: eventUsesConventionShirts(event),
       attendeePassesAvailable: attendeePassExpiry(event.endsAt).getTime()
         > now.getTime(),
     },
@@ -363,6 +375,10 @@ function serializeRegistrationAccess(
     attendees: registration.attendees.map((attendee) => ({
       id: attendee.id,
       name: publicAttendeeName(attendee.profileSnapshot, attendee.person),
+      shirtSize: shirtSizeFromResponses(attendee.formResponses),
+      shirtSizeConfirmedAt: shirtSizeConfirmedAtFromResponses(
+        attendee.formResponses,
+      ),
     })),
     payment,
     order,
@@ -378,6 +394,18 @@ function serializeRegistrationAccess(
 export type PublicRegistrationAccessView = ReturnType<
   typeof serializeRegistrationAccess
 >;
+
+export class PublicShirtSizeConfirmationError extends Error {
+  constructor(
+    public readonly code:
+      | "REGISTRATION_NOT_ELIGIBLE"
+      | "ATTENDEE_ROSTER_CHANGED",
+    message: string,
+  ) {
+    super(message);
+    this.name = "PublicShirtSizeConfirmationError";
+  }
+}
 
 async function loadActiveAccessRecord(
   client: RegistrationAccessClient,
@@ -665,6 +693,95 @@ export async function updatePublicRegistrationContact(
 ) {
   const result = await updatePublicRegistrationContactWithMessages(token, input, now);
   return result?.registration ?? null;
+}
+
+async function confirmRegistrationShirtSizesWithClient(
+  client: Prisma.TransactionClient,
+  token: string,
+  input: PublicShirtSizeConfirmationInput,
+  now: Date,
+) {
+  const access = await loadActiveAccessRecord(client, token, now);
+  if (!access) return null;
+  if (!eventUsesConventionShirts(access.registration.event)) {
+    throw new PublicShirtSizeConfirmationError(
+      "REGISTRATION_NOT_ELIGIBLE",
+      "Shirt-size confirmation is not available for this event.",
+    );
+  }
+  if (
+    access.registration.status !== "SUBMITTED"
+    && access.registration.status !== "CONFIRMED"
+    && access.registration.status !== "WAITLISTED"
+  ) {
+    throw new PublicShirtSizeConfirmationError(
+      "REGISTRATION_NOT_ELIGIBLE",
+      "Shirt sizes can be confirmed only for an active or waitlisted registration.",
+    );
+  }
+
+  const expectedIds = new Set(
+    access.registration.attendees.map((attendee) => attendee.id),
+  );
+  const selections = new Map(
+    input.attendees.map((attendee) => [
+      attendee.attendeeId,
+      attendee.shirtSize,
+    ]),
+  );
+  if (
+    selections.size !== expectedIds.size
+    || [...expectedIds].some((attendeeId) => !selections.has(attendeeId))
+  ) {
+    throw new PublicShirtSizeConfirmationError(
+      "ATTENDEE_ROSTER_CHANGED",
+      "The attendee list changed. Refresh this private page and confirm every attendee again.",
+    );
+  }
+
+  const confirmedAt = now.toISOString();
+  for (const attendee of access.registration.attendees) {
+    await client.registrationAttendee.update({
+      where: { id: attendee.id },
+      data: {
+        formResponses: {
+          ...jsonRecord(attendee.formResponses),
+          shirt_size: selections.get(attendee.id)!,
+          shirt_size_confirmed_at: confirmedAt,
+        } satisfies Prisma.InputJsonObject,
+      },
+    });
+  }
+
+  await client.auditLog.create({
+    data: {
+      eventId: access.registration.eventId,
+      action: "PUBLIC_ATTENDEE_SHIRT_SIZES_CONFIRMED",
+      entityType: "Registration",
+      entityId: access.registration.id,
+      correlationId: randomUUID(),
+      summary: `Confirmed shirt sizes for ${access.registration.attendees.length} attendee${access.registration.attendees.length === 1 ? "" : "s"} on ${access.registration.confirmationCode}.`,
+      metadata: {
+        source: "PRIVATE_MANAGE_LINK",
+        attendeeIds: [...expectedIds],
+        confirmedAt,
+        originalSubmissionPreserved: true,
+      },
+    },
+  });
+  return access.registration.id;
+}
+
+export async function confirmPublicRegistrationShirtSizes(
+  token: string,
+  input: PublicShirtSizeConfirmationInput,
+  now = new Date(),
+) {
+  const registrationId = await getPrisma().$transaction((tx) => (
+    confirmRegistrationShirtSizesWithClient(tx, token, input, now)
+  ));
+  if (!registrationId) return null;
+  return resolveRegistrationAccessToken(token, { now });
 }
 
 export async function revokeRegistrationAccessToken(

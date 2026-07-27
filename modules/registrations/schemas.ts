@@ -89,3 +89,53 @@ export type RegistrationTransferInput = z.infer<
 export type AttendeeSubstitutionInput = z.infer<
   typeof attendeeSubstitutionInputSchema
 >;
+
+const registrationAmendmentAttendeeSchema = z.strictObject({
+  attendeeId: z.string().trim().min(1).max(100).nullable(),
+  clientId: z.string().trim().min(1).max(100),
+  responses: z.record(z.string(), z.unknown()),
+});
+
+export const registrationAmendmentInputSchema = z.strictObject({
+  clientRequestId: z.uuid(),
+  expectedUpdatedAt: z.iso.datetime(),
+  reason: z.string().trim().max(500).default(""),
+  responses: z.record(z.string(), z.unknown()),
+  attendees: z.array(registrationAmendmentAttendeeSchema).min(1).max(50),
+  previewOnly: z.boolean().default(true),
+  quoteFingerprint: z.string().length(64).optional(),
+}).superRefine((input, context) => {
+  const clientIds = new Set<string>();
+  const attendeeIds = new Set<string>();
+  input.attendees.forEach((attendee, index) => {
+    if (clientIds.has(attendee.clientId)) {
+      context.addIssue({
+        code: "custom",
+        path: ["attendees", index, "clientId"],
+        message: "Each attendee row must have a unique client identifier.",
+      });
+    }
+    clientIds.add(attendee.clientId);
+    if (attendee.attendeeId) {
+      if (attendeeIds.has(attendee.attendeeId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["attendees", index, "attendeeId"],
+          message: "An existing attendee can appear only once.",
+        });
+      }
+      attendeeIds.add(attendee.attendeeId);
+    }
+  });
+  if (!input.previewOnly && !input.quoteFingerprint) {
+    context.addIssue({
+      code: "custom",
+      path: ["quoteFingerprint"],
+      message: "Review the amendment quote before confirming it.",
+    });
+  }
+});
+
+export type RegistrationAmendmentInput = z.infer<
+  typeof registrationAmendmentInputSchema
+>;

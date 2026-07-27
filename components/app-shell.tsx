@@ -13,6 +13,8 @@ import {
   MoreHorizontal,
   PanelsTopLeft,
   Settings2,
+  ShieldCheck,
+  TicketPercent,
   type LucideIcon,
   UserCog,
   UsersRound,
@@ -33,10 +35,18 @@ type NavigationItem = {
   requiredAnyPermissions?: readonly EventPermission[];
 };
 
+const systemNavigation: NavigationItem = {
+  href: "/admin",
+  label: "System management",
+  mobileLabel: "System",
+  icon: ShieldCheck,
+};
+
 const navigation: readonly NavigationItem[] = [
   { href: "/overview", label: "Dashboard", mobileLabel: "Home", icon: LayoutDashboard },
   { href: "/people", label: "Registrations", mobileLabel: "People", icon: UsersRound, requiredPermission: "VIEW_SENSITIVE_DATA" },
   { href: "/finance", label: "Payments", mobileLabel: "Payments", icon: WalletCards, requiredPermission: "MANAGE_FINANCE" },
+  { href: "/more/promo-codes", label: "Promo codes", mobileLabel: "Promos", icon: TicketPercent, requiredPermission: "MANAGE_FINANCE" },
   { href: "/check-in", label: "Check-in", mobileLabel: "Check-in", icon: CheckCircle2, requiredPermission: "MANAGE_CHECK_IN" },
   { href: "/communications", label: "Emails", mobileLabel: "Emails", icon: Megaphone, requiredPermission: "MANAGE_COMMUNICATIONS" },
   { href: "/registration-builder", label: "Registration form", mobileLabel: "Form", icon: PanelsTopLeft, desktopOnly: true, requiredPermission: "MANAGE_FORMS" },
@@ -58,7 +68,7 @@ const navigation: readonly NavigationItem[] = [
 ];
 
 type ShellEvent = { id: string; name: string; permissions: readonly EventPermission[] };
-type ShellUser = { displayName: string; email: string };
+type ShellUser = { displayName: string; email: string; globalRole?: "SYSTEM_ADMIN" | null };
 
 export function AppShell({
   children,
@@ -73,7 +83,10 @@ export function AppShell({
   const router = useRouter();
   const searchParams = useSearchParams();
   const [openMenu, setOpenMenu] = useState<"account" | null>(null);
-  const current = navigation.find((item) => pathname.startsWith(item.href)) ?? navigation[0];
+  const isSystemRoute = pathname.startsWith(systemNavigation.href);
+  const current = isSystemRoute
+    ? systemNavigation
+    : navigation.find((item) => pathname.startsWith(item.href)) ?? navigation[0];
   const selectedEventId = events.some((event) => event.id === searchParams.get("event"))
     ? searchParams.get("event")!
     : events[0]?.id ?? "";
@@ -108,6 +121,26 @@ export function AppShell({
           <span><strong>IMSDA</strong><small>Events</small></span>
         </Link>
 
+        {user.globalRole === "SYSTEM_ADMIN" && (
+          <div className="system-navigation">
+            <span className="system-navigation-label">Global administration</span>
+            <Link
+              className={isSystemRoute ? "system-navigation-link active" : "system-navigation-link"}
+              href={systemNavigation.href}
+              aria-current={isSystemRoute ? "page" : undefined}
+            >
+              <span className="system-navigation-icon">
+                <ShieldCheck aria-hidden="true" size={19} strokeWidth={1.9} />
+              </span>
+              <span>
+                <strong>System management</strong>
+                <small>All events and integrations</small>
+              </span>
+            </Link>
+          </div>
+        )}
+
+        <span className="event-workspace-label">Event workspace</span>
         <div className="event-picker-wrap">
           <label htmlFor="event-picker">Current event</label>
           <div className="select-shell">
@@ -144,13 +177,15 @@ export function AppShell({
       <main className="workspace">
         <header className="workspace-header">
           <div><p className="eyebrow">Staff workspace</p><h1>{current.label}</h1></div>
-          <label className="mobile-event-picker">
-            <span className="sr-only">Current event</span>
-            <select value={selectedEventId} onChange={(event) => selectEvent(event.target.value)}>
-              {events.map((event) => <option value={event.id} key={event.id}>{event.name}</option>)}
-            </select>
-            <ChevronDown aria-hidden="true" size={15} />
-          </label>
+          {!isSystemRoute && (
+            <label className="mobile-event-picker">
+              <span className="sr-only">Current event</span>
+              <select value={selectedEventId} onChange={(event) => selectEvent(event.target.value)}>
+                {events.map((event) => <option value={event.id} key={event.id}>{event.name}</option>)}
+              </select>
+              <ChevronDown aria-hidden="true" size={15} />
+            </label>
+          )}
           <div className="header-actions">
             <span className="staff-pill">Staff mode</span>
             <div className="menu-anchor">
@@ -159,7 +194,14 @@ export function AppShell({
               </button>
               {openMenu === "account" && (
                 <div className="header-popover account-popover" role="status">
-                  <strong>{user.displayName}</strong><p>{user.email}</p><small>Database-backed staff session</small><SignOutButton />
+                  <strong>{user.displayName}</strong><p>{user.email}</p><small>Database-backed staff session</small>
+                  {user.globalRole === "SYSTEM_ADMIN" && (
+                    <Link className="account-system-link" href="/admin" onClick={() => setOpenMenu(null)}>
+                      <ShieldCheck aria-hidden="true" size={17} />
+                      System management
+                    </Link>
+                  )}
+                  <SignOutButton />
                 </div>
               )}
             </div>

@@ -51,6 +51,19 @@ enum MembershipStatus {
   INACTIVE
 }
 
+enum OrganizationType {
+  CHURCH
+  CLUB
+}
+
+enum ExternalSystem {
+  EADVENTIST
+  ULTRACAMP
+  STERLING
+  CMMS
+  WR26
+}
+
 enum RegistrationStatus {
   DRAFT
   SUBMITTED
@@ -66,6 +79,7 @@ enum RegistrationAccessTokenPurpose {
 enum RegistrationOperationType {
   TRANSFER
   ATTENDEE_SUBSTITUTION
+  AMENDMENT
 }
 
 enum WaitlistEntryStatus {
@@ -304,28 +318,30 @@ model UserSession {
  * sealed with AES-256-GCM instead (`lib/secret-box.ts`).
  */
 model UserMfaEnrollment {
-  id             String        @id @default(cuid())
-  userId         String        @unique
-  method         MfaMethod     @default(TOTP)
-  status         MfaStatus     @default(PENDING)
+  id             String    @id @default(cuid())
+  userId         String    @unique
+  method         MfaMethod @default(TOTP)
+  status         MfaStatus @default(PENDING)
   sealedSecret   String
   // The last accepted time step. A code, and everything before it, is spent —
   // this is what stops one being replayed inside its own thirty seconds.
   lastUsedStep   BigInt?
-  failedAttempts Int           @default(0)
+  failedAttempts Int       @default(0)
   lockedUntil    DateTime?
   confirmedAt    DateTime?
   lastVerifiedAt DateTime?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   recoveryCodes MfaRecoveryCode[]
 
   @@index([status])
 }
 
-/** Single-use fallbacks, stored as digests exactly like a session token. */
+/**
+ * Single-use fallbacks, stored as digests exactly like a session token.
+ */
 model MfaRecoveryCode {
   id           String    @id @default(cuid())
   enrollmentId String
@@ -344,15 +360,15 @@ model MfaRecoveryCode {
  * be mistaken for a signed-in session by any other code path.
  */
 model MfaChallenge {
-  id         String            @id @default(cuid())
+  id         String           @id @default(cuid())
   userId     String
-  tokenHash  String            @unique
-  purpose    MfaChallengeKind  @default(SIGN_IN)
+  tokenHash  String           @unique
+  purpose    MfaChallengeKind @default(SIGN_IN)
   expiresAt  DateTime
   consumedAt DateTime?
-  attempts   Int               @default(0)
+  attempts   Int              @default(0)
   userAgent  String?
-  createdAt  DateTime          @default(now())
+  createdAt  DateTime         @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -380,14 +396,14 @@ model PasswordResetToken {
  * would send an alert every five minutes and be muted by whoever receives it.
  */
 model AlertNotification {
-  id         String    @id @default(cuid())
-  key        String    @unique
-  severity   String
-  summary    String
-  firstSeenAt DateTime @default(now())
-  lastSentAt DateTime
-  sendCount  Int       @default(1)
-  resolvedAt DateTime?
+  id          String    @id @default(cuid())
+  key         String    @unique
+  severity    String
+  summary     String
+  firstSeenAt DateTime  @default(now())
+  lastSentAt  DateTime
+  sendCount   Int       @default(1)
+  resolvedAt  DateTime?
 
   @@index([lastSentAt])
   @@index([resolvedAt])
@@ -483,6 +499,7 @@ model Person {
   householdMembers   HouseholdMember[]
   heldRegistrations  Registration[]
   registrationEvents RegistrationAttendee[]
+  externalIdentities ExternalIdentity[]
 
   @@index([lastName, firstName])
 }
@@ -509,6 +526,56 @@ model HouseholdMember {
   person    Person    @relation(fields: [personId], references: [id], onDelete: Cascade)
 
   @@unique([householdId, personId])
+  @@index([personId])
+}
+
+/**
+ * Permanent IMSDA-owned organizations. Clubs can point to their sponsoring
+ * church without making either external provider authoritative for the
+ * relationship.
+ */
+model Organization {
+  id                   String           @id @default(cuid())
+  type                 OrganizationType
+  name                 String
+  normalizedName       String
+  parentOrganizationId String?
+  isActive             Boolean          @default(true)
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  parentOrganization Organization?      @relation("OrganizationHierarchy", fields: [parentOrganizationId], references: [id], onDelete: Restrict)
+  childOrganizations Organization[]     @relation("OrganizationHierarchy")
+  externalIdentities ExternalIdentity[]
+
+  @@index([type, isActive, name])
+  @@index([parentOrganizationId, isActive])
+  @@index([normalizedName])
+}
+
+/**
+ * Stable provider keys. A row belongs to exactly one IMSDA entity; the
+ * database migration carries the XOR check Prisma cannot express.
+ */
+model ExternalIdentity {
+  id             String         @id @default(cuid())
+  organizationId String?
+  personId       String?
+  provider       ExternalSystem
+  providerScope  String         @default("")
+  externalId     String
+  displayLabel   String?
+  lastVerifiedAt DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  person       Person?       @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerScope, externalId])
+  @@unique([organizationId, provider, providerScope])
+  @@unique([personId, provider, providerScope])
+  @@index([organizationId])
   @@index([personId])
 }
 

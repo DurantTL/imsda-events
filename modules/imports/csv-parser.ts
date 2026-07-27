@@ -36,6 +36,58 @@ export type NormalizedImportData = {
   status: "DRAFT" | "SUBMITTED" | "CONFIRMED" | "WAITLISTED" | "CANCELLED";
   totalAmountCents: number;
   submittedAt: string | null;
+  contactSnapshot?: Record<string, string | number | boolean | null>;
+  attendees?: Array<{
+    sourceId: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string;
+    attendeeType: "ATTENDEE" | "WORKER" | "CHILD";
+    profileSnapshot: Record<string, string | number | boolean | null>;
+    formResponses: Record<string, string | boolean | string[]>;
+  }>;
+  payment?: {
+    sourceId: string;
+    amountCents: number;
+    status: "PENDING" | "SUCCEEDED" | "FAILED" | "VOIDED";
+    method: "CARD_REFERENCE" | "CASH" | "CHECK" | "MANUAL";
+    externalReference: string;
+    receivedAt: string | null;
+  } | null;
+  refunds?: Array<{
+    sourceId: string;
+    amountCents: number;
+    status: "PENDING" | "SUCCEEDED" | "FAILED";
+    reason: string;
+  }>;
+  waitlist?: {
+    position: number;
+    status: "WAITING" | "PROMOTED" | "REMOVED";
+    joinedAt: string | null;
+    promotedAt: string | null;
+    notes: string;
+  } | null;
+  checkIns?: Array<{
+    sourceId: string;
+    checkedInAt: string;
+    method: string;
+    actor: string;
+  }>;
+  legacyHistory?: {
+    transfers: Array<Record<string, string>>;
+  };
+  legacyPromoCodes?: Array<{
+    code: string;
+    description: string;
+    discountType: "FIXED_CENTS" | "PERCENT_BPS";
+    discountValue: number;
+    maximumUses: number | null;
+    redeemedCount: number;
+    endsOn: string | null;
+    isActive: boolean;
+    minimumSubtotalCents: number | null;
+  }>;
 };
 
 export type ParsedImportRow = {

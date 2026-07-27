@@ -3,6 +3,7 @@
 import {
   AlertTriangle,
   CheckCircle2,
+  ContactRound,
   Printer,
   RefreshCw,
   RotateCcw,
@@ -191,13 +192,22 @@ export function CheckInWorkspace({
             arrivals for {eventName}. Offline check-ins stay clearly queued
             until the server confirms them.
           </p>
-          <Link
-            className="secondary-button checkin-pass-link"
-            href={`/check-in/passes?event=${encodeURIComponent(eventId)}`}
-          >
-            <Printer aria-hidden="true" size={16} />
-            Print attendee passes
-          </Link>
+          <div className="checkin-print-links">
+            <Link
+              className="secondary-button checkin-pass-link"
+              href={`/check-in/passes?event=${encodeURIComponent(eventId)}`}
+            >
+              <Printer aria-hidden="true" size={16} />
+              Print attendee passes
+            </Link>
+            <Link
+              className="secondary-button checkin-pass-link"
+              href={`/check-in/badges?event=${encodeURIComponent(eventId)}`}
+            >
+              <ContactRound aria-hidden="true" size={16} />
+              Print name badges
+            </Link>
+          </div>
         </div>
         <div className="checkin-tallies">
           <span><strong>{checkedIn}</strong><small>Confirmed</small></span>

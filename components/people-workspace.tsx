@@ -3,11 +3,14 @@
 import { useMemo, useState } from "react";
 import {
   ArrowRightLeft,
+  Banknote,
   Ban,
   Download,
   ExternalLink,
   Filter,
   ListPlus,
+  Mail,
+  PencilLine,
   Plus,
   RotateCcw,
   Search,
@@ -16,6 +19,7 @@ import {
   UsersRound,
   X,
 } from "lucide-react";
+import { RegistrationAmendmentEditor } from "@/components/registration-amendment-editor";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 
@@ -76,6 +80,59 @@ function answerValue(value: unknown) {
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (value === null || value === undefined || value === "") return "Not provided";
   return String(value);
+}
+
+function dateTime(value: string | null) {
+  if (!value) return "Not recorded";
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return value;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function paymentMethodLabel(value: string) {
+  if (value === "CARD_REFERENCE") return "Square card";
+  if (value === "CASH") return "Cash";
+  if (value === "CHECK") return "Check";
+  if (value === "MANUAL") return "Manual";
+  return answerLabel(value);
+}
+
+function messageDelivery(record: RegistrationRecord["messages"][number]) {
+  if (record.providerDeliveryStatus === "DELIVERED") {
+    return { label: "Delivered", tone: "green", date: record.deliveredAt };
+  }
+  if (
+    record.providerDeliveryStatus === "BOUNCED"
+    || record.providerDeliveryStatus === "FAILED"
+    || record.providerDeliveryStatus === "COMPLAINED"
+    || record.providerDeliveryStatus === "SUPPRESSED"
+    || record.status === "FAILED"
+    || record.status === "SUPPRESSED"
+    || record.status === "CANCELLED"
+  ) {
+    return {
+      label: answerLabel(record.providerDeliveryStatus ?? record.status),
+      tone: "coral",
+      date: record.failedAt ?? record.createdAt,
+    };
+  }
+  if (record.status === "SENT") {
+    return { label: "Sent", tone: "green", date: record.sentAt };
+  }
+  if (record.status === "CAPTURED") {
+    return { label: "Captured locally", tone: "purple", date: record.capturedAt };
+  }
+  return {
+    label: record.status === "PROCESSING" ? "Processing" : "Pending",
+    tone: "gold",
+    date: record.createdAt,
+  };
 }
 
 function fieldLabelsFromDefinition(definition: Record<string, unknown>) {
@@ -160,6 +217,7 @@ export function PeopleWorkspace({
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
   const [addingAttendee, setAddingAttendee] = useState(false);
+  const [amending, setAmending] = useState(false);
   const [lifecycleAction, setLifecycleAction] = useState<LifecycleAction | null>(null);
   const [operationDraft, setOperationDraft] = useState<RegistrationOperationDraft | null>(null);
   const dialogRef = useAccessibleDialog<HTMLElement>(Boolean(modal), closeModal);
@@ -192,6 +250,7 @@ export function PeopleWorkspace({
   function openDetail(record: RegistrationRecord) {
     setSelected(record);
     setAddingAttendee(false);
+    setAmending(false);
     setLifecycleAction(null);
     setOperationDraft(null);
     setError("");
@@ -202,6 +261,7 @@ export function PeopleWorkspace({
     if (!saving) {
       setModal(null);
       setAddingAttendee(false);
+      setAmending(false);
       setLifecycleAction(null);
       setOperationDraft(null);
       setError("");
@@ -448,7 +508,7 @@ export function PeopleWorkspace({
   return (
     <section className="page-stack">
       <div className="page-intro">
-        <div><p className="eyebrow">Registration operations</p><h2>People & registrations</h2><p>Search account holders, review balances, and maintain registration details for this event.</p></div>
+        <div><p className="eyebrow">Registration hub</p><h2>People & registrations</h2><p>Review each party’s attendees, submitted choices, payments, emails, and operational status in one record.</p></div>
         <div className="intro-actions">
           <span className="count-badge"><UsersRound aria-hidden="true" size={17} /> {expectedPeople} expected</span>
           <a className="secondary-button" href={`/api/events/${eventId}/exports/registrations`}><Download aria-hidden="true" size={17} /> Export CSV</a>
@@ -483,7 +543,19 @@ export function PeopleWorkspace({
               <div className="detail-stack">
                 {notice && <div className="inline-notice success" role="status">{notice}</div>}
                 {error && <p className="form-error" role="alert">{error}</p>}
-                {operationDraft ? (
+                {amending ? (
+                  <RegistrationAmendmentEditor
+                    eventId={eventId}
+                    registration={selected}
+                    onCancel={() => { setAmending(false); setError(""); }}
+                    onSaved={(saved, message) => {
+                      setRegistrations((current) => current.map((item) => item.id === saved.id ? saved : item));
+                      setSelected(saved);
+                      setAmending(false);
+                      setNotice(message);
+                    }}
+                  />
+                ) : operationDraft ? (
                   operationDraft.step === "details" ? (
                     <form className="form-stack registration-operation" onSubmit={reviewRegistrationOperation}>
                       <div className="operation-step-heading">
@@ -580,7 +652,7 @@ export function PeopleWorkspace({
                 <div className="detail-grid"><span><small>Confirmation</small><strong>{selected.confirmationCode}</strong></span><span><small>Status</small><strong>{selected.status.toLowerCase()}</strong></span><span><small>Total</small><strong>{money(selected.totalAmountCents)}</strong></span><span><small>Balance</small><strong>{money(selected.balanceCents)}</strong></span></div>
                 <div className="contact-card"><strong>Contact</strong><p>{selected.accountHolder.email || "No email"}</p><p>{selected.accountHolder.phone || "No phone"}</p></div>
                 {selected.publicSubmission && <div className="public-submission-detail">
-                  <div><span className="status-chip green">Public form</span><strong>{selected.publicSubmission.formName}</strong><small>Version {selected.publicSubmission.versionNumber} · immutable submitted snapshot</small></div>
+                  <div><span className="status-chip green">Public form</span><strong>{selected.publicSubmission.formName}</strong><small>Version {selected.publicSubmission.versionNumber} · original submission retained{selected.publicSubmission.amendedAt ? ` · last amended ${dateTime(selected.publicSubmission.amendedAt)}` : ""}</small></div>
                   {selectedPricing && <details open>
                     <summary>Saved promo discount</summary>
                     <dl>
@@ -591,9 +663,11 @@ export function PeopleWorkspace({
                       <div><dt>Recorded total</dt><dd>{money(selectedPricing.totalCents)}</dd></div>
                     </dl>
                   </details>}
-                  <details open={selected.publicSubmission.attendeeResponses.length > 0}>
+                  <details open>
                     <summary>Registration answers</summary>
-                    <dl>{Object.entries(selected.publicSubmission.responses).map(([key, value]) => <div key={key}><dt>{selectedFieldLabels.get(key) ?? answerLabel(key)}</dt><dd>{answerValue(value)}</dd></div>)}</dl>
+                    {Object.keys(selected.publicSubmission.responses).length > 0
+                      ? <dl>{Object.entries(selected.publicSubmission.responses).map(([key, value]) => <div key={key}><dt>{selectedFieldLabels.get(key) ?? answerLabel(key)}</dt><dd>{answerValue(value)}</dd></div>)}</dl>
+                      : <p className="quiet-copy">No registration-level answers were submitted.</p>}
                   </details>
                 </div>}
                 <div className="registration-attendee-list">
@@ -607,21 +681,69 @@ export function PeopleWorkspace({
                       </span>
                     </div>
                     {canEdit && attendee.checkedIn && <p className="quiet-copy">Undo this attendee’s active check-in before a substitution can be reviewed.</p>}
-                    {(attendee.email || attendee.phone || Object.keys(attendee.responses).length > 0) && <details>
-                      <summary>View {attendee.source === "PUBLIC_REGISTRATION" ? "submitted" : "attendee"} details</summary>
-                      <dl>
-                        {attendee.email && <div><dt>Email</dt><dd>{attendee.email}</dd></div>}
-                        {attendee.phone && <div><dt>Phone</dt><dd>{attendee.phone}</dd></div>}
-                        {Object.entries(attendee.responses).map(([key, value]) => <div key={`${attendeeIndex}_${key}`}><dt>{selectedFieldLabels.get(key) ?? answerLabel(key)}</dt><dd>{answerValue(value)}</dd></div>)}
-                      </dl>
-                    </details>}
+                    <details open={selected.attendeeCount <= 5}>
+                      <summary>{attendee.source === "PUBLIC_REGISTRATION" ? "Submitted choices and contact" : "Attendee details"}</summary>
+                      {(attendee.email || attendee.phone || Object.keys(attendee.responses).length > 0)
+                        ? <dl>
+                            {attendee.email && <div><dt>Email</dt><dd>{attendee.email}</dd></div>}
+                            {attendee.phone && <div><dt>Phone</dt><dd>{attendee.phone}</dd></div>}
+                            {Object.entries(attendee.responses).map(([key, value]) => <div key={`${attendeeIndex}_${key}`}><dt>{selectedFieldLabels.get(key) ?? answerLabel(key)}</dt><dd>{answerValue(value)}</dd></div>)}
+                          </dl>
+                        : <p className="quiet-copy">No additional attendee choices or contact details are recorded.</p>}
+                    </details>
                   </article>)}
                 </div>
+                <section className="registration-related-panel" aria-labelledby="registration-payment-history">
+                  <header>
+                    <span><Banknote aria-hidden="true" size={17} /></span>
+                    <div><p className="eyebrow">Finance</p><h3 id="registration-payment-history">Payment history</h3></div>
+                    <strong>{selected.payments.length}</strong>
+                  </header>
+                  <div className="registration-related-list">
+                    {selected.payments.map((payment) => <article key={payment.id}>
+                      <div>
+                        <strong>{money(payment.amountCents)} · {paymentMethodLabel(payment.method)}</strong>
+                        <small>{dateTime(payment.receivedAt)}{payment.externalReference ? ` · ${payment.externalReference}` : ""}</small>
+                      </div>
+                      {payment.refundedCents > 0 && <span className="status-chip gold">{money(payment.refundedCents)} refunded</span>}
+                      {payment.refunds.length > 0 && <details>
+                        <summary>Refund details</summary>
+                        <dl>{payment.refunds.map((refund) => <div key={refund.id}><dt>{dateTime(refund.createdAt)}</dt><dd>−{money(refund.amountCents)}{refund.reason ? ` · ${refund.reason}` : ""}</dd></div>)}</dl>
+                      </details>}
+                    </article>)}
+                    {selected.payments.length === 0 && <p className="quiet-copy">No successful payments have been recorded.</p>}
+                  </div>
+                </section>
+                <section className="registration-related-panel" aria-labelledby="registration-email-history">
+                  <header>
+                    <span><Mail aria-hidden="true" size={17} /></span>
+                    <div><p className="eyebrow">Communication</p><h3 id="registration-email-history">Email history</h3></div>
+                    <strong>{selected.messages.length}</strong>
+                  </header>
+                  <div className="registration-related-list">
+                    {selected.messages.map((message) => {
+                      const delivery = messageDelivery(message);
+                      return <details className="registration-message" key={message.id}>
+                        <summary>
+                          <span><strong>{message.subject}</strong><small>To {message.recipientName ? `${message.recipientName} · ` : ""}{message.recipientEmail} · {dateTime(delivery.date)}</small></span>
+                          <span className={`status-chip ${delivery.tone}`}>{delivery.label}</span>
+                        </summary>
+                        <div className="registration-message-body">
+                          <p>{message.bodyText}</p>
+                          <small>Message type: {answerLabel(message.templateKey)}</small>
+                          {message.lastError && <p className="form-error">Delivery issue: {message.lastError}</p>}
+                        </div>
+                      </details>;
+                    })}
+                    {selected.messages.length === 0 && <p className="quiet-copy">No registrant emails are linked to this registration yet.</p>}
+                  </div>
+                </section>
                 {selected.publicSubmission && <p className="quiet-copy">This registration came through a published form. Submitted attendees, choices, and pricing stay together as one auditable snapshot.</p>}
                 {addingAttendee && <form className="form-stack inset-form" onSubmit={addAttendee}><div className="form-grid two-column"><label>First name<input name="firstName" required /></label><label>Last name<input name="lastName" required /></label></div><div className="form-grid two-column"><label>Email<input name="email" type="email" /></label><label>Phone<input name="phone" type="tel" /></label></div><label>Attendee type<select name="attendeeType" defaultValue="ATTENDEE"><option value="ATTENDEE">Attendee</option><option value="WORKER">Event worker</option><option value="CHILD">Child</option></select></label>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><button className="secondary-button" type="button" onClick={() => { setAddingAttendee(false); setError(""); }}>Cancel</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Adding…" : "Add attendee"}</button></div></form>}
                 {canEdit && !addingAttendee && !lifecycleAction && (
                   <>
                     <div className="registration-management-actions">
+                      {selected.publicSubmission?.rosterEnabled && <button className="primary-button" type="button" onClick={() => { setError(""); setNotice(""); setAmending(true); }}><PencilLine aria-hidden="true" size={17} /> Edit choices & attendees</button>}
                       <button className="secondary-button" type="button" onClick={() => { setError(""); setNotice(""); setModal("edit"); }}><UserRoundPen aria-hidden="true" size={17} /> Edit contact</button>
                       <button className="secondary-button" type="button" onClick={beginTransfer}><ArrowRightLeft aria-hidden="true" size={17} /> Transfer registration</button>
                       {(selected.status === "SUBMITTED" || selected.status === "CONFIRMED") && waitlistEnabled && <button className="secondary-button" type="button" onClick={() => { setError(""); setNotice(""); setLifecycleAction("waitlist"); }}><ListPlus aria-hidden="true" size={17} /> Move to waitlist</button>}

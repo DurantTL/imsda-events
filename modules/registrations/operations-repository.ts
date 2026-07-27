@@ -323,7 +323,7 @@ function operationReplay(
   existing: {
     registrationId: string;
     attendeeId: string | null;
-    type: RegistrationOperationKind;
+    type: RegistrationOperationKind | "AMENDMENT";
     requestFingerprint: string;
     responseSnapshot: Prisma.JsonValue;
   },

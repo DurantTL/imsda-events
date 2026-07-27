@@ -34,6 +34,37 @@ function getRegistrationQuery(
         where: { status: "SUCCEEDED" },
         include: { refunds: { where: { status: "SUCCEEDED" } } },
       },
+      messages: {
+        where: { recipientKind: "REGISTRANT" },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+        select: {
+          id: true,
+          templateKey: true,
+          recipientEmail: true,
+          recipientName: true,
+          subjectSnapshot: true,
+          bodyTextSnapshot: true,
+          status: true,
+          providerDeliveryStatus: true,
+          capturedAt: true,
+          sentAt: true,
+          deliveredAt: true,
+          failedAt: true,
+          lastError: true,
+          createdAt: true,
+        },
+      },
+      operations: {
+        where: { type: "AMENDMENT" },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: {
+          id: true,
+          afterSnapshot: true,
+          createdAt: true,
+        },
+      },
       publicFormSubmission: {
         include: {
           formVersion: {
@@ -70,6 +101,14 @@ function serializeRegistration(registration: RegistrationWithRelations) {
   const totalAmountCents = moneyToCents(registration.totalAmount);
   const firstAttendee = registration.attendees[0];
   const contactSnapshot = recordFromJson(registration.contactSnapshot);
+  const latestAmendment = registration.operations[0];
+  const amendmentSnapshot = recordFromJson(latestAmendment?.afterSnapshot);
+  const amendedRegistrationResponses = recordFromJson(
+    amendmentSnapshot.registrationResponses,
+  );
+  const amendedPricingSnapshot = recordFromJson(
+    amendmentSnapshot.pricingSnapshot,
+  );
   const contactValue = (key: "firstName" | "lastName" | "email" | "phone", fallback: string) => (
     typeof contactSnapshot[key] === "string"
       ? contactSnapshot[key].trim()
@@ -85,6 +124,7 @@ function serializeRegistration(registration: RegistrationWithRelations) {
     balanceCents: Math.max(totalAmountCents - paidCents, 0),
     submittedAt: registration.submittedAt?.toISOString() ?? null,
     createdAt: registration.createdAt.toISOString(),
+    updatedAt: registration.updatedAt.toISOString(),
     accountHolder: {
       id: registration.accountHolderPerson.id,
       firstName: contactValue("firstName", registration.accountHolderPerson.firstName),
@@ -131,15 +171,42 @@ function serializeRegistration(registration: RegistrationWithRelations) {
         createdAt: refund.createdAt.toISOString(),
       })),
     })),
+    messages: registration.messages.map((message) => ({
+      id: message.id,
+      templateKey: message.templateKey,
+      recipientEmail: message.recipientEmail,
+      recipientName: message.recipientName,
+      subject: message.subjectSnapshot,
+      bodyText: message.bodyTextSnapshot,
+      status: message.status,
+      providerDeliveryStatus: message.providerDeliveryStatus,
+      capturedAt: message.capturedAt?.toISOString() ?? null,
+      sentAt: message.sentAt?.toISOString() ?? null,
+      deliveredAt: message.deliveredAt?.toISOString() ?? null,
+      failedAt: message.failedAt?.toISOString() ?? null,
+      lastError: message.lastError,
+      createdAt: message.createdAt.toISOString(),
+    })),
     publicSubmission: registration.publicFormSubmission ? {
       formName: registration.publicFormSubmission.formVersion.form.name,
       formSlug: registration.publicFormSubmission.formVersion.form.slug,
       versionNumber: registration.publicFormSubmission.formVersion.versionNumber,
-      responses: recordFromJson(registration.publicFormSubmission.responses),
+      responses: Object.keys(amendedRegistrationResponses).length > 0
+        ? amendedRegistrationResponses
+        : recordFromJson(registration.publicFormSubmission.responses),
+      originalResponses: recordFromJson(registration.publicFormSubmission.responses),
       attendeeResponses: recordsFromJson(registration.publicFormSubmission.attendeeResponses),
       definition: recordFromJson(registration.publicFormSubmission.formVersion.definition),
-      pricingSnapshot: recordFromJson(registration.publicFormSubmission.pricingSnapshot),
+      rosterEnabled: recordFromJson(
+        recordFromJson(registration.publicFormSubmission.formVersion.definition).attendeeRoster,
+      ).enabled === true,
+      pricingSnapshot: Object.keys(amendedPricingSnapshot).length > 0
+        ? amendedPricingSnapshot
+        : recordFromJson(registration.publicFormSubmission.pricingSnapshot),
+      originalPricingSnapshot: recordFromJson(registration.publicFormSubmission.pricingSnapshot),
       submittedAt: registration.publicFormSubmission.createdAt.toISOString(),
+      amendedAt: latestAmendment?.createdAt.toISOString() ?? null,
+      amendmentOperationId: latestAmendment?.id ?? null,
     } : null,
   };
 }
