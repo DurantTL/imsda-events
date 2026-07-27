@@ -12,6 +12,7 @@ export const MESSAGE_TEMPLATE_KEYS = [
   "REGISTRATION_TRANSFERRED_NEW_CONTACT",
   "REGISTRATION_TRANSFERRED_PRIOR_CONTACT",
   "ATTENDEE_SUBSTITUTED",
+  "SHIRT_SIZE_REQUEST",
 ] as const;
 
 export type MessageTemplateKey = (typeof MESSAGE_TEMPLATE_KEYS)[number];
@@ -80,6 +81,7 @@ export const DEFAULT_MESSAGE_TEMPLATE_NAMES: Readonly<Record<MessageTemplateKey,
   REGISTRATION_TRANSFERRED_NEW_CONTACT: "Transfer notice for new contact",
   REGISTRATION_TRANSFERRED_PRIOR_CONTACT: "Transfer notice for prior contact",
   ATTENDEE_SUBSTITUTED: "Attendee substitution notice",
+  SHIRT_SIZE_REQUEST: "Shirt size request",
 };
 
 export const DEFAULT_MESSAGE_TEMPLATE_DESCRIPTIONS: Readonly<
@@ -111,6 +113,8 @@ export const DEFAULT_MESSAGE_TEMPLATE_DESCRIPTIONS: Readonly<
     "Tells the prior registration contact that responsibility and private access changed.",
   ATTENDEE_SUBSTITUTED:
     "Tells the registration contact, prior attendee, and replacement attendee when their valid email destinations differ.",
+  SHIRT_SIZE_REQUEST:
+    "Sent only after staff review an audience of registrations still missing a shirt size. Carries the private management link, so a migrated registrant reaches self-service for the first time from this message.",
 };
 
 export const DEFAULT_MESSAGE_TEMPLATE_SUBJECTS: Readonly<
@@ -138,6 +142,8 @@ export const DEFAULT_MESSAGE_TEMPLATE_SUBJECTS: Readonly<
     "Registration contact transferred: {{event_name}} ({{confirmation_code}})",
   ATTENDEE_SUBSTITUTED:
     "Attendee substitution recorded: {{event_name}} ({{confirmation_code}})",
+  SHIRT_SIZE_REQUEST:
+    "Shirt sizes needed for {{event_name}} ({{confirmation_code}})",
 };
 
 export const DEFAULT_MESSAGE_TEMPLATE_BODIES: Readonly<Record<MessageTemplateKey, string>> = {
@@ -345,6 +351,20 @@ export const DEFAULT_MESSAGE_TEMPLATE_BODIES: Readonly<Record<MessageTemplateKey
     "Staff updated registration {{confirmation_code}} for {{event_name}}: {{prior_person_name}} was replaced by {{new_person_name}}.",
     "",
     "The attendee record, position, type, submitted choices, capacity reservations, and pricing did not change. The registration contact, status, total, payments and refunds, promo redemption, and waitlist position also remain unchanged.",
+    "",
+    "Questions? Contact {{reply_to_email}}.",
+  ].join("\n"),
+  SHIRT_SIZE_REQUEST: [
+    "Hello {{recipient_name}},",
+    "",
+    "We still need a shirt size for everyone on registration {{confirmation_code}} for {{event_name}}.",
+    "",
+    "{{attendee_summary}}",
+    "",
+    "Open your private registration page to choose a size for each attendee. The same page shows your balance and lets you update your contact details:",
+    "{{portal_url}}",
+    "",
+    "This link is private to your registration. Please do not forward it.",
     "",
     "Questions? Contact {{reply_to_email}}.",
   ].join("\n"),

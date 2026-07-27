@@ -17,7 +17,7 @@ import {
 } from "@/modules/communications/templates";
 
 describe("message templates", () => {
-  it("ships thirteen valid plaintext defaults", () => {
+  it("ships fourteen valid plaintext defaults", () => {
     expect(MESSAGE_TEMPLATE_KEYS).toEqual([
       "REGISTRATION_CONFIRMATION_PAID",
       "REGISTRATION_CONFIRMATION_UNPAID",
@@ -32,8 +32,9 @@ describe("message templates", () => {
       "REGISTRATION_TRANSFERRED_NEW_CONTACT",
       "REGISTRATION_TRANSFERRED_PRIOR_CONTACT",
       "ATTENDEE_SUBSTITUTED",
+      "SHIRT_SIZE_REQUEST",
     ]);
-    expect(DEFAULT_MESSAGE_TEMPLATE_LIST).toHaveLength(13);
+    expect(DEFAULT_MESSAGE_TEMPLATE_LIST).toHaveLength(14);
 
     for (const key of MESSAGE_TEMPLATE_KEYS) {
       const template = DEFAULT_MESSAGE_TEMPLATES[key];
