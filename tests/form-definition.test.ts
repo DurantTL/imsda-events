@@ -29,6 +29,20 @@ describe("registration form definitions", () => {
     if (!result.success) expect(result.error.issues.some((issue) => issue.message.includes("already in use"))).toBe(true);
   });
 
+  it("keeps one designated review step at the end of the section order", () => {
+    const definition = structuredClone(formTemplates.find((template) => template.key === "womens_retreat_export")!.definition);
+    definition.sections[0].isReviewStep = true;
+    const result = registrationFormDefinitionSchema.safeParse(definition);
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => (
+        issue.message.includes("Only one section")
+        || issue.message.includes("final section")
+      ))).toBe(true);
+    }
+  });
+
   it("requires choices for select fields", () => {
     const definition = structuredClone(formTemplates[0].definition);
     definition.sections[0].fields[0].type = "SELECT";
@@ -126,15 +140,58 @@ describe("registration form definitions", () => {
     const church = fields.find((field) => field.key === "church")!;
     const churchOther = fields.find((field) => field.key === "church_other")!;
     const attendeeType = fields.find((field) => field.key === "attendee_type")!;
+    const shirtSize = fields.find((field) => field.key === "shirt_size")!;
     const rankedSessions = fields.filter((field) => field.type === "RANKED_CHOICE");
 
-    expect(definition.attendeeRoster).toMatchObject({ enabled: true, maxAttendees: 12 });
+    expect(definition.attendeeRoster).toMatchObject({ enabled: true, maxAttendees: 50 });
     expect(church.options).toContain("Other");
     expect(church.options.length).toBeGreaterThan(130);
     expect(churchOther.conditional).toEqual({ fieldKey: "church", operator: "EQUALS", value: "Other" });
     expect(attendeeType.options).toEqual(["Adult", "Teen", "Child"]);
+    expect(shirtSize).toMatchObject({
+      type: "SELECT",
+      scope: "ATTENDEE",
+      required: true,
+    });
+    expect(shirtSize.options).toEqual(expect.arrayContaining([
+      "Adult S",
+      "Adult 5XL",
+    ]));
+    expect(fields.find((field) => field.key === "childcare_children")).toMatchObject({
+      type: "NUMBER",
+      scope: "ATTENDEE",
+      required: true,
+      conditional: { fieldKey: "childcare_needed", operator: "EQUALS", value: "Yes" },
+    });
+    expect(fields.find((field) => field.key === "volunteer")).toMatchObject({
+      type: "RADIO",
+      scope: "ATTENDEE",
+      required: true,
+      options: ["No", "Yes"],
+    });
     expect(rankedSessions).toHaveLength(3);
     expect(rankedSessions.every((field) => field.minSelections === 2 && field.maxSelections === 2)).toBe(true);
+    expect(rankedSessions.every((field) => (
+      field.options.every((option) => Boolean(field.optionDescriptions?.[option]))
+    ))).toBe(true);
+    expect(fields.find((field) => field.key === "session_1_preferences")?.optionDescriptions?.["Refined by Fire, Revealed in Beauty"]).toContain("Rita Tasche");
+    expect(fields.find((field) => field.key === "session_2_preferences")?.optionDescriptions?.["Color Me Prayerful: Discovering the Beautiful Ways We Talk With God"]).toContain("interactive prayer stations");
+    expect(fields.find((field) => field.key === "session_4_attendance")?.optionDescriptions?.Attending).toContain("Brushstrokes of Leadership");
+  });
+
+  it("rejects a choice description that no longer matches a configured choice", () => {
+    const definition = structuredClone(formTemplates.find((template) => template.key === "womens_retreat_export")!.definition);
+    const session = definition.sections.flatMap((section) => section.fields).find((field) => field.key === "session_1_preferences")!;
+    session.optionDescriptions = {
+      ...(session.optionDescriptions ?? {}),
+      "Removed seminar": "This option no longer exists.",
+    };
+
+    const result = registrationFormDefinitionSchema.safeParse(definition);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.message === "Choice descriptions must reference a configured choice.")).toBe(true);
+    }
   });
 
   it("calculates Man Camp lodging packages per attendee and leaves volunteers free", () => {

@@ -1,11 +1,13 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { ImportRecordStatus, ImportRunStatus, Prisma, type PrismaClient } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
-import { createImportSnapshotIdentity, CsvImportError, parseImportCsv, type NormalizedImportData } from "@/modules/imports/csv-parser";
+import { createImportSnapshotIdentity, CsvImportError, parseImportCsv, type NormalizedImportData, type ParsedImportRow } from "@/modules/imports/csv-parser";
+import { parseWr26Bundle, type Wr26BundleFile } from "@/modules/imports/wr26-bundle";
 
 const SOURCE_SYSTEM = "WR26_CSV_STAGING";
+const WR26_BUNDLE_SOURCE_SYSTEM = "WR26_GOOGLE_SHEETS_BUNDLE";
 type DatabaseClient = PrismaClient | Prisma.TransactionClient;
 
 export class ImportOperationError extends Error {
@@ -151,19 +153,28 @@ function differencesFor(
   return checks.filter(([, source, target]) => source !== target).map(([field, source, target]) => ({ field, source, target }));
 }
 
-export async function previewCsvImport(eventId: string, actorUserId: string, fileName: string, csvText: string) {
-  const { checksum, sourceRunKey } = createImportSnapshotIdentity(eventId, csvText);
-  const existingRun = await getPrisma().importRun.findUnique({ where: { sourceSystem_sourceRunKey: { sourceSystem: SOURCE_SYSTEM, sourceRunKey } } });
+async function previewImportRows(input: {
+  eventId: string;
+  actorUserId: string;
+  fileName: string;
+  sourceSystem: string;
+  checksum: string;
+  sourceRunKey: string;
+  headers: string[];
+  rows: ParsedImportRow[];
+  extraSummary?: Record<string, Prisma.InputJsonValue>;
+}) {
+  const { eventId, actorUserId, fileName, sourceSystem, checksum, sourceRunKey } = input;
+  const existingRun = await getPrisma().importRun.findUnique({ where: { sourceSystem_sourceRunKey: { sourceSystem, sourceRunKey } } });
   if (existingRun) return { run: (await getImportRun(eventId, existingRun.id))!, reused: true };
 
-  const parsed = parseImportCsv(csvText);
-  const validRows = parsed.rows.filter((row): row is typeof row & { data: NormalizedImportData } => Boolean(row.data));
+  const validRows = input.rows.filter((row): row is typeof row & { data: NormalizedImportData } => Boolean(row.data));
   const confirmationCodes = validRows.map((row) => row.data.confirmationCode);
   const emails = validRows.map((row) => row.data.email).filter(Boolean);
   const [existingRegistrations, existingPeople, targetBefore] = await Promise.all([
     getPrisma().registration.findMany({
       where: { eventId, confirmationCode: { in: confirmationCodes } },
-      include: { accountHolderPerson: true, attendees: { orderBy: { createdAt: "asc" }, take: 1 } },
+      include: { accountHolderPerson: true, attendees: { orderBy: { position: "asc" } } },
     }),
     getPrisma().person.findMany({ where: { normalizedEmail: { in: emails } } }),
     getEventTotals(getPrisma(), eventId),
@@ -171,7 +182,7 @@ export async function previewCsvImport(eventId: string, actorUserId: string, fil
   const registrationByCode = new Map(existingRegistrations.map((registration) => [registration.confirmationCode, registration]));
   const personByEmail = new Map(existingPeople.map((person) => [person.normalizedEmail, person]));
 
-  const analyzedRows = parsed.rows.map((row) => {
+  const analyzedRows = input.rows.map((row) => {
     const warnings = [...row.warnings];
     const errors = [...row.errors];
     let proposedAction = "ERROR";
@@ -191,6 +202,13 @@ export async function previewCsvImport(eventId: string, actorUserId: string, fil
       }
       if (registration) {
         differences = differencesFor(row.data, registration);
+        if (row.data.attendees) {
+          differences.push({
+            field: "legacyDetails",
+            source: `${row.data.attendees.length} attendee WR26 bundle`,
+            target: `${registration.attendees.length} current attendee record${registration.attendees.length === 1 ? "" : "s"}`,
+          });
+        }
         proposedAction = differences.length === 0 ? "SKIP" : "UPDATE";
       } else {
         proposedAction = "CREATE";
@@ -216,7 +234,7 @@ export async function previewCsvImport(eventId: string, actorUserId: string, fil
       data: {
         eventId,
         startedByUserId: actorUserId,
-        sourceSystem: SOURCE_SYSTEM,
+        sourceSystem,
         sourceRunKey,
         fileName,
         sourceChecksum: checksum,
@@ -224,7 +242,7 @@ export async function previewCsvImport(eventId: string, actorUserId: string, fil
         recordsSkipped: skippedCount,
         warnings: warningCount,
         errors: errorCount,
-        summary: { headers: parsed.headers, sourceTotals, targetBefore, productionSource: false, readOnlySource: true },
+        summary: { headers: input.headers, sourceTotals, targetBefore, productionSource: false, readOnlySource: true, ...input.extraSummary },
         records: {
           create: analyzedRows.map((row) => ({
             sourceRow: row.sourceRow,
@@ -246,10 +264,358 @@ export async function previewCsvImport(eventId: string, actorUserId: string, fil
     return { run: (await getImportRun(eventId, run.id))!, reused: false };
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      const duplicate = await getPrisma().importRun.findUnique({ where: { sourceSystem_sourceRunKey: { sourceSystem: SOURCE_SYSTEM, sourceRunKey } } });
+      const duplicate = await getPrisma().importRun.findUnique({ where: { sourceSystem_sourceRunKey: { sourceSystem, sourceRunKey } } });
       if (duplicate) return { run: (await getImportRun(eventId, duplicate.id))!, reused: true };
     }
     throw error;
+  }
+}
+
+export async function previewCsvImport(eventId: string, actorUserId: string, fileName: string, csvText: string) {
+  const identity = createImportSnapshotIdentity(eventId, csvText);
+  const parsed = parseImportCsv(csvText);
+  return previewImportRows({
+    eventId,
+    actorUserId,
+    fileName,
+    sourceSystem: SOURCE_SYSTEM,
+    ...identity,
+    ...parsed,
+  });
+}
+
+export async function previewWr26BundleImport(
+  eventId: string,
+  actorUserId: string,
+  files: Wr26BundleFile[],
+) {
+  const bundle = parseWr26Bundle(files, eventId);
+  return previewImportRows({
+    eventId,
+    actorUserId,
+    fileName: bundle.fileName,
+    sourceSystem: WR26_BUNDLE_SOURCE_SYSTEM,
+    checksum: bundle.checksum,
+    sourceRunKey: bundle.sourceRunKey,
+    headers: bundle.headers,
+    rows: bundle.rows,
+    extraSummary: { wr26Bundle: bundle.summary },
+  });
+}
+
+function importedAttendees(data: NormalizedImportData) {
+  return data.attendees ?? [{
+    sourceId: data.sourceId,
+    firstName: data.firstName,
+    lastName: data.lastName,
+    email: data.email,
+    phone: data.phone,
+    attendeeType: data.attendeeType,
+    profileSnapshot: {},
+    formResponses: {},
+  }];
+}
+
+async function syncImportedDetails(
+  tx: Prisma.TransactionClient,
+  eventId: string,
+  registrationId: string,
+  data: NormalizedImportData,
+) {
+  const registration = await tx.registration.findUnique({
+    where: { id: registrationId },
+    include: {
+      accountHolderPerson: true,
+      attendees: { orderBy: { position: "asc" } },
+      publicFormSubmission: true,
+    },
+  });
+  if (!registration) throw new ImportOperationError("IMPORT_CONFLICT", `Registration ${data.confirmationCode} no longer exists.`);
+
+  const contactSnapshot = {
+    ...jsonObject(registration.contactSnapshot),
+    ...(data.contactSnapshot ?? {}),
+    sourceId: data.sourceId,
+  };
+  if (data.legacyHistory) {
+    Object.assign(contactSnapshot, { legacyHistory: data.legacyHistory as unknown as Prisma.InputJsonValue });
+  }
+  await tx.registration.update({
+    where: { id: registrationId },
+    data: { contactSnapshot },
+  });
+  for (const promo of data.legacyPromoCodes ?? []) {
+    const maximumUses = promo.maximumUses === null
+      ? null
+      : Math.max(promo.maximumUses, promo.redeemedCount);
+    await tx.promoCode.upsert({
+      where: {
+        eventId_normalizedCode: {
+          eventId,
+          normalizedCode: promo.code.trim().toUpperCase(),
+        },
+      },
+      update: {
+        code: promo.code,
+        isActive: promo.isActive,
+        discountType: promo.discountType,
+        discountValue: promo.discountValue,
+        endsOn: promo.endsOn,
+        minimumSubtotalCents: promo.minimumSubtotalCents,
+        maximumUses,
+        redeemedCount: promo.redeemedCount,
+      },
+      create: {
+        eventId,
+        code: promo.code,
+        normalizedCode: promo.code.trim().toUpperCase(),
+        isActive: promo.isActive,
+        discountType: promo.discountType,
+        discountValue: promo.discountValue,
+        endsOn: promo.endsOn,
+        minimumSubtotalCents: promo.minimumSubtotalCents,
+        maximumUses,
+        redeemedCount: promo.redeemedCount,
+      },
+    });
+  }
+
+  const existingBySourceId = new Map(registration.attendees.flatMap((attendee) => {
+    const sourceId = jsonObject(attendee.profileSnapshot).sourceId;
+    return typeof sourceId === "string" ? [[sourceId, attendee] as const] : [];
+  }));
+  const usedPersonIds = new Set<string>();
+  const syncedAttendees: Array<{ id: string; sourceId: string }> = [];
+  for (const [position, attendee] of importedAttendees(data).entries()) {
+    const existing = existingBySourceId.get(attendee.sourceId)
+      ?? (data.attendees ? registration.attendees[position] : registration.attendees[0]);
+    let personId = existing?.personId ?? null;
+    if (personId) {
+      await tx.person.update({
+        where: { id: personId },
+        data: {
+          firstName: attendee.firstName,
+          lastName: attendee.lastName,
+          phone: attendee.phone || null,
+        },
+      });
+    } else {
+      const emailMatch = attendee.email
+        ? await tx.person.findUnique({ where: { normalizedEmail: attendee.email } })
+        : null;
+      const canReuseEmailMatch = emailMatch
+        && emailMatch.firstName === attendee.firstName
+        && emailMatch.lastName === attendee.lastName
+        && !usedPersonIds.has(emailMatch.id);
+      const person = canReuseEmailMatch
+        ? emailMatch
+        : await tx.person.create({
+            data: {
+              firstName: attendee.firstName,
+              lastName: attendee.lastName,
+              normalizedEmail: emailMatch ? null : attendee.email || null,
+              phone: attendee.phone || null,
+            },
+          });
+      personId = person.id;
+    }
+    usedPersonIds.add(personId);
+    const profileSnapshot = {
+      ...(existing ? jsonObject(existing.profileSnapshot) : {}),
+      ...attendee.profileSnapshot,
+      sourceId: attendee.sourceId,
+      firstName: attendee.firstName,
+      lastName: attendee.lastName,
+      email: attendee.email || null,
+      phone: attendee.phone || null,
+    };
+    const saved = existing
+      ? await tx.registrationAttendee.update({
+          where: { id: existing.id },
+          data: {
+            personId,
+            attendeeType: attendee.attendeeType,
+            position,
+            profileSnapshot,
+            formResponses: attendee.formResponses,
+          },
+        })
+      : await tx.registrationAttendee.create({
+          data: {
+            eventId,
+            registrationId,
+            personId,
+            attendeeType: attendee.attendeeType,
+            position,
+            profileSnapshot,
+            formResponses: attendee.formResponses,
+          },
+        });
+    syncedAttendees.push({ id: saved.id, sourceId: attendee.sourceId });
+  }
+
+  let paymentId: string | null = null;
+  if (data.payment) {
+    const existingPayment = await tx.payment.findFirst({
+      where: {
+        registrationId,
+        externalReference: data.payment.externalReference,
+      },
+    });
+    const payment = existingPayment
+      ? await tx.payment.update({
+          where: { id: existingPayment.id },
+          data: {
+            amount: data.payment.amountCents / 100,
+            status: data.payment.status,
+            method: data.payment.method,
+            receivedAt: data.payment.receivedAt ? new Date(data.payment.receivedAt) : null,
+          },
+        })
+      : await tx.payment.create({
+          data: {
+            eventId,
+            registrationId,
+            amount: data.payment.amountCents / 100,
+            status: data.payment.status,
+            method: data.payment.method,
+            externalReference: data.payment.externalReference,
+            receivedAt: data.payment.receivedAt ? new Date(data.payment.receivedAt) : null,
+          },
+        });
+    paymentId = payment.id;
+  }
+  if (paymentId) {
+    for (const refund of data.refunds ?? []) {
+      const externalReference = `wr26:${refund.sourceId}`;
+      const existingRefund = await tx.refund.findFirst({
+        where: { paymentId, externalReference },
+      });
+      if (existingRefund) {
+        await tx.refund.update({
+          where: { id: existingRefund.id },
+          data: {
+            amount: refund.amountCents / 100,
+            status: refund.status,
+            reason: refund.reason || null,
+          },
+        });
+      } else {
+        await tx.refund.create({
+          data: {
+            eventId,
+            paymentId,
+            amount: refund.amountCents / 100,
+            status: refund.status,
+            externalReference,
+            reason: refund.reason || null,
+          },
+        });
+      }
+    }
+  }
+
+  if (data.waitlist) {
+    const existingEntry = await tx.registrationWaitlistEntry.findUnique({
+      where: { registrationId },
+    });
+    const waitlistData = {
+      eventId,
+      position: data.waitlist.position,
+      attendeeCount: syncedAttendees.length,
+      status: data.waitlist.status,
+      lastBlockedReason: data.waitlist.notes || null,
+      joinedAt: data.waitlist.joinedAt ? new Date(data.waitlist.joinedAt) : undefined,
+      promotedAt: data.waitlist.promotedAt ? new Date(data.waitlist.promotedAt) : null,
+      removedAt: data.waitlist.status === "REMOVED" ? new Date() : null,
+    };
+    if (existingEntry) {
+      await tx.registrationWaitlistEntry.update({
+        where: { id: existingEntry.id },
+        data: waitlistData,
+      });
+    } else {
+      await tx.registrationWaitlistEntry.create({
+        data: { ...waitlistData, registrationId },
+      });
+    }
+  }
+
+  const primaryCheckIn = data.checkIns?.[0];
+  if (primaryCheckIn) {
+    for (const attendee of syncedAttendees) {
+      const active = await tx.checkIn.findFirst({
+        where: { registrationAttendeeId: attendee.id, undoneAt: null },
+      });
+      if (!active) {
+        await tx.checkIn.create({
+          data: {
+            eventId,
+            registrationAttendeeId: attendee.id,
+            idempotencyKey: `wr26:${primaryCheckIn.sourceId}:${attendee.sourceId}`,
+            checkedInAt: new Date(primaryCheckIn.checkedInAt),
+          },
+        });
+      }
+    }
+  }
+
+  if (data.attendees) {
+    const formVersion = await tx.registrationFormVersion.findFirst({
+      where: { form: { eventId }, status: "PUBLISHED" },
+      orderBy: { publishedAt: "desc" },
+    });
+    if (formVersion && !registration.publicFormSubmission) {
+      const responses = {
+        primary_contact_first_name: data.firstName,
+        primary_contact_last_name: data.lastName,
+        email: data.email,
+        phone: data.phone,
+        church: String(data.contactSnapshot?.church ?? ""),
+        emergency_contact_name: String(data.contactSnapshot?.emergencyContactName ?? ""),
+        emergency_contact_phone: String(data.contactSnapshot?.emergencyContactPhone ?? ""),
+        special_needs: String(data.contactSnapshot?.specialNeeds ?? ""),
+        promo_code: String(data.contactSnapshot?.promoCode ?? ""),
+        payment_method: String(data.contactSnapshot?.paymentFormChoice ?? "Pay later"),
+      };
+      const attendeeResponses = data.attendees.map((attendee, position) => ({
+        clientId: `wr26:${attendee.sourceId}`,
+        position,
+        responses: attendee.formResponses,
+        identity: {
+          firstName: attendee.firstName,
+          lastName: attendee.lastName,
+          email: attendee.email || null,
+        },
+      }));
+      const requestHash = createHash("sha256")
+        .update(JSON.stringify({ sourceId: data.sourceId, responses, attendees: attendeeResponses }))
+        .digest("hex");
+      await tx.publicRegistrationSubmission.create({
+        data: {
+          eventId,
+          formVersionId: formVersion.id,
+          registrationId,
+          idempotencyKey: `wr26-import:${data.sourceId}`,
+          requestHash,
+          responses,
+          attendeeResponses,
+          pricingSnapshot: {
+            sourceSystem: "WR26_GOOGLE_SHEETS",
+            imported: true,
+            pricingDate: data.submittedAt?.slice(0, 10) ?? null,
+            subtotalCents: data.totalAmountCents,
+            processingFeeCents: 0,
+            totalCents: data.totalAmountCents,
+            attendeeCount: data.attendees.length,
+            attendeeNames: data.attendees.map((attendee) => (
+              `${attendee.firstName} ${attendee.lastName}`.trim()
+            )),
+            totalAmountCents: data.totalAmountCents,
+          },
+        },
+      });
+    }
   }
 }
 
@@ -293,7 +659,22 @@ export async function commitImportRun(eventId: string, importRunId: string, acto
             status: data.status,
             totalAmount: data.totalAmountCents / 100,
             submittedAt: data.submittedAt ? new Date(data.submittedAt) : null,
-            attendees: { create: { eventId, personId, attendeeType: data.attendeeType, profileSnapshot: { firstName: data.firstName, lastName: data.lastName, email: data.email || null, phone: data.phone || null, sourceId: data.sourceId } } },
+            ...(data.attendees ? {} : {
+              attendees: {
+                create: {
+                  eventId,
+                  personId,
+                  attendeeType: data.attendeeType,
+                  profileSnapshot: {
+                    firstName: data.firstName,
+                    lastName: data.lastName,
+                    email: data.email || null,
+                    phone: data.phone || null,
+                    sourceId: data.sourceId,
+                  },
+                },
+              },
+            }),
           },
         });
         registrationId = registration.id;
@@ -304,13 +685,19 @@ export async function commitImportRun(eventId: string, importRunId: string, acto
         if (!registration) throw new ImportOperationError("IMPORT_CONFLICT", `Registration ${data.confirmationCode} changed after preview.`);
         await tx.person.update({ where: { id: registration.accountHolderPersonId }, data: { firstName: data.firstName, lastName: data.lastName, normalizedEmail: data.email || null, phone: data.phone || null } });
         await tx.registration.update({ where: { id: registration.id }, data: { status: data.status, totalAmount: data.totalAmountCents / 100, submittedAt: data.submittedAt ? new Date(data.submittedAt) : null } });
-        if (registration.attendees[0]) {
+        if (!data.attendees && registration.attendees[0]) {
           await tx.registrationAttendee.update({ where: { id: registration.attendees[0].id }, data: { attendeeType: data.attendeeType, profileSnapshot: { firstName: data.firstName, lastName: data.lastName, email: data.email || null, phone: data.phone || null, sourceId: data.sourceId } } });
         }
         finalStatus = ImportRecordStatus.UPDATED;
         updated += 1;
       } else {
         skipped += 1;
+      }
+      if (
+        registrationId
+        && (record.proposedAction === "CREATE" || record.proposedAction === "UPDATE")
+      ) {
+        await syncImportedDetails(tx, eventId, registrationId, data);
       }
       await tx.importRecord.update({ where: { id: record.id }, data: { status: finalStatus, committedEntityId: registrationId } });
     }

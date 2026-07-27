@@ -26,7 +26,8 @@ import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import { calculateFormTotal, calculateRosterTotal, conditionOperators, formFieldScopes, formFieldTypes, getAttendeeRosterConfig, getAvailabilityMode, isChoiceFieldType, isFieldVisible, isLatePricingActive, localCalendarDate, type ChoiceUsage, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
 import { promoCodeBuilderModule } from "@/modules/forms/builder-modules";
-import { getPublicRegistrationStepPlan, type PublicRegistrationStepId } from "@/modules/forms/public-registration-steps";
+import { getPublicRegistrationStepPlan, isPublicReviewSection, type PublicRegistrationStepId } from "@/modules/forms/public-registration-steps";
+import { shirtSizeOptions } from "@/modules/registrations/shirt-sizes";
 
 type TestSubmissionView = { id: string; isValid: boolean; submittedBy: string; createdAt: string; validation: Record<string, unknown>; responses: Record<string, unknown> };
 type FormVersionView = {
@@ -150,6 +151,23 @@ const fieldModules: FieldModuleDefinition[] = [
       { key: "guest_name", label: "Guest name", helpText: "This block repeats for every person in the registration.", placeholder: "First and last name", type: "TEXT", scope: "ATTENDEE", required: true, options: [] },
       { key: "guest_age", label: "Guest age", helpText: "", type: "NUMBER", scope: "ATTENDEE", required: false, options: [] },
       { key: "guest_type", label: "Guest type", helpText: "", type: "RADIO", scope: "ATTENDEE", required: true, options: ["Adult", "Youth", "Child"] },
+    ],
+  },
+  {
+    key: "shirt_size",
+    category: "People",
+    name: "Convention shirt size",
+    description: "Required shirt size repeated for each attendee",
+    fields: [
+      {
+        key: "shirt_size",
+        label: "T-shirt size",
+        helpText: "Choose the size this attendee wants for the convention shirt. Registrants can reconfirm it from their private registration page.",
+        type: "SELECT",
+        scope: "ATTENDEE",
+        required: true,
+        options: [...shirtSizeOptions],
+      },
     ],
   },
   {
@@ -320,7 +338,11 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
   const [expandedFieldId, setExpandedFieldId] = useState<string | null>(null);
   const [openModuleSection, setOpenModuleSection] = useState<number | null>(null);
   const [pricingPreviewDate, setPricingPreviewDate] = useState(localCalendarDate());
-  const [previewStepId, setPreviewStepId] = useState<PublicRegistrationStepId>("contact");
+  const [previewStepId, setPreviewStepId] = useState<PublicRegistrationStepId>(
+    () => selectedVersion?.definition
+      ? firstPreviewStepId(selectedVersion.definition)
+      : "__review",
+  );
   const previewRef = useRef<HTMLElement>(null);
   useUnsavedChangesGuard(
     dirty,
@@ -452,7 +474,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
       if (issues.length > 0) {
         const issueStep = previewSteps.find((step) => (
           step.fieldKeys.includes(issues[0].key)
-          || (issues[0].key === "attendees" && step.id === "attendees")
+          || (issues[0].key === "attendees" && step.managesAttendees)
         ));
         if (issueStep) setPreviewStepId(issueStep.id);
       }
@@ -513,6 +535,13 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
     if (!definition) return;
     const nextIndex = sectionIndex + direction;
     if (nextIndex < 0 || nextIndex >= definition.sections.length) return;
+    const reviewSectionIndex = definition.sections.findIndex((section) => (
+      isPublicReviewSection(definition, section)
+    ));
+    if (
+      sectionIndex === reviewSectionIndex
+      || (direction === 1 && nextIndex === reviewSectionIndex)
+    ) return;
     const sections = [...definition.sections];
     [sections[sectionIndex], sections[nextIndex]] = [sections[nextIndex], sections[sectionIndex]];
     replaceDefinition({ ...definition, sections });
@@ -520,9 +549,24 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
 
   function dropSection(targetIndex: number) {
     if (!definition || dragging?.kind !== "section") return;
+    const source = definition.sections[dragging.sectionIndex];
+    if (isPublicReviewSection(definition, source)) {
+      setDragging(null);
+      return;
+    }
     const sections = [...definition.sections];
     const [section] = sections.splice(dragging.sectionIndex, 1);
-    sections.splice(targetIndex, 0, section);
+    const reviewIndex = sections.findIndex((candidate) => (
+      isPublicReviewSection({ ...definition, sections }, candidate)
+    ));
+    const adjustedTarget = dragging.sectionIndex < targetIndex
+      ? targetIndex - 1
+      : targetIndex;
+    sections.splice(
+      reviewIndex >= 0 ? Math.min(adjustedTarget, reviewIndex) : adjustedTarget,
+      0,
+      section,
+    );
     setDragging(null);
     replaceDefinition({ ...definition, sections });
   }
@@ -598,13 +642,43 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
 
   function addSection() {
     if (!definition) return;
-    replaceDefinition({ ...definition, sections: [...definition.sections, { id: localId("section"), title: "New section", description: "", fields: [defaultField(totalFields + 1)] }] });
+    const sections = [...definition.sections];
+    const reviewIndex = sections.findIndex((section) => (
+      isPublicReviewSection(definition, section)
+    ));
+    sections.splice(
+      reviewIndex >= 0 ? reviewIndex : sections.length,
+      0,
+      {
+        id: localId("section"),
+        title: "New section",
+        description: "",
+        fields: [defaultField(totalFields + 1)],
+      },
+    );
+    replaceDefinition({ ...definition, sections });
   }
 
   function removeSection(sectionIndex: number) {
     if (!definition) return;
     if (definition.sections.length === 1) { setError("A form must keep at least one section."); return; }
     replaceDefinition({ ...definition, sections: definition.sections.filter((_, index) => index !== sectionIndex) });
+  }
+
+  function setReviewSection(sectionIndex: number, enabled: boolean) {
+    if (!definition) return;
+    const sections = definition.sections.map((section, index) => ({
+      ...section,
+      isReviewStep: enabled ? index === sectionIndex : index === sectionIndex
+        ? false
+        : section.isReviewStep ?? false,
+    }));
+    if (enabled) {
+      const [reviewSection] = sections.splice(sectionIndex, 1);
+      sections.push(reviewSection);
+    }
+    setOpenModuleSection(null);
+    replaceDefinition({ ...definition, sections });
   }
 
   function renderPreviewField(
@@ -645,10 +719,16 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
       if (price === undefined && !tracksAvailability) return null;
       return <small className={full ? "choice-availability full" : "choice-availability"}>{price !== undefined && <>{money(price)}{tracksAvailability ? " · " : ""}</>}{tracksAvailability && <>{ranked && <>{stats.first} first · {stats.second} second · </>}{stats.total} interested{limit ? ` · limit ${limit}` : " · unlimited"}</>}</small>;
     };
+    const choiceDescription = (option: string) => {
+      const description = field.optionDescriptions?.[option]?.trim();
+      return description
+        ? <small className="choice-description">{description}</small>
+        : null;
+    };
 
-    if (field.type === "RADIO") return <fieldset className={className} key={field.id}><legend>{fieldHeading}</legend><div className="preview-choice-list">{field.options.map((option) => { const { full } = choiceStatus(option); return <label className={full ? "preview-option full" : "preview-option"} key={option}><input name={inputId} type="radio" checked={valueResponses[field.key] === option} disabled={full && valueResponses[field.key] !== option} onChange={() => setValue(option)} /> <span><strong>{option}</strong>{choiceCount(option)}</span></label>; })}</div>{supportingText}</fieldset>;
-    if (field.type === "MULTISELECT") return <fieldset className={className} key={field.id}><legend>{fieldHeading}</legend><small>Choose {field.minSelections ? `at least ${field.minSelections} and ` : ""}up to {maximum}</small><div className="preview-choice-list">{field.options.map((option) => { const { full } = choiceStatus(option); return <label className={full ? "preview-option full" : "preview-option"} key={option}><input type="checkbox" checked={selectedValues.includes(option)} disabled={!selectedValues.includes(option) && (selectedValues.length >= maximum || full)} onChange={() => toggleChoice(option)} /> <span><strong>{option}</strong>{choiceCount(option)}</span></label>; })}</div>{supportingText}</fieldset>;
-    if (field.type === "RANKED_CHOICE") return <fieldset className={className} key={field.id}><legend>{fieldHeading}</legend><small>Choose {field.minSelections ?? (field.required ? Math.min(2, maximum) : 1)} and rank up to {maximum}. The first selected is first choice; the second is second choice.</small><div className="preview-ranking-list">{field.options.map((option) => { const rank = selectedValues.indexOf(option); const { full } = choiceStatus(option); return <button aria-pressed={rank >= 0} className={`${rank >= 0 ? "selected" : ""}${full ? " full" : ""}`.trim()} type="button" key={option} disabled={rank < 0 && (selectedValues.length >= maximum || full)} onClick={() => toggleChoice(option)}><span><strong>{option}</strong>{choiceCount(option, true)}</span><b>{rank >= 0 ? (rank === 0 ? "1st choice" : rank === 1 ? "2nd choice" : `#${rank + 1}`) : full ? "Full" : "Choose"}</b></button>; })}</div>{supportingText}</fieldset>;
+    if (field.type === "RADIO") return <fieldset className={className} key={field.id}><legend>{fieldHeading}</legend><div className="preview-choice-list">{field.options.map((option) => { const { full } = choiceStatus(option); return <label className={full ? "preview-option full" : "preview-option"} key={option}><input name={inputId} type="radio" checked={valueResponses[field.key] === option} disabled={full && valueResponses[field.key] !== option} onChange={() => setValue(option)} /> <span><strong>{option}</strong>{choiceDescription(option)}{choiceCount(option)}</span></label>; })}</div>{supportingText}</fieldset>;
+    if (field.type === "MULTISELECT") return <fieldset className={className} key={field.id}><legend>{fieldHeading}</legend><small>Choose {field.minSelections ? `at least ${field.minSelections} and ` : ""}up to {maximum}</small><div className="preview-choice-list">{field.options.map((option) => { const { full } = choiceStatus(option); return <label className={full ? "preview-option full" : "preview-option"} key={option}><input type="checkbox" checked={selectedValues.includes(option)} disabled={!selectedValues.includes(option) && (selectedValues.length >= maximum || full)} onChange={() => toggleChoice(option)} /> <span><strong>{option}</strong>{choiceDescription(option)}{choiceCount(option)}</span></label>; })}</div>{supportingText}</fieldset>;
+    if (field.type === "RANKED_CHOICE") return <fieldset className={className} key={field.id}><legend>{fieldHeading}</legend><small>Choose {field.minSelections ?? (field.required ? Math.min(2, maximum) : 1)} and rank up to {maximum}. The first selected is first choice; the second is second choice.</small><div className="preview-ranking-list">{field.options.map((option) => { const rank = selectedValues.indexOf(option); const { full } = choiceStatus(option); return <button aria-pressed={rank >= 0} className={`${rank >= 0 ? "selected" : ""}${full ? " full" : ""}`.trim()} type="button" key={option} disabled={rank < 0 && (selectedValues.length >= maximum || full)} onClick={() => toggleChoice(option)}><span><strong>{option}</strong>{choiceDescription(option)}{choiceCount(option, true)}</span><b>{rank >= 0 ? (rank === 0 ? "1st choice" : rank === 1 ? "2nd choice" : `#${rank + 1}`) : full ? "Full" : "Choose"}</b></button>; })}</div>{supportingText}</fieldset>;
     if (field.type === "CHECKBOX") return <fieldset className={className} key={field.id}><legend>{fieldHeading}</legend><label className="preview-check"><input id={inputId} type="checkbox" checked={valueResponses[field.key] === true} onChange={(event) => setValue(event.target.checked)} /> <span>{field.placeholder || "Yes, I agree"}</span></label>{supportingText}</fieldset>;
     if (field.type === "CALCULATED") return <div className="preview-field preview-calculated-field" key={field.id}><span>{field.label}</span><small>Automatically included in the order total.{field.latePricing ? ` ${field.latePricing.label} begins ${new Date(`${field.latePricing.startsOn}T12:00:00`).toLocaleDateString()}.` : ""}</small></div>;
 
@@ -673,36 +753,37 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
   }
 
   function renderPreviewSections(allowedFieldKeys: ReadonlySet<string>) {
-    if (!definition) return null;
-    return definition.sections.map((section) => {
-      const visibleFields = section.fields.filter((field) => (
-        allowedFieldKeys.has(field.key)
-        && (!roster?.enabled || field.scope === "REGISTRATION")
-        && isFieldVisible(field, responses)
-      ));
-      return visibleFields.length > 0 && (
-        <section key={section.id}>
-          <h4>{section.title}</h4>
-          {section.description && <p>{section.description}</p>}
-          {visibleFields.map((field) => renderPreviewField(field))}
-        </section>
-      );
-    });
+    if (!definition || !previewStep?.sectionId) return null;
+    const section = definition.sections.find((candidate) => (
+      candidate.id === previewStep.sectionId
+    ));
+    if (!section) return null;
+    const visibleFields = section.fields.filter((field) => (
+      allowedFieldKeys.has(field.key)
+      && (!roster?.enabled || field.scope === "REGISTRATION")
+      && isFieldVisible(field, responses)
+    ));
+    return visibleFields.length > 0 && (
+      <section className="preview-linked-section" aria-label={section.title}>
+        {visibleFields.map((field) => renderPreviewField(field))}
+      </section>
+    );
   }
 
   function renderPreviewRoster(allowedFieldKeys: ReadonlySet<string>) {
-    if (!definition || !roster?.enabled) return null;
-    const hasAllowedAttendeeFields = definition.sections.some((section) => (
-      section.fields.some((field) => (
+    if (!definition || !roster?.enabled || !previewStep?.sectionId) return null;
+    const stepSection = definition.sections.find((section) => (
+      section.id === previewStep.sectionId
+    ));
+    const hasAllowedAttendeeFields = stepSection?.fields.some((field) => (
         field.scope === "ATTENDEE" && allowedFieldKeys.has(field.key)
-      ))
     ));
     if (!hasAllowedAttendeeFields) return null;
 
     return <section className="preview-roster">
       <div className="preview-roster-heading">
         <span>
-          <h4>{previewStep?.id === "choices" ? "Choices for each attendee" : "Who is attending?"}</h4>
+          <h4>{previewStep.managesAttendees ? "Who is attending?" : "Choices for each attendee"}</h4>
           <small>{previewAttendees.length} of {roster.maxAttendees} {roster.attendeeLabel.toLowerCase()}{roster.maxAttendees === 1 ? "" : "s"}</small>
         </span>
       </div>
@@ -727,7 +808,6 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
             ));
             return fields.length > 0 && (
               <div className="preview-attendee-fields" key={`${attendee.clientId}_${section.id}`}>
-                <h5>{section.title}</h5>
                 {fields.map((field) => renderPreviewField(field, {
                   valueResponses: attendee.responses,
                   idPrefix: attendee.clientId,
@@ -739,7 +819,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
           })}
         </article>;
       })}
-      {previewStep?.id === "attendees" && (
+      {previewStep.managesAttendees && (
         <button className="preview-add-attendee" type="button" disabled={previewAttendees.length >= roster.maxAttendees} onClick={() => setPreviewAttendees((current) => [...current, { clientId: localId("preview_attendee"), responses: {} }])}>
           <Plus size={14} /> {roster.addButtonLabel}
         </button>
@@ -814,11 +894,19 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
         >
           <div className="builder-section-head">
             <span className="section-number">{sectionIndex + 1}</span>
-            <div><input aria-label={`Section ${sectionIndex + 1} title`} disabled={!canEdit} value={section.title} maxLength={120} onChange={(event) => updateSection(sectionIndex, { title: event.target.value })} /><input aria-label={`Section ${sectionIndex + 1} description`} className="section-description-input" disabled={!canEdit} value={section.description} maxLength={300} placeholder="Optional section description" onChange={(event) => updateSection(sectionIndex, { description: event.target.value })} /></div>
+            <div className="builder-section-copy">
+              <span className="builder-step-link">Public step {sectionIndex + 1}{isPublicReviewSection(definition, section) ? " · Final review" : ""}</span>
+              <input aria-label={`Section ${sectionIndex + 1} title`} disabled={!canEdit} value={section.title} maxLength={120} onChange={(event) => updateSection(sectionIndex, { title: event.target.value })} />
+              <input aria-label={`Section ${sectionIndex + 1} description`} className="section-description-input" disabled={!canEdit} value={section.description} maxLength={300} placeholder="Optional section description" onChange={(event) => updateSection(sectionIndex, { description: event.target.value })} />
+              <div className="builder-step-settings">
+                <label>Progress label<input aria-label={`Step ${sectionIndex + 1} progress label`} disabled={!canEdit} value={section.stepLabel ?? section.title.slice(0, 40)} maxLength={40} onChange={(event) => updateSection(sectionIndex, { stepLabel: event.target.value })} /></label>
+                <label className="builder-review-toggle"><input disabled={!canEdit} type="checkbox" checked={isPublicReviewSection(definition, section)} onChange={(event) => setReviewSection(sectionIndex, event.target.checked)} /> Final review and payment step</label>
+              </div>
+            </div>
             {canEdit && <div className="section-actions">
-              <button className="drag-handle" type="button" draggable aria-label={`Drag section ${section.title}`} title="Drag section" onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; setDragging({ kind: "section", sectionIndex }); }} onDragEnd={() => setDragging(null)}><GripVertical size={15} /><span>Drag</span></button>
-              <button type="button" aria-label={`Move section ${section.title} up`} disabled={sectionIndex === 0} onClick={() => moveSection(sectionIndex, -1)}><ArrowUp size={14} /><span>Up</span></button>
-              <button type="button" aria-label={`Move section ${section.title} down`} disabled={sectionIndex === definition.sections.length - 1} onClick={() => moveSection(sectionIndex, 1)}><ArrowDown size={14} /><span>Down</span></button>
+              <button className="drag-handle" type="button" draggable={!isPublicReviewSection(definition, section)} disabled={isPublicReviewSection(definition, section)} aria-label={`Drag section ${section.title}`} title={isPublicReviewSection(definition, section) ? "The final review step stays last" : "Drag section"} onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; setDragging({ kind: "section", sectionIndex }); }} onDragEnd={() => setDragging(null)}><GripVertical size={15} /><span>Drag</span></button>
+              <button type="button" aria-label={`Move section ${section.title} up`} disabled={sectionIndex === 0 || isPublicReviewSection(definition, section)} onClick={() => moveSection(sectionIndex, -1)}><ArrowUp size={14} /><span>Up</span></button>
+              <button type="button" aria-label={`Move section ${section.title} down`} disabled={sectionIndex === definition.sections.length - 1 || isPublicReviewSection(definition, definition.sections[sectionIndex + 1]!)} onClick={() => moveSection(sectionIndex, 1)}><ArrowDown size={14} /><span>Down</span></button>
               <button className="danger" type="button" aria-label={`Remove ${section.title}`} onClick={() => removeSection(sectionIndex)}><Trash2 size={14} /><span>Remove</span></button>
             </div>}
           </div>
@@ -837,7 +925,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
             {expandedFieldId === field.id && <div className="field-editor-body">
               <div className="field-settings field-basic-settings">
                 <label>Label<input disabled={!canEdit} value={field.label} maxLength={120} onChange={(event) => updateField(sectionIndex, fieldIndex, { label: event.target.value, key: field.key.startsWith("new_field_") ? fieldKey(event.target.value) : field.key })} /></label>
-                <label>Field type<select disabled={!canEdit} value={field.type} onChange={(event) => { const type = event.target.value as RegistrationFormField["type"]; const choiceType = isChoiceFieldType(type); const changedPricingKind = choiceType !== isChoiceFieldType(field.type); updateField(sectionIndex, fieldIndex, { type, required: type === "CALCULATED" ? false : field.required, options: choiceType ? (field.options.length < 2 ? ["Option one", "Option two"] : field.options) : [], minSelections: type === "RANKED_CHOICE" ? field.minSelections ?? 2 : type === "MULTISELECT" ? field.minSelections ?? 1 : undefined, maxSelections: type === "MULTISELECT" || type === "RANKED_CHOICE" ? field.maxSelections ?? 2 : undefined, availabilityMode: choiceType ? field.availabilityMode : undefined, choiceLimits: choiceType ? field.choiceLimits : undefined, choicePricesCents: choiceType ? field.choicePricesCents : undefined, latePricing: changedPricingKind ? undefined : field.latePricing }); }}>{formFieldTypes.map((type) => <option key={type} value={type}>{fieldTypeLabels[type]}</option>)}</select></label>
+                <label>Field type<select disabled={!canEdit} value={field.type} onChange={(event) => { const type = event.target.value as RegistrationFormField["type"]; const choiceType = isChoiceFieldType(type); const changedPricingKind = choiceType !== isChoiceFieldType(field.type); updateField(sectionIndex, fieldIndex, { type, required: type === "CALCULATED" ? false : field.required, options: choiceType ? (field.options.length < 2 ? ["Option one", "Option two"] : field.options) : [], optionDescriptions: choiceType && field.options.length >= 2 ? field.optionDescriptions : undefined, minSelections: type === "RANKED_CHOICE" ? field.minSelections ?? 2 : type === "MULTISELECT" ? field.minSelections ?? 1 : undefined, maxSelections: type === "MULTISELECT" || type === "RANKED_CHOICE" ? field.maxSelections ?? 2 : undefined, availabilityMode: choiceType ? field.availabilityMode : undefined, choiceLimits: choiceType ? field.choiceLimits : undefined, choicePricesCents: choiceType ? field.choicePricesCents : undefined, latePricing: changedPricingKind ? undefined : field.latePricing }); }}>{formFieldTypes.map((type) => <option key={type} value={type}>{fieldTypeLabels[type]}</option>)}</select></label>
                 <label>Applies to<select disabled={!canEdit} value={field.scope} onChange={(event) => {
                   const scope = event.target.value as RegistrationFormField["scope"];
                   const controller = field.conditional ? allFields.find((candidate) => candidate.key === field.conditional?.fieldKey) : null;
@@ -848,11 +936,12 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
                 }}>{formFieldScopes.map((scope) => <option key={scope} value={scope}>{scope === "ATTENDEE" ? "Each attendee" : "Registration"}</option>)}</select></label>
                 <label className="required-toggle"><input disabled={!canEdit || field.type === "CALCULATED"} type="checkbox" checked={field.required} onChange={(event) => updateField(sectionIndex, fieldIndex, { required: event.target.checked })} /> Required</label>
               </div>
-              {isChoiceFieldType(field.type) && <section className="choice-settings"><div><p className="eyebrow">Choices, pricing &amp; capacity</p><span>Ordinary choices stay clean; enable capacity only for rooms, activities, or ranked interest.</span></div><div className="field-settings">
-                <label>Quick choices<select aria-label={`Quick choices for ${field.label}`} disabled={!canEdit} value="" onChange={(event) => { const preset = choicePresets.find((item) => item.name === event.target.value); if (preset) updateField(sectionIndex, fieldIndex, { options: preset.options, choiceLimits: getAvailabilityMode(field) === "NONE" ? undefined : {}, choicePricesCents: {}, latePricing: field.latePricing ? { ...field.latePricing, choicePricesCents: {} } : undefined }); }}><option value="">Choose a preset…</option>{choicePresets.map((preset) => <option key={preset.name}>{preset.name}</option>)}</select></label>
+              {isChoiceFieldType(field.type) && <section className="choice-settings"><div><p className="eyebrow">Choices, descriptions, pricing &amp; capacity</p><span>Add optional descriptions when people need more information before choosing.</span></div><div className="field-settings">
+                <label>Quick choices<select aria-label={`Quick choices for ${field.label}`} disabled={!canEdit} value="" onChange={(event) => { const preset = choicePresets.find((item) => item.name === event.target.value); if (preset) updateField(sectionIndex, fieldIndex, { options: preset.options, optionDescriptions: undefined, choiceLimits: getAvailabilityMode(field) === "NONE" ? undefined : {}, choicePricesCents: {}, latePricing: field.latePricing ? { ...field.latePricing, choicePricesCents: {} } : undefined }); }}><option value="">Choose a preset…</option>{choicePresets.map((preset) => <option key={preset.name}>{preset.name}</option>)}</select></label>
                 <label>Availability<select aria-label={`Availability tracking for ${field.label}`} disabled={!canEdit} value={getAvailabilityMode(field)} onChange={(event) => { const availabilityMode = event.target.value as RegistrationFormField["availabilityMode"]; updateField(sectionIndex, fieldIndex, { availabilityMode, choiceLimits: availabilityMode === "NONE" ? undefined : field.choiceLimits ?? {} }); }}><option value="NONE">No counts or limits</option><option value="CAPACITY">Capacity &amp; spots</option><option value="RANKED_INTEREST">Ranked interest &amp; room assignment</option></select></label>
                 {(field.type === "MULTISELECT" || field.type === "RANKED_CHOICE") && <><label>Choices required<input aria-label={`Minimum selections for ${field.label}`} disabled={!canEdit} type="number" min={1} max={Math.min(10, Math.max(1, field.options.length))} value={field.minSelections ?? (field.type === "RANKED_CHOICE" ? 2 : 1)} onChange={(event) => updateField(sectionIndex, fieldIndex, { minSelections: Number(event.target.value) })} /></label><label>Maximum allowed<input aria-label={`Maximum selections for ${field.label}`} disabled={!canEdit} type="number" min={1} max={Math.min(10, Math.max(1, field.options.length))} value={field.maxSelections ?? 2} onChange={(event) => updateField(sectionIndex, fieldIndex, { maxSelections: Number(event.target.value) })} /></label></>}
-                <label className="field-full">Choices — one per line<textarea disabled={!canEdit} rows={Math.min(8, Math.max(3, field.options.length))} value={field.options.join("\n")} onChange={(event) => { const options = event.target.value.split("\n").map((value) => value.trim()).filter(Boolean); const choiceLimits = getAvailabilityMode(field) === "NONE" ? undefined : Object.fromEntries(Object.entries(field.choiceLimits ?? {}).filter(([choice]) => options.includes(choice))); const choicePricesCents = Object.fromEntries(Object.entries(field.choicePricesCents ?? {}).filter(([choice]) => options.includes(choice))); const lateChoicePricesCents = Object.fromEntries(Object.entries(field.latePricing?.choicePricesCents ?? {}).filter(([choice]) => options.includes(choice))); updateField(sectionIndex, fieldIndex, { options, choiceLimits, choicePricesCents, latePricing: field.latePricing ? { ...field.latePricing, choicePricesCents: lateChoicePricesCents } : undefined }); }} /></label>
+                <label className="field-full">Choices — one per line<textarea disabled={!canEdit} rows={Math.min(8, Math.max(3, field.options.length))} value={field.options.join("\n")} onChange={(event) => { const options = event.target.value.split("\n").map((value) => value.trim()).filter(Boolean); const optionDescriptions = Object.fromEntries(options.flatMap((option, optionIndex) => { const priorOption = field.options[optionIndex]; const description = field.optionDescriptions?.[option] ?? (priorOption ? field.optionDescriptions?.[priorOption] : undefined); return description ? [[option, description]] : []; })); const choiceLimits = getAvailabilityMode(field) === "NONE" ? undefined : Object.fromEntries(Object.entries(field.choiceLimits ?? {}).filter(([choice]) => options.includes(choice))); const choicePricesCents = Object.fromEntries(Object.entries(field.choicePricesCents ?? {}).filter(([choice]) => options.includes(choice))); const lateChoicePricesCents = Object.fromEntries(Object.entries(field.latePricing?.choicePricesCents ?? {}).filter(([choice]) => options.includes(choice))); updateField(sectionIndex, fieldIndex, { options, optionDescriptions, choiceLimits, choicePricesCents, latePricing: field.latePricing ? { ...field.latePricing, choicePricesCents: lateChoicePricesCents } : undefined }); }} /></label>
+                <div className="field-full choice-description-editor"><div><strong>Descriptions shown to registrants</strong><small>Optional. Use plain language to explain the presenter, topic, activity, room, or package.</small></div>{field.options.map((option) => <label key={option}><span>{option}</span><textarea aria-label={`Description for ${option}`} disabled={!canEdit} rows={3} maxLength={2000} placeholder="Optional description shown below this choice" value={field.optionDescriptions?.[option] ?? ""} onChange={(event) => { const optionDescriptions = { ...(field.optionDescriptions ?? {}) }; if (event.target.value) optionDescriptions[option] = event.target.value; else delete optionDescriptions[option]; updateField(sectionIndex, fieldIndex, { optionDescriptions }); }} /></label>)}</div>
                 <div className="field-full late-pricing-controls"><label className="required-toggle"><input disabled={!canEdit} type="checkbox" checked={Boolean(field.latePricing)} onChange={(event) => updateField(sectionIndex, fieldIndex, { latePricing: event.target.checked ? { startsOn: localCalendarDate(), label: "Late registration pricing", choicePricesCents: {} } : undefined })} /> Use different prices starting on a date</label>{field.latePricing && <><label>Late pricing starts<input aria-label={`Late pricing starts for ${field.label}`} disabled={!canEdit} type="date" value={field.latePricing.startsOn} onChange={(event) => updateField(sectionIndex, fieldIndex, { latePricing: { ...field.latePricing!, startsOn: event.target.value } })} /></label><label>Pricing label<input aria-label={`Late pricing label for ${field.label}`} disabled={!canEdit} value={field.latePricing.label} maxLength={80} onChange={(event) => updateField(sectionIndex, fieldIndex, { latePricing: { ...field.latePricing!, label: event.target.value } })} /></label></>}</div>
                 <div className={`field-full choice-limit-editor ${getAvailabilityMode(field) !== "NONE" ? "with-capacity" : ""} ${field.latePricing ? "with-late-price" : ""}`}><div><strong>Price{getAvailabilityMode(field) === "CAPACITY" ? " & capacity" : getAvailabilityMode(field) === "RANKED_INTEREST" ? " & room assignment" : ""} by choice</strong><small>{getAvailabilityMode(field) === "CAPACITY" ? "Capacity limits close a choice when all spots are reserved. " : getAvailabilityMode(field) === "RANKED_INTEREST" ? "Room limits guide the assignment run; people can still rank a popular room so demand stays visible. " : ""}Leave a price blank for free.</small></div><div className="choice-editor-head"><span>Choice</span>{getAvailabilityMode(field) !== "NONE" && <span>{getAvailabilityMode(field) === "RANKED_INTEREST" ? "Room limit" : "Limit"}</span>}<span>Standard</span>{field.latePricing && <span>Late</span>}</div>{field.options.map((option) => <label key={option}><span>{option}</span>{getAvailabilityMode(field) !== "NONE" && <input aria-label={`${getAvailabilityMode(field) === "RANKED_INTEREST" ? "Room limit" : "Limit"} for ${option}`} disabled={!canEdit} type="number" min={1} max={10000} placeholder="Unlimited" value={field.choiceLimits?.[option] ?? ""} onChange={(event) => { const choiceLimits = { ...(field.choiceLimits ?? {}) }; if (event.target.value) choiceLimits[option] = Number(event.target.value); else delete choiceLimits[option]; updateField(sectionIndex, fieldIndex, { choiceLimits }); }} />}<span className="money-input"><b>$</b><input aria-label={`Price for ${option}`} disabled={!canEdit} type="number" min={0} max={100000} step="0.01" placeholder="0.00" value={field.choicePricesCents?.[option] === undefined ? "" : field.choicePricesCents[option] / 100} onChange={(event) => { const choicePricesCents = { ...(field.choicePricesCents ?? {}) }; if (event.target.value !== "") choicePricesCents[option] = Math.round(Number(event.target.value) * 100); else delete choicePricesCents[option]; updateField(sectionIndex, fieldIndex, { choicePricesCents }); }} /></span>{field.latePricing && <span className="money-input"><b>$</b><input aria-label={`Late price for ${option}`} disabled={!canEdit} type="number" min={0} max={100000} step="0.01" placeholder="Same" value={field.latePricing.choicePricesCents?.[option] === undefined ? "" : field.latePricing.choicePricesCents[option] / 100} onChange={(event) => { const choicePricesCents = { ...(field.latePricing?.choicePricesCents ?? {}) }; if (event.target.value !== "") choicePricesCents[option] = Math.round(Number(event.target.value) * 100); else delete choicePricesCents[option]; updateField(sectionIndex, fieldIndex, { latePricing: { ...field.latePricing!, choicePricesCents } }); }} /></span>}</label>)}</div>
               </div></section>}
@@ -926,16 +1015,16 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
               </section>}
               {renderPreviewSections(previewAllowedFieldKeys)}
               {renderPreviewRoster(previewAllowedFieldKeys)}
-              {previewStep?.id === "review" && <section className="preview-review-card">
+              {previewStep?.isReview && <section className="preview-review-card">
                 <h4>Review before submitting</h4>
                 <p>{roster?.enabled ? `${previewAttendees.length} ${roster.attendeeLabel.toLowerCase()}${previewAttendees.length === 1 ? "" : "s"} will be included. ` : ""}The public form shows entered answers here before the registrant submits.</p>
               </section>}
               {calculation && (calculation.lineItems.length > 0 || definition.payment?.enabled) && <section className="preview-order-summary" aria-label="Order summary"><h4>Order summary</h4>{calculation.lineItems.length === 0 ? <p>Select a priced option to see the total.</p> : <>{calculation.lineItems.map((item) => <div key={item.key}><span>{item.label}{item.pricingLabel && <small>{item.pricingLabel}</small>}</span><strong>{money(item.amountCents)}</strong></div>)}<div><span>Subtotal</span><strong>{money(calculation.subtotalCents)}</strong></div>{calculation.processingFeeCents > 0 && <div><span>Card processing</span><strong>{money(calculation.processingFeeCents)}</strong></div>}<div className="preview-total"><span>Total</span><strong>{money(calculation.totalCents)}</strong></div></>}</section>}
               {previewStep && <nav className="preview-step-actions" aria-label="Move through preview">
                 <button className="secondary-button" type="button" disabled={previewStepIndex === 0} onClick={() => setPreviewStepId(previewSteps[previewStepIndex - 1]!.id)}>Back</button>
-                {previewStep.id !== "review" && <button className="primary-button" type="button" onClick={() => setPreviewStepId(previewSteps[previewStepIndex + 1]!.id)}>Continue</button>}
+                {!previewStep.isReview && <button className="primary-button" type="button" onClick={() => setPreviewStepId(previewSteps[previewStepIndex + 1]!.id)}>Continue</button>}
               </nav>}
-              {previewStep?.id === "review" && <>
+              {previewStep?.isReview && <>
                 <button className="primary-button full-button" type="button" disabled={busy !== null || isHistorical || dirty} onClick={runTest}><ClipboardCheck size={16} /> {busy === "test" ? "Testing…" : dirty ? "Save draft to test" : "Run test submission"}</button>
                 <small className="preview-boundary"><ShieldCheck size={13} /> Saves a form test only — it does not create a registration, send email, or charge a card</small>
               </>}

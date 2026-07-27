@@ -1,0 +1,1 @@
+ALTER TYPE "RegistrationOperationType" ADD VALUE IF NOT EXISTS 'AMENDMENT';

@@ -15,6 +15,7 @@ vi.mock("@/modules/communications/transactional-messages", () => ({
 
 import {
   authorizeRegistrationAccessToken,
+  confirmPublicRegistrationShirtSizes,
   issueRegistrationAccessToken,
   issueStableRegistrationAccessToken,
   resolveRegistrationAccessToken,
@@ -61,6 +62,10 @@ function accessRecord(overrides: {
         phone: "555-0101",
       },
       attendees: [{
+        id: "attendee-1",
+        formResponses: {
+          shirt_size: "Adult L",
+        } as Record<string, unknown>,
         profileSnapshot: {
           firstName: "Retreat",
           lastName: "Guest",
@@ -80,6 +85,7 @@ function accessRecord(overrides: {
         : null,
       publicFormSubmission: {
         createdAt: new Date("2026-07-23T12:00:00.000Z"),
+        attendeeResponses: [{ registration_fee: "Standard" }],
         formVersion: {
           versionNumber: 2,
           form: {
@@ -253,6 +259,10 @@ describe("private registration access repository", () => {
       include: expect.any(Object),
     });
     expect(view).toMatchObject({
+      event: {
+        name: "Women’s Retreat",
+        shirtSizesAvailable: true,
+      },
       registration: {
         confirmationCode: "REG-PRIVATE",
         statusLabel: "Submitted",
@@ -261,7 +271,12 @@ describe("private registration access repository", () => {
         firstName: "Caleb",
         email: "caleb@example.test",
       },
-      attendees: [{ name: "Retreat Guest" }],
+      attendees: [{
+        id: "attendee-1",
+        name: "Retreat Guest",
+        shirtSize: "Adult L",
+        shirtSizeConfirmedAt: null,
+      }],
       payment: {
         totalCents: 25_000,
         paidCents: 7_500,
@@ -378,6 +393,79 @@ describe("private registration access repository", () => {
         },
       }),
     });
+  });
+
+  it("reconfirms every attendee shirt size without changing the immutable submission", async () => {
+    const token = createOpaqueToken();
+    const record = accessRecord();
+    const originalAttendeeResponses = structuredClone(
+      record.registration.publicFormSubmission.attendeeResponses,
+    );
+    const registrationAttendee = {
+      update: vi.fn(async ({ where, data }: {
+        where: { id: string };
+        data: { formResponses: Record<string, unknown> };
+      }) => {
+        const attendee = record.registration.attendees.find(
+          (candidate) => candidate.id === where.id,
+        )!;
+        attendee.formResponses = data.formResponses;
+        return { id: where.id };
+      }),
+    };
+    const tx = {
+      registrationAccessToken: {
+        findUnique: vi.fn().mockResolvedValue(record),
+      },
+      registrationAttendee,
+      auditLog: {
+        create: vi.fn().mockResolvedValue({ id: "audit-shirt" }),
+      },
+    };
+    const prisma = {
+      ...tx,
+      $transaction: vi.fn(async (
+        operation: (client: typeof tx) => unknown,
+      ) => operation(tx)),
+    };
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    const updated = await confirmPublicRegistrationShirtSizes(
+      token,
+      {
+        attendees: [{
+          attendeeId: "attendee-1",
+          shirtSize: "Adult XL",
+        }],
+      },
+      new Date("2026-08-02T15:30:00.000Z"),
+    );
+
+    expect(registrationAttendee.update).toHaveBeenCalledWith({
+      where: { id: "attendee-1" },
+      data: {
+        formResponses: {
+          shirt_size: "Adult XL",
+          shirt_size_confirmed_at: "2026-08-02T15:30:00.000Z",
+        },
+      },
+    });
+    expect(updated?.attendees).toEqual([expect.objectContaining({
+      id: "attendee-1",
+      shirtSize: "Adult XL",
+      shirtSizeConfirmedAt: "2026-08-02T15:30:00.000Z",
+    })]);
+    expect(record.registration.publicFormSubmission.attendeeResponses)
+      .toEqual(originalAttendeeResponses);
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "PUBLIC_ATTENDEE_SHIRT_SIZES_CONFIRMED",
+        metadata: expect.objectContaining({
+          originalSubmissionPreserved: true,
+        }),
+      }),
+    });
+    expect(JSON.stringify(tx.auditLog.create.mock.calls)).not.toContain(token);
   });
 
   it("revokes a link by hash and never stores the raw token", async () => {

@@ -16,6 +16,7 @@ import {
 import { BrandMark } from "@/components/brand-mark";
 import { PublicAttendeePasses } from "@/components/public-attendee-passes";
 import { PublicRegistrationContactForm } from "@/components/public-registration-contact-form";
+import { PublicShirtSizeConfirmation } from "@/components/public-shirt-size-confirmation";
 import { PublicSquarePayment } from "@/components/public-square-payment";
 import { resolveRegistrationAccessToken } from "@/modules/public-access/repository";
 
@@ -175,6 +176,11 @@ export default async function PublicManagePage({
                     <div>
                       <small>Attendee {index + 1}</small>
                       <strong>{attendee.name}</strong>
+                      {view.event.shirtSizesAvailable && (
+                        <em>
+                          Shirt: {attendee.shirtSize ?? "not selected"}
+                        </em>
+                      )}
                     </div>
                   </li>
                 ))}
@@ -185,11 +191,25 @@ export default async function PublicManagePage({
               </p>
             )}
             <div className="public-manage-readonly-note">
+              {view.event.shirtSizesAvailable && (
+                <>Shirt sizes can be reconfirmed below. </>
+              )}
               Attendance, room or activity choices, and registration fees cannot
-              be changed from this private page. Contact the event team for
-              those changes.
+              be changed from this private page. Contact the event team for those
+              changes.
             </div>
           </section>
+
+          {view.event.shirtSizesAvailable && view.attendees.length > 0 && (
+            view.registration.status === "SUBMITTED"
+            || view.registration.status === "CONFIRMED"
+            || view.registration.status === "WAITLISTED"
+          ) && (
+            <PublicShirtSizeConfirmation
+              attendees={view.attendees}
+              token={token}
+            />
+          )}
 
           {attendeePassesAvailable && (
             <PublicAttendeePasses

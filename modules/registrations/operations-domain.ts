@@ -25,7 +25,7 @@ export function registrationOperationFingerprint(input: {
   eventId: string;
   registrationId: string;
   attendeeId?: string;
-  operation: "TRANSFER" | "ATTENDEE_SUBSTITUTION";
+  operation: "TRANSFER" | "ATTENDEE_SUBSTITUTION" | "AMENDMENT";
   payload: Record<string, unknown>;
 }) {
   return createHash("sha256")

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { shirtSizeOptions } from "@/modules/registrations/shirt-sizes";
 
 export const formFieldTypes = ["TEXT", "LONG_TEXT", "EMAIL", "PHONE", "SELECT", "RADIO", "MULTISELECT", "RANKED_CHOICE", "CHECKBOX", "DATE", "NUMBER", "CALCULATED"] as const;
 export const formFieldScopes = ["REGISTRATION", "ATTENDEE"] as const;
@@ -33,6 +34,10 @@ export const formFieldSchema = z.object({
   scope: z.enum(formFieldScopes),
   required: z.boolean(),
   options: z.array(z.string().trim().min(1).max(120)).max(200).default([]),
+  optionDescriptions: z.record(
+    z.string(),
+    z.string().trim().max(2000),
+  ).optional(),
   minSelections: z.number().int().min(1).max(10).optional(),
   maxSelections: z.number().int().min(1).max(10).optional(),
   availabilityMode: z.enum(availabilityModes).optional(),
@@ -59,6 +64,9 @@ export const formFieldSchema = z.object({
   for (const choice of Object.keys(field.choiceLimits ?? {})) {
     if (!field.options.includes(choice)) context.addIssue({ code: "custom", path: ["choiceLimits", choice], message: "Choice limits must reference a configured choice." });
   }
+  for (const choice of Object.keys(field.optionDescriptions ?? {})) {
+    if (!field.options.includes(choice)) context.addIssue({ code: "custom", path: ["optionDescriptions", choice], message: "Choice descriptions must reference a configured choice." });
+  }
   for (const choice of Object.keys(field.choicePricesCents ?? {})) {
     if (!field.options.includes(choice)) context.addIssue({ code: "custom", path: ["choicePricesCents", choice], message: "Choice prices must reference a configured choice." });
   }
@@ -74,6 +82,8 @@ export const formSectionSchema = z.object({
   id: z.string().trim().min(3).max(80),
   title: z.string().trim().min(2, "Every section needs a title.").max(120),
   description: z.string().trim().max(300).default(""),
+  stepLabel: z.string().trim().min(2).max(40).optional(),
+  isReviewStep: z.boolean().optional(),
   fields: z.array(formFieldSchema).min(1, "Every section needs at least one field.").max(20),
 });
 
@@ -102,9 +112,11 @@ export const registrationFormDefinitionSchema = z.object({
   const sectionIds = new Set<string>();
   const fieldIds = new Set<string>();
   const fieldKeys = new Set<string>();
+  const reviewSectionIndexes: number[] = [];
   definition.sections.forEach((section, sectionIndex) => {
     if (sectionIds.has(section.id)) context.addIssue({ code: "custom", path: ["sections", sectionIndex, "id"], message: "Section IDs must be unique." });
     sectionIds.add(section.id);
+    if (section.isReviewStep) reviewSectionIndexes.push(sectionIndex);
     section.fields.forEach((field, fieldIndex) => {
       if (fieldIds.has(field.id)) context.addIssue({ code: "custom", path: ["sections", sectionIndex, "fields", fieldIndex, "id"], message: "Field IDs must be unique." });
       if (fieldKeys.has(field.key)) context.addIssue({ code: "custom", path: ["sections", sectionIndex, "fields", fieldIndex, "key"], message: `Field key ${field.key} is already in use.` });
@@ -126,6 +138,17 @@ export const registrationFormDefinitionSchema = z.object({
       }
     });
   });
+  if (reviewSectionIndexes.length > 1) {
+    for (const sectionIndex of reviewSectionIndexes.slice(1)) {
+      context.addIssue({ code: "custom", path: ["sections", sectionIndex, "isReviewStep"], message: "Only one section can be the final review step." });
+    }
+  }
+  if (
+    reviewSectionIndexes.length === 1
+    && reviewSectionIndexes[0] !== definition.sections.length - 1
+  ) {
+    context.addIssue({ code: "custom", path: ["sections", reviewSectionIndexes[0], "isReviewStep"], message: "The review section must be the final section." });
+  }
   definition.sections.forEach((section, sectionIndex) => section.fields.forEach((field, fieldIndex) => {
     if (field.conditional && (!fieldKeys.has(field.conditional.fieldKey) || field.conditional.fieldKey === field.key)) context.addIssue({ code: "custom", path: ["sections", sectionIndex, "fields", fieldIndex, "conditional"], message: "Conditional logic must reference another configured field." });
     const controller = field.conditional
@@ -388,6 +411,38 @@ const campMeetingHousingOptions = [
 
 const campMeetingNights = ["Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
+const wr26SeminarDescriptions = {
+  "Color Me Golden: Embracing Life in Every Season":
+    "Panel Discussion — Every season of a woman’s life holds unique beauty, but later chapters often bring transitions that feel like winding down. God views this stage not as a time of fading, but as a vibrant season of deep impact and fruitfulness. Come hear real stories of faith and uncover fresh avenues for kingdom purpose while exploring practical ways to transform your life experience into a lasting legacy.",
+  "Refined by Fire, Revealed in Beauty":
+    "Rita Tasche — In this seminar we will learn how hard seasons shape strength, depth and resilience. We will learn how to walk through trials without losing our faith and how to find purpose in pain while developing a strength that comes only through surrender to God.",
+  "Repainted by Grace":
+    "Valerie Haveman — So many women carry the stains of past mistakes, shame, regret, or feelings of not being enough. But God does not define us by the colors of our past. In this breakout session, we’ll explore what it means to accept God’s forgiveness, stop condemning ourselves, and allow His grace to repaint our hearts with truth, freedom, and hope. Through Scripture and personal stories, we’ll discover how God makes broken things beautiful and invites us to see ourselves through His eyes instead of our own.",
+  "Color Me Open":
+    "Mary Kendall — The door is open. Are you? And what does a root canal have to do with church hospitality? More than you’d think. Mary and her husband built Touchstone Endodontics around one mission: “Unforgettable care, start to finish” — and the same principles that turn nervous patients into raving fans can transform how we love our neighbors, our church family, and the stranger in our pew. Mary draws from business, home, and church ministry to share what she’s learning about what it means to truly see the people around us. She doesn’t have it all figured out — but she’s convinced the journey is worth taking, and she’d love some company.",
+  "Nourished by Color":
+    "Stephanie Richards — This seminar explores simple, evidence-based ways to improve overall health by focusing on colorful nutrition, regular movement, and healthy sun exposure. Participants will learn how “eating the rainbow” — incorporating a variety of brightly colored fruits and vegetables — supports immunity, heart health, gut health, and energy. The session will also highlight how daily activity and safe sunshine exposure work together with nutrition to promote long-term wellness and healthy aging.",
+  "Color Me Prayerful: Discovering the Beautiful Ways We Talk With God":
+    "Shannon Pigsley and Penny Gallant — Prayer is powerful—an intimate, ongoing conversation with a God who listens, loves, and responds. In this session, we will explore why prayer matters so deeply in our relationship and discover the many beautiful ways we can communicate with our Heavenly Father. From kneeling in quiet surrender, to praying in community, to whispering private heart-conversations throughout the day, we’ll reflect on how the privilege of prayer draws us closer to God’s heart. Participants will also have the opportunity to visit interactive prayer stations, each designed to help you experience different forms of prayer in meaningful, hands-on ways. This is a space to learn, to practice, and to rediscover the joy of talking with God in every shade of life.",
+  "Shades of Peace":
+    "Melissa Morris — This is a practical and encouraging seminar on letting go of anger and resentment while discovering the peace that comes through forgiveness in God. Together, we will explore how releasing past hurts can bring healing, restore relationships, and help us experience greater emotional and spiritual freedom.",
+  "Coloring Through the Chaos: Raising Children with Grace and Truth":
+    "Panel Discussion — Raising children today can feel unpredictable and overwhelming but God is still at work both in your child and in you. This season doesn’t require us to control every detail but does require us to guide, love and trust God with the outcome.",
+  "Broken Crayons Still Color":
+    "Domestic violence and alcohol use affect families inside and outside our church. This session is about awareness, growth and safety regarding domestic violence and alcohol use and empowering women to be the hands and feet of Jesus in our struggling world. Matthew 22: 37–39",
+  "Attending":
+    "Brushstrokes of Leadership — Ami Cook. God uses ordinary women to create extraordinary ministry. In this practical and encouraging workshop, discover how small acts of faith, kindness, and leadership become beautiful brushstrokes in God’s masterpiece. Learn creative ways to build women’s ministry in your local church, encourage connection, and lead with both grace and purpose.",
+} satisfies Record<string, string>;
+
+function wr26DescriptionsFor(options: string[]) {
+  const descriptions = wr26SeminarDescriptions as Record<string, string>;
+  return Object.fromEntries(
+    options.flatMap((option) => (
+      descriptions[option] ? [[option, descriptions[option]]] : []
+    )),
+  );
+}
+
 export const formTemplates: FormTemplate[] = [
   {
     key: "simple_rsvp",
@@ -448,13 +503,13 @@ export const formTemplates: FormTemplate[] = [
   {
     key: "womens_retreat_export",
     name: "Women’s Retreat 2026",
-    description: "Primary contact, repeatable attendee roster, meals, childcare, ranked seminars, late pricing, and payment.",
+    description: "Primary contact, repeatable attendee roster, shirts, meals, childcare, ranked seminars, late pricing, and payment.",
     audience: "Retreat",
     definition: {
       title: "Women’s Retreat 2026 registration",
       description: "Register each attendee, rank two choices for every breakout block, and review the full amount before submitting.",
       confirmationMessage: "Your Women’s Retreat registration has been received. Check your email for payment and edit-registration details.",
-      attendeeRoster: { enabled: true, minAttendees: 1, maxAttendees: 12, attendeeLabel: "Attendee", addButtonLabel: "Add another attendee" },
+      attendeeRoster: { enabled: true, minAttendees: 1, maxAttendees: 50, attendeeLabel: "Attendee", addButtonLabel: "Add another attendee" },
       payment: { enabled: true, currency: "USD", paymentMethodFieldKey: "payment_method", cardOptionValue: "Credit / debit card", percentageBasisPoints: 290, fixedFeeCents: 30, passFeeToRegistrant: true },
       sections: [
         { id: "wr_contact", title: "Primary contact", description: "Confirmation and emergency contact details.", fields: [
@@ -468,22 +523,25 @@ export const formTemplates: FormTemplate[] = [
           templateField("wr_emergency_phone", "emergency_contact_phone", "Emergency contact phone", "PHONE", true),
           templateField("wr_special", "special_needs", "Special needs / accessibility", "LONG_TEXT"),
         ] },
-        { id: "wr_attendee", title: "Attendees", description: "Add each person once. Meal, childcare, and seminar answers stay with that attendee.", fields: [
+        { id: "wr_attendee", title: "Attendees", description: "Add each person once. Shirt, meal, childcare, and seminar answers stay with that attendee.", fields: [
           templateField("wr_attendee_first", "first_name", "First name", "TEXT", true, [], { scope: "ATTENDEE" }),
           templateField("wr_attendee_last", "last_name", "Last name", "TEXT", true, [], { scope: "ATTENDEE" }),
           templateField("wr_attendee_phone", "attendee_phone", "Phone", "PHONE", false, [], { scope: "ATTENDEE" }),
           templateField("wr_type", "attendee_type", "Attendee type", "RADIO", true, ["Adult", "Teen", "Child"], { scope: "ATTENDEE" }),
+          templateField("wr_shirt_size", "shirt_size", "T-shirt size", "SELECT", true, [...shirtSizeOptions], { scope: "ATTENDEE", helpText: "Choose the size this attendee wants for the convention shirt. The private confirmation page can be used to reconfirm it later." }),
           templateField("wr_meal", "meal_preference", "Meal preference", "SELECT", true, ["Standard", "Vegetarian", "Vegan", "Gluten-free", "Other"], { scope: "ATTENDEE" }),
           templateField("wr_dietary", "dietary_needs", "Dietary needs / allergies", "LONG_TEXT", false, [], { scope: "ATTENDEE" }),
           templateField("wr_childcare", "childcare_needed", "Childcare needed?", "RADIO", false, ["No", "Yes"], { scope: "ATTENDEE" }),
           templateField("wr_childcare_details", "childcare_details", "Childcare ages and notes", "LONG_TEXT", false, [], { scope: "ATTENDEE", conditional: { fieldKey: "childcare_needed", operator: "EQUALS", value: "Yes" } }),
-          templateField("wr_session_1", "session_1_preferences", "Friday 4:00–5:00 PM — rank both choices", "RANKED_CHOICE", true, ["Color Me Golden: Embracing Life in Every Season", "Refined by Fire, Revealed in Beauty"], { scope: "ATTENDEE", minSelections: 2, maxSelections: 2, availabilityMode: "RANKED_INTEREST", choiceLimits: {} }),
-          templateField("wr_session_2", "session_2_preferences", "Sabbath 2:00–3:15 PM — rank two choices", "RANKED_CHOICE", true, ["Repainted by Grace", "Color Me Open", "Nourished by Color", "Color Me Prayerful"], { scope: "ATTENDEE", minSelections: 2, maxSelections: 2, availabilityMode: "RANKED_INTEREST", choiceLimits: {} }),
-          templateField("wr_session_3", "session_3_preferences", "Sabbath 4:15–5:30 PM — rank two choices", "RANKED_CHOICE", true, ["Shades of Peace", "Coloring Through the Chaos", "Broken Crayons Still Color"], { scope: "ATTENDEE", minSelections: 2, maxSelections: 2, availabilityMode: "RANKED_INTEREST", choiceLimits: {} }),
-          templateField("wr_session_4", "session_4_attendance", "Sunday 8:15–9:15 AM — Brushstrokes of Leadership", "RADIO", true, ["Attending", "Not attending"], { scope: "ATTENDEE" }),
+          templateField("wr_childcare_children", "childcare_children", "Number of children needing care", "NUMBER", true, [], { scope: "ATTENDEE", conditional: { fieldKey: "childcare_needed", operator: "EQUALS", value: "Yes" }, helpText: "Childcare availability will be confirmed closer to the retreat based on registered need." }),
+          templateField("wr_volunteer", "volunteer", "Willing to volunteer to help at the retreat?", "RADIO", true, ["No", "Yes"], { scope: "ATTENDEE" }),
+          templateField("wr_session_1", "session_1_preferences", "Friday 4:00–5:00 PM — rank both choices", "RANKED_CHOICE", true, ["Color Me Golden: Embracing Life in Every Season", "Refined by Fire, Revealed in Beauty"], { scope: "ATTENDEE", minSelections: 2, maxSelections: 2, availabilityMode: "RANKED_INTEREST", choiceLimits: {}, optionDescriptions: wr26DescriptionsFor(["Color Me Golden: Embracing Life in Every Season", "Refined by Fire, Revealed in Beauty"]) }),
+          templateField("wr_session_2", "session_2_preferences", "Sabbath 2:00–3:15 PM — rank two choices", "RANKED_CHOICE", true, ["Repainted by Grace", "Color Me Open", "Nourished by Color", "Color Me Prayerful: Discovering the Beautiful Ways We Talk With God"], { scope: "ATTENDEE", minSelections: 2, maxSelections: 2, availabilityMode: "RANKED_INTEREST", choiceLimits: {}, optionDescriptions: wr26DescriptionsFor(["Repainted by Grace", "Color Me Open", "Nourished by Color", "Color Me Prayerful: Discovering the Beautiful Ways We Talk With God"]) }),
+          templateField("wr_session_3", "session_3_preferences", "Sabbath 4:15–5:30 PM — rank two choices", "RANKED_CHOICE", true, ["Shades of Peace", "Coloring Through the Chaos: Raising Children with Grace and Truth", "Broken Crayons Still Color"], { scope: "ATTENDEE", minSelections: 2, maxSelections: 2, availabilityMode: "RANKED_INTEREST", choiceLimits: {}, optionDescriptions: wr26DescriptionsFor(["Shades of Peace", "Coloring Through the Chaos: Raising Children with Grace and Truth", "Broken Crayons Still Color"]) }),
+          templateField("wr_session_4", "session_4_attendance", "Sunday 8:15–9:15 AM — Brushstrokes of Leadership", "RADIO", true, ["Attending", "Not attending"], { scope: "ATTENDEE", optionDescriptions: wr26DescriptionsFor(["Attending"]) }),
           templateField("wr_fee", "registration_fee", "Registration fee", "CALCULATED", false, [], { scope: "ATTENDEE", priceCents: 12500, latePricing: { startsOn: "2026-08-15", label: "Regular registration pricing", priceCents: 14500 } }),
         ] },
-        { id: "wr_payment", title: "Payment & acknowledgment", description: "Choose how you would like to pay and review the final amount.", fields: [
+        { id: "wr_payment", title: "Payment & acknowledgment", description: "Choose how you would like to pay and review the final amount.", stepLabel: "Payment", isReviewStep: true, fields: [
           templateField("wr_payment_method", "payment_method", "Payment method", "RADIO", true, ["Pay later", "Credit / debit card"]),
           templateField("wr_promo", "promo_code", "Promo code", "TEXT", false, [], { helpText: "Enter a code supplied by the event team, then select Apply." }),
           templateField("wr_notes", "attendee_notes", "Additional notes", "LONG_TEXT", false),
@@ -547,7 +605,7 @@ export const formTemplates: FormTemplate[] = [
           templateField("mc_dietary", "dietary_needs", "Vegan, gluten-free, or food-allergy needs", "LONG_TEXT", false, [], { scope: "ATTENDEE", helpText: "All meals are vegetarian. Note vegan, gluten-free, and allergy needs." }),
           templateField("mc_accommodations", "accommodations", "Other accommodations", "LONG_TEXT", false, [], { scope: "ATTENDEE" }),
         ] },
-        { id: "mc_payment", title: "Review & payment", description: "Card payments include the configured processing fee; cash or check does not.", fields: [
+        { id: "mc_payment", title: "Review & payment", description: "Card payments include the configured processing fee; cash or check does not.", stepLabel: "Payment", isReviewStep: true, fields: [
           templateField("mc_pay", "payment_method", "Payment option", "RADIO", true, ["Cash or check", "Credit / debit card"]),
           templateField("mc_notes", "registration_notes", "Party notes", "LONG_TEXT"),
         ] },
@@ -672,7 +730,7 @@ export const formTemplates: FormTemplate[] = [
           templateField("cm_supper_child", "supper_child_qty", "Child supper tickets — $7 each", "NUMBER", false, [], { priceCents: 700, helpText: "Available Tuesday through Saturday." }),
           templateField("cm_dietary", "dietary_restrictions", "Dietary restrictions or allergies", "LONG_TEXT"),
         ] },
-        { id: "cm_payment", title: "Review & payment", description: "Card payments include the processing fee. Checks require a $65 deposit to hold the reservation.", fields: [
+        { id: "cm_payment", title: "Review & payment", description: "Card payments include the processing fee. Checks require a $65 deposit to hold the reservation.", stepLabel: "Payment", isReviewStep: true, fields: [
           templateField("cm_pay", "payment_method", "Payment method", "RADIO", true, ["Pay by check", "Credit / debit card"]),
           templateField("cm_deposit", "check_deposit_acknowledgment", "Check deposit acknowledgment", "CHECKBOX", true, [], { conditional: { fieldKey: "payment_method", operator: "EQUALS", value: "Pay by check" }, placeholder: "I understand a $65 mailed deposit is required to hold this reservation." }),
           templateField("cm_comments", "comments", "Comments", "LONG_TEXT"),

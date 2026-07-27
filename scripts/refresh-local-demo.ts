@@ -85,8 +85,10 @@ async function main() {
       last_name: "Registrant",
       attendee_phone: "515-555-0100",
       attendee_type: "Adult",
+      shirt_size: "Adult L",
       meal_preference: "Standard",
       childcare_needed: "No",
+      volunteer: "No",
       session_1_preferences: [
         "Color Me Golden: Embracing Life in Every Season",
         "Refined by Fire, Revealed in Beauty",
