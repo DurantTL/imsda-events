@@ -15,6 +15,19 @@ import {
   selectRegistrationMessageTemplate,
   validateMessageTemplate,
 } from "@/modules/communications/templates";
+import type { MessageTemplateKeyValue } from "@/modules/communications/types";
+
+/**
+ * `MessageTemplateKeyValue` restates the template keys by hand, and nothing at
+ * runtime connects the two lists — a key added to one and missed in the other
+ * only surfaces as a type error somewhere else entirely. These two assignments
+ * fail to compile the moment the lists disagree, in either direction.
+ */
+type TemplateKey = (typeof MESSAGE_TEMPLATE_KEYS)[number];
+const _keysAreTemplateKeyValues: MessageTemplateKeyValue = null as unknown as TemplateKey;
+const _templateKeyValuesAreKeys: TemplateKey = null as unknown as MessageTemplateKeyValue;
+void _keysAreTemplateKeyValues;
+void _templateKeyValuesAreKeys;
 
 describe("message templates", () => {
   it("ships fourteen valid plaintext defaults", () => {
