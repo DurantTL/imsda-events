@@ -32,12 +32,27 @@ export type OperationalReadinessFacts = {
     senderEmail: string | null;
     replyToEmail: string | null;
   } | null;
+  /**
+   * Whether the email provider itself holds credentials. An event set to
+   * EXTERNAL_EMAIL with no Resend API key looks live and fails on every queue
+   * run with EXTERNAL_EMAIL_NOT_CONFIGURED, which is the worst combination:
+   * the report says confirmations are reaching people, and none are.
+   */
+  emailProvider: { deliveryConfigured: boolean; webhookConfigured: boolean };
   templates: Array<{ key: string; isEnabled: boolean; hasPublishedVersion: boolean }>;
   requiredTemplateKeys: string[];
+  /**
+   * Taken from `getSquareConfiguration`, not from raw environment variables.
+   * Credentials being present is not the same as Square working: a production
+   * environment without its separate unlock, a sandbox key in production, or a
+   * mismatched API URL all leave checkout throwing SQUARE_NOT_CONFIGURED while
+   * the variables look perfectly populated.
+   */
   square: {
     paymentConfigured: boolean;
     webhookConfigured: boolean;
     environment: string;
+    issue: string | null;
   };
   registrationsMissingShirtSize: number;
   registrationsWithBalanceDue: number;
@@ -54,6 +69,20 @@ const UNDELIVERABLE_SENDER_PATTERN =
 export function isUndeliverableSenderAddress(email: string | null | undefined) {
   return Boolean(email && UNDELIVERABLE_SENDER_PATTERN.test(email.trim()));
 }
+
+/**
+ * Each of these is a state where the Square variables are populated and
+ * checkout still refuses, so the message has to name the actual cause rather
+ * than send someone hunting for a credential that is already set.
+ */
+const SQUARE_ISSUE_DETAIL: Readonly<Record<string, string>> = {
+  INVALID_ENVIRONMENT: "SQUARE_ENVIRONMENT must be exactly \"sandbox\" or \"production\".",
+  PRODUCTION_DISABLED: "SQUARE_ENVIRONMENT is production but SQUARE_ENABLE_PRODUCTION is not \"true\". Production requires that separate, deliberate unlock.",
+  INVALID_API_URL: "SQUARE_API_URL does not match the selected environment's origin.",
+  CREDENTIAL_ENVIRONMENT_MISMATCH: "The application id does not match the selected environment — a sandbox- key in production, or a live key in sandbox.",
+  MISSING_PAYMENT_CREDENTIALS: "Set SQUARE_APPLICATION_ID, SQUARE_ACCESS_TOKEN, and SQUARE_LOCATION_ID.",
+  MISSING_WEBHOOK_CONFIGURATION: "Set SQUARE_WEBHOOK_SIGNATURE_KEY and a reachable notification URL.",
+};
 
 function addressCheck(
   role: "SENDER" | "REPLY_TO",
@@ -102,7 +131,14 @@ export function checkOperationalReadiness(
   } else {
     const { deliveryMode, senderEmail, replyToEmail } = facts.messaging;
     checks.push(deliveryMode === "EXTERNAL_EMAIL"
-      ? { code: "DELIVERY_MODE", label: "Email delivery is live", severity: "READY", detail: "Messages are handed to the external provider." }
+      ? facts.emailProvider.deliveryConfigured
+        ? { code: "DELIVERY_MODE", label: "Email delivery is live", severity: "READY", detail: "Messages are handed to the external provider." }
+        : {
+            code: "DELIVERY_MODE",
+            label: "Email delivery is live but the provider has no API key",
+            severity: "BLOCKER",
+            detail: "The event is set to external delivery while RESEND_API_KEY is unset, so every queue run fails with EXTERNAL_EMAIL_NOT_CONFIGURED and no message reaches anyone.",
+          }
       : {
           code: "DELIVERY_MODE",
           label: `Email delivery is ${deliveryMode === "DISABLED" ? "disabled" : "capturing locally"}`,
@@ -113,6 +149,15 @@ export function checkOperationalReadiness(
         });
     checks.push(addressCheck("SENDER", "Sender", senderEmail));
     checks.push(addressCheck("REPLY_TO", "Reply-to", replyToEmail));
+
+    if (deliveryMode === "EXTERNAL_EMAIL" && !facts.emailProvider.webhookConfigured) {
+      checks.push({
+        code: "EMAIL_WEBHOOK",
+        label: "Email provider webhook is not configured",
+        severity: "WARNING",
+        detail: "Without RESEND_WEBHOOK_SECRET, bounces and complaints never post back, so a dead address keeps looking delivered.",
+      });
+    }
   }
 
   const byKey = new Map(facts.templates.map((template) => [template.key, template]));
@@ -131,11 +176,14 @@ export function checkOperationalReadiness(
   } else {
     checks.push({
       code: "SQUARE",
-      label: "Square is not configured",
+      label: `Square is not configured${facts.square.issue ? ` (${facts.square.issue})` : ""}`,
       severity: facts.registrationsWithBalanceDue > 0 ? "BLOCKER" : "WARNING",
-      detail: facts.registrationsWithBalanceDue > 0
-        ? `${facts.registrationsWithBalanceDue} registration${facts.registrationsWithBalanceDue === 1 ? " has" : "s have"} a balance due and no card path to pay it. Set SQUARE_APPLICATION_ID, SQUARE_ACCESS_TOKEN, SQUARE_LOCATION_ID, and SQUARE_WEBHOOK_SIGNATURE_KEY.`
-        : "No card payment can be taken until Square credentials are set.",
+      detail: [
+        SQUARE_ISSUE_DETAIL[facts.square.issue ?? ""] ?? "Set SQUARE_APPLICATION_ID, SQUARE_ACCESS_TOKEN, SQUARE_LOCATION_ID, and SQUARE_WEBHOOK_SIGNATURE_KEY.",
+        facts.registrationsWithBalanceDue > 0
+          ? `${facts.registrationsWithBalanceDue} registration${facts.registrationsWithBalanceDue === 1 ? " has" : "s have"} a balance due and no card path to pay it.`
+          : "No card payment can be taken until this is resolved.",
+      ].join(" "),
     });
   }
 
@@ -144,7 +192,7 @@ export function checkOperationalReadiness(
       code: "SHIRT_SIZES",
       label: `${facts.registrationsMissingShirtSize} registration${facts.registrationsMissingShirtSize === 1 ? "" : "s"} missing a shirt size`,
       severity: "WARNING",
-      detail: "Review a shirt-size request audience and send the batch. That message also carries each registrant's private management link.",
+      detail: "Inspect the audience with `npm run event:shirt-sizes`. Sending a reviewed shirt-size batch is not wired up yet, so this cannot be cleared from the workspace.",
     });
   }
 

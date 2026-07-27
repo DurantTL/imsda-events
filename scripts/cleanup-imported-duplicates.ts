@@ -18,7 +18,14 @@
  * code matches --keep-pattern are kept; every other row in the event is a
  * candidate. A candidate that has received money is never deleted unless its
  * code is named explicitly in --also-delete, so an accidental pattern can cost
- * you fictitious rows but never a payment you cannot see.
+ * you fictitious rows but never a payment you cannot see. "Received" is net of
+ * successful refunds, matching how the rest of the application reads a balance.
+ *
+ * A candidate carrying transfer, substitution, amendment, or payment-choice
+ * history is withheld unconditionally. Those rows are immutable by database
+ * trigger and their foreign keys are ON DELETE RESTRICT, so the delete could
+ * not succeed anyway — attempting it would abort the transaction and take
+ * every other duplicate with it.
  *
  * Prints a full report and changes nothing unless --commit is passed.
  *
@@ -65,6 +72,20 @@ function toCents(value: Prisma.Decimal | number | null) {
   return Math.round(Number(value ?? 0) * 100);
 }
 
+/**
+ * Money actually received: successful payments less successful refunds, the
+ * same net the rest of the application computes. Counting the gross would
+ * withhold a registration whose payment was refunded in full.
+ */
+function netPaidCents(
+  payments: Array<{ amount: Prisma.Decimal | number; refunds: Array<{ amount: Prisma.Decimal | number }> }>,
+) {
+  return payments.reduce((total, payment) => {
+    const refunded = payment.refunds.reduce((sum, refund) => sum + toCents(refund.amount), 0);
+    return total + Math.max(toCents(payment.amount) - refunded, 0);
+  }, 0);
+}
+
 async function main() {
   const eventSlug = readFlag("event");
   if (!eventSlug) usage("--event is required.");
@@ -98,7 +119,11 @@ async function main() {
         totalAmount: true,
         accountHolderPerson: { select: { firstName: true, lastName: true } },
         attendees: { select: { id: true } },
-        payments: { select: { amount: true, status: true } },
+        payments: {
+          where: { status: "SUCCEEDED" },
+          select: { amount: true, refunds: { where: { status: "SUCCEEDED" }, select: { amount: true } } },
+        },
+        _count: { select: { operations: true, paymentChoiceOperations: true } },
       },
       orderBy: { confirmationCode: "asc" },
     });
@@ -113,9 +138,9 @@ async function main() {
       status: registration.status,
       attendeeCount: registration.attendees.length,
       totalCents: toCents(registration.totalAmount),
-      netPaidCents: registration.payments
-        .filter((payment) => payment.status === "SUCCEEDED")
-        .reduce((sum, payment) => sum + toCents(payment.amount), 0),
+      netPaidCents: netPaidCents(registration.payments),
+      hasImmutableHistory: registration._count.operations > 0
+        || registration._count.paymentChoiceOperations > 0,
     });
 
     const plan = planImportCleanup(
@@ -133,8 +158,10 @@ async function main() {
     console.log(`Keep pattern: ${keepPatternSource}\n`);
     console.log(`  keeping   ${String(kept.length).padStart(4)} registrations  total ${money(plan.keptTotalCents)}  received ${money(received(kept))}`);
     console.log(`  deleting  ${String(deleting.length).padStart(4)} registrations  total ${money(plan.deletingTotalCents)}  received ${money(received(deleting))}`);
+    const withheldForMoney = withheld.filter((row) => row.reason === "RECEIVED_MONEY");
+    const withheldForHistory = withheld.filter((row) => row.reason === "IMMUTABLE_HISTORY");
     if (withheld.length > 0) {
-      console.log(`  withheld  ${String(withheld.length).padStart(4)} registrations that received money and were not named in --also-delete`);
+      console.log(`  withheld  ${String(withheld.length).padStart(4)} registrations (${withheldForMoney.length} received money, ${withheldForHistory.length} have immutable history)`);
     }
 
     if (deleting.length > 0) {
@@ -147,10 +174,18 @@ async function main() {
       }
     }
 
-    if (withheld.length > 0) {
-      console.log("\nWithheld (received money, not named in --also-delete):");
-      for (const row of withheld) {
+    if (withheldForMoney.length > 0) {
+      console.log("\nWithheld — received money, not named in --also-delete:");
+      for (const row of withheldForMoney) {
         console.log(`  ${row.confirmationCode.padEnd(28)} ${row.accountHolder.padEnd(26)} received ${money(row.netPaidCents)}`);
+      }
+    }
+
+    if (withheldForHistory.length > 0) {
+      console.log("\nWithheld — transfer, substitution, amendment, or payment-choice history:");
+      console.log("  These rows are immutable by database trigger and cannot be deleted at all.");
+      for (const row of withheldForHistory) {
+        console.log(`  ${row.confirmationCode.padEnd(28)} ${row.accountHolder.padEnd(26)} ${row.status}`);
       }
     }
 
@@ -168,22 +203,66 @@ async function main() {
     }
 
     const ids = deleting.map((row) => row.id);
+    const allowedPaidCodes = new Set(
+      deleting.filter((row) => alsoDelete.has(row.confirmationCode)).map((row) => row.id),
+    );
+
     const removed = await prisma.$transaction(async (tx) => {
-      // Both of these Restrict the delete rather than cascading, so they have
-      // to go first or the registration delete fails.
-      await tx.registrationPaymentChoiceOperation.deleteMany({
-        where: { registrationId: { in: ids } },
+      /**
+       * The payment guard above was computed from a read taken before this
+       * transaction opened. A pending Square payment settling in between would
+       * otherwise let a registration that has since received money be deleted,
+       * cascading the payment with it. Re-read under the transaction and abort
+       * rather than silently breaking the guarantee this script advertises.
+       */
+      const nowPaid = await tx.registration.findMany({
+        where: { id: { in: ids }, payments: { some: { status: "SUCCEEDED" } } },
+        select: {
+          id: true,
+          confirmationCode: true,
+          payments: {
+            where: { status: "SUCCEEDED" },
+            select: { amount: true, refunds: { where: { status: "SUCCEEDED" }, select: { amount: true } } },
+          },
+        },
       });
-      await tx.registrationOperation.deleteMany({
+      const newlyPaid = nowPaid.filter((registration) => (
+        !allowedPaidCodes.has(registration.id)
+        && netPaidCents(registration.payments) > 0
+      ));
+      if (newlyPaid.length > 0) {
+        throw new Error(
+          `Aborted: ${newlyPaid.map((r) => r.confirmationCode).join(", ")} received money after the preview was taken. Re-run to review the current state.`,
+        );
+      }
+
+      /**
+       * PromoCodeRedemption cascades with the registration, but redeemedCount
+       * is denormalised and does not. Left stale it keeps consuming a code's
+       * maximumUses, so a later valid registration is refused a discount that
+       * is actually available. Recompute from the surviving rows.
+       */
+      const affectedPromoCodeIds = (await tx.promoCodeRedemption.findMany({
         where: { registrationId: { in: ids } },
-      });
+        select: { promoCodeId: true },
+      })).map((redemption) => redemption.promoCodeId);
+
       const result = await tx.registration.deleteMany({
         where: { id: { in: ids }, eventId: event.id },
       });
-      return result.count;
+
+      for (const promoCodeId of new Set(affectedPromoCodeIds)) {
+        const redeemedCount = await tx.promoCodeRedemption.count({ where: { promoCodeId } });
+        await tx.promoCode.update({ where: { id: promoCodeId }, data: { redeemedCount } });
+      }
+
+      return { count: result.count, promoCodesRepaired: new Set(affectedPromoCodeIds).size };
     });
 
-    console.log(`\nDeleted ${removed} registration${removed === 1 ? "" : "s"}.`);
+    console.log(`\nDeleted ${removed.count} registration${removed.count === 1 ? "" : "s"}.`);
+    if (removed.promoCodesRepaired > 0) {
+      console.log(`Recomputed redeemedCount on ${removed.promoCodesRepaired} promo code${removed.promoCodesRepaired === 1 ? "" : "s"}.`);
+    }
   } finally {
     await prisma.$disconnect();
   }

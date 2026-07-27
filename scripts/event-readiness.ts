@@ -14,6 +14,7 @@ import {
   operationalReadinessSummary,
   type OperationalReadinessFacts,
 } from "@/modules/events/operational-readiness";
+import { getSquareConfiguration } from "@/modules/payments/square-config-domain";
 import { shirtSizeFromResponses } from "@/modules/registrations/shirt-sizes";
 
 loadEnvConfig(process.cwd());
@@ -69,7 +70,10 @@ async function main() {
         select: {
           totalAmount: true,
           attendees: { select: { formResponses: true } },
-          payments: { select: { amount: true, status: true } },
+          payments: {
+            where: { status: "SUCCEEDED" },
+            select: { amount: true, refunds: { where: { status: "SUCCEEDED" }, select: { amount: true } } },
+          },
         },
       }),
     ]);
@@ -80,15 +84,19 @@ async function main() {
       if (registration.attendees.some((attendee) => !shirtSizeFromResponses(attendee.formResponses))) {
         missingShirtSize += 1;
       }
-      const paid = registration.payments
-        .filter((payment) => payment.status === "SUCCEEDED")
-        .reduce((sum, payment) => sum + Number(payment.amount), 0);
+      // Net of successful refunds: a fully refunded payment leaves the balance
+      // owed again, and counting it as paid would downgrade a missing Square
+      // configuration from blocker to warning.
+      const paid = registration.payments.reduce((sum, payment) => {
+        const refunded = payment.refunds.reduce((total, refund) => total + Number(refund.amount), 0);
+        return sum + Math.max(Number(payment.amount) - refunded, 0);
+      }, 0);
       if (Number(registration.totalAmount) - paid > 0) balanceDue += 1;
     }
 
-    // Read straight from the environment rather than importing the Square
-    // config module, which is server-only and refuses to load in a script.
-    const squareEnvironment = process.env.SQUARE_ENVIRONMENT ?? "sandbox";
+    // The same evaluation the checkout path performs, so this cannot report a
+    // configuration the payment code would reject.
+    const square = getSquareConfiguration(process.env);
     const facts: OperationalReadinessFacts = {
       isPublished: event.isPublished,
       hasPublishedFormVersion: Boolean(publishedForm),
@@ -105,14 +113,16 @@ async function main() {
         hasPublishedVersion: template.versions.length > 0,
       })),
       requiredTemplateKeys: REQUIRED_TEMPLATE_KEYS,
+      emailProvider: {
+        // Mirrors getResendEmailAvailability, which lives behind server-only.
+        deliveryConfigured: Boolean(process.env.RESEND_API_KEY?.trim()),
+        webhookConfigured: Boolean(process.env.RESEND_WEBHOOK_SECRET?.trim()),
+      },
       square: {
-        paymentConfigured: Boolean(
-          process.env.SQUARE_APPLICATION_ID
-          && process.env.SQUARE_ACCESS_TOKEN
-          && process.env.SQUARE_LOCATION_ID,
-        ),
-        webhookConfigured: Boolean(process.env.SQUARE_WEBHOOK_SIGNATURE_KEY),
-        environment: squareEnvironment,
+        paymentConfigured: square.paymentConfigured,
+        webhookConfigured: square.webhookConfigured,
+        environment: square.environment,
+        issue: square.issue,
       },
       registrationsMissingShirtSize: missingShirtSize,
       registrationsWithBalanceDue: balanceDue,

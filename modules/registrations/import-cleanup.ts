@@ -16,14 +16,31 @@ export type CleanupCandidate = {
   accountHolder: string;
   status: string;
   attendeeCount: number;
-  totalCents: number;
+  /** Payments that succeeded, less refunds that succeeded — the same net the
+   * rest of the application treats as money actually received. */
   netPaidCents: number;
+  totalCents: number;
+  /**
+   * Whether the registration has any RegistrationOperation or
+   * RegistrationPaymentChoiceOperation row. Both tables carry a BEFORE UPDATE
+   * OR DELETE trigger that raises unconditionally, and both foreign keys are
+   * ON DELETE RESTRICT, so such a registration cannot be deleted at all — an
+   * attempt aborts the whole transaction and takes the other duplicates with
+   * it. These are withheld rather than worked around: the invariant is
+   * deliberate, and transfer and amendment history is meant to outlive the
+   * row it describes.
+   */
+  hasImmutableHistory: boolean;
 };
+
+export type CleanupWithholdReason = "RECEIVED_MONEY" | "IMMUTABLE_HISTORY";
+
+export type WithheldCandidate = CleanupCandidate & { reason: CleanupWithholdReason };
 
 export type CleanupPlan = {
   kept: CleanupCandidate[];
   deleting: CleanupCandidate[];
-  withheld: CleanupCandidate[];
+  withheld: WithheldCandidate[];
   keptTotalCents: number;
   deletingTotalCents: number;
   beforeTotalCents: number;
@@ -53,11 +70,18 @@ export function planImportCleanup(
   }
 
   const deleting: CleanupCandidate[] = [];
-  const withheld: CleanupCandidate[] = [];
+  const withheld: WithheldCandidate[] = [];
   for (const candidate of candidates) {
+    // Immutable history is checked first and cannot be overridden. --also-delete
+    // is a judgement call about money; it is not a way to defeat a database
+    // invariant, and trying would only abort the transaction.
+    if (candidate.hasImmutableHistory) {
+      withheld.push({ ...candidate, reason: "IMMUTABLE_HISTORY" });
+      continue;
+    }
     const paid = candidate.netPaidCents > 0;
     if (!paid || alsoDelete.has(candidate.confirmationCode)) deleting.push(candidate);
-    else withheld.push(candidate);
+    else withheld.push({ ...candidate, reason: "RECEIVED_MONEY" });
   }
 
   const beforeCount = registrations.length;

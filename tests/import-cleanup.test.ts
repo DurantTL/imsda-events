@@ -11,6 +11,7 @@ function candidate(overrides: Partial<CleanupCandidate> & { confirmationCode: st
     attendeeCount: 1,
     totalCents: 12_500,
     netPaidCents: 0,
+    hasImmutableHistory: false,
     ...overrides,
   };
 }
@@ -54,6 +55,7 @@ describe("planImportCleanup", () => {
 
     expect(plan.deleting).toEqual([]);
     expect(plan.withheld.map((row) => row.confirmationCode)).toEqual(["TEST-1001"]);
+    expect(plan.withheld[0].reason).toBe("RECEIVED_MONEY");
     // A withheld row is still counted in the event afterwards.
     expect(plan.afterTotalCents).toBe(plan.beforeTotalCents);
   });
@@ -76,6 +78,42 @@ describe("planImportCleanup", () => {
     );
 
     expect(plan.deleting).toEqual([]);
+    expect(plan.withheld).toHaveLength(1);
+  });
+
+  it("withholds a registration carrying immutable operation history", () => {
+    const plan = planImportCleanup(
+      [candidate({ confirmationCode: "WR26-3857-1", hasImmutableHistory: true })],
+      CANONICAL,
+    );
+
+    expect(plan.deleting).toEqual([]);
+    expect(plan.withheld[0].reason).toBe("IMMUTABLE_HISTORY");
+  });
+
+  it("does not let --also-delete override immutable history", () => {
+    // The rows are rejected by a database trigger; forcing it would abort the
+    // whole transaction rather than delete anything.
+    const plan = planImportCleanup(
+      [candidate({ confirmationCode: "WR26-3857-1", hasImmutableHistory: true, netPaidCents: 5_000 })],
+      CANONICAL,
+      new Set(["WR26-3857-1"]),
+    );
+
+    expect(plan.deleting).toEqual([]);
+    expect(plan.withheld[0].reason).toBe("IMMUTABLE_HISTORY");
+  });
+
+  it("still deletes clean duplicates alongside a withheld one", () => {
+    const plan = planImportCleanup(
+      [
+        candidate({ confirmationCode: "WR26-3857-1", hasImmutableHistory: true }),
+        candidate({ confirmationCode: "WR26-3857-2" }),
+      ],
+      CANONICAL,
+    );
+
+    expect(plan.deleting.map((row) => row.confirmationCode)).toEqual(["WR26-3857-2"]);
     expect(plan.withheld).toHaveLength(1);
   });
 
