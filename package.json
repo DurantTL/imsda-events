@@ -22,6 +22,9 @@
     "db:refresh-demo": "tsx scripts/refresh-local-demo.ts",
     "admin:create": "tsx scripts/create-admin.ts",
     "admin:reset-mfa": "tsx scripts/reset-mfa.ts",
+    "registrations:cleanup": "tsx scripts/cleanup-imported-duplicates.ts",
+    "event:readiness": "tsx scripts/event-readiness.ts",
+    "event:shirt-sizes": "tsx scripts/shirt-size-audience.ts",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate"
   },

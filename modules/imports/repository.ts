@@ -182,6 +182,26 @@ async function previewImportRows(input: {
   const registrationByCode = new Map(existingRegistrations.map((registration) => [registration.confirmationCode, registration]));
   const personByEmail = new Map(existingPeople.map((person) => [person.normalizedEmail, person]));
 
+  /**
+   * Attendee answers — meals, shirt sizes, ranked seminar choices — are only
+   * viewable through a submission bound to a published form version. Committing
+   * without one imports the people and silently discards every answer, and the
+   * import still reports success. Say so here, while the staff member can still
+   * publish the form instead of finding out weeks later.
+   */
+  const carriesAttendeeAnswers = validRows.some((row) => Boolean(row.data.attendees));
+  const publishedFormVersion = carriesAttendeeAnswers
+    ? await getPrisma().registrationFormVersion.findFirst({
+        where: { form: { eventId }, status: "PUBLISHED" },
+        select: { id: true },
+      })
+    : null;
+  // Carried once, on the first row that has attendee answers, so a 45-row
+  // bundle does not repeat the same sentence 45 times in the exception list.
+  const attendeeAnswerWarningRow = carriesAttendeeAnswers && !publishedFormVersion
+    ? input.rows.find((row) => Boolean(row.data?.attendees))
+    : undefined;
+
   const analyzedRows = input.rows.map((row) => {
     const warnings = [...row.warnings];
     const errors = [...row.errors];
@@ -190,6 +210,11 @@ async function previewImportRows(input: {
     let matchedRegistrationId: string | null = null;
     let differences: Array<{ field: string; source: string | number | null; target: string | number | null }> = [];
     if (row.data) {
+      if (row === attendeeAnswerWarningRow) {
+        warnings.push(
+          "This event has no published registration form version, so imported attendee answers — meals, shirt sizes, and ranked seminar choices — will not be viewable on the registration. Publish the form before committing.",
+        );
+      }
       const registration = registrationByCode.get(row.data.confirmationCode);
       const emailMatch = row.data.email ? personByEmail.get(row.data.email) : null;
       matchedPersonId = registration?.accountHolderPersonId ?? emailMatch?.id ?? null;

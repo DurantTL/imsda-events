@@ -15,9 +15,22 @@ import {
   selectRegistrationMessageTemplate,
   validateMessageTemplate,
 } from "@/modules/communications/templates";
+import type { MessageTemplateKeyValue } from "@/modules/communications/types";
+
+/**
+ * `MessageTemplateKeyValue` restates the template keys by hand, and nothing at
+ * runtime connects the two lists — a key added to one and missed in the other
+ * only surfaces as a type error somewhere else entirely. These two assignments
+ * fail to compile the moment the lists disagree, in either direction.
+ */
+type TemplateKey = (typeof MESSAGE_TEMPLATE_KEYS)[number];
+const _keysAreTemplateKeyValues: MessageTemplateKeyValue = null as unknown as TemplateKey;
+const _templateKeyValuesAreKeys: TemplateKey = null as unknown as MessageTemplateKeyValue;
+void _keysAreTemplateKeyValues;
+void _templateKeyValuesAreKeys;
 
 describe("message templates", () => {
-  it("ships thirteen valid plaintext defaults", () => {
+  it("ships fourteen valid plaintext defaults", () => {
     expect(MESSAGE_TEMPLATE_KEYS).toEqual([
       "REGISTRATION_CONFIRMATION_PAID",
       "REGISTRATION_CONFIRMATION_UNPAID",
@@ -32,8 +45,9 @@ describe("message templates", () => {
       "REGISTRATION_TRANSFERRED_NEW_CONTACT",
       "REGISTRATION_TRANSFERRED_PRIOR_CONTACT",
       "ATTENDEE_SUBSTITUTED",
+      "SHIRT_SIZE_REQUEST",
     ]);
-    expect(DEFAULT_MESSAGE_TEMPLATE_LIST).toHaveLength(13);
+    expect(DEFAULT_MESSAGE_TEMPLATE_LIST).toHaveLength(14);
 
     for (const key of MESSAGE_TEMPLATE_KEYS) {
       const template = DEFAULT_MESSAGE_TEMPLATES[key];
