@@ -1,5 +1,6 @@
 import "server-only";
 
+import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 
 /**
@@ -73,59 +74,81 @@ export async function setAccountDisabled(
     );
   }
 
-  if (disabled) {
-    const otherEnabledSystemAdminCount = await prisma.user.count({
-      where: {
-        globalRole: "SYSTEM_ADMIN",
-        id: { not: targetUserId },
-        credential: { is: { disabledAt: null } },
-      },
-    });
-    const refusal = refusesAccountDisable({
-      targetUserId,
-      actorUserId,
-      targetIsSystemAdmin: target.globalRole === "SYSTEM_ADMIN",
-      otherEnabledSystemAdminCount,
-    });
-    if (refusal === "CANNOT_DISABLE_SELF") {
-      throw new AccountStatusError(
-        "CANNOT_DISABLE_SELF",
-        "You cannot disable your own sign-in. Ask another system administrator.",
-      );
-    }
-    if (refusal === "LAST_SYSTEM_ADMIN") {
-      throw new AccountStatusError(
-        "LAST_SYSTEM_ADMIN",
-        "This is the only system administrator who can still sign in. Give another account that role first.",
-      );
+  // The count and the write share one serializable transaction. Read outside
+  // it and two administrators disabling each other concurrently each see the
+  // other still enabled, both commit, and nobody can sign in — the exact state
+  // this guard exists to prevent.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await prisma.$transaction(async (tx) => {
+        if (disabled) {
+          const otherEnabledSystemAdminCount = await tx.user.count({
+            where: {
+              globalRole: "SYSTEM_ADMIN",
+              id: { not: targetUserId },
+              credential: { is: { disabledAt: null } },
+            },
+          });
+          const refusal = refusesAccountDisable({
+            targetUserId,
+            actorUserId,
+            targetIsSystemAdmin: target.globalRole === "SYSTEM_ADMIN",
+            otherEnabledSystemAdminCount,
+          });
+          if (refusal === "CANNOT_DISABLE_SELF") {
+            throw new AccountStatusError(
+              "CANNOT_DISABLE_SELF",
+              "You cannot disable your own sign-in. Ask another system administrator.",
+            );
+          }
+          if (refusal === "LAST_SYSTEM_ADMIN") {
+            throw new AccountStatusError(
+              "LAST_SYSTEM_ADMIN",
+              "This is the only system administrator who can still sign in. Give another account that role first.",
+            );
+          }
+        }
+
+        await tx.authCredential.update({
+          where: { id: target.credential!.id },
+          data: { disabledAt: disabled ? new Date() : null },
+        });
+        if (disabled) {
+          // A disabled account with a live session is still signed in until
+          // that session is next checked. Revoking now closes the door.
+          await tx.userSession.updateMany({
+            where: { userId: targetUserId, revokedAt: null },
+            data: { revokedAt: new Date() },
+          });
+          // An outstanding sign-in challenge is a session waiting to be minted.
+          // It is refused while the account stays disabled, but re-enabling
+          // would let that half-finished sign-in complete without the password
+          // being entered again, so it is spent here too.
+          await tx.mfaChallenge.updateMany({
+            where: { userId: targetUserId, consumedAt: null },
+            data: { consumedAt: new Date() },
+          });
+        }
+        await tx.auditLog.create({
+          data: {
+            actorUserId,
+            action: disabled ? "ACCOUNT_SIGN_IN_DISABLED" : "ACCOUNT_SIGN_IN_ENABLED",
+            entityType: "User",
+            entityId: targetUserId,
+            correlationId: `account-status:${targetUserId}:${Date.now()}`,
+            summary: disabled
+              ? `Disabled sign-in for ${target.email}, revoking their sessions and any sign-in in progress.`
+              : `Restored sign-in for ${target.email}.`,
+            metadata: { targetUserId, displayName: target.displayName, disabled },
+          },
+        });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      return;
+    } catch (error) {
+      const retryable = error instanceof Prisma.PrismaClientKnownRequestError
+        && error.code === "P2034";
+      if (!retryable || attempt === 2) throw error;
     }
   }
 
-  await prisma.$transaction(async (tx) => {
-    await tx.authCredential.update({
-      where: { id: target.credential!.id },
-      data: { disabledAt: disabled ? new Date() : null },
-    });
-    if (disabled) {
-      // A disabled account with a live session is still signed in until that
-      // session is next checked. Revoking now closes the door immediately.
-      await tx.userSession.updateMany({
-        where: { userId: targetUserId, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
-    }
-    await tx.auditLog.create({
-      data: {
-        actorUserId,
-        action: disabled ? "ACCOUNT_SIGN_IN_DISABLED" : "ACCOUNT_SIGN_IN_ENABLED",
-        entityType: "User",
-        entityId: targetUserId,
-        correlationId: `account-status:${targetUserId}:${Date.now()}`,
-        summary: disabled
-          ? `Disabled sign-in for ${target.email} and revoked their sessions.`
-          : `Restored sign-in for ${target.email}.`,
-        metadata: { targetUserId, displayName: target.displayName, disabled },
-      },
-    });
-  });
 }
