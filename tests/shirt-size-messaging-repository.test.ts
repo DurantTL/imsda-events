@@ -32,6 +32,7 @@ const event = {
   id: "event-1",
   name: "Women’s Retreat",
   slug: "womens-retreat-2026",
+  collectsShirtSizes: true,
   startsAt: new Date("2026-10-09T21:00:00.000Z"),
   endsAt: new Date("2026-10-11T17:00:00.000Z"),
   timezone: "America/Chicago",
@@ -80,6 +81,10 @@ function partlyAnsweredRegistration() {
 
 function baseTransaction() {
   return {
+    // Read when event messaging settings are first created, so a new event
+    // inherits the platform sender identity. Null here keeps these cases on the
+    // built-in fallback, which is what they were written against.
+    platformSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     eventMessageSettings: {
       upsert: vi.fn().mockResolvedValue({}),
       findUnique: vi.fn().mockResolvedValue(settings),
@@ -228,11 +233,13 @@ describe("shirt-size request repository", () => {
 
   it("refuses an event that does not collect shirts, even with people missing sizes", async () => {
     const tx = baseTransaction();
-    // Same registrations, same missing sizes — only the event is ineligible.
+    // Same registrations, same missing sizes. The event simply does not collect
+    // shirts — which is now a stored capability, not a guess from its name.
     tx.event.findUnique.mockResolvedValue({
       ...event,
       name: "Men’s Convention",
       slug: "mens-convention-2027",
+      collectsShirtSizes: false,
     });
     mocks.getPrisma.mockReturnValue(prismaFor(tx));
 
@@ -250,19 +257,32 @@ describe("shirt-size request repository", () => {
     expect(tx.messageOutbox.upsert).not.toHaveBeenCalled();
   });
 
-  it("invalidates a reviewed batch when the event is renamed out of eligibility", async () => {
+  it("keeps collecting sizes when the event is renamed", async () => {
+    const tx = baseTransaction();
+    // The rule this replaced read the event's name, so renaming an event
+    // silently stopped it collecting sizes. A stored capability survives it.
+    tx.event.findUnique.mockResolvedValue({
+      ...event,
+      name: "Autumn Gathering",
+      slug: "autumn-gathering-2026",
+      collectsShirtSizes: true,
+    });
+    mocks.getPrisma.mockReturnValue(prismaFor(tx));
+
+    const preview = await getShirtSizeRequestPreview("event-1");
+    expect(preview.eventSupportsShirtSizes).toBe(true);
+    expect(preview.includedCount).toBe(1);
+  });
+
+  it("invalidates a reviewed batch when shirt collection is switched off mid-review", async () => {
     const tx = baseTransaction();
     mocks.getPrisma.mockReturnValue(prismaFor(tx));
     const preview = await getShirtSizeRequestPreview("event-1");
     expect(preview.eventSupportsShirtSizes).toBe(true);
 
-    // Renamed between review and send. Eligibility is inside the fingerprint,
-    // so the reviewed batch must not still be sendable.
-    tx.event.findUnique.mockResolvedValue({
-      ...event,
-      name: "Autumn Gathering",
-      slug: "autumn-gathering-2026",
-    });
+    // Turned off between review and send. Eligibility sits inside the
+    // fingerprint, so the reviewed batch must not still be sendable.
+    tx.event.findUnique.mockResolvedValue({ ...event, collectsShirtSizes: false });
 
     await expect(enqueueShirtSizeRequestBatch("event-1", {
       previewFingerprint: preview.fingerprint,

@@ -56,7 +56,7 @@ import {
   type ShirtSizePreviewContext,
 } from "@/modules/communications/shirt-size-audience";
 import {
-  eventUsesConventionShirts,
+  eventCollectsShirtSizes,
   shirtSizeFromResponses,
 } from "@/modules/registrations/shirt-sizes";
 import type {
@@ -391,6 +391,18 @@ function serializeMessage(message: {
 
 export async function ensureEventMessagingDefaults(eventId: string) {
   const prisma = getPrisma();
+  // Only consulted when the row is being created. An event whose settings
+  // already exist is never rewritten from the platform defaults: a staff member
+  // who set a sender for one event should not have it changed underneath them
+  // because somebody edited the platform later.
+  const platform = await prisma.platformSettings.findUnique({
+    where: { id: "platform" },
+    select: {
+      defaultSenderName: true,
+      defaultSenderEmail: true,
+      defaultReplyToEmail: true,
+    },
+  });
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       await prisma.$transaction(async (tx) => {
@@ -399,7 +411,12 @@ export async function ensureEventMessagingDefaults(eventId: string) {
           update: {},
           create: {
             eventId,
-            senderName: fallbackSettings.senderName,
+            senderName: platform?.defaultSenderName || fallbackSettings.senderName,
+            senderEmail: platform?.defaultSenderEmail ?? null,
+            replyToEmail: platform?.defaultReplyToEmail ?? null,
+            // Still LOCAL_CAPTURE. Inheriting an address is a convenience;
+            // inheriting live delivery would mean a newly created event could
+            // mail registrants before anyone reviewed a single template.
             deliveryMode: fallbackSettings.deliveryMode,
             internalNotificationEmails: [],
           },
@@ -622,6 +639,7 @@ async function loadShirtSizeRequestState(
         timezone: true,
         location: true,
         supportContact: true,
+        collectsShirtSizes: true,
       },
     }),
     client.eventMessageSettings.findUnique({ where: { eventId } }),
@@ -713,7 +731,7 @@ async function loadShirtSizeRequestState(
     // The same predicate the registrant's picker and the handler that accepts
     // their answer use. Asking an event that will refuse the answer would mail
     // people a link to a page that turns them away.
-    eventSupportsShirtSizes: eventUsesConventionShirts(event),
+    eventSupportsShirtSizes: eventCollectsShirtSizes(event),
     deliveryMode: settings.deliveryMode,
     senderName: settings.senderName,
     senderEmail: settings.senderEmail,
