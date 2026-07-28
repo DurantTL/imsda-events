@@ -42,6 +42,59 @@ A `User` may be linked to an `AttendeeAccount` when both hold the same **verifie
 
 The rule that matters: **attendee mode shows the staff member their own registrations, never anyone else's.** It is a context switch, not an impersonation feature. Staff who need to see another person's registration already have the roster, which is permissioned, audited, and the correct tool. If impersonation is ever wanted it must be a separate, audited capability with its own decision — not a side effect of this one.
 
+### An account may hold a second factor, but is not gated on having one
+
+Attendee accounts support TOTP enrolment from the start, using the same
+machinery staff use. Building the capability later is far more expensive than
+building it now: retrofitting a second factor means a migration, a recovery-code
+scheme, and a rollout across accounts that already exist.
+
+Holding one is **not** a condition of having an account. Someone registering for
+an event should not be made to install an authenticator to do it, and a barrier
+at that point does not protect anything — the registration they are creating is
+one they already know about.
+
+The rule inverts when an account reaches further than its own registrations.
+Club rosters and medical information are the cases already known to be coming,
+and enrolment becomes **required** to reach either. That is a scope rule, not an
+account rule: the factor is required by what is being touched, not by who is
+touching it.
+
+### Editing takes a fresh emailed code, and never a link
+
+Reading a registration needs only the account. Changing one takes a one-time
+code, sent to the account's verified address and entered in the session that
+asked for it.
+
+**A code, not a link, and this is the point of the decision.** A link in an
+inbox is a bearer token: it works for whoever opens it, it survives forwarding,
+it is logged by mail scanners, and it grants its power somewhere other than
+where the request came from. A code has to be carried back into the session that
+requested it, which binds the change to the person making it. The private
+management link already carries the weaknesses of a link; adding a second link
+to authorise editing would double them rather than answer them.
+
+The code is short-lived, single-use, invalidated when a new one is requested,
+and rate limited per account.
+
+Not every change is worth a code. The tiers:
+
+| Change | What it takes |
+| --- | --- |
+| Viewing a registration | The account |
+| Shirt size, meal choice, and similar per-attendee answers | The account |
+| Contact details, cancellations, transfers | Account plus emailed code |
+| Medical information, club rosters (when built) | Account plus enrolled second factor |
+
+The middle row is where the friction has to be justified, and the bottom row is
+why the second factor exists at all.
+
+Shirt size sits in the first tier deliberately. The reviewed shirt-size batch
+mails a private link precisely because a migrated registrant has no account yet,
+and putting a code in front of that answer would strand the campaign it was
+built for. A shirt size is also not worth protecting: the worst outcome of a
+wrong one is a wrong shirt.
+
 ### What an account does
 
 In priority order, each independently shippable:
@@ -59,7 +112,7 @@ The private link does not go away. It stays the path for someone who will never 
 
 Sign-up is a public, unauthenticated, email-sending endpoint — the most abusable surface the platform will have. It needs the existing rate limiting, and enumeration has to be considered in every response: "an account exists for this address" is not something a stranger may learn.
 
-Second factor is not required for an attendee account at first. The staff rule exists because staff can export a roster; an attendee can see their own registration, which they can already do from an emailed link. This should be revisited if an account ever gains reach beyond its own registrations.
+Sign-up is a public, unauthenticated, email-sending endpoint, and the step-up code below is a second one. Both need the existing rate limiting, per address and per source, or the platform becomes a way to send mail to strangers.
 
 Nothing here grants an `EventPermission`. An attendee account cannot hold one, and the type system should keep it that way rather than relying on a runtime check.
 
@@ -70,3 +123,7 @@ Nothing here grants an `EventPermission`. An attendee account cannot hold one, a
 **Confirmation code plus email to claim.** Materially harder to claim someone else's registration, and it handles imported rows with duplicated addresses. Rejected as the default because it puts friction on every registrant to prevent a case the shared inbox already permits. Worth reconsidering if a claim is ever reported as wrong.
 
 **No accounts; extend private links.** Longer-lived links with more on the page. Cheapest, and genuinely sufficient for everything except being recognised — which is the one thing actually being asked for.
+
+**A magic link to authorise editing.** One click instead of typing six digits, and the flow staff already know from password reset. Rejected: a link is a bearer token that works for whoever opens it, survives forwarding, and is followed by mail scanners. The private management link already carries those weaknesses because it has to reach someone with no account at all. An edit made *from* an account has a session to bind to, and a code is what binds it.
+
+**Requiring a second factor to hold an account.** Rejected as a barrier that protects nothing at the moment it is imposed — the registration being created is one the person already knows about — while costing the platform registrations from anyone unwilling to install an authenticator to sign up for a retreat.
