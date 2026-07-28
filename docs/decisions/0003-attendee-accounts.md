@@ -110,9 +110,7 @@ Community and discussion features are **not** in scope here. This ADR exists so 
 
 The private link does not go away. It stays the path for someone who will never make an account, and it is how a migrated registrant reaches self-service the first time. Accounts are additive; a registrant who ignores them loses nothing.
 
-Sign-up is a public, unauthenticated, email-sending endpoint — the most abusable surface the platform will have. It needs the existing rate limiting, and enumeration has to be considered in every response: "an account exists for this address" is not something a stranger may learn.
-
-Sign-up is a public, unauthenticated, email-sending endpoint, and the step-up code below is a second one. Both need the existing rate limiting, per address and per source, or the platform becomes a way to send mail to strangers.
+Sign-up is a public, unauthenticated, email-sending endpoint — the most abusable surface the platform will have — and the step-up code is a second one. Both need the existing rate limiting, per address and per source, or the platform becomes a way to send mail to strangers. Enumeration has to be considered in every response too: "an account exists for this address" is not something a stranger may learn.
 
 Nothing here grants an `EventPermission`. An attendee account cannot hold one, and the type system should keep it that way rather than relying on a runtime check.
 
