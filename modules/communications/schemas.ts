@@ -46,6 +46,12 @@ export const messageTemplateInputSchema = z.object({
 export const messageTestInputSchema = z.object({
   recipientEmail: z.email().transform((value) => value.trim().toLowerCase()),
   recipientName: z.string().trim().max(120).optional().default("Local test recipient"),
+  /**
+   * Deliver to the address for real, through the event's own sender, instead of
+   * capturing locally. Defaults to false so the safe behaviour is the one a
+   * caller gets by omission.
+   */
+  realDelivery: z.boolean().optional().default(false),
 }).strict();
 
 export const balanceReminderBatchInputSchema = z.object({

@@ -243,6 +243,7 @@ export function CommunicationsWorkspace({
   const [reminderBatchId, setReminderBatchId] = useState("");
   const [shirtSizeConfirmed, setShirtSizeConfirmed] = useState(false);
   const [shirtSizeBatchId, setShirtSizeBatchId] = useState("");
+  const [testRealDelivery, setTestRealDelivery] = useState(false);
   const [resendRecipientEmail, setResendRecipientEmail] = useState("");
   const [resendConfirmed, setResendConfirmed] = useState(false);
   const [resendRequestId, setResendRequestId] = useState("");
@@ -423,9 +424,12 @@ export function CommunicationsWorkspace({
         body: JSON.stringify({
           recipientEmail: form.get("recipientEmail"),
           recipientName: form.get("recipientName"),
+          realDelivery: testRealDelivery,
         }),
       },
-      "The test message was captured locally. No email was sent.",
+      testRealDelivery
+        ? `A real test message was sent to ${form.get("recipientEmail")} from this event's sender. Check the Delivery log for the provider result.`
+        : "The test message was captured locally. No email was sent.",
     );
     if (updated?.messages[0]) setSelectedMessageId(updated.messages[0].id);
   }
@@ -1180,12 +1184,43 @@ export function CommunicationsWorkspace({
               </article>
               <form className="panel message-test-form" onSubmit={createTestCapture}>
                 <p className="eyebrow">Test the workflow</p>
-                <h2>Capture a test message</h2>
-                <p>This creates a delivery-log row and attempt. It never contacts an email provider.</p>
+                <h2>{testRealDelivery ? "Send a real test message" : "Capture a test message"}</h2>
+                <p>
+                  {testRealDelivery
+                    ? "This sends one real email to the address below, from this event’s own sender and reply-to, so you can check what a registrant receives before a batch goes to everyone."
+                    : "This creates a delivery-log row and attempt. It never contacts an email provider."}
+                </p>
                 <label>Recipient name<input name="recipientName" defaultValue="Local Test Recipient" required /></label>
-                <label>Fictitious recipient<input name="recipientEmail" type="email" defaultValue="message.preview@example.test" required /></label>
+                <label>
+                  {testRealDelivery ? "Real recipient" : "Fictitious recipient"}
+                  <input
+                    name="recipientEmail"
+                    type="email"
+                    defaultValue="message.preview@example.test"
+                    required
+                  />
+                </label>
+                <label className="message-enabled-toggle">
+                  <input
+                    type="checkbox"
+                    checked={testRealDelivery}
+                    disabled={messaging.settings.deliveryMode !== "EXTERNAL_EMAIL"}
+                    onChange={(event) => setTestRealDelivery(event.target.checked)}
+                  />
+                  <span>
+                    <strong>Actually email this address</strong>
+                    <small>
+                      {messaging.settings.deliveryMode === "EXTERNAL_EMAIL"
+                        ? "Uses this event’s sender, reply-to, and domain — the parts a local capture cannot check. The private link in the message is a sample and will not open a registration."
+                        : "Available once this event’s delivery is set to real email with a verified sender."}
+                    </small>
+                  </span>
+                </label>
                 <button className="secondary-button" type="submit" disabled={saving || messaging.settings.deliveryMode === "DISABLED"}>
-                  <FlaskConical size={16} aria-hidden="true" /> {saving ? "Capturing…" : "Capture locally"}
+                  <FlaskConical size={16} aria-hidden="true" />
+                  {saving
+                    ? (testRealDelivery ? "Sending…" : "Capturing…")
+                    : (testRealDelivery ? "Send real test email" : "Capture locally")}
                 </button>
               </form>
             </aside>
