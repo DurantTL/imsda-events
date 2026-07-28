@@ -23,7 +23,7 @@ import {
   type ShirtSizeCandidate,
 } from "@/modules/communications/shirt-size-audience";
 import {
-  eventUsesConventionShirts,
+  eventCollectsShirtSizes,
   shirtSizeFromResponses,
 } from "@/modules/registrations/shirt-sizes";
 
@@ -110,7 +110,7 @@ async function main() {
 
     const preview = computeShirtSizeRequestPreview(candidates, {
       eventId: event.id,
-      eventSupportsShirtSizes: eventUsesConventionShirts(event),
+      eventSupportsShirtSizes: eventCollectsShirtSizes(event),
       deliveryMode: settings?.deliveryMode ?? "DISABLED",
       senderName: settings?.senderName ?? "",
       senderEmail: settings?.senderEmail ?? null,

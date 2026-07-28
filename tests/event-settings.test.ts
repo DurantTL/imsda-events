@@ -16,6 +16,7 @@ const validEvent = {
   isPublished: false,
   registrationOpensOn: "2027-05-01",
   registrationClosesOn: "2027-10-01",
+  collectsShirtSizes: false,
   waitlistEnabled: true,
   autoPromoteWaitlist: true,
 } as const;

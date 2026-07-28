@@ -467,6 +467,10 @@ model Event {
   registrationClosesOn String?
   waitlistEnabled      Boolean  @default(false)
   autoPromoteWaitlist  Boolean  @default(true)
+  /// Whether this event collects a shirt size per attendee. Replaces a match on
+  /// the event's name, which meant only one event could ever collect sizes and
+  /// renaming it turned collection off without telling anyone.
+  collectsShirtSizes   Boolean  @default(false)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
