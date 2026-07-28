@@ -80,6 +80,10 @@ function partlyAnsweredRegistration() {
 
 function baseTransaction() {
   return {
+    // Read when event messaging settings are first created, so a new event
+    // inherits the platform sender identity. Null here keeps these cases on the
+    // built-in fallback, which is what they were written against.
+    platformSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     eventMessageSettings: {
       upsert: vi.fn().mockResolvedValue({}),
       findUnique: vi.fn().mockResolvedValue(settings),
