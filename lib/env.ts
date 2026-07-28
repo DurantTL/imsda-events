@@ -24,6 +24,10 @@ const serverEnvSchema = z
     DATABASE_URL: z.string().url().startsWith("postgresql://"),
     APP_BASE_URL: z.string().url().default("http://localhost:3000"),
 
+    // Where uploaded event files are written. A deployment points this at a
+    // mounted volume so uploads outlive the container that received them.
+    ASSET_STORAGE_DIR: optionalTrimmed,
+
     // Derives retry-stable private registration links without storing raw tokens.
     MANAGE_LINK_DERIVATION_SECRET: optionalTrimmed,
     MANAGE_LINK_DERIVATION_SECRET_PREVIOUS: optionalTrimmed,
@@ -247,6 +251,7 @@ function readSource(source: Record<string, string | undefined>) {
     "NODE_ENV",
     "DATABASE_URL",
     "APP_BASE_URL",
+    "ASSET_STORAGE_DIR",
     "MANAGE_LINK_DERIVATION_SECRET",
     "MANAGE_LINK_DERIVATION_SECRET_PREVIOUS",
     "ATTENDEE_PASS_SIGNING_SECRET",

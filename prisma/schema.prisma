@@ -283,6 +283,7 @@ model User {
   formTestSubmissions       FormTestSubmission[]      @relation("FormTestSubmissionSubmittedBy")
   createdMessageVersions    MessageTemplateVersion[]  @relation("MessageTemplateVersionCreatedBy")
   platformSettingsUpdates   PlatformSettings[]        @relation("PlatformSettingsUpdatedBy")
+  uploadedEventAssets       EventAsset[]              @relation("EventAssetUploadedBy")
   appliedProgramAssignments ProgramAssignmentRun[]    @relation("ProgramAssignmentAppliedBy")
   registrationOperations    RegistrationOperation[]   @relation("RegistrationOperationActor")
   accountMessages           MessageOutbox[]           @relation("AccountMessageRecipient")
@@ -465,17 +466,48 @@ model EventContentSection {
 }
 
 /// One resource tile inside a RESOURCE_LINKS section.
+/// One resource tile: either an address elsewhere, or a file uploaded here.
+/// Exactly one of `url` and `assetId` is set; the migration carries the XOR
+/// check Prisma cannot express.
 model EventContentLink {
-  id          String @id @default(cuid())
+  id          String  @id @default(cuid())
   sectionId   String
   label       String
-  description String @default("")
-  url         String
+  description String  @default("")
+  url         String?
+  assetId     String?
   position    Int
 
   section EventContentSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  /// Restrict, not cascade: deleting a file that a published page still links
+  /// to should fail loudly rather than quietly leave a dead tile.
+  asset   EventAsset?         @relation(fields: [assetId], references: [id], onDelete: Restrict)
 
   @@index([sectionId, position])
+  @@index([assetId])
+}
+
+/// A file staff uploaded for an event page.
+///
+/// `contentType` is the verified type, not the one the upload claimed, and
+/// `storageKey` is generated here — never derived from the uploaded filename.
+/// `displayName` is a label only, and is what a download is offered as.
+model EventAsset {
+  id             String   @id @default(cuid())
+  eventId        String
+  displayName    String
+  contentType    String
+  byteSize       Int
+  checksum       String
+  storageKey     String   @unique
+  uploadedByUserId String?
+  createdAt      DateTime @default(now())
+
+  event      Event              @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  uploadedBy User?              @relation("EventAssetUploadedBy", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+  links      EventContentLink[]
+
+  @@index([eventId, createdAt])
 }
 
 /// Platform-wide identity and the defaults a new event inherits.
@@ -527,6 +559,7 @@ model Event {
 
   memberships                         EventMembership[]
   contentSections                     EventContentSection[]
+  assets                              EventAsset[]
   registrations                       Registration[]
   attendees                           RegistrationAttendee[]
   payments                            Payment[]

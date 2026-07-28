@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { AccessRestricted } from "@/components/access-restricted";
 import { EventContentWorkspace } from "@/components/event-content-workspace";
+import { listEventAssets } from "@/modules/events/asset-repository";
 import { listEventContentSections } from "@/modules/events/content-repository";
 import { resolveEventContext } from "@/modules/events/selection";
 
@@ -27,6 +28,7 @@ export default async function EventContentPage({
       eventId={event.id}
       eventName={event.name}
       initialSections={await listEventContentSections(event.id)}
+      initialAssets={await listEventAssets(event.id)}
     />
   );
 }
