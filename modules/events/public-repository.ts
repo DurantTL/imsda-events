@@ -10,6 +10,7 @@ import {
   summarizePublicRegistrationForm,
 } from "@/modules/events/public-domain";
 import { activeRegistrationStatuses } from "@/modules/events/lifecycle";
+import { listPublishedEventContentSections } from "@/modules/events/content-repository";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import { logWarn } from "@/lib/logger";
 
@@ -141,6 +142,7 @@ async function loadPublicEventLanding(
     announcements,
     forms,
     links,
+    contentSections: await listPublishedEventContentSections(event.id),
   };
 }
 

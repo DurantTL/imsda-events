@@ -37,6 +37,8 @@ const landing = {
     remainingSpots: 96,
   },
   forms: [],
+  // The page filters these by kind, so an empty list is the neutral case.
+  contentSections: [],
   links: {
     detailsUrl: "https://imsda.org/events/",
     supportUrl: "https://imsda.org/contact/",

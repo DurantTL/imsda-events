@@ -5634,3 +5634,22 @@ select:focus-visible {
     -webkit-print-color-adjust: exact;
   }
 }
+
+/* Event page content sections. Resource tiles echo the row of links IMSDA
+   publishes today: a label, a smaller qualifier, and an off-site target. */
+.public-event-resources { max-width: 1120px; margin: 0 auto 22px; padding: 0 24px; }
+.public-event-resources h2 { margin-bottom: 12px; color: var(--ink); font-size: 0.95rem; }
+.public-event-resources ul { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; list-style: none; margin: 0; padding: 0; }
+.public-event-resources a { display: flex; flex-direction: column; gap: 3px; height: 100%; border: 1px solid #d8e6ee; border-radius: 12px; background: #fff; padding: 15px 17px; color: var(--ink); text-decoration: none; transition: border-color 120ms ease, transform 120ms ease; }
+.public-event-resources a:hover { border-color: var(--imsda-purple); transform: translateY(-1px); }
+.public-event-resources strong { font-size: 0.8rem; }
+.public-event-resources small { color: var(--muted); font-size: 0.66rem; }
+.public-event-prose { margin-top: 22px; border-top: 1px solid #e6eef3; padding-top: 20px; }
+.public-event-prose h2 { margin-bottom: 10px; color: var(--ink); font-size: 0.92rem; }
+.public-event-prose p { margin-bottom: 10px; color: var(--muted); font-size: 0.76rem; line-height: 1.65; }
+
+/* Content editor */
+.event-content-section { display: grid; gap: 11px; border-left: 4px solid var(--imsda-purple); }
+.event-content-section.is-draft { border-left-color: #d8e6ee; }
+.event-content-link-row { display: grid; grid-template-columns: 1fr 1fr 2fr auto; gap: 8px; align-items: end; }
+@media (max-width: 720px) { .event-content-link-row { grid-template-columns: 1fr; } }

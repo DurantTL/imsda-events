@@ -9,6 +9,8 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({
   getPrisma: () => ({
     event: { findFirst: prismaMocks.eventFindFirst },
+    // Read when the landing page loads its published content sections.
+    eventContentSection: { findMany: vi.fn().mockResolvedValue([]) },
     registrationAttendee: { count: prismaMocks.attendeeCount },
   }),
 }));
