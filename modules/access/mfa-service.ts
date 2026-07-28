@@ -506,6 +506,23 @@ export async function completeMfaChallenge(
     data: { consumedAt: now },
   });
 
+  // Re-read immediately before minting. Consuming outstanding challenges when
+  // an account is disabled closes the common case, but not the race where this
+  // challenge was already read and verified when the disable landed. Without
+  // this the resulting session is merely inert — refused while `disabledAt`
+  // stands — and becomes usable the moment the account is re-enabled, with no
+  // password or code entered again.
+  const credential = await getPrisma().authCredential.findUnique({
+    where: { userId: challenge.userId },
+    select: { disabledAt: true },
+  });
+  if (!credential || credential.disabledAt) {
+    throw new MfaError(
+      "MFA_CHALLENGE_INVALID",
+      "This sign-in is no longer valid. Start again.",
+    );
+  }
+
   const session = await createDatabaseSession(challenge.userId, challenge.userAgent ?? null);
 
   if (accepted.usedRecoveryCode) {

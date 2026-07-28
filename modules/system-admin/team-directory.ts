@@ -107,8 +107,11 @@ export async function getTeamDirectory(): Promise<TeamDirectory> {
     totalCount: members.length,
     activeCount: members.filter((member) => member.accountStatus === "ACTIVE").length,
     systemAdminCount: members.filter((member) => member.globalRole === "SYSTEM_ADMIN").length,
+    // A disabled account reaches nothing because it cannot sign in at all,
+    // which is a resolved state rather than the loose end this counts.
     withoutAccessCount: members.filter((member) => (
-      member.globalRole === null
+      !member.signInDisabled
+      && member.globalRole === null
       && !member.memberships.some((membership) => membership.status === "ACTIVE")
     )).length,
   };
