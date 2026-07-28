@@ -53,6 +53,11 @@ export const balanceReminderBatchInputSchema = z.object({
   batchId: z.uuid(),
 }).strict();
 
+export const shirtSizeRequestBatchInputSchema = z.object({
+  previewFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  batchId: z.uuid(),
+}).strict();
+
 export const confirmationResendInputSchema = z.object({
   clientRequestId: z.uuid(),
   correctedRecipientEmail: z.union([
@@ -74,6 +79,9 @@ export type MessageTemplateInput = z.infer<typeof messageTemplateInputSchema>;
 export type MessageTestInput = z.infer<typeof messageTestInputSchema>;
 export type BalanceReminderBatchInput = z.infer<
   typeof balanceReminderBatchInputSchema
+>;
+export type ShirtSizeRequestBatchInput = z.infer<
+  typeof shirtSizeRequestBatchInputSchema
 >;
 export type ConfirmationResendInput = z.infer<
   typeof confirmationResendInputSchema

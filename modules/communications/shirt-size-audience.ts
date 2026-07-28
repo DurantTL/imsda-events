@@ -14,7 +14,18 @@
  */
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import type { MessagingSettingsRecord } from "@/modules/communications/types";
+import type {
+  MessagingSettingsRecord,
+  ShirtSizeRecipient,
+  ShirtSizeRequestPreview,
+  ShirtSizeSkipReasonCode,
+} from "@/modules/communications/types";
+
+export type {
+  ShirtSizeRecipient,
+  ShirtSizeRequestPreview,
+  ShirtSizeSkipReasonCode,
+};
 
 export type ShirtSizeCandidateAttendee = {
   attendeeId: string;
@@ -29,35 +40,6 @@ export type ShirtSizeCandidate = {
   recipientName: string;
   recipientEmail: string;
   attendees: ShirtSizeCandidateAttendee[];
-};
-
-export type ShirtSizeRecipient = {
-  registrationId: string;
-  confirmationCode: string;
-  recipientName: string;
-  recipientEmail: string;
-  missingAttendeeNames: string[];
-  missingCount: number;
-  attendeeCount: number;
-};
-
-export type ShirtSizeSkipReasonCode =
-  | "INACTIVE_REGISTRATION"
-  | "ALL_SIZES_RECORDED"
-  | "NO_ATTENDEES"
-  | "INVALID_CONTACT_EMAIL";
-
-export type ShirtSizeRequestPreview = {
-  fingerprint: string;
-  generatedAt: string;
-  includedCount: number;
-  skippedCount: number;
-  missingAttendeeCount: number;
-  deliveryMode: MessagingSettingsRecord["deliveryMode"];
-  templateEnabled: boolean;
-  templateVersionNumber: number | null;
-  recipients: ShirtSizeRecipient[];
-  skipReasons: Array<{ code: ShirtSizeSkipReasonCode; label: string; count: number }>;
 };
 
 export type ShirtSizePreviewContext = {

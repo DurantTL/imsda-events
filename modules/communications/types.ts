@@ -110,6 +110,7 @@ export type MessagingWorkspaceData = {
   messages: MessageOutboxRecord[];
   counts: Record<MessageOutboxStatusValue, number>;
   reminderPreview: BalanceReminderPreview;
+  shirtSizePreview: ShirtSizeRequestPreview;
 };
 
 export type BalanceReminderSkipReasonCode =
@@ -143,6 +144,39 @@ export type BalanceReminderPreview = {
   }>;
 };
 
+export type ShirtSizeSkipReasonCode =
+  | "INACTIVE_REGISTRATION"
+  | "ALL_SIZES_RECORDED"
+  | "NO_ATTENDEES"
+  | "INVALID_CONTACT_EMAIL";
+
+export type ShirtSizeRecipient = {
+  registrationId: string;
+  confirmationCode: string;
+  recipientName: string;
+  recipientEmail: string;
+  missingAttendeeNames: string[];
+  missingCount: number;
+  attendeeCount: number;
+};
+
+export type ShirtSizeRequestPreview = {
+  fingerprint: string;
+  generatedAt: string;
+  includedCount: number;
+  skippedCount: number;
+  missingAttendeeCount: number;
+  deliveryMode: MessagingSettingsRecord["deliveryMode"];
+  templateEnabled: boolean;
+  templateVersionNumber: number | null;
+  recipients: ShirtSizeRecipient[];
+  skipReasons: Array<{
+    code: ShirtSizeSkipReasonCode;
+    label: string;
+    count: number;
+  }>;
+};
+
 export type AnnouncementRecord = {
   id: string;
   title: string;
@@ -156,6 +190,7 @@ export type AnnouncementRecord = {
 export type CommunicationsView =
   | "announcements"
   | "reminders"
+  | "shirt-sizes"
   | "templates"
   | "deliveries"
   | "settings";

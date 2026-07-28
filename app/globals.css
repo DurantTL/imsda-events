@@ -4586,6 +4586,9 @@ select:focus-visible {
 .reminder-recipient-table th { color: var(--muted); font-size: 0.51rem; text-transform: uppercase; }
 .reminder-recipient-table td { overflow-wrap: anywhere; color: var(--ink); }
 .reminder-recipient-table td:last-child { color: #805807; font-weight: 800; white-space: nowrap; }
+/* Names of attendees still missing a size sit under the count in the last
+   cell, so they have to opt out of that cell's nowrap emphasis and wrap. */
+.reminder-recipient-table td small { display: block; margin-top: 3px; color: var(--muted); font-size: 0.52rem; font-weight: 600; white-space: normal; }
 .reminder-confirm-panel { position: sticky; top: 15px; display: grid; gap: 13px; border-top: 4px solid var(--imsda-purple); }
 .reminder-confirm-panel h2 { margin: 4px 0 7px; font-size: 1rem; }
 .reminder-confirm-panel > div:first-child > p:not(.eyebrow) { margin: 0; color: var(--muted); font-size: 0.61rem; line-height: 1.6; }

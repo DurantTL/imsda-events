@@ -25,6 +25,7 @@ import type {
   MessagingSettingsInput,
   MessageTemplateInput,
   MessageTestInput,
+  ShirtSizeRequestBatchInput,
 } from "@/modules/communications/schemas";
 import {
   messageRetryIdempotencyKey,
@@ -48,12 +49,20 @@ import {
   type BalanceReminderCandidate,
   type BalanceReminderPreviewContext,
 } from "@/modules/communications/reminder-audience";
+import {
+  computeShirtSizeRequestPreview,
+  shirtSizeAttendeeSummary,
+  type ShirtSizeCandidate,
+  type ShirtSizePreviewContext,
+} from "@/modules/communications/shirt-size-audience";
+import { shirtSizeFromResponses } from "@/modules/registrations/shirt-sizes";
 import type {
   BalanceReminderPreview,
   MessageOutboxRecord,
   MessageOutboxStatusValue,
   MessageTemplateRecord,
   MessagingWorkspaceData,
+  ShirtSizeRequestPreview,
 } from "@/modules/communications/types";
 import { REGISTRATION_MANAGE_LINK_SENTINEL } from "@/modules/communications/manage-link";
 import type { FormCalculation, RegistrationFormDefinition } from "@/modules/forms/definition";
@@ -582,10 +591,165 @@ export async function getBalanceReminderPreview(
   return (await loadBalanceReminderState(eventId, getPrisma())).preview;
 }
 
+/**
+ * The shirt-size counterpart of `loadBalanceReminderState`.
+ *
+ * The shape is deliberately the same, because the two batches have to make the
+ * same promise: the audience staff reviewed is the audience that gets written,
+ * and anything that would change rendered content has to change the
+ * fingerprint. The one structural difference is that a shirt size lives on the
+ * attendee rather than the registration, so attendees are loaded and reduced
+ * here instead of money.
+ */
+async function loadShirtSizeRequestState(
+  eventId: string,
+  client: MessagingDatabaseClient,
+  now = new Date(),
+) {
+  const [event, settingsRow, template, registrations] = await Promise.all([
+    client.event.findUnique({
+      where: { id: eventId },
+      select: {
+        id: true,
+        name: true,
+        startsAt: true,
+        endsAt: true,
+        timezone: true,
+        location: true,
+        supportContact: true,
+      },
+    }),
+    client.eventMessageSettings.findUnique({ where: { eventId } }),
+    client.eventMessageTemplate.findUnique({
+      where: {
+        eventId_key: {
+          eventId,
+          key: "SHIRT_SIZE_REQUEST",
+        },
+      },
+      include: {
+        versions: {
+          where: { status: "PUBLISHED" },
+          orderBy: { versionNumber: "desc" },
+          take: 1,
+        },
+      },
+    }),
+    client.registration.findMany({
+      where: { eventId },
+      orderBy: { id: "asc" },
+      select: {
+        id: true,
+        confirmationCode: true,
+        status: true,
+        contactSnapshot: true,
+        accountHolderPerson: {
+          select: {
+            firstName: true,
+            lastName: true,
+            normalizedEmail: true,
+          },
+        },
+        attendees: {
+          orderBy: { position: "asc" },
+          select: {
+            id: true,
+            formResponses: true,
+            person: { select: { firstName: true, lastName: true } },
+          },
+        },
+      },
+    }),
+  ]);
+
+  if (!event) {
+    throw new MessagingError(
+      "MESSAGE_NOT_FOUND",
+      "That event is no longer available.",
+    );
+  }
+
+  const settings = settingsRow ?? fallbackSettings;
+  const version = template?.versions[0] ?? null;
+  const candidates: ShirtSizeCandidate[] = registrations.map((registration) => {
+    const contact = recordFromJson(registration.contactSnapshot);
+    const contactValue = (
+      key: "firstName" | "lastName" | "email",
+      fallback: string,
+    ) => typeof contact[key] === "string" ? contact[key].trim() : fallback;
+    const firstName = contactValue(
+      "firstName",
+      registration.accountHolderPerson.firstName,
+    );
+    const lastName = contactValue(
+      "lastName",
+      registration.accountHolderPerson.lastName,
+    );
+    return {
+      registrationId: registration.id,
+      confirmationCode: registration.confirmationCode,
+      status: registration.status,
+      recipientName: `${firstName} ${lastName}`.trim(),
+      recipientEmail: contactValue(
+        "email",
+        registration.accountHolderPerson.normalizedEmail ?? "",
+      ),
+      attendees: registration.attendees.map((attendee) => ({
+        attendeeId: attendee.id,
+        fullName: `${attendee.person.firstName} ${attendee.person.lastName}`.trim(),
+        // The same reader the public confirmation route and the readiness
+        // check use, so "still missing" means the same thing everywhere.
+        shirtSize: shirtSizeFromResponses(attendee.formResponses),
+      })),
+    };
+  });
+  const context: ShirtSizePreviewContext = {
+    eventId,
+    deliveryMode: settings.deliveryMode,
+    senderName: settings.senderName,
+    senderEmail: settings.senderEmail,
+    replyToEmail: settings.replyToEmail
+      || settings.senderEmail
+      || event.supportContact
+      || null,
+    templateEnabled: template?.isEnabled ?? true,
+    templateVersionId: version?.id ?? null,
+    templateVersionNumber: version?.versionNumber ?? null,
+    eventSnapshot: {
+      name: event.name,
+      startsAt: event.startsAt.toISOString(),
+      endsAt: event.endsAt.toISOString(),
+      timezone: event.timezone,
+      location: event.location,
+    },
+  };
+  return {
+    event,
+    settings,
+    template,
+    version,
+    preview: computeShirtSizeRequestPreview(candidates, context, now),
+  };
+}
+
+export async function getShirtSizeRequestPreview(
+  eventId: string,
+): Promise<ShirtSizeRequestPreview> {
+  await ensureEventMessagingDefaults(eventId);
+  return (await loadShirtSizeRequestState(eventId, getPrisma())).preview;
+}
+
 export async function getMessagingWorkspace(eventId: string): Promise<MessagingWorkspaceData> {
   await ensureEventMessagingDefaults(eventId);
   const prisma = getPrisma();
-  const [settings, templates, messages, groupedCounts, reminderState] = await Promise.all([
+  const [
+    settings,
+    templates,
+    messages,
+    groupedCounts,
+    reminderState,
+    shirtSizeState,
+  ] = await Promise.all([
     prisma.eventMessageSettings.findUniqueOrThrow({ where: { eventId } }),
     prisma.eventMessageTemplate.findMany({
       where: { eventId },
@@ -612,6 +776,7 @@ export async function getMessagingWorkspace(eventId: string): Promise<MessagingW
       _count: { _all: true },
     }),
     loadBalanceReminderState(eventId, prisma),
+    loadShirtSizeRequestState(eventId, prisma),
   ]);
 
   const counts = Object.fromEntries(outboxStatuses.map((status) => [status, 0])) as Record<MessageOutboxStatusValue, number>;
@@ -629,6 +794,7 @@ export async function getMessagingWorkspace(eventId: string): Promise<MessagingW
       .map((message) => serializeMessage(message, settings.deliveryMode)),
     counts,
     reminderPreview: reminderState.preview,
+    shirtSizePreview: shirtSizeState.preview,
   };
 }
 
@@ -1237,6 +1403,286 @@ export async function enqueueBalanceReminderBatch(
 
   if (!transactionResult) {
     throw new Error("The reminder batch transaction did not complete.");
+  }
+
+  const capturedIds = transactionResult.deliveryMode === "LOCAL_CAPTURE"
+    ? await captureMessageIdsLocally(transactionResult.messageIds)
+    : [];
+  const { existingCapturedCount, ...operation } = transactionResult;
+  return {
+    ...operation,
+    queuedCount: Math.max(transactionResult.queuedCount - capturedIds.length, 0),
+    capturedCount: existingCapturedCount + capturedIds.length,
+  };
+}
+
+export type ShirtSizeRequestBatchOperation = {
+  batchId: string;
+  messageIds: string[];
+  includedCount: number;
+  missingAttendeeCount: number;
+  deliveryMode: "DISABLED" | "LOCAL_CAPTURE" | "EXTERNAL_EMAIL";
+  queuedCount: number;
+  capturedCount: number;
+  suppressedCount: number;
+  replayed: boolean;
+};
+
+/**
+ * Enqueues the reviewed shirt-size request batch.
+ *
+ * Structurally identical to `enqueueBalanceReminderBatch`, and deliberately so
+ * rather than sharing a generic helper: the two differ in the audience they
+ * load, the tokens they render, and the numbers their audit row carries, and
+ * folding that into one parameterised function would hide which guarantee
+ * belongs to which batch. What must not differ is the set of guarantees —
+ * fingerprint equality before writing, one outbox row per registration keyed on
+ * a per-batch idempotency key, replay returning the original batch rather than
+ * a second one, and the enqueue stopping short of sending.
+ */
+export async function enqueueShirtSizeRequestBatch(
+  eventId: string,
+  input: ShirtSizeRequestBatchInput,
+  actorUserId: string,
+): Promise<ShirtSizeRequestBatchOperation> {
+  await ensureEventMessagingDefaults(eventId);
+  const prisma = getPrisma();
+  let transactionResult:
+    | (Omit<ShirtSizeRequestBatchOperation, "capturedCount"> & {
+      existingCapturedCount: number;
+    })
+    | undefined;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      transactionResult = await prisma.$transaction(async (tx) => {
+        const operationEntityId = `shirt-size-request:${eventId}:${input.batchId}`;
+        const existingAudit = await tx.auditLog.findFirst({
+          where: {
+            eventId,
+            action: "SHIRT_SIZE_REQUEST_BATCH_ENQUEUED",
+            entityId: operationEntityId,
+          },
+          select: { metadata: true },
+        });
+        if (existingAudit) {
+          const metadata = recordFromJson(existingAudit.metadata);
+          const storedFingerprint = typeof metadata.previewFingerprint === "string"
+            ? metadata.previewFingerprint
+            : "";
+          if (storedFingerprint !== input.previewFingerprint) {
+            throw new MessagingError(
+              "IDEMPOTENCY_KEY_REUSED",
+              "This batch ID was already used with a different preview. Refresh the page and create a new batch.",
+            );
+          }
+          const existingMessages = await tx.messageOutbox.findMany({
+            where: {
+              eventId,
+              templateKey: "SHIRT_SIZE_REQUEST",
+              correlationId: input.batchId,
+            },
+            orderBy: { createdAt: "asc" },
+            select: { id: true, status: true },
+          });
+          const storedMode = metadata.deliveryMode;
+          const deliveryMode = storedMode === "DISABLED"
+            || storedMode === "LOCAL_CAPTURE"
+            || storedMode === "EXTERNAL_EMAIL"
+            ? storedMode
+            : "LOCAL_CAPTURE";
+          const initialQueuedCount = typeof metadata.initialQueuedCount === "number"
+            ? metadata.initialQueuedCount
+            : existingMessages.filter((message) => message.status !== "SUPPRESSED").length;
+          const currentCapturedCount = existingMessages.filter(
+            (message) => message.status === "CAPTURED",
+          ).length;
+          return {
+            batchId: input.batchId,
+            messageIds: existingMessages.map((message) => message.id),
+            includedCount: typeof metadata.includedCount === "number"
+              ? metadata.includedCount
+              : existingMessages.length,
+            missingAttendeeCount: typeof metadata.missingAttendeeCount === "number"
+              ? metadata.missingAttendeeCount
+              : 0,
+            deliveryMode,
+            queuedCount: deliveryMode === "EXTERNAL_EMAIL"
+              ? initialQueuedCount
+              : existingMessages.filter(
+                (message) => message.status === "PENDING"
+                  || message.status === "PROCESSING",
+              ).length,
+            suppressedCount: typeof metadata.initialSuppressedCount === "number"
+              ? metadata.initialSuppressedCount
+              : existingMessages.filter((message) => message.status === "SUPPRESSED").length,
+            replayed: true,
+            existingCapturedCount: currentCapturedCount,
+          };
+        }
+
+        const state = await loadShirtSizeRequestState(eventId, tx);
+        if (state.preview.fingerprint !== input.previewFingerprint) {
+          throw new MessagingError(
+            "PREVIEW_CHANGED",
+            "The shirt-size audience changed. Review the updated preview before creating the batch.",
+            { shirtSizePreview: state.preview },
+          );
+        }
+        if (state.preview.includedCount === 0) {
+          throw new MessagingError(
+            "EMPTY_AUDIENCE",
+            "No active registration is currently missing a shirt size with a valid contact email.",
+            { shirtSizePreview: state.preview },
+          );
+        }
+
+        const source = {
+          isEnabled: state.template?.isEnabled ?? true,
+          templateVersionId: state.version?.id ?? null,
+          subject: state.version?.subjectTemplate
+            ?? DEFAULT_MESSAGE_TEMPLATES.SHIRT_SIZE_REQUEST.subject,
+          body: state.version?.bodyTemplate
+            ?? DEFAULT_MESSAGE_TEMPLATES.SHIRT_SIZE_REQUEST.body,
+        };
+        const suppressed = state.settings.deliveryMode === "DISABLED"
+          || !source.isEnabled;
+        const correlationId = input.batchId;
+        const messageIds: string[] = [];
+        let queuedCount = 0;
+        let suppressedCount = 0;
+
+        for (const recipient of state.preview.recipients) {
+          const rendered = renderMessageTemplate(
+            { subject: source.subject, body: source.body },
+            {
+              recipient_name: recipient.recipientName,
+              registrant_name: recipient.recipientName,
+              event_name: state.event.name,
+              event_dates: formatMessageDateRange(
+                state.event.startsAt,
+                state.event.endsAt,
+                { timeZone: state.event.timezone },
+              ),
+              event_location: state.event.location || "Location to be announced",
+              confirmation_code: recipient.confirmationCode,
+              // Only the attendees still missing a size, so a registrant who
+              // answered for two of three is not asked to redo the two.
+              attendee_summary: shirtSizeAttendeeSummary(recipient),
+              // Swapped for a freshly issued private link at delivery. For a
+              // migrated registrant this message is also their first route
+              // into self-service, so the ask and the access are one send.
+              portal_url: REGISTRATION_MANAGE_LINK_SENTINEL,
+              reply_to_email: state.settings.replyToEmail
+                || state.settings.senderEmail
+                || state.event.supportContact
+                || "the IMSDA event office",
+            },
+          );
+          if (!rendered.isComplete) {
+            throw new MessagingError(
+              "INVALID_TEMPLATE",
+              `The shirt size request template has unresolved tokens: ${rendered.unresolvedTokens.join(", ")}.`,
+            );
+          }
+          const message = await tx.messageOutbox.upsert({
+            where: {
+              idempotencyKey: `shirt-size-request:${eventId}:${input.batchId}:${recipient.registrationId}`,
+            },
+            update: {},
+            create: {
+              eventId,
+              registrationId: recipient.registrationId,
+              templateVersionId: source.templateVersionId,
+              templateKey: "SHIRT_SIZE_REQUEST",
+              recipientKind: "REGISTRANT",
+              recipientEmail: recipient.recipientEmail,
+              recipientName: recipient.recipientName,
+              senderNameSnapshot: state.settings.senderName,
+              senderEmailSnapshot: state.settings.senderEmail,
+              replyToEmailSnapshot: state.settings.replyToEmail,
+              subjectSnapshot: rendered.subject,
+              bodyTextSnapshot: rendered.body,
+              metadata: {
+                trigger: "STAFF_SHIRT_SIZE_REQUEST_BATCH",
+                batchId: input.batchId,
+                previewFingerprint: input.previewFingerprint,
+                confirmationCode: recipient.confirmationCode,
+                missingCount: recipient.missingCount,
+                attendeeCount: recipient.attendeeCount,
+                deliveryMode: state.settings.deliveryMode,
+                realDelivery: state.settings.deliveryMode === "EXTERNAL_EMAIL",
+              },
+              idempotencyKey: `shirt-size-request:${eventId}:${input.batchId}:${recipient.registrationId}`,
+              correlationId,
+              status: suppressed ? "SUPPRESSED" : "PENDING",
+              lastError: suppressed
+                ? state.settings.deliveryMode === "DISABLED"
+                  ? "Delivery is disabled for this event."
+                  : "The shirt size request template is disabled."
+                : null,
+            },
+            select: { id: true, status: true },
+          });
+          messageIds.push(message.id);
+          if (message.status === "PENDING") queuedCount += 1;
+          if (message.status === "SUPPRESSED") suppressedCount += 1;
+        }
+
+        const audit = await tx.auditLog.createMany({
+          data: [{
+            eventId,
+            actorUserId,
+            action: "SHIRT_SIZE_REQUEST_BATCH_ENQUEUED",
+            entityType: "MessageBatch",
+            entityId: operationEntityId,
+            correlationId,
+            summary: suppressed
+              ? `Recorded a suppressed shirt-size request batch for ${state.preview.includedCount} registration${state.preview.includedCount === 1 ? "" : "s"}; no email was sent.`
+              : state.settings.deliveryMode === "LOCAL_CAPTURE"
+                ? `Created a local shirt-size request batch for ${state.preview.includedCount} registration${state.preview.includedCount === 1 ? "" : "s"}; no email was sent.`
+                : `Queued a shirt-size request batch for ${state.preview.includedCount} registration${state.preview.includedCount === 1 ? "" : "s"} for later explicit email processing.`,
+            metadata: {
+              batchId: input.batchId,
+              previewFingerprint: input.previewFingerprint,
+              includedCount: state.preview.includedCount,
+              skippedCount: state.preview.skippedCount,
+              missingAttendeeCount: state.preview.missingAttendeeCount,
+              deliveryMode: state.settings.deliveryMode,
+              templateEnabled: source.isEnabled,
+              templateVersionId: source.templateVersionId,
+              initialQueuedCount: queuedCount,
+              initialSuppressedCount: suppressedCount,
+              realDelivery: false,
+            },
+          }],
+          skipDuplicates: true,
+        });
+
+        return {
+          batchId: input.batchId,
+          messageIds,
+          includedCount: state.preview.includedCount,
+          missingAttendeeCount: state.preview.missingAttendeeCount,
+          deliveryMode: state.settings.deliveryMode,
+          queuedCount,
+          suppressedCount,
+          replayed: audit.count === 0,
+          existingCapturedCount: 0,
+        };
+      }, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+      break;
+    } catch (error) {
+      const retryable = error instanceof Prisma.PrismaClientKnownRequestError
+        && error.code === "P2034";
+      if (!retryable || attempt === 2) throw error;
+    }
+  }
+
+  if (!transactionResult) {
+    throw new Error("The shirt-size request batch transaction did not complete.");
   }
 
   const capturedIds = transactionResult.deliveryMode === "LOCAL_CAPTURE"
