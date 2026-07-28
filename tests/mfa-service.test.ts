@@ -112,6 +112,9 @@ function prismaFixture(fixture: Fixture = {}) {
       updateMany: vi.fn(async () => ({ count: fixture.recoveryCodeMatches ?? 0 })),
       count: vi.fn(async () => 6),
     },
+    // Re-read immediately before a session is minted, so a disable landing
+    // mid-sign-in cannot produce a session that works once re-enabled.
+    authCredential: { findUnique: vi.fn().mockResolvedValue({ disabledAt: null }) },
     mfaChallenge: {
       create: vi.fn(async (query: Record<string, unknown>) => {
         state.createdChallenges.push(query);
@@ -219,6 +222,28 @@ describe("the sign-in challenge", () => {
 
     expect(result.session.token).toBe("session-token");
     expect(dependencies.createDatabaseSession).toHaveBeenCalledOnce();
+  });
+
+  it("issues no session when the account was disabled mid-sign-in", async () => {
+    const { prisma } = prismaFixture();
+    // The code is correct and the challenge was already read and verified. An
+    // administrator disabled the account in between. Without the re-read the
+    // session is merely inert — refused while disabled, and usable the moment
+    // somebody re-enables the account, with no password entered again.
+    prisma.authCredential.findUnique.mockResolvedValue({ disabledAt: new Date() });
+
+    await expect(completeMfaChallenge("token", totpCode(SECRET, now), { now }))
+      .rejects.toMatchObject({ code: "MFA_CHALLENGE_INVALID" });
+    expect(dependencies.createDatabaseSession).not.toHaveBeenCalled();
+  });
+
+  it("issues no session when the account has no credential at all", async () => {
+    const { prisma } = prismaFixture();
+    prisma.authCredential.findUnique.mockResolvedValue(null);
+
+    await expect(completeMfaChallenge("token", totpCode(SECRET, now), { now }))
+      .rejects.toMatchObject({ code: "MFA_CHALLENGE_INVALID" });
+    expect(dependencies.createDatabaseSession).not.toHaveBeenCalled();
   });
 
   it("issues no session for a wrong code", async () => {

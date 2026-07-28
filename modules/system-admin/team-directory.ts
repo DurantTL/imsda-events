@@ -27,6 +27,8 @@ export type TeamDirectoryMember = {
   displayName: string;
   globalRole: string | null;
   accountStatus: string;
+  /** Whether sign-in is switched off platform-wide. */
+  signInDisabled: boolean;
   activatedAt: string | null;
   createdAt: string;
   lastSignedInAt: string | null;
@@ -59,6 +61,7 @@ export async function getTeamDirectory(): Promise<TeamDirectory> {
       accountStatus: true,
       activatedAt: true,
       createdAt: true,
+      credential: { select: { disabledAt: true } },
       mfaEnrollment: { select: { status: true } },
       sessions: {
         orderBy: { createdAt: "desc" },
@@ -82,6 +85,7 @@ export async function getTeamDirectory(): Promise<TeamDirectory> {
     displayName: user.displayName,
     globalRole: user.globalRole,
     accountStatus: user.accountStatus,
+    signInDisabled: Boolean(user.credential?.disabledAt),
     activatedAt: user.activatedAt?.toISOString() ?? null,
     createdAt: user.createdAt.toISOString(),
     lastSignedInAt: user.sessions[0]?.createdAt.toISOString() ?? null,
@@ -103,8 +107,11 @@ export async function getTeamDirectory(): Promise<TeamDirectory> {
     totalCount: members.length,
     activeCount: members.filter((member) => member.accountStatus === "ACTIVE").length,
     systemAdminCount: members.filter((member) => member.globalRole === "SYSTEM_ADMIN").length,
+    // A disabled account reaches nothing because it cannot sign in at all,
+    // which is a resolved state rather than the loose end this counts.
     withoutAccessCount: members.filter((member) => (
-      member.globalRole === null
+      !member.signInDisabled
+      && member.globalRole === null
       && !member.memberships.some((membership) => membership.status === "ACTIVE")
     )).length,
   };

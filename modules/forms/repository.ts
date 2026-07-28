@@ -14,7 +14,7 @@ import { preparePublicRegistration } from "@/modules/forms/public-domain";
 
 export class FormOperationError extends Error {
   constructor(
-    public readonly code: "FORM_NOT_FOUND" | "TEMPLATE_NOT_FOUND" | "EDIT_CONFLICT" | "NO_DRAFT" | "TEST_REQUIRED" | "VERSION_NOT_FOUND",
+    public readonly code: "FORM_NOT_FOUND" | "TEMPLATE_NOT_FOUND" | "EDIT_CONFLICT" | "NO_DRAFT" | "TEST_REQUIRED" | "VERSION_NOT_FOUND" | "NOT_PUBLISHED",
     message: string,
   ) {
     super(message);
@@ -225,6 +225,44 @@ export async function publishRegistrationForm(eventId: string, formId: string, a
     await tx.auditLog.create({ data: {
       eventId, actorUserId, action: "REGISTRATION_FORM_PUBLISHED", entityType: "RegistrationForm", entityId: formId,
       correlationId: randomUUID(), summary: `Published ${definition.title} version ${draft.versionNumber}.`, metadata: { versionId: draft.id, versionNumber: draft.versionNumber, productionWrite: false },
+    } });
+  });
+  return (await getRegistrationForm(eventId, formId))!;
+}
+
+/**
+ * Takes a published form off the public page.
+ *
+ * Publishing had no reverse, so an event that published two forms was stuck
+ * showing both. Archiving the published version is the same move publishing
+ * already makes when a newer version supersedes an older one — this just does
+ * it without a replacement.
+ *
+ * Registrations already taken are untouched. They reference an immutable form
+ * version, and withdrawing the form staff no longer want must not rewrite what
+ * somebody already submitted.
+ */
+export async function unpublishRegistrationForm(eventId: string, formId: string, actorUserId: string) {
+  await getPrisma().$transaction(async (tx) => {
+    const form = await tx.registrationForm.findFirst({
+      where: { id: formId, eventId },
+      include: { versions: { where: { status: RegistrationFormStatus.PUBLISHED }, orderBy: { versionNumber: "desc" } } },
+    });
+    if (!form) throw new FormOperationError("FORM_NOT_FOUND", "That registration form was not found.");
+    const published = form.versions[0];
+    if (!published) {
+      throw new FormOperationError("NOT_PUBLISHED", "This form is not published, so there is nothing to withdraw.");
+    }
+    await tx.registrationFormVersion.updateMany({
+      where: { formId, status: RegistrationFormStatus.PUBLISHED },
+      data: { status: RegistrationFormStatus.ARCHIVED },
+    });
+    await tx.registrationForm.update({ where: { id: formId }, data: { status: RegistrationFormStatus.ARCHIVED } });
+    await tx.auditLog.create({ data: {
+      eventId, actorUserId, action: "REGISTRATION_FORM_UNPUBLISHED", entityType: "RegistrationForm", entityId: formId,
+      correlationId: randomUUID(),
+      summary: `Withdrew ${form.name} version ${published.versionNumber} from the public event page.`,
+      metadata: { versionId: published.id, versionNumber: published.versionNumber, productionWrite: false },
     } });
   });
   return (await getRegistrationForm(eventId, formId))!;
