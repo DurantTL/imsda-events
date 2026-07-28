@@ -144,6 +144,14 @@ enum AnnouncementPriority {
   URGENT
 }
 
+/// What a section of an event page holds. Two kinds cover the pages IMSDA
+/// publishes today: prose (lodging, notes, who to contact) and a row of
+/// resources (a flyer, a schedule, a link back to a ministry page).
+enum EventContentSectionKind {
+  RICH_TEXT
+  RESOURCE_LINKS
+}
+
 enum ImportRunStatus {
   PENDING
   RUNNING
@@ -426,6 +434,49 @@ model RateLimitBucket {
   @@index([policy, windowEndsAt])
 }
 
+/// A block of an event's public page: speaker bios, seminar descriptions,
+/// lodging, the schedule, the teen programme.
+///
+/// Deliberately generic rather than a model per topic. Every one of those is a
+/// heading and a body, and a table called Speaker would have to grow a second
+/// one called Seminar the first time staff wanted something the platform had
+/// not anticipated. Publishing is per section, so a half-written page can sit
+/// beside a live one without a draft of the whole page.
+model EventContentSection {
+  id          String                  @id @default(cuid())
+  eventId     String
+  kind        EventContentSectionKind @default(RICH_TEXT)
+  title       String
+  /// Plain text with blank-line paragraphs. Not HTML: this is rendered on a
+  /// public page, and accepting markup from a form is how a content field
+  /// becomes a cross-site scripting hole.
+  body        String                  @default("")
+  position    Int
+  isPublished Boolean                 @default(false)
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+
+  event Event              @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  links EventContentLink[]
+
+  @@index([eventId, position])
+  @@index([eventId, isPublished])
+}
+
+/// One resource tile inside a RESOURCE_LINKS section.
+model EventContentLink {
+  id          String @id @default(cuid())
+  sectionId   String
+  label       String
+  description String @default("")
+  url         String
+  position    Int
+
+  section EventContentSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@index([sectionId, position])
+}
+
 model Event {
   id                   String   @id @default(cuid())
   slug                 String   @unique
@@ -446,6 +497,7 @@ model Event {
   updatedAt            DateTime @updatedAt
 
   memberships                         EventMembership[]
+  contentSections                     EventContentSection[]
   registrations                       Registration[]
   attendees                           RegistrationAttendee[]
   payments                            Payment[]

@@ -12,6 +12,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
+import { contentParagraphs } from "@/modules/events/content-schemas";
 import { getPublicEventLanding } from "@/modules/events/public-repository";
 
 export const dynamic = "force-dynamic";
@@ -59,6 +60,14 @@ export default async function PublicEventPage({
   if (!landing) notFound();
 
   const hasForms = landing.forms.length > 0;
+  // Resources sit above the fold, the way the tiles do on the current page;
+  // prose reads below the registration options.
+  const resourceSections = landing.contentSections.filter(
+    (section) => section.kind === "RESOURCE_LINKS" && section.links.length > 0,
+  );
+  const proseSections = landing.contentSections.filter(
+    (section) => section.kind === "RICH_TEXT" && section.body.trim().length > 0,
+  );
   const canChooseForm = landing.lifecycle.ctaEnabled && hasForms;
 
   return (
@@ -132,6 +141,24 @@ export default async function PublicEventPage({
         </section>
       )}
 
+      {resourceSections.map((section) => (
+        <section className="public-event-resources" aria-label={section.title} key={section.id}>
+          <h2>{section.title}</h2>
+          <ul>
+            {section.links.map((link) => (
+              <li key={link.url}>
+                {/* Staff-entered destinations are off-site, so the usual
+                    protections for an untrusted target apply. */}
+                <a href={link.url} target="_blank" rel="noopener noreferrer">
+                  <strong>{link.label}</strong>
+                  {link.description && <small>{link.description}</small>}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+
       <div className="public-event-layout">
         <section className="public-event-main" aria-labelledby="registration-options-title">
           <div className="public-event-registration-state">
@@ -179,6 +206,17 @@ export default async function PublicEventPage({
               <p>Event details are available now. Please check back or contact the event team for registration help.</p>
             </div>
           )}
+
+          {proseSections.map((section) => (
+            <section className="public-event-prose" key={section.id}>
+              <h2>{section.title}</h2>
+              {/* Paragraphs, not markup. The body is plain text and React
+                  escapes it, so a content field cannot become an injection. */}
+              {contentParagraphs(section.body).map((paragraph, index) => (
+                <p key={index}>{paragraph}</p>
+              ))}
+            </section>
+          ))}
         </section>
 
         <aside className="public-event-sidebar" aria-label="Event registration help">

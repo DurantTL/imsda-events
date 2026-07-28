@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import Link from "next/link";
-import { Activity, ChartNoAxesCombined, FileUp, HeartPulse, ListChecks, PanelsTopLeft, Settings2, TicketPercent, UserCog } from "lucide-react";
+import { Activity, ChartNoAxesCombined, FileText, FileUp, HeartPulse, ListChecks, PanelsTopLeft, Settings2, TicketPercent, UserCog } from "lucide-react";
 import { MfaManager, type MfaStatus } from "@/components/mfa-manager";
 import { SessionManager } from "@/components/session-manager";
 import { getMfaStatus } from "@/modules/access/mfa-service";
@@ -30,6 +30,7 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
         {canManageProgramAssignments(permissions) && <Link className="panel foundation-card" href={`/more/program-assignments?event=${event.id}`}><span><ListChecks aria-hidden="true" size={21} /></span><h3>Seminar assignments</h3><p>Turn attendee rankings and room limits into reviewed, printable session rosters.</p><small>Preview assignments</small></Link>}
         {permissions.includes("MANAGE_FINANCE") && <Link className="panel foundation-card" href={`/more/promo-codes?event=${event.id}`}><span><TicketPercent aria-hidden="true" size={21} /></span><h3>Promo codes</h3><p>Create bounded registration discounts, schedule dates, and review use limits.</p><small>Manage discounts</small></Link>}
         {permissions.includes("CONFIGURE_EVENT") && <Link className="panel foundation-card" href={`/more/event-settings?event=${event.id}`}><span><Settings2 aria-hidden="true" size={21} /></span><h3>Event settings</h3><p>Edit dates, location, capacity, registration availability, and publishing.</p><small>Open settings</small></Link>}
+        {permissions.includes("CONFIGURE_EVENT") && <Link className="panel foundation-card" href={`/more/event-content?event=${event.id}`}><span><FileText aria-hidden="true" size={21} /></span><h3>Event page</h3><p>Speaker bios, seminar descriptions, lodging, schedules, and downloads shown publicly.</p><small>Edit page</small></Link>}
         {permissions.includes("MANAGE_FORMS") && <Link className="panel foundation-card" href={`/registration-builder?event=${event.id}`}><span><PanelsTopLeft aria-hidden="true" size={21} /></span><h3>Registration form</h3><p>Build, test, and publish the form people use to register.</p><small>Open form builder</small></Link>}
         {permissions.includes("MANAGE_IMPORTS") && <Link className="panel foundation-card" href={`/imports?event=${event.id}`}><span><FileUp aria-hidden="true" size={21} /></span><h3>Import registrations</h3><p>Preview a CSV, review every change, then import approved records.</p><small>Open imports</small></Link>}
         {permissions.includes("MANAGE_STAFF") && <Link className="panel foundation-card" href={`/staff?event=${event.id}`}><span><UserCog aria-hidden="true" size={21} /></span><h3>Team access</h3><p>Add staff and choose what each person can do for this event.</p><small>Manage team</small></Link>}
