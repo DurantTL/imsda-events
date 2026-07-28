@@ -16,7 +16,7 @@ import {
   type PublicContactUpdateInput,
 } from "@/modules/public-access/domain";
 import {
-  eventUsesConventionShirts,
+  eventCollectsShirtSizes,
   shirtSizeConfirmedAtFromResponses,
   shirtSizeFromResponses,
   type PublicShirtSizeConfirmationInput,
@@ -50,6 +50,7 @@ const registrationAccessInclude = {
           location: true,
           publicInfoUrl: true,
           supportContact: true,
+          collectsShirtSizes: true,
         },
       },
       accountHolderPerson: {
@@ -354,7 +355,7 @@ function serializeRegistrationAccess(
       detailsUrl: links.detailsUrl,
       supportUrl: links.supportUrl,
       supportContact: event.supportContact,
-      shirtSizesAvailable: eventUsesConventionShirts(event),
+      shirtSizesAvailable: eventCollectsShirtSizes(event),
       attendeePassesAvailable: attendeePassExpiry(event.endsAt).getTime()
         > now.getTime(),
     },
@@ -699,7 +700,7 @@ async function confirmRegistrationShirtSizesWithClient(
 ) {
   const access = await loadActiveAccessRecord(client, token, now);
   if (!access) return null;
-  if (!eventUsesConventionShirts(access.registration.event)) {
+  if (!eventCollectsShirtSizes(access.registration.event)) {
     throw new PublicShirtSizeConfirmationError(
       "REGISTRATION_NOT_ELIGIBLE",
       "Shirt-size confirmation is not available for this event.",

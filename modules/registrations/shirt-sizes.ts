@@ -56,18 +56,19 @@ export function shirtSizeFromResponses(value: unknown) {
 }
 
 /**
- * Whether an event collects convention shirts at all.
+ * Whether an event collects a shirt size per attendee.
  *
- * Still a name match rather than a stored event capability, which is a known
- * shortcoming: renaming the event silently turns shirt collection off. It lives
- * here rather than beside one caller because three paths must agree — the
- * registrant's picker, the handler that accepts their answer, and the staff
- * batch that asks for it. Two of the three agreeing is worse than none: it
- * mails people a link to a page that will refuse them.
+ * A stored capability now. It was a match on the event's name, which meant only
+ * one event could ever collect sizes and renaming that event turned collection
+ * off without telling anyone.
+ *
+ * It stays a named function rather than an inlined field read because three
+ * paths have to agree — the registrant's picker, the handler that accepts their
+ * answer, and the staff batch that asks for it. Two of the three agreeing is
+ * worse than none: it mails people a link to a page that will refuse them.
  */
-export function eventUsesConventionShirts(event: { name: string; slug: string }) {
-  return event.slug.includes("womens-retreat")
-    || /\bwomen(?:'|’)?s?\s+retreat\b/i.test(event.name);
+export function eventCollectsShirtSizes(event: { collectsShirtSizes: boolean }) {
+  return event.collectsShirtSizes;
 }
 
 export function shirtSizeConfirmedAtFromResponses(value: unknown) {

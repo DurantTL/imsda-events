@@ -54,6 +54,7 @@ function accessRecord(overrides: {
         location: "Camp Heritage",
         publicInfoUrl: "https://imsda.org/event/womens-retreat-3/",
         supportContact: "registration@imsda.org",
+        collectsShirtSizes: true,
       },
       accountHolderPerson: {
         firstName: "Caleb",

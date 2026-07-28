@@ -95,6 +95,10 @@ export const eventSettingsInputSchema = z.object({
   location: nullableText(200),
   publicInfoUrl: publicInfoUrlSchema,
   supportContact: nullableText(200),
+  // Not part of lifecycleFields: those govern when registration is open, and
+  // this governs what the form asks for. Grouping them would suggest turning
+  // shirts off has something to do with closing registration.
+  collectsShirtSizes: z.boolean(),
   ...lifecycleFields,
 }).superRefine((value, context) => {
   validateLifecycle(value, context);

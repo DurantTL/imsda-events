@@ -56,7 +56,7 @@ import {
   type ShirtSizePreviewContext,
 } from "@/modules/communications/shirt-size-audience";
 import {
-  eventUsesConventionShirts,
+  eventCollectsShirtSizes,
   shirtSizeFromResponses,
 } from "@/modules/registrations/shirt-sizes";
 import type {
@@ -622,6 +622,7 @@ async function loadShirtSizeRequestState(
         timezone: true,
         location: true,
         supportContact: true,
+        collectsShirtSizes: true,
       },
     }),
     client.eventMessageSettings.findUnique({ where: { eventId } }),
@@ -713,7 +714,7 @@ async function loadShirtSizeRequestState(
     // The same predicate the registrant's picker and the handler that accepts
     // their answer use. Asking an event that will refuse the answer would mail
     // people a link to a page that turns them away.
-    eventSupportsShirtSizes: eventUsesConventionShirts(event),
+    eventSupportsShirtSizes: eventCollectsShirtSizes(event),
     deliveryMode: settings.deliveryMode,
     senderName: settings.senderName,
     senderEmail: settings.senderEmail,

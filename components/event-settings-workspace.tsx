@@ -69,6 +69,7 @@ function draftFromEvent(event: EventSettingsRecord | null): EventSettingsInput {
     isPublished: event?.isPublished ?? false,
     registrationOpensOn: event?.registrationOpensOn ?? null,
     registrationClosesOn: event?.registrationClosesOn ?? null,
+    collectsShirtSizes: event?.collectsShirtSizes ?? false,
     waitlistEnabled: event?.waitlistEnabled ?? false,
     autoPromoteWaitlist: event?.waitlistEnabled
       ? (event.autoPromoteWaitlist ?? false)
@@ -299,6 +300,21 @@ export function EventSettingsWorkspace({
                 onChange={(event) => update("autoPromoteWaitlist", event.target.checked)}
               />
               <span><strong>Automatically promote the next eligible registration</strong><small>Use the saved queue order when capacity becomes available.</small></span>
+            </label>
+            <label className="event-setting-toggle">
+              <input
+                type="checkbox"
+                checked={draft.collectsShirtSizes}
+                onChange={(event) => update("collectsShirtSizes", event.target.checked)}
+              />
+              <span>
+                <strong>Collect a shirt size for each attendee</strong>
+                <small>
+                  Registrants choose a size on their private page, and staff can send a reviewed
+                  request to everyone still missing one. Turning this off hides the question and
+                  stops the request being sent.
+                </small>
+              </span>
             </label>
           </section>
 
