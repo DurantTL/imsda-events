@@ -27,7 +27,13 @@ import { withRequestContext } from "@/lib/request-context";
 const challengeSchema = z.object({
   challengeToken: z.string().min(32).max(256),
   action: z.enum(["describe", "begin-enrollment", "verify"]),
-  code: z.string().trim().min(1).max(32).optional(),
+  // Whitespace anywhere, not only at the ends. Password managers and phone
+  // autofill hand over the grouped form a user sees — "123 456" — and neither a
+  // six-digit code nor a NNNNN-NNNNN recovery code legitimately contains a
+  // space, so removing them cannot make a wrong code right.
+  code: z.string().transform((value) => value.replace(/\s+/g, ""))
+    .pipe(z.string().min(1).max(32))
+    .optional(),
 });
 
 function mfaErrorResponse(error: MfaError) {

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { KeyRound, ShieldCheck, ShieldAlert } from "lucide-react";
+import { OneTimeCodeInput } from "@/components/one-time-code-input";
 
 export type MfaStatus = {
   required: boolean;
@@ -132,7 +133,7 @@ export function MfaManager({ initialStatus }: { initialStatus: MfaStatus }) {
             value={offer.secret}
             onFocus={(event) => event.currentTarget.select()}
           />
-          <label>Code from your authenticator<input name="code" inputMode="numeric" autoComplete="one-time-code" required maxLength={32} /></label>
+          <OneTimeCodeInput label="Code from your authenticator" />
           {error && <p className="form-error" role="alert">{error}</p>}
           <div className="form-actions">
             <button className="secondary-button" type="button" onClick={() => setOffer(null)}>Cancel</button>
@@ -160,7 +161,7 @@ export function MfaManager({ initialStatus }: { initialStatus: MfaStatus }) {
           </button>
           {!status.required && (
             <form className="form-stack" onSubmit={disable}>
-              <label>Remove the authenticator — enter a current code to confirm<input name="code" inputMode="numeric" autoComplete="one-time-code" required maxLength={32} /></label>
+              <OneTimeCodeInput label="Remove the authenticator — enter a current code to confirm" />
               <div className="form-actions">
                 <button className="secondary-button" type="submit" disabled={busy}>Turn off two-factor</button>
               </div>

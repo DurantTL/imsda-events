@@ -3,7 +3,48 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Eye, EyeOff, LogIn, ShieldCheck } from "lucide-react";
+import { Check, Copy, Eye, EyeOff, LogIn, ShieldCheck } from "lucide-react";
+import QRCode from "qrcode";
+import { OneTimeCodeInput } from "@/components/one-time-code-input";
+
+/**
+ * A secret shown once, with the copy affordance next to it. Selecting on focus
+ * is kept for anyone who prefers the keyboard, and for browsers where the
+ * clipboard write is refused.
+ */
+function CopyField({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="mfa-copy-field">
+      <span className="field-help">{label}</span>
+      <div className="password-field">
+        <input
+          className="copy-field"
+          readOnly
+          value={value}
+          aria-label={label}
+          onFocus={(event) => event.currentTarget.select()}
+        />
+        <button
+          type="button"
+          aria-label={`Copy ${label.toLowerCase()}`}
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(value);
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 2000);
+            } catch {
+              // Clipboard refused — the field is selectable, which is the
+              // fallback rather than an error worth interrupting sign-in for.
+            }
+          }}
+        >
+          {copied ? <Check size={17} /> : <Copy size={17} />}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export const LOCAL_DEMO_EMAIL = "admin@imsda-events.test";
 export const LOCAL_DEMO_PASSWORD = "IMSDA-Local-2026!";
@@ -26,6 +67,12 @@ export function LoginForm({ demoCredentials = false }: { demoCredentials?: boole
   const [showPassword, setShowPassword] = useState(false);
   const [mfa, setMfa] = useState<MfaStep | null>(null);
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  /**
+   * Rendered in the browser rather than fetched. The client already holds the
+   * secret at this point, so drawing it here adds no exposure, while an
+   * endpoint that served it would put the secret in another request.
+   */
+  const [qrDataUrl, setQrDataUrl] = useState("");
 
   async function callChallenge(body: Record<string, unknown>) {
     const response = await fetch("/api/auth/mfa/challenge", {
@@ -60,6 +107,16 @@ export function LoginForm({ demoCredentials = false }: { demoCredentials?: boole
             challengeToken: step.challengeToken,
             action: "begin-enrollment",
           });
+          if (step.offer?.otpauthUri) {
+            setQrDataUrl(
+              await QRCode.toDataURL(step.offer.otpauthUri, {
+                errorCorrectionLevel: "M",
+                margin: 2,
+                width: 200,
+                color: { dark: "#003b5cff", light: "#ffffffff" },
+              }).catch(() => ""),
+            );
+          }
         }
         setMfa(step);
         setBusy(false);
@@ -129,32 +186,30 @@ export function LoginForm({ demoCredentials = false }: { demoCredentials?: boole
           <div className="auth-success">
             <strong>Set up two-factor authentication</strong>
             <p>
-              This account administers events, so it needs a second factor. Add this key to an
-              authenticator app, then enter the six-digit code it shows.
+              This account administers events, so it needs a second factor. Scan this with an
+              authenticator app or password manager, then enter the six-digit code it shows.
             </p>
-            <input
-              className="copy-field"
-              readOnly
-              value={mfa.offer.secret}
-              onFocus={(event) => event.currentTarget.select()}
-            />
+            {qrDataUrl && (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                className="mfa-qr"
+                src={qrDataUrl}
+                alt="QR code containing this account's two-factor setup key"
+                width={200}
+                height={200}
+              />
+            )}
             <p className="field-help">
-              Most apps can also take the setup link directly: <code>{mfa.offer.otpauthUri}</code>
+              Cannot scan? Enter this key by hand, or paste the setup link into a password manager.
             </p>
+            <CopyField label="Setup key" value={mfa.offer.secret} />
+            <CopyField label="Setup link" value={mfa.offer.otpauthUri} />
           </div>
         )}
-        <label>
-          {mfa.offer ? "Code from your authenticator" : "Six-digit code"}
-          <input
-            name="code"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            autoFocus
-            required
-            maxLength={32}
-            placeholder="123456"
-          />
-        </label>
+        <OneTimeCodeInput
+          label={mfa.offer ? "Code from your authenticator" : "Six-digit code"}
+          autoFocus
+        />
         {!mfa.offer && (
           <p className="field-help">
             Lost your authenticator? Enter one of your recovery codes instead.

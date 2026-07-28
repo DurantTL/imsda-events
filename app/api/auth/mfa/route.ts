@@ -25,11 +25,20 @@ import { withRequestContext } from "@/lib/request-context";
  * `mfa/challenge` — because that account has no session yet.
  */
 
+/**
+ * Whitespace anywhere, not only at the ends: password managers and phone
+ * autofill hand over the grouped form a user sees. Neither a six-digit code
+ * nor a NNNNN-NNNNN recovery code legitimately contains a space.
+ */
+const mfaCodeSchema = z.string()
+  .transform((value) => value.replace(/\s+/g, ""))
+  .pipe(z.string().min(1).max(32));
+
 const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("begin") }),
-  z.object({ action: z.literal("confirm"), code: z.string().trim().min(1).max(32) }),
+  z.object({ action: z.literal("confirm"), code: mfaCodeSchema }),
   z.object({ action: z.literal("regenerate-recovery-codes") }),
-  z.object({ action: z.literal("disable"), code: z.string().trim().min(1).max(32) }),
+  z.object({ action: z.literal("disable"), code: mfaCodeSchema }),
 ]);
 
 function apiError(error: unknown) {
