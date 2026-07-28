@@ -1516,6 +1516,9 @@ select:focus-visible {
 .auth-success .primary-button { margin-top: 4px; text-decoration: none; }
 .auth-success.warning { border-color: #eadca9; background: var(--imsda-gold-soft); color: #69501a; }
 .copy-field { width: 100%; border: 1px solid #b8d7ca; border-radius: 9px; background: #fff; color: var(--ink); padding: 8px 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.66rem; }
+.mfa-qr { display: block; margin: 10px auto; border-radius: 9px; background: #fff; padding: 6px; }
+.mfa-copy-field { display: grid; gap: 4px; margin-top: 8px; }
+.mfa-copy-field .password-field { display: flex; align-items: center; gap: 6px; }
 .field-help { margin: -9px 0 0; color: var(--muted); font-size: 0.63rem; }
 .field-help code { overflow-wrap: anywhere; }
 .recovery-code-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 6px; margin: 10px 0; padding: 0; list-style: none; }
