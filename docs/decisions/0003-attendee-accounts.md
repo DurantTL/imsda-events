@@ -77,7 +77,16 @@ to authorise editing would double them rather than answer them.
 The code is short-lived, single-use, invalidated when a new one is requested,
 and rate limited per account.
 
-Not every change is worth a code. The tiers:
+### How much an edit costs is a policy, not a constant
+
+What each change requires is stored, chosen per event, and inherited from the
+platform default the way every other event default is. It is not a constant in
+the code, because the answer is already known to change: the Women's Retreat
+needs the lenient version this year, and later events should start strict.
+
+Two policies to begin with.
+
+**`TIERED`** — what the Women's Retreat runs:
 
 | Change | What it takes |
 | --- | --- |
@@ -86,14 +95,25 @@ Not every change is worth a code. The tiers:
 | Contact details, cancellations, transfers | Account plus emailed code |
 | Medical information, club rosters (when built) | Account plus enrolled second factor |
 
-The middle row is where the friction has to be justified, and the bottom row is
-why the second factor exists at all.
+**`VERIFY_EVERY_EDIT`** — the intended default for new events: every change above
+viewing takes the emailed code, and the bottom row still takes the factor.
 
-Shirt size sits in the first tier deliberately. The reviewed shirt-size batch
-mails a private link precisely because a migrated registrant has no account yet,
-and putting a code in front of that answer would strand the campaign it was
-built for. A shirt size is also not worth protecting: the worst outcome of a
-wrong one is a wrong shirt.
+Shirt size sits outside the code requirement under `TIERED` deliberately. The
+reviewed shirt-size batch mails a private link precisely because a migrated
+registrant has no account yet, and putting a code in front of that answer would
+strand the campaign it was built for. A wrong shirt size costs a wrong shirt,
+which is not what a verification step is for.
+
+The bottom row is exempt from the policy in both directions: medical and club
+data require the enrolled factor whatever an event has chosen. A per-event
+setting may add friction and may not remove it, or the setting becomes a way to
+turn off the protection it exists to describe.
+
+Following the rule platform settings already established, changing the default
+never rewrites an event that already exists. Tightening the default for next
+year's events cannot quietly re-gate a campaign already in flight — which is the
+entire reason the Women's Retreat can keep the lenient policy while everything
+created after it starts strict.
 
 ### What an account does
 
@@ -123,5 +143,7 @@ Nothing here grants an `EventPermission`. An attendee account cannot hold one, a
 **No accounts; extend private links.** Longer-lived links with more on the page. Cheapest, and genuinely sufficient for everything except being recognised — which is the one thing actually being asked for.
 
 **A magic link to authorise editing.** One click instead of typing six digits, and the flow staff already know from password reset. Rejected: a link is a bearer token that works for whoever opens it, survives forwarding, and is followed by mail scanners. The private management link already carries those weaknesses because it has to reach someone with no account at all. An edit made *from* an account has a session to bind to, and a code is what binds it.
+
+**Hardcoding the tiers.** Simpler, and correct for exactly one event. Rejected because the requirement is already known to change: the lenient version is what the Women's Retreat needs now, and strict is what later events should start from. A constant would make that a code change and a deploy, and would offer no way for two concurrent events to differ.
 
 **Requiring a second factor to hold an account.** Rejected as a barrier that protects nothing at the moment it is imposed — the registration being created is one the person already knows about — while costing the platform registrations from anyone unwilling to install an authenticator to sign up for a retreat.
