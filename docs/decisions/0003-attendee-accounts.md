@@ -1,0 +1,72 @@
+# ADR 0003: Attendee accounts
+
+Status: Accepted
+Date: 2026-07-28
+
+## Context
+
+Registrants have no identity. A registration is reachable through a private link carried in an email — a bearer token with no password, no profile, and no memory. That was a deliberate simplification and it has held up: someone who can open their inbox can see their registration, pay a balance, and choose a shirt size without an account existing.
+
+It stops working the moment anyone needs to be *recognised* rather than merely *let in*. A registrant with three registrations has three unrelated links. Someone who deletes the email has nothing. And a discussion feature — the reason this is being scoped now — has no author to attach a post to, because there is nobody signed in.
+
+`User` is staff-only. Every permission in the system is event-scoped and granted by a membership, and the sign-in path carries MFA and the rules protecting roster export and sensitive data.
+
+## Decision
+
+### Attendee accounts live in their own table
+
+`AttendeeAccount` is separate from `User`, with its own credentials, sessions, and sign-in route.
+
+The alternative — attendees as `User` rows with no role and no memberships — means every existing permission check runs against a far larger population, and one careless query is the difference between an attendee and staff access. The staff path already carries MFA and sensitive-data rules; widening who flows through it is the kind of change that fails quietly and badly.
+
+The cost is accepted: two sign-in paths, two session types, and some duplicated recovery logic.
+
+### An account claims registrations by verified email
+
+Sign-up verifies an email address. The account then reaches every registration whose contact email matches, and nothing else.
+
+Verification is the whole control. An unverified address claims nothing, because claiming on an unverified address is just asking to be given somebody else's registration.
+
+Two consequences are accepted deliberately:
+
+- **A shared family address sees several registrations.** That is usually correct — one parent registers the household — and where it is not, the household already shares the inbox those private links were sent to. The account changes nothing about who could already see what.
+- **A registration whose contact email is wrong is unreachable by account.** Imported rows carry whatever the workbook held. Staff can already correct a contact address, and doing so is what attaches it.
+
+Matching is on the registration's contact email, normalised the same way the rest of the system normalises addresses. It is never on name.
+
+### Staff can switch to attendee mode, for their own registrations only
+
+Staff register for events too, and asking them to keep a second password for the same person is the kind of friction that produces shared credentials.
+
+A `User` may be linked to an `AttendeeAccount` when both hold the same **verified** email. Switching context then shows that account's registrations.
+
+The rule that matters: **attendee mode shows the staff member their own registrations, never anyone else's.** It is a context switch, not an impersonation feature. Staff who need to see another person's registration already have the roster, which is permissioned, audited, and the correct tool. If impersonation is ever wanted it must be a separate, audited capability with its own decision — not a side effect of this one.
+
+### What an account does
+
+In priority order, each independently shippable:
+
+1. **See every registration across events.** Replaces hunting for the right email. The first slice and the one carrying most of the value.
+2. **Keep a profile.** Name, contact details, shirt size, dietary and accessibility needs — held once instead of retyped per event.
+3. **Pay a balance.** Needs Square configured; otherwise identical to the existing payment path.
+4. **Prefill a new registration.** Touches the public registration flow, which is load-bearing and well tested, so it goes last and behind the others being proven.
+
+Community and discussion features are **not** in scope here. This ADR exists so they have an author to attach to.
+
+## Consequences
+
+The private link does not go away. It stays the path for someone who will never make an account, and it is how a migrated registrant reaches self-service the first time. Accounts are additive; a registrant who ignores them loses nothing.
+
+Sign-up is a public, unauthenticated, email-sending endpoint — the most abusable surface the platform will have. It needs the existing rate limiting, and enumeration has to be considered in every response: "an account exists for this address" is not something a stranger may learn.
+
+Second factor is not required for an attendee account at first. The staff rule exists because staff can export a roster; an attendee can see their own registration, which they can already do from an emailed link. This should be revisited if an account ever gains reach beyond its own registrations.
+
+Nothing here grants an `EventPermission`. An attendee account cannot hold one, and the type system should keep it that way rather than relying on a runtime check.
+
+## Alternatives considered
+
+**One table with roles.** Rejected above: it widens the population flowing through the staff auth path.
+
+**Confirmation code plus email to claim.** Materially harder to claim someone else's registration, and it handles imported rows with duplicated addresses. Rejected as the default because it puts friction on every registrant to prevent a case the shared inbox already permits. Worth reconsidering if a claim is ever reported as wrong.
+
+**No accounts; extend private links.** Longer-lived links with more on the page. Cheapest, and genuinely sufficient for everything except being recognised — which is the one thing actually being asked for.
