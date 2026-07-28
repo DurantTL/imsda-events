@@ -1113,6 +1113,99 @@ export async function processPendingMessages(
  * than a working private link. The test proves rendering, sender identity, and
  * deliverability; it does not produce a clickable registration.
  */
+/**
+ * Real values for the tokens a test message can meaningfully fill from one
+ * registration.
+ *
+ * Tokens with no equivalent on a registration — the transfer templates' prior
+ * and new person names, for instance — keep their sample values, so every
+ * template still renders completely rather than failing on an unrelated token.
+ */
+async function loadTestRegistrationContext(
+  eventId: string,
+  confirmationCode: string,
+  client: MessagingDatabaseClient,
+) {
+  const registration = await client.registration.findFirst({
+    where: { eventId, confirmationCode },
+    select: {
+      id: true,
+      confirmationCode: true,
+      status: true,
+      totalAmount: true,
+      contactSnapshot: true,
+      accountHolderPerson: {
+        select: { firstName: true, lastName: true, normalizedEmail: true },
+      },
+      attendees: {
+        orderBy: { position: "asc" },
+        select: { person: { select: { firstName: true, lastName: true } } },
+      },
+      payments: {
+        where: { status: "SUCCEEDED" },
+        select: {
+          amount: true,
+          refunds: { where: { status: "SUCCEEDED" }, select: { amount: true } },
+        },
+      },
+    },
+  });
+  if (!registration) {
+    throw new MessagingError(
+      "MESSAGE_NOT_FOUND",
+      `No registration in this event has the confirmation code ${confirmationCode}.`,
+    );
+  }
+
+  const contact = recordFromJson(registration.contactSnapshot);
+  const contactValue = (
+    key: "firstName" | "lastName" | "email",
+    fallback: string,
+  ) => typeof contact[key] === "string" ? contact[key].trim() : fallback;
+  const recipientName = [
+    contactValue("firstName", registration.accountHolderPerson.firstName),
+    contactValue("lastName", registration.accountHolderPerson.lastName),
+  ].join(" ").trim() || "Registrant";
+  const contactEmail = contactValue(
+    "email",
+    registration.accountHolderPerson.normalizedEmail ?? "",
+  );
+
+  const totalCents = moneyToCents(registration.totalAmount);
+  const netPaidCents = registration.payments.reduce((total, payment) => {
+    const refunded = payment.refunds.reduce(
+      (sum, refund) => sum + moneyToCents(refund.amount),
+      0,
+    );
+    return total + moneyToCents(payment.amount) - refunded;
+  }, 0);
+  const balanceCents = Math.max(totalCents - netPaidCents, 0);
+
+  return {
+    registrationId: registration.id,
+    confirmationCode: registration.confirmationCode,
+    contactEmail,
+    tokens: {
+      recipient_name: recipientName,
+      registrant_name: recipientName,
+      confirmation_code: registration.confirmationCode,
+      contact_email: contactEmail,
+      attendee_summary: registration.attendees
+        .map((attendee) => `- ${`${attendee.person.firstName} ${attendee.person.lastName}`.trim()}`)
+        .join("\n") || "- No attendees recorded",
+      total_amount: formatMessageMoney(totalCents),
+      balance_amount: formatMessageMoney(balanceCents),
+      payment_amount: formatMessageMoney(netPaidCents),
+      payment_instructions: balanceCents > 0
+        ? `A balance of ${formatMessageMoney(balanceCents)} is outstanding.`
+        : "No additional payment is due.",
+      // Delivery swaps this for a freshly issued, working private link, because
+      // the outbox row below carries the real registrationId.
+      portal_url: REGISTRATION_MANAGE_LINK_SENTINEL,
+    } satisfies Partial<MessageTemplateContext>,
+  };
+}
+
 export async function sendTestMessage(
   eventId: string,
   templateId: string,
@@ -1158,6 +1251,10 @@ export async function sendTestMessage(
     );
   }
 
+  const source = input.confirmationCode
+    ? await loadTestRegistrationContext(eventId, input.confirmationCode, prisma)
+    : null;
+
   const context: MessageTemplateContext = {
     ...SAMPLE_MESSAGE_TEMPLATE_CONTEXT,
     recipient_name: input.recipientName,
@@ -1165,6 +1262,9 @@ export async function sendTestMessage(
     event_dates: formatMessageDateRange(event.startsAt, event.endsAt, { timeZone: event.timezone }),
     event_location: event.location || "Location to be announced",
     reply_to_email: settings.replyToEmail || settings.senderEmail || "the IMSDA event office",
+    // Real registration values last: they are the point of naming a code, and
+    // they carry the sentinel that becomes a working private link.
+    ...(source?.tokens ?? {}),
   };
   const rendered = renderMessageTemplate(
     { subject: version.subjectTemplate, body: version.bodyTemplate },
@@ -1177,6 +1277,9 @@ export async function sendTestMessage(
     const created = await tx.messageOutbox.create({
       data: {
         eventId,
+        // Present only for a real-registration test. Delivery needs it to mint
+        // the private link, and it is also what makes the exposure auditable.
+        registrationId: source?.registrationId ?? null,
         templateVersionId: version.id,
         templateKey: template.key,
         recipientKind: "TEST",
@@ -1190,6 +1293,12 @@ export async function sendTestMessage(
         metadata: {
           trigger: input.realDelivery ? "REAL_TEST" : "LOCAL_TEST",
           realDelivery: input.realDelivery,
+          confirmationCode: source?.confirmationCode ?? null,
+          // Whether a working private link left the registration's own contact
+          // address. True is the case worth finding later.
+          destinationChanged: source
+            ? source.contactEmail.toLowerCase() !== input.recipientEmail.toLowerCase()
+            : false,
         },
         idempotencyKey: `${input.realDelivery ? "real-test" : "local-test"}:${randomUUID()}`,
         correlationId: randomUUID(),
@@ -1204,12 +1313,21 @@ export async function sendTestMessage(
         entityId: created.id,
         correlationId: created.correlationId,
         summary: input.realDelivery
-          ? `Sent a real test message to ${input.recipientEmail} using this event's sender.`
-          : `Created a local test capture for ${input.recipientEmail}.`,
+          ? source
+            ? `Sent a real test message to ${input.recipientEmail} using this event's sender, carrying a working private link to registration ${source.confirmationCode}.`
+            : `Sent a real test message to ${input.recipientEmail} using this event's sender.`
+          : source
+            ? `Created a local test capture for ${input.recipientEmail} from registration ${source.confirmationCode}.`
+            : `Created a local test capture for ${input.recipientEmail}.`,
         metadata: {
           templateId,
           templateVersionId: version.id,
           realDelivery: input.realDelivery,
+          registrationId: source?.registrationId ?? null,
+          confirmationCode: source?.confirmationCode ?? null,
+          destinationChanged: source
+            ? source.contactEmail.toLowerCase() !== input.recipientEmail.toLowerCase()
+            : false,
         },
       },
     });
