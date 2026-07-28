@@ -14,7 +14,18 @@
  */
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import type { MessagingSettingsRecord } from "@/modules/communications/types";
+import type {
+  MessagingSettingsRecord,
+  ShirtSizeRecipient,
+  ShirtSizeRequestPreview,
+  ShirtSizeSkipReasonCode,
+} from "@/modules/communications/types";
+
+export type {
+  ShirtSizeRecipient,
+  ShirtSizeRequestPreview,
+  ShirtSizeSkipReasonCode,
+};
 
 export type ShirtSizeCandidateAttendee = {
   attendeeId: string;
@@ -31,37 +42,14 @@ export type ShirtSizeCandidate = {
   attendees: ShirtSizeCandidateAttendee[];
 };
 
-export type ShirtSizeRecipient = {
-  registrationId: string;
-  confirmationCode: string;
-  recipientName: string;
-  recipientEmail: string;
-  missingAttendeeNames: string[];
-  missingCount: number;
-  attendeeCount: number;
-};
-
-export type ShirtSizeSkipReasonCode =
-  | "INACTIVE_REGISTRATION"
-  | "ALL_SIZES_RECORDED"
-  | "NO_ATTENDEES"
-  | "INVALID_CONTACT_EMAIL";
-
-export type ShirtSizeRequestPreview = {
-  fingerprint: string;
-  generatedAt: string;
-  includedCount: number;
-  skippedCount: number;
-  missingAttendeeCount: number;
-  deliveryMode: MessagingSettingsRecord["deliveryMode"];
-  templateEnabled: boolean;
-  templateVersionNumber: number | null;
-  recipients: ShirtSizeRecipient[];
-  skipReasons: Array<{ code: ShirtSizeSkipReasonCode; label: string; count: number }>;
-};
-
 export type ShirtSizePreviewContext = {
   eventId: string;
+  /**
+   * Whether the event collects shirts. Part of the context rather than a
+   * caller-side guard so it is inside the fingerprint: an event renamed out of
+   * eligibility between review and send must invalidate the reviewed batch.
+   */
+  eventSupportsShirtSizes: boolean;
   deliveryMode: MessagingSettingsRecord["deliveryMode"];
   senderName: string;
   senderEmail: string | null;
@@ -97,8 +85,9 @@ function fingerprintPayload(
   skipCounts: Record<ShirtSizeSkipReasonCode, number>,
 ) {
   return {
-    version: 1,
+    version: 2,
     eventId: context.eventId,
+    eventSupportsShirtSizes: context.eventSupportsShirtSizes,
     deliveryMode: context.deliveryMode,
     senderName: context.senderName,
     senderEmail: context.senderEmail,
@@ -133,7 +122,12 @@ export function computeShirtSizeRequestPreview(
     INVALID_CONTACT_EMAIL: 0,
   };
 
-  for (const candidate of [...candidates].sort((left, right) => (
+  // An ineligible event has no audience at all. Skip counts stay zero: these
+  // registrations are not "skipped for a reason staff could act on", the
+  // question simply does not apply to this event.
+  const eligible = context.eventSupportsShirtSizes ? candidates : [];
+
+  for (const candidate of [...eligible].sort((left, right) => (
     left.registrationId.localeCompare(right.registrationId)
   ))) {
     if (candidate.status !== "SUBMITTED" && candidate.status !== "CONFIRMED") {
@@ -174,6 +168,7 @@ export function computeShirtSizeRequestPreview(
   return {
     fingerprint: createHash("sha256").update(serialized).digest("hex"),
     generatedAt: now.toISOString(),
+    eventSupportsShirtSizes: context.eventSupportsShirtSizes,
     includedCount: recipients.length,
     skippedCount: Object.values(skipCounts).reduce((sum, count) => sum + count, 0),
     missingAttendeeCount: recipients.reduce(

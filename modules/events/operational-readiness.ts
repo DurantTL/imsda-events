@@ -192,7 +192,7 @@ export function checkOperationalReadiness(
       code: "SHIRT_SIZES",
       label: `${facts.registrationsMissingShirtSize} registration${facts.registrationsMissingShirtSize === 1 ? "" : "s"} missing a shirt size`,
       severity: "WARNING",
-      detail: "Inspect the audience with `npm run event:shirt-sizes`. Sending a reviewed shirt-size batch is not wired up yet, so this cannot be cleared from the workspace.",
+      detail: "Review and send the reviewed batch from Communications → Shirt sizes, or inspect the same audience from the command line with `npm run event:shirt-sizes`.",
     });
   }
 

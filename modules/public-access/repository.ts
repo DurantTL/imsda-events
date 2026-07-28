@@ -16,6 +16,7 @@ import {
   type PublicContactUpdateInput,
 } from "@/modules/public-access/domain";
 import {
+  eventUsesConventionShirts,
   shirtSizeConfirmedAtFromResponses,
   shirtSizeFromResponses,
   type PublicShirtSizeConfirmationInput,
@@ -247,11 +248,6 @@ function jsonRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
-}
-
-function eventUsesConventionShirts(event: { name: string; slug: string }) {
-  return event.slug.includes("womens-retreat")
-    || /\bwomen(?:'|’)?s?\s+retreat\b/i.test(event.name);
 }
 
 function serializeRegistrationAccess(

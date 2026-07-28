@@ -17,6 +17,7 @@ import {
   Save,
   Send,
   Settings,
+  Shirt,
   Users,
   WalletCards,
   X,
@@ -31,6 +32,7 @@ import type {
   MessageOutboxRecord,
   MessageOutboxStatusValue,
   MessagingWorkspaceData,
+  ShirtSizeRequestPreview,
 } from "@/modules/communications/types";
 
 type CommunicationsWorkspaceProps = {
@@ -47,6 +49,7 @@ type ApiResult = {
   messaging?: MessagingWorkspaceData;
   announcement?: AnnouncementRecord;
   reminderPreview?: BalanceReminderPreview;
+  shirtSizePreview?: ShirtSizeRequestPreview;
   operation?: {
     batchId?: string;
     messageId?: string;
@@ -238,6 +241,8 @@ export function CommunicationsWorkspace({
   );
   const [reminderConfirmed, setReminderConfirmed] = useState(false);
   const [reminderBatchId, setReminderBatchId] = useState("");
+  const [shirtSizeConfirmed, setShirtSizeConfirmed] = useState(false);
+  const [shirtSizeBatchId, setShirtSizeBatchId] = useState("");
   const [resendRecipientEmail, setResendRecipientEmail] = useState("");
   const [resendConfirmed, setResendConfirmed] = useState(false);
   const [resendRequestId, setResendRequestId] = useState("");
@@ -251,8 +256,13 @@ export function CommunicationsWorkspace({
   const savedSettingsDraft = settingsDraftFromMessaging(messaging);
   const settingsDirty = JSON.stringify(settingsDraft) !== JSON.stringify(savedSettingsDraft);
   const reminderDirty = reminderConfirmed;
+  const shirtSizeDirty = shirtSizeConfirmed;
   const resendDirty = resendConfirmed || resendRecipientEmail.trim().length > 0;
-  const hasUnsavedChanges = templateDirty || settingsDirty || reminderDirty || resendDirty;
+  const hasUnsavedChanges = templateDirty
+    || settingsDirty
+    || reminderDirty
+    || shirtSizeDirty
+    || resendDirty;
   useUnsavedChangesGuard(
     hasUnsavedChanges,
     "These communication changes have not been published or saved. Leave and discard them?",
@@ -280,6 +290,8 @@ export function CommunicationsWorkspace({
     setSettingsDraft(settingsDraftFromMessaging(messaging));
     setReminderConfirmed(false);
     setReminderBatchId("");
+    setShirtSizeConfirmed(false);
+    setShirtSizeBatchId("");
     setResendRecipientEmail("");
     setResendConfirmed(false);
     setResendRequestId("");
@@ -525,6 +537,76 @@ export function CommunicationsWorkspace({
     }
   }
 
+  async function refreshShirtSizePreview() {
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`/api/events/${eventId}/shirt-size-requests`);
+      const result = await response.json().catch(() => ({})) as ApiResult;
+      if (!response.ok || !result.shirtSizePreview) {
+        throw new Error(result.message ?? "The shirt-size preview could not be refreshed.");
+      }
+      setMessaging((current) => current
+        ? { ...current, shirtSizePreview: result.shirtSizePreview! }
+        : current);
+      setShirtSizeConfirmed(false);
+      setShirtSizeBatchId("");
+      setNotice("The shirt-size audience was recalculated from current attendee answers.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The shirt-size preview could not be refreshed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function createShirtSizeBatch(submitEvent: React.FormEvent<HTMLFormElement>) {
+    submitEvent.preventDefault();
+    if (!messaging || !shirtSizeConfirmed) return;
+    const clientBatchId = shirtSizeBatchId || crypto.randomUUID();
+    setShirtSizeBatchId(clientBatchId);
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`/api/events/${eventId}/shirt-size-requests`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          previewFingerprint: messaging.shirtSizePreview.fingerprint,
+          batchId: clientBatchId,
+        }),
+      });
+      const result = await response.json().catch(() => ({})) as ApiResult;
+      if (!response.ok || !result.messaging || !result.operation) {
+        if (result.shirtSizePreview) {
+          setMessaging((current) => current
+            ? { ...current, shirtSizePreview: result.shirtSizePreview! }
+            : current);
+          setShirtSizeConfirmed(false);
+          setShirtSizeBatchId("");
+        }
+        throw new Error(result.message ?? "The shirt-size request batch could not be created.");
+      }
+      setMessaging(result.messaging);
+      setShirtSizeConfirmed(false);
+      setShirtSizeBatchId("");
+      if (result.operation.replayed) {
+        setNotice("This exact batch was already recorded, so no duplicate messages were created.");
+      } else if (result.operation.deliveryMode === "EXTERNAL_EMAIL") {
+        setNotice(`${result.operation.queuedCount ?? 0} shirt-size request${result.operation.queuedCount === 1 ? " is" : "s are"} queued but not sent. Review the Delivery log, then use Process email queue when ready.`);
+      } else if (result.operation.deliveryMode === "LOCAL_CAPTURE") {
+        setNotice(`${result.operation.capturedCount ?? 0} shirt-size request${result.operation.capturedCount === 1 ? " was" : "s were"} captured locally. No email was sent.`);
+      } else {
+        setNotice(`${result.operation.suppressedCount ?? 0} shirt-size request row${result.operation.suppressedCount === 1 ? " was" : "s were"} recorded as suppressed. Delivery is off, so no email was sent.`);
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The shirt-size request batch could not be created.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function createReminderBatch(submitEvent: React.FormEvent<HTMLFormElement>) {
     submitEvent.preventDefault();
     if (!messaging || !reminderConfirmed) return;
@@ -653,6 +735,7 @@ export function CommunicationsWorkspace({
   const tabs: Array<{ id: CommunicationsView; label: string; icon: typeof Mail }> = [
     { id: "announcements", label: "Announcements", icon: Megaphone },
     { id: "reminders", label: "Balance reminders", icon: Bell },
+    { id: "shirt-sizes", label: "Shirt sizes", icon: Shirt },
     { id: "templates", label: "Message templates", icon: FileText },
     { id: "deliveries", label: "Delivery log", icon: Inbox },
     { id: "settings", label: "Settings", icon: Settings },
@@ -869,6 +952,163 @@ export function CommunicationsWorkspace({
                   : messaging.settings.deliveryMode === "LOCAL_CAPTURE"
                     ? `Capture ${messaging.reminderPreview.includedCount} local preview${messaging.reminderPreview.includedCount === 1 ? "" : "s"}`
                     : `Record ${messaging.reminderPreview.includedCount} suppressed row${messaging.reminderPreview.includedCount === 1 ? "" : "s"}`}
+            </button>
+          </form>
+        </div>
+      )}
+
+      {view === "shirt-sizes" && messaging && (
+        <div className="reminder-workspace" role="tabpanel" aria-label="Shirt size requests">
+          <section className="panel reminder-preview-panel">
+            <div className="message-delivery-toolbar">
+              <div>
+                <p className="eyebrow">Step 1 · review only</p>
+                <h2>Review who is still missing a shirt size</h2>
+                <p>
+                  This preview does not create or send anything. It includes submitted or confirmed registrations with a valid contact email where at least one attendee has no shirt size recorded.
+                </p>
+              </div>
+              <button className="secondary-button" type="button" onClick={refreshShirtSizePreview} disabled={saving}>
+                <RefreshCw className={saving ? "spin" : ""} size={16} aria-hidden="true" />
+                Refresh preview
+              </button>
+            </div>
+
+            <div className="reminder-summary" aria-label="Shirt size audience summary">
+              <article>
+                <span className="message-stat-icon green"><Users size={18} aria-hidden="true" /></span>
+                <small>Included recipients</small>
+                <strong>{messaging.shirtSizePreview.includedCount}</strong>
+              </article>
+              <article>
+                <span className="message-stat-icon gold"><Shirt size={18} aria-hidden="true" /></span>
+                <small>Attendees missing a size</small>
+                <strong>{messaging.shirtSizePreview.missingAttendeeCount}</strong>
+              </article>
+              <article>
+                <span className="message-stat-icon purple"><AlertTriangle size={18} aria-hidden="true" /></span>
+                <small>Skipped registrations</small>
+                <strong>{messaging.shirtSizePreview.skippedCount}</strong>
+              </article>
+            </div>
+
+            <div className="reminder-skip-reasons">
+              <div>
+                <p className="eyebrow">Why registrations were skipped</p>
+                <ul>
+                  {messaging.shirtSizePreview.skipReasons.map((reason) => (
+                    <li key={reason.code}>
+                      <span>{reason.label}</span>
+                      <strong>{reason.count}</strong>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <p>
+                A partly answered registration is still included, and the message names only the attendees who still need a size. Draft, waitlisted, and cancelled registrations are never included.
+              </p>
+            </div>
+
+            <div className="reminder-recipient-table-wrap">
+              <table className="reminder-recipient-table">
+                <caption>
+                  Recipient rows calculated {localDate(messaging.shirtSizePreview.generatedAt)}
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Registrant</th>
+                    <th scope="col">Confirmation</th>
+                    <th scope="col">Email destination</th>
+                    <th scope="col">Still missing</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {messaging.shirtSizePreview.recipients.map((recipient) => (
+                    <tr key={recipient.registrationId}>
+                      <td>{recipient.recipientName}</td>
+                      <td>{recipient.confirmationCode}</td>
+                      <td>{recipient.recipientEmail}</td>
+                      <td>
+                        {recipient.missingCount} of {recipient.attendeeCount}
+                        <small>{recipient.missingAttendeeNames.join(", ")}</small>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {messaging.shirtSizePreview.recipients.length === 0 && (
+                messaging.shirtSizePreview.eventSupportsShirtSizes ? (
+                  <div className="empty-state">
+                    <CheckCircle2 size={24} aria-hidden="true" />
+                    <h3>Every attendee has a shirt size</h3>
+                    <p>No active registration is currently missing a shirt size with a valid contact email.</p>
+                  </div>
+                ) : (
+                  <div className="empty-state">
+                    <AlertTriangle size={24} aria-hidden="true" />
+                    <h3>This event does not collect shirt sizes</h3>
+                    <p>Registrants of this event have no shirt-size question on their private page, so a request would send them to a page that cannot answer it.</p>
+                  </div>
+                )
+              )}
+            </div>
+          </section>
+
+          <form className="panel reminder-confirm-panel" onSubmit={createShirtSizeBatch}>
+            <div>
+              <p className="eyebrow">Step 2 · explicit action</p>
+              <h2>
+                {messaging.settings.deliveryMode === "EXTERNAL_EMAIL"
+                  ? "Create the reviewed email queue"
+                  : messaging.settings.deliveryMode === "LOCAL_CAPTURE"
+                    ? "Create local shirt-size previews"
+                    : "Record a suppressed shirt-size batch"}
+              </h2>
+              <p>
+                {messaging.settings.deliveryMode === "EXTERNAL_EMAIL"
+                  ? "This creates queued email rows only. It does not send them; a separate Process email queue action in the Delivery log is still required."
+                  : messaging.settings.deliveryMode === "LOCAL_CAPTURE"
+                    ? "This renders and captures the reviewed requests inside IMSDA Events. No email provider is contacted."
+                    : "Delivery is off. The reviewed rows will be recorded as suppressed for audit history, and no email will be sent."}
+              </p>
+              <p>
+                Each message carries a freshly issued private management link, so a registrant who was migrated without an account reaches self-service from this message and chooses a size for each attendee there.
+              </p>
+            </div>
+            {!messaging.shirtSizePreview.templateEnabled && (
+              <div className="inline-notice error" role="alert">
+                <AlertTriangle size={17} aria-hidden="true" />
+                The Shirt size request template is disabled. This batch will be recorded as suppressed even if the delivery mode is on.
+              </div>
+            )}
+            <label className="message-enabled-toggle reminder-confirm-check">
+              <input
+                type="checkbox"
+                checked={shirtSizeConfirmed}
+                required
+                onChange={(event) => setShirtSizeConfirmed(event.target.checked)}
+              />
+              <span>
+                <strong>I reviewed all {messaging.shirtSizePreview.includedCount} recipient{messaging.shirtSizePreview.includedCount === 1 ? "" : "s"} covering {messaging.shirtSizePreview.missingAttendeeCount} attendee{messaging.shirtSizePreview.missingAttendeeCount === 1 ? "" : "s"} without a size.</strong>
+                <small>
+                  I understand this action uses the exact preview above. If an attendee answers, or a registration, email, template, or sender setting changes, IMSDA Events will stop and require a new review.
+                </small>
+              </span>
+            </label>
+            {shirtSizeDirty && <span className="unsaved-dot" role="status">Confirmation not submitted</span>}
+            <button
+              className="primary-button full-button"
+              type="submit"
+              disabled={saving || !shirtSizeConfirmed || messaging.shirtSizePreview.includedCount === 0}
+            >
+              <Shirt size={16} aria-hidden="true" />
+              {saving
+                ? "Creating reviewed batch…"
+                : messaging.settings.deliveryMode === "EXTERNAL_EMAIL"
+                  ? `Queue ${messaging.shirtSizePreview.includedCount} shirt-size email${messaging.shirtSizePreview.includedCount === 1 ? "" : "s"}`
+                  : messaging.settings.deliveryMode === "LOCAL_CAPTURE"
+                    ? `Capture ${messaging.shirtSizePreview.includedCount} local preview${messaging.shirtSizePreview.includedCount === 1 ? "" : "s"}`
+                    : `Record ${messaging.shirtSizePreview.includedCount} suppressed row${messaging.shirtSizePreview.includedCount === 1 ? "" : "s"}`}
             </button>
           </form>
         </div>

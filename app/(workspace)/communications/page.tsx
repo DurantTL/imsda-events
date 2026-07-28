@@ -44,11 +44,30 @@ const emptyMessaging: MessagingWorkspaceData = {
       { code: "INVALID_CONTACT_EMAIL", label: "Missing or invalid contact email", count: 0 },
     ],
   },
+  shirtSizePreview: {
+    fingerprint: "",
+    generatedAt: new Date(0).toISOString(),
+    eventSupportsShirtSizes: false,
+    includedCount: 0,
+    skippedCount: 0,
+    missingAttendeeCount: 0,
+    deliveryMode: "LOCAL_CAPTURE",
+    templateEnabled: true,
+    templateVersionNumber: null,
+    recipients: [],
+    skipReasons: [
+      { code: "INACTIVE_REGISTRATION", label: "Not submitted or confirmed", count: 0 },
+      { code: "ALL_SIZES_RECORDED", label: "Every attendee already has a shirt size", count: 0 },
+      { code: "NO_ATTENDEES", label: "No attendees on the registration", count: 0 },
+      { code: "INVALID_CONTACT_EMAIL", label: "Missing or invalid contact email", count: 0 },
+    ],
+  },
 };
 
 const communicationViews = new Set<CommunicationsView>([
   "announcements",
   "reminders",
+  "shirt-sizes",
   "templates",
   "deliveries",
   "settings",
