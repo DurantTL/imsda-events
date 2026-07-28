@@ -274,6 +274,7 @@ model User {
   createdFormVersions       RegistrationFormVersion[] @relation("RegistrationFormVersionCreatedBy")
   formTestSubmissions       FormTestSubmission[]      @relation("FormTestSubmissionSubmittedBy")
   createdMessageVersions    MessageTemplateVersion[]  @relation("MessageTemplateVersionCreatedBy")
+  platformSettingsUpdates   PlatformSettings[]        @relation("PlatformSettingsUpdatedBy")
   appliedProgramAssignments ProgramAssignmentRun[]    @relation("ProgramAssignmentAppliedBy")
   registrationOperations    RegistrationOperation[]   @relation("RegistrationOperationActor")
   accountMessages           MessageOutbox[]           @relation("AccountMessageRecipient")
@@ -424,6 +425,30 @@ model RateLimitBucket {
   @@unique([policy, subjectHash, windowStartedAt])
   @@index([expiresAt])
   @@index([policy, windowEndsAt])
+}
+
+/// Platform-wide identity and the defaults a new event inherits.
+///
+/// Exactly one row, pinned by `id`. A singleton in a table rather than
+/// environment variables because staff change these, and a value staff can
+/// change should not require a deploy. The messaging defaults exist because
+/// every event previously began on LOCAL_CAPTURE with no sender at all: the
+/// event looked ready, and the first symptom was a registrant who never got
+/// their confirmation.
+model PlatformSettings {
+  id                  String   @id @default("platform")
+  organizationName    String   @default("IMSDA Events")
+  logoUrl             String?
+  supportContact      String?
+  publicWebsiteUrl    String?
+  defaultTimezone     String   @default("America/Chicago")
+  defaultSenderName   String   @default("IMSDA Events")
+  defaultSenderEmail  String?
+  defaultReplyToEmail String?
+  updatedAt           DateTime @updatedAt
+  updatedByUserId     String?
+
+  updatedBy User? @relation("PlatformSettingsUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
 }
 
 model Event {
