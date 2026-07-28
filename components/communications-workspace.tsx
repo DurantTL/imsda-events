@@ -244,6 +244,8 @@ export function CommunicationsWorkspace({
   const [shirtSizeConfirmed, setShirtSizeConfirmed] = useState(false);
   const [shirtSizeBatchId, setShirtSizeBatchId] = useState("");
   const [testRealDelivery, setTestRealDelivery] = useState(false);
+  const [testConfirmationCode, setTestConfirmationCode] = useState("");
+  const [testAcknowledgeExposure, setTestAcknowledgeExposure] = useState(false);
   const [resendRecipientEmail, setResendRecipientEmail] = useState("");
   const [resendConfirmed, setResendConfirmed] = useState(false);
   const [resendRequestId, setResendRequestId] = useState("");
@@ -293,6 +295,7 @@ export function CommunicationsWorkspace({
     setReminderBatchId("");
     setShirtSizeConfirmed(false);
     setShirtSizeBatchId("");
+    setTestAcknowledgeExposure(false);
     setResendRecipientEmail("");
     setResendConfirmed(false);
     setResendRequestId("");
@@ -425,12 +428,15 @@ export function CommunicationsWorkspace({
           recipientEmail: form.get("recipientEmail"),
           recipientName: form.get("recipientName"),
           realDelivery: testRealDelivery,
+          confirmationCode: testConfirmationCode.trim(),
+          acknowledgeLinkExposure: testAcknowledgeExposure,
         }),
       },
       testRealDelivery
         ? `A real test message was sent to ${form.get("recipientEmail")} from this event's sender. Check the Delivery log for the provider result.`
         : "The test message was captured locally. No email was sent.",
     );
+    setTestAcknowledgeExposure(false);
     if (updated?.messages[0]) setSelectedMessageId(updated.messages[0].id);
   }
 
@@ -1211,11 +1217,39 @@ export function CommunicationsWorkspace({
                     <strong>Actually email this address</strong>
                     <small>
                       {messaging.settings.deliveryMode === "EXTERNAL_EMAIL"
-                        ? "Uses this event’s sender, reply-to, and domain — the parts a local capture cannot check. The private link in the message is a sample and will not open a registration."
+                        ? "Uses this event’s sender, reply-to, and domain — the parts a local capture cannot check."
                         : "Available once this event’s delivery is set to real email with a verified sender."}
                     </small>
                   </span>
                 </label>
+                <label>
+                  Real registration (optional)
+                  <input
+                    name="confirmationCode"
+                    value={testConfirmationCode}
+                    placeholder="e.g. WR26-1780602786558-7AC3"
+                    onChange={(event) => setTestConfirmationCode(event.target.value)}
+                  />
+                  <small>
+                    Blank uses sample data and a placeholder link. Name a confirmation code to render that registration’s real details, and the private link in the message becomes a working one.
+                  </small>
+                </label>
+                {testConfirmationCode.trim() && testRealDelivery && (
+                  <label className="message-enabled-toggle reminder-confirm-check">
+                    <input
+                      type="checkbox"
+                      checked={testAcknowledgeExposure}
+                      required
+                      onChange={(event) => setTestAcknowledgeExposure(event.target.checked)}
+                    />
+                    <span>
+                      <strong>I understand this emails a working private link to that registration.</strong>
+                      <small>
+                        Whoever receives it can open that registration, change its contact details, and see its balance. Send it to an address you control, and prefer a registration of your own. This is recorded against the registration and the address.
+                      </small>
+                    </span>
+                  </label>
+                )}
                 <button className="secondary-button" type="submit" disabled={saving || messaging.settings.deliveryMode === "DISABLED"}>
                   <FlaskConical size={16} aria-hidden="true" />
                   {saving

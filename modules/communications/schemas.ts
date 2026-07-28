@@ -52,7 +52,27 @@ export const messageTestInputSchema = z.object({
    * caller gets by omission.
    */
   realDelivery: z.boolean().optional().default(false),
-}).strict();
+  /**
+   * Render from this real registration instead of the sample context, which
+   * also makes the private link in the message a working one. Blank keeps the
+   * sample data and its placeholder link.
+   */
+  confirmationCode: z.string().trim().max(64).optional().default(""),
+  /**
+   * Required before a real registration's working private link may be mailed to
+   * a chosen address. The link grants whoever holds it access to that
+   * registration, so this is a deliberate acknowledgement rather than a default.
+   */
+  acknowledgeLinkExposure: z.boolean().optional().default(false),
+}).strict().superRefine((input, context) => {
+  if (input.confirmationCode && input.realDelivery && !input.acknowledgeLinkExposure) {
+    context.addIssue({
+      code: "custom",
+      path: ["acknowledgeLinkExposure"],
+      message: "Sending a real registration's private link to this address needs an explicit acknowledgement.",
+    });
+  }
+});
 
 export const balanceReminderBatchInputSchema = z.object({
   previewFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
