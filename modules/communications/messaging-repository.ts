@@ -1076,7 +1076,27 @@ export async function processPendingMessages(
   return getMessagingWorkspace(eventId);
 }
 
-export async function createLocalTestMessage(
+/**
+ * Renders one template to a chosen address, so a staff member can see a real
+ * message before a batch goes to everyone.
+ *
+ * Two modes. Captured (the default) writes the rendered message to the local
+ * capture table and contacts no provider. Real delivery sends it through the
+ * *event's own* sender rather than the platform account sender, deliberately:
+ * the point of a test is to prove what a registrant will receive, and the
+ * sender address, reply-to, and sending domain are the parts most likely to be
+ * wrong. Testing through a different identity would prove the wrong thing.
+ *
+ * That is also why real delivery requires the event to be on EXTERNAL_EMAIL
+ * rather than quietly borrowing another sender. Switching the event does not
+ * send anything by itself — batches still need their own review and an explicit
+ * queue run — so the requirement costs a setting change, not an unplanned send.
+ *
+ * Tokens come from the sample context, so `portal_url` is a placeholder rather
+ * than a working private link. The test proves rendering, sender identity, and
+ * deliverability; it does not produce a clickable registration.
+ */
+export async function sendTestMessage(
   eventId: string,
   templateId: string,
   input: MessageTestInput,
@@ -1108,6 +1128,18 @@ export async function createLocalTestMessage(
   if (settings.deliveryMode === "DISABLED") {
     throw new MessagingError("DELIVERY_DISABLED", "Turn on local capture before creating a test message.");
   }
+  if (input.realDelivery && settings.deliveryMode !== "EXTERNAL_EMAIL") {
+    throw new MessagingError(
+      "DELIVERY_DISABLED",
+      "Set this event's delivery to real email, with its own verified sender, before sending a test to a real address. Switching does not send anything on its own.",
+    );
+  }
+  if (input.realDelivery && !settings.senderEmail?.trim()) {
+    throw new MessagingError(
+      "EXTERNAL_EMAIL_NOT_CONFIGURED",
+      "This event has no sender address, so a real test would have nothing to send from.",
+    );
+  }
 
   const context: MessageTemplateContext = {
     ...SAMPLE_MESSAGE_TEMPLATE_CONTEXT,
@@ -1138,8 +1170,11 @@ export async function createLocalTestMessage(
         replyToEmailSnapshot: settings.replyToEmail,
         subjectSnapshot: rendered.subject,
         bodyTextSnapshot: rendered.body,
-        metadata: { trigger: "LOCAL_TEST", realDelivery: false },
-        idempotencyKey: `local-test:${randomUUID()}`,
+        metadata: {
+          trigger: input.realDelivery ? "REAL_TEST" : "LOCAL_TEST",
+          realDelivery: input.realDelivery,
+        },
+        idempotencyKey: `${input.realDelivery ? "real-test" : "local-test"}:${randomUUID()}`,
         correlationId: randomUUID(),
       },
     });
@@ -1147,17 +1182,31 @@ export async function createLocalTestMessage(
       data: {
         eventId,
         actorUserId,
-        action: "MESSAGE_TEST_CREATED",
+        action: input.realDelivery ? "MESSAGE_TEST_SENT" : "MESSAGE_TEST_CREATED",
         entityType: "MessageOutbox",
         entityId: created.id,
         correlationId: created.correlationId,
-        summary: `Created a local test capture for ${input.recipientEmail}.`,
-        metadata: { templateId, templateVersionId: version.id, realDelivery: false },
+        summary: input.realDelivery
+          ? `Sent a real test message to ${input.recipientEmail} using this event's sender.`
+          : `Created a local test capture for ${input.recipientEmail}.`,
+        metadata: {
+          templateId,
+          templateVersionId: version.id,
+          realDelivery: input.realDelivery,
+        },
       },
     });
     return created;
   });
-  await captureOneMessageLocally(message.id, eventId);
+
+  if (input.realDelivery) {
+    // One message, by id. The shared loop owns attempts, backoff, and the
+    // delivery log, so a failed test is diagnosed the same way a failed
+    // registrant message is rather than through a parallel code path.
+    await processExternalEmailQueue(eventId, { messageIds: [message.id] });
+  } else {
+    await captureOneMessageLocally(message.id, eventId);
+  }
   return getMessagingWorkspace(eventId);
 }
 
