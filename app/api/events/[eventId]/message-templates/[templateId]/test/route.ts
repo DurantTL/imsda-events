@@ -2,7 +2,7 @@ import { requirePermission } from "@/modules/access/authorization";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { messagingApiError } from "@/modules/communications/api-errors";
-import { createLocalTestMessage } from "@/modules/communications/messaging-repository";
+import { sendTestMessage } from "@/modules/communications/messaging-repository";
 import { messageTestInputSchema } from "@/modules/communications/schemas";
 import { findActiveMembership } from "@/modules/events/repository";
 import { withRequestContext } from "@/lib/request-context";
@@ -22,7 +22,7 @@ async function postHandler(
       findActiveMembership,
     );
     const input = messageTestInputSchema.parse(await request.json());
-    const messaging = await createLocalTestMessage(
+    const messaging = await sendTestMessage(
       eventId,
       templateId,
       input,
@@ -30,7 +30,7 @@ async function postHandler(
     );
     return Response.json({ messaging }, { status: 201 });
   } catch (error) {
-    return messagingApiError(error, "Creating the local test message");
+    return messagingApiError(error, "Sending the test message");
   }
 }
 
