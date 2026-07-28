@@ -290,6 +290,8 @@ export function CommunicationsWorkspace({
     setSettingsDraft(settingsDraftFromMessaging(messaging));
     setReminderConfirmed(false);
     setReminderBatchId("");
+    setShirtSizeConfirmed(false);
+    setShirtSizeBatchId("");
     setResendRecipientEmail("");
     setResendConfirmed(false);
     setResendRequestId("");
@@ -1035,11 +1037,19 @@ export function CommunicationsWorkspace({
                 </tbody>
               </table>
               {messaging.shirtSizePreview.recipients.length === 0 && (
-                <div className="empty-state">
-                  <CheckCircle2 size={24} aria-hidden="true" />
-                  <h3>Every attendee has a shirt size</h3>
-                  <p>No active registration is currently missing a shirt size with a valid contact email.</p>
-                </div>
+                messaging.shirtSizePreview.eventSupportsShirtSizes ? (
+                  <div className="empty-state">
+                    <CheckCircle2 size={24} aria-hidden="true" />
+                    <h3>Every attendee has a shirt size</h3>
+                    <p>No active registration is currently missing a shirt size with a valid contact email.</p>
+                  </div>
+                ) : (
+                  <div className="empty-state">
+                    <AlertTriangle size={24} aria-hidden="true" />
+                    <h3>This event does not collect shirt sizes</h3>
+                    <p>Registrants of this event have no shirt-size question on their private page, so a request would send them to a page that cannot answer it.</p>
+                  </div>
+                )
               )}
             </div>
           </section>

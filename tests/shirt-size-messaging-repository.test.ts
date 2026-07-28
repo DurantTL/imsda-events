@@ -31,6 +31,7 @@ import { REGISTRATION_MANAGE_LINK_SENTINEL } from "@/modules/communications/mana
 const event = {
   id: "event-1",
   name: "Women’s Retreat",
+  slug: "womens-retreat-2026",
   startsAt: new Date("2026-10-09T21:00:00.000Z"),
   endsAt: new Date("2026-10-11T17:00:00.000Z"),
   timezone: "America/Chicago",
@@ -223,6 +224,50 @@ describe("shirt-size request repository", () => {
       previewFingerprint: preview.fingerprint,
       batchId: "3d7b2a4f-6c8e-4b02-9a33-0f1c6e5d8b24",
     }, "user-1")).rejects.toMatchObject({ code: "EMPTY_AUDIENCE" });
+  });
+
+  it("refuses an event that does not collect shirts, even with people missing sizes", async () => {
+    const tx = baseTransaction();
+    // Same registrations, same missing sizes — only the event is ineligible.
+    tx.event.findUnique.mockResolvedValue({
+      ...event,
+      name: "Men’s Convention",
+      slug: "mens-convention-2027",
+    });
+    mocks.getPrisma.mockReturnValue(prismaFor(tx));
+
+    const preview = await getShirtSizeRequestPreview("event-1");
+    expect(preview.eventSupportsShirtSizes).toBe(false);
+    // The registrant's picker is gated on the same predicate, so asking would
+    // send them to a page that refuses the answer.
+    expect(preview.includedCount).toBe(0);
+
+    await expect(enqueueShirtSizeRequestBatch("event-1", {
+      previewFingerprint: preview.fingerprint,
+      batchId: "5f9d4c6b-8e0a-4d24-9c55-2b3e8a7f0d46",
+    }, "user-1")).rejects.toMatchObject({ code: "EVENT_NOT_ELIGIBLE" });
+
+    expect(tx.messageOutbox.upsert).not.toHaveBeenCalled();
+  });
+
+  it("invalidates a reviewed batch when the event is renamed out of eligibility", async () => {
+    const tx = baseTransaction();
+    mocks.getPrisma.mockReturnValue(prismaFor(tx));
+    const preview = await getShirtSizeRequestPreview("event-1");
+    expect(preview.eventSupportsShirtSizes).toBe(true);
+
+    // Renamed between review and send. Eligibility is inside the fingerprint,
+    // so the reviewed batch must not still be sendable.
+    tx.event.findUnique.mockResolvedValue({
+      ...event,
+      name: "Autumn Gathering",
+      slug: "autumn-gathering-2026",
+    });
+
+    await expect(enqueueShirtSizeRequestBatch("event-1", {
+      previewFingerprint: preview.fingerprint,
+      batchId: "6a0e5d7c-9f1b-4e35-8d66-3c4f9b8e1e57",
+    }, "user-1")).rejects.toMatchObject({ code: "EVENT_NOT_ELIGIBLE" });
   });
 
   it("replays an audited batch before recomputing, and rejects reuse with another fingerprint", async () => {

@@ -163,6 +163,12 @@ export type ShirtSizeRecipient = {
 export type ShirtSizeRequestPreview = {
   fingerprint: string;
   generatedAt: string;
+  /**
+   * False when the event does not collect shirts at all. The audience is then
+   * empty by construction rather than by coincidence, and the workspace says
+   * so instead of showing "everyone has answered".
+   */
+  eventSupportsShirtSizes: boolean;
   includedCount: number;
   skippedCount: number;
   missingAttendeeCount: number;

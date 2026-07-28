@@ -47,6 +47,7 @@ const emptyMessaging: MessagingWorkspaceData = {
   shirtSizePreview: {
     fingerprint: "",
     generatedAt: new Date(0).toISOString(),
+    eventSupportsShirtSizes: false,
     includedCount: 0,
     skippedCount: 0,
     missingAttendeeCount: 0,

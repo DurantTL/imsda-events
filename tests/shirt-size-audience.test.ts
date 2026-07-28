@@ -8,6 +8,7 @@ import {
 
 const context: ShirtSizePreviewContext = {
   eventId: "evt_wr26",
+  eventSupportsShirtSizes: true,
   deliveryMode: "EXTERNAL_EMAIL",
   senderName: "IMSDA Events",
   senderEmail: "notifications@imsda.org",

@@ -55,6 +55,21 @@ export function shirtSizeFromResponses(value: unknown) {
   return result.success ? result.data : null;
 }
 
+/**
+ * Whether an event collects convention shirts at all.
+ *
+ * Still a name match rather than a stored event capability, which is a known
+ * shortcoming: renaming the event silently turns shirt collection off. It lives
+ * here rather than beside one caller because three paths must agree — the
+ * registrant's picker, the handler that accepts their answer, and the staff
+ * batch that asks for it. Two of the three agreeing is worse than none: it
+ * mails people a link to a page that will refuse them.
+ */
+export function eventUsesConventionShirts(event: { name: string; slug: string }) {
+  return event.slug.includes("womens-retreat")
+    || /\bwomen(?:'|’)?s?\s+retreat\b/i.test(event.name);
+}
+
 export function shirtSizeConfirmedAtFromResponses(value: unknown) {
   const confirmedAt = record(value).shirt_size_confirmed_at;
   if (typeof confirmedAt !== "string") return null;

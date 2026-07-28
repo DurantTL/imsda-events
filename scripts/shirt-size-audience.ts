@@ -22,7 +22,10 @@ import {
   shirtSizeAttendeeSummary,
   type ShirtSizeCandidate,
 } from "@/modules/communications/shirt-size-audience";
-import { shirtSizeFromResponses } from "@/modules/registrations/shirt-sizes";
+import {
+  eventUsesConventionShirts,
+  shirtSizeFromResponses,
+} from "@/modules/registrations/shirt-sizes";
 
 loadEnvConfig(process.cwd());
 
@@ -107,6 +110,7 @@ async function main() {
 
     const preview = computeShirtSizeRequestPreview(candidates, {
       eventId: event.id,
+      eventSupportsShirtSizes: eventUsesConventionShirts(event),
       deliveryMode: settings?.deliveryMode ?? "DISABLED",
       senderName: settings?.senderName ?? "",
       senderEmail: settings?.senderEmail ?? null,

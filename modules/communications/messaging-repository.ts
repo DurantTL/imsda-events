@@ -55,7 +55,10 @@ import {
   type ShirtSizeCandidate,
   type ShirtSizePreviewContext,
 } from "@/modules/communications/shirt-size-audience";
-import { shirtSizeFromResponses } from "@/modules/registrations/shirt-sizes";
+import {
+  eventUsesConventionShirts,
+  shirtSizeFromResponses,
+} from "@/modules/registrations/shirt-sizes";
 import type {
   BalanceReminderPreview,
   MessageOutboxRecord,
@@ -134,6 +137,7 @@ export class MessagingError extends Error {
       | "PREVIEW_CHANGED"
       | "EMPTY_AUDIENCE"
       | "IDEMPOTENCY_KEY_REUSED"
+      | "EVENT_NOT_ELIGIBLE"
       | "INVALID_TEMPLATE",
     message: string,
     public readonly details?: Record<string, unknown>,
@@ -612,6 +616,7 @@ async function loadShirtSizeRequestState(
       select: {
         id: true,
         name: true,
+        slug: true,
         startsAt: true,
         endsAt: true,
         timezone: true,
@@ -705,6 +710,10 @@ async function loadShirtSizeRequestState(
   });
   const context: ShirtSizePreviewContext = {
     eventId,
+    // The same predicate the registrant's picker and the handler that accepts
+    // their answer use. Asking an event that will refuse the answer would mail
+    // people a link to a page that turns them away.
+    eventSupportsShirtSizes: eventUsesConventionShirts(event),
     deliveryMode: settings.deliveryMode,
     senderName: settings.senderName,
     senderEmail: settings.senderEmail,
@@ -1522,6 +1531,13 @@ export async function enqueueShirtSizeRequestBatch(
         }
 
         const state = await loadShirtSizeRequestState(eventId, tx);
+        if (!state.preview.eventSupportsShirtSizes) {
+          throw new MessagingError(
+            "EVENT_NOT_ELIGIBLE",
+            "This event does not collect shirt sizes, so its registrants cannot answer the request.",
+            { shirtSizePreview: state.preview },
+          );
+        }
         if (state.preview.fingerprint !== input.previewFingerprint) {
           throw new MessagingError(
             "PREVIEW_CHANGED",
