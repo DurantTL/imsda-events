@@ -43,3 +43,6 @@ next-env.d.ts
 
 # local review artifacts
 /.codex-doc-review/
+
+# Generated code graph. Regenerate locally with: graphify update .
+/graphify-out/
