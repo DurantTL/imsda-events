@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import { FileText, Link2, Plus, Save, Trash2 } from "lucide-react";
+import type { EventAssetRecord } from "@/modules/events/asset-repository";
 import type { EventContentSectionRecord } from "@/modules/events/content-repository";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 
-type LinkDraft = { label: string; description: string; url: string };
+type LinkDraft = { label: string; description: string; url: string | null; assetId: string | null };
 type SectionDraft = {
   kind: "RICH_TEXT" | "RESOURCE_LINKS";
   title: string;
@@ -28,11 +29,15 @@ export function EventContentWorkspace({
   eventId,
   eventName,
   initialSections,
+  initialAssets,
 }: {
   eventId: string;
   eventName: string;
   initialSections: EventContentSectionRecord[];
+  initialAssets: EventAssetRecord[];
 }) {
+  const [assets, setAssets] = useState(initialAssets);
+  const [uploading, setUploading] = useState(false);
   const [saved, setSaved] = useState(() => draftsFrom(initialSections));
   const [sections, setSections] = useState(() => draftsFrom(initialSections));
   const [saving, setSaving] = useState(false);
@@ -69,8 +74,29 @@ export function EventContentWorkspace({
       title: "",
       body: "",
       isPublished: false,
-      links: kind === "RESOURCE_LINKS" ? [{ label: "", description: "", url: "" }] : [],
+      links: kind === "RESOURCE_LINKS" ? [{ label: "", description: "", url: "", assetId: null }] : [],
     }]);
+  }
+
+  async function uploadAsset(file: File) {
+    setUploading(true);
+    setError("");
+    setNotice("");
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const response = await fetch(`/api/events/${eventId}/assets`, { method: "POST", body });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.assets) {
+        throw new Error(result.message ?? "That file could not be uploaded.");
+      }
+      setAssets(result.assets);
+      setNotice(`Uploaded ${result.asset?.displayName ?? "the file"}. Choose it on a tile below.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "That file could not be uploaded.");
+    } finally {
+      setUploading(false);
+    }
   }
 
   async function save(submitEvent: React.FormEvent<HTMLFormElement>) {
@@ -116,6 +142,44 @@ export function EventContentWorkspace({
 
       {error && <p className="form-error" role="alert">{error}</p>}
       {notice && <p className="inline-notice" role="status">{notice}</p>}
+
+      <section className="panel">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Files</p>
+            <h2>Uploads for this event</h2>
+            <p>PDF, PNG, JPEG, or WebP, up to 25 MB. A file is only reachable publicly while a published tile links to it.</p>
+          </div>
+        </div>
+        <label>
+          Add a file
+          <input
+            type="file"
+            accept="application/pdf,image/png,image/jpeg,image/webp"
+            disabled={uploading}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) void uploadAsset(file);
+            }}
+          />
+        </label>
+        {assets.length > 0 && (
+          <ul className="event-asset-list">
+            {assets.map((asset) => (
+              <li key={asset.id}>
+                <a href={`/api/events/${eventId}/assets/${asset.id}`} target="_blank" rel="noreferrer">
+                  {asset.displayName}
+                </a>
+                <small>
+                  {(asset.byteSize / 1024).toFixed(0)} KB ·{" "}
+                  {asset.linkCount === 0 ? "not used yet" : `used on ${asset.linkCount} tile${asset.linkCount === 1 ? "" : "s"}`}
+                </small>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <form className="form-stack" onSubmit={save}>
         {sections.map((section, index) => (
@@ -174,9 +238,29 @@ export function EventContentWorkspace({
                     <label>Note<input value={link.description} maxLength={120} placeholder="Full weekend · PDF" onChange={(event) => updateSection(index, {
                       links: section.links.map((entry, position) => position === linkIndex ? { ...entry, description: event.target.value } : entry),
                     })} /></label>
-                    <label>Address<input type="url" value={link.url} placeholder="https://imsda.org/flyer.pdf" onChange={(event) => updateSection(index, {
-                      links: section.links.map((entry, position) => position === linkIndex ? { ...entry, url: event.target.value } : entry),
-                    })} /></label>
+                    <label>
+                      Destination
+                      <select
+                        value={link.assetId ?? ""}
+                        onChange={(event) => updateSection(index, {
+                          links: section.links.map((entry, position) => position === linkIndex
+                            // A tile points at one thing, so choosing a file
+                            // clears the address and vice versa.
+                            ? { ...entry, assetId: event.target.value || null, url: event.target.value ? null : entry.url ?? "" }
+                            : entry),
+                        })}
+                      >
+                        <option value="">A web address</option>
+                        {assets.map((asset) => (
+                          <option value={asset.id} key={asset.id}>{asset.displayName}</option>
+                        ))}
+                      </select>
+                      {!link.assetId && (
+                        <input type="url" value={link.url ?? ""} placeholder="https://imsda.org/flyer.pdf" onChange={(event) => updateSection(index, {
+                          links: section.links.map((entry, position) => position === linkIndex ? { ...entry, url: event.target.value } : entry),
+                        })} />
+                      )}
+                    </label>
                     <button className="secondary-button" type="button" onClick={() => updateSection(index, {
                       links: section.links.filter((_, position) => position !== linkIndex),
                     })}>
@@ -185,7 +269,7 @@ export function EventContentWorkspace({
                   </div>
                 ))}
                 <button className="secondary-button" type="button" onClick={() => updateSection(index, {
-                  links: [...section.links, { label: "", description: "", url: "" }],
+                  links: [...section.links, { label: "", description: "", url: "", assetId: null }],
                 })}>
                   <Plus size={15} aria-hidden="true" /> Add a link
                 </button>

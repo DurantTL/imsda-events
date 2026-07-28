@@ -145,11 +145,17 @@ export default async function PublicEventPage({
         <section className="public-event-resources" aria-label={section.title} key={section.id}>
           <h2>{section.title}</h2>
           <ul>
-            {section.links.map((link) => (
-              <li key={link.url}>
-                {/* Staff-entered destinations are off-site, so the usual
-                    protections for an untrusted target apply. */}
-                <a href={link.url} target="_blank" rel="noopener noreferrer">
+            {section.links.map((link, linkIndex) => (
+              <li key={`${section.id}:${linkIndex}`}>
+                {/* An uploaded file is served from here; anything else is
+                    off-site, so it gets the usual untrusted-target guards. */}
+                <a
+                  href={link.assetId
+                    ? `/api/public/events/${encodeURIComponent(landing.event.slug)}/assets/${encodeURIComponent(link.assetId)}`
+                    : link.url ?? "#"}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
                   <strong>{link.label}</strong>
                   {link.description && <small>{link.description}</small>}
                 </a>

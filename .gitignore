@@ -46,3 +46,6 @@ next-env.d.ts
 
 # Generated code graph. Regenerate locally with: graphify update .
 /graphify-out/
+
+# Uploaded event files are written here at runtime.
+/storage/

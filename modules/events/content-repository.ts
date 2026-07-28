@@ -6,7 +6,10 @@ import type { EventContentInput } from "@/modules/events/content-schemas";
 export type EventContentLinkRecord = {
   label: string;
   description: string;
-  url: string;
+  /** Set when the tile points elsewhere. Exactly one of these two is non-null. */
+  url: string | null;
+  /** Set when the tile points at a file uploaded here. */
+  assetId: string | null;
 };
 
 export type EventContentSectionRecord = {
@@ -26,7 +29,7 @@ const sectionSelect = {
   isPublished: true,
   links: {
     orderBy: { position: "asc" as const },
-    select: { label: true, description: true, url: true },
+    select: { label: true, description: true, url: true, assetId: true },
   },
 } as const;
 
@@ -90,7 +93,9 @@ export async function replaceEventContent(
               create: section.links.map((link, linkPosition) => ({
                 label: link.label,
                 description: link.description,
-                url: link.url,
+                // The database carries an XOR check, so exactly one is stored.
+                url: link.assetId ? null : link.url ?? null,
+                assetId: link.assetId ?? null,
                 position: linkPosition,
               })),
             }

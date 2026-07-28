@@ -7,21 +7,43 @@ import { z } from "zod";
  * scheme would render `javascript:` as an anchor on a public page, which is a
  * cross-site scripting hole wearing a link's clothes.
  */
+const externalUrlSchema = z.url().max(500).refine(
+  (value) => {
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+      return false;
+    }
+  },
+  "Enter a complete http:// or https:// web address.",
+);
+
 export const eventContentLinkInputSchema = z.object({
   label: z.string().trim().min(1, "Give the link a label.").max(80),
   description: z.string().trim().max(120).default(""),
-  url: z.url().max(500).refine(
-    (value) => {
-      try {
-        const parsed = new URL(value);
-        return parsed.protocol === "http:" || parsed.protocol === "https:";
-      } catch {
-        return false;
-      }
-    },
-    "Enter a complete http:// or https:// web address.",
-  ),
-}).strict();
+  url: z.union([z.literal(""), externalUrlSchema]).nullable().optional()
+    .transform((value) => (value ? value : null)),
+  assetId: z.union([z.literal(""), z.string().trim().max(40)]).nullable().optional()
+    .transform((value) => (value ? value : null)),
+}).strict().superRefine((value, context) => {
+  // The database carries the same rule as a CHECK. Stating it here too means a
+  // staff member gets a sentence rather than a constraint violation.
+  if (!value.url && !value.assetId) {
+    context.addIssue({
+      code: "custom",
+      path: ["url"],
+      message: "Point the tile at a web address, or choose an uploaded file.",
+    });
+  }
+  if (value.url && value.assetId) {
+    context.addIssue({
+      code: "custom",
+      path: ["url"],
+      message: "A tile points at one thing: an address or an uploaded file, not both.",
+    });
+  }
+});
 
 export const eventContentSectionInputSchema = z.object({
   kind: z.enum(["RICH_TEXT", "RESOURCE_LINKS"]),
