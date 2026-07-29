@@ -16,6 +16,7 @@ const squareFontOrigins = [
   "https://square-fonts-production-f.squarecdn.com",
   "https://d1g145x70srn7h.cloudfront.net",
 ].join(" ");
+const buildTsconfigPath = process.env.NEXT_BUILD_TSCONFIG?.trim() || "tsconfig.json";
 
 function contentSecurityPolicy(frameAncestors: string) {
   return [
@@ -54,6 +55,12 @@ const privateRegistrationHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Docker's production build checks only code that can ship in the app. The
+  // normal local/CI build keeps using tsconfig.json, which also covers tests,
+  // import helpers, and operator scripts.
+  typescript: {
+    tsconfigPath: buildTsconfigPath,
+  },
   async headers() {
     return [
       {
