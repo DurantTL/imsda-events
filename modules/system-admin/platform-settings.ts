@@ -38,6 +38,9 @@ export const platformSettingsInputSchema = z.object({
   defaultSenderName: z.string().trim().min(2).max(120),
   defaultSenderEmail: optionalEmail,
   defaultReplyToEmail: optionalEmail,
+  defaultAttendeeEditPolicy: z
+    .enum(["TIERED", "VERIFY_EVERY_EDIT"])
+    .default("VERIFY_EVERY_EDIT"),
 }).strict();
 
 export type PlatformSettingsInput = z.infer<typeof platformSettingsInputSchema>;
@@ -71,6 +74,7 @@ export async function getPlatformSettings(): Promise<PlatformSettingsRecord> {
     defaultSenderName: row.defaultSenderName,
     defaultSenderEmail: row.defaultSenderEmail,
     defaultReplyToEmail: row.defaultReplyToEmail,
+    defaultAttendeeEditPolicy: row.defaultAttendeeEditPolicy,
     updatedAt: row.updatedAt.toISOString(),
     updatedByName: row.updatedBy?.displayName ?? null,
   };
@@ -107,6 +111,7 @@ export async function updatePlatformSettings(
               defaultSenderEmail: before.defaultSenderEmail,
               defaultReplyToEmail: before.defaultReplyToEmail,
               defaultTimezone: before.defaultTimezone,
+              defaultAttendeeEditPolicy: before.defaultAttendeeEditPolicy,
             }
             : null,
           after: {
@@ -114,6 +119,7 @@ export async function updatePlatformSettings(
             defaultSenderEmail: input.defaultSenderEmail,
             defaultReplyToEmail: input.defaultReplyToEmail,
             defaultTimezone: input.defaultTimezone,
+            defaultAttendeeEditPolicy: input.defaultAttendeeEditPolicy,
           },
         },
       },

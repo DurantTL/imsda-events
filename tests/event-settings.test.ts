@@ -17,6 +17,7 @@ const validEvent = {
   registrationOpensOn: "2027-05-01",
   registrationClosesOn: "2027-10-01",
   collectsShirtSizes: false,
+  attendeeEditPolicy: "VERIFY_EVERY_EDIT",
   waitlistEnabled: true,
   autoPromoteWaitlist: true,
 } as const;

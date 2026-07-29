@@ -54,7 +54,8 @@ export async function listEventsForUser(userId: string, isSystemAdmin: boolean) 
       registrationOpensOn: true,
       registrationClosesOn: true,
       waitlistEnabled: true,
-        collectsShirtSizes: true,
+      collectsShirtSizes: true,
+      attendeeEditPolicy: true,
       autoPromoteWaitlist: true,
       publicInfoUrl: true,
       supportContact: true,
@@ -83,6 +84,7 @@ export async function getEventSettings(eventId: string) {
         registrationClosesOn: true,
         waitlistEnabled: true,
         collectsShirtSizes: true,
+        attendeeEditPolicy: true,
         autoPromoteWaitlist: true,
         createdAt: true,
         updatedAt: true,
@@ -119,6 +121,7 @@ export async function getEventSettings(eventId: string) {
     registrationClosesOn: event.registrationClosesOn,
     waitlistEnabled: event.waitlistEnabled,
     collectsShirtSizes: event.collectsShirtSizes,
+    attendeeEditPolicy: event.attendeeEditPolicy,
     autoPromoteWaitlist: event.autoPromoteWaitlist,
     publishedFormCount,
     publishedForms,
@@ -146,6 +149,12 @@ export async function createEvent(
   }
 
   const eventId = await getPrisma().$transaction(async (tx) => {
+    const platform = await tx.platformSettings.upsert({
+      where: { id: "platform" },
+      update: {},
+      create: { id: "platform" },
+      select: { defaultAttendeeEditPolicy: true },
+    });
     const event = await tx.event.create({
       data: {
         name: input.name,
@@ -162,6 +171,7 @@ export async function createEvent(
         registrationClosesOn: input.registrationClosesOn,
         waitlistEnabled: input.waitlistEnabled,
         collectsShirtSizes: input.collectsShirtSizes,
+        attendeeEditPolicy: platform.defaultAttendeeEditPolicy,
         autoPromoteWaitlist: input.autoPromoteWaitlist,
       },
     });
@@ -215,6 +225,7 @@ export async function updateEventSettings(
           registrationClosesOn: true,
           waitlistEnabled: true,
         collectsShirtSizes: true,
+        attendeeEditPolicy: true,
           autoPromoteWaitlist: true,
         },
       }),
@@ -252,6 +263,7 @@ export async function updateEventSettings(
         registrationClosesOn: input.registrationClosesOn,
         waitlistEnabled: input.waitlistEnabled,
         collectsShirtSizes: input.collectsShirtSizes,
+        attendeeEditPolicy: input.attendeeEditPolicy,
         autoPromoteWaitlist: input.autoPromoteWaitlist,
       },
     });

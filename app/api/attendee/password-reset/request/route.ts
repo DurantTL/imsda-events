@@ -1,12 +1,16 @@
 import { cookies } from "next/headers";
+import { after } from "next/server";
 import { z } from "zod";
 import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { beginAttendeePasswordReset } from "@/modules/attendee-accounts/account-service";
-import { EMAIL_VERIFICATION_LIFETIME_MINUTES } from "@/modules/attendee-accounts/codes";
+import { ATTENDEE_PENDING_REQUEST_LIFETIME_HOURS } from "@/modules/attendee-accounts/codes";
 import { ATTENDEE_PENDING_COOKIE_NAME } from "@/modules/attendee-accounts/session-store";
-import { sendAttendeePasswordResetEmail } from "@/modules/attendee-accounts/attendee-email-dispatch";
+import {
+  deliverQueuedAttendeeEmail,
+  queueAttendeePasswordResetEmail,
+} from "@/modules/attendee-accounts/attendee-email-dispatch";
 import { mintAttendeeCodeWithoutSending } from "@/modules/attendee-accounts/attendee-email";
 import {
   applyRateLimitHeaders,
@@ -51,13 +55,16 @@ async function postHandler(request: Request) {
 
     let configured = true;
     if (reset.accountId && reset.outcome !== "no-account") {
-      const dispatch = await sendAttendeePasswordResetEmail({
+      const dispatch = await queueAttendeePasswordResetEmail({
         accountId: reset.accountId,
         email: input.email,
         displayName: reset.displayName,
         federatedOnly: reset.outcome === "federated-only",
       });
       configured = dispatch.configured;
+      if (dispatch.messageId) {
+        after(() => deliverQueuedAttendeeEmail(dispatch.messageId!));
+      }
     }
 
     (await cookies()).set(ATTENDEE_PENDING_COOKIE_NAME, reset.pendingToken, {
@@ -66,7 +73,7 @@ async function postHandler(request: Request) {
       sameSite: "lax",
       path: "/",
       expires: reset.expiresAt,
-      maxAge: EMAIL_VERIFICATION_LIFETIME_MINUTES * 60,
+      maxAge: ATTENDEE_PENDING_REQUEST_LIFETIME_HOURS * 60 * 60,
       priority: "high",
     });
 

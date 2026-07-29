@@ -7,7 +7,12 @@ const dependencies = vi.hoisted(() => ({
   getResendEmailAvailability: vi.fn(),
   attachVerificationCode: vi.fn(),
   attachPasswordResetCode: vi.fn(),
+  reuseVerificationCode: vi.fn(),
+  reusePasswordResetCode: vi.fn(),
   revokeVerificationCode: vi.fn(),
+  attachAttendeeStepUpCode: vi.fn(),
+  reuseAttendeeStepUpCode: vi.fn(),
+  revokeAttendeeStepUpCode: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -19,17 +24,23 @@ vi.mock("@/integrations/email/resend", () => ({
 vi.mock("@/modules/attendee-accounts/account-service", () => ({
   attachVerificationCode: dependencies.attachVerificationCode,
   attachPasswordResetCode: dependencies.attachPasswordResetCode,
+  reuseVerificationCode: dependencies.reuseVerificationCode,
+  reusePasswordResetCode: dependencies.reusePasswordResetCode,
   revokeVerificationCode: dependencies.revokeVerificationCode,
+}));
+vi.mock("@/modules/attendee-accounts/step-up-service", () => ({
+  attachAttendeeStepUpCode: dependencies.attachAttendeeStepUpCode,
+  reuseAttendeeStepUpCode: dependencies.reuseAttendeeStepUpCode,
+  revokeAttendeeStepUpCode: dependencies.revokeAttendeeStepUpCode,
 }));
 
 import {
   PASSWORD_RESET_CODE_SENTINEL,
+  EDIT_VERIFICATION_CODE_SENTINEL,
   VERIFICATION_CODE_SENTINEL,
   enqueueAttendeeEmail,
   prepareAttendeeEmailBodyForDelivery,
 } from "@/modules/attendee-accounts/attendee-email";
-import { hashOneTimeCode } from "@/modules/attendee-accounts/codes";
-
 const messageOutbox = { create: vi.fn() };
 
 beforeEach(() => {
@@ -48,6 +59,10 @@ beforeEach(() => {
   dependencies.getPrisma.mockReturnValue({ messageOutbox });
   dependencies.attachVerificationCode.mockResolvedValue(true);
   dependencies.attachPasswordResetCode.mockResolvedValue(true);
+  dependencies.reuseVerificationCode.mockResolvedValue(null);
+  dependencies.reusePasswordResetCode.mockResolvedValue(null);
+  dependencies.attachAttendeeStepUpCode.mockResolvedValue(true);
+  dependencies.reuseAttendeeStepUpCode.mockResolvedValue(null);
 });
 
 async function enqueue(alreadyRegistered: boolean) {
@@ -146,6 +161,7 @@ describe("minting the code at delivery", () => {
     // to a verification token would produce a code that verifies nothing and a
     // reset nobody can finish.
     const prepared = await prepareAttendeeEmailBodyForDelivery({
+      messageId: "message-reset",
       accountAttendeeId: "acct_1",
       templateKey: "ATTENDEE_PASSWORD_RESET",
       bodyText: `Here it is:\n${PASSWORD_RESET_CODE_SENTINEL}`,
@@ -161,6 +177,7 @@ describe("minting the code at delivery", () => {
     // Each message only ever replaces its own sentinel, so a mismatched pair
     // fails loudly rather than sending the wrong code.
     const prepared = await prepareAttendeeEmailBodyForDelivery({
+      messageId: "message-mismatch",
       accountAttendeeId: "acct_1",
       templateKey: "ATTENDEE_PASSWORD_RESET",
       bodyText: VERIFICATION_CODE_SENTINEL,
@@ -172,6 +189,7 @@ describe("minting the code at delivery", () => {
 
   it("replaces the sentinel with a six-digit code and stores that code's digest", async () => {
     const prepared = await prepareAttendeeEmailBodyForDelivery({
+      messageId: "message-verification",
       accountAttendeeId: "acct_1",
       templateKey: "ATTENDEE_EMAIL_VERIFICATION",
       bodyText: `Here it is:\n${VERIFICATION_CODE_SENTINEL}\nThanks.`,
@@ -182,12 +200,17 @@ describe("minting the code at delivery", () => {
     expect(code).toMatch(/^\d{6}$/);
     expect(prepared.bodyText).not.toContain(VERIFICATION_CODE_SENTINEL);
     expect(dependencies.attachVerificationCode).toHaveBeenCalledWith(
-      expect.objectContaining({ accountId: "acct_1", codeHash: hashOneTimeCode(code!) }),
+      expect.objectContaining({
+        accountId: "acct_1",
+        messageId: "message-verification",
+        code,
+      }),
     );
   });
 
   it("retires the code if the send fails for good", async () => {
     const prepared = await prepareAttendeeEmailBodyForDelivery({
+      messageId: "message-definitive-failure",
       accountAttendeeId: "acct_1",
       templateKey: "ATTENDEE_EMAIL_VERIFICATION",
       bodyText: VERIFICATION_CODE_SENTINEL,
@@ -201,6 +224,7 @@ describe("minting the code at delivery", () => {
   it("leaves a body with no sentinel alone", async () => {
     const bodyText = "An account already exists for this address.";
     const prepared = await prepareAttendeeEmailBodyForDelivery({
+      messageId: "message-no-sentinel",
       accountAttendeeId: "acct_1",
       templateKey: "ATTENDEE_EMAIL_VERIFICATION",
       bodyText,
@@ -215,6 +239,7 @@ describe("minting the code at delivery", () => {
     // in the queue. Delivering a dead code is worse than not delivering.
     dependencies.attachVerificationCode.mockResolvedValue(false);
     await expect(prepareAttendeeEmailBodyForDelivery({
+      messageId: "message-dead-code",
       accountAttendeeId: "acct_1",
       templateKey: "ATTENDEE_EMAIL_VERIFICATION",
       bodyText: VERIFICATION_CODE_SENTINEL,
@@ -224,11 +249,51 @@ describe("minting the code at delivery", () => {
 
   it("refuses to mint without an account", async () => {
     await expect(prepareAttendeeEmailBodyForDelivery({
+      messageId: "message-no-account",
       accountAttendeeId: null,
       templateKey: "ATTENDEE_EMAIL_VERIFICATION",
       bodyText: VERIFICATION_CODE_SENTINEL,
       now: new Date("2026-07-28T12:00:00Z"),
     })).rejects.toThrow();
+  });
+
+  it("reuses the first sealed code on a retry instead of minting another", async () => {
+    dependencies.reuseVerificationCode.mockResolvedValue("246810");
+
+    const prepared = await prepareAttendeeEmailBodyForDelivery({
+      messageId: "message-retry",
+      accountAttendeeId: "acct_1",
+      templateKey: "ATTENDEE_EMAIL_VERIFICATION",
+      bodyText: VERIFICATION_CODE_SENTINEL,
+      now: new Date("2026-07-28T12:01:00Z"),
+    });
+
+    expect(prepared.bodyText).toBe("246810");
+    expect(dependencies.attachVerificationCode).not.toHaveBeenCalled();
+    expect(dependencies.reuseVerificationCode).toHaveBeenCalledWith({
+      accountId: "acct_1",
+      messageId: "message-retry",
+      now: new Date("2026-07-28T12:01:00Z"),
+    });
+  });
+
+  it("binds an edit code to the step-up record and reuses it on delivery retry", async () => {
+    dependencies.reuseAttendeeStepUpCode.mockResolvedValue("135790");
+    const prepared = await prepareAttendeeEmailBodyForDelivery({
+      messageId: "message-edit-retry",
+      accountAttendeeId: "acct_1",
+      templateKey: "ATTENDEE_EDIT_VERIFICATION",
+      bodyText: EDIT_VERIFICATION_CODE_SENTINEL,
+      now: new Date("2026-07-28T12:01:00Z"),
+    });
+
+    expect(prepared.bodyText).toBe("135790");
+    expect(dependencies.attachAttendeeStepUpCode).not.toHaveBeenCalled();
+    expect(dependencies.reuseAttendeeStepUpCode).toHaveBeenCalledWith({
+      accountId: "acct_1",
+      messageId: "message-edit-retry",
+      now: new Date("2026-07-28T12:01:00Z"),
+    });
   });
 });
 

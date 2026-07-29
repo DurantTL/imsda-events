@@ -206,6 +206,11 @@ enum AttendeeStepUpPurpose {
   REGISTRATION_EDIT
 }
 
+enum AttendeeEditPolicy {
+  TIERED
+  VERIFY_EVERY_EDIT
+}
+
 enum AttendeeIdentityProvider {
   GOOGLE
 }
@@ -229,6 +234,7 @@ enum MessageTemplateKey {
   ACCOUNT_PASSWORD_RESET
   ATTENDEE_EMAIL_VERIFICATION
   ATTENDEE_PASSWORD_RESET
+  ATTENDEE_EDIT_VERIFICATION
 }
 
 enum MessageTemplateStatus {
@@ -444,6 +450,12 @@ model AttendeeAccount {
   id              String                @id @default(cuid())
   email           String                @unique
   displayName     String
+  firstName       String?
+  lastName        String?
+  phone           String?
+  shirtSize       String?
+  dietaryNeeds    String?
+  accessibilityNeeds String?
   status          AttendeeAccountStatus @default(PENDING_VERIFICATION)
   emailVerifiedAt DateTime?
   /**
@@ -542,20 +554,29 @@ model AttendeeSession {
  * message actually leaves, so a database read never yields a usable credential.
  */
 model AttendeeAccountToken {
-  id         String               @id @default(cuid())
-  accountId  String
-  tokenHash  String               @unique
-  codeHash   String?
-  purpose    AttendeeTokenPurpose
-  expiresAt  DateTime
-  usedAt     DateTime?
-  attempts   Int                  @default(0)
-  createdAt  DateTime             @default(now())
+  id                String               @id @default(cuid())
+  accountId         String
+  tokenHash         String               @unique
+  codeHash          String?
+  // Retry-stable association with the outbox row that first prepared the code.
+  deliveryMessageId String?              @unique
+  // Recoverable only by the application encryption key. This lets a retry send
+  // the same code without storing a usable credential in a database dump.
+  sealedCode        String?
+  // The request handle may outlive a slow queue; the code itself gets a fresh,
+  // shorter lifetime when delivery preparation first succeeds.
+  codeExpiresAt     DateTime?
+  purpose           AttendeeTokenPurpose
+  expiresAt         DateTime
+  usedAt            DateTime?
+  attempts          Int                  @default(0)
+  createdAt         DateTime             @default(now())
 
   account AttendeeAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
   @@index([accountId, purpose, usedAt])
   @@index([expiresAt])
+  @@index([codeExpiresAt])
 }
 
 /**
@@ -612,7 +633,10 @@ model AttendeeStepUpCode {
   id         String                @id @default(cuid())
   accountId  String
   sessionId  String
-  codeHash   String                @unique
+  codeHash   String?               @unique
+  deliveryMessageId String?        @unique
+  sealedCode String?
+  codeExpiresAt DateTime?
   purpose    AttendeeStepUpPurpose @default(REGISTRATION_EDIT)
   expiresAt  DateTime
   consumedAt DateTime?
@@ -623,6 +647,7 @@ model AttendeeStepUpCode {
 
   @@index([accountId, purpose, consumedAt])
   @@index([expiresAt])
+  @@index([codeExpiresAt])
 }
 
 /**
@@ -752,6 +777,7 @@ model PlatformSettings {
   defaultSenderName   String   @default("IMSDA Events")
   defaultSenderEmail  String?
   defaultReplyToEmail String?
+  defaultAttendeeEditPolicy AttendeeEditPolicy @default(VERIFY_EVERY_EDIT)
   updatedAt           DateTime @updatedAt
   updatedByUserId     String?
 
@@ -778,6 +804,7 @@ model Event {
   /// the event's name, which meant only one event could ever collect sizes and
   /// renaming it turned collection off without telling anyone.
   collectsShirtSizes   Boolean  @default(false)
+  attendeeEditPolicy   AttendeeEditPolicy @default(VERIFY_EVERY_EDIT)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 

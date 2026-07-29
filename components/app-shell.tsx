@@ -201,6 +201,14 @@ export function AppShell({
                       System management
                     </Link>
                   )}
+                  <Link
+                    className="account-system-link"
+                    href="/account"
+                    onClick={() => setOpenMenu(null)}
+                  >
+                    <CircleUserRound aria-hidden="true" size={17} />
+                    My registrations
+                  </Link>
                   <SignOutButton />
                 </div>
               )}

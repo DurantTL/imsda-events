@@ -1,12 +1,20 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { consumeAttendeeEditStepUp } from "@/modules/attendee-accounts/step-up-service";
+import {
+  processQueuedMessageIdsAfterCommit,
+} from "@/modules/communications/messaging-repository";
+import { enqueueRegistrationContactUpdatedMessage } from "@/modules/communications/transactional-messages";
 import { moneyToCents, registrationBalanceCents } from "@/modules/payments/square-domain";
 import {
   describePublicRegistrationStatus,
   publicAttendeeName,
+  publicContactFromSnapshot,
   type PublicRegistrationStatusSummary,
+  type PublicContactUpdateInput,
 } from "@/modules/public-access/domain";
 
 /**
@@ -54,6 +62,113 @@ async function matchingRegistrationIds(verifiedEmail: string) {
   return rows.map((row) => row.id);
 }
 
+export async function authorizeAttendeeRegistration(
+  verifiedEmail: string,
+  registrationId: string,
+) {
+  const ids = await matchingRegistrationIds(verifiedEmail);
+  if (!ids.includes(registrationId)) return null;
+  const registration = await getPrisma().registration.findUnique({
+    where: { id: registrationId },
+    select: { id: true, eventId: true },
+  });
+  return registration
+    ? { registrationId: registration.id, eventId: registration.eventId }
+    : null;
+}
+
+export async function updateAttendeeRegistrationContact(input: {
+  accountId: string;
+  verifiedEmail: string;
+  sessionId: string;
+  registrationId: string;
+  code: string;
+  contact: PublicContactUpdateInput;
+  now?: Date;
+}) {
+  const now = input.now ?? new Date();
+  const result = await getPrisma().$transaction(async (tx) => {
+    const owned = await tx.$queryRaw<Array<{
+      id: string;
+      eventId: string;
+      confirmationCode: string;
+      contactSnapshot: Prisma.JsonValue;
+    }>>(Prisma.sql`
+      SELECT registration."id", registration."eventId",
+        registration."confirmationCode", registration."contactSnapshot"
+      FROM "Registration" registration
+      JOIN "Person" person ON person."id" = registration."accountHolderPersonId"
+      WHERE registration."id" = ${input.registrationId}
+        AND registration."status" <> 'DRAFT'
+        AND ${CONTACT_EMAIL_SQL} = ${input.verifiedEmail}
+      FOR UPDATE
+    `);
+    const registration = owned[0];
+    if (!registration) return null;
+    const authorized = await consumeAttendeeEditStepUp({
+      accountId: input.accountId,
+      sessionId: input.sessionId,
+      code: input.code,
+      now,
+      client: tx,
+    });
+    if (!authorized) return { codeAccepted: false as const };
+
+    const existing = registration.contactSnapshot
+      && typeof registration.contactSnapshot === "object"
+      && !Array.isArray(registration.contactSnapshot)
+      ? registration.contactSnapshot as Prisma.JsonObject
+      : {};
+    await tx.registration.update({
+      where: { id: registration.id },
+      data: {
+        contactSnapshot: {
+          ...existing,
+          ...input.contact,
+        } satisfies Prisma.InputJsonObject,
+      },
+    });
+    const correlationId = randomUUID();
+    await tx.auditLog.create({
+      data: {
+        eventId: registration.eventId,
+        action: "ATTENDEE_ACCOUNT_REGISTRATION_CONTACT_UPDATED",
+        entityType: "Registration",
+        entityId: registration.id,
+        correlationId,
+        summary: `The signed-in attendee account updated contact details for ${registration.confirmationCode}.`,
+        metadata: {
+          source: "ATTENDEE_ACCOUNT",
+          attendeeAccountId: input.accountId,
+          stepUp: "EMAILED_CODE",
+          changedFields: ["firstName", "lastName", "email", "phone"],
+        },
+      },
+    });
+    const queued = await enqueueRegistrationContactUpdatedMessage(tx, {
+      eventId: registration.eventId,
+      registrationId: registration.id,
+      correlationId,
+      transitionKey: `ATTENDEE_ACCOUNT_REGISTRATION_CONTACT_UPDATED:${correlationId}`,
+      recipientEmail: input.contact.email,
+      recipientName: `${input.contact.firstName} ${input.contact.lastName}`.trim(),
+      metadata: {
+        source: "ATTENDEE_ACCOUNT",
+        destinationUpdated: true,
+      },
+    });
+    return {
+      codeAccepted: true as const,
+      contact: input.contact,
+      pendingMessageIds: queued.pendingMessageIds,
+    };
+  });
+  if (result?.codeAccepted) {
+    await processQueuedMessageIdsAfterCommit(result.pendingMessageIds);
+  }
+  return result;
+}
+
 export type AttendeeRegistrationSummary = {
   id: string;
   confirmationCode: string;
@@ -66,6 +181,13 @@ export type AttendeeRegistrationSummary = {
     endsAt: string;
     timezone: string;
     location: string | null;
+    attendeeEditPolicy: "TIERED" | "VERIFY_EVERY_EDIT";
+  };
+  contact: {
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string;
   };
   attendeeNames: string[];
   totalCents: number;
@@ -92,6 +214,15 @@ export async function listRegistrationsForVerifiedEmail(
       status: true,
       submittedAt: true,
       totalAmount: true,
+      contactSnapshot: true,
+      accountHolderPerson: {
+        select: {
+          firstName: true,
+          lastName: true,
+          normalizedEmail: true,
+          phone: true,
+        },
+      },
       event: {
         select: {
           name: true,
@@ -100,6 +231,7 @@ export async function listRegistrationsForVerifiedEmail(
           endsAt: true,
           timezone: true,
           location: true,
+          attendeeEditPolicy: true,
         },
       },
       attendees: {
@@ -144,7 +276,17 @@ export async function listRegistrationsForVerifiedEmail(
         endsAt: registration.event.endsAt.toISOString(),
         timezone: registration.event.timezone,
         location: registration.event.location,
+        attendeeEditPolicy: registration.event.attendeeEditPolicy,
       },
+      contact: publicContactFromSnapshot(
+        registration.contactSnapshot,
+        {
+          firstName: registration.accountHolderPerson.firstName,
+          lastName: registration.accountHolderPerson.lastName,
+          email: registration.accountHolderPerson.normalizedEmail ?? "",
+          phone: registration.accountHolderPerson.phone ?? "",
+        },
+      ),
       attendeeNames: registration.attendees.map(
         (attendee) => publicAttendeeName(attendee.profileSnapshot, attendee.person),
       ),

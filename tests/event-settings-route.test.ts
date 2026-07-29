@@ -52,6 +52,7 @@ const eventPayload = {
   registrationOpensOn: "2028-05-01",
   registrationClosesOn: "2028-10-01",
   collectsShirtSizes: false,
+  attendeeEditPolicy: "VERIFY_EVERY_EDIT",
   waitlistEnabled: true,
   autoPromoteWaitlist: true,
 };

@@ -36,6 +36,15 @@ export const ONE_TIME_CODE_MAX_ATTEMPTS = 5;
  */
 export const EMAIL_VERIFICATION_LIFETIME_MINUTES = 20;
 
+/**
+ * How long the browser handle may wait for a queued message to be prepared.
+ *
+ * This is deliberately longer than the code lifetime. The handle grants
+ * nothing without the emailed code, while expiring it after twenty minutes
+ * would make a code delivered after a slow queue unusable on arrival.
+ */
+export const ATTENDEE_PENDING_REQUEST_LIFETIME_HOURS = 24;
+
 export function createOneTimeCode() {
   // `randomInt` is uniform over the range; `Math.random()` is neither uniform
   // enough nor unpredictable enough for a credential.

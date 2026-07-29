@@ -6,12 +6,17 @@ import {
   enqueueAttendeeEmail,
   isAttendeeEmailConfigured,
 } from "@/modules/attendee-accounts/attendee-email";
+import { bindAttendeeStepUpMessage } from "@/modules/attendee-accounts/step-up-service";
 
 /**
- * Queues an attendee email and tries to deliver it in the same request, the way
- * an account activation is. A failure here is not the caller's to handle: the
- * message keeps its place in the outbox with its backoff, and the scheduled
- * sweep picks it up.
+ * Queues attendee email separately from delivering it.
+ *
+ * Public password-reset responses must not wait on a provider request only for
+ * known addresses: doing that turns Resend and database latency into an account
+ * enumeration oracle. Route handlers queue the immutable row, return their
+ * deliberately identical response, and use Next.js `after()` to call
+ * {@link deliverQueuedAttendeeEmail}. The scheduled sweep remains the durable
+ * fallback if that best-effort first delivery does not run.
  *
  * Separate from `attendee-email` for the reason `account-email-dispatch` is
  * separate from `account-email`: the delivery worker already depends on the
@@ -21,12 +26,18 @@ import {
 export type AttendeeEmailDispatch = {
   /** Whether this deployment can send account email at all. */
   configured: boolean;
+  /** Present when a durable outbox row was created. */
+  messageId: string | null;
 };
 
-async function dispatch(input: Parameters<typeof enqueueAttendeeEmail>[0]) {
-  if (!isAttendeeEmailConfigured()) return { configured: false };
+async function queue(input: Parameters<typeof enqueueAttendeeEmail>[0]) {
+  if (!isAttendeeEmailConfigured()) return { configured: false, messageId: null };
 
   const { messageId } = await enqueueAttendeeEmail(input);
+  return { configured: true, messageId };
+}
+
+export async function deliverQueuedAttendeeEmail(messageId: string) {
   try {
     const result = await processAccountEmailQueue({ messageIds: [messageId], limit: 1 });
     if (result.sentIds.length === 0) {
@@ -37,18 +48,17 @@ async function dispatch(input: Parameters<typeof enqueueAttendeeEmail>[0]) {
     }
   } catch (error) {
     // Queued is what matters. The sweep will try again.
-    logError("An attendee email could not be delivered immediately.", error, { messageId });
+    logError("An attendee email could not be delivered after the response.", error, { messageId });
   }
-  return { configured: true };
 }
 
-export async function sendAttendeeVerificationEmail(input: {
+export async function queueAttendeeVerificationEmail(input: {
   accountId: string;
   email: string;
   displayName: string;
   alreadyRegistered: boolean;
 }): Promise<AttendeeEmailDispatch> {
-  return dispatch({
+  return queue({
     accountId: input.accountId,
     email: input.email,
     displayName: input.displayName,
@@ -56,16 +66,37 @@ export async function sendAttendeeVerificationEmail(input: {
   });
 }
 
-export async function sendAttendeePasswordResetEmail(input: {
+export async function queueAttendeePasswordResetEmail(input: {
   accountId: string;
   email: string;
   displayName: string;
   federatedOnly: boolean;
 }): Promise<AttendeeEmailDispatch> {
-  return dispatch({
+  return queue({
     accountId: input.accountId,
     email: input.email,
     displayName: input.displayName,
     selection: { kind: "password-reset", federatedOnly: input.federatedOnly },
   });
+}
+
+export async function queueAttendeeEditVerificationEmail(input: {
+  accountId: string;
+  stepUpCodeId: string;
+  email: string;
+  displayName: string;
+}): Promise<AttendeeEmailDispatch> {
+  const dispatch = await queue({
+    accountId: input.accountId,
+    email: input.email,
+    displayName: input.displayName,
+    selection: { kind: "edit-verification" },
+  });
+  if (
+    dispatch.messageId
+    && !await bindAttendeeStepUpMessage(input.stepUpCodeId, dispatch.messageId)
+  ) {
+    throw new Error("The edit verification message could not be bound to its session.");
+  }
+  return dispatch;
 }

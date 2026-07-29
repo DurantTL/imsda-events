@@ -189,6 +189,33 @@ export async function checkAttendeeVerificationRateLimit(request: Request) {
   }], configuration);
 }
 
+export async function checkAttendeeEditStepUpRateLimit(
+  request: Request,
+  accountId: string,
+) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  const account = hashRateLimitIdentifier(
+    "attendee-edit-step-up",
+    accountId,
+    configuration,
+  );
+  return evaluate([
+    {
+      policy: "attendee.edit-step-up.client",
+      limit: 10,
+      windowSeconds: oneHour,
+      identifierHashes: [client],
+    },
+    {
+      policy: "attendee.edit-step-up.account",
+      limit: 3,
+      windowSeconds: oneHour,
+      identifierHashes: [account],
+    },
+  ], configuration);
+}
+
 /**
  * The other public, unauthenticated, email-sending attendee endpoint, and held
  * tighter than sign-up: nobody legitimately needs three password resets an

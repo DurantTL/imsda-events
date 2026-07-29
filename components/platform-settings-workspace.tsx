@@ -13,6 +13,7 @@ type Draft = {
   defaultSenderName: string;
   defaultSenderEmail: string;
   defaultReplyToEmail: string;
+  defaultAttendeeEditPolicy: "TIERED" | "VERIFY_EVERY_EDIT";
 };
 
 function draftFrom(settings: PlatformSettingsRecord): Draft {
@@ -25,6 +26,7 @@ function draftFrom(settings: PlatformSettingsRecord): Draft {
     defaultSenderName: settings.defaultSenderName,
     defaultSenderEmail: settings.defaultSenderEmail ?? "",
     defaultReplyToEmail: settings.defaultReplyToEmail ?? "",
+    defaultAttendeeEditPolicy: settings.defaultAttendeeEditPolicy,
   };
 }
 
@@ -126,6 +128,20 @@ export function PlatformSettingsWorkspace({
             <small>Must be verified with the email provider before an event can send real mail.</small>
           </label>
           <label>Default reply-to address<input type="email" placeholder="registration@imsda.org" {...field("defaultReplyToEmail")} /></label>
+          <label>
+            Default attendee edit verification
+            <select
+              value={draft.defaultAttendeeEditPolicy}
+              onChange={(event) => setDraft((current) => ({
+                ...current,
+                defaultAttendeeEditPolicy: event.target.value as Draft["defaultAttendeeEditPolicy"],
+              }))}
+            >
+              <option value="VERIFY_EVERY_EDIT">Verify every edit</option>
+              <option value="TIERED">Tiered by sensitivity</option>
+            </select>
+            <small>New events inherit this choice. Existing events are never rewritten.</small>
+          </label>
           <p className="field-help">
             A new event still starts on local capture, so nothing reaches a registrant until someone turns real delivery on for that event.
           </p>

@@ -194,9 +194,7 @@ describe("linking to an account that already exists", () => {
     expect(dependencies.logInfo).toHaveBeenCalledOnce();
   });
 
-  it("refuses to rebind an address already linked to a different Google account", async () => {
-    // Rebinding on an address match is exactly what keying on the subject
-    // exists to prevent, so this goes to a person rather than through.
+  it("rebinds a Google-only account recreated at the same verified address", async () => {
     prisma.attendeeAccount.findUnique.mockResolvedValue({
       id: "acct_1",
       status: "ACTIVE",
@@ -206,8 +204,27 @@ describe("linking to an account that already exists", () => {
     });
 
     expect(await signInWithGoogle(identity, null))
+      .toMatchObject({ outcome: "signed-in", linkage: "rebound-google-only" });
+    expect(prisma.attendeeIdentity.update).toHaveBeenCalledWith({
+      where: { id: "idn_other" },
+      data: expect.objectContaining({ subject: identity.subject }),
+    });
+    expect(prisma.attendeeSession.updateMany).toHaveBeenCalled();
+    expect(dependencies.logInfo).toHaveBeenCalled();
+  });
+
+  it("refuses an automatic rebind when the account also has a password", async () => {
+    prisma.attendeeAccount.findUnique.mockResolvedValue({
+      id: "acct_1",
+      status: "ACTIVE",
+      disabledAt: null,
+      credential: { id: "cred_1" },
+      identities: [{ id: "idn_other" }],
+    });
+
+    expect(await signInWithGoogle(identity, null))
       .toEqual({ outcome: "refused", reason: "identity-conflict" });
-    expect(prisma.attendeeIdentity.create).not.toHaveBeenCalled();
+    expect(prisma.attendeeIdentity.update).not.toHaveBeenCalled();
   });
 });
 

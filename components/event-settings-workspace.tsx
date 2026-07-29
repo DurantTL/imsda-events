@@ -70,6 +70,7 @@ function draftFromEvent(event: EventSettingsRecord | null): EventSettingsInput {
     registrationOpensOn: event?.registrationOpensOn ?? null,
     registrationClosesOn: event?.registrationClosesOn ?? null,
     collectsShirtSizes: event?.collectsShirtSizes ?? false,
+    attendeeEditPolicy: event?.attendeeEditPolicy ?? "VERIFY_EVERY_EDIT",
     waitlistEnabled: event?.waitlistEnabled ?? false,
     autoPromoteWaitlist: event?.waitlistEnabled
       ? (event.autoPromoteWaitlist ?? false)
@@ -291,6 +292,23 @@ export function EventSettingsWorkspace({
                 }}
               />
               <span><strong>Offer a waitlist when the event is full</strong><small>People can submit without taking a confirmed event spot.</small></span>
+            </label>
+            <label>
+              Attendee edit verification
+              <select
+                value={draft.attendeeEditPolicy}
+                onChange={(event) => update(
+                  "attendeeEditPolicy",
+                  event.target.value as EventSettingsInput["attendeeEditPolicy"],
+                )}
+              >
+                <option value="VERIFY_EVERY_EDIT">Email a code for every edit</option>
+                <option value="TIERED">Allow low-risk answers without a code</option>
+              </select>
+              <small>
+                Contact changes, cancellations, and transfers always require a fresh emailed
+                code. Medical and club data always require an authenticator.
+              </small>
             </label>
             <label className="event-setting-toggle nested">
               <input

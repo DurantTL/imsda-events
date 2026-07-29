@@ -130,8 +130,15 @@ function unavailableCheckout(error: unknown): SquareCheckout {
   };
 }
 
-export function PublicSquarePayment({ token }: { token: string }) {
-  const manageEndpoint = `/api/public/manage/${encodeURIComponent(token)}`;
+export function PublicSquarePayment({
+  token,
+  manageEndpoint: explicitManageEndpoint,
+}: {
+  token?: string;
+  manageEndpoint?: string;
+}) {
+  const manageEndpoint = explicitManageEndpoint
+    ?? `/api/public/manage/${encodeURIComponent(token ?? "")}`;
   const paymentEndpoint = `${manageEndpoint}/payment`;
   const choiceEndpoint = `${manageEndpoint}/payment-choice`;
   const cardRef = useRef<SquareCard | null>(null);
