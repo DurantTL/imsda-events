@@ -3,10 +3,17 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import {
+  AttendeeAnswerUpdateError,
+  editableAttendeeFields,
+  prepareTieredAttendeeAnswerUpdate,
+  type EditableAttendeeField,
+} from "@/modules/attendee-accounts/registration-answer-policy";
 import { consumeAttendeeEditStepUp } from "@/modules/attendee-accounts/step-up-service";
 import {
   processQueuedMessageIdsAfterCommit,
 } from "@/modules/communications/messaging-repository";
+import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import { enqueueRegistrationContactUpdatedMessage } from "@/modules/communications/transactional-messages";
 import { moneyToCents, registrationBalanceCents } from "@/modules/payments/square-domain";
 import {
@@ -60,6 +67,12 @@ async function matchingRegistrationIds(verifiedEmail: string) {
       AND ${CONTACT_EMAIL_SQL} = ${verifiedEmail}
   `);
   return rows.map((row) => row.id);
+}
+
+export async function matchingRegistrationIdsForVerifiedEmail(
+  verifiedEmail: string,
+) {
+  return matchingRegistrationIds(verifiedEmail);
 }
 
 export async function authorizeAttendeeRegistration(
@@ -169,6 +182,166 @@ export async function updateAttendeeRegistrationContact(input: {
   return result;
 }
 
+function recordFromJson(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+export async function updateTieredAttendeeAnswers(input: {
+  accountId: string;
+  verifiedEmail: string;
+  registrationId: string;
+  expectedUpdatedAt: string;
+  attendees: Array<{
+    attendeeId: string;
+    responses: Record<string, unknown>;
+  }>;
+  now?: Date;
+}) {
+  const now = input.now ?? new Date();
+  const result = await getPrisma().$transaction(async (tx) => {
+    const owned = await tx.$queryRaw<Array<{
+      id: string;
+      eventId: string;
+      confirmationCode: string;
+    }>>(Prisma.sql`
+      SELECT registration."id", registration."eventId",
+        registration."confirmationCode"
+      FROM "Registration" registration
+      JOIN "Person" person ON person."id" = registration."accountHolderPersonId"
+      WHERE registration."id" = ${input.registrationId}
+        AND registration."status" IN ('SUBMITTED', 'CONFIRMED', 'WAITLISTED')
+        AND ${CONTACT_EMAIL_SQL} = ${input.verifiedEmail}
+      FOR UPDATE
+    `);
+    const ownership = owned[0];
+    if (!ownership) return null;
+
+    const registration = await tx.registration.findUnique({
+      where: { id: ownership.id },
+      select: {
+        updatedAt: true,
+        event: { select: { attendeeEditPolicy: true } },
+        publicFormSubmission: {
+          select: {
+            responses: true,
+            formVersion: { select: { definition: true } },
+          },
+        },
+        attendees: {
+          orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+          select: {
+            id: true,
+            formResponses: true,
+            profileSnapshot: true,
+            person: { select: { firstName: true, lastName: true } },
+          },
+        },
+      },
+    });
+    if (!registration?.publicFormSubmission) {
+      throw new AttendeeAnswerUpdateError(
+        "NO_EDITABLE_ANSWERS",
+        "This registration is not connected to a published form, so the event team must update its attendee choices.",
+      );
+    }
+    const submission = registration.publicFormSubmission;
+    if (registration.updatedAt.toISOString() !== input.expectedUpdatedAt) {
+      throw new AttendeeAnswerUpdateError(
+        "INVALID_ANSWER",
+        "This registration changed after you opened it. Refresh and review the latest answers.",
+      );
+    }
+    const definition = registrationFormDefinitionSchema.parse(
+      registration.publicFormSubmission.formVersion.definition,
+    );
+    const currentById = new Map(
+      registration.attendees.map((attendee) => [attendee.id, attendee]),
+    );
+    const seen = new Set<string>();
+    const prepared = input.attendees.map((attendeeInput) => {
+      if (seen.has(attendeeInput.attendeeId)) {
+        throw new AttendeeAnswerUpdateError(
+          "INVALID_ANSWER",
+          "Each attendee can be updated only once per request.",
+        );
+      }
+      seen.add(attendeeInput.attendeeId);
+      const attendee = currentById.get(attendeeInput.attendeeId);
+      if (!attendee) {
+        throw new AttendeeAnswerUpdateError(
+          "INVALID_ANSWER",
+          "One of the attendees changed after you opened the registration.",
+        );
+      }
+      return {
+        attendee,
+        ...prepareTieredAttendeeAnswerUpdate({
+          definition,
+          policy: registration.event.attendeeEditPolicy,
+          registrationResponses: recordFromJson(
+            submission.responses,
+          ),
+          currentResponses: recordFromJson(attendee.formResponses),
+          changes: attendeeInput.responses,
+        }),
+      };
+    });
+
+    for (const update of prepared) {
+      await tx.registrationAttendee.update({
+        where: { id: update.attendee.id },
+        data: { formResponses: update.responses as Prisma.InputJsonValue },
+      });
+    }
+    await tx.registration.update({
+      where: { id: ownership.id },
+      data: { updatedAt: now },
+    });
+    const changedFields = [...new Set(
+      prepared.flatMap((update) => update.changedKeys),
+    )].sort();
+    await tx.auditLog.create({
+      data: {
+        eventId: ownership.eventId,
+        action: "ATTENDEE_ACCOUNT_ANSWERS_UPDATED",
+        entityType: "Registration",
+        entityId: ownership.id,
+        correlationId: randomUUID(),
+        summary: `The signed-in attendee account updated attendee choices for ${ownership.confirmationCode}.`,
+        metadata: {
+          source: "ATTENDEE_ACCOUNT",
+          attendeeAccountId: input.accountId,
+          policy: registration.event.attendeeEditPolicy,
+          verification: "ACCOUNT_SESSION",
+          attendeeCount: prepared.length,
+          changedFields,
+        },
+      },
+    });
+    const editable = editableAttendeeFields(
+      definition,
+      registration.event.attendeeEditPolicy,
+    );
+    const editableKeys = new Set(editable.map((field) => field.key));
+    return {
+      expectedUpdatedAt: now.toISOString(),
+      attendees: prepared.map((update) => ({
+        attendeeId: update.attendee.id,
+        name: publicAttendeeName(
+          update.attendee.profileSnapshot,
+          update.attendee.person,
+        ),
+        responses: Object.fromEntries(
+          Object.entries(update.responses).filter(([key]) => editableKeys.has(key)),
+        ),
+      })),
+    };
+  });
+  return result;
+}
+
 export type AttendeeRegistrationSummary = {
   id: string;
   confirmationCode: string;
@@ -190,6 +363,17 @@ export type AttendeeRegistrationSummary = {
     phone: string;
   };
   attendeeNames: string[];
+  answerEditing: {
+    enabled: boolean;
+    reason: string;
+    expectedUpdatedAt: string;
+    fields: EditableAttendeeField[];
+    attendees: Array<{
+      attendeeId: string;
+      name: string;
+      responses: Record<string, unknown>;
+    }>;
+  };
   totalCents: number;
   paidCents: number;
   balanceCents: number;
@@ -213,6 +397,7 @@ export async function listRegistrationsForVerifiedEmail(
       confirmationCode: true,
       status: true,
       submittedAt: true,
+      updatedAt: true,
       totalAmount: true,
       contactSnapshot: true,
       accountHolderPerson: {
@@ -237,8 +422,15 @@ export async function listRegistrationsForVerifiedEmail(
       attendees: {
         orderBy: [{ position: "asc" }, { createdAt: "asc" }],
         select: {
+          id: true,
+          formResponses: true,
           profileSnapshot: true,
           person: { select: { firstName: true, lastName: true } },
+        },
+      },
+      publicFormSubmission: {
+        select: {
+          formVersion: { select: { definition: true } },
         },
       },
       payments: {
@@ -257,6 +449,25 @@ export async function listRegistrationsForVerifiedEmail(
     // The same arithmetic the payment path and the private management page use,
     // so a balance shown here can never disagree with the one shown there.
     const balanceCents = registrationBalanceCents(registration);
+    const parsedDefinition = registration.publicFormSubmission
+      ? registrationFormDefinitionSchema.safeParse(
+          registration.publicFormSubmission.formVersion.definition,
+        )
+      : null;
+    const answerFields = parsedDefinition?.success
+      ? editableAttendeeFields(
+          parsedDefinition.data,
+          registration.event.attendeeEditPolicy,
+        )
+      : [];
+    const answerKeys = new Set(answerFields.map((field) => field.key));
+    const answerEditingEnabled = (
+      registration.event.attendeeEditPolicy === "TIERED"
+      && answerFields.length > 0
+      && (registration.status === "SUBMITTED"
+        || registration.status === "CONFIRMED"
+        || registration.status === "WAITLISTED")
+    );
     return {
       id: registration.id,
       confirmationCode: registration.confirmationCode,
@@ -290,6 +501,26 @@ export async function listRegistrationsForVerifiedEmail(
       attendeeNames: registration.attendees.map(
         (attendee) => publicAttendeeName(attendee.profileSnapshot, attendee.person),
       ),
+      answerEditing: {
+        enabled: answerEditingEnabled,
+        reason: answerEditingEnabled
+          ? "These event choices can be updated from your verified account."
+          : registration.event.attendeeEditPolicy !== "TIERED"
+            ? "This event requires verification before attendee choices can be changed."
+            : !registration.publicFormSubmission
+              ? "The event team must update this imported registration."
+              : "This registration has no low-risk attendee choices available for self-service.",
+        expectedUpdatedAt: registration.updatedAt.toISOString(),
+        fields: answerFields,
+        attendees: registration.attendees.map((attendee) => ({
+          attendeeId: attendee.id,
+          name: publicAttendeeName(attendee.profileSnapshot, attendee.person),
+          responses: Object.fromEntries(
+            Object.entries(recordFromJson(attendee.formResponses))
+              .filter(([key]) => answerKeys.has(key)),
+          ),
+        })),
+      },
       totalCents,
       paidCents: Math.max(0, totalCents - balanceCents),
       balanceCents,

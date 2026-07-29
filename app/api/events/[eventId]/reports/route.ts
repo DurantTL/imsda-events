@@ -25,7 +25,7 @@ async function getHandler(
       return Response.json(
         {
           error: "INVALID_REPORT",
-          message: "Choose roster, meals, housing, or seminars.",
+          message: "Choose roster, meals, housing, seminars, childcare, volunteers, or attendance.",
         },
         { status: 400 }
       );

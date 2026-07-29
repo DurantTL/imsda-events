@@ -64,8 +64,11 @@ describe("attendee profile", () => {
   it("maps common form keys for opt-in prefill", () => {
     expect(attendeeProfilePrefill(input, "avery@example.com")).toMatchObject({
       first_name: "Avery",
+      primary_contact_first_name: "Avery",
       last_name: "Person",
+      primary_contact_last_name: "Person",
       phone: "555-0100",
+      attendee_phone: "555-0100",
       shirt_size: "M",
       dietary_needs: "Vegetarian",
       email: "avery@example.com",

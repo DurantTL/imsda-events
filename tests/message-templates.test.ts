@@ -30,7 +30,7 @@ void _keysAreTemplateKeyValues;
 void _templateKeyValuesAreKeys;
 
 describe("message templates", () => {
-  it("ships fourteen valid plaintext defaults", () => {
+  it("ships fifteen valid plaintext defaults", () => {
     expect(MESSAGE_TEMPLATE_KEYS).toEqual([
       "REGISTRATION_CONFIRMATION_PAID",
       "REGISTRATION_CONFIRMATION_UNPAID",
@@ -46,8 +46,9 @@ describe("message templates", () => {
       "REGISTRATION_TRANSFERRED_PRIOR_CONTACT",
       "ATTENDEE_SUBSTITUTED",
       "SHIRT_SIZE_REQUEST",
+      "EVENT_ANNOUNCEMENT",
     ]);
-    expect(DEFAULT_MESSAGE_TEMPLATE_LIST).toHaveLength(14);
+    expect(DEFAULT_MESSAGE_TEMPLATE_LIST).toHaveLength(15);
 
     for (const key of MESSAGE_TEMPLATE_KEYS) {
       const template = DEFAULT_MESSAGE_TEMPLATES[key];

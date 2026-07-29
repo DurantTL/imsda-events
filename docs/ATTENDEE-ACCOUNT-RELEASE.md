@@ -15,13 +15,15 @@ cannot be proved by a local test suite.
 - Safe Google-subject rebind for verified Google-only accounts; mixed-method conflicts remain explicit
 - Reusable attendee profile and matching-field registration prefill
 - Account-authorized Square checkout without exposing a private management token
+- Account-authorized attendee QR passes and a private retreat hub
+- Tiered self-service editing for low-risk attendee choices
 - Session-bound, single-use emailed codes for registration contact edits
 - Platform default and per-event `TIERED` / `VERIFY_EVERY_EDIT` policy
 
 ## Deploy
 
 1. Back up PostgreSQL and run `npm run db:deploy`.
-2. Confirm all 42 migrations are applied with `npx prisma migrate status`.
+2. Confirm all 43 migrations are applied with `npx prisma migrate status`.
 3. Configure `APP_BASE_URL`, `SECRET_ENCRYPTION_KEY`,
    `RATE_LIMIT_HASH_SECRET`, `OUTBOX_SWEEP_TOKEN`, `RESEND_API_KEY`,
    `ACCOUNT_EMAIL_SENDER_ADDRESS`, and the normal production secrets documented
@@ -43,6 +45,11 @@ cannot be proved by a local test suite.
 - Enrol TOTP, use a current code, use one recovery code once, and disable MFA.
 - Save the attendee profile, open a new registration, and verify only matching
   form keys are prefilled.
+- Under the tiered edit policy, update a meal/session choice from the account
+  and confirm identity, medical, priced, and capacity-controlled answers remain
+  staff-only.
+- Open the attendee hub and verify only active registrations, published event
+  content, current assignments, announcements, and owned QR passes appear.
 - Pay a balance with a Square Sandbox test card and verify the receipt/outbox,
   idempotent retry, webhook, and balance.
 - Request an edit code in one browser session. Confirm it works once there,

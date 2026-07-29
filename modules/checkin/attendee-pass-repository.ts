@@ -8,6 +8,7 @@ import {
   verifyAttendeePassToken,
 } from "@/modules/checkin/attendee-pass-token";
 import { activeRegistrationStatuses } from "@/modules/events/lifecycle";
+import { authorizeAttendeeRegistration } from "@/modules/attendee-accounts/registrations-repository";
 import { authorizeRegistrationAccessToken } from "@/modules/public-access/repository";
 
 const activeStatusSet = new Set<string>(activeRegistrationStatuses);
@@ -253,6 +254,45 @@ export async function createAuthorizedAttendeePass(
   });
   if (!attendee) return null;
 
+  const expiresAt = attendeePassExpiry(attendee.event.endsAt);
+  if (expiresAt.getTime() <= now.getTime()) return null;
+  return {
+    token: createAttendeePassToken({
+      eventId: attendee.eventId,
+      attendeeId: attendee.id,
+      expiresAt,
+    }),
+    expiresAt,
+  };
+}
+
+export async function createAccountAttendeePass(
+  verifiedEmail: string,
+  registrationId: string,
+  attendeeId: string,
+  now = new Date(),
+) {
+  const owned = await authorizeAttendeeRegistration(
+    verifiedEmail,
+    registrationId,
+  );
+  if (!owned) return null;
+  const attendee = await getPrisma().registrationAttendee.findFirst({
+    where: {
+      id: attendeeId,
+      eventId: owned.eventId,
+      registrationId: owned.registrationId,
+      registration: {
+        status: { in: [...activeRegistrationStatuses] },
+      },
+    },
+    select: {
+      id: true,
+      eventId: true,
+      event: { select: { endsAt: true } },
+    },
+  });
+  if (!attendee) return null;
   const expiresAt = attendeePassExpiry(attendee.event.endsAt);
   if (expiresAt.getTime() <= now.getTime()) return null;
   return {

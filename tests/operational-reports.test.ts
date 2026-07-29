@@ -123,6 +123,46 @@ const definition = {
           required: false,
           options: [],
         },
+        {
+          id: "field_childcare_needed",
+          key: "childcare_needed",
+          label: "Childcare needed?",
+          helpText: "",
+          type: "RADIO",
+          scope: "ATTENDEE",
+          required: false,
+          options: ["No", "Yes"],
+        },
+        {
+          id: "field_childcare_count",
+          key: "childcare_children",
+          label: "Number of children needing childcare",
+          helpText: "",
+          type: "NUMBER",
+          scope: "ATTENDEE",
+          required: false,
+          options: [],
+        },
+        {
+          id: "field_volunteer",
+          key: "volunteer",
+          label: "Willing to volunteer to help?",
+          helpText: "",
+          type: "RADIO",
+          scope: "ATTENDEE",
+          required: false,
+          options: ["No", "Yes"],
+        },
+        {
+          id: "field_sunday_attendance",
+          key: "sunday_attendance",
+          label: "Sunday session attendance",
+          helpText: "",
+          type: "RADIO",
+          scope: "ATTENDEE",
+          required: false,
+          options: ["Not attending", "Attending"],
+        },
       ],
     },
   ],
@@ -167,12 +207,19 @@ function registration(
         {
           food_selection_987: "Vegan",
           rank_the_sessions_654: ["Prayer", "Service"],
+          childcare_needed: "Yes",
+          childcare_children: 2,
+          volunteer: "Yes",
+          sunday_attendance: "Attending",
           private_food_note: "PRIVATE-ALLERGY-DETAIL",
           private_medical_note: "PRIVATE-MEDICAL-DETAIL",
         },
         {
           food_selection_987: "Standard",
           rank_the_sessions_654: ["Service", "Prayer"],
+          childcare_needed: "No",
+          volunteer: "No",
+          sunday_attendance: "Not attending",
         },
       ],
     },
@@ -227,6 +274,9 @@ describe("operational reports", () => {
       mealSelections: 5,
       housingSelections: 1,
       seminarInterests: 4,
+      childcareSelections: 4,
+      volunteerSelections: 2,
+      attendanceSelections: 2,
     });
     expect(report.rosterGroups.map((group) => group.label)).toEqual([
       "Central Congregation",
@@ -257,6 +307,18 @@ describe("operational reports", () => {
       { label: "Prayer", firstChoice: 1, secondChoice: 1, totalInterest: 2 },
       { label: "Service", firstChoice: 1, secondChoice: 1, totalInterest: 2 },
     ]);
+    expect(report.childcare.map((field) => field.label)).toEqual([
+      "Childcare needed?",
+      "Number of children needing childcare",
+    ]);
+    expect(report.volunteers[0]).toMatchObject({
+      label: "Willing to volunteer to help?",
+      total: 2,
+    });
+    expect(report.attendance[0]).toMatchObject({
+      label: "Sunday session attendance",
+      total: 2,
+    });
     expect(JSON.stringify(report)).not.toContain("Cancelled Group");
   });
 
@@ -268,6 +330,9 @@ describe("operational reports", () => {
       operationalReportCsv(report, "meals"),
       operationalReportCsv(report, "housing"),
       operationalReportCsv(report, "seminars"),
+      operationalReportCsv(report, "childcare"),
+      operationalReportCsv(report, "volunteers"),
+      operationalReportCsv(report, "attendance"),
     ].join("\n");
 
     expect(serialized).not.toContain("PRIVATE-ALLERGY-DETAIL");

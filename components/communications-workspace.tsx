@@ -60,6 +60,9 @@ type ApiResult = {
     deliveryMode?: MessagingWorkspaceData["settings"]["deliveryMode"];
     replayed?: boolean;
   };
+  messageCount?: number;
+  skippedCount?: number;
+  deliveryMode?: MessagingWorkspaceData["settings"]["deliveryMode"];
   error?: string;
   message?: string;
   issues?: Array<{ message?: string }>;
@@ -105,6 +108,8 @@ const sampleTokens: Record<string, string> = {
   payment_reference: "square-demo-reference",
   prior_person_name: "Jordan Lee",
   new_person_name: "Morgan Lee",
+  announcement_title: "Friday arrival information",
+  announcement_body: "Check-in opens at 4:00 PM in the main lodge.",
 };
 
 const templateTokenKeys = Object.keys(sampleTokens);
@@ -132,6 +137,7 @@ const templateLabels: Record<string, string> = {
   REGISTRATION_TRANSFERRED_NEW_CONTACT: "Transfer · new contact",
   REGISTRATION_TRANSFERRED_PRIOR_CONTACT: "Transfer · prior contact",
   ATTENDEE_SUBSTITUTED: "Attendee substituted",
+  EVENT_ANNOUNCEMENT: "Event announcement",
 };
 
 function renderSample(value: string, eventName: string) {
@@ -383,6 +389,49 @@ export function CommunicationsWorkspace({
       setNotice("Announcement published to the local event feed.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to publish the announcement.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function broadcastAnnouncement(announcement: AnnouncementRecord) {
+    const recipientMode = messaging?.settings.deliveryMode === "EXTERNAL_EMAIL"
+      ? "send a real email"
+      : messaging?.settings.deliveryMode === "LOCAL_CAPTURE"
+        ? "create a local preview"
+        : "record a suppressed delivery";
+    if (!window.confirm(
+      `This will ${recipientMode} for every active registration contact using the current event email template. Continue?`,
+    )) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(
+        `/api/events/${eventId}/announcements/${announcement.id}/broadcast`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ batchId: crypto.randomUUID() }),
+        },
+      );
+      const result = await response.json().catch(() => ({})) as ApiResult;
+      if (!response.ok || typeof result.messageCount !== "number") {
+        throw new Error(result.message ?? "Unable to prepare the announcement email.");
+      }
+      const skipped = result.skippedCount
+        ? ` ${result.skippedCount} registration${result.skippedCount === 1 ? " was" : "s were"} skipped.`
+        : "";
+      if (result.deliveryMode === "EXTERNAL_EMAIL") {
+        setNotice(`${result.messageCount} announcement email${result.messageCount === 1 ? " was" : "s were"} processed.${skipped}`);
+      } else if (result.deliveryMode === "LOCAL_CAPTURE") {
+        setNotice(`${result.messageCount} announcement preview${result.messageCount === 1 ? " was" : "s were"} captured locally; no email was sent.${skipped}`);
+      } else {
+        setNotice(`${result.messageCount} announcement delivery row${result.messageCount === 1 ? " was" : "s were"} recorded as suppressed; delivery is off.${skipped}`);
+      }
+      router.refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to prepare the announcement email.");
     } finally {
       setSaving(false);
     }
@@ -808,6 +857,11 @@ export function CommunicationsWorkspace({
                     <Send aria-hidden="true" size={16} /> Publish to event feed
                   </button>
                 )}
+                {canManage && announcement.status === "PUBLISHED" && (
+                  <button className="secondary-button publish-button" type="button" disabled={saving} onClick={() => broadcastAnnouncement(announcement)}>
+                    <Mail aria-hidden="true" size={16} /> Email active registrations
+                  </button>
+                )}
               </article>
             ))}
             {announcements.length === 0 && (
@@ -816,10 +870,10 @@ export function CommunicationsWorkspace({
           </section>
           <aside className="panel audience-panel">
             <span className="announcement-icon purple"><Send aria-hidden="true" size={20} /></span>
-            <p className="eyebrow">Event feed</p>
-            <h2>Announcements stay local</h2>
-            <p>Publishing makes an announcement available to the local event feed. It does not send an email, text, or push notification.</p>
-            <ul><li>Staff-reviewed drafts</li><li>Event-scoped permissions</li><li>Audited publication</li></ul>
+            <p className="eyebrow">Feed & email</p>
+            <h2>Publish first, email deliberately</h2>
+            <p>Publishing updates the event page and attendee hub. A separate confirmed action emails active registration contacts using the event’s current delivery settings.</p>
+            <ul><li>Staff-reviewed drafts</li><li>No automatic email on publish</li><li>Audited, event-scoped broadcasts</li></ul>
           </aside>
         </div>
       )}

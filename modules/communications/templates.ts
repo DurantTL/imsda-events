@@ -13,6 +13,7 @@ export const MESSAGE_TEMPLATE_KEYS = [
   "REGISTRATION_TRANSFERRED_PRIOR_CONTACT",
   "ATTENDEE_SUBSTITUTED",
   "SHIRT_SIZE_REQUEST",
+  "EVENT_ANNOUNCEMENT",
 ] as const;
 
 export type MessageTemplateKey = (typeof MESSAGE_TEMPLATE_KEYS)[number];
@@ -47,6 +48,8 @@ export const MESSAGE_TEMPLATE_TOKEN_KEYS = [
   "payment_reference",
   "prior_person_name",
   "new_person_name",
+  "announcement_title",
+  "announcement_body",
 ] as const;
 
 export type MessageTemplateToken = (typeof MESSAGE_TEMPLATE_TOKEN_KEYS)[number];
@@ -82,6 +85,7 @@ export const DEFAULT_MESSAGE_TEMPLATE_NAMES: Readonly<Record<MessageTemplateKey,
   REGISTRATION_TRANSFERRED_PRIOR_CONTACT: "Transfer notice for prior contact",
   ATTENDEE_SUBSTITUTED: "Attendee substitution notice",
   SHIRT_SIZE_REQUEST: "Shirt size request",
+  EVENT_ANNOUNCEMENT: "Event announcement",
 };
 
 export const DEFAULT_MESSAGE_TEMPLATE_DESCRIPTIONS: Readonly<
@@ -115,6 +119,8 @@ export const DEFAULT_MESSAGE_TEMPLATE_DESCRIPTIONS: Readonly<
     "Tells the registration contact, prior attendee, and replacement attendee when their valid email destinations differ.",
   SHIRT_SIZE_REQUEST:
     "Sent only after staff review an audience of registrations still missing a shirt size. Carries the private management link, so a migrated registrant reaches self-service for the first time from this message.",
+  EVENT_ANNOUNCEMENT:
+    "Sends a published event-feed announcement to active registration contacts after an explicit staff broadcast action.",
 };
 
 export const DEFAULT_MESSAGE_TEMPLATE_SUBJECTS: Readonly<
@@ -144,6 +150,8 @@ export const DEFAULT_MESSAGE_TEMPLATE_SUBJECTS: Readonly<
     "Attendee substitution recorded: {{event_name}} ({{confirmation_code}})",
   SHIRT_SIZE_REQUEST:
     "Shirt sizes needed for {{event_name}} ({{confirmation_code}})",
+  EVENT_ANNOUNCEMENT:
+    "{{event_name}} update: {{announcement_title}}",
 };
 
 export const DEFAULT_MESSAGE_TEMPLATE_BODIES: Readonly<Record<MessageTemplateKey, string>> = {
@@ -368,6 +376,18 @@ export const DEFAULT_MESSAGE_TEMPLATE_BODIES: Readonly<Record<MessageTemplateKey
     "",
     "Questions? Contact {{reply_to_email}}.",
   ].join("\n"),
+  EVENT_ANNOUNCEMENT: [
+    "Hello {{recipient_name}},",
+    "",
+    "{{announcement_title}}",
+    "",
+    "{{announcement_body}}",
+    "",
+    "Review your registration and attendee information:",
+    "{{portal_url}}",
+    "",
+    "Questions? Contact {{reply_to_email}}.",
+  ].join("\n"),
 };
 
 export const DEFAULT_MESSAGE_TEMPLATES: Readonly<
@@ -483,6 +503,16 @@ export const MESSAGE_TEMPLATE_TOKEN_OPTIONS: readonly {
     label: "New person",
     description: "The contact or attendee taking over after an operation.",
   },
+  {
+    key: "announcement_title",
+    label: "Announcement title",
+    description: "The title of the published event-feed announcement.",
+  },
+  {
+    key: "announcement_body",
+    label: "Announcement body",
+    description: "The plain-text body of the published event-feed announcement.",
+  },
 ];
 
 export const SAMPLE_MESSAGE_TEMPLATE_CONTEXT: Readonly<
@@ -506,6 +536,8 @@ export const SAMPLE_MESSAGE_TEMPLATE_CONTEXT: Readonly<
   payment_reference: "square-demo-reference",
   prior_person_name: "Jordan Lee",
   new_person_name: "Morgan Lee",
+  announcement_title: "Friday arrival information",
+  announcement_body: "Check-in opens at 3:00 PM in the main lodge.",
 });
 
 const templateTokenPattern = /\{\{([^{}]+)\}\}/g;

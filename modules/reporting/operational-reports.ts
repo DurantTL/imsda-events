@@ -10,6 +10,9 @@ export const operationalReportKinds = [
   "meals",
   "housing",
   "seminars",
+  "childcare",
+  "volunteers",
+  "attendance",
 ] as const;
 
 export type OperationalReportKind = typeof operationalReportKinds[number];
@@ -91,11 +94,17 @@ export type OperationalReport = {
     mealSelections: number;
     housingSelections: number;
     seminarInterests: number;
+    childcareSelections: number;
+    volunteerSelections: number;
+    attendanceSelections: number;
   };
   rosterGroups: OperationalRosterGroup[];
   meals: OperationalCountField[];
   housing: OperationalCountField[];
   seminars: OperationalSeminarField[];
+  childcare: OperationalCountField[];
+  volunteers: OperationalCountField[];
+  attendance: OperationalCountField[];
 };
 
 type FieldMetadata = {
@@ -128,6 +137,9 @@ const mealSemanticPattern = /\b(?:meal|food|dietary|breakfast|brunch|lunch|suppe
 const housingSemanticPattern = /\b(?:housing|lodging|accommodation|overnight|dorm|cabin|campsite|camp\s*site|rv|camper|tent|room|bed|nights?\s+staying)\b/i;
 const housingQuantityPattern = /\b(?:count|number|qty|quantity|rooms?|beds?|cabins?|sites?|campsites?|tents?|nights?)\b/i;
 const seminarSemanticPattern = /\b(?:seminar|workshop|session|breakout|class|track|program)\b/i;
+const childcareSemanticPattern = /\b(?:child\s*care|childcare|children\s+needing\s+care|nursery)\b/i;
+const volunteerSemanticPattern = /\b(?:volunteer|willing\s+to\s+help|serve\s+at|help\s+at)\b/i;
+const attendanceSemanticPattern = /\b(?:attendance|attending|will\s+attend|plans?\s+to\s+attend|sunday)\b/i;
 
 function normalizeWords(value: string) {
   return value
@@ -231,7 +243,7 @@ function fieldAggregateKey(field: RegistrationFormField) {
 
 function ensureCountField(
   collection: Map<string, MutableCountField>,
-  category: "meals" | "housing",
+  category: "meals" | "housing" | "childcare" | "volunteers" | "attendance",
   field: RegistrationFormField,
 ) {
   const key = fieldAggregateKey(field);
@@ -351,6 +363,9 @@ function addResponseFields(
   mealFields: Map<string, MutableCountField>,
   housingFields: Map<string, MutableCountField>,
   seminarFields: Map<string, MutableSeminarField>,
+  childcareFields: Map<string, MutableCountField>,
+  volunteerFields: Map<string, MutableCountField>,
+  attendanceFields: Map<string, MutableCountField>,
 ) {
   for (const metadata of fields) {
     const { field } = metadata;
@@ -367,6 +382,9 @@ function addResponseFields(
     const isHousingField = field.type === "NUMBER"
       ? housingSemanticPattern.test(coreSemantic) && housingQuantityPattern.test(coreSemantic)
       : housingSemanticPattern.test(semantic);
+    const isChildcareField = childcareSemanticPattern.test(semantic);
+    const isVolunteerField = volunteerSemanticPattern.test(semantic);
+    const isAttendanceField = attendanceSemanticPattern.test(semantic);
 
     if (structuredType && isMealField) {
       addStructuredCount(
@@ -379,6 +397,30 @@ function addResponseFields(
     if (structuredType && isHousingField) {
       addStructuredCount(
         ensureCountField(housingFields, "housing", field),
+        field,
+        responses[field.key],
+      );
+    }
+
+    if (structuredType && isChildcareField) {
+      addStructuredCount(
+        ensureCountField(childcareFields, "childcare", field),
+        field,
+        responses[field.key],
+      );
+    }
+
+    if (structuredType && isVolunteerField) {
+      addStructuredCount(
+        ensureCountField(volunteerFields, "volunteers", field),
+        field,
+        responses[field.key],
+      );
+    }
+
+    if (structuredType && isAttendanceField) {
+      addStructuredCount(
+        ensureCountField(attendanceFields, "attendance", field),
         field,
         responses[field.key],
       );
@@ -442,6 +484,9 @@ export function buildOperationalReport(
   const mealFields = new Map<string, MutableCountField>();
   const housingFields = new Map<string, MutableCountField>();
   const seminarFields = new Map<string, MutableSeminarField>();
+  const childcareFields = new Map<string, MutableCountField>();
+  const volunteerFields = new Map<string, MutableCountField>();
+  const attendanceFields = new Map<string, MutableCountField>();
 
   for (const registration of activeRegistrations) {
     const definition = registration.publicSubmission
@@ -484,19 +529,25 @@ export function buildOperationalReport(
       mealFields,
       housingFields,
       seminarFields,
+      childcareFields,
+      volunteerFields,
+      attendanceFields,
     );
 
     registration.attendees.forEach((attendee, index) => {
-      const immutableResponses = registration.publicSubmission?.attendeeResponses[index]
-        ?? attendee.responses
-        ?? {};
+      const currentResponses = Object.keys(attendee.responses ?? {}).length > 0
+        ? attendee.responses
+        : registration.publicSubmission?.attendeeResponses[index] ?? {};
       addResponseFields(
         fields,
         "ATTENDEE",
-        immutableResponses,
+        currentResponses,
         mealFields,
         housingFields,
         seminarFields,
+        childcareFields,
+        volunteerFields,
+        attendanceFields,
       );
     });
   }
@@ -518,6 +569,9 @@ export function buildOperationalReport(
   const meals = finishCountFields(mealFields);
   const housing = finishCountFields(housingFields);
   const seminars = finishSeminarFields(seminarFields);
+  const childcare = finishCountFields(childcareFields);
+  const volunteers = finishCountFields(volunteerFields);
+  const attendance = finishCountFields(attendanceFields);
 
   return {
     summary: {
@@ -530,11 +584,17 @@ export function buildOperationalReport(
       mealSelections: meals.reduce((total, field) => total + field.total, 0),
       housingSelections: housing.reduce((total, field) => total + field.total, 0),
       seminarInterests: seminars.reduce((total, field) => total + field.totalInterest, 0),
+      childcareSelections: childcare.reduce((total, field) => total + field.total, 0),
+      volunteerSelections: volunteers.reduce((total, field) => total + field.total, 0),
+      attendanceSelections: attendance.reduce((total, field) => total + field.total, 0),
     },
     rosterGroups: finishedRosterGroups,
     meals,
     housing,
     seminars,
+    childcare,
+    volunteers,
+    attendance,
   };
 }
 
@@ -596,7 +656,15 @@ export function operationalReportCsv(
     return toCsv(rows);
   }
 
-  const fields = kind === "meals" ? report.meals : report.housing;
+  const fields = kind === "meals"
+    ? report.meals
+    : kind === "housing"
+      ? report.housing
+      : kind === "childcare"
+        ? report.childcare
+        : kind === "volunteers"
+          ? report.volunteers
+          : report.attendance;
   const rows: Array<Array<string | number>> = [[
     "Field",
     "Applies to",

@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import {
   BedDouble,
+  Baby,
+  CalendarCheck2,
   Download,
+  HandHeart,
   ListOrdered,
   ShieldCheck,
   UsersRound,
@@ -160,6 +163,24 @@ export default async function OperationalReportsPage({
       detail: `${report.seminars.length} ranked ${report.seminars.length === 1 ? "field" : "fields"}`,
       tone: "purple",
     },
+    {
+      label: "Childcare responses",
+      value: displayCount(report.summary.childcareSelections),
+      detail: `${report.childcare.length} structured ${report.childcare.length === 1 ? "field" : "fields"}`,
+      tone: "green",
+    },
+    {
+      label: "Volunteer responses",
+      value: displayCount(report.summary.volunteerSelections),
+      detail: `${report.volunteers.length} structured ${report.volunteers.length === 1 ? "field" : "fields"}`,
+      tone: "gold",
+    },
+    {
+      label: "Attendance responses",
+      value: displayCount(report.summary.attendanceSelections),
+      detail: `${report.attendance.length} structured ${report.attendance.length === 1 ? "field" : "fields"}`,
+      tone: "navy",
+    },
   ];
 
   return (
@@ -258,6 +279,39 @@ export default async function OperationalReportsPage({
           <a className="secondary-button report-download" href={reportDownloadHref(event.id, "seminars")}><Download aria-hidden="true" size={15} /> Download ranking CSV</a>
         </div>
         <SeminarFields fields={report.seminars} />
+      </section>
+
+      <section className="panel report-panel" id="childcare-counts">
+        <div className="section-heading report-section-heading">
+          <div className="report-title">
+            <span className="report-icon green"><Baby aria-hidden="true" size={19} /></span>
+            <div><p className="eyebrow">Family support</p><h2>Childcare planning</h2><p>Counts structured childcare requests and child quantities without exporting free-text ages or care notes.</p></div>
+          </div>
+          <a className="secondary-button report-download" href={reportDownloadHref(event.id, "childcare")}><Download aria-hidden="true" size={15} /> Download childcare CSV</a>
+        </div>
+        <CountFields fields={report.childcare} emptyCopy="No structured childcare fields are configured on an active registration form yet." />
+      </section>
+
+      <section className="panel report-panel" id="volunteer-counts">
+        <div className="section-heading report-section-heading">
+          <div className="report-title">
+            <span className="report-icon gold"><HandHeart aria-hidden="true" size={19} /></span>
+            <div><p className="eyebrow">Service team</p><h2>Volunteer responses</h2><p>Shows structured willingness-to-help choices for staff follow-up and shift planning.</p></div>
+          </div>
+          <a className="secondary-button report-download" href={reportDownloadHref(event.id, "volunteers")}><Download aria-hidden="true" size={15} /> Download volunteer CSV</a>
+        </div>
+        <CountFields fields={report.volunteers} emptyCopy="No structured volunteer fields are configured on an active registration form yet." />
+      </section>
+
+      <section className="panel report-panel" id="attendance-counts">
+        <div className="section-heading report-section-heading">
+          <div className="report-title">
+            <span className="report-icon navy"><CalendarCheck2 aria-hidden="true" size={19} /></span>
+            <div><p className="eyebrow">Programme planning</p><h2>Optional-session attendance</h2><p>Counts structured attendance intentions such as Sunday sessions without treating interest rankings as attendance.</p></div>
+          </div>
+          <a className="secondary-button report-download" href={reportDownloadHref(event.id, "attendance")}><Download aria-hidden="true" size={15} /> Download attendance CSV</a>
+        </div>
+        <CountFields fields={report.attendance} emptyCopy="No structured attendance fields are configured on an active registration form yet." />
       </section>
     </section>
   );
