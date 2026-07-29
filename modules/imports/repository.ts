@@ -32,6 +32,22 @@ function normalizedData(value: Prisma.JsonValue | null): NormalizedImportData {
   return value as unknown as NormalizedImportData;
 }
 
+function hasInvalidLegacyPromoData(data: NormalizedImportData) {
+  return data.legacyPromoCodes?.some((promo) => (
+    !Number.isSafeInteger(promo.discountValue)
+    || promo.discountValue < 0
+    || !Number.isSafeInteger(promo.redeemedCount)
+    || promo.redeemedCount < 0
+    || (
+      promo.maximumUses !== null
+      && (
+        !Number.isSafeInteger(promo.maximumUses)
+        || promo.maximumUses < 0
+      )
+    )
+  )) ?? false;
+}
+
 async function getEventTotals(client: DatabaseClient, eventId: string) {
   const [registrationTotals, attendees] = await Promise.all([
     client.registration.aggregate({ where: { eventId }, _count: true, _sum: { totalAmount: true } }),
@@ -651,6 +667,15 @@ export async function commitImportRun(eventId: string, importRunId: string, acto
   if (existing.status !== ImportRunStatus.PENDING) throw new ImportOperationError("IMPORT_NOT_READY", "This import is not ready to commit.");
   if (existing.records.some((record) => record.status === ImportRecordStatus.ERROR)) {
     throw new ImportOperationError("IMPORT_HAS_ERRORS", "Resolve the preview errors before committing this import.");
+  }
+  if (existing.records.some((record) => (
+    record.normalizedData
+    && hasInvalidLegacyPromoData(normalizedData(record.normalizedData))
+  ))) {
+    throw new ImportOperationError(
+      "IMPORT_NOT_READY",
+      "This preview was created by an older WR26 importer that could not read formatted promo-code amounts. Upload the same CSV bundle again to create a corrected preview.",
+    );
   }
 
   await getPrisma().$transaction(async (tx) => {
