@@ -8,6 +8,20 @@
 FROM node:22-bookworm-slim AS build
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_BUILD_TSCONFIG=tsconfig.build.json
+
+# These values affect build-time metadata and response headers. They contain no
+# credentials, and Compose supplies the same values again when the app runs.
+# Passing them into the image keeps canonical URLs, iframe policy, and Square's
+# CSP hosts aligned when a deployment moves to a different public origin.
+ARG APP_BASE_URL=http://localhost:3000
+ARG EMBED_ALLOWED_ORIGINS="'self' https://imsda.org https://www.imsda.org"
+ARG SQUARE_ENVIRONMENT=sandbox
+ARG SQUARE_ENABLE_PRODUCTION=false
+ENV APP_BASE_URL=${APP_BASE_URL}
+ENV EMBED_ALLOWED_ORIGINS=${EMBED_ALLOWED_ORIGINS}
+ENV SQUARE_ENVIRONMENT=${SQUARE_ENVIRONMENT}
+ENV SQUARE_ENABLE_PRODUCTION=${SQUARE_ENABLE_PRODUCTION}
 RUN apt-get update \
   && apt-get install -y --no-install-recommends openssl ca-certificates \
   && rm -rf /var/lib/apt/lists/*
@@ -19,7 +33,9 @@ COPY prisma ./prisma
 RUN npm ci
 
 # Build the app. The placeholder DATABASE_URL only satisfies env-shape validation
-# at build time; `next build` does not contact a database.
+# at build time; `next build` does not contact a database. The production-only
+# tsconfig keeps tests and operator scripts out of Next's build-time typecheck;
+# CI still runs the full-project typecheck before building the image.
 COPY . .
 ENV DATABASE_URL="postgresql://build:build@localhost:5432/build?schema=public"
 RUN npx prisma generate && npm run build

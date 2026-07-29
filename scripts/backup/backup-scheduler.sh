@@ -15,6 +15,9 @@ while true; do
   RUN=$((RUN + 1))
 
   if /usr/local/bin/pg-backup.sh; then
+    /usr/local/bin/assets-backup.sh || \
+      echo "[backup-scheduler] asset backup failed; retrying at the next interval." >&2
+
     if [ "$((RUN % VERIFY_EVERY))" -eq 1 ] || [ "${VERIFY_EVERY}" -eq 1 ]; then
       # A failed rehearsal must be loud but must not stop future backups.
       /usr/local/bin/pg-restore-verify.sh || \

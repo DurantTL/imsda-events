@@ -16,7 +16,8 @@ What happens on `docker compose up`:
    The app validates its whole environment before accepting a request and **refuses
    to start** if anything required is missing — see [Environment variables](#environment-variables-set-these-in-the-xcloud-env-panel).
 3. **outbox-sweeper** retries queued email that failed a first delivery attempt.
-4. **backup** takes a nightly `pg_dump` and periodically rehearses a restore.
+4. **backup** takes a nightly `pg_dump`, archives uploaded event files, and
+   periodically rehearses a database restore.
 
 The reverse proxy (xCloud's Nginx) forwards your domain to the app's published port.
 
@@ -33,13 +34,14 @@ already taken on the host, set `APP_PORT` to a free port and point the proxy at 
 
 ## Environment variables (set these in the xCloud env panel)
 
-Only `KEY=value` lines — no comments, no blank lines, no spaces in values.
+Use `KEY=value` lines in the deployment environment. Do not commit the
+production values to this repository.
 
 **Required for production** — the app will not start without all of these:
 
 ```
 APP_BASE_URL=https://your-final-domain
-POSTGRES_PASSWORD=<strong>
+POSTGRES_PASSWORD=<openssl rand -hex 32>
 MANAGE_LINK_DERIVATION_SECRET=<openssl rand -base64 48>
 ATTENDEE_PASS_SIGNING_SECRET=<openssl rand -base64 48>
 RATE_LIMIT_HASH_SECRET=<openssl rand -base64 48>
@@ -90,7 +92,10 @@ RATE_LIMIT_CLIENT_IP_HEADER=x-forwarded-for   # cf-connecting-ip behind Cloudfla
 OUTBOX_SWEEP_INTERVAL_SECONDS=300
 BACKUP_RETENTION_DAYS=14
 BACKUP_VERIFY_EVERY=7            # rehearse a restore every Nth backup
-BACKUP_OFFSITE_COMMAND=          # receives the dump path as $1
+BACKUP_OFFSITE_COMMAND=          # receives each database/asset backup path as $1
+GOOGLE_OAUTH_CLIENT_ID=          # set both Google values or leave both blank
+GOOGLE_OAUTH_CLIENT_SECRET=
+EMBED_ALLOWED_ORIGINS='self' https://imsda.org https://www.imsda.org
 ```
 
 (There is no `POSTGRES_HOST_PORT` to set for deployment — the database is not published
@@ -99,6 +104,56 @@ to the host at all. That variable only matters for the local `docker-compose.dev
 Email (Resend) and Square are left disabled unless you supply their credentials;
 Square stays in Sandbox until `SQUARE_ENVIRONMENT=production` **and**
 `SQUARE_ENABLE_PRODUCTION=true` are both set. See the main README for those.
+
+## Moving to a clean server and a new URL
+
+This deployment is designed to start from an empty server. It does not need a
+database dump when the old data is intentionally being discarded:
+
+1. Install Docker Engine with the Compose plugin, clone this repository, and set
+   the production environment variables. Generate new values for all five
+   application secrets and `POSTGRES_PASSWORD`; do not copy old values when no
+   old sessions, private links, QR passes, or MFA enrollments need to survive.
+2. Set `APP_BASE_URL` to the final HTTPS origin, with no trailing path. Set
+   `SQUARE_WEBHOOK_NOTIFICATION_URL` to
+   `<APP_BASE_URL>/api/webhooks/square`.
+3. Point DNS at the new server and configure its TLS reverse proxy to forward to
+   `APP_PORT` (`3100` by default).
+4. Update the external providers that know the old URL:
+   - Google OAuth authorized redirect URI:
+     `<APP_BASE_URL>/api/attendee/oauth/google/callback`
+   - Square webhook notification URL:
+     `<APP_BASE_URL>/api/webhooks/square`
+   - Resend webhook URL:
+     `<APP_BASE_URL>/api/webhooks/resend`
+5. Run `docker compose up -d --build`. Postgres creates an empty database in the
+   `imsda_events_postgres` volume; the app waits for it, applies every committed
+   Prisma migration, and then starts. There is no demo seed.
+6. Confirm the stack before importing anything:
+
+   ```bash
+   docker compose ps
+   docker compose exec app npx prisma migrate status
+   curl --fail https://your-new-domain/api/health
+   ```
+
+7. Create the first administrator as described below. Create or configure the
+   Women's Retreat event, then use **Imports** to preview and commit the
+   registration CSV again. Re-enter event messaging settings and re-upload
+   schedules, flyers, or images; uploaded files are now kept in the separate
+   `imsda_events_assets` volume.
+8. Keep Square in Sandbox, complete a registration/payment/webhook test, and
+   only consider the separate production unlock after reconciliation passes.
+
+Changing `APP_BASE_URL`, `EMBED_ALLOWED_ORIGINS`, or the Square environment
+requires `docker compose up -d --build`, not only a container restart. Those
+public values are used while Next compiles metadata and security headers and are
+also supplied again at runtime.
+
+Ordinary rebuilds and `docker compose down` preserve all three named volumes.
+`docker compose down --volumes` deliberately erases the database, uploaded
+files, and on-host backups; use it only while this intentionally disposable
+clean deployment is still being rebuilt.
 
 ## First-deploy checklist
 
@@ -232,10 +287,11 @@ plainly. Add the named variable and deploy again.
 
 ## Backups and restore rehearsals
 
-The `backup` service writes `pg_dump` custom-format dumps to the
-`imsda_events_backups` volume, prunes anything older than `BACKUP_RETENTION_DAYS`,
-and every `BACKUP_VERIFY_EVERY` runs restores the newest dump into a scratch
-database and prints its row counts.
+The `backup` service writes PostgreSQL custom-format dumps and
+`imsda-assets-*.tar.gz` upload archives to the `imsda_events_backups` volume,
+checks that each asset archive is readable, prunes both sets after
+`BACKUP_RETENTION_DAYS`, and every `BACKUP_VERIFY_EVERY` runs restores the newest
+database dump into a scratch database and prints its row counts.
 
 **Two things still need a decision from you:**
 
@@ -254,6 +310,18 @@ docker compose exec backup pg_restore --dbname=imsda_events --clean --if-exists 
   --no-owner --no-privileges /backups/imsda-events-<stamp>.dump
 docker compose start app
 ```
+
+Restore a matching uploaded-file archive while the app is stopped:
+
+```bash
+docker compose stop app
+docker compose run --rm --no-deps --entrypoint sh backup -c \
+  'find /assets -mindepth 1 -maxdepth 1 -exec rm -rf {} + &&
+   tar -xzf /backups/imsda-assets-<stamp>.tar.gz -C /assets'
+docker compose start app
+```
+
+The database dump and asset archive should come from the same nightly run.
 
 ## Default local development is unchanged
 

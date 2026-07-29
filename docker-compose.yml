@@ -13,25 +13,39 @@ services:
     environment:
       POSTGRES_DB: imsda_events
       POSTGRES_USER: imsda
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD?set this in the deployment environment; it is the database superuser password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD?set this to a URL-safe database password (openssl rand -hex 32)}
     volumes:
       - imsda_events_postgres:/var/lib/postgresql/data
+    stop_grace_period: 1m
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U imsda -d imsda_events"]
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 10s
     restart: unless-stopped
 
   app:
-    build: .
+    build:
+      context: .
+      args:
+        # Public, non-secret values consumed while Next compiles metadata and
+        # response headers. The same values are supplied at runtime below.
+        APP_BASE_URL: ${APP_BASE_URL?set this to the new public https origin}
+        EMBED_ALLOWED_ORIGINS: ${EMBED_ALLOWED_ORIGINS:-'self' https://imsda.org https://www.imsda.org}
+        SQUARE_ENVIRONMENT: ${SQUARE_ENVIRONMENT:-sandbox}
+        SQUARE_ENABLE_PRODUCTION: ${SQUARE_ENABLE_PRODUCTION:-false}
     depends_on:
       postgres:
         condition: service_healthy
+    init: true
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://imsda:${POSTGRES_PASSWORD}@postgres:5432/imsda_events?schema=public
       APP_BASE_URL: ${APP_BASE_URL?set this to the public https origin; it is written into emailed links}
+      # Uploaded schedules, flyers, and images must live outside the replaceable
+      # application container.
+      ASSET_STORAGE_DIR: /app/storage/event-assets
       MANAGE_LINK_DERIVATION_SECRET: ${MANAGE_LINK_DERIVATION_SECRET?set this to at least 32 random characters (openssl rand -base64 48)}
       MANAGE_LINK_DERIVATION_SECRET_PREVIOUS: ${MANAGE_LINK_DERIVATION_SECRET_PREVIOUS:-}
       ATTENDEE_PASS_SIGNING_SECRET: ${ATTENDEE_PASS_SIGNING_SECRET?set this to at least 32 random characters (openssl rand -base64 48)}
@@ -48,6 +62,8 @@ services:
       ACCOUNT_EMAIL_SENDER_NAME: ${ACCOUNT_EMAIL_SENDER_NAME:-IMSDA Events}
       ACCOUNT_EMAIL_SENDER_ADDRESS: ${ACCOUNT_EMAIL_SENDER_ADDRESS?set this to a sender address verified with Resend}
       ACCOUNT_EMAIL_REPLY_TO: ${ACCOUNT_EMAIL_REPLY_TO:-}
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
       # Seals the TOTP secrets behind two-factor authentication. Changing it
       # makes every enrolled authenticator unreadable.
       SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY?set this to at least 32 random characters (openssl rand -base64 48)}
@@ -67,6 +83,8 @@ services:
       # New requirement. An existing deployment that has never set this will not
       # start until it is added — the sweep endpoint is never open by omission.
       OUTBOX_SWEEP_TOKEN: ${OUTBOX_SWEEP_TOKEN?set this to at least 32 random characters (openssl rand -base64 48); it authorises the scheduled outbox sweep}
+    volumes:
+      - imsda_events_assets:/app/storage/event-assets
     ports:
       - "${APP_PORT:-3100}:3000"
     healthcheck:
@@ -109,6 +127,7 @@ services:
       PGUSER: imsda
       PGPASSWORD: ${POSTGRES_PASSWORD}
       PGDATABASE: imsda_events
+      ASSET_DIR: /assets
       BACKUP_DIR: /backups
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
@@ -118,11 +137,16 @@ services:
     volumes:
       - ./scripts/backup:/usr/local/bin:ro
       - imsda_events_backups:/backups
+      - imsda_events_assets:/assets
     entrypoint: ["sh", "/usr/local/bin/backup-scheduler.sh"]
     restart: unless-stopped
 
 volumes:
+  # Database rows and uploaded event files survive image rebuilds and ordinary
+  # `docker compose down`. Do not use `docker compose down --volumes` after the
+  # deployment becomes authoritative.
   imsda_events_postgres:
+  imsda_events_assets:
   # Bind this to off-host storage, or set BACKUP_OFFSITE_COMMAND. A dump on the
   # same host as the database it came from does not survive losing that host.
   imsda_events_backups:
