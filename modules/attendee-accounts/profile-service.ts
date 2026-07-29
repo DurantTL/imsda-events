@@ -83,11 +83,14 @@ export function attendeeProfilePrefill(
   const name = `${profile.firstName} ${profile.lastName}`.trim();
   return {
     first_name: profile.firstName,
+    primary_contact_first_name: profile.firstName,
     last_name: profile.lastName,
+    primary_contact_last_name: profile.lastName,
     full_name: name,
     name,
     phone: profile.phone,
     phone_number: profile.phone,
+    attendee_phone: profile.phone,
     email: verifiedEmail,
     contact_email: verifiedEmail,
     shirt_size: profile.shirtSize,

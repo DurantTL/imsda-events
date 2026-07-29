@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   CalendarDays,
+  ArrowRight,
   CircleDollarSign,
   CircleHelp,
   Inbox,
@@ -14,6 +15,7 @@ import { BrandMark } from "@/components/brand-mark";
 import { AttendeeSignOutButton } from "@/components/attendee-sign-out-button";
 import { AttendeeProfileForm } from "@/components/attendee-profile-form";
 import { AttendeeRegistrationContactForm } from "@/components/attendee-registration-contact-form";
+import { AttendeeRegistrationAnswersForm } from "@/components/attendee-registration-answers-form";
 import { MfaManager } from "@/components/mfa-manager";
 import { PublicSquarePayment } from "@/components/public-square-payment";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
@@ -109,6 +111,12 @@ function RegistrationCard({
       <p className="public-manage-readonly-note">
         {registration.status.detail}
       </p>
+      <Link
+        className="secondary-button attendee-hub-link"
+        href={`/account/events/${encodeURIComponent(registration.event.slug)}`}
+      >
+        Open attendee hub <ArrowRight size={16} aria-hidden="true" />
+      </Link>
       {editable && registration.balanceCents > 0 && (
         <PublicSquarePayment
           manageEndpoint={`/api/attendee/registrations/${encodeURIComponent(registration.id)}`}
@@ -118,6 +126,14 @@ function RegistrationCard({
         <AttendeeRegistrationContactForm
           registrationId={registration.id}
           initialContact={registration.contact}
+        />
+      )}
+      {editable && registration.answerEditing.enabled && (
+        <AttendeeRegistrationAnswersForm
+          registrationId={registration.id}
+          initialExpectedUpdatedAt={registration.answerEditing.expectedUpdatedAt}
+          fields={registration.answerEditing.fields}
+          initialAttendees={registration.answerEditing.attendees}
         />
       )}
     </section>

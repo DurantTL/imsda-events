@@ -1,6 +1,34 @@
 # IMSDA Events build status and WR26 feature audit
 
-Updated July 23, 2026. This document compares the current IMSDA Events workspace with the useful behaviors in [DurantTL/WR26-IMSDA](https://github.com/DurantTL/WR26-IMSDA). WR26 is a behavior reference, not an architecture to copy: IMSDA Events remains the multi-event PostgreSQL system of record rather than importing the old WordPress, Google Apps Script, Google Sheets, or in-memory-cache architecture.
+Updated July 29, 2026. This document compares the current IMSDA Events workspace with the useful behaviors in [DurantTL/WR26-IMSDA](https://github.com/DurantTL/WR26-IMSDA). WR26 is a behavior reference, not an architecture to copy: IMSDA Events remains the multi-event PostgreSQL system of record rather than importing the old WordPress, Google Apps Script, Google Sheets, or in-memory-cache architecture.
+
+## July 29 Women’s Retreat implementation update
+
+The repository now includes the first complete attendee event-day surface:
+
+- An authenticated retreat hub for active registrations with published event
+  content, staff updates, current program assignments, check-in state, support
+  details, resources, and one private QR pass per attendee.
+- Tiered account editing for low-risk structured attendee answers such as meal,
+  shirt, volunteer, and session choices. Identity, demographic, medical,
+  accessibility, priced, capacity-controlled, and protected conditional fields
+  remain staff-managed.
+- A retreat-guide starter in the event-page editor for schedule, arrival,
+  parking/check-in, meals/childcare/accessibility, packing, and resources. Every
+  section remains unpublished until staff deliberately publishes it.
+- Childcare, volunteer, and optional-session attendance reports and CSV
+  downloads, in addition to roster, meals, housing, and seminar reports. Reports
+  prefer the current amended attendee answers rather than the immutable original
+  submission snapshot.
+- A separately confirmed email-broadcast action for a published announcement,
+  using the event’s versioned template, active registration audience, configured
+  delivery mode, outbox processing, idempotency, and audit log. Publishing to
+  the feed alone still never sends email.
+
+Repository verification is green: lint, generated route types, TypeScript, all
+872 tests, and the Next.js production build. Deployment still requires migration
+43, a controlled data/configuration check against the deployed environment, and
+the Square Sandbox rehearsal described below.
 
 ## What is working locally
 
@@ -11,13 +39,13 @@ Updated July 23, 2026. This document compares the current IMSDA Events workspace
 | People and registrations | Registration CRUD, ordered attendee parties, public individual/household/group submission, immutable answer review, explicit cancel/reactivate/waitlist/promote actions, automatic promotion, staff-only whole-registration transfer and in-place attendee substitution, balances, and CSV export |
 | Finance | Manual cash/check payments, partial offline refunds, bounded event promo codes, Square Sandbox checkout, durable payment attempts, signed payment/refund webhooks, balance calculation, and audit records |
 | Check-in | Attendee search, individual check-in/online undo, signed PII-free QR passes, camera/manual resolution, visible staff confirmation, and a recoverable device-local offline check-in queue |
-| Communications | Announcement drafts/publication with a filtered public all-attendee landing feed, event sender settings, fourteen versioned templates, transactional outbox, transfer/substitution notices, exact-audience balance-reminder preview/batches, corrected-address immutable confirmation copies, local capture or Resend delivery, provider-event history, retry/backoff, and audited retry |
+| Communications | Announcement drafts/publication with public and authenticated feeds, explicitly confirmed email broadcasts, event sender settings, fifteen versioned event templates, transactional outbox, transfer/substitution notices, exact-audience balance-reminder preview/batches, corrected-address immutable confirmation copies, local capture or Resend delivery, provider-event history, retry/backoff, and audited retry |
 | Imports | CSV preview, validation, matching, reviewed commit, reconciliation totals, exception export |
 | Form builder | Seven templates, reusable modules, individual/group mode, repeatable attendee preview, sections/fields, drag and button reordering, validation tests, immutable publication and version history |
 | Conditions | One show/hide rule per field with equals, not-equals, includes, and has-answer operators; hidden required fields and hidden prices are skipped |
 | Pricing | Automatic fees, flat prices, quantity prices, per-choice prices, bounded fixed/percentage promo discounts, card-fee gross-up after discount, and date-driven standard/late prices |
 | Public registration | IMSDA-branded landing/form/embed views, published all-attendee event updates, multi-step add/remove/reorder roster flow, explicit promo Apply/Remove quotes, server validation/timezone pricing, immutable answer/order/redemption snapshots, waitlist routing, confirmation delivery, and private management link |
-| Private self-service | Hash-only expiring/revocable bearer links, no-store/noindex responses, contact-only edits, attendee/status/payment history, and secure Square handoff |
+| Private self-service | Hash-only expiring/revocable bearer links plus verified attendee accounts, no-store/noindex responses, contact edits, tiered low-risk attendee-answer edits, private event hub/QR passes, attendee/status/payment history, and secure Square handoff |
 | Availability | Event capacity, per-choice limits, registration/attendee reservations, ranked first/second counts, within-roster aggregation, serializable concurrency protection, cancellation release/reactivation, waitlist position, and automatic promotion |
 | Security | Same-origin mutations, strict public schemas, CSP and embed allow-list, hash-only sessions/reset/manage/rate-limit identifiers, trusted-proxy controls, provider signature verification, and production safety locks |
 
@@ -27,10 +55,21 @@ Updated July 23, 2026. This document compares the current IMSDA Events workspace
 - Publishing activates `/events/{event-slug}`, `/register/{event-slug}/{form-slug}`, and the noindex `/embed/{event-slug}/{form-slug}` view.
 - Public submission recomputes pricing, conditions, capacity, and waitlist eligibility server-side. A waitlist request records no payment choice or card fee. After promotion, its private page requires an explicit card or pay-later choice, shows both totals, and adds the configured gross-up exactly once from the preserved discounted subtotal before Square hosted fields can load.
 - Square and Resend are implemented but disabled with blank local credentials. Square remains Sandbox by default and Production requires a separate explicit unlock.
-- Private self-service deliberately allows contact edits only. Whole-registration transfer, attendee substitution, option changes, cancellation, and refunds remain staff-mediated.
+- Private self-service permits contact edits and tiered low-risk structured
+  attendee-answer edits. Whole-registration transfer, attendee substitution,
+  identity/demographic/medical/priced/capacity-controlled changes, cancellation,
+  and refunds remain staff-mediated.
 - Lifecycle messages cover waitlist entry/promotion, cancellation, contact updates, whole-registration transfer, attendee substitution, and first-success Square payment receipts. Reviewed balance-reminder batches and corrected-address confirmation copies are complete.
-- Published, already-active announcements whose audience is exactly all attendees appear on the public event landing feed. Drafts, future schedules, archived rows, and targeted audiences remain staff-only; targeted/scheduled email delivery, SMS, push, preferences, and unsubscribe handling are not complete.
-- File uploads, seminar assignment runs, and remaining printable operational reports remain open event-program/event-day work. Payment and undo actions are intentionally never added to the offline check-in queue.
+- Published, already-active announcements whose audience is exactly all
+  attendees appear on the public event landing page and authenticated retreat
+  hub. Staff may explicitly broadcast one published announcement to active
+  registration contacts. Scheduled/segmented delivery, SMS, push, preferences,
+  and attendee-to-attendee discussion are not complete.
+- File uploads, seminar assignment runs and rosters, event content, and core
+  operational reports are complete. Dedicated print layouts for passes/group
+  packets and an attendee discussion board with reporting/moderation remain open.
+  Payment and undo actions are intentionally never added to the offline check-in
+  queue.
 
 ## WR26 behaviors to preserve in the new platform
 
@@ -105,10 +144,11 @@ IMSDA Events implements the shared versioned-template, outbox, idempotency, retr
 | Complete | Private self-service | Registrant can securely view the exact registration, update contact details, see balance/history, and continue card payment |
 | Complete | Signed event-day passes | One private pass per eligible attendee, HMAC verification, event-scoped camera/manual lookup, and explicit staff confirmation before check-in |
 | Complete | Recoverable offline check-in | Client UUID idempotency, one-active-check-in database invariant, queued-not-confirmed UI, reconnect retry, and explicit Retry/Discard conflict recovery |
-| 1 | Remaining event-day foundation | Printable passes and group rosters |
+| 1 | Remaining event-day foundation | Dedicated print layouts for pass sheets and grouped retreat packets |
 | Complete | Bounded promo codes | Finance managers configure fixed/percentage codes with event-local dates, minimums, use limits, immutable redemptions, public Apply/Remove quote, and concurrent final-use protection |
 | Complete | Transfer workflow | Two-step staff review, whole-registration transfer, in-place attendee substitution, durable idempotency, immutable operation snapshots, access revocation/reissue, and versioned notices |
-| 3 | Program operations | Ranked seminar assignment preview/run, rosters, meal/housing counts, and operational exception center |
+| Complete | Program operations | Ranked assignment preview/run and rosters plus meal, housing, seminar, childcare, volunteer, and attendance reports |
+| 3 | Attendee community expansion | Opt-in attendee posts, staff moderation/reporting, conduct copy, retention policy, and notification controls |
 | 4 | Communications expansion | Targeted/scheduled announcements, SMS/push adapters, preferences, unsubscribe, and urgent alerts |
 
 ## Repository delivery status

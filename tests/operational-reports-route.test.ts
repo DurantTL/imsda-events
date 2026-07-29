@@ -43,6 +43,9 @@ const report = {
     mealSelections: 0,
     housingSelections: 0,
     seminarInterests: 0,
+    childcareSelections: 0,
+    volunteerSelections: 0,
+    attendanceSelections: 0,
   },
   rosterGroups: [{
     id: "group_one",
@@ -61,6 +64,9 @@ const report = {
   meals: [],
   housing: [],
   seminars: [],
+  childcare: [],
+  volunteers: [],
+  attendance: [],
 };
 
 beforeEach(() => {

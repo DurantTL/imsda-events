@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { FileText, Link2, Plus, Save, Trash2 } from "lucide-react";
+import { FileText, Link2, Plus, Save, Sparkles, Trash2 } from "lucide-react";
 import type { EventAssetRecord } from "@/modules/events/asset-repository";
 import type { EventContentSectionRecord } from "@/modules/events/content-repository";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
@@ -14,6 +14,44 @@ type SectionDraft = {
   isPublished: boolean;
   links: LinkDraft[];
 };
+
+const retreatGuideStarterSections: SectionDraft[] = [
+  {
+    kind: "RICH_TEXT",
+    title: "Weekend schedule",
+    body: "Friday\nAdd arrival, registration, supper, worship, and evening activity times.\n\nSabbath\nAdd breakfast, worship, seminar, meal, and evening programme times.\n\nSunday\nAdd breakfast, final session, checkout, and departure times.",
+    isPublished: false,
+    links: [],
+  },
+  {
+    kind: "RICH_TEXT",
+    title: "Arrival, parking and check-in",
+    body: "Add the arrival window, street address, parking instructions, check-in location, and what attendees should have ready.",
+    isPublished: false,
+    links: [],
+  },
+  {
+    kind: "RICH_TEXT",
+    title: "Meals, childcare and accessibility",
+    body: "Add meal times and locations, childcare check-in details, accessibility guidance, and who to contact before or during the retreat.",
+    isPublished: false,
+    links: [],
+  },
+  {
+    kind: "RICH_TEXT",
+    title: "What to bring",
+    body: "Add clothing, bedding, personal items, medications, activity supplies, and anything attendees should leave at home.",
+    isPublished: false,
+    links: [],
+  },
+  {
+    kind: "RICH_TEXT",
+    title: "Retreat resources",
+    body: "Add the final programme, site map, packing list, speaker notes, recordings, and other files or web links attendees may need. Change this section to “Resource links” when the first resource is ready.",
+    isPublished: false,
+    links: [],
+  },
+];
 
 function draftsFrom(sections: EventContentSectionRecord[]): SectionDraft[] {
   return sections.map((section) => ({
@@ -78,6 +116,18 @@ export function EventContentWorkspace({
     }]);
   }
 
+  function addRetreatGuideStarter() {
+    setSections((current) => [
+      ...current,
+      ...retreatGuideStarterSections.map((section) => ({
+        ...section,
+        links: section.links.map((link) => ({ ...link })),
+      })),
+    ]);
+    setError("");
+    setNotice("Added five unpublished retreat-guide sections. Replace the prompts, then publish each section when it is ready.");
+  }
+
   async function uploadAsset(file: File) {
     setUploading(true);
     setError("");
@@ -138,6 +188,9 @@ export function EventContentWorkspace({
             Each section publishes on its own, so a half-written one can wait while the rest goes live.
           </p>
         </div>
+        <button className="secondary-button" type="button" onClick={addRetreatGuideStarter}>
+          <Sparkles size={16} aria-hidden="true" /> Add retreat guide starter
+        </button>
       </div>
 
       {error && <p className="form-error" role="alert">{error}</p>}

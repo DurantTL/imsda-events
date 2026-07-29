@@ -5,6 +5,7 @@ vi.mock("server-only", () => ({}));
 
 import {
   enqueueAttendeeSubstitutedMessage,
+  enqueueEventAnnouncementMessage,
   enqueuePaymentReceiptMessage,
   enqueueRegistrationCancelledMessage,
   enqueueRegistrationContactUpdatedMessage,
@@ -288,5 +289,27 @@ describe("transactional lifecycle messages", () => {
     expect(message.create.bodyTextSnapshot).not.toContain(
       REGISTRATION_MANAGE_LINK_SENTINEL,
     );
+  });
+
+  it("renders a published event announcement for the registration contact", async () => {
+    const { tx, upsert } = transactionFixture();
+
+    await enqueueEventAnnouncementMessage(tx as never, {
+      eventId: "event-1",
+      registrationId: "registration-1",
+      correlationId: "announcement-batch-1",
+      transitionKey: "announcement-broadcast:announcement-1:announcement-batch-1",
+      announcementTitle: "Friday arrival information",
+      announcementBody: "Check-in opens at 4:00 PM in the main lodge.",
+    });
+
+    const message = queuedMessage(upsert);
+    expect(message.create.templateKey).toBe("EVENT_ANNOUNCEMENT");
+    expect(message.create.recipientEmail).toBe("old-contact@example.test");
+    expect(message.create.subjectSnapshot).toContain("Friday arrival information");
+    expect(message.create.bodyTextSnapshot).toContain(
+      "Check-in opens at 4:00 PM in the main lodge.",
+    );
+    expect(message.create.bodyTextSnapshot).toContain(REGISTRATION_MANAGE_LINK_SENTINEL);
   });
 });

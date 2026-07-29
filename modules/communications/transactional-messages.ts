@@ -19,6 +19,7 @@ type TransactionalTemplateKey =
   | "REGISTRATION_TRANSFERRED_NEW_CONTACT"
   | "REGISTRATION_TRANSFERRED_PRIOR_CONTACT"
   | "ATTENDEE_SUBSTITUTED"
+  | "EVENT_ANNOUNCEMENT"
   | "PAYMENT_RECEIPT";
 
 type TransactionalMessageInput = {
@@ -34,6 +35,8 @@ type TransactionalMessageInput = {
   paymentReference?: string;
   priorPersonName?: string;
   newPersonName?: string;
+  announcementTitle?: string;
+  announcementBody?: string;
   metadata?: Record<string, string | number | boolean | null>;
 };
 
@@ -308,6 +311,8 @@ async function enqueueTransactionalMessage(
     payment_reference: input.paymentReference?.trim() || "Not provided",
     prior_person_name: input.priorPersonName?.trim() || "Prior attendee",
     new_person_name: input.newPersonName?.trim() || "Replacement attendee",
+    announcement_title: input.announcementTitle?.trim() || "Event update",
+    announcement_body: input.announcementBody?.trim() || "Open your registration for the latest event information.",
   };
   const rendered = renderMessageTemplate(
     {
@@ -439,6 +444,19 @@ export function enqueueAttendeeSubstitutedMessage(
   return enqueueTransactionalMessage(tx, {
     ...input,
     templateKey: "ATTENDEE_SUBSTITUTED",
+  });
+}
+
+export function enqueueEventAnnouncementMessage(
+  tx: Prisma.TransactionClient,
+  input: Omit<TransactionalMessageInput, "templateKey"> & {
+    announcementTitle: string;
+    announcementBody: string;
+  },
+) {
+  return enqueueTransactionalMessage(tx, {
+    ...input,
+    templateKey: "EVENT_ANNOUNCEMENT",
   });
 }
 
