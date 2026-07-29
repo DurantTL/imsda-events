@@ -105,6 +105,38 @@ Email (Resend) and Square are left disabled unless you supply their credentials;
 Square stays in Sandbox until `SQUARE_ENVIRONMENT=production` **and**
 `SQUARE_ENABLE_PRODUCTION=true` are both set. See the main README for those.
 
+## Permanent xCloud Dockerfile-only runtime override
+
+xCloud's Dockerfile-only site type regenerates
+`/home/u_events/.xcloud/docker-compose.yml` during every deployment. A separate
+`docker-compose.env.yml` override is not loaded by that generated command, so
+the newly created app container loses both `DATABASE_URL` and its external
+PostgreSQL network unless the override is reapplied.
+
+Keep these server-owned files in `/home/u_events/.xcloud`:
+
+- `.env` — mode `600`, containing the production environment.
+- `docker-compose.env.yml` — adds `.env` through `env_file` and attaches the
+  external PostgreSQL network.
+
+Then configure the xCloud site's **Deployment Script** to run:
+
+```bash
+IMSDA_XCLOUD_RUNTIME_DIR=/home/u_events/.xcloud IMSDA_XCLOUD_EXPECTED_NETWORK=postgresql_9kgaw_239292_xcloud-network sh "$PROJECT_DIR/scripts/xcloud-post-deploy.sh"
+```
+
+xCloud runs this hook after each deployment. The script validates the base
+Compose file, override, and environment without printing secret values; safely
+recreates only the `app` service with both Compose files; and fails the
+deployment if the resulting container is missing `DATABASE_URL` or the expected
+database network.
+
+The cleaner long-term alternative is an xCloud **Custom Docker → Docker Compose
+From Git** site using the repository's Compose file and xCloud's Environment
+File option. That site type natively loads a named Compose file and should be
+preferred when replacing this Dockerfile-only site. The post-deployment hook
+keeps the current site reliable without another database or domain move.
+
 ## Moving to a clean server and a new URL
 
 This deployment is designed to start from an empty server. It does not need a
