@@ -11,8 +11,10 @@ import {
   MapPin,
   ReceiptText,
   ShieldCheck,
+  UserRoundPlus,
   UsersRound,
 } from "lucide-react";
+import Link from "next/link";
 import { BrandMark } from "@/components/brand-mark";
 import { PublicAttendeePasses } from "@/components/public-attendee-passes";
 import { PublicRegistrationContactForm } from "@/components/public-registration-contact-form";
@@ -298,6 +300,25 @@ export default async function PublicManagePage({
             <a href={view.event.supportUrl} rel="noreferrer">
               Contact IMSDA <ExternalLink size={15} aria-hidden="true" />
             </a>
+          </section>
+
+          {/*
+            * The one place a registrant reliably is, so it is where an account
+            * has to be offered. Nothing else links to sign-up: someone who
+            * never makes an account keeps this page and loses nothing, which is
+            * the arrangement ADR 0003 preserves deliberately.
+            */}
+          <section className="public-manage-help-card">
+            <span><UserRoundPlus size={23} aria-hidden="true" /></span>
+            <p className="public-registration-eyebrow">Tired of finding this email?</p>
+            <h2>See all your registrations</h2>
+            <p>
+              Create an account with {view.contact.email} and every registration made with that
+              address appears in one place — no link to keep.
+            </p>
+            <Link href="/account/sign-up">
+              Create an account <ExternalLink size={15} aria-hidden="true" />
+            </Link>
           </section>
 
           <section className="public-manage-security-note">

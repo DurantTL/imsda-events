@@ -21,6 +21,7 @@ import {
   getAccountEmailSender,
   prepareAccountEmailBodyForDelivery,
 } from "@/modules/communications/account-email";
+import { prepareAttendeeEmailBodyForDelivery } from "@/modules/attendee-accounts/attendee-email";
 import { logError } from "@/lib/logger";
 import {
   createStableRegistrationAccessToken,
@@ -65,6 +66,7 @@ type ClaimedMessage = {
   id: string;
   eventId: string | null;
   accountUserId: string | null;
+  accountAttendeeId: string | null;
   templateKey: string;
   registrationId: string | null;
   recipientEmail: string;
@@ -87,6 +89,7 @@ export type EmailBodyPreparationInput = {
   messageId: string;
   registrationId: string | null;
   accountUserId?: string | null;
+  accountAttendeeId?: string | null;
   templateKey?: string;
   bodyText: string;
   now: Date;
@@ -299,6 +302,7 @@ async function claimNextMessage(
           id: true,
           eventId: true,
           accountUserId: true,
+          accountAttendeeId: true,
           templateKey: true,
           registrationId: true,
           recipientEmail: true,
@@ -524,6 +528,7 @@ async function runDeliveryLoop(
         messageId: message.id,
         registrationId: message.registrationId,
         accountUserId: message.accountUserId,
+        accountAttendeeId: message.accountAttendeeId,
         templateKey: message.templateKey,
         bodyText: message.bodyTextSnapshot,
         now: message.startedAt,
@@ -568,9 +573,24 @@ async function runDeliveryLoop(
   return result;
 }
 
+/**
+ * The eventless slice holds two populations now: staff activation and reset,
+ * which mint a one-time link, and attendee verification, which mints a code.
+ * Which one a message is comes from its template key rather than from which id
+ * column happens to be set, so a row with neither is a clear error instead of a
+ * message that silently sends its sentinel to a person.
+ */
 async function prepareAccountEmailBody(
   input: EmailBodyPreparationInput,
 ): Promise<PreparedEmailBody> {
+  if (input.templateKey?.startsWith("ATTENDEE_")) {
+    return prepareAttendeeEmailBodyForDelivery({
+      accountAttendeeId: input.accountAttendeeId ?? null,
+      templateKey: input.templateKey,
+      bodyText: input.bodyText,
+      now: input.now,
+    });
+  }
   return prepareAccountEmailBodyForDelivery({
     messageId: input.messageId,
     accountUserId: input.accountUserId ?? null,

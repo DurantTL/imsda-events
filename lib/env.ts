@@ -18,7 +18,7 @@ const optionalTrimmed = z
   .optional()
   .transform((value) => (value ? value : undefined));
 
-const serverEnvSchema = z
+export const serverEnvSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
     DATABASE_URL: z.string().url().startsWith("postgresql://"),
@@ -63,6 +63,13 @@ const serverEnvSchema = z
     ACCOUNT_EMAIL_SENDER_NAME: z.string().trim().min(1).max(100).default("IMSDA Events"),
     ACCOUNT_EMAIL_SENDER_ADDRESS: optionalTrimmed,
     ACCOUNT_EMAIL_REPLY_TO: optionalTrimmed,
+
+    // Google sign-in for attendee accounts. Blank hides the button entirely
+    // rather than offering one that cannot work — a registrant who clicks a
+    // dead sign-in button has no way to know the deployment is at fault.
+    // Never used for staff: that path carries the MFA gate.
+    GOOGLE_OAUTH_CLIENT_ID: optionalTrimmed,
+    GOOGLE_OAUTH_CLIENT_SECRET: optionalTrimmed,
 
     // Square stays in Sandbox unless production is separately unlocked.
     SQUARE_ENVIRONMENT: z.enum(["sandbox", "production"]).default("sandbox"),
@@ -176,6 +183,22 @@ const serverEnvSchema = z
       });
     }
 
+    // Half a client is worse than none: the button would appear and every
+    // attempt would fail at the token exchange, after the registrant had
+    // already handed Google their password.
+    const googleHalves = [
+      value.GOOGLE_OAUTH_CLIENT_ID,
+      value.GOOGLE_OAUTH_CLIENT_SECRET,
+    ];
+    if (googleHalves.some(Boolean) && !googleHalves.every(Boolean)) {
+      context.addIssue({
+        code: "custom",
+        path: ["GOOGLE_OAUTH_CLIENT_SECRET"],
+        message:
+          "GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET must be set together",
+      });
+    }
+
     if (
       value.RATE_LIMIT_TRUSTED_PROXY_HOPS > 1
       && value.RATE_LIMIT_CLIENT_IP_HEADER !== "x-forwarded-for"
@@ -246,8 +269,15 @@ export type ServerEnvValidation =
   | { ok: true; env: ServerEnv }
   | { ok: false; issues: string[] };
 
-function readSource(source: Record<string, string | undefined>) {
-  const keys = [
+/**
+ * The variables actually read out of the process environment.
+ *
+ * This list and the schema above have to agree. A variable declared in the
+ * schema but missing here is silently dropped before parsing — it validates,
+ * defaults, and is never populated, which looks exactly like a deployment that
+ * forgot to set it. `server-env-contract.test.ts` fails when they drift.
+ */
+export const SERVER_ENV_KEYS = [
     "NODE_ENV",
     "DATABASE_URL",
     "APP_BASE_URL",
@@ -266,6 +296,8 @@ function readSource(source: Record<string, string | undefined>) {
     "ACCOUNT_EMAIL_SENDER_NAME",
     "ACCOUNT_EMAIL_SENDER_ADDRESS",
     "ACCOUNT_EMAIL_REPLY_TO",
+    "GOOGLE_OAUTH_CLIENT_ID",
+    "GOOGLE_OAUTH_CLIENT_SECRET",
     "SQUARE_ENVIRONMENT",
     "SQUARE_APPLICATION_ID",
     "SQUARE_ACCESS_TOKEN",
@@ -282,10 +314,11 @@ function readSource(source: Record<string, string | undefined>) {
     "ALERT_REPEAT_MINUTES",
     "PASSWORD_BREACH_CHECK",
     "PASSWORD_BREACH_CHECK_URL",
-  ] as const;
+] as const;
 
+function readSource(source: Record<string, string | undefined>) {
   return Object.fromEntries(
-    keys
+    SERVER_ENV_KEYS
       .map((key) => [key, source[key]?.trim() ? source[key] : undefined])
       .filter(([, value]) => value !== undefined),
   );

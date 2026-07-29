@@ -133,6 +133,165 @@ export async function checkPasswordResetAccountRateLimit(
   ], configuration);
 }
 
+/**
+ * Attendee sign-up is a public, unauthenticated endpoint that sends email to
+ * an address chosen by whoever calls it — the most abusable surface the platform
+ * has (ADR 0003). The per-address limit is the one that matters: without it,
+ * sign-up is a way to mail a stranger repeatedly, and the fact that the platform
+ * would not create an account for them is no comfort to the person receiving it.
+ */
+export async function checkAttendeeSignUpRateLimit(
+  request: Request,
+  email: string,
+) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  const account = hashRateLimitIdentifier(
+    "attendee-email",
+    email.trim().toLowerCase(),
+    configuration,
+  );
+  return evaluate([
+    {
+      policy: "attendee.sign-up.client",
+      limit: 10,
+      windowSeconds: oneHour,
+      identifierHashes: [client],
+    },
+    {
+      policy: "attendee.sign-up.account",
+      limit: 3,
+      windowSeconds: oneHour,
+      identifierHashes: [account],
+    },
+    {
+      policy: "attendee.sign-up.client-account",
+      limit: 3,
+      windowSeconds: oneHour,
+      identifierHashes: [client, account],
+    },
+  ], configuration);
+}
+
+/**
+ * Guessing the emailed code. The token's own attempt ceiling already stops a
+ * sustained attack on one verification; this stops someone working through many
+ * verifications, or reissuing to reset the ceiling.
+ */
+export async function checkAttendeeVerificationRateLimit(request: Request) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  return evaluate([{
+    policy: "attendee.verify.client",
+    limit: 20,
+    windowSeconds: fifteenMinutes,
+    identifierHashes: [client],
+  }], configuration);
+}
+
+/**
+ * The other public, unauthenticated, email-sending attendee endpoint, and held
+ * tighter than sign-up: nobody legitimately needs three password resets an
+ * hour, and each request retires the previous code, so an unlimited one is also
+ * a way to keep a real owner's reset perpetually out of date.
+ */
+export async function checkAttendeePasswordResetRateLimit(
+  request: Request,
+  email: string,
+) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  const account = hashRateLimitIdentifier(
+    "attendee-email",
+    email.trim().toLowerCase(),
+    configuration,
+  );
+  return evaluate([
+    {
+      policy: "attendee.password-reset.client",
+      limit: 10,
+      windowSeconds: oneHour,
+      identifierHashes: [client],
+    },
+    {
+      policy: "attendee.password-reset.account",
+      limit: 3,
+      windowSeconds: oneHour,
+      identifierHashes: [account],
+    },
+    {
+      policy: "attendee.password-reset.client-account",
+      limit: 3,
+      windowSeconds: oneHour,
+      identifierHashes: [client, account],
+    },
+  ], configuration);
+}
+
+/**
+ * Starting a Google sign-in costs nothing here but a redirect, so the limit is
+ * loose. It exists so a script cannot mint handoff cookies indefinitely.
+ */
+export async function checkAttendeeOAuthStartRateLimit(request: Request) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  return evaluate([{
+    policy: "attendee.oauth.start.client",
+    limit: 30,
+    windowSeconds: fifteenMinutes,
+    identifierHashes: [client],
+  }], configuration);
+}
+
+/**
+ * The callback does real work — a token exchange with Google and a key fetch —
+ * so it is held tighter than the start. There is no per-address rule because
+ * the address is not known until the exchange has already happened.
+ */
+export async function checkAttendeeOAuthCallbackRateLimit(request: Request) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  return evaluate([{
+    policy: "attendee.oauth.callback.client",
+    limit: 20,
+    windowSeconds: fifteenMinutes,
+    identifierHashes: [client],
+  }], configuration);
+}
+
+export async function checkAttendeeSignInRateLimit(
+  request: Request,
+  email: string,
+) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  const account = hashRateLimitIdentifier(
+    "attendee-email",
+    email.trim().toLowerCase(),
+    configuration,
+  );
+  return evaluate([
+    {
+      policy: "attendee.sign-in.client",
+      limit: 20,
+      windowSeconds: fifteenMinutes,
+      identifierHashes: [client],
+    },
+    {
+      policy: "attendee.sign-in.account",
+      limit: 10,
+      windowSeconds: fifteenMinutes,
+      identifierHashes: [account],
+    },
+    {
+      policy: "attendee.sign-in.client-account",
+      limit: 5,
+      windowSeconds: fifteenMinutes,
+      identifierHashes: [client, account],
+    },
+  ], configuration);
+}
+
 export async function checkPublicRegistrationRateLimit(
   request: Request,
   eventSlug: string,

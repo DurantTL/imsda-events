@@ -44,9 +44,13 @@ describe("submitted MFA code normalisation", () => {
  * Mirrors OneTimeCodeInput so the hazard it avoids stays documented: a recovery
  * code typed by hand passes through six digits on its way to ten.
  */
-function shouldAutoSubmit(value: string, inputType: string | undefined) {
+function shouldAutoSubmit(
+  value: string,
+  inputType: string | undefined,
+  autoSubmit = true,
+) {
   const cleaned = value.replace(/\s+/g, "");
-  return inputType !== "insertText" && /^\d{6}$/.test(cleaned);
+  return autoSubmit && inputType !== "insertText" && /^\d{6}$/.test(cleaned);
 }
 
 describe("auto-submitting a complete code", () => {
@@ -68,5 +72,13 @@ describe("auto-submitting a complete code", () => {
     expect(shouldAutoSubmit("12345", "insertFromPaste")).toBe(false);
     expect(shouldAutoSubmit("12345-67890", "insertFromPaste")).toBe(false);
     expect(shouldAutoSubmit("abc123", "insertFromPaste")).toBe(false);
+  });
+
+  it("stays put where the code is not the last thing the form needs", () => {
+    // The password reset asks for a code and a new password together. An
+    // autofilled code that submitted on arrival would post an empty password
+    // and spend the code on a request that could never succeed.
+    expect(shouldAutoSubmit("123456", "insertFromPaste", false)).toBe(false);
+    expect(shouldAutoSubmit("123456", undefined, false)).toBe(false);
   });
 });
