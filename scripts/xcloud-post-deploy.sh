@@ -34,6 +34,47 @@ docker compose \
   -f "$IMSDA_XCLOUD_OVERRIDE_COMPOSE" \
   config --quiet
 
+IMSDA_XCLOUD_CONTAINER_ID="$(
+  docker compose \
+    -f "$IMSDA_XCLOUD_BASE_COMPOSE" \
+    -f "$IMSDA_XCLOUD_OVERRIDE_COMPOSE" \
+    ps -q "$IMSDA_XCLOUD_SERVICE"
+)"
+
+# A timer can wake while xCloud is between removing the previous container and
+# creating the replacement. Do not start a competing build; the next timer run
+# will inspect the container after xCloud has finished.
+if [ -z "$IMSDA_XCLOUD_CONTAINER_ID" ]; then
+  echo "[xcloud-post-deploy] No app container exists yet; deferring until xCloud finishes deployment."
+  exit 0
+fi
+
+IMSDA_XCLOUD_HAS_DATABASE_URL=false
+if docker inspect "$IMSDA_XCLOUD_CONTAINER_ID" \
+  --format '{{range .Config.Env}}{{println .}}{{end}}' |
+  grep -q '^DATABASE_URL='
+then
+  IMSDA_XCLOUD_HAS_DATABASE_URL=true
+fi
+
+IMSDA_XCLOUD_HAS_EXPECTED_NETWORK=true
+if [ -n "${IMSDA_XCLOUD_EXPECTED_NETWORK:-}" ]; then
+  IMSDA_XCLOUD_HAS_EXPECTED_NETWORK=false
+  if docker inspect "$IMSDA_XCLOUD_CONTAINER_ID" \
+    --format '{{range $name, $settings := .NetworkSettings.Networks}}{{println $name}}{{end}}' |
+    grep -Fxq "$IMSDA_XCLOUD_EXPECTED_NETWORK"
+  then
+    IMSDA_XCLOUD_HAS_EXPECTED_NETWORK=true
+  fi
+fi
+
+if [ "$IMSDA_XCLOUD_HAS_DATABASE_URL" = true ] \
+  && [ "$IMSDA_XCLOUD_HAS_EXPECTED_NETWORK" = true ]
+then
+  echo "[xcloud-post-deploy] Runtime override is already present; no container change needed."
+  exit 0
+fi
+
 echo "[xcloud-post-deploy] Recreating $IMSDA_XCLOUD_SERVICE with its runtime environment and database network..."
 docker compose \
   -f "$IMSDA_XCLOUD_BASE_COMPOSE" \

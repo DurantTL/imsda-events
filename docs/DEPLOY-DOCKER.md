@@ -131,6 +131,33 @@ recreates only the `app` service with both Compose files; and fails the
 deployment if the resulting container is missing `DATABASE_URL` or the expected
 database network.
 
+Some Dockerfile-only xCloud sites do not execute the configured Deployment
+Script. When the deployment log does not contain any `[xcloud-post-deploy]`
+lines, install the server-level guard instead:
+
+```bash
+curl --fail --silent --show-error --location \
+  https://raw.githubusercontent.com/DurantTL/imsda-events/main/scripts/install-xcloud-runtime-guard.sh \
+  --output /tmp/install-imsda-xcloud-runtime-guard.sh
+
+sh /tmp/install-imsda-xcloud-runtime-guard.sh
+```
+
+Run those commands as `root`. The installer copies the repair hook to
+`/usr/local/sbin`, creates a systemd oneshot service and 30-second timer, and
+runs the first check immediately. The check is idempotent: while the app already
+has `DATABASE_URL` and the expected PostgreSQL network, it makes no container
+change. After xCloud recreates a base-only container, the next timer run restores
+the override. If the timer wakes while xCloud has no app container, it defers
+rather than starting a competing build.
+
+Verify it with:
+
+```bash
+systemctl status imsda-xcloud-runtime-guard.timer --no-pager
+journalctl -u imsda-xcloud-runtime-guard.service -n 50 --no-pager
+```
+
 The cleaner long-term alternative is an xCloud **Custom Docker → Docker Compose
 From Git** site using the repository's Compose file and xCloud's Environment
 File option. That site type natively loads a named Compose file and should be
