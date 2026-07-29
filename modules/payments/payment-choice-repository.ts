@@ -123,21 +123,14 @@ function storedResult(value: Prisma.JsonValue): PaymentChoiceResult {
 
 async function choosePromotedWaitlistPaymentInTransaction(
   tx: Prisma.TransactionClient,
-  token: string,
+  access: {
+    accessTokenId: string | null;
+    registrationId: string;
+    eventId: string;
+  },
   input: PaymentChoiceInput,
   now: Date,
 ) {
-  const access = await authorizeRegistrationAccessToken(token, {
-    now,
-    client: tx,
-  });
-  if (!access) {
-    throw new PaymentChoiceOperationError(
-      "REGISTRATION_ACCESS_UNAVAILABLE",
-      "This private registration link is invalid or no longer active.",
-    );
-  }
-
   const requestFingerprint = paymentChoiceRequestFingerprint(
     access.registrationId,
     input,
@@ -310,12 +303,31 @@ export function choosePublicPromotedWaitlistPayment(
   options: { now?: Date } = {},
 ) {
   const now = options.now ?? new Date();
-  return runSerializable((tx) => (
-    choosePromotedWaitlistPaymentInTransaction(
-      tx,
-      token,
-      input,
+  return runSerializable(async (tx) => {
+    const access = await authorizeRegistrationAccessToken(token, {
       now,
-    )
+      client: tx,
+    });
+    if (!access) {
+      throw new PaymentChoiceOperationError(
+        "REGISTRATION_ACCESS_UNAVAILABLE",
+        "This private registration link is invalid or no longer active.",
+      );
+    }
+    return choosePromotedWaitlistPaymentInTransaction(tx, access, input, now);
+  });
+}
+
+export function chooseAttendeePromotedWaitlistPayment(
+  access: { registrationId: string; eventId: string },
+  input: PaymentChoiceInput,
+  options: { now?: Date } = {},
+) {
+  const now = options.now ?? new Date();
+  return runSerializable((tx) => choosePromotedWaitlistPaymentInTransaction(
+    tx,
+    { ...access, accessTokenId: null },
+    input,
+    now,
   ));
 }

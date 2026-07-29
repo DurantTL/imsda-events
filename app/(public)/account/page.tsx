@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   CalendarDays,
@@ -11,7 +12,13 @@ import {
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 import { AttendeeSignOutButton } from "@/components/attendee-sign-out-button";
+import { AttendeeProfileForm } from "@/components/attendee-profile-form";
+import { AttendeeRegistrationContactForm } from "@/components/attendee-registration-contact-form";
+import { MfaManager } from "@/components/mfa-manager";
+import { PublicSquarePayment } from "@/components/public-square-payment";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { getAttendeeMfaStatus } from "@/modules/attendee-accounts/mfa-service";
+import { getAttendeeProfile } from "@/modules/attendee-accounts/profile-service";
 import {
   listRegistrationsForVerifiedEmail,
   type AttendeeRegistrationSummary,
@@ -46,7 +53,13 @@ function dateLabel(startsAt: string, endsAt: string, timeZone: string) {
   return start === end ? start : `${start} – ${end}`;
 }
 
-function RegistrationCard({ registration }: { registration: AttendeeRegistrationSummary }) {
+function RegistrationCard({
+  registration,
+  editable,
+}: {
+  registration: AttendeeRegistrationSummary;
+  editable: boolean;
+}) {
   return (
     <section className="public-manage-card attendee-registration-card">
       <div className="public-manage-card-heading attendee-registration-heading">
@@ -96,15 +109,28 @@ function RegistrationCard({ registration }: { registration: AttendeeRegistration
       <p className="public-manage-readonly-note">
         {registration.status.detail}
       </p>
+      {editable && registration.balanceCents > 0 && (
+        <PublicSquarePayment
+          manageEndpoint={`/api/attendee/registrations/${encodeURIComponent(registration.id)}`}
+        />
+      )}
+      {editable && (
+        <AttendeeRegistrationContactForm
+          registrationId={registration.id}
+          initialContact={registration.contact}
+        />
+      )}
     </section>
   );
 }
 
 export default async function AttendeeAccountPage() {
-  const { account } = await getCurrentAttendee();
+  const { account, via } = await getCurrentAttendee();
   if (!account) redirect("/account/sign-in");
 
   const registrations = await listRegistrationsForVerifiedEmail(account.verifiedEmail);
+  const mfaStatus = await getAttendeeMfaStatus(account.id);
+  const profile = await getAttendeeProfile(account.id);
 
   return (
     <main className="public-registration-page public-manage-page">
@@ -117,7 +143,9 @@ export default async function AttendeeAccountPage() {
             <BrandMark />
             <span><strong>IMSDA</strong><small>Events</small></span>
           </a>
-          <AttendeeSignOutButton />
+          {via === "staff"
+            ? <Link className="text-button" href="/overview">Back to staff workspace</Link>
+            : <AttendeeSignOutButton />}
         </div>
       </header>
 
@@ -133,9 +161,14 @@ export default async function AttendeeAccountPage() {
 
       <div className="public-manage-layout">
         <div className="public-manage-main">
+          {via === "attendee" && <AttendeeProfileForm initialProfile={profile} />}
           {registrations.length > 0
             ? registrations.map((registration) => (
-              <RegistrationCard key={registration.id} registration={registration} />
+              <RegistrationCard
+                key={registration.id}
+                registration={registration}
+                editable={via === "attendee"}
+              />
             ))
             : (
               <section className="public-manage-card">
@@ -171,10 +204,15 @@ export default async function AttendeeAccountPage() {
             <p className="public-registration-eyebrow">Need to change something?</p>
             <h2>Contact the event team</h2>
             <p>
-              Changes are not available here yet. Use the private link in your registration
-              confirmation email, or contact the event team.
+              Contact details can be updated with a fresh emailed code. Changes to attendance,
+              rooms, activities, cancellations, or transfers still go through the event team.
             </p>
           </section>
+          <MfaManager
+            initialStatus={mfaStatus}
+            endpoint="/api/attendee/mfa"
+            attendee
+          />
         </aside>
       </div>
     </main>

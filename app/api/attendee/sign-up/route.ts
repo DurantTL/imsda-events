@@ -1,13 +1,17 @@
 import { cookies } from "next/headers";
+import { after } from "next/server";
 import { z } from "zod";
 import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
 import { validateChosenPassword } from "@/modules/access/passwords";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { beginAttendeeSignUp } from "@/modules/attendee-accounts/account-service";
-import { EMAIL_VERIFICATION_LIFETIME_MINUTES } from "@/modules/attendee-accounts/codes";
+import { ATTENDEE_PENDING_REQUEST_LIFETIME_HOURS } from "@/modules/attendee-accounts/codes";
 import { ATTENDEE_PENDING_COOKIE_NAME } from "@/modules/attendee-accounts/session-store";
-import { sendAttendeeVerificationEmail } from "@/modules/attendee-accounts/attendee-email-dispatch";
+import {
+  deliverQueuedAttendeeEmail,
+  queueAttendeeVerificationEmail,
+} from "@/modules/attendee-accounts/attendee-email-dispatch";
 import { mintAttendeeCodeWithoutSending } from "@/modules/attendee-accounts/attendee-email";
 import {
   applyRateLimitHeaders,
@@ -68,12 +72,15 @@ async function postHandler(request: Request) {
     }
 
     const signUp = await beginAttendeeSignUp(input);
-    const dispatch = await sendAttendeeVerificationEmail({
+    const dispatch = await queueAttendeeVerificationEmail({
       accountId: signUp.accountId,
       email: input.email,
       displayName: input.displayName,
       alreadyRegistered: signUp.outcome === "existing",
     });
+    if (dispatch.messageId) {
+      after(() => deliverQueuedAttendeeEmail(dispatch.messageId!));
+    }
 
     (await cookies()).set(ATTENDEE_PENDING_COOKIE_NAME, signUp.pendingToken, {
       httpOnly: true,
@@ -81,7 +88,7 @@ async function postHandler(request: Request) {
       sameSite: "lax",
       path: "/",
       expires: signUp.expiresAt,
-      maxAge: EMAIL_VERIFICATION_LIFETIME_MINUTES * 60,
+      maxAge: ATTENDEE_PENDING_REQUEST_LIFETIME_HOURS * 60 * 60,
       priority: "high",
     });
 

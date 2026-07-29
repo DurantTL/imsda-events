@@ -110,9 +110,9 @@ Other roles may enrol voluntarily from **More → Two-factor authentication**.
 
 ### Account email
 
-Activation and password-reset email travel the same outbox as registration
-messages — with backoff, attempt history, and the scheduled sweep — but belong
-to a person rather than to an event, so they take their sender from
+Activation, password-reset, attendee verification, and attendee edit-code email
+travel the same outbox as registration messages — with backoff, attempt history,
+and the scheduled sweep — but belong to a person rather than to an event, so they take their sender from
 `ACCOUNT_EMAIL_SENDER_ADDRESS` (plus `ACCOUNT_EMAIL_SENDER_NAME` and the
 optional `ACCOUNT_EMAIL_REPLY_TO`) instead of an event's message settings.
 Production requires that address and `RESEND_API_KEY`: a colleague who never
@@ -122,9 +122,33 @@ Locally, leaving them blank keeps the previous behaviour — **Forgot password**
 shows the one-time link on the page, and an invitation returns it to the
 administrator — and the page says which of the two is happening.
 
-The queued message stores a sentinel, never a token. The one-time link is minted
-when the message is actually sent, so a database read yields nothing usable and a
-reset link's thirty minutes start on delivery rather than in the queue.
+The queued message stores a sentinel, never a token or code. The credential is
+minted when the message is actually sent, so its short lifetime starts on
+delivery rather than in the queue. A retry reuses the same encrypted credential
+instead of invalidating the first message while the recipient is typing it.
+
+### Attendee accounts
+
+Attendee identity stays separate from staff identity. A verified attendee
+account claims registrations only by the normalized registration contact email;
+it cannot hold an event permission. The account page supports registrations
+across events, a reusable profile that prefills matching fields, optional TOTP,
+Square balance payment, and contact edits protected by a single-use emailed code
+bound to the session that requested it.
+
+Staff can open their own matching attendee account from the staff shell when
+their verified staff email matches an active verified attendee account. This is
+not impersonation and cannot select another attendee.
+
+Google identities use the provider subject as the durable key. A verified
+same-email Google-only account may safely rebind after Google changes that
+subject; mixed password-and-Google accounts require explicit support rather than
+an automatic rebind. Event edit policy is stored per event, inherited from the
+platform default, with `VERIFY_EVERY_EDIT` as the default and the Women's Retreat
+kept on `TIERED`.
+
+See [the attendee-account release checklist](docs/ATTENDEE-ACCOUNT-RELEASE.md)
+before enabling these paths against production providers.
 
 ## Verification
 

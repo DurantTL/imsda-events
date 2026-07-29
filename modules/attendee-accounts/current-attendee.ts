@@ -3,6 +3,7 @@ import "server-only";
 import { cache } from "react";
 import { cookies } from "next/headers";
 import { getPrisma } from "@/lib/prisma";
+import { getCurrentSession } from "@/modules/access/current-session";
 import { hashOpaqueToken } from "@/modules/access/tokens";
 import {
   ATTENDEE_SESSION_COOKIE_NAME,
@@ -31,16 +32,52 @@ export type AttendeeSession = {
     verifiedEmail: string;
     displayName: string;
   } | null;
+  via: "attendee" | "staff" | null;
+  sessionId: string | null;
 };
+
+async function attendeeAccountForStaff(): Promise<AttendeeSession> {
+  const { user } = await getCurrentSession();
+  if (!user) return { account: null, via: null, sessionId: null };
+  const account = await getPrisma().attendeeAccount.findUnique({
+    where: { email: user.email.trim().toLowerCase() },
+    select: {
+      id: true,
+      email: true,
+      displayName: true,
+      status: true,
+      emailVerifiedAt: true,
+      disabledAt: true,
+    },
+  });
+  if (
+    !account
+    || account.disabledAt
+    || account.status !== "ACTIVE"
+    || !account.emailVerifiedAt
+  ) {
+    return { account: null, via: null, sessionId: null };
+  }
+  return {
+    account: {
+      id: account.id,
+      verifiedEmail: account.email,
+      displayName: account.displayName,
+    },
+    via: "staff",
+    sessionId: null,
+  };
+}
 
 export const getCurrentAttendee = cache(async (): Promise<AttendeeSession> => {
   const token = (await cookies()).get(ATTENDEE_SESSION_COOKIE_NAME)?.value;
-  if (!token) return { account: null };
+  if (!token) return attendeeAccountForStaff();
 
   const tokenHash = hashOpaqueToken(token);
   const session = await getPrisma().attendeeSession.findUnique({
     where: { tokenHash },
     select: {
+      id: true,
       expiresAt: true,
       revokedAt: true,
       lastSeenAt: true,
@@ -73,10 +110,10 @@ export const getCurrentAttendee = cache(async (): Promise<AttendeeSession> => {
     // must reach nothing rather than reach everything at that address.
     || !session.account.emailVerifiedAt
   ) {
-    return { account: null };
+    return attendeeAccountForStaff();
   }
 
-  if (isAttendeeSessionIdle(session.lastSeenAt, now)) return { account: null };
+  if (isAttendeeSessionIdle(session.lastSeenAt, now)) return attendeeAccountForStaff();
 
   if (shouldTouchAttendeeSession(session.lastSeenAt, now)) {
     await touchAttendeeSession(tokenHash, session.lastSeenAt, now);
@@ -88,5 +125,7 @@ export const getCurrentAttendee = cache(async (): Promise<AttendeeSession> => {
       verifiedEmail: session.account.email,
       displayName: session.account.displayName,
     },
+    via: "attendee",
+    sessionId: session.id,
   };
 });

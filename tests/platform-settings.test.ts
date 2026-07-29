@@ -9,6 +9,7 @@ function validInput(overrides: Record<string, unknown> = {}) {
     organizationName: "IMSDA",
     defaultTimezone: "America/Chicago",
     defaultSenderName: "IMSDA Events",
+    defaultAttendeeEditPolicy: "VERIFY_EVERY_EDIT",
     ...overrides,
   };
 }

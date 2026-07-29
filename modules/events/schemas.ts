@@ -99,6 +99,9 @@ export const eventSettingsInputSchema = z.object({
   // this governs what the form asks for. Grouping them would suggest turning
   // shirts off has something to do with closing registration.
   collectsShirtSizes: z.boolean(),
+  attendeeEditPolicy: z
+    .enum(["TIERED", "VERIFY_EVERY_EDIT"])
+    .default("VERIFY_EVERY_EDIT"),
   ...lifecycleFields,
 }).superRefine((value, context) => {
   validateLifecycle(value, context);

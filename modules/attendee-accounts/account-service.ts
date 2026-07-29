@@ -1,11 +1,14 @@
 import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
+import { openSecret, sealSecret } from "@/lib/secret-box";
 import { hashPassword, spendPasswordCheck, verifyPassword } from "@/modules/access/passwords";
 import { createOpaqueToken, hashOpaqueToken } from "@/modules/access/tokens";
 import {
+  ATTENDEE_PENDING_REQUEST_LIFETIME_HOURS,
   EMAIL_VERIFICATION_LIFETIME_MINUTES,
   ONE_TIME_CODE_MAX_ATTEMPTS,
+  hashOneTimeCode,
   oneTimeCodeMatches,
 } from "@/modules/attendee-accounts/codes";
 import {
@@ -32,6 +35,19 @@ import {
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_MINUTES = 15;
+const ATTENDEE_EMAIL_CODE_SECRET_PURPOSE = "attendee-email-code";
+
+function pendingRequestExpiresAt(now: Date) {
+  return new Date(
+    now.getTime() + ATTENDEE_PENDING_REQUEST_LIFETIME_HOURS * 60 * 60 * 1000,
+  );
+}
+
+function deliveredCodeExpiresAt(now: Date) {
+  return new Date(
+    now.getTime() + EMAIL_VERIFICATION_LIFETIME_MINUTES * 60 * 1000,
+  );
+}
 
 /**
  * The normalisation the rest of the platform applies to an address, applied
@@ -82,7 +98,7 @@ export async function beginAttendeeSignUp(input: {
   const email = normalizeAttendeeEmail(input.email);
   const displayName = input.displayName.trim();
   const now = input.now ?? new Date();
-  const expiresAt = new Date(now.getTime() + EMAIL_VERIFICATION_LIFETIME_MINUTES * 60 * 1000);
+  const expiresAt = pendingRequestExpiresAt(now);
 
   const existing = await getPrisma().attendeeAccount.findUnique({
     where: { email },
@@ -138,9 +154,9 @@ export async function beginAttendeeSignUp(input: {
 
 /**
  * Retires any verification still outstanding for the account and records the
- * new one. `codeHash` stays null: the code is minted when the email is actually
- * sent, so a database read never yields a usable credential and the twenty
- * minutes start when the message leaves rather than when it was queued.
+ * new one. `codeHash` stays null: the code is minted when delivery begins. The
+ * pending handle may wait in the queue for a day, while the separately recorded
+ * code expiry starts only when the code is prepared for its first send.
  */
 async function issueVerificationToken(
   accountId: string,
@@ -166,22 +182,70 @@ async function issueVerificationToken(
  * Guarded on `codeHash: null` so a redelivery cannot overwrite a code the
  * recipient may already be typing.
  */
-export async function attachVerificationCode(input: {
+async function attachAttendeeCode(input: {
   accountId: string;
-  codeHash: string;
+  purpose: "EMAIL_VERIFICATION" | "PASSWORD_RESET";
+  messageId: string;
+  code: string;
   now: Date;
 }) {
   const claimed = await getPrisma().attendeeAccountToken.updateMany({
     where: {
       accountId: input.accountId,
-      purpose: "EMAIL_VERIFICATION",
+      purpose: input.purpose,
       usedAt: null,
       codeHash: null,
+      deliveryMessageId: null,
       expiresAt: { gt: input.now },
     },
-    data: { codeHash: input.codeHash },
+    data: {
+      codeHash: hashOneTimeCode(input.code),
+      deliveryMessageId: input.messageId,
+      sealedCode: sealSecret(input.code, ATTENDEE_EMAIL_CODE_SECRET_PURPOSE),
+      codeExpiresAt: deliveredCodeExpiresAt(input.now),
+    },
   });
   return claimed.count > 0;
+}
+
+async function reuseAttendeeCode(input: {
+  accountId: string;
+  purpose: "EMAIL_VERIFICATION" | "PASSWORD_RESET";
+  messageId: string;
+  now: Date;
+}) {
+  const token = await getPrisma().attendeeAccountToken.findFirst({
+    where: {
+      accountId: input.accountId,
+      purpose: input.purpose,
+      deliveryMessageId: input.messageId,
+      usedAt: null,
+      expiresAt: { gt: input.now },
+      codeExpiresAt: { gt: input.now },
+      sealedCode: { not: null },
+    },
+    select: { sealedCode: true },
+  });
+  return token?.sealedCode
+    ? openSecret(token.sealedCode, ATTENDEE_EMAIL_CODE_SECRET_PURPOSE)
+    : null;
+}
+
+export async function attachVerificationCode(input: {
+  accountId: string;
+  messageId: string;
+  code: string;
+  now: Date;
+}) {
+  return attachAttendeeCode({ ...input, purpose: "EMAIL_VERIFICATION" });
+}
+
+export async function reuseVerificationCode(input: {
+  accountId: string;
+  messageId: string;
+  now: Date;
+}) {
+  return reuseAttendeeCode({ ...input, purpose: "EMAIL_VERIFICATION" });
 }
 
 /**
@@ -221,6 +285,7 @@ export async function verifyAttendeeEmail(input: {
       codeHash: true,
       purpose: true,
       expiresAt: true,
+      codeExpiresAt: true,
       usedAt: true,
       attempts: true,
     },
@@ -231,6 +296,8 @@ export async function verifyAttendeeEmail(input: {
     || record.purpose !== "EMAIL_VERIFICATION"
     || record.usedAt
     || record.expiresAt <= now
+    || !record.codeExpiresAt
+    || record.codeExpiresAt <= now
     || record.attempts >= ONE_TIME_CODE_MAX_ATTEMPTS
   ) {
     return { outcome: "rejected" };
@@ -251,7 +318,12 @@ export async function verifyAttendeeEmail(input: {
 
   const claimed = await getPrisma().$transaction(async (tx) => {
     const spent = await tx.attendeeAccountToken.updateMany({
-      where: { id: record.id, usedAt: null, expiresAt: { gt: now } },
+      where: {
+        id: record.id,
+        usedAt: null,
+        expiresAt: { gt: now },
+        codeExpiresAt: { gt: now },
+      },
       data: { usedAt: now },
     });
     if (spent.count !== 1) return false;
@@ -370,7 +442,7 @@ export async function beginAttendeePasswordReset(input: {
 }): Promise<AttendeePasswordResetRequest> {
   const email = normalizeAttendeeEmail(input.email);
   const now = input.now ?? new Date();
-  const expiresAt = new Date(now.getTime() + EMAIL_VERIFICATION_LIFETIME_MINUTES * 60 * 1000);
+  const expiresAt = pendingRequestExpiresAt(now);
   const token = createOpaqueToken();
 
   const account = await getPrisma().attendeeAccount.findUnique({
@@ -430,20 +502,19 @@ export async function beginAttendeePasswordReset(input: {
 /** The reset counterpart of {@link attachVerificationCode}. */
 export async function attachPasswordResetCode(input: {
   accountId: string;
-  codeHash: string;
+  messageId: string;
+  code: string;
   now: Date;
 }) {
-  const claimed = await getPrisma().attendeeAccountToken.updateMany({
-    where: {
-      accountId: input.accountId,
-      purpose: "PASSWORD_RESET",
-      usedAt: null,
-      codeHash: null,
-      expiresAt: { gt: input.now },
-    },
-    data: { codeHash: input.codeHash },
-  });
-  return claimed.count > 0;
+  return attachAttendeeCode({ ...input, purpose: "PASSWORD_RESET" });
+}
+
+export async function reusePasswordResetCode(input: {
+  accountId: string;
+  messageId: string;
+  now: Date;
+}) {
+  return reuseAttendeeCode({ ...input, purpose: "PASSWORD_RESET" });
 }
 
 export type AttendeePasswordReset =
@@ -475,6 +546,7 @@ export async function completeAttendeePasswordReset(input: {
       codeHash: true,
       purpose: true,
       expiresAt: true,
+      codeExpiresAt: true,
       usedAt: true,
       attempts: true,
     },
@@ -485,6 +557,8 @@ export async function completeAttendeePasswordReset(input: {
     || record.purpose !== "PASSWORD_RESET"
     || record.usedAt
     || record.expiresAt <= now
+    || !record.codeExpiresAt
+    || record.codeExpiresAt <= now
     || record.attempts >= ONE_TIME_CODE_MAX_ATTEMPTS
   ) {
     return { outcome: "rejected" };
@@ -502,7 +576,12 @@ export async function completeAttendeePasswordReset(input: {
 
   const applied = await getPrisma().$transaction(async (tx) => {
     const spent = await tx.attendeeAccountToken.updateMany({
-      where: { id: record.id, usedAt: null, expiresAt: { gt: now } },
+      where: {
+        id: record.id,
+        usedAt: null,
+        expiresAt: { gt: now },
+        codeExpiresAt: { gt: now },
+      },
       data: { usedAt: now },
     });
     if (spent.count !== 1) return false;

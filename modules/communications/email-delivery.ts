@@ -585,6 +585,7 @@ async function prepareAccountEmailBody(
 ): Promise<PreparedEmailBody> {
   if (input.templateKey?.startsWith("ATTENDEE_")) {
     return prepareAttendeeEmailBodyForDelivery({
+      messageId: input.messageId,
       accountAttendeeId: input.accountAttendeeId ?? null,
       templateKey: input.templateKey,
       bodyText: input.bodyText,

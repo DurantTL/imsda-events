@@ -20,7 +20,12 @@ export type FederatedSignIn =
   | {
     outcome: "signed-in";
     accountId: string;
-    linkage: "existing-identity" | "linked-to-password-account" | "claimed-pending" | "created";
+    linkage:
+      | "existing-identity"
+      | "linked-to-password-account"
+      | "claimed-pending"
+      | "rebound-google-only"
+      | "created";
     session: { token: string; expiresAt: Date };
   }
   | { outcome: "refused"; reason: "unverified-email" | "account-disabled" | "identity-conflict" };
@@ -93,12 +98,39 @@ export async function signInWithGoogle(
     };
   }
 
-  // The account already has a Google identity, and it is not this one. Google
-  // accounts can be deleted and recreated at the same address with a new
-  // subject, so this is a real situation and not only an attack — but rebinding
-  // on an address match is precisely what keying on the subject exists to
-  // prevent, so it is refused and handled by a person.
+  // A Google-only account can be deleted and recreated at the same address,
+  // which gives it a new subject. The address is the claim this application
+  // protects, and Google's verified assertion is at least as strong as the
+  // emailed code that would otherwise prove it. Rebinding is therefore safe
+  // only for an active account with no password fallback: a mixed-method
+  // account can sign in with its password and must not have an identity changed
+  // merely because another Google subject asserted the same address.
   if (account.identities.length > 0) {
+    if (account.status === "ACTIVE" && !account.credential) {
+      await prisma.$transaction([
+        prisma.attendeeIdentity.update({
+          where: { id: account.identities[0].id },
+          data: { subject: identity.subject, email, lastUsedAt: now },
+        }),
+        prisma.attendeeAccountToken.updateMany({
+          where: { accountId: account.id, usedAt: null },
+          data: { usedAt: now },
+        }),
+        prisma.attendeeSession.updateMany({
+          where: { accountId: account.id, revokedAt: null },
+          data: { revokedAt: now },
+        }),
+      ]);
+      logInfo("A verified Google assertion rebound a Google-only attendee account.", {
+        accountId: account.id,
+      });
+      return {
+        outcome: "signed-in",
+        accountId: account.id,
+        linkage: "rebound-google-only",
+        session: await createAttendeeSession(account.id, userAgent),
+      };
+    }
     return { outcome: "refused", reason: "identity-conflict" };
   }
 

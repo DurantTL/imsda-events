@@ -127,6 +127,8 @@ export type PublicRegistrationFormProps = {
     remainingSpots: number | null;
     waitingRegistrations: number;
   };
+  initialResponses?: FormResponses;
+  initialAttendeeResponses?: FormResponses;
 };
 
 const moneyFormatter = new Intl.NumberFormat("en-US", {
@@ -263,6 +265,8 @@ export function PublicRegistrationForm({
   choiceUsage,
   pricingDate,
   lifecycle,
+  initialResponses = {},
+  initialAttendeeResponses = {},
 }: PublicRegistrationFormProps) {
   const { definition } = form;
   const joiningWaitlist = lifecycle.capacityDecision === "WAITLIST";
@@ -272,9 +276,13 @@ export function PublicRegistrationForm({
     () => definition.sections.flatMap((section) => section.fields),
     [definition],
   );
-  const [responses, setResponses] = useState<FormResponses>({});
-  const [registrationResponses, setRegistrationResponses] = useState<FormResponses>({});
-  const [attendees, setAttendees] = useState<RosterAttendee[]>(() => initialRoster(roster.minAttendees));
+  const [responses, setResponses] = useState<FormResponses>(initialResponses);
+  const [registrationResponses, setRegistrationResponses] = useState<FormResponses>(initialResponses);
+  const [attendees, setAttendees] = useState<RosterAttendee[]>(() => {
+    const initial = initialRoster(roster.minAttendees);
+    if (initial.length > 0) initial[0] = { ...initial[0], responses: initialAttendeeResponses };
+    return initial;
+  });
   const [website, setWebsite] = useState("");
   const [issues, setIssues] = useState<FormIssue[]>([]);
   const [error, setError] = useState("");

@@ -7,6 +7,8 @@ const dependencies = vi.hoisted(() => ({
   spendPasswordCheck: vi.fn(),
   createAttendeeSession: vi.fn(),
   revokeAllAttendeeSessions: vi.fn(),
+  sealSecret: vi.fn(),
+  openSecret: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -15,6 +17,10 @@ vi.mock("@/modules/access/passwords", () => ({
   hashPassword: dependencies.hashPassword,
   verifyPassword: dependencies.verifyPassword,
   spendPasswordCheck: dependencies.spendPasswordCheck,
+}));
+vi.mock("@/lib/secret-box", () => ({
+  sealSecret: dependencies.sealSecret,
+  openSecret: dependencies.openSecret,
 }));
 vi.mock("@/modules/attendee-accounts/session-store", async () => {
   const actual = await vi.importActual<typeof import("@/modules/attendee-accounts/session-store")>(
@@ -29,10 +35,12 @@ vi.mock("@/modules/attendee-accounts/session-store", async () => {
 
 import {
   authenticateAttendee,
+  attachVerificationCode,
   beginAttendeeSignUp,
   beginAttendeePasswordReset,
   completeAttendeePasswordReset,
   normalizeAttendeeEmail,
+  reuseVerificationCode,
   verifyAttendeeEmail,
 } from "@/modules/attendee-accounts/account-service";
 import {
@@ -57,6 +65,7 @@ type PrismaStub = {
   attendeeCredential: { update: ReturnType<typeof vi.fn> };
   attendeeAccountToken: {
     findUnique: ReturnType<typeof vi.fn>;
+    findFirst: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
     updateMany: ReturnType<typeof vi.fn>;
   };
@@ -76,6 +85,7 @@ function stubPrisma(): PrismaStub {
     attendeeCredential: { update: vi.fn().mockResolvedValue({}) },
     attendeeAccountToken: {
       findUnique: vi.fn(),
+      findFirst: vi.fn(),
       create: vi.fn().mockResolvedValue({ id: "tok_1" }),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
@@ -96,6 +106,8 @@ beforeEach(() => {
   prisma = stubPrisma();
   dependencies.getPrisma.mockReturnValue(prisma);
   dependencies.hashPassword.mockResolvedValue("scrypt$hash");
+  dependencies.sealSecret.mockImplementation((value: string) => `sealed:${value}`);
+  dependencies.openSecret.mockImplementation((value: string) => value.replace(/^sealed:/, ""));
   dependencies.createAttendeeSession.mockResolvedValue({
     token: "session-token",
     expiresAt: new Date("2026-08-11T00:00:00Z"),
@@ -233,6 +245,7 @@ describe("spending a verification code", () => {
       codeHash: hashOneTimeCode(code),
       purpose: "EMAIL_VERIFICATION",
       expiresAt: new Date("2999-01-01T00:00:00Z"),
+      codeExpiresAt: new Date("2999-01-01T00:00:00Z"),
       usedAt: null,
       attempts: 0,
       ...overrides,
@@ -320,6 +333,7 @@ describe("spending a verification code", () => {
   it("refuses an expired, spent, or wrong-purpose token", async () => {
     const refused = [
       liveToken({ expiresAt: new Date("2000-01-01T00:00:00Z") }),
+      liveToken({ codeExpiresAt: new Date("2000-01-01T00:00:00Z") }),
       liveToken({ usedAt: new Date("2026-07-28T00:00:00Z") }),
       liveToken({ purpose: "PASSWORD_RESET" }),
       // A verification whose email never got as far as minting a code.
@@ -335,6 +349,45 @@ describe("spending a verification code", () => {
       })).outcome).toBe("rejected");
     }
     expect(dependencies.createAttendeeSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("preparing a retry-stable verification code", () => {
+  it("binds the first code to its message and starts twenty minutes at preparation", async () => {
+    const now = new Date("2026-07-29T12:00:00Z");
+
+    await expect(attachVerificationCode({
+      accountId: "acct_1",
+      messageId: "message-1",
+      code: "123456",
+      now,
+    })).resolves.toBe(true);
+
+    expect(prisma.attendeeAccountToken.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        accountId: "acct_1",
+        codeHash: null,
+        deliveryMessageId: null,
+      }),
+      data: expect.objectContaining({
+        codeHash: hashOneTimeCode("123456"),
+        deliveryMessageId: "message-1",
+        sealedCode: "sealed:123456",
+        codeExpiresAt: new Date("2026-07-29T12:20:00Z"),
+      }),
+    });
+  });
+
+  it("opens the code already attached to the same message on retry", async () => {
+    prisma.attendeeAccountToken.findFirst.mockResolvedValue({
+      sealedCode: "sealed:123456",
+    });
+
+    await expect(reuseVerificationCode({
+      accountId: "acct_1",
+      messageId: "message-1",
+      now: new Date("2026-07-29T12:01:00Z"),
+    })).resolves.toBe("123456");
   });
 });
 
@@ -513,6 +566,7 @@ describe("spending a reset code", () => {
       codeHash: hashOneTimeCode(code),
       purpose: "PASSWORD_RESET",
       expiresAt: new Date("2999-01-01T00:00:00Z"),
+      codeExpiresAt: new Date("2999-01-01T00:00:00Z"),
       usedAt: null,
       attempts: 0,
       ...overrides,
@@ -578,6 +632,7 @@ describe("spending a reset code", () => {
     const refused = [
       liveToken({ codeHash: hashOneTimeCode("000000") }),
       liveToken({ expiresAt: new Date("2000-01-01T00:00:00Z") }),
+      liveToken({ codeExpiresAt: new Date("2000-01-01T00:00:00Z") }),
       liveToken({ usedAt: new Date("2026-07-29T00:00:00Z") }),
       liveToken({ attempts: ONE_TIME_CODE_MAX_ATTEMPTS }),
       liveToken({ codeHash: null }),

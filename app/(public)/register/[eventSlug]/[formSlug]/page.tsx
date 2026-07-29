@@ -1,6 +1,11 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { PublicRegistrationForm } from "@/components/public-registration-form";
+import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import {
+  attendeeProfilePrefill,
+  getAttendeeProfile,
+} from "@/modules/attendee-accounts/profile-service";
 import { getPublicRegistrationExperience } from "@/modules/forms/public-repository";
 
 export const dynamic = "force-dynamic";
@@ -43,6 +48,23 @@ export default async function PublicRegistrationPage({
   ) {
     redirect(`/events/${encodeURIComponent(eventSlug)}`);
   }
+  const { account } = await getCurrentAttendee();
+  const profilePrefill = account
+    ? attendeeProfilePrefill(
+        await getAttendeeProfile(account.id),
+        account.verifiedEmail,
+      )
+    : {};
+  const fields = experience.form.definition.sections.flatMap((section) => section.fields);
+  const knownKeys = new Set(fields.map((field) => field.key));
+  const scopedPrefill = (scope: "REGISTRATION" | "ATTENDEE") => Object.fromEntries(
+    fields
+      .filter((field) => field.scope === scope && knownKeys.has(field.key))
+      .flatMap((field) => {
+        const value = profilePrefill[field.key as keyof typeof profilePrefill];
+        return typeof value === "string" && value ? [[field.key, value]] : [];
+      }),
+  );
 
   return (
     <PublicRegistrationForm
@@ -55,6 +77,8 @@ export default async function PublicRegistrationPage({
       choiceUsage={experience.choiceUsage}
       pricingDate={experience.pricingDate}
       lifecycle={experience.lifecycle}
+      initialResponses={scopedPrefill("REGISTRATION")}
+      initialAttendeeResponses={scopedPrefill("ATTENDEE")}
     />
   );
 }

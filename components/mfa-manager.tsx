@@ -19,7 +19,15 @@ export type MfaStatus = {
  * never reaches a session without one — so what this panel adds is enrolling
  * *before* that role is granted, and replacing recovery codes after using them.
  */
-export function MfaManager({ initialStatus }: { initialStatus: MfaStatus }) {
+export function MfaManager({
+  initialStatus,
+  endpoint = "/api/auth/mfa",
+  attendee = false,
+}: {
+  initialStatus: MfaStatus;
+  endpoint?: string;
+  attendee?: boolean;
+}) {
   const [status, setStatus] = useState(initialStatus);
   const [offer, setOffer] = useState<{ secret: string; otpauthUri: string } | null>(null);
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
@@ -30,7 +38,7 @@ export function MfaManager({ initialStatus }: { initialStatus: MfaStatus }) {
     setBusy(true);
     setError("");
     try {
-      const response = await fetch("/api/auth/mfa", {
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -107,7 +115,9 @@ export function MfaManager({ initialStatus }: { initialStatus: MfaStatus }) {
         <p className="quiet-copy">
           {status.required
             ? "This account administers events, so a second factor is required. You will be asked to set one up the next time you sign in."
-            : "Add a second factor so a leaked password is not enough to sign in as you. Accounts that administer events are required to have one."}
+            : attendee
+              ? "Add an authenticator now. It is required before this account may reach medical information or club rosters."
+              : "Add a second factor so a leaked password is not enough to sign in as you. Accounts that administer events are required to have one."}
         </p>
       )}
 

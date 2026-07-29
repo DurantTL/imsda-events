@@ -39,6 +39,14 @@ import { authorizeRegistrationAccessToken } from "@/modules/public-access/reposi
 import { logError } from "@/lib/logger";
 
 type PaymentClient = Prisma.TransactionClient | PrismaClient;
+type PaymentAccess = {
+  accessTokenId: string | null;
+  registrationId: string;
+  eventId: string;
+};
+type PaymentAuthorization =
+  | { kind: "private-link"; token: string }
+  | { kind: "attendee-account"; access: PaymentAccess };
 
 export type SquarePaymentOperationErrorCode =
   | "REGISTRATION_ACCESS_UNAVAILABLE"
@@ -340,6 +348,22 @@ export async function getPublicSquareCheckout(
   );
 }
 
+export async function getAttendeeSquareCheckout(
+  access: Omit<PaymentAccess, "accessTokenId">,
+  options: {
+    client?: PaymentClient;
+    configuration?: SquareRuntimeConfiguration;
+  } = {},
+) {
+  const client = options.client ?? getPrisma();
+  const registration = await loadCheckoutRegistration(client, access.registrationId);
+  if (!registration || registration.eventId !== access.eventId) return null;
+  return checkoutFromRegistration(
+    registration,
+    options.configuration ?? getSquareConfiguration(),
+  );
+}
+
 function operationErrorForCheckout(checkout: SquareCheckoutView): never {
   if (checkout.state === "NOT_CONFIGURED") {
     throw new SquarePaymentOperationError(
@@ -421,15 +445,17 @@ function resultFromAttempt(attempt: AttemptRecord) {
 
 async function preparePaymentAttempt(
   tx: Prisma.TransactionClient,
-  token: string,
+  authorization: PaymentAuthorization,
   input: SquarePaymentInput,
   configuration: SquareRuntimeConfiguration,
   now: Date,
 ): Promise<PreparedPaymentAttempt> {
-  const access = await authorizeRegistrationAccessToken(token, {
-    now,
-    client: tx,
-  });
+  const access = authorization.kind === "private-link"
+    ? await authorizeRegistrationAccessToken(authorization.token, {
+        now,
+        client: tx,
+      })
+    : authorization.access;
   if (!access) {
     throw new SquarePaymentOperationError(
       "REGISTRATION_ACCESS_UNAVAILABLE",
@@ -791,8 +817,8 @@ async function markAmountMismatchForReview(
   });
 }
 
-export async function createPublicSquarePayment(
-  token: string,
+async function createSquarePaymentWithAuthorization(
+  authorization: PaymentAuthorization,
   input: SquarePaymentInput,
   options: {
     now?: Date;
@@ -809,7 +835,7 @@ export async function createPublicSquarePayment(
     );
   }
   const prepared = await runSerializable((tx) => (
-    preparePaymentAttempt(tx, token, input, configuration, now)
+    preparePaymentAttempt(tx, authorization, input, configuration, now)
   ));
   if (prepared.operation === "RETURN_EXISTING") {
     return resultFromAttempt(prepared.attempt);
@@ -881,6 +907,38 @@ export async function createPublicSquarePayment(
     );
   }
   return result;
+}
+
+export function createPublicSquarePayment(
+  token: string,
+  input: SquarePaymentInput,
+  options: {
+    now?: Date;
+    configuration?: SquareRuntimeConfiguration;
+    createPayment?: typeof createSquarePayment;
+  } = {},
+) {
+  return createSquarePaymentWithAuthorization(
+    { kind: "private-link", token },
+    input,
+    options,
+  );
+}
+
+export function createAttendeeSquarePayment(
+  access: Omit<PaymentAccess, "accessTokenId">,
+  input: SquarePaymentInput,
+  options: {
+    now?: Date;
+    configuration?: SquareRuntimeConfiguration;
+    createPayment?: typeof createSquarePayment;
+  } = {},
+) {
+  return createSquarePaymentWithAuthorization(
+    { kind: "attendee-account", access: { ...access, accessTokenId: null } },
+    input,
+    options,
+  );
 }
 
 async function storeIgnoredWebhook(

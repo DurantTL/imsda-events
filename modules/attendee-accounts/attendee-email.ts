@@ -10,6 +10,8 @@ import {
 import {
   attachPasswordResetCode,
   attachVerificationCode,
+  reusePasswordResetCode,
+  reuseVerificationCode,
   revokeVerificationCode,
 } from "@/modules/attendee-accounts/account-service";
 import {
@@ -17,6 +19,11 @@ import {
   hashOneTimeCode,
   EMAIL_VERIFICATION_LIFETIME_MINUTES,
 } from "@/modules/attendee-accounts/codes";
+import {
+  attachAttendeeStepUpCode,
+  reuseAttendeeStepUpCode,
+  revokeAttendeeStepUpCode,
+} from "@/modules/attendee-accounts/step-up-service";
 
 /**
  * The two emails an attendee account sends: the code that verifies an address
@@ -34,6 +41,7 @@ import {
 
 export const VERIFICATION_CODE_SENTINEL = "{{attendee_verification_code}}";
 export const PASSWORD_RESET_CODE_SENTINEL = "{{attendee_password_reset_code}}";
+export const EDIT_VERIFICATION_CODE_SENTINEL = "{{attendee_edit_verification_code}}";
 
 function greeting(displayName: string) {
   return displayName.trim() || "there";
@@ -121,9 +129,29 @@ function federatedOnlyBody(displayName: string) {
   };
 }
 
+function editVerificationBody(displayName: string) {
+  return {
+    subject: "Your IMSDA Events edit verification code",
+    bodyText: [
+      `Hello ${greeting(displayName)},`,
+      "",
+      "Enter this code in the signed-in browser where you are editing a registration:",
+      "",
+      EDIT_VERIFICATION_CODE_SENTINEL,
+      "",
+      `The code expires in ${EMAIL_VERIFICATION_LIFETIME_MINUTES} minutes, works once, and is tied to the session that requested it.`,
+      "",
+      "If you did not request a registration change, no action is needed.",
+      "",
+      "IMSDA Events",
+    ].join("\n"),
+  };
+}
+
 type AttendeeEmailKind =
   | { kind: "verification"; alreadyRegistered: boolean }
-  | { kind: "password-reset"; federatedOnly: boolean };
+  | { kind: "password-reset"; federatedOnly: boolean }
+  | { kind: "edit-verification" };
 
 function contentFor(selection: AttendeeEmailKind, displayName: string) {
   if (selection.kind === "verification") {
@@ -133,6 +161,13 @@ function contentFor(selection: AttendeeEmailKind, displayName: string) {
       ...(selection.alreadyRegistered
         ? alreadyRegisteredBody(displayName)
         : verificationBody(displayName)),
+    };
+  }
+  if (selection.kind === "edit-verification") {
+    return {
+      templateKey: "ATTENDEE_EDIT_VERIFICATION" as MessageTemplateKey,
+      trigger: "ATTENDEE_REGISTRATION_EDIT_REQUESTED",
+      ...editVerificationBody(displayName),
     };
   }
   return {
@@ -194,13 +229,19 @@ export async function enqueueAttendeeEmail(input: {
  * is sent rather than when it was queued.
  */
 export async function prepareAttendeeEmailBodyForDelivery(input: {
+  messageId: string;
   accountAttendeeId: string | null;
   templateKey: string;
   bodyText: string;
   now: Date;
 }) {
   const reset = input.templateKey === "ATTENDEE_PASSWORD_RESET";
-  const sentinel = reset ? PASSWORD_RESET_CODE_SENTINEL : VERIFICATION_CODE_SENTINEL;
+  const edit = input.templateKey === "ATTENDEE_EDIT_VERIFICATION";
+  const sentinel = edit
+    ? EDIT_VERIFICATION_CODE_SENTINEL
+    : reset
+      ? PASSWORD_RESET_CODE_SENTINEL
+      : VERIFICATION_CODE_SENTINEL;
   if (!input.bodyText.includes(sentinel)) {
     return { bodyText: input.bodyText };
   }
@@ -208,12 +249,30 @@ export async function prepareAttendeeEmailBodyForDelivery(input: {
     throw new Error("An attendee email cannot mint a code without an account.");
   }
 
+  const reuse = edit
+    ? reuseAttendeeStepUpCode
+    : reset
+      ? reusePasswordResetCode
+      : reuseVerificationCode;
+  const reusedCode = await reuse({
+    accountId: input.accountAttendeeId,
+    messageId: input.messageId,
+    now: input.now,
+  });
+  if (reusedCode) {
+    return { bodyText: input.bodyText.replaceAll(sentinel, reusedCode) };
+  }
+
   const code = createOneTimeCode();
-  const codeHash = hashOneTimeCode(code);
-  const attach = reset ? attachPasswordResetCode : attachVerificationCode;
+  const attach = edit
+    ? attachAttendeeStepUpCode
+    : reset
+      ? attachPasswordResetCode
+      : attachVerificationCode;
   const attached = await attach({
     accountId: input.accountAttendeeId,
-    codeHash,
+    messageId: input.messageId,
+    code,
     now: input.now,
   });
   if (!attached) {
@@ -226,7 +285,11 @@ export async function prepareAttendeeEmailBodyForDelivery(input: {
   return {
     bodyText: input.bodyText.replaceAll(sentinel, code),
     revokeOnDefinitiveFailure: async () => {
-      await revokeVerificationCode(codeHash, input.now);
+      if (edit) {
+        await revokeAttendeeStepUpCode(hashOneTimeCode(code), input.now);
+      } else {
+        await revokeVerificationCode(hashOneTimeCode(code), input.now);
+      }
     },
   };
 }
@@ -245,17 +308,22 @@ export function isAttendeeEmailConfigured() {
  */
 export async function mintAttendeeCodeWithoutSending(input: {
   accountId: string;
-  purpose: "verification" | "password-reset";
+  purpose: "verification" | "password-reset" | "edit-verification";
+  messageId?: string;
   now?: Date;
 }) {
   const now = input.now ?? new Date();
   const code = createOneTimeCode();
-  const attach = input.purpose === "password-reset"
-    ? attachPasswordResetCode
-    : attachVerificationCode;
+  const attach = input.purpose === "edit-verification"
+    ? attachAttendeeStepUpCode
+    : input.purpose === "password-reset"
+      ? attachPasswordResetCode
+      : attachVerificationCode;
   const attached = await attach({
     accountId: input.accountId,
-    codeHash: hashOneTimeCode(code),
+    messageId: input.messageId
+      ?? `development:${input.purpose}:${input.accountId}:${now.getTime()}`,
+    code,
     now,
   });
   return attached ? code : null;
