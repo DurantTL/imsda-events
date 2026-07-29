@@ -22,17 +22,24 @@ import { useState } from "react";
  * someone types. Typing a recovery code passes through six digits on its way to
  * ten, and a form that submitted at that moment would fail the login and burn
  * the attempt.
+ *
+ * `autoSubmit` turns that off, and has to be turned off wherever the code is
+ * not the last thing the form needs. The password reset asks for a code and a
+ * new password together: submitting the moment the code arrives would post an
+ * empty password and spend the code on it.
  */
 export function OneTimeCodeInput({
   name = "code",
   label,
   autoFocus = false,
   disabled = false,
+  autoSubmit = true,
 }: {
   name?: string;
   label: string;
   autoFocus?: boolean;
   disabled?: boolean;
+  autoSubmit?: boolean;
 }) {
   const [value, setValue] = useState("");
 
@@ -45,7 +52,7 @@ export function OneTimeCodeInput({
     // autofill, a replacement — delivered the value in one piece.
     const inputType = (event.nativeEvent as InputEvent).inputType;
     const arrivedWhole = inputType !== "insertText";
-    if (arrivedWhole && /^\d{6}$/.test(cleaned)) {
+    if (autoSubmit && arrivedWhole && /^\d{6}$/.test(cleaned)) {
       event.target.form?.requestSubmit();
     }
   }

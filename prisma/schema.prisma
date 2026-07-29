@@ -187,6 +187,29 @@ enum MfaChallengeKind {
   SIGN_IN
 }
 
+/// A registrant's own account, which is not staff. Deliberately a separate type
+/// from `UserAccountStatus`: the two populations never share a status value, so
+/// a query cannot accidentally treat one as the other (ADR 0003).
+enum AttendeeAccountStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+}
+
+enum AttendeeTokenPurpose {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+/// What a freshly emailed code is being spent on. Only registration edits need
+/// one today; the enum exists so adding the next reason is not a migration.
+enum AttendeeStepUpPurpose {
+  REGISTRATION_EDIT
+}
+
+enum AttendeeIdentityProvider {
+  GOOGLE
+}
+
 enum MessageTemplateKey {
   REGISTRATION_CONFIRMATION_PAID
   REGISTRATION_CONFIRMATION_UNPAID
@@ -204,6 +227,8 @@ enum MessageTemplateKey {
   SHIRT_SIZE_REQUEST
   ACCOUNT_ACTIVATION
   ACCOUNT_PASSWORD_RESET
+  ATTENDEE_EMAIL_VERIFICATION
+  ATTENDEE_PASSWORD_RESET
 }
 
 enum MessageTemplateStatus {
@@ -399,6 +424,205 @@ model PasswordResetToken {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, expiresAt])
+}
+
+/**
+ * A registrant's identity, separate from `User` by decision (ADR 0003).
+ *
+ * The separation is the security property, not an accident of modelling: every
+ * permission in this schema is granted by an `EventMembership` pointing at a
+ * `User`, and an account in this table has no way to reach one. Widening the
+ * staff table to hold attendees would put a far larger population through the
+ * checks that guard roster export and sensitive data, where one careless query
+ * is the difference between a registrant and staff access.
+ *
+ * `email` is the whole claim. An account reaches every registration whose
+ * contact address matches it and nothing else, so the address is stored already
+ * normalised and is only load-bearing once `emailVerifiedAt` is set.
+ */
+model AttendeeAccount {
+  id              String                @id @default(cuid())
+  email           String                @unique
+  displayName     String
+  status          AttendeeAccountStatus @default(PENDING_VERIFICATION)
+  emailVerifiedAt DateTime?
+  /**
+   * Shuts the person out, whatever they sign in with. Distinct from
+   * `AttendeeCredential.disabledAt`, which retires one method: an account that
+   * only ever used Google has no credential row for a method-level flag to
+   * live on, so the master switch has to be here.
+   */
+  disabledAt      DateTime?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  credential    AttendeeCredential?
+  identities    AttendeeIdentity[]
+  sessions      AttendeeSession[]
+  tokens        AttendeeAccountToken[]
+  mfaEnrollment AttendeeMfaEnrollment?
+  stepUpCodes   AttendeeStepUpCode[]
+  messages      MessageOutbox[]        @relation("AttendeeMessageRecipient")
+
+  @@index([status])
+}
+
+/**
+ * A sign-in method owned by somebody else — today, Google.
+ *
+ * `subject` is the provider's immutable identifier for the person, and it is
+ * what the account is actually keyed on. The address is stored alongside it for
+ * display and support, never for matching: a Google account can change its
+ * email, and following that change blindly would move an account onto an
+ * address it never proved control of.
+ *
+ * The unique constraint on (provider, subject) is what stops one Google account
+ * from reaching two attendee accounts.
+ */
+model AttendeeIdentity {
+  id         String                   @id @default(cuid())
+  accountId  String
+  provider   AttendeeIdentityProvider
+  subject    String
+  email      String
+  createdAt  DateTime                 @default(now())
+  lastUsedAt DateTime?
+
+  account AttendeeAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, subject])
+  @@unique([accountId, provider])
+  @@index([accountId])
+}
+
+/// Mirrors `AuthCredential`, including its lockout counters. Kept as its own
+/// table so a query for staff credentials can never return an attendee's.
+model AttendeeCredential {
+  id                String    @id @default(cuid())
+  accountId         String    @unique
+  passwordHash      String
+  passwordUpdatedAt DateTime  @default(now())
+  failedAttempts    Int       @default(0)
+  lockedUntil       DateTime?
+  disabledAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  account AttendeeAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+}
+
+/// Mirrors `UserSession`. A distinct table and a distinct cookie name are what
+/// stop an attendee session from ever being resolved by `getCurrentSession`.
+model AttendeeSession {
+  id            String    @id @default(cuid())
+  accountId     String
+  tokenHash     String    @unique
+  expiresAt     DateTime
+  lastSeenAt    DateTime  @default(now())
+  revokedAt     DateTime?
+  userAgentHash String?
+  createdAt     DateTime  @default(now())
+
+  account AttendeeAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, expiresAt])
+  @@index([expiresAt, revokedAt])
+}
+
+/**
+ * One-time credentials belonging to an account rather than to a session.
+ *
+ * Both purposes carry both halves: `tokenHash` is the handle held by the
+ * browser that asked, and `codeHash` is the secret that arrives by email.
+ * Needing both is what binds the act to the person who started it — a code
+ * forwarded out of an inbox is useless without the session that requested it,
+ * which is the same reasoning ADR 0003 applies to editing.
+ *
+ * `codeHash` is null between issuing and sending: the code is minted when the
+ * message actually leaves, so a database read never yields a usable credential.
+ */
+model AttendeeAccountToken {
+  id         String               @id @default(cuid())
+  accountId  String
+  tokenHash  String               @unique
+  codeHash   String?
+  purpose    AttendeeTokenPurpose
+  expiresAt  DateTime
+  usedAt     DateTime?
+  attempts   Int                  @default(0)
+  createdAt  DateTime             @default(now())
+
+  account AttendeeAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, purpose, usedAt])
+  @@index([expiresAt])
+}
+
+/**
+ * Second factor for an attendee account. Built now rather than later because
+ * retrofitting one means a migration, a recovery-code scheme, and a rollout
+ * across accounts that already exist (ADR 0003).
+ *
+ * Holding an enrolment is not a condition of holding an account. It becomes
+ * required by what is being touched — medical information and club rosters —
+ * not by who is touching it.
+ */
+model AttendeeMfaEnrollment {
+  id             String    @id @default(cuid())
+  accountId      String    @unique
+  method         MfaMethod @default(TOTP)
+  status         MfaStatus @default(PENDING)
+  sealedSecret   String
+  lastUsedStep   BigInt?
+  failedAttempts Int       @default(0)
+  lockedUntil    DateTime?
+  confirmedAt    DateTime?
+  lastVerifiedAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  account       AttendeeAccount           @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  recoveryCodes AttendeeMfaRecoveryCode[]
+
+  @@index([status])
+}
+
+model AttendeeMfaRecoveryCode {
+  id           String    @id @default(cuid())
+  enrollmentId String
+  codeHash     String    @unique
+  usedAt       DateTime?
+  createdAt    DateTime  @default(now())
+
+  enrollment AttendeeMfaEnrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+
+  @@index([enrollmentId, usedAt])
+}
+
+/**
+ * The freshly emailed code that authorises a change, held here rather than
+ * expressed as a link.
+ *
+ * `sessionId` is why this table exists at all. A link in an inbox works for
+ * whoever opens it and survives forwarding; a code has to be carried back into
+ * the session that asked for it, which binds the change to the person making
+ * it. Storing the requesting session is what makes that check possible.
+ */
+model AttendeeStepUpCode {
+  id         String                @id @default(cuid())
+  accountId  String
+  sessionId  String
+  codeHash   String                @unique
+  purpose    AttendeeStepUpPurpose @default(REGISTRATION_EDIT)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int                   @default(0)
+  createdAt  DateTime              @default(now())
+
+  account AttendeeAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, purpose, consumedAt])
+  @@index([expiresAt])
 }
 
 /**
@@ -1265,6 +1489,9 @@ model MessageOutbox {
   // Set only on account email. The delivery step mints the one-time link from
   // this, so the raw token is never written to the outbox.
   accountUserId          String?
+  // The attendee equivalent. Exclusive with `accountUserId`: a message belongs
+  // to one population or the other, never both.
+  accountAttendeeId      String?
   templateVersionId      String?
   templateKey            MessageTemplateKey
   recipientKind          MessageRecipientKind
@@ -1299,6 +1526,7 @@ model MessageOutbox {
   event           Event?                   @relation(fields: [eventId], references: [id], onDelete: Cascade)
   registration    Registration?            @relation(fields: [registrationId], references: [id], onDelete: SetNull)
   accountUser     User?                    @relation("AccountMessageRecipient", fields: [accountUserId], references: [id], onDelete: Cascade)
+  accountAttendee AttendeeAccount?         @relation("AttendeeMessageRecipient", fields: [accountAttendeeId], references: [id], onDelete: Cascade)
   templateVersion MessageTemplateVersion?  @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
   retryOf         MessageOutbox?           @relation("MessageRetry", fields: [retryOfMessageId], references: [id], onDelete: SetNull)
   retries         MessageOutbox[]          @relation("MessageRetry")
@@ -1309,6 +1537,7 @@ model MessageOutbox {
   @@index([eventId, createdAt])
   @@index([registrationId, createdAt])
   @@index([accountUserId, createdAt])
+  @@index([accountAttendeeId, createdAt])
   @@index([retryOfMessageId])
   @@index([provider, providerDeliveryStatus, providerStatusAt])
 }
