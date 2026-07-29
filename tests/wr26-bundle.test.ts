@@ -64,7 +64,7 @@ describe("WR26 Google Sheets bundle parser", () => {
         name: "PromoCodes.csv",
         text: csv(
           ["Code", "Description", "Discount Type", "Discount Amount", "Max Uses", "Current Uses", "Expiry Date", "Active", "Min Purchase"],
-          [["SCHOLAR", "Per-lady scholarship", "fixed", "25.00", "20", "4", "2026-09-17", "true", "100.00"]],
+          [["SCHOLAR", "Per-lady scholarship", "fixed", "$25.00", "20", "4", "2026-09-17", "true", "$100.00"]],
         ),
       },
       {

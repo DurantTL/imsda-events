@@ -22,6 +22,11 @@ const supportedSheets = [
   "transferlog",
 ] as const;
 
+// Included in the snapshot identity so a parser correction creates a fresh
+// preview for the same source files instead of reusing normalized data written
+// by an older parser.
+const WR26_BUNDLE_PARSER_VERSION = 2;
+
 function sheetKey(fileName: string) {
   return fileName
     .replace(/^.*[\\/]/, "")
@@ -73,6 +78,17 @@ function cents(value: string) {
   const normalized = value.trim().replaceAll("$", "").replaceAll(",", "");
   const amount = Number(normalized || 0);
   return Number.isFinite(amount) && amount >= 0 ? Math.round(amount * 100) : 0;
+}
+
+function nonNegativeNumber(value: string) {
+  const normalized = value
+    .trim()
+    .replaceAll("$", "")
+    .replaceAll(",", "")
+    .replaceAll("%", "");
+  if (!normalized) return null;
+  const amount = Number(normalized);
+  return Number.isFinite(amount) && amount >= 0 ? amount : null;
 }
 
 function money(centsValue: number) {
@@ -283,19 +299,29 @@ export function parseWr26Bundle(
       notes: cell(seminar, "Notes"),
     }];
   });
+  let invalidPromoCodeRows = 0;
   const legacyPromoCodes = (tables.get("promocodes")?.rows ?? []).flatMap((promo) => {
     const code = cell(promo, "Code").trim().toUpperCase();
     if (!code) return [];
     const type = cell(promo, "Discount Type").toLowerCase();
-    const amount = Number(cell(promo, "Discount Amount") || 0);
+    const amount = nonNegativeNumber(cell(promo, "Discount Amount"));
+    if (amount === null) {
+      invalidPromoCodeRows += 1;
+      return [];
+    }
     const percentage = type.includes("percent");
+    const maximumUses = nonNegativeNumber(cell(promo, "Max Uses"));
+    const redeemedCount = nonNegativeNumber(cell(promo, "Current Uses"));
     return [{
       code,
       description: cell(promo, "Description"),
       discountType: percentage ? "PERCENT_BPS" as const : "FIXED_CENTS" as const,
-      discountValue: percentage ? Math.round(amount * 100) : Math.round(amount * 100),
-      maximumUses: cell(promo, "Max Uses") ? Math.max(0, Number(cell(promo, "Max Uses"))) : null,
-      redeemedCount: Math.max(0, Number(cell(promo, "Current Uses") || 0)),
+      // Dollar amounts become cents; percentage values become basis points.
+      // Both use a factor of 100, but the separate domain names above keep
+      // formatted inputs such as "$25.00" and "20%" finite before JSON storage.
+      discountValue: Math.round(amount * 100),
+      maximumUses: maximumUses === null ? null : Math.round(maximumUses),
+      redeemedCount: Math.round(redeemedCount ?? 0),
       endsOn: calendarDate(cell(promo, "Expiry Date")),
       isActive: !["false", "no", "0", "inactive"].includes(cell(promo, "Active").toLowerCase()),
       minimumSubtotalCents: cell(promo, "Min Purchase") ? cents(cell(promo, "Min Purchase")) : null,
@@ -358,6 +384,11 @@ export function parseWr26Bundle(
     if (index === 0 && !shirtSizeHeader) {
       warnings.push(
         "The Attendees sheet has no shirt-size column. Shirt sizes must be collected or reconfirmed after migration.",
+      );
+    }
+    if (index === 0 && invalidPromoCodeRows > 0) {
+      warnings.push(
+        `${invalidPromoCodeRows} promo code row${invalidPromoCodeRows === 1 ? "" : "s"} had an invalid discount amount and were excluded.`,
       );
     }
     const normalizedAttendees = (registrationAttendees.length > 0 ? registrationAttendees : [{
@@ -669,7 +700,10 @@ export function parseWr26Bundle(
   const canonicalFiles = files
     .filter((file) => (supportedSheets as readonly string[]).includes(sheetKey(file.name)))
     .sort((left, right) => left.name.localeCompare(right.name));
-  const snapshotText = canonicalFiles.map((file) => `${file.name}\n${file.text}`).join("\n--WR26-SHEET--\n");
+  const snapshotText = [
+    `WR26_BUNDLE_PARSER_VERSION=${WR26_BUNDLE_PARSER_VERSION}`,
+    ...canonicalFiles.map((file) => `${file.name}\n${file.text}`),
+  ].join("\n--WR26-SHEET--\n");
   const identity = createImportSnapshotIdentity(eventId, snapshotText);
   const missingOptionalSheets = supportedSheets
     .filter((sheet) => !["registrations", "attendees"].includes(sheet))
@@ -712,6 +746,7 @@ export function parseWr26Bundle(
       checkIns: tables.get("checkins")?.rows.length ?? 0,
       transferLogs: tables.get("transferlog")?.rows.length ?? 0,
       promoCodes: legacyPromoCodes.length,
+      invalidPromoCodes: invalidPromoCodeRows,
       seminarCatalog: legacySeminarCatalog,
       seminarPreferences: tables.get("seminarpreferences")?.rows.length ?? 0,
       importedSeminarPreferences: matchedPreferenceRows.length,
