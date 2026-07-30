@@ -4459,6 +4459,46 @@ select:focus-visible {
   border-radius: 10px;
   background: white;
 }
+.public-square-wallets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+.public-square-wallets > .is-unavailable { display: none; }
+.public-square-apple-pay {
+  width: 100%;
+  min-height: 48px;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+  -webkit-appearance: -apple-pay-button;
+  -apple-pay-button-type: pay;
+  -apple-pay-button-style: black;
+}
+.public-square-apple-pay:disabled { cursor: wait; opacity: 0.65; }
+.public-square-google-pay {
+  min-height: 48px;
+}
+.public-square-google-pay > div,
+.public-square-google-pay button {
+  width: 100% !important;
+  min-height: 48px !important;
+}
+.public-square-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.58rem;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+.public-square-divider::before,
+.public-square-divider::after {
+  content: "";
+  flex: 1 1 auto;
+  border-top: 1px solid #dce6ea;
+}
 .public-square-pay-button {
   display: inline-flex;
   min-height: 47px;
@@ -4527,6 +4567,7 @@ select:focus-visible {
 
 @media (max-width: 680px) {
   .public-payment-choice-options { grid-template-columns: 1fr; }
+  .public-square-wallets { grid-template-columns: 1fr; }
 }
 
 .public-manage-side {

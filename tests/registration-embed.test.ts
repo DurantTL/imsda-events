@@ -23,6 +23,13 @@ const registrationRoute = readFileSync(
   ),
   "utf8",
 );
+const embeddedRegistrationPage = readFileSync(
+  path.join(
+    root,
+    "app/(public)/embed/[eventSlug]/[formSlug]/page.tsx",
+  ),
+  "utf8",
+);
 
 describe("registration embed", () => {
   it("generates the complete auto-sizing host block without lazy loading or clipping", () => {
@@ -128,5 +135,20 @@ describe("registration embed", () => {
     expect(registrationRoute).not.toContain("Set-Cookie");
     expect(registrationRoute).toContain("submitPublicRegistration");
     expect(registrationForm).toContain("idempotencyKey: submissionKey");
+  });
+
+  it("opens private management and payment outside the iframe", () => {
+    expect(embeddedRegistrationPage).toMatch(
+      /<PublicRegistrationForm[\s\S]*?\bembedded\b/,
+    );
+    expect(registrationForm).toContain(
+      'target: "_blank" as const, rel: "noopener noreferrer"',
+    );
+    expect(registrationForm).toContain(
+      "<a {...eventsSiteNavigation} href={confirmation.managePath}>",
+    );
+    expect(registrationForm).toContain(
+      "Opens the secure events.imsda.org page in a new tab.",
+    );
   });
 });

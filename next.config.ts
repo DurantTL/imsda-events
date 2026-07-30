@@ -37,6 +37,9 @@ function contentSecurityPolicy(frameAncestors: string) {
 const sharedSecurityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  // Google Pay opens a wallet window. `same-origin` breaks that handoff on
+  // iOS; Square documents this value for Web Payments SDK wallet support.
+  { key: "Cross-Origin-Opener-Policy", value: "same-origin-allow-popups" },
   {
     key: "Permissions-Policy",
     value: "camera=(), microphone=(), geolocation=(), browsing-topics=()",

@@ -60,6 +60,7 @@ export default async function EmbeddedRegistrationPage({
         choiceUsage={experience.choiceUsage}
         pricingDate={experience.pricingDate}
         lifecycle={experience.lifecycle}
+        embedded
       />
     </div>
   );

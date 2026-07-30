@@ -530,14 +530,27 @@ export async function updateCommunitySettings(
     retentionDays: number;
   },
 ) {
+  // The route passes the parsed discriminated-union member, which also has an
+  // `action` key at runtime even though this narrower structural type does not
+  // mention it. Whitelist the persisted fields instead of spreading input into
+  // Prisma; otherwise `action` reaches the client as an unknown column.
+  const settingsInput = {
+    isEnabled: input.isEnabled,
+    allowNewPosts: input.allowNewPosts,
+    allowReplies: input.allowReplies,
+    conductText: input.conductText,
+    retentionDays: input.retentionDays,
+  };
   const existing = await getPrisma().eventCommunitySettings.findUnique({ where: { eventId } });
-  const conductChanged = Boolean(existing && existing.conductText !== input.conductText);
+  const conductChanged = Boolean(
+    existing && existing.conductText !== settingsInput.conductText,
+  );
   return getPrisma().$transaction(async (tx) => {
     const settings = await tx.eventCommunitySettings.upsert({
       where: { eventId },
-      create: { eventId, updatedByUserId: actorUserId, ...input },
+      create: { eventId, updatedByUserId: actorUserId, ...settingsInput },
       update: {
-        ...input,
+        ...settingsInput,
         updatedByUserId: actorUserId,
         ...(conductChanged ? { conductVersion: { increment: 1 } } : {}),
       },
