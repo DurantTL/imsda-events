@@ -1,8 +1,12 @@
+---
+spec_id: IMSDA-short-stable-id
+status: draft
+milestone: WR26
+risk: low
+github_issue_url: ""
+---
+
 # Feature title
-
-Status: Draft
-
-Spec ID: IMSDA-short-stable-id
 
 > Draft with synthetic examples only. Do not include participant data,
 > production identifiers, medical or insurance details, secrets, or payment

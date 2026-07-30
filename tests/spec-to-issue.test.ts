@@ -1,41 +1,96 @@
 import { describe, expect, it } from "vitest";
-import { issueBody, parseSpec, requiredSections } from "@/scripts/spec-to-issue";
 
-function specification() {
-  return `# Repeat-event blueprint
+import {
+  issueBody,
+  parseSpec,
+  requiredSections,
+  withGitHubIssueUrl,
+} from "@/scripts/spec-to-issue";
 
-Status: Approved
+function validSpec(overrides: Partial<Record<string, string>> = {}) {
+  const frontmatter = {
+    spec_id: "IMSDA-synthetic-example",
+    status: "draft",
+    milestone: "WR26",
+    risk: "low",
+    github_issue_url: "",
+    ...overrides,
+  };
+  const sections = requiredSections
+    .map((section) => `## ${section}\n\nSynthetic ${section.toLowerCase()} content.`)
+    .join("\n\n");
 
-Spec ID: IMSDA-repeat-blueprint
-
-${requiredSections.map((name) => `## ${name}\n\nSynthetic ${name}.\n`).join("\n")}`;
+  return [
+    "---",
+    ...Object.entries(frontmatter).map(([key, value]) => `${key}: ${value}`),
+    "---",
+    "",
+    "# Synthetic specification",
+    "",
+    sections,
+    "",
+  ].join("\n");
 }
 
-describe("approved specification issue helper", () => {
-  it("parses every required issue section and builds a stable marker", () => {
-    const parsed = parseSpec(specification());
+describe("specification publication", () => {
+  it("requires complete YAML frontmatter", () => {
+    const markdown = validSpec({ milestone: "" });
 
-    expect(parsed.title).toBe("Repeat-event blueprint");
-    expect(parsed.status).toBe("Approved");
-    expect(issueBody(parsed)).toContain("<!-- imsda-spec-id: IMSDA-repeat-blueprint -->");
-    expect(issueBody(parsed)).toContain("## Verification required");
+    expect(() => parseSpec(markdown)).toThrow(
+      "Frontmatter field 'milestone' is required.",
+    );
   });
 
-  it("rejects a missing required section", () => {
-    const incomplete = specification().replace(
-      "## Out of scope\n\nSynthetic Out of scope.",
+  it("rejects unstable or unsafe specification identifiers", () => {
+    const markdown = validSpec({ spec_id: "../../participant export" });
+
+    expect(() => parseSpec(markdown)).toThrow("Spec ID must be");
+  });
+
+  it("requires every issue section", () => {
+    const markdown = validSpec().replace(
+      "## Out of scope\n\nSynthetic out of scope content.",
       "",
     );
 
-    expect(() => parseSpec(incomplete)).toThrow("Section '## Out of scope' is required");
+    expect(() => parseSpec(markdown)).toThrow(
+      "Section '## Out of scope' is required",
+    );
   });
 
-  it("rejects unstable or unsafe spec identifiers", () => {
-    const invalid = specification().replace(
-      "Spec ID: IMSDA-repeat-blueprint",
-      "Spec ID: ../../participant export",
+  it("builds an issue body with a stable idempotency marker", () => {
+    const spec = parseSpec(validSpec());
+
+    expect(issueBody(spec)).toContain(
+      "<!-- imsda-spec-id: IMSDA-synthetic-example -->",
+    );
+    expect(issueBody(spec)).toContain("Milestone: WR26");
+    expect(issueBody(spec)).toContain("Risk: low");
+  });
+
+  it("records the issue URL without changing the specification ID", () => {
+    const markdown = validSpec();
+    const updated = withGitHubIssueUrl(
+      markdown,
+      "https://github.com/DurantTL/imsda-events/issues/123",
     );
 
-    expect(() => parseSpec(invalid)).toThrow("Spec ID must be");
+    expect(updated).toContain(
+      'github_issue_url: "https://github.com/DurantTL/imsda-events/issues/123"',
+    );
+    expect(parseSpec(updated).specId).toBe("IMSDA-synthetic-example");
+  });
+
+  it("refuses to replace a different recorded issue URL", () => {
+    const markdown = validSpec({
+      github_issue_url: '"https://github.com/DurantTL/imsda-events/issues/123"',
+    });
+
+    expect(() =>
+      withGitHubIssueUrl(
+        markdown,
+        "https://github.com/DurantTL/imsda-events/issues/456",
+      ),
+    ).toThrow("already references a different GitHub issue");
   });
 });
