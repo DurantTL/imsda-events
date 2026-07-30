@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  contentParagraphs,
+  contentBlocks,
   eventContentInputSchema,
   eventContentSectionInputSchema,
 } from "@/modules/events/content-schemas";
@@ -73,21 +73,35 @@ describe("event content sections", () => {
 });
 
 describe("rendering stored text", () => {
-  it("splits on blank lines and drops the gaps", () => {
-    expect(contentParagraphs("One.\n\nTwo.\n\n\n  Three.  ")).toEqual([
-      "One.",
-      "Two.",
-      "Three.",
+  it("gives every non-empty authored line readable separation", () => {
+    expect(contentBlocks("One.\nTwo.\n\n\n  Three.  ")).toEqual([
+      { kind: "PARAGRAPH", text: "One." },
+      { kind: "PARAGRAPH", text: "Two." },
+      { kind: "PARAGRAPH", text: "Three." },
     ]);
   });
 
-  it("keeps a single newline inside one paragraph", () => {
-    // Only a blank line starts a new paragraph, so an address or a list of
-    // times stays together rather than scattering.
-    expect(contentParagraphs("Line one\nLine two")).toEqual(["Line one\nLine two"]);
+  it("turns consecutive plain-text bullets into a semantic list", () => {
+    expect(contentBlocks("Bring:\n- Towel\n* Flashlight\n• Closed-toe shoes")).toEqual([
+      { kind: "PARAGRAPH", text: "Bring:" },
+      {
+        kind: "UNORDERED_LIST",
+        items: ["Towel", "Flashlight", "Closed-toe shoes"],
+      },
+    ]);
+  });
+
+  it("preserves authored values in numbered lists", () => {
+    expect(contentBlocks("3. Check in\n5) Pick up a key")).toEqual([{
+      kind: "ORDERED_LIST",
+      items: [
+        { value: 3, text: "Check in" },
+        { value: 5, text: "Pick up a key" },
+      ],
+    }]);
   });
 
   it("returns nothing for text that is only whitespace", () => {
-    expect(contentParagraphs("   \n\n  ")).toEqual([]);
+    expect(contentBlocks("   \n\n  ")).toEqual([]);
   });
 });

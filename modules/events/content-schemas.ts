@@ -80,16 +80,58 @@ export type EventContentLinkInput = z.infer<typeof eventContentLinkInputSchema>;
 export type EventContentSectionInput = z.infer<typeof eventContentSectionInputSchema>;
 export type EventContentInput = z.infer<typeof eventContentInputSchema>;
 
+export type EventContentBlock =
+  | { kind: "PARAGRAPH"; text: string }
+  | { kind: "UNORDERED_LIST"; items: string[] }
+  | { kind: "ORDERED_LIST"; items: Array<{ value: number; text: string }> };
+
 /**
- * Splits stored text into paragraphs for rendering.
+ * Segments stored plain text into readable blocks without accepting markup.
  *
- * The body is plain text, never HTML — it reaches a public page, and accepting
- * markup from a form is how a content field becomes an injection point. React
- * escapes each paragraph on the way out.
+ * Each non-empty authored line remains visually distinct. Consecutive bullet
+ * or numbered lines become semantic lists, while React still escapes every
+ * string at render time.
  */
-export function contentParagraphs(body: string) {
-  return body
-    .split(/\n\s*\n/)
-    .map((paragraph) => paragraph.trim())
-    .filter(Boolean);
+export function contentBlocks(body: string): EventContentBlock[] {
+  const lines = body.replace(/\r\n?/g, "\n").split("\n");
+  const blocks: EventContentBlock[] = [];
+
+  for (let index = 0; index < lines.length;) {
+    const line = lines[index].trim();
+    if (!line) {
+      index += 1;
+      continue;
+    }
+
+    const unorderedItem = line.match(/^[-*•]\s+(.+)$/);
+    if (unorderedItem) {
+      const items: string[] = [];
+      while (index < lines.length) {
+        const match = lines[index].trim().match(/^[-*•]\s+(.+)$/);
+        if (!match) break;
+        items.push(match[1].trim());
+        index += 1;
+      }
+      blocks.push({ kind: "UNORDERED_LIST", items });
+      continue;
+    }
+
+    const orderedItem = line.match(/^(\d+)[.)]\s+(.+)$/);
+    if (orderedItem) {
+      const items: Array<{ value: number; text: string }> = [];
+      while (index < lines.length) {
+        const match = lines[index].trim().match(/^(\d+)[.)]\s+(.+)$/);
+        if (!match) break;
+        items.push({ value: Number(match[1]), text: match[2].trim() });
+        index += 1;
+      }
+      blocks.push({ kind: "ORDERED_LIST", items });
+      continue;
+    }
+
+    blocks.push({ kind: "PARAGRAPH", text: line });
+    index += 1;
+  }
+
+  return blocks;
 }
