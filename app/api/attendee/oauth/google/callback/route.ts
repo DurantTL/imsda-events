@@ -12,6 +12,7 @@ import {
   parseOAuthHandoff,
   stateMatches,
 } from "@/modules/attendee-accounts/oauth-handoff";
+import { attendeePublicUrl } from "@/modules/attendee-accounts/public-navigation";
 import {
   ATTENDEE_OAUTH_COOKIE_NAME,
   ATTENDEE_PENDING_COOKIE_NAME,
@@ -33,9 +34,9 @@ import { checkAttendeeOAuthCallbackRateLimit } from "@/modules/rate-limit/servic
  * writes anything, so a callback that fails any check leaves no trace.
  */
 
-function back(request: Request, error: string) {
+function back(error: string) {
   return mutableRedirect(
-    new URL(`/account/sign-in?error=${encodeURIComponent(error)}`, request.url),
+    attendeePublicUrl(`/account/sign-in?error=${encodeURIComponent(error)}`),
     303,
   );
 }
@@ -56,32 +57,32 @@ async function getHandler(request: Request) {
 
   let rateLimit: RateLimitOutcome | undefined;
   try {
-    if (!isGoogleSignInConfigured()) return back(request, "google-unavailable");
+    if (!isGoogleSignInConfigured()) return back("google-unavailable");
 
     rateLimit = await checkAttendeeOAuthCallbackRateLimit(request);
     if (!rateLimit.allowed) {
-      return applyRateLimitHeaders(back(request, "rate-limited"), rateLimit);
+      return applyRateLimitHeaders(back("rate-limited"), rateLimit);
     }
 
     const url = new URL(request.url);
     // Someone who declines the Google consent screen arrives here too. That is
     // a decision, not a fault, so it goes back quietly.
     const denied = url.searchParams.get("error");
-    if (denied) return applyRateLimitHeaders(back(request, "google-cancelled"), rateLimit);
+    if (denied) return applyRateLimitHeaders(back("google-cancelled"), rateLimit);
 
     if (!handoff || !stateMatches(url.searchParams.get("state"), handoff.state)) {
-      return applyRateLimitHeaders(back(request, "google-expired"), rateLimit);
+      return applyRateLimitHeaders(back("google-expired"), rateLimit);
     }
 
     const code = url.searchParams.get("code");
-    if (!code) return applyRateLimitHeaders(back(request, "google-failed"), rateLimit);
+    if (!code) return applyRateLimitHeaders(back("google-failed"), rateLimit);
 
     const idToken = await exchangeGoogleAuthorizationCode(code, handoff.codeVerifier);
     const identity = await verifyGoogleIdToken(idToken, handoff.nonce);
 
     const result = await signInWithGoogle(identity, request.headers.get("user-agent"));
     if (result.outcome === "refused") {
-      return applyRateLimitHeaders(back(request, `google-${result.reason}`), rateLimit);
+      return applyRateLimitHeaders(back(`google-${result.reason}`), rateLimit);
     }
 
     cookieStore.set(ATTENDEE_SESSION_COOKIE_NAME, result.session.token, {
@@ -98,12 +99,12 @@ async function getHandler(request: Request) {
 
     logInfo("An attendee signed in with Google.", { linkage: result.linkage });
     return applyRateLimitHeaders(
-      mutableRedirect(new URL("/account", request.url)),
+      mutableRedirect(attendeePublicUrl("/account")),
       rateLimit,
     );
   } catch (error) {
     logError("Google sign-in could not be completed", error);
-    const response = back(request, "google-failed");
+    const response = back("google-failed");
     return rateLimit ? applyRateLimitHeaders(response, rateLimit) : response;
   }
 }
