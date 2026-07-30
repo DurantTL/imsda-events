@@ -256,6 +256,44 @@ export async function checkAttendeePasswordResetRateLimit(
 }
 
 /**
+ * Recovery accepts two pieces of registration knowledge and may send a private
+ * bearer link. The combined subject bucket prevents repeatedly targeting one
+ * address/confirmation pair, while the client bucket limits broad guessing.
+ */
+export async function checkRegistrationRecoveryRateLimit(
+  request: Request,
+  input: { email: string; confirmationCode: string },
+) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  const recoverySubject = hashRateLimitIdentifier(
+    "registration-recovery",
+    `${input.confirmationCode.trim().toUpperCase()}\u0000${input.email.trim().toLowerCase()}`,
+    configuration,
+  );
+  return evaluate([
+    {
+      policy: "registration.recovery.client",
+      limit: 10,
+      windowSeconds: oneHour,
+      identifierHashes: [client],
+    },
+    {
+      policy: "registration.recovery.subject",
+      limit: 3,
+      windowSeconds: oneHour,
+      identifierHashes: [recoverySubject],
+    },
+    {
+      policy: "registration.recovery.client-subject",
+      limit: 3,
+      windowSeconds: oneHour,
+      identifierHashes: [client, recoverySubject],
+    },
+  ], configuration);
+}
+
+/**
  * Starting a Google sign-in costs nothing here but a redirect, so the limit is
  * loose. It exists so a script cannot mint handoff cookies indefinitely.
  */

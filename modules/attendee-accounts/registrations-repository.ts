@@ -4,11 +4,10 @@ import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import {
-  AttendeeAnswerUpdateError,
   editableAttendeeFields,
-  prepareTieredAttendeeAnswerUpdate,
   type EditableAttendeeField,
 } from "@/modules/attendee-accounts/registration-answer-policy";
+import { updateTieredRegistrationAnswersWithClient } from "@/modules/attendee-accounts/answer-update-repository";
 import { consumeAttendeeEditStepUp } from "@/modules/attendee-accounts/step-up-service";
 import {
   processQueuedMessageIdsAfterCommit,
@@ -200,14 +199,11 @@ export async function updateTieredAttendeeAnswers(input: {
   now?: Date;
 }) {
   const now = input.now ?? new Date();
-  const result = await getPrisma().$transaction(async (tx) => {
+  return getPrisma().$transaction(async (tx) => {
     const owned = await tx.$queryRaw<Array<{
       id: string;
-      eventId: string;
-      confirmationCode: string;
     }>>(Prisma.sql`
-      SELECT registration."id", registration."eventId",
-        registration."confirmationCode"
+      SELECT registration."id"
       FROM "Registration" registration
       JOIN "Person" person ON person."id" = registration."accountHolderPersonId"
       WHERE registration."id" = ${input.registrationId}
@@ -217,129 +213,24 @@ export async function updateTieredAttendeeAnswers(input: {
     `);
     const ownership = owned[0];
     if (!ownership) return null;
-
-    const registration = await tx.registration.findUnique({
-      where: { id: ownership.id },
-      select: {
-        updatedAt: true,
-        event: { select: { attendeeEditPolicy: true } },
-        publicFormSubmission: {
-          select: {
-            responses: true,
-            formVersion: { select: { definition: true } },
-          },
-        },
-        attendees: {
-          orderBy: [{ position: "asc" }, { createdAt: "asc" }],
-          select: {
-            id: true,
-            formResponses: true,
-            profileSnapshot: true,
-            person: { select: { firstName: true, lastName: true } },
-          },
-        },
-      },
-    });
-    if (!registration?.publicFormSubmission) {
-      throw new AttendeeAnswerUpdateError(
-        "NO_EDITABLE_ANSWERS",
-        "This registration is not connected to a published form, so the event team must update its attendee choices.",
-      );
-    }
-    const submission = registration.publicFormSubmission;
-    if (registration.updatedAt.toISOString() !== input.expectedUpdatedAt) {
-      throw new AttendeeAnswerUpdateError(
-        "INVALID_ANSWER",
-        "This registration changed after you opened it. Refresh and review the latest answers.",
-      );
-    }
-    const definition = registrationFormDefinitionSchema.parse(
-      registration.publicFormSubmission.formVersion.definition,
-    );
-    const currentById = new Map(
-      registration.attendees.map((attendee) => [attendee.id, attendee]),
-    );
-    const seen = new Set<string>();
-    const prepared = input.attendees.map((attendeeInput) => {
-      if (seen.has(attendeeInput.attendeeId)) {
-        throw new AttendeeAnswerUpdateError(
-          "INVALID_ANSWER",
-          "Each attendee can be updated only once per request.",
-        );
-      }
-      seen.add(attendeeInput.attendeeId);
-      const attendee = currentById.get(attendeeInput.attendeeId);
-      if (!attendee) {
-        throw new AttendeeAnswerUpdateError(
-          "INVALID_ANSWER",
-          "One of the attendees changed after you opened the registration.",
-        );
-      }
-      return {
-        attendee,
-        ...prepareTieredAttendeeAnswerUpdate({
-          definition,
-          policy: registration.event.attendeeEditPolicy,
-          registrationResponses: recordFromJson(
-            submission.responses,
-          ),
-          currentResponses: recordFromJson(attendee.formResponses),
-          changes: attendeeInput.responses,
-        }),
-      };
-    });
-
-    for (const update of prepared) {
-      await tx.registrationAttendee.update({
-        where: { id: update.attendee.id },
-        data: { formResponses: update.responses as Prisma.InputJsonValue },
-      });
-    }
-    await tx.registration.update({
-      where: { id: ownership.id },
-      data: { updatedAt: now },
-    });
-    const changedFields = [...new Set(
-      prepared.flatMap((update) => update.changedKeys),
-    )].sort();
-    await tx.auditLog.create({
-      data: {
-        eventId: ownership.eventId,
+    return updateTieredRegistrationAnswersWithClient(tx, {
+      registrationId: ownership.id,
+      expectedUpdatedAt: input.expectedUpdatedAt,
+      attendees: input.attendees,
+      now,
+      audit: {
         action: "ATTENDEE_ACCOUNT_ANSWERS_UPDATED",
-        entityType: "Registration",
-        entityId: ownership.id,
-        correlationId: randomUUID(),
-        summary: `The signed-in attendee account updated attendee choices for ${ownership.confirmationCode}.`,
+        summary: (confirmationCode) => (
+          `The signed-in attendee account updated attendee choices for ${confirmationCode}.`
+        ),
         metadata: {
           source: "ATTENDEE_ACCOUNT",
           attendeeAccountId: input.accountId,
-          policy: registration.event.attendeeEditPolicy,
           verification: "ACCOUNT_SESSION",
-          attendeeCount: prepared.length,
-          changedFields,
         },
       },
     });
-    const editable = editableAttendeeFields(
-      definition,
-      registration.event.attendeeEditPolicy,
-    );
-    const editableKeys = new Set(editable.map((field) => field.key));
-    return {
-      expectedUpdatedAt: now.toISOString(),
-      attendees: prepared.map((update) => ({
-        attendeeId: update.attendee.id,
-        name: publicAttendeeName(
-          update.attendee.profileSnapshot,
-          update.attendee.person,
-        ),
-        responses: Object.fromEntries(
-          Object.entries(update.responses).filter(([key]) => editableKeys.has(key)),
-        ),
-      })),
-    };
   });
-  return result;
 }
 
 export type AttendeeRegistrationSummary = {

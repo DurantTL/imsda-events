@@ -3,12 +3,15 @@ import { createOpaqueToken, hashOpaqueToken } from "@/modules/access/tokens";
 
 const dependencies = vi.hoisted(() => ({
   getPrisma: vi.fn(),
+  enqueueRegistrationAccessRecoveryMessage: vi.fn(),
   enqueueRegistrationContactUpdatedMessage: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: dependencies.getPrisma }));
 vi.mock("@/modules/communications/transactional-messages", () => ({
+  enqueueRegistrationAccessRecoveryMessage:
+    dependencies.enqueueRegistrationAccessRecoveryMessage,
   enqueueRegistrationContactUpdatedMessage:
     dependencies.enqueueRegistrationContactUpdatedMessage,
 }));
@@ -18,6 +21,7 @@ import {
   confirmPublicRegistrationShirtSizes,
   issueRegistrationAccessToken,
   issueStableRegistrationAccessToken,
+  requestRegistrationAccessRecovery,
   resolveRegistrationAccessToken,
   revokeRegistrationAccessToken,
   updatePublicRegistrationContact,
@@ -45,6 +49,7 @@ function accessRecord(overrides: {
       totalAmount: { toString: () => "250.00" },
       contactSnapshot: {},
       submittedAt: new Date("2026-07-23T12:00:00.000Z"),
+      updatedAt: new Date("2026-07-25T12:00:00.000Z"),
       event: {
         name: "Women’s Retreat",
         slug: "womens-retreat-2026",
@@ -55,6 +60,7 @@ function accessRecord(overrides: {
         publicInfoUrl: "https://imsda.org/event/womens-retreat-3/",
         supportContact: "registration@imsda.org",
         collectsShirtSizes: true,
+        attendeeEditPolicy: "TIERED",
       },
       accountHolderPerson: {
         firstName: "Caleb",
@@ -66,6 +72,8 @@ function accessRecord(overrides: {
         id: "attendee-1",
         formResponses: {
           shirt_size: "Adult L",
+          session_preferences: ["Prayer", "Service"],
+          medical_note: "PRIVATE-MEDICAL",
         } as Record<string, unknown>,
         profileSnapshot: {
           firstName: "Retreat",
@@ -86,9 +94,44 @@ function accessRecord(overrides: {
         : null,
       publicFormSubmission: {
         createdAt: new Date("2026-07-23T12:00:00.000Z"),
+        responses: {},
+        pricingSnapshot: {},
         attendeeResponses: [{ registration_fee: "Standard" }],
         formVersion: {
           versionNumber: 2,
+          definition: {
+            title: "Attendee registration",
+            description: "",
+            confirmationMessage: "Received.",
+            sections: [{
+              id: "sessions",
+              title: "Sessions",
+              description: "",
+              fields: [{
+                id: "session_preferences",
+                key: "session_preferences",
+                label: "Seminar preferences",
+                helpText: "",
+                type: "RANKED_CHOICE",
+                scope: "ATTENDEE",
+                required: true,
+                options: ["Prayer", "Service"],
+                minSelections: 1,
+                maxSelections: 2,
+                availabilityMode: "RANKED_INTEREST",
+                choiceLimits: {},
+              }, {
+                id: "medical_note",
+                key: "medical_note",
+                label: "Medical note",
+                helpText: "",
+                type: "TEXT",
+                scope: "ATTENDEE",
+                required: false,
+                options: [],
+              }],
+            }],
+          },
           form: {
             name: "Attendee registration",
             slug: "attendee",
@@ -105,6 +148,12 @@ beforeEach(() => {
     messageIds: ["contact-message"],
     pendingMessageIds: ["contact-message"],
     deliveryMode: "LOCAL_CAPTURE",
+    skippedReason: null,
+  });
+  dependencies.enqueueRegistrationAccessRecoveryMessage.mockResolvedValue({
+    messageIds: ["recovery-message"],
+    pendingMessageIds: ["recovery-message"],
+    deliveryMode: "EXTERNAL_EMAIL",
     skippedReason: null,
   });
 });
@@ -243,7 +292,7 @@ describe("private registration access repository", () => {
       .not.toContain(first.token);
   });
 
-  it("resolves an active link to a scoped view without raw form answers or payment references", async () => {
+  it("resolves an active link with only policy-approved answers and no protected details", async () => {
     const token = createOpaqueToken();
     const findUnique = vi.fn().mockResolvedValue(accessRecord());
     const client = {
@@ -288,10 +337,21 @@ describe("private registration access repository", () => {
         name: "Attendee registration",
         versionNumber: 2,
       },
+      answerEditing: {
+        enabled: true,
+        expectedUpdatedAt: "2026-07-25T12:00:00.000Z",
+        fields: [{ key: "session_preferences" }],
+        attendees: [{
+          attendeeId: "attendee-1",
+          responses: {
+            session_preferences: ["Prayer", "Service"],
+          },
+        }],
+      },
     });
     expect(JSON.stringify(view)).not.toContain("private@example.test");
     expect(JSON.stringify(view)).not.toContain("externalReference");
-    expect(JSON.stringify(view)).not.toContain("responses");
+    expect(JSON.stringify(view)).not.toContain("PRIVATE-MEDICAL");
 
     await expect(authorizeRegistrationAccessToken(token, {
       client: client as never,
@@ -331,6 +391,77 @@ describe("private registration access repository", () => {
       client: client as never,
       now: new Date("2026-07-23T13:00:00.000Z"),
     })).toBeNull();
+  });
+
+  it("queues recovery only for an active registration with the matching contact email", async () => {
+    const auditLog = { create: vi.fn().mockResolvedValue({ id: "audit-recovery" }) };
+    const tx = {
+      registration: {
+        findMany: vi.fn().mockResolvedValue([
+          accessRecord().registration,
+          {
+            ...accessRecord().registration,
+            id: "cancelled",
+            contactSnapshot: { email: "someone-else@example.test" },
+          },
+        ]),
+      },
+      auditLog,
+    };
+    dependencies.getPrisma.mockReturnValue({
+      $transaction: vi.fn(async (
+        operation: (client: typeof tx) => unknown,
+      ) => operation(tx)),
+    });
+
+    const result = await requestRegistrationAccessRecovery({
+      confirmationCode: " reg-private ",
+      email: " Caleb@Example.Test ",
+    });
+
+    expect(result.pendingMessageIds).toEqual(["recovery-message"]);
+    expect(dependencies.enqueueRegistrationAccessRecoveryMessage)
+      .toHaveBeenCalledWith(tx, expect.objectContaining({
+        eventId: "event-1",
+        registrationId: "registration-1",
+        recipientEmail: "caleb@example.test",
+      }));
+    const persistedAudit = JSON.stringify(auditLog.create.mock.calls);
+    expect(persistedAudit).not.toContain("REG-PRIVATE");
+    expect(persistedAudit).not.toContain("caleb@example.test");
+    expect(auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "REGISTRATION_ACCESS_RECOVERY_REQUESTED",
+        entityId: "registration-1",
+        metadata: expect.objectContaining({
+          matched: true,
+          rawIdentifiersStored: false,
+        }),
+      }),
+    });
+  });
+
+  it("audits a recovery mismatch without queuing mail or storing submitted identifiers", async () => {
+    const auditLog = { create: vi.fn().mockResolvedValue({ id: "audit-miss" }) };
+    const tx = {
+      registration: { findMany: vi.fn().mockResolvedValue([]) },
+      auditLog,
+    };
+    dependencies.getPrisma.mockReturnValue({
+      $transaction: vi.fn(async (
+        operation: (client: typeof tx) => unknown,
+      ) => operation(tx)),
+    });
+
+    await expect(requestRegistrationAccessRecovery({
+      confirmationCode: "REG-SECRET",
+      email: "private@example.test",
+    })).resolves.toEqual({ pendingMessageIds: [] });
+
+    expect(dependencies.enqueueRegistrationAccessRecoveryMessage).not.toHaveBeenCalled();
+    const persistedAudit = JSON.stringify(auditLog.create.mock.calls);
+    expect(persistedAudit).not.toContain("REG-SECRET");
+    expect(persistedAudit).not.toContain("private@example.test");
   });
 
   it("updates only the registration-scoped contact snapshot and writes a non-secret audit record", async () => {
@@ -445,10 +576,10 @@ describe("private registration access repository", () => {
     expect(registrationAttendee.update).toHaveBeenCalledWith({
       where: { id: "attendee-1" },
       data: {
-        formResponses: {
+        formResponses: expect.objectContaining({
           shirt_size: "Adult XL",
           shirt_size_confirmed_at: "2026-08-02T15:30:00.000Z",
-        },
+        }),
       },
     });
     expect(updated?.attendees).toEqual([expect.objectContaining({

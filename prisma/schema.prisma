@@ -261,6 +261,7 @@ enum MessageTemplateKey {
   REGISTRATION_TRANSFERRED_PRIOR_CONTACT
   ATTENDEE_SUBSTITUTED
   SHIRT_SIZE_REQUEST
+  REGISTRATION_ACCESS_RECOVERY
   EVENT_ANNOUNCEMENT
   ACCOUNT_ACTIVATION
   ACCOUNT_PASSWORD_RESET
@@ -1773,6 +1774,7 @@ model ProgramAssignmentRun {
   appliedByUserId        String?
   appliedByNameSnapshot  String
   supersedesRunId        String?
+  invalidatedAt          DateTime?
   appliedAt              DateTime @default(now())
   createdAt              DateTime @default(now())
 
@@ -1785,7 +1787,7 @@ model ProgramAssignmentRun {
   assignments  ProgramAttendeeAssignment[]
 
   @@unique([eventId, clientRequestId])
-  @@index([eventId, formVersionId, fieldId, appliedAt])
+  @@index([eventId, formVersionId, fieldId, invalidatedAt, appliedAt])
   @@index([supersedesRunId])
 }
 

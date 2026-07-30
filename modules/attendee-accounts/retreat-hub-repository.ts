@@ -139,6 +139,7 @@ export async function getAttendeeRetreatHub(
     ? await getPrisma().programAssignmentRun.findMany({
         where: {
           eventId: event.id,
+          invalidatedAt: null,
           assignments: {
             some: { attendeeIdSnapshot: { in: attendeeIds } },
           },

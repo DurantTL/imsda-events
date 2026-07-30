@@ -13,6 +13,7 @@ export type MessageTemplateKeyValue =
   | "REGISTRATION_TRANSFERRED_PRIOR_CONTACT"
   | "ATTENDEE_SUBSTITUTED"
   | "SHIRT_SIZE_REQUEST"
+  | "REGISTRATION_ACCESS_RECOVERY"
   | "EVENT_ANNOUNCEMENT";
 
 export type MessageOutboxStatusValue =

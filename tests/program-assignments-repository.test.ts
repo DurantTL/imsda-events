@@ -145,6 +145,10 @@ function fixture() {
           id: "attendee_one",
           position: 0,
           attendeeType: "Adult",
+          formResponses: {
+            session_one_preferences: ["Prayer", "Service"],
+            private_medical_note: "NEVER PERSIST THIS",
+          },
           profileSnapshot: {
             firstName: "Ada",
             lastName: "Lovelace",
@@ -162,7 +166,7 @@ function fixture() {
               lastName: "Lovelace",
             },
             responses: {
-              session_one_preferences: ["Prayer", "Service"],
+              session_one_preferences: ["Service", "Prayer"],
               private_medical_note: "NEVER PERSIST THIS",
             },
           }],

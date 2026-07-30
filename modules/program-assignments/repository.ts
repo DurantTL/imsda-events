@@ -48,14 +48,6 @@ function recordFromJson(value: unknown): JsonRecord {
     : {};
 }
 
-function recordsFromJson(value: unknown) {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is JsonRecord => (
-        Boolean(entry && typeof entry === "object" && !Array.isArray(entry))
-      ))
-    : [];
-}
-
 function textFromRecord(
   record: JsonRecord,
   key: string,
@@ -146,6 +138,7 @@ async function loadAssignmentSource(
           id: true,
           position: true,
           attendeeType: true,
+          formResponses: true,
           profileSnapshot: true,
           person: {
             select: {
@@ -154,9 +147,6 @@ async function loadAssignmentSource(
             },
           },
         },
-      },
-      publicFormSubmission: {
-        select: { attendeeResponses: true },
       },
     },
   });
@@ -172,15 +162,8 @@ async function loadAssignmentSource(
     }
     const registrationStatus: "SUBMITTED" | "CONFIRMED" =
       registration.status;
-    const responseSnapshots = recordsFromJson(
-      registration.publicFormSubmission?.attendeeResponses,
-    );
-    return registration.attendees.map((attendee, index) => {
-      const snapshot = responseSnapshots[index] ?? {};
-      const responses = Object.prototype.hasOwnProperty.call(snapshot, "responses")
-        ? recordFromJson(snapshot.responses)
-        : snapshot;
-      const identity = recordFromJson(snapshot.identity);
+    return registration.attendees.map((attendee) => {
+      const responses = recordFromJson(attendee.formResponses);
       const profile = recordFromJson(attendee.profileSnapshot);
       return {
         attendeeId: attendee.id,
@@ -190,14 +173,14 @@ async function loadAssignmentSource(
         submittedAt: registration.submittedAt?.toISOString() ?? null,
         attendeePosition: attendee.position,
         firstName: textFromRecord(
-          identity,
+          profile,
           "firstName",
-          textFromRecord(profile, "firstName", attendee.person.firstName),
+          attendee.person.firstName,
         ),
         lastName: textFromRecord(
-          identity,
+          profile,
           "lastName",
-          textFromRecord(profile, "lastName", attendee.person.lastName),
+          attendee.person.lastName,
         ),
         attendeeType: attendee.attendeeType,
         preferences: responses[field.key],
@@ -277,6 +260,7 @@ type RunForSerialization = {
   clientRequestId: string;
   appliedByNameSnapshot: string;
   supersedesRunId: string | null;
+  invalidatedAt: Date | null;
   appliedAt: Date;
   summarySnapshot: unknown;
 };
@@ -293,6 +277,7 @@ function serializeRun(run: RunForSerialization) {
     clientRequestId: run.clientRequestId,
     appliedByName: run.appliedByNameSnapshot,
     supersedesRunId: run.supersedesRunId,
+    invalidatedAt: run.invalidatedAt?.toISOString() ?? null,
     appliedAt: run.appliedAt.toISOString(),
     summary: summaryFromJson(run.summarySnapshot),
   };
@@ -313,6 +298,7 @@ async function listAppliedRuns(client: AssignmentClient, eventId: string) {
       clientRequestId: true,
       appliedByNameSnapshot: true,
       supersedesRunId: true,
+      invalidatedAt: true,
       appliedAt: true,
       summarySnapshot: true,
     },

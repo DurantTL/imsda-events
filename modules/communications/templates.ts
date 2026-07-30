@@ -13,6 +13,7 @@ export const MESSAGE_TEMPLATE_KEYS = [
   "REGISTRATION_TRANSFERRED_PRIOR_CONTACT",
   "ATTENDEE_SUBSTITUTED",
   "SHIRT_SIZE_REQUEST",
+  "REGISTRATION_ACCESS_RECOVERY",
   "EVENT_ANNOUNCEMENT",
 ] as const;
 
@@ -85,6 +86,7 @@ export const DEFAULT_MESSAGE_TEMPLATE_NAMES: Readonly<Record<MessageTemplateKey,
   REGISTRATION_TRANSFERRED_PRIOR_CONTACT: "Transfer notice for prior contact",
   ATTENDEE_SUBSTITUTED: "Attendee substitution notice",
   SHIRT_SIZE_REQUEST: "Shirt size request",
+  REGISTRATION_ACCESS_RECOVERY: "Private registration link recovery",
   EVENT_ANNOUNCEMENT: "Event announcement",
 };
 
@@ -119,6 +121,8 @@ export const DEFAULT_MESSAGE_TEMPLATE_DESCRIPTIONS: Readonly<
     "Tells the registration contact, prior attendee, and replacement attendee when their valid email destinations differ.",
   SHIRT_SIZE_REQUEST:
     "Sent only after staff review an audience of registrations still missing a shirt size. Carries the private management link, so a migrated registrant reaches self-service for the first time from this message.",
+  REGISTRATION_ACCESS_RECOVERY:
+    "Sent when a registrant proves knowledge of a confirmation code and its current contact email, with a newly issued private management link.",
   EVENT_ANNOUNCEMENT:
     "Sends a published event-feed announcement to active registration contacts after an explicit staff broadcast action.",
 };
@@ -150,6 +154,8 @@ export const DEFAULT_MESSAGE_TEMPLATE_SUBJECTS: Readonly<
     "Attendee substitution recorded: {{event_name}} ({{confirmation_code}})",
   SHIRT_SIZE_REQUEST:
     "Shirt sizes needed for {{event_name}} ({{confirmation_code}})",
+  REGISTRATION_ACCESS_RECOVERY:
+    "Your private registration link: {{event_name}} ({{confirmation_code}})",
   EVENT_ANNOUNCEMENT:
     "{{event_name}} update: {{announcement_title}}",
 };
@@ -373,6 +379,20 @@ export const DEFAULT_MESSAGE_TEMPLATE_BODIES: Readonly<Record<MessageTemplateKey
     "{{portal_url}}",
     "",
     "This link is private to your registration. Please do not forward it.",
+    "",
+    "Questions? Contact {{reply_to_email}}.",
+  ].join("\n"),
+  REGISTRATION_ACCESS_RECOVERY: [
+    "Hello {{recipient_name}},",
+    "",
+    "Someone requested a new private management link for registration {{confirmation_code}} for {{event_name}}.",
+    "",
+    "Open your registration:",
+    "{{portal_url}}",
+    "",
+    "This link expires and is private to your registration. Please do not forward it.",
+    "",
+    "If you did not request this link, no registration details were changed and you can ignore this message.",
     "",
     "Questions? Contact {{reply_to_email}}.",
   ].join("\n"),

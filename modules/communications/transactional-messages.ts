@@ -19,6 +19,7 @@ type TransactionalTemplateKey =
   | "REGISTRATION_TRANSFERRED_NEW_CONTACT"
   | "REGISTRATION_TRANSFERRED_PRIOR_CONTACT"
   | "ATTENDEE_SUBSTITUTED"
+  | "REGISTRATION_ACCESS_RECOVERY"
   | "EVENT_ANNOUNCEMENT"
   | "PAYMENT_RECEIPT";
 
@@ -414,6 +415,16 @@ export function enqueueRegistrationContactUpdatedMessage(
   return enqueueTransactionalMessage(tx, {
     ...input,
     templateKey: "REGISTRATION_CONTACT_UPDATED",
+  });
+}
+
+export function enqueueRegistrationAccessRecoveryMessage(
+  tx: Prisma.TransactionClient,
+  input: Omit<TransactionalMessageInput, "templateKey">,
+) {
+  return enqueueTransactionalMessage(tx, {
+    ...input,
+    templateKey: "REGISTRATION_ACCESS_RECOVERY",
   });
 }
 
