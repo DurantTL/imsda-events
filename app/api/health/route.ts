@@ -3,6 +3,7 @@ import { getOutboxQueueHealth } from "@/modules/communications/outbox-sweep";
 import { logError } from "@/lib/logger";
 import { dispatchUnsuppressedAlert } from "@/modules/operations/alerting";
 import { withRequestContext } from "@/lib/request-context";
+import { getReleaseIdentity } from "@/lib/release";
 
 /**
  * Liveness and readiness in one response.
@@ -14,6 +15,7 @@ import { withRequestContext } from "@/lib/request-context";
  */
 async function getHandler() {
   const checkedAt = new Date().toISOString();
+  const release = getReleaseIdentity();
 
   try {
     await getPrisma().$queryRaw`SELECT 1`;
@@ -33,6 +35,7 @@ async function getHandler() {
       {
         status: "degraded",
         checkedAt,
+        release,
         services: { application: "ok", database: "unavailable" },
       },
       { status: 503 }
@@ -49,6 +52,7 @@ async function getHandler() {
   return Response.json({
     status: outbox && outbox.status !== "ok" ? "degraded" : "ok",
     checkedAt,
+    release,
     services: {
       application: "ok",
       database: "ok",

@@ -3,12 +3,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const dependencies = vi.hoisted(() => ({
   getPrisma: vi.fn(),
   getOutboxQueueHealth: vi.fn(),
+  getReleaseIdentity: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: dependencies.getPrisma }));
 vi.mock("@/modules/communications/outbox-sweep", () => ({
   getOutboxQueueHealth: dependencies.getOutboxQueueHealth,
+}));
+vi.mock("@/lib/release", () => ({
+  getReleaseIdentity: dependencies.getReleaseIdentity,
 }));
 
 import { GET } from "@/app/api/health/route";
@@ -28,6 +32,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   dependencies.getPrisma.mockReturnValue({ $queryRaw: vi.fn().mockResolvedValue([{ "?column?": 1 }]) });
   dependencies.getOutboxQueueHealth.mockResolvedValue(healthyQueue);
+  dependencies.getReleaseIdentity.mockReturnValue({
+    sha: "d27839dcabf253111bf4a014cb526db3b1c57469",
+    buildId: "next-build-id",
+  });
 });
 
 /** The wrapper needs a request: Next always supplies one. */
@@ -42,6 +50,10 @@ describe("health endpoint", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       status: "ok",
+      release: {
+        sha: "d27839dcabf253111bf4a014cb526db3b1c57469",
+        buildId: "next-build-id",
+      },
       services: { application: "ok", database: "ok", messageOutbox: "ok" },
     });
   });

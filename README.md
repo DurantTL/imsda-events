@@ -1,6 +1,6 @@
 # IMSDA Events
 
-IMSDA Events is the new multi-event operations platform for the Iowa-Missouri Conference. The current workspace includes seven no-code registration templates, modular fields, repeatable household/group rosters, conditional visibility, capacity and ranked-interest tracking, scheduled pricing, bounded promo codes, auditable lifecycle/waitlist actions, staff-only registration transfer and attendee substitution, public all-attendee event updates, private self-service links, durable email delivery, and Square Sandbox checkout alongside the authenticated staff workspace.
+IMSDA Events is the new multi-event operations platform for the Iowa-Missouri Conference. The current workspace includes seven no-code registration templates, modular fields, repeatable household/group rosters, conditional visibility, capacity and ranked-interest tracking, scheduled pricing, bounded promo codes, auditable lifecycle/waitlist actions, staff-only registration transfer and attendee substitution, public all-attendee event updates, private self-service links, a moderated attendee community, retreat packet printing, durable email delivery, and Square Sandbox checkout alongside the authenticated staff workspace.
 
 > Foundation safety boundary: all included names, emails, phone numbers, confirmations, and payment references are fictitious `.test` data. This application does not write to WR26 Google Apps Script, Google Sheets, WordPress, FluentCRM, UltraCamp, eAdventist, Sterling Volunteers, SMS, or push services. Optional external email and Square integrations remain disabled until their credentials are supplied; Square defaults to Sandbox and production additionally requires an explicit safety unlock.
 
@@ -136,9 +136,12 @@ across events, a reusable profile that prefills matching fields, optional TOTP,
 Square balance payment, and contact edits protected by a single-use emailed code
 bound to the session that requested it.
 
-Staff can open their own matching attendee account from the staff shell when
-their verified staff email matches an active verified attendee account. This is
-not impersonation and cannot select another attendee.
+Staff can explicitly switch from the staff shell into a real attendee session
+for their own matching account when the normalized staff email matches an
+active verified attendee account. The switch endpoint accepts no attendee ID,
+so it cannot select or impersonate another attendee. The staff session remains
+available through **Back to staff workspace**. Staff without a matching account
+retain the read-only event preview.
 
 Google identities use the provider subject as the durable key. A verified
 same-email Google-only account may safely rebind after Google changes that
@@ -149,6 +152,33 @@ kept on `TIERED`.
 
 See [the attendee-account release checklist](docs/ATTENDEE-ACCOUNT-RELEASE.md)
 before enabling these paths against production providers.
+
+### Registration embeds
+
+Event settings generates one complete iframe-and-script block for each
+published form. The embed-only layout reports its content height as fields,
+steps, validation, and confirmation change; the host helper validates the
+message origin, resizes the exact sending iframe, and scrolls that frame back
+into view when the registrant advances or needs to correct an error. The 900px
+iframe height remains a usable fallback when host JavaScript is blocked.
+
+`EMBED_ALLOWED_ORIGINS` is the authoritative `frame-ancestors` allow-list. The
+embed flow is anonymous and stateless: registration submission does not depend
+on a third-party session or CSRF cookie, and payment continues from the private
+top-level registration page.
+
+### Attendee community
+
+Each event may opt in to a community for attendee accounts with an active
+registration. An attendee accepts the event’s current conduct version before
+posting, can create a post or one-level reply, choose `NONE`, `REPLIES`, or
+`ALL` in-app notifications, and report content for staff review.
+
+Communications managers can pause posts/replies, edit conduct copy, set
+post-event retention, hide/restore/remove content, and resolve reports. Staff
+preview is intentionally read-only; it cannot create an attendee-authored
+action. The scheduled outbox sweep also performs event-end retention cleanup.
+See [ADR 0004](docs/decisions/0004-attendee-community.md).
 
 ## Verification
 
@@ -188,10 +218,10 @@ Never place real attendee exports, medical details, production identifiers, or c
 
 - `POST /api/auth/login` validates a staff credential and creates an eight-hour database session.
 - `POST /api/auth/logout` revokes the current session and expires its HttpOnly cookie.
-- `POST /api/auth/password-reset/request` creates a single-use 30-minute reset token. Development returns a local link; production email delivery is not connected.
+- `POST /api/auth/password-reset/request` queues a single-use 30-minute reset credential for account email delivery; development can return a local link when delivery is unconfigured.
 - `POST /api/auth/password-reset/complete` updates the scrypt password hash and revokes all prior sessions.
 
-- `GET /api/health` checks the application and PostgreSQL connection.
+- `GET /api/health` checks the application, PostgreSQL connection, and message outbox, and identifies the running release SHA/build ID.
 - `GET /api/events` returns only events assigned to the development session user.
 - `GET /api/events/:eventId/overview` validates the event ID, verifies active event membership and `VIEW_EVENT`, then returns database-derived totals.
 - `GET|POST /api/events/:eventId/registrations` lists or creates registrations after event-scoped permission checks.
@@ -235,6 +265,8 @@ Never place real attendee exports, medical details, production identifiers, or c
 - `POST /api/events/:eventId/forms/:formId/publish` publishes a tested draft as an immutable local version and archives the prior published version.
 - `GET|POST /api/events/:eventId/program-assignments` previews a deterministic ranked-interest assignment or applies the exact reviewed fingerprint as a new immutable, audited run.
 - `GET /api/events/:eventId/program-assignments/:runId/roster` downloads the event-authorized, formula-safe CSV for one frozen assignment run.
+- `GET|PATCH /api/events/:eventId/community` returns the staff moderation workspace or updates settings, post state, and reports for communications managers.
+- `GET|POST /api/attendee/events/:eventId/community` serves conduct, posts, replies, reports, notification preferences, and read state only to an actual attendee session with an active registration.
 - `POST /api/public/events/:eventSlug/forms/:formSlug/registrations` validates, prices, capacity-checks, waitlists if necessary, and saves an anonymous registration idempotently.
 - `POST /api/public/events/:eventSlug/forms/:formSlug/promo-code` returns a same-origin, rate-limited, server-calculated display quote without consuming a use.
 - `GET|PATCH /api/public/manage/:token` resolves a hash-only, expiring private link and permits contact-only self-service changes.
@@ -255,7 +287,9 @@ modules/payments/     payment and refund boundary
 modules/promo-codes/  bounded discount, quote, redemption, and immutable snapshot boundary
 modules/checkin/      check-in and reconciliation boundary
 modules/communications announcements, versioned templates, transactional outbox, and delivery-history boundary
+modules/community/    attendee posts, conduct, reports, moderation, notifications, and retention
 modules/forms/        registration templates, definitions, tests, and immutable versions
+modules/reporting/    safe operational reports, grouped retreat packets, and printable projections
 modules/audit/        transaction-compatible audit interface
 integrations/         future external adapters only
 prisma/               schema, migration, and fictitious seed
@@ -280,7 +314,7 @@ The workspace preserves the calm operational structure of WR26 App V2 while usin
 - event selector plus Overview, People, Check-in, Communications, and More routes
 - working event selection that follows staff between pages
 
-The current UI writes authoritative operational state to the configured IMSDA Events PostgreSQL database. Staff sign-in/out, local recovery, event role/status management, registration create/edit, reviewed whole-registration transfer, in-place attendee substitution, party attendees, manual payments, partial offline refunds, signed attendee passes, camera/manual pass resolution, partial-party check-in/online undo, recoverable device-local offline check-in, CSV export, audit history, announcement draft/publish with a filtered public all-attendee feed, reviewed CSV imports, registration-form draft/test/publish, and message-template/outbox workflows are functional. A published form is available at `/register/{event-slug}/{form-slug}` and can save either one attendee or an ordered household/group roster locally. It records attendee-scoped answers, pricing, capacity claims, and the exact confirmation after commit. A private management link can collect the remaining card balance through Square Sandbox when configured; no real payment is possible with the default configuration.
+The current UI writes authoritative operational state to the configured IMSDA Events PostgreSQL database. Staff sign-in/out, local recovery, event role/status management, registration create/edit, reviewed whole-registration transfer, in-place attendee substitution, party attendees, manual payments, partial offline refunds, signed attendee passes, camera/manual pass resolution, partial-party check-in/online undo, recoverable device-local offline check-in, CSV export, audit history, announcement draft/publish with a filtered public all-attendee feed, reviewed CSV imports, registration-form draft/test/publish, and message-template/outbox workflows are functional. A published form is available at `/register/{event-slug}/{form-slug}` and through an allow-listed, automatically resizing `/embed/{event-slug}/{form-slug}` iframe. It can save either one attendee or an ordered household/group roster locally. It records attendee-scoped answers, pricing, capacity claims, and the exact confirmation after commit. A private management link can collect the remaining card balance through Square Sandbox when configured; no real payment is possible with the default configuration.
 
 ## Registration builder workflow
 
@@ -310,6 +344,6 @@ The detailed built-versus-remaining matrix and the behavior comparison with `Dur
 
 Before this workspace holds real attendee, medical, or payment data, read [the production readiness review](docs/PRODUCTION-READINESS-REVIEW.md). It reviews the build plan and the shipped features against what a real deployment requires, and sequences the remaining work into ten items.
 
-[The production readiness progress log](docs/PRODUCTION-READINESS-PROGRESS.md) tracks that sequence: what has been implemented, what is deliberately deferred, and why. The review's three blocking findings — no path to a real administrator account, a single bad environment variable silently 403ing every write, and no backups — are addressed; MFA, medical-data encryption, and a staging environment are not yet.
+[The production readiness progress log](docs/PRODUCTION-READINESS-PROGRESS.md) tracks that sequence: what has been implemented, what is deliberately deferred, and why. The review's three blocking findings — no path to a real administrator account, a single bad environment variable silently 403ing every write, and no backups — are addressed. MFA is complete; medical-data encryption remains a platform backlog item outside the Women’s Retreat release scope, and the deployment/Square Sandbox rehearsal remains in progress.
 
-Signed attendee QR passes, camera/manual staff resolution, the recoverable offline check-in conflict queue, reviewed balance reminders, corrected-address confirmation copies, bounded promo-code administration, whole-registration transfer, and in-place attendee substitution are complete. Printable passes and group rosters are the remaining event-day release gate. Scheduled/targeted announcements remain later work. Production Square activation remains gated behind approved credentials, an exact public webhook URL, operational refund testing, and the explicit production unlock.
+Signed attendee QR passes, camera/manual staff resolution, the recoverable offline check-in conflict queue, reviewed balance reminders, corrected-address confirmation copies, bounded promo-code administration, whole-registration transfer, in-place attendee substitution, printable pass sheets, grouped retreat packets, and the moderated attendee community are complete. Scheduled/targeted announcements remain later work. Production Square activation remains gated behind approved credentials, an exact public webhook URL, operational refund testing, and the explicit production unlock.

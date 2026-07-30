@@ -1,6 +1,6 @@
 # Attendee-account release checklist
 
-Updated: 2026-07-29
+Updated: 2026-07-30
 
 The attendee-account code path is implemented and locally verified. This
 checklist separates repository work from the provider and deployment work that
@@ -18,14 +18,20 @@ cannot be proved by a local test suite.
 - Account-authorized attendee QR passes and a private retreat hub
 - Read-only event-scoped staff preview of the shared retreat hub without
   attendee-account login or access to personal registration data
+- Explicit staff-to-own-attendee session switching when the active verified
+  attendee account carries the same normalized email; no attendee ID is
+  accepted from the browser, and the staff session remains available
 - Tiered self-service editing for low-risk attendee choices
 - Session-bound, single-use emailed codes for registration contact edits
 - Platform default and per-event `TIERED` / `VERIFY_EVERY_EDIT` policy
+- Opt-in event community for active registrants, including conduct acceptance,
+  posts/replies, reporting, notification preferences, staff moderation, and
+  event-end retention cleanup
 
 ## Deploy
 
 1. Back up PostgreSQL and run `npm run db:deploy`.
-2. Confirm all 44 migrations are applied with `npx prisma migrate status`.
+2. Confirm all 45 migrations are applied with `npx prisma migrate status`.
 3. Configure `APP_BASE_URL`, `SECRET_ENCRYPTION_KEY`,
    `RATE_LIMIT_HASH_SECRET`, `OUTBOX_SWEEP_TOKEN`, `RESEND_API_KEY`,
    `ACCOUNT_EMAIL_SENDER_ADDRESS`, and the normal production secrets documented
@@ -55,12 +61,21 @@ cannot be proved by a local test suite.
 - From the staff workspace, use **Attendee experience** and verify published
   shared content appears while registration details, assignments, balances,
   and QR passes remain hidden in preview mode.
+- For a staff member with a matching active verified attendee account, use
+  **My attendee account** and verify a real attendee session opens that
+  account’s registrations and community. Confirm **Back to staff workspace**
+  returns without another login and that no other attendee can be selected.
+- Enable the event community, review and save the conduct copy, then verify an
+  actual attendee must accept it before posting. Exercise a post, reply,
+  notification preference, report, hide/restore action, report resolution, and
+  the read-only staff preview.
 - Pay a balance with a Square Sandbox test card and verify the receipt/outbox,
   idempotent retry, webhook, and balance.
 - Request an edit code in one browser session. Confirm it works once there,
   fails in another session, and fails after expiry or five wrong guesses.
 - Confirm a staff member reaches only the attendee account with the same
-  verified email and cannot choose another attendee.
+  verified email, receives full attendee behavior only after the explicit
+  switch, and cannot choose another attendee.
 
 ## Production-only confirmation
 

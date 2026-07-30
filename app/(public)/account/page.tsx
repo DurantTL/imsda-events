@@ -18,6 +18,7 @@ import { AttendeeRegistrationContactForm } from "@/components/attendee-registrat
 import { AttendeeRegistrationAnswersForm } from "@/components/attendee-registration-answers-form";
 import { MfaManager } from "@/components/mfa-manager";
 import { PublicSquarePayment } from "@/components/public-square-payment";
+import { getCurrentSession } from "@/modules/access/current-session";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { getAttendeeMfaStatus } from "@/modules/attendee-accounts/mfa-service";
 import { getAttendeeProfile } from "@/modules/attendee-accounts/profile-service";
@@ -141,7 +142,10 @@ function RegistrationCard({
 }
 
 export default async function AttendeeAccountPage() {
-  const { account, via } = await getCurrentAttendee();
+  const [{ account, via }, staffSession] = await Promise.all([
+    getCurrentAttendee(),
+    getCurrentSession(),
+  ]);
   if (!account) redirect("/account/sign-in");
 
   const registrations = await listRegistrationsForVerifiedEmail(account.verifiedEmail);
@@ -159,7 +163,7 @@ export default async function AttendeeAccountPage() {
             <BrandMark />
             <span><strong>IMSDA</strong><small>Events</small></span>
           </a>
-          {via === "staff"
+          {staffSession.user
             ? <Link className="text-button" href="/overview">Back to staff workspace</Link>
             : <AttendeeSignOutButton />}
         </div>

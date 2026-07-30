@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const isDevelopment = process.env.NODE_ENV === "development";
 const embedAllowedOrigins = process.env.EMBED_ALLOWED_ORIGINS
-  ?? "'self' https://imsda.org https://www.imsda.org";
+  ?? "'self' https://imsda.org https://*.imsda.org";
 const squareProductionEnabled = process.env.SQUARE_ENVIRONMENT === "production"
   && process.env.SQUARE_ENABLE_PRODUCTION === "true";
 const squareWebOrigin = squareProductionEnabled

@@ -28,6 +28,28 @@ if ! grep -q '^DATABASE_URL=postgres\(ql\)\?://' "$IMSDA_XCLOUD_ENV_FILE"; then
   exit 1
 fi
 
+IMSDA_XCLOUD_RELEASE_SHA="${XCLOUD_DEPLOYED_COMMIT:-${APP_RELEASE_SHA:-}}"
+IMSDA_XCLOUD_RELEASE_SHA="${IMSDA_XCLOUD_RELEASE_SHA%% *}"
+if [ -n "$IMSDA_XCLOUD_RELEASE_SHA" ]; then
+  if ! printf '%s\n' "$IMSDA_XCLOUD_RELEASE_SHA" | grep -Eq '^[0-9a-fA-F]{7,64}$'; then
+    echo "[xcloud-post-deploy] Ignoring malformed release SHA." >&2
+    IMSDA_XCLOUD_RELEASE_SHA=""
+  else
+    IMSDA_XCLOUD_ENV_TEMP="$(mktemp "${IMSDA_XCLOUD_RUNTIME_DIR}/.env.release.XXXXXX")"
+    trap 'rm -f "$IMSDA_XCLOUD_ENV_TEMP"' EXIT
+    awk -v sha="$IMSDA_XCLOUD_RELEASE_SHA" '
+      BEGIN { found = 0 }
+      /^APP_RELEASE_SHA=/ { print "APP_RELEASE_SHA=" sha; found = 1; next }
+      { print }
+      END { if (!found) print "APP_RELEASE_SHA=" sha }
+    ' "$IMSDA_XCLOUD_ENV_FILE" > "$IMSDA_XCLOUD_ENV_TEMP"
+    chown --reference="$IMSDA_XCLOUD_ENV_FILE" "$IMSDA_XCLOUD_ENV_TEMP"
+    chmod --reference="$IMSDA_XCLOUD_ENV_FILE" "$IMSDA_XCLOUD_ENV_TEMP"
+    mv "$IMSDA_XCLOUD_ENV_TEMP" "$IMSDA_XCLOUD_ENV_FILE"
+    trap - EXIT
+  fi
+fi
+
 echo "[xcloud-post-deploy] Validating the generated Compose project with the persistent override..."
 docker compose \
   -f "$IMSDA_XCLOUD_BASE_COMPOSE" \
@@ -57,6 +79,17 @@ then
   IMSDA_XCLOUD_HAS_DATABASE_URL=true
 fi
 
+IMSDA_XCLOUD_HAS_RELEASE_SHA=true
+if [ -n "$IMSDA_XCLOUD_RELEASE_SHA" ]; then
+  IMSDA_XCLOUD_HAS_RELEASE_SHA=false
+  if docker inspect "$IMSDA_XCLOUD_CONTAINER_ID" \
+    --format '{{range .Config.Env}}{{println .}}{{end}}' |
+    grep -Fxq "APP_RELEASE_SHA=$IMSDA_XCLOUD_RELEASE_SHA"
+  then
+    IMSDA_XCLOUD_HAS_RELEASE_SHA=true
+  fi
+fi
+
 IMSDA_XCLOUD_HAS_EXPECTED_NETWORK=true
 if [ -n "${IMSDA_XCLOUD_EXPECTED_NETWORK:-}" ]; then
   IMSDA_XCLOUD_HAS_EXPECTED_NETWORK=false
@@ -69,7 +102,8 @@ if [ -n "${IMSDA_XCLOUD_EXPECTED_NETWORK:-}" ]; then
 fi
 
 if [ "$IMSDA_XCLOUD_HAS_DATABASE_URL" = true ] \
-  && [ "$IMSDA_XCLOUD_HAS_EXPECTED_NETWORK" = true ]
+  && [ "$IMSDA_XCLOUD_HAS_EXPECTED_NETWORK" = true ] \
+  && [ "$IMSDA_XCLOUD_HAS_RELEASE_SHA" = true ]
 then
   echo "[xcloud-post-deploy] Runtime override is already present; no container change needed."
   exit 0

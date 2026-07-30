@@ -144,6 +144,37 @@ enum AnnouncementPriority {
   URGENT
 }
 
+enum CommunityPostStatus {
+  PUBLISHED
+  HIDDEN
+  REMOVED
+}
+
+enum CommunityReportReason {
+  CONDUCT
+  HARASSMENT
+  PRIVACY
+  SPAM
+  OTHER
+}
+
+enum CommunityReportStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+enum CommunityNotificationPreference {
+  NONE
+  REPLIES
+  ALL
+}
+
+enum CommunityNotificationKind {
+  NEW_POST
+  REPLY
+}
+
 /// What a section of an event page holds. Two kinds cover the pages IMSDA
 /// publishes today: prose (lodging, notes, who to contact) and a row of
 /// resources (a flyer, a schedule, a link back to a ministry page).
@@ -324,6 +355,9 @@ model User {
   accountMessages           MessageOutbox[]           @relation("AccountMessageRecipient")
   mfaEnrollment             UserMfaEnrollment?
   mfaChallenges             MfaChallenge[]
+  updatedCommunitySettings  EventCommunitySettings[]  @relation("CommunitySettingsUpdatedBy")
+  moderatedCommunityPosts   CommunityPost[]           @relation("CommunityPostModeratedBy")
+  resolvedCommunityReports  CommunityReport[]         @relation("CommunityReportResolvedBy")
 
   @@index([accountStatus])
 }
@@ -438,60 +472,61 @@ model PasswordResetToken {
 
 /**
  * A registrant's identity, separate from `User` by decision (ADR 0003).
- *
  * The separation is the security property, not an accident of modelling: every
  * permission in this schema is granted by an `EventMembership` pointing at a
  * `User`, and an account in this table has no way to reach one. Widening the
  * staff table to hold attendees would put a far larger population through the
  * checks that guard roster export and sensitive data, where one careless query
  * is the difference between a registrant and staff access.
- *
  * `email` is the whole claim. An account reaches every registration whose
  * contact address matches it and nothing else, so the address is stored already
  * normalised and is only load-bearing once `emailVerifiedAt` is set.
  */
 model AttendeeAccount {
-  id              String                @id @default(cuid())
-  email           String                @unique
-  displayName     String
-  firstName       String?
-  lastName        String?
-  phone           String?
-  shirtSize       String?
-  dietaryNeeds    String?
+  id                 String                @id @default(cuid())
+  email              String                @unique
+  displayName        String
+  firstName          String?
+  lastName           String?
+  phone              String?
+  shirtSize          String?
+  dietaryNeeds       String?
   accessibilityNeeds String?
-  status          AttendeeAccountStatus @default(PENDING_VERIFICATION)
-  emailVerifiedAt DateTime?
+  status             AttendeeAccountStatus @default(PENDING_VERIFICATION)
+  emailVerifiedAt    DateTime?
   /**
    * Shuts the person out, whatever they sign in with. Distinct from
    * `AttendeeCredential.disabledAt`, which retires one method: an account that
    * only ever used Google has no credential row for a method-level flag to
    * live on, so the master switch has to be here.
    */
-  disabledAt      DateTime?
-  createdAt       DateTime              @default(now())
-  updatedAt       DateTime              @updatedAt
+  disabledAt         DateTime?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
 
-  credential    AttendeeCredential?
-  identities    AttendeeIdentity[]
-  sessions      AttendeeSession[]
-  tokens        AttendeeAccountToken[]
-  mfaEnrollment AttendeeMfaEnrollment?
-  stepUpCodes   AttendeeStepUpCode[]
-  messages      MessageOutbox[]        @relation("AttendeeMessageRecipient")
+  credential                   AttendeeCredential?
+  identities                   AttendeeIdentity[]
+  sessions                     AttendeeSession[]
+  tokens                       AttendeeAccountToken[]
+  mfaEnrollment                AttendeeMfaEnrollment?
+  stepUpCodes                  AttendeeStepUpCode[]
+  messages                     MessageOutbox[]          @relation("AttendeeMessageRecipient")
+  communityParticipations      CommunityParticipation[]
+  communityPosts               CommunityPost[]          @relation("CommunityPostAuthor")
+  communityReports             CommunityReport[]        @relation("CommunityReportReporter")
+  communityNotifications       CommunityNotification[]  @relation("CommunityNotificationRecipient")
+  communityNotificationActions CommunityNotification[]  @relation("CommunityNotificationActor")
 
   @@index([status])
 }
 
 /**
  * A sign-in method owned by somebody else — today, Google.
- *
  * `subject` is the provider's immutable identifier for the person, and it is
  * what the account is actually keyed on. The address is stored alongside it for
  * display and support, never for matching: a Google account can change its
  * email, and following that change blindly would move an account onto an
  * address it never proved control of.
- *
  * The unique constraint on (provider, subject) is what stops one Google account
  * from reaching two attendee accounts.
  */
@@ -547,13 +582,11 @@ model AttendeeSession {
 
 /**
  * One-time credentials belonging to an account rather than to a session.
- *
  * Both purposes carry both halves: `tokenHash` is the handle held by the
  * browser that asked, and `codeHash` is the secret that arrives by email.
  * Needing both is what binds the act to the person who started it — a code
  * forwarded out of an inbox is useless without the session that requested it,
  * which is the same reasoning ADR 0003 applies to editing.
- *
  * `codeHash` is null between issuing and sending: the code is minted when the
  * message actually leaves, so a database read never yields a usable credential.
  */
@@ -587,7 +620,6 @@ model AttendeeAccountToken {
  * Second factor for an attendee account. Built now rather than later because
  * retrofitting one means a migration, a recovery-code scheme, and a rollout
  * across accounts that already exist (ADR 0003).
- *
  * Holding an enrolment is not a condition of holding an account. It becomes
  * required by what is being touched — medical information and club rosters —
  * not by who is touching it.
@@ -627,25 +659,24 @@ model AttendeeMfaRecoveryCode {
 /**
  * The freshly emailed code that authorises a change, held here rather than
  * expressed as a link.
- *
  * `sessionId` is why this table exists at all. A link in an inbox works for
  * whoever opens it and survives forwarding; a code has to be carried back into
  * the session that asked for it, which binds the change to the person making
  * it. Storing the requesting session is what makes that check possible.
  */
 model AttendeeStepUpCode {
-  id         String                @id @default(cuid())
-  accountId  String
-  sessionId  String
-  codeHash   String?               @unique
-  deliveryMessageId String?        @unique
-  sealedCode String?
-  codeExpiresAt DateTime?
-  purpose    AttendeeStepUpPurpose @default(REGISTRATION_EDIT)
-  expiresAt  DateTime
-  consumedAt DateTime?
-  attempts   Int                   @default(0)
-  createdAt  DateTime              @default(now())
+  id                String                @id @default(cuid())
+  accountId         String
+  sessionId         String
+  codeHash          String?               @unique
+  deliveryMessageId String?               @unique
+  sealedCode        String?
+  codeExpiresAt     DateTime?
+  purpose           AttendeeStepUpPurpose @default(REGISTRATION_EDIT)
+  expiresAt         DateTime
+  consumedAt        DateTime?
+  attempts          Int                   @default(0)
+  createdAt         DateTime              @default(now())
 
   account AttendeeAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
@@ -746,15 +777,15 @@ model EventContentLink {
 /// `storageKey` is generated here — never derived from the uploaded filename.
 /// `displayName` is a label only, and is what a download is offered as.
 model EventAsset {
-  id             String   @id @default(cuid())
-  eventId        String
-  displayName    String
-  contentType    String
-  byteSize       Int
-  checksum       String
-  storageKey     String   @unique
+  id               String   @id @default(cuid())
+  eventId          String
+  displayName      String
+  contentType      String
+  byteSize         Int
+  checksum         String
+  storageKey       String   @unique
   uploadedByUserId String?
-  createdAt      DateTime @default(now())
+  createdAt        DateTime @default(now())
 
   event      Event              @relation(fields: [eventId], references: [id], onDelete: Cascade)
   uploadedBy User?              @relation("EventAssetUploadedBy", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
@@ -772,45 +803,45 @@ model EventAsset {
 /// event looked ready, and the first symptom was a registrant who never got
 /// their confirmation.
 model PlatformSettings {
-  id                  String   @id @default("platform")
-  organizationName    String   @default("IMSDA Events")
-  logoUrl             String?
-  supportContact      String?
-  publicWebsiteUrl    String?
-  defaultTimezone     String   @default("America/Chicago")
-  defaultSenderName   String   @default("IMSDA Events")
-  defaultSenderEmail  String?
-  defaultReplyToEmail String?
+  id                        String             @id @default("platform")
+  organizationName          String             @default("IMSDA Events")
+  logoUrl                   String?
+  supportContact            String?
+  publicWebsiteUrl          String?
+  defaultTimezone           String             @default("America/Chicago")
+  defaultSenderName         String             @default("IMSDA Events")
+  defaultSenderEmail        String?
+  defaultReplyToEmail       String?
   defaultAttendeeEditPolicy AttendeeEditPolicy @default(VERIFY_EVERY_EDIT)
-  updatedAt           DateTime @updatedAt
-  updatedByUserId     String?
+  updatedAt                 DateTime           @updatedAt
+  updatedByUserId           String?
 
   updatedBy User? @relation("PlatformSettingsUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
 }
 
 model Event {
-  id                   String   @id @default(cuid())
-  slug                 String   @unique
+  id                   String             @id @default(cuid())
+  slug                 String             @unique
   name                 String
   startsAt             DateTime
   endsAt               DateTime
-  timezone             String   @default("America/Chicago")
+  timezone             String             @default("America/Chicago")
   location             String?
   capacity             Int?
   publicInfoUrl        String?
   supportContact       String?
-  isPublished          Boolean  @default(false)
+  isPublished          Boolean            @default(false)
   registrationOpensOn  String?
   registrationClosesOn String?
-  waitlistEnabled      Boolean  @default(false)
-  autoPromoteWaitlist  Boolean  @default(true)
+  waitlistEnabled      Boolean            @default(false)
+  autoPromoteWaitlist  Boolean            @default(true)
   /// Whether this event collects a shirt size per attendee. Replaces a match on
   /// the event's name, which meant only one event could ever collect sizes and
   /// renaming it turned collection off without telling anyone.
-  collectsShirtSizes   Boolean  @default(false)
+  collectsShirtSizes   Boolean            @default(false)
   attendeeEditPolicy   AttendeeEditPolicy @default(VERIFY_EVERY_EDIT)
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
 
   memberships                         EventMembership[]
   contentSections                     EventContentSection[]
@@ -838,6 +869,11 @@ model Event {
   programAssignmentRuns               ProgramAssignmentRun[]
   registrationOperations              RegistrationOperation[]
   registrationPaymentChoiceOperations RegistrationPaymentChoiceOperation[]
+  communitySettings                   EventCommunitySettings?
+  communityParticipations             CommunityParticipation[]
+  communityPosts                      CommunityPost[]
+  communityReports                    CommunityReport[]
+  communityNotifications              CommunityNotification[]
 }
 
 model EventMembership {
@@ -1280,6 +1316,113 @@ model Announcement {
   createdBy User  @relation(fields: [createdByUserId], references: [id])
 
   @@index([eventId, status, publishedAt])
+}
+
+/// Event-level controls keep attendee discussion off until staff publish the
+/// conduct agreement and deliberately enable it.
+model EventCommunitySettings {
+  id              String   @id @default(cuid())
+  eventId         String   @unique
+  isEnabled       Boolean  @default(false)
+  allowNewPosts   Boolean  @default(true)
+  allowReplies    Boolean  @default(true)
+  conductVersion  Int      @default(1)
+  conductText     String   @default("Be kind, protect privacy, and keep posts focused on the retreat. Do not share another person's personal information without permission. Event staff may hide content that is unsafe, disruptive, or unrelated to the event.")
+  retentionDays   Int      @default(30)
+  updatedByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  event     Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  updatedBy User? @relation("CommunitySettingsUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+}
+
+/// Acceptance and in-app notification choices are event-scoped. A person can
+/// participate in one retreat without silently opting into another.
+model CommunityParticipation {
+  id                     String                          @id @default(cuid())
+  eventId                String
+  accountId              String
+  acceptedConductVersion Int?
+  conductAcceptedAt      DateTime?
+  notificationPreference CommunityNotificationPreference @default(REPLIES)
+  createdAt              DateTime                        @default(now())
+  updatedAt              DateTime                        @updatedAt
+
+  event   Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  account AttendeeAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, accountId])
+  @@index([eventId, notificationPreference])
+}
+
+model CommunityPost {
+  id                String              @id @default(cuid())
+  eventId           String
+  authorAccountId   String
+  parentId          String?
+  body              String
+  status            CommunityPostStatus @default(PUBLISHED)
+  moderatedAt       DateTime?
+  moderatedByUserId String?
+  moderationNote    String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  event         Event                   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  author        AttendeeAccount         @relation("CommunityPostAuthor", fields: [authorAccountId], references: [id], onDelete: Cascade)
+  parent        CommunityPost?          @relation("CommunityPostReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies       CommunityPost[]         @relation("CommunityPostReplies")
+  moderatedBy   User?                   @relation("CommunityPostModeratedBy", fields: [moderatedByUserId], references: [id], onDelete: SetNull)
+  reports       CommunityReport[]
+  notifications CommunityNotification[]
+
+  @@index([eventId, status, createdAt])
+  @@index([parentId, createdAt])
+  @@index([authorAccountId, createdAt])
+}
+
+model CommunityReport {
+  id                String                @id @default(cuid())
+  eventId           String
+  postId            String
+  reporterAccountId String
+  reason            CommunityReportReason
+  detail            String?
+  status            CommunityReportStatus @default(OPEN)
+  resolutionNote    String?
+  resolvedAt        DateTime?
+  resolvedByUserId  String?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  event      Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  post       CommunityPost   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  reporter   AttendeeAccount @relation("CommunityReportReporter", fields: [reporterAccountId], references: [id], onDelete: Cascade)
+  resolvedBy User?           @relation("CommunityReportResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([postId, reporterAccountId])
+  @@index([eventId, status, createdAt])
+}
+
+model CommunityNotification {
+  id                 String                    @id @default(cuid())
+  eventId            String
+  recipientAccountId String
+  actorAccountId     String
+  postId             String
+  kind               CommunityNotificationKind
+  readAt             DateTime?
+  createdAt          DateTime                  @default(now())
+
+  event     Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  recipient AttendeeAccount @relation("CommunityNotificationRecipient", fields: [recipientAccountId], references: [id], onDelete: Cascade)
+  actor     AttendeeAccount @relation("CommunityNotificationActor", fields: [actorAccountId], references: [id], onDelete: Cascade)
+  post      CommunityPost   @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([recipientAccountId, postId, kind])
+  @@index([recipientAccountId, readAt, createdAt])
+  @@index([eventId, createdAt])
 }
 
 model AuditLog {

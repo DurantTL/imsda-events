@@ -79,4 +79,25 @@ describe("application shell navigation", () => {
     expect(markup).toContain("Event workspace");
     expect(markup).toContain("Attendee experience");
   });
+
+  it("offers a real attendee-session switch when the staff email has an account", () => {
+    const markup = renderToStaticMarkup(
+      createElement(
+        AppShellElement,
+        {
+          attendeeAccountAvailable: true,
+          events,
+          user: {
+            displayName: "Riley Registration",
+            email: "registration@imsda-events.test",
+          },
+        },
+        createElement("p", null, "Workspace content"),
+      ),
+    );
+
+    expect(markup).toContain('action="/api/auth/switch-to-attendee"');
+    expect(markup).toContain("My attendee account");
+    expect(markup).toContain("Switch to your matching attendee account");
+  });
 });

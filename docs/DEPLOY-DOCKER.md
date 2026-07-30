@@ -78,10 +78,17 @@ provider. `ACCOUNT_EMAIL_SENDER_NAME` defaults to `IMSDA Events`, and
 `NODE_ENV` and `DATABASE_URL` are set by `docker-compose.yml` — you do **not**
 provide `DATABASE_URL` here.
 
+`APP_RELEASE_SHA` is operational metadata, not a secret. When supplied, it must
+be a 7–64 character hexadecimal Git SHA. `/api/health` returns it together with
+the immutable Next.js build ID so an operator can verify what is actually
+running. The xCloud repair script copies `XCLOUD_DEPLOYED_COMMIT` into
+`APP_RELEASE_SHA` when xCloud exposes that value.
+
 **Optional / conditional:**
 
 ```
 APP_PORT=3100                    # only if host 3100 is already in use
+APP_RELEASE_SHA=                 # optional 7–64 character Git SHA; see release health below
 ALERT_WEBHOOK_URL=               # Slack/Teams incoming webhook; see Alerting below
 ALERT_REPEAT_MINUTES=60          # how long the same condition stays quiet after paging
 PASSWORD_BREACH_CHECK=           # enabled/disabled; unset means on in production
@@ -95,8 +102,14 @@ BACKUP_VERIFY_EVERY=7            # rehearse a restore every Nth backup
 BACKUP_OFFSITE_COMMAND=          # receives each database/asset backup path as $1
 GOOGLE_OAUTH_CLIENT_ID=          # set both Google values or leave both blank
 GOOGLE_OAUTH_CLIENT_SECRET=
-EMBED_ALLOWED_ORIGINS='self' https://imsda.org https://www.imsda.org
+EMBED_ALLOWED_ORIGINS='self' https://imsda.org https://*.imsda.org
 ```
+
+Add each approved church website origin to `EMBED_ALLOWED_ORIGINS`; do not use
+a bare `*`. The embed response uses this value for CSP `frame-ancestors` and does not
+send a conflicting `X-Frame-Options: SAMEORIGIN` header. Because the public
+registration POST is stateless, it does not require a `SameSite=None` session
+cookie inside the third-party frame.
 
 (There is no `POSTGRES_HOST_PORT` to set for deployment — the database is not published
 to the host at all. That variable only matters for the local `docker-compose.dev.yml` overlay.)
@@ -118,6 +131,26 @@ Keep these server-owned files in `/home/u_events/.xcloud`:
 - `.env` — mode `600`, containing the production environment.
 - `docker-compose.env.yml` — adds `.env` through `env_file` and attaches the
   external PostgreSQL network.
+
+The app service in `docker-compose.env.yml` must also map the release value; an
+`env_file` alone cannot see xCloud’s shell-only deployment variable:
+
+```yaml
+services:
+  app:
+    env_file:
+      - .env
+    environment:
+      APP_RELEASE_SHA: ${APP_RELEASE_SHA:-}
+    networks:
+      - default
+      - postgresql
+
+networks:
+  postgresql:
+    external: true
+    name: postgresql_9kgaw_239292_xcloud-network
+```
 
 Then configure the xCloud site's **Deployment Script** to run:
 
@@ -220,7 +253,12 @@ clean deployment is still being rebuilt.
 2. Deploy. Watch the logs for `Applying database migrations...` then `Starting`.
    A startup failure names the environment variable that caused it.
 3. `GET /api/health` should return `{"status":"ok"}` with `database` and
-   `messageOutbox` both `ok`.
+   `messageOutbox` both `ok`, plus `release.buildId` and, when configured,
+   `release.sha`. Record both values in the deployment log:
+
+   ```bash
+   curl --fail --silent https://your-final-domain/api/health | jq '.status, .release'
+   ```
 4. Create the first real administrator. The database starts empty and there is no
    first-run setup screen, so this is the supported way in:
 

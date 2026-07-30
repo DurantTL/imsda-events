@@ -23,6 +23,7 @@ export const serverEnvSchema = z
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
     DATABASE_URL: z.string().url().startsWith("postgresql://"),
     APP_BASE_URL: z.string().url().default("http://localhost:3000"),
+    APP_RELEASE_SHA: optionalTrimmed,
 
     // Where uploaded event files are written. A deployment points this at a
     // mounted volume so uploads outlive the container that received them.
@@ -281,6 +282,7 @@ export const SERVER_ENV_KEYS = [
     "NODE_ENV",
     "DATABASE_URL",
     "APP_BASE_URL",
+    "APP_RELEASE_SHA",
     "ASSET_STORAGE_DIR",
     "MANAGE_LINK_DERIVATION_SECRET",
     "MANAGE_LINK_DERIVATION_SECRET_PREVIOUS",

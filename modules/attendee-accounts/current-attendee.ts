@@ -36,11 +36,22 @@ export type AttendeeSession = {
   sessionId: string | null;
 };
 
-async function attendeeAccountForStaff(): Promise<AttendeeSession> {
-  const { user } = await getCurrentSession();
-  if (!user) return { account: null, via: null, sessionId: null };
+export type SwitchableAttendeeAccount = {
+  id: string;
+  verifiedEmail: string;
+  displayName: string;
+};
+
+/**
+ * A staff identity may switch only to the attendee account carrying the same
+ * normalized, verified email. There is deliberately no account-id input: the
+ * caller cannot select or impersonate another attendee.
+ */
+export async function findSwitchableAttendeeAccountForStaff(
+  staffEmail: string,
+): Promise<SwitchableAttendeeAccount | null> {
   const account = await getPrisma().attendeeAccount.findUnique({
-    where: { email: user.email.trim().toLowerCase() },
+    where: { email: staffEmail.trim().toLowerCase() },
     select: {
       id: true,
       email: true,
@@ -56,14 +67,22 @@ async function attendeeAccountForStaff(): Promise<AttendeeSession> {
     || account.status !== "ACTIVE"
     || !account.emailVerifiedAt
   ) {
-    return { account: null, via: null, sessionId: null };
+    return null;
   }
   return {
-    account: {
-      id: account.id,
-      verifiedEmail: account.email,
-      displayName: account.displayName,
-    },
+    id: account.id,
+    verifiedEmail: account.email,
+    displayName: account.displayName,
+  };
+}
+
+async function attendeeAccountForStaff(): Promise<AttendeeSession> {
+  const { user } = await getCurrentSession();
+  if (!user) return { account: null, via: null, sessionId: null };
+  const account = await findSwitchableAttendeeAccountForStaff(user.email);
+  if (!account) return { account: null, via: null, sessionId: null };
+  return {
+    account,
     via: "staff",
     sessionId: null,
   };

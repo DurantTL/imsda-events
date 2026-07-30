@@ -33,3 +33,11 @@ Build 6 stores each form as an event-scoped `RegistrationForm` with ordered `Reg
 - Export-derived starters are included for Women’s Retreat, Man Camp, Spring Camporee, and Camp Meeting. They use native repeatable rosters and conditions instead of copied WordPress scripts. Women’s Retreat keeps ranked first/second seminar interest and its August 15 rate change; Man Camp prices each lodging/attendance package and leaves volunteers free; Spring Camporee includes its April 11 per-person rate change and dependent duty/activity questions; Camp Meeting calculates conditional per-night housing, separate adult/child meal tickets, and the card fee.
 
 Published forms are exposed at `/events/{event-slug}`, `/register/{event-slug}/{form-slug}`, and the embeddable `/embed/{event-slug}/{form-slug}` view when the event is published and within its registration window. Public submission reloads the exact version, allow-lists visible registration/attendee responses, prices in the event timezone, persists ordered attendees and immutable response/pricing snapshots, and claims capacity in a serializable transaction. Full events can create an ordered waitlist entry without reserving inventory; cancellation releases inventory and may automatically promote the earliest fitting request. The committed registration then receives an expiring private management link and queues the correct local or external confirmation. Card-selected balances are paid from that private page through the Square boundary.
+
+The event settings screen generates the complete two-script embed block. The
+embed-only layout removes viewport-height constraints and `/embed/embed.js`
+reports content changes to the parent. `/embed/embed-host.js` validates the
+message origin, matches the sending frame by `contentWindow`, resizes multiple
+frames independently, and scrolls the correct frame into view after step
+changes, validation errors, or confirmation. The public registration request
+is stateless and does not depend on a third-party session or CSRF cookie.
