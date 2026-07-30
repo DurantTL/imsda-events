@@ -102,14 +102,14 @@ function addressCheck(
       code: `${role}_ADDRESS`,
       label: `${label} address is a placeholder`,
       severity: "BLOCKER",
-      detail: `${address} uses a reserved domain that cannot send or receive real mail. Replace it with an IMSDA address on a domain you control.`,
+      detail: "The configured address uses a reserved domain that cannot send or receive real mail. Replace it with an IMSDA address on a domain you control.",
     };
   }
   return {
     code: `${role}_ADDRESS`,
     label: `${label} address is set`,
     severity: "READY",
-    detail: address,
+    detail: "A non-placeholder address is configured.",
   };
 }
 
