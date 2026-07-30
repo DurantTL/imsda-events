@@ -11,6 +11,7 @@ vi.mock("@/modules/rate-limit/repository", () => repositoryMocks);
 import {
   checkLoginAccountRateLimit,
   checkPublicManageRateLimit,
+  checkRegistrationRecoveryRateLimit,
 } from "@/modules/rate-limit/service";
 
 beforeEach(() => {
@@ -50,6 +51,10 @@ describe("rate-limit subject privacy", () => {
 
     await checkLoginAccountRateLimit(request, rawEmail);
     await checkPublicManageRateLimit(request, rawToken, "update");
+    await checkRegistrationRecoveryRateLimit(request, {
+      confirmationCode: "REG-PRIVATE",
+      email: rawEmail,
+    });
 
     const batches = repositoryMocks.enforceRateLimitRules.mock.calls.map(
       ([rules]) => rules as Array<{
@@ -62,19 +67,23 @@ describe("rate-limit subject privacy", () => {
     const rules = batches.flat();
     const serializedRules = JSON.stringify(rules);
 
-    expect(rules).toHaveLength(5);
+    expect(rules).toHaveLength(8);
     expect(rules.map((entry) => entry.policy)).toEqual([
       "auth.login.account",
       "auth.login.client-account",
       "public.manage.update.client",
       "public.manage.update.token",
       "public.manage.update.client-token",
+      "registration.recovery.client",
+      "registration.recovery.subject",
+      "registration.recovery.client-subject",
     ]);
     expect(rules.every((entry) => /^[a-f0-9]{64}$/.test(entry.subjectHash)))
       .toBe(true);
     expect(serializedRules).not.toContain(rawEmail);
     expect(serializedRules).not.toContain(rawEmail.toLowerCase());
     expect(serializedRules).not.toContain(rawToken);
+    expect(serializedRules).not.toContain("REG-PRIVATE");
     expect(serializedRules).not.toContain(rawIp);
     expect(serializedRules).not.toContain(rawUserAgent);
   });

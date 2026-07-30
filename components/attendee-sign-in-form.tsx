@@ -68,6 +68,7 @@ export function AttendeeSignInForm() {
       </button>
       <p className="field-help">
         No account yet? <Link href="/account/sign-up">Create one</Link>.
+        {" "}Have a confirmation code? <Link href="/recover-registration">Recover a private link</Link>.
       </p>
     </form>
   );

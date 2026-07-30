@@ -19,6 +19,7 @@ import { BrandMark } from "@/components/brand-mark";
 import { PublicAttendeePasses } from "@/components/public-attendee-passes";
 import { PublicRegistrationContactForm } from "@/components/public-registration-contact-form";
 import { PublicShirtSizeConfirmation } from "@/components/public-shirt-size-confirmation";
+import { AttendeeRegistrationAnswersForm } from "@/components/attendee-registration-answers-form";
 import { PublicSquarePayment } from "@/components/public-square-payment";
 import { resolveRegistrationAccessToken } from "@/modules/public-access/repository";
 
@@ -196,9 +197,11 @@ export default async function PublicManagePage({
               {view.event.shirtSizesAvailable && (
                 <>Shirt sizes can be reconfirmed below. </>
               )}
-              Attendance, room or activity choices, and registration fees cannot
-              be changed from this private page. Contact the event team for those
-              changes.
+              {view.answerEditing.enabled
+                ? "Eligible session and retreat choices can be updated below. "
+                : ""}
+              Attendance, priced or capacity-controlled choices, identity,
+              protected details, and registration fees remain staff-managed.
             </div>
           </section>
 
@@ -211,6 +214,18 @@ export default async function PublicManagePage({
               attendees={view.attendees}
               token={token}
             />
+          )}
+
+          {view.answerEditing.enabled && (
+            <section className="public-manage-card">
+              <AttendeeRegistrationAnswersForm
+                answerEndpoint={`/api/public/manage/${encodeURIComponent(token)}/answers`}
+                description={view.answerEditing.reason}
+                fields={view.answerEditing.fields}
+                initialAttendees={view.answerEditing.attendees}
+                initialExpectedUpdatedAt={view.answerEditing.expectedUpdatedAt}
+              />
+            </section>
           )}
 
           {attendeePassesAvailable && (

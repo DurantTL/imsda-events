@@ -30,6 +30,7 @@ type AppliedRun = {
   clientRequestId: string;
   appliedByName: string;
   supersedesRunId: string | null;
+  invalidatedAt: string | null;
   appliedAt: string;
   summary: RankedAssignmentPreview["summary"];
 };
@@ -446,7 +447,9 @@ export function ProgramAssignmentsWorkspace({
                     </div>
                   </div>
                   <div className="assignment-run-actions">
-                    {index === 0 && <span className="review-badge">Newest</span>}
+                    {run.invalidatedAt
+                      ? <span className="review-badge">Choices changed · reapply</span>
+                      : index === 0 && <span className="review-badge">Newest</span>}
                     <a
                       className="secondary-button"
                       href={`/api/events/${encodeURIComponent(eventId)}/program-assignments/${encodeURIComponent(run.id)}/roster`}

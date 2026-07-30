@@ -40,7 +40,7 @@ export async function getRetreatPackets(eventId: string) {
     }),
     listRegistrations(eventId, { statuses: activeRegistrationStatuses }),
     getPrisma().programAssignmentRun.findMany({
-      where: { eventId },
+      where: { eventId, invalidatedAt: null },
       orderBy: [{ appliedAt: "desc" }, { id: "desc" }],
       select: {
         fieldId: true,

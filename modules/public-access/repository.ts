@@ -5,7 +5,14 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { createOpaqueToken, hashOpaqueToken } from "@/modules/access/tokens";
 import { attendeePassExpiry } from "@/modules/checkin/attendee-pass-token";
-import { enqueueRegistrationContactUpdatedMessage } from "@/modules/communications/transactional-messages";
+import {
+  editableAttendeeFields,
+} from "@/modules/attendee-accounts/registration-answer-policy";
+import { updateTieredRegistrationAnswersWithClient } from "@/modules/attendee-accounts/answer-update-repository";
+import {
+  enqueueRegistrationAccessRecoveryMessage,
+  enqueueRegistrationContactUpdatedMessage,
+} from "@/modules/communications/transactional-messages";
 import {
   defaultRegistrationAccessExpiry,
   describePublicRegistrationStatus,
@@ -25,6 +32,7 @@ import {
   formatPublicEventSchedule,
   publicEventWebsiteLinks,
 } from "@/modules/events/public-domain";
+import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 
 export { REGISTRATION_MANAGE_LINK_SENTINEL } from "@/modules/communications/manage-link";
 
@@ -40,6 +48,7 @@ const registrationAccessInclude = {
       totalAmount: true,
       contactSnapshot: true,
       submittedAt: true,
+      updatedAt: true,
       event: {
         select: {
           name: true,
@@ -51,6 +60,7 @@ const registrationAccessInclude = {
           publicInfoUrl: true,
           supportContact: true,
           collectsShirtSizes: true,
+          attendeeEditPolicy: true,
         },
       },
       accountHolderPerson: {
@@ -95,10 +105,12 @@ const registrationAccessInclude = {
       publicFormSubmission: {
         select: {
           createdAt: true,
+          responses: true,
           pricingSnapshot: true,
           formVersion: {
             select: {
               versionNumber: true,
+              definition: true,
               form: {
                 select: {
                   name: true,
@@ -293,6 +305,25 @@ function serializeRegistrationAccess(
     },
   );
   const submission = registration.publicFormSubmission;
+  const parsedDefinition = submission
+    ? registrationFormDefinitionSchema.safeParse(submission.formVersion.definition)
+    : null;
+  const answerFields = parsedDefinition?.success
+    ? editableAttendeeFields(
+        parsedDefinition.data,
+        event.attendeeEditPolicy,
+      ).filter((field) => (
+        !eventCollectsShirtSizes(event) || field.key !== "shirt_size"
+      ))
+    : [];
+  const answerKeys = new Set(answerFields.map((field) => field.key));
+  const answerEditingEnabled = (
+    event.attendeeEditPolicy === "TIERED"
+    && answerFields.length > 0
+    && (registration.status === "SUBMITTED"
+      || registration.status === "CONFIRMED"
+      || registration.status === "WAITLISTED")
+  );
   const pricingSnapshot = submission
     ? jsonRecord(submission.pricingSnapshot)
     : {};
@@ -377,6 +408,26 @@ function serializeRegistrationAccess(
         attendee.formResponses,
       ),
     })),
+    answerEditing: {
+      enabled: answerEditingEnabled,
+      reason: answerEditingEnabled
+        ? "These low-risk event choices can be updated from this private registration link."
+        : event.attendeeEditPolicy !== "TIERED"
+          ? "This event requires verified account access before attendee choices can be changed."
+          : !submission
+            ? "The event team must update this imported registration."
+            : "This registration has no low-risk attendee choices available for self-service.",
+      expectedUpdatedAt: registration.updatedAt.toISOString(),
+      fields: answerFields,
+      attendees: registration.attendees.map((attendee) => ({
+        attendeeId: attendee.id,
+        name: publicAttendeeName(attendee.profileSnapshot, attendee.person),
+        responses: Object.fromEntries(
+          Object.entries(jsonRecord(attendee.formResponses))
+            .filter(([key]) => answerKeys.has(key)),
+        ),
+      })),
+    },
     payment,
     order,
     form: submission ? {
@@ -585,6 +636,95 @@ export async function createStableRegistrationAccessToken(
   ));
 }
 
+export async function requestRegistrationAccessRecovery(input: {
+  confirmationCode: string;
+  email: string;
+}) {
+  const confirmationCode = input.confirmationCode.trim().toUpperCase();
+  const email = input.email.trim().toLowerCase();
+  return getPrisma().$transaction(async (tx) => {
+    const candidates = await tx.registration.findMany({
+      where: {
+        confirmationCode: { equals: confirmationCode, mode: "insensitive" },
+        status: { in: ["SUBMITTED", "CONFIRMED", "WAITLISTED"] },
+      },
+      select: {
+        id: true,
+        eventId: true,
+        contactSnapshot: true,
+        accountHolderPerson: {
+          select: {
+            firstName: true,
+            lastName: true,
+            normalizedEmail: true,
+            phone: true,
+          },
+        },
+      },
+    });
+    const matches = candidates.filter((registration) => (
+      publicContactFromSnapshot(
+        registration.contactSnapshot,
+        {
+          firstName: registration.accountHolderPerson.firstName,
+          lastName: registration.accountHolderPerson.lastName,
+          email: registration.accountHolderPerson.normalizedEmail ?? "",
+          phone: registration.accountHolderPerson.phone ?? "",
+        },
+      ).email === email
+    ));
+    if (matches.length === 0) {
+      await tx.auditLog.create({
+        data: {
+          action: "REGISTRATION_ACCESS_RECOVERY_REQUESTED",
+          entityType: "RegistrationAccessRecovery",
+          correlationId: randomUUID(),
+          summary: "A private registration link recovery request did not match an active registration.",
+          metadata: {
+            matched: false,
+            messagesQueued: 0,
+            rawIdentifiersStored: false,
+          },
+        },
+      });
+      return { pendingMessageIds: [] as string[] };
+    }
+
+    const pendingMessageIds: string[] = [];
+    for (const registration of matches) {
+      const correlationId = randomUUID();
+      const queued = await enqueueRegistrationAccessRecoveryMessage(tx, {
+        eventId: registration.eventId,
+        registrationId: registration.id,
+        correlationId,
+        transitionKey: `REGISTRATION_ACCESS_RECOVERY:${correlationId}`,
+        recipientEmail: email,
+        metadata: {
+          source: "PUBLIC_RECOVERY",
+          rawIdentifiersStored: false,
+        },
+      });
+      pendingMessageIds.push(...queued.pendingMessageIds);
+      await tx.auditLog.create({
+        data: {
+          eventId: registration.eventId,
+          action: "REGISTRATION_ACCESS_RECOVERY_REQUESTED",
+          entityType: "Registration",
+          entityId: registration.id,
+          correlationId,
+          summary: "A matching private registration link recovery email was queued.",
+          metadata: {
+            matched: true,
+            messagesQueued: queued.messageIds.length,
+            rawIdentifiersStored: false,
+          },
+        },
+      });
+    }
+    return { pendingMessageIds };
+  });
+}
+
 export async function resolveRegistrationAccessToken(
   token: string,
   options: { now?: Date; client?: RegistrationAccessClient } = {},
@@ -690,6 +830,40 @@ export async function updatePublicRegistrationContact(
 ) {
   const result = await updatePublicRegistrationContactWithMessages(token, input, now);
   return result?.registration ?? null;
+}
+
+export async function updatePublicTieredAttendeeAnswers(
+  token: string,
+  input: {
+    expectedUpdatedAt: string;
+    attendees: Array<{
+      attendeeId: string;
+      responses: Record<string, unknown>;
+    }>;
+  },
+  now = new Date(),
+) {
+  return getPrisma().$transaction(async (tx) => {
+    const access = await loadActiveAccessRecord(tx, token, now);
+    if (!access) return null;
+    return updateTieredRegistrationAnswersWithClient(tx, {
+      registrationId: access.registration.id,
+      expectedUpdatedAt: input.expectedUpdatedAt,
+      attendees: input.attendees,
+      now,
+      audit: {
+        action: "PRIVATE_LINK_ANSWERS_UPDATED",
+        summary: (confirmationCode) => (
+          `The private registration link updated attendee choices for ${confirmationCode}.`
+        ),
+        metadata: {
+          source: "PRIVATE_MANAGE_LINK",
+          accessTokenId: access.id,
+          verification: "PRIVATE_LINK",
+        },
+      },
+    });
+  });
 }
 
 async function confirmRegistrationShirtSizesWithClient(

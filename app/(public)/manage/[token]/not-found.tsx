@@ -1,4 +1,5 @@
 import { ArrowLeft, Link2Off } from "lucide-react";
+import Link from "next/link";
 import { BrandMark } from "@/components/brand-mark";
 
 export default function PublicManageNotFound() {
@@ -20,9 +21,12 @@ export default function PublicManageNotFound() {
         <p className="public-registration-eyebrow">Private link unavailable</p>
         <h1>This registration link is no longer active</h1>
         <p>
-          The link may be incomplete, expired, or revoked. Use the link from
-          your latest confirmation message or contact the event team for help.
+          The link may be incomplete, expired, or revoked. Request a new link
+          with your confirmation code and registration contact email.
         </p>
+        <Link className="primary-button" href="/recover-registration">
+          Recover this registration
+        </Link>
         <a
           className="public-event-not-found-link"
           href="https://imsda.org/contact/"

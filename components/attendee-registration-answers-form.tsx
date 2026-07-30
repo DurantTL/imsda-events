@@ -40,11 +40,15 @@ function valuesEqual(left: unknown, right: unknown) {
 
 export function AttendeeRegistrationAnswersForm({
   registrationId,
+  answerEndpoint,
+  description = "These low-risk choices can be updated from your verified account.",
   initialExpectedUpdatedAt,
   fields,
   initialAttendees,
 }: {
-  registrationId: string;
+  registrationId?: string;
+  answerEndpoint?: string;
+  description?: string;
   initialExpectedUpdatedAt: string;
   fields: EditableAttendeeField[];
   initialAttendees: EditableAttendee[];
@@ -56,6 +60,8 @@ export function AttendeeRegistrationAnswersForm({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const dirty = useMemo(() => !valuesEqual(saved, attendees), [attendees, saved]);
+  const endpoint = answerEndpoint
+    ?? `/api/attendee/registrations/${encodeURIComponent(registrationId ?? "")}/answers`;
 
   function updateAnswer(attendeeId: string, key: string, value: unknown) {
     setAttendees((current) => current.map((attendee) => (
@@ -77,7 +83,7 @@ export function AttendeeRegistrationAnswersForm({
     setNotice("");
     try {
       const response = await fetch(
-        `/api/attendee/registrations/${encodeURIComponent(registrationId)}/answers`,
+        endpoint,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -113,7 +119,7 @@ export function AttendeeRegistrationAnswersForm({
         <div>
           <p className="public-registration-eyebrow">Self-service choices</p>
           <h3>Meals, sessions and retreat details</h3>
-          <p>These low-risk choices can be updated from your verified account.</p>
+          <p>{description}</p>
         </div>
       </div>
 
