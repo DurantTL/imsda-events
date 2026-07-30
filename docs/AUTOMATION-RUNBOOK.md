@@ -27,6 +27,22 @@ Graphify. Use synthetic examples only, and keep production databases, attendee
 exports, medical or insurance documents, secrets, and payment credentials out
 of the automation loop.
 
+## WR26 pre-rehearsal readiness evidence
+
+Before asking a human to begin staging or release review, run the read-only
+configuration checklist against the intended event:
+
+```sh
+npm run event:readiness -- --event <slug>
+```
+
+The command reports stable check codes, aggregate active-registration counts,
+blockers, and warnings without printing participant or configuration values. A
+blocker returns a non-zero status; warnings alone do not. Save the output as
+pre-rehearsal evidence, not authorization: human sign-off is still required for
+staging/release decisions, deployment, migrations, payment enablement, and all
+other human-only gates.
+
 Human approval is always required for the gates in [root guidance](../AGENTS.md),
 including merge, deployment, production data changes, refunds, bulk sends,
 pricing/capacity changes, identity merges, and medical or insurance rules. When
