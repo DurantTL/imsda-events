@@ -18,10 +18,12 @@ ARG APP_BASE_URL=http://localhost:3000
 ARG EMBED_ALLOWED_ORIGINS="'self' https://imsda.org https://www.imsda.org"
 ARG SQUARE_ENVIRONMENT=sandbox
 ARG SQUARE_ENABLE_PRODUCTION=false
+ARG APP_RELEASE_SHA=
 ENV APP_BASE_URL=${APP_BASE_URL}
 ENV EMBED_ALLOWED_ORIGINS=${EMBED_ALLOWED_ORIGINS}
 ENV SQUARE_ENVIRONMENT=${SQUARE_ENVIRONMENT}
 ENV SQUARE_ENABLE_PRODUCTION=${SQUARE_ENABLE_PRODUCTION}
+ENV APP_RELEASE_SHA=${APP_RELEASE_SHA}
 RUN apt-get update \
   && apt-get install -y --no-install-recommends openssl ca-certificates \
   && rm -rf /var/lib/apt/lists/*
@@ -42,9 +44,11 @@ RUN npx prisma generate && npm run build
 
 FROM node:22-bookworm-slim AS runner
 WORKDIR /app
+ARG APP_RELEASE_SHA=
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
+ENV APP_RELEASE_SHA=${APP_RELEASE_SHA}
 RUN apt-get update \
   && apt-get install -y --no-install-recommends openssl ca-certificates \
   && rm -rf /var/lib/apt/lists/*

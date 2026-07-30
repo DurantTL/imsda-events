@@ -3,6 +3,7 @@ import {
   isAuthorizedSweepRequest,
   sweepOutbox,
 } from "@/modules/communications/outbox-sweep";
+import { pruneExpiredCommunityContent } from "@/modules/community/repository";
 import { runAlertScan } from "@/modules/operations/alert-scan";
 import { withRequestContext } from "@/lib/request-context";
 
@@ -32,6 +33,10 @@ async function postHandler(request: Request) {
       logError("The alert scan failed after a successful sweep", error);
       return null;
     });
+    const communityRetention = await pruneExpiredCommunityContent().catch((error) => {
+      logError("Community retention sweep failed after a successful outbox sweep", error);
+      return null;
+    });
     return Response.json({
       sweptEventCount: result.sweptEventIds.length,
       sweptAccountMessages: result.sweptAccountMessages,
@@ -43,6 +48,7 @@ async function postHandler(request: Request) {
         undelivered: alerts.undelivered.map((alert) => alert.key),
         cleared: alerts.cleared,
       },
+      communityRetention,
     });
   } catch (error) {
     logError("Outbox sweep failed", error);

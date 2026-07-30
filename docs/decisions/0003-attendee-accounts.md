@@ -126,6 +126,11 @@ In priority order, each independently shippable:
 
 Community and discussion features are **not** in scope here. This ADR exists so they have an author to attach to.
 
+The community was subsequently implemented as its own event-scoped module under
+[ADR 0004](0004-attendee-community.md). That does not change this account
+boundary: community authors are attendee accounts, and staff preview is not
+impersonation.
+
 ## Consequences
 
 The private link does not go away. It stays the path for someone who will never make an account, and it is how a migrated registrant reaches self-service the first time. Accounts are additive; a registrant who ignores them loses nothing.

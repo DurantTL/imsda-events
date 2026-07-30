@@ -15,6 +15,7 @@ import {
   QrCode,
   UsersRound,
 } from "lucide-react";
+import { AttendeeCommunityBoard } from "@/components/attendee-community-board";
 import { BrandMark } from "@/components/brand-mark";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
@@ -23,6 +24,10 @@ import {
   getStaffRetreatHubPreview,
   type AttendeeRetreatHub,
 } from "@/modules/attendee-accounts/retreat-hub-repository";
+import {
+  getAttendeeCommunity,
+  getStaffCommunity,
+} from "@/modules/community/repository";
 
 export const dynamic = "force-dynamic";
 
@@ -81,11 +86,14 @@ export default async function AttendeeEventHubPage({
   const staffPreview = query.preview === "staff" && Boolean(staffSession.user);
   let hub: AttendeeRetreatHub;
   let staffPreviewEventId: string | null = null;
+  let attendeeCommunity: NonNullable<Awaited<ReturnType<typeof getAttendeeCommunity>>> | null = null;
+  let staffCommunity: NonNullable<Awaited<ReturnType<typeof getStaffCommunity>>> | null = null;
   if (staffPreview && staffSession.user) {
     const preview = await getStaffRetreatHubPreview(staffSession.user, eventSlug);
     if (!preview) notFound();
     hub = preview.hub;
     staffPreviewEventId = preview.eventId;
+    staffCommunity = await getStaffCommunity(preview.eventId);
   } else {
     if (!attendeeSession.account) redirect("/account/sign-in");
     const attendeeHub = await getAttendeeRetreatHub(
@@ -94,6 +102,7 @@ export default async function AttendeeEventHubPage({
     );
     if (!attendeeHub) notFound();
     hub = attendeeHub;
+    attendeeCommunity = await getAttendeeCommunity(attendeeSession.account, eventSlug);
   }
   const textSections = hub.contentSections.filter((section) => section.kind === "RICH_TEXT");
   const resourceSections = hub.contentSections.filter((section) => section.kind === "RESOURCE_LINKS");
@@ -228,6 +237,45 @@ export default async function AttendeeEventHubPage({
             )}
           </section>
 
+          {attendeeCommunity && <AttendeeCommunityBoard community={attendeeCommunity} />}
+
+          {staffCommunity && (
+            <section className="public-manage-card attendee-community-board attendee-community-staff-preview">
+              <div className="public-manage-card-heading">
+                <UsersRound size={20} aria-hidden="true" />
+                <div>
+                  <p className="public-registration-eyebrow">Community preview</p>
+                  <h2>{staffCommunity.eventName} Community</h2>
+                </div>
+              </div>
+              <p>
+                {staffCommunity.settings.isEnabled
+                  ? "Attendee discussion is enabled. This preview shows shared posts without impersonating a registrant."
+                  : "Attendee discussion is currently disabled."}
+              </p>
+              {staffCommunity.settings.isEnabled && staffCommunity.posts.length > 0 ? (
+                <div className="attendee-community-posts">
+                  {staffCommunity.posts.slice(0, 20).map((post) => (
+                    <article className={`attendee-community-post is-${post.status.toLowerCase()}`} key={post.id}>
+                      <header><strong>{post.authorName}</strong><time dateTime={post.createdAt}>{new Date(post.createdAt).toLocaleString()}</time></header>
+                      <p>{post.status === "PUBLISHED" ? post.body : "This post is not visible to attendees."}</p>
+                      {post.replies.filter((reply) => reply.status === "PUBLISHED").map((reply) => (
+                        <article className="community-staff-reply" key={reply.id}>
+                          <strong>{reply.authorName}</strong><p>{reply.body}</p>
+                        </article>
+                      ))}
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="public-manage-empty">No attendee conversations are visible.</p>
+              )}
+              <Link className="secondary-button" href={`/community?event=${encodeURIComponent(staffCommunity.eventId)}`}>
+                Open moderation controls
+              </Link>
+            </section>
+          )}
+
           {textSections.map((section) => (
             <section className="public-manage-card attendee-hub-content" key={section.id}>
               <div className="public-manage-card-heading"><h2>{section.title}</h2></div>
@@ -237,26 +285,6 @@ export default async function AttendeeEventHubPage({
         </div>
 
         <aside className="attendee-hub-side">
-          {staffPreviewEventId && (
-            <section className="public-manage-card attendee-hub-community-preview">
-              <div className="public-manage-card-heading">
-                <UsersRound size={20} aria-hidden="true" />
-                <div>
-                  <p className="public-registration-eyebrow">Community</p>
-                  <h2>{hub.event.name} Community</h2>
-                </div>
-              </div>
-              <p>
-                This is the planned attendee community area. Staff announcements are available
-                now; attendee posts and replies remain off until moderation, reporting, conduct,
-                retention, and notification controls are built.
-              </p>
-              <ul>
-                <li><CheckCircle2 size={14} aria-hidden="true" /> Staff updates enabled</li>
-                <li><Clock3 size={14} aria-hidden="true" /> Attendee discussion not enabled</li>
-              </ul>
-            </section>
-          )}
           <section className="public-manage-card attendee-hub-updates">
             <div className="public-manage-card-heading">
               <Megaphone size={20} aria-hidden="true" />

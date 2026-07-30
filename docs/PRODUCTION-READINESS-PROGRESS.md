@@ -5,11 +5,12 @@ Tracks implementation against the ten-step sequence in
 has to be true before this system holds real attendee, medical, and payment data. This
 document says how far along that is, and is updated as work lands.
 
-**Status: items 1–7 are done; items 8–10 are not started.** All three P0 blocking
-findings are addressed, and every P1 and P2 finding with code behind it has landed. What
-remains is the medical-data encryption decision (item 8), a staging environment and
-cutover rehearsal (item 9), and the printable passes and rosters that gate event day
-(item 10). Items 8 and 9 need a decision from IMSDA before they need code.
+**Status: items 1–7 and 10 are done.** All three P0 blocking findings are
+addressed, and every P1 and P2 finding with code behind it has landed. The
+medical-data encryption decision (item 8) remains a platform backlog item but
+has been explicitly removed from the Women’s Retreat release gate. The
+deployment/configuration rehearsal and Square Sandbox test in item 9 remain the
+release work that cannot be proven by the repository alone.
 
 ---
 
@@ -24,9 +25,9 @@ cutover rehearsal (item 9), and the printable passes and rosters that gate event
 | 5 | Structured logs with correlation IDs and redaction; error tracking; alerts | **Done** |
 | 6 | Scheduled outbox sweep; health check covers queue depth | **Done** |
 | 7 | MFA for admin roles; real password policy; session idle timeout and revocation | **Done** |
-| 8 | Medical-data encryption decision; retention/deletion/export procedure | Not started |
-| 9 | Staging environment; go-live checklist; cutover rehearsal; Square production unlock | Not started |
-| 10 | Printable passes and rosters, then resume Phase 6/7/8 breadth | Not started |
+| 8 | Medical-data encryption decision; retention/deletion/export procedure | Deferred beyond the Women’s Retreat release; platform backlog |
+| 9 | Staging environment; go-live checklist; cutover rehearsal; Square production unlock | In progress on the deployed sandbox environment |
+| 10 | Printable passes and rosters, then resume Phase 6/7/8 breadth | **Done** |
 
 ---
 
@@ -311,7 +312,7 @@ Also shipped — **a real password policy**:
   from the environment rather than an argument so it stays out of shell history and `ps`,
   is held to the same policy, and is stored only as its scrypt hash.
 
-## 8. Medical-data encryption — not started
+## 8. Medical-data encryption — deferred beyond the Women’s Retreat release
 
 Answers remain plaintext JSON snapshots. This needs a policy decision before code, and
 the review is right that it gets harder with every registration recorded.
@@ -321,29 +322,38 @@ with per-purpose key derivation, written for TOTP secrets but not specific to th
 is still missing is the decision — which field keys, whether they stay searchable, and
 what the retention and deletion procedure is — not the primitive.
 
-## 9. Staging environment — not started
+For the Women’s Retreat, Caleb explicitly removed this item from the release
+scope on July 30. That is a prioritization decision, not evidence that the
+platform-level risk is solved. Existing least-privilege access, redacted logs,
+backups, and restricted reports remain required.
 
-There is still one compose file. Square production remains locked behind
+## 9. Staging environment — in progress
+
+The replacement deployment is running as a real sandbox/test environment, but
+the full cutover evidence has not yet been recorded. Square production remains locked behind
 `SQUARE_ENVIRONMENT=production` **and** `SQUARE_ENABLE_PRODUCTION=true`, and the startup
 contract now enforces that pairing — setting the environment to production without the
 unlock fails the deploy rather than being silently ignored.
 
-## 10. Printable passes and rosters — not started
+## 10. Printable passes and rosters — done
 
-Unchanged; still the event-day release gate.
+The workspace now has print-specific Avery attendee pass sheets, operational
+rosters, and grouped retreat packets. Group packets include contacts, attendee
+checklists, shirt/check-in counts, latest applied session assignments, and
+structured meal/housing counts. Free-text protected answers are excluded from
+the packet builder.
 
 ---
 
 ## Verification
 
-Against a local PostgreSQL 16 with all migrations applied:
+Current verification against local PostgreSQL with all 45 migrations applied:
 
 ```
-npx prisma migrate deploy                    ✅ 28 migrations, no drift on changed models
+npx prisma migrate deploy                    ✅ 45 migrations applied
 npm run lint                                 ✅
 npm run typecheck                            ✅
-npx vitest run                               ✅ 579 passed (101 files), 177 new
-npx vitest run  (with no DATABASE_URL set)   ✅ 579 passed — was 30 failures before
+npx vitest run                               ✅ 904 passed (148 files)
 npm run admin:create                         ✅ created and promoted; both guards exercised
 npm run admin:create --password-from-env     ✅ ACTIVE with a scrypt hash and no token row
 npm run admin:reset-mfa                      ✅ enrolment removed, sessions revoked

@@ -9,6 +9,13 @@ It is a companion to — not a replacement for — [`BUILD-PLAN-GAP-ANALYSIS.md`
 [`BUILD-STATUS-AND-WR26-GAP-AUDIT.md`](BUILD-STATUS-AND-WR26-GAP-AUDIT.md) (which measures it
 against WR26 behaviors). Those ask "how much is built?" This one asks "can it go live?"
 
+> Historical review notice (updated July 30): this document preserves the
+> findings as they were discovered. The current implementation status is tracked
+> in [`PRODUCTION-READINESS-PROGRESS.md`](PRODUCTION-READINESS-PROGRESS.md).
+> Items 1–7 and 10 are now complete. Medical-data encryption remains a platform
+> backlog item but is not a Women’s Retreat release requirement; the deployed
+> sandbox/cutover rehearsal remains in progress.
+
 ---
 
 ## Verdict
@@ -289,7 +296,7 @@ reports) should pause until the first two blocks below are done.
 | 7 | MFA for admin roles; real password policy; session idle timeout and revocation | An admin account cannot be taken over by a single leaked password |
 | 8 | Medical-data encryption decision; retention/deletion/export procedure | The standard is documented and implemented for the identified field keys |
 | 9 | Staging environment; go-live checklist; cutover rehearsal; then the Square production unlock | A rehearsal has run end to end against staging with test-mode money |
-| 10 | Printable passes and rosters (the current event-day release gate), then resume Phase 6/7/8 breadth | — |
+| 10 | Printable passes and rosters (the current event-day release gate), then resume Phase 6/7/8 breadth | Complete: pass sheets, operational rosters, and grouped retreat packets |
 
 Items 1–3 are days of work, not weeks, and they convert the system from a convincing demo into
 something that can hold a real registration. Items 4–6 are what make it safe to leave running.

@@ -35,6 +35,7 @@ services:
         EMBED_ALLOWED_ORIGINS: ${EMBED_ALLOWED_ORIGINS:-'self' https://imsda.org https://www.imsda.org}
         SQUARE_ENVIRONMENT: ${SQUARE_ENVIRONMENT:-sandbox}
         SQUARE_ENABLE_PRODUCTION: ${SQUARE_ENABLE_PRODUCTION:-false}
+        APP_RELEASE_SHA: ${APP_RELEASE_SHA:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,6 +44,7 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://imsda:${POSTGRES_PASSWORD}@postgres:5432/imsda_events?schema=public
       APP_BASE_URL: ${APP_BASE_URL?set this to the public https origin; it is written into emailed links}
+      APP_RELEASE_SHA: ${APP_RELEASE_SHA:-}
       # Uploaded schedules, flyers, and images must live outside the replaceable
       # application container.
       ASSET_STORAGE_DIR: /app/storage/event-assets

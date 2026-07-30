@@ -31,6 +31,7 @@ describe("portable Docker deployment contract", () => {
       "EMBED_ALLOWED_ORIGINS",
       "SQUARE_ENVIRONMENT",
       "SQUARE_ENABLE_PRODUCTION",
+      "APP_RELEASE_SHA",
     ]) {
       expect(dockerfile).toContain(`ARG ${key}`);
       expect(compose).toContain(`${key}: \${`);

@@ -7,6 +7,7 @@ import {
   Download,
   HandHeart,
   ListOrdered,
+  PackageOpen,
   ShieldCheck,
   UsersRound,
   Utensils,
@@ -193,6 +194,7 @@ export default async function OperationalReportsPage({
         </div>
         <div className="intro-actions report-actions">
           <Link className="secondary-button" href={`/more${peopleQuery}`}>Back to More</Link>
+          <Link className="secondary-button" href={`/more/reports/packets${peopleQuery}`}><PackageOpen aria-hidden="true" size={15} /> Group packets</Link>
           <PrintReportButton />
         </div>
       </div>
