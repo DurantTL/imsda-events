@@ -87,6 +87,15 @@ Promoted registrants see card and pay-later totals before choosing; the card
 fee is recomputed once from the preserved discounted subtotal. Card data is
 entered directly in Square's hosted fields; the application stores neither
 card data nor Square's short-lived source token.
+
+The same embedded Web Payments SDK checkout offers Apple Pay and Google Pay
+when the buyer's browser, device, wallet, and Square account support them.
+Google Pay requires HTTPS in production. Apple Pay additionally requires the
+public payment-page domain to be registered in both the Sandbox and Production
+views of the Square Developer Console. This application serves Square's current
+domain-association file at
+`/.well-known/apple-developer-merchantid-domain-association`; no Apple merchant
+ID or extra application environment variable is required.
 See [`modules/payments/README.md`](modules/payments/README.md) for the
 idempotency, webhook, refund, and production-safety boundary.
 

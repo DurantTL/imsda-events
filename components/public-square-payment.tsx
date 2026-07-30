@@ -1,7 +1,13 @@
 "use client";
 
 import Script from "next/script";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { CreditCard, LoaderCircle, ShieldCheck, TriangleAlert } from "lucide-react";
 import {
   paymentChoiceOptionPresentations,
@@ -44,9 +50,18 @@ type SquareCheckout = {
   } | null;
 };
 
-type SquareCard = {
+type SquareTokenResult = {
+  status: string;
+  token?: string;
+  errors?: Array<{ message?: string; detail?: string }>;
+};
+
+type SquarePaymentMethod = {
+  destroy?(): Promise<void>;
+};
+
+type SquareCard = SquarePaymentMethod & {
   attach(selector: string): Promise<void>;
-  destroy(): Promise<void>;
   tokenize(details: {
     amount: string;
     billingContact?: {
@@ -59,15 +74,31 @@ type SquareCard = {
     intent: "CHARGE";
     customerInitiated: true;
     sellerKeyedIn: false;
-  }): Promise<{
-    status: string;
-    token?: string;
-    errors?: Array<{ message?: string; detail?: string }>;
-  }>;
+  }): Promise<SquareTokenResult>;
 };
+
+type SquareWallet = SquarePaymentMethod & {
+  tokenize(): Promise<SquareTokenResult>;
+};
+
+type SquareGooglePay = SquareWallet & {
+  attach(selector: string): Promise<void>;
+};
+
+type SquarePaymentRequest = object;
 
 type SquarePayments = {
   card(): Promise<SquareCard>;
+  paymentRequest(input: {
+    countryCode: "US";
+    currencyCode: "USD";
+    total: {
+      amount: string;
+      label: string;
+    };
+  }): SquarePaymentRequest;
+  applePay(request: SquarePaymentRequest): Promise<SquareWallet>;
+  googlePay(request: SquarePaymentRequest): Promise<SquareGooglePay>;
 };
 
 declare global {
@@ -81,7 +112,7 @@ declare global {
   }
 }
 
-const cardContainerId = "square-card-container";
+type PaymentMethodKind = "CARD" | "APPLE_PAY" | "GOOGLE_PAY";
 
 function money(cents: number) {
   return new Intl.NumberFormat("en-US", {
@@ -92,10 +123,21 @@ function money(cents: number) {
 
 function firstTokenizationError(
   errors: Array<{ message?: string; detail?: string }> | undefined,
+  fallback = "Review the card details and try again.",
 ) {
   return errors?.find((error) => error.message || error.detail)?.message
     ?? errors?.find((error) => error.detail)?.detail
-    ?? "Review the card details and try again.";
+    ?? fallback;
+}
+
+function methodLabel(method: PaymentMethodKind) {
+  if (method === "APPLE_PAY") return "Apple Pay";
+  if (method === "GOOGLE_PAY") return "Google Pay";
+  return "card";
+}
+
+function destroyPaymentMethod(method: SquarePaymentMethod | null) {
+  if (method?.destroy) void method.destroy();
 }
 
 async function fetchCheckout(endpoint: string) {
@@ -120,7 +162,7 @@ function unavailableCheckout(error: unknown): SquareCheckout {
     state: "NOT_CONFIGURED",
     message: error instanceof Error
       ? error.message
-      : "Online card payment is unavailable. Your registration is still saved.",
+      : "Online payment is unavailable. Your registration is still saved.",
     amountCents: 0,
     currency: "USD",
     cardSelected: false,
@@ -141,9 +183,15 @@ export function PublicSquarePayment({
     ?? `/api/public/manage/${encodeURIComponent(token ?? "")}`;
   const paymentEndpoint = `${manageEndpoint}/payment`;
   const choiceEndpoint = `${manageEndpoint}/payment-choice`;
+  const instanceId = useId().replace(/[^A-Za-z0-9_-]/g, "");
+  const cardContainerId = `square-card-${instanceId}`;
+  const googlePayContainerId = `square-google-pay-${instanceId}`;
   const cardRef = useRef<SquareCard | null>(null);
+  const applePayRef = useRef<SquareWallet | null>(null);
+  const googlePayRef = useRef<SquareGooglePay | null>(null);
   const idempotencyKeyRef = useRef<string | null>(null);
   const sourceIdRef = useRef<string | null>(null);
+  const sourceMethodRef = useRef<PaymentMethodKind | null>(null);
   const choiceRequestRef = useRef<{
     choice: "CARD" | "PAY_LATER";
     clientRequestId: string;
@@ -153,7 +201,11 @@ export function PublicSquarePayment({
   const [loading, setLoading] = useState(true);
   const [sdkReady, setSdkReady] = useState(false);
   const [cardReady, setCardReady] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [applePayReady, setApplePayReady] = useState(false);
+  const [googlePayReady, setGooglePayReady] = useState(false);
+  const [submittingMethod, setSubmittingMethod] = useState<
+    PaymentMethodKind | null
+  >(null);
   const [choiceSubmitting, setChoiceSubmitting] = useState<
     "CARD" | "PAY_LATER" | null
   >(null);
@@ -201,66 +253,163 @@ export function PublicSquarePayment({
       || !checkout.square
       || !window.Square
       || cardRef.current
+      || applePayRef.current
+      || googlePayRef.current
     ) {
       return;
     }
     let active = true;
     void (async () => {
+      let card: SquareCard | null = null;
+      let applePay: SquareWallet | null = null;
+      let googlePay: SquareGooglePay | null = null;
       try {
         const payments = await window.Square!.payments(
           checkout.square!.applicationId,
           checkout.square!.locationId,
         );
-        const card = await payments.card();
-        await card.attach(`#${cardContainerId}`);
+        const request = payments.paymentRequest({
+          countryCode: "US",
+          currencyCode: "USD",
+          total: {
+            amount: (checkout.amountCents / 100).toFixed(2),
+            label: "IMSDA Events registration",
+          },
+        });
+
+        const [cardResult, applePayResult, googlePayResult] =
+          await Promise.allSettled([
+            payments.card().then(async (nextCard) => {
+              await nextCard.attach(`#${cardContainerId}`);
+              return nextCard;
+            }),
+            payments.applePay(request),
+            payments.googlePay(request).then(async (nextGooglePay) => {
+              await nextGooglePay.attach(`#${googlePayContainerId}`);
+              return nextGooglePay;
+            }),
+          ]);
+        card = cardResult.status === "fulfilled" ? cardResult.value : null;
+        applePay = applePayResult.status === "fulfilled"
+          ? applePayResult.value
+          : null;
+        googlePay = googlePayResult.status === "fulfilled"
+          ? googlePayResult.value
+          : null;
+
         if (!active) {
-          await card.destroy();
+          destroyPaymentMethod(card);
+          destroyPaymentMethod(applePay);
+          destroyPaymentMethod(googlePay);
           return;
         }
         cardRef.current = card;
-        setCardReady(true);
+        applePayRef.current = applePay;
+        googlePayRef.current = googlePay;
+        setCardReady(Boolean(card));
+        setApplePayReady(Boolean(applePay));
+        setGooglePayReady(Boolean(googlePay));
+        if (!card && !applePay && !googlePay) {
+          setNotice({
+            tone: "error",
+            message: "No secure Square payment method is available in this browser. Try another browser or contact the event team.",
+          });
+        } else if (!card) {
+          setNotice({
+            tone: "pending",
+            message: "Card entry is unavailable in this browser, but an available wallet can still be used.",
+          });
+        }
       } catch {
+        destroyPaymentMethod(card);
+        destroyPaymentMethod(applePay);
+        destroyPaymentMethod(googlePay);
         setNotice({
           tone: "error",
-          message: "The secure Square card form could not be loaded. Try again or contact the event team.",
+          message: "The secure Square payment options could not be loaded. Try again or contact the event team.",
         });
       }
     })();
     return () => {
       active = false;
       const card = cardRef.current;
+      const applePay = applePayRef.current;
+      const googlePay = googlePayRef.current;
       cardRef.current = null;
+      applePayRef.current = null;
+      googlePayRef.current = null;
       setCardReady(false);
-      if (card) void card.destroy();
+      setApplePayReady(false);
+      setGooglePayReady(false);
+      destroyPaymentMethod(card);
+      destroyPaymentMethod(applePay);
+      destroyPaymentMethod(googlePay);
     };
-  }, [checkout, sdkReady]);
+  }, [cardContainerId, checkout, googlePayContainerId, sdkReady]);
 
-  async function submitPayment() {
-    if (!checkout || checkout.state !== "READY" || !cardRef.current) return;
-    setSubmitting(true);
+  function clearPaymentAttempt() {
+    idempotencyKeyRef.current = null;
+    sourceIdRef.current = null;
+    sourceMethodRef.current = null;
+  }
+
+  function beginPayment(
+    method: PaymentMethodKind,
+    tokenize: () => Promise<SquareTokenResult>,
+  ) {
+    if (!checkout || checkout.state !== "READY" || submittingMethod) return;
+    if (
+      sourceIdRef.current
+      && sourceMethodRef.current
+      && sourceMethodRef.current !== method
+    ) {
+      setNotice({
+        tone: "pending",
+        message: `First retry the ${methodLabel(sourceMethodRef.current)} payment so Square can confirm its result.`,
+      });
+      return;
+    }
+
+    // Apple requires tokenize() to be invoked directly from its click handler,
+    // with no awaited work in between. Start every payment method synchronously
+    // here, then hand the promise to the shared server-submission flow.
+    let tokenization: Promise<SquareTokenResult> | null = null;
+    try {
+      if (!sourceIdRef.current) tokenization = tokenize();
+    } catch {
+      setNotice({
+        tone: "error",
+        message: `${methodLabel(method)} could not be opened. Try again or choose another payment method.`,
+      });
+      return;
+    }
+    setSubmittingMethod(method);
     setNotice(null);
+    void completePayment(method, tokenization);
+  }
+
+  async function completePayment(
+    method: PaymentMethodKind,
+    tokenization: Promise<SquareTokenResult> | null,
+  ) {
     try {
       let sourceId = sourceIdRef.current;
       if (!sourceId) {
-        const tokenized = await cardRef.current.tokenize({
-          amount: (checkout.amountCents / 100).toFixed(2),
-          billingContact: checkout.billingContact ?? undefined,
-          currencyCode: "USD",
-          intent: "CHARGE",
-          customerInitiated: true,
-          sellerKeyedIn: false,
-        });
+        const tokenized = await tokenization!;
         if (tokenized.status !== "OK" || !tokenized.token) {
-          idempotencyKeyRef.current = null;
-          sourceIdRef.current = null;
+          clearPaymentAttempt();
           setNotice({
             tone: "error",
-            message: firstTokenizationError(tokenized.errors),
+            message: firstTokenizationError(
+              tokenized.errors,
+              `${methodLabel(method)} was not authorized. Try again or choose another payment method.`,
+            ),
           });
           return;
         }
         sourceId = tokenized.token;
         sourceIdRef.current = sourceId;
+        sourceMethodRef.current = method;
       }
 
       idempotencyKeyRef.current ??= crypto.randomUUID();
@@ -278,10 +427,7 @@ export function PublicSquarePayment({
         retryable?: boolean;
       };
       if (!response.ok || !body.payment) {
-        if (!body.retryable) {
-          idempotencyKeyRef.current = null;
-          sourceIdRef.current = null;
-        }
+        if (!body.retryable) clearPaymentAttempt();
         setNotice({
           tone: body.retryable ? "pending" : "error",
           message: body.message
@@ -291,8 +437,7 @@ export function PublicSquarePayment({
       }
 
       if (body.payment.status === "SUCCEEDED") {
-        idempotencyKeyRef.current = null;
-        sourceIdRef.current = null;
+        clearPaymentAttempt();
       }
       setNotice({
         tone: body.payment.status === "SUCCEEDED" ? "success" : "pending",
@@ -305,8 +450,30 @@ export function PublicSquarePayment({
         message: "The payment result was not confirmed. It is safe to use the button again; the same request will not be charged twice.",
       });
     } finally {
-      setSubmitting(false);
+      setSubmittingMethod(null);
     }
+  }
+
+  function submitCardPayment() {
+    if (!checkout || !cardRef.current) return;
+    beginPayment("CARD", () => cardRef.current!.tokenize({
+      amount: (checkout.amountCents / 100).toFixed(2),
+      billingContact: checkout.billingContact ?? undefined,
+      currencyCode: "USD",
+      intent: "CHARGE",
+      customerInitiated: true,
+      sellerKeyedIn: false,
+    }));
+  }
+
+  function submitApplePay() {
+    if (!applePayRef.current) return;
+    beginPayment("APPLE_PAY", () => applePayRef.current!.tokenize());
+  }
+
+  function submitGooglePay() {
+    if (!googlePayRef.current) return;
+    beginPayment("GOOGLE_PAY", () => googlePayRef.current!.tokenize());
   }
 
   async function savePaymentChoice(choice: "CARD" | "PAY_LATER") {
@@ -374,8 +541,7 @@ export function PublicSquarePayment({
 
       choiceRequestRef.current = null;
       setPendingChoice(null);
-      idempotencyKeyRef.current = null;
-      sourceIdRef.current = null;
+      clearPaymentAttempt();
       setNotice({
         tone: "success",
         message: body.paymentChoice.choice === "CARD"
@@ -436,7 +602,7 @@ export function PublicSquarePayment({
           </strong>
           <p>
             Your place is now available. Nothing is charged until you enter
-            and submit card details through Square.
+            and submit payment details through Square.
           </p>
         </div>
       </div>
@@ -521,10 +687,10 @@ export function PublicSquarePayment({
                 : checkout.state === "PAY_LATER"
                   ? "Pay later is selected"
                   : checkout.state === "NOT_CONFIGURED"
-                    ? "Online card payment is not available yet"
+                    ? "Online payment is not available yet"
                     : checkout.state === "NO_BALANCE"
                       ? "No online payment is due"
-                      : "Card payment is unavailable"}
+                      : "Online payment is unavailable"}
             </strong>
             <p>{checkout.message}</p>
           </div>
@@ -551,26 +717,43 @@ export function PublicSquarePayment({
       <div className="public-square-heading">
         <span><CreditCard size={20} aria-hidden="true" /></span>
         <div>
-          <strong>Pay {money(checkout.amountCents)} securely by card</strong>
+          <strong>Pay {money(checkout.amountCents)} securely with Square</strong>
           <p>
-            Card details are entered directly into Square and are never stored
-            by IMSDA Events.
+            Use an available digital wallet or enter a card. Payment details go
+            directly to Square and are never stored by IMSDA Events.
           </p>
         </div>
       </div>
       {checkout.square.environment === "sandbox" && (
         <p className="public-square-sandbox">
-          Sandbox mode · test cards only · no real charge will be made
+          Sandbox mode · no real charge will be made
         </p>
+      )}
+      <div className="public-square-wallets" aria-label="Digital wallet payment methods">
+        <button
+          type="button"
+          aria-label={`Pay ${money(checkout.amountCents)} with Apple Pay`}
+          className={`public-square-apple-pay${applePayReady ? "" : " is-unavailable"}`}
+          disabled={!applePayReady || Boolean(submittingMethod)}
+          onClick={submitApplePay}
+        />
+        <div
+          id={googlePayContainerId}
+          className={`public-square-google-pay${googlePayReady ? "" : " is-unavailable"}`}
+          onClick={submitGooglePay}
+        />
+      </div>
+      {(applePayReady || googlePayReady) && (
+        <div className="public-square-divider"><span>or enter a card</span></div>
       )}
       <div id={cardContainerId} className="public-square-card-frame" />
       <button
         type="button"
         className="public-square-pay-button"
-        disabled={!cardReady || submitting}
-        onClick={() => void submitPayment()}
+        disabled={!cardReady || Boolean(submittingMethod)}
+        onClick={submitCardPayment}
       >
-        {submitting ? (
+        {submittingMethod === "CARD" ? (
           <><LoaderCircle size={17} className="is-spinning" /> Confirming with Square…</>
         ) : (
           <><ShieldCheck size={17} /> Pay {money(checkout.amountCents)}</>

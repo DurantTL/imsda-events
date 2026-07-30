@@ -140,6 +140,7 @@ export type PublicRegistrationFormProps = {
   };
   initialResponses?: FormResponses;
   initialAttendeeResponses?: FormResponses;
+  embedded?: boolean;
 };
 
 const moneyFormatter = new Intl.NumberFormat("en-US", {
@@ -278,8 +279,12 @@ export function PublicRegistrationForm({
   lifecycle,
   initialResponses = {},
   initialAttendeeResponses = {},
+  embedded = false,
 }: PublicRegistrationFormProps) {
   const { definition } = form;
+  const eventsSiteNavigation = embedded
+    ? { target: "_blank" as const, rel: "noopener noreferrer" }
+    : {};
   const joiningWaitlist = lifecycle.capacityDecision === "WAITLIST";
   const roster = useMemo(() => getAttendeeRosterConfig(definition), [definition]);
   const rosterEnabled = roster.enabled;
@@ -1852,7 +1857,7 @@ export function PublicRegistrationForm({
       <main className="public-registration-page">
         <header className="public-registration-header">
           <div className="public-registration-header-inner">
-            <a className="public-registration-brand public-event-brand-link" href={`/events/${event.slug}`}><BrandMark /><span><strong>IMSDA</strong><small>Events</small></span></a>
+            <a {...eventsSiteNavigation} className="public-registration-brand public-event-brand-link" href={`/events/${event.slug}`}><BrandMark /><span><strong>IMSDA</strong><small>Events</small></span></a>
             <span className="public-registration-secure">{waitlisted ? <Clock3 size={16} aria-hidden="true" /> : <LockKeyhole size={16} aria-hidden="true" />} {waitlisted ? "Waitlist request received" : "Registration received"}</span>
           </div>
         </header>
@@ -1926,12 +1931,17 @@ export function PublicRegistrationForm({
             )}
             {confirmation.managePath && (
               <div className="public-registration-manage-link">
-                <a href={confirmation.managePath}>
+                <a {...eventsSiteNavigation} href={confirmation.managePath}>
                   {confirmation.cardSelected && !confirmation.paymentCollected && !waitlisted
                     ? "Continue to secure card payment"
                     : "View or update this registration"}{" "}
                   <ArrowRight size={17} aria-hidden="true" />
                 </a>
+                {embedded && (
+                  <small>
+                    Opens the secure events.imsda.org page in a new tab.
+                  </small>
+                )}
                 {formatManageLinkExpiry(confirmation.manageLinkExpiresAt) && (
                   <small>
                     Private link available through {formatManageLinkExpiry(confirmation.manageLinkExpiresAt)}.
@@ -1941,7 +1951,7 @@ export function PublicRegistrationForm({
               </div>
             )}
             <div className="public-registration-confirmation-actions">
-              <a className="public-registration-secondary-button" href={`/events/${event.slug}`}><ArrowLeft size={16} aria-hidden="true" /> Back to event</a>
+              <a {...eventsSiteNavigation} className="public-registration-secondary-button" href={`/events/${event.slug}`}><ArrowLeft size={16} aria-hidden="true" /> Back to event</a>
               <button className="public-registration-secondary-button" type="button" onClick={startAnotherRegistration}>{waitlisted ? "Add another waitlist request" : "Start another registration"}</button>
             </div>
           </article>
@@ -1954,7 +1964,7 @@ export function PublicRegistrationForm({
     <main className="public-registration-page">
       <header className="public-registration-header">
         <div className="public-registration-header-inner">
-          <a className="public-registration-brand public-event-brand-link" href={`/events/${event.slug}`}><BrandMark /><span><strong>IMSDA</strong><small>Events</small></span></a>
+          <a {...eventsSiteNavigation} className="public-registration-brand public-event-brand-link" href={`/events/${event.slug}`}><BrandMark /><span><strong>IMSDA</strong><small>Events</small></span></a>
           <span className="public-registration-secure">{joiningWaitlist ? <Clock3 size={16} aria-hidden="true" /> : <LockKeyhole size={16} aria-hidden="true" />} {joiningWaitlist ? "Event waitlist" : "Secure event registration"}</span>
         </div>
       </header>
