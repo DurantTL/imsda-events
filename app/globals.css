@@ -650,11 +650,14 @@ select:focus-visible {
   color: var(--imsda-purple);
   padding: 7px 11px;
   font-size: 0.66rem;
+  font-family: inherit;
   font-weight: 800;
   text-decoration: none;
+  cursor: pointer;
 }
 
 .attendee-preview-switch:hover { border-color: var(--imsda-purple); }
+.attendee-preview-switch:disabled { cursor: wait; opacity: 0.68; }
 
 .menu-anchor { position: relative; }
 
@@ -687,6 +690,18 @@ select:focus-visible {
   padding-top: 11px;
   font-size: 0.68rem;
   font-weight: 700;
+}
+
+.account-switch-form { margin: 0; }
+.account-switch-button {
+  width: 100%;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .shell-loading {

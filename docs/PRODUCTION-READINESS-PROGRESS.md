@@ -353,7 +353,7 @@ Current verification against local PostgreSQL with all 45 migrations applied:
 npx prisma migrate deploy                    ✅ 45 migrations applied
 npm run lint                                 ✅
 npm run typecheck                            ✅
-npx vitest run                               ✅ 904 passed (148 files)
+npx vitest run                               ✅ 910 passed (149 files)
 npm run admin:create                         ✅ created and promoted; both guards exercised
 npm run admin:create --password-from-env     ✅ ACTIVE with a scrypt hash and no token row
 npm run admin:reset-mfa                      ✅ enrolment removed, sessions revoked

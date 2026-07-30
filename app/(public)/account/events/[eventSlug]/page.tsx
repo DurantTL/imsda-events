@@ -119,10 +119,14 @@ export default async function AttendeeEventHubPage({
             className="text-button"
             href={staffPreviewEventId
               ? `/overview?event=${encodeURIComponent(staffPreviewEventId)}`
-              : "/account"}
+              : staffSession.user
+                ? "/overview"
+                : "/account"}
           >
             <ArrowLeft size={15} aria-hidden="true" />
-            {staffPreviewEventId ? "Back to staff workspace" : "All registrations"}
+            {staffPreviewEventId || staffSession.user
+              ? "Back to staff workspace"
+              : "All registrations"}
           </Link>
         </div>
       </header>

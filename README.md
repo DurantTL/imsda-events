@@ -136,9 +136,12 @@ across events, a reusable profile that prefills matching fields, optional TOTP,
 Square balance payment, and contact edits protected by a single-use emailed code
 bound to the session that requested it.
 
-Staff can open their own matching attendee account from the staff shell when
-their verified staff email matches an active verified attendee account. This is
-not impersonation and cannot select another attendee.
+Staff can explicitly switch from the staff shell into a real attendee session
+for their own matching account when the normalized staff email matches an
+active verified attendee account. The switch endpoint accepts no attendee ID,
+so it cannot select or impersonate another attendee. The staff session remains
+available through **Back to staff workspace**. Staff without a matching account
+retain the read-only event preview.
 
 Google identities use the provider subject as the durable key. A verified
 same-email Google-only account may safely rebind after Google changes that

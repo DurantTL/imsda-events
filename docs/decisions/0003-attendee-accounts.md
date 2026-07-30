@@ -42,6 +42,13 @@ A `User` may be linked to an `AttendeeAccount` when both hold the same **verifie
 
 The rule that matters: **attendee mode shows the staff member their own registrations, never anyone else's.** It is a context switch, not an impersonation feature. Staff who need to see another person's registration already have the roster, which is permissioned, audited, and the correct tool. If impersonation is ever wanted it must be a separate, audited capability with its own decision — not a side effect of this one.
 
+The implemented switch is an authenticated same-origin POST that accepts no
+attendee identifier. The server resolves the staff session, derives the only
+eligible attendee account from the normalized staff email, creates the separate
+attendee session/cookie, and preserves the staff session for a visible return
+path. If no active verified account matches, the UI offers only the read-only
+event preview.
+
 ### An account may hold a second factor, but is not gated on having one
 
 Attendee accounts support TOTP enrolment from the start, using the same

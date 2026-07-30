@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import {
+  ArrowRightLeft,
   CheckCircle2,
   ChevronDown,
   CircleUserRound,
@@ -77,10 +78,12 @@ type ShellEvent = {
 type ShellUser = { displayName: string; email: string; globalRole?: "SYSTEM_ADMIN" | null };
 
 export function AppShell({
+  attendeeAccountAvailable = false,
   children,
   events,
   user,
 }: {
+  attendeeAccountAvailable?: boolean;
   children: React.ReactNode;
   events: ShellEvent[];
   user: ShellUser;
@@ -197,14 +200,29 @@ export function AppShell({
             </label>
           )}
           <div className="header-actions">
-            <Link
-              className="attendee-preview-switch"
-              href={attendeePreviewHref}
-              title={`Preview ${selectedEvent?.name ?? "this event"} as an attendee`}
-            >
-              <Eye aria-hidden="true" size={16} />
-              <span>Attendee experience</span>
-            </Link>
+            {attendeeAccountAvailable
+              ? (
+                <form action="/api/auth/switch-to-attendee" method="post">
+                  <button
+                    className="attendee-preview-switch"
+                    title="Switch to your matching attendee account"
+                    type="submit"
+                  >
+                    <ArrowRightLeft aria-hidden="true" size={16} />
+                    <span>My attendee account</span>
+                  </button>
+                </form>
+              )
+              : (
+                <Link
+                  className="attendee-preview-switch"
+                  href={attendeePreviewHref}
+                  title={`Preview ${selectedEvent?.name ?? "this event"} as an attendee`}
+                >
+                  <Eye aria-hidden="true" size={16} />
+                  <span>Attendee experience</span>
+                </Link>
+              )}
             <span className="staff-pill">Staff mode</span>
             <div className="menu-anchor">
               <button className="avatar" type="button" aria-label="Staff account" aria-expanded={openMenu === "account"} onClick={() => setOpenMenu(openMenu === "account" ? null : "account")}> 
@@ -218,6 +236,21 @@ export function AppShell({
                       <ShieldCheck aria-hidden="true" size={17} />
                       System management
                     </Link>
+                  )}
+                  {attendeeAccountAvailable && (
+                    <form
+                      action="/api/auth/switch-to-attendee"
+                      className="account-switch-form"
+                      method="post"
+                    >
+                      <button
+                        className="account-system-link account-switch-button"
+                        type="submit"
+                      >
+                        <ArrowRightLeft aria-hidden="true" size={17} />
+                        Switch to my attendee account
+                      </button>
+                    </form>
                   )}
                   <Link
                     className="account-system-link"

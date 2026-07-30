@@ -9,10 +9,13 @@ The repository now includes the first complete attendee event-day surface:
 - An authenticated retreat hub for active registrations with published event
   content, staff updates, current program assignments, check-in state, support
   details, resources, and one private QR pass per attendee.
-- An event-scoped, read-only staff switch into the attendee experience. It
-  shows the selected event's shared published content and Community placeholder
-  without requiring a second account or exposing a registrant's personal
-  registration, assignments, balances, or QR passes.
+- Two deliberate staff paths into attendee-facing work. A team member whose
+  normalized staff email matches an active verified attendee account can create
+  a real session for that same account and return to staff mode without another
+  login; the endpoint accepts no attendee ID. Everyone else retains an
+  event-scoped read-only preview of shared published content without personal
+  registrations, assignments, balances, QR passes, or attendee-authored
+  community actions.
 - Audited global team profiles. A system administrator can correct a team
   member's display name and record their title/responsibility, phone, and
   internal profile notes from System Management → Team; the event team view
@@ -78,7 +81,7 @@ the Square Sandbox rehearsal described below.
 | Conditions | One show/hide rule per field with equals, not-equals, includes, and has-answer operators; hidden required fields and hidden prices are skipped |
 | Pricing | Automatic fees, flat prices, quantity prices, per-choice prices, bounded fixed/percentage promo discounts, card-fee gross-up after discount, and date-driven standard/late prices |
 | Public registration | IMSDA-branded landing/form/embed views, published all-attendee event updates, multi-step add/remove/reorder roster flow, searchable dropdowns, first-attendee/primary-contact name syncing with an editable override, explicit promo Apply/Remove quotes, server validation/timezone pricing, immutable answer/order/redemption snapshots, waitlist routing, confirmation delivery, and private management link |
-| Private self-service | Hash-only expiring/revocable bearer links plus verified attendee accounts, no-store/noindex responses, contact edits, tiered low-risk attendee-answer edits, private event hub/QR passes, attendee/status/payment history, secure Square handoff, and a non-impersonating staff preview of shared attendee content |
+| Private self-service | Hash-only expiring/revocable bearer links plus verified attendee accounts, no-store/noindex responses, contact edits, tiered low-risk attendee-answer edits, private event hub/QR passes, attendee/status/payment history, secure Square handoff, an explicit same-email staff-to-own-attendee session switch, and a separate non-impersonating staff preview |
 | Availability | Event capacity, per-choice limits, registration/attendee reservations, ranked first/second counts, within-roster aggregation, serializable concurrency protection, cancellation release/reactivation, waitlist position, and automatic promotion |
 | Printing and release operations | Avery pass sheets, operational rosters, grouped retreat packets, print-only layouts, and release SHA/build ID visibility in the health endpoint |
 | Security | Same-origin mutations, strict public schemas, CSP and embed allow-list, hash-only sessions/reset/manage/rate-limit identifiers, trusted-proxy controls, provider signature verification, and production safety locks |
