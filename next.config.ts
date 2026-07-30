@@ -3,14 +3,14 @@ import type { NextConfig } from "next";
 const isDevelopment = process.env.NODE_ENV === "development";
 const embedAllowedOrigins = process.env.EMBED_ALLOWED_ORIGINS
   ?? "'self' https://imsda.org https://*.imsda.org";
-const squareProductionEnabled = process.env.SQUARE_ENVIRONMENT === "production"
-  && process.env.SQUARE_ENABLE_PRODUCTION === "true";
-const squareWebOrigin = squareProductionEnabled
-  ? "https://web.squarecdn.com"
-  : "https://sandbox.web.squarecdn.com";
-const squarePciOrigin = squareProductionEnabled
-  ? "https://pci-connect.squareup.com"
-  : "https://pci-connect.squareupsandbox.com";
+const squareWebOrigins = [
+  "https://web.squarecdn.com",
+  "https://sandbox.web.squarecdn.com",
+].join(" ");
+const squarePciOrigins = [
+  "https://pci-connect.squareup.com",
+  "https://pci-connect.squareupsandbox.com",
+].join(" ");
 const squareTelemetryOrigin = "https://o160250.ingest.sentry.io";
 const squareFontOrigins = [
   "https://square-fonts-production-f.squarecdn.com",
@@ -21,12 +21,12 @@ const buildTsconfigPath = process.env.NEXT_BUILD_TSCONFIG?.trim() || "tsconfig.j
 function contentSecurityPolicy(frameAncestors: string) {
   return [
     "default-src 'self'",
-    `script-src 'self' 'unsafe-inline' ${squareWebOrigin}${isDevelopment ? " 'unsafe-eval'" : ""}`,
-    `style-src 'self' 'unsafe-inline' ${squareWebOrigin}`,
+    `script-src 'self' 'unsafe-inline' ${squareWebOrigins}${isDevelopment ? " 'unsafe-eval'" : ""}`,
+    `style-src 'self' 'unsafe-inline' ${squareWebOrigins}`,
     "img-src 'self' blob: data:",
     `font-src 'self' data: ${squareFontOrigins}`,
-    `connect-src 'self' ${squareWebOrigin} ${squarePciOrigin} ${squareTelemetryOrigin}`,
-    `frame-src 'self' ${squareWebOrigin}`,
+    `connect-src 'self' ${squareWebOrigins} ${squarePciOrigins} ${squareTelemetryOrigin}`,
+    `frame-src 'self' ${squareWebOrigins}`,
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
