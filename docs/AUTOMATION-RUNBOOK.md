@@ -4,10 +4,12 @@ This repository uses a reviewable, one-issue delivery loop:
 
 1. Draft a feature in Obsidian with the
    [feature-spec template](templates/OBSIDIAN-FEATURE-SPEC.md). Obsidian is for
-   drafting only.
-2. After a human approves the specification, preview
-   `npm run issue:from-spec -- <spec.md>`. Apply it with `--apply`. The helper is
-   idempotent by Spec ID and never overwrites an existing issue.
+   drafting only. Keep the required YAML frontmatter intact: `spec_id`,
+   `status`, `milestone`, `risk`, and `github_issue_url`.
+2. Preview with `npm run issue:from-spec -- <spec.md>`; preview mode never
+   changes GitHub or the note. After a human sets `status: approved`, apply with
+   `--apply`. The helper is idempotent by `spec_id`, never overwrites an existing
+   issue, and records the authoritative issue URL in `github_issue_url`.
 3. GitHub becomes authoritative when the approved issue exists. Add
    `codex-ready` only when its behavior and acceptance criteria are buildable.
 4. Use one issue, one branch, and one isolated worktree. `$imsda-build` may
