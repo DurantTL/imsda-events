@@ -32,7 +32,7 @@ services:
         # Public, non-secret values consumed while Next compiles metadata and
         # response headers. The same values are supplied at runtime below.
         APP_BASE_URL: ${APP_BASE_URL?set this to the new public https origin}
-        EMBED_ALLOWED_ORIGINS: ${EMBED_ALLOWED_ORIGINS:-'self' https://imsda.org https://www.imsda.org}
+        EMBED_ALLOWED_ORIGINS: ${EMBED_ALLOWED_ORIGINS:-'self' https://imsda.org https://*.imsda.org}
         SQUARE_ENVIRONMENT: ${SQUARE_ENVIRONMENT:-sandbox}
         SQUARE_ENABLE_PRODUCTION: ${SQUARE_ENABLE_PRODUCTION:-false}
         APP_RELEASE_SHA: ${APP_RELEASE_SHA:-}

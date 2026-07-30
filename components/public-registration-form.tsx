@@ -51,6 +51,12 @@ import {
   syncFirstAttendeeNameChange,
 } from "@/modules/forms/primary-attendee-sync";
 
+declare global {
+  interface Window {
+    imsdaEmbedScrollTop?: () => void;
+  }
+}
+
 type ResponseValue = string | boolean | string[];
 type FormResponses = Record<string, ResponseValue>;
 type FormIssue = {
@@ -447,6 +453,7 @@ export function PublicRegistrationForm({
     if (targetStep) setCurrentStepId(targetStep.id);
     setIssues(scopedIssues.length > 0 ? scopedIssues : nextIssues);
     setError(message);
+    window.imsdaEmbedScrollTop?.();
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => errorSummaryRef.current?.focus());
     });
@@ -456,6 +463,7 @@ export function PublicRegistrationForm({
     setCurrentStepId(step.id);
     setIssues([]);
     setError("");
+    window.imsdaEmbedScrollTop?.();
     window.requestAnimationFrame(() => stepHeadingRef.current?.focus());
   }
 
@@ -1809,9 +1817,11 @@ export function PublicRegistrationForm({
         return;
       }
       setConfirmation(result.confirmation);
+      window.imsdaEmbedScrollTop?.();
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch {
       setError("We could not reach the registration service. Your answers are still here; please try again.");
+      window.imsdaEmbedScrollTop?.();
       window.requestAnimationFrame(() => errorSummaryRef.current?.focus());
     } finally {
       setSubmitting(false);
@@ -1832,6 +1842,7 @@ export function PublicRegistrationForm({
     setPromoCodeNotice("");
     setIdempotencyKey(null);
     setCurrentStepId(registrationSteps[0]?.id ?? "__review");
+    window.imsdaEmbedScrollTop?.();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 

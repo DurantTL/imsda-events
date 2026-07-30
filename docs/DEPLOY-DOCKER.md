@@ -102,8 +102,14 @@ BACKUP_VERIFY_EVERY=7            # rehearse a restore every Nth backup
 BACKUP_OFFSITE_COMMAND=          # receives each database/asset backup path as $1
 GOOGLE_OAUTH_CLIENT_ID=          # set both Google values or leave both blank
 GOOGLE_OAUTH_CLIENT_SECRET=
-EMBED_ALLOWED_ORIGINS='self' https://imsda.org https://www.imsda.org
+EMBED_ALLOWED_ORIGINS='self' https://imsda.org https://*.imsda.org
 ```
+
+Add each approved church website origin to `EMBED_ALLOWED_ORIGINS`; do not use
+a bare `*`. The embed response uses this value for CSP `frame-ancestors` and does not
+send a conflicting `X-Frame-Options: SAMEORIGIN` header. Because the public
+registration POST is stateless, it does not require a `SameSite=None` session
+cookie inside the third-party frame.
 
 (There is no `POSTGRES_HOST_PORT` to set for deployment — the database is not published
 to the host at all. That variable only matters for the local `docker-compose.dev.yml` overlay.)

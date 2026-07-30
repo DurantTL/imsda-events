@@ -15,7 +15,7 @@ ENV NEXT_BUILD_TSCONFIG=tsconfig.build.json
 # Passing them into the image keeps canonical URLs, iframe policy, and Square's
 # CSP hosts aligned when a deployment moves to a different public origin.
 ARG APP_BASE_URL=http://localhost:3000
-ARG EMBED_ALLOWED_ORIGINS="'self' https://imsda.org https://www.imsda.org"
+ARG EMBED_ALLOWED_ORIGINS="'self' https://imsda.org https://*.imsda.org"
 ARG SQUARE_ENVIRONMENT=sandbox
 ARG SQUARE_ENABLE_PRODUCTION=false
 ARG APP_RELEASE_SHA=

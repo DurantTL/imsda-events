@@ -153,6 +153,20 @@ kept on `TIERED`.
 See [the attendee-account release checklist](docs/ATTENDEE-ACCOUNT-RELEASE.md)
 before enabling these paths against production providers.
 
+### Registration embeds
+
+Event settings generates one complete iframe-and-script block for each
+published form. The embed-only layout reports its content height as fields,
+steps, validation, and confirmation change; the host helper validates the
+message origin, resizes the exact sending iframe, and scrolls that frame back
+into view when the registrant advances or needs to correct an error. The 900px
+iframe height remains a usable fallback when host JavaScript is blocked.
+
+`EMBED_ALLOWED_ORIGINS` is the authoritative `frame-ancestors` allow-list. The
+embed flow is anonymous and stateless: registration submission does not depend
+on a third-party session or CSRF cookie, and payment continues from the private
+top-level registration page.
+
 ### Attendee community
 
 Each event may opt in to a community for attendee accounts with an active
@@ -300,7 +314,7 @@ The workspace preserves the calm operational structure of WR26 App V2 while usin
 - event selector plus Overview, People, Check-in, Communications, and More routes
 - working event selection that follows staff between pages
 
-The current UI writes authoritative operational state to the configured IMSDA Events PostgreSQL database. Staff sign-in/out, local recovery, event role/status management, registration create/edit, reviewed whole-registration transfer, in-place attendee substitution, party attendees, manual payments, partial offline refunds, signed attendee passes, camera/manual pass resolution, partial-party check-in/online undo, recoverable device-local offline check-in, CSV export, audit history, announcement draft/publish with a filtered public all-attendee feed, reviewed CSV imports, registration-form draft/test/publish, and message-template/outbox workflows are functional. A published form is available at `/register/{event-slug}/{form-slug}` and can save either one attendee or an ordered household/group roster locally. It records attendee-scoped answers, pricing, capacity claims, and the exact confirmation after commit. A private management link can collect the remaining card balance through Square Sandbox when configured; no real payment is possible with the default configuration.
+The current UI writes authoritative operational state to the configured IMSDA Events PostgreSQL database. Staff sign-in/out, local recovery, event role/status management, registration create/edit, reviewed whole-registration transfer, in-place attendee substitution, party attendees, manual payments, partial offline refunds, signed attendee passes, camera/manual pass resolution, partial-party check-in/online undo, recoverable device-local offline check-in, CSV export, audit history, announcement draft/publish with a filtered public all-attendee feed, reviewed CSV imports, registration-form draft/test/publish, and message-template/outbox workflows are functional. A published form is available at `/register/{event-slug}/{form-slug}` and through an allow-listed, automatically resizing `/embed/{event-slug}/{form-slug}` iframe. It can save either one attendee or an ordered household/group roster locally. It records attendee-scoped answers, pricing, capacity claims, and the exact confirmation after commit. A private management link can collect the remaining card balance through Square Sandbox when configured; no real payment is possible with the default configuration.
 
 ## Registration builder workflow
 

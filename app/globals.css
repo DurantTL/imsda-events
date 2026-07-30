@@ -279,6 +279,21 @@ body {
   line-height: 1.5;
 }
 
+html:has(.imsda-embed-layout),
+html:has(.imsda-embed-layout) body {
+  height: auto;
+  min-height: 0;
+  margin: 0;
+  overflow: visible;
+  padding: 0;
+}
+
+.imsda-embed-layout {
+  display: flow-root;
+  min-height: 0;
+  overflow: visible;
+}
+
 button,
 input,
 select,
@@ -1625,18 +1640,18 @@ select:focus-visible {
 .import-change-list dd small { color: var(--muted); font-size: 0.56rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
 
 .public-registration-embed {
-  min-height: 100vh;
+  min-height: 0;
   background: var(--surface-soft);
 }
 .public-registration-embed .public-registration-header {
   display: none;
 }
 .public-registration-embed .public-registration-page {
-  min-height: 100vh;
+  min-height: 0;
 }
 .public-registration-embed-state {
   display: grid;
-  min-height: 100vh;
+  min-height: 0;
   place-content: center;
   justify-items: start;
   gap: 12px;

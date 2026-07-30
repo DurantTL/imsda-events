@@ -27,6 +27,12 @@ The repository now includes the first complete attendee event-day surface:
 - Searchable dropdowns across public registration, builder preview, and
   attendee self-service editing. Long church and club directories can be
   filtered by typing while remaining keyboard accessible.
+- A complete auto-sizing website embed block generated from event settings.
+  The embed-only layout removes viewport-height constraints, reports content
+  changes, and asks the approved host page to reveal the correct frame on step
+  changes, validation errors, and confirmation. Multiple frames are matched by
+  their sending `contentWindow`; anonymous submission remains independent of
+  third-party cookies.
 - Faster form creation with module search/category filters, one-click field
   copying, a ready-to-use searchable church-directory module, section-size
   safeguards, and clearer module discovery.
@@ -70,7 +76,7 @@ the Square Sandbox rehearsal described below.
 | Area | Current capability |
 | --- | --- |
 | Staff access | Password login, database sessions, password recovery, event-scoped roles/permissions, staff activation safeguards, audited global names/profile details, and durable hash-only rate limits |
-| Multi-event operations | Event creation/settings, publishing readiness, public event pages, website embed code, event selector, database-derived overview, and event-scoped authorization |
+| Multi-event operations | Event creation/settings, publishing readiness, public event pages, generated auto-sizing website embed block, event selector, database-derived overview, and event-scoped authorization |
 | People and registrations | Registration CRUD, ordered attendee parties, public individual/household/group submission, immutable answer review, explicit cancel/reactivate/waitlist/promote actions, automatic promotion, staff-only whole-registration transfer and in-place attendee substitution, balances, and CSV export |
 | Finance | Manual cash/check payments, partial offline refunds, bounded event promo codes, Square Sandbox checkout, durable payment attempts, signed payment/refund webhooks, balance calculation, and audit records |
 | Check-in | Attendee search, individual check-in/online undo, signed PII-free QR passes, camera/manual resolution, visible staff confirmation, and a recoverable device-local offline check-in queue |
@@ -80,7 +86,7 @@ the Square Sandbox rehearsal described below.
 | Form builder | Seven templates, searchable/category-filtered reusable modules, field copying, individual/group mode, repeatable attendee preview, sections/fields, drag and button reordering, validation tests, immutable publication and version history |
 | Conditions | One show/hide rule per field with equals, not-equals, includes, and has-answer operators; hidden required fields and hidden prices are skipped |
 | Pricing | Automatic fees, flat prices, quantity prices, per-choice prices, bounded fixed/percentage promo discounts, card-fee gross-up after discount, and date-driven standard/late prices |
-| Public registration | IMSDA-branded landing/form/embed views, published all-attendee event updates, multi-step add/remove/reorder roster flow, searchable dropdowns, first-attendee/primary-contact name syncing with an editable override, explicit promo Apply/Remove quotes, server validation/timezone pricing, immutable answer/order/redemption snapshots, waitlist routing, confirmation delivery, and private management link |
+| Public registration | IMSDA-branded landing/form/embed views, allow-listed automatic iframe resizing and parent scroll coordination, published all-attendee event updates, multi-step add/remove/reorder roster flow, searchable dropdowns, first-attendee/primary-contact name syncing with an editable override, explicit promo Apply/Remove quotes, server validation/timezone pricing, immutable answer/order/redemption snapshots, waitlist routing, confirmation delivery, and private management link |
 | Private self-service | Hash-only expiring/revocable bearer links plus verified attendee accounts, no-store/noindex responses, contact edits, tiered low-risk attendee-answer edits, private event hub/QR passes, attendee/status/payment history, secure Square handoff, an explicit same-email staff-to-own-attendee session switch, and a separate non-impersonating staff preview |
 | Availability | Event capacity, per-choice limits, registration/attendee reservations, ranked first/second counts, within-roster aggregation, serializable concurrency protection, cancellation release/reactivation, waitlist position, and automatic promotion |
 | Printing and release operations | Avery pass sheets, operational rosters, grouped retreat packets, print-only layouts, and release SHA/build ID visibility in the health endpoint |
@@ -89,7 +95,7 @@ the Square Sandbox rehearsal described below.
 ## Important scope boundaries
 
 - Builder-preview counts come from valid fictitious **test submissions**; the public form separately shows committed reservation counts.
-- Publishing activates `/events/{event-slug}`, `/register/{event-slug}/{form-slug}`, and the noindex `/embed/{event-slug}/{form-slug}` view.
+- Publishing activates `/events/{event-slug}`, `/register/{event-slug}/{form-slug}`, and the noindex `/embed/{event-slug}/{form-slug}` view. Event settings copies the iframe plus `/embed/embed-host.js` as one block; `/embed/embed.js` is loaded only by the embedded layout.
 - Public submission recomputes pricing, conditions, capacity, and waitlist eligibility server-side. A waitlist request records no payment choice or card fee. After promotion, its private page requires an explicit card or pay-later choice, shows both totals, and adds the configured gross-up exactly once from the preserved discounted subtotal before Square hosted fields can load.
 - Square and Resend are implemented but disabled with blank local credentials. Square remains Sandbox by default and Production requires a separate explicit unlock.
 - Private self-service permits contact edits and tiered low-risk structured

@@ -20,6 +20,7 @@ import {
   eventTimeZones,
   type EventSettingsInput,
 } from "@/modules/events/schemas";
+import { buildRegistrationEmbedCode } from "@/modules/forms/embed";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 
 type EventSettingsWorkspaceProps = {
@@ -176,15 +177,16 @@ export function EventSettingsWorkspace({
   }
 
   async function copyEmbedCode(formSlug: string) {
-    const source = new URL(
-      `/embed/${encodeURIComponent(draft.slug)}/${encodeURIComponent(formSlug)}`,
-      window.location.origin,
-    ).toString();
-    const code = `<iframe src="${source}" title="${draft.name} registration" width="100%" height="900" style="border:0" loading="lazy"></iframe>`;
+    const code = buildRegistrationEmbedCode({
+      origin: window.location.origin,
+      eventSlug: draft.slug,
+      formSlug,
+      eventName: draft.name,
+    });
     try {
       await navigator.clipboard.writeText(code);
       setCopiedFormSlug(formSlug);
-      setNotice("Embed code copied. Paste it into an IMSDA.org Custom HTML block.");
+      setNotice("Auto-sizing embed code copied. Paste the full block into the website’s Custom HTML area.");
       setError("");
     } catch {
       setError("The embed code could not be copied. Open the embedded form and copy its address instead.");
@@ -425,7 +427,7 @@ export function EventSettingsWorkspace({
                       </article>
                     ))}
                   </div>
-                  <small className="event-embed-note"><Code2 size={14} aria-hidden="true" /> Embeds are accepted only when displayed on IMSDA.org.</small>
+                  <small className="event-embed-note"><Code2 size={14} aria-hidden="true" /> The full block includes automatic height and scroll handling. It works only on domains allowed by the deployment’s embed policy.</small>
                 </>
               ) : (
                 <p>Publish the event and at least one registration form to unlock its public link and website embed code.</p>
