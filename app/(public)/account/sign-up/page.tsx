@@ -20,11 +20,16 @@ export const metadata: Metadata = {
 export default async function AttendeeSignUpPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{
+    error?: string | string[];
+  }>;
 }) {
   if ((await getCurrentAttendee()).account) redirect("/account");
 
-  const { error } = await searchParams;
+  const parameters = await searchParams;
+  const error = typeof parameters.error === "string"
+    ? parameters.error
+    : undefined;
   const errorMessage = attendeeSignInErrorMessage(error);
   const googleAvailable = isGoogleSignInConfigured();
 

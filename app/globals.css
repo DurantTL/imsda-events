@@ -3540,6 +3540,12 @@ select:focus-visible {
 .public-registration-manage-link { display: grid; gap: 8px; margin-top: 22px; border-radius: 14px; background: var(--imsda-purple-soft); padding: 14px; text-align: left; }
 .public-registration-manage-link > a { display: inline-flex; min-height: 46px; align-items: center; justify-content: center; gap: 7px; border-radius: 11px; background: var(--imsda-purple); color: white; padding: 11px 15px; font-size: 0.78rem; font-weight: 800; text-decoration: none; }
 .public-registration-manage-link > small { color: #5b4c66; font-size: 0.62rem; line-height: 1.5; }
+.public-registration-account-prompt { display: grid; grid-template-columns: auto 1fr; gap: 12px; margin-top: 14px; border: 1px solid #d8cce2; border-radius: 14px; background: #fbf8fd; padding: 15px; text-align: left; }
+.public-registration-account-prompt > span { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 11px; background: var(--imsda-purple-soft); color: var(--imsda-purple); }
+.public-registration-account-prompt h2 { margin: 2px 0 5px; font-size: 0.94rem; }
+.public-registration-account-prompt p:not(.public-registration-eyebrow) { margin: 0; color: #5b4c66; font-size: 0.7rem; line-height: 1.55; }
+.public-registration-account-prompt a { display: inline-flex; min-height: 38px; align-items: center; justify-content: center; gap: 6px; margin-top: 10px; border-radius: 9px; background: white; box-shadow: inset 0 0 0 1px #bda9ce; color: var(--imsda-purple); padding: 8px 12px; font-size: 0.7rem; font-weight: 800; text-decoration: none; }
+.public-registration-account-prompt small { display: block; margin-top: 7px; color: #77677f; font-size: 0.6rem; line-height: 1.45; }
 .public-registration-confirmation-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 .public-registration-confirmation-actions .public-registration-secondary-button { flex: 1 1 180px; margin: 16px 0 0; }
 
