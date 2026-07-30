@@ -1,0 +1,57 @@
+name: Bug
+description: Report one reproducible defect.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: Use synthetic examples only. Do not include participant or sensitive operational data.
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: State the correct outcome.
+    validations:
+      required: true
+  - type: textarea
+    id: user_workflow
+    attributes:
+      label: User workflow
+      description: Give minimal reproduction steps, expected behavior, and actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: business_rules
+    attributes:
+      label: Business rules
+      description: Identify the rule or invariant the defect violates.
+    validations:
+      required: true
+  - type: textarea
+    id: security_privacy
+    attributes:
+      label: Security/privacy impact
+      description: Identify affected permissions or sensitive data, or write "None".
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance criteria
+      description: Define the regression behavior that proves the fix.
+      placeholder: "- [ ] ..."
+    validations:
+      required: true
+  - type: textarea
+    id: verification_required
+    attributes:
+      label: Verification required
+      description: List the regression test and any manual confirmation.
+    validations:
+      required: true
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: State related cleanup or redesign excluded from this fix.
+    validations:
+      required: true

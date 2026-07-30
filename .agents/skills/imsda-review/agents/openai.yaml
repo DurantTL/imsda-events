@@ -1,0 +1,4 @@
+interface:
+  display_name: "IMSDA Review"
+  short_description: "Review one IMSDA pull request safely"
+  default_prompt: "Use $imsda-review to review one IMSDA pull request and report actionable findings."

@@ -178,7 +178,13 @@ IMSDA Events implements the shared versioned-template, outbox, idempotency, retr
 - Creating a zero-dollar registration during waitlist promotion
 - Enabling Square Production by default
 
-## Recommended build order
+## Roadmap and build order
+
+WR26 completion and operational readiness come first. Community and grouped
+packets are complete; the remaining gate is a controlled deployment,
+migration/configuration review, Square Sandbox rehearsal, and the documented
+operational checks. Automation may prepare evidence, but humans perform every
+production action.
 
 | Priority | Build | Acceptance gate |
 | --- | --- | --- |
@@ -197,7 +203,61 @@ IMSDA Events implements the shared versioned-template, outbox, idempotency, retr
 | Complete | Transfer workflow | Two-step staff review, whole-registration transfer, in-place attendee substitution, durable idempotency, immutable operation snapshots, access revocation/reissue, and versioned notices |
 | Complete | Program operations | Ranked assignment preview/run and rosters plus meal, housing, seminar, childcare, volunteer, and attendance reports |
 | Complete | Attendee community expansion | Opt-in attendee posts, staff moderation/reporting, conduct copy, retention policy, and notification controls |
-| 4 | Communications expansion | Targeted/scheduled announcements, SMS/push adapters, preferences, unsubscribe, and urgent alerts |
+| Now | WR26 operational readiness | Human-reviewed deployment rehearsal, production configuration and migration plan, Square Sandbox exercise, rollback evidence, and event-day sign-off |
+| Next | Repeat-event and versioned blueprint support | A prior event can seed a reviewed new-event draft without copying registrations, people, secrets, or live operational state; blueprint versions remain immutable and attributable |
+| Next | Permanent person participation model | Introduce an explicit `UserAccount ↔ Person` link while preserving staff/attendee authorization isolation, then model `Person → EventParticipation` and `Person → ClubYearMembership`; identity merging remains a human-only workflow |
+| Then | Versioned consent and approval workflows | Consent text, acceptance, withdrawal, approval policy, reviewer, and evidence are versioned and auditable without rewriting history |
+| Then | Protected medical and allergy records | Medical records and allergy records are separately stored and permissioned, encrypted under an approved design, audited, minimized, retained, exported, and deleted under human-approved rules |
+| Later | Communications expansion | Targeted/scheduled announcements, SMS/push adapters, preferences, unsubscribe, and urgent alerts |
+
+The future model names above are roadmap concepts, not current-schema claims.
+Today `User` and `AttendeeAccount` remain separate security principals and
+`RegistrationAttendee` is the event-scoped participation record. Any transition
+requires its own issue, ADR-quality decision, migration/rollback plan, and
+permission tests.
+
+## Canonical execution-plan template
+
+Use this section inside the approved GitHub issue; GitHub is authoritative for
+scope once the issue is approved. One execution plan covers one issue and one
+isolated worktree.
+
+### Issue and outcome
+
+- Issue:
+- Branch/worktree:
+- Goal:
+- User workflow:
+
+### Rules and boundaries
+
+- Business rules:
+- Security/privacy impact:
+- Human-only gates:
+- Out of scope:
+
+### Source evidence
+
+- Graphify query and relevant nodes:
+- Current source files that verify the graph:
+- Owning modular-monolith boundary:
+
+### Implementation
+
+- Acceptance-criterion steps:
+- Tests to add or change:
+- Database/migration and rollback considerations:
+
+### Verification
+
+- Targeted commands:
+- Synthetic manual scenarios:
+- Full GitHub CI evidence:
+
+### Decisions
+
+- Resolved decisions:
+- Unresolved material decisions (`needs-decision`; stop until resolved):
 
 ## Repository delivery status
 

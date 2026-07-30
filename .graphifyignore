@@ -1,0 +1,37 @@
+# Graphify 0.9.28 uses gitignore syntax, including anchored paths and negation.
+
+# Dependencies and generated output
+/node_modules/
+/.next/
+/out/
+/build/
+/dist/
+/coverage/
+/graphify-out/
+
+# Secrets and credentials
+/.env
+/.env.*
+!/.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+**/credentials.json
+**/service-account*.json
+/secrets/
+
+# Runtime or exported data (keep source import modules, tests, and migrations)
+/storage/
+/uploads/
+/exports/
+/backups/
+/production-data/
+/prod-data/
+/medical-documents/
+/insurance-documents/
+*.sql.gz
+*.dump
+*.bak
+*.backup
