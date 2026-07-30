@@ -9,6 +9,7 @@ import {
   CircleUserRound,
   LayoutDashboard,
   FileUp,
+  Eye,
   Megaphone,
   MoreHorizontal,
   PanelsTopLeft,
@@ -67,7 +68,12 @@ const navigation: readonly NavigationItem[] = [
   },
 ];
 
-type ShellEvent = { id: string; name: string; permissions: readonly EventPermission[] };
+type ShellEvent = {
+  id: string;
+  slug: string;
+  name: string;
+  permissions: readonly EventPermission[];
+};
 type ShellUser = { displayName: string; email: string; globalRole?: "SYSTEM_ADMIN" | null };
 
 export function AppShell({
@@ -90,6 +96,7 @@ export function AppShell({
   const selectedEventId = events.some((event) => event.id === searchParams.get("event"))
     ? searchParams.get("event")!
     : events[0]?.id ?? "";
+  const selectedEvent = events.find((event) => event.id === selectedEventId) ?? events[0];
   const selectedPermissions = new Set(
     events.find((event) => event.id === selectedEventId)?.permissions ?? [],
   );
@@ -102,6 +109,9 @@ export function AppShell({
     return true;
   });
   const eventQuery = selectedEventId ? `?event=${encodeURIComponent(selectedEventId)}` : "";
+  const attendeePreviewHref = selectedEvent
+    ? `/account/events/${encodeURIComponent(selectedEvent.slug)}?preview=staff`
+    : "/account";
 
   function selectEvent(eventId: string) {
     const params = new URLSearchParams(searchParams.toString());
@@ -187,6 +197,14 @@ export function AppShell({
             </label>
           )}
           <div className="header-actions">
+            <Link
+              className="attendee-preview-switch"
+              href={attendeePreviewHref}
+              title={`Preview ${selectedEvent?.name ?? "this event"} as an attendee`}
+            >
+              <Eye aria-hidden="true" size={16} />
+              <span>Attendee experience</span>
+            </Link>
             <span className="staff-pill">Staff mode</span>
             <div className="menu-anchor">
               <button className="avatar" type="button" aria-label="Staff account" aria-expanded={openMenu === "account"} onClick={() => setOpenMenu(openMenu === "account" ? null : "account")}> 
@@ -203,11 +221,11 @@ export function AppShell({
                   )}
                   <Link
                     className="account-system-link"
-                    href="/account"
+                    href={attendeePreviewHref}
                     onClick={() => setOpenMenu(null)}
                   >
-                    <CircleUserRound aria-hidden="true" size={17} />
-                    My registrations
+                    <Eye aria-hidden="true" size={17} />
+                    Preview attendee experience
                   </Link>
                   <SignOutButton />
                 </div>

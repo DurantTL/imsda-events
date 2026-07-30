@@ -13,6 +13,7 @@ export default async function WorkspaceLayout({ children }: { children: React.Re
     : await listActiveEventPermissionsForUser(user.id, events.map((event) => event.id));
   const shellEvents = events.map((event) => ({
     id: event.id,
+    slug: event.slug,
     name: event.name,
     permissions: permissionsByEvent.get(event.id) ?? [],
   }));

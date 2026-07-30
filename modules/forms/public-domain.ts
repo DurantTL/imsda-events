@@ -89,6 +89,16 @@ const fullNameKeys = [
   "household_name",
 ] as const;
 
+const splitNameKeyPairs = [
+  { first: "first_name", last: "last_name" },
+  {
+    first: "primary_contact_first_name",
+    last: "primary_contact_last_name",
+  },
+  { first: "contact_first_name", last: "contact_last_name" },
+  { first: "registrant_first_name", last: "registrant_last_name" },
+] as const;
+
 function formFields(definition: RegistrationFormDefinition) {
   return definition.sections.flatMap((section) => section.fields);
 }
@@ -203,11 +213,17 @@ function extractName(
   fields: RegistrationFormField[],
   responses: Record<string, unknown>,
 ) {
-  const firstNameField = fields.find((field) => field.key === "first_name");
-  const lastNameField = fields.find((field) => field.key === "last_name");
-  const firstName = firstNameField ? stringResponse(responses, firstNameField.key) : null;
-  const lastName = lastNameField ? stringResponse(responses, lastNameField.key) : null;
-  if (firstName && lastName) return { firstName, lastName };
+  for (const pair of splitNameKeyPairs) {
+    const firstNameField = fields.find((field) => field.key === pair.first);
+    const lastNameField = fields.find((field) => field.key === pair.last);
+    const firstName = firstNameField
+      ? stringResponse(responses, firstNameField.key)
+      : null;
+    const lastName = lastNameField
+      ? stringResponse(responses, lastNameField.key)
+      : null;
+    if (firstName && lastName) return { firstName, lastName };
+  }
   for (const key of fullNameKeys) {
     const field = fields.find((candidate) => candidate.key === key);
     const value = field ? stringResponse(responses, field.key) : null;
@@ -251,14 +267,16 @@ export function extractPublicContactIdentity(
     }));
   }
 
-  const configuredFirstName = fields.some((field) => field.key === "first_name");
-  const configuredLastName = fields.some((field) => field.key === "last_name");
+  const configuredSplitName = splitNameKeyPairs.find((pair) => (
+    fields.some((field) => field.key === pair.first)
+    && fields.some((field) => field.key === pair.last)
+  ));
   const configuredFullName = fields.find((field) => fullNameKeys.includes(field.key as typeof fullNameKeys[number]));
   if (!name) {
-    const configured = (configuredFirstName && configuredLastName) || Boolean(configuredFullName);
+    const configured = Boolean(configuredSplitName) || Boolean(configuredFullName);
     const nameField: RegistrationFormField | undefined = configuredFullName
-      ?? fields.find((field) => field.key === "first_name")
-      ?? fields.find((field) => field.key === "last_name");
+      ?? fields.find((field) => field.key === configuredSplitName?.first)
+      ?? fields.find((field) => field.key === configuredSplitName?.last);
     issues.push(makeIssue({
       kind: configured ? "validation" : "configuration",
       code: "CONTACT_NAME_REQUIRED",
@@ -266,7 +284,7 @@ export function extractPublicContactIdentity(
       key: nameField?.key ?? "name",
       message: configured
         ? "A first and last name are required to create this registration."
-        : "This published form does not configure first_name/last_name or a supported full-name field.",
+        : "This published form does not configure a supported first/last-name pair or full-name field.",
     }));
   }
 

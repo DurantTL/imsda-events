@@ -9,6 +9,24 @@ The repository now includes the first complete attendee event-day surface:
 - An authenticated retreat hub for active registrations with published event
   content, staff updates, current program assignments, check-in state, support
   details, resources, and one private QR pass per attendee.
+- An event-scoped, read-only staff switch into the attendee experience. It
+  shows the selected event's shared published content and Community placeholder
+  without requiring a second account or exposing a registrant's personal
+  registration, assignments, balances, or QR passes.
+- Audited global team profiles. A system administrator can correct a team
+  member's display name and record their title/responsibility, phone, and
+  internal profile notes from System Management → Team; the event team view
+  shows those details without creating a competing event-specific profile.
+- Women’s Retreat primary-contact name syncing. The first attendee starts with
+  the name of the person completing the form and follows contact-name edits
+  until the attendee name is deliberately changed. The primary contact remains
+  the saved registration/account holder if attendee one is someone else.
+- Searchable dropdowns across public registration, builder preview, and
+  attendee self-service editing. Long church and club directories can be
+  filtered by typing while remaining keyboard accessible.
+- Faster form creation with module search/category filters, one-click field
+  copying, a ready-to-use searchable church-directory module, section-size
+  safeguards, and clearer module discovery.
 - Tiered account editing for low-risk structured attendee answers such as meal,
   shirt, volunteer, and session choices. Identity, demographic, medical,
   accessibility, priced, capacity-controlled, and protected conditional fields
@@ -26,26 +44,26 @@ The repository now includes the first complete attendee event-day surface:
   the feed alone still never sends email.
 
 Repository verification is green: lint, generated route types, TypeScript, all
-872 tests, and the Next.js production build. Deployment still requires migration
-43, a controlled data/configuration check against the deployed environment, and
+tests, and the Next.js production build. Deployment still requires migration
+44, a controlled data/configuration check against the deployed environment, and
 the Square Sandbox rehearsal described below.
 
 ## What is working locally
 
 | Area | Current capability |
 | --- | --- |
-| Staff access | Password login, database sessions, password recovery, event-scoped roles/permissions, staff activation safeguards, and durable hash-only rate limits |
+| Staff access | Password login, database sessions, password recovery, event-scoped roles/permissions, staff activation safeguards, audited global names/profile details, and durable hash-only rate limits |
 | Multi-event operations | Event creation/settings, publishing readiness, public event pages, website embed code, event selector, database-derived overview, and event-scoped authorization |
 | People and registrations | Registration CRUD, ordered attendee parties, public individual/household/group submission, immutable answer review, explicit cancel/reactivate/waitlist/promote actions, automatic promotion, staff-only whole-registration transfer and in-place attendee substitution, balances, and CSV export |
 | Finance | Manual cash/check payments, partial offline refunds, bounded event promo codes, Square Sandbox checkout, durable payment attempts, signed payment/refund webhooks, balance calculation, and audit records |
 | Check-in | Attendee search, individual check-in/online undo, signed PII-free QR passes, camera/manual resolution, visible staff confirmation, and a recoverable device-local offline check-in queue |
-| Communications | Announcement drafts/publication with public and authenticated feeds, explicitly confirmed email broadcasts, event sender settings, fifteen versioned event templates, transactional outbox, transfer/substitution notices, exact-audience balance-reminder preview/batches, corrected-address immutable confirmation copies, local capture or Resend delivery, provider-event history, retry/backoff, and audited retry |
+| Communications | Announcement drafts/publication with public and authenticated feeds, explicitly confirmed email broadcasts, event sender settings, fifteen versioned event templates, transactional outbox, transfer/substitution notices, exact-audience balance-reminder preview/batches, corrected-address immutable confirmation copies, local capture or Resend delivery, provider-event history, retry/backoff, audited retry, and corrected-copy recovery for legacy failures whose sender snapshot was blank |
 | Imports | CSV preview, validation, matching, reviewed commit, reconciliation totals, exception export |
-| Form builder | Seven templates, reusable modules, individual/group mode, repeatable attendee preview, sections/fields, drag and button reordering, validation tests, immutable publication and version history |
+| Form builder | Seven templates, searchable/category-filtered reusable modules, field copying, individual/group mode, repeatable attendee preview, sections/fields, drag and button reordering, validation tests, immutable publication and version history |
 | Conditions | One show/hide rule per field with equals, not-equals, includes, and has-answer operators; hidden required fields and hidden prices are skipped |
 | Pricing | Automatic fees, flat prices, quantity prices, per-choice prices, bounded fixed/percentage promo discounts, card-fee gross-up after discount, and date-driven standard/late prices |
-| Public registration | IMSDA-branded landing/form/embed views, published all-attendee event updates, multi-step add/remove/reorder roster flow, explicit promo Apply/Remove quotes, server validation/timezone pricing, immutable answer/order/redemption snapshots, waitlist routing, confirmation delivery, and private management link |
-| Private self-service | Hash-only expiring/revocable bearer links plus verified attendee accounts, no-store/noindex responses, contact edits, tiered low-risk attendee-answer edits, private event hub/QR passes, attendee/status/payment history, and secure Square handoff |
+| Public registration | IMSDA-branded landing/form/embed views, published all-attendee event updates, multi-step add/remove/reorder roster flow, searchable dropdowns, first-attendee/primary-contact name syncing with an editable override, explicit promo Apply/Remove quotes, server validation/timezone pricing, immutable answer/order/redemption snapshots, waitlist routing, confirmation delivery, and private management link |
+| Private self-service | Hash-only expiring/revocable bearer links plus verified attendee accounts, no-store/noindex responses, contact edits, tiered low-risk attendee-answer edits, private event hub/QR passes, attendee/status/payment history, secure Square handoff, and a non-impersonating staff preview of shared attendee content |
 | Availability | Event capacity, per-choice limits, registration/attendee reservations, ranked first/second counts, within-roster aggregation, serializable concurrency protection, cancellation release/reactivation, waitlist position, and automatic promotion |
 | Security | Same-origin mutations, strict public schemas, CSP and embed allow-list, hash-only sessions/reset/manage/rate-limit identifiers, trusted-proxy controls, provider signature verification, and production safety locks |
 
@@ -103,7 +121,7 @@ The WR26 repository demonstrates several separate message types that should beco
 7. Pending-balance reminder with preview/dry-run before send. **Complete.**
 8. Staff resend of a confirmation, including an optional corrected recipient address. **Complete.**
 
-IMSDA Events implements the shared versioned-template, outbox, idempotency, retry/backoff, delivery/suppression log, preview/test, and event sender/reply-to foundation. Generic staff retries use a stable client UUID plus an immutable-source fingerprint, replay the same child after a lost response, and share the corrected-resend active-child database invariant. Email failure does not roll back a successful registration or payment. Remaining message-specific work is called out below.
+IMSDA Events implements the shared versioned-template, outbox, idempotency, retry/backoff, delivery/suppression log, preview/test, and event sender/reply-to foundation. Generic staff retries use a stable client UUID plus an immutable-source fingerprint, replay the same child after a lost response, and share the corrected-resend active-child database invariant. When a legacy failed row has no sender snapshot, staff can create a separately audited corrected copy that preserves the original subject and body while taking the event's current sender; the failed source row remains immutable. Email failure does not roll back a successful registration or payment. Remaining message-specific work is called out below.
 
 ### Payments
 

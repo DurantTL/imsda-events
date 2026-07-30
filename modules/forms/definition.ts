@@ -217,7 +217,7 @@ function templateField(id: string, key: string, label: string, type: Registratio
   return { id, key, label, helpText: "", type, scope: "REGISTRATION", required, options, ...extra };
 }
 
-const imsdaChurchOptions = [
+export const imsdaChurchOptions = [
   "Albany SDA Church",
   "Albia SDA Church",
   "Ames SDA Church",

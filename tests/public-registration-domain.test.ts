@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import { registrationFormDefinitionSchema, type RegistrationFormDefinition } from "@/modules/forms/definition";
 import {
   calendarDateInTimeZone,
+  extractPublicContactIdentity,
   preparePublicRegistration,
   publicRegistrationInputSchema,
 } from "@/modules/forms/public-domain";
+import { getFormTemplate } from "@/modules/forms/definition";
 
 const idempotencyKey = "2f1c5ce4-a9bc-4d15-8a6d-9879f25dbd3b";
 
@@ -146,6 +148,25 @@ describe("public registration domain", () => {
       payment_method: "Pay later",
     }), { timeZone: "America/Chicago", now: new Date("2026-08-14T12:00:00Z") });
     expect(fallback.identity).toMatchObject({ firstName: "Mary", lastName: "Ann Smith", email: "mary@example.test" });
+  });
+
+  it("uses the Women’s Retreat primary contact as the account holder even when attendee one differs", () => {
+    const definition = getFormTemplate("womens_retreat_export")!.definition;
+    const result = extractPublicContactIdentity(definition, {
+      primary_contact_first_name: "Avery",
+      primary_contact_last_name: "Organizer",
+      email: "AVERY@EXAMPLE.TEST",
+      first_name: "Guest",
+      last_name: "Attendee",
+    });
+
+    expect(result.identity).toEqual({
+      firstName: "Avery",
+      lastName: "Organizer",
+      email: "avery@example.test",
+      phone: "",
+    });
+    expect(result.issues).toEqual([]);
   });
 
   it("returns contact configuration and validation issues when identity cannot be derived", () => {

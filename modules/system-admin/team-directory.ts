@@ -25,6 +25,9 @@ export type TeamDirectoryMember = {
   id: string;
   email: string;
   displayName: string;
+  jobTitle: string;
+  phone: string;
+  bio: string;
   globalRole: string | null;
   accountStatus: string;
   /** Whether sign-in is switched off platform-wide. */
@@ -57,6 +60,9 @@ export async function getTeamDirectory(): Promise<TeamDirectory> {
       id: true,
       email: true,
       displayName: true,
+      jobTitle: true,
+      phone: true,
+      bio: true,
       globalRole: true,
       accountStatus: true,
       activatedAt: true,
@@ -83,6 +89,9 @@ export async function getTeamDirectory(): Promise<TeamDirectory> {
     id: user.id,
     email: user.email,
     displayName: user.displayName,
+    jobTitle: user.jobTitle ?? "",
+    phone: user.phone ?? "",
+    bio: user.bio ?? "",
     globalRole: user.globalRole,
     accountStatus: user.accountStatus,
     signInDisabled: Boolean(user.credential?.disabledAt),

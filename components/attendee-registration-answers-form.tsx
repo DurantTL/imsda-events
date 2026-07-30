@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { CheckCircle2, ListChecks, Save } from "lucide-react";
+import { SearchableSelect } from "@/components/searchable-select";
 import type { EditableAttendeeField } from "@/modules/attendee-accounts/registration-answer-policy";
 
 type EditableAttendee = {
@@ -216,20 +217,27 @@ export function AttendeeRegistrationAnswersForm({
                 );
               }
               return (
-                <label key={field.id}>
-                  {field.label}
-                  <select
+                <div className="attendee-answer-searchable-select" key={field.id}>
+                  <label htmlFor={`${attendee.attendeeId}_${field.id}`}>
+                    {field.label}{field.required ? " *" : ""}
+                  </label>
+                  <SearchableSelect
+                    id={`${attendee.attendeeId}_${field.id}`}
                     required={field.required}
                     value={typeof value === "string" ? value : ""}
-                    onChange={(event) => updateAnswer(attendee.attendeeId, field.key, event.target.value)}
-                  >
-                    <option value="">Choose…</option>
-                    {field.options.map((option) => (
-                      <option value={option} key={option}>{option}</option>
-                    ))}
-                  </select>
+                    placeholder={`Search ${field.label.toLocaleLowerCase()}…`}
+                    options={field.options.map((option) => ({
+                      value: option,
+                      label: option,
+                    }))}
+                    onChange={(nextValue) => updateAnswer(
+                      attendee.attendeeId,
+                      field.key,
+                      nextValue,
+                    )}
+                  />
                   {field.helpText && <small>{field.helpText}</small>}
-                </label>
+                </div>
               );
             })}
           </div>

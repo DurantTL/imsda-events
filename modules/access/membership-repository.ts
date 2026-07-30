@@ -62,7 +62,19 @@ export async function listStaffMemberships(eventId: string) {
       permissions: true,
       createdAt: true,
       updatedAt: true,
-      user: { select: { id: true, displayName: true, email: true, globalRole: true, accountStatus: true, credential: { select: { disabledAt: true } } } },
+      user: {
+        select: {
+          id: true,
+          displayName: true,
+          email: true,
+          jobTitle: true,
+          phone: true,
+          bio: true,
+          globalRole: true,
+          accountStatus: true,
+          credential: { select: { disabledAt: true } },
+        },
+      },
     },
   });
   return rows.map((row) => ({
@@ -76,6 +88,9 @@ export async function listStaffMemberships(eventId: string) {
       id: row.user.id,
       displayName: row.user.displayName,
       email: row.user.email,
+      jobTitle: row.user.jobTitle ?? "",
+      phone: row.user.phone ?? "",
+      bio: row.user.bio ?? "",
       globalRole: row.user.globalRole,
       accountStatus: row.user.accountStatus,
       accountDisabled: Boolean(row.user.credential?.disabledAt),

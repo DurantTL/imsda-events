@@ -21,6 +21,7 @@ const AppShellElement = AppShell as ComponentType<
 
 const events = [{
   id: "event_1",
+  slug: "womens-retreat-2026",
   name: "Women’s Retreat 2026",
   permissions: [
     "VIEW_SENSITIVE_DATA",
@@ -52,6 +53,10 @@ describe("application shell navigation", () => {
       markup.indexOf("Event workspace"),
     );
     expect(markup).toContain("All events and integrations");
+    expect(markup).toContain("Attendee experience");
+    expect(markup).toContain(
+      "/account/events/womens-retreat-2026?preview=staff",
+    );
   });
 
   it("does not expose system management to event-only staff", () => {
@@ -72,5 +77,6 @@ describe("application shell navigation", () => {
     expect(markup).not.toContain("Global administration");
     expect(markup).not.toContain("System management");
     expect(markup).toContain("Event workspace");
+    expect(markup).toContain("Attendee experience");
   });
 });

@@ -239,6 +239,16 @@ export function CommunicationsWorkspace({
     ?? null;
   const selectedMessage = messaging?.messages.find((message) => message.id === selectedMessageId)
     ?? null;
+  const selectedMessageNeedsSenderRepair = Boolean(
+    selectedMessage
+    && messaging?.settings.deliveryMode === "EXTERNAL_EMAIL"
+    && selectedMessage.status === "FAILED"
+    && !selectedMessage.senderEmail?.trim(),
+  );
+  const senderRepairReady = Boolean(
+    selectedMessageNeedsSenderRepair
+    && messaging?.settings.senderEmail.trim(),
+  );
   const [templateSubject, setTemplateSubject] = useState(selectedTemplate?.activeVersion?.subjectTemplate ?? "");
   const [templateBody, setTemplateBody] = useState(selectedTemplate?.activeVersion?.bodyTemplate ?? "");
   const [templateEnabled, setTemplateEnabled] = useState(selectedTemplate?.isEnabled ?? true);
@@ -1375,13 +1385,26 @@ export function CommunicationsWorkspace({
                       ))}
                       {selectedMessage.attempts.length === 0 && <p className="quiet-copy">No processing attempt has been recorded.</p>}
                     </div>
+                    {selectedMessageNeedsSenderRepair && (
+                      <div className={`message-retry-notice ${senderRepairReady ? "" : "is-blocked"}`} role="status">
+                        <AlertTriangle size={18} aria-hidden="true" />
+                        <span>
+                          <strong>The original sender snapshot is blank.</strong>
+                          <small>
+                            {senderRepairReady
+                              ? `A corrected copy can keep this subject and body while using the current event sender, ${messaging.settings.senderEmail}. The failed row remains unchanged for audit history.`
+                              : "Save a verified sender in Sender & notifications before creating a corrected copy."}
+                          </small>
+                        </span>
+                      </div>
+                    )}
                     {canResendConfirmation(selectedMessage) && (
                       <form className="confirmation-resend-form" onSubmit={resendConfirmation}>
                         <div>
                           <p className="eyebrow">Audited confirmation copy</p>
                           <h3>Resend this registration confirmation</h3>
                           <p>
-                            The subject and body above will be copied exactly. A corrected destination applies only to this copy and never changes the person or registration contact record.
+                            The subject and body above will be copied exactly. A corrected destination applies only to this copy and never changes the person or registration contact record. If the original sender was blank, the copy uses the event’s current sender.
                           </p>
                         </div>
                         <label>
@@ -1416,12 +1439,22 @@ export function CommunicationsWorkspace({
                           </span>
                         </label>
                         {resendDirty && <span className="unsaved-dot" role="status">Confirmation-copy changes not submitted</span>}
-                        <button className="secondary-button" type="submit" disabled={saving || !resendConfirmed}>
+                        <button
+                          className="secondary-button"
+                          type="submit"
+                          disabled={
+                            saving
+                            || !resendConfirmed
+                            || (selectedMessageNeedsSenderRepair && !senderRepairReady)
+                          }
+                        >
                           <Send size={16} aria-hidden="true" />
                           {saving
                             ? "Creating copy…"
                             : messaging.settings.deliveryMode === "EXTERNAL_EMAIL"
-                              ? "Queue confirmation email"
+                              ? selectedMessageNeedsSenderRepair
+                                ? "Queue corrected confirmation"
+                                : "Queue confirmation email"
                               : messaging.settings.deliveryMode === "LOCAL_CAPTURE"
                                 ? "Capture confirmation locally"
                                 : "Record suppressed copy"}
@@ -1436,6 +1469,7 @@ export function CommunicationsWorkspace({
                         disabled={
                           saving
                           || messaging.settings.deliveryMode === "DISABLED"
+                          || (selectedMessageNeedsSenderRepair && !senderRepairReady)
                           || selectedMessage.status === "PENDING"
                           || selectedMessage.status === "PROCESSING"
                           || (
@@ -1444,7 +1478,11 @@ export function CommunicationsWorkspace({
                           )
                         }
                       >
-                        <RefreshCw size={16} aria-hidden="true" /> {messaging.settings.deliveryMode === "EXTERNAL_EMAIL" ? "Retry failed email" : "Capture another audited copy"}
+                        <RefreshCw size={16} aria-hidden="true" /> {messaging.settings.deliveryMode === "EXTERNAL_EMAIL"
+                          ? selectedMessageNeedsSenderRepair
+                            ? "Send corrected copy"
+                            : "Retry failed email"
+                          : "Capture another audited copy"}
                       </button>
                     )}
                   </>

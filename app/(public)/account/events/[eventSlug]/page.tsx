@@ -8,6 +8,7 @@ import {
   CircleHelp,
   Clock3,
   ExternalLink,
+  Eye,
   ListChecks,
   MapPin,
   Megaphone,
@@ -15,8 +16,13 @@ import {
   UsersRound,
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
+import { getCurrentSession } from "@/modules/access/current-session";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
-import { getAttendeeRetreatHub } from "@/modules/attendee-accounts/retreat-hub-repository";
+import {
+  getAttendeeRetreatHub,
+  getStaffRetreatHubPreview,
+  type AttendeeRetreatHub,
+} from "@/modules/attendee-accounts/retreat-hub-repository";
 
 export const dynamic = "force-dynamic";
 
@@ -61,14 +67,34 @@ function paragraphs(body: string) {
 
 export default async function AttendeeEventHubPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ eventSlug: string }>;
+  searchParams: Promise<{ preview?: string }>;
 }) {
-  const { account } = await getCurrentAttendee();
-  if (!account) redirect("/account/sign-in");
-  const { eventSlug } = await params;
-  const hub = await getAttendeeRetreatHub(account.verifiedEmail, eventSlug);
-  if (!hub) notFound();
+  const [{ eventSlug }, query, attendeeSession, staffSession] = await Promise.all([
+    params,
+    searchParams,
+    getCurrentAttendee(),
+    getCurrentSession(),
+  ]);
+  const staffPreview = query.preview === "staff" && Boolean(staffSession.user);
+  let hub: AttendeeRetreatHub;
+  let staffPreviewEventId: string | null = null;
+  if (staffPreview && staffSession.user) {
+    const preview = await getStaffRetreatHubPreview(staffSession.user, eventSlug);
+    if (!preview) notFound();
+    hub = preview.hub;
+    staffPreviewEventId = preview.eventId;
+  } else {
+    if (!attendeeSession.account) redirect("/account/sign-in");
+    const attendeeHub = await getAttendeeRetreatHub(
+      attendeeSession.account.verifiedEmail,
+      eventSlug,
+    );
+    if (!attendeeHub) notFound();
+    hub = attendeeHub;
+  }
   const textSections = hub.contentSections.filter((section) => section.kind === "RICH_TEXT");
   const resourceSections = hub.contentSections.filter((section) => section.kind === "RESOURCE_LINKS");
 
@@ -80,15 +106,33 @@ export default async function AttendeeEventHubPage({
             <BrandMark />
             <span><strong>IMSDA</strong><small>Events</small></span>
           </a>
-          <Link className="text-button" href="/account">
-            <ArrowLeft size={15} aria-hidden="true" /> All registrations
+          <Link
+            className="text-button"
+            href={staffPreviewEventId
+              ? `/overview?event=${encodeURIComponent(staffPreviewEventId)}`
+              : "/account"}
+          >
+            <ArrowLeft size={15} aria-hidden="true" />
+            {staffPreviewEventId ? "Back to staff workspace" : "All registrations"}
           </Link>
         </div>
       </header>
 
+      {staffPreviewEventId && (
+        <section className="attendee-staff-preview-banner" role="status">
+          <Eye size={20} aria-hidden="true" />
+          <div>
+            <strong>Staff preview of the attendee experience</strong>
+            <p>Published shared content is live below. Personal registrations, assignments, balances, and QR passes are intentionally hidden in preview mode.</p>
+          </div>
+        </section>
+      )}
+
       <section className="public-registration-hero attendee-hub-hero">
         <div>
-          <p className="public-registration-eyebrow">Your attendee hub</p>
+          <p className="public-registration-eyebrow">
+            {staffPreviewEventId ? "Staff preview · Attendee experience" : "Your attendee hub"}
+          </p>
           <h1>{hub.event.name}</h1>
           <p>Schedule, updates, resources, passes and assigned sessions in one signed-in place.</p>
         </div>
@@ -106,7 +150,15 @@ export default async function AttendeeEventHubPage({
               <p className="public-registration-eyebrow">Your party</p>
               <h2>Registration and arrival</h2>
             </div>
-            {hub.registrations.map((registration) => (
+            {staffPreviewEventId ? (
+              <div className="attendee-preview-private-placeholder">
+                <Eye size={20} aria-hidden="true" />
+                <div>
+                  <strong>Personal registration details appear here for attendees.</strong>
+                  <p>Confirmation, party names, check-in state, balances, and QR passes are hidden from this shared staff preview.</p>
+                </div>
+              </div>
+            ) : hub.registrations.map((registration) => (
               <article key={registration.id}>
                 <header>
                   <strong>Confirmation {registration.confirmationCode}</strong>
@@ -154,7 +206,9 @@ export default async function AttendeeEventHubPage({
               <p className="public-registration-eyebrow">Personal schedule</p>
               <h2>Your assigned sessions</h2>
             </div>
-            {hub.assignmentRuns.length > 0 ? (
+            {staffPreviewEventId ? (
+              <p className="public-manage-empty">Each attendee sees only her own published session assignments here. Staff preview does not impersonate a registration.</p>
+            ) : hub.assignmentRuns.length > 0 ? (
               <div className="attendee-hub-assignment-list">
                 {hub.assignmentRuns.map((run) => (
                   <article key={run.id}>
@@ -183,6 +237,26 @@ export default async function AttendeeEventHubPage({
         </div>
 
         <aside className="attendee-hub-side">
+          {staffPreviewEventId && (
+            <section className="public-manage-card attendee-hub-community-preview">
+              <div className="public-manage-card-heading">
+                <UsersRound size={20} aria-hidden="true" />
+                <div>
+                  <p className="public-registration-eyebrow">Community</p>
+                  <h2>{hub.event.name} Community</h2>
+                </div>
+              </div>
+              <p>
+                This is the planned attendee community area. Staff announcements are available
+                now; attendee posts and replies remain off until moderation, reporting, conduct,
+                retention, and notification controls are built.
+              </p>
+              <ul>
+                <li><CheckCircle2 size={14} aria-hidden="true" /> Staff updates enabled</li>
+                <li><Clock3 size={14} aria-hidden="true" /> Attendee discussion not enabled</li>
+              </ul>
+            </section>
+          )}
           <section className="public-manage-card attendee-hub-updates">
             <div className="public-manage-card-heading">
               <Megaphone size={20} aria-hidden="true" />

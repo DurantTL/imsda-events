@@ -21,6 +21,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
+import { SearchableSelect } from "@/components/searchable-select";
 import {
   calculateFormTotal,
   calculateRosterTotal,
@@ -45,6 +46,10 @@ import {
   type PublicRegistrationStep,
   type PublicRegistrationStepId,
 } from "@/modules/forms/public-registration-steps";
+import {
+  getPrimaryAttendeeNameSync,
+  syncFirstAttendeeNameChange,
+} from "@/modules/forms/primary-attendee-sync";
 
 type ResponseValue = string | boolean | string[];
 type FormResponses = Record<string, ResponseValue>;
@@ -276,11 +281,34 @@ export function PublicRegistrationForm({
     () => definition.sections.flatMap((section) => section.fields),
     [definition],
   );
+  const primaryAttendeeNameSync = useMemo(
+    () => getPrimaryAttendeeNameSync(definition),
+    [definition],
+  );
   const [responses, setResponses] = useState<FormResponses>(initialResponses);
   const [registrationResponses, setRegistrationResponses] = useState<FormResponses>(initialResponses);
   const [attendees, setAttendees] = useState<RosterAttendee[]>(() => {
     const initial = initialRoster(roster.minAttendees);
-    if (initial.length > 0) initial[0] = { ...initial[0], responses: initialAttendeeResponses };
+    if (initial.length > 0) {
+      let firstAttendeeResponses = initialAttendeeResponses;
+      if (primaryAttendeeNameSync) {
+        firstAttendeeResponses = syncFirstAttendeeNameChange(
+          primaryAttendeeNameSync,
+          primaryAttendeeNameSync.registrationFirstNameKey,
+          "",
+          initialResponses[primaryAttendeeNameSync.registrationFirstNameKey],
+          firstAttendeeResponses,
+        ) as FormResponses;
+        firstAttendeeResponses = syncFirstAttendeeNameChange(
+          primaryAttendeeNameSync,
+          primaryAttendeeNameSync.registrationLastNameKey,
+          "",
+          initialResponses[primaryAttendeeNameSync.registrationLastNameKey],
+          firstAttendeeResponses,
+        ) as FormResponses;
+      }
+      initial[0] = { ...initial[0], responses: firstAttendeeResponses };
+    }
     return initial;
   });
   const [website, setWebsite] = useState("");
@@ -641,10 +669,25 @@ export function PublicRegistrationForm({
       {},
     );
     setRegistrationResponses(nextRegistration);
-    setAttendees((current) => current.map((attendee) => ({
-      ...attendee,
-      responses: pruneScopedResponses(attendee.responses, "ATTENDEE", nextRegistration),
-    })));
+    setAttendees((current) => current.map((attendee, attendeeIndex) => {
+      const syncedResponses = attendeeIndex === 0
+        ? syncFirstAttendeeNameChange(
+            primaryAttendeeNameSync,
+            key,
+            registrationResponses[key],
+            value,
+            attendee.responses,
+          ) as FormResponses
+        : attendee.responses;
+      return {
+        ...attendee,
+        responses: pruneScopedResponses(
+          syncedResponses,
+          "ATTENDEE",
+          nextRegistration,
+        ),
+      };
+    }));
     clearFieldIssue(`responses.${key}`, key);
   }
 
@@ -1083,24 +1126,27 @@ export function PublicRegistrationForm({
 
     if (field.type === "SELECT") {
       return (
-        <label className={wrapperClass} key={field.id}>
-          {fieldLabel(field)}
-          <select
+        <div className={wrapperClass} key={field.id}>
+          <label htmlFor={id}>{fieldLabel(field)}</label>
+          <SearchableSelect
             id={id}
             value={typeof context.values[field.key] === "string" ? context.values[field.key] as string : ""}
             required={field.required}
-            aria-invalid={Boolean(issue)}
-            aria-describedby={description}
-            onChange={(inputEvent) => context.setValue(field.key, inputEvent.target.value)}
-          >
-            <option value="">Choose one</option>
-            {field.options.map((option) => {
+            invalid={Boolean(issue)}
+            describedBy={description}
+            placeholder={`Search ${field.label.toLocaleLowerCase()}…`}
+            onChange={(value) => context.setValue(field.key, value)}
+            options={field.options.map((option) => {
               const { full } = choiceState(field, option);
               const details = choiceDetails(field, option);
               const selected = context.values[field.key] === option;
-              return <option value={option} disabled={rosterEnabled ? full && !selected : full} key={option}>{option}{details ? ` — ${details}` : ""}</option>;
+              return {
+                value: option,
+                label: `${option}${details ? ` — ${details}` : ""}`,
+                disabled: rosterEnabled ? full && !selected : full,
+              };
             })}
-          </select>
+          />
           {field.options.some((option) => Boolean(optionDescription(option))) && (
             <span className="public-registration-select-descriptions">
               {field.options.flatMap((option) => (
@@ -1111,7 +1157,7 @@ export function PublicRegistrationForm({
             </span>
           )}
           {fieldSupport(field, context)}
-        </label>
+        </div>
       );
     }
 
@@ -1317,6 +1363,12 @@ export function PublicRegistrationForm({
                 </header>
 
                 <div className="public-registration-attendee-body">
+                  {manageRoster && attendeeIndex === 0 && primaryAttendeeNameSync && (
+                    <p className="public-registration-attendee-name-sync">
+                      The first attendee starts with the primary contact’s name. You can edit it
+                      here when the person completing the form is registering someone else.
+                    </p>
+                  )}
                   {visibleAttendeeSections.map((section) => (
                     <section
                       className="public-registration-attendee-section"

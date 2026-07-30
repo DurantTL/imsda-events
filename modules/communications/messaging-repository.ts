@@ -2032,6 +2032,16 @@ export async function resendRegistrationConfirmation(
       }
 
       const suppressed = settings.deliveryMode === "DISABLED";
+      const repairMissingSenderSnapshot = (
+        settings.deliveryMode === "EXTERNAL_EMAIL"
+        && !source.senderEmailSnapshot?.trim()
+      );
+      if (repairMissingSenderSnapshot && !settings.senderEmail?.trim()) {
+        throw new MessagingError(
+          "EXTERNAL_EMAIL_NOT_CONFIGURED",
+          "This confirmation has no sender snapshot. Save a verified sender in this event's communication settings before creating a corrected copy.",
+        );
+      }
       const message = await tx.messageOutbox.create({
         data: {
           eventId,
@@ -2041,9 +2051,15 @@ export async function resendRegistrationConfirmation(
           recipientKind: "REGISTRANT",
           recipientEmail,
           recipientName: source.recipientName,
-          senderNameSnapshot: source.senderNameSnapshot,
-          senderEmailSnapshot: source.senderEmailSnapshot,
-          replyToEmailSnapshot: source.replyToEmailSnapshot,
+          senderNameSnapshot: repairMissingSenderSnapshot
+            ? settings.senderName
+            : source.senderNameSnapshot,
+          senderEmailSnapshot: repairMissingSenderSnapshot
+            ? settings.senderEmail
+            : source.senderEmailSnapshot,
+          replyToEmailSnapshot: repairMissingSenderSnapshot
+            ? settings.replyToEmail
+            : source.replyToEmailSnapshot,
           subjectSnapshot: source.subjectSnapshot,
           bodyTextSnapshot: source.bodyTextSnapshot,
           metadata: {
@@ -2052,6 +2068,8 @@ export async function resendRegistrationConfirmation(
             destinationChanged: recipientEmail !== source.recipientEmail.toLowerCase(),
             requestFingerprint,
             deliveryMode: settings.deliveryMode,
+            immutableContentSnapshot: true,
+            senderSnapshotRepaired: repairMissingSenderSnapshot,
             realDelivery: settings.deliveryMode === "EXTERNAL_EMAIL",
           },
           idempotencyKey,
@@ -2082,7 +2100,9 @@ export async function resendRegistrationConfirmation(
             newMessageId: message.id,
             destinationChanged: recipientEmail !== source.recipientEmail.toLowerCase(),
             deliveryMode: settings.deliveryMode,
-            immutableSourceSnapshot: true,
+            immutableSourceSnapshot: !repairMissingSenderSnapshot,
+            immutableContentSnapshot: true,
+            senderSnapshotRepaired: repairMissingSenderSnapshot,
             contactRecordChanged: false,
             realDelivery: false,
           },
@@ -2280,6 +2300,16 @@ export async function retryMessage(
           "Add the Resend API key before retrying real email.",
         );
       }
+      const repairMissingSenderSnapshot = (
+        settings.deliveryMode === "EXTERNAL_EMAIL"
+        && !source.senderEmailSnapshot?.trim()
+      );
+      if (repairMissingSenderSnapshot && !settings.senderEmail?.trim()) {
+        throw new MessagingError(
+          "EXTERNAL_EMAIL_NOT_CONFIGURED",
+          "This failed message has no sender snapshot. Save a verified sender in this event's communication settings before creating a corrected copy.",
+        );
+      }
       const activeChild = await tx.messageOutbox.findFirst({
         where: {
           retryOfMessageId: source.id,
@@ -2303,9 +2333,15 @@ export async function retryMessage(
           recipientKind: source.recipientKind,
           recipientEmail: source.recipientEmail,
           recipientName: source.recipientName,
-          senderNameSnapshot: source.senderNameSnapshot,
-          senderEmailSnapshot: source.senderEmailSnapshot,
-          replyToEmailSnapshot: source.replyToEmailSnapshot,
+          senderNameSnapshot: repairMissingSenderSnapshot
+            ? settings.senderName
+            : source.senderNameSnapshot,
+          senderEmailSnapshot: repairMissingSenderSnapshot
+            ? settings.senderEmail
+            : source.senderEmailSnapshot,
+          replyToEmailSnapshot: repairMissingSenderSnapshot
+            ? settings.replyToEmail
+            : source.replyToEmailSnapshot,
           subjectSnapshot: source.subjectSnapshot,
           bodyTextSnapshot: source.bodyTextSnapshot,
           metadata: {
@@ -2313,7 +2349,9 @@ export async function retryMessage(
             sourceMessageId: source.id,
             requestFingerprint: input.requestFingerprint,
             deliveryMode: settings.deliveryMode,
-            immutableSourceSnapshot: true,
+            immutableSourceSnapshot: !repairMissingSenderSnapshot,
+            immutableContentSnapshot: true,
+            senderSnapshotRepaired: repairMissingSenderSnapshot,
             realDelivery: settings.deliveryMode === "EXTERNAL_EMAIL",
           },
           idempotencyKey,
@@ -2334,13 +2372,17 @@ export async function retryMessage(
           entityId: created.id,
           correlationId: input.clientRequestId,
           summary: settings.deliveryMode === "EXTERNAL_EMAIL"
-            ? `Created an audited real-email retry from failed message ${source.id}.`
+            ? repairMissingSenderSnapshot
+              ? `Created an audited real-email copy of failed message ${source.id} using the event's current sender because the original sender snapshot was blank.`
+              : `Created an audited real-email retry from failed message ${source.id}.`
             : `Created a new local capture from message ${source.id}.`,
           metadata: {
             retryOfMessageId: source.id,
             newMessageId: created.id,
             deliveryMode: settings.deliveryMode,
-            immutableSourceSnapshot: true,
+            immutableSourceSnapshot: !repairMissingSenderSnapshot,
+            immutableContentSnapshot: true,
+            senderSnapshotRepaired: repairMissingSenderSnapshot,
             realDelivery: settings.deliveryMode === "EXTERNAL_EMAIL",
           },
         },
