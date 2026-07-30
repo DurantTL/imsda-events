@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Eye, EyeOff, MailCheck, UserPlus } from "lucide-react";
 import { OneTimeCodeInput } from "@/components/one-time-code-input";
+import { attendeeSignUpEmailPrefill } from "@/modules/attendee-accounts/sign-up-prefill";
 
 /**
  * Creating an attendee account: details, then the code that arrives by email.
@@ -18,14 +19,26 @@ import { OneTimeCodeInput } from "@/components/one-time-code-input";
  * person whether the address already had an account, because the server does not
  * tell it either, so the waiting copy has to be true in both cases.
  */
-export function AttendeeSignUpForm() {
+export function AttendeeSignUpForm({
+  initialEmail = "",
+}: {
+  initialEmail?: string;
+}) {
   const router = useRouter();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
   /** Only ever set by a development server with no account email configured. */
   const [developmentCode, setDevelopmentCode] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialEmail || !window.location.hash) return;
+    const fragment = new URLSearchParams(window.location.hash.slice(1));
+    const prefill = attendeeSignUpEmailPrefill(fragment.get("email") ?? undefined);
+    if (prefill && emailRef.current) emailRef.current.value = prefill;
+  }, [initialEmail]);
 
   async function submitDetails(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -116,7 +129,15 @@ export function AttendeeSignUpForm() {
       </label>
       <label>
         Email address
-        <input name="email" type="email" autoComplete="username" required maxLength={254} />
+        <input
+          name="email"
+          type="email"
+          autoComplete="username"
+          required
+          maxLength={254}
+          defaultValue={initialEmail}
+          ref={emailRef}
+        />
       </label>
       <p className="field-help">
         Use the address your registrations were made with. That is what connects them to your

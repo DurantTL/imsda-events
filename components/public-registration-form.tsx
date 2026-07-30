@@ -21,6 +21,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
+import { RegistrationAccountPrompt } from "@/components/registration-account-prompt";
 import { SearchableSelect } from "@/components/searchable-select";
 import {
   calculateFormTotal,
@@ -1950,6 +1951,10 @@ export function PublicRegistrationForm({
                 )}
               </div>
             )}
+            <RegistrationAccountPrompt
+              email={confirmation.email}
+              embedded={embedded}
+            />
             <div className="public-registration-confirmation-actions">
               <a {...eventsSiteNavigation} className="public-registration-secondary-button" href={`/events/${event.slug}`}><ArrowLeft size={16} aria-hidden="true" /> Back to event</a>
               <button className="public-registration-secondary-button" type="button" onClick={startAnotherRegistration}>{waitlisted ? "Add another waitlist request" : "Start another registration"}</button>
