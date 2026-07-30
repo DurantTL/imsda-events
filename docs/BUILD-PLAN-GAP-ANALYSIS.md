@@ -1,4 +1,9 @@
-# Build-plan gap analysis
+# Historical build-plan gap analysis
+
+This is a point-in-time comparison retained for implementation history. Use the
+[build-status and WR26 audit](BUILD-STATUS-AND-WR26-GAP-AUDIT.md) for the
+current roadmap and canonical execution-plan template; do not create a second
+sequencing document from this snapshot.
 
 Compares the staged **IMSDA Events — First Build Prompt and Implementation Plan** (phases 0–9)
 against the current `imsda-events` implementation, verified by a full runtime pass on

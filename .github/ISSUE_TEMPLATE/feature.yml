@@ -1,0 +1,57 @@
+name: Feature
+description: Propose one user-visible capability.
+title: "[Feature] "
+body:
+  - type: markdown
+    attributes:
+      value: Use synthetic examples only. Do not include participant or sensitive operational data.
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: State the outcome and who benefits.
+    validations:
+      required: true
+  - type: textarea
+    id: user_workflow
+    attributes:
+      label: User workflow
+      description: Describe the workflow before and after this change.
+    validations:
+      required: true
+  - type: textarea
+    id: business_rules
+    attributes:
+      label: Business rules
+      description: List validations, permissions, state transitions, and human gates.
+    validations:
+      required: true
+  - type: textarea
+    id: security_privacy
+    attributes:
+      label: Security/privacy impact
+      description: Identify affected permissions or sensitive data, or write "None".
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance criteria
+      description: Provide testable, bounded completion criteria.
+      placeholder: "- [ ] ..."
+    validations:
+      required: true
+  - type: textarea
+    id: verification_required
+    attributes:
+      label: Verification required
+      description: List automated checks and manual scenarios required.
+    validations:
+      required: true
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: State adjacent behavior this issue must not change.
+    validations:
+      required: true

@@ -1,0 +1,4 @@
+interface:
+  display_name: "IMSDA Build"
+  short_description: "Build one codex-ready IMSDA issue safely"
+  default_prompt: "Use $imsda-build to implement one codex-ready GitHub issue in an isolated worktree."

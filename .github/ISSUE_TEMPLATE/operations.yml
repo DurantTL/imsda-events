@@ -1,0 +1,57 @@
+name: Operations
+description: Plan one bounded operational or readiness change.
+title: "[Operations] "
+body:
+  - type: markdown
+    attributes:
+      value: Use synthetic examples only. Production actions and sensitive data stay outside GitHub.
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: State the operational outcome and accountable role.
+    validations:
+      required: true
+  - type: textarea
+    id: user_workflow
+    attributes:
+      label: User workflow
+      description: Describe the operator workflow, approvals, and observable result.
+    validations:
+      required: true
+  - type: textarea
+    id: business_rules
+    attributes:
+      label: Business rules
+      description: List safety checks, ordering, idempotency, audit, and human gates.
+    validations:
+      required: true
+  - type: textarea
+    id: security_privacy
+    attributes:
+      label: Security/privacy impact
+      description: Identify permissions or sensitive-data handling without including that data.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance criteria
+      description: Define reviewable evidence of readiness; do not authorize production execution.
+      placeholder: "- [ ] ..."
+    validations:
+      required: true
+  - type: textarea
+    id: verification_required
+    attributes:
+      label: Verification required
+      description: List dry runs, rollback checks, monitoring, and human confirmation.
+    validations:
+      required: true
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: State actions this issue does not authorize.
+    validations:
+      required: true
