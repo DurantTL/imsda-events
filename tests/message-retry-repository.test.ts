@@ -286,6 +286,85 @@ describe("generic message retry repository", () => {
     );
   });
 
+  it("creates a corrected copy with the current event sender when the failed snapshot was blank", async () => {
+    const fixture = retryFixture();
+    mocks.getPrisma.mockReturnValue(fixture.prisma);
+    mocks.processExternalEmailQueue.mockResolvedValue({
+      recoveredIds: [],
+      sentIds: ["message-retry-1"],
+      failedIds: [],
+      rescheduledIds: [],
+    });
+    const source = sourceMessage("message-missing-sender", {
+      senderNameSnapshot: "Old sender name",
+      senderEmailSnapshot: null,
+      replyToEmailSnapshot: null,
+    });
+    fixture.sources.set(source.id, source);
+
+    await retryMessage(
+      "event-1",
+      source.id,
+      {
+        clientRequestId,
+        requestFingerprint: fingerprintFor(source),
+      },
+      "user-1",
+      deliveryDependencies,
+    );
+
+    const created = fixture.tx.messageOutbox.create.mock.calls[0]![0].data;
+    expect(created).toMatchObject({
+      senderNameSnapshot: settings.senderName,
+      senderEmailSnapshot: settings.senderEmail,
+      replyToEmailSnapshot: settings.replyToEmail,
+      subjectSnapshot: source.subjectSnapshot,
+      bodyTextSnapshot: source.bodyTextSnapshot,
+      metadata: {
+        immutableSourceSnapshot: false,
+        immutableContentSnapshot: true,
+        senderSnapshotRepaired: true,
+      },
+    });
+    expect(fixture.tx.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        metadata: expect.objectContaining({
+          immutableSourceSnapshot: false,
+          immutableContentSnapshot: true,
+          senderSnapshotRepaired: true,
+        }),
+      }),
+    });
+  });
+
+  it("blocks a blank-sender retry until the event has a current sender", async () => {
+    const fixture = retryFixture();
+    fixture.tx.eventMessageSettings.findUniqueOrThrow.mockResolvedValue({
+      ...settings,
+      senderEmail: null,
+    });
+    mocks.getPrisma.mockReturnValue(fixture.prisma);
+    const source = sourceMessage("message-missing-all-senders", {
+      senderEmailSnapshot: null,
+    });
+    fixture.sources.set(source.id, source);
+
+    await expect(retryMessage(
+      "event-1",
+      source.id,
+      {
+        clientRequestId,
+        requestFingerprint: fingerprintFor(source),
+      },
+      "user-1",
+      deliveryDependencies,
+    )).rejects.toMatchObject({
+      code: "EXTERNAL_EMAIL_NOT_CONFIGURED",
+    });
+    expect(fixture.tx.messageOutbox.create).not.toHaveBeenCalled();
+    expect(mocks.processExternalEmailQueue).not.toHaveBeenCalled();
+  });
+
   it("rejects reuse of one event-scoped UUID for another source or payload", async () => {
     const fixture = retryFixture();
     mocks.getPrisma.mockReturnValue(fixture.prisma);

@@ -220,8 +220,8 @@ type ConfirmationMessage = {
   recipientEmail: string;
   recipientName: string;
   senderNameSnapshot: string;
-  senderEmailSnapshot: string;
-  replyToEmailSnapshot: string;
+  senderEmailSnapshot: string | null;
+  replyToEmailSnapshot: string | null;
   subjectSnapshot: string;
   bodyTextSnapshot: string;
   metadata: Record<string, unknown>;
@@ -340,6 +340,49 @@ describe("confirmation-resend repository", () => {
       retryOfMessageId: "message-source",
     });
     expect(tx.messageOutbox.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the current event sender when an original confirmation has a blank sender snapshot", async () => {
+    const { tx, source } = confirmationFixture();
+    source.senderNameSnapshot = "Old sender name";
+    source.senderEmailSnapshot = null;
+    source.replyToEmailSnapshot = null;
+    mocks.getPrisma.mockReturnValue(prismaFor(tx));
+
+    await resendRegistrationConfirmation(
+      "event-1",
+      "message-source",
+      {
+        clientRequestId: "57cf9714-ad77-4546-b225-4f8dfc863078",
+        correctedRecipientEmail: "",
+      },
+      "user-1",
+    );
+
+    const create = tx.messageOutbox.create.mock.calls[0]![0].data;
+    expect(create).toMatchObject({
+      senderNameSnapshot: settings.senderName,
+      senderEmailSnapshot: settings.senderEmail,
+      replyToEmailSnapshot: settings.replyToEmail,
+      subjectSnapshot: "Original immutable subject",
+      bodyTextSnapshot: "Original immutable body",
+      metadata: expect.objectContaining({
+        immutableContentSnapshot: true,
+        senderSnapshotRepaired: true,
+      }),
+    });
+    expect(tx.auditLog.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            immutableSourceSnapshot: false,
+            immutableContentSnapshot: true,
+            senderSnapshotRepaired: true,
+          }),
+        }),
+      ],
+      skipDuplicates: true,
+    });
   });
 
   it("rejects reuse of a resend request ID with a different destination", async () => {

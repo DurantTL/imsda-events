@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ChevronRight,
   ClipboardCheck,
+  Copy,
   CopyPlus,
   Eye,
   ExternalLink,
@@ -16,15 +17,17 @@ import {
   Layers3,
   Plus,
   Save,
+  Search,
   Send,
   Settings2,
   ShieldCheck,
   Trash2,
   X,
 } from "lucide-react";
+import { SearchableSelect } from "@/components/searchable-select";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
-import { calculateFormTotal, calculateRosterTotal, conditionOperators, formFieldScopes, formFieldTypes, getAttendeeRosterConfig, getAvailabilityMode, isChoiceFieldType, isFieldVisible, isLatePricingActive, localCalendarDate, type ChoiceUsage, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
+import { calculateFormTotal, calculateRosterTotal, conditionOperators, formFieldScopes, formFieldTypes, getAttendeeRosterConfig, getAvailabilityMode, imsdaChurchOptions, isChoiceFieldType, isFieldVisible, isLatePricingActive, localCalendarDate, type ChoiceUsage, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
 import { promoCodeBuilderModule } from "@/modules/forms/builder-modules";
 import { getPublicRegistrationStepPlan, isPublicReviewSection, type PublicRegistrationStepId } from "@/modules/forms/public-registration-steps";
 import { shirtSizeOptions } from "@/modules/registrations/shirt-sizes";
@@ -83,6 +86,8 @@ const choicePresets = [
   { name: "Payment method", options: ["Pay Later", "Pay Now"] },
 ];
 
+const moduleCategories = ["All", "Common", "People", "Housing", "Group event"] as const;
+
 type FieldModuleDefinition = {
   key: string;
   category: "Common" | "People" | "Housing" | "Group event";
@@ -125,7 +130,8 @@ const fieldModules: FieldModuleDefinition[] = [
     fields: [
       { key: "club_name", label: "Club name", helpText: "", placeholder: "Pathfinder club or group", type: "TEXT", scope: "REGISTRATION", required: true, options: [] },
       { key: "director_name", label: "Club director", helpText: "", placeholder: "Full name", type: "TEXT", scope: "REGISTRATION", required: true, options: [] },
-      { key: "church_name", label: "Home church", helpText: "Use Advanced options to paste a full church list.", placeholder: "Church name", type: "TEXT", scope: "REGISTRATION", required: true, options: [] },
+      { key: "church_name", label: "Home church", helpText: "Start typing to search the IMSDA church directory.", type: "SELECT", scope: "REGISTRATION", required: true, options: [...imsdaChurchOptions] },
+      { key: "church_other", label: "Home church — other", helpText: "", placeholder: "Church or organization name", type: "TEXT", scope: "REGISTRATION", required: true, options: [], conditional: { fieldKey: "church_name", operator: "EQUALS", value: "Other" } },
       { key: "email", label: "Contact email", helpText: "", placeholder: "name@example.com", type: "EMAIL", scope: "REGISTRATION", required: true, options: [] },
       { key: "phone", label: "Contact phone", helpText: "", placeholder: "Phone number", type: "PHONE", scope: "REGISTRATION", required: true, options: [] },
     ],
@@ -338,6 +344,8 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
   const [dragging, setDragging] = useState<DragState>(null);
   const [expandedFieldId, setExpandedFieldId] = useState<string | null>(null);
   const [openModuleSection, setOpenModuleSection] = useState<number | null>(null);
+  const [moduleQuery, setModuleQuery] = useState("");
+  const [moduleCategory, setModuleCategory] = useState<typeof moduleCategories[number]>("All");
   const [pricingPreviewDate, setPricingPreviewDate] = useState(localCalendarDate());
   const [previewStepId, setPreviewStepId] = useState<PublicRegistrationStepId>(
     () => selectedVersion?.definition
@@ -352,6 +360,18 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
 
   const totalFields = useMemo(() => definition?.sections.reduce((count, section) => count + section.fields.length, 0) ?? 0, [definition]);
   const allFields = useMemo(() => definition?.sections.flatMap((section) => section.fields) ?? [], [definition]);
+  const visibleFieldModules = useMemo(() => {
+    const query = moduleQuery.trim().toLocaleLowerCase();
+    return fieldModules.filter((module) => (
+      (moduleCategory === "All" || module.category === moduleCategory)
+      && (
+        !query
+        || `${module.name} ${module.description} ${module.category}`
+          .toLocaleLowerCase()
+          .includes(query)
+      )
+    ));
+  }, [moduleCategory, moduleQuery]);
   const attendeeFields = allFields.filter((field) => field.scope === "ATTENDEE");
   const hasAttendeeNameFields = (
     attendeeFields.some((field) => field.key === "first_name")
@@ -421,7 +441,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
       setPreviewStepId(firstPreviewStepId(nextDefinition));
       setTestIssues([]);
       setExpandedFieldId(null);
-      setOpenModuleSection(null);
+      closeModuleLibrary();
     }
     if (message) setNotice(message);
   }
@@ -511,13 +531,13 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
   function chooseForm(form: FormView) {
     if (dirty && !window.confirm("Discard the unsaved draft changes and open another form?")) return;
     const nextDefinition = structuredClone(form.activeVersion.definition);
-    setSelectedFormId(form.id); setSelectedVersionId(form.activeVersion.id); setDefinition(nextDefinition); setDirty(false); setResponses({}); setPreviewAttendees(blankPreviewAttendees(nextDefinition)); setPreviewStepId(firstPreviewStepId(nextDefinition)); setTestIssues([]); setExpandedFieldId(null); setOpenModuleSection(null); setNotice(""); setError("");
+    setSelectedFormId(form.id); setSelectedVersionId(form.activeVersion.id); setDefinition(nextDefinition); setDirty(false); setResponses({}); setPreviewAttendees(blankPreviewAttendees(nextDefinition)); setPreviewStepId(firstPreviewStepId(nextDefinition)); setTestIssues([]); setExpandedFieldId(null); closeModuleLibrary(); setNotice(""); setError("");
   }
 
   function chooseVersion(version: FormVersionView) {
     if (dirty && !window.confirm("Discard the unsaved draft changes and view another version?")) return;
     const nextDefinition = structuredClone(version.definition);
-    setSelectedVersionId(version.id); setDefinition(nextDefinition); setDirty(false); setResponses({}); setPreviewAttendees(blankPreviewAttendees(nextDefinition)); setPreviewStepId(firstPreviewStepId(nextDefinition)); setExpandedFieldId(null); setOpenModuleSection(null); setNotice(""); setError(""); setTestIssues([]);
+    setSelectedVersionId(version.id); setDefinition(nextDefinition); setDirty(false); setResponses({}); setPreviewAttendees(blankPreviewAttendees(nextDefinition)); setPreviewStepId(firstPreviewStepId(nextDefinition)); setExpandedFieldId(null); closeModuleLibrary(); setNotice(""); setError(""); setTestIssues([]);
   }
 
   function updateSection(index: number, patch: Partial<RegistrationFormDefinition["sections"][number]>) {
@@ -611,15 +631,57 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
     updateSection(sectionIndex, { fields: section.fields.filter((_, index) => index !== fieldIndex) });
   }
 
+  function duplicateField(sectionIndex: number, fieldIndex: number) {
+    if (!definition) return;
+    const source = definition.sections[sectionIndex].fields[fieldIndex];
+    if (definition.sections[sectionIndex].fields.length >= 20) {
+      setError("A section can contain up to 20 fields. Add another section before copying this field.");
+      return;
+    }
+    const usedKeys = new Set(allFields.map((field) => field.key));
+    const baseKey = `${source.key.slice(0, 55)}_copy`;
+    let key = baseKey;
+    let suffix = 2;
+    while (usedKeys.has(key)) {
+      key = `${baseKey.slice(0, 57)}_${suffix}`;
+      suffix += 1;
+    }
+    const duplicate = {
+      ...structuredClone(source),
+      id: localId("field"),
+      key,
+      label: `${source.label} copy`.slice(0, 120),
+    };
+    const fields = [...definition.sections[sectionIndex].fields];
+    fields.splice(fieldIndex + 1, 0, duplicate);
+    updateSection(sectionIndex, { fields });
+    setExpandedFieldId(duplicate.id);
+  }
+
+  function closeModuleLibrary() {
+    setOpenModuleSection(null);
+    setModuleQuery("");
+    setModuleCategory("All");
+  }
+
   function addModule(sectionIndex: number, module: FieldModuleDefinition) {
     if (!definition) return;
+    if (
+      definition.sections[sectionIndex].fields.length + module.fields.length
+      > 20
+    ) {
+      setError(
+        `${module.name} does not fit in this section. Add another section and place the module there.`,
+      );
+      return;
+    }
     const usedKeys = new Set(definition.sections.flatMap((section) => section.fields.map((field) => field.key)));
     if (module.key === "promo_code" && usedKeys.has("promo_code")) {
       const existing = definition.sections
         .flatMap((section) => section.fields)
         .find((field) => field.key === "promo_code");
       setExpandedFieldId(existing?.id ?? null);
-      setOpenModuleSection(null);
+      closeModuleLibrary();
       setNotice("This form already has its Promo code module.");
       return;
     }
@@ -650,7 +712,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
       setPreviewAttendees(blankPreviewAttendees(nextDefinition));
     }
     setExpandedFieldId(fields[0]?.id ?? null);
-    setOpenModuleSection(null);
+    closeModuleLibrary();
   }
 
   function addSection() {
@@ -690,7 +752,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
       const [reviewSection] = sections.splice(sectionIndex, 1);
       sections.push(reviewSection);
     }
-    setOpenModuleSection(null);
+    closeModuleLibrary();
     replaceDefinition({ ...definition, sections });
   }
 
@@ -744,9 +806,10 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
     if (field.type === "RANKED_CHOICE") return <fieldset className={className} key={field.id}><legend>{fieldHeading}</legend><small>Choose {field.minSelections ?? (field.required ? Math.min(2, maximum) : 1)} and rank up to {maximum}. The first selected is first choice; the second is second choice.</small><div className="preview-ranking-list">{field.options.map((option) => { const rank = selectedValues.indexOf(option); const { full } = choiceStatus(option); return <button aria-pressed={rank >= 0} className={`${rank >= 0 ? "selected" : ""}${full ? " full" : ""}`.trim()} type="button" key={option} disabled={rank < 0 && (selectedValues.length >= maximum || full)} onClick={() => toggleChoice(option)}><span><strong>{option}</strong>{choiceDescription(option)}{choiceCount(option, true)}</span><b>{rank >= 0 ? (rank === 0 ? "1st choice" : rank === 1 ? "2nd choice" : `#${rank + 1}`) : full ? "Full" : "Choose"}</b></button>; })}</div>{supportingText}</fieldset>;
     if (field.type === "CHECKBOX") return <fieldset className={className} key={field.id}><legend>{fieldHeading}</legend><label className="preview-check"><input id={inputId} type="checkbox" checked={valueResponses[field.key] === true} onChange={(event) => setValue(event.target.checked)} /> <span>{field.placeholder || "Yes, I agree"}</span></label>{supportingText}</fieldset>;
     if (field.type === "CALCULATED") return <div className="preview-field preview-calculated-field" key={field.id}><span>{field.label}</span><small>Automatically included in the order total.{field.latePricing ? ` ${field.latePricing.label} begins ${new Date(`${field.latePricing.startsOn}T12:00:00`).toLocaleDateString()}.` : ""}</small></div>;
+    if (field.type === "SELECT") return <div className={className} key={field.id}><label htmlFor={inputId}>{fieldHeading}</label><SearchableSelect id={inputId} value={typeof valueResponses[field.key] === "string" ? valueResponses[field.key] as string : ""} required={field.required} invalid={Boolean(issue)} placeholder={`Search ${field.label.toLocaleLowerCase()}…`} options={field.options.map((option) => ({ value: option, label: option, disabled: choiceStatus(option).full && valueResponses[field.key] !== option }))} onChange={(value) => setValue(value)} />{supportingText}</div>;
 
     const common = { id: inputId, value: typeof valueResponses[field.key] === "string" ? valueResponses[field.key] as string : "", placeholder: field.placeholder ?? "", onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setValue(event.target.value) };
-    return <label className={className} key={field.id}>{fieldHeading}{field.type === "SELECT" ? <select {...common}><option value="">Choose one</option>{field.options.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "LONG_TEXT" ? <textarea {...common} rows={4} /> : <input {...common} type={field.type === "EMAIL" ? "email" : field.type === "PHONE" ? "tel" : field.type === "DATE" ? "date" : field.type === "NUMBER" ? "number" : "text"} />}{supportingText}</label>;
+    return <label className={className} key={field.id}>{fieldHeading}{field.type === "LONG_TEXT" ? <textarea {...common} rows={4} /> : <input {...common} type={field.type === "EMAIL" ? "email" : field.type === "PHONE" ? "tel" : field.type === "DATE" ? "date" : field.type === "NUMBER" ? "number" : "text"} />}{supportingText}</label>;
   }
 
   function setPreviewAttendeeValue(clientId: string, key: string, value: string | boolean | string[]) {
@@ -933,7 +996,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
             <div className="field-module-row">
               {canEdit ? <button className="drag-handle field-drag-handle" type="button" draggable aria-label={`Drag field ${field.label}`} title="Drag field" onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; setDragging({ kind: "field", sectionIndex, fieldIndex }); }} onDragEnd={() => setDragging(null)}><GripVertical size={16} /></button> : <GripVertical className="field-grip" size={17} />}
               <button className="field-module-summary" type="button" aria-expanded={expandedFieldId === field.id} aria-label={`${expandedFieldId === field.id ? "Close settings for" : "Edit"} ${field.label}`} onClick={() => setExpandedFieldId((current) => current === field.id ? null : field.id)}><span className="field-type-mark">{fieldTypeLabels[field.type].slice(0, 1)}</span><span><strong>{field.label}</strong><small>{fieldTypeLabels[field.type]} · {field.scope === "ATTENDEE" ? "Each attendee" : "Registration"}{field.required ? " · Required" : ""}</small></span><ChevronRight className={expandedFieldId === field.id ? "expanded" : ""} size={16} /></button>
-              {canEdit && <div className="field-actions"><button type="button" aria-label={`Move ${field.label} up`} disabled={fieldIndex === 0} onClick={() => moveField(sectionIndex, fieldIndex, -1)}><ArrowUp size={14} /><span>Up</span></button><button type="button" aria-label={`Move ${field.label} down`} disabled={fieldIndex === section.fields.length - 1} onClick={() => moveField(sectionIndex, fieldIndex, 1)}><ArrowDown size={14} /><span>Down</span></button><button className="danger" type="button" aria-label={`Remove ${field.label}`} onClick={() => removeField(sectionIndex, fieldIndex)}><Trash2 size={14} /><span>Remove</span></button></div>}
+              {canEdit && <div className="field-actions"><button type="button" aria-label={`Duplicate ${field.label}`} onClick={() => duplicateField(sectionIndex, fieldIndex)}><Copy size={14} /><span>Copy</span></button><button type="button" aria-label={`Move ${field.label} up`} disabled={fieldIndex === 0} onClick={() => moveField(sectionIndex, fieldIndex, -1)}><ArrowUp size={14} /><span>Up</span></button><button type="button" aria-label={`Move ${field.label} down`} disabled={fieldIndex === section.fields.length - 1} onClick={() => moveField(sectionIndex, fieldIndex, 1)}><ArrowDown size={14} /><span>Down</span></button><button className="danger" type="button" aria-label={`Remove ${field.label}`} onClick={() => removeField(sectionIndex, fieldIndex)}><Trash2 size={14} /><span>Remove</span></button></div>}
             </div>
             {expandedFieldId === field.id && <div className="field-editor-body">
               <div className="field-settings field-basic-settings">
@@ -975,7 +1038,85 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
               </div></details>
             </div>}
           </article>)}</div>
-          {canEdit && <><button className="add-field-button" type="button" onClick={() => setOpenModuleSection((current) => current === sectionIndex ? null : sectionIndex)}><Plus size={15} /> Add module to {section.title}</button>{openModuleSection === sectionIndex && <div className="module-library"><div className="module-library-head"><div><p className="eyebrow">Drop-in modules</p><strong>Choose a ready-made block</strong></div><button className="icon-button" type="button" aria-label="Close module library" onClick={() => setOpenModuleSection(null)}><X size={16} /></button></div><div className="module-grid">{fieldModules.map((module) => <button type="button" key={module.key} onClick={() => addModule(sectionIndex, module)}><span><Layers3 size={17} /></span><strong>{module.name}</strong><small>{module.description}</small><b>{module.category} · {module.fields.length} field{module.fields.length === 1 ? "" : "s"}</b></button>)}</div></div>}</>}
+          {canEdit && <>
+            <button
+              className="add-field-button"
+              type="button"
+              onClick={() => {
+                if (openModuleSection === sectionIndex) closeModuleLibrary();
+                else setOpenModuleSection(sectionIndex);
+              }}
+            >
+              <Plus size={15} /> Add module to {section.title}
+            </button>
+            {openModuleSection === sectionIndex && (
+              <div className="module-library">
+                <div className="module-library-head">
+                  <div>
+                    <p className="eyebrow">Drop-in modules</p>
+                    <strong>Search or filter ready-made blocks</strong>
+                  </div>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    aria-label="Close module library"
+                    onClick={closeModuleLibrary}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                <div className="module-library-filters">
+                  <label>
+                    Search modules
+                    <span className="search-input">
+                      <Search size={14} aria-hidden="true" />
+                      <input
+                        value={moduleQuery}
+                        placeholder="Contact, housing, meals…"
+                        onChange={(event) => setModuleQuery(event.target.value)}
+                      />
+                    </span>
+                  </label>
+                  <label>
+                    Category
+                    <select
+                      value={moduleCategory}
+                      onChange={(event) => setModuleCategory(
+                        event.target.value as typeof moduleCategories[number],
+                      )}
+                    >
+                      {moduleCategories.map((category) => (
+                        <option value={category} key={category}>{category}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                {visibleFieldModules.length === 0 ? (
+                  <p className="module-library-empty">
+                    No modules match that search.
+                  </p>
+                ) : (
+                  <div className="module-grid">
+                    {visibleFieldModules.map((module) => (
+                      <button
+                        type="button"
+                        key={module.key}
+                        onClick={() => addModule(sectionIndex, module)}
+                      >
+                        <span><Layers3 size={17} /></span>
+                        <strong>{module.name}</strong>
+                        <small>{module.description}</small>
+                        <b>
+                          {module.category} · {module.fields.length} field
+                          {module.fields.length === 1 ? "" : "s"}
+                        </b>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </>}
         </section>)}
 
         {canEdit && <button className="add-section-button" type="button" onClick={addSection}><Plus size={17} /> Add another section</button>}

@@ -6,10 +6,18 @@ import {
   setAccountDisabled,
 } from "@/modules/system-admin/account-status";
 import { getTeamDirectory } from "@/modules/system-admin/team-directory";
+import {
+  TeamProfileError,
+  teamProfileSchema,
+  updateTeamProfile,
+} from "@/modules/system-admin/team-profile";
 import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
 
-const inputSchema = z.object({ disabled: z.boolean() }).strict();
+const inputSchema = z.union([
+  z.strictObject({ disabled: z.boolean() }),
+  teamProfileSchema,
+]);
 
 /**
  * Sign-in is platform-wide, so this is gated on the global role rather than an
@@ -27,7 +35,7 @@ async function patchHandler(
     return Response.json(
       {
         error: "SYSTEM_ADMIN_REQUIRED",
-        message: "Only a system administrator can change whether an account can sign in.",
+        message: "Only a system administrator can manage a team account.",
       },
       { status: 403 },
     );
@@ -35,7 +43,11 @@ async function patchHandler(
   try {
     const { userId } = await context.params;
     const input = inputSchema.parse(await request.json());
-    await setAccountDisabled(userId, input.disabled, user.id);
+    if ("disabled" in input) {
+      await setAccountDisabled(userId, input.disabled, user.id);
+    } else {
+      await updateTeamProfile(userId, user.id, input);
+    }
     return Response.json({ directory: await getTeamDirectory() });
   } catch (error) {
     if (error instanceof AccountStatusError) {
@@ -44,15 +56,25 @@ async function patchHandler(
         { status: error.code === "ACCOUNT_NOT_FOUND" ? 404 : 409 },
       );
     }
+    if (error instanceof TeamProfileError) {
+      return Response.json(
+        { error: error.code, message: error.message },
+        { status: 404 },
+      );
+    }
     if (error instanceof z.ZodError) {
       return Response.json(
-        { error: "INVALID_REQUEST", message: "Say whether the account should be disabled." },
+        {
+          error: "INVALID_REQUEST",
+          message: error.issues[0]?.message ?? "Review the team profile.",
+          issues: error.issues,
+        },
         { status: 400 },
       );
     }
-    logError("Changing an account's sign-in failed", error);
+    logError("Changing a team account failed", error);
     return Response.json(
-      { error: "ACCOUNT_STATUS_FAILED", message: "That account could not be updated." },
+      { error: "ACCOUNT_UPDATE_FAILED", message: "That account could not be updated." },
       { status: 500 },
     );
   }

@@ -1,7 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { ShieldCheck, ShieldAlert, UserX, UsersRound } from "lucide-react";
+import {
+  Pencil,
+  ShieldCheck,
+  ShieldAlert,
+  UserX,
+  UsersRound,
+  X,
+} from "lucide-react";
+import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { TeamDirectory } from "@/modules/system-admin/team-directory";
 
 function friendly(value: string) {
@@ -25,6 +33,53 @@ export function TeamDirectoryWorkspace({
   const [busyUserId, setBusyUserId] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [profileMember, setProfileMember] = useState<
+    TeamDirectory["members"][number] | null
+  >(null);
+  const dialogRef = useAccessibleDialog<HTMLElement>(
+    Boolean(profileMember),
+    closeProfile,
+  );
+
+  function closeProfile() {
+    if (!busyUserId) setProfileMember(null);
+  }
+
+  async function saveProfile(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!profileMember) return;
+    const form = new FormData(event.currentTarget);
+    setBusyUserId(profileMember.id);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`/api/admin/users/${profileMember.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          displayName: form.get("displayName"),
+          jobTitle: form.get("jobTitle"),
+          phone: form.get("phone"),
+          bio: form.get("bio"),
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.directory) {
+        throw new Error(result.message ?? "That team profile could not be updated.");
+      }
+      setDirectory(result.directory);
+      setProfileMember(null);
+      setNotice(`Updated the team profile for ${form.get("displayName")}.`);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "That team profile could not be updated.",
+      );
+    } finally {
+      setBusyUserId("");
+    }
+  }
 
   async function setDisabled(userId: string, displayName: string, disabled: boolean) {
     if (disabled && !window.confirm(
@@ -110,8 +165,12 @@ export function TeamDirectoryWorkspace({
                   <td>
                     {member.displayName}
                     {member.globalRole === "SYSTEM_ADMIN" && <small>System administrator</small>}
+                    {member.jobTitle && <small>{member.jobTitle}</small>}
                   </td>
-                  <td>{member.email}</td>
+                  <td>
+                    {member.email}
+                    {member.phone && <small>{member.phone}</small>}
+                  </td>
                   <td>
                     {member.signInDisabled
                       ? "Disabled"
@@ -138,20 +197,30 @@ export function TeamDirectoryWorkspace({
                     )}
                   </td>
                   <td>
-                    {member.id === currentUserId ? (
-                      // The refusal is enforced server-side too; showing it
-                      // here saves someone finding out by being refused.
-                      <small>This is you</small>
-                    ) : (
+                    <div className="team-account-actions">
                       <button
                         className="secondary-button"
                         type="button"
                         disabled={busyUserId === member.id}
+                        onClick={() => setProfileMember(member)}
+                      >
+                        <Pencil size={14} aria-hidden="true" /> Edit profile
+                      </button>
+                      {member.id === currentUserId ? (
+                        // The refusal is enforced server-side too; showing it
+                        // here saves someone finding out by being refused.
+                        <small>This is you</small>
+                      ) : (
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={busyUserId === member.id}
                         onClick={() => setDisabled(member.id, member.displayName, !member.signInDisabled)}
                       >
                         {member.signInDisabled ? "Allow sign-in" : "Disable sign-in"}
                       </button>
-                    )}
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -159,6 +228,96 @@ export function TeamDirectoryWorkspace({
           </table>
         </div>
       </section>
+      {profileMember && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeProfile();
+          }}
+        >
+          <section
+            className="modal-card"
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="team-profile-title"
+            tabIndex={-1}
+          >
+            <div className="modal-head">
+              <div>
+                <p className="eyebrow">Global team profile</p>
+                <h2 id="team-profile-title">Edit {profileMember.displayName}</h2>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                onClick={closeProfile}
+                aria-label="Close team profile"
+              >
+                <X size={18} aria-hidden="true" />
+              </button>
+            </div>
+            <p className="quiet-copy">
+              These details identify this account everywhere it appears. Email and
+              event permissions are managed separately.
+            </p>
+            <form className="form-stack" onSubmit={saveProfile}>
+              <label>
+                Display name
+                <input
+                  name="displayName"
+                  defaultValue={profileMember.displayName}
+                  minLength={2}
+                  maxLength={100}
+                  autoComplete="name"
+                  required
+                />
+              </label>
+              <label>
+                Title or responsibility
+                <input
+                  name="jobTitle"
+                  defaultValue={profileMember.jobTitle}
+                  maxLength={120}
+                  placeholder="Registration coordinator"
+                />
+              </label>
+              <label>
+                Phone
+                <input
+                  name="phone"
+                  defaultValue={profileMember.phone}
+                  maxLength={40}
+                  autoComplete="tel"
+                />
+              </label>
+              <label>
+                Profile notes
+                <textarea
+                  name="bio"
+                  defaultValue={profileMember.bio}
+                  maxLength={1000}
+                  rows={4}
+                  placeholder="Responsibilities, availability, or internal context."
+                />
+              </label>
+              <div className="form-actions">
+                <button className="secondary-button" type="button" onClick={closeProfile}>
+                  Cancel
+                </button>
+                <button
+                  className="primary-button"
+                  type="submit"
+                  disabled={busyUserId === profileMember.id}
+                >
+                  {busyUserId === profileMember.id ? "Saving…" : "Save profile"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
     </section>
   );
 }
