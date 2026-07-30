@@ -3,16 +3,19 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   ArrowRight,
+  BookOpenText,
   CalendarDays,
   CircleHelp,
   Clock3,
   ExternalLink,
+  FileDown,
   MapPin,
   Megaphone,
+  Paperclip,
   UsersRound,
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
-import { contentParagraphs } from "@/modules/events/content-schemas";
+import { contentBlocks } from "@/modules/events/content-schemas";
 import { getPublicEventLanding } from "@/modules/events/public-repository";
 
 export const dynamic = "force-dynamic";
@@ -141,29 +144,47 @@ export default async function PublicEventPage({
         </section>
       )}
 
-      {resourceSections.map((section) => (
-        <section className="public-event-resources" aria-label={section.title} key={section.id}>
-          <h2>{section.title}</h2>
-          <ul>
-            {section.links.map((link, linkIndex) => (
-              <li key={`${section.id}:${linkIndex}`}>
-                {/* An uploaded file is served from here; anything else is
-                    off-site, so it gets the usual untrusted-target guards. */}
-                <a
-                  href={link.assetId
-                    ? `/api/public/events/${encodeURIComponent(landing.event.slug)}/assets/${encodeURIComponent(link.assetId)}`
-                    : link.url ?? "#"}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <strong>{link.label}</strong>
-                  {link.description && <small>{link.description}</small>}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ))}
+      {resourceSections.map((section, sectionIndex) => {
+        const headingId = `public-event-resources-${sectionIndex}`;
+        return (
+          <section
+            className="public-event-resources"
+            aria-labelledby={headingId}
+            key={section.id}
+          >
+            <header className="public-event-content-heading">
+              <span aria-hidden="true"><Paperclip size={20} /></span>
+              <div>
+                <p className="public-registration-eyebrow">Event resources</p>
+                <h2 id={headingId}>{section.title}</h2>
+              </div>
+            </header>
+            <ul>
+              {section.links.map((link, linkIndex) => (
+                <li key={`${section.id}:${linkIndex}`}>
+                  {/* An uploaded file is served from here; anything else is
+                      off-site, so it gets the usual untrusted-target guards. */}
+                  <a
+                    href={link.assetId
+                      ? `/api/public/events/${encodeURIComponent(landing.event.slug)}/assets/${encodeURIComponent(link.assetId)}`
+                      : link.url ?? "#"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <span className="public-event-resource-icon" aria-hidden="true">
+                      {link.assetId ? <FileDown size={19} /> : <ExternalLink size={18} />}
+                    </span>
+                    <span>
+                      <strong>{link.label}</strong>
+                      {link.description && <small>{link.description}</small>}
+                    </span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })}
 
       <div className="public-event-layout">
         <section className="public-event-main" aria-labelledby="registration-options-title">
@@ -213,14 +234,44 @@ export default async function PublicEventPage({
             </div>
           )}
 
-          {proseSections.map((section) => (
-            <section className="public-event-prose" key={section.id}>
-              <h2>{section.title}</h2>
-              {/* Paragraphs, not markup. The body is plain text and React
-                  escapes it, so a content field cannot become an injection. */}
-              {contentParagraphs(section.body).map((paragraph, index) => (
-                <p key={index}>{paragraph}</p>
-              ))}
+          {proseSections.map((section, sectionIndex) => (
+            <section
+              className="public-event-prose"
+              aria-labelledby={`public-event-information-${sectionIndex}`}
+              key={section.id}
+            >
+              <header className="public-event-content-heading">
+                <span aria-hidden="true"><BookOpenText size={20} /></span>
+                <div>
+                  <p className="public-registration-eyebrow">Event information</p>
+                  <h2 id={`public-event-information-${sectionIndex}`}>{section.title}</h2>
+                </div>
+              </header>
+              {/* Blocks contain plain text, never markup. React escapes every
+                  item, so authored event content cannot become an injection. */}
+              <div className="public-event-prose-body">
+                {contentBlocks(section.body).map((block, blockIndex) => {
+                  if (block.kind === "UNORDERED_LIST") {
+                    return (
+                      <ul key={blockIndex}>
+                        {block.items.map((item, itemIndex) => (
+                          <li key={itemIndex}>{item}</li>
+                        ))}
+                      </ul>
+                    );
+                  }
+                  if (block.kind === "ORDERED_LIST") {
+                    return (
+                      <ol key={blockIndex}>
+                        {block.items.map((item, itemIndex) => (
+                          <li value={item.value} key={itemIndex}>{item.text}</li>
+                        ))}
+                      </ol>
+                    );
+                  }
+                  return <p key={blockIndex}>{block.text}</p>;
+                })}
+              </div>
             </section>
           ))}
         </section>

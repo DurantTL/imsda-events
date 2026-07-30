@@ -97,3 +97,60 @@ describe("public event landing announcement feed", () => {
     expect(markup).not.toContain("Event updates");
   });
 });
+
+describe("public event extra information", () => {
+  it("renders plain-text lines and lists as escaped, scannable blocks", async () => {
+    landingMocks.getPublicEventLanding.mockResolvedValueOnce({
+      ...landing,
+      announcements: [],
+      contentSections: [{
+        id: "information",
+        kind: "RICH_TEXT",
+        title: "What to bring",
+        body: "Read this first.\n<script>alert('unsafe')</script>\n- Towel\n- Flashlight",
+        links: [],
+      }],
+    });
+
+    const markup = renderToStaticMarkup(await PublicEventPage({
+      params: Promise.resolve({ eventSlug: "public-retreat" }),
+    }));
+
+    expect(markup).toContain("<p>Read this first.</p>");
+    expect(markup).toContain(
+      "<p>&lt;script&gt;alert(&#x27;unsafe&#x27;)&lt;/script&gt;</p>",
+    );
+    expect(markup).toContain("<ul><li>Towel</li><li>Flashlight</li></ul>");
+    expect(markup).not.toContain("<script>alert");
+  });
+
+  it("keeps resource links guarded and labeled by their visible heading", async () => {
+    landingMocks.getPublicEventLanding.mockResolvedValueOnce({
+      ...landing,
+      announcements: [],
+      contentSections: [{
+        id: "resources",
+        kind: "RESOURCE_LINKS",
+        title: "Downloads",
+        body: "",
+        links: [{
+          label: "Packing guide",
+          description: "PDF checklist",
+          url: "https://example.test/packing.pdf",
+          assetId: null,
+        }],
+      }],
+    });
+
+    const markup = renderToStaticMarkup(await PublicEventPage({
+      params: Promise.resolve({ eventSlug: "public-retreat" }),
+    }));
+
+    expect(markup).toContain('aria-labelledby="public-event-resources-0"');
+    expect(markup).toContain('href="https://example.test/packing.pdf"');
+    expect(markup).toContain('target="_blank"');
+    expect(markup).toContain('rel="noopener noreferrer"');
+    expect(markup).toContain("Packing guide");
+    expect(markup).toContain("PDF checklist");
+  });
+});
