@@ -10,6 +10,7 @@ import {
   mutableRedirect,
   OAUTH_HANDOFF_LIFETIME_SECONDS,
 } from "@/modules/attendee-accounts/oauth-handoff";
+import { attendeePublicUrl } from "@/modules/attendee-accounts/public-navigation";
 import {
   applyRateLimitHeaders,
   type RateLimitOutcome,
@@ -31,13 +32,13 @@ async function getHandler(request: Request) {
     if (!isGoogleSignInConfigured()) {
       // Sign-in pages hide the button when this is the case, so reaching here
       // means a stale tab or a hand-typed URL.
-      return mutableRedirect(new URL("/account/sign-in?error=google-unavailable", request.url));
+      return mutableRedirect(attendeePublicUrl("/account/sign-in?error=google-unavailable"));
     }
 
     rateLimit = await checkAttendeeOAuthStartRateLimit(request);
     if (!rateLimit.allowed) {
       return applyRateLimitHeaders(
-        mutableRedirect(new URL("/account/sign-in?error=rate-limited", request.url)),
+        mutableRedirect(attendeePublicUrl("/account/sign-in?error=rate-limited")),
         rateLimit,
       );
     }
@@ -69,7 +70,7 @@ async function getHandler(request: Request) {
   } catch (error) {
     logError("Google sign-in could not be started", error);
     const response = mutableRedirect(
-      new URL("/account/sign-in?error=google-failed", request.url),
+      attendeePublicUrl("/account/sign-in?error=google-failed"),
       303,
     );
     return rateLimit ? applyRateLimitHeaders(response, rateLimit) : response;

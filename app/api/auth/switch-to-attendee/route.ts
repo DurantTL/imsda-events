@@ -4,6 +4,7 @@ import { withRequestContext } from "@/lib/request-context";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { findSwitchableAttendeeAccountForStaff } from "@/modules/attendee-accounts/current-attendee";
+import { attendeePublicUrl } from "@/modules/attendee-accounts/public-navigation";
 import {
   ATTENDEE_SESSION_COOKIE_NAME,
   ATTENDEE_SESSION_LIFETIME_SECONDS,
@@ -58,7 +59,7 @@ async function postHandler(request: Request) {
     return new Response(null, {
       status: 303,
       headers: {
-        location: new URL("/account", request.url).toString(),
+        location: attendeePublicUrl("/account").toString(),
         "cache-control": "no-store",
       },
     });

@@ -8,8 +8,10 @@ const mocks = vi.hoisted(() => ({
   findSwitchableAttendeeAccountForStaff: vi.fn(),
   createAttendeeSession: vi.fn(),
   revokeAttendeeSession: vi.fn(),
+  getServerEnv: vi.fn(),
 }));
 
+vi.mock("server-only", () => ({}));
 vi.mock("next/headers", () => ({
   cookies: vi.fn(async () => ({
     get: mocks.cookieGet,
@@ -31,11 +33,17 @@ vi.mock("@/modules/attendee-accounts/session-store", () => ({
   createAttendeeSession: mocks.createAttendeeSession,
   revokeAttendeeSession: mocks.revokeAttendeeSession,
 }));
+vi.mock("@/lib/env", () => ({
+  getServerEnv: mocks.getServerEnv,
+}));
 
 import { POST } from "@/app/api/auth/switch-to-attendee/route";
 
-function request(body?: unknown) {
-  return new Request("https://events.imsda.test/api/auth/switch-to-attendee", {
+function request(
+  body?: unknown,
+  url = "https://events.imsda.test/api/auth/switch-to-attendee",
+) {
+  return new Request(url, {
     method: "POST",
     headers: {
       origin: "https://events.imsda.test",
@@ -67,6 +75,9 @@ beforeEach(() => {
     token: "new-attendee-token",
     expiresAt: new Date("2026-08-13T14:00:00.000Z"),
   });
+  mocks.getServerEnv.mockReturnValue({
+    APP_BASE_URL: "https://events.imsda.org",
+  });
 });
 
 describe("staff attendee-account switch route", () => {
@@ -74,7 +85,7 @@ describe("staff attendee-account switch route", () => {
     const response = await POST(request());
 
     expect(response.status).toBe(303);
-    expect(response.headers.get("location")).toBe("https://events.imsda.test/account");
+    expect(response.headers.get("location")).toBe("https://events.imsda.org/account");
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(mocks.findSwitchableAttendeeAccountForStaff).toHaveBeenCalledWith(
       "same@example.test",
@@ -95,6 +106,15 @@ describe("staff attendee-account switch route", () => {
         priority: "high",
       }),
     );
+  });
+
+  it("does not expose a reverse proxy address in the redirect", async () => {
+    const response = await POST(
+      request(undefined, "http://10.42.0.19:3100/api/auth/switch-to-attendee"),
+    );
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("https://events.imsda.org/account");
   });
 
   it("requires an active staff session", async () => {
