@@ -7,8 +7,18 @@
 - `modules/`: domain boundaries in the modular monolith.
 - `prisma/`: schema, committed migrations, and synthetic seed data.
 - `tests/`: Vitest permission, domain, route, and regression tests.
-- `docs/`: runbooks, decisions, readiness evidence, and the canonical roadmap.
+- `docs/`: runbooks, decisions, and readiness evidence.
 - `.agents/skills/`: repository-scoped build and review workflows.
+- `.claude/`: Claude Code configuration (session hook, permissions, and thin
+  wrappers around the `.agents/skills/` workflows).
+
+## Roadmap and issue conventions
+
+GitHub issue #98 is the canonical ordered roadmap; work issues in its phase
+order. `docs/BUILD-STATUS-AND-WR26-GAP-AUDIT.md` is historical status evidence,
+not the roadmap. Labels mirror the phases (`phase-0` … `phase-5`);
+`codex-ready` marks the currently claimable frontier for automated builds;
+`needs-decision` and `needs-human` mark issues blocked on a human.
 
 Use Node.js 20.9 or newer. Start locally with `npm install`, the PostgreSQL
 Compose service, `npm run db:deploy`, `npm run db:seed`, and `npm run dev`.
@@ -20,7 +30,9 @@ GitHub CI also migrates and seeds a clean PostgreSQL database.
 
 1. Query the installed Graphify project before broad repository searches
    (`graphify query "<question>"`). Verify every finding against current source
-   files; Graphify is derived and rebuildable.
+   files; Graphify is derived and rebuildable. When the `graphify` CLI is not
+   installed (for example cloud agent sessions), skip this step and use the
+   repository search tools directly — do not fail or wait on Graphify.
 2. Use exactly one approved GitHub issue and one isolated worktree per build.
    Continue an existing issue branch or PR instead of duplicating it.
 3. Implement only the issue's acceptance criteria, preserve unrelated changes,
