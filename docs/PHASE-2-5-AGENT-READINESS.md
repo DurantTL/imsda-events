@@ -63,14 +63,43 @@ need #120; #94 and #95 need #121; the Phase 1 release gate needs #123.
 Installment schedules moved from #74 to #92, where the authorization and dunning
 workflow they belong to lives.
 
-## The ADR trio
+## The planning epics are features, not documents
 
-#40 identity, #43 consent and guardian authority, and #44 protected records are
-all `codex-ready` for documentation — no schema, no migration, no real data —
-and all unclaimed. They are cheap and they gate a lot: #43 alone blocks #96
-completely and constrains #91, #42, #78, #44, and #115. `docs/decisions/`
-currently holds four ADRs and none of them covers identity, consent, or
-protected records.
+#40, #41, #42, #43, and #44 were all scoped as "draft an ADR, no schema
+changes," and all five sat unclaimed. That scoping was wrong. Each epic's own
+acceptance criteria demand end-state tests over working code — #40 requires
+proof that merging cannot grant access or collapse distinct people under
+concurrency, #43 that versions are immutable and withdrawals do not erase
+history, #44 that encryption, rotation, break-glass, redaction, and restore all
+behave — and each body **names the sub-issues it expects**. The ADR is
+deliverable one of several, not the deliverable.
+
+What makes the implementation specifiable now is that the policy decisions are
+already recorded on the epics: reversible soft-merge, anonymize rather than
+erase, guardian authority declared rather than inferred, clubs as units under
+their church, eligibility that establishes nothing beyond eligibility. The ADR
+documents those decisions; it does not discover them, so it runs alongside the
+build rather than in front of it.
+
+| Epic | Slices | Status |
+| --- | --- | --- |
+| #40 identity | #125 links and household history, #126 match review, #127 soft-merge and unmerge, #128 authorization and migration | created, `codex-ready` |
+| #43 consent | #129 policy versions, #130 evidence events, #131 guardian authority, #132 staff decisions and readiness | created, `codex-ready` |
+| #41 roster | season/unit, membership, roles, roster import, authorization, migration | slices specified in comments |
+| #42 participation | participation persistence, **normalized readiness contract**, readiness engine, disclosure projections, invite/add, coexistence | slices specified in comments |
+| #44 protected records | key management, persistence, authorization/break-glass, redaction, workflows, retention, migration | slices specified in comments |
+
+Two ordering notes:
+
+- **#131 unblocks #96**, which currently has no separable work at all. Guardian
+  authority is the concept #96 is built entirely out of.
+- **#44 is the one epic where the ADR genuinely gates most slices.** Persisting
+  protected values under an unapproved key design cannot be corrected later.
+  Its key-management and redaction slices are claimable before approval; the
+  rest are not.
+
+`docs/decisions/` holds four ADRs today and none covers identity, consent, or
+protected records. Those remain required — they are just not the whole job.
 
 ## Phase 2
 
@@ -122,8 +151,9 @@ guide plus a claimable-slice review; the summary below is the short form.
 
 1. **#117 then #118** — three Phase 2 modules unblock at #118, which is the
    fastest path from "nothing can post a charge" to "everything can."
-2. **The ADR trio** — #40, #43, #44. Documentation PRs, no schema, and #43
-   alone releases six issues. Can run in parallel with the ledger.
+2. **#125 then #131** — durable identity, then declared guardian authority.
+   #131 releases #96, which has no separable work without it. Runs in parallel
+   with the ledger; the ADRs are drafted alongside, not first.
 3. Phase 2 operational modules in roadmap order: #64, #89, #65, #78, #100,
    #81, #80, #102.
 4. **#119 through #123** — the rest of the ledger, with #121 the one to treat
