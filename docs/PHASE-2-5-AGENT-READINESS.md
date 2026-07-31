@@ -24,14 +24,53 @@ Rather than blocking them or writing into the existing `Payment` tables — whic
 would create the second ledger every financial guardrail prohibits — each
 records immutable **charge intents behind a disabled posting adapter**:
 
-| Issue | Deferred financial behavior |
-| --- | --- |
-| #80 | asset deposits, damage and replacement charges, waivers |
-| #81 | meal charges, credits, walk-up sales |
-| #100 | per-session fees |
+| Issue | Deferred financial behavior | Unblocks at |
+| --- | --- | --- |
+| #80 | asset deposits, damage and replacement charges, waivers | #118 |
+| #81 | meal charges, credits, walk-up sales | #118 |
+| #100 | per-session fees | #118 |
 
-The affected acceptance criteria stay open on those issues until #74 lands and
-one PR per module enables posting.
+The affected acceptance criteria stay open on those issues until the ledger
+slice lands and one PR per module enables posting.
+
+## The ledger (#74) and its slices
+
+#74 was `codex-ready` but unclaimed, because it is eleven entity families plus a
+live-data migration in one issue. The difficulty is not the ledger, it is that
+`Registration.totalAmount` is a mutable column read in roughly 73 places —
+including confirmation emails — overwritten by amendment repricing
+(`modules/registrations/amendments-repository.ts`), with balance computed as
+`totalAmount - paidCents` in `modules/registrations/repository.ts`.
+
+The approach is a ledger built alongside, backfilled, and proven against the
+existing number before anything switches over. The mechanism is a **shadow
+reconciliation check** — `derived_balance == totalAmount - paidCents` for every
+registration — kept green through every slice and retained afterward as a
+standing invariant. `totalAmount` is not dropped; it becomes a projection.
+
+| Slice | Scope |
+| --- | --- |
+| #117 | charge and credit entries, backfill, shadow reconciliation |
+| #118 | payments and multi-registration allocations |
+| #119 | refund allocations, disputes distinct from refunds |
+| #120 | adjustments, scholarships, transfers, event credits |
+| #121 | derived balance service and read-site cutover |
+| #122 | processor settlement import and exceptions queue |
+| #123 | event financial reconciliation report |
+
+Downstream: #102 needs #117; #80, #81, and #100 need #118; #101, #67, and #92
+need #120; #94 and #95 need #121; the Phase 1 release gate needs #123.
+Installment schedules moved from #74 to #92, where the authorization and dunning
+workflow they belong to lives.
+
+## The ADR trio
+
+#40 identity, #43 consent and guardian authority, and #44 protected records are
+all `codex-ready` for documentation — no schema, no migration, no real data —
+and all unclaimed. They are cheap and they gate a lot: #43 alone blocks #96
+completely and constrains #91, #42, #78, #44, and #115. `docs/decisions/`
+currently holds four ADRs and none of them covers identity, consent, or
+protected records.
 
 ## Phase 2
 
@@ -66,23 +105,28 @@ guide plus a claimable-slice review; the summary below is the short form.
 | --- | --- | --- |
 | #62 passkeys | credential persistence, once a library is chosen | RP ID belongs in `PlatformSettings`; recovery needs security review |
 | #91 reviewed prefill | field registry with never-carry-forward default | #40 identity model |
-| #92 installments | none | #74; processor capability for unattended charges |
+| #92 installments | none | #120; processor capability for unattended charges |
 | #90 surveys and certificates | survey definition and identified-mode collection | certificate authority; anonymity needs its own sub-issue |
-| #103 outbound API | credential model, public catalog endpoints | private partner API or public developer API |
+| #103 outbound API | **#124 credential model**, then public catalog endpoints | private partner API or public developer API |
 | #82 mobile app | none | #103, #62, store accounts, framework ownership |
 | #83 community expansion | per-event restriction controls | media, minor visibility, moderation capacity |
 | #85 external portals | speaker and sponsor records as event content | where external-party identities live |
 | #87 networking and lead capture | none | consent; recommend excluding events with minors |
-| #94 camp store and POS | none | #74, #54; sales-tax obligation |
-| #95 donations and funds | none | #74; tax receipting and designated-fund ownership |
+| #94 camp store and POS | none | #121, #54; sales-tax obligation |
+| #95 donations and funds | none | #121; tax receipting and designated-fund ownership |
 | #86 virtual and hybrid | none | build after #100; buy streaming rather than build it |
 | #97 personalization | none | build after #100/#89; input allowlist |
 | #71 UltraCamp | none — #112 only | contract terms, #44, no confirmed readiness endpoint |
 
 ## Recommended order
 
-1. **#74** — unblocks three Phase 2 modules and all Phase 3–4 finance work.
-2. Phase 2 operational modules in roadmap order: #64, #89, #65, #78, #100,
+1. **#117 then #118** — three Phase 2 modules unblock at #118, which is the
+   fastest path from "nothing can post a charge" to "everything can."
+2. **The ADR trio** — #40, #43, #44. Documentation PRs, no schema, and #43
+   alone releases six issues. Can run in parallel with the ledger.
+3. Phase 2 operational modules in roadmap order: #64, #89, #65, #78, #100,
    #81, #80, #102.
-3. #114 and #115 — small and independent of everything above.
-4. #112 — closes the ADR-0002 conflict over UltraCamp ordering.
+4. **#119 through #123** — the rest of the ledger, with #121 the one to treat
+   carefully because it changes numbers attendees see.
+5. #114, #115, and #124 — small, independent, and each unblocks a blocked epic.
+6. #112 — closes the ADR-0002 conflict over UltraCamp ordering.
