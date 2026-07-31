@@ -1,5 +1,9 @@
 # IMSDA Events build status and WR26 feature audit
 
+> **Roadmap note:** [GitHub issue #98](https://github.com/DurantTL/imsda-events/issues/98)
+> is the canonical ordered roadmap for future work. This document is historical
+> status and behavior-audit evidence for the WR26 milestone.
+
 Updated July 30, 2026. This document compares the current IMSDA Events workspace with the useful behaviors in [DurantTL/WR26-IMSDA](https://github.com/DurantTL/WR26-IMSDA). WR26 is a behavior reference, not an architecture to copy: IMSDA Events remains the multi-event PostgreSQL system of record rather than importing the old WordPress, Google Apps Script, Google Sheets, or in-memory-cache architecture.
 
 ## July 30 Women’s Retreat implementation update
