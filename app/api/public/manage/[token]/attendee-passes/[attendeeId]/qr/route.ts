@@ -57,15 +57,34 @@ async function getHandler(request: Request, context: RouteContext) {
       }, { status: 404 }, rateLimit);
     }
 
-    const svg = await QRCode.toString(pass.token, {
-      type: "svg",
-      errorCorrectionLevel: "M",
+    const renderOptions = {
+      errorCorrectionLevel: "M" as const,
       margin: 2,
       width: 280,
       color: {
         dark: "#003b5cff",
         light: "#ffffffff",
       },
+    };
+
+    // Mail clients do not render SVG in an <img>, so a pass emailed into a
+    // confirmation asks for PNG. The page keeps the sharper SVG.
+    if (new URL(request.url).searchParams.get("format") === "png") {
+      const png = await QRCode.toBuffer(pass.token, { type: "png", ...renderOptions });
+      const pngResponse = new Response(new Uint8Array(png), {
+        headers: {
+          ...privateHeaders,
+          "Content-Type": "image/png",
+          "Content-Disposition": "inline; filename=\"imsda-attendee-pass.png\"",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+      return applyRateLimitHeaders(pngResponse, rateLimit);
+    }
+
+    const svg = await QRCode.toString(pass.token, {
+      type: "svg",
+      ...renderOptions,
     });
     const response = new Response(svg, {
       headers: {

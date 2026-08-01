@@ -25,6 +25,15 @@ import {
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import { messageRetryRequestPayload } from "@/modules/communications/message-retry-client";
+import { renderEmailHtmlDocument } from "@/modules/communications/email-html";
+import {
+  REGISTRATION_MANAGE_API_SENTINEL,
+  REGISTRATION_MANAGE_LINK_SENTINEL,
+} from "@/modules/communications/manage-link";
+import {
+  MESSAGE_TEMPLATE_TOKEN_KEYS,
+  SAMPLE_MESSAGE_TEMPLATE_CONTEXT,
+} from "@/modules/communications/templates";
 import type {
   AnnouncementRecord,
   BalanceReminderPreview,
@@ -89,30 +98,29 @@ function settingsDraftFromMessaging(
   };
 }
 
-const sampleTokens: Record<string, string> = {
-  recipient_name: "Avery Johnson",
-  registrant_name: "Avery Johnson",
-  event_name: "Sample event",
-  event_dates: "September 25–27, 2026",
-  event_location: "Camp Heritage",
-  confirmation_code: "REG-DEMO123",
-  attendee_summary: "Avery Johnson\nHousing: Lodge room\nMeal plan: Full weekend",
-  total_amount: "$129.05",
-  balance_amount: "$129.05",
-  payment_instructions: "No card was charged. The event team will confirm the next payment step.",
-  portal_url: "[Private registration link inserted only during delivery]",
-  reply_to_email: "registration@example.test",
-  waitlist_position: "3",
-  contact_email: "avery.johnson@example.test",
-  payment_amount: "$129.05",
-  payment_reference: "square-demo-reference",
-  prior_person_name: "Jordan Lee",
-  new_person_name: "Morgan Lee",
-  announcement_title: "Friday arrival information",
-  announcement_body: "Check-in opens at 4:00 PM in the main lodge.",
-};
+/**
+ * Preview values come from the one sample context the server also uses, rather
+ * than a second copy maintained here. The copies drifted: the preview paired
+ * one event's dates and venue with another event's lodging, which is exactly
+ * the kind of mismatch a preview exists to rule out.
+ */
+const sampleTokens: Record<string, string> = { ...SAMPLE_MESSAGE_TEMPLATE_CONTEXT };
+const templateTokenKeys: readonly string[] = MESSAGE_TEMPLATE_TOKEN_KEYS;
 
-const templateTokenKeys = Object.keys(sampleTokens);
+/**
+ * A preview has no registration and mints no private token, so the delivery
+ * sentinels stand in for one. Both stand-ins are valid absolute URLs: a
+ * template writes its portal link as `[text]({{portal_url}})`, and a bracketed
+ * note in that position renders as broken markup rather than a button.
+ */
+const PREVIEW_MANAGE_URL = "https://events.imsda.org/manage/preview-link-not-live";
+const PREVIEW_MANAGE_API_URL = "https://events.imsda.org/api/public/manage/preview-link-not-live";
+
+function withPreviewLinks(value: string) {
+  return value
+    .replaceAll(REGISTRATION_MANAGE_API_SENTINEL, PREVIEW_MANAGE_API_URL)
+    .replaceAll(REGISTRATION_MANAGE_LINK_SENTINEL, PREVIEW_MANAGE_URL);
+}
 const deliveryFilters: Array<"ALL" | MessageOutboxStatusValue> = [
   "ALL",
   "PENDING",
@@ -141,10 +149,11 @@ const templateLabels: Record<string, string> = {
 };
 
 function renderSample(value: string, eventName: string) {
-  return value.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (placeholder, token: string) => {
+  const filled = value.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (placeholder, token: string) => {
     if (token === "event_name") return eventName;
     return sampleTokens[token] ?? placeholder;
   });
+  return withPreviewLinks(filled).replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function statusTone(status: MessageOutboxStatusValue) {
@@ -1216,7 +1225,13 @@ export function CommunicationsWorkspace({
               </div>
               <div className="message-safety-banner"><Clock3 size={18} aria-hidden="true" /><span><strong>Publishing affects future messages only.</strong><small>Existing queued and captured rows keep their exact subject and body snapshots.</small></span></div>
               <label>Subject<input value={templateSubject} maxLength={180} required onChange={(event) => setTemplateSubject(event.target.value)} /></label>
-              <label>Plain-text message<textarea value={templateBody} rows={18} maxLength={12000} required onChange={(event) => setTemplateBody(event.target.value)} /></label>
+              <label>
+                Message body
+                <textarea value={templateBody} rows={18} maxLength={12000} required onChange={(event) => setTemplateBody(event.target.value)} />
+                <small>
+                  Markdown: <code># Heading</code>, <code>### Section</code>, <code>**bold**</code>, <code>- list item</code>, <code>[link text](https://…)</code>. Delivery sends this formatted, with the plain text as the fallback.
+                </small>
+              </label>
               <label className="message-enabled-toggle">
                 <input type="checkbox" checked={templateEnabled} onChange={(event) => setTemplateEnabled(event.target.checked)} />
                 <span><strong>Queue this message type</strong><small>When disabled, registrations retain a suppressed audit row instead of a pending message.</small></span>
@@ -1244,13 +1259,26 @@ export function CommunicationsWorkspace({
           {selectedTemplate && (
             <aside className="message-preview-column">
               <article className="panel message-email-preview">
-                <div className="message-preview-head"><span><Mail size={17} aria-hidden="true" /></span><div><strong>Template preview</strong><small>This preview never sends email</small></div></div>
+                <div className="message-preview-head"><span><Mail size={17} aria-hidden="true" /></span><div><strong>Template preview</strong><small>Formatted exactly as delivery renders it. Never sends email.</small></div></div>
                 <dl>
                   <div><dt>From</dt><dd>{messaging.settings.senderName}{messaging.settings.senderEmail ? ` <${messaging.settings.senderEmail}>` : ""}</dd></div>
                   <div><dt>Reply to</dt><dd>{messaging.settings.replyToEmail || "Not configured"}</dd></div>
                   <div><dt>Subject</dt><dd>{renderSample(templateSubject, eventName) || "No subject"}</dd></div>
                 </dl>
-                <pre>{renderSample(templateBody, eventName) || "No message body"}</pre>
+                <iframe
+                  className="message-body-html"
+                  title="Template preview"
+                  sandbox=""
+                  srcDoc={renderEmailHtmlDocument({
+                    title: renderSample(templateSubject, eventName) || "Template preview",
+                    body: renderSample(templateBody, eventName) || "No message body",
+                    footer: messaging.settings.senderName,
+                  })}
+                />
+                <details className="message-body-plain">
+                  <summary>Plain-text fallback</summary>
+                  <pre>{renderSample(templateBody, eventName) || "No message body"}</pre>
+                </details>
               </article>
               <form className="panel message-test-form" onSubmit={createTestCapture}>
                 <p className="eyebrow">Test the workflow</p>
@@ -1374,7 +1402,21 @@ export function CommunicationsWorkspace({
                       <div><dt>Provider delivery</dt><dd>{selectedMessage.providerDeliveryStatus ? friendlyStatus(selectedMessage.providerDeliveryStatus) : selectedMessage.status === "CAPTURED" ? "Local preview only" : "Not reported"}</dd></div>
                       <div><dt>Provider message</dt><dd>{selectedMessage.providerMessageId ?? "Not assigned"}</dd></div>
                     </dl>
-                    <pre className="message-body-snapshot">{selectedMessage.bodyText.replaceAll("__IMSDA_PRIVATE_MANAGE_LINK__", "[Private registration link inserted only during delivery]")}</pre>
+                    <p className="message-body-note">The private link and pass image below are stand-ins. Delivery mints a fresh one-per-message link that is never stored here.</p>
+                    <iframe
+                      className="message-body-html"
+                      title="Captured message"
+                      sandbox=""
+                      srcDoc={renderEmailHtmlDocument({
+                        title: selectedMessage.subject,
+                        body: withPreviewLinks(selectedMessage.bodyText),
+                        footer: selectedMessage.senderName,
+                      })}
+                    />
+                    <details className="message-body-plain">
+                      <summary>Plain-text fallback</summary>
+                      <pre className="message-body-snapshot">{withPreviewLinks(selectedMessage.bodyText)}</pre>
+                    </details>
                     <div className="message-attempts">
                       <p className="eyebrow">Attempt history</p>
                       {selectedMessage.attempts.map((attempt) => (

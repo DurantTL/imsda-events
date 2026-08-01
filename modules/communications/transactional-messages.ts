@@ -10,6 +10,12 @@ import {
   renderMessageTemplate,
   type MessageTemplateContext,
 } from "@/modules/communications/templates";
+import {
+  buildHotelInformationBlock,
+  buildPaymentStatusBlock,
+  buildRegistrationCheckinTokens,
+  type PaymentState,
+} from "@/modules/communications/message-blocks";
 
 type TransactionalTemplateKey =
   | "WAITLIST_JOINED"
@@ -123,6 +129,22 @@ function paymentInstructions(
     : "No balance is due at this time.";
 }
 
+/**
+ * Which payment section a transition's message shows. The trigger decides it,
+ * not the arithmetic: a waitlist confirmation with a nonzero total must still
+ * say "no payment is due", and a cancellation must not ask anyone to pay.
+ */
+function paymentStateForTemplate(
+  key: TransactionalTemplateKey,
+  input: { totalCents: number; balanceCents: number },
+): PaymentState {
+  if (key === "WAITLIST_JOINED") return "WAITLISTED";
+  if (key === "WAITLIST_PROMOTED") return "WAITLIST_PROMOTED";
+  if (key === "REGISTRATION_CANCELLED") return "CANCELLED";
+  if (input.totalCents <= 0) return "COMPLIMENTARY";
+  return input.balanceCents > 0 ? "BALANCE_DUE" : "PAID";
+}
+
 function attendeeName(attendee: {
   profileSnapshot: Prisma.JsonValue;
   person: { firstName: string; lastName: string };
@@ -193,11 +215,18 @@ async function enqueueTransactionalMessage(
             timezone: true,
             location: true,
             supportContact: true,
+            hotelName: true,
+            hotelBookingUrl: true,
+            hotelPhone: true,
+            hotelGroupName: true,
+            hotelRate: true,
+            hotelInstructions: true,
           },
         },
         attendees: {
           orderBy: [{ position: "asc" }, { createdAt: "asc" }],
           select: {
+            id: true,
             profileSnapshot: true,
             person: {
               select: {
@@ -278,9 +307,23 @@ async function enqueueTransactionalMessage(
     ?? 0;
   const source = template?.versions[0];
   const fallback = DEFAULT_MESSAGE_TEMPLATES[input.templateKey];
+  const instructions = paymentInstructions(
+    input.templateKey,
+    balanceCents,
+    paidCents,
+    refundedCents,
+  );
+  // The organiser's published address, which is what a "questions? contact …"
+  // line means. The reply-to is a delivery header and can be a no-reply.
+  const eventContactEmail = registration.event.supportContact?.trim()
+    || settings.replyToEmail
+    || settings.senderEmail
+    || "the IMSDA event office";
   const context: MessageTemplateContext = {
     recipient_name: recipientName || "Registrant",
-    registrant_name: recipientName || "Registrant",
+    // The person the registration belongs to, which is not always the person
+    // this specific message goes to — a transfer notice reaches two people.
+    registrant_name: defaultRecipientName || recipientName || "Registrant",
     event_name: registration.event.name,
     event_dates: formatMessageDateRange(
       registration.event.startsAt,
@@ -294,12 +337,7 @@ async function enqueueTransactionalMessage(
       .join("\n") || "No attendee names are recorded.",
     total_amount: formatMessageMoney(totalCents),
     balance_amount: formatMessageMoney(balanceCents),
-    payment_instructions: paymentInstructions(
-      input.templateKey,
-      balanceCents,
-      paidCents,
-      refundedCents,
-    ),
+    payment_instructions: instructions,
     portal_url: REGISTRATION_MANAGE_LINK_SENTINEL,
     reply_to_email:
       settings.replyToEmail
@@ -307,7 +345,23 @@ async function enqueueTransactionalMessage(
       || registration.event.supportContact
       || "the IMSDA event office",
     waitlist_position: waitlistPosition > 0 ? String(waitlistPosition) : "Pending",
-    contact_email: recipientEmail,
+    contact_email: eventContactEmail,
+    registration_contact_email: recipientEmail,
+    hotel_information: buildHotelInformationBlock(registration.event),
+    payment_status_block: buildPaymentStatusBlock({
+      state: paymentStateForTemplate(input.templateKey, { totalCents, balanceCents }),
+      totalCents,
+      paidCents,
+      balanceCents,
+      waitlistPosition,
+      paymentInstructions: instructions,
+      portalUrl: REGISTRATION_MANAGE_LINK_SENTINEL,
+      cancellationNote: cancellationPaymentWording({ paidCents, refundedCents }),
+    }),
+    ...buildRegistrationCheckinTokens({
+      confirmationCode: registration.confirmationCode,
+      primaryAttendeeId: registration.attendees[0]?.id ?? null,
+    }),
     payment_amount: formatMessageMoney(input.paymentAmountCents ?? 0),
     payment_reference: input.paymentReference?.trim() || "Not provided",
     prior_person_name: input.priorPersonName?.trim() || "Prior attendee",

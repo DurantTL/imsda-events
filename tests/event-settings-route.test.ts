@@ -57,6 +57,21 @@ const eventPayload = {
   autoPromoteWaitlist: true,
 };
 
+/**
+ * What the route hands the repository. Lodging is optional on the wire — a
+ * client that predates those fields stays valid — and normalises to null, so
+ * every stored event has an explicit "no room block" rather than an absence.
+ */
+const normalizedEventPayload = {
+  ...eventPayload,
+  hotelName: null,
+  hotelBookingUrl: null,
+  hotelPhone: null,
+  hotelGroupName: null,
+  hotelRate: null,
+  hotelInstructions: null,
+};
+
 function eventRequest(
   path: string,
   method: "POST" | "PATCH",
@@ -146,7 +161,7 @@ describe("event settings routes", () => {
     expect(response.status).toBe(200);
     expect(dependencies.updateEventSettings).toHaveBeenCalledWith(
       "evt_wr28",
-      eventPayload,
+      normalizedEventPayload,
       "usr_system",
     );
   });

@@ -191,6 +191,34 @@ describe("external email queue", () => {
     ]);
   });
 
+  /**
+   * The HTML body is derived from the snapshot at send time rather than stored
+   * beside it, so the formatted mail and its plain-text fallback are always the
+   * same snapshot said two ways.
+   */
+  it("sends a formatted HTML body derived from the same snapshot as the text", async () => {
+    const store = fakeDeliveryStore({
+      bodyTextSnapshot: "# Registration confirmed\n\nHello **Avery**.",
+    });
+    let payload: { bodyText: string; bodyHtml?: string | null } | null = null;
+    const sendEmail = vi.fn(async (input: { bodyText: string; bodyHtml?: string | null }) => {
+      payload = { bodyText: input.bodyText, bodyHtml: input.bodyHtml };
+      return { provider: "RESEND" as const, providerMessageId: "email-provider-html" };
+    });
+
+    await processExternalEmailQueue("event-1", {
+      dependencies: { ...dependencies, prisma: store.prisma as never, sendEmail: sendEmail as never },
+    });
+
+    expect(payload).not.toBeNull();
+    expect(payload!.bodyText).toBe("# Registration confirmed\n\nHello **Avery**.");
+    expect(payload!.bodyHtml).toContain("<!DOCTYPE html>");
+    expect(payload!.bodyHtml).toContain(">Registration confirmed</h1>");
+    expect(payload!.bodyHtml).toContain("<strong>Avery</strong>");
+    // Nothing new is written back: the row keeps only what it was captured with.
+    expect(store.message.bodyTextSnapshot).toBe("# Registration confirmed\n\nHello **Avery**.");
+  });
+
   it("inserts a private link only in the in-memory provider payload", async () => {
     const sentinel = "__IMSDA_PRIVATE_MANAGE_LINK__";
     const store = fakeDeliveryStore({

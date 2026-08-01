@@ -50,6 +50,27 @@ describe("Resend email adapter", () => {
     });
   });
 
+  it("sends an HTML part alongside the text fallback, and omits it when absent", async () => {
+    const request = vi.fn<typeof fetch>(async () => new Response(
+      JSON.stringify({ id: "email_provider_123" }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ));
+    const configuration = { apiKey: "re_test_only", apiUrl: "https://api.resend.test" };
+
+    await sendEmailWithResend(
+      { ...input, bodyHtml: "<!DOCTYPE html><html><body>Saved.</body></html>" },
+      configuration,
+      request,
+    );
+    const withHtml = JSON.parse(String(request.mock.calls[0]![1]?.body));
+    expect(withHtml.html).toBe("<!DOCTYPE html><html><body>Saved.</body></html>");
+    // The plain-text part is never replaced by the HTML one.
+    expect(withHtml.text).toBe("Your registration is saved.");
+
+    await sendEmailWithResend(input, configuration, request);
+    expect(JSON.parse(String(request.mock.calls[1]![1]?.body))).not.toHaveProperty("html");
+  });
+
   it("marks throttling and provider outages as retryable", async () => {
     const request = vi.fn<typeof fetch>(async () => new Response(
       JSON.stringify({ name: "rate_limit_exceeded", message: "Try again later." }),

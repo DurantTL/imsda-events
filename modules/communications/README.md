@@ -31,6 +31,22 @@ Staff can publish new immutable versions, inspect exact snapshots and delivery a
 
 Private management URLs are inserted in memory at delivery time from deterministic HMAC tokens; the raw bearer URL is never stored in the outbox, operation snapshots, audit metadata, API response, or logs. Transfer and substitution operations initialize their event's published template versions before mutation, queue the immutable rendered notices inside the business transaction, and process local or external delivery only after that transaction commits. The new transfer contact's replacement access row is also issued only after commit.
 
+## Message bodies, HTML, and generated blocks
+
+A template body is authored, validated, stored, and snapshotted as one plain-text Markdown source. Delivery sends that snapshot as the plain-text part and derives the HTML part from it at send time (`email-html.ts`), so the two parts can never drift and a captured row keeps meaning exactly what it said when it was captured. The renderer escapes the whole source before it looks for any markup, then recognises a small subset — headings, bold, italic, code, ordered and unordered lists, rules, images, and links restricted to `http`, `https`, `mailto`, and `tel`. Registrant-submitted values that reach a body through a token therefore cannot introduce a tag, an attribute, or a script.
+
+Some sections depend on the event or on the registration's state rather than on the template. Those are server-generated blocks (`message-blocks.ts`), placed by a single token and emitted as Markdown like everything else:
+
+- `{{hotel_information}}` — the event's configured lodging. Omitted entirely when the event has no hotel name, which is why lodging is per-event columns rather than text embedded in a shared template.
+- `{{payment_status_block}}` — the paid, balance-due, complimentary, waitlisted, promoted, or cancelled section for this registration's actual state. The trigger decides the state, not the arithmetic: a waitlist confirmation with a nonzero total still says no payment is due.
+- `{{checkin_block}}`, `{{checkin_qr_url}}`, `{{checkin_qr_image}}` — check-in instructions and the attendee pass QR, written against the delivery sentinels and omitted when the registration has no pass.
+
+These tokens are optional: an empty value renders as nothing rather than leaving `{{token}}` in the body and stopping the send, and the surrounding blank lines close back up.
+
+`{{contact_email}}` is the event organiser's published contact address — the one a "questions? contact …" line means. The registration's own destination is `{{registration_contact_email}}`, and `{{reply_to_email}}` remains the delivery header configured in message settings. The migration that introduced the split rewrote every stored template version from the old `{{contact_email}}` to `{{registration_contact_email}}`, so an already-published template kept rendering exactly the value it rendered before.
+
+Preview in the workspace renders the same HTML delivery sends, inside a fully sandboxed iframe, with the delivery sentinels replaced by valid but obviously non-live URLs. It uses the one sample context the server also uses, rather than a second copy: the copies had drifted, and the preview was pairing one event's dates and venue with another event's lodging.
+
 ## Balance-reminder workflow
 
 The Reminders tab is a two-step staff workflow. Its read-only preview considers every event registration, but includes a recipient only when all three rules are true:

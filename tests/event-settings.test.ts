@@ -23,6 +23,28 @@ const validEvent = {
 } as const;
 
 describe("event settings", () => {
+  it("accepts lodging, and treats an omitted or blank hotel as no room block", () => {
+    const configured = eventSettingsInputSchema.parse({
+      ...validEvent,
+      hotelName: "  Holiday Inn Des Moines – Airport Conference Center ",
+      hotelBookingUrl: "https://example.test/book",
+      hotelPhone: " (515) 287-2400 ",
+      hotelGroupName: "IMSDA Women’s Retreat",
+      hotelRate: "$120 per night plus tax",
+      hotelInstructions: " Share a room and split the cost. ",
+    });
+    expect(configured.hotelName).toBe("Holiday Inn Des Moines – Airport Conference Center");
+    expect(configured.hotelPhone).toBe("(515) 287-2400");
+    expect(configured.hotelInstructions).toBe("Share a room and split the cost.");
+
+    // Omitted entirely — an older client that never learned these fields.
+    expect(eventSettingsInputSchema.parse(validEvent).hotelName).toBeNull();
+    // Present but cleared by staff.
+    expect(
+      eventSettingsInputSchema.parse({ ...validEvent, hotelName: "  " }).hotelName,
+    ).toBeNull();
+  });
+
   it("normalizes a valid event payload", () => {
     const parsed = eventSettingsInputSchema.parse({
       ...validEvent,

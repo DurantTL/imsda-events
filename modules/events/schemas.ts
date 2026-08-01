@@ -24,6 +24,16 @@ const nullableText = (maximum: number) => z.string()
   .nullable()
   .transform((value) => value || null);
 
+/**
+ * Same as `nullableText`, but an absent key is also nothing. Used for fields
+ * added after clients existed, so an older payload that never learned to send
+ * them stays valid instead of failing validation on a field it cannot know
+ * about.
+ */
+const optionalNullableText = (maximum: number) => nullableText(maximum)
+  .optional()
+  .transform((value) => value ?? null);
+
 const publicInfoUrlSchema = nullableText(500).refine((value) => {
   if (value === null) return true;
   try {
@@ -95,6 +105,15 @@ export const eventSettingsInputSchema = z.object({
   location: nullableText(200),
   publicInfoUrl: publicInfoUrlSchema,
   supportContact: nullableText(200),
+  // Lodging for this event. Rendered into messages through
+  // {{hotel_information}} and omitted entirely when the name is blank, so an
+  // event that books no room block never carries another event's hotel.
+  hotelName: optionalNullableText(200),
+  hotelBookingUrl: optionalNullableText(500),
+  hotelPhone: optionalNullableText(60),
+  hotelGroupName: optionalNullableText(200),
+  hotelRate: optionalNullableText(120),
+  hotelInstructions: optionalNullableText(1_000),
   // Not part of lifecycleFields: those govern when registration is open, and
   // this governs what the form asks for. Grouping them would suggest turning
   // shirts off has something to do with closing registration.

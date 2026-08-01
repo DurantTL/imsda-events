@@ -12,6 +12,11 @@ export type EmailDeliveryInput = {
   replyToEmail?: string | null;
   subject: string;
   bodyText: string;
+  /**
+   * The formatted body. Sent alongside `bodyText`, never instead of it: the
+   * plain-text part stays the fallback for a client that will not render HTML.
+   */
+  bodyHtml?: string | null;
   idempotencyKey: string;
   messageId: string;
 };
@@ -92,6 +97,7 @@ export async function sendEmailWithResend(
         to: [input.toEmail.trim().toLowerCase()],
         subject: cleanHeaderText(input.subject),
         text: input.bodyText,
+        ...(input.bodyHtml?.trim() ? { html: input.bodyHtml } : {}),
         ...(input.replyToEmail?.trim()
           ? { reply_to: input.replyToEmail.trim().toLowerCase() }
           : {}),

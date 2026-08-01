@@ -15,7 +15,11 @@ import {
   mapResendDeliveryEvent,
   providerTransitionUpdate,
 } from "@/modules/communications/provider-events";
-import { REGISTRATION_MANAGE_LINK_SENTINEL } from "@/modules/communications/manage-link";
+import {
+  REGISTRATION_MANAGE_API_SENTINEL,
+  REGISTRATION_MANAGE_LINK_SENTINEL,
+} from "@/modules/communications/manage-link";
+import { renderEmailHtmlDocument } from "@/modules/communications/email-html";
 import {
   AccountEmailNotConfiguredError,
   getAccountEmailSender,
@@ -98,7 +102,9 @@ export type EmailBodyPreparationInput = {
 export async function prepareEmailBodyForDelivery(
   input: EmailBodyPreparationInput,
 ): Promise<PreparedEmailBody> {
-  if (!input.bodyText.includes(REGISTRATION_MANAGE_LINK_SENTINEL)) {
+  const needsLink = input.bodyText.includes(REGISTRATION_MANAGE_LINK_SENTINEL);
+  const needsApi = input.bodyText.includes(REGISTRATION_MANAGE_API_SENTINEL);
+  if (!needsLink && !needsApi) {
     return { bodyText: input.bodyText };
   }
   if (!input.registrationId) {
@@ -114,11 +120,16 @@ export async function prepareEmailBodyForDelivery(
     now: input.now,
   });
   const manageUrl = new URL(access.managePath, appBaseUrl).toString();
+  // One token serves both the page a registrant opens and the pass image their
+  // mail client fetches, so a confirmation carries a single grant of access.
+  const manageApiUrl = new URL(
+    `/api/public/manage/${access.token}`,
+    appBaseUrl,
+  ).toString();
   return {
-    bodyText: input.bodyText.replaceAll(
-      REGISTRATION_MANAGE_LINK_SENTINEL,
-      manageUrl,
-    ),
+    bodyText: input.bodyText
+      .replaceAll(REGISTRATION_MANAGE_API_SENTINEL, manageApiUrl)
+      .replaceAll(REGISTRATION_MANAGE_LINK_SENTINEL, manageUrl),
     revokeOnDefinitiveFailure: async () => {
       await revokeRegistrationAccessToken(access.token);
     },
@@ -540,6 +551,14 @@ async function runDeliveryLoop(
         replyToEmail: message.replyToEmailSnapshot,
         subject: message.subjectSnapshot,
         bodyText: preparedBody.bodyText,
+        // Derived here rather than stored, so the HTML body and the plain-text
+        // fallback are always the same snapshot said two ways and a captured
+        // row keeps meaning exactly what it meant when it was captured.
+        bodyHtml: renderEmailHtmlDocument({
+          title: message.subjectSnapshot,
+          body: preparedBody.bodyText,
+          footer: message.senderNameSnapshot,
+        }),
         idempotencyKey: `outbox:${message.id}`,
         messageId: message.id,
       }, configuration);
