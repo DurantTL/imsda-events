@@ -23,6 +23,31 @@ const validEvent = {
 } as const;
 
 describe("event settings", () => {
+  it("accepts lodging, and treats an omitted or blank hotel as no room block", () => {
+    const configured = eventSettingsInputSchema.parse({
+      ...validEvent,
+      hotelName: "  Holiday Inn Des Moines – Airport Conference Center ",
+      hotelBookingUrl: "https://example.test/book",
+      hotelPhone: " (515) 287-2400 ",
+      hotelGroupName: "IMSDA Women’s Retreat",
+      hotelRate: "$120 per night plus tax",
+      hotelInstructions: " Share a room and split the cost. ",
+    });
+    expect(configured.hotelName).toBe("Holiday Inn Des Moines – Airport Conference Center");
+    expect(configured.hotelPhone).toBe("(515) 287-2400");
+    expect(configured.hotelInstructions).toBe("Share a room and split the cost.");
+
+    // Omitted entirely — an older client, or a browser tab opened before these
+    // fields existed. `undefined`, not null: the update path must be able to
+    // tell "not supplied" from "staff cleared this", or every such save would
+    // erase the event's lodging.
+    expect(eventSettingsInputSchema.parse(validEvent).hotelName).toBeUndefined();
+    // Present but cleared by staff.
+    expect(
+      eventSettingsInputSchema.parse({ ...validEvent, hotelName: "  " }).hotelName,
+    ).toBeNull();
+  });
+
   it("normalizes a valid event payload", () => {
     const parsed = eventSettingsInputSchema.parse({
       ...validEvent,

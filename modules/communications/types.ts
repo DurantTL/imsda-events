@@ -69,6 +69,13 @@ export type MessageOutboxRecord = {
   replyToEmail: string | null;
   subject: string;
   bodyText: string;
+  /**
+   * The formatted body exactly as it was rendered at enqueue. Null on rows
+   * captured before HTML bodies existed. The viewer shows this rather than
+   * re-rendering `bodyText`, which would re-parse registrant values as Markdown
+   * long after the safe render already happened.
+   */
+  bodyHtml: string | null;
   status: MessageOutboxStatusValue;
   attemptCount: number;
   capturedAt: string | null;

@@ -57,15 +57,41 @@ async function getHandler(request: Request, context: RouteContext) {
       }, { status: 404 }, rateLimit);
     }
 
-    const svg = await QRCode.toString(pass.token, {
-      type: "svg",
-      errorCorrectionLevel: "M",
+    const renderOptions = {
+      errorCorrectionLevel: "M" as const,
       margin: 2,
       width: 280,
       color: {
         dark: "#003b5cff",
         light: "#ffffffff",
       },
+    };
+
+    // Mail clients do not render SVG in an <img>, so a pass emailed into a
+    // confirmation asks for PNG. The page keeps the sharper SVG.
+    if (new URL(request.url).searchParams.get("format") === "png") {
+      const png = await QRCode.toBuffer(pass.token, { type: "png", ...renderOptions });
+      const pngResponse = new Response(new Uint8Array(png), {
+        headers: {
+          ...privateHeaders,
+          "Content-Type": "image/png",
+          "Content-Disposition": "inline; filename=\"imsda-attendee-pass.png\"",
+          // This one response exists to be loaded from a mail client, which is
+          // by definition another origin, so the inherited `same-origin` policy
+          // would block the image before it rendered. It costs nothing here:
+          // the URL already carries the bearer token that authorises it, so
+          // anyone who can request it can read it whatever this header says.
+          // The SVG the app itself renders keeps `same-origin`.
+          "Cross-Origin-Resource-Policy": "cross-origin",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+      return applyRateLimitHeaders(pngResponse, rateLimit);
+    }
+
+    const svg = await QRCode.toString(pass.token, {
+      type: "svg",
+      ...renderOptions,
     });
     const response = new Response(svg, {
       headers: {

@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   createAuthorizedAttendeePass: vi.fn(),
   checkPublicManageRateLimit: vi.fn(),
   qrToString: vi.fn(),
+  qrToBuffer: vi.fn(),
 }));
 
 vi.mock("@/modules/checkin/attendee-pass-repository", () => ({
@@ -13,7 +14,7 @@ vi.mock("@/modules/rate-limit/service", () => ({
   checkPublicManageRateLimit: mocks.checkPublicManageRateLimit,
 }));
 vi.mock("qrcode", () => ({
-  default: { toString: mocks.qrToString },
+  default: { toString: mocks.qrToString, toBuffer: mocks.qrToBuffer },
 }));
 
 import { GET } from "@/app/api/public/manage/[token]/attendee-passes/[attendeeId]/qr/route";
@@ -45,6 +46,7 @@ beforeEach(() => {
     expiresAt: new Date("2026-10-13T17:00:00.000Z"),
   });
   mocks.qrToString.mockResolvedValue("<svg><path d=\"M0 0\" /></svg>");
+  mocks.qrToBuffer.mockResolvedValue(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
 });
 
 describe("private attendee QR route", () => {
@@ -75,6 +77,48 @@ describe("private attendee QR route", () => {
     expect(response.headers.get("content-security-policy")).toContain(
       "default-src 'none'",
     );
+  });
+
+  /**
+   * The PNG exists to be embedded in a confirmation email, which loads it from
+   * a mail client — another origin by definition. The SVG the app renders keeps
+   * `same-origin`; this one response has to opt out, or browser-based clients
+   * refuse the image before it ever renders.
+   */
+  it("returns an embeddable PNG that a mail client can load cross-origin", async () => {
+    const response = await GET(
+      new Request(
+        `https://events.imsda.test/api/public/manage/${token}/attendee-passes/attendee_456/qr?format=png`,
+      ),
+      context,
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.qrToBuffer).toHaveBeenCalledWith(
+      "imsda-pass.v1.payload.signature",
+      expect.objectContaining({ type: "png", errorCorrectionLevel: "M" }),
+    );
+    expect(mocks.qrToString).not.toHaveBeenCalled();
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(response.headers.get("cross-origin-resource-policy")).toBe("cross-origin");
+
+    // Opting out of CORP must not loosen anything else: the URL still carries a
+    // bearer token, so it stays uncacheable, unindexed, and referrer-free.
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    expect(response.headers.get("x-robots-tag")).toContain("noindex");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("keeps the in-app SVG same-origin", async () => {
+    const response = await GET(
+      new Request(
+        `https://events.imsda.test/api/public/manage/${token}/attendee-passes/attendee_456/qr`,
+      ),
+      context,
+    );
+
+    expect(response.headers.get("cross-origin-resource-policy")).toBe("same-origin");
   });
 
   it("uses one private unavailable response when access or attendee scope fails", async () => {

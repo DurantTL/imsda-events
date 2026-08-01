@@ -23,6 +23,7 @@ type MutableMessage = {
   replyToEmailSnapshot: string | null;
   subjectSnapshot: string;
   bodyTextSnapshot: string;
+  bodyHtmlSnapshot: string | null;
   status: string;
   attemptCount: number;
   availableAt: Date;
@@ -45,6 +46,7 @@ function fakeDeliveryStore(overrides: Partial<MutableMessage> = {}) {
     replyToEmailSnapshot: "help@imsda.org",
     subjectSnapshot: "Registration received",
     bodyTextSnapshot: "Your registration is saved.",
+    bodyHtmlSnapshot: null,
     status: "PENDING",
     attemptCount: 0,
     availableAt: new Date("2026-07-23T12:00:00.000Z"),
@@ -79,6 +81,7 @@ function fakeDeliveryStore(overrides: Partial<MutableMessage> = {}) {
             replyToEmailSnapshot: message.replyToEmailSnapshot,
             subjectSnapshot: message.subjectSnapshot,
             bodyTextSnapshot: message.bodyTextSnapshot,
+            bodyHtmlSnapshot: message.bodyHtmlSnapshot,
             attemptCount: message.attemptCount,
           }
         : null
@@ -191,6 +194,61 @@ describe("external email queue", () => {
     ]);
   });
 
+  /**
+   * Both bodies were rendered together at enqueue, where trusted and untrusted
+   * token spans were still distinguishable. Delivery wraps the stored fragment
+   * rather than re-parsing the finished text, which by then cannot tell a
+   * template's Markdown from a registrant's.
+   */
+  it("wraps the stored HTML snapshot and sends it beside the text", async () => {
+    const store = fakeDeliveryStore({
+      bodyTextSnapshot: "# Registration confirmed\n\nHello **Avery**.",
+      bodyHtmlSnapshot: "<h1>Registration confirmed</h1>\n<p>Hello <strong>Avery</strong>.</p>",
+    });
+    let payload: { bodyText: string; bodyHtml?: string | null } | null = null;
+    const sendEmail = vi.fn(async (input: { bodyText: string; bodyHtml?: string | null }) => {
+      payload = { bodyText: input.bodyText, bodyHtml: input.bodyHtml };
+      return { provider: "RESEND" as const, providerMessageId: "email-provider-html" };
+    });
+
+    await processExternalEmailQueue("event-1", {
+      dependencies: { ...dependencies, prisma: store.prisma as never, sendEmail: sendEmail as never },
+    });
+
+    expect(payload).not.toBeNull();
+    expect(payload!.bodyText).toBe("# Registration confirmed\n\nHello **Avery**.");
+    expect(payload!.bodyHtml).toContain("<!DOCTYPE html>");
+    expect(payload!.bodyHtml).toContain("<h1>Registration confirmed</h1>");
+    expect(payload!.bodyHtml).toContain("<strong>Avery</strong>");
+    // Nothing new is written back: the row keeps only what it was captured with.
+    expect(store.message.bodyTextSnapshot).toBe("# Registration confirmed\n\nHello **Avery**.");
+  });
+
+  /**
+   * Rows queued before HTML bodies existed have no fragment. Re-deriving one
+   * from their text would re-parse whatever a registrant typed as Markdown, so
+   * they go out as text only.
+   */
+  it("sends a pre-HTML row as text only rather than re-parsing its body", async () => {
+    const store = fakeDeliveryStore({
+      bodyTextSnapshot: "Hello [Avery](https://malicious.example).",
+      bodyHtmlSnapshot: null,
+    });
+    let payload: { bodyText: string; bodyHtml?: string | null } | null = null;
+    const sendEmail = vi.fn(async (input: { bodyText: string; bodyHtml?: string | null }) => {
+      payload = { bodyText: input.bodyText, bodyHtml: input.bodyHtml };
+      return { provider: "RESEND" as const, providerMessageId: "email-provider-legacy" };
+    });
+
+    await processExternalEmailQueue("event-1", {
+      dependencies: { ...dependencies, prisma: store.prisma as never, sendEmail: sendEmail as never },
+    });
+
+    expect(payload).not.toBeNull();
+    expect(payload!.bodyText).toBe("Hello [Avery](https://malicious.example).");
+    expect(payload!.bodyHtml).toBeNull();
+  });
+
   it("inserts a private link only in the in-memory provider payload", async () => {
     const sentinel = "__IMSDA_PRIVATE_MANAGE_LINK__";
     const store = fakeDeliveryStore({
@@ -219,6 +277,7 @@ describe("external email queue", () => {
       accountUserId: null,
       templateKey: "REGISTRATION_CONFIRMATION_PAID",
       bodyText: `Manage: ${sentinel}`,
+      bodyHtml: null,
       now: new Date("2026-07-23T12:00:00.000Z"),
     });
     expect(sendEmail).toHaveBeenCalledWith(

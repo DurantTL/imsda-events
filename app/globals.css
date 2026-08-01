@@ -4980,6 +4980,13 @@ select:focus-visible {
 .message-detail-meta dt { color: var(--muted); font-size: 0.51rem; text-transform: uppercase; }
 .message-detail-meta dd { overflow-wrap: anywhere; margin: 3px 0 0; font-size: 0.58rem; font-weight: 700; }
 .message-body-snapshot { max-height: 350px; overflow-y: auto; border: 1px solid var(--line); border-radius: 11px; background: #fbfcfd; padding: 13px; font-family: inherit; font-size: 0.61rem; line-height: 1.65; }
+/* The rendered email. Sandboxed with no allowances, so a preview cannot
+   navigate, script, or submit anything — it only shows what delivery sends. */
+.message-body-html { width: 100%; min-height: 420px; border: 1px solid var(--line); border-radius: 11px; background: #fff; display: block; }
+.message-body-note { margin: 0 0 8px; font-size: 0.62rem; color: var(--muted); }
+.message-body-plain { margin-top: 10px; font-size: 0.62rem; color: var(--muted); }
+.message-body-plain summary { cursor: pointer; }
+.message-body-plain pre { margin: 8px 0 0; max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--line); border-radius: 11px; background: #fbfcfd; padding: 13px; font-family: inherit; font-size: 0.61rem; line-height: 1.65; }
 .message-attempts { display: grid; gap: 6px; }
 .message-attempts > div { display: grid; grid-template-columns: auto 1fr; align-items: start; gap: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
 .message-attempts strong,

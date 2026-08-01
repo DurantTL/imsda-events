@@ -841,6 +841,17 @@ model Event {
   /// renaming it turned collection off without telling anyone.
   collectsShirtSizes   Boolean            @default(false)
   attendeeEditPolicy   AttendeeEditPolicy @default(VERIFY_EVERY_EDIT)
+  /// Lodging for this event, rendered into messages through the
+  /// `{{hotel_information}}` token. Every field is optional and the block is
+  /// omitted entirely when `hotelName` is unset, because most events book no
+  /// room block and a hotel embedded in a shared template would follow an event
+  /// that never used it.
+  hotelName            String?
+  hotelBookingUrl      String?
+  hotelPhone           String?
+  hotelGroupName       String?
+  hotelRate            String?
+  hotelInstructions    String?
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
 
@@ -1677,6 +1688,11 @@ model MessageOutbox {
   replyToEmailSnapshot   String?
   subjectSnapshot        String
   bodyTextSnapshot       String
+  /// The formatted body, rendered from the same template and context as
+  /// `bodyTextSnapshot` in the same call. Null for rows queued before HTML
+  /// bodies existed; those are delivered as text only, because the untrusted
+  /// spans a safe HTML render depends on cannot be recovered from the text.
+  bodyHtmlSnapshot       String?
   metadata               Json?
   idempotencyKey         String                         @unique
   correlationId          String

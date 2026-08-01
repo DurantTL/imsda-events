@@ -68,6 +68,12 @@ import type {
   ShirtSizeRequestPreview,
 } from "@/modules/communications/types";
 import { REGISTRATION_MANAGE_LINK_SENTINEL } from "@/modules/communications/manage-link";
+import {
+  buildHotelInformationBlock,
+  buildPaymentStatusBlock,
+  buildRegistrationCheckinTokens,
+  EVENT_LODGING_SELECT,
+} from "@/modules/communications/message-blocks";
 import type { FormCalculation, RegistrationFormDefinition } from "@/modules/forms/definition";
 
 const fallbackSettings = {
@@ -312,6 +318,7 @@ function serializeMessage(message: {
   replyToEmailSnapshot: string | null;
   subjectSnapshot: string;
   bodyTextSnapshot: string;
+  bodyHtmlSnapshot: string | null;
   status: MessageOutboxStatus;
   attemptCount: number;
   capturedAt: Date | null;
@@ -350,6 +357,7 @@ function serializeMessage(message: {
     replyToEmail: message.replyToEmailSnapshot,
     subject: message.subjectSnapshot,
     bodyText: message.bodyTextSnapshot,
+    bodyHtml: message.bodyHtmlSnapshot,
     status: message.status,
     attemptCount: message.attemptCount,
     capturedAt: message.capturedAt?.toISOString() ?? null,
@@ -482,6 +490,7 @@ async function loadBalanceReminderState(
         timezone: true,
         location: true,
         supportContact: true,
+        ...EVENT_LODGING_SELECT,
       },
     }),
     client.eventMessageSettings.findUnique({ where: { eventId } }),
@@ -640,6 +649,7 @@ async function loadShirtSizeRequestState(
         location: true,
         supportContact: true,
         collectsShirtSizes: true,
+        ...EVENT_LODGING_SELECT,
       },
     }),
     client.eventMessageSettings.findUnique({ where: { eventId } }),
@@ -1140,7 +1150,7 @@ async function loadTestRegistrationContext(
       },
       attendees: {
         orderBy: { position: "asc" },
-        select: { person: { select: { firstName: true, lastName: true } } },
+        select: { id: true, person: { select: { firstName: true, lastName: true } } },
       },
       payments: {
         where: { status: "SUCCEEDED" },
@@ -1181,6 +1191,9 @@ async function loadTestRegistrationContext(
     return total + moneyToCents(payment.amount) - refunded;
   }, 0);
   const balanceCents = Math.max(totalCents - netPaidCents, 0);
+  const paymentInstructionsText = balanceCents > 0
+    ? `A balance of ${formatMessageMoney(balanceCents)} is outstanding.`
+    : "No additional payment is due.";
 
   return {
     registrationId: registration.id,
@@ -1190,19 +1203,31 @@ async function loadTestRegistrationContext(
       recipient_name: recipientName,
       registrant_name: recipientName,
       confirmation_code: registration.confirmationCode,
-      contact_email: contactEmail,
+      registration_contact_email: contactEmail,
       attendee_summary: registration.attendees
         .map((attendee) => `- ${`${attendee.person.firstName} ${attendee.person.lastName}`.trim()}`)
         .join("\n") || "- No attendees recorded",
       total_amount: formatMessageMoney(totalCents),
       balance_amount: formatMessageMoney(balanceCents),
       payment_amount: formatMessageMoney(netPaidCents),
-      payment_instructions: balanceCents > 0
-        ? `A balance of ${formatMessageMoney(balanceCents)} is outstanding.`
-        : "No additional payment is due.",
+      payment_instructions: paymentInstructionsText,
       // Delivery swaps this for a freshly issued, working private link, because
       // the outbox row below carries the real registrationId.
       portal_url: REGISTRATION_MANAGE_LINK_SENTINEL,
+      payment_status_block: buildPaymentStatusBlock({
+        state: totalCents <= 0
+          ? "COMPLIMENTARY"
+          : balanceCents > 0 ? "BALANCE_DUE" : "PAID",
+        totalCents,
+        paidCents: netPaidCents,
+        balanceCents,
+        paymentInstructions: paymentInstructionsText,
+        portalUrl: REGISTRATION_MANAGE_LINK_SENTINEL,
+      }),
+      ...buildRegistrationCheckinTokens({
+        confirmationCode: registration.confirmationCode,
+        attendeeIds: registration.attendees.map((attendee) => attendee.id),
+      }),
     } satisfies Partial<MessageTemplateContext>,
   };
 }
@@ -1218,7 +1243,16 @@ export async function sendTestMessage(
   const [event, settings, template] = await Promise.all([
     prisma.event.findUnique({
       where: { id: eventId },
-      select: { id: true, name: true, startsAt: true, endsAt: true, timezone: true, location: true },
+      select: {
+        id: true,
+        name: true,
+        startsAt: true,
+        endsAt: true,
+        timezone: true,
+        location: true,
+        supportContact: true,
+        ...EVENT_LODGING_SELECT,
+      },
     }),
     prisma.eventMessageSettings.findUnique({ where: { eventId } }),
     prisma.eventMessageTemplate.findFirst({
@@ -1263,6 +1297,13 @@ export async function sendTestMessage(
     event_dates: formatMessageDateRange(event.startsAt, event.endsAt, { timeZone: event.timezone }),
     event_location: event.location || "Location to be announced",
     reply_to_email: settings.replyToEmail || settings.senderEmail || "the IMSDA event office",
+    contact_email: event.supportContact
+      || settings.replyToEmail
+      || settings.senderEmail
+      || "the IMSDA event office",
+    // This event's own lodging rather than the sample's, so a preview never
+    // pairs one event's dates and venue with another event's hotel.
+    hotel_information: buildHotelInformationBlock(event),
     // Real registration values last: they are the point of naming a code, and
     // they carry the sentinel that becomes a working private link.
     ...(source?.tokens ?? {}),
@@ -1291,6 +1332,7 @@ export async function sendTestMessage(
         replyToEmailSnapshot: settings.replyToEmail,
         subjectSnapshot: rendered.subject,
         bodyTextSnapshot: rendered.body,
+        bodyHtmlSnapshot: rendered.bodyHtml,
         metadata: {
           trigger: input.realDelivery ? "REAL_TEST" : "LOCAL_TEST",
           realDelivery: input.realDelivery,
@@ -1491,6 +1533,21 @@ export async function enqueueBalanceReminderBatch(
                 || state.settings.senderEmail
                 || state.event.supportContact
                 || "the IMSDA event office",
+              contact_email: state.event.supportContact
+                || state.settings.replyToEmail
+                || state.settings.senderEmail
+                || "the IMSDA event office",
+              registration_contact_email: recipient.recipientEmail,
+              hotel_information: buildHotelInformationBlock(state.event),
+              // A reminder audience is exactly the registrations with a
+              // balance, so the block never needs any other state.
+              payment_status_block: buildPaymentStatusBlock({
+                state: "BALANCE_DUE",
+                totalCents: recipient.totalCents,
+                paidCents: Math.max(recipient.totalCents - recipient.balanceCents, 0),
+                balanceCents: recipient.balanceCents,
+                portalUrl: REGISTRATION_MANAGE_LINK_SENTINEL,
+              }),
             },
           );
           if (!rendered.isComplete) {
@@ -1517,6 +1574,7 @@ export async function enqueueBalanceReminderBatch(
               replyToEmailSnapshot: state.settings.replyToEmail,
               subjectSnapshot: rendered.subject,
               bodyTextSnapshot: rendered.body,
+              bodyHtmlSnapshot: rendered.bodyHtml,
               metadata: {
                 trigger: "STAFF_BALANCE_REMINDER_BATCH",
                 batchId: input.batchId,
@@ -1778,6 +1836,12 @@ export async function enqueueShirtSizeRequestBatch(
                 || state.settings.senderEmail
                 || state.event.supportContact
                 || "the IMSDA event office",
+              contact_email: state.event.supportContact
+                || state.settings.replyToEmail
+                || state.settings.senderEmail
+                || "the IMSDA event office",
+              registration_contact_email: recipient.recipientEmail,
+              hotel_information: buildHotelInformationBlock(state.event),
             },
           );
           if (!rendered.isComplete) {
@@ -1804,6 +1868,7 @@ export async function enqueueShirtSizeRequestBatch(
               replyToEmailSnapshot: state.settings.replyToEmail,
               subjectSnapshot: rendered.subject,
               bodyTextSnapshot: rendered.body,
+              bodyHtmlSnapshot: rendered.bodyHtml,
               metadata: {
                 trigger: "STAFF_SHIRT_SIZE_REQUEST_BATCH",
                 batchId: input.batchId,
@@ -2627,7 +2692,7 @@ export async function enqueuePublicRegistrationMessages(
     isWorker: input.registration.attendeeType === "WORKER",
     balanceCents: input.calculation.totalCents,
   });
-  const [settingsRow, templates] = await Promise.all([
+  const [settingsRow, templates, eventDetails, registrationAttendees] = await Promise.all([
     tx.eventMessageSettings.findUnique({ where: { eventId: input.event.id } }),
     tx.eventMessageTemplate.findMany({
       where: {
@@ -2644,6 +2709,21 @@ export async function enqueuePublicRegistrationMessages(
           select: { id: true, subjectTemplate: true, bodyTemplate: true },
         },
       },
+    }),
+    // The caller passes only the event fields it already had in hand. Lodging
+    // and the published contact address are read here so a submission route
+    // never has to know which fields a message template happens to use.
+    tx.event.findUnique({
+      where: { id: input.event.id },
+      select: { supportContact: true, ...EVENT_LODGING_SELECT },
+    }),
+    // The whole party, not just the first attendee: a check-in code belongs to
+    // one attendee, so how many there are decides whether a code can be inlined
+    // at all.
+    tx.registrationAttendee.findMany({
+      where: { registrationId: input.registration.id },
+      orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+      select: { id: true },
     }),
   ]);
   const settings = settingsRow
@@ -2662,6 +2742,9 @@ export async function enqueuePublicRegistrationMessages(
     input.identity,
     input.attendeeResponses,
   );
+  const paymentInstructionsText = input.calculation.totalCents > 0
+    ? "No card was charged. The event team will provide or confirm the next payment step."
+    : "No balance is due at this time.";
   const commonContext: MessageTemplateContext = {
     registrant_name: registrantName,
     event_name: input.event.name,
@@ -2671,11 +2754,29 @@ export async function enqueuePublicRegistrationMessages(
     attendee_summary: attendeeSummary,
     total_amount: formatMessageMoney(input.calculation.totalCents),
     balance_amount: formatMessageMoney(input.calculation.totalCents),
-    payment_instructions: input.calculation.totalCents > 0
-      ? "No card was charged. The event team will provide or confirm the next payment step."
-      : "No balance is due at this time.",
+    payment_instructions: paymentInstructionsText,
     portal_url: REGISTRATION_MANAGE_LINK_SENTINEL,
     reply_to_email: settings.replyToEmail || settings.senderEmail || "the IMSDA event office",
+    contact_email: eventDetails?.supportContact
+      || settings.replyToEmail
+      || settings.senderEmail
+      || "the IMSDA event office",
+    registration_contact_email: input.identity.email.trim().toLowerCase(),
+    hotel_information: buildHotelInformationBlock(eventDetails),
+    // A public submission takes no payment inline, so the balance is the whole
+    // total until a payment posts. A zero total is complimentary, not paid.
+    payment_status_block: buildPaymentStatusBlock({
+      state: input.calculation.totalCents > 0 ? "BALANCE_DUE" : "COMPLIMENTARY",
+      totalCents: input.calculation.totalCents,
+      paidCents: 0,
+      balanceCents: input.calculation.totalCents,
+      paymentInstructions: paymentInstructionsText,
+      portalUrl: REGISTRATION_MANAGE_LINK_SENTINEL,
+    }),
+    ...buildRegistrationCheckinTokens({
+      confirmationCode: input.registration.confirmationCode,
+      attendeeIds: registrationAttendees.map((attendee) => attendee.id),
+    }),
   };
   const recipients: Array<{
     templateKey: MessageTemplateKey;
@@ -2727,6 +2828,7 @@ export async function enqueuePublicRegistrationMessages(
         replyToEmailSnapshot: settings.replyToEmail,
         subjectSnapshot: rendered.subject,
         bodyTextSnapshot: rendered.body,
+        bodyHtmlSnapshot: rendered.bodyHtml,
         metadata: {
           trigger: "PUBLIC_REGISTRATION_SUBMITTED",
           confirmationCode: input.registration.confirmationCode,

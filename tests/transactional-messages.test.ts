@@ -129,7 +129,7 @@ describe("transactional lifecycle messages", () => {
       correlationId: "correlation-waitlist",
       status: "PENDING",
     });
-    expect(message.create.bodyTextSnapshot).toContain("Waitlist position: 7");
+    expect(message.create.bodyTextSnapshot).toContain("You are number **7** on the waitlist.");
     expect(message.create.bodyTextSnapshot).toContain("No payment is due");
     expect(message.create.bodyTextSnapshot).toContain(
       REGISTRATION_MANAGE_LINK_SENTINEL,
@@ -147,7 +147,7 @@ describe("transactional lifecycle messages", () => {
     });
 
     const body = queuedMessage(upsert).create.bodyTextSnapshot;
-    expect(body).toContain("Balance due: $175.00");
+    expect(body).toContain("Balance due: **$175.00**");
     expect(body).toContain("$175.00 remains due");
     expect(body).toContain(REGISTRATION_MANAGE_LINK_SENTINEL);
   });
@@ -217,10 +217,10 @@ describe("transactional lifecycle messages", () => {
     expect(first.update).toEqual({});
     expect(first.create.idempotencyKey).toBe(first.where.idempotencyKey);
     expect(first.create.bodyTextSnapshot).toContain(
-      "Payment received: $50.25",
+      "**Payment received:** $50.25",
     );
     expect(first.create.bodyTextSnapshot).toContain(
-      "Payment reference: square-payment-1",
+      "**Payment reference:** square-payment-1",
     );
     expect(first.create.bodyTextSnapshot).toContain(
       REGISTRATION_MANAGE_LINK_SENTINEL,

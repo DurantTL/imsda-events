@@ -63,6 +63,51 @@ export async function listEventsForUser(userId: string, isSystemAdmin: boolean) 
   });
 }
 
+/**
+ * Lodging fields are optional on the wire, and the two callers need opposite
+ * readings of an omission.
+ *
+ * On create there is nothing to preserve, so an absent field is stored as "this
+ * event books no rooms". On update an absent field must be left untouched: a
+ * stale browser tab or an older API client saving an unrelated setting would
+ * otherwise erase lodging it never knew existed. Prisma skips `undefined`
+ * fields, so omitting the key entirely is what preserves the stored value —
+ * whereas an explicit `null`, which staff clearing the input produces, still
+ * writes the clear.
+ */
+type EventLodgingInput = Pick<
+  EventSettingsInput,
+  | "hotelName"
+  | "hotelBookingUrl"
+  | "hotelPhone"
+  | "hotelGroupName"
+  | "hotelRate"
+  | "hotelInstructions"
+>;
+
+const LODGING_FIELDS = [
+  "hotelName",
+  "hotelBookingUrl",
+  "hotelPhone",
+  "hotelGroupName",
+  "hotelRate",
+  "hotelInstructions",
+] as const satisfies readonly (keyof EventLodgingInput)[];
+
+function lodgingCreateData(input: EventLodgingInput) {
+  return Object.fromEntries(
+    LODGING_FIELDS.map((field) => [field, input[field] ?? null]),
+  ) as Record<keyof EventLodgingInput, string | null>;
+}
+
+function lodgingUpdateData(input: EventLodgingInput) {
+  return Object.fromEntries(
+    LODGING_FIELDS
+      .filter((field) => input[field] !== undefined)
+      .map((field) => [field, input[field] ?? null]),
+  ) as Partial<Record<keyof EventLodgingInput, string | null>>;
+}
+
 export async function getEventSettings(eventId: string) {
   const prisma = getPrisma();
   const [event, publishedForms] = await Promise.all([
@@ -79,6 +124,12 @@ export async function getEventSettings(eventId: string) {
         capacity: true,
         publicInfoUrl: true,
         supportContact: true,
+        hotelName: true,
+        hotelBookingUrl: true,
+        hotelPhone: true,
+        hotelGroupName: true,
+        hotelRate: true,
+        hotelInstructions: true,
         isPublished: true,
         registrationOpensOn: true,
         registrationClosesOn: true,
@@ -116,6 +167,12 @@ export async function getEventSettings(eventId: string) {
     capacity: event.capacity,
     publicInfoUrl: event.publicInfoUrl,
     supportContact: event.supportContact,
+    hotelName: event.hotelName,
+    hotelBookingUrl: event.hotelBookingUrl,
+    hotelPhone: event.hotelPhone,
+    hotelGroupName: event.hotelGroupName,
+    hotelRate: event.hotelRate,
+    hotelInstructions: event.hotelInstructions,
     isPublished: event.isPublished,
     registrationOpensOn: event.registrationOpensOn,
     registrationClosesOn: event.registrationClosesOn,
@@ -166,6 +223,7 @@ export async function createEvent(
         capacity: input.capacity,
         publicInfoUrl: input.publicInfoUrl,
         supportContact: input.supportContact,
+        ...lodgingCreateData(input),
         isPublished: input.isPublished,
         registrationOpensOn: input.registrationOpensOn,
         registrationClosesOn: input.registrationClosesOn,
@@ -220,6 +278,12 @@ export async function updateEventSettings(
           capacity: true,
           publicInfoUrl: true,
           supportContact: true,
+          hotelName: true,
+          hotelBookingUrl: true,
+          hotelPhone: true,
+          hotelGroupName: true,
+          hotelRate: true,
+          hotelInstructions: true,
           isPublished: true,
           registrationOpensOn: true,
           registrationClosesOn: true,
@@ -258,6 +322,7 @@ export async function updateEventSettings(
         capacity: input.capacity,
         publicInfoUrl: input.publicInfoUrl,
         supportContact: input.supportContact,
+        ...lodgingUpdateData(input),
         isPublished: input.isPublished,
         registrationOpensOn: input.registrationOpensOn,
         registrationClosesOn: input.registrationClosesOn,

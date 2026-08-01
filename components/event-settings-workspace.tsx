@@ -67,6 +67,12 @@ function draftFromEvent(event: EventSettingsRecord | null): EventSettingsInput {
     capacity: event?.capacity ?? null,
     publicInfoUrl: event?.publicInfoUrl ?? null,
     supportContact: event?.supportContact ?? null,
+    hotelName: event?.hotelName ?? null,
+    hotelBookingUrl: event?.hotelBookingUrl ?? null,
+    hotelPhone: event?.hotelPhone ?? null,
+    hotelGroupName: event?.hotelGroupName ?? null,
+    hotelRate: event?.hotelRate ?? null,
+    hotelInstructions: event?.hotelInstructions ?? null,
     isPublished: event?.isPublished ?? false,
     registrationOpensOn: event?.registrationOpensOn ?? null,
     registrationClosesOn: event?.registrationClosesOn ?? null,
@@ -358,6 +364,47 @@ export function EventSettingsWorkspace({
                 <ExternalLink size={15} aria-hidden="true" /> Open IMSDA.org page
               </a>
             )}
+          </section>
+
+          <section className="panel form-stack event-settings-panel">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Optional</p>
+                <h2>Lodging</h2>
+                <p>
+                  Rooms held for this event. Registration messages that use the hotel token show
+                  these details, and leave the section out entirely when the hotel name is blank —
+                  so an event with no room block never carries another event&rsquo;s hotel.
+                </p>
+              </div>
+              <Globe2 size={21} aria-hidden="true" />
+            </div>
+            <label>
+              Hotel name
+              <input value={draft.hotelName ?? ""} maxLength={200} placeholder="Holiday Inn Des Moines – Airport Conference Center" onChange={(event) => update("hotelName", event.target.value || null)} />
+              <small>Leave blank for an event with no room block. Everything below is then unused.</small>
+            </label>
+            <label>
+              Reservation link
+              <input type="url" value={draft.hotelBookingUrl ?? ""} maxLength={500} placeholder="https://…" onChange={(event) => update("hotelBookingUrl", event.target.value || null)} />
+            </label>
+            <label>
+              Reservation phone
+              <input value={draft.hotelPhone ?? ""} maxLength={60} placeholder="(515) 287-2400" onChange={(event) => update("hotelPhone", event.target.value || null)} />
+            </label>
+            <label>
+              Group name to ask for
+              <input value={draft.hotelGroupName ?? ""} maxLength={200} placeholder="IA-MO Conference of Seventh-day Adventists Women’s Retreat" onChange={(event) => update("hotelGroupName", event.target.value || null)} />
+            </label>
+            <label>
+              Group rate
+              <input value={draft.hotelRate ?? ""} maxLength={120} placeholder="$120 per night plus tax" onChange={(event) => update("hotelRate", event.target.value || null)} />
+            </label>
+            <label>
+              Additional lodging notes
+              <textarea value={draft.hotelInstructions ?? ""} rows={3} maxLength={1000} placeholder="Pro tip: share a room with a friend and split the cost." onChange={(event) => update("hotelInstructions", event.target.value || null)} />
+              <small>Shown under the reservation details in every message that includes lodging.</small>
+            </label>
           </section>
         </div>
 

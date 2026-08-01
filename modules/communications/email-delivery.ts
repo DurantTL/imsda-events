@@ -15,7 +15,11 @@ import {
   mapResendDeliveryEvent,
   providerTransitionUpdate,
 } from "@/modules/communications/provider-events";
-import { REGISTRATION_MANAGE_LINK_SENTINEL } from "@/modules/communications/manage-link";
+import {
+  REGISTRATION_MANAGE_API_SENTINEL,
+  REGISTRATION_MANAGE_LINK_SENTINEL,
+} from "@/modules/communications/manage-link";
+import { renderEmailHtmlDocument } from "@/modules/communications/email-html";
 import {
   AccountEmailNotConfiguredError,
   getAccountEmailSender,
@@ -75,6 +79,7 @@ type ClaimedMessage = {
   replyToEmailSnapshot: string | null;
   subjectSnapshot: string;
   bodyTextSnapshot: string;
+  bodyHtmlSnapshot: string | null;
   attemptCount: number;
   lockToken: string;
   startedAt: Date;
@@ -82,6 +87,7 @@ type ClaimedMessage = {
 
 export type PreparedEmailBody = {
   bodyText: string;
+  bodyHtml?: string | null;
   revokeOnDefinitiveFailure?: () => Promise<void>;
 };
 
@@ -92,14 +98,23 @@ export type EmailBodyPreparationInput = {
   accountAttendeeId?: string | null;
   templateKey?: string;
   bodyText: string;
+  bodyHtml?: string | null;
   now: Date;
 };
 
 export async function prepareEmailBodyForDelivery(
   input: EmailBodyPreparationInput,
 ): Promise<PreparedEmailBody> {
-  if (!input.bodyText.includes(REGISTRATION_MANAGE_LINK_SENTINEL)) {
-    return { bodyText: input.bodyText };
+  // Both bodies carry the same sentinels and both must be resolved from the
+  // same token, or the formatted mail and its fallback would offer different
+  // links — or one of them a raw sentinel.
+  const carriesSentinel = (value: string | null | undefined) => Boolean(
+    value
+    && (value.includes(REGISTRATION_MANAGE_LINK_SENTINEL)
+      || value.includes(REGISTRATION_MANAGE_API_SENTINEL)),
+  );
+  if (!carriesSentinel(input.bodyText) && !carriesSentinel(input.bodyHtml)) {
+    return { bodyText: input.bodyText, bodyHtml: input.bodyHtml ?? null };
   }
   if (!input.registrationId) {
     throw new Error(
@@ -114,11 +129,18 @@ export async function prepareEmailBodyForDelivery(
     now: input.now,
   });
   const manageUrl = new URL(access.managePath, appBaseUrl).toString();
+  // One token serves both the page a registrant opens and the pass image their
+  // mail client fetches, so a confirmation carries a single grant of access.
+  const manageApiUrl = new URL(
+    `/api/public/manage/${access.token}`,
+    appBaseUrl,
+  ).toString();
+  const resolveSentinels = (value: string) => value
+    .replaceAll(REGISTRATION_MANAGE_API_SENTINEL, manageApiUrl)
+    .replaceAll(REGISTRATION_MANAGE_LINK_SENTINEL, manageUrl);
   return {
-    bodyText: input.bodyText.replaceAll(
-      REGISTRATION_MANAGE_LINK_SENTINEL,
-      manageUrl,
-    ),
+    bodyText: resolveSentinels(input.bodyText),
+    bodyHtml: input.bodyHtml ? resolveSentinels(input.bodyHtml) : null,
     revokeOnDefinitiveFailure: async () => {
       await revokeRegistrationAccessToken(access.token);
     },
@@ -311,6 +333,7 @@ async function claimNextMessage(
           replyToEmailSnapshot: true,
           subjectSnapshot: true,
           bodyTextSnapshot: true,
+          bodyHtmlSnapshot: true,
           attemptCount: true,
         },
       });
@@ -531,6 +554,7 @@ async function runDeliveryLoop(
         accountAttendeeId: message.accountAttendeeId,
         templateKey: message.templateKey,
         bodyText: message.bodyTextSnapshot,
+        bodyHtml: message.bodyHtmlSnapshot,
         now: message.startedAt,
       });
       const delivery = await sendEmail({
@@ -540,6 +564,18 @@ async function runDeliveryLoop(
         replyToEmail: message.replyToEmailSnapshot,
         subject: message.subjectSnapshot,
         bodyText: preparedBody.bodyText,
+        // Wrapped, not rendered: the body fragment was rendered at enqueue from
+        // the same template and context as the text snapshot, where trusted and
+        // untrusted token spans were still distinguishable. A row queued before
+        // HTML bodies existed has none, and goes out as text only rather than
+        // being re-parsed as Markdown here.
+        bodyHtml: preparedBody.bodyHtml
+          ? renderEmailHtmlDocument({
+            title: message.subjectSnapshot,
+            bodyHtml: preparedBody.bodyHtml,
+            footer: message.senderNameSnapshot,
+          })
+          : null,
         idempotencyKey: `outbox:${message.id}`,
         messageId: message.id,
       }, configuration);
