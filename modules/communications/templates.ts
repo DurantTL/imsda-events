@@ -1,3 +1,5 @@
+import { escapeMarkdown, renderEmailBodyHtml } from "@/modules/communications/email-html";
+
 export const MESSAGE_TEMPLATE_KEYS = [
   "REGISTRATION_CONFIRMATION_PAID",
   "REGISTRATION_CONFIRMATION_UNPAID",
@@ -80,6 +82,40 @@ export const OPTIONAL_MESSAGE_TEMPLATE_TOKENS: ReadonlySet<MessageTemplateToken>
   "checkin_block",
   "checkin_qr_url",
   "checkin_qr_image",
+]);
+
+/**
+ * Tokens whose value is allowed to carry live Markdown into the formatted body.
+ *
+ * Everything else is Markdown-escaped before it is substituted, because HTML
+ * escaping alone does not stop Markdown injection: a registrant named
+ * `[Review your registration](https://malicious.example)` would otherwise get a
+ * trusted-looking link, and `![](…)` a tracking pixel, into mail sent from the
+ * IMSDA address.
+ *
+ * Membership here means "this string is composed by us or by staff, at the same
+ * trust level as the template body itself":
+ *
+ * - the block builders, which assemble their own Markdown from generated
+ *   values and neutralise the staff-configured parts they interpolate;
+ * - the URL tokens, which are delivery sentinels or server-built URLs and are
+ *   written inside `[text](…)` and `![alt](…)`, where escaping would break the
+ *   link rather than protect it;
+ * - `announcement_body`, which staff author in the workspace and which exists
+ *   to carry formatted event information.
+ *
+ * `attendee_summary` is deliberately absent: it is assembled from registrant
+ * names and submitted form answers, so it is escaped and renders as plain
+ * lines rather than a list.
+ */
+export const MARKDOWN_MESSAGE_TEMPLATE_TOKENS: ReadonlySet<MessageTemplateToken> = new Set([
+  "hotel_information",
+  "payment_status_block",
+  "checkin_block",
+  "checkin_qr_url",
+  "checkin_qr_image",
+  "portal_url",
+  "announcement_body",
 ]);
 
 export type MessageTemplateContext = Partial<
@@ -655,11 +691,11 @@ export const SAMPLE_MESSAGE_TEMPLATE_CONTEXT: Readonly<
   event_dates: "October 9 – 11, 2026",
   event_location: "Des Moines, Iowa",
   confirmation_code: "REG-DEMO123",
-  attendee_summary: [
-    "**Attendees**",
-    "",
-    "1. Avery Johnson — Adult registration",
-  ].join("\n"),
+  // Plain lines on purpose. This token is assembled from registrant names and
+  // submitted answers, so it is Markdown-escaped before it reaches the
+  // formatted body; sample data that pretended otherwise would show staff
+  // formatting the real thing can never produce.
+  attendee_summary: "Attendees:\nAvery Johnson — Adult registration",
   total_amount: "$129.05",
   balance_amount: "$0.00",
   payment_instructions: "No additional payment is due.",
@@ -794,9 +830,19 @@ export type RenderedTemplateText = {
   unresolvedTokens: string[];
 };
 
+export type RenderTemplateTextOptions = {
+  /**
+   * Markdown-escape every value except the trusted block and URL tokens, for
+   * the source the HTML renderer reads. The plain-text body renders without
+   * this, so a reader of the text part never sees a backslash.
+   */
+  escapeUntrustedMarkdown?: boolean;
+};
+
 export function renderTemplateText(
   template: string,
   context: MessageTemplateContext,
+  options: RenderTemplateTextOptions = {},
 ): RenderedTemplateText {
   const missingTokens: MessageTemplateToken[] = [];
   const unresolvedTokens: string[] = [];
@@ -822,7 +868,10 @@ export function renderTemplateText(
 
     // The callback return is inserted literally. Values containing "$&" or
     // another {{token}} are never interpreted as replacement syntax or rendered twice.
-    return value;
+    return options.escapeUntrustedMarkdown
+      && !MARKDOWN_MESSAGE_TEMPLATE_TOKENS.has(knownToken)
+      ? escapeMarkdown(value)
+      : value;
   });
 
   return {
@@ -835,6 +884,13 @@ export function renderTemplateText(
 export type RenderedMessageTemplate = {
   subject: string;
   body: string;
+  /**
+   * The formatted body, rendered from the same template and context as `body`
+   * in the same call. Rendering both together is what keeps the two parts of an
+   * email from drifting; it also means the HTML can escape untrusted token
+   * values as Markdown without those escapes leaking into the text part.
+   */
+  bodyHtml: string;
   isComplete: boolean;
   missingTokens: MessageTemplateToken[];
   unresolvedTokens: string[];
@@ -862,9 +918,14 @@ export function renderMessageTemplate(
     ...body.unresolvedTokens,
   ]);
 
+  const htmlSource = renderTemplateText(template.body, context, {
+    escapeUntrustedMarkdown: true,
+  });
+
   return {
     subject: subject.text,
     body: collapseBlankLines(body.text),
+    bodyHtml: renderEmailBodyHtml(collapseBlankLines(htmlSource.text)),
     isComplete: unresolvedTokens.length === 0,
     missingTokens,
     unresolvedTokens,

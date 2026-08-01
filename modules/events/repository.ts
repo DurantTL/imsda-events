@@ -63,6 +63,51 @@ export async function listEventsForUser(userId: string, isSystemAdmin: boolean) 
   });
 }
 
+/**
+ * Lodging fields are optional on the wire, and the two callers need opposite
+ * readings of an omission.
+ *
+ * On create there is nothing to preserve, so an absent field is stored as "this
+ * event books no rooms". On update an absent field must be left untouched: a
+ * stale browser tab or an older API client saving an unrelated setting would
+ * otherwise erase lodging it never knew existed. Prisma skips `undefined`
+ * fields, so omitting the key entirely is what preserves the stored value —
+ * whereas an explicit `null`, which staff clearing the input produces, still
+ * writes the clear.
+ */
+type EventLodgingInput = Pick<
+  EventSettingsInput,
+  | "hotelName"
+  | "hotelBookingUrl"
+  | "hotelPhone"
+  | "hotelGroupName"
+  | "hotelRate"
+  | "hotelInstructions"
+>;
+
+const LODGING_FIELDS = [
+  "hotelName",
+  "hotelBookingUrl",
+  "hotelPhone",
+  "hotelGroupName",
+  "hotelRate",
+  "hotelInstructions",
+] as const satisfies readonly (keyof EventLodgingInput)[];
+
+function lodgingCreateData(input: EventLodgingInput) {
+  return Object.fromEntries(
+    LODGING_FIELDS.map((field) => [field, input[field] ?? null]),
+  ) as Record<keyof EventLodgingInput, string | null>;
+}
+
+function lodgingUpdateData(input: EventLodgingInput) {
+  return Object.fromEntries(
+    LODGING_FIELDS
+      .filter((field) => input[field] !== undefined)
+      .map((field) => [field, input[field] ?? null]),
+  ) as Partial<Record<keyof EventLodgingInput, string | null>>;
+}
+
 export async function getEventSettings(eventId: string) {
   const prisma = getPrisma();
   const [event, publishedForms] = await Promise.all([
@@ -178,12 +223,7 @@ export async function createEvent(
         capacity: input.capacity,
         publicInfoUrl: input.publicInfoUrl,
         supportContact: input.supportContact,
-        hotelName: input.hotelName,
-        hotelBookingUrl: input.hotelBookingUrl,
-        hotelPhone: input.hotelPhone,
-        hotelGroupName: input.hotelGroupName,
-        hotelRate: input.hotelRate,
-        hotelInstructions: input.hotelInstructions,
+        ...lodgingCreateData(input),
         isPublished: input.isPublished,
         registrationOpensOn: input.registrationOpensOn,
         registrationClosesOn: input.registrationClosesOn,
@@ -282,12 +322,7 @@ export async function updateEventSettings(
         capacity: input.capacity,
         publicInfoUrl: input.publicInfoUrl,
         supportContact: input.supportContact,
-        hotelName: input.hotelName,
-        hotelBookingUrl: input.hotelBookingUrl,
-        hotelPhone: input.hotelPhone,
-        hotelGroupName: input.hotelGroupName,
-        hotelRate: input.hotelRate,
-        hotelInstructions: input.hotelInstructions,
+        ...lodgingUpdateData(input),
         isPublished: input.isPublished,
         registrationOpensOn: input.registrationOpensOn,
         registrationClosesOn: input.registrationClosesOn,

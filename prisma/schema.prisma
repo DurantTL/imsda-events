@@ -1688,6 +1688,11 @@ model MessageOutbox {
   replyToEmailSnapshot   String?
   subjectSnapshot        String
   bodyTextSnapshot       String
+  /// The formatted body, rendered from the same template and context as
+  /// `bodyTextSnapshot` in the same call. Null for rows queued before HTML
+  /// bodies existed; those are delivered as text only, because the untrusted
+  /// spans a safe HTML render depends on cannot be recovered from the text.
+  bodyHtmlSnapshot       String?
   metadata               Json?
   idempotencyKey         String                         @unique
   correlationId          String

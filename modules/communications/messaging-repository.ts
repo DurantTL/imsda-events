@@ -318,6 +318,7 @@ function serializeMessage(message: {
   replyToEmailSnapshot: string | null;
   subjectSnapshot: string;
   bodyTextSnapshot: string;
+  bodyHtmlSnapshot: string | null;
   status: MessageOutboxStatus;
   attemptCount: number;
   capturedAt: Date | null;
@@ -356,6 +357,7 @@ function serializeMessage(message: {
     replyToEmail: message.replyToEmailSnapshot,
     subject: message.subjectSnapshot,
     bodyText: message.bodyTextSnapshot,
+    bodyHtml: message.bodyHtmlSnapshot,
     status: message.status,
     attemptCount: message.attemptCount,
     capturedAt: message.capturedAt?.toISOString() ?? null,
@@ -1224,7 +1226,7 @@ async function loadTestRegistrationContext(
       }),
       ...buildRegistrationCheckinTokens({
         confirmationCode: registration.confirmationCode,
-        primaryAttendeeId: registration.attendees[0]?.id ?? null,
+        attendeeIds: registration.attendees.map((attendee) => attendee.id),
       }),
     } satisfies Partial<MessageTemplateContext>,
   };
@@ -1330,6 +1332,7 @@ export async function sendTestMessage(
         replyToEmailSnapshot: settings.replyToEmail,
         subjectSnapshot: rendered.subject,
         bodyTextSnapshot: rendered.body,
+        bodyHtmlSnapshot: rendered.bodyHtml,
         metadata: {
           trigger: input.realDelivery ? "REAL_TEST" : "LOCAL_TEST",
           realDelivery: input.realDelivery,
@@ -1571,6 +1574,7 @@ export async function enqueueBalanceReminderBatch(
               replyToEmailSnapshot: state.settings.replyToEmail,
               subjectSnapshot: rendered.subject,
               bodyTextSnapshot: rendered.body,
+              bodyHtmlSnapshot: rendered.bodyHtml,
               metadata: {
                 trigger: "STAFF_BALANCE_REMINDER_BATCH",
                 batchId: input.batchId,
@@ -1864,6 +1868,7 @@ export async function enqueueShirtSizeRequestBatch(
               replyToEmailSnapshot: state.settings.replyToEmail,
               subjectSnapshot: rendered.subject,
               bodyTextSnapshot: rendered.body,
+              bodyHtmlSnapshot: rendered.bodyHtml,
               metadata: {
                 trigger: "STAFF_SHIRT_SIZE_REQUEST_BATCH",
                 batchId: input.batchId,
@@ -2687,7 +2692,7 @@ export async function enqueuePublicRegistrationMessages(
     isWorker: input.registration.attendeeType === "WORKER",
     balanceCents: input.calculation.totalCents,
   });
-  const [settingsRow, templates, eventDetails, primaryAttendee] = await Promise.all([
+  const [settingsRow, templates, eventDetails, registrationAttendees] = await Promise.all([
     tx.eventMessageSettings.findUnique({ where: { eventId: input.event.id } }),
     tx.eventMessageTemplate.findMany({
       where: {
@@ -2712,7 +2717,10 @@ export async function enqueuePublicRegistrationMessages(
       where: { id: input.event.id },
       select: { supportContact: true, ...EVENT_LODGING_SELECT },
     }),
-    tx.registrationAttendee.findFirst({
+    // The whole party, not just the first attendee: a check-in code belongs to
+    // one attendee, so how many there are decides whether a code can be inlined
+    // at all.
+    tx.registrationAttendee.findMany({
       where: { registrationId: input.registration.id },
       orderBy: [{ position: "asc" }, { createdAt: "asc" }],
       select: { id: true },
@@ -2767,7 +2775,7 @@ export async function enqueuePublicRegistrationMessages(
     }),
     ...buildRegistrationCheckinTokens({
       confirmationCode: input.registration.confirmationCode,
-      primaryAttendeeId: primaryAttendee?.id ?? null,
+      attendeeIds: registrationAttendees.map((attendee) => attendee.id),
     }),
   };
   const recipients: Array<{
@@ -2820,6 +2828,7 @@ export async function enqueuePublicRegistrationMessages(
         replyToEmailSnapshot: settings.replyToEmail,
         subjectSnapshot: rendered.subject,
         bodyTextSnapshot: rendered.body,
+        bodyHtmlSnapshot: rendered.bodyHtml,
         metadata: {
           trigger: "PUBLIC_REGISTRATION_SUBMITTED",
           confirmationCode: input.registration.confirmationCode,

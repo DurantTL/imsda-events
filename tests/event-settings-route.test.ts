@@ -58,18 +58,20 @@ const eventPayload = {
 };
 
 /**
- * What the route hands the repository. Lodging is optional on the wire — a
- * client that predates those fields stays valid — and normalises to null, so
- * every stored event has an explicit "no room block" rather than an absence.
+ * What the route hands the repository for a payload that omits lodging: the
+ * keys stay absent rather than becoming null. The repository turns an absence
+ * into "leave the stored value alone" on update and into "no room block" on
+ * create, so an older client saving an unrelated setting cannot erase lodging
+ * it never knew about.
  */
 const normalizedEventPayload = {
   ...eventPayload,
-  hotelName: null,
-  hotelBookingUrl: null,
-  hotelPhone: null,
-  hotelGroupName: null,
-  hotelRate: null,
-  hotelInstructions: null,
+  hotelName: undefined,
+  hotelBookingUrl: undefined,
+  hotelPhone: undefined,
+  hotelGroupName: undefined,
+  hotelRate: undefined,
+  hotelInstructions: undefined,
 };
 
 function eventRequest(
@@ -164,5 +166,32 @@ describe("event settings routes", () => {
       normalizedEventPayload,
       "usr_system",
     );
+    const [, forwarded] = dependencies.updateEventSettings.mock.calls[0] as [
+      string,
+      Record<string, unknown>,
+    ];
+    // Absent, not null. A null would be written as a deletion.
+    expect("hotelName" in forwarded ? forwarded.hotelName : undefined).toBeUndefined();
+  });
+
+  it("keeps an explicit blank as a clear rather than as an omission", async () => {
+    dependencies.updateEventSettings.mockResolvedValue({
+      id: "evt_wr28",
+      ...eventPayload,
+    });
+
+    await PATCH(
+      eventRequest("/api/events/evt_wr28", "PATCH", {
+        ...eventPayload,
+        hotelName: "   ",
+      }),
+      { params: Promise.resolve({ eventId: "evt_wr28" }) },
+    );
+
+    const [, forwarded] = dependencies.updateEventSettings.mock.calls[0] as [
+      string,
+      Record<string, unknown>,
+    ];
+    expect(forwarded.hotelName).toBeNull();
   });
 });

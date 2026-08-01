@@ -360,7 +360,7 @@ async function enqueueTransactionalMessage(
     }),
     ...buildRegistrationCheckinTokens({
       confirmationCode: registration.confirmationCode,
-      primaryAttendeeId: registration.attendees[0]?.id ?? null,
+      attendeeIds: registration.attendees.map((attendee) => attendee.id),
     }),
     payment_amount: formatMessageMoney(input.paymentAmountCents ?? 0),
     payment_reference: input.paymentReference?.trim() || "Not provided",
@@ -402,6 +402,7 @@ async function enqueueTransactionalMessage(
       replyToEmailSnapshot: settings.replyToEmail,
       subjectSnapshot: rendered.subject,
       bodyTextSnapshot: rendered.body,
+      bodyHtmlSnapshot: rendered.bodyHtml,
       metadata: {
         trigger: input.templateKey,
         transitionKey: input.transitionKey,

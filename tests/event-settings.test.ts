@@ -37,8 +37,11 @@ describe("event settings", () => {
     expect(configured.hotelPhone).toBe("(515) 287-2400");
     expect(configured.hotelInstructions).toBe("Share a room and split the cost.");
 
-    // Omitted entirely — an older client that never learned these fields.
-    expect(eventSettingsInputSchema.parse(validEvent).hotelName).toBeNull();
+    // Omitted entirely — an older client, or a browser tab opened before these
+    // fields existed. `undefined`, not null: the update path must be able to
+    // tell "not supplied" from "staff cleared this", or every such save would
+    // erase the event's lodging.
+    expect(eventSettingsInputSchema.parse(validEvent).hotelName).toBeUndefined();
     // Present but cleared by staff.
     expect(
       eventSettingsInputSchema.parse({ ...validEvent, hotelName: "  " }).hotelName,

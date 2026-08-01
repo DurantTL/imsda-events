@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   escapeHtml,
+  escapeMarkdown,
   renderEmailBodyHtml,
   renderEmailHtmlDocument,
 } from "@/modules/communications/email-html";
@@ -101,6 +102,55 @@ describe("email HTML rendering", () => {
     expect(html).toContain('<a href="https://events.example.test/manage/abc"');
   });
 
+  it("drops a backslash escape and renders the character literally", () => {
+    const html = renderEmailBodyHtml("A literal \\*star\\* and \\[bracket\\].");
+
+    expect(html).toContain("A literal *star* and [bracket].");
+    expect(html).not.toContain("<em>");
+    expect(html).not.toContain("\\");
+  });
+
+  it("escapes every Markdown construct in an untrusted value", () => {
+    const escaped = escapeMarkdown("[Review your registration](https://malicious.example)");
+    const html = renderEmailBodyHtml(`Hello ${escaped},`);
+
+    expect(html).not.toContain("<a href=");
+    expect(html).toContain("[Review your registration](https://malicious.example)");
+  });
+
+  it("keeps a heading, list, and emphasis inert inside an escaped value", () => {
+    const escaped = escapeMarkdown("# Heading\n- item\n**bold** _italic_ `code`");
+    const html = renderEmailBodyHtml(escaped);
+
+    expect(html).not.toContain("<h1");
+    expect(html).not.toContain("<ul");
+    expect(html).not.toContain("<strong>");
+    expect(html).not.toContain("<em>");
+    expect(html).not.toContain("<code");
+    expect(html).toContain("# Heading");
+    expect(html).toContain("**bold**");
+  });
+
+  it("keeps an escaped image from fetching a remote tracking pixel", () => {
+    const escaped = escapeMarkdown("![](https://malicious.example/pixel.gif)");
+    expect(renderEmailBodyHtml(escaped)).not.toContain("<img");
+  });
+
+  /**
+   * A marker in the input would otherwise be restored as somebody else's
+   * escaped character, which is a way to smuggle one back out.
+   */
+  it("strips a literal marker character supplied in the source", () => {
+    const html = renderEmailBodyHtml(`a\u00010\u0001b \\*star\\*`);
+    // The marker characters are gone; only their real content survives, and the
+    // genuine escape still resolves to its own character rather than to whatever
+    // a forged marker pointed at.
+    expect(html).toContain("a0b");
+    expect(html).not.toContain(String.fromCharCode(1));
+    expect(html).toContain("*star*");
+    expect(html).not.toContain("<em>");
+  });
+
   it("wraps a body in a complete document with an escaped title", () => {
     const document = renderEmailHtmlDocument({
       title: 'Registration confirmed <"Women\'s Retreat">',
@@ -117,5 +167,15 @@ describe("email HTML rendering", () => {
 
   it("produces a document for an empty body rather than failing", () => {
     expect(renderEmailHtmlDocument({ title: "Empty", body: "" })).toContain("</html>");
+    expect(renderEmailHtmlDocument({ title: "Empty" })).toContain("</html>");
+  });
+
+  it("wraps an already-rendered fragment without re-parsing it as Markdown", () => {
+    const document = renderEmailHtmlDocument({
+      title: "Prerendered",
+      bodyHtml: "<p>Already <strong>rendered</strong> **not bold**</p>",
+    });
+
+    expect(document).toContain("<p>Already <strong>rendered</strong> **not bold**</p>");
   });
 });

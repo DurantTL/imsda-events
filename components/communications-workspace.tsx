@@ -32,6 +32,7 @@ import {
 } from "@/modules/communications/manage-link";
 import {
   MESSAGE_TEMPLATE_TOKEN_KEYS,
+  renderMessageTemplate,
   SAMPLE_MESSAGE_TEMPLATE_CONTEXT,
 } from "@/modules/communications/templates";
 import type {
@@ -104,7 +105,6 @@ function settingsDraftFromMessaging(
  * one event's dates and venue with another event's lodging, which is exactly
  * the kind of mismatch a preview exists to rule out.
  */
-const sampleTokens: Record<string, string> = { ...SAMPLE_MESSAGE_TEMPLATE_CONTEXT };
 const templateTokenKeys: readonly string[] = MESSAGE_TEMPLATE_TOKEN_KEYS;
 
 /**
@@ -148,12 +148,23 @@ const templateLabels: Record<string, string> = {
   EVENT_ANNOUNCEMENT: "Event announcement",
 };
 
-function renderSample(value: string, eventName: string) {
-  const filled = value.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (placeholder, token: string) => {
-    if (token === "event_name") return eventName;
-    return sampleTokens[token] ?? placeholder;
-  });
-  return withPreviewLinks(filled).replace(/\n{3,}/g, "\n\n").trim();
+/**
+ * Render a preview through the very same pipeline delivery uses, rather than a
+ * second substitution written for the preview alone. That is what makes the
+ * preview trustworthy: a token value that would be Markdown-escaped in a real
+ * send is escaped here too, so staff never see formatting the real message
+ * cannot produce.
+ */
+function renderPreview(subject: string, body: string, eventName: string) {
+  const rendered = renderMessageTemplate(
+    { subject, body },
+    { ...SAMPLE_MESSAGE_TEMPLATE_CONTEXT, event_name: eventName },
+  );
+  return {
+    subject: withPreviewLinks(rendered.subject),
+    body: withPreviewLinks(rendered.body),
+    bodyHtml: withPreviewLinks(rendered.bodyHtml),
+  };
 }
 
 function statusTone(status: MessageOutboxStatusValue) {
@@ -275,6 +286,11 @@ export function CommunicationsWorkspace({
   const [resendConfirmed, setResendConfirmed] = useState(false);
   const [resendRequestId, setResendRequestId] = useState("");
   const [retryRequestId, setRetryRequestId] = useState("");
+
+  const preview = useMemo(
+    () => renderPreview(templateSubject, templateBody, eventName),
+    [templateSubject, templateBody, eventName],
+  );
 
   const templateDirty = Boolean(selectedTemplate && (
     templateSubject !== (selectedTemplate.activeVersion?.subjectTemplate ?? "")
@@ -1263,21 +1279,21 @@ export function CommunicationsWorkspace({
                 <dl>
                   <div><dt>From</dt><dd>{messaging.settings.senderName}{messaging.settings.senderEmail ? ` <${messaging.settings.senderEmail}>` : ""}</dd></div>
                   <div><dt>Reply to</dt><dd>{messaging.settings.replyToEmail || "Not configured"}</dd></div>
-                  <div><dt>Subject</dt><dd>{renderSample(templateSubject, eventName) || "No subject"}</dd></div>
+                  <div><dt>Subject</dt><dd>{preview.subject || "No subject"}</dd></div>
                 </dl>
                 <iframe
                   className="message-body-html"
                   title="Template preview"
                   sandbox=""
                   srcDoc={renderEmailHtmlDocument({
-                    title: renderSample(templateSubject, eventName) || "Template preview",
-                    body: renderSample(templateBody, eventName) || "No message body",
+                    title: preview.subject || "Template preview",
+                    bodyHtml: preview.bodyHtml,
                     footer: messaging.settings.senderName,
                   })}
                 />
                 <details className="message-body-plain">
                   <summary>Plain-text fallback</summary>
-                  <pre>{renderSample(templateBody, eventName) || "No message body"}</pre>
+                  <pre>{preview.body || "No message body"}</pre>
                 </details>
               </article>
               <form className="panel message-test-form" onSubmit={createTestCapture}>
@@ -1403,16 +1419,25 @@ export function CommunicationsWorkspace({
                       <div><dt>Provider message</dt><dd>{selectedMessage.providerMessageId ?? "Not assigned"}</dd></div>
                     </dl>
                     <p className="message-body-note">The private link and pass image below are stand-ins. Delivery mints a fresh one-per-message link that is never stored here.</p>
-                    <iframe
-                      className="message-body-html"
-                      title="Captured message"
-                      sandbox=""
-                      srcDoc={renderEmailHtmlDocument({
-                        title: selectedMessage.subject,
-                        body: withPreviewLinks(selectedMessage.bodyText),
-                        footer: selectedMessage.senderName,
-                      })}
-                    />
+                    {selectedMessage.bodyHtml ? (
+                      <iframe
+                        className="message-body-html"
+                        title="Captured message"
+                        sandbox=""
+                        srcDoc={renderEmailHtmlDocument({
+                          title: selectedMessage.subject,
+                          // The fragment stored at enqueue, shown as-is. Re-rendering
+                          // the text here would re-parse registrant values as Markdown
+                          // long after the safe render already decided they were not.
+                          bodyHtml: withPreviewLinks(selectedMessage.bodyHtml),
+                          footer: selectedMessage.senderName,
+                        })}
+                      />
+                    ) : (
+                      <p className="message-body-note">
+                        This message was captured before formatted bodies existed, so it has a plain-text body only.
+                      </p>
+                    )}
                     <details className="message-body-plain">
                       <summary>Plain-text fallback</summary>
                       <pre className="message-body-snapshot">{withPreviewLinks(selectedMessage.bodyText)}</pre>

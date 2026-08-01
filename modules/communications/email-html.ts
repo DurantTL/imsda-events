@@ -1,14 +1,20 @@
 /**
- * Message bodies are authored, stored, and snapshotted as one plain-text
- * Markdown source. The HTML body is derived from that same snapshot at preview
- * and at delivery, so an email and its plain-text fallback can never drift, and
- * a captured row keeps meaning exactly what it said when it was captured.
+ * Message bodies are authored as one plain-text Markdown source. Both parts of
+ * the email are rendered from that source and the same token context in one
+ * call, so the formatted part and its plain-text fallback cannot drift.
  *
- * The renderer escapes the entire source before it looks for any markup, so
- * registrant-submitted values that reach a body through a token — names, form
- * answers, announcement text — can never introduce a tag, an attribute, or a
- * script. Only the small Markdown subset below produces elements, and only
- * `http`, `https`, `mailto`, and `tel` links survive.
+ * There are two layers of protection here, and they answer different attacks:
+ *
+ * 1. The renderer escapes the entire source before it looks for any markup, so
+ *    nothing in a body can introduce a tag, an attribute, or a script.
+ * 2. HTML escaping alone does not stop *Markdown* injection. A registrant whose
+ *    name is `[Review your registration](https://malicious.example)` would
+ *    otherwise get a trusted-looking link — or a tracking pixel via `![](…)` —
+ *    into mail sent from the IMSDA address. So untrusted token values are
+ *    Markdown-escaped before substitution (`escapeMarkdown`), and only the
+ *    server-generated block tokens are allowed to carry live Markdown. The
+ *    escapes are dropped again while rendering, so the reader sees the literal
+ *    text and the plain-text part never shows a backslash.
  */
 
 const ESCAPE_PATTERN = /[&<>"']/g;
@@ -29,6 +35,25 @@ export function escapeHtml(value: string) {
   return value.replace(ESCAPE_PATTERN, (character) => ESCAPE_REPLACEMENTS[character]);
 }
 
+/** ASCII punctuation, the full set Markdown lets a backslash escape. */
+const MARKDOWN_ESCAPE_PATTERN = /[!-/:-@[-`{-~]/g;
+const BACKSLASH_ESCAPE_PATTERN = /\\([!-/:-@[-`{-~])/g;
+
+/**
+ * Neutralise every Markdown construct in an untrusted value. Deliberately
+ * escapes all ASCII punctuation rather than only the characters that start a
+ * construct today: the alternative is a denylist that has to be revisited every
+ * time the renderer learns new syntax, and a missed character is a live link in
+ * somebody's inbox.
+ *
+ * The result is only ever fed to the HTML renderer, which drops the backslashes
+ * again. The plain-text body substitutes the raw value instead, so a reader of
+ * the text part never sees an escape.
+ */
+export function escapeMarkdown(value: string) {
+  return value.replace(MARKDOWN_ESCAPE_PATTERN, (character) => `\\${character}`);
+}
+
 /**
  * The source is already escaped when this runs, so a scheme check on the
  * escaped text is the same check on the original: escaping only ever expands
@@ -36,7 +61,9 @@ export function escapeHtml(value: string) {
  */
 function safeUrl(rawUrl: string, schemes: readonly string[]) {
   const url = rawUrl.trim();
-  if (!url || /[\s<>"']/.test(url)) return null;
+  // U+0001 is the literal marker used below. It cannot legitimately appear in
+  // a URL, and a URL is the one place a marker could reach an attribute.
+  if (!url || /[\s<>"'\u0001]/.test(url)) return null;
   const lower = url.toLowerCase();
   return schemes.some((scheme) => lower.startsWith(scheme)) ? url : null;
 }
@@ -165,13 +192,45 @@ const LIST_STYLE = "margin:0 0 14px;padding-left:22px;font-size:15px;line-height
 const RULE_STYLE = "border:0;border-top:1px solid #d9e2e6;margin:22px 0;";
 
 /**
+ * Pull `\punctuation` out of the source before anything else looks at it, so an
+ * escaped `*` can never start emphasis and an escaped `[` can never start a
+ * link. Each becomes an inert marker — U+0001, digits, U+0001 — that survives
+ * HTML escaping and every Markdown rule untouched, and is swapped back for the
+ * literal character once rendering is done.
+ *
+ * This runs before `escapeHtml` on purpose. Afterwards a source `\>` would
+ * already read `\&gt;`, and the escape would consume the `&` and leave a stray
+ * `gt;` behind as visible text.
+ */
+function extractBackslashEscapes(source: string) {
+  const literals: string[] = [];
+  const text = source
+    // A marker in the input would otherwise be restored as somebody else's
+    // character. Nothing legitimate carries a U+0001.
+    .replaceAll("\u0001", "")
+    .replace(BACKSLASH_ESCAPE_PATTERN, (match, character: string) => {
+      literals.push(character);
+      return `\u0001${literals.length - 1}\u0001`;
+    });
+  return { text, literals };
+}
+
+function restoreEscapedLiterals(html: string, literals: readonly string[]) {
+  if (literals.length === 0) return html;
+  return html.replace(/\u0001(\d+)\u0001/g, (match, index: string) => {
+    const literal = literals[Number(index)];
+    return literal === undefined ? "" : escapeHtml(literal);
+  });
+}
+
+/**
  * Render a Markdown body into the HTML fragment that goes inside the email
  * layout. Safe to call on any string, including one that already contains
  * angle brackets or quotes.
  */
 export function renderEmailBodyHtml(body: string) {
-  const blocks = parseBlocks(escapeHtml(body));
-  return blocks
+  const { text, literals } = extractBackslashEscapes(body);
+  const html = parseBlocks(escapeHtml(text))
     .map((block) => {
       if (block.kind === "rule") return `<hr style="${RULE_STYLE}" />`;
       if (block.kind === "heading") {
@@ -187,13 +246,24 @@ export function renderEmailBodyHtml(body: string) {
       return `<p style="${PARAGRAPH_STYLE}">${block.lines.map(renderInline).join("<br />")}</p>`;
     })
     .join("\n");
+  return restoreEscapedLiterals(html, literals);
 }
 
 export type EmailHtmlDocumentInput = {
   /** Shown in the client's tab and read by screen readers. */
   title: string;
-  /** The Markdown body. Escaped and rendered by `renderEmailBodyHtml`. */
-  body: string;
+  /**
+   * The Markdown body, escaped and rendered by `renderEmailBodyHtml`. Use this
+   * where the body is being rendered for the first time.
+   */
+  body?: string;
+  /**
+   * An already-rendered body fragment, wrapped as-is. Delivery uses this: the
+   * fragment was produced at enqueue from the template and its context, where
+   * trusted and untrusted token spans were still distinguishable, and re-parsing
+   * the finished text as Markdown here would lose that distinction.
+   */
+  bodyHtml?: string;
   /** Small line under the body, used for the sender identity. */
   footer?: string | null;
 };
@@ -226,7 +296,7 @@ export function renderEmailHtmlDocument(input: EmailHtmlDocumentInput) {
     '<span style="color:#ffffff;font-size:14px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">IMSDA Events</span>',
     "</td></tr>",
     '<tr><td style="padding:28px;">',
-    renderEmailBodyHtml(input.body),
+    input.bodyHtml ?? renderEmailBodyHtml(input.body ?? ""),
     footer,
     "</td></tr>",
     "</table>",

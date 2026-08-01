@@ -164,10 +164,10 @@ describe("payment status block", () => {
 });
 
 describe("check-in block", () => {
-  it("shows the QR image when the registration has a pass", () => {
+  it("inlines the QR only for a single-attendee registration", () => {
     const tokens = buildRegistrationCheckinTokens({
       confirmationCode: "REG-1234",
-      primaryAttendeeId: "attendee-1",
+      attendeeIds: ["attendee-1"],
     });
 
     expect(tokens.checkin_qr_image).toBe(
@@ -178,10 +178,30 @@ describe("check-in block", () => {
     expect(tokens.checkin_block).toContain("REG-1234");
   });
 
-  it("falls back to the portal link and the code when no pass exists", () => {
+  /**
+   * A pass resolves one attendee. Inlining the first person's code for a family
+   * would check that person in and leave everyone else holding a code that is
+   * not theirs, so a party is sent to the portal, where each attendee has their
+   * own labelled pass.
+   */
+  it("never inlines one attendee's code for a multi-attendee registration", () => {
     const tokens = buildRegistrationCheckinTokens({
       confirmationCode: "REG-1234",
-      primaryAttendeeId: null,
+      attendeeIds: ["attendee-1", "attendee-2", "attendee-3"],
+    });
+
+    expect(tokens.checkin_qr_image).toBe("");
+    expect(tokens.checkin_block).not.toContain("![");
+    expect(tokens.checkin_block).not.toContain("attendee-1");
+    expect(tokens.checkin_block).toContain("own check-in code");
+    expect(tokens.checkin_block).toContain("[Show our check-in passes]");
+    expect(tokens.checkin_block).toContain("**REG-1234**");
+  });
+
+  it("falls back to the portal link and the code when no attendee exists", () => {
+    const tokens = buildRegistrationCheckinTokens({
+      confirmationCode: "REG-1234",
+      attendeeIds: [],
     });
 
     expect(tokens.checkin_qr_image).toBe("");

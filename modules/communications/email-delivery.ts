@@ -79,6 +79,7 @@ type ClaimedMessage = {
   replyToEmailSnapshot: string | null;
   subjectSnapshot: string;
   bodyTextSnapshot: string;
+  bodyHtmlSnapshot: string | null;
   attemptCount: number;
   lockToken: string;
   startedAt: Date;
@@ -86,6 +87,7 @@ type ClaimedMessage = {
 
 export type PreparedEmailBody = {
   bodyText: string;
+  bodyHtml?: string | null;
   revokeOnDefinitiveFailure?: () => Promise<void>;
 };
 
@@ -96,16 +98,23 @@ export type EmailBodyPreparationInput = {
   accountAttendeeId?: string | null;
   templateKey?: string;
   bodyText: string;
+  bodyHtml?: string | null;
   now: Date;
 };
 
 export async function prepareEmailBodyForDelivery(
   input: EmailBodyPreparationInput,
 ): Promise<PreparedEmailBody> {
-  const needsLink = input.bodyText.includes(REGISTRATION_MANAGE_LINK_SENTINEL);
-  const needsApi = input.bodyText.includes(REGISTRATION_MANAGE_API_SENTINEL);
-  if (!needsLink && !needsApi) {
-    return { bodyText: input.bodyText };
+  // Both bodies carry the same sentinels and both must be resolved from the
+  // same token, or the formatted mail and its fallback would offer different
+  // links — or one of them a raw sentinel.
+  const carriesSentinel = (value: string | null | undefined) => Boolean(
+    value
+    && (value.includes(REGISTRATION_MANAGE_LINK_SENTINEL)
+      || value.includes(REGISTRATION_MANAGE_API_SENTINEL)),
+  );
+  if (!carriesSentinel(input.bodyText) && !carriesSentinel(input.bodyHtml)) {
+    return { bodyText: input.bodyText, bodyHtml: input.bodyHtml ?? null };
   }
   if (!input.registrationId) {
     throw new Error(
@@ -126,10 +135,12 @@ export async function prepareEmailBodyForDelivery(
     `/api/public/manage/${access.token}`,
     appBaseUrl,
   ).toString();
+  const resolveSentinels = (value: string) => value
+    .replaceAll(REGISTRATION_MANAGE_API_SENTINEL, manageApiUrl)
+    .replaceAll(REGISTRATION_MANAGE_LINK_SENTINEL, manageUrl);
   return {
-    bodyText: input.bodyText
-      .replaceAll(REGISTRATION_MANAGE_API_SENTINEL, manageApiUrl)
-      .replaceAll(REGISTRATION_MANAGE_LINK_SENTINEL, manageUrl),
+    bodyText: resolveSentinels(input.bodyText),
+    bodyHtml: input.bodyHtml ? resolveSentinels(input.bodyHtml) : null,
     revokeOnDefinitiveFailure: async () => {
       await revokeRegistrationAccessToken(access.token);
     },
@@ -322,6 +333,7 @@ async function claimNextMessage(
           replyToEmailSnapshot: true,
           subjectSnapshot: true,
           bodyTextSnapshot: true,
+          bodyHtmlSnapshot: true,
           attemptCount: true,
         },
       });
@@ -542,6 +554,7 @@ async function runDeliveryLoop(
         accountAttendeeId: message.accountAttendeeId,
         templateKey: message.templateKey,
         bodyText: message.bodyTextSnapshot,
+        bodyHtml: message.bodyHtmlSnapshot,
         now: message.startedAt,
       });
       const delivery = await sendEmail({
@@ -551,14 +564,18 @@ async function runDeliveryLoop(
         replyToEmail: message.replyToEmailSnapshot,
         subject: message.subjectSnapshot,
         bodyText: preparedBody.bodyText,
-        // Derived here rather than stored, so the HTML body and the plain-text
-        // fallback are always the same snapshot said two ways and a captured
-        // row keeps meaning exactly what it meant when it was captured.
-        bodyHtml: renderEmailHtmlDocument({
-          title: message.subjectSnapshot,
-          body: preparedBody.bodyText,
-          footer: message.senderNameSnapshot,
-        }),
+        // Wrapped, not rendered: the body fragment was rendered at enqueue from
+        // the same template and context as the text snapshot, where trusted and
+        // untrusted token spans were still distinguishable. A row queued before
+        // HTML bodies existed has none, and goes out as text only rather than
+        // being re-parsed as Markdown here.
+        bodyHtml: preparedBody.bodyHtml
+          ? renderEmailHtmlDocument({
+            title: message.subjectSnapshot,
+            bodyHtml: preparedBody.bodyHtml,
+            footer: message.senderNameSnapshot,
+          })
+          : null,
         idempotencyKey: `outbox:${message.id}`,
         messageId: message.id,
       }, configuration);

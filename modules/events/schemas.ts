@@ -25,14 +25,16 @@ const nullableText = (maximum: number) => z.string()
   .transform((value) => value || null);
 
 /**
- * Same as `nullableText`, but an absent key is also nothing. Used for fields
- * added after clients existed, so an older payload that never learned to send
- * them stays valid instead of failing validation on a field it cannot know
- * about.
+ * Same as `nullableText`, but an absent key stays absent.
+ *
+ * The distinction matters on update. These fields were added after clients
+ * existed, so an older API client — or a browser tab opened before the deploy —
+ * can save an unrelated setting without sending them. Normalising the omission
+ * to `null` would make every such save silently erase the event's lodging.
+ * `undefined` means "not supplied, leave alone"; an explicit `null` or blank
+ * string still means "staff cleared this".
  */
-const optionalNullableText = (maximum: number) => nullableText(maximum)
-  .optional()
-  .transform((value) => value ?? null);
+const optionalNullableText = (maximum: number) => nullableText(maximum).optional();
 
 const publicInfoUrlSchema = nullableText(500).refine((value) => {
   if (value === null) return true;

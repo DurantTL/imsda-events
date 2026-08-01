@@ -201,28 +201,41 @@ export function buildPaymentStatusBlock(input: PaymentStatusBlockInput) {
 
 export type CheckinBlockInput = {
   confirmationCode: string;
-  /** Where the registrant can open their own check-in pass. */
+  /** Where the registrant can open the check-in pass for every attendee. */
   passUrl?: string | null;
-  /** Direct image URL for the pass QR code. Omitted when unavailable. */
+  /**
+   * Direct image URL for the pass QR code. Supply this only when the code
+   * stands for the whole registration — one attendee's code checks in one
+   * attendee, so a party is sent to the portal instead.
+   */
   qrImageUrl?: string | null;
+  /** How many attendees the registration covers, which decides the wording. */
+  attendeeCount?: number;
 };
 
 /**
  * The check-in tokens for one registration, written against the delivery
  * sentinels so the private token only ever exists inside a sent message.
  *
- * `primaryAttendeeId` is the first attendee on the registration: a party shares
- * one confirmation and arrives together, and a body carrying one code per
- * attendee would be unreadable. Without one there is no pass to show, so the
- * image is omitted and the block falls back to the portal link.
+ * A pass is per attendee: scanning one resolves that person and nobody else. So
+ * a QR is inlined only when the registration has exactly one attendee, where
+ * the code in the email is unambiguously that person's. A family or group gets
+ * the portal link instead, which shows every attendee's own labelled pass —
+ * inlining the first attendee's code there would check in one person and leave
+ * the rest of the party looking at a code that is not theirs.
+ *
+ * `attendeeIds` is the whole party for that reason, not just the first.
  */
 export function buildRegistrationCheckinTokens(input: {
   confirmationCode: string;
-  primaryAttendeeId?: string | null;
+  attendeeIds?: readonly string[] | null;
 }) {
-  const attendeeId = clean(input.primaryAttendeeId);
-  const qrImageUrl = attendeeId
-    ? `${REGISTRATION_MANAGE_API_SENTINEL}/attendee-passes/${encodeURIComponent(attendeeId)}/qr?format=png`
+  const attendeeIds = (input.attendeeIds ?? []).map(clean).filter(
+    (value): value is string => value !== null,
+  );
+  const soleAttendeeId = attendeeIds.length === 1 ? attendeeIds[0] : null;
+  const qrImageUrl = soleAttendeeId
+    ? `${REGISTRATION_MANAGE_API_SENTINEL}/attendee-passes/${encodeURIComponent(soleAttendeeId)}/qr?format=png`
     : null;
   return {
     checkin_qr_url: REGISTRATION_MANAGE_LINK_SENTINEL,
@@ -231,6 +244,7 @@ export function buildRegistrationCheckinTokens(input: {
       confirmationCode: input.confirmationCode,
       passUrl: REGISTRATION_MANAGE_LINK_SENTINEL,
       qrImageUrl,
+      attendeeCount: attendeeIds.length,
     }),
   };
 }
@@ -240,9 +254,10 @@ export function buildCheckinBlock(input: CheckinBlockInput) {
   const qrImageUrl = clean(input.qrImageUrl);
   const code = clean(input.confirmationCode);
   if (!passUrl && !qrImageUrl && !code) return "";
+  const isParty = (input.attendeeCount ?? 0) > 1;
 
   const lines = ["### At check-in", ""];
-  if (qrImageUrl) {
+  if (qrImageUrl && !isParty) {
     lines.push(
       "Show this QR code at the check-in desk:",
       "",
@@ -250,12 +265,20 @@ export function buildCheckinBlock(input: CheckinBlockInput) {
       "",
     );
   } else if (passUrl) {
-    lines.push("Open your registration to show your check-in QR code at the desk:", "", `[Show my check-in pass](${passUrl})`, "");
+    lines.push(
+      isParty
+        ? "Everyone on this registration has their own check-in code. Open your registration to show each attendee's code at the desk:"
+        : "Open your registration to show your check-in QR code at the desk:",
+      "",
+      `[${isParty ? "Show our check-in passes" : "Show my check-in pass"}](${passUrl})`,
+      "",
+    );
   }
   if (code) {
+    const codes = isParty ? "the codes" : "the code";
     lines.push(
       qrImageUrl || passUrl
-        ? `If you cannot open the code, give your confirmation code **${code}** at the desk instead.`
+        ? `If you cannot open ${codes}, give your confirmation code **${code}** at the desk instead.`
         : `Give your confirmation code **${code}** at the check-in desk.`,
     );
   }

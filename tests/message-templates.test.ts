@@ -16,7 +16,6 @@ import {
   selectRegistrationMessageTemplate,
   validateMessageTemplate,
 } from "@/modules/communications/templates";
-import { renderEmailBodyHtml } from "@/modules/communications/email-html";
 import type { MessageTemplateKeyValue } from "@/modules/communications/types";
 
 /**
@@ -227,7 +226,7 @@ describe("message templates", () => {
       DEFAULT_MESSAGE_TEMPLATES.REGISTRATION_CONFIRMATION_PAID,
       SAMPLE_MESSAGE_TEMPLATE_CONTEXT,
     );
-    const html = renderEmailBodyHtml(rendered.body);
+    const html = rendered.bodyHtml;
     expect(html).toContain(`<a href="${SAMPLE_MESSAGE_TEMPLATE_CONTEXT.portal_url}"`);
     expect(html).toContain("View, pay, or edit your registration");
   });
@@ -241,13 +240,70 @@ describe("message templates", () => {
   it("renders every default into HTML with no leftover markup or unsafe link", () => {
     for (const template of DEFAULT_MESSAGE_TEMPLATE_LIST) {
       const rendered = renderMessageTemplate(template, SAMPLE_MESSAGE_TEMPLATE_CONTEXT);
-      const html = renderEmailBodyHtml(rendered.body);
+      const html = rendered.bodyHtml;
 
       expect(html).not.toMatch(/\{\{[^{}]+\}\}/);
       expect(html).not.toMatch(/(^|[^&])\*\*/);
       expect(html).not.toContain('href="javascript:');
       expect(html).not.toContain('href="data:');
     }
+  });
+
+  /**
+   * The end-to-end version of the Markdown-injection guard. A registrant
+   * controls their own name; the formatted body must not turn it into a link,
+   * an image, or a heading, while the plain-text part still shows exactly what
+   * they typed, backslash-free.
+   */
+  it("never lets a registrant-controlled value become live Markdown", () => {
+    const hostileName = "[Review your registration](https://malicious.example)";
+    const rendered = renderMessageTemplate(
+      { subject: "{{event_name}}", body: "Hello {{recipient_name}},\n\n{{attendee_summary}}" },
+      {
+        event_name: "Retreat",
+        recipient_name: hostileName,
+        attendee_summary: "![](https://malicious.example/pixel.gif)\n# Not a heading",
+      },
+    );
+
+    // The text part is what the registrant typed, unaltered.
+    expect(rendered.body).toContain(hostileName);
+    expect(rendered.body).not.toContain("\\");
+
+    // The formatted part carries none of it as markup.
+    expect(rendered.bodyHtml).not.toContain("malicious.example\"");
+    expect(rendered.bodyHtml).not.toContain("<img");
+    expect(rendered.bodyHtml).not.toContain("<h1");
+    expect(rendered.bodyHtml).toContain("[Review your registration]");
+  });
+
+  it("still renders trusted generated blocks as real Markdown", () => {
+    const rendered = renderMessageTemplate(
+      {
+        subject: "{{event_name}}",
+        body: "{{hotel_information}}\n\n[Portal]({{portal_url}})",
+      },
+      {
+        event_name: "Retreat",
+        hotel_information: "### Hotel reservations\n\nStay at the **lodge**.",
+        portal_url: "https://events.example.test/manage/abc",
+      },
+    );
+
+    expect(rendered.bodyHtml).toContain("<h3");
+    expect(rendered.bodyHtml).toContain("<strong>lodge</strong>");
+    expect(rendered.bodyHtml).toContain('<a href="https://events.example.test/manage/abc"');
+  });
+
+  it("renders both bodies from one call so they cannot drift", () => {
+    const rendered = renderMessageTemplate(
+      DEFAULT_MESSAGE_TEMPLATES.REGISTRATION_CONFIRMATION_PAID,
+      SAMPLE_MESSAGE_TEMPLATE_CONTEXT,
+    );
+
+    expect(rendered.body).toContain("Confirmation code:");
+    expect(rendered.bodyHtml).toContain("<h1");
+    expect(rendered.bodyHtml).toContain(SAMPLE_MESSAGE_TEMPLATE_CONTEXT.confirmation_code);
   });
 
   it("formats currency and event date ranges for template context", () => {
