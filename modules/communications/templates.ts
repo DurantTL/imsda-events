@@ -658,7 +658,7 @@ export const MESSAGE_TEMPLATE_TOKEN_OPTIONS: readonly {
     key: "checkin_block",
     label: "Check-in block",
     description:
-      "Check-in instructions with the QR code or pass link. Renders nothing when no pass is available.",
+      "Check-in instructions with the QR code for a single attendee, or the portal link for a party. Renders nothing when no pass is available.",
   },
   {
     key: "checkin_qr_url",
@@ -668,7 +668,8 @@ export const MESSAGE_TEMPLATE_TOKEN_OPTIONS: readonly {
   {
     key: "checkin_qr_image",
     label: "Check-in QR image",
-    description: "The QR code image for the registration's first attendee, as an inline image.",
+    description:
+      "The pass QR image, for a single-attendee registration only. A party has one code per attendee, so this renders nothing and the check-in block links to the portal instead.",
   },
 ];
 

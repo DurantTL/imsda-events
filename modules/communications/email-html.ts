@@ -17,6 +17,11 @@
  *    text and the plain-text part never shows a backslash.
  */
 
+import {
+  REGISTRATION_MANAGE_API_SENTINEL,
+  REGISTRATION_MANAGE_LINK_SENTINEL,
+} from "@/modules/communications/manage-link";
+
 const ESCAPE_PATTERN = /[&<>"']/g;
 const ESCAPE_REPLACEMENTS: Readonly<Record<string, string>> = {
   "&": "&amp;",
@@ -30,6 +35,22 @@ const ESCAPE_REPLACEMENTS: Readonly<Record<string, string>> = {
 const LINK_SCHEMES = ["http://", "https://", "mailto:", "tel:"];
 /** Images are remote fetches by the mail client, so they stay web-only. */
 const IMAGE_SCHEMES = ["http://", "https://"];
+
+/**
+ * The delivery sentinels are a third, internal URL class. A registration body
+ * is rendered at enqueue, when no private token exists yet, so its portal link
+ * and pass image carry a sentinel that delivery swaps for a real URL in memory.
+ * Scheme validation alone would drop them as unrecognised, and dropping them
+ * strips the `href` and `src` outright — after which delivery has nothing left
+ * to replace and every HTML email loses its buttons and its QR.
+ *
+ * These are matched exactly, not by prefix. A broad "internal-looking URLs are
+ * fine" rule would be a way to smuggle an arbitrary destination past the
+ * scheme check; the only shapes accepted are the two this codebase generates.
+ */
+const INTERNAL_IMAGE_URL_PATTERN = new RegExp(
+  `^${REGISTRATION_MANAGE_API_SENTINEL}/attendee-passes/[A-Za-z0-9_%-]+/qr\\?format=png$`,
+);
 
 export function escapeHtml(value: string) {
   return value.replace(ESCAPE_PATTERN, (character) => ESCAPE_REPLACEMENTS[character]);
@@ -77,6 +98,18 @@ const BARE_URL_PATTERN = /(^|[\s(])(https?:\/\/[^\s<>"')]+)/g;
 
 const LINK_STYLE = "color:#0f6f8c;text-decoration:underline;";
 
+function safeLinkUrl(rawUrl: string) {
+  const url = rawUrl.trim();
+  if (url === REGISTRATION_MANAGE_LINK_SENTINEL) return url;
+  return safeUrl(url, LINK_SCHEMES);
+}
+
+function safeImageUrl(rawUrl: string) {
+  const url = rawUrl.trim();
+  if (INTERNAL_IMAGE_URL_PATTERN.test(url)) return url;
+  return safeUrl(url, IMAGE_SCHEMES);
+}
+
 /**
  * Inline markup for one already-escaped line. Images run before links so that
  * `![alt](url)` is never mistaken for a link whose text starts with `!`.
@@ -84,12 +117,12 @@ const LINK_STYLE = "color:#0f6f8c;text-decoration:underline;";
 function renderInline(escaped: string) {
   return escaped
     .replace(IMAGE_PATTERN, (match, alt: string, rawUrl: string) => {
-      const url = safeUrl(rawUrl, IMAGE_SCHEMES);
+      const url = safeImageUrl(rawUrl);
       if (!url) return alt;
       return `<img src="${url}" alt="${alt}" style="max-width:100%;height:auto;border:0;display:block;" />`;
     })
     .replace(LINK_PATTERN, (match, text: string, rawUrl: string) => {
-      const url = safeUrl(rawUrl, LINK_SCHEMES);
+      const url = safeLinkUrl(rawUrl);
       if (!url) return text;
       return `<a href="${url}" style="${LINK_STYLE}">${text}</a>`;
     })

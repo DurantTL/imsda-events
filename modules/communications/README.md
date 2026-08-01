@@ -41,6 +41,8 @@ Second, HTML escaping alone does not stop *Markdown* injection: a registrant nam
 
 This is also why the HTML is rendered at enqueue rather than at delivery. Only there are the trusted and untrusted spans of a body still distinguishable; the finished text cannot tell a template's Markdown from a registrant's.
 
+Rendering at enqueue has one consequence worth knowing before touching `email-html.ts`: a body is rendered *before* any private token exists, so its portal link and pass image carry the delivery sentinels rather than URLs. The renderer accepts those as a third, internal URL class, matched by exact shape rather than by prefix. If it did not, scheme validation would reject them, and a rejected link is rendered as inert text — which strips the `href` and `src` and leaves delivery nothing to substitute, so every HTML email loses its buttons and its QR while the plain-text part still looks correct. `tests/delivery-sentinel-round-trip.test.ts` pins that whole path, because preview tests use ordinary HTTPS sample URLs and never exercise it.
+
 Some sections depend on the event or on the registration's state rather than on the template. Those are server-generated blocks (`message-blocks.ts`), placed by a single token and emitted as Markdown like everything else:
 
 - `{{hotel_information}}` — the event's configured lodging. Omitted entirely when the event has no hotel name, which is why lodging is per-event columns rather than text embedded in a shared template.

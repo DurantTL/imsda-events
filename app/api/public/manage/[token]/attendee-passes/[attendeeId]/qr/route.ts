@@ -76,6 +76,13 @@ async function getHandler(request: Request, context: RouteContext) {
           ...privateHeaders,
           "Content-Type": "image/png",
           "Content-Disposition": "inline; filename=\"imsda-attendee-pass.png\"",
+          // This one response exists to be loaded from a mail client, which is
+          // by definition another origin, so the inherited `same-origin` policy
+          // would block the image before it rendered. It costs nothing here:
+          // the URL already carries the bearer token that authorises it, so
+          // anyone who can request it can read it whatever this header says.
+          // The SVG the app itself renders keeps `same-origin`.
+          "Cross-Origin-Resource-Policy": "cross-origin",
           "X-Content-Type-Options": "nosniff",
         },
       });
