@@ -23,6 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
+import { MessageBodyEditor } from "@/components/message-body-editor";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import { messageRetryRequestPayload } from "@/modules/communications/message-retry-client";
 import { renderEmailHtmlDocument } from "@/modules/communications/email-html";
@@ -1241,21 +1242,19 @@ export function CommunicationsWorkspace({
               </div>
               <div className="message-safety-banner"><Clock3 size={18} aria-hidden="true" /><span><strong>Publishing affects future messages only.</strong><small>Existing queued and captured rows keep their exact subject and body snapshots.</small></span></div>
               <label>Subject<input value={templateSubject} maxLength={180} required onChange={(event) => setTemplateSubject(event.target.value)} /></label>
-              <label>
-                Message body
-                <textarea value={templateBody} rows={18} maxLength={12000} required onChange={(event) => setTemplateBody(event.target.value)} />
-                <small>
-                  Markdown: <code># Heading</code>, <code>### Section</code>, <code>**bold**</code>, <code>- list item</code>, <code>[link text](https://…)</code>. Delivery sends this formatted, with the plain text as the fallback.
-                </small>
-              </label>
+              <div className="message-body-field">
+                <strong>Message body</strong>
+                <MessageBodyEditor
+                  key={selectedTemplate.id}
+                  value={templateBody}
+                  tokens={templateTokenKeys}
+                  onChange={setTemplateBody}
+                />
+              </div>
               <label className="message-enabled-toggle">
                 <input type="checkbox" checked={templateEnabled} onChange={(event) => setTemplateEnabled(event.target.checked)} />
                 <span><strong>Queue this message type</strong><small>When disabled, registrations retain a suppressed audit row instead of a pending message.</small></span>
               </label>
-              <div className="message-token-list">
-                <strong>Available tokens</strong>
-                <div>{templateTokenKeys.map((token) => <code key={token}>{`{{${token}}}`}</code>)}</div>
-              </div>
               <div className="builder-actions">
                 {templateDirty && <span className="unsaved-dot" role="status">Unpublished changes</span>}
                 <button className="primary-button" type="submit" disabled={saving || !templateDirty}><Save size={16} aria-hidden="true" /> {saving ? "Publishing…" : "Publish new version"}</button>
