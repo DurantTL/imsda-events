@@ -256,19 +256,51 @@ export async function checkAttendeePasswordResetRateLimit(
 }
 
 /**
- * Recovery accepts two pieces of registration knowledge and may send a private
- * bearer link. The combined subject bucket prevents repeatedly targeting one
- * address/confirmation pair, while the client bucket limits broad guessing.
+ * Direct access accepts two pieces of registration knowledge and returns a
+ * private bearer link. The combined subject bucket limits broad guessing.
  */
-export async function checkRegistrationRecoveryRateLimit(
+export async function checkRegistrationCodeAccessRateLimit(
   request: Request,
   input: { email: string; confirmationCode: string },
 ) {
   const configuration = getRateLimitConfiguration();
   const { client } = requestIdentities(request, configuration);
   const recoverySubject = hashRateLimitIdentifier(
-    "registration-recovery",
+    "registration-code-access",
     `${input.confirmationCode.trim().toUpperCase()}\u0000${input.email.trim().toLowerCase()}`,
+    configuration,
+  );
+  return evaluate([
+    {
+      policy: "registration.code-access.client",
+      limit: 10,
+      windowSeconds: oneHour,
+      identifierHashes: [client],
+    },
+    {
+      policy: "registration.code-access.subject",
+      limit: 3,
+      windowSeconds: oneHour,
+      identifierHashes: [recoverySubject],
+    },
+    {
+      policy: "registration.code-access.client-subject",
+      limit: 3,
+      windowSeconds: oneHour,
+      identifierHashes: [client, recoverySubject],
+    },
+  ], configuration);
+}
+
+export async function checkRegistrationRecoveryRateLimit(
+  request: Request,
+  email: string,
+) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  const recoverySubject = hashRateLimitIdentifier(
+    "registration-recovery-email",
+    email.trim().toLowerCase(),
     configuration,
   );
   return evaluate([

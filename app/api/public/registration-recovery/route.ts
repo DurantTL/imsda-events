@@ -4,17 +4,32 @@ import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { processQueuedMessageIdsAfterCommit } from "@/modules/communications/messaging-repository";
-import { requestRegistrationAccessRecovery } from "@/modules/public-access/repository";
+import {
+  establishRegistrationAccess,
+  requestRegistrationAccessRecovery,
+} from "@/modules/public-access/repository";
 import {
   applyRateLimitHeaders,
   type RateLimitOutcome,
 } from "@/modules/rate-limit/domain";
-import { checkRegistrationRecoveryRateLimit } from "@/modules/rate-limit/service";
+import {
+  checkRegistrationCodeAccessRateLimit,
+  checkRegistrationRecoveryRateLimit,
+} from "@/modules/rate-limit/service";
 
-const requestSchema = z.strictObject({
-  confirmationCode: z.string().trim().min(1).max(80),
-  email: z.string().trim().email().max(160),
-});
+const requestSchema = z.discriminatedUnion("action", [
+  z.strictObject({
+    action: z.literal("access"),
+    clientRequestId: z.uuid(),
+    confirmationCode: z.string().trim().min(1).max(80),
+    email: z.string().trim().email().max(160),
+  }),
+  z.strictObject({
+    action: z.literal("email"),
+    clientRequestId: z.uuid(),
+    email: z.string().trim().email().max(160),
+  }),
+]);
 
 const privateHeaders = {
   "Cache-Control": "private, no-store, max-age=0",
@@ -47,12 +62,29 @@ async function postHandler(request: Request) {
   let rateLimit: RateLimitOutcome | undefined;
   try {
     const input = requestSchema.parse(await request.json());
-    rateLimit = await checkRegistrationRecoveryRateLimit(request, input);
+    rateLimit = input.action === "access"
+      ? await checkRegistrationCodeAccessRateLimit(request, input)
+      : await checkRegistrationRecoveryRateLimit(request, input.email);
     if (!rateLimit.allowed) {
       return json({
         error: "RATE_LIMITED",
         message: "Too many recovery requests for those details. Try again later.",
       }, { status: 429 }, rateLimit);
+    }
+
+    if (input.action === "access") {
+      const access = await establishRegistrationAccess(input);
+      if (!access) {
+        return json({
+          error: "REGISTRATION_ACCESS_UNAVAILABLE",
+          message: "We could not open a registration with those details. Check both fields or request a private link by email.",
+        }, { status: 401 }, rateLimit);
+      }
+      return json({
+        ok: true,
+        managePath: access.managePath,
+        expiresAt: access.expiresAt.toISOString(),
+      }, undefined, rateLimit);
     }
 
     const recovery = await requestRegistrationAccessRecovery(input);
@@ -70,7 +102,7 @@ async function postHandler(request: Request) {
     if (error instanceof z.ZodError || error instanceof SyntaxError) {
       return json({
         error: "INVALID_RECOVERY_REQUEST",
-        message: "Enter a confirmation code and valid registration contact email.",
+        message: "Enter a valid registration contact email and, for direct access, a confirmation code.",
       }, { status: 400 }, rateLimit);
     }
     logError("Registration access recovery request failed.", error);

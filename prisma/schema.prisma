@@ -1112,6 +1112,8 @@ model RegistrationAccessToken {
   tokenHash      String                         @unique
   purpose        RegistrationAccessTokenPurpose @default(MANAGE_REGISTRATION)
   expiresAt      DateTime
+  firstUsedAt    DateTime?
+  expiryRecordedAt DateTime?
   revokedAt      DateTime?
   createdAt      DateTime                       @default(now())
 

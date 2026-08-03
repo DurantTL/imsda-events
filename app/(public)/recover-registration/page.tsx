@@ -5,8 +5,8 @@ import { PublicRegistrationRecoveryForm } from "@/components/public-registration
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Recover your registration",
-  description: "Request a new private link for an IMSDA event registration.",
+  title: "Manage your registration",
+  description: "Open or recover access to an IMSDA event registration.",
   robots: { index: false, follow: false, nocache: true },
 };
 
@@ -20,10 +20,11 @@ export default function RecoverRegistrationPage() {
         </div>
         <div className="auth-heading">
           <p className="eyebrow">Private registration access</p>
-          <h1>Recover your registration</h1>
+          <h1>Manage my registration</h1>
           <p>
-            Enter the confirmation code and contact email from your registration.
-            We will email a fresh, expiring private management link when they match.
+            Enter the confirmation code and contact email to open your registration.
+            An account is not required, and you can request a private link if you
+            no longer have the code.
           </p>
         </div>
         <PublicRegistrationRecoveryForm />

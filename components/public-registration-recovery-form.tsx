@@ -2,16 +2,19 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { MailCheck } from "lucide-react";
+import { LockKeyhole, MailCheck } from "lucide-react";
 
 export function PublicRegistrationRecoveryForm() {
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"access" | "email" | null>(null);
   const [error, setError] = useState("");
   const [requested, setRequested] = useState(false);
 
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
+  async function submit(
+    event: React.FormEvent<HTMLFormElement>,
+    action: "access" | "email",
+  ) {
     event.preventDefault();
-    setBusy(true);
+    setBusy(action);
     setError("");
     const form = new FormData(event.currentTarget);
     try {
@@ -19,7 +22,11 @@ export function PublicRegistrationRecoveryForm() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          confirmationCode: form.get("confirmationCode"),
+          action,
+          clientRequestId: crypto.randomUUID(),
+          ...(action === "access"
+            ? { confirmationCode: form.get("confirmationCode") }
+            : {}),
           email: form.get("email"),
         }),
       });
@@ -27,13 +34,17 @@ export function PublicRegistrationRecoveryForm() {
       if (!response.ok) {
         throw new Error(result.message ?? "The recovery request could not be submitted.");
       }
-      setRequested(true);
+      if (action === "access") {
+        window.location.assign(result.managePath);
+      } else {
+        setRequested(true);
+      }
     } catch (caught) {
       setError(caught instanceof Error
         ? caught.message
         : "The recovery request could not be submitted.");
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }
 
@@ -56,35 +67,57 @@ export function PublicRegistrationRecoveryForm() {
   }
 
   return (
-    <form className="auth-form" onSubmit={submit}>
-      <label>
-        Confirmation code
-        <input
-          autoCapitalize="characters"
-          autoComplete="off"
-          maxLength={80}
-          name="confirmationCode"
-          required
-        />
-      </label>
-      <label>
-        Registration contact email
-        <input
-          autoComplete="email"
-          maxLength={160}
-          name="email"
-          required
-          type="email"
-        />
-      </label>
-      {error && <p className="form-error" role="alert">{error}</p>}
-      <button className="primary-button full-button" disabled={busy} type="submit">
-        <MailCheck aria-hidden="true" size={17} />
-        {busy ? "Requesting…" : "Email a new private link"}
-      </button>
-      <p className="field-help">
-        Have an attendee account? <Link href="/account/sign-in">Sign in</Link>.
-      </p>
-    </form>
+    <div>
+      <form className="auth-form" onSubmit={(event) => submit(event, "access")}>
+        <label>
+          Confirmation code
+          <input
+            autoCapitalize="characters"
+            autoComplete="off"
+            maxLength={80}
+            name="confirmationCode"
+            required
+          />
+        </label>
+        <label>
+          Registration contact email
+          <input
+            autoComplete="email"
+            maxLength={160}
+            name="email"
+            required
+            type="email"
+          />
+        </label>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <button className="primary-button full-button" disabled={busy !== null} type="submit">
+          <LockKeyhole aria-hidden="true" size={17} />
+          {busy === "access" ? "Checking…" : "Manage my registration"}
+        </button>
+      </form>
+
+      <form className="auth-form" onSubmit={(event) => submit(event, "email")}>
+        <p className="field-help">
+          Lost the code? Request a private link using only the registration contact email.
+        </p>
+        <label>
+          Registration contact email
+          <input
+            autoComplete="email"
+            maxLength={160}
+            name="email"
+            required
+            type="email"
+          />
+        </label>
+        <button className="secondary-button full-button" disabled={busy !== null} type="submit">
+          <MailCheck aria-hidden="true" size={17} />
+          {busy === "email" ? "Requesting…" : "Email a private link"}
+        </button>
+        <p className="field-help">
+          No account is required. If you have one, you can also <Link href="/account/sign-in">sign in</Link>.
+        </p>
+      </form>
+    </div>
   );
 }

@@ -8,6 +8,7 @@ import { attendeePassExpiry } from "@/modules/checkin/attendee-pass-token";
 import {
   editableAttendeeFields,
 } from "@/modules/attendee-accounts/registration-answer-policy";
+import { matchingRegistrationIdsForVerifiedEmail } from "@/modules/attendee-accounts/registrations-repository";
 import { updateTieredRegistrationAnswersWithClient } from "@/modules/attendee-accounts/answer-update-repository";
 import {
   enqueueRegistrationAccessRecoveryMessage,
@@ -19,6 +20,7 @@ import {
   isRegistrationAccessToken,
   publicAttendeeName,
   publicContactFromSnapshot,
+  registrationRecoveryAccessExpiry,
   summarizePublicPayment,
   type PublicContactUpdateInput,
 } from "@/modules/public-access/domain";
@@ -469,9 +471,55 @@ async function loadActiveAccessRecord(
     !access
     || access.purpose !== "MANAGE_REGISTRATION"
     || access.revokedAt
-    || access.expiresAt.getTime() <= now.getTime()
   ) {
     return null;
+  }
+  if (access.expiresAt.getTime() <= now.getTime()) {
+    const recorded = await client.registrationAccessToken.updateMany({
+      where: { id: access.id, expiryRecordedAt: null },
+      data: { expiryRecordedAt: now },
+    });
+    if (recorded.count > 0) {
+      await client.auditLog.create({
+        data: {
+          eventId: access.registration.eventId,
+          action: "REGISTRATION_ACCESS_EXPIRED",
+          entityType: "Registration",
+          entityId: access.registration.id,
+          correlationId: randomUUID(),
+          summary: "A private registration access grant expired.",
+          metadata: {
+            accessTokenId: access.id,
+            purpose: access.purpose,
+            expiresAt: access.expiresAt.toISOString(),
+          },
+        },
+      });
+    }
+    return null;
+  }
+  if (!access.firstUsedAt) {
+    const recorded = await client.registrationAccessToken.updateMany({
+      where: { id: access.id, firstUsedAt: null },
+      data: { firstUsedAt: now },
+    });
+    if (recorded.count > 0) {
+      await client.auditLog.create({
+        data: {
+          eventId: access.registration.eventId,
+          action: "REGISTRATION_ACCESS_USED",
+          entityType: "Registration",
+          entityId: access.registration.id,
+          correlationId: randomUUID(),
+          summary: "A private registration access grant was used.",
+          metadata: {
+            accessTokenId: access.id,
+            purpose: access.purpose,
+            firstUsedAt: now.toISOString(),
+          },
+        },
+      });
+    }
   }
   return access;
 }
@@ -557,7 +605,7 @@ async function issueRegistrationAccessTokenValue(
       entityType: "Registration",
       entityId: input.registrationId,
       correlationId: randomUUID(),
-      summary: `Issued a private registration access link for ${registration.confirmationCode}.`,
+      summary: "Issued a private registration access link.",
       metadata: {
         accessTokenId: stored.id,
         purpose: "MANAGE_REGISTRATION",
@@ -636,9 +684,10 @@ export async function createStableRegistrationAccessToken(
   ));
 }
 
-export async function requestRegistrationAccessRecovery(input: {
+export async function establishRegistrationAccess(input: {
   confirmationCode: string;
   email: string;
+  clientRequestId: string;
 }) {
   const confirmationCode = input.confirmationCode.trim().toUpperCase();
   const email = input.email.trim().toLowerCase();
@@ -650,7 +699,6 @@ export async function requestRegistrationAccessRecovery(input: {
       },
       select: {
         id: true,
-        eventId: true,
         contactSnapshot: true,
         accountHolderPerson: {
           select: {
@@ -673,12 +721,40 @@ export async function requestRegistrationAccessRecovery(input: {
         },
       ).email === email
     ));
+    if (matches.length !== 1) return null;
+    const now = new Date();
+    return issueStableRegistrationAccessToken(tx, {
+      registrationId: matches[0].id,
+      deliveryKey: `confirmation-access:${input.clientRequestId}:${matches[0].id}`,
+      now,
+      expiresAt: registrationRecoveryAccessExpiry(now),
+    });
+  });
+}
+
+export async function requestRegistrationAccessRecovery(input: {
+  email: string;
+  clientRequestId: string;
+}) {
+  const email = input.email.trim().toLowerCase();
+  const registrationIds = await matchingRegistrationIdsForVerifiedEmail(email);
+  return getPrisma().$transaction(async (tx) => {
+    const matches = await tx.registration.findMany({
+      where: {
+        id: { in: registrationIds },
+        status: { in: ["SUBMITTED", "CONFIRMED", "WAITLISTED"] },
+      },
+      select: {
+        id: true,
+        eventId: true,
+      },
+    });
     if (matches.length === 0) {
       await tx.auditLog.create({
         data: {
           action: "REGISTRATION_ACCESS_RECOVERY_REQUESTED",
           entityType: "RegistrationAccessRecovery",
-          correlationId: randomUUID(),
+          correlationId: input.clientRequestId,
           summary: "A private registration link recovery request did not match an active registration.",
           metadata: {
             matched: false,
@@ -692,12 +768,11 @@ export async function requestRegistrationAccessRecovery(input: {
 
     const pendingMessageIds: string[] = [];
     for (const registration of matches) {
-      const correlationId = randomUUID();
       const queued = await enqueueRegistrationAccessRecoveryMessage(tx, {
         eventId: registration.eventId,
         registrationId: registration.id,
-        correlationId,
-        transitionKey: `REGISTRATION_ACCESS_RECOVERY:${correlationId}`,
+        correlationId: input.clientRequestId,
+        transitionKey: `REGISTRATION_ACCESS_RECOVERY:${input.clientRequestId}:${registration.id}`,
         recipientEmail: email,
         metadata: {
           source: "PUBLIC_RECOVERY",
@@ -711,7 +786,7 @@ export async function requestRegistrationAccessRecovery(input: {
           action: "REGISTRATION_ACCESS_RECOVERY_REQUESTED",
           entityType: "Registration",
           entityId: registration.id,
-          correlationId,
+          correlationId: input.clientRequestId,
           summary: "A matching private registration link recovery email was queued.",
           metadata: {
             matched: true,
@@ -991,7 +1066,7 @@ export async function revokeRegistrationAccessToken(
         entityType: "Registration",
         entityId: access.registration.id,
         correlationId: randomUUID(),
-        summary: `Revoked a private registration access link for ${access.registration.confirmationCode}.`,
+      summary: "Revoked a private registration access link.",
         metadata: {
           accessTokenId: access.id,
           purpose: "MANAGE_REGISTRATION",
