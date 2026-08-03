@@ -62,14 +62,17 @@ describe("Women’s Retreat registration visibility", () => {
     const markup = renderToStaticMarkup(createElement(PeopleWorkspace, {
       eventId: "event-1",
       eventSlug: "womens-retreat-2026",
+      eventTimezone: "America/Chicago",
       waitlistEnabled: true,
       initialRegistrations: [registration("2026-07-30T18:13:05.955Z")],
       initialRegistrationId: "registration-1",
       canEdit: true,
     }));
 
-    expect(markup).toContain("Jul 30, 2026");
+    expect(markup).toContain("Jul 30, 2026, 1:13 PM CDT");
+    expect(markup).toContain("Times are shown in America/Chicago.");
     expect(markup).toContain("<small>Submitted</small>");
+    expect(markup).toContain("<small>Last updated</small>");
     expect(markup).not.toContain("Not submitted");
   });
 
@@ -77,6 +80,7 @@ describe("Women’s Retreat registration visibility", () => {
     const markup = renderToStaticMarkup(createElement(PeopleWorkspace, {
       eventId: "event-1",
       eventSlug: "womens-retreat-2026",
+      eventTimezone: "America/Chicago",
       waitlistEnabled: true,
       initialRegistrations: [registration(null)],
       initialRegistrationId: "registration-1",
