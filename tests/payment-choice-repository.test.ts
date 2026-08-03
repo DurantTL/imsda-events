@@ -11,6 +11,12 @@ const dependencies = vi.hoisted(() => ({
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: dependencies.getPrisma }));
+vi.mock("@prisma/client", () => ({
+  Prisma: {
+    TransactionIsolationLevel: { Serializable: "Serializable" },
+    PrismaClientKnownRequestError: class PrismaClientKnownRequestError extends Error {},
+  },
+}));
 vi.mock("@/modules/public-access/repository", () => ({
   authorizeRegistrationAccessToken:
     dependencies.authorizeRegistrationAccessToken,
@@ -63,6 +69,7 @@ function promotedRegistration(overrides: Record<string, unknown> = {}) {
     confirmationCode: "REG-PROMOTED",
     status: "SUBMITTED",
     totalAmount: 80,
+    submittedAt: new Date("2026-07-01T12:00:00.000Z"),
     waitlistEntry: { status: "PROMOTED" },
     publicFormSubmission: {
       pricingSnapshot: {
@@ -84,18 +91,23 @@ function promotedRegistration(overrides: Record<string, unknown> = {}) {
 }
 
 function transactionClient() {
+  const registrationRecord = promotedRegistration();
   return {
     registrationPaymentChoiceOperation: {
       findUnique: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockResolvedValue({}),
     },
     registration: {
-      findUnique: vi.fn().mockResolvedValue(promotedRegistration()),
-      update: vi.fn().mockResolvedValue({}),
+      findUnique: vi.fn().mockResolvedValue(registrationRecord),
+      update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+        Object.assign(registrationRecord, data);
+        return registrationRecord;
+      }),
     },
     auditLog: {
       create: vi.fn().mockResolvedValue({}),
     },
+    registrationRecord,
   };
 }
 
@@ -120,6 +132,7 @@ beforeEach(() => {
 describe("promoted waitlist payment-choice repository", () => {
   it("atomically adds one card gross-up while preserving the discounted base", async () => {
     const tx = transactionClient();
+    const originalSubmittedAt = tx.registrationRecord.submittedAt;
     const prisma = prismaFor(tx);
     dependencies.getPrisma.mockReturnValue(prisma);
 
@@ -136,6 +149,7 @@ describe("promoted waitlist payment-choice repository", () => {
       totalCents: 8_270,
       currency: "USD",
     });
+    expect(tx.registrationRecord.submittedAt).toBe(originalSubmittedAt);
     expect(tx.registration.update).toHaveBeenCalledWith({
       where: { id: "registration-1" },
       data: { totalAmount: "82.70" },

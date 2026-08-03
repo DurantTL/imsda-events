@@ -13,5 +13,5 @@ export default async function PeoplePage({ searchParams }: { searchParams: Promi
     return <AccessRestricted title="People records are restricted" detail="Your event role does not include access to attendee names, contact details, or registration records." />;
   }
   const registrations = await listRegistrations(event.id);
-  return <PeopleWorkspace key={event.id} eventId={event.id} eventSlug={event.slug} waitlistEnabled={event.waitlistEnabled} initialRegistrations={registrations} canEdit={permissions.includes("MANAGE_REGISTRATION")} initialFilter={filter} initialRegistrationId={registration} />;
+  return <PeopleWorkspace key={event.id} eventId={event.id} eventSlug={event.slug} eventTimezone={event.timezone} waitlistEnabled={event.waitlistEnabled} initialRegistrations={registrations} canEdit={permissions.includes("MANAGE_REGISTRATION")} initialFilter={filter} initialRegistrationId={registration} />;
 }

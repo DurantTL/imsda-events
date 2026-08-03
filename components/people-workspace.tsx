@@ -82,7 +82,7 @@ function answerValue(value: unknown) {
   return String(value);
 }
 
-function dateTime(value: string | null) {
+function dateTime(value: string | null, timeZone: string) {
   if (!value) return "Not recorded";
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) return value;
@@ -92,22 +92,13 @@ function dateTime(value: string | null) {
     year: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZone,
+    timeZoneName: "short",
   }).format(date);
 }
 
-function submittedDate(value: string | null) {
-  if (!value) return "Not submitted";
-  const date = new Date(value);
-  if (Number.isNaN(date.valueOf())) return value;
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
-}
-
-function submittedDateTime(value: string | null) {
-  return value ? dateTime(value) : "Not submitted";
+function submittedDateTime(value: string | null, timeZone: string) {
+  return value ? dateTime(value, timeZone) : "Not submitted";
 }
 
 function paymentMethodLabel(value: string) {
@@ -208,6 +199,7 @@ function statusLabel(record: RegistrationRecord) {
 export function PeopleWorkspace({
   eventId,
   eventSlug,
+  eventTimezone,
   waitlistEnabled,
   initialRegistrations,
   canEdit,
@@ -216,6 +208,7 @@ export function PeopleWorkspace({
 }: {
   eventId: string;
   eventSlug: string;
+  eventTimezone: string;
   waitlistEnabled: boolean;
   initialRegistrations: RegistrationRecord[];
   canEdit: boolean;
@@ -523,7 +516,7 @@ export function PeopleWorkspace({
   return (
     <section className="page-stack">
       <div className="page-intro">
-        <div><p className="eyebrow">Registration hub</p><h2>People & registrations</h2><p>Review each party’s attendees, submitted choices, payments, emails, and operational status in one record.</p></div>
+        <div><p className="eyebrow">Registration hub</p><h2>People & registrations</h2><p>Review each party’s attendees, submitted choices, payments, emails, and operational status in one record. Times are shown in {eventTimezone}.</p></div>
         <div className="intro-actions">
           <span className="count-badge"><UsersRound aria-hidden="true" size={17} /> {expectedPeople} expected</span>
           <a className="secondary-button" href={`/api/events/${eventId}/exports/registrations`}><Download aria-hidden="true" size={17} /> Export CSV</a>
@@ -539,7 +532,7 @@ export function PeopleWorkspace({
         {visible.map((registration) => (
           <button className="record-card interactive-record" type="button" key={registration.id} onClick={() => openDetail(registration)}>
             <span className={`person-avatar large ${statusTone(registration)}`}>{initials(registration)}</span>
-            <span className="record-copy"><strong>{registration.accountHolder.firstName} {registration.accountHolder.lastName}</strong><small>{registration.confirmationCode} · {registration.attendeeCount} {registration.attendeeCount === 1 ? "person" : "people"}</small><small>{registration.attendeeCount > 1 ? registration.attendees.slice(0, 2).map((attendee) => `${attendee.firstName} ${attendee.lastName}`).join(", ") + (registration.attendeeCount > 2 ? ` +${registration.attendeeCount - 2} more` : "") : registration.accountHolder.email || "No email on file"} · {submittedDate(registration.submittedAt)}</small></span>
+            <span className="record-copy"><strong>{registration.accountHolder.firstName} {registration.accountHolder.lastName}</strong><small>{registration.confirmationCode} · {registration.attendeeCount} {registration.attendeeCount === 1 ? "person" : "people"}</small><small>{registration.attendeeCount > 1 ? registration.attendees.slice(0, 2).map((attendee) => `${attendee.firstName} ${attendee.lastName}`).join(", ") + (registration.attendeeCount > 2 ? ` +${registration.attendeeCount - 2} more` : "") : registration.accountHolder.email || "No email on file"} · {submittedDateTime(registration.submittedAt, eventTimezone)}</small></span>
             <span className={`status-chip ${statusTone(registration)}`}>{statusLabel(registration)}</span>
           </button>
         ))}
@@ -664,10 +657,10 @@ export function PeopleWorkspace({
                   )
                 ) : (
                   <>
-                <div className="detail-grid"><span><small>Confirmation</small><strong>{selected.confirmationCode}</strong></span><span><small>Status</small><strong>{selected.status.toLowerCase()}</strong></span><span><small>Submitted</small><strong>{submittedDateTime(selected.submittedAt)}</strong></span><span><small>Total</small><strong>{money(selected.totalAmountCents)}</strong></span><span><small>Balance</small><strong>{money(selected.balanceCents)}</strong></span></div>
+                <div className="detail-grid"><span><small>Confirmation</small><strong>{selected.confirmationCode}</strong></span><span><small>Status</small><strong>{selected.status.toLowerCase()}</strong></span><span><small>Submitted</small><strong>{submittedDateTime(selected.submittedAt, eventTimezone)}</strong></span><span><small>Last updated</small><strong>{dateTime(selected.updatedAt, eventTimezone)}</strong></span><span><small>Total</small><strong>{money(selected.totalAmountCents)}</strong></span><span><small>Balance</small><strong>{money(selected.balanceCents)}</strong></span></div>
                 <div className="contact-card"><strong>Contact</strong><p>{selected.accountHolder.email || "No email"}</p><p>{selected.accountHolder.phone || "No phone"}</p></div>
                 {selected.publicSubmission && <div className="public-submission-detail">
-                  <div><span className="status-chip green">Public form</span><strong>{selected.publicSubmission.formName}</strong><small>Version {selected.publicSubmission.versionNumber} · original submission retained{selected.publicSubmission.amendedAt ? ` · last amended ${dateTime(selected.publicSubmission.amendedAt)}` : ""}</small></div>
+                  <div><span className="status-chip green">Public form</span><strong>{selected.publicSubmission.formName}</strong><small>Version {selected.publicSubmission.versionNumber} · original submission retained{selected.publicSubmission.amendedAt ? ` · last amended ${dateTime(selected.publicSubmission.amendedAt, eventTimezone)}` : ""}</small></div>
                   {selectedPricing && <details open>
                     <summary>Saved promo discount</summary>
                     <dl>
@@ -718,12 +711,12 @@ export function PeopleWorkspace({
                     {selected.payments.map((payment) => <article key={payment.id}>
                       <div>
                         <strong>{money(payment.amountCents)} · {paymentMethodLabel(payment.method)}</strong>
-                        <small>{dateTime(payment.receivedAt)}{payment.externalReference ? ` · ${payment.externalReference}` : ""}</small>
+                        <small>{dateTime(payment.receivedAt, eventTimezone)}{payment.externalReference ? ` · ${payment.externalReference}` : ""}</small>
                       </div>
                       {payment.refundedCents > 0 && <span className="status-chip gold">{money(payment.refundedCents)} refunded</span>}
                       {payment.refunds.length > 0 && <details>
                         <summary>Refund details</summary>
-                        <dl>{payment.refunds.map((refund) => <div key={refund.id}><dt>{dateTime(refund.createdAt)}</dt><dd>−{money(refund.amountCents)}{refund.reason ? ` · ${refund.reason}` : ""}</dd></div>)}</dl>
+                        <dl>{payment.refunds.map((refund) => <div key={refund.id}><dt>{dateTime(refund.createdAt, eventTimezone)}</dt><dd>−{money(refund.amountCents)}{refund.reason ? ` · ${refund.reason}` : ""}</dd></div>)}</dl>
                       </details>}
                     </article>)}
                     {selected.payments.length === 0 && <p className="quiet-copy">No successful payments have been recorded.</p>}
@@ -740,7 +733,7 @@ export function PeopleWorkspace({
                       const delivery = messageDelivery(message);
                       return <details className="registration-message" key={message.id}>
                         <summary>
-                          <span><strong>{message.subject}</strong><small>To {message.recipientName ? `${message.recipientName} · ` : ""}{message.recipientEmail} · {dateTime(delivery.date)}</small></span>
+                          <span><strong>{message.subject}</strong><small>To {message.recipientName ? `${message.recipientName} · ` : ""}{message.recipientEmail} · {dateTime(delivery.date, eventTimezone)}</small></span>
                           <span className={`status-chip ${delivery.tone}`}>{delivery.label}</span>
                         </summary>
                         <div className="registration-message-body">

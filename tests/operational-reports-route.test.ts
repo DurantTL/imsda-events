@@ -16,6 +16,7 @@ const dependencies = vi.hoisted(() => {
     getCurrentSession: vi.fn(),
     findActiveMembership: vi.fn(),
     getOperationalReport: vi.fn(),
+    listRegistrations: vi.fn(),
   };
 });
 
@@ -32,8 +33,12 @@ vi.mock("@/modules/events/repository", () => ({
 vi.mock("@/modules/reporting/repository", () => ({
   getOperationalReport: dependencies.getOperationalReport,
 }));
+vi.mock("@/modules/registrations/repository", () => ({
+  listRegistrations: dependencies.listRegistrations,
+}));
 
 import { GET } from "@/app/api/events/[eventId]/reports/route";
+import { GET as registrationExportGET } from "@/app/api/events/[eventId]/exports/registrations/route";
 
 const report = {
   summary: {
@@ -73,6 +78,46 @@ beforeEach(() => {
   vi.clearAllMocks();
   dependencies.getCurrentSession.mockResolvedValue({ user: { id: "user_one" } });
   dependencies.getOperationalReport.mockResolvedValue(report);
+  dependencies.listRegistrations.mockResolvedValue([]);
+});
+
+describe("registration export route", () => {
+  it("exports the canonical submission timestamp as ISO 8601 and leaves unknown values empty", async () => {
+    dependencies.listRegistrations.mockResolvedValue([
+      {
+        confirmationCode: "REG-KNOWN",
+        accountHolder: { firstName: "Synthetic", lastName: "Known", email: "known@example.test" },
+        status: "SUBMITTED",
+        submittedAt: "2026-07-30T18:13:05.955Z",
+        attendeeCount: 1,
+        totalAmountCents: 12_500,
+        paidCents: 5_000,
+        balanceCents: 7_500,
+      },
+      {
+        confirmationCode: "REG-UNKNOWN",
+        accountHolder: { firstName: "Synthetic", lastName: "Unknown", email: "unknown@example.test" },
+        status: "DRAFT",
+        submittedAt: null,
+        attendeeCount: 1,
+        totalAmountCents: 0,
+        paidCents: 0,
+        balanceCents: 0,
+      },
+    ]);
+
+    const response = await registrationExportGET(
+      new Request("https://events.imsda.test/api/events/event_one/exports/registrations"),
+      { params: Promise.resolve({ eventId: "event_one" }) },
+    );
+    const csv = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/csv");
+    expect(csv).toContain("Submitted at (ISO 8601)");
+    expect(csv).toContain("2026-07-30T18:13:05.955Z");
+    expect(csv).toContain('"REG-UNKNOWN","Synthetic Unknown","unknown@example.test","DRAFT","","1"');
+  });
 });
 
 describe("operational report export route", () => {

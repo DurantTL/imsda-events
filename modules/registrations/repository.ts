@@ -20,7 +20,11 @@ function getRegistrationQuery(
       eventId,
       ...(statuses ? { status: { in: [...statuses] } } : {}),
     },
-    orderBy: { createdAt: "desc" },
+    orderBy: [
+      { submittedAt: { sort: "desc", nulls: "last" } },
+      { createdAt: "desc" },
+      { id: "desc" },
+    ],
     include: {
       accountHolderPerson: true,
       attendees: {
