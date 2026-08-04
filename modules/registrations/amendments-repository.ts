@@ -477,6 +477,102 @@ function amendmentSnapshot(
 
 type PreparedAmendment = Awaited<ReturnType<typeof prepareAmendment>>;
 
+function visibleResponses(
+  definition: RegistrationFormDefinition,
+  scope: "REGISTRATION" | "ATTENDEE",
+  registrationResponses: Record<string, unknown>,
+  responses: Record<string, unknown>,
+) {
+  const ignoredKeys = scope === "ATTENDEE"
+    ? protectedAttendeeIdentityKeys
+    : new Set<string>();
+  return Object.fromEntries(
+    definition.sections
+      .flatMap((section) => section.fields)
+      .filter((field) => (
+        field.scope === scope
+        && !ignoredKeys.has(field.key)
+        && isFieldVisible(field, { ...registrationResponses, ...responses })
+        && Object.hasOwn(responses, field.key)
+      ))
+      .map((field) => [field.key, responses[field.key]]),
+  );
+}
+
+function capacitySelections(
+  selections: Array<{
+    registrationAttendeeId: string | null;
+    fieldId: string;
+    optionValue: string;
+    rank: number | null;
+  }>,
+) {
+  return selections
+    .map((selection) => ({
+      attendeeId: selection.registrationAttendeeId,
+      fieldId: selection.fieldId,
+      optionValue: selection.optionValue,
+      rank: selection.rank,
+    }))
+    .sort((left, right) => stableJson(left).localeCompare(stableJson(right)));
+}
+
+function hasMeaningfulAttendeeVisibleChange(
+  prepared: PreparedAmendment,
+  input: RegistrationAmendmentInput,
+) {
+  const currentRegistrationResponses = visibleResponses(
+    prepared.definition,
+    "REGISTRATION",
+    prepared.currentRegistrationResponses,
+    prepared.currentRegistrationResponses,
+  );
+  const nextRegistrationResponses = visibleResponses(
+    prepared.definition,
+    "REGISTRATION",
+    prepared.prepared.registrationResponses,
+    prepared.prepared.registrationResponses,
+  );
+  const currentAttendees = prepared.registration.attendees.map((attendee) => ({
+    attendeeId: attendee.id,
+    responses: visibleResponses(
+      prepared.definition,
+      "ATTENDEE",
+      prepared.currentRegistrationResponses,
+      recordFromJson(attendee.formResponses),
+    ),
+  }));
+  const nextAttendees = prepared.prepared.attendees.map((attendee, index) => ({
+    attendeeId: input.attendees[index]?.attendeeId ?? null,
+    responses: visibleResponses(
+      prepared.definition,
+      "ATTENDEE",
+      prepared.prepared.registrationResponses,
+      attendee.responses,
+    ),
+  }));
+  const nextCapacitySelections = selectedCapacityChoices(
+    prepared.definition,
+    prepared.prepared.registrationResponses,
+    prepared.prepared.attendees.map((attendee, index) => ({
+      attendeeId: input.attendees[index]?.attendeeId ?? `new-attendee:${index}`,
+      responses: attendee.responses,
+    })),
+  );
+
+  return stableJson({
+    registrationResponses: currentRegistrationResponses,
+    attendees: currentAttendees,
+    capacitySelections: capacitySelections(prepared.registration.capacityReservations),
+    totalCents: cents(prepared.registration.totalAmount),
+  }) !== stableJson({
+    registrationResponses: nextRegistrationResponses,
+    attendees: nextAttendees,
+    capacitySelections: capacitySelections(nextCapacitySelections),
+    totalCents: prepared.pricedCalculation.totalCents,
+  });
+}
+
 async function loadRegistration(
   tx: Prisma.TransactionClient,
   eventId: string,
@@ -1005,14 +1101,16 @@ export async function amendRegistration(
           },
           pendingMessageIds: [] as string[],
         };
-        const queued = await enqueueRegistrationUpdatedMessage(tx, {
-          eventId,
-          registrationId,
-          correlationId: input.clientRequestId,
-          transitionKey: `registration-amendment:${amendmentId}`,
-          changeCategory: "REGISTRATION_DETAILS",
-        });
-        response.pendingMessageIds = queued.pendingMessageIds;
+        if (hasMeaningfulAttendeeVisibleChange(prepared, input)) {
+          const queued = await enqueueRegistrationUpdatedMessage(tx, {
+            eventId,
+            registrationId,
+            correlationId: input.clientRequestId,
+            transitionKey: `registration-amendment:${amendmentId}`,
+            changeCategory: "REGISTRATION_DETAILS",
+          });
+          response.pendingMessageIds = queued.pendingMessageIds;
+        }
         await tx.registrationOperation.create({
           data: {
             id: amendmentId,
