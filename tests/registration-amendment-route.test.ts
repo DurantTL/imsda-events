@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => {
     findActiveMembership: vi.fn(),
     previewRegistrationAmendment: vi.fn(),
     amendRegistration: vi.fn(),
+    processQueuedMessageIdsAfterCommit: vi.fn(),
     logError: vi.fn(),
   };
 });
@@ -47,6 +48,9 @@ vi.mock("@/modules/access/request-security", () => ({
 }));
 vi.mock("@/modules/events/repository", () => ({
   findActiveMembership: mocks.findActiveMembership,
+}));
+vi.mock("@/modules/communications/messaging-repository", () => ({
+  processQueuedMessageIdsAfterCommit: mocks.processQueuedMessageIdsAfterCommit,
 }));
 vi.mock("@/modules/registrations/amendments-repository", () => ({
   RegistrationAmendmentError: mocks.RegistrationAmendmentError,
@@ -130,6 +134,7 @@ beforeEach(() => {
   mocks.amendRegistration.mockResolvedValue({
     registration: { id: "registration-1" },
     operation: { id: "operation-1", type: "AMENDMENT" },
+    pendingMessageIds: ["message-update-1"],
   });
 });
 
@@ -153,6 +158,7 @@ describe("registration amendment route", () => {
     expect(wrongMedia.status).toBe(415);
     expect(mocks.requirePermission).not.toHaveBeenCalled();
     expect(mocks.previewRegistrationAmendment).not.toHaveBeenCalled();
+    expect(mocks.processQueuedMessageIdsAfterCommit).not.toHaveBeenCalled();
   });
 
   it("authorizes and returns a non-mutating preview quote", async () => {
@@ -195,6 +201,9 @@ describe("registration amendment route", () => {
       { id: "user-1", displayName: "Staff User" },
     );
     expect(mocks.previewRegistrationAmendment).not.toHaveBeenCalled();
+    expect(mocks.processQueuedMessageIdsAfterCommit).toHaveBeenCalledWith([
+      "message-update-1",
+    ]);
     expect(await response.json()).toEqual({
       registration: { id: "registration-1" },
       operation: { id: "operation-1", type: "AMENDMENT" },
@@ -228,5 +237,6 @@ describe("registration amendment route", () => {
       issues: [],
       details: { expectedUpdatedAt: baseBody.expectedUpdatedAt },
     });
+    expect(mocks.processQueuedMessageIdsAfterCommit).not.toHaveBeenCalled();
   });
 });

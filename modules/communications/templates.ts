@@ -9,6 +9,7 @@ export const MESSAGE_TEMPLATE_KEYS = [
   "WAITLIST_PROMOTED",
   "REGISTRATION_CANCELLED",
   "REGISTRATION_CONTACT_UPDATED",
+  "REGISTRATION_UPDATED",
   "PAYMENT_RECEIPT",
   "BALANCE_REMINDER",
   "REGISTRATION_TRANSFERRED_NEW_CONTACT",
@@ -48,6 +49,7 @@ export const MESSAGE_TEMPLATE_TOKEN_KEYS = [
   "waitlist_position",
   "contact_email",
   "registration_contact_email",
+  "change_category",
   "payment_amount",
   "payment_reference",
   "prior_person_name",
@@ -139,6 +141,7 @@ export const DEFAULT_MESSAGE_TEMPLATE_NAMES: Readonly<Record<MessageTemplateKey,
   WAITLIST_PROMOTED: "Waitlist promotion confirmation",
   REGISTRATION_CANCELLED: "Registration cancellation",
   REGISTRATION_CONTACT_UPDATED: "Registration contact updated",
+  REGISTRATION_UPDATED: "Registration updated",
   PAYMENT_RECEIPT: "Payment receipt",
   BALANCE_REMINDER: "Balance reminder",
   REGISTRATION_TRANSFERRED_NEW_CONTACT: "Transfer notice for new contact",
@@ -168,6 +171,8 @@ export const DEFAULT_MESSAGE_TEMPLATE_DESCRIPTIONS: Readonly<
     "Confirms cancellation while preserving accurate payment and refund wording.",
   REGISTRATION_CONTACT_UPDATED:
     "Confirms a self-service contact change to the new message destination.",
+  REGISTRATION_UPDATED:
+    "Confirms an attendee-visible registration change without including submitted answer values.",
   PAYMENT_RECEIPT:
     "Sent once when a Square payment first reaches a successful state.",
   BALANCE_REMINDER:
@@ -201,6 +206,7 @@ export const DEFAULT_MESSAGE_TEMPLATE_SUBJECTS: Readonly<
   WAITLIST_PROMOTED: "A place is available: {{event_name}}",
   REGISTRATION_CANCELLED: "Registration cancelled: {{event_name}}",
   REGISTRATION_CONTACT_UPDATED: "Contact details updated: {{event_name}}",
+  REGISTRATION_UPDATED: "Registration updated: {{event_name}}",
   PAYMENT_RECEIPT:
     "Payment received: {{event_name}} ({{confirmation_code}})",
   BALANCE_REMINDER:
@@ -380,6 +386,23 @@ export const DEFAULT_MESSAGE_TEMPLATE_BODIES: Readonly<Record<MessageTemplateKey
     "---",
     "",
     "If you did not make this change, contact {{contact_email}}.",
+  ].join("\n"),
+  REGISTRATION_UPDATED: [
+    "# Registration updated for {{event_name}}",
+    "",
+    "Hello {{recipient_name}},",
+    "",
+    "Registration **{{confirmation_code}}** was updated successfully.",
+    "",
+    "- **Change category:** {{change_category}}",
+    "",
+    "For your privacy, this confirmation does not include submitted answer values.",
+    "",
+    "**[Review your registration]({{portal_url}})**",
+    "",
+    "---",
+    "",
+    "Questions? Contact {{contact_email}}.",
   ].join("\n"),
   PAYMENT_RECEIPT: [
     "# Payment received for {{event_name}}",
@@ -613,6 +636,11 @@ export const MESSAGE_TEMPLATE_TOKEN_OPTIONS: readonly {
     description: "The email destination currently saved on the registration itself.",
   },
   {
+    key: "change_category",
+    label: "Change category",
+    description: "The permitted category of registration information that changed.",
+  },
+  {
     key: "payment_amount",
     label: "Payment amount",
     description: "The amount received for this specific payment.",
@@ -705,6 +733,7 @@ export const SAMPLE_MESSAGE_TEMPLATE_CONTEXT: Readonly<
   waitlist_position: "3",
   contact_email: "registration@example.test",
   registration_contact_email: "avery.johnson@example.test",
+  change_category: "Seminar preferences",
   payment_amount: "$129.05",
   payment_reference: "square-demo-reference",
   prior_person_name: "Jordan Lee",

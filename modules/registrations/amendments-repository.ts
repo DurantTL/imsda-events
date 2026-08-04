@@ -3,6 +3,7 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { enqueueRegistrationUpdatedMessage } from "@/modules/communications/transactional-messages";
 import {
   getAvailabilityMode,
   isChoiceFieldType,
@@ -781,6 +782,7 @@ export async function amendRegistration(
               id: string;
               createdAt: string;
             };
+            pendingMessageIds: string[];
           };
         }
 
@@ -1001,7 +1003,16 @@ export async function amendRegistration(
             createdAt: now.toISOString(),
             ...amendmentPreview(prepared),
           },
+          pendingMessageIds: [] as string[],
         };
+        const queued = await enqueueRegistrationUpdatedMessage(tx, {
+          eventId,
+          registrationId,
+          correlationId: input.clientRequestId,
+          transitionKey: `registration-amendment:${amendmentId}`,
+          changeCategory: "REGISTRATION_DETAILS",
+        });
+        response.pendingMessageIds = queued.pendingMessageIds;
         await tx.registrationOperation.create({
           data: {
             id: amendmentId,

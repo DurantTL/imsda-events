@@ -9,6 +9,7 @@ import {
   enqueuePaymentReceiptMessage,
   enqueueRegistrationCancelledMessage,
   enqueueRegistrationContactUpdatedMessage,
+  enqueueRegistrationUpdatedMessage,
   enqueueRegistrationTransferredNewContactMessage,
   enqueueRegistrationTransferredPriorContactMessage,
   enqueueWaitlistJoinedMessage,
@@ -28,6 +29,10 @@ type CapturedOutboxUpsert = {
     recipientName: string;
     subjectSnapshot: string;
     bodyTextSnapshot: string;
+    bodyHtmlSnapshot: string;
+    senderNameSnapshot: string;
+    senderEmailSnapshot: string | null;
+    replyToEmailSnapshot: string | null;
     metadata: Record<string, unknown>;
     idempotencyKey: string;
     correlationId: string;
@@ -194,6 +199,66 @@ describe("transactional lifecycle messages", () => {
     expect(JSON.stringify(message.create)).not.toContain(
       "old-contact@example.test",
     );
+  });
+
+  it("queues one event-correct registration update across retries without protected values", async () => {
+    const { tx, upsert } = transactionFixture();
+    const input = {
+      eventId: "event-1",
+      registrationId: "registration-1",
+      correlationId: "amendment-request-1",
+      transitionKey: "registration-amendment:operation-1",
+      changeCategory: "REGISTRATION_DETAILS" as const,
+    };
+
+    await enqueueRegistrationUpdatedMessage(tx as never, input);
+    await enqueueRegistrationUpdatedMessage(tx as never, input);
+
+    const first = upsert.mock.calls[0]![0] as CapturedOutboxUpsert;
+    const retry = upsert.mock.calls[1]![0] as CapturedOutboxUpsert;
+    expect(first.where.idempotencyKey).toBe(retry.where.idempotencyKey);
+    expect(first.create).toMatchObject({
+      templateKey: "REGISTRATION_UPDATED",
+      recipientEmail: "old-contact@example.test",
+      senderNameSnapshot: "IMSDA Events",
+      senderEmailSnapshot: "events@example.test",
+      replyToEmailSnapshot: "help@example.test",
+      status: "PENDING",
+    });
+    expect(first.create.subjectSnapshot).toContain("Women");
+    expect(first.create.bodyTextSnapshot).toContain("Registration details");
+    expect(first.create.bodyTextSnapshot).toContain(REGISTRATION_MANAGE_LINK_SENTINEL);
+    expect(first.create.bodyHtmlSnapshot).toContain("Registration details");
+    expect(JSON.stringify(first.create)).not.toContain("immutable_protected_answer");
+    expect(first.create.metadata).toMatchObject({
+      changeCategory: "REGISTRATION_DETAILS",
+    });
+  });
+
+  it("provides the #142 seminar category without accepting protected categories or values", async () => {
+    const { tx, upsert } = transactionFixture();
+
+    await enqueueRegistrationUpdatedMessage(tx as never, {
+      eventId: "event-1",
+      registrationId: "registration-1",
+      correlationId: "seminar-update-1",
+      transitionKey: "seminar-preferences:operation-1",
+      changeCategory: "SEMINAR_PREFERENCES",
+    });
+
+    const message = queuedMessage(upsert);
+    expect(message.create.bodyTextSnapshot).toContain("Seminar preferences");
+    expect(JSON.stringify(message.create)).not.toContain("Prayer");
+    expect(JSON.stringify(message.create)).not.toContain("Service");
+
+    expect(() => enqueueRegistrationUpdatedMessage(tx as never, {
+      eventId: "event-1",
+      registrationId: "registration-1",
+      correlationId: "protected-update-1",
+      transitionKey: "protected-answer:operation-1",
+      changeCategory: "MEDICAL_ANSWER" as never,
+    })).toThrow("not permitted");
+    expect(upsert).toHaveBeenCalledTimes(1);
   });
 
   it("creates one immutable, idempotent payment-receipt snapshot for a Square success transition", async () => {
