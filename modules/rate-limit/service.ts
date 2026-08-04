@@ -256,19 +256,85 @@ export async function checkAttendeePasswordResetRateLimit(
 }
 
 /**
- * Recovery accepts two pieces of registration knowledge and may send a private
- * bearer link. The combined subject bucket prevents repeatedly targeting one
- * address/confirmation pair, while the client bucket limits broad guessing.
+ * Direct access accepts two pieces of registration knowledge and returns a
+ * private bearer link. The combined subject bucket limits broad guessing.
  */
-export async function checkRegistrationRecoveryRateLimit(
+export async function checkRegistrationCodeAccessRateLimit(
   request: Request,
   input: { email: string; confirmationCode: string },
 ) {
   const configuration = getRateLimitConfiguration();
   const { client } = requestIdentities(request, configuration);
-  const recoverySubject = hashRateLimitIdentifier(
-    "registration-recovery",
+  const email = hashRateLimitIdentifier(
+    "registration-code-access-email",
+    input.email.trim().toLowerCase(),
+    configuration,
+  );
+  const confirmationCode = hashRateLimitIdentifier(
+    "registration-code-access-code",
+    input.confirmationCode.trim().toUpperCase(),
+    configuration,
+  );
+  const pair = hashRateLimitIdentifier(
+    "registration-code-access-pair",
     `${input.confirmationCode.trim().toUpperCase()}\u0000${input.email.trim().toLowerCase()}`,
+    configuration,
+  );
+  return evaluate([
+    {
+      policy: "registration.code-access.client",
+      limit: 10,
+      windowSeconds: oneHour,
+      identifierHashes: [client],
+    },
+    {
+      policy: "registration.code-access.email",
+      limit: 5,
+      windowSeconds: oneHour,
+      identifierHashes: [email],
+    },
+    {
+      policy: "registration.code-access.code",
+      limit: 5,
+      windowSeconds: oneHour,
+      identifierHashes: [confirmationCode],
+    },
+    {
+      policy: "registration.code-access.pair",
+      limit: 3,
+      windowSeconds: oneHour,
+      identifierHashes: [pair],
+    },
+    {
+      policy: "registration.code-access.client-email",
+      limit: 3,
+      windowSeconds: oneHour,
+      identifierHashes: [client, email],
+    },
+    {
+      policy: "registration.code-access.client-code",
+      limit: 3,
+      windowSeconds: oneHour,
+      identifierHashes: [client, confirmationCode],
+    },
+    {
+      policy: "registration.code-access.client-pair",
+      limit: 3,
+      windowSeconds: oneHour,
+      identifierHashes: [client, pair],
+    },
+  ], configuration);
+}
+
+export async function checkRegistrationRecoveryRateLimit(
+  request: Request,
+  email: string,
+) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  const recoverySubject = hashRateLimitIdentifier(
+    "registration-recovery-email",
+    email.trim().toLowerCase(),
     configuration,
   );
   return evaluate([

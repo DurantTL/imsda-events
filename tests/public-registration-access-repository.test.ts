@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, assert, beforeEach, describe, expect, it, vi } from "vitest";
 import { createOpaqueToken, hashOpaqueToken } from "@/modules/access/tokens";
 
 const dependencies = vi.hoisted(() => ({
@@ -19,6 +19,7 @@ vi.mock("@/modules/communications/transactional-messages", () => ({
 import {
   authorizeRegistrationAccessToken,
   confirmPublicRegistrationShirtSizes,
+  establishRegistrationAccess,
   issueRegistrationAccessToken,
   issueStableRegistrationAccessToken,
   requestRegistrationAccessRecovery,
@@ -39,6 +40,8 @@ function accessRecord(overrides: {
     tokenHash: "stored-hash",
     purpose: "MANAGE_REGISTRATION",
     expiresAt: overrides.expiresAt ?? new Date("2026-11-10T18:00:00.000Z"),
+    firstUsedAt: new Date("2026-07-23T12:05:00.000Z"),
+    expiryRecordedAt: null,
     revokedAt: overrides.revokedAt ?? null,
     createdAt: new Date("2026-07-23T12:00:00.000Z"),
     registration: {
@@ -269,6 +272,8 @@ describe("private registration access repository", () => {
       registrationId: "registration-1",
       deliveryKey: "message:outbox-1",
       now: new Date("2026-07-23T12:00:00.000Z"),
+      expiresAt: new Date("2026-07-23T12:30:00.000Z"),
+      renewExpired: true,
     };
 
     const first = await issueStableRegistrationAccessToken(
@@ -283,13 +288,157 @@ describe("private registration access repository", () => {
       client as never,
       { ...input, deliveryKey: "message:outbox-2" },
     );
+    const delayedRetryInput = {
+      ...input,
+      now: new Date("2026-07-23T12:31:00.000Z"),
+      expiresAt: new Date("2026-07-23T13:01:00.000Z"),
+    };
+    const delayedRetry = await issueStableRegistrationAccessToken(
+      client as never,
+      delayedRetryInput,
+    );
+    const repeatedDelayedRetry = await issueStableRegistrationAccessToken(
+      client as never,
+      delayedRetryInput,
+    );
 
     expect(retry).toEqual(first);
     expect(anotherMessage.token).not.toBe(first.token);
-    expect(registrationAccessToken.create).toHaveBeenCalledTimes(2);
-    expect(client.auditLog.create).toHaveBeenCalledTimes(2);
+    expect(delayedRetry.token).not.toBe(first.token);
+    expect(repeatedDelayedRetry).toEqual(delayedRetry);
+    expect(delayedRetry.expiresAt).toEqual(delayedRetryInput.expiresAt);
+    expect(registrationAccessToken.create).toHaveBeenCalledTimes(3);
+    expect(client.auditLog.create).toHaveBeenCalledTimes(3);
     expect(JSON.stringify(registrationAccessToken.create.mock.calls))
       .not.toContain(first.token);
+  });
+
+  it("establishes one short-lived scoped grant for idempotent matching requests", async () => {
+    vi.stubEnv(
+      "MANAGE_LINK_DERIVATION_SECRET",
+      "test-only-manage-link-secret-with-more-than-32-characters",
+    );
+    const rows = new Map<string, {
+      id: string;
+      registrationId: string;
+      purpose: "MANAGE_REGISTRATION";
+      expiresAt: Date;
+      revokedAt: null;
+    }>();
+    const registrationAccessToken = {
+      findUnique: vi.fn(async ({ where }: { where: { tokenHash: string } }) => (
+        rows.get(where.tokenHash) ?? null
+      )),
+      create: vi.fn(async ({ data }: {
+        data: {
+          registrationId: string;
+          tokenHash: string;
+          purpose: "MANAGE_REGISTRATION";
+          expiresAt: Date;
+        };
+      }) => {
+        const row = {
+          id: "direct-access",
+          registrationId: data.registrationId,
+          purpose: data.purpose,
+          expiresAt: data.expiresAt,
+          revokedAt: null,
+        };
+        rows.set(data.tokenHash, row);
+        return { id: row.id };
+      }),
+    };
+    const auditLog = { create: vi.fn().mockResolvedValue({ id: "audit-direct" }) };
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([{ id: "registration-1" }]),
+      registration: {
+        findUnique: vi.fn().mockResolvedValue({
+          eventId: "event-1",
+          confirmationCode: "REG-PRIVATE",
+          event: { endsAt: new Date("2026-10-11T17:00:00.000Z") },
+        }),
+      },
+      registrationAccessToken,
+      auditLog,
+    };
+    dependencies.getPrisma.mockReturnValue({
+      $transaction: vi.fn(async (
+        operation: (client: typeof tx) => unknown,
+      ) => operation(tx)),
+    });
+    const input = {
+      clientRequestId: "18b4a487-3c1f-4e96-8564-64b60167c770",
+      confirmationCode: " reg-private ",
+      email: " Guest@Example.Test ",
+    };
+
+    const first = await establishRegistrationAccess(input);
+    const retry = await establishRegistrationAccess(input);
+
+    expect(retry).toEqual(first);
+    assert(first);
+    expect(first.expiresAt.getTime() - Date.now()).toBeGreaterThan(29 * 60_000);
+    expect(first.expiresAt.getTime() - Date.now()).toBeLessThanOrEqual(30 * 60_000);
+    expect(registrationAccessToken.create).toHaveBeenCalledOnce();
+    expect(registrationAccessToken.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        registrationId: "registration-1",
+        purpose: "MANAGE_REGISTRATION",
+      }),
+      select: { id: true },
+    });
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+    for (const [lockedMatchQuery] of tx.$queryRaw.mock.calls) {
+      expect(lockedMatchQuery.strings.join(" ")).toContain("FOR UPDATE");
+      expect(lockedMatchQuery.values).toContain("REG-PRIVATE");
+      expect(lockedMatchQuery.values).toContain("guest@example.test");
+    }
+    const persisted = JSON.stringify({
+      tokens: registrationAccessToken.create.mock.calls,
+      audits: auditLog.create.mock.calls,
+    });
+    expect(persisted).not.toContain(first?.token);
+    expect(persisted).not.toContain("REG-PRIVATE");
+    expect(persisted).not.toContain("guest@example.test");
+  });
+
+  it("rejects invalid and cross-registration confirmation details", async () => {
+    const auditLog = { create: vi.fn().mockResolvedValue({ id: "audit-failed" }) };
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      auditLog,
+    };
+    dependencies.getPrisma.mockReturnValue({
+      $transaction: vi.fn(async (
+        operation: (client: typeof tx) => unknown,
+      ) => operation(tx)),
+    });
+
+    await expect(establishRegistrationAccess({
+      clientRequestId: "477dba22-03bc-41fb-bcf1-f22d91d89c46",
+      confirmationCode: "INVALID",
+      email: "first@example.test",
+    })).resolves.toBeNull();
+    await expect(establishRegistrationAccess({
+      clientRequestId: "1f7fca17-a773-4158-8523-2e919bca9ae4",
+      confirmationCode: "REG-FIRST",
+      email: "second@example.test",
+    })).resolves.toBeNull();
+    expect(auditLog.create).toHaveBeenCalledTimes(2);
+    expect(auditLog.create).toHaveBeenLastCalledWith({
+      data: expect.objectContaining({
+        action: "REGISTRATION_ACCESS_REQUEST_FAILED",
+        metadata: {
+          matched: false,
+          rawIdentifiersStored: false,
+        },
+      }),
+    });
+    const persisted = JSON.stringify(auditLog.create.mock.calls);
+    expect(persisted).not.toContain("INVALID");
+    expect(persisted).not.toContain("REG-FIRST");
+    expect(persisted).not.toContain("first@example.test");
+    expect(persisted).not.toContain("second@example.test");
   });
 
   it("resolves an active link with only policy-approved answers and no protected details", async () => {
@@ -367,8 +516,11 @@ describe("private registration access repository", () => {
   it("rejects malformed, expired, and revoked links with the same null result", async () => {
     const token = createOpaqueToken();
     const findUnique = vi.fn();
+    const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const auditLog = { create: vi.fn().mockResolvedValue({ id: "audit-expired" }) };
     const client = {
-      registrationAccessToken: { findUnique },
+      registrationAccessToken: { findUnique, updateMany },
+      auditLog,
     };
 
     expect(await resolveRegistrationAccessToken("not-a-token", {
@@ -383,6 +535,17 @@ describe("private registration access repository", () => {
       client: client as never,
       now: new Date("2026-07-24T12:00:00.000Z"),
     })).toBeNull();
+    expect(auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "REGISTRATION_ACCESS_EXPIRED",
+        entityId: "registration-1",
+        metadata: expect.objectContaining({
+          accessTokenId: "access-1",
+          purpose: "MANAGE_REGISTRATION",
+        }),
+      }),
+    });
+    expect(JSON.stringify(auditLog.create.mock.calls)).not.toContain(token);
 
     findUnique.mockResolvedValueOnce(accessRecord({
       revokedAt: new Date("2026-07-23T14:00:00.000Z"),
@@ -396,16 +559,10 @@ describe("private registration access repository", () => {
   it("queues recovery only for an active registration with the matching contact email", async () => {
     const auditLog = { create: vi.fn().mockResolvedValue({ id: "audit-recovery" }) };
     const tx = {
-      registration: {
-        findMany: vi.fn().mockResolvedValue([
-          accessRecord().registration,
-          {
-            ...accessRecord().registration,
-            id: "cancelled",
-            contactSnapshot: { email: "someone-else@example.test" },
-          },
-        ]),
-      },
+      $queryRaw: vi.fn().mockResolvedValue([{
+        id: "registration-1",
+        eventId: "event-1",
+      }]),
       auditLog,
     };
     dependencies.getPrisma.mockReturnValue({
@@ -413,18 +570,22 @@ describe("private registration access repository", () => {
         operation: (client: typeof tx) => unknown,
       ) => operation(tx)),
     });
-
     const result = await requestRegistrationAccessRecovery({
-      confirmationCode: " reg-private ",
       email: " Caleb@Example.Test ",
+      clientRequestId: "9942bdd3-2043-4a6b-b07a-f9bd3e24711b",
     });
 
     expect(result.pendingMessageIds).toEqual(["recovery-message"]);
+    const [lockedMatchQuery] = tx.$queryRaw.mock.calls[0];
+    expect(lockedMatchQuery.strings.join(" ")).toContain("FOR UPDATE");
+    expect(lockedMatchQuery.values).toContain("caleb@example.test");
     expect(dependencies.enqueueRegistrationAccessRecoveryMessage)
       .toHaveBeenCalledWith(tx, expect.objectContaining({
         eventId: "event-1",
         registrationId: "registration-1",
         recipientEmail: "caleb@example.test",
+        correlationId: "9942bdd3-2043-4a6b-b07a-f9bd3e24711b",
+        transitionKey: "REGISTRATION_ACCESS_RECOVERY:9942bdd3-2043-4a6b-b07a-f9bd3e24711b:registration-1",
       }));
     const persistedAudit = JSON.stringify(auditLog.create.mock.calls);
     expect(persistedAudit).not.toContain("REG-PRIVATE");
@@ -444,7 +605,7 @@ describe("private registration access repository", () => {
   it("audits a recovery mismatch without queuing mail or storing submitted identifiers", async () => {
     const auditLog = { create: vi.fn().mockResolvedValue({ id: "audit-miss" }) };
     const tx = {
-      registration: { findMany: vi.fn().mockResolvedValue([]) },
+      $queryRaw: vi.fn().mockResolvedValue([]),
       auditLog,
     };
     dependencies.getPrisma.mockReturnValue({
@@ -454,13 +615,12 @@ describe("private registration access repository", () => {
     });
 
     await expect(requestRegistrationAccessRecovery({
-      confirmationCode: "REG-SECRET",
       email: "private@example.test",
+      clientRequestId: "6999ad17-b589-4740-a41a-3dc082d35d66",
     })).resolves.toEqual({ pendingMessageIds: [] });
 
     expect(dependencies.enqueueRegistrationAccessRecoveryMessage).not.toHaveBeenCalled();
     const persistedAudit = JSON.stringify(auditLog.create.mock.calls);
-    expect(persistedAudit).not.toContain("REG-SECRET");
     expect(persistedAudit).not.toContain("private@example.test");
   });
 

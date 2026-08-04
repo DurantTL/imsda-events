@@ -11,6 +11,7 @@ vi.mock("@/modules/rate-limit/repository", () => repositoryMocks);
 import {
   checkLoginAccountRateLimit,
   checkPublicManageRateLimit,
+  checkRegistrationCodeAccessRateLimit,
   checkRegistrationRecoveryRateLimit,
 } from "@/modules/rate-limit/service";
 
@@ -51,10 +52,11 @@ describe("rate-limit subject privacy", () => {
 
     await checkLoginAccountRateLimit(request, rawEmail);
     await checkPublicManageRateLimit(request, rawToken, "update");
-    await checkRegistrationRecoveryRateLimit(request, {
+    await checkRegistrationCodeAccessRateLimit(request, {
       confirmationCode: "REG-PRIVATE",
       email: rawEmail,
     });
+    await checkRegistrationRecoveryRateLimit(request, rawEmail);
 
     const batches = repositoryMocks.enforceRateLimitRules.mock.calls.map(
       ([rules]) => rules as Array<{
@@ -67,13 +69,20 @@ describe("rate-limit subject privacy", () => {
     const rules = batches.flat();
     const serializedRules = JSON.stringify(rules);
 
-    expect(rules).toHaveLength(8);
+    expect(rules).toHaveLength(15);
     expect(rules.map((entry) => entry.policy)).toEqual([
       "auth.login.account",
       "auth.login.client-account",
       "public.manage.update.client",
       "public.manage.update.token",
       "public.manage.update.client-token",
+      "registration.code-access.client",
+      "registration.code-access.email",
+      "registration.code-access.code",
+      "registration.code-access.pair",
+      "registration.code-access.client-email",
+      "registration.code-access.client-code",
+      "registration.code-access.client-pair",
       "registration.recovery.client",
       "registration.recovery.subject",
       "registration.recovery.client-subject",

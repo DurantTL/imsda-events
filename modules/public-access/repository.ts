@@ -19,6 +19,7 @@ import {
   isRegistrationAccessToken,
   publicAttendeeName,
   publicContactFromSnapshot,
+  registrationRecoveryAccessExpiry,
   summarizePublicPayment,
   type PublicContactUpdateInput,
 } from "@/modules/public-access/domain";
@@ -37,6 +38,14 @@ import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 export { REGISTRATION_MANAGE_LINK_SENTINEL } from "@/modules/communications/manage-link";
 
 type RegistrationAccessClient = Prisma.TransactionClient | PrismaClient;
+
+const REGISTRATION_CONTACT_EMAIL_SQL = Prisma.sql`
+  lower(coalesce(
+    nullif(trim(registration."contactSnapshot"->>'email'), ''),
+    person."normalizedEmail",
+    ''
+  ))
+`;
 
 const registrationAccessInclude = {
   registration: {
@@ -469,11 +478,73 @@ async function loadActiveAccessRecord(
     !access
     || access.purpose !== "MANAGE_REGISTRATION"
     || access.revokedAt
-    || access.expiresAt.getTime() <= now.getTime()
   ) {
     return null;
   }
+  if (access.expiresAt.getTime() <= now.getTime()) {
+    const recorded = await client.registrationAccessToken.updateMany({
+      where: { id: access.id, expiryRecordedAt: null },
+      data: { expiryRecordedAt: now },
+    });
+    if (recorded.count > 0) {
+      await client.auditLog.create({
+        data: {
+          eventId: access.registration.eventId,
+          action: "REGISTRATION_ACCESS_EXPIRED",
+          entityType: "Registration",
+          entityId: access.registration.id,
+          correlationId: randomUUID(),
+          summary: "A private registration access grant expired.",
+          metadata: {
+            accessTokenId: access.id,
+            purpose: access.purpose,
+            expiresAt: access.expiresAt.toISOString(),
+          },
+        },
+      });
+    }
+    return null;
+  }
+  if (!access.firstUsedAt) {
+    const recorded = await client.registrationAccessToken.updateMany({
+      where: { id: access.id, firstUsedAt: null },
+      data: { firstUsedAt: now },
+    });
+    if (recorded.count > 0) {
+      await client.auditLog.create({
+        data: {
+          eventId: access.registration.eventId,
+          action: "REGISTRATION_ACCESS_USED",
+          entityType: "Registration",
+          entityId: access.registration.id,
+          correlationId: randomUUID(),
+          summary: "A private registration access grant was used.",
+          metadata: {
+            accessTokenId: access.id,
+            purpose: access.purpose,
+            firstUsedAt: now.toISOString(),
+          },
+        },
+      });
+    }
+  }
   return access;
+}
+
+async function findStableRecord(
+  client: RegistrationAccessClient,
+  token: string,
+) {
+  return client.registrationAccessToken.findUnique({
+    where: { tokenHash: hashOpaqueToken(token) },
+    select: {
+      id: true,
+      registrationId: true,
+      purpose: true,
+      expiresAt: true,
+      revokedAt: true,
+    },
+  });
 }
 
 /**
@@ -557,7 +628,7 @@ async function issueRegistrationAccessTokenValue(
       entityType: "Registration",
       entityId: input.registrationId,
       correlationId: randomUUID(),
-      summary: `Issued a private registration access link for ${registration.confirmationCode}.`,
+      summary: "Issued a private registration access link.",
       metadata: {
         accessTokenId: stored.id,
         purpose: "MANAGE_REGISTRATION",
@@ -593,7 +664,10 @@ export async function issueRegistrationAccessToken(
  */
 export async function issueStableRegistrationAccessToken(
   client: RegistrationAccessClient,
-  input: IssueRegistrationAccessTokenInput & { deliveryKey: string },
+  input: IssueRegistrationAccessTokenInput & {
+    deliveryKey: string;
+    renewExpired?: boolean;
+  },
 ) {
   if (!input.deliveryKey.trim() || input.deliveryKey.length > 240) {
     throw new RegistrationAccessIssueError(
@@ -602,22 +676,36 @@ export async function issueStableRegistrationAccessToken(
     );
   }
   const now = input.now ?? new Date();
-  const candidates = stableRegistrationAccessTokens(input.deliveryKey);
-  for (const candidate of candidates) {
-    const existing = await findStableExisting(
-      client,
-      input.registrationId,
-      candidate,
-      now,
-    );
-    if (existing) return existing;
+  let deliveryKey = input.deliveryKey;
+  for (let generation = 0; generation < 5; generation += 1) {
+    const candidates = stableRegistrationAccessTokens(deliveryKey);
+    let expiredAt: Date | null = null;
+    for (const candidate of candidates) {
+      const existing = await findStableRecord(client, candidate);
+      if (!existing) continue;
+      if (
+        existing.registrationId !== input.registrationId
+        || existing.purpose !== "MANAGE_REGISTRATION"
+        || existing.revokedAt
+      ) {
+        throw stableTokenUnavailable();
+      }
+      if (existing.expiresAt.getTime() > now.getTime()) {
+        return issuedAccess(candidate, existing.id, existing.expiresAt);
+      }
+      expiredAt = existing.expiresAt;
+    }
+    if (!expiredAt || !input.renewExpired) {
+      return issueRegistrationAccessTokenValue(
+        client,
+        input,
+        candidates[0],
+        true,
+      );
+    }
+    deliveryKey = `${input.deliveryKey}:renewed:${expiredAt.toISOString()}`;
   }
-  return issueRegistrationAccessTokenValue(
-    client,
-    input,
-    candidates[0],
-    true,
-  );
+  throw stableTokenUnavailable();
 }
 
 export async function createRegistrationAccessToken(
@@ -629,56 +717,81 @@ export async function createRegistrationAccessToken(
 }
 
 export async function createStableRegistrationAccessToken(
-  input: IssueRegistrationAccessTokenInput & { deliveryKey: string },
+  input: IssueRegistrationAccessTokenInput & {
+    deliveryKey: string;
+    renewExpired?: boolean;
+  },
 ) {
   return getPrisma().$transaction((tx) => (
     issueStableRegistrationAccessToken(tx, input)
   ));
 }
 
-export async function requestRegistrationAccessRecovery(input: {
+export async function establishRegistrationAccess(input: {
   confirmationCode: string;
   email: string;
+  clientRequestId: string;
 }) {
   const confirmationCode = input.confirmationCode.trim().toUpperCase();
   const email = input.email.trim().toLowerCase();
   return getPrisma().$transaction(async (tx) => {
-    const candidates = await tx.registration.findMany({
-      where: {
-        confirmationCode: { equals: confirmationCode, mode: "insensitive" },
-        status: { in: ["SUBMITTED", "CONFIRMED", "WAITLISTED"] },
-      },
-      select: {
-        id: true,
-        eventId: true,
-        contactSnapshot: true,
-        accountHolderPerson: {
-          select: {
-            firstName: true,
-            lastName: true,
-            normalizedEmail: true,
-            phone: true,
+    const matches = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT registration."id"
+      FROM "Registration" registration
+      JOIN "Person" person ON person."id" = registration."accountHolderPersonId"
+      WHERE upper(trim(registration."confirmationCode")) = ${confirmationCode}
+        AND registration."status" IN ('SUBMITTED', 'CONFIRMED', 'WAITLISTED')
+        AND ${REGISTRATION_CONTACT_EMAIL_SQL} = ${email}
+      FOR UPDATE
+    `);
+    if (matches.length !== 1) {
+      await tx.auditLog.create({
+        data: {
+          action: "REGISTRATION_ACCESS_REQUEST_FAILED",
+          entityType: "RegistrationAccessRecovery",
+          correlationId: input.clientRequestId,
+          summary: "A direct private registration access request did not match one active registration.",
+          metadata: {
+            matched: false,
+            rawIdentifiersStored: false,
           },
         },
-      },
+      });
+      return null;
+    }
+    const now = new Date();
+    return issueStableRegistrationAccessToken(tx, {
+      registrationId: matches[0].id,
+      deliveryKey: `confirmation-access:${input.clientRequestId}:${matches[0].id}`,
+      now,
+      expiresAt: registrationRecoveryAccessExpiry(now),
     });
-    const matches = candidates.filter((registration) => (
-      publicContactFromSnapshot(
-        registration.contactSnapshot,
-        {
-          firstName: registration.accountHolderPerson.firstName,
-          lastName: registration.accountHolderPerson.lastName,
-          email: registration.accountHolderPerson.normalizedEmail ?? "",
-          phone: registration.accountHolderPerson.phone ?? "",
-        },
-      ).email === email
-    ));
+  });
+}
+
+export async function requestRegistrationAccessRecovery(input: {
+  email: string;
+  clientRequestId: string;
+}) {
+  const email = input.email.trim().toLowerCase();
+  return getPrisma().$transaction(async (tx) => {
+    const matches = await tx.$queryRaw<Array<{
+      id: string;
+      eventId: string;
+    }>>(Prisma.sql`
+      SELECT registration."id", registration."eventId"
+      FROM "Registration" registration
+      JOIN "Person" person ON person."id" = registration."accountHolderPersonId"
+      WHERE registration."status" IN ('SUBMITTED', 'CONFIRMED', 'WAITLISTED')
+        AND ${REGISTRATION_CONTACT_EMAIL_SQL} = ${email}
+      FOR UPDATE
+    `);
     if (matches.length === 0) {
       await tx.auditLog.create({
         data: {
           action: "REGISTRATION_ACCESS_RECOVERY_REQUESTED",
           entityType: "RegistrationAccessRecovery",
-          correlationId: randomUUID(),
+          correlationId: input.clientRequestId,
           summary: "A private registration link recovery request did not match an active registration.",
           metadata: {
             matched: false,
@@ -692,12 +805,11 @@ export async function requestRegistrationAccessRecovery(input: {
 
     const pendingMessageIds: string[] = [];
     for (const registration of matches) {
-      const correlationId = randomUUID();
       const queued = await enqueueRegistrationAccessRecoveryMessage(tx, {
         eventId: registration.eventId,
         registrationId: registration.id,
-        correlationId,
-        transitionKey: `REGISTRATION_ACCESS_RECOVERY:${correlationId}`,
+        correlationId: input.clientRequestId,
+        transitionKey: `REGISTRATION_ACCESS_RECOVERY:${input.clientRequestId}:${registration.id}`,
         recipientEmail: email,
         metadata: {
           source: "PUBLIC_RECOVERY",
@@ -711,7 +823,7 @@ export async function requestRegistrationAccessRecovery(input: {
           action: "REGISTRATION_ACCESS_RECOVERY_REQUESTED",
           entityType: "Registration",
           entityId: registration.id,
-          correlationId,
+          correlationId: input.clientRequestId,
           summary: "A matching private registration link recovery email was queued.",
           metadata: {
             matched: true,
@@ -991,7 +1103,7 @@ export async function revokeRegistrationAccessToken(
         entityType: "Registration",
         entityId: access.registration.id,
         correlationId: randomUUID(),
-        summary: `Revoked a private registration access link for ${access.registration.confirmationCode}.`,
+      summary: "Revoked a private registration access link.",
         metadata: {
           accessTokenId: access.id,
           purpose: "MANAGE_REGISTRATION",

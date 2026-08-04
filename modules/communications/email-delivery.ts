@@ -31,6 +31,7 @@ import {
   createStableRegistrationAccessToken,
   revokeRegistrationAccessToken,
 } from "@/modules/public-access/repository";
+import { registrationRecoveryAccessExpiry } from "@/modules/public-access/domain";
 
 export const MAX_EMAIL_DELIVERY_ATTEMPTS = 5;
 export const EMAIL_DELIVERY_LOCK_TIMEOUT_MS = 10 * 60 * 1000;
@@ -127,6 +128,10 @@ export async function prepareEmailBodyForDelivery(
     registrationId: input.registrationId,
     deliveryKey: `message:${input.messageId}`,
     now: input.now,
+    expiresAt: input.templateKey === "REGISTRATION_ACCESS_RECOVERY"
+      ? registrationRecoveryAccessExpiry(input.now)
+      : undefined,
+    renewExpired: input.templateKey === "REGISTRATION_ACCESS_RECOVERY",
   });
   const manageUrl = new URL(access.managePath, appBaseUrl).toString();
   // One token serves both the page a registrant opens and the pass image their

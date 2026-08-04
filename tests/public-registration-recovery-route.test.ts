@@ -4,7 +4,9 @@ const mocks = vi.hoisted(() => ({
   after: vi.fn(),
   rejectCrossOriginRequest: vi.fn(),
   processQueuedMessageIdsAfterCommit: vi.fn(),
+  establishRegistrationAccess: vi.fn(),
   requestRegistrationAccessRecovery: vi.fn(),
+  checkRegistrationCodeAccessRateLimit: vi.fn(),
   checkRegistrationRecoveryRateLimit: vi.fn(),
 }));
 
@@ -19,9 +21,12 @@ vi.mock("@/modules/communications/messaging-repository", () => ({
   processQueuedMessageIdsAfterCommit: mocks.processQueuedMessageIdsAfterCommit,
 }));
 vi.mock("@/modules/public-access/repository", () => ({
+  establishRegistrationAccess: mocks.establishRegistrationAccess,
   requestRegistrationAccessRecovery: mocks.requestRegistrationAccessRecovery,
 }));
 vi.mock("@/modules/rate-limit/service", () => ({
+  checkRegistrationCodeAccessRateLimit:
+    mocks.checkRegistrationCodeAccessRateLimit,
   checkRegistrationRecoveryRateLimit: mocks.checkRegistrationRecoveryRateLimit,
 }));
 
@@ -59,16 +64,116 @@ function request(body: unknown) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
+  mocks.checkRegistrationCodeAccessRateLimit.mockResolvedValue(outcome(true));
   mocks.checkRegistrationRecoveryRateLimit.mockResolvedValue(outcome(true));
+  mocks.establishRegistrationAccess.mockResolvedValue(null);
   mocks.requestRegistrationAccessRecovery.mockResolvedValue({
     pendingMessageIds: [],
   });
 });
 
 describe("public registration recovery route", () => {
+  it("returns scoped direct access for matching registration details", async () => {
+    const input = {
+      action: "access",
+      clientRequestId: "34335e39-e0a0-4dd2-af6e-b97df37a915f",
+      confirmationCode: "REG-PRIVATE",
+      email: "guest@example.test",
+    };
+    mocks.establishRegistrationAccess.mockResolvedValue({
+      managePath: "/manage/private-token",
+      expiresAt: new Date("2026-08-03T18:30:00.000Z"),
+    });
+
+    const response = await POST(request(input));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ok: true,
+      managePath: "/manage/private-token",
+      expiresAt: "2026-08-03T18:30:00.000Z",
+    });
+    expect(mocks.checkRegistrationCodeAccessRateLimit).toHaveBeenCalledWith(
+      expect.any(Request),
+      input,
+    );
+    expect(mocks.establishRegistrationAccess).toHaveBeenCalledWith({
+      clientRequestId: input.clientRequestId,
+      confirmationCode: input.confirmationCode,
+      email: input.email,
+    });
+    expect(mocks.requestRegistrationAccessRecovery).not.toHaveBeenCalled();
+  });
+
+  it("preserves only a same-origin registration-management destination", async () => {
+    const priorToken = "a".repeat(43);
+    mocks.establishRegistrationAccess.mockResolvedValue({
+      managePath: "/manage/private-token",
+      expiresAt: new Date("2026-08-03T18:30:00.000Z"),
+    });
+
+    const response = await POST(request({
+      action: "access",
+      clientRequestId: "11746b10-b007-43f1-80f0-d2956e03dca7",
+      confirmationCode: "REG-PRIVATE",
+      email: "guest@example.test",
+      returnTo: `https://events.imsda.test/manage/${priorToken}/payment?step=card#balance`,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      managePath: "/manage/private-token/payment?step=card#balance",
+    });
+    expect(mocks.establishRegistrationAccess).toHaveBeenCalledWith({
+      clientRequestId: "11746b10-b007-43f1-80f0-d2956e03dca7",
+      confirmationCode: "REG-PRIVATE",
+      email: "guest@example.test",
+    });
+  });
+
+  it.each([
+    "https://attacker.example/manage/" + "a".repeat(43),
+    "javascript:alert(1)",
+    "/account",
+    "https://user:password@events.imsda.test/manage/" + "a".repeat(43),
+  ])("rejects unsafe return destination %s before issuing access", async (returnTo) => {
+    const response = await POST(request({
+      action: "access",
+      clientRequestId: "e701a698-97f8-4f58-967d-840b185f9c6d",
+      confirmationCode: "REG-PRIVATE",
+      email: "guest@example.test",
+      returnTo,
+    }));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: "INVALID_RETURN_DESTINATION",
+    });
+    expect(mocks.establishRegistrationAccess).not.toHaveBeenCalled();
+  });
+
+  it("returns one failure response for invalid or mismatched direct access", async () => {
+    const invalidCode = await POST(request({
+      action: "access",
+      clientRequestId: "c01b88f2-f408-481b-8c2a-ec4b2cb79d70",
+      confirmationCode: "INVALID",
+      email: "guest@example.test",
+    }));
+    const mismatchedEmail = await POST(request({
+      action: "access",
+      clientRequestId: "c43ee22d-c9e7-4ce3-ac6e-ccac92acdf89",
+      confirmationCode: "REG-PRIVATE",
+      email: "other@example.test",
+    }));
+
+    expect(invalidCode.status).toBe(401);
+    expect(await invalidCode.json()).toEqual(await mismatchedEmail.json());
+  });
+
   it("returns the same noindex response whether or not a matching email was queued", async () => {
     const input = {
-      confirmationCode: "REG-PRIVATE",
+      action: "email",
+      clientRequestId: "5f579588-13e4-455a-88fa-284f667ef2df",
       email: "guest@example.test",
     };
     const mismatch = await POST(request(input));
@@ -83,17 +188,29 @@ describe("public registration recovery route", () => {
     expect(match.headers.get("cache-control")).toContain("no-store");
     expect(mocks.after).toHaveBeenCalledOnce();
     expect(mocks.requestRegistrationAccessRecovery).toHaveBeenLastCalledWith(input);
+    expect(mocks.checkRegistrationRecoveryRateLimit).toHaveBeenLastCalledWith(
+      expect.any(Request),
+      input.email,
+    );
   });
 
-  it("rate limits before attempting a registration lookup", async () => {
-    mocks.checkRegistrationRecoveryRateLimit.mockResolvedValue(outcome(false));
+  it.each(["access", "email"] as const)(
+    "rate limits %s before attempting a registration lookup",
+    async (action) => {
+    const rateLimit = action === "access"
+      ? mocks.checkRegistrationCodeAccessRateLimit
+      : mocks.checkRegistrationRecoveryRateLimit;
+    rateLimit.mockResolvedValue(outcome(false));
     const response = await POST(request({
-      confirmationCode: "REG-PRIVATE",
+      action,
+      clientRequestId: "3c93b274-3726-4a44-a831-e786eb4c218a",
+      ...(action === "access" ? { confirmationCode: "REG-PRIVATE" } : {}),
       email: "guest@example.test",
     }));
 
     expect(response.status).toBe(429);
     expect(response.headers.get("retry-after")).toBe("900");
+    expect(mocks.establishRegistrationAccess).not.toHaveBeenCalled();
     expect(mocks.requestRegistrationAccessRecovery).not.toHaveBeenCalled();
   });
 
@@ -102,11 +219,14 @@ describe("public registration recovery route", () => {
       Response.json({ error: "CROSS_ORIGIN_REQUEST" }, { status: 403 }),
     );
     const response = await POST(request({
+      action: "access",
+      clientRequestId: "ac1b8ec4-fdb1-42b8-b0b8-ee38959449a1",
       confirmationCode: "REG-PRIVATE",
       email: "guest@example.test",
     }));
 
     expect(response.status).toBe(403);
+    expect(mocks.checkRegistrationCodeAccessRateLimit).not.toHaveBeenCalled();
     expect(mocks.checkRegistrationRecoveryRateLimit).not.toHaveBeenCalled();
   });
 });

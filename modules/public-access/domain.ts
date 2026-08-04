@@ -2,6 +2,7 @@ import type { RegistrationStatus } from "@prisma/client";
 import { z } from "zod";
 
 const millisecondsPerDay = 24 * 60 * 60 * 1_000;
+const recoveryAccessLifetimeMilliseconds = 30 * 60 * 1_000;
 const opaqueTokenPattern = /^[A-Za-z0-9_-]{43}$/;
 
 const publicEmailSchema = z
@@ -61,6 +62,13 @@ export function defaultRegistrationAccessExpiry(
   const minimumExpiry = now.getTime() + (30 * millisecondsPerDay);
   const postEventExpiry = eventEndsAt.getTime() + (30 * millisecondsPerDay);
   return new Date(Math.max(minimumExpiry, postEventExpiry));
+}
+
+export function registrationRecoveryAccessExpiry(now: Date) {
+  if (Number.isNaN(now.valueOf())) {
+    throw new RangeError("A valid issue date is required.");
+  }
+  return new Date(now.getTime() + recoveryAccessLifetimeMilliseconds);
 }
 
 export function describePublicRegistrationStatus(

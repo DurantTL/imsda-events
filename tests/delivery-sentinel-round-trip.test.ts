@@ -19,6 +19,11 @@ import {
  */
 
 const issuedToken = "private-token-abc123";
+const createStableRegistrationAccessToken = vi.fn(async () => ({
+  token: issuedToken,
+  managePath: `/manage/${issuedToken}`,
+  expiresAt: new Date("2026-09-01T00:00:00.000Z"),
+}));
 
 vi.mock("server-only", () => ({}));
 
@@ -27,11 +32,7 @@ vi.mock("@/lib/env", () => ({
 }));
 
 vi.mock("@/modules/public-access/repository", () => ({
-  createStableRegistrationAccessToken: vi.fn(async () => ({
-    token: issuedToken,
-    managePath: `/manage/${issuedToken}`,
-    expiresAt: new Date("2026-09-01T00:00:00.000Z"),
-  })),
+  createStableRegistrationAccessToken,
   revokeRegistrationAccessToken: vi.fn(async () => undefined),
 }));
 
@@ -119,6 +120,30 @@ describe("delivery sentinel round trip", () => {
     expect(prepared.bodyHtml).not.toContain(REGISTRATION_MANAGE_API_SENTINEL);
     expect(prepared.bodyText).not.toContain(REGISTRATION_MANAGE_LINK_SENTINEL);
     expect(prepared.bodyText).not.toContain(REGISTRATION_MANAGE_API_SENTINEL);
+    expect(createStableRegistrationAccessToken).toHaveBeenCalledWith(
+      expect.objectContaining({ renewExpired: false }),
+    );
+  });
+
+  it("allows an expired recovery-email link to renew during a delayed retry", async () => {
+    const rendered = renderRegistrationConfirmation();
+
+    await prepareEmailBodyForDelivery({
+      messageId: "recovery-message-1",
+      registrationId: "registration-1",
+      templateKey: "REGISTRATION_ACCESS_RECOVERY",
+      bodyText: rendered.body,
+      bodyHtml: rendered.bodyHtml,
+      now: new Date("2026-08-01T12:31:00.000Z"),
+    });
+
+    expect(createStableRegistrationAccessToken).toHaveBeenCalledWith({
+      registrationId: "registration-1",
+      deliveryKey: "message:recovery-message-1",
+      now: new Date("2026-08-01T12:31:00.000Z"),
+      expiresAt: new Date("2026-08-01T13:01:00.000Z"),
+      renewExpired: true,
+    });
   });
 
   it("leaves the stored snapshots untouched", async () => {
