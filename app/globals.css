@@ -3275,6 +3275,51 @@ select:focus-visible {
   color: var(--ink);
   font-size: 0.96rem;
 }
+.public-registration-review-account { grid-column: 1 / -1; }
+.public-registration-review-account > p:not(.public-registration-eyebrow) {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.55;
+}
+.public-registration-review-account fieldset {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  margin: 14px 0 10px;
+  border: 0;
+  padding: 0;
+}
+.public-registration-review-account legend {
+  margin-bottom: 7px;
+  color: var(--ink);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+.public-registration-review-account label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  min-height: 58px;
+  border: 1px solid #d3e0e5;
+  border-radius: 11px;
+  padding: 11px;
+  cursor: pointer;
+}
+.public-registration-review-account input { margin: 2px 0 0; }
+.public-registration-review-account label:has(input:checked) {
+  border-color: var(--imsda-purple);
+  background: var(--imsda-purple-soft);
+}
+.public-registration-review-account label > span { display: grid; gap: 3px; }
+.public-registration-review-account label strong { color: var(--ink); font-size: 0.7rem; }
+.public-registration-review-account label small,
+.public-registration-review-account > small {
+  color: var(--muted);
+  font-size: 0.62rem;
+  line-height: 1.5;
+}
 .public-registration-review-order { border-top: 4px solid var(--imsda-gold); }
 .public-registration-review-empty {
   margin: 12px 0 0;
@@ -3545,7 +3590,11 @@ select:focus-visible {
 .public-registration-account-prompt > span { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 11px; background: var(--imsda-purple-soft); color: var(--imsda-purple); }
 .public-registration-account-prompt h2 { margin: 2px 0 5px; font-size: 0.94rem; }
 .public-registration-account-prompt p:not(.public-registration-eyebrow) { margin: 0; color: #5b4c66; font-size: 0.7rem; line-height: 1.55; }
+.public-registration-account-prompt p + p { margin-top: 7px; }
+.public-registration-account-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .public-registration-account-prompt a { display: inline-flex; min-height: 38px; align-items: center; justify-content: center; gap: 6px; margin-top: 10px; border-radius: 9px; background: white; box-shadow: inset 0 0 0 1px #bda9ce; color: var(--imsda-purple); padding: 8px 12px; font-size: 0.7rem; font-weight: 800; text-decoration: none; }
+.public-registration-account-actions a { flex: 1 1 180px; margin-top: 0; text-align: center; }
+.public-registration-account-prompt a:focus-visible { outline: 2px solid var(--imsda-purple); outline-offset: 2px; }
 .public-registration-account-prompt small { display: block; margin-top: 7px; color: #77677f; font-size: 0.6rem; line-height: 1.45; }
 .public-registration-confirmation-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 .public-registration-confirmation-actions .public-registration-secondary-button { flex: 1 1 180px; margin: 16px 0 0; }
@@ -4784,6 +4833,7 @@ select:focus-visible {
   .public-registration-step-actions button { flex: 1; }
   .public-registration-step-actions .is-continue { min-width: 0; }
   .public-registration-review { grid-template-columns: 1fr; }
+  .public-registration-review-account fieldset { grid-template-columns: 1fr; }
   .public-registration-review-answers > div {
     grid-template-columns: 1fr;
     gap: 3px;

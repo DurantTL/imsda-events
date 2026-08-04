@@ -5,7 +5,11 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Eye, EyeOff, MailCheck, UserPlus } from "lucide-react";
 import { OneTimeCodeInput } from "@/components/one-time-code-input";
-import { attendeeSignUpEmailPrefill } from "@/modules/attendee-accounts/sign-up-prefill";
+import {
+  attendeeAuthReturnPathFromHash,
+  attendeeSignUpEmailPrefill,
+  takeAttendeeAuthReturnPath,
+} from "@/modules/attendee-accounts/sign-up-prefill";
 
 /**
  * Creating an attendee account: details, then the code that arrives by email.
@@ -34,7 +38,9 @@ export function AttendeeSignUpForm({
   const [developmentCode, setDevelopmentCode] = useState<string | null>(null);
 
   useEffect(() => {
-    if (initialEmail || !window.location.hash) return;
+    if (!window.location.hash) return;
+    attendeeAuthReturnPathFromHash(window.location.hash);
+    if (initialEmail) return;
     const fragment = new URLSearchParams(window.location.hash.slice(1));
     const prefill = attendeeSignUpEmailPrefill(fragment.get("email") ?? undefined);
     if (prefill && emailRef.current) emailRef.current.value = prefill;
@@ -80,7 +86,7 @@ export function AttendeeSignUpForm({
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message ?? "That code could not be checked.");
-      router.replace("/account");
+      router.replace(takeAttendeeAuthReturnPath() ?? "/account");
       router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "That code could not be checked.");

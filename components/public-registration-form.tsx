@@ -333,6 +333,7 @@ export function PublicRegistrationForm({
   const [promoCodeApplying, setPromoCodeApplying] = useState(false);
   const [promoCodeNotice, setPromoCodeNotice] = useState("");
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
+  const [accountChoice, setAccountChoice] = useState<"without" | "create">("without");
   const errorSummaryRef = useRef<HTMLDivElement>(null);
   const stepHeadingRef = useRef<HTMLHeadingElement>(null);
   const rosterCsvInputRef = useRef<HTMLInputElement>(null);
@@ -1707,6 +1708,49 @@ export function PublicRegistrationForm({
             </ul>
           </section>
         )}
+
+        <section className="public-registration-review-card public-registration-review-account">
+          <p className="public-registration-eyebrow">Optional account</p>
+          <h3>Create an optional account to manage future registrations</h3>
+          <p>
+            An account can show registrations and attendees that use your verified
+            contact email, across events, without requesting another private link.
+          </p>
+          <fieldset>
+            <legend>Choose what happens after submission</legend>
+            <label>
+              <input
+                checked={accountChoice === "without"}
+                name="optionalAccount"
+                onChange={() => setAccountChoice("without")}
+                type="radio"
+                value="without"
+              />
+              <span>
+                <strong>Finish without an account</strong>
+                <small>Use the confirmation code or private email link to manage this registration.</small>
+              </span>
+            </label>
+            <label>
+              <input
+                checked={accountChoice === "create"}
+                name="optionalAccount"
+                onChange={() => setAccountChoice("create")}
+                type="radio"
+                value="create"
+              />
+              <span>
+                <strong>Create an account after submitting</strong>
+                <small>We will offer verified account setup on the confirmation page.</small>
+              </span>
+            </label>
+          </fieldset>
+          <small>
+            The registration holder is the contact person. Attendees are the people
+            registered. The account is a separate, optional sign-in and does not
+            change either role or delay submission.
+          </small>
+        </section>
       </div>
     );
   }
@@ -1847,6 +1891,7 @@ export function PublicRegistrationForm({
     setPromoCodeApplying(false);
     setPromoCodeNotice("");
     setIdempotencyKey(null);
+    setAccountChoice("without");
     setCurrentStepId(registrationSteps[0]?.id ?? "__review");
     window.imsdaEmbedScrollTop?.();
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1954,6 +1999,8 @@ export function PublicRegistrationForm({
             <RegistrationAccountPrompt
               email={confirmation.email}
               embedded={embedded}
+              intended={accountChoice === "create"}
+              returnTo={confirmation.managePath ?? undefined}
             />
             <div className="public-registration-confirmation-actions">
               <a {...eventsSiteNavigation} className="public-registration-secondary-button" href={`/events/${event.slug}`}><ArrowLeft size={16} aria-hidden="true" /> Back to event</a>
