@@ -3,6 +3,7 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { isSeminarPreferenceField } from "@/modules/attendee-accounts/registration-answer-policy";
 import { enqueueRegistrationUpdatedMessage } from "@/modules/communications/transactional-messages";
 import {
   getAvailabilityMode,
@@ -630,6 +631,25 @@ async function prepareAmendment(
   const currentById = new Map(
     registration.attendees.map((attendee) => [attendee.id, attendee]),
   );
+  const seminarKeys = definition.sections
+    .flatMap((section) => section.fields)
+    .filter(isSeminarPreferenceField)
+    .map((field) => field.key);
+  const seminarPreferencesChanged = input.attendees.some((attendee) => {
+    if (!attendee.attendeeId) return false;
+    const current = currentById.get(attendee.attendeeId);
+    if (!current) return false;
+    const currentResponses = recordFromJson(current.formResponses);
+    return seminarKeys.some((key) => (
+      stableJson(currentResponses[key]) !== stableJson(attendee.responses[key])
+    ));
+  });
+  if (seminarPreferencesChanged && !input.reason.trim()) {
+    throw new RegistrationAmendmentError(
+      "INVALID_AMENDMENT",
+      "Enter a reason for a staff seminar preference override.",
+    );
+  }
   const retainedIds = new Set(
     input.attendees.flatMap((attendee) => attendee.attendeeId ? [attendee.attendeeId] : []),
   );
@@ -788,6 +808,7 @@ async function prepareAmendment(
     quoteFingerprint,
     paidCents: netPaidCents,
     addedAttendeeCount: input.attendees.filter((attendee) => !attendee.attendeeId).length,
+    seminarPreferencesChanged,
   };
 }
 
@@ -1107,7 +1128,9 @@ export async function amendRegistration(
             registrationId,
             correlationId: input.clientRequestId,
             transitionKey: `registration-amendment:${amendmentId}`,
-            changeCategory: "REGISTRATION_DETAILS",
+            changeCategory: prepared.seminarPreferencesChanged
+              ? "SEMINAR_PREFERENCES"
+              : "REGISTRATION_DETAILS",
           });
           response.pendingMessageIds = queued.pendingMessageIds;
         }
@@ -1148,6 +1171,7 @@ export async function amendRegistration(
               removedAttendeeCount: prepared.removedAttendees.length,
               pricingDate: prepared.prepared.pricingDate,
               originalSubmissionPreserved: true,
+              seminarPreferenceOverride: prepared.seminarPreferencesChanged,
             },
           },
         });

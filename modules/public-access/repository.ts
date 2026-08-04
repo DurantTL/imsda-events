@@ -7,12 +7,14 @@ import { createOpaqueToken, hashOpaqueToken } from "@/modules/access/tokens";
 import { attendeePassExpiry } from "@/modules/checkin/attendee-pass-token";
 import {
   editableAttendeeFields,
+  isSeminarPreferenceField,
 } from "@/modules/attendee-accounts/registration-answer-policy";
 import { updateTieredRegistrationAnswersWithClient } from "@/modules/attendee-accounts/answer-update-repository";
 import {
   enqueueRegistrationAccessRecoveryMessage,
   enqueueRegistrationContactUpdatedMessage,
 } from "@/modules/communications/transactional-messages";
+import { processQueuedMessageIdsAfterCommit } from "@/modules/communications/messaging-repository";
 import {
   defaultRegistrationAccessExpiry,
   describePublicRegistrationStatus,
@@ -33,6 +35,7 @@ import {
   formatPublicEventSchedule,
   publicEventWebsiteLinks,
 } from "@/modules/events/public-domain";
+import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 
 export { REGISTRATION_MANAGE_LINK_SENTINEL } from "@/modules/communications/manage-link";
@@ -70,6 +73,18 @@ const registrationAccessInclude = {
           supportContact: true,
           collectsShirtSizes: true,
           attendeeEditPolicy: true,
+          seminarPreferenceClosesOn: true,
+          seminarPreferenceSelfServiceLocked: true,
+          programAssignmentRuns: {
+            where: {
+              invalidatedAt: null,
+              supersededBy: { none: {} },
+            },
+            select: {
+              fieldKeySnapshot: true,
+              assignments: { select: { attendeeIdSnapshot: true } },
+            },
+          },
         },
       },
       accountHolderPerson: {
@@ -326,12 +341,46 @@ function serializeRegistrationAccess(
       ))
     : [];
   const answerKeys = new Set(answerFields.map((field) => field.key));
+  const seminarKeys = new Set(
+    parsedDefinition?.success
+      ? parsedDefinition.data.sections
+          .flatMap((section) => section.fields)
+          .filter(isSeminarPreferenceField)
+          .map((field) => field.key)
+      : [],
+  );
+  const seminarSelfServiceClosed = event.seminarPreferenceSelfServiceLocked
+    || Boolean(
+      event.seminarPreferenceClosesOn
+      && calendarDateInEventTimeZone(now, event.timezone)
+        > event.seminarPreferenceClosesOn,
+    );
+  const assignmentLocks = new Map<string, Set<string>>();
+  for (const run of event.programAssignmentRuns) {
+    for (const assignment of run.assignments) {
+      const locked = assignmentLocks.get(assignment.attendeeIdSnapshot) ?? new Set<string>();
+      locked.add(run.fieldKeySnapshot);
+      assignmentLocks.set(assignment.attendeeIdSnapshot, locked);
+    }
+  }
+  const lockedFieldKeys = (attendeeId: string) => answerFields
+    .filter((field) => (
+      seminarKeys.has(field.key)
+      && (
+        seminarSelfServiceClosed
+        || assignmentLocks.get(attendeeId)?.has(field.key)
+      )
+    ))
+    .map((field) => field.key);
+  const activeRegistration = registration.status === "SUBMITTED"
+    || registration.status === "CONFIRMED"
+    || registration.status === "WAITLISTED";
   const answerEditingEnabled = (
-    event.attendeeEditPolicy === "TIERED"
+    activeRegistration
     && answerFields.length > 0
-    && (registration.status === "SUBMITTED"
-      || registration.status === "CONFIRMED"
-      || registration.status === "WAITLISTED")
+    && registration.attendees.some((attendee) => (
+      lockedFieldKeys(attendee.id).length < answerFields.length
+    ))
   );
   const pricingSnapshot = submission
     ? jsonRecord(submission.pricingSnapshot)
@@ -420,17 +469,20 @@ function serializeRegistrationAccess(
     answerEditing: {
       enabled: answerEditingEnabled,
       reason: answerEditingEnabled
-        ? "These low-risk event choices can be updated from this private registration link."
-        : event.attendeeEditPolicy !== "TIERED"
-          ? "This event requires verified account access before attendee choices can be changed."
+        ? "Permitted attendee choices can be updated from this private registration link."
+        : !activeRegistration
+          ? "This registration is read-only. Contact the event team for help."
           : !submission
             ? "The event team must update this imported registration."
-            : "This registration has no low-risk attendee choices available for self-service.",
+            : seminarSelfServiceClosed || assignmentLocks.size > 0
+              ? "Seminar preference self-service is closed. Contact the event team for help."
+              : "This registration has no attendee choices available for self-service.",
       expectedUpdatedAt: registration.updatedAt.toISOString(),
       fields: answerFields,
       attendees: registration.attendees.map((attendee) => ({
         attendeeId: attendee.id,
         name: publicAttendeeName(attendee.profileSnapshot, attendee.person),
+        lockedFieldKeys: lockedFieldKeys(attendee.id),
         responses: Object.fromEntries(
           Object.entries(jsonRecord(attendee.formResponses))
             .filter(([key]) => answerKeys.has(key)),
@@ -947,6 +999,7 @@ export async function updatePublicRegistrationContact(
 export async function updatePublicTieredAttendeeAnswers(
   token: string,
   input: {
+    clientRequestId: string;
     expectedUpdatedAt: string;
     attendees: Array<{
       attendeeId: string;
@@ -955,11 +1008,12 @@ export async function updatePublicTieredAttendeeAnswers(
   },
   now = new Date(),
 ) {
-  return getPrisma().$transaction(async (tx) => {
+  const result = await getPrisma().$transaction(async (tx) => {
     const access = await loadActiveAccessRecord(tx, token, now);
     if (!access) return null;
     return updateTieredRegistrationAnswersWithClient(tx, {
       registrationId: access.registration.id,
+      clientRequestId: input.clientRequestId,
       expectedUpdatedAt: input.expectedUpdatedAt,
       attendees: input.attendees,
       now,
@@ -976,6 +1030,12 @@ export async function updatePublicTieredAttendeeAnswers(
       },
     });
   });
+  if (!result) return null;
+  await processQueuedMessageIdsAfterCommit(result.pendingMessageIds);
+  return {
+    expectedUpdatedAt: result.expectedUpdatedAt,
+    attendees: result.attendees,
+  };
 }
 
 async function confirmRegistrationShirtSizesWithClient(

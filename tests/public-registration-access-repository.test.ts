@@ -64,6 +64,9 @@ function accessRecord(overrides: {
         supportContact: "registration@imsda.org",
         collectsShirtSizes: true,
         attendeeEditPolicy: "TIERED",
+        seminarPreferenceClosesOn: null,
+        seminarPreferenceSelfServiceLocked: false,
+        programAssignmentRuns: [],
       },
       accountHolderPerson: {
         firstName: "Caleb",

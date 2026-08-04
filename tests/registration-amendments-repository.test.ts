@@ -116,6 +116,20 @@ const definition = {
         required: false,
         options: [],
       },
+      {
+        id: "seminar-field",
+        key: "seminar_preferences",
+        label: "Seminar preferences",
+        helpText: "",
+        type: "RANKED_CHOICE",
+        scope: "ATTENDEE",
+        required: true,
+        options: ["Prayer", "Service"],
+        minSelections: 2,
+        maxSelections: 2,
+        availabilityMode: "RANKED_INTEREST",
+        choiceLimits: { Prayer: 1, Service: 1 },
+      },
     ],
   }],
 };
@@ -130,6 +144,7 @@ const attendeeResponses = {
   last_name: "Guest",
   meal: "Vegetarian",
   notes: "Near the aisle",
+  seminar_preferences: ["Prayer", "Service"],
 };
 
 function repositoryFixture() {
@@ -199,6 +214,26 @@ function repositoryFixture() {
       rank: null,
       releasedAt: null,
       createdAt: new Date("2026-08-01T12:00:00.000Z"),
+    }, {
+      id: "reservation-2",
+      registrationAttendeeId: "attendee-1",
+      participantKey: "attendee:0",
+      fieldId: "seminar-field",
+      fieldKey: "seminar_preferences",
+      optionValue: "Prayer",
+      rank: 0,
+      releasedAt: null,
+      createdAt: new Date("2026-08-01T12:00:00.000Z"),
+    }, {
+      id: "reservation-3",
+      registrationAttendeeId: "attendee-1",
+      participantKey: "attendee:0",
+      fieldId: "seminar-field",
+      fieldKey: "seminar_preferences",
+      optionValue: "Service",
+      rank: 1,
+      releasedAt: null,
+      createdAt: new Date("2026-08-01T12:00:00.000Z"),
     }],
     promoCodeRedemption: null,
     operations: [] as Array<Record<string, unknown>>,
@@ -262,7 +297,7 @@ function repositoryFixture() {
       pricingSnapshot: registration.publicFormSubmission.pricingSnapshot,
     },
   }));
-  return { registration };
+  return { registration, tx };
 }
 
 async function commitAmendment(
@@ -357,11 +392,59 @@ describe("registration amendments repository", () => {
         meal: attendeeResponses.meal,
         last_name: attendeeResponses.last_name,
         first_name: attendeeResponses.first_name,
+        seminar_preferences: attendeeResponses.seminar_preferences,
       },
       new Date("2026-08-04T13:00:00.000Z"),
     );
 
     expect(result.pendingMessageIds).toEqual([]);
     expect(dependencies.enqueueRegistrationUpdatedMessage).not.toHaveBeenCalled();
+  });
+
+  it("requires a reason and records a staff seminar override through the amendment path", async () => {
+    const { registration, tx } = repositoryFixture();
+    const input = {
+      clientRequestId: "10ab0f4d-163f-4d3d-a842-e328665838ef",
+      expectedUpdatedAt: registration.updatedAt.toISOString(),
+      reason: "",
+      responses: { ...registrationResponses },
+      attendees: [{
+        attendeeId: "attendee-1",
+        clientId: "attendee-row-1",
+        responses: {
+          ...attendeeResponses,
+          seminar_preferences: ["Service", "Prayer"],
+        },
+      }],
+      previewOnly: true as const,
+    };
+
+    await expect(previewRegistrationAmendment(
+      "event-1",
+      "registration-1",
+      input,
+    )).rejects.toThrow("Enter a reason for a staff seminar preference override.");
+
+    const { result } = await commitAmendment(
+      input.clientRequestId,
+      input.expectedUpdatedAt,
+      input.attendees[0].responses,
+      new Date("2026-08-04T13:00:00.000Z"),
+    );
+    expect(result.registration.publicSubmission?.responses).toBeDefined();
+    expect(dependencies.enqueueRegistrationUpdatedMessage).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ changeCategory: "SEMINAR_PREFERENCES" }),
+    );
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        actorUserId: actor.id,
+        correlationId: input.clientRequestId,
+        metadata: expect.objectContaining({
+          reason: "Registrant requested the change.",
+          seminarPreferenceOverride: true,
+        }),
+      }),
+    });
   });
 });

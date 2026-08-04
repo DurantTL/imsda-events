@@ -74,6 +74,17 @@ describe("event settings", () => {
     expect(parsed.supportContact).toBeNull();
   });
 
+  it("accepts an event-timezone seminar deadline and manual lock", () => {
+    expect(eventSettingsInputSchema.parse({
+      ...validEvent,
+      seminarPreferenceClosesOn: "2027-09-30",
+      seminarPreferenceSelfServiceLocked: true,
+    })).toMatchObject({
+      seminarPreferenceClosesOn: "2027-09-30",
+      seminarPreferenceSelfServiceLocked: true,
+    });
+  });
+
   it("rejects invalid schedules, URLs, and waitlist combinations", () => {
     expect(() => eventSettingsInputSchema.parse({
       ...validEvent,

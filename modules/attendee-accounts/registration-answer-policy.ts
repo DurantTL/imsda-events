@@ -52,7 +52,10 @@ export class AttendeeAnswerUpdateError extends Error {
       | "EDIT_POLICY_REQUIRES_VERIFICATION"
       | "NO_EDITABLE_ANSWERS"
       | "FIELD_NOT_EDITABLE"
-      | "INVALID_ANSWER",
+      | "INVALID_ANSWER"
+      | "SEMINAR_PREFERENCES_LOCKED"
+      | "FINAL_ASSIGNMENT_LOCKED"
+      | "IDEMPOTENCY_KEY_REUSED",
     message: string,
   ) {
     super(message);
@@ -84,12 +87,22 @@ export function isTieredAttendeeFieldEditable(field: RegistrationFormField) {
   return true;
 }
 
+export function isSeminarPreferenceField(field: RegistrationFormField) {
+  return field.scope === "ATTENDEE"
+    && field.type === "RANKED_CHOICE"
+    && getAvailabilityMode(field) === "RANKED_INTEREST";
+}
+
 function tieredEditableFieldDefinitions(
   definition: RegistrationFormDefinition,
+  policy: "TIERED" | "VERIFY_EVERY_EDIT",
 ) {
   const candidates = definition.sections
     .flatMap((section) => section.fields)
-    .filter(isTieredAttendeeFieldEditable);
+    .filter((field) => (
+      isSeminarPreferenceField(field)
+      || (policy === "TIERED" && isTieredAttendeeFieldEditable(field))
+    ));
   const candidateKeys = new Set(candidates.map((field) => field.key));
   return candidates.filter((field) => (
     !field.conditional || candidateKeys.has(field.conditional.fieldKey)
@@ -100,8 +113,7 @@ export function editableAttendeeFields(
   definition: RegistrationFormDefinition,
   policy: "TIERED" | "VERIFY_EVERY_EDIT",
 ): EditableAttendeeField[] {
-  if (policy !== "TIERED") return [];
-  return tieredEditableFieldDefinitions(definition)
+  return tieredEditableFieldDefinitions(definition, policy)
     // A condition controlled by a protected or registration-level answer
     // cannot be evaluated in the browser without disclosing that answer.
     // Keep the field staff-managed instead of exposing hidden context.
@@ -134,14 +146,8 @@ export function prepareTieredAttendeeAnswerUpdate(input: {
   currentResponses: Record<string, unknown>;
   changes: Record<string, unknown>;
 }) {
-  if (input.policy !== "TIERED") {
-    throw new AttendeeAnswerUpdateError(
-      "EDIT_POLICY_REQUIRES_VERIFICATION",
-      "This event requires a fresh verification code before attendee answers can be changed.",
-    );
-  }
   const fields = input.definition.sections.flatMap((section) => section.fields);
-  const editable = tieredEditableFieldDefinitions(input.definition);
+  const editable = tieredEditableFieldDefinitions(input.definition, input.policy);
   if (editable.length === 0) {
     throw new AttendeeAnswerUpdateError(
       "NO_EDITABLE_ANSWERS",

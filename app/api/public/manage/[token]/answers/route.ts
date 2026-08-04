@@ -16,6 +16,7 @@ const attendeeSchema = z.strictObject({
   responses: z.record(z.string().trim().min(1).max(80), z.unknown()),
 });
 const inputSchema = z.strictObject({
+  clientRequestId: z.uuid(),
   expectedUpdatedAt: z.iso.datetime(),
   attendees: z.array(attendeeSchema).min(1).max(50),
 });
@@ -87,9 +88,16 @@ async function putHandler(request: Request, context: Context) {
       }, { status: 400 }, rateLimit);
     }
     if (error instanceof AttendeeAnswerUpdateError) {
+      const status = error.code === "EDIT_POLICY_REQUIRES_VERIFICATION"
+        ? 403
+        : error.code === "SEMINAR_PREFERENCES_LOCKED"
+          || error.code === "FINAL_ASSIGNMENT_LOCKED"
+          || error.code === "IDEMPOTENCY_KEY_REUSED"
+          ? 409
+          : 400;
       return json(
         { error: error.code, message: error.message },
-        { status: error.code === "EDIT_POLICY_REQUIRES_VERIFICATION" ? 403 : 400 },
+        { status },
         rateLimit,
       );
     }
