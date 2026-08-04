@@ -8,6 +8,7 @@ import { OneTimeCodeInput } from "@/components/one-time-code-input";
 import {
   attendeeAuthReturnPathFromHash,
   attendeeSignUpEmailPrefill,
+  removeAttendeeAuthFragment,
   takeAttendeeAuthReturnPath,
 } from "@/modules/attendee-accounts/sign-up-prefill";
 
@@ -40,10 +41,10 @@ export function AttendeeSignUpForm({
   useEffect(() => {
     if (!window.location.hash) return;
     attendeeAuthReturnPathFromHash(window.location.hash);
-    if (initialEmail) return;
     const fragment = new URLSearchParams(window.location.hash.slice(1));
     const prefill = attendeeSignUpEmailPrefill(fragment.get("email") ?? undefined);
-    if (prefill && emailRef.current) emailRef.current.value = prefill;
+    if (!initialEmail && prefill && emailRef.current) emailRef.current.value = prefill;
+    removeAttendeeAuthFragment();
   }, [initialEmail]);
 
   async function submitDetails(event: React.FormEvent<HTMLFormElement>) {

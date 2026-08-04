@@ -10,6 +10,7 @@ import {
   attendeeAuthReturnPath,
   attendeeAuthReturnPathFromHash,
   attendeeSignUpEmailPrefill,
+  removeAttendeeAuthFragment,
   takeAttendeeAuthReturnPath,
 } from "@/modules/attendee-accounts/sign-up-prefill";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
@@ -171,7 +172,7 @@ describe("Women’s Retreat registration visibility", () => {
     expect(attendeeSignUpEmailPrefill(`a@${"x".repeat(251)}.test`)).toBe("");
   });
 
-  it("keeps only a private local management path through account authentication", () => {
+  it("rejects external and non-management return destinations", () => {
     expect(attendeeAuthReturnPath("/manage/private-token_123")).toBe(
       "/manage/private-token_123",
     );
@@ -202,5 +203,44 @@ describe("Women’s Retreat registration visibility", () => {
     )).toBe("/manage/private-token");
     expect(takeAttendeeAuthReturnPath()).toBe("/manage/private-token");
     expect(takeAttendeeAuthReturnPath()).toBeNull();
+  });
+
+  it("removes the fragment while preserving the path and query", () => {
+    let visibleUrl = "/account/sign-in?source=registration#email=retreat%40example.test";
+    const state = { navigation: "account" };
+    vi.stubGlobal("window", {
+      history: {
+        state,
+        replaceState: (nextState: unknown, _unused: string, url: string) => {
+          expect(nextState).toBe(state);
+          visibleUrl = url;
+        },
+      },
+      location: {
+        pathname: "/account/sign-in",
+        search: "?source=registration",
+      },
+    });
+
+    removeAttendeeAuthFragment();
+
+    expect(visibleUrl).toBe("/account/sign-in?source=registration");
+  });
+
+  it.each([
+    ["expired", JSON.stringify({ path: "/manage/private-token", expiresAt: 999 })],
+    ["malformed", "not-json"],
+  ])("rejects %s attendee return session data", (_name, stored) => {
+    const values = new Map([["imsda_attendee_auth_return", stored]]);
+    vi.spyOn(Date, "now").mockReturnValue(1_000);
+    vi.stubGlobal("window", {
+      sessionStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        removeItem: (key: string) => values.delete(key),
+      },
+    });
+
+    expect(takeAttendeeAuthReturnPath()).toBeNull();
+    expect(values.size).toBe(0);
   });
 });

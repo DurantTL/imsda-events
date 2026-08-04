@@ -7,6 +7,7 @@ import { Eye, EyeOff, LogIn } from "lucide-react";
 import {
   attendeeAuthReturnPathFromHash,
   attendeeSignUpEmailPrefill,
+  removeAttendeeAuthFragment,
   takeAttendeeAuthReturnPath,
 } from "@/modules/attendee-accounts/sign-up-prefill";
 
@@ -24,6 +25,7 @@ export function AttendeeSignInForm() {
     const fragment = new URLSearchParams(window.location.hash.slice(1));
     const email = attendeeSignUpEmailPrefill(fragment.get("email") ?? undefined);
     if (email && emailRef.current) emailRef.current.value = email;
+    removeAttendeeAuthFragment();
   }, []);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -99,7 +101,10 @@ export function AttendeeAuthReturn() {
   const router = useRouter();
 
   useEffect(() => {
-    attendeeAuthReturnPathFromHash(window.location.hash);
+    if (window.location.hash) {
+      attendeeAuthReturnPathFromHash(window.location.hash);
+      removeAttendeeAuthFragment();
+    }
     const returnTo = takeAttendeeAuthReturnPath();
     if (returnTo) router.replace(returnTo);
   }, [router]);

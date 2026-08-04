@@ -41,6 +41,14 @@ export function attendeeAuthReturnPathFromHash(hash: string) {
   return rememberAttendeeAuthReturnPath(parameters.get("returnTo"));
 }
 
+export function removeAttendeeAuthFragment() {
+  window.history.replaceState(
+    window.history.state,
+    "",
+    `${window.location.pathname}${window.location.search}`,
+  );
+}
+
 export function takeAttendeeAuthReturnPath() {
   const raw = window.sessionStorage.getItem(ATTENDEE_AUTH_RETURN_KEY);
   window.sessionStorage.removeItem(ATTENDEE_AUTH_RETURN_KEY);
