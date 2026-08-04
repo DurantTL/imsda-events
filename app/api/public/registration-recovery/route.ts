@@ -23,6 +23,7 @@ const requestSchema = z.discriminatedUnion("action", [
     clientRequestId: z.uuid(),
     confirmationCode: z.string().trim().min(1).max(80),
     email: z.string().trim().email().max(160),
+    returnTo: z.string().trim().min(1).max(2048).optional(),
   }),
   z.strictObject({
     action: z.literal("email"),
@@ -42,6 +43,31 @@ const SAME_ANSWER = {
   ok: true as const,
   message: "If those details match an active registration, a new private link is on its way.",
 };
+
+function registrationManageDestination(
+  request: Request,
+  managePath: string,
+  returnTo: string | undefined,
+) {
+  if (!returnTo) return managePath;
+  const requestUrl = new URL(request.url);
+  let destination: URL;
+  try {
+    destination = new URL(returnTo, requestUrl.origin);
+  } catch {
+    return null;
+  }
+  if (
+    destination.origin !== requestUrl.origin
+    || destination.username
+    || destination.password
+  ) return null;
+  const match = destination.pathname.match(
+    /^\/manage(?:\/[A-Za-z0-9_-]{43})?(\/.*)?$/,
+  );
+  if (!match) return null;
+  return `${managePath}${match[1] ?? ""}${destination.search}${destination.hash}`;
+}
 
 function json(
   body: unknown,
@@ -73,16 +99,38 @@ async function postHandler(request: Request) {
     }
 
     if (input.action === "access") {
-      const access = await establishRegistrationAccess(input);
+      if (
+        input.returnTo
+        && !registrationManageDestination(
+          request,
+          "/manage/validated-token",
+          input.returnTo,
+        )
+      ) {
+        return json({
+          error: "INVALID_RETURN_DESTINATION",
+          message: "The requested registration destination is not available.",
+        }, { status: 400 }, rateLimit);
+      }
+      const access = await establishRegistrationAccess({
+        clientRequestId: input.clientRequestId,
+        confirmationCode: input.confirmationCode,
+        email: input.email,
+      });
       if (!access) {
         return json({
           error: "REGISTRATION_ACCESS_UNAVAILABLE",
           message: "We could not open a registration with those details. Check both fields or request a private link by email.",
         }, { status: 401 }, rateLimit);
       }
+      const managePath = registrationManageDestination(
+        request,
+        access.managePath,
+        input.returnTo,
+      );
       return json({
         ok: true,
-        managePath: access.managePath,
+        managePath: managePath!,
         expiresAt: access.expiresAt.toISOString(),
       }, undefined, rateLimit);
     }

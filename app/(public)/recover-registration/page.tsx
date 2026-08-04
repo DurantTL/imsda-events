@@ -10,7 +10,15 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false, nocache: true },
 };
 
-export default function RecoverRegistrationPage() {
+export default async function RecoverRegistrationPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ returnTo?: string | string[] }>;
+}) {
+  const requestedReturnTo = (await searchParams).returnTo;
+  const returnTo = typeof requestedReturnTo === "string"
+    ? requestedReturnTo
+    : undefined;
   return (
     <main className="auth-page">
       <section className="auth-card">
@@ -27,7 +35,7 @@ export default function RecoverRegistrationPage() {
             no longer have the code.
           </p>
         </div>
-        <PublicRegistrationRecoveryForm />
+        <PublicRegistrationRecoveryForm returnTo={returnTo} />
       </section>
     </main>
   );

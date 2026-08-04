@@ -1,13 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { LockKeyhole, MailCheck } from "lucide-react";
 
-export function PublicRegistrationRecoveryForm() {
+export function PublicRegistrationRecoveryForm({
+  returnTo,
+}: {
+  returnTo?: string;
+}) {
   const [busy, setBusy] = useState<"access" | "email" | null>(null);
   const [error, setError] = useState("");
   const [requested, setRequested] = useState(false);
+  const requestIds = useRef<Record<"access" | "email", {
+    fingerprint: string;
+    id: string;
+  } | null>>({ access: null, email: null });
 
   async function submit(
     event: React.FormEvent<HTMLFormElement>,
@@ -17,26 +25,45 @@ export function PublicRegistrationRecoveryForm() {
     setBusy(action);
     setError("");
     const form = new FormData(event.currentTarget);
+    const email = String(form.get("email") ?? "").trim().toLowerCase();
+    const confirmationCode = action === "access"
+      ? String(form.get("confirmationCode") ?? "").trim().toUpperCase()
+      : "";
+    const fingerprint = [email, confirmationCode, action === "access" ? returnTo ?? "" : ""]
+      .join("\u0000");
+    if (requestIds.current[action]?.fingerprint !== fingerprint) {
+      requestIds.current[action] = {
+        fingerprint,
+        id: crypto.randomUUID(),
+      };
+    }
+    const clientRequestId = requestIds.current[action]!.id;
     try {
       const response = await fetch("/api/public/registration-recovery", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action,
-          clientRequestId: crypto.randomUUID(),
+          clientRequestId,
           ...(action === "access"
-            ? { confirmationCode: form.get("confirmationCode") }
+            ? { confirmationCode, ...(returnTo ? { returnTo } : {}) }
             : {}),
-          email: form.get("email"),
+          email,
         }),
       });
-      const result = await response.json().catch(() => ({}));
+      const result = await response.json();
       if (!response.ok) {
+        requestIds.current[action] = null;
         throw new Error(result.message ?? "The recovery request could not be submitted.");
       }
       if (action === "access") {
+        if (typeof result.managePath !== "string") {
+          throw new Error("The recovery request could not be completed.");
+        }
+        requestIds.current.access = null;
         window.location.assign(result.managePath);
       } else {
+        requestIds.current.email = null;
         setRequested(true);
       }
     } catch (caught) {

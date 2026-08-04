@@ -131,6 +131,7 @@ export async function prepareEmailBodyForDelivery(
     expiresAt: input.templateKey === "REGISTRATION_ACCESS_RECOVERY"
       ? registrationRecoveryAccessExpiry(input.now)
       : undefined,
+    renewExpired: input.templateKey === "REGISTRATION_ACCESS_RECOVERY",
   });
   const manageUrl = new URL(access.managePath, appBaseUrl).toString();
   // One token serves both the page a registrant opens and the pass image their

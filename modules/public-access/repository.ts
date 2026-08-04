@@ -8,7 +8,6 @@ import { attendeePassExpiry } from "@/modules/checkin/attendee-pass-token";
 import {
   editableAttendeeFields,
 } from "@/modules/attendee-accounts/registration-answer-policy";
-import { matchingRegistrationIdsForVerifiedEmail } from "@/modules/attendee-accounts/registrations-repository";
 import { updateTieredRegistrationAnswersWithClient } from "@/modules/attendee-accounts/answer-update-repository";
 import {
   enqueueRegistrationAccessRecoveryMessage,
@@ -39,6 +38,14 @@ import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 export { REGISTRATION_MANAGE_LINK_SENTINEL } from "@/modules/communications/manage-link";
 
 type RegistrationAccessClient = Prisma.TransactionClient | PrismaClient;
+
+const REGISTRATION_CONTACT_EMAIL_SQL = Prisma.sql`
+  lower(coalesce(
+    nullif(trim(registration."contactSnapshot"->>'email'), ''),
+    person."normalizedEmail",
+    ''
+  ))
+`;
 
 const registrationAccessInclude = {
   registration: {
@@ -524,6 +531,22 @@ async function loadActiveAccessRecord(
   return access;
 }
 
+async function findStableRecord(
+  client: RegistrationAccessClient,
+  token: string,
+) {
+  return client.registrationAccessToken.findUnique({
+    where: { tokenHash: hashOpaqueToken(token) },
+    select: {
+      id: true,
+      registrationId: true,
+      purpose: true,
+      expiresAt: true,
+      revokedAt: true,
+    },
+  });
+}
+
 /**
  * Transaction-friendly issuance hook for a newly created registration.
  *
@@ -641,7 +664,10 @@ export async function issueRegistrationAccessToken(
  */
 export async function issueStableRegistrationAccessToken(
   client: RegistrationAccessClient,
-  input: IssueRegistrationAccessTokenInput & { deliveryKey: string },
+  input: IssueRegistrationAccessTokenInput & {
+    deliveryKey: string;
+    renewExpired?: boolean;
+  },
 ) {
   if (!input.deliveryKey.trim() || input.deliveryKey.length > 240) {
     throw new RegistrationAccessIssueError(
@@ -650,22 +676,36 @@ export async function issueStableRegistrationAccessToken(
     );
   }
   const now = input.now ?? new Date();
-  const candidates = stableRegistrationAccessTokens(input.deliveryKey);
-  for (const candidate of candidates) {
-    const existing = await findStableExisting(
-      client,
-      input.registrationId,
-      candidate,
-      now,
-    );
-    if (existing) return existing;
+  let deliveryKey = input.deliveryKey;
+  for (let generation = 0; generation < 5; generation += 1) {
+    const candidates = stableRegistrationAccessTokens(deliveryKey);
+    let expiredAt: Date | null = null;
+    for (const candidate of candidates) {
+      const existing = await findStableRecord(client, candidate);
+      if (!existing) continue;
+      if (
+        existing.registrationId !== input.registrationId
+        || existing.purpose !== "MANAGE_REGISTRATION"
+        || existing.revokedAt
+      ) {
+        throw stableTokenUnavailable();
+      }
+      if (existing.expiresAt.getTime() > now.getTime()) {
+        return issuedAccess(candidate, existing.id, existing.expiresAt);
+      }
+      expiredAt = existing.expiresAt;
+    }
+    if (!expiredAt || !input.renewExpired) {
+      return issueRegistrationAccessTokenValue(
+        client,
+        input,
+        candidates[0],
+        true,
+      );
+    }
+    deliveryKey = `${input.deliveryKey}:renewed:${expiredAt.toISOString()}`;
   }
-  return issueRegistrationAccessTokenValue(
-    client,
-    input,
-    candidates[0],
-    true,
-  );
+  throw stableTokenUnavailable();
 }
 
 export async function createRegistrationAccessToken(
@@ -677,7 +717,10 @@ export async function createRegistrationAccessToken(
 }
 
 export async function createStableRegistrationAccessToken(
-  input: IssueRegistrationAccessTokenInput & { deliveryKey: string },
+  input: IssueRegistrationAccessTokenInput & {
+    deliveryKey: string;
+    renewExpired?: boolean;
+  },
 ) {
   return getPrisma().$transaction((tx) => (
     issueStableRegistrationAccessToken(tx, input)
@@ -692,36 +735,30 @@ export async function establishRegistrationAccess(input: {
   const confirmationCode = input.confirmationCode.trim().toUpperCase();
   const email = input.email.trim().toLowerCase();
   return getPrisma().$transaction(async (tx) => {
-    const candidates = await tx.registration.findMany({
-      where: {
-        confirmationCode: { equals: confirmationCode, mode: "insensitive" },
-        status: { in: ["SUBMITTED", "CONFIRMED", "WAITLISTED"] },
-      },
-      select: {
-        id: true,
-        contactSnapshot: true,
-        accountHolderPerson: {
-          select: {
-            firstName: true,
-            lastName: true,
-            normalizedEmail: true,
-            phone: true,
+    const matches = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT registration."id"
+      FROM "Registration" registration
+      JOIN "Person" person ON person."id" = registration."accountHolderPersonId"
+      WHERE upper(trim(registration."confirmationCode")) = ${confirmationCode}
+        AND registration."status" IN ('SUBMITTED', 'CONFIRMED', 'WAITLISTED')
+        AND ${REGISTRATION_CONTACT_EMAIL_SQL} = ${email}
+      FOR UPDATE
+    `);
+    if (matches.length !== 1) {
+      await tx.auditLog.create({
+        data: {
+          action: "REGISTRATION_ACCESS_REQUEST_FAILED",
+          entityType: "RegistrationAccessRecovery",
+          correlationId: input.clientRequestId,
+          summary: "A direct private registration access request did not match one active registration.",
+          metadata: {
+            matched: false,
+            rawIdentifiersStored: false,
           },
         },
-      },
-    });
-    const matches = candidates.filter((registration) => (
-      publicContactFromSnapshot(
-        registration.contactSnapshot,
-        {
-          firstName: registration.accountHolderPerson.firstName,
-          lastName: registration.accountHolderPerson.lastName,
-          email: registration.accountHolderPerson.normalizedEmail ?? "",
-          phone: registration.accountHolderPerson.phone ?? "",
-        },
-      ).email === email
-    ));
-    if (matches.length !== 1) return null;
+      });
+      return null;
+    }
     const now = new Date();
     return issueStableRegistrationAccessToken(tx, {
       registrationId: matches[0].id,
@@ -737,18 +774,18 @@ export async function requestRegistrationAccessRecovery(input: {
   clientRequestId: string;
 }) {
   const email = input.email.trim().toLowerCase();
-  const registrationIds = await matchingRegistrationIdsForVerifiedEmail(email);
   return getPrisma().$transaction(async (tx) => {
-    const matches = await tx.registration.findMany({
-      where: {
-        id: { in: registrationIds },
-        status: { in: ["SUBMITTED", "CONFIRMED", "WAITLISTED"] },
-      },
-      select: {
-        id: true,
-        eventId: true,
-      },
-    });
+    const matches = await tx.$queryRaw<Array<{
+      id: string;
+      eventId: string;
+    }>>(Prisma.sql`
+      SELECT registration."id", registration."eventId"
+      FROM "Registration" registration
+      JOIN "Person" person ON person."id" = registration."accountHolderPersonId"
+      WHERE registration."status" IN ('SUBMITTED', 'CONFIRMED', 'WAITLISTED')
+        AND ${REGISTRATION_CONTACT_EMAIL_SQL} = ${email}
+      FOR UPDATE
+    `);
     if (matches.length === 0) {
       await tx.auditLog.create({
         data: {

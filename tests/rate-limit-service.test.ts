@@ -69,7 +69,7 @@ describe("rate-limit subject privacy", () => {
     const rules = batches.flat();
     const serializedRules = JSON.stringify(rules);
 
-    expect(rules).toHaveLength(11);
+    expect(rules).toHaveLength(15);
     expect(rules.map((entry) => entry.policy)).toEqual([
       "auth.login.account",
       "auth.login.client-account",
@@ -77,8 +77,12 @@ describe("rate-limit subject privacy", () => {
       "public.manage.update.token",
       "public.manage.update.client-token",
       "registration.code-access.client",
-      "registration.code-access.subject",
-      "registration.code-access.client-subject",
+      "registration.code-access.email",
+      "registration.code-access.code",
+      "registration.code-access.pair",
+      "registration.code-access.client-email",
+      "registration.code-access.client-code",
+      "registration.code-access.client-pair",
       "registration.recovery.client",
       "registration.recovery.subject",
       "registration.recovery.client-subject",

@@ -265,8 +265,18 @@ export async function checkRegistrationCodeAccessRateLimit(
 ) {
   const configuration = getRateLimitConfiguration();
   const { client } = requestIdentities(request, configuration);
-  const recoverySubject = hashRateLimitIdentifier(
-    "registration-code-access",
+  const email = hashRateLimitIdentifier(
+    "registration-code-access-email",
+    input.email.trim().toLowerCase(),
+    configuration,
+  );
+  const confirmationCode = hashRateLimitIdentifier(
+    "registration-code-access-code",
+    input.confirmationCode.trim().toUpperCase(),
+    configuration,
+  );
+  const pair = hashRateLimitIdentifier(
+    "registration-code-access-pair",
     `${input.confirmationCode.trim().toUpperCase()}\u0000${input.email.trim().toLowerCase()}`,
     configuration,
   );
@@ -278,16 +288,40 @@ export async function checkRegistrationCodeAccessRateLimit(
       identifierHashes: [client],
     },
     {
-      policy: "registration.code-access.subject",
-      limit: 3,
+      policy: "registration.code-access.email",
+      limit: 5,
       windowSeconds: oneHour,
-      identifierHashes: [recoverySubject],
+      identifierHashes: [email],
     },
     {
-      policy: "registration.code-access.client-subject",
+      policy: "registration.code-access.code",
+      limit: 5,
+      windowSeconds: oneHour,
+      identifierHashes: [confirmationCode],
+    },
+    {
+      policy: "registration.code-access.pair",
       limit: 3,
       windowSeconds: oneHour,
-      identifierHashes: [client, recoverySubject],
+      identifierHashes: [pair],
+    },
+    {
+      policy: "registration.code-access.client-email",
+      limit: 3,
+      windowSeconds: oneHour,
+      identifierHashes: [client, email],
+    },
+    {
+      policy: "registration.code-access.client-code",
+      limit: 3,
+      windowSeconds: oneHour,
+      identifierHashes: [client, confirmationCode],
+    },
+    {
+      policy: "registration.code-access.client-pair",
+      limit: 3,
+      windowSeconds: oneHour,
+      identifierHashes: [client, pair],
     },
   ], configuration);
 }

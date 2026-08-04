@@ -1542,6 +1542,7 @@ select:focus-visible {
 .auth-heading h1 { margin: 3px 0 7px; color: var(--ink); font-size: 1.75rem; line-height: 1.15; }
 .auth-heading > p:not(.eyebrow) { margin: 0; color: var(--muted); font-size: 0.75rem; line-height: 1.6; }
 .auth-form { display: grid; gap: 15px; }
+.auth-form + .auth-form { margin-top: 20px; }
 .auth-form > label { display: grid; gap: 6px; color: var(--ink); font-size: 0.7rem; font-weight: 700; }
 .auth-form input:not([type="checkbox"]) { width: 100%; border: 1px solid #c7d8df; border-radius: 11px; background: #fbfcfd; color: var(--ink); padding: 11px 12px; outline: 0; }
 .auth-form input:focus { border-color: var(--imsda-purple); box-shadow: 0 0 0 3px rgba(88, 44, 131, 0.1); }

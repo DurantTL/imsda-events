@@ -97,8 +97,59 @@ describe("public registration recovery route", () => {
       expect.any(Request),
       input,
     );
-    expect(mocks.establishRegistrationAccess).toHaveBeenCalledWith(input);
+    expect(mocks.establishRegistrationAccess).toHaveBeenCalledWith({
+      clientRequestId: input.clientRequestId,
+      confirmationCode: input.confirmationCode,
+      email: input.email,
+    });
     expect(mocks.requestRegistrationAccessRecovery).not.toHaveBeenCalled();
+  });
+
+  it("preserves only a same-origin registration-management destination", async () => {
+    const priorToken = "a".repeat(43);
+    mocks.establishRegistrationAccess.mockResolvedValue({
+      managePath: "/manage/private-token",
+      expiresAt: new Date("2026-08-03T18:30:00.000Z"),
+    });
+
+    const response = await POST(request({
+      action: "access",
+      clientRequestId: "11746b10-b007-43f1-80f0-d2956e03dca7",
+      confirmationCode: "REG-PRIVATE",
+      email: "guest@example.test",
+      returnTo: `https://events.imsda.test/manage/${priorToken}/payment?step=card#balance`,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      managePath: "/manage/private-token/payment?step=card#balance",
+    });
+    expect(mocks.establishRegistrationAccess).toHaveBeenCalledWith({
+      clientRequestId: "11746b10-b007-43f1-80f0-d2956e03dca7",
+      confirmationCode: "REG-PRIVATE",
+      email: "guest@example.test",
+    });
+  });
+
+  it.each([
+    "https://attacker.example/manage/" + "a".repeat(43),
+    "javascript:alert(1)",
+    "/account",
+    "https://user:password@events.imsda.test/manage/" + "a".repeat(43),
+  ])("rejects unsafe return destination %s before issuing access", async (returnTo) => {
+    const response = await POST(request({
+      action: "access",
+      clientRequestId: "e701a698-97f8-4f58-967d-840b185f9c6d",
+      confirmationCode: "REG-PRIVATE",
+      email: "guest@example.test",
+      returnTo,
+    }));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: "INVALID_RETURN_DESTINATION",
+    });
+    expect(mocks.establishRegistrationAccess).not.toHaveBeenCalled();
   });
 
   it("returns one failure response for invalid or mismatched direct access", async () => {
