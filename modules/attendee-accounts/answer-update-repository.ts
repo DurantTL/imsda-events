@@ -113,6 +113,7 @@ export async function updateTieredRegistrationAnswersWithClient(
           attendeeId: string;
           name: string;
           responses: Record<string, unknown>;
+          lockedFieldKeys: string[];
         }>;
       }),
       pendingMessageIds: [] as string[],
@@ -140,12 +141,39 @@ export async function updateTieredRegistrationAnswersWithClient(
     registration.event.attendeeEditPolicy,
   );
   const editableKeys = new Set(editable.map((field) => field.key));
-  const seminarKeys = new Set(
-    definition.sections
-      .flatMap((section) => section.fields)
-      .filter(isSeminarPreferenceField)
-      .map((field) => field.key),
-  );
+  const seminarFields = definition.sections
+    .flatMap((section) => section.fields)
+    .filter(isSeminarPreferenceField);
+  const seminarKeys = new Set(seminarFields.map((field) => field.key));
+  const lockedAssignments = seminarKeys.size > 0
+    ? await tx.programAttendeeAssignment.findMany({
+        where: {
+          attendeeIdSnapshot: { in: registration.attendees.map((attendee) => attendee.id) },
+          outcome: "ASSIGNED",
+          optionValue: { not: null },
+          run: {
+            eventId: registration.eventId,
+            formVersionId: submission.formVersionId,
+            fieldKeySnapshot: { in: [...seminarKeys] },
+            invalidatedAt: null,
+            supersededBy: { none: {} },
+          },
+        },
+        select: {
+          attendeeIdSnapshot: true,
+          run: { select: { fieldKeySnapshot: true } },
+        },
+      })
+    : [];
+  const assignmentLocks = new Map<string, Set<string>>();
+  for (const assignment of lockedAssignments) {
+    const locked = assignmentLocks.get(assignment.attendeeIdSnapshot) ?? new Set<string>();
+    locked.add(assignment.run.fieldKeySnapshot);
+    assignmentLocks.set(assignment.attendeeIdSnapshot, locked);
+  }
+  const lockedFieldKeys = (attendeeId: string) => editable
+    .filter((field) => assignmentLocks.get(attendeeId)?.has(field.key))
+    .map((field) => field.key);
   const currentById = new Map(
     registration.attendees.map((attendee) => [attendee.id, attendee]),
   );
@@ -201,26 +229,6 @@ export async function updateTieredRegistrationAnswersWithClient(
           "Seminar preference self-service is closed. Contact the event team for help.",
         );
       }
-      const lockedAssignments = await tx.programAttendeeAssignment.findMany({
-        where: {
-          attendeeIdSnapshot: {
-            in: prepared
-              .filter((update) => update.changedKeys.some((key) => seminarKeys.has(key)))
-              .map((update) => update.attendee.id),
-          },
-          run: {
-            eventId: registration.eventId,
-            formVersionId: submission.formVersionId,
-            fieldKeySnapshot: { in: changedSeminarFields },
-            invalidatedAt: null,
-            supersededBy: { none: {} },
-          },
-        },
-        select: {
-          attendeeIdSnapshot: true,
-          run: { select: { fieldKeySnapshot: true } },
-        },
-      });
       if (lockedAssignments.some((assignment) => prepared.some((update) => (
         update.attendee.id === assignment.attendeeIdSnapshot
         && update.changedKeys.includes(assignment.run.fieldKeySnapshot)
@@ -248,6 +256,13 @@ export async function updateTieredRegistrationAnswersWithClient(
         formVersionId: submission.formVersionId,
         fieldKeySnapshot: { in: changedFields },
         invalidatedAt: null,
+        assignments: {
+          none: {
+            attendeeIdSnapshot: { in: registration.attendees.map((attendee) => attendee.id) },
+            outcome: "ASSIGNED",
+            optionValue: { not: null },
+          },
+        },
       },
       data: { invalidatedAt: input.now },
     });
@@ -262,6 +277,7 @@ export async function updateTieredRegistrationAnswersWithClient(
         responses: Object.fromEntries(
           Object.entries(update.responses).filter(([key]) => editableKeys.has(key)),
         ),
+        lockedFieldKeys: lockedFieldKeys(update.attendee.id),
       })),
     };
     const queued = changedSeminarFields.length > 0
@@ -271,6 +287,22 @@ export async function updateTieredRegistrationAnswersWithClient(
           correlationId: input.clientRequestId,
           transitionKey: `seminar-preferences:${input.clientRequestId}`,
           changeCategory: "SEMINAR_PREFERENCES",
+          seminarPreferences: prepared.map((update) => ({
+            attendeeName: publicAttendeeName(
+              update.attendee.profileSnapshot,
+              update.attendee.person,
+            ),
+            seminarLabels: seminarFields.flatMap((field) => {
+              const value = update.responses[field.key];
+              return Array.isArray(value)
+                ? value.flatMap((label) => (
+                    typeof label === "string" && field.options.includes(label)
+                      ? [label]
+                      : []
+                  ))
+                : [];
+            }),
+          })),
         })
       : { pendingMessageIds: [] as string[] };
     await tx.auditLog.create({
@@ -331,6 +363,7 @@ export async function updateTieredRegistrationAnswersWithClient(
       responses: Object.fromEntries(
         Object.entries(update.responses).filter(([key]) => editableKeys.has(key)),
       ),
+      lockedFieldKeys: lockedFieldKeys(update.attendee.id),
     })),
     pendingMessageIds: [] as string[],
   };

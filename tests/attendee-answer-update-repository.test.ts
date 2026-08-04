@@ -129,6 +129,13 @@ describe("tiered attendee answer updates", () => {
         formVersionId: "form-version-1",
         fieldKeySnapshot: { in: ["session_preferences"] },
         invalidatedAt: null,
+        assignments: {
+          none: {
+            attendeeIdSnapshot: { in: ["attendee-1"] },
+            outcome: "ASSIGNED",
+            optionValue: { not: null },
+          },
+        },
       },
       data: { invalidatedAt: now },
     });
@@ -162,6 +169,10 @@ describe("tiered attendee answer updates", () => {
       expect.objectContaining({
         changeCategory: "SEMINAR_PREFERENCES",
         transitionKey: "seminar-preferences:a2f15c6b-c2e7-45fe-8d49-e8e8e80d41de",
+        seminarPreferences: [{
+          attendeeName: "Retreat Guest",
+          seminarLabels: ["Service", "Prayer"],
+        }],
       }),
     );
   });
@@ -227,7 +238,7 @@ describe("tiered attendee answer updates", () => {
     })).rejects.toMatchObject({ code: "SEMINAR_PREFERENCES_LOCKED" });
   });
 
-  it("blocks an active final assignment but treats no assignment as unassigned", async () => {
+  it("blocks an active assigned outcome but keeps an UNASSIGNED outcome editable", async () => {
     const { registration, tx } = fixture();
     tx.programAttendeeAssignment.findMany.mockResolvedValue([{
       attendeeIdSnapshot: "attendee-1",
@@ -250,8 +261,24 @@ describe("tiered attendee answer updates", () => {
       },
     })).rejects.toMatchObject({ code: "FINAL_ASSIGNMENT_LOCKED" });
     expect(tx.registrationAttendee.update).not.toHaveBeenCalled();
+    expect(tx.programAttendeeAssignment.findMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        outcome: "ASSIGNED",
+        optionValue: { not: null },
+      }),
+      select: expect.any(Object),
+    });
 
-    tx.programAttendeeAssignment.findMany.mockResolvedValue([]);
+    tx.programAttendeeAssignment.findMany.mockImplementation(async (args: {
+      where: { outcome?: string; optionValue?: { not: null } };
+    }) => (
+      args.where.outcome === "ASSIGNED" && args.where.optionValue?.not === null
+        ? []
+        : [{
+            attendeeIdSnapshot: "attendee-1",
+            run: { fieldKeySnapshot: "session_preferences" },
+          }]
+    ));
     await expect(updateTieredRegistrationAnswersWithClient(tx as never, {
       registrationId: registration.id,
       clientRequestId: "251c971a-e0f1-4086-ad4d-6bafcd28c8af",
@@ -300,6 +327,55 @@ describe("tiered attendee answer updates", () => {
     });
     expect(tx.registrationAttendee.update).toHaveBeenCalledOnce();
     expect(enqueueRegistrationUpdatedMessage).toHaveBeenCalledOnce();
+  });
+
+  it("retains assigned locks when an editable attendee saves seminar preferences", async () => {
+    const { registration, tx } = fixture();
+    registration.attendees.push({
+      id: "attendee-2",
+      formResponses: {
+        session_preferences: ["Prayer", "Service"],
+        immutable_protected_answer: "second-private-answer",
+      },
+      profileSnapshot: { firstName: "Second", lastName: "Guest" },
+      person: { firstName: "Second", lastName: "Person" },
+    });
+    tx.programAttendeeAssignment.findMany.mockResolvedValue([{
+      attendeeIdSnapshot: "attendee-1",
+      run: { fieldKeySnapshot: "session_preferences" },
+    }]);
+
+    const result = await updateTieredRegistrationAnswersWithClient(tx as never, {
+      registrationId: registration.id,
+      clientRequestId: "8f32f746-8669-4400-a126-b78310aa842a",
+      expectedUpdatedAt: registration.updatedAt.toISOString(),
+      attendees: [{
+        attendeeId: "attendee-1",
+        responses: { session_preferences: ["Prayer", "Service"] },
+      }, {
+        attendeeId: "attendee-2",
+        responses: { session_preferences: ["Service", "Prayer"] },
+      }],
+      now: new Date("2026-08-10T15:00:00.000Z"),
+      audit: {
+        action: "PRIVATE_LINK_ANSWERS_UPDATED",
+        summary: () => "Private choices changed.",
+        metadata: { source: "PRIVATE_MANAGE_LINK" },
+      },
+    });
+
+    expect(result?.attendees).toEqual([
+      expect.objectContaining({
+        attendeeId: "attendee-1",
+        lockedFieldKeys: ["session_preferences"],
+      }),
+      expect.objectContaining({
+        attendeeId: "attendee-2",
+        lockedFieldKeys: [],
+        responses: { session_preferences: ["Service", "Prayer"] },
+      }),
+    ]);
+    expect(tx.registrationAttendee.update).toHaveBeenCalledOnce();
   });
 
   it("accepts excess ranked interest when assignment room capacity is full", async () => {

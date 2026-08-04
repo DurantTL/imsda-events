@@ -446,7 +446,41 @@ describe("private registration access repository", () => {
 
   it("resolves an active link with only policy-approved answers and no protected details", async () => {
     const token = createOpaqueToken();
-    const findUnique = vi.fn().mockResolvedValue(accessRecord());
+    const record = accessRecord();
+    record.registration.attendees.push({
+      id: "attendee-2",
+      formResponses: {
+        shirt_size: "Adult M",
+        session_preferences: ["Service", "Prayer"],
+        medical_note: "SECOND-PRIVATE-MEDICAL",
+      },
+      profileSnapshot: {
+        firstName: "Second",
+        lastName: "Guest",
+        email: "second-private@example.test",
+      },
+      person: { firstName: "Second", lastName: "Person" },
+    });
+    (record.registration.event.programAssignmentRuns as Array<{
+      fieldKeySnapshot: string;
+      assignments: Array<{
+        attendeeIdSnapshot: string;
+        outcome: "ASSIGNED" | "UNASSIGNED";
+        optionValue: string | null;
+      }>;
+    }>).push({
+      fieldKeySnapshot: "session_preferences",
+      assignments: [{
+        attendeeIdSnapshot: "attendee-1",
+        outcome: "ASSIGNED",
+        optionValue: "Prayer",
+      }, {
+        attendeeIdSnapshot: "attendee-2",
+        outcome: "UNASSIGNED",
+        optionValue: null,
+      }],
+    });
+    const findUnique = vi.fn().mockResolvedValue(record);
     const client = {
       registrationAccessToken: { findUnique },
     };
@@ -478,6 +512,11 @@ describe("private registration access repository", () => {
         name: "Retreat Guest",
         shirtSize: "Adult L",
         shirtSizeConfirmedAt: null,
+      }, {
+        id: "attendee-2",
+        name: "Second Guest",
+        shirtSize: "Adult M",
+        shirtSizeConfirmedAt: null,
       }],
       payment: {
         totalCents: 25_000,
@@ -495,8 +534,15 @@ describe("private registration access repository", () => {
         fields: [{ key: "session_preferences" }],
         attendees: [{
           attendeeId: "attendee-1",
+          lockedFieldKeys: ["session_preferences"],
           responses: {
             session_preferences: ["Prayer", "Service"],
+          },
+        }, {
+          attendeeId: "attendee-2",
+          lockedFieldKeys: [],
+          responses: {
+            session_preferences: ["Service", "Prayer"],
           },
         }],
       },

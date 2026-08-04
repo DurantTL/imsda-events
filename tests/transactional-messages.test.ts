@@ -85,6 +85,10 @@ function transactionFixture() {
             firstName: "Retreat",
             lastName: "Guest",
           },
+          formResponses: {
+            medical_note: "immutable_protected_answer",
+            arbitrary_answer: "do-not-render",
+          },
           person: {
             firstName: "Canonical",
             lastName: "Person",
@@ -244,12 +248,18 @@ describe("transactional lifecycle messages", () => {
       correlationId: "seminar-update-1",
       transitionKey: "seminar-preferences:operation-1",
       changeCategory: "SEMINAR_PREFERENCES",
+      seminarPreferences: [{
+        attendeeName: "Retreat Guest",
+        seminarLabels: ["Prayer", "Service"],
+      }],
     });
 
     const message = queuedMessage(upsert);
     expect(message.create.bodyTextSnapshot).toContain("Seminar preferences");
-    expect(JSON.stringify(message.create)).not.toContain("Prayer");
-    expect(JSON.stringify(message.create)).not.toContain("Service");
+    expect(message.create.bodyTextSnapshot).toContain("Retreat Guest: Prayer, Service");
+    expect(message.create.bodyHtmlSnapshot).toContain("Retreat Guest: Prayer, Service");
+    expect(JSON.stringify(message.create)).not.toContain("immutable_protected_answer");
+    expect(JSON.stringify(message.create)).not.toContain("do-not-render");
 
     expect(() => enqueueRegistrationUpdatedMessage(tx as never, {
       eventId: "event-1",

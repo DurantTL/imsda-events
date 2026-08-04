@@ -328,7 +328,13 @@ export async function listRegistrationsForVerifiedEmail(
             },
             select: {
               fieldKeySnapshot: true,
-              assignments: { select: { attendeeIdSnapshot: true } },
+              assignments: {
+                select: {
+                  attendeeIdSnapshot: true,
+                  outcome: true,
+                  optionValue: true,
+                },
+              },
             },
           },
         },
@@ -392,6 +398,7 @@ export async function listRegistrationsForVerifiedEmail(
     const assignmentLocks = new Map<string, Set<string>>();
     for (const run of registration.event.programAssignmentRuns) {
       for (const assignment of run.assignments) {
+        if (assignment.outcome !== "ASSIGNED" || assignment.optionValue === null) continue;
         const locked = assignmentLocks.get(assignment.attendeeIdSnapshot) ?? new Set<string>();
         locked.add(run.fieldKeySnapshot);
         assignmentLocks.set(assignment.attendeeIdSnapshot, locked);

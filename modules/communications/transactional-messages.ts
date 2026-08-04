@@ -46,6 +46,10 @@ type TransactionalMessageInput = {
   announcementTitle?: string;
   announcementBody?: string;
   changeCategory?: RegistrationUpdateCategory;
+  seminarPreferences?: Array<{
+    attendeeName: string;
+    seminarLabels: string[];
+  }>;
   metadata?: Record<string, string | number | boolean | null>;
 };
 
@@ -382,6 +386,11 @@ async function enqueueTransactionalMessage(
     change_category: input.changeCategory
       ? registrationUpdateCategoryLabels[input.changeCategory]
       : "Registration details",
+    seminar_preferences: input.seminarPreferences
+      ?.map((attendee) => (
+        `${attendee.attendeeName}: ${attendee.seminarLabels.join(", ")}`
+      ))
+      .join("\n") ?? "",
   };
   const rendered = renderMessageTemplate(
     {
@@ -495,6 +504,9 @@ export function enqueueRegistrationUpdatedMessage(
 ) {
   if (!registrationUpdateCategoryLabels[input.changeCategory]) {
     throw new Error("That registration update category is not permitted in a confirmation message.");
+  }
+  if (input.changeCategory === "SEMINAR_PREFERENCES" && !input.seminarPreferences) {
+    throw new Error("Seminar preference labels are required in a confirmation message.");
   }
   return enqueueTransactionalMessage(tx, {
     ...input,

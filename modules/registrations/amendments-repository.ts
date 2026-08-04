@@ -1131,6 +1131,26 @@ export async function amendRegistration(
             changeCategory: prepared.seminarPreferencesChanged
               ? "SEMINAR_PREFERENCES"
               : "REGISTRATION_DETAILS",
+            seminarPreferences: prepared.seminarPreferencesChanged
+              ? prepared.prepared.attendees.map((attendee) => ({
+                  attendeeName: attendee.identity
+                    ? `${attendee.identity.firstName} ${attendee.identity.lastName}`.trim()
+                    : "Attendee",
+                  seminarLabels: prepared.definition.sections
+                    .flatMap((section) => section.fields)
+                    .filter(isSeminarPreferenceField)
+                    .flatMap((field) => {
+                      const value = attendee.responses[field.key];
+                      return Array.isArray(value)
+                        ? value.flatMap((label) => (
+                            typeof label === "string" && field.options.includes(label)
+                              ? [label]
+                              : []
+                          ))
+                        : [];
+                    }),
+                }))
+              : undefined,
           });
           response.pendingMessageIds = queued.pendingMessageIds;
         }
