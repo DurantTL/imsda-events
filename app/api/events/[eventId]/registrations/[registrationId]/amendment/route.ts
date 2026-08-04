@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AccessDeniedError, requirePermission } from "@/modules/access/authorization";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
+import { processQueuedMessageIdsAfterCommit } from "@/modules/communications/messaging-repository";
 import { findActiveMembership } from "@/modules/events/repository";
 import {
   amendRegistration,
@@ -104,7 +105,7 @@ async function postHandler(
         { status: 200, headers: noStoreHeaders },
       );
     }
-    const result = await amendRegistration(
+    const { pendingMessageIds, ...result } = await amendRegistration(
       eventId,
       registrationId,
       input,
@@ -113,6 +114,11 @@ async function postHandler(
         displayName: access.user.displayName,
       },
     );
+    try {
+      await processQueuedMessageIdsAfterCommit(pendingMessageIds);
+    } catch (error) {
+      logError("Registration update notice processing failed after commit", error);
+    }
     return Response.json(result, {
       status: 200,
       headers: noStoreHeaders,

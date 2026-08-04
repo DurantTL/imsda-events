@@ -204,6 +204,7 @@ function contextFor(fixture: EventFixture, registration: RegistrationFixture): M
     waitlist_position: waitlisted ? "3" : "Not waitlisted",
     contact_email: fixture.contactEmail,
     registration_contact_email: `${registration.confirmationCode.toLowerCase()}@example.test`,
+    change_category: "Seminar preferences",
     payment_amount: paid ? "$125.00" : "$0.00",
     payment_reference: `demo-${registration.confirmationCode.toLowerCase()}`,
     prior_person_name: "Prior Demo Attendee",

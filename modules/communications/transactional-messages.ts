@@ -22,6 +22,7 @@ type TransactionalTemplateKey =
   | "WAITLIST_PROMOTED"
   | "REGISTRATION_CANCELLED"
   | "REGISTRATION_CONTACT_UPDATED"
+  | "REGISTRATION_UPDATED"
   | "REGISTRATION_TRANSFERRED_NEW_CONTACT"
   | "REGISTRATION_TRANSFERRED_PRIOR_CONTACT"
   | "ATTENDEE_SUBSTITUTED"
@@ -44,7 +45,17 @@ type TransactionalMessageInput = {
   newPersonName?: string;
   announcementTitle?: string;
   announcementBody?: string;
+  changeCategory?: RegistrationUpdateCategory;
   metadata?: Record<string, string | number | boolean | null>;
+};
+
+export type RegistrationUpdateCategory =
+  | "REGISTRATION_DETAILS"
+  | "SEMINAR_PREFERENCES";
+
+const registrationUpdateCategoryLabels: Record<RegistrationUpdateCategory, string> = {
+  REGISTRATION_DETAILS: "Registration details",
+  SEMINAR_PREFERENCES: "Seminar preferences",
 };
 
 export type QueuedTransactionalMessage = {
@@ -368,6 +379,9 @@ async function enqueueTransactionalMessage(
     new_person_name: input.newPersonName?.trim() || "Replacement attendee",
     announcement_title: input.announcementTitle?.trim() || "Event update",
     announcement_body: input.announcementBody?.trim() || "Open your registration for the latest event information.",
+    change_category: input.changeCategory
+      ? registrationUpdateCategoryLabels[input.changeCategory]
+      : "Registration details",
   };
   const rendered = renderMessageTemplate(
     {
@@ -470,6 +484,24 @@ export function enqueueRegistrationContactUpdatedMessage(
   return enqueueTransactionalMessage(tx, {
     ...input,
     templateKey: "REGISTRATION_CONTACT_UPDATED",
+  });
+}
+
+export function enqueueRegistrationUpdatedMessage(
+  tx: Prisma.TransactionClient,
+  input: Omit<TransactionalMessageInput, "templateKey" | "changeCategory" | "metadata"> & {
+    changeCategory: RegistrationUpdateCategory;
+  },
+) {
+  if (!registrationUpdateCategoryLabels[input.changeCategory]) {
+    throw new Error("That registration update category is not permitted in a confirmation message.");
+  }
+  return enqueueTransactionalMessage(tx, {
+    ...input,
+    templateKey: "REGISTRATION_UPDATED",
+    metadata: {
+      changeCategory: input.changeCategory,
+    },
   });
 }
 
