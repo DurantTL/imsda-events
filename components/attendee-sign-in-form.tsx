@@ -2,8 +2,14 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Eye, EyeOff, LogIn } from "lucide-react";
+import {
+  attendeeAuthReturnPathFromHash,
+  attendeeSignUpEmailPrefill,
+  removeAttendeeAuthFragment,
+  takeAttendeeAuthReturnPath,
+} from "@/modules/attendee-accounts/sign-up-prefill";
 
 /** Password sign-in for a registrant. Staff sign in at `/login` instead. */
 export function AttendeeSignInForm() {
@@ -11,6 +17,16 @@ export function AttendeeSignInForm() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const emailRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!window.location.hash) return;
+    attendeeAuthReturnPathFromHash(window.location.hash);
+    const fragment = new URLSearchParams(window.location.hash.slice(1));
+    const email = attendeeSignUpEmailPrefill(fragment.get("email") ?? undefined);
+    if (email && emailRef.current) emailRef.current.value = email;
+    removeAttendeeAuthFragment();
+  }, []);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -25,7 +41,7 @@ export function AttendeeSignInForm() {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message ?? "Unable to sign in.");
-      router.replace("/account");
+      router.replace(takeAttendeeAuthReturnPath() ?? "/account");
       router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to sign in.");
@@ -37,7 +53,14 @@ export function AttendeeSignInForm() {
     <form className="auth-form" onSubmit={submit}>
       <label>
         Email address
-        <input name="email" type="email" autoComplete="username" required maxLength={254} />
+        <input
+          name="email"
+          type="email"
+          autoComplete="username"
+          required
+          maxLength={254}
+          ref={emailRef}
+        />
       </label>
       <label>
         Password
@@ -72,4 +95,19 @@ export function AttendeeSignInForm() {
       </p>
     </form>
   );
+}
+
+export function AttendeeAuthReturn() {
+  const router = useRouter();
+
+  useEffect(() => {
+    if (window.location.hash) {
+      attendeeAuthReturnPathFromHash(window.location.hash);
+      removeAttendeeAuthFragment();
+    }
+    const returnTo = takeAttendeeAuthReturnPath();
+    if (returnTo) router.replace(returnTo);
+  }, [router]);
+
+  return null;
 }

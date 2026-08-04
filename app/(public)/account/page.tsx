@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 import { AttendeeSignOutButton } from "@/components/attendee-sign-out-button";
+import { AttendeeAuthReturn } from "@/components/attendee-sign-in-form";
 import { AttendeeProfileForm } from "@/components/attendee-profile-form";
 import { AttendeeRegistrationContactForm } from "@/components/attendee-registration-contact-form";
 import { AttendeeRegistrationAnswersForm } from "@/components/attendee-registration-answers-form";
@@ -154,6 +155,7 @@ export default async function AttendeeAccountPage() {
 
   return (
     <main className="public-registration-page public-manage-page">
+      <AttendeeAuthReturn />
       <header className="public-registration-header">
         <div className="public-registration-header-inner">
           <a
