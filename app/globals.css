@@ -6166,7 +6166,14 @@ select:focus-visible {
 .attendee-answer-ranking { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .attendee-answer-ranking > legend,
 .attendee-answer-ranking > small { grid-column: 1 / -1; }
-.attendee-answer-ranking > label { display: grid; gap: 5px; }
+.attendee-answer-ranking > label { display: grid; gap: 5px; min-width: 0; }
+.attendee-answer-ranking > label > select {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .attendee-answer-check { grid-column: 1 / -1; display: flex !important; gap: 9px !important; align-items: flex-start; border-radius: 10px; background: #f7fafb; padding: 12px; }
 .attendee-answer-check span { display: grid; gap: 2px; }
 .attendee-answer-grid small { color: var(--muted); font-size: 0.61rem; line-height: 1.45; }
