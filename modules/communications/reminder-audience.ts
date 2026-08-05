@@ -19,6 +19,12 @@ export type BalanceReminderCandidate = {
 
 export type BalanceReminderPreviewContext = {
   eventId: string;
+  /**
+   * A deferred-organization event never creates an attendee balance — its
+   * recorded amount is the responsible organization's estimated rate — so
+   * every candidate is skipped before the status/balance checks below.
+   */
+  isDeferredOrganizationBilling?: boolean;
   deliveryMode: MessagingSettingsRecord["deliveryMode"];
   senderName: string;
   senderEmail: string | null;
@@ -41,6 +47,7 @@ const skipReasonLabels: Record<BalanceReminderSkipReasonCode, string> = {
   INACTIVE_REGISTRATION: "Not submitted or confirmed",
   NO_BALANCE_DUE: "No balance is due",
   INVALID_CONTACT_EMAIL: "Missing or invalid contact email",
+  ORGANIZATION_BILLED: "Event bills the responsible organization, not the attendee",
 };
 
 function normalizedEmail(value: string) {
@@ -85,11 +92,16 @@ export function computeBalanceReminderPreview(
     INACTIVE_REGISTRATION: 0,
     NO_BALANCE_DUE: 0,
     INVALID_CONTACT_EMAIL: 0,
+    ORGANIZATION_BILLED: 0,
   };
 
   for (const candidate of [...candidates].sort((left, right) => (
     left.registrationId.localeCompare(right.registrationId)
   ))) {
+    if (context.isDeferredOrganizationBilling) {
+      skipCounts.ORGANIZATION_BILLED += 1;
+      continue;
+    }
     if (candidate.status !== "SUBMITTED" && candidate.status !== "CONFIRMED") {
       skipCounts.INACTIVE_REGISTRATION += 1;
       continue;

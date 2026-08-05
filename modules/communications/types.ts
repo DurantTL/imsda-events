@@ -1,6 +1,7 @@
 export type MessageTemplateKeyValue =
   | "REGISTRATION_CONFIRMATION_PAID"
   | "REGISTRATION_CONFIRMATION_UNPAID"
+  | "REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED"
   | "WORKER_CONFIRMATION"
   | "INTERNAL_NEW_REGISTRATION"
   | "WAITLIST_JOINED"
@@ -126,7 +127,8 @@ export type MessagingWorkspaceData = {
 export type BalanceReminderSkipReasonCode =
   | "INACTIVE_REGISTRATION"
   | "NO_BALANCE_DUE"
-  | "INVALID_CONTACT_EMAIL";
+  | "INVALID_CONTACT_EMAIL"
+  | "ORGANIZATION_BILLED";
 
 export type BalanceReminderRecipient = {
   registrationId: string;

@@ -74,6 +74,7 @@ const normalizedEventPayload = {
   hotelInstructions: undefined,
   seminarPreferenceClosesOn: null,
   seminarPreferenceSelfServiceLocked: false,
+  billingMode: "ATTENDEE_PAY",
 };
 
 function eventRequest(

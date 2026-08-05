@@ -86,6 +86,7 @@ type PublicEvent = {
   timezone: string;
   location: string | null;
   capacity: number | null;
+  billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE";
 };
 
 type PublicForm = {
@@ -287,6 +288,7 @@ export function PublicRegistrationForm({
     ? { target: "_blank" as const, rel: "noopener noreferrer" }
     : {};
   const joiningWaitlist = lifecycle.capacityDecision === "WAITLIST";
+  const deferredOrganizationBilling = event.billingMode === "DEFERRED_ORGANIZATION_INVOICE";
   const roster = useMemo(() => getAttendeeRosterConfig(definition), [definition]);
   const rosterEnabled = roster.enabled;
   const allFields = useMemo(
@@ -1624,7 +1626,7 @@ export function PublicRegistrationForm({
 
         <section className="public-registration-review-card public-registration-review-order">
           <p className="public-registration-eyebrow">
-            {joiningWaitlist ? "Estimated cost" : "Price & fees"}
+            {joiningWaitlist ? "Estimated cost" : deferredOrganizationBilling ? "Estimated rate" : "Price & fees"}
           </p>
           <h3>
             {joiningWaitlist ? "If space becomes available" : "Registration total"}
@@ -1660,7 +1662,7 @@ export function PublicRegistrationForm({
                 </div>
               )}
               <div className="is-total">
-                <span>{joiningWaitlist ? "Estimated if promoted" : "Total"}</span>
+                <span>{joiningWaitlist ? "Estimated if promoted" : deferredOrganizationBilling ? "Estimated total" : "Total"}</span>
                 <strong>
                   {money(
                     joiningWaitlist
@@ -1678,6 +1680,11 @@ export function PublicRegistrationForm({
           {joiningWaitlist && (
             <p className="public-registration-review-waitlist">
               No payment is collected for this waitlist request.
+            </p>
+          )}
+          {!joiningWaitlist && deferredOrganizationBilling && (
+            <p className="public-registration-review-waitlist">
+              No payment is due online. Your organization will be billed later based on final attendance.
             </p>
           )}
         </section>
@@ -1950,8 +1957,13 @@ export function PublicRegistrationForm({
                 </div>
               )}
               <div><dt>{waitlisted ? "Estimate date" : "Pricing date"}</dt><dd>{formatPricingDate(confirmation.pricingDate)}</dd></div>
-              <div><dt>{waitlisted ? "Estimated total if promoted" : "Total recorded"}</dt><dd>{money(confirmation.totalCents)}</dd></div>
+              <div><dt>{waitlisted ? "Estimated total if promoted" : deferredOrganizationBilling ? "Estimated total" : "Total recorded"}</dt><dd>{money(confirmation.totalCents)}</dd></div>
             </dl>
+            {!waitlisted && deferredOrganizationBilling && (
+              <p className="public-registration-review-waitlist">
+                No payment is due online. Your organization will be billed later based on final attendance.
+              </p>
+            )}
             {rosterEnabled && confirmation.attendeeNames.length > 0 && (
               <section className="public-registration-confirmation-attendees" aria-label="Registered attendees">
                 <h2>{waitlisted ? "Waitlisted attendees" : "Registered attendees"}</h2>
@@ -1960,7 +1972,7 @@ export function PublicRegistrationForm({
             )}
             {confirmation.lineItems.length > 0 && (
               <section className="public-registration-confirmation-order" aria-label="Recorded order">
-                <h2>{waitlisted ? "Estimated order if promoted" : "Recorded order"}</h2>
+                <h2>{waitlisted ? "Estimated order if promoted" : deferredOrganizationBilling ? "Estimated order" : "Recorded order"}</h2>
                 {confirmation.lineItems.map((item) => (
                   <div key={item.key}><span>{item.label}{item.pricingLabel && <small>{item.pricingLabel}</small>}</span><strong>{money(item.amountCents)}</strong></div>
                 ))}
@@ -1972,7 +1984,7 @@ export function PublicRegistrationForm({
                   </>
                 )}
                 {confirmation.processingFeeCents > 0 && <div><span>Card processing</span><strong>{money(confirmation.processingFeeCents)}</strong></div>}
-                <div className="is-total"><span>Total</span><strong>{money(confirmation.totalCents)}</strong></div>
+                <div className="is-total"><span>{deferredOrganizationBilling ? "Estimated total" : "Total"}</span><strong>{money(confirmation.totalCents)}</strong></div>
               </section>
             )}
             {confirmation.managePath && (
@@ -2166,7 +2178,7 @@ export function PublicRegistrationForm({
           {currentStep.isReview && (
             <section className="public-registration-submit-card">
               <div><ShieldCheck size={21} aria-hidden="true" /><span><strong>Server-verified registration</strong><small>Pricing and remaining capacity are checked again when you submit.</small></span></div>
-              {cardSelected && !joiningWaitlist && <p>Submitting saves the registration first. Your private registration page will then offer secure Square checkout when Sandbox or Production payments are configured.</p>}
+              {cardSelected && !joiningWaitlist && !deferredOrganizationBilling && <p>Submitting saves the registration first. Your private registration page will then offer secure Square checkout when Sandbox or Production payments are configured.</p>}
               <button type="submit" disabled={submitting}>
                 <ClipboardCheck size={19} aria-hidden="true" /> {submitting ? "Submitting…" : joiningWaitlist ? "Join waitlist" : "Submit registration"}
               </button>
@@ -2191,11 +2203,11 @@ export function PublicRegistrationForm({
                 </>
               )}
               {calculation.processingFeeCents > 0 && <div><span>Card processing</span><strong>{money(calculation.processingFeeCents)}</strong></div>}
-              <div className="is-total"><span>{joiningWaitlist ? "Estimated if promoted" : "Total"}</span><strong>{money(joiningWaitlist ? calculation.subtotalCents : calculation.totalCents)}</strong></div>
+              <div className="is-total"><span>{joiningWaitlist ? "Estimated if promoted" : deferredOrganizationBilling ? "Estimated total" : "Total"}</span><strong>{money(joiningWaitlist ? calculation.subtotalCents : calculation.totalCents)}</strong></div>
             </div>
           )}
           <small className="public-registration-pricing-date">Pricing verified for {formatPricingDate(pricingDate)}</small>
-          <div className="public-registration-summary-note">{joiningWaitlist ? <Clock3 size={15} aria-hidden="true" /> : <LockKeyhole size={15} aria-hidden="true" />}<span>{joiningWaitlist ? "This estimate is not charged while you are on the waitlist." : "Final pricing and availability are confirmed securely on submission."}</span></div>
+          <div className="public-registration-summary-note">{joiningWaitlist ? <Clock3 size={15} aria-hidden="true" /> : <LockKeyhole size={15} aria-hidden="true" />}<span>{joiningWaitlist ? "This estimate is not charged while you are on the waitlist." : deferredOrganizationBilling ? "No payment is due online. Your organization will be billed later based on final attendance." : "Final pricing and availability are confirmed securely on submission."}</span></div>
         </aside>
       </form>
     </main>

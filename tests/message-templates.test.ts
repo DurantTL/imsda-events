@@ -31,10 +31,11 @@ void _keysAreTemplateKeyValues;
 void _templateKeyValuesAreKeys;
 
 describe("message templates", () => {
-  it("ships seventeen valid plaintext defaults", () => {
+  it("ships eighteen valid plaintext defaults", () => {
     expect(MESSAGE_TEMPLATE_KEYS).toEqual([
       "REGISTRATION_CONFIRMATION_PAID",
       "REGISTRATION_CONFIRMATION_UNPAID",
+      "REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED",
       "WORKER_CONFIRMATION",
       "INTERNAL_NEW_REGISTRATION",
       "WAITLIST_JOINED",
@@ -51,7 +52,7 @@ describe("message templates", () => {
       "REGISTRATION_ACCESS_RECOVERY",
       "EVENT_ANNOUNCEMENT",
     ]);
-    expect(DEFAULT_MESSAGE_TEMPLATE_LIST).toHaveLength(17);
+    expect(DEFAULT_MESSAGE_TEMPLATE_LIST).toHaveLength(18);
 
     for (const key of MESSAGE_TEMPLATE_KEYS) {
       const template = DEFAULT_MESSAGE_TEMPLATES[key];
@@ -152,6 +153,23 @@ describe("message templates", () => {
     expect(
       selectRegistrationMessageTemplate({ isWorker: false, balanceCents: -100 }),
     ).toBe("REGISTRATION_CONFIRMATION_PAID");
+  });
+
+  it("selects the organization-billed confirmation ahead of worker or balance state", () => {
+    expect(
+      selectRegistrationMessageTemplate({
+        isWorker: false,
+        balanceCents: 12_500,
+        isDeferredOrganizationBilling: true,
+      }),
+    ).toBe("REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED");
+    expect(
+      selectRegistrationMessageTemplate({
+        isWorker: true,
+        balanceCents: 0,
+        isDeferredOrganizationBilling: true,
+      }),
+    ).toBe("REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED");
   });
 
   it("renders an optional block as nothing instead of stopping the send", () => {

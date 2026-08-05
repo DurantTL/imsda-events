@@ -173,6 +173,24 @@ describe("balance-reminder repository", () => {
     expect(mocks.processExternalEmailQueue).not.toHaveBeenCalled();
   });
 
+  it("never previews a balance reminder for a deferred-organization-billing event", async () => {
+    const tx = baseTransaction();
+    tx.event.findUnique.mockResolvedValue({
+      ...event,
+      billingMode: "DEFERRED_ORGANIZATION_INVOICE",
+    });
+    mocks.getPrisma.mockReturnValue(prismaFor(tx));
+
+    const preview = await getBalanceReminderPreview("event-1");
+
+    expect(preview.includedCount).toBe(0);
+    expect(preview.recipients).toEqual([]);
+    expect(preview.skipReasons).toContainEqual(expect.objectContaining({
+      code: "ORGANIZATION_BILLED",
+      count: 1,
+    }));
+  });
+
   it("replays an audited batch before recomputing and rejects reuse with another fingerprint", async () => {
     const tx = baseTransaction();
     tx.auditLog.findFirst.mockResolvedValue({

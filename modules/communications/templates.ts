@@ -3,6 +3,7 @@ import { escapeMarkdown, renderEmailBodyHtml } from "@/modules/communications/em
 export const MESSAGE_TEMPLATE_KEYS = [
   "REGISTRATION_CONFIRMATION_PAID",
   "REGISTRATION_CONFIRMATION_UNPAID",
+  "REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED",
   "WORKER_CONFIRMATION",
   "INTERNAL_NEW_REGISTRATION",
   "WAITLIST_JOINED",
@@ -137,6 +138,7 @@ export type MessageTemplateDefinition = {
 export const DEFAULT_MESSAGE_TEMPLATE_NAMES: Readonly<Record<MessageTemplateKey, string>> = {
   REGISTRATION_CONFIRMATION_PAID: "Paid registration confirmation",
   REGISTRATION_CONFIRMATION_UNPAID: "Unpaid registration confirmation",
+  REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED: "Organization-billed registration confirmation",
   WORKER_CONFIRMATION: "Worker registration confirmation",
   INTERNAL_NEW_REGISTRATION: "Internal new registration notice",
   WAITLIST_JOINED: "Waitlist joined confirmation",
@@ -161,6 +163,8 @@ export const DEFAULT_MESSAGE_TEMPLATE_DESCRIPTIONS: Readonly<
     "Sent to a registrant whose recorded balance is paid in full.",
   REGISTRATION_CONFIRMATION_UNPAID:
     "Sent to a registrant who still has a balance or payment step to complete.",
+  REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED:
+    "Sent for a registration on a deferred-organization-billing event. States that no payment is due online and the responsible organization will be billed later.",
   WORKER_CONFIRMATION:
     "Sent for a worker registration, regardless of the current recorded balance.",
   INTERNAL_NEW_REGISTRATION:
@@ -200,6 +204,8 @@ export const DEFAULT_MESSAGE_TEMPLATE_SUBJECTS: Readonly<
     "Registration confirmed: {{event_name}} ({{confirmation_code}})",
   REGISTRATION_CONFIRMATION_UNPAID:
     "Registration received — balance due for {{event_name}}",
+  REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED:
+    "Registration received: {{event_name}} ({{confirmation_code}})",
   WORKER_CONFIRMATION: "Worker registration received: {{event_name}}",
   INTERNAL_NEW_REGISTRATION:
     "New registration: {{event_name}} — {{confirmation_code}}",
@@ -271,6 +277,31 @@ export const DEFAULT_MESSAGE_TEMPLATE_BODIES: Readonly<Record<MessageTemplateKey
     "{{attendee_summary}}",
     "",
     "**[View, pay, or edit your registration]({{portal_url}})**",
+    "",
+    "{{payment_status_block}}",
+    "",
+    "{{hotel_information}}",
+    "",
+    "---",
+    "",
+    "Questions? Contact {{contact_email}}.",
+  ].join("\n"),
+  REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED: [
+    "# We received your registration for {{event_name}}",
+    "",
+    "Hello {{recipient_name}},",
+    "",
+    "Your registration is recorded. This event bills the responsible organization directly — do not send payment yourself.",
+    "",
+    "### Your registration",
+    "",
+    "- **Confirmation code:** {{confirmation_code}}",
+    "- **Dates:** {{event_dates}}",
+    "- **Location:** {{event_location}}",
+    "",
+    "{{attendee_summary}}",
+    "",
+    "**[View or update this registration]({{portal_url}})**",
     "",
     "{{payment_status_block}}",
     "",
@@ -975,7 +1006,11 @@ export function renderMessageTemplate(
 export function selectRegistrationMessageTemplate(input: {
   isWorker: boolean;
   balanceCents: number;
+  isDeferredOrganizationBilling?: boolean;
 }): MessageTemplateKey {
+  // A deferred-organization event never creates an attendee balance, so its
+  // whole payment framing differs regardless of worker status.
+  if (input.isDeferredOrganizationBilling) return "REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED";
   if (input.isWorker) return "WORKER_CONFIRMATION";
   return input.balanceCents > 0
     ? "REGISTRATION_CONFIRMATION_UNPAID"

@@ -193,6 +193,43 @@ export const registrationFormDefinitionSchema = z.object({
   }
 });
 
+/**
+ * Best-effort read of the club/church running a deferred-organization
+ * registration, from whatever registration-level answer already names it.
+ * There is no relational link from a registration to an organization record,
+ * so this reads the same well-known response keys the Spring Camporee
+ * template already collects rather than requiring a new one.
+ */
+export function resolveResponsibleOrganization(responses: Record<string, unknown>): string | null {
+  const explicit = typeof responses.responsible_organization === "string"
+    ? responses.responsible_organization.trim()
+    : "";
+  if (explicit) return explicit;
+  const clubName = typeof responses.club_name === "string" ? responses.club_name.trim() : "";
+  if (clubName && clubName !== "Other") return clubName;
+  const clubNameOther = typeof responses.club_name_other === "string" ? responses.club_name_other.trim() : "";
+  if (clubNameOther) return clubNameOther;
+  const churchName = typeof responses.church_name === "string" ? responses.church_name.trim() : "";
+  if (churchName && churchName !== "Other") return churchName;
+  return null;
+}
+
+/**
+ * Best-effort read of the deferred-organization billing contact, separate
+ * from the registration submitter's own contact identity. Same rationale as
+ * `resolveResponsibleOrganization`: no relational billing-contact record
+ * exists, so this reads the well-known response key the Spring Camporee
+ * template already collects.
+ */
+export function resolveBillingContactName(responses: Record<string, unknown>): string | null {
+  const explicit = typeof responses.billing_contact_name === "string"
+    ? responses.billing_contact_name.trim()
+    : "";
+  if (explicit) return explicit;
+  const directorName = typeof responses.director_name === "string" ? responses.director_name.trim() : "";
+  return directorName || null;
+}
+
 export type RegistrationFormDefinition = z.infer<typeof registrationFormDefinitionSchema>;
 export type RegistrationFormField = z.infer<typeof formFieldSchema>;
 export type ChoiceUsage = Record<string, Record<string, { total: number; first: number; second: number }>>;

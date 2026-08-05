@@ -83,6 +83,7 @@ function registration() {
     confirmationCode: "REG-ONE",
     status: "CONFIRMED",
     totalAmount: 100,
+    event: { billingMode: "ATTENDEE_PAY" },
     contactSnapshot: {
       firstName: "Test",
       lastName: "Registrant",
@@ -228,6 +229,22 @@ describe("Square payment repository", () => {
       },
     });
     expect(JSON.stringify(checkout)).not.toContain("sandbox-access-token");
+  });
+
+  it("never offers online card payment for a deferred-organization-billing event, even if the form has a payment field", async () => {
+    const client = transactionClient();
+    client.registration.findUnique.mockResolvedValue({
+      ...registration(),
+      event: { billingMode: "DEFERRED_ORGANIZATION_INVOICE" },
+    });
+
+    const checkout = await getPublicSquareCheckout("a".repeat(43), {
+      client: client as never,
+      configuration,
+    });
+
+    expect(checkout).toMatchObject({ state: "NOT_ELIGIBLE" });
+    expect(checkout?.square).toBeNull();
   });
 
   it("requires an explicit choice after promotion and quotes both totals", async () => {

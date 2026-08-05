@@ -130,6 +130,7 @@ export type PublicRegistrationExperience = {
     registrationOpensOn: string | null;
     registrationClosesOn: string | null;
     waitlistEnabled: boolean;
+    billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE";
   };
   form: {
     slug: string;
@@ -160,6 +161,7 @@ const publicEventSelect = {
   registrationOpensOn: true,
   registrationClosesOn: true,
   waitlistEnabled: true,
+  billingMode: true,
 } satisfies Prisma.EventSelect;
 
 function publishedFormQuery(eventSlug: string, formSlug: string) {
@@ -424,6 +426,7 @@ export async function getPublicRegistrationExperience(eventSlug: string, formSlu
       registrationOpensOn: form.event.registrationOpensOn,
       registrationClosesOn: form.event.registrationClosesOn,
       waitlistEnabled: form.event.waitlistEnabled,
+      billingMode: form.event.billingMode,
     },
     form: { slug: form.slug, versionId: version.id, versionNumber: version.versionNumber, definition },
     choiceUsage: usageFromReservations(definition, reservations),
@@ -505,6 +508,15 @@ async function createPublicRegistrationTransaction(
   }
 
   const definition = definitionFromJson(version.definition);
+  if (form.event.billingMode === "DEFERRED_ORGANIZATION_INVOICE" && definition.payment?.enabled) {
+    // A deferred-organization event must never create an attendee balance or
+    // online payment. This form should never have been published with a
+    // payment block enabled for such an event, so treat it as a
+    // misconfiguration rather than silently taking a card payment.
+    throw new Error(
+      `Registration form ${form.slug} has card payment enabled for a deferred-organization-billing event. Disable payment on the form or change the event's billing mode.`
+    );
+  }
   const requestHash = submissionHash(input);
   const replay = await findExistingConfirmation(tx, version.id, input.idempotencyKey, requestHash, definition);
   if (replay) return replay;

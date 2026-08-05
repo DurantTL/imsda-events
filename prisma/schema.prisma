@@ -121,6 +121,16 @@ enum RegistrationPaymentChoice {
   PAY_LATER
 }
 
+/// ATTENDEE_PAY is the existing behavior: attendees choose a payment method and
+/// may owe an online balance. DEFERRED_ORGANIZATION_INVOICE is for club/church
+/// group registrations (e.g. Spring Camporee): no attendee balance or online
+/// payment is created, and the responsible organization is billed later based
+/// on final attendance. See issue #143.
+enum EventBillingMode {
+  ATTENDEE_PAY
+  DEFERRED_ORGANIZATION_INVOICE
+}
+
 enum SquareWebhookEventStatus {
   PROCESSED
   IGNORED
@@ -269,6 +279,7 @@ enum MessageTemplateKey {
   ATTENDEE_EMAIL_VERIFICATION
   ATTENDEE_PASSWORD_RESET
   ATTENDEE_EDIT_VERIFICATION
+  REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED
 }
 
 enum MessageTemplateStatus {
@@ -842,6 +853,7 @@ model Event {
   /// renaming it turned collection off without telling anyone.
   collectsShirtSizes   Boolean            @default(false)
   attendeeEditPolicy   AttendeeEditPolicy @default(VERIFY_EVERY_EDIT)
+  billingMode          EventBillingMode   @default(ATTENDEE_PAY)
   seminarPreferenceClosesOn          String?
   seminarPreferenceSelfServiceLocked Boolean @default(false)
   /// Lodging for this event, rendered into messages through the

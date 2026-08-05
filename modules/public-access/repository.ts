@@ -73,6 +73,7 @@ const registrationAccessInclude = {
           supportContact: true,
           collectsShirtSizes: true,
           attendeeEditPolicy: true,
+          billingMode: true,
           seminarPreferenceClosesOn: true,
           seminarPreferenceSelfServiceLocked: true,
           programAssignmentRuns: {
@@ -323,6 +324,7 @@ function serializeRegistrationAccess(
         0,
       ),
     })),
+    isDeferredOrganizationBilling: event.billingMode === "DEFERRED_ORGANIZATION_INVOICE",
   });
   const accountHolder = registration.accountHolderPerson;
   const contact = publicContactFromSnapshot(
