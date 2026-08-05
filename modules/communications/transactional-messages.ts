@@ -334,6 +334,12 @@ async function enqueueTransactionalMessage(
     || settings.replyToEmail
     || settings.senderEmail
     || "the IMSDA event office";
+  const publishedBody = source?.bodyTemplate ?? fallback.body;
+  const bodyTemplate = input.changeCategory === "SEMINAR_PREFERENCES"
+    && input.seminarPreferences
+    && !publishedBody.includes("{{seminar_preferences}}")
+    ? `${publishedBody.trimEnd()}\n\n### Seminar preferences\n\n{{seminar_preferences}}`
+    : publishedBody;
   const context: MessageTemplateContext = {
     recipient_name: recipientName || "Registrant",
     // The person the registration belongs to, which is not always the person
@@ -395,7 +401,7 @@ async function enqueueTransactionalMessage(
   const rendered = renderMessageTemplate(
     {
       subject: source?.subjectTemplate ?? fallback.subject,
-      body: source?.bodyTemplate ?? fallback.body,
+      body: bodyTemplate,
     },
     context,
   );
