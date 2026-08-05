@@ -50,6 +50,7 @@ export const MESSAGE_TEMPLATE_TOKEN_KEYS = [
   "contact_email",
   "registration_contact_email",
   "change_category",
+  "seminar_preferences",
   "payment_amount",
   "payment_reference",
   "prior_person_name",
@@ -84,6 +85,7 @@ export const OPTIONAL_MESSAGE_TEMPLATE_TOKENS: ReadonlySet<MessageTemplateToken>
   "checkin_block",
   "checkin_qr_url",
   "checkin_qr_image",
+  "seminar_preferences",
 ]);
 
 /**
@@ -396,6 +398,8 @@ export const DEFAULT_MESSAGE_TEMPLATE_BODIES: Readonly<Record<MessageTemplateKey
     "",
     "- **Change category:** {{change_category}}",
     "",
+    "{{seminar_preferences}}",
+    "",
     "For your privacy, this confirmation does not include submitted answer values.",
     "",
     "**[Review your registration]({{portal_url}})**",
@@ -641,6 +645,11 @@ export const MESSAGE_TEMPLATE_TOKEN_OPTIONS: readonly {
     description: "The permitted category of registration information that changed.",
   },
   {
+    key: "seminar_preferences",
+    label: "Seminar preferences",
+    description: "Attendee names and resulting seminar labels for a seminar preference update.",
+  },
+  {
     key: "payment_amount",
     label: "Payment amount",
     description: "The amount received for this specific payment.",
@@ -734,6 +743,7 @@ export const SAMPLE_MESSAGE_TEMPLATE_CONTEXT: Readonly<
   contact_email: "registration@example.test",
   registration_contact_email: "avery.johnson@example.test",
   change_category: "Seminar preferences",
+  seminar_preferences: "Avery Johnson: Prayer, Service",
   payment_amount: "$129.05",
   payment_reference: "square-demo-reference",
   prior_person_name: "Jordan Lee",

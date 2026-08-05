@@ -130,9 +130,11 @@ function RegistrationCard({
           initialContact={registration.contact}
         />
       )}
-      {editable && registration.answerEditing.enabled && (
+      {registration.answerEditing.fields.length > 0 && (
         <AttendeeRegistrationAnswersForm
           registrationId={registration.id}
+          description={registration.answerEditing.reason}
+          readOnly={!editable || !registration.answerEditing.enabled}
           initialExpectedUpdatedAt={registration.answerEditing.expectedUpdatedAt}
           fields={registration.answerEditing.fields}
           initialAttendees={registration.answerEditing.attendees}

@@ -5,6 +5,7 @@ import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import {
   editableAttendeeFields,
+  isSeminarPreferenceField,
   type EditableAttendeeField,
 } from "@/modules/attendee-accounts/registration-answer-policy";
 import { updateTieredRegistrationAnswersWithClient } from "@/modules/attendee-accounts/answer-update-repository";
@@ -13,6 +14,7 @@ import {
   processQueuedMessageIdsAfterCommit,
 } from "@/modules/communications/messaging-repository";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
+import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { enqueueRegistrationContactUpdatedMessage } from "@/modules/communications/transactional-messages";
 import { moneyToCents, registrationBalanceCents } from "@/modules/payments/square-domain";
 import {
@@ -191,6 +193,7 @@ export async function updateTieredAttendeeAnswers(input: {
   accountId: string;
   verifiedEmail: string;
   registrationId: string;
+  clientRequestId: string;
   expectedUpdatedAt: string;
   attendees: Array<{
     attendeeId: string;
@@ -199,7 +202,7 @@ export async function updateTieredAttendeeAnswers(input: {
   now?: Date;
 }) {
   const now = input.now ?? new Date();
-  return getPrisma().$transaction(async (tx) => {
+  const result = await getPrisma().$transaction(async (tx) => {
     const owned = await tx.$queryRaw<Array<{
       id: string;
     }>>(Prisma.sql`
@@ -215,6 +218,7 @@ export async function updateTieredAttendeeAnswers(input: {
     if (!ownership) return null;
     return updateTieredRegistrationAnswersWithClient(tx, {
       registrationId: ownership.id,
+      clientRequestId: input.clientRequestId,
       expectedUpdatedAt: input.expectedUpdatedAt,
       attendees: input.attendees,
       now,
@@ -231,6 +235,12 @@ export async function updateTieredAttendeeAnswers(input: {
       },
     });
   });
+  if (!result) return null;
+  await processQueuedMessageIdsAfterCommit(result.pendingMessageIds);
+  return {
+    expectedUpdatedAt: result.expectedUpdatedAt,
+    attendees: result.attendees,
+  };
 }
 
 export type AttendeeRegistrationSummary = {
@@ -263,6 +273,7 @@ export type AttendeeRegistrationSummary = {
       attendeeId: string;
       name: string;
       responses: Record<string, unknown>;
+      lockedFieldKeys: string[];
     }>;
   };
   totalCents: number;
@@ -308,6 +319,24 @@ export async function listRegistrationsForVerifiedEmail(
           timezone: true,
           location: true,
           attendeeEditPolicy: true,
+          seminarPreferenceClosesOn: true,
+          seminarPreferenceSelfServiceLocked: true,
+          programAssignmentRuns: {
+            where: {
+              invalidatedAt: null,
+              supersededBy: { none: {} },
+            },
+            select: {
+              fieldKeySnapshot: true,
+              assignments: {
+                select: {
+                  attendeeIdSnapshot: true,
+                  outcome: true,
+                  optionValue: true,
+                },
+              },
+            },
+          },
         },
       },
       attendees: {
@@ -352,12 +381,47 @@ export async function listRegistrationsForVerifiedEmail(
         )
       : [];
     const answerKeys = new Set(answerFields.map((field) => field.key));
+    const seminarKeys = new Set(
+      parsedDefinition?.success
+        ? parsedDefinition.data.sections
+            .flatMap((section) => section.fields)
+            .filter(isSeminarPreferenceField)
+            .map((field) => field.key)
+        : [],
+    );
+    const seminarSelfServiceClosed = registration.event.seminarPreferenceSelfServiceLocked
+      || Boolean(
+        registration.event.seminarPreferenceClosesOn
+        && calendarDateInEventTimeZone(new Date(), registration.event.timezone)
+          > registration.event.seminarPreferenceClosesOn,
+      );
+    const assignmentLocks = new Map<string, Set<string>>();
+    for (const run of registration.event.programAssignmentRuns) {
+      for (const assignment of run.assignments) {
+        if (assignment.outcome !== "ASSIGNED" || assignment.optionValue === null) continue;
+        const locked = assignmentLocks.get(assignment.attendeeIdSnapshot) ?? new Set<string>();
+        locked.add(run.fieldKeySnapshot);
+        assignmentLocks.set(assignment.attendeeIdSnapshot, locked);
+      }
+    }
+    const lockedFieldKeys = (attendeeId: string) => answerFields
+      .filter((field) => (
+        seminarKeys.has(field.key)
+        && (
+          seminarSelfServiceClosed
+          || assignmentLocks.get(attendeeId)?.has(field.key)
+        )
+      ))
+      .map((field) => field.key);
+    const activeRegistration = registration.status === "SUBMITTED"
+      || registration.status === "CONFIRMED"
+      || registration.status === "WAITLISTED";
     const answerEditingEnabled = (
-      registration.event.attendeeEditPolicy === "TIERED"
+      activeRegistration
       && answerFields.length > 0
-      && (registration.status === "SUBMITTED"
-        || registration.status === "CONFIRMED"
-        || registration.status === "WAITLISTED")
+      && registration.attendees.some((attendee) => (
+        lockedFieldKeys(attendee.id).length < answerFields.length
+      ))
     );
     return {
       id: registration.id,
@@ -395,17 +459,20 @@ export async function listRegistrationsForVerifiedEmail(
       answerEditing: {
         enabled: answerEditingEnabled,
         reason: answerEditingEnabled
-          ? "These event choices can be updated from your verified account."
-          : registration.event.attendeeEditPolicy !== "TIERED"
-            ? "This event requires verification before attendee choices can be changed."
+          ? "Permitted attendee choices can be updated from your verified account."
+          : !activeRegistration
+            ? "This registration is read-only. Contact the event team for help."
             : !registration.publicFormSubmission
               ? "The event team must update this imported registration."
-              : "This registration has no low-risk attendee choices available for self-service.",
+              : seminarSelfServiceClosed || assignmentLocks.size > 0
+                ? "Seminar preference self-service is closed. Contact the event team for help."
+                : "This registration has no attendee choices available for self-service.",
         expectedUpdatedAt: registration.updatedAt.toISOString(),
         fields: answerFields,
         attendees: registration.attendees.map((attendee) => ({
           attendeeId: attendee.id,
           name: publicAttendeeName(attendee.profileSnapshot, attendee.person),
+          lockedFieldKeys: lockedFieldKeys(attendee.id),
           responses: Object.fromEntries(
             Object.entries(recordFromJson(attendee.formResponses))
               .filter(([key]) => answerKeys.has(key)),

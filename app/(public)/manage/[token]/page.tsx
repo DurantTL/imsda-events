@@ -215,11 +215,12 @@ export default async function PublicManagePage({
             />
           )}
 
-          {view.answerEditing.enabled && (
+          {view.answerEditing.fields.length > 0 && (
             <section className="public-manage-card">
               <AttendeeRegistrationAnswersForm
                 answerEndpoint={`/api/public/manage/${encodeURIComponent(token)}/answers`}
                 description={view.answerEditing.reason}
+                readOnly={!view.answerEditing.enabled}
                 fields={view.answerEditing.fields}
                 initialAttendees={view.answerEditing.attendees}
                 initialExpectedUpdatedAt={view.answerEditing.expectedUpdatedAt}

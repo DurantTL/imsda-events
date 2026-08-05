@@ -9,6 +9,7 @@ type EditableAttendee = {
   attendeeId: string;
   name: string;
   responses: Record<string, unknown>;
+  lockedFieldKeys?: string[];
 };
 
 function fieldIsVisible(
@@ -42,6 +43,7 @@ export function AttendeeRegistrationAnswersForm({
   registrationId,
   answerEndpoint,
   description = "These low-risk choices can be updated from your verified account.",
+  readOnly = false,
   initialExpectedUpdatedAt,
   fields,
   initialAttendees,
@@ -49,6 +51,7 @@ export function AttendeeRegistrationAnswersForm({
   registrationId?: string;
   answerEndpoint?: string;
   description?: string;
+  readOnly?: boolean;
   initialExpectedUpdatedAt: string;
   fields: EditableAttendeeField[];
   initialAttendees: EditableAttendee[];
@@ -57,6 +60,7 @@ export function AttendeeRegistrationAnswersForm({
   const [saved, setSaved] = useState(initialAttendees);
   const [attendees, setAttendees] = useState(initialAttendees);
   const [saving, setSaving] = useState(false);
+  const [clientRequestId, setClientRequestId] = useState(() => crypto.randomUUID());
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const dirty = useMemo(() => !valuesEqual(saved, attendees), [attendees, saved]);
@@ -88,6 +92,7 @@ export function AttendeeRegistrationAnswersForm({
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            clientRequestId,
             expectedUpdatedAt,
             attendees: attendees.map((attendee) => ({
               attendeeId: attendee.attendeeId,
@@ -104,6 +109,7 @@ export function AttendeeRegistrationAnswersForm({
       setAttendees(next);
       setSaved(next);
       setExpectedUpdatedAt(result.expectedUpdatedAt);
+      setClientRequestId(crypto.randomUUID());
       setNotice("Attendee choices saved.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The attendee choices could not be saved.");
@@ -129,11 +135,13 @@ export function AttendeeRegistrationAnswersForm({
           <div className="attendee-answer-grid">
             {fields.filter((field) => fieldIsVisible(field, attendee.responses)).map((field) => {
               const value = attendee.responses[field.key];
+              const locked = readOnly || attendee.lockedFieldKeys?.includes(field.key) === true;
               if (field.type === "CHECKBOX") {
                 return (
                   <label className="attendee-answer-check" key={field.id}>
                     <input
                       type="checkbox"
+                      disabled={locked}
                       checked={value === true}
                       onChange={(event) => updateAnswer(
                         attendee.attendeeId,
@@ -148,7 +156,7 @@ export function AttendeeRegistrationAnswersForm({
               if (field.type === "MULTISELECT") {
                 const selected = Array.isArray(value) ? value.map(String) : [];
                 return (
-                  <fieldset className="attendee-answer-options" key={field.id}>
+                  <fieldset className="attendee-answer-options" disabled={locked} key={field.id}>
                     <legend>{field.label}{field.required ? " *" : ""}</legend>
                     {field.options.map((option) => (
                       <label key={option}>
@@ -167,6 +175,7 @@ export function AttendeeRegistrationAnswersForm({
                       </label>
                     ))}
                     {field.helpText && <small>{field.helpText}</small>}
+                    {locked && <small>Contact the event team to change these preferences.</small>}
                   </fieldset>
                 );
               }
@@ -174,7 +183,7 @@ export function AttendeeRegistrationAnswersForm({
                 const selected = Array.isArray(value) ? value.map(String) : [];
                 const slots = field.maxSelections ?? 2;
                 return (
-                  <fieldset className="attendee-answer-ranking" key={field.id}>
+                  <fieldset className="attendee-answer-ranking" disabled={locked} key={field.id}>
                     <legend>{field.label}{field.required ? " *" : ""}</legend>
                     {Array.from({ length: slots }, (_, rank) => (
                       <label key={rank}>
@@ -203,6 +212,7 @@ export function AttendeeRegistrationAnswersForm({
                       </label>
                     ))}
                     {field.helpText && <small>{field.helpText}</small>}
+                    {locked && <small>Contact the event team to change these preferences.</small>}
                   </fieldset>
                 );
               }
@@ -214,6 +224,7 @@ export function AttendeeRegistrationAnswersForm({
                       type="number"
                       min="0"
                       max="100000"
+                      disabled={locked}
                       required={field.required}
                       value={typeof value === "number" || typeof value === "string" ? value : ""}
                       onChange={(event) => updateAnswer(attendee.attendeeId, field.key, event.target.value)}
@@ -227,7 +238,9 @@ export function AttendeeRegistrationAnswersForm({
                   <label htmlFor={`${attendee.attendeeId}_${field.id}`}>
                     {field.label}{field.required ? " *" : ""}
                   </label>
-                  <SearchableSelect
+                  {locked ? (
+                    <input readOnly value={typeof value === "string" ? value : ""} />
+                  ) : <SearchableSelect
                     id={`${attendee.attendeeId}_${field.id}`}
                     required={field.required}
                     value={typeof value === "string" ? value : ""}
@@ -241,8 +254,9 @@ export function AttendeeRegistrationAnswersForm({
                       field.key,
                       nextValue,
                     )}
-                  />
+                  />}
                   {field.helpText && <small>{field.helpText}</small>}
+                  {locked && <small>Contact the event team to change this selection.</small>}
                 </div>
               );
             })}
@@ -252,12 +266,12 @@ export function AttendeeRegistrationAnswersForm({
 
       {error && <p className="form-error" role="alert">{error}</p>}
       {notice && <p className="inline-notice" role="status"><CheckCircle2 size={16} aria-hidden="true" /> {notice}</p>}
-      <div className="form-actions">
+      {!readOnly && <div className="form-actions">
         {dirty && <span className="unsaved-dot" role="status">Unsaved choices</span>}
         <button className="primary-button" type="submit" disabled={!dirty || saving}>
           <Save size={16} aria-hidden="true" /> {saving ? "Saving…" : "Save attendee choices"}
         </button>
-      </div>
+      </div>}
     </form>
   );
 }

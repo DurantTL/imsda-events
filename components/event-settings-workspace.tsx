@@ -78,6 +78,9 @@ function draftFromEvent(event: EventSettingsRecord | null): EventSettingsInput {
     registrationClosesOn: event?.registrationClosesOn ?? null,
     collectsShirtSizes: event?.collectsShirtSizes ?? false,
     attendeeEditPolicy: event?.attendeeEditPolicy ?? "VERIFY_EVERY_EDIT",
+    seminarPreferenceClosesOn: event?.seminarPreferenceClosesOn ?? null,
+    seminarPreferenceSelfServiceLocked:
+      event?.seminarPreferenceSelfServiceLocked ?? false,
     waitlistEnabled: event?.waitlistEnabled ?? false,
     autoPromoteWaitlist: event?.waitlistEnabled
       ? (event.autoPromoteWaitlist ?? false)
@@ -318,6 +321,31 @@ export function EventSettingsWorkspace({
                 code. Medical and club data always require an authenticator.
               </small>
             </label>
+            <div className="form-grid two-column">
+              <label>
+                Seminar preference deadline
+                <input
+                  type="date"
+                  value={draft.seminarPreferenceClosesOn ?? ""}
+                  onChange={(event) => update(
+                    "seminarPreferenceClosesOn",
+                    event.target.value || null,
+                  )}
+                />
+                <small>Holders can update ranked seminar preferences through this date in the event timezone.</small>
+              </label>
+              <label className="event-setting-toggle">
+                <input
+                  type="checkbox"
+                  checked={draft.seminarPreferenceSelfServiceLocked}
+                  onChange={(event) => update(
+                    "seminarPreferenceSelfServiceLocked",
+                    event.target.checked,
+                  )}
+                />
+                <span><strong>Lock seminar preference self-service</strong><small>Current preferences remain visible; staff can still make a documented override.</small></span>
+              </label>
+            </div>
             <label className="event-setting-toggle nested">
               <input
                 type="checkbox"

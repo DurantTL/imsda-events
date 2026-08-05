@@ -55,6 +55,7 @@ beforeEach(() => {
 describe("attendee registration answer route", () => {
   it("passes only a verified attendee identity and validated payload to the repository", async () => {
     const response = await PUT(request({
+      clientRequestId: "bb02cc2c-462b-4c90-a9f4-29f70c4410cc",
       expectedUpdatedAt: "2026-07-29T15:00:00.000Z",
       attendees: [{
         attendeeId: "attendee-1",
@@ -68,6 +69,7 @@ describe("attendee registration answer route", () => {
       accountId: "account-1",
       verifiedEmail: "guest@example.test",
       registrationId: "registration-1",
+      clientRequestId: "bb02cc2c-462b-4c90-a9f4-29f70c4410cc",
       expectedUpdatedAt: "2026-07-29T15:00:00.000Z",
       attendees: [{
         attendeeId: "attendee-1",
@@ -87,6 +89,7 @@ describe("attendee registration answer route", () => {
     });
 
     const response = await PUT(request({
+      clientRequestId: "444441ab-08d3-4c50-b4dc-354c6b15667e",
       expectedUpdatedAt: "2026-07-29T15:00:00.000Z",
       attendees: [{ attendeeId: "attendee-1", responses: {} }],
     }), context);
@@ -101,6 +104,7 @@ describe("attendee registration answer route", () => {
     );
 
     const response = await PUT(request({
+      clientRequestId: "7911e914-40c1-4f1f-84d4-3e6fdde48a8c",
       expectedUpdatedAt: "2026-07-29T15:00:00.000Z",
       attendees: [{ attendeeId: "attendee-1", responses: {} }],
     }), context);

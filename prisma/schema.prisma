@@ -842,6 +842,8 @@ model Event {
   /// renaming it turned collection off without telling anyone.
   collectsShirtSizes   Boolean            @default(false)
   attendeeEditPolicy   AttendeeEditPolicy @default(VERIFY_EVERY_EDIT)
+  seminarPreferenceClosesOn          String?
+  seminarPreferenceSelfServiceLocked Boolean @default(false)
   /// Lodging for this event, rendered into messages through the
   /// `{{hotel_information}}` token. Every field is optional and the block is
   /// omitted entirely when `hotelName` is unset, because most events book no

@@ -62,6 +62,7 @@ beforeEach(() => {
 describe("private registration answer route", () => {
   it("authorizes by private token and passes a validated optimistic update", async () => {
     const input = {
+      clientRequestId: "93bc4ffb-81b1-47cb-888d-693759258938",
       expectedUpdatedAt: "2026-07-30T10:00:00.000Z",
       attendees: [{
         attendeeId: "attendee-1",
@@ -81,6 +82,7 @@ describe("private registration answer route", () => {
   it("rate limits before attempting a private-link update", async () => {
     mocks.checkPublicManageRateLimit.mockResolvedValue(outcome(false));
     const response = await PUT(request({
+      clientRequestId: "df8c41a9-f908-4d73-b38c-900b45acfaef",
       expectedUpdatedAt: "2026-07-30T10:00:00.000Z",
       attendees: [{ attendeeId: "attendee-1", responses: {} }],
     }), context);
@@ -92,6 +94,7 @@ describe("private registration answer route", () => {
   it("returns the same unavailable response for an invalid or expired private link", async () => {
     mocks.updatePublicTieredAttendeeAnswers.mockResolvedValue(null);
     const response = await PUT(request({
+      clientRequestId: "2d340092-e41a-49c1-85d4-a55717324002",
       expectedUpdatedAt: "2026-07-30T10:00:00.000Z",
       attendees: [{ attendeeId: "attendee-1", responses: {} }],
     }), context);

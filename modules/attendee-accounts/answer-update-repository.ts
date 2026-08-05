@@ -1,12 +1,15 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import {
   AttendeeAnswerUpdateError,
   editableAttendeeFields,
+  isSeminarPreferenceField,
   prepareTieredAttendeeAnswerUpdate,
 } from "@/modules/attendee-accounts/registration-answer-policy";
+import { enqueueRegistrationUpdatedMessage } from "@/modules/communications/transactional-messages";
+import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import { publicAttendeeName } from "@/modules/public-access/domain";
 
@@ -24,6 +27,7 @@ export async function updateTieredRegistrationAnswersWithClient(
   tx: Prisma.TransactionClient,
   input: {
     registrationId: string;
+    clientRequestId: string;
     expectedUpdatedAt: string;
     attendees: Array<{
       attendeeId: string;
@@ -54,7 +58,14 @@ export async function updateTieredRegistrationAnswersWithClient(
       eventId: true,
       confirmationCode: true,
       updatedAt: true,
-      event: { select: { attendeeEditPolicy: true } },
+      event: {
+        select: {
+          attendeeEditPolicy: true,
+          timezone: true,
+          seminarPreferenceClosesOn: true,
+          seminarPreferenceSelfServiceLocked: true,
+        },
+      },
       publicFormSubmission: {
         select: {
           responses: true,
@@ -74,6 +85,40 @@ export async function updateTieredRegistrationAnswersWithClient(
     },
   });
   if (!registration) return null;
+  const requestFingerprint = createHash("sha256").update(JSON.stringify({
+    expectedUpdatedAt: input.expectedUpdatedAt,
+    attendees: input.attendees,
+  })).digest("hex");
+  const priorRequest = await tx.auditLog.findFirst({
+    where: {
+      eventId: registration.eventId,
+      entityId: registration.id,
+      action: input.audit.action,
+      correlationId: input.clientRequestId,
+    },
+    select: { metadata: true },
+  });
+  if (priorRequest) {
+    const metadata = recordFromJson(priorRequest.metadata);
+    if (metadata.requestFingerprint !== requestFingerprint) {
+      throw new AttendeeAnswerUpdateError(
+        "IDEMPOTENCY_KEY_REUSED",
+        "That update request ID was already used for different choices. Refresh and try again.",
+      );
+    }
+    return {
+      ...(metadata.response as {
+        expectedUpdatedAt: string;
+        attendees: Array<{
+          attendeeId: string;
+          name: string;
+          responses: Record<string, unknown>;
+          lockedFieldKeys: string[];
+        }>;
+      }),
+      pendingMessageIds: [] as string[],
+    };
+  }
   if (!registration.publicFormSubmission) {
     throw new AttendeeAnswerUpdateError(
       "NO_EDITABLE_ANSWERS",
@@ -96,6 +141,39 @@ export async function updateTieredRegistrationAnswersWithClient(
     registration.event.attendeeEditPolicy,
   );
   const editableKeys = new Set(editable.map((field) => field.key));
+  const seminarFields = definition.sections
+    .flatMap((section) => section.fields)
+    .filter(isSeminarPreferenceField);
+  const seminarKeys = new Set(seminarFields.map((field) => field.key));
+  const lockedAssignments = seminarKeys.size > 0
+    ? await tx.programAttendeeAssignment.findMany({
+        where: {
+          attendeeIdSnapshot: { in: registration.attendees.map((attendee) => attendee.id) },
+          outcome: "ASSIGNED",
+          optionValue: { not: null },
+          run: {
+            eventId: registration.eventId,
+            formVersionId: submission.formVersionId,
+            fieldKeySnapshot: { in: [...seminarKeys] },
+            invalidatedAt: null,
+            supersededBy: { none: {} },
+          },
+        },
+        select: {
+          attendeeIdSnapshot: true,
+          run: { select: { fieldKeySnapshot: true } },
+        },
+      })
+    : [];
+  const assignmentLocks = new Map<string, Set<string>>();
+  for (const assignment of lockedAssignments) {
+    const locked = assignmentLocks.get(assignment.attendeeIdSnapshot) ?? new Set<string>();
+    locked.add(assignment.run.fieldKeySnapshot);
+    assignmentLocks.set(assignment.attendeeIdSnapshot, locked);
+  }
+  const lockedFieldKeys = (attendeeId: string) => editable
+    .filter((field) => assignmentLocks.get(attendeeId)?.has(field.key))
+    .map((field) => field.key);
   const currentById = new Map(
     registration.attendees.map((attendee) => [attendee.id, attendee]),
   );
@@ -135,7 +213,32 @@ export async function updateTieredRegistrationAnswersWithClient(
   const changedFields = [...new Set(
     prepared.flatMap((update) => update.changedKeys),
   )].sort();
+  const changedSeminarFields = changedFields.filter((key) => seminarKeys.has(key));
   if (changedFields.length > 0) {
+    if (changedSeminarFields.length > 0) {
+      const today = calendarDateInEventTimeZone(input.now, registration.event.timezone);
+      if (
+        registration.event.seminarPreferenceSelfServiceLocked
+        || (
+          registration.event.seminarPreferenceClosesOn
+          && today > registration.event.seminarPreferenceClosesOn
+        )
+      ) {
+        throw new AttendeeAnswerUpdateError(
+          "SEMINAR_PREFERENCES_LOCKED",
+          "Seminar preference self-service is closed. Contact the event team for help.",
+        );
+      }
+      if (lockedAssignments.some((assignment) => prepared.some((update) => (
+        update.attendee.id === assignment.attendeeIdSnapshot
+        && update.changedKeys.includes(assignment.run.fieldKeySnapshot)
+      )))) {
+        throw new AttendeeAnswerUpdateError(
+          "FINAL_ASSIGNMENT_LOCKED",
+          "A final seminar assignment is recorded. Contact the event team for help.",
+        );
+      }
+    }
     for (const update of prepared) {
       if (update.changedKeys.length === 0) continue;
       await tx.registrationAttendee.update({
@@ -153,26 +256,98 @@ export async function updateTieredRegistrationAnswersWithClient(
         formVersionId: submission.formVersionId,
         fieldKeySnapshot: { in: changedFields },
         invalidatedAt: null,
+        assignments: {
+          none: {
+            attendeeIdSnapshot: { in: registration.attendees.map((attendee) => attendee.id) },
+            outcome: "ASSIGNED",
+            optionValue: { not: null },
+          },
+        },
       },
       data: { invalidatedAt: input.now },
     });
+    const result = {
+      expectedUpdatedAt: input.now.toISOString(),
+      attendees: prepared.map((update) => ({
+        attendeeId: update.attendee.id,
+        name: publicAttendeeName(
+          update.attendee.profileSnapshot,
+          update.attendee.person,
+        ),
+        responses: Object.fromEntries(
+          Object.entries(update.responses).filter(([key]) => editableKeys.has(key)),
+        ),
+        lockedFieldKeys: lockedFieldKeys(update.attendee.id),
+      })),
+    };
+    const queued = changedSeminarFields.length > 0
+      ? await enqueueRegistrationUpdatedMessage(tx, {
+          eventId: registration.eventId,
+          registrationId: registration.id,
+          correlationId: input.clientRequestId,
+          transitionKey: `seminar-preferences:${input.clientRequestId}`,
+          changeCategory: "SEMINAR_PREFERENCES",
+          seminarPreferences: prepared.map((update) => ({
+            attendeeName: publicAttendeeName(
+              update.attendee.profileSnapshot,
+              update.attendee.person,
+            ),
+            seminarLabels: seminarFields.flatMap((field) => {
+              const value = update.responses[field.key];
+              return Array.isArray(value)
+                ? value.flatMap((label) => (
+                    typeof label === "string" && field.options.includes(label)
+                      ? [label]
+                      : []
+                  ))
+                : [];
+            }),
+          })),
+        })
+      : { pendingMessageIds: [] as string[] };
     await tx.auditLog.create({
       data: {
         eventId: registration.eventId,
         action: input.audit.action,
         entityType: "Registration",
         entityId: registration.id,
-        correlationId: randomUUID(),
+        correlationId: input.clientRequestId,
         summary: input.audit.summary(registration.confirmationCode),
         metadata: {
           ...input.audit.metadata,
           policy: registration.event.attendeeEditPolicy,
           attendeeCount: prepared.length,
           changedFields,
+          changedAt: input.now.toISOString(),
+          requestFingerprint,
+          previousSeminarPreferences: prepared
+            .filter((update) => update.changedKeys.some((key) => seminarKeys.has(key)))
+            .map((update) => ({
+              attendeeId: update.attendee.id,
+              responses: Object.fromEntries(update.changedKeys
+                .filter((key) => seminarKeys.has(key))
+                .map((key) => [
+                  key,
+                  recordFromJson(update.attendee.formResponses)[key] ?? null,
+                ])),
+            })),
+          newSeminarPreferences: prepared
+            .filter((update) => update.changedKeys.some((key) => seminarKeys.has(key)))
+            .map((update) => ({
+              attendeeId: update.attendee.id,
+              responses: Object.fromEntries(update.changedKeys
+                .filter((key) => seminarKeys.has(key))
+                .map((key) => [
+                  key,
+                  update.responses[key] ?? null,
+                ])),
+            })),
           invalidatedAssignmentRunCount: invalidated.count,
-        },
+          response: result,
+        } as unknown as Prisma.InputJsonObject,
       },
     });
+    return { ...result, pendingMessageIds: queued.pendingMessageIds };
   }
 
   return {
@@ -188,6 +363,8 @@ export async function updateTieredRegistrationAnswersWithClient(
       responses: Object.fromEntries(
         Object.entries(update.responses).filter(([key]) => editableKeys.has(key)),
       ),
+      lockedFieldKeys: lockedFieldKeys(update.attendee.id),
     })),
+    pendingMessageIds: [] as string[],
   };
 }

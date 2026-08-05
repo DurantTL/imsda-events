@@ -85,6 +85,10 @@ function transactionFixture() {
             firstName: "Retreat",
             lastName: "Guest",
           },
+          formResponses: {
+            medical_note: "immutable_protected_answer",
+            arbitrary_answer: "do-not-render",
+          },
           person: {
             firstName: "Canonical",
             lastName: "Person",
@@ -244,12 +248,18 @@ describe("transactional lifecycle messages", () => {
       correlationId: "seminar-update-1",
       transitionKey: "seminar-preferences:operation-1",
       changeCategory: "SEMINAR_PREFERENCES",
+      seminarPreferences: [{
+        attendeeName: "Retreat Guest",
+        seminarLabels: ["Prayer", "Service"],
+      }],
     });
 
     const message = queuedMessage(upsert);
     expect(message.create.bodyTextSnapshot).toContain("Seminar preferences");
-    expect(JSON.stringify(message.create)).not.toContain("Prayer");
-    expect(JSON.stringify(message.create)).not.toContain("Service");
+    expect(message.create.bodyTextSnapshot).toContain("Retreat Guest: Prayer, Service");
+    expect(message.create.bodyHtmlSnapshot).toContain("Retreat Guest: Prayer, Service");
+    expect(JSON.stringify(message.create)).not.toContain("immutable_protected_answer");
+    expect(JSON.stringify(message.create)).not.toContain("do-not-render");
 
     expect(() => enqueueRegistrationUpdatedMessage(tx as never, {
       eventId: "event-1",
@@ -259,6 +269,53 @@ describe("transactional lifecycle messages", () => {
       changeCategory: "MEDICAL_ANSWER" as never,
     })).toThrow("not permitted");
     expect(upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("adds the seminar summary to the original seeded published body when its token is absent", async () => {
+    const { tx, upsert } = transactionFixture();
+    (tx.eventMessageTemplate.findUnique as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      isEnabled: true,
+      versions: [{
+        id: "seeded-registration-updated-version",
+        subjectTemplate: "Registration updated: {{event_name}}",
+        bodyTemplate: [
+          "# Registration updated for {{event_name}}",
+          "",
+          "Hello {{recipient_name}},",
+          "",
+          "Registration **{{confirmation_code}}** was updated successfully.",
+          "",
+          "- **Change category:** {{change_category}}",
+          "",
+          "For your privacy, this confirmation does not include submitted answer values.",
+          "",
+          "**[Review your registration]({{portal_url}})**",
+          "",
+          "---",
+          "",
+          "Questions? Contact {{contact_email}}.",
+        ].join("\n"),
+      }],
+    });
+
+    await enqueueRegistrationUpdatedMessage(tx as never, {
+      eventId: "event-1",
+      registrationId: "registration-1",
+      correlationId: "seeded-template-seminar-update",
+      transitionKey: "seminar-preferences:seeded-template",
+      changeCategory: "SEMINAR_PREFERENCES",
+      seminarPreferences: [{
+        attendeeName: "Retreat Guest",
+        seminarLabels: ["Prayer", "Service"],
+      }],
+    });
+
+    const message = queuedMessage(upsert);
+    expect(message.create.bodyTextSnapshot).toContain("Questions? Contact registration@example.test.");
+    expect(message.create.bodyTextSnapshot).toContain("### Seminar preferences");
+    expect(message.create.bodyTextSnapshot).toContain("Retreat Guest: Prayer, Service");
+    expect(message.create.bodyTextSnapshot).not.toContain("immutable_protected_answer");
+    expect(message.create.bodyTextSnapshot).not.toContain("do-not-render");
   });
 
   it("creates one immutable, idempotent payment-receipt snapshot for a Square success transition", async () => {

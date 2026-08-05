@@ -72,6 +72,8 @@ const normalizedEventPayload = {
   hotelGroupName: undefined,
   hotelRate: undefined,
   hotelInstructions: undefined,
+  seminarPreferenceClosesOn: null,
+  seminarPreferenceSelfServiceLocked: false,
 };
 
 function eventRequest(

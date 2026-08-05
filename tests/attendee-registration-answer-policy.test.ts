@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { AttendeeRegistrationAnswersForm } from "@/components/attendee-registration-answers-form";
 import {
   AttendeeAnswerUpdateError,
   editableAttendeeFields,
@@ -99,7 +102,66 @@ describe("tiered attendee answer policy", () => {
       "childcare_children",
       "session_preferences",
     ]);
-    expect(editableAttendeeFields(definition, "VERIFY_EVERY_EDIT")).toEqual([]);
+    expect(editableAttendeeFields(definition, "VERIFY_EVERY_EDIT").map((field) => field.key))
+      .toEqual(["session_preferences"]);
+  });
+
+  it("validates ranked seminar preferences under the verified-edit policy", () => {
+    const result = prepareTieredAttendeeAnswerUpdate({
+      definition,
+      policy: "VERIFY_EVERY_EDIT",
+      registrationResponses: {},
+      currentResponses,
+      changes: { session_preferences: ["Prayer", "Grace"] },
+    });
+    expect(result.responses.session_preferences).toEqual(["Prayer", "Grace"]);
+    expect(() => prepareTieredAttendeeAnswerUpdate({
+      definition,
+      policy: "VERIFY_EVERY_EDIT",
+      registrationResponses: {},
+      currentResponses,
+      changes: { meal_preference: "Vegetarian" },
+    })).toThrowError(AttendeeAnswerUpdateError);
+  });
+
+  it("rejects duplicate ranks and ineligible seminar options server-side", () => {
+    for (const preferences of [
+      ["Grace", "Grace"],
+      ["Grace", "Unknown seminar"],
+    ]) {
+      expect(() => prepareTieredAttendeeAnswerUpdate({
+        definition,
+        policy: "VERIFY_EVERY_EDIT",
+        registrationResponses: {},
+        currentResponses,
+        changes: { session_preferences: preferences },
+      })).toThrowError(AttendeeAnswerUpdateError);
+    }
+  });
+
+  it("renders resulting preferences accurately when assignment state is read-only", () => {
+    const fields = editableAttendeeFields(definition, "VERIFY_EVERY_EDIT");
+    const markup = renderToStaticMarkup(createElement(
+      AttendeeRegistrationAnswersForm,
+      {
+        description: "A final seminar assignment is recorded. Contact the event team for help.",
+        readOnly: true,
+        initialExpectedUpdatedAt: "2026-08-04T12:00:00.000Z",
+        fields,
+        initialAttendees: [{
+          attendeeId: "attendee-1",
+          name: "Avery Guest",
+          responses: { session_preferences: ["Prayer", "Grace"] },
+          lockedFieldKeys: ["session_preferences"],
+        }],
+      },
+    ));
+
+    expect(markup).toContain("Avery Guest");
+    expect(markup).toContain("Prayer");
+    expect(markup).toContain("Grace");
+    expect(markup).toContain("Contact the event team");
+    expect(markup).not.toContain("Save attendee choices");
   });
 
   it("validates and merges a complete low-risk update", () => {

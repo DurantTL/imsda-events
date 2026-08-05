@@ -123,6 +123,8 @@ export const eventSettingsInputSchema = z.object({
   attendeeEditPolicy: z
     .enum(["TIERED", "VERIFY_EVERY_EDIT"])
     .default("VERIFY_EVERY_EDIT"),
+  seminarPreferenceClosesOn: calendarDateSchema.nullable().default(null),
+  seminarPreferenceSelfServiceLocked: z.boolean().default(false),
   ...lifecycleFields,
 }).superRefine((value, context) => {
   validateLifecycle(value, context);

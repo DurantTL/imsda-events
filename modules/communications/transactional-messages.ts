@@ -46,6 +46,10 @@ type TransactionalMessageInput = {
   announcementTitle?: string;
   announcementBody?: string;
   changeCategory?: RegistrationUpdateCategory;
+  seminarPreferences?: Array<{
+    attendeeName: string;
+    seminarLabels: string[];
+  }>;
   metadata?: Record<string, string | number | boolean | null>;
 };
 
@@ -330,6 +334,12 @@ async function enqueueTransactionalMessage(
     || settings.replyToEmail
     || settings.senderEmail
     || "the IMSDA event office";
+  const publishedBody = source?.bodyTemplate ?? fallback.body;
+  const bodyTemplate = input.changeCategory === "SEMINAR_PREFERENCES"
+    && input.seminarPreferences
+    && !publishedBody.includes("{{seminar_preferences}}")
+    ? `${publishedBody.trimEnd()}\n\n### Seminar preferences\n\n{{seminar_preferences}}`
+    : publishedBody;
   const context: MessageTemplateContext = {
     recipient_name: recipientName || "Registrant",
     // The person the registration belongs to, which is not always the person
@@ -382,11 +392,16 @@ async function enqueueTransactionalMessage(
     change_category: input.changeCategory
       ? registrationUpdateCategoryLabels[input.changeCategory]
       : "Registration details",
+    seminar_preferences: input.seminarPreferences
+      ?.map((attendee) => (
+        `${attendee.attendeeName}: ${attendee.seminarLabels.join(", ")}`
+      ))
+      .join("\n") ?? "",
   };
   const rendered = renderMessageTemplate(
     {
       subject: source?.subjectTemplate ?? fallback.subject,
-      body: source?.bodyTemplate ?? fallback.body,
+      body: bodyTemplate,
     },
     context,
   );
@@ -495,6 +510,9 @@ export function enqueueRegistrationUpdatedMessage(
 ) {
   if (!registrationUpdateCategoryLabels[input.changeCategory]) {
     throw new Error("That registration update category is not permitted in a confirmation message.");
+  }
+  if (input.changeCategory === "SEMINAR_PREFERENCES" && !input.seminarPreferences) {
+    throw new Error("Seminar preference labels are required in a confirmation message.");
   }
   return enqueueTransactionalMessage(tx, {
     ...input,

@@ -55,6 +55,7 @@ import {
   ATTENDEE_SESSION_COOKIE_NAME,
 } from "@/modules/attendee-accounts/session-store";
 import { SESSION_COOKIE_NAME } from "@/modules/access/session-store";
+import { listRegistrationsForVerifiedEmail } from "@/modules/attendee-accounts/registrations-repository";
 
 type PrismaStub = {
   attendeeAccount: {
@@ -111,6 +112,108 @@ beforeEach(() => {
   dependencies.createAttendeeSession.mockResolvedValue({
     token: "session-token",
     expiresAt: new Date("2026-08-11T00:00:00Z"),
+  });
+});
+
+describe("verified attendee registration views", () => {
+  it("locks assigned seminars while leaving unassigned attendees editable", async () => {
+    dependencies.getPrisma.mockReturnValue({
+      $queryRaw: vi.fn().mockResolvedValue([{ id: "registration-1" }]),
+      registration: {
+        findMany: vi.fn().mockResolvedValue([{
+          id: "registration-1",
+          confirmationCode: "REG-142",
+          status: "SUBMITTED",
+          submittedAt: new Date("2026-08-01T12:00:00.000Z"),
+          updatedAt: new Date("2026-08-01T13:00:00.000Z"),
+          totalAmount: { toString: () => "0" },
+          contactSnapshot: { email: "holder@example.test" },
+          accountHolderPerson: {
+            firstName: "Registration",
+            lastName: "Holder",
+            normalizedEmail: "holder@example.test",
+            phone: null,
+          },
+          event: {
+            name: "Synthetic Retreat",
+            slug: "synthetic-retreat",
+            startsAt: new Date("2026-10-09T21:00:00.000Z"),
+            endsAt: new Date("2026-10-11T17:00:00.000Z"),
+            timezone: "America/Chicago",
+            location: "Test Camp",
+            attendeeEditPolicy: "TIERED",
+            seminarPreferenceClosesOn: null,
+            seminarPreferenceSelfServiceLocked: false,
+            programAssignmentRuns: [{
+              fieldKeySnapshot: "session_preferences",
+              assignments: [{
+                attendeeIdSnapshot: "attendee-1",
+                outcome: "ASSIGNED",
+                optionValue: "Prayer",
+              }, {
+                attendeeIdSnapshot: "attendee-2",
+                outcome: "UNASSIGNED",
+                optionValue: null,
+              }],
+            }],
+          },
+          attendees: [{
+            id: "attendee-1",
+            formResponses: { session_preferences: ["Prayer", "Service"] },
+            profileSnapshot: { firstName: "Assigned", lastName: "Guest" },
+            person: { firstName: "Assigned", lastName: "Person" },
+          }, {
+            id: "attendee-2",
+            formResponses: { session_preferences: ["Service", "Prayer"] },
+            profileSnapshot: { firstName: "Unassigned", lastName: "Guest" },
+            person: { firstName: "Unassigned", lastName: "Person" },
+          }],
+          publicFormSubmission: {
+            formVersion: {
+              definition: {
+                title: "Synthetic registration",
+                description: "",
+                confirmationMessage: "Received.",
+                sections: [{
+                  id: "seminars",
+                  title: "Seminars",
+                  description: "",
+                  fields: [{
+                    id: "session_preferences",
+                    key: "session_preferences",
+                    label: "Seminar preferences",
+                    helpText: "",
+                    type: "RANKED_CHOICE",
+                    scope: "ATTENDEE",
+                    required: true,
+                    options: ["Prayer", "Service"],
+                    minSelections: 1,
+                    maxSelections: 2,
+                    availabilityMode: "RANKED_INTEREST",
+                    choiceLimits: {},
+                  }],
+                }],
+              },
+            },
+          },
+          payments: [],
+          waitlistEntry: null,
+        }]),
+      },
+    });
+
+    const [registration] = await listRegistrationsForVerifiedEmail("holder@example.test");
+
+    expect(registration?.answerEditing).toMatchObject({
+      enabled: true,
+      attendees: [{
+        attendeeId: "attendee-1",
+        lockedFieldKeys: ["session_preferences"],
+      }, {
+        attendeeId: "attendee-2",
+        lockedFieldKeys: [],
+      }],
+    });
   });
 });
 
