@@ -123,6 +123,13 @@ export const eventSettingsInputSchema = z.object({
   attendeeEditPolicy: z
     .enum(["TIERED", "VERIFY_EVERY_EDIT"])
     .default("VERIFY_EVERY_EDIT"),
+  // ATTENDEE_PAY is the existing behavior. DEFERRED_ORGANIZATION_INVOICE is
+  // for club/church group registrations (e.g. Spring Camporee): no attendee
+  // balance or online payment is created, and the responsible organization is
+  // billed later based on final attendance.
+  billingMode: z
+    .enum(["ATTENDEE_PAY", "DEFERRED_ORGANIZATION_INVOICE"])
+    .default("ATTENDEE_PAY"),
   seminarPreferenceClosesOn: calendarDateSchema.nullable().default(null),
   seminarPreferenceSelfServiceLocked: z.boolean().default(false),
   ...lifecycleFields,

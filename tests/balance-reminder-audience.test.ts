@@ -102,7 +102,29 @@ describe("balance-reminder audience", () => {
         label: "Missing or invalid contact email",
         count: 1,
       },
+      {
+        code: "ORGANIZATION_BILLED",
+        label: "Event bills the responsible organization, not the attendee",
+        count: 0,
+      },
     ]);
+  });
+
+  it("skips every candidate on a deferred-organization-billing event, regardless of status or balance", () => {
+    const preview = computeBalanceReminderPreview(
+      candidates,
+      { ...context, isDeferredOrganizationBilling: true },
+      new Date("2026-07-23T12:00:00.000Z"),
+    );
+
+    expect(preview.includedCount).toBe(0);
+    expect(preview.skippedCount).toBe(candidates.length);
+    expect(preview.recipients).toEqual([]);
+    expect(preview.skipReasons).toContainEqual({
+      code: "ORGANIZATION_BILLED",
+      label: "Event bills the responsible organization, not the attendee",
+      count: candidates.length,
+    });
   });
 
   it("keeps fingerprints stable across generation time and input order", () => {

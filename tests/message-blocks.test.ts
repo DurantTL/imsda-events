@@ -150,6 +150,36 @@ describe("payment status block", () => {
     expect(block).not.toContain("[Pay your balance]");
   });
 
+  it("tells a deferred-organization registration its rate is not owed by the attendee", () => {
+    const block = buildPaymentStatusBlock({
+      state: "ORGANIZATION_INVOICED",
+      totalCents: 900,
+      paidCents: 0,
+      balanceCents: 900,
+      organization: "Ankeny Son-Seekers",
+      billingContact: "Jane Doe",
+    });
+
+    expect(block).toContain("No payment is due online");
+    expect(block).toContain("$9.00");
+    expect(block).toContain("Responsible organization: **Ankeny Son-Seekers**");
+    expect(block).toContain("Billing contact: **Jane Doe**");
+    expect(block).not.toContain("Balance due");
+    expect(block).not.toContain("[Pay your balance]");
+  });
+
+  it("omits organization and billing-contact lines when neither is known", () => {
+    const block = buildPaymentStatusBlock({
+      state: "ORGANIZATION_INVOICED",
+      totalCents: 900,
+      paidCents: 0,
+      balanceCents: 900,
+    });
+
+    expect(block).not.toContain("Responsible organization");
+    expect(block).not.toContain("Billing contact");
+  });
+
   it("reads a zero total as complimentary rather than paid", () => {
     expect(resolvePaymentState({ totalCents: 0, balanceCents: 0 })).toBe("COMPLIMENTARY");
     expect(resolvePaymentState({ totalCents: 12_500, balanceCents: 0 })).toBe("PAID");

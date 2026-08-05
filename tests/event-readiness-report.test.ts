@@ -103,4 +103,18 @@ describe("collectEventReadinessReport", () => {
     expect(await collectEventReadinessReport(prisma, "unknown", readyEnv)).toBeNull();
     expect(reads.registration.findMany).not.toHaveBeenCalled();
   });
+
+  it("never treats a deferred-organization registration's estimated rate as a balance with no card path", async () => {
+    const { prisma } = dataSource({
+      event: { billingMode: "DEFERRED_ORGANIZATION_INVOICE" },
+      templates: [
+        { key: "REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED", isEnabled: true, versions: [{ id: "version_org_billed" }] },
+        { key: "SHIRT_SIZE_REQUEST", isEnabled: true, versions: [{ id: "version_shirt" }] },
+      ],
+      registrations: [{ totalAmount: 9, attendees: [{ formResponses: { shirt_size: "Adult M" } }], payments: [] }],
+    });
+    const report = await collectEventReadinessReport(prisma, "synthetic-retreat", {});
+    expect(check(report, "SQUARE")?.severity).toBe("WARNING");
+    expect(check(report, "TEMPLATES")?.severity).toBe("READY");
+  });
 });

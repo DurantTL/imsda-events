@@ -81,6 +81,9 @@ const checkoutRegistrationSelect = {
   status: true,
   totalAmount: true,
   contactSnapshot: true,
+  event: {
+    select: { billingMode: true },
+  },
   accountHolderPerson: {
     select: {
       firstName: true,
@@ -249,6 +252,17 @@ function checkoutFromRegistration(
     square: null,
     billingContact: billingContact(registration),
   };
+
+  if (registration.event.billingMode === "DEFERRED_ORGANIZATION_INVOICE") {
+    // Defense in depth: a deferred-organization event must never take an
+    // online card payment, even if a form were misconfigured with payment
+    // enabled. This event bills the responsible organization directly.
+    return {
+      ...base,
+      state: "NOT_ELIGIBLE",
+      message: "This event bills the responsible organization directly. No online payment is available.",
+    };
+  }
 
   if (!paymentSelection.configured) {
     return {

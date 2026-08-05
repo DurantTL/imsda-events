@@ -74,6 +74,7 @@ import {
   buildRegistrationCheckinTokens,
   EVENT_LODGING_SELECT,
 } from "@/modules/communications/message-blocks";
+import { resolveBillingContactName, resolveResponsibleOrganization } from "@/modules/forms/definition";
 import type { FormCalculation, RegistrationFormDefinition } from "@/modules/forms/definition";
 
 const fallbackSettings = {
@@ -109,6 +110,7 @@ export type RegistrationMessageInput = {
     endsAt: Date;
     timezone: string;
     location: string | null;
+    billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE";
   };
   registration: {
     id: string;
@@ -490,6 +492,7 @@ async function loadBalanceReminderState(
         timezone: true,
         location: true,
         supportContact: true,
+        billingMode: true,
         ...EVENT_LODGING_SELECT,
       },
     }),
@@ -584,6 +587,7 @@ async function loadBalanceReminderState(
   });
   const context: BalanceReminderPreviewContext = {
     eventId,
+    isDeferredOrganizationBilling: event.billingMode === "DEFERRED_ORGANIZATION_INVOICE",
     deliveryMode: settings.deliveryMode,
     senderName: settings.senderName,
     senderEmail: settings.senderEmail,
@@ -2688,9 +2692,11 @@ export async function enqueuePublicRegistrationMessages(
   tx: Prisma.TransactionClient,
   input: RegistrationMessageInput,
 ): Promise<QueuedRegistrationMessages> {
+  const isDeferredOrganizationBilling = input.event.billingMode === "DEFERRED_ORGANIZATION_INVOICE";
   const registrantTemplateKey = selectRegistrationMessageTemplate({
     isWorker: input.registration.attendeeType === "WORKER",
     balanceCents: input.calculation.totalCents,
+    isDeferredOrganizationBilling,
   });
   const [settingsRow, templates, eventDetails, registrationAttendees] = await Promise.all([
     tx.eventMessageSettings.findUnique({ where: { eventId: input.event.id } }),
@@ -2742,9 +2748,17 @@ export async function enqueuePublicRegistrationMessages(
     input.identity,
     input.attendeeResponses,
   );
-  const paymentInstructionsText = input.calculation.totalCents > 0
-    ? "No card was charged. The event team will provide or confirm the next payment step."
-    : "No balance is due at this time.";
+  const paymentInstructionsText = isDeferredOrganizationBilling
+    ? "No payment is due online. The responsible organization will be billed after the event."
+    : input.calculation.totalCents > 0
+      ? "No card was charged. The event team will provide or confirm the next payment step."
+      : "No balance is due at this time.";
+  const responsibleOrganization = isDeferredOrganizationBilling
+    ? resolveResponsibleOrganization(input.responses)
+    : null;
+  const billingContactName = isDeferredOrganizationBilling
+    ? resolveBillingContactName(input.responses)
+    : null;
   const commonContext: MessageTemplateContext = {
     registrant_name: registrantName,
     event_name: input.event.name,
@@ -2764,14 +2778,19 @@ export async function enqueuePublicRegistrationMessages(
     registration_contact_email: input.identity.email.trim().toLowerCase(),
     hotel_information: buildHotelInformationBlock(eventDetails),
     // A public submission takes no payment inline, so the balance is the whole
-    // total until a payment posts. A zero total is complimentary, not paid.
+    // total until a payment posts. A zero total is complimentary, not paid. A
+    // deferred-organization event never creates an attendee balance at all.
     payment_status_block: buildPaymentStatusBlock({
-      state: input.calculation.totalCents > 0 ? "BALANCE_DUE" : "COMPLIMENTARY",
+      state: isDeferredOrganizationBilling
+        ? "ORGANIZATION_INVOICED"
+        : input.calculation.totalCents > 0 ? "BALANCE_DUE" : "COMPLIMENTARY",
       totalCents: input.calculation.totalCents,
       paidCents: 0,
       balanceCents: input.calculation.totalCents,
       paymentInstructions: paymentInstructionsText,
       portalUrl: REGISTRATION_MANAGE_LINK_SENTINEL,
+      organization: responsibleOrganization,
+      billingContact: billingContactName,
     }),
     ...buildRegistrationCheckinTokens({
       confirmationCode: input.registration.confirmationCode,

@@ -143,6 +143,44 @@ describe("private registration access domain", () => {
     });
   });
 
+  it("never tells a deferred-organization submitter they owe a balance", () => {
+    expect(summarizePublicPayment({
+      status: "CONFIRMED",
+      totalCents: 900,
+      payments: [],
+      isDeferredOrganizationBilling: true,
+    })).toMatchObject({
+      state: "ORGANIZATION_BILLED",
+      totalCents: 900,
+      paidCents: 0,
+      amountDueCents: 0,
+      paymentEligible: false,
+      label: "Billed to your organization",
+    });
+
+    expect(summarizePublicPayment({
+      status: "SUBMITTED",
+      totalCents: 900,
+      payments: [],
+      isDeferredOrganizationBilling: true,
+    }).state).toBe("ORGANIZATION_BILLED");
+  });
+
+  it("keeps cancelled and not-submitted wording for a deferred-organization registration", () => {
+    expect(summarizePublicPayment({
+      status: "CANCELLED",
+      totalCents: 900,
+      payments: [],
+      isDeferredOrganizationBilling: true,
+    }).state).toBe("NOT_DUE");
+    expect(summarizePublicPayment({
+      status: "DRAFT",
+      totalCents: 900,
+      payments: [],
+      isDeferredOrganizationBilling: true,
+    }).state).toBe("NOT_DUE");
+  });
+
   it("uses registration-scoped contact and attendee snapshots with safe fallbacks", () => {
     expect(publicContactFromSnapshot(
       {

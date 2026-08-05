@@ -17,6 +17,25 @@ export const REQUIRED_READINESS_TEMPLATE_KEYS = [
   "SHIRT_SIZE_REQUEST",
 ] as const;
 
+/**
+ * A deferred-organization event never sends a paid/unpaid confirmation,
+ * payment receipt, or balance reminder — it always sends the
+ * organization-billed confirmation instead. Requiring the attendee-pay
+ * templates here would permanently block publishing such an event.
+ */
+const DEFERRED_ORGANIZATION_REQUIRED_READINESS_TEMPLATE_KEYS = [
+  "REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED",
+  "SHIRT_SIZE_REQUEST",
+] as const;
+
+export function requiredReadinessTemplateKeys(
+  billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE",
+) {
+  return billingMode === "DEFERRED_ORGANIZATION_INVOICE"
+    ? DEFERRED_ORGANIZATION_REQUIRED_READINESS_TEMPLATE_KEYS
+    : REQUIRED_READINESS_TEMPLATE_KEYS;
+}
+
 export type EventReadinessReport = {
   event: { name: string; slug: string };
   activeRegistrationCount: number;
@@ -32,9 +51,10 @@ export async function collectEventReadinessReport(
 ): Promise<EventReadinessReport | null> {
   const event = await prisma.event.findUnique({
     where: { slug },
-    select: { id: true, name: true, slug: true, startsAt: true, endsAt: true, timezone: true, location: true, publicInfoUrl: true, supportContact: true, isPublished: true },
+    select: { id: true, name: true, slug: true, startsAt: true, endsAt: true, timezone: true, location: true, publicInfoUrl: true, supportContact: true, isPublished: true, billingMode: true },
   });
   if (!event) return null;
+  const isDeferredOrganizationBilling = event.billingMode === "DEFERRED_ORGANIZATION_INVOICE";
 
   const [publishedFormCount, settings, templates, registrations] = await Promise.all([
     prisma.registrationFormVersion.count({ where: { form: { eventId: event.id }, status: "PUBLISHED" } }),
@@ -57,6 +77,10 @@ export async function collectEventReadinessReport(
   let registrationsWithBalanceDue = 0;
   for (const registration of registrations) {
     if (registration.attendees.some((attendee) => !shirtSizeFromResponses(attendee.formResponses))) registrationsMissingShirtSize += 1;
+    // A deferred-organization registration's recorded amount is the
+    // responsible organization's estimated rate, never an attendee balance,
+    // so it must never count toward "no card path to pay it" alarms.
+    if (isDeferredOrganizationBilling) continue;
     const paid = registration.payments.reduce((sum, payment) => {
       const refunded = payment.refunds.reduce((total, refund) => total + Number(refund.amount), 0);
       return sum + Math.max(Number(payment.amount) - refunded, 0);
@@ -82,7 +106,7 @@ export async function collectEventReadinessReport(
     hasPublishedFormVersion: publishedFormCount > 0,
     messaging: settings,
     templates: templates.map((template) => ({ key: template.key, isEnabled: template.isEnabled, hasPublishedVersion: template.versions.length > 0 })),
-    requiredTemplateKeys: [...REQUIRED_READINESS_TEMPLATE_KEYS],
+    requiredTemplateKeys: [...requiredReadinessTemplateKeys(event.billingMode)],
     emailProvider: { deliveryConfigured: Boolean(env.RESEND_API_KEY?.trim()), webhookConfigured: Boolean(env.RESEND_WEBHOOK_SECRET?.trim()) },
     square: { paymentConfigured: square.paymentConfigured, webhookConfigured: square.webhookConfigured, environment: square.environment, issue: square.issue },
     registrationsMissingShirtSize,

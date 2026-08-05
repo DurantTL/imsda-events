@@ -92,7 +92,8 @@ export type PaymentState =
   | "COMPLIMENTARY"
   | "WAITLISTED"
   | "WAITLIST_PROMOTED"
-  | "CANCELLED";
+  | "CANCELLED"
+  | "ORGANIZATION_INVOICED";
 
 export type PaymentStatusBlockInput = {
   state: PaymentState;
@@ -106,6 +107,10 @@ export type PaymentStatusBlockInput = {
   portalUrl?: string | null;
   /** Refund and payment wording for a cancelled registration. */
   cancellationNote?: string | null;
+  /** The club/church responsible for a deferred-organization registration. */
+  organization?: string | null;
+  /** The billing contact for a deferred-organization registration, separate from the submitter. */
+  billingContact?: string | null;
 };
 
 /**
@@ -169,6 +174,21 @@ export function buildPaymentStatusBlock(input: PaymentStatusBlockInput) {
       clean(input.cancellationNote)
         ?? `${paid} in payments is recorded against a registration total of ${total}.`,
     ].join("\n");
+  }
+
+  if (input.state === "ORGANIZATION_INVOICED") {
+    const organization = clean(input.organization);
+    const billingContact = clean(input.billingContact);
+    const lines = [
+      "### Payment status",
+      "",
+      "**No payment is due online.** This event bills the responsible organization directly. The organization will receive an invoice after the event based on final attendance.",
+      "",
+      `Published rate reference: **${total}**. This is an estimate, not an amount due from you.`,
+    ];
+    if (organization) lines.push("", `Responsible organization: **${organization}**`);
+    if (billingContact) lines.push(`Billing contact: **${billingContact}**`);
+    return lines.join("\n");
   }
 
   if (input.state === "COMPLIMENTARY") {

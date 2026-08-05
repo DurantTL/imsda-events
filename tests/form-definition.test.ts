@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateRosterTotal, formTemplates, registrationFormDefinitionSchema, summarizeChoiceUsage, validateTestResponses } from "@/modules/forms/definition";
+import { calculateRosterTotal, formTemplates, registrationFormDefinitionSchema, resolveBillingContactName, resolveResponsibleOrganization, summarizeChoiceUsage, validateTestResponses } from "@/modules/forms/definition";
 
 describe("registration form definitions", () => {
   it("ships valid starter templates", () => {
@@ -238,6 +238,27 @@ describe("registration form definitions", () => {
     expect(calculateRosterTotal(definition, {}, [{ first_name: "Pat", last_name: "Finder" }], "2026-04-10").subtotalCents).toBe(900);
     expect(calculateRosterTotal(definition, {}, [{ first_name: "Pat", last_name: "Finder" }], "2026-04-11").subtotalCents).toBe(1400);
     expect(fee.latePricing?.label).toBe("Late registration pricing");
+  });
+
+  it("resolves the Spring Camporee club and director as the deferred-organization billing identity", () => {
+    expect(resolveResponsibleOrganization({ club_name: "Ankeny Son-Seekers" })).toBe("Ankeny Son-Seekers");
+    expect(resolveResponsibleOrganization({
+      club_name: "Other",
+      club_name_other: "New Frontier Pathfinders",
+    })).toBe("New Frontier Pathfinders");
+    expect(resolveResponsibleOrganization({ church_name: "Des Moines SDA Church" })).toBe("Des Moines SDA Church");
+    expect(resolveResponsibleOrganization({
+      responsible_organization: "Explicit Org",
+      club_name: "Ankeny Son-Seekers",
+    })).toBe("Explicit Org");
+    expect(resolveResponsibleOrganization({})).toBeNull();
+
+    expect(resolveBillingContactName({ director_name: "Jane Doe" })).toBe("Jane Doe");
+    expect(resolveBillingContactName({
+      billing_contact_name: "Explicit Contact",
+      director_name: "Jane Doe",
+    })).toBe("Explicit Contact");
+    expect(resolveBillingContactName({})).toBeNull();
   });
 
   it("calculates Camp Meeting housing nights and separate adult and child meal tickets", () => {

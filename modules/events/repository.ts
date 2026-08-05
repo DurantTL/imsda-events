@@ -56,6 +56,7 @@ export async function listEventsForUser(userId: string, isSystemAdmin: boolean) 
       waitlistEnabled: true,
       collectsShirtSizes: true,
       attendeeEditPolicy: true,
+      billingMode: true,
       seminarPreferenceClosesOn: true,
       seminarPreferenceSelfServiceLocked: true,
       autoPromoteWaitlist: true,
@@ -138,6 +139,7 @@ export async function getEventSettings(eventId: string) {
         waitlistEnabled: true,
         collectsShirtSizes: true,
         attendeeEditPolicy: true,
+        billingMode: true,
         seminarPreferenceClosesOn: true,
         seminarPreferenceSelfServiceLocked: true,
         autoPromoteWaitlist: true,
@@ -183,6 +185,7 @@ export async function getEventSettings(eventId: string) {
     waitlistEnabled: event.waitlistEnabled,
     collectsShirtSizes: event.collectsShirtSizes,
     attendeeEditPolicy: event.attendeeEditPolicy,
+    billingMode: event.billingMode,
     seminarPreferenceClosesOn: event.seminarPreferenceClosesOn,
     seminarPreferenceSelfServiceLocked:
       event.seminarPreferenceSelfServiceLocked,
@@ -237,6 +240,7 @@ export async function createEvent(
         waitlistEnabled: input.waitlistEnabled,
         collectsShirtSizes: input.collectsShirtSizes,
         attendeeEditPolicy: platform.defaultAttendeeEditPolicy,
+        billingMode: input.billingMode,
         seminarPreferenceClosesOn: input.seminarPreferenceClosesOn,
         seminarPreferenceSelfServiceLocked:
           input.seminarPreferenceSelfServiceLocked,
@@ -300,6 +304,7 @@ export async function updateEventSettings(
           waitlistEnabled: true,
           collectsShirtSizes: true,
           attendeeEditPolicy: true,
+          billingMode: true,
           seminarPreferenceClosesOn: true,
           seminarPreferenceSelfServiceLocked: true,
           autoPromoteWaitlist: true,
@@ -341,6 +346,7 @@ export async function updateEventSettings(
         waitlistEnabled: input.waitlistEnabled,
         collectsShirtSizes: input.collectsShirtSizes,
         attendeeEditPolicy: input.attendeeEditPolicy,
+        billingMode: input.billingMode,
         seminarPreferenceClosesOn: input.seminarPreferenceClosesOn,
         seminarPreferenceSelfServiceLocked:
           input.seminarPreferenceSelfServiceLocked,

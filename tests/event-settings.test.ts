@@ -85,6 +85,18 @@ describe("event settings", () => {
     });
   });
 
+  it("defaults billing mode to attendee-pay and accepts deferred-organization billing", () => {
+    expect(eventSettingsInputSchema.parse(validEvent).billingMode).toBe("ATTENDEE_PAY");
+    expect(eventSettingsInputSchema.parse({
+      ...validEvent,
+      billingMode: "DEFERRED_ORGANIZATION_INVOICE",
+    }).billingMode).toBe("DEFERRED_ORGANIZATION_INVOICE");
+    expect(() => eventSettingsInputSchema.parse({
+      ...validEvent,
+      billingMode: "NOT_A_MODE",
+    })).toThrow();
+  });
+
   it("rejects invalid schedules, URLs, and waitlist combinations", () => {
     expect(() => eventSettingsInputSchema.parse({
       ...validEvent,

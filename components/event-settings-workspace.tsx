@@ -78,6 +78,7 @@ function draftFromEvent(event: EventSettingsRecord | null): EventSettingsInput {
     registrationClosesOn: event?.registrationClosesOn ?? null,
     collectsShirtSizes: event?.collectsShirtSizes ?? false,
     attendeeEditPolicy: event?.attendeeEditPolicy ?? "VERIFY_EVERY_EDIT",
+    billingMode: event?.billingMode ?? "ATTENDEE_PAY",
     seminarPreferenceClosesOn: event?.seminarPreferenceClosesOn ?? null,
     seminarPreferenceSelfServiceLocked:
       event?.seminarPreferenceSelfServiceLocked ?? false,
@@ -319,6 +320,24 @@ export function EventSettingsWorkspace({
               <small>
                 Contact changes, cancellations, and transfers always require a fresh emailed
                 code. Medical and club data always require an authenticator.
+              </small>
+            </label>
+            <label>
+              Billing mode
+              <select
+                value={draft.billingMode}
+                onChange={(event) => update(
+                  "billingMode",
+                  event.target.value as EventSettingsInput["billingMode"],
+                )}
+              >
+                <option value="ATTENDEE_PAY">Attendees pay online</option>
+                <option value="DEFERRED_ORGANIZATION_INVOICE">Bill the responsible organization later</option>
+              </select>
+              <small>
+                Club/church group events such as Spring Camporee: registration shows informational
+                rates only, no attendee balance or online payment is created, and the responsible
+                organization is billed later based on final attendance.
               </small>
             </label>
             <div className="form-grid two-column">
