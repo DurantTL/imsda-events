@@ -1,5 +1,8 @@
 import { getPrisma } from "@/lib/prisma";
 import { getRegistrationById } from "@/modules/registrations/repository";
+import { enqueueRefundNoticeMessage } from "@/modules/communications/transactional-messages";
+import { processQueuedMessageIdsAfterCommit } from "@/modules/communications/messaging-repository";
+import { logError } from "@/lib/logger";
 
 export class PaymentOperationError extends Error {
   constructor(public readonly code: "REGISTRATION_NOT_FOUND" | "REGISTRATION_NOT_PAYABLE" | "PAYMENT_NOT_FOUND" | "PAYMENT_EXCEEDS_BALANCE" | "REFUND_EXCEEDS_AVAILABLE" | "CARD_REFUND_REQUIRES_SQUARE") {
@@ -89,7 +92,7 @@ export async function recordRefund(
   const refundableCents = Math.max(Math.round(Number(payment.amount) * 100) - refundedCents, 0);
   if (input.amountCents > refundableCents) throw new PaymentOperationError("REFUND_EXCEEDS_AVAILABLE");
 
-  await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const refund = await tx.refund.create({
       data: {
         eventId,
@@ -111,7 +114,21 @@ export async function recordRefund(
         metadata: { amountCents: input.amountCents, paymentId },
       },
     });
+    const notice = await enqueueRefundNoticeMessage(tx, {
+      eventId,
+      registrationId: payment.registrationId,
+      refundId: refund.id,
+      amountCents: input.amountCents,
+      reference: "Manual refund",
+      provider: "MANUAL",
+    });
+    return { pendingMessageIds: notice.pendingMessageIds };
   });
+  try {
+    await processQueuedMessageIdsAfterCommit(result.pendingMessageIds);
+  } catch (error) {
+    logError("Manual refund message processing failed after refund commit", error);
+  }
 
   return getRegistrationById(eventId, payment.registrationId);
 }

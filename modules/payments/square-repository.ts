@@ -34,7 +34,10 @@ import {
   type SquarePaymentInput,
 } from "@/modules/payments/square-domain";
 import { processQueuedMessageIdsAfterCommit } from "@/modules/communications/messaging-repository";
-import { enqueuePaymentReceiptMessage } from "@/modules/communications/transactional-messages";
+import {
+  enqueuePaymentReceiptMessage,
+  enqueueRefundNoticeMessage,
+} from "@/modules/communications/transactional-messages";
 import { authorizeRegistrationAccessToken } from "@/modules/public-access/repository";
 import { logError } from "@/lib/logger";
 
@@ -1238,6 +1241,17 @@ async function applyRefundWebhook(
       },
     });
   }
+  const notice = effectiveStatus === "SUCCEEDED" && existing?.status !== "SUCCEEDED"
+    ? await enqueueRefundNoticeMessage(tx, {
+        eventId: payment.eventId,
+        registrationId: payment.registrationId,
+        refundId: refund.id,
+        amountCents,
+        reference: providerRefund.id,
+        provider: "SQUARE",
+        providerRefundId: providerRefund.id,
+      })
+    : null;
   await tx.squareWebhookEvent.create({
     data: {
       eventId: payment.eventId,
@@ -1256,6 +1270,7 @@ async function applyRefundWebhook(
     status: "PROCESSED" as const,
     duplicate: false,
     refundStatus: effectiveStatus,
+    pendingMessageIds: notice?.pendingMessageIds ?? [],
   };
 }
 
@@ -1316,11 +1331,18 @@ export async function processSquareWebhook(
     ? result.pendingMessageIds
     : [];
   await processPaymentMessagesAfterCommit(pendingMessageIds);
-  if ("pendingMessageIds" in result) {
+  if ("pendingMessageIds" in result && "paymentStatus" in result) {
     return {
       status: result.status,
       duplicate: result.duplicate,
       paymentStatus: result.paymentStatus,
+    };
+  }
+  if ("pendingMessageIds" in result && "refundStatus" in result) {
+    return {
+      status: result.status,
+      duplicate: result.duplicate,
+      refundStatus: result.refundStatus,
     };
   }
   return result;

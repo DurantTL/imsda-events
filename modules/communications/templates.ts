@@ -14,6 +14,7 @@ export const MESSAGE_TEMPLATE_KEYS = [
   "REGISTRATION_CONTACT_UPDATED",
   "REGISTRATION_UPDATED",
   "PAYMENT_RECEIPT",
+  "REFUND_NOTICE",
   "BALANCE_REMINDER",
   "REGISTRATION_TRANSFERRED_NEW_CONTACT",
   "REGISTRATION_TRANSFERRED_PRIOR_CONTACT",
@@ -46,6 +47,8 @@ export const MESSAGE_TEMPLATE_TOKEN_KEYS = [
   "attendee_summary",
   "total_amount",
   "restored_status",
+  "refund_amount",
+  "refund_reference",
   "balance_amount",
   "payment_instructions",
   "portal_url",
@@ -153,6 +156,7 @@ export const DEFAULT_MESSAGE_TEMPLATE_NAMES: Readonly<Record<MessageTemplateKey,
   REGISTRATION_CONTACT_UPDATED: "Registration contact updated",
   REGISTRATION_UPDATED: "Registration updated",
   PAYMENT_RECEIPT: "Payment receipt",
+  REFUND_NOTICE: "Refund notification",
   BALANCE_REMINDER: "Balance reminder",
   REGISTRATION_TRANSFERRED_NEW_CONTACT: "Transfer notice for new contact",
   REGISTRATION_TRANSFERRED_PRIOR_CONTACT: "Transfer notice for prior contact",
@@ -191,6 +195,8 @@ export const DEFAULT_MESSAGE_TEMPLATE_DESCRIPTIONS: Readonly<
     "Confirms an attendee-visible registration change without including submitted answer values.",
   PAYMENT_RECEIPT:
     "Sent once when a Square payment first reaches a successful state.",
+  REFUND_NOTICE:
+    "Sent when a manual or Square refund first reaches a successful state.",
   BALANCE_REMINDER:
     "Sent only after staff review a current balance-due audience and explicitly create a reminder batch.",
   REGISTRATION_TRANSFERRED_NEW_CONTACT:
@@ -230,6 +236,8 @@ export const DEFAULT_MESSAGE_TEMPLATE_SUBJECTS: Readonly<
   REGISTRATION_UPDATED: "Registration updated: {{event_name}}",
   PAYMENT_RECEIPT:
     "Payment received: {{event_name}} ({{confirmation_code}})",
+  REFUND_NOTICE:
+    "Refund recorded: {{event_name}} ({{confirmation_code}})",
   BALANCE_REMINDER:
     "Payment reminder: {{event_name}} — {{balance_amount}} due",
   REGISTRATION_TRANSFERRED_NEW_CONTACT:
@@ -505,6 +513,25 @@ export const DEFAULT_MESSAGE_TEMPLATE_BODIES: Readonly<Record<MessageTemplateKey
     "- **Payment reference:** {{payment_reference}}",
     "",
     "{{payment_status_block}}",
+    "",
+    "**[Review your registration and payment history]({{portal_url}})**",
+    "",
+    "---",
+    "",
+    "Questions? Contact {{contact_email}}.",
+  ].join("\n"),
+  REFUND_NOTICE: [
+    "# Refund recorded for {{event_name}}",
+    "",
+    "Hello {{recipient_name}},",
+    "",
+    "A refund was recorded for registration **{{confirmation_code}}**.",
+    "",
+    "- **Refunded amount:** {{refund_amount}}",
+    "- **Remaining balance:** {{balance_amount}}",
+    "- **Reference:** {{refund_reference}}",
+    "",
+    "This notice confirms the recorded refund only; it does not make claims about processor fees or other fee-refund policy.",
     "",
     "**[Review your registration and payment history]({{portal_url}})**",
     "",
@@ -826,6 +853,8 @@ export const SAMPLE_MESSAGE_TEMPLATE_CONTEXT: Readonly<
   attendee_summary: "Attendees:\nAvery Johnson — Adult registration",
   total_amount: "$129.05",
   restored_status: "CONFIRMED",
+  refund_amount: "$25.00",
+  refund_reference: "square-demo-refund",
   balance_amount: "$0.00",
   payment_instructions: "No additional payment is due.",
   portal_url: "https://events.example.test/manage/sample-preview-link",

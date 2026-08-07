@@ -30,7 +30,8 @@ type TransactionalTemplateKey =
   | "ATTENDEE_SUBSTITUTED"
   | "REGISTRATION_ACCESS_RECOVERY"
   | "EVENT_ANNOUNCEMENT"
-  | "PAYMENT_RECEIPT";
+  | "PAYMENT_RECEIPT"
+  | "REFUND_NOTICE";
 
 type TransactionalMessageInput = {
   eventId: string;
@@ -44,6 +45,8 @@ type TransactionalMessageInput = {
   waitlistRemovalReason?: string;
   paymentAmountCents?: number;
   paymentReference?: string;
+  refundAmountCents?: number;
+  refundReference?: string;
   priorPersonName?: string;
   newPersonName?: string;
   announcementTitle?: string;
@@ -398,6 +401,8 @@ async function enqueueTransactionalMessage(
     }),
     payment_amount: formatMessageMoney(input.paymentAmountCents ?? 0),
     payment_reference: input.paymentReference?.trim() || "Not provided",
+    refund_amount: formatMessageMoney(input.refundAmountCents ?? 0),
+    refund_reference: input.refundReference?.trim() || "Not provided",
     prior_person_name: input.priorPersonName?.trim() || "Prior attendee",
     new_person_name: input.newPersonName?.trim() || "Replacement attendee",
     announcement_title: input.announcementTitle?.trim() || "Event update",
@@ -633,6 +638,35 @@ export function enqueuePaymentReceiptMessage(
       paymentId: input.paymentId,
       paymentAttemptId: input.paymentAttemptId,
       provider: "SQUARE",
+    },
+  });
+}
+
+export function enqueueRefundNoticeMessage(
+  tx: Prisma.TransactionClient,
+  input: {
+    eventId: string;
+    registrationId: string;
+    refundId: string;
+    amountCents: number;
+    reference?: string;
+    provider: "MANUAL" | "SQUARE";
+    providerRefundId?: string;
+    correlationId?: string;
+  },
+) {
+  return enqueueTransactionalMessage(tx, {
+    eventId: input.eventId,
+    registrationId: input.registrationId,
+    templateKey: "REFUND_NOTICE",
+    correlationId: input.correlationId ?? randomUUID(),
+    transitionKey: `refund:${input.provider}:${input.refundId}:${input.providerRefundId ?? ""}`,
+    refundAmountCents: input.amountCents,
+    refundReference: input.reference,
+    metadata: {
+      refundId: input.refundId,
+      provider: input.provider,
+      ...(input.providerRefundId ? { providerRefundId: input.providerRefundId } : {}),
     },
   });
 }

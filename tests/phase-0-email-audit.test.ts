@@ -198,6 +198,8 @@ function contextFor(fixture: EventFixture, registration: RegistrationFixture): M
     attendee_summary: registration.attendeeSummary,
     total_amount: paid || unpaid ? "$125.00" : "$0.00",
     restored_status: "CONFIRMED",
+    refund_amount: paid ? "$25.00" : "$0.00",
+    refund_reference: `demo-refund-${registration.confirmationCode.toLowerCase()}`,
     balance_amount: unpaid ? "$125.00" : "$0.00",
     payment_instructions: unpaid ? `Contact ${fixture.contactEmail} for the approved payment step.` : "No additional payment is due.",
     portal_url: `https://events.example.test/manage/${registration.confirmationCode.toLowerCase()}`,
