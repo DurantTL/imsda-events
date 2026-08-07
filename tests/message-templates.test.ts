@@ -47,8 +47,15 @@ const registrationReactivatedMigration = readFileSync(
   "utf8",
 );
 
+const refundNoticeMigration = readFileSync(
+  new URL(
+    "../prisma/migrations/20260807120000_registration_refund_notice/migration.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 describe("message templates", () => {
-  it("ships twenty valid plaintext defaults", () => {
+  it("ships twenty-one valid plaintext defaults", () => {
     expect(MESSAGE_TEMPLATE_KEYS).toEqual([
       "REGISTRATION_CONFIRMATION_PAID",
       "REGISTRATION_CONFIRMATION_UNPAID",
@@ -63,6 +70,7 @@ describe("message templates", () => {
       "REGISTRATION_CONTACT_UPDATED",
       "REGISTRATION_UPDATED",
       "PAYMENT_RECEIPT",
+      "REFUND_NOTICE",
       "BALANCE_REMINDER",
       "REGISTRATION_TRANSFERRED_NEW_CONTACT",
       "REGISTRATION_TRANSFERRED_PRIOR_CONTACT",
@@ -71,7 +79,7 @@ describe("message templates", () => {
       "REGISTRATION_ACCESS_RECOVERY",
       "EVENT_ANNOUNCEMENT",
     ]);
-    expect(DEFAULT_MESSAGE_TEMPLATE_LIST).toHaveLength(20);
+    expect(DEFAULT_MESSAGE_TEMPLATE_LIST).toHaveLength(21);
 
     for (const key of MESSAGE_TEMPLATE_KEYS) {
       const template = DEFAULT_MESSAGE_TEMPLATES[key];
@@ -116,6 +124,15 @@ describe("message templates", () => {
     expect(registrationReactivatedMigration).toContain("{{restored_status}}");
     expect(registrationReactivatedMigration).not.toContain('UPDATE "MessageTemplateVersion"');
     expect(registrationReactivatedMigration).not.toContain('UPDATE "MessageOutbox"');
+  });
+
+  it("adds a versioned refund-notice default without rewriting message history", () => {
+    expect(refundNoticeMigration).toContain("ADD VALUE IF NOT EXISTS 'REFUND_NOTICE'");
+    expect(refundNoticeMigration).toContain("'REFUND_NOTICE'::\"MessageTemplateKey\"");
+    expect(refundNoticeMigration).toContain("{{refund_amount}}");
+    expect(refundNoticeMigration).toContain("{{refund_reference}}");
+    expect(refundNoticeMigration).not.toContain('UPDATE "MessageTemplateVersion"');
+    expect(refundNoticeMigration).not.toContain('UPDATE "MessageOutbox"');
   });
 
   it("rejects unknown tokens in either field and line breaks in a subject", () => {

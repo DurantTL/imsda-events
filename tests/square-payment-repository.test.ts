@@ -4,6 +4,7 @@ const dependencies = vi.hoisted(() => ({
   getPrisma: vi.fn(),
   authorizeRegistrationAccessToken: vi.fn(),
   enqueuePaymentReceiptMessage: vi.fn(),
+  enqueueRefundNoticeMessage: vi.fn(),
   processQueuedMessageIdsAfterCommit: vi.fn(),
 }));
 
@@ -16,6 +17,8 @@ vi.mock("@/modules/public-access/repository", () => ({
 vi.mock("@/modules/communications/transactional-messages", () => ({
   enqueuePaymentReceiptMessage:
     dependencies.enqueuePaymentReceiptMessage,
+  enqueueRefundNoticeMessage:
+    dependencies.enqueueRefundNoticeMessage,
 }));
 vi.mock("@/modules/communications/messaging-repository", () => ({
   processQueuedMessageIdsAfterCommit:
@@ -595,7 +598,9 @@ describe("Square payment repository", () => {
   it("records a completed Square refund against its card payment", async () => {
     const tx = transactionClient();
     const prisma = prismaFor(tx);
-    tx.squareWebhookEvent.findUnique.mockResolvedValue(null);
+    tx.squareWebhookEvent.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ status: "PROCESSED" });
     tx.payment.findFirst.mockResolvedValue({
       id: "payment-1",
       eventId: "event-1",
@@ -621,6 +626,9 @@ describe("Square payment repository", () => {
       updatedAt: new Date(),
     });
     dependencies.getPrisma.mockReturnValue(prisma);
+    dependencies.enqueueRefundNoticeMessage.mockResolvedValue({
+      pendingMessageIds: ["message-refund-1"],
+    });
     const event: ParsedSquareWebhookEvent = {
       providerEventId: "square-refund-event-1",
       eventType: "refund.updated",
@@ -640,7 +648,16 @@ describe("Square payment repository", () => {
       "b".repeat(64),
       { configuration },
     );
+    const duplicate = await processSquareWebhook(
+      event,
+      "b".repeat(64),
+      { configuration },
+    );
 
+    expect(duplicate).toEqual({
+      status: "PROCESSED",
+      duplicate: true,
+    });
     expect(result).toMatchObject({
       status: "PROCESSED",
       refundStatus: "SUCCEEDED",
@@ -654,6 +671,19 @@ describe("Square payment repository", () => {
         externalReference: "square-refund-1",
       }),
     });
+    expect(dependencies.enqueueRefundNoticeMessage).toHaveBeenCalledTimes(1);
+    expect(dependencies.enqueueRefundNoticeMessage).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        refundId: "refund-1",
+        amountCents: 2_500,
+        provider: "SQUARE",
+        providerRefundId: "square-refund-1",
+      }),
+    );
+    expect(dependencies.processQueuedMessageIdsAfterCommit).toHaveBeenCalledWith([
+      "message-refund-1",
+    ]);
     expect(tx.auditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         action: "SQUARE_REFUND_COMPLETED",
