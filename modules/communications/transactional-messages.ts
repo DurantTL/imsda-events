@@ -22,6 +22,7 @@ type TransactionalTemplateKey =
   | "WAITLIST_PROMOTED"
   | "WAITLIST_REMOVED"
   | "REGISTRATION_CANCELLED"
+  | "REGISTRATION_REACTIVATED"
   | "REGISTRATION_CONTACT_UPDATED"
   | "REGISTRATION_UPDATED"
   | "REGISTRATION_TRANSFERRED_NEW_CONTACT"
@@ -222,6 +223,7 @@ async function enqueueTransactionalMessage(
       select: {
         id: true,
         confirmationCode: true,
+        status: true,
         totalAmount: true,
         contactSnapshot: true,
         accountHolderPerson: {
@@ -366,6 +368,7 @@ async function enqueueTransactionalMessage(
       .map((attendee, index) => `${index + 1}. ${attendeeName(attendee)}`)
       .join("\n") || "No attendee names are recorded.",
     total_amount: formatMessageMoney(totalCents),
+    restored_status: registration.status,
     balance_amount: formatMessageMoney(balanceCents),
     payment_instructions: instructions,
     portal_url: REGISTRATION_MANAGE_LINK_SENTINEL,
@@ -509,6 +512,16 @@ export function enqueueRegistrationCancelledMessage(
   return enqueueTransactionalMessage(tx, {
     ...input,
     templateKey: "REGISTRATION_CANCELLED",
+  });
+}
+
+export function enqueueRegistrationReactivatedMessage(
+  tx: Prisma.TransactionClient,
+  input: Omit<TransactionalMessageInput, "templateKey">,
+) {
+  return enqueueTransactionalMessage(tx, {
+    ...input,
+    templateKey: "REGISTRATION_REACTIVATED",
   });
 }
 
