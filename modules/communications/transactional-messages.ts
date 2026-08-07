@@ -20,6 +20,7 @@ import {
 type TransactionalTemplateKey =
   | "WAITLIST_JOINED"
   | "WAITLIST_PROMOTED"
+  | "WAITLIST_REMOVED"
   | "REGISTRATION_CANCELLED"
   | "REGISTRATION_CONTACT_UPDATED"
   | "REGISTRATION_UPDATED"
@@ -39,6 +40,7 @@ type TransactionalMessageInput = {
   recipientEmail?: string;
   recipientName?: string;
   waitlistPosition?: number | null;
+  waitlistRemovalReason?: string;
   paymentAmountCents?: number;
   paymentReference?: string;
   priorPersonName?: string;
@@ -91,6 +93,13 @@ function snapshotString(
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
+function safeWaitlistRemovalReason(value?: string) {
+  return value?.trim()
+    .replaceAll("{{", "{ {")
+    .replaceAll("}}", "} }")
+    || "No reason was provided.";
+}
+
 function moneyToCents(value: { toString(): string } | number) {
   return Math.max(0, Math.round(Number(value) * 100));
 }
@@ -131,7 +140,7 @@ function paymentInstructions(
   if (key === "WAITLIST_JOINED") {
     return "No payment is due while this registration remains on the waitlist.";
   }
-  if (key === "REGISTRATION_CANCELLED") {
+  if (key === "REGISTRATION_CANCELLED" || key === "WAITLIST_REMOVED") {
     return cancellationPaymentWording({ paidCents, refundedCents });
   }
   if (key === "WAITLIST_PROMOTED") {
@@ -155,7 +164,7 @@ function paymentStateForTemplate(
 ): PaymentState {
   if (key === "WAITLIST_JOINED") return "WAITLISTED";
   if (key === "WAITLIST_PROMOTED") return "WAITLIST_PROMOTED";
-  if (key === "REGISTRATION_CANCELLED") return "CANCELLED";
+  if (key === "REGISTRATION_CANCELLED" || key === "WAITLIST_REMOVED") return "CANCELLED";
   if (input.totalCents <= 0) return "COMPLIMENTARY";
   return input.balanceCents > 0 ? "BALANCE_DUE" : "PAID";
 }
@@ -366,6 +375,7 @@ async function enqueueTransactionalMessage(
       || registration.event.supportContact
       || "the IMSDA event office",
     waitlist_position: waitlistPosition > 0 ? String(waitlistPosition) : "Pending",
+    waitlist_removal_reason: safeWaitlistRemovalReason(input.waitlistRemovalReason),
     contact_email: eventContactEmail,
     registration_contact_email: recipientEmail,
     hotel_information: buildHotelInformationBlock(registration.event),
@@ -479,6 +489,16 @@ export function enqueueWaitlistPromotedMessage(
   return enqueueTransactionalMessage(tx, {
     ...input,
     templateKey: "WAITLIST_PROMOTED",
+  });
+}
+
+export function enqueueWaitlistRemovedMessage(
+  tx: Prisma.TransactionClient,
+  input: Omit<TransactionalMessageInput, "templateKey">,
+) {
+  return enqueueTransactionalMessage(tx, {
+    ...input,
+    templateKey: "WAITLIST_REMOVED",
   });
 }
 

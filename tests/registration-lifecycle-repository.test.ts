@@ -6,6 +6,7 @@ const dependencies = vi.hoisted(() => ({
   enqueueRegistrationCancelledMessage: vi.fn(),
   enqueueWaitlistJoinedMessage: vi.fn(),
   enqueueWaitlistPromotedMessage: vi.fn(),
+  enqueueWaitlistRemovedMessage: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -18,6 +19,7 @@ vi.mock("@/modules/communications/transactional-messages", () => ({
     dependencies.enqueueRegistrationCancelledMessage,
   enqueueWaitlistJoinedMessage: dependencies.enqueueWaitlistJoinedMessage,
   enqueueWaitlistPromotedMessage: dependencies.enqueueWaitlistPromotedMessage,
+  enqueueWaitlistRemovedMessage: dependencies.enqueueWaitlistRemovedMessage,
 }));
 
 import {
@@ -98,6 +100,7 @@ beforeEach(() => {
   dependencies.enqueueRegistrationCancelledMessage.mockResolvedValue(queued);
   dependencies.enqueueWaitlistJoinedMessage.mockResolvedValue(queued);
   dependencies.enqueueWaitlistPromotedMessage.mockResolvedValue(queued);
+  dependencies.enqueueWaitlistRemovedMessage.mockResolvedValue(queued);
   dependencies.getRegistrationById.mockImplementation(async (_eventId, registrationId) => ({
     id: registrationId,
   }));
@@ -220,6 +223,73 @@ describe("registration lifecycle repository", () => {
         registrationId: active.id,
         waitlistPosition: 6,
       }));
+  });
+
+  it("removes a waitlisted registration with its prior position and safe operator reason", async () => {
+    const { prisma, tx } = transactionFixture();
+    const waitlisted = registration({
+      status: "WAITLISTED",
+      waitlistEntry: { id: "entry-1", status: "WAITING", position: 4 },
+    });
+    tx.registration.findFirst.mockResolvedValue(waitlisted);
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await cancelRegistration(
+      event.id,
+      waitlisted.id,
+      "user-1",
+      "Registrant chose a different event.",
+      new Date("2026-08-12T12:00:00.000Z"),
+    );
+
+    expect(tx.registrationWaitlistEntry.update).toHaveBeenCalledWith({
+      where: { id: "entry-1" },
+      data: {
+        status: "REMOVED",
+        removedAt: new Date("2026-08-12T12:00:00.000Z"),
+        lastBlockedReason: "Registrant chose a different event.",
+      },
+    });
+    expect(dependencies.enqueueWaitlistRemovedMessage).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        registrationId: waitlisted.id,
+        waitlistPosition: 4,
+        waitlistRemovalReason: "Registrant chose a different event.",
+        metadata: expect.objectContaining({
+          waitlistPosition: 4,
+          reason: "Registrant chose a different event.",
+        }),
+      }),
+    );
+    expect(dependencies.enqueueRegistrationCancelledMessage).not.toHaveBeenCalled();
+    expect(dependencies.enqueueWaitlistPromotedMessage).not.toHaveBeenCalled();
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        metadata: expect.objectContaining({
+          fromStatus: "WAITLISTED",
+          toStatus: "CANCELLED",
+          waitlistPosition: 4,
+          reason: "Registrant chose a different event.",
+        }),
+      }),
+    });
+  });
+
+  it("rejects a duplicate waitlist removal without adding another delivery intent", async () => {
+    const { prisma, tx } = transactionFixture();
+    tx.registration.findFirst.mockResolvedValue(registration({ status: "CANCELLED" }));
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await expect(cancelRegistration(
+      event.id,
+      "registration-1",
+      "user-1",
+      "Repeated request.",
+    )).rejects.toMatchObject({ code: "INVALID_REGISTRATION_TRANSITION" });
+
+    expect(dependencies.enqueueWaitlistRemovedMessage).not.toHaveBeenCalled();
+    expect(dependencies.enqueueRegistrationCancelledMessage).not.toHaveBeenCalled();
   });
 
   it("reactivates a cancelled registration only after event and option capacity are available", async () => {
@@ -481,5 +551,7 @@ describe("registration lifecycle repository", () => {
       where: { id: "entry-1" },
       data: expect.objectContaining({ status: "PROMOTED", lastBlockedReason: null }),
     });
+    expect(dependencies.enqueueWaitlistPromotedMessage).toHaveBeenCalledOnce();
+    expect(dependencies.enqueueWaitlistRemovedMessage).not.toHaveBeenCalled();
   });
 });

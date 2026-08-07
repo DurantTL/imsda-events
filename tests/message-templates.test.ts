@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   ALLOWED_MESSAGE_TEMPLATE_TOKENS,
@@ -30,8 +31,16 @@ const _templateKeyValuesAreKeys: TemplateKey = null as unknown as MessageTemplat
 void _keysAreTemplateKeyValues;
 void _templateKeyValuesAreKeys;
 
+const waitlistRemovedMigration = readFileSync(
+  new URL(
+    "../prisma/migrations/20260806180000_waitlist_removed_message/migration.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+
 describe("message templates", () => {
-  it("ships eighteen valid plaintext defaults", () => {
+  it("ships nineteen valid plaintext defaults", () => {
     expect(MESSAGE_TEMPLATE_KEYS).toEqual([
       "REGISTRATION_CONFIRMATION_PAID",
       "REGISTRATION_CONFIRMATION_UNPAID",
@@ -40,6 +49,7 @@ describe("message templates", () => {
       "INTERNAL_NEW_REGISTRATION",
       "WAITLIST_JOINED",
       "WAITLIST_PROMOTED",
+      "WAITLIST_REMOVED",
       "REGISTRATION_CANCELLED",
       "REGISTRATION_CONTACT_UPDATED",
       "REGISTRATION_UPDATED",
@@ -52,7 +62,7 @@ describe("message templates", () => {
       "REGISTRATION_ACCESS_RECOVERY",
       "EVENT_ANNOUNCEMENT",
     ]);
-    expect(DEFAULT_MESSAGE_TEMPLATE_LIST).toHaveLength(18);
+    expect(DEFAULT_MESSAGE_TEMPLATE_LIST).toHaveLength(19);
 
     for (const key of MESSAGE_TEMPLATE_KEYS) {
       const template = DEFAULT_MESSAGE_TEMPLATES[key];
@@ -72,6 +82,18 @@ describe("message templates", () => {
     expect(ALLOWED_MESSAGE_TEMPLATE_TOKENS.has("registrant_name")).toBe(true);
     expect(ALLOWED_MESSAGE_TEMPLATE_TOKENS.has("reply_to_email")).toBe(true);
     expect(formatMessageTemplateToken("confirmation_code")).toBe("{{confirmation_code}}");
+  });
+
+  it("adds a versioned waitlist-removal default without rewriting message history", () => {
+    expect(waitlistRemovedMigration).toContain(
+      "ADD VALUE IF NOT EXISTS 'WAITLIST_REMOVED'",
+    );
+    expect(waitlistRemovedMigration).toContain("'WAITLIST_REMOVED'::\"MessageTemplateKey\"");
+    expect(waitlistRemovedMigration).toContain("'PUBLISHED'");
+    expect(waitlistRemovedMigration).toContain("{{waitlist_position}}");
+    expect(waitlistRemovedMigration).toContain("{{waitlist_removal_reason}}");
+    expect(waitlistRemovedMigration).not.toContain('UPDATE "MessageTemplateVersion"');
+    expect(waitlistRemovedMigration).not.toContain('UPDATE "MessageOutbox"');
   });
 
   it("rejects unknown tokens in either field and line breaks in a subject", () => {
