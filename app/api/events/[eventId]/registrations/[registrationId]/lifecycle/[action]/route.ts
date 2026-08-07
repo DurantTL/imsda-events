@@ -106,13 +106,14 @@ async function postHandler(
       }, { status: 200, headers: noStoreHeaders });
     }
     if (action.data === "reactivate") {
-      const registration = await reactivateRegistration(
+      const result = await reactivateRegistration(
         eventId,
         registrationId,
         access.user.id,
         reason
       );
-      return Response.json({ registration }, { status: 200, headers: noStoreHeaders });
+      await processMessagesAfterCommit(result.pendingMessageIds);
+      return Response.json({ registration: result.registration }, { status: 200, headers: noStoreHeaders });
     }
     const result = action.data === "waitlist"
       ? await moveRegistrationToWaitlist(eventId, registrationId, access.user.id, reason)

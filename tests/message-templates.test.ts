@@ -39,8 +39,16 @@ const waitlistRemovedMigration = readFileSync(
   "utf8",
 );
 
+const registrationReactivatedMigration = readFileSync(
+  new URL(
+    "../prisma/migrations/20260806190000_registration_reactivated_message/migration.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+
 describe("message templates", () => {
-  it("ships nineteen valid plaintext defaults", () => {
+  it("ships twenty valid plaintext defaults", () => {
     expect(MESSAGE_TEMPLATE_KEYS).toEqual([
       "REGISTRATION_CONFIRMATION_PAID",
       "REGISTRATION_CONFIRMATION_UNPAID",
@@ -51,6 +59,7 @@ describe("message templates", () => {
       "WAITLIST_PROMOTED",
       "WAITLIST_REMOVED",
       "REGISTRATION_CANCELLED",
+      "REGISTRATION_REACTIVATED",
       "REGISTRATION_CONTACT_UPDATED",
       "REGISTRATION_UPDATED",
       "PAYMENT_RECEIPT",
@@ -62,7 +71,7 @@ describe("message templates", () => {
       "REGISTRATION_ACCESS_RECOVERY",
       "EVENT_ANNOUNCEMENT",
     ]);
-    expect(DEFAULT_MESSAGE_TEMPLATE_LIST).toHaveLength(19);
+    expect(DEFAULT_MESSAGE_TEMPLATE_LIST).toHaveLength(20);
 
     for (const key of MESSAGE_TEMPLATE_KEYS) {
       const template = DEFAULT_MESSAGE_TEMPLATES[key];
@@ -94,6 +103,19 @@ describe("message templates", () => {
     expect(waitlistRemovedMigration).toContain("{{waitlist_removal_reason}}");
     expect(waitlistRemovedMigration).not.toContain('UPDATE "MessageTemplateVersion"');
     expect(waitlistRemovedMigration).not.toContain('UPDATE "MessageOutbox"');
+  });
+
+  it("adds a versioned reactivation default without rewriting message history", () => {
+    expect(registrationReactivatedMigration).toContain(
+      "ADD VALUE IF NOT EXISTS 'REGISTRATION_REACTIVATED'",
+    );
+    expect(registrationReactivatedMigration).toContain(
+      "'REGISTRATION_REACTIVATED'::\"MessageTemplateKey\"",
+    );
+    expect(registrationReactivatedMigration).toContain("'PUBLISHED'");
+    expect(registrationReactivatedMigration).toContain("{{restored_status}}");
+    expect(registrationReactivatedMigration).not.toContain('UPDATE "MessageTemplateVersion"');
+    expect(registrationReactivatedMigration).not.toContain('UPDATE "MessageOutbox"');
   });
 
   it("rejects unknown tokens in either field and line breaks in a subject", () => {

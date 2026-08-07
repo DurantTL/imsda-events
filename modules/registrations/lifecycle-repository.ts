@@ -4,6 +4,7 @@ import { Prisma, type RegistrationStatus } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import {
   enqueueRegistrationCancelledMessage,
+  enqueueRegistrationReactivatedMessage,
   enqueueWaitlistJoinedMessage,
   enqueueWaitlistPromotedMessage,
   enqueueWaitlistRemovedMessage,
@@ -841,7 +842,7 @@ export async function reactivateRegistration(
   reason = "",
   now = new Date(),
 ) {
-  const id = await runSerializable(async (tx) => {
+  const result = await runSerializable(async (tx) => {
     const event = await loadEvent(tx, eventId);
     const registration = await loadRegistration(tx, eventId, registrationId);
     requireStatus(registration, ["CANCELLED"], "Reactivation");
@@ -875,6 +876,7 @@ export async function reactivateRegistration(
     });
     const priorStatus = recordFromJson(previousCancellation?.metadata).fromStatus;
     const targetStatus = priorStatus === "CONFIRMED" ? "CONFIRMED" : "SUBMITTED";
+    const correlationId = crypto.randomUUID();
     const activatedReservations = await activateOptionReservations(tx, registration, claims, now);
     await tx.registration.update({
       where: { id: registration.id },
@@ -900,7 +902,7 @@ export async function reactivateRegistration(
       fromStatus: "CANCELLED",
       toStatus: targetStatus,
       reason,
-      correlationId: crypto.randomUUID(),
+      correlationId,
       metadata: {
         activatedReservations,
         restoredStatus: targetStatus,
@@ -908,7 +910,24 @@ export async function reactivateRegistration(
         paymentHistoryPreserved: true,
       },
     });
-    return registration.id;
+    const queued = await enqueueRegistrationReactivatedMessage(tx, {
+      eventId,
+      registrationId: registration.id,
+      correlationId,
+      transitionKey: `REGISTRATION_REACTIVATED:${correlationId}`,
+      metadata: {
+        source: "STAFF_LIFECYCLE",
+        restoredStatus: targetStatus,
+        activatedReservations,
+      },
+    });
+    return {
+      registrationId: registration.id,
+      pendingMessageIds: queued.pendingMessageIds,
+    };
   });
-  return registrationResult(eventId, id);
+  return {
+    registration: await registrationResult(eventId, result.registrationId),
+    pendingMessageIds: result.pendingMessageIds,
+  };
 }

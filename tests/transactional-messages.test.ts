@@ -8,6 +8,7 @@ import {
   enqueueEventAnnouncementMessage,
   enqueuePaymentReceiptMessage,
   enqueueRegistrationCancelledMessage,
+  enqueueRegistrationReactivatedMessage,
   enqueueRegistrationContactUpdatedMessage,
   enqueueRegistrationUpdatedMessage,
   enqueueRegistrationTransferredNewContactMessage,
@@ -62,6 +63,7 @@ function transactionFixture() {
       findFirst: vi.fn().mockResolvedValue({
         id: "registration-1",
         confirmationCode: "REG-1234",
+        status: "CONFIRMED",
         totalAmount: { toString: () => "250.00" },
         contactSnapshot: {
           firstName: "Original",
@@ -204,6 +206,33 @@ describe("transactional lifecycle messages", () => {
     expect(first.create.bodyTextSnapshot).not.toContain("do-not-render");
     expect(first.create.bodyHtmlSnapshot).not.toContain('href="https://malicious.example"');
     expect(first.create.bodyHtmlSnapshot).not.toMatch(/\{\{[^{}]+\}\}/);
+  });
+
+  it("queues one reactivation confirmation across retries with restored status and no recreation claim", async () => {
+    const { tx, upsert } = transactionFixture();
+    const input = {
+      eventId: "event-1",
+      registrationId: "registration-1",
+      correlationId: "correlation-reactivated",
+      transitionKey: "registration-reactivated:1",
+    };
+
+    await enqueueRegistrationReactivatedMessage(tx as never, input);
+    await enqueueRegistrationReactivatedMessage(tx as never, input);
+
+    const first = upsert.mock.calls[0]![0] as CapturedOutboxUpsert;
+    const retry = upsert.mock.calls[1]![0] as CapturedOutboxUpsert;
+    expect(first.where.idempotencyKey).toBe(retry.where.idempotencyKey);
+    expect(first.create).toMatchObject({
+      templateKey: "REGISTRATION_REACTIVATED",
+      status: "PENDING",
+    });
+    expect(first.create.subjectSnapshot).not.toMatch(/\\{\\{[^{}]+\\}\\}/);
+    expect(first.create.bodyTextSnapshot).toContain("Restored status:** CONFIRMED");
+    expect(first.create.bodyTextSnapshot).toContain("No payment was recreated");
+    expect(first.create.bodyTextSnapshot).toContain("No new capacity or waitlist policy was created");
+    expect(first.create.bodyTextSnapshot).toContain(REGISTRATION_MANAGE_LINK_SENTINEL);
+    expect(first.create.bodyHtmlSnapshot).not.toMatch(/\\{\\{[^{}]+\\}\\}/);
   });
 
   it("preserves payment and refund facts in a cancellation without claiming an automatic refund", async () => {

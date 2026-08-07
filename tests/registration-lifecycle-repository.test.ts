@@ -4,6 +4,7 @@ const dependencies = vi.hoisted(() => ({
   getPrisma: vi.fn(),
   getRegistrationById: vi.fn(),
   enqueueRegistrationCancelledMessage: vi.fn(),
+  enqueueRegistrationReactivatedMessage: vi.fn(),
   enqueueWaitlistJoinedMessage: vi.fn(),
   enqueueWaitlistPromotedMessage: vi.fn(),
   enqueueWaitlistRemovedMessage: vi.fn(),
@@ -17,6 +18,8 @@ vi.mock("@/modules/registrations/repository", () => ({
 vi.mock("@/modules/communications/transactional-messages", () => ({
   enqueueRegistrationCancelledMessage:
     dependencies.enqueueRegistrationCancelledMessage,
+  enqueueRegistrationReactivatedMessage:
+    dependencies.enqueueRegistrationReactivatedMessage,
   enqueueWaitlistJoinedMessage: dependencies.enqueueWaitlistJoinedMessage,
   enqueueWaitlistPromotedMessage: dependencies.enqueueWaitlistPromotedMessage,
   enqueueWaitlistRemovedMessage: dependencies.enqueueWaitlistRemovedMessage,
@@ -98,6 +101,7 @@ beforeEach(() => {
     skippedReason: null,
   };
   dependencies.enqueueRegistrationCancelledMessage.mockResolvedValue(queued);
+  dependencies.enqueueRegistrationReactivatedMessage.mockResolvedValue(queued);
   dependencies.enqueueWaitlistJoinedMessage.mockResolvedValue(queued);
   dependencies.enqueueWaitlistPromotedMessage.mockResolvedValue(queued);
   dependencies.enqueueWaitlistRemovedMessage.mockResolvedValue(queued);
@@ -333,7 +337,7 @@ describe("registration lifecycle repository", () => {
     tx.auditLog.findFirst.mockResolvedValue({ metadata: { fromStatus: "CONFIRMED" } });
     dependencies.getPrisma.mockReturnValue(prisma);
 
-    await reactivateRegistration(
+    const result = await reactivateRegistration(
       event.id,
       cancelled.id,
       "user-1",
@@ -355,6 +359,48 @@ describe("registration lifecycle repository", () => {
       data: { status: "CONFIRMED", cancelledAt: null },
     });
     expect(tx.registration.update.mock.calls[0][0].data).not.toHaveProperty("totalAmount");
+    expect(result).toMatchObject({
+      registration: { id: cancelled.id },
+      pendingMessageIds: ["message-1"],
+    });
+    expect(dependencies.enqueueRegistrationReactivatedMessage).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        registrationId: cancelled.id,
+        transitionKey: expect.stringMatching(/^REGISTRATION_REACTIVATED:/),
+        metadata: expect.objectContaining({ restoredStatus: "CONFIRMED" }),
+      }),
+    );
+  });
+
+  it("restores a cancelled submitted registration to submitted and queues its confirmation", async () => {
+    const { prisma, tx } = transactionFixture();
+    const cancelled = registration({ status: "CANCELLED" });
+    tx.registration.findFirst.mockResolvedValue(cancelled);
+    tx.auditLog.findFirst.mockResolvedValue(null);
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    const result = await reactivateRegistration(
+      event.id,
+      cancelled.id,
+      "user-1",
+      "Cancellation was entered in error.",
+    );
+
+    expect(tx.registration.update).toHaveBeenCalledWith({
+      where: { id: cancelled.id },
+      data: { status: "SUBMITTED", cancelledAt: null },
+    });
+    expect(result).toMatchObject({
+      registration: { id: cancelled.id },
+      pendingMessageIds: ["message-1"],
+    });
+    expect(dependencies.enqueueRegistrationReactivatedMessage).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        metadata: expect.objectContaining({ restoredStatus: "SUBMITTED" }),
+      }),
+    );
   });
 
   it("blocks manual promotion when an immutable option selection no longer fits", async () => {

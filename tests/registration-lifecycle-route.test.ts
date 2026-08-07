@@ -94,7 +94,10 @@ beforeEach(() => {
     autoPromotedRegistration: null,
     pendingMessageIds: ["message-cancelled"],
   });
-  mocks.reactivateRegistration.mockResolvedValue({ id: "registration-1", status: "SUBMITTED" });
+  mocks.reactivateRegistration.mockResolvedValue({
+    registration: { id: "registration-1", status: "SUBMITTED" },
+    pendingMessageIds: ["message-reactivated"],
+  });
   mocks.moveRegistrationToWaitlist.mockResolvedValue({
     registration: { id: "registration-1", status: "WAITLISTED" },
     pendingMessageIds: ["message-waitlisted"],
@@ -130,6 +133,8 @@ describe("registration lifecycle action route", () => {
       "Reviewed by event staff.",
     );
     if (action !== "reactivate") {
+      expect(mocks.processQueuedMessageIdsAfterCommit).toHaveBeenCalledOnce();
+    } else {
       expect(mocks.processQueuedMessageIdsAfterCommit).toHaveBeenCalledOnce();
     }
   });
