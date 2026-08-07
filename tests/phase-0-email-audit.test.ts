@@ -202,6 +202,7 @@ function contextFor(fixture: EventFixture, registration: RegistrationFixture): M
     portal_url: `https://events.example.test/manage/${registration.confirmationCode.toLowerCase()}`,
     reply_to_email: fixture.replyToEmail,
     waitlist_position: waitlisted ? "3" : "Not waitlisted",
+    waitlist_removal_reason: "The registrant can no longer attend.",
     contact_email: fixture.contactEmail,
     registration_contact_email: `${registration.confirmationCode.toLowerCase()}@example.test`,
     change_category: "Seminar preferences",

@@ -6,6 +6,7 @@ import {
   enqueueRegistrationCancelledMessage,
   enqueueWaitlistJoinedMessage,
   enqueueWaitlistPromotedMessage,
+  enqueueWaitlistRemovedMessage,
 } from "@/modules/communications/transactional-messages";
 import {
   getAvailabilityMode,
@@ -637,9 +638,13 @@ export async function cancelRegistration(
     );
     const correlationId = crypto.randomUUID();
     const wasActive = isActiveStatus(registration.status);
+    const wasWaitlisted = registration.status === "WAITLISTED";
+    const waitlistPosition = wasWaitlisted
+      ? registration.waitlistEntry?.position ?? null
+      : null;
     const released = await releaseOptionReservations(tx, registration.id, now);
 
-    if (registration.status === "WAITLISTED" && registration.waitlistEntry) {
+    if (wasWaitlisted && registration.waitlistEntry) {
       await tx.registrationWaitlistEntry.update({
         where: { id: registration.waitlistEntry.id },
         data: {
@@ -681,18 +686,24 @@ export async function cancelRegistration(
       metadata: {
         releasedReservations: released.count,
         autoPromotedRegistrationId,
+        ...(wasWaitlisted ? { waitlistPosition } : {}),
         totalAmountPreserved: true,
         paymentHistoryPreserved: true,
       },
     });
-    const cancellationMessage = await enqueueRegistrationCancelledMessage(tx, {
+    const cancellationMessage = await (wasWaitlisted
+      ? enqueueWaitlistRemovedMessage
+      : enqueueRegistrationCancelledMessage)(tx, {
       eventId,
       registrationId: registration.id,
       correlationId,
       transitionKey: `REGISTRATION_CANCELLED:${correlationId}`,
+      waitlistPosition,
+      waitlistRemovalReason: reason,
       metadata: {
         source: "STAFF_LIFECYCLE",
         autoPromotedRegistrationId,
+        ...(wasWaitlisted ? { waitlistPosition, reason: reason || null } : {}),
       },
     });
     return {

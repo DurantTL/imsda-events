@@ -14,6 +14,7 @@ import {
   enqueueRegistrationTransferredPriorContactMessage,
   enqueueWaitlistJoinedMessage,
   enqueueWaitlistPromotedMessage,
+  enqueueWaitlistRemovedMessage,
 } from "@/modules/communications/transactional-messages";
 
 type CapturedOutboxUpsert = {
@@ -159,6 +160,50 @@ describe("transactional lifecycle messages", () => {
     expect(body).toContain("Balance due: **$175.00**");
     expect(body).toContain("$175.00 remains due");
     expect(body).toContain(REGISTRATION_MANAGE_LINK_SENTINEL);
+  });
+
+  it("queues one escaped waitlist-removal snapshot across retries with prior position and reason", async () => {
+    const { tx, upsert } = transactionFixture();
+    const input = {
+      eventId: "event-1",
+      registrationId: "registration-1",
+      correlationId: "correlation-removed",
+      transitionKey: "waitlist-removal:1",
+      waitlistPosition: 4,
+      waitlistRemovalReason: "[Changed plans](https://malicious.example)",
+      metadata: {
+        source: "STAFF_LIFECYCLE",
+        waitlistPosition: 4,
+        reason: "[Changed plans](https://malicious.example)",
+      },
+    };
+
+    await enqueueWaitlistRemovedMessage(tx as never, input);
+    await enqueueWaitlistRemovedMessage(tx as never, input);
+
+    const first = upsert.mock.calls[0]![0] as CapturedOutboxUpsert;
+    const retry = upsert.mock.calls[1]![0] as CapturedOutboxUpsert;
+    expect(first.where.idempotencyKey).toBe(retry.where.idempotencyKey);
+    expect(first.update).toEqual({});
+    expect(first.create).toMatchObject({
+      templateKey: "WAITLIST_REMOVED",
+      recipientEmail: "old-contact@example.test",
+      status: "PENDING",
+      metadata: expect.objectContaining({
+        waitlistPosition: 4,
+        reason: "[Changed plans](https://malicious.example)",
+      }),
+    });
+    expect(first.create.subjectSnapshot).not.toMatch(/\{\{[^{}]+\}\}/);
+    expect(first.create.bodyTextSnapshot).toContain("Previous waitlist position:** 4");
+    expect(first.create.bodyTextSnapshot).toContain(
+      "[Changed plans](https://malicious.example)",
+    );
+    expect(first.create.bodyTextSnapshot).not.toContain("{{protected_answer}}");
+    expect(first.create.bodyTextSnapshot).not.toContain("immutable_protected_answer");
+    expect(first.create.bodyTextSnapshot).not.toContain("do-not-render");
+    expect(first.create.bodyHtmlSnapshot).not.toContain('href="https://malicious.example"');
+    expect(first.create.bodyHtmlSnapshot).not.toMatch(/\{\{[^{}]+\}\}/);
   });
 
   it("preserves payment and refund facts in a cancellation without claiming an automatic refund", async () => {
