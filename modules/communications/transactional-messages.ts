@@ -140,21 +140,23 @@ function paymentInstructions(
   balanceCents: number,
   paidCents: number,
   refundedCents: number,
+  approvedInstructions: string | null | undefined,
+  billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE",
 ) {
   if (key === "WAITLIST_JOINED") {
-    return "No payment is due while this registration remains on the waitlist.";
+    return "";
   }
   if (key === "REGISTRATION_CANCELLED" || key === "WAITLIST_REMOVED") {
     return cancellationPaymentWording({ paidCents, refundedCents });
   }
   if (key === "WAITLIST_PROMOTED") {
-    return balanceCents > 0
-      ? `${formatMessageMoney(balanceCents)} remains due. Use the private registration link to review the balance and continue payment.`
-      : "No balance is due at this time.";
+    return billingMode === "ATTENDEE_PAY" && balanceCents > 0
+      ? approvedInstructions?.trim() || ""
+      : "";
   }
-  return balanceCents > 0
-    ? `${formatMessageMoney(balanceCents)} remains due.`
-    : "No balance is due at this time.";
+  return billingMode === "ATTENDEE_PAY" && balanceCents > 0
+    ? approvedInstructions?.trim() || ""
+    : "";
 }
 
 /**
@@ -244,6 +246,12 @@ async function enqueueTransactionalMessage(
             timezone: true,
             location: true,
             supportContact: true,
+            billingMode: true,
+            paymentInstructionVersions: {
+              orderBy: { versionNumber: "desc" },
+              take: 1,
+              select: { instructions: true },
+            },
             hotelName: true,
             hotelBookingUrl: true,
             hotelPhone: true,
@@ -341,6 +349,8 @@ async function enqueueTransactionalMessage(
     balanceCents,
     paidCents,
     refundedCents,
+    registration.event.paymentInstructionVersions?.[0]?.instructions,
+    registration.event.billingMode,
   );
   // The organiser's published address, which is what a "questions? contact …"
   // line means. The reply-to is a delivery header and can be a no-reply.

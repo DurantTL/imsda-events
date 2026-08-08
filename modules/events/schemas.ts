@@ -116,6 +116,7 @@ export const eventSettingsInputSchema = z.object({
   hotelGroupName: optionalNullableText(200),
   hotelRate: optionalNullableText(120),
   hotelInstructions: optionalNullableText(1_000),
+  approvedPaymentInstructions: optionalNullableText(2_000),
   // Not part of lifecycleFields: those govern when registration is open, and
   // this governs what the form asks for. Grouping them would suggest turning
   // shirts off has something to do with closing registration.

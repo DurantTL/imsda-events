@@ -493,6 +493,11 @@ async function loadBalanceReminderState(
         location: true,
         supportContact: true,
         billingMode: true,
+        paymentInstructionVersions: {
+          orderBy: { versionNumber: "desc" },
+          take: 1,
+          select: { instructions: true },
+        },
         ...EVENT_LODGING_SELECT,
       },
     }),
@@ -1152,6 +1157,16 @@ async function loadTestRegistrationContext(
       accountHolderPerson: {
         select: { firstName: true, lastName: true, normalizedEmail: true },
       },
+      event: {
+        select: {
+          billingMode: true,
+          paymentInstructionVersions: {
+            orderBy: { versionNumber: "desc" },
+            take: 1,
+            select: { instructions: true },
+          },
+        },
+      },
       attendees: {
         orderBy: { position: "asc" },
         select: { id: true, person: { select: { firstName: true, lastName: true } } },
@@ -1195,9 +1210,10 @@ async function loadTestRegistrationContext(
     return total + moneyToCents(payment.amount) - refunded;
   }, 0);
   const balanceCents = Math.max(totalCents - netPaidCents, 0);
-  const paymentInstructionsText = balanceCents > 0
-    ? `A balance of ${formatMessageMoney(balanceCents)} is outstanding.`
-    : "No additional payment is due.";
+  const paymentInstructionsText = registration.event?.billingMode === "ATTENDEE_PAY"
+    && balanceCents > 0
+    ? registration.event?.paymentInstructionVersions?.[0]?.instructions?.trim() || ""
+    : "";
 
   return {
     registrationId: registration.id,
@@ -1543,6 +1559,9 @@ export async function enqueueBalanceReminderBatch(
                 || "the IMSDA event office",
               registration_contact_email: recipient.recipientEmail,
               hotel_information: buildHotelInformationBlock(state.event),
+              payment_instructions: state.event.billingMode === "ATTENDEE_PAY"
+                ? state.event.paymentInstructionVersions[0]?.instructions?.trim() || ""
+                : "",
               // A reminder audience is exactly the registrations with a
               // balance, so the block never needs any other state.
               payment_status_block: buildPaymentStatusBlock({
@@ -2721,7 +2740,16 @@ export async function enqueuePublicRegistrationMessages(
     // never has to know which fields a message template happens to use.
     tx.event.findUnique({
       where: { id: input.event.id },
-      select: { supportContact: true, ...EVENT_LODGING_SELECT },
+      select: {
+        supportContact: true,
+        billingMode: true,
+        paymentInstructionVersions: {
+          orderBy: { versionNumber: "desc" },
+          take: 1,
+          select: { instructions: true },
+        },
+        ...EVENT_LODGING_SELECT,
+      },
     }),
     // The whole party, not just the first attendee: a check-in code belongs to
     // one attendee, so how many there are decides whether a code can be inlined
@@ -2749,10 +2777,10 @@ export async function enqueuePublicRegistrationMessages(
     input.attendeeResponses,
   );
   const paymentInstructionsText = isDeferredOrganizationBilling
-    ? "No payment is due online. The responsible organization will be billed after the event."
+    ? ""
     : input.calculation.totalCents > 0
-      ? "No card was charged. The event team will provide or confirm the next payment step."
-      : "No balance is due at this time.";
+      ? eventDetails?.paymentInstructionVersions[0]?.instructions?.trim() || ""
+      : "";
   const responsibleOrganization = isDeferredOrganizationBilling
     ? resolveResponsibleOrganization(input.responses)
     : null;
