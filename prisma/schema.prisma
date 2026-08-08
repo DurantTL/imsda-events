@@ -149,6 +149,12 @@ enum MerchandiseFeePolicy {
   PASSED_TO_BUYER
 }
 
+enum MerchandiseCatalogStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+}
+
 /// ATTENDEE_PAY is the existing behavior: attendees choose a payment method and
 /// may owe an online balance. DEFERRED_ORGANIZATION_INVOICE is for club/church
 /// group registrations (e.g. Spring Camporee): no attendee balance or online
@@ -838,7 +844,7 @@ model EventAsset {
   event      Event              @relation(fields: [eventId], references: [id], onDelete: Cascade)
   uploadedBy User?              @relation("EventAssetUploadedBy", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
   links      EventContentLink[]
-
+  merchandiseArtworkProducts MerchandiseProduct[] @relation("MerchandiseProductArtwork")
   @@index([eventId, createdAt])
 }
 
@@ -938,6 +944,7 @@ model Event {
   communityReports                    CommunityReport[]
   communityNotifications              CommunityNotification[]
   merchandiseProducts                 MerchandiseProduct[]
+  merchandiseCatalog                   MerchandiseCatalog?
   merchandiseOrders                   MerchandiseOrder[]
   merchandiseOrderLines               MerchandiseOrderLine[]
   merchandiseOrderStatusChanges       MerchandiseOrderStatusChange[]
@@ -1336,14 +1343,19 @@ model MerchandiseProduct {
   name        String
   description String?
   isEnabled   Boolean  @default(true)
+  isArchived  Boolean  @default(false)
+  position    Int      @default(0)
+  artworkAssetId String?
+  artworkAltText String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   event      Event                        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  artwork    EventAsset?                  @relation("MerchandiseProductArtwork", fields: [artworkAssetId], references: [id], onDelete: Restrict)
   variants   MerchandiseProductVariant[]
   orderLines MerchandiseOrderLine[]
 
-  @@index([eventId, isEnabled])
+  @@index([eventId, isEnabled, isArchived, position])
 }
 
 /// A purchasable option of a product, such as a size. A variant that has ever
@@ -1357,6 +1369,7 @@ model MerchandiseProductVariant {
   sku       String?
   position  Int      @default(0)
   isEnabled Boolean  @default(true)
+  isArchived Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1387,6 +1400,11 @@ model MerchandiseVariantAvailability {
   isActive          Boolean                    @default(true)
   createdByUserId   String
   reason            String?
+  salesStartsAt     DateTime?
+  salesEndsAt       DateTime?
+  minQuantity       Int      @default(1)
+  maxQuantity       Int?
+  attendeeAvailability String @default("ALL")
   createdAt         DateTime                   @default(now())
 
   variant    MerchandiseProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
@@ -1394,7 +1412,20 @@ model MerchandiseVariantAvailability {
   orderLines MerchandiseOrderLine[]
 
   @@unique([variantId, versionNumber])
-  @@index([variantId, isActive])
+  @@index([variantId, isActive, salesStartsAt, salesEndsAt])
+}
+
+/// Event-level switch and human approval gate for the catalog. Saving a draft
+/// never activates public sales; only an explicit APPROVED state can do that.
+model MerchandiseCatalog {
+  id        String                   @id @default(cuid())
+  eventId   String                   @unique
+  isEnabled Boolean                  @default(false)
+  status    MerchandiseCatalogStatus @default(DRAFT)
+  createdAt DateTime                 @default(now())
+  updatedAt DateTime                 @updatedAt
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 }
 
 /// A merchandise purchase. Deliberately independent of `Registration.status`
