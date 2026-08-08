@@ -364,6 +364,7 @@ model User {
   createdFormVersions       RegistrationFormVersion[] @relation("RegistrationFormVersionCreatedBy")
   formTestSubmissions       FormTestSubmission[]      @relation("FormTestSubmissionSubmittedBy")
   createdMessageVersions    MessageTemplateVersion[]  @relation("MessageTemplateVersionCreatedBy")
+  createdPaymentInstructionVersions EventPaymentInstructionVersion[] @relation("PaymentInstructionVersionApprovedBy")
   platformSettingsUpdates   PlatformSettings[]        @relation("PlatformSettingsUpdatedBy")
   uploadedEventAssets       EventAsset[]              @relation("EventAssetUploadedBy")
   appliedProgramAssignments ProgramAssignmentRun[]    @relation("ProgramAssignmentAppliedBy")
@@ -890,6 +891,7 @@ model Event {
   capacityReservations                RegistrationCapacityReservation[]
   messageSettings                     EventMessageSettings?
   messageTemplates                    EventMessageTemplate[]
+  paymentInstructionVersions          EventPaymentInstructionVersion[]
   messageOutbox                       MessageOutbox[]
   waitlistEntries                     RegistrationWaitlistEntry[]
   paymentAttempts                     PaymentAttempt[]
@@ -1634,6 +1636,22 @@ model RegistrationCapacityReservation {
   @@unique([registrationId, participantKey, fieldId, optionValue], map: "RegistrationCapacityReservation_scoped_choice_key")
   @@index([registrationAttendeeId])
   @@index([formId, fieldId, optionValue, releasedAt])
+  @@index([eventId, createdAt])
+}
+
+model EventPaymentInstructionVersion {
+  id              String   @id @default(cuid())
+  eventId         String
+  versionNumber   Int
+  instructions    String?
+  approvedByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  event      Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  approvedBy User? @relation("PaymentInstructionVersionApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([eventId, versionNumber])
   @@index([eventId, createdAt])
 }
 

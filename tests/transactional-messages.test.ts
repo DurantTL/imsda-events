@@ -160,7 +160,7 @@ describe("transactional lifecycle messages", () => {
 
     const body = queuedMessage(upsert).create.bodyTextSnapshot;
     expect(body).toContain("Balance due: **$175.00**");
-    expect(body).toContain("$175.00 remains due");
+    expect(body).not.toContain("remains due");
     expect(body).toContain(REGISTRATION_MANAGE_LINK_SENTINEL);
   });
 

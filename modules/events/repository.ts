@@ -113,7 +113,7 @@ function lodgingUpdateData(input: EventLodgingInput) {
 
 export async function getEventSettings(eventId: string) {
   const prisma = getPrisma();
-  const [event, publishedForms] = await Promise.all([
+  const [event, publishedForms, paymentInstructions] = await Promise.all([
     prisma.event.findUnique({
       where: { id: eventId },
       select: {
@@ -159,6 +159,11 @@ export async function getEventSettings(eventId: string) {
         slug: true,
       },
     }),
+    prisma.eventPaymentInstructionVersion.findFirst({
+      where: { eventId },
+      orderBy: { versionNumber: "desc" },
+      select: { instructions: true, versionNumber: true },
+    }),
   ]);
   if (!event) return null;
   const publishedFormCount = publishedForms.length;
@@ -179,6 +184,7 @@ export async function getEventSettings(eventId: string) {
     hotelGroupName: event.hotelGroupName,
     hotelRate: event.hotelRate,
     hotelInstructions: event.hotelInstructions,
+    approvedPaymentInstructions: paymentInstructions?.instructions ?? null,
     isPublished: event.isPublished,
     registrationOpensOn: event.registrationOpensOn,
     registrationClosesOn: event.registrationClosesOn,
@@ -255,6 +261,16 @@ export async function createEvent(
         status: "ACTIVE",
       },
     });
+    if (input.approvedPaymentInstructions) {
+      await tx.eventPaymentInstructionVersion.create({
+        data: {
+          eventId: event.id,
+          versionNumber: 1,
+          instructions: input.approvedPaymentInstructions,
+          approvedByUserId: actorUserId,
+        },
+      });
+    }
     await tx.auditLog.create({
       data: {
         eventId: event.id,
@@ -279,7 +295,7 @@ export async function updateEventSettings(
 ) {
   const prisma = getPrisma();
   await prisma.$transaction(async (tx) => {
-    const [current, publishedFormCount] = await Promise.all([
+    const [current, publishedFormCount, currentPaymentInstructions] = await Promise.all([
       tx.event.findUnique({
         where: { id: eventId },
         select: {
@@ -312,6 +328,11 @@ export async function updateEventSettings(
       }),
       tx.registrationFormVersion.count({
         where: { status: "PUBLISHED", form: { eventId } },
+      }),
+      tx.eventPaymentInstructionVersion.findFirst({
+        where: { eventId },
+        orderBy: { versionNumber: "desc" },
+        select: { instructions: true, versionNumber: true },
       }),
     ]);
     if (!current) {
@@ -353,6 +374,18 @@ export async function updateEventSettings(
         autoPromoteWaitlist: input.autoPromoteWaitlist,
       },
     });
+    const requestedInstructions = input.approvedPaymentInstructions;
+    const previousInstructions = currentPaymentInstructions?.instructions ?? null;
+    if (requestedInstructions !== undefined && requestedInstructions !== previousInstructions) {
+      await tx.eventPaymentInstructionVersion.create({
+        data: {
+          eventId,
+          versionNumber: (currentPaymentInstructions?.versionNumber ?? 0) + 1,
+          instructions: requestedInstructions,
+          approvedByUserId: actorUserId,
+        },
+      });
+    }
     await tx.auditLog.create({
       data: {
         eventId,

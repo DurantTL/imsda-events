@@ -79,6 +79,7 @@ function draftFromEvent(event: EventSettingsRecord | null): EventSettingsInput {
     collectsShirtSizes: event?.collectsShirtSizes ?? false,
     attendeeEditPolicy: event?.attendeeEditPolicy ?? "VERIFY_EVERY_EDIT",
     billingMode: event?.billingMode ?? "ATTENDEE_PAY",
+    approvedPaymentInstructions: event?.approvedPaymentInstructions ?? null,
     seminarPreferenceClosesOn: event?.seminarPreferenceClosesOn ?? null,
     seminarPreferenceSelfServiceLocked:
       event?.seminarPreferenceSelfServiceLocked ?? false,
@@ -338,6 +339,20 @@ export function EventSettingsWorkspace({
                 Club/church group events such as Spring Camporee: registration shows informational
                 rates only, no attendee balance or online payment is created, and the responsible
                 organization is billed later based on final attendance.
+              </small>
+            </label>
+            <label>
+              Approved payment instructions
+              <textarea
+                value={draft.approvedPaymentInstructions ?? ""}
+                maxLength={2_000}
+                rows={5}
+                placeholder="Tell registrants how to pay this event's approved balance."
+                onChange={(event) => update("approvedPaymentInstructions", event.target.value || null)}
+              />
+              <small>
+                Versioned event guidance appears only on applicable unpaid messages. Amounts, payment
+                state, waitlist, complimentary, and organization-billed wording remain server-derived.
               </small>
             </label>
             <div className="form-grid two-column">
