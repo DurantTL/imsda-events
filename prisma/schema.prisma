@@ -121,6 +121,34 @@ enum RegistrationPaymentChoice {
   PAY_LATER
 }
 
+/// Deliberately distinct from `RegistrationStatus` (issue #144): a merchandise
+/// order's lifecycle never stands in for a registration's, even when the same
+/// person owns both.
+enum MerchandiseOrderStatus {
+  PENDING
+  PAID
+  CANCELLED
+  REFUNDED
+}
+
+enum MerchandiseInventoryPolicy {
+  UNLIMITED
+  TRACKED
+}
+
+enum MerchandiseTaxTreatment {
+  TAXABLE
+  TAX_EXEMPT
+}
+
+/// Who bears the card-processing fee on a merchandise order, mirroring the
+/// absorbed/passed-through choice `RegistrationPaymentChoice` makes for
+/// registrations.
+enum MerchandiseFeePolicy {
+  ABSORBED_BY_EVENT
+  PASSED_TO_BUYER
+}
+
 /// ATTENDEE_PAY is the existing behavior: attendees choose a payment method and
 /// may owe an online balance. DEFERRED_ORGANIZATION_INVOICE is for club/church
 /// group registrations (e.g. Spring Camporee): no attendee balance or online
@@ -375,6 +403,9 @@ model User {
   updatedCommunitySettings  EventCommunitySettings[]  @relation("CommunitySettingsUpdatedBy")
   moderatedCommunityPosts   CommunityPost[]           @relation("CommunityPostModeratedBy")
   resolvedCommunityReports  CommunityReport[]         @relation("CommunityReportResolvedBy")
+  createdMerchandiseAvailability MerchandiseVariantAvailability[] @relation("MerchandiseAvailabilityCreatedBy")
+  createdMerchandiseOrders       MerchandiseOrder[]               @relation("MerchandiseOrderCreatedBy")
+  merchandiseOrderStatusChanges  MerchandiseOrderStatusChange[]   @relation("MerchandiseOrderStatusActor")
 
   @@index([accountStatus])
 }
@@ -906,6 +937,10 @@ model Event {
   communityPosts                      CommunityPost[]
   communityReports                    CommunityReport[]
   communityNotifications              CommunityNotification[]
+  merchandiseProducts                 MerchandiseProduct[]
+  merchandiseOrders                   MerchandiseOrder[]
+  merchandiseOrderLines               MerchandiseOrderLine[]
+  merchandiseOrderStatusChanges       MerchandiseOrderStatusChange[]
 }
 
 model EventMembership {
@@ -1045,6 +1080,7 @@ model Registration {
   promoCodeRedemption     PromoCodeRedemption?
   operations              RegistrationOperation[]
   paymentChoiceOperations RegistrationPaymentChoiceOperation[]
+  merchandiseOrders       MerchandiseOrder[]
 
   @@unique([eventId, confirmationCode])
   @@index([eventId, status])
@@ -1288,6 +1324,174 @@ model Refund {
   @@unique([paymentId, externalReference])
   @@index([eventId, status])
   @@index([paymentId])
+}
+
+/// An event-owned merchandise product (a shirt, a mug). Disabling the product,
+/// or its event being unpublished, hides it from any future public catalog
+/// without touching the order history already recorded against it (issue
+/// #144). No public checkout exists yet; this is the domain foundation.
+model MerchandiseProduct {
+  id          String   @id @default(cuid())
+  eventId     String
+  name        String
+  description String?
+  isEnabled   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  event      Event                        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  variants   MerchandiseProductVariant[]
+  orderLines MerchandiseOrderLine[]
+
+  @@index([eventId, isEnabled])
+}
+
+/// A purchasable option of a product, such as a size. A variant that has ever
+/// sold is never hard-deleted by application code — only disabled — but the
+/// schema also tolerates deletion (`onDelete: SetNull` on order lines) so a
+/// historical line still reads correctly if a row is ever removed by hand.
+model MerchandiseProductVariant {
+  id        String   @id @default(cuid())
+  productId String
+  label     String
+  sku       String?
+  position  Int      @default(0)
+  isEnabled Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product      MerchandiseProduct                @relation(fields: [productId], references: [id], onDelete: Cascade)
+  availability MerchandiseVariantAvailability[]
+  orderLines   MerchandiseOrderLine[]
+
+  @@unique([productId, label])
+  @@index([productId, isEnabled, position])
+}
+
+/// The price/tax/fee/inventory terms a variant sells under. A row is never
+/// edited after it is created — changing terms supersedes it with a new row
+/// and deactivates the old one — so an order line can always cite the exact
+/// availability it was priced from and a later catalog edit can never rewrite
+/// a past purchase. Only one row per variant may have `isActive = true`; the
+/// migration carries the partial unique index Prisma cannot express, plus a
+/// check constraint tying `inventoryQuantity` to `inventoryPolicy`.
+model MerchandiseVariantAvailability {
+  id                String                     @id @default(cuid())
+  variantId         String
+  versionNumber     Int
+  priceCents        Int
+  taxTreatment      MerchandiseTaxTreatment
+  feePolicy         MerchandiseFeePolicy
+  inventoryPolicy   MerchandiseInventoryPolicy @default(UNLIMITED)
+  inventoryQuantity Int?
+  isActive          Boolean                    @default(true)
+  createdByUserId   String
+  reason            String?
+  createdAt         DateTime                   @default(now())
+
+  variant    MerchandiseProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  createdBy  User                      @relation("MerchandiseAvailabilityCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  orderLines MerchandiseOrderLine[]
+
+  @@unique([variantId, versionNumber])
+  @@index([variantId, isActive])
+}
+
+/// A merchandise purchase. Deliberately independent of `Registration.status`
+/// (issue #144): an order can be paid while a registration is still a draft,
+/// and a cancelled registration does not retroactively cancel an order.
+/// `registrationId` is kept only for buyer context; totals are this order's
+/// own and are never folded into `Registration.totalAmount`.
+/// `clientRequestId` plus the unique index below make order creation
+/// retry-safe the same way `RegistrationOperation.clientRequestId` does:
+/// a retry with the same key and the same basket replays the stored order,
+/// and `requestFingerprint` catches a key reused for a different basket
+/// instead of silently returning someone else's order.
+/// `paymentMethod`/`paymentReference` are allocation fields for the append-only
+/// accounting direction in #74; they intentionally do not force every order
+/// through the Square-specific `Payment`/`PaymentAttempt` tables, so cash and
+/// check settlement do not have to pretend to be a card workflow.
+model MerchandiseOrder {
+  id                String                 @id @default(cuid())
+  eventId           String
+  registrationId    String?
+  purchaserSnapshot Json
+  clientRequestId   String
+  requestFingerprint String
+  status            MerchandiseOrderStatus @default(PENDING)
+  subtotalCents     Int
+  feeCents          Int                    @default(0)
+  taxCents          Int                    @default(0)
+  totalCents        Int
+  paymentMethod     PaymentMethod?
+  paymentReference  String?
+  createdByUserId   String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  event         Event                          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration  Registration?                  @relation(fields: [registrationId], references: [id], onDelete: SetNull)
+  createdBy     User?                          @relation("MerchandiseOrderCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  lines         MerchandiseOrderLine[]
+  statusChanges MerchandiseOrderStatusChange[]
+
+  @@unique([eventId, clientRequestId])
+  @@index([eventId, status, createdAt])
+  @@index([registrationId])
+}
+
+/// One purchased line. Every commercial fact is copied at order time and never
+/// re-read from the catalog — `productId`/`variantId`/`availabilityId` are
+/// live-reference conveniences only, all nullable and `SetNull` on delete — so
+/// a later price change, product rename, or variant deletion/disablement can
+/// never rewrite an existing order line (issue #144 acceptance criteria).
+model MerchandiseOrderLine {
+  id                     String                  @id @default(cuid())
+  orderId                String
+  eventId                String
+  productId              String?
+  productNameSnapshot    String
+  variantId              String?
+  variantLabelSnapshot   String
+  availabilityId         String?
+  unitPriceCentsSnapshot Int
+  quantity               Int
+  taxTreatmentSnapshot   MerchandiseTaxTreatment
+  feePolicySnapshot      MerchandiseFeePolicy
+  lineTotalCents         Int
+  createdAt              DateTime                @default(now())
+
+  order        MerchandiseOrder                @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  event        Event                            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  product      MerchandiseProduct?              @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variant      MerchandiseProductVariant?       @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  availability MerchandiseVariantAvailability?  @relation(fields: [availabilityId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([eventId, createdAt])
+  @@index([productId])
+  @@index([variantId])
+}
+
+/// Staff-driven order status transitions, carrying actor and reason the same
+/// way `RegistrationOperation` does for registration changes (issue #144:
+/// "Staff mutations carry actor and reason where applicable").
+model MerchandiseOrderStatusChange {
+  id          String                 @id @default(cuid())
+  orderId     String
+  eventId     String
+  fromStatus  MerchandiseOrderStatus
+  toStatus    MerchandiseOrderStatus
+  actorUserId String
+  reason      String?
+  createdAt   DateTime               @default(now())
+
+  order MerchandiseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  event Event            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  actor User             @relation("MerchandiseOrderStatusActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([orderId, createdAt])
+  @@index([eventId, createdAt])
 }
 
 model SquareWebhookEvent {
