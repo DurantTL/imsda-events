@@ -29,6 +29,35 @@ ALTER TABLE "MerchandiseVariantAvailability"
   ADD COLUMN "maxQuantity" INTEGER,
   ADD COLUMN "attendeeAvailability" TEXT NOT NULL DEFAULT 'ALL';
 
+ALTER TABLE "MerchandiseProduct"
+  ADD CONSTRAINT "MerchandiseProduct_archive_requires_disabled"
+  CHECK (NOT "isArchived" OR NOT "isEnabled"),
+  ADD CONSTRAINT "MerchandiseProduct_position_nonnegative"
+  CHECK ("position" >= 0),
+  ADD CONSTRAINT "MerchandiseProduct_artwork_alt_text_pair"
+  -- Postgres treats a CHECK expression that evaluates to NULL as satisfied,
+  -- not violated. Without an explicit "artworkAltText" IS NOT NULL conjunct, a
+  -- row with an assetId but a NULL altText makes the second branch evaluate
+  -- to NULL (length(trim(NULL)) is NULL) rather than FALSE, and the whole OR
+  -- silently passes. The explicit IS NOT NULL forces that branch to FALSE.
+  CHECK (("artworkAssetId" IS NULL AND "artworkAltText" IS NULL) OR ("artworkAssetId" IS NOT NULL AND "artworkAltText" IS NOT NULL AND length(trim("artworkAltText")) >= 3));
+
+ALTER TABLE "MerchandiseProductVariant"
+  ADD CONSTRAINT "MerchandiseProductVariant_archive_requires_disabled"
+  CHECK (NOT "isArchived" OR NOT "isEnabled"),
+  ADD CONSTRAINT "MerchandiseProductVariant_position_nonnegative"
+  CHECK ("position" >= 0);
+
+ALTER TABLE "MerchandiseVariantAvailability"
+  ADD CONSTRAINT "MerchandiseVariantAvailability_price_nonnegative"
+  CHECK ("priceCents" >= 0),
+  ADD CONSTRAINT "MerchandiseVariantAvailability_quantity_bounds"
+  CHECK ("minQuantity" >= 1 AND ("maxQuantity" IS NULL OR "maxQuantity" >= "minQuantity")),
+  ADD CONSTRAINT "MerchandiseVariantAvailability_sales_window_order"
+  CHECK ("salesStartsAt" IS NULL OR "salesEndsAt" IS NULL OR "salesEndsAt" >= "salesStartsAt"),
+  ADD CONSTRAINT "MerchandiseVariantAvailability_attendee_availability"
+  CHECK ("attendeeAvailability" IN ('ALL', 'REGISTERED', 'STAFF_ONLY'));
+
 ALTER TABLE "MerchandiseCatalog"
   ADD CONSTRAINT "MerchandiseCatalog_eventId_fkey"
   FOREIGN KEY ("eventId") REFERENCES "Event"("id") ON DELETE CASCADE ON UPDATE CASCADE;

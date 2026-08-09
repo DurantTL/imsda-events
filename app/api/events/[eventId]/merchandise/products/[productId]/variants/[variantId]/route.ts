@@ -25,9 +25,9 @@ export const DELETE = withRequestContext(async (request: Request, context: Conte
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
   try {
-    const { eventId, variantId } = await context.params;
+    const { eventId, productId, variantId } = await context.params;
     const access = await requirePermission(await getCurrentSession(), eventId, "CONFIGURE_EVENT", findActiveMembership);
-    return Response.json({ variant: await archiveVariant(eventId, variantId, access.user.id) });
+    return Response.json({ variant: await archiveVariant(eventId, productId, variantId, access.user.id) });
   } catch (error) {
     if (error instanceof Error && "status" in error) return Response.json({ error: (error as Error & { code?: string }).code ?? "ACCESS_DENIED", message: error.message }, { status: Number((error as Error & { status: number }).status) });
     return Response.json({ error: "MERCHANDISE_VARIANT_FAILED", message: error instanceof Error ? error.message : "The variant request could not be completed." }, { status: 400 });

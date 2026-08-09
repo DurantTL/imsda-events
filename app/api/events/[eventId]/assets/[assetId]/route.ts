@@ -41,7 +41,7 @@ function apiError(error: unknown, operation: string) {
 }
 
 /** Staff preview, including files no published section links to yet. */
-async function getHandler(_request: Request, context: RouteContext) {
+async function getHandler(request: Request, context: RouteContext) {
   try {
     const { eventId, assetId } = await context.params;
     await authorize(eventId);
@@ -52,7 +52,8 @@ async function getHandler(_request: Request, context: RouteContext) {
         { status: 404 },
       );
     }
-    return eventAssetResponse(asset);
+    const disposition = new URL(request.url).searchParams.get("disposition") === "inline" ? "inline" : "attachment";
+    return eventAssetResponse(asset, disposition);
   } catch (error) {
     return apiError(error, "Opening the event file");
   }

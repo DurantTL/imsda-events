@@ -29,11 +29,18 @@ export class EventAssetError extends Error {
 export type EventAssetRecord = {
   id: string;
   displayName: string;
+  filename: string;
   contentType: string;
   byteSize: number;
   createdAt: string;
   linkCount: number;
+  /** Only ever inline for a verified image type — see eventAssetResponse. */
+  url: string;
 };
+
+function assetInlineUrl(eventId: string, assetId: string) {
+  return `/api/events/${encodeURIComponent(eventId)}/assets/${encodeURIComponent(assetId)}?disposition=inline`;
+}
 
 export async function listEventAssets(eventId: string): Promise<EventAssetRecord[]> {
   const assets = await getPrisma().eventAsset.findMany({
@@ -51,10 +58,12 @@ export async function listEventAssets(eventId: string): Promise<EventAssetRecord
   return assets.map((asset) => ({
     id: asset.id,
     displayName: asset.displayName,
+    filename: asset.displayName,
     contentType: asset.contentType,
     byteSize: asset.byteSize,
     createdAt: asset.createdAt.toISOString(),
     linkCount: asset._count.links,
+    url: assetInlineUrl(eventId, asset.id),
   }));
 }
 
@@ -109,7 +118,7 @@ export async function createEventAsset(
       },
       select: { id: true, displayName: true, contentType: true, byteSize: true, createdAt: true },
     });
-    return { ...asset, createdAt: asset.createdAt.toISOString(), linkCount: 0 };
+    return { ...asset, filename: asset.displayName, createdAt: asset.createdAt.toISOString(), linkCount: 0, url: assetInlineUrl(eventId, asset.id) };
   } catch (error) {
     // The row is the record of truth. Without it the file is unreachable and
     // unlistable, so it goes rather than sitting on disk forever.
@@ -122,7 +131,11 @@ export async function removeEventAsset(eventId: string, assetId: string) {
   const prisma = getPrisma();
   const asset = await prisma.eventAsset.findFirst({
     where: { id: assetId, eventId },
-    select: { id: true, storageKey: true, _count: { select: { links: true } } },
+    select: {
+      id: true,
+      storageKey: true,
+      _count: { select: { links: true, merchandiseArtworkProducts: true } },
+    },
   });
   if (!asset) {
     throw new EventAssetError("ASSET_NOT_FOUND", "That file is no longer available.");
@@ -131,6 +144,12 @@ export async function removeEventAsset(eventId: string, assetId: string) {
     throw new EventAssetError(
       "ASSET_IN_USE",
       "Remove the tiles that link to this file before deleting it.",
+    );
+  }
+  if (asset._count.merchandiseArtworkProducts > 0) {
+    throw new EventAssetError(
+      "ASSET_IN_USE",
+      "Remove this artwork from the merchandise products that use it before deleting it.",
     );
   }
   await prisma.eventAsset.delete({ where: { id: asset.id } });
@@ -147,11 +166,13 @@ export async function findEventAssetForStaff(eventId: string, assetId: string) {
 
 /**
  * Public view: an asset is reachable only while a *published* section of a
- * *published* event links to it.
+ * *published* event links to it, or it is the artwork of a merchandise
+ * product whose catalog is enabled and approved.
  *
  * Serving by id alone would mean an uploaded-but-unpublished file — next
  * year's pricing, a draft schedule — is one guessed identifier from being
- * public. Unpublishing a section takes its files down with it, which is what
+ * public. Unpublishing a section (or disabling/archiving a product, or
+ * pulling catalog approval) takes its files down with it, which is what
  * unpublishing is for.
  */
 export async function findPublishedEventAsset(assetId: string) {
@@ -159,7 +180,18 @@ export async function findPublishedEventAsset(assetId: string) {
     where: {
       id: assetId,
       event: { isPublished: true },
-      links: { some: { section: { isPublished: true } } },
+      OR: [
+        { links: { some: { section: { isPublished: true } } } },
+        {
+          merchandiseArtworkProducts: {
+            some: {
+              isEnabled: true,
+              isArchived: false,
+              event: { merchandiseCatalog: { isEnabled: true, status: "APPROVED" } },
+            },
+          },
+        },
+      ],
     },
     select: { displayName: true, contentType: true, storageKey: true },
   });

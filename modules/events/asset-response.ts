@@ -10,21 +10,26 @@ import { readAsset } from "@/modules/events/asset-storage";
  * in this origin. The CSP is the belt to that brace: nothing in the response is
  * permitted to load or execute anything.
  */
-export async function eventAssetResponse(asset: {
-  displayName: string;
-  contentType: string;
-  storageKey: string;
-}) {
+/**
+ * `inline` is only ever honored for a verified image content type — this is
+ * what lets an artwork picker render a thumbnail without opening the same
+ * door for a PDF (a format that can carry script) to render in this origin.
+ */
+export async function eventAssetResponse(
+  asset: { displayName: string; contentType: string; storageKey: string },
+  disposition: "attachment" | "inline" = "attachment",
+) {
   const bytes = await readAsset(asset.storageKey);
   // The name is quoted and stripped of quotes so it cannot break out of the
   // header and add directives of its own.
   const safeName = asset.displayName.replace(/["\\]/g, "");
+  const effectiveDisposition = disposition === "inline" && asset.contentType.startsWith("image/") ? "inline" : "attachment";
   return new Response(new Uint8Array(bytes), {
     headers: {
       // The verified type from upload, never anything a request supplied.
       "Content-Type": asset.contentType,
       "Content-Length": String(bytes.byteLength),
-      "Content-Disposition": `attachment; filename="${safeName}"`,
+      "Content-Disposition": `${effectiveDisposition}; filename="${safeName}"`,
       "X-Content-Type-Options": "nosniff",
       "Content-Security-Policy": "default-src 'none'; sandbox",
       "Cross-Origin-Resource-Policy": "same-origin",

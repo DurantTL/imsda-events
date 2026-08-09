@@ -11,7 +11,7 @@ async function handler(request: Request, context: Context) {
     const originError = rejectCrossOriginRequest(request); if (originError) return originError;
     const { eventId } = await context.params;
     const access = await requirePermission(await getCurrentSession(), eventId, "CONFIGURE_EVENT", findActiveMembership);
-    if (request.method === "GET") return Response.json({ products: (await getMerchandiseCatalog(eventId, true)).products });
+    if (request.method === "GET") return Response.json({ products: (await getMerchandiseCatalog(eventId)).products });
     const product = await createProduct(eventId, await request.json(), access.user.id);
     return Response.json({ product }, { status: 201 });
   } catch (error) {

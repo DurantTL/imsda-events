@@ -12,6 +12,9 @@
 .artPlaceholder { display: grid; place-items: center; background: var(--imsda-purple-soft); color: var(--imsda-purple); }
 .cardActions { display: flex; gap: 3px; }
 .previewHelp { margin: -5px 0 14px; color: var(--muted); font-size: .67rem; line-height: 1.55; }
+.audienceToggle { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+.audienceToggle button { padding: 6px 10px; font-size: .64rem; }
+.audienceToggle button[aria-pressed="true"] { border-color: var(--imsda-purple); color: var(--imsda-purple); }
 .previewList { display: grid; gap: 10px; }
 .previewCard { display: grid; grid-template-columns: 60px minmax(0, 1fr); gap: 11px; border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
 .previewCard > img { width: 60px; height: 60px; border-radius: 10px; object-fit: cover; }
@@ -26,7 +29,7 @@
 .variantHeading .secondary-button { padding: 6px 8px; font-size: .62rem; }
 .variantRow { align-items: center; }
 .variantRow > span { display: grid; gap: 2px; }
-.variantRow > span:last-child { display: flex; align-items: center; gap: 8px; color: var(--imsda-purple); font-weight: 800; }
+.variantRow > span:last-child { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--imsda-purple); font-weight: 800; }
 .variantRow small { color: var(--muted); font-size: .6rem; font-weight: 500; }
 .variantSummary div { color: var(--muted); }
 .editor { max-width: 650px; }
@@ -43,4 +46,5 @@
   .cardActions { flex-direction: column; }
   .previewCard { grid-template-columns: 48px minmax(0, 1fr); }
   .previewCard > img { width: 48px; height: 48px; }
+  .audienceToggle button { flex: 1 1 auto; }
 }
