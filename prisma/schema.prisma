@@ -221,6 +221,12 @@ enum EventContentSectionKind {
   RESOURCE_LINKS
 }
 
+enum AttendeeClassificationKind {
+  CATEGORY
+  TRACK
+  DEPARTMENT
+}
+
 enum ImportRunStatus {
   PENDING
   RUNNING
@@ -941,6 +947,51 @@ model Event {
   merchandiseOrders                   MerchandiseOrder[]
   merchandiseOrderLines               MerchandiseOrderLine[]
   merchandiseOrderStatusChanges       MerchandiseOrderStatusChange[]
+  attendeeTypes                       EventAttendeeType[]
+  attendeeClassifications             EventAttendeeClassification[]
+}
+
+/// Event-owned identity used by registration, pricing, capacity, and restriction
+/// modules. `label` is mutable; RegistrationAttendee.attendeeType is the snapshot.
+model EventAttendeeType {
+  id          String   @id @default(cuid())
+  eventId     String
+  code        String
+  label       String
+  description String   @default("")
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  minimumAge  Int?
+  maximumAge  Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  event     Event                  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  attendees RegistrationAttendee[]
+
+  @@unique([eventId, code])
+  @@index([eventId, isActive, sortOrder, label])
+}
+
+/// Orthogonal event-owned groupings. An attendee has one type but can have any
+/// number of categories, tracks, and departments.
+model EventAttendeeClassification {
+  id          String                     @id @default(cuid())
+  eventId     String
+  kind        AttendeeClassificationKind
+  code        String
+  label       String
+  description String                     @default("")
+  sortOrder   Int                        @default(0)
+  isActive    Boolean                    @default(true)
+  createdAt   DateTime                   @default(now())
+  updatedAt   DateTime                   @updatedAt
+
+  event       Event                              @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  assignments RegistrationAttendeeClassification[]
+
+  @@unique([eventId, kind, code])
+  @@index([eventId, kind, isActive, sortOrder, label])
 }
 
 model EventMembership {
@@ -1207,6 +1258,7 @@ model RegistrationAttendee {
   registrationId  String
   personId        String
   attendeeType    String
+  attendeeTypeDefinitionId String?
   position        Int      @default(0)
   profileSnapshot Json
   formResponses   Json     @default("{}")
@@ -1216,6 +1268,8 @@ model RegistrationAttendee {
   event                  Event                             @relation(fields: [eventId], references: [id], onDelete: Cascade)
   registration           Registration                      @relation(fields: [registrationId], references: [id], onDelete: Cascade)
   person                 Person                            @relation(fields: [personId], references: [id])
+  attendeeTypeDefinition EventAttendeeType?                @relation(fields: [attendeeTypeDefinitionId], references: [id], onDelete: Restrict)
+  classifications        RegistrationAttendeeClassification[]
   checkIns               CheckIn[]
   capacityReservations   RegistrationCapacityReservation[]
   substitutionOperations RegistrationOperation[]
@@ -1223,6 +1277,19 @@ model RegistrationAttendee {
   @@unique([registrationId, personId])
   @@index([registrationId, position])
   @@index([eventId, attendeeType])
+  @@index([attendeeTypeDefinitionId])
+}
+
+model RegistrationAttendeeClassification {
+  attendeeId      String
+  classificationId String
+  assignedAt      DateTime @default(now())
+
+  attendee       RegistrationAttendee        @relation(fields: [attendeeId], references: [id], onDelete: Cascade)
+  classification EventAttendeeClassification @relation(fields: [classificationId], references: [id], onDelete: Restrict)
+
+  @@id([attendeeId, classificationId])
+  @@index([classificationId])
 }
 
 model RegistrationOperation {

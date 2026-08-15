@@ -26,6 +26,7 @@ import {
 } from "@/modules/promo-codes/domain";
 import { registrationOperationFingerprint } from "@/modules/registrations/operations-domain";
 import { getRegistrationByIdWithClient } from "@/modules/registrations/repository";
+import { withAttendeeTypeOptions, attendeeTypeSelector } from "@/modules/attendee-types/form-options";
 import type { RegistrationAmendmentInput } from "@/modules/registrations/schemas";
 
 type AmendmentActor = {
@@ -107,6 +108,7 @@ const amendmentRegistrationInclude = {
       },
       checkIns: { select: { id: true } },
       substitutionOperations: { select: { id: true } },
+      attendeeTypeDefinition: { select: { id: true, code: true, label: true } },
     },
   },
   payments: {
@@ -284,6 +286,57 @@ function attendeeType(responses: Record<string, unknown>) {
   if (value.includes("worker") || value.includes("volunteer")) return "WORKER";
   if (value.includes("child") || value.includes("teen") || value.includes("youth")) return "CHILD";
   return "ATTENDEE";
+}
+
+export function resolveAmendmentAttendeeType(
+  definition: RegistrationFormDefinition,
+  responses: Record<string, unknown>,
+  configuredTypes: Array<{ id: string; code: string; label: string }>,
+  current: { attendeeType: string; attendeeTypeDefinitionId?: string | null; attendeeTypeDefinition?: { id: string; code: string; label: string } | null } | null,
+) {
+  const selector = attendeeTypeSelector(definition);
+  const selectedCode = selector && typeof responses[selector.key] === "string" ? responses[selector.key] : null;
+  const selected = selectedCode ? configuredTypes.find((type) => type.code === selectedCode) : null;
+  if (selector && current && current.attendeeTypeDefinition?.code === selectedCode) {
+    return { attendeeType: current.attendeeType, attendeeTypeDefinitionId: current.attendeeTypeDefinitionId };
+  }
+  if (selector && selectedCode && !selected) {
+    throw new RegistrationAmendmentError(
+      "INVALID_AMENDMENT",
+      "A deactivated attendee type can only be retained by the attendee who already has it.",
+    );
+  }
+  if (selector && selected) return { attendeeType: selected.label, attendeeTypeDefinitionId: selected.id };
+  return current
+    ? { attendeeType: current.attendeeType, attendeeTypeDefinitionId: current.attendeeTypeDefinitionId }
+    : { attendeeType: attendeeType(responses), attendeeTypeDefinitionId: null };
+}
+
+export function assertAmendmentAttendeeTypeSelections(
+  definition: RegistrationFormDefinition,
+  attendees: Array<{ attendeeId?: string | null; responses: Record<string, unknown> }>,
+  configuredTypes: Array<{ code: string; isActive: boolean }>,
+  currentAttendees: Array<{ id: string; attendeeTypeDefinition?: { code: string } | null }>,
+) {
+  const selectors = definition.sections.flatMap((section) => section.fields)
+    .filter((field) => field.optionSource === "ATTENDEE_TYPES");
+  const activeCodes = new Set(configuredTypes.filter((type) => type.isActive).map((type) => type.code));
+  const currentById = new Map(currentAttendees.map((attendee) => [attendee.id, attendee]));
+  for (const attendee of attendees) {
+    const current = attendee.attendeeId ? currentById.get(attendee.attendeeId) : null;
+    for (const selector of selectors) {
+      const selectedValue = attendee.responses[selector.key];
+      const selectedCode = typeof selectedValue === "string"
+        ? selectedValue
+        : null;
+      if (selectedCode && !activeCodes.has(selectedCode) && current?.attendeeTypeDefinition?.code !== selectedCode) {
+        throw new RegistrationAmendmentError(
+          "INVALID_AMENDMENT",
+          "A deactivated attendee type can only be retained by the attendee who already has it.",
+        );
+      }
+    }
+  }
 }
 
 function selectedCapacityChoices(
@@ -617,9 +670,29 @@ async function prepareAmendment(
     );
   }
 
-  const definition = registrationFormDefinitionSchema.parse(
-    registration.publicFormSubmission.formVersion.definition,
+  const configuredTypes = await tx.eventAttendeeType.findMany({
+    where: { eventId },
+    orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
+  });
+  const definition = withAttendeeTypeOptions(
+    registrationFormDefinitionSchema.parse(registration.publicFormSubmission.formVersion.definition),
+    configuredTypes.filter((type) => type.isActive),
   );
+  assertAmendmentAttendeeTypeSelections(
+    definition,
+    input.attendees,
+    configuredTypes,
+    registration.attendees,
+  );
+  for (const field of definition.sections.flatMap((section) => section.fields)) {
+    if (field.optionSource !== "ATTENDEE_TYPES") continue;
+    for (const current of registration.attendees) {
+      const code = current.attendeeTypeDefinition?.code;
+      if (!code || field.options.includes(code)) continue;
+      field.options.push(code);
+      field.optionLabels = { ...(field.optionLabels ?? {}), [code]: current.attendeeType };
+    }
+  }
   const currentRegistrationResponses = storedRegistrationResponses(registration);
   assertProtectedFieldsUnchanged(
     definition,
@@ -809,6 +882,7 @@ async function prepareAmendment(
     paidCents: netPaidCents,
     addedAttendeeCount: input.attendees.filter((attendee) => !attendee.attendeeId).length,
     seminarPreferencesChanged,
+    configuredTypes,
   };
 }
 
@@ -961,10 +1035,12 @@ export async function amendRegistration(
               where: { id: current.id },
               data: {
                 position,
-                attendeeType: attendeeType({
-                  ...prepared.prepared.registrationResponses,
-                  ...attendee.responses,
-                }),
+                ...resolveAmendmentAttendeeType(
+                  prepared.definition,
+                  { ...prepared.prepared.registrationResponses, ...attendee.responses },
+                  prepared.configuredTypes.filter((type) => type.isActive),
+                  current,
+                ),
                 profileSnapshot: {
                   ...recordFromJson(current.profileSnapshot),
                   firstName: attendee.identity.firstName,
@@ -991,10 +1067,12 @@ export async function amendRegistration(
                 eventId,
                 registrationId,
                 personId: person.id,
-                attendeeType: attendeeType({
-                  ...prepared.prepared.registrationResponses,
-                  ...attendee.responses,
-                }),
+                ...resolveAmendmentAttendeeType(
+                  prepared.definition,
+                  { ...prepared.prepared.registrationResponses, ...attendee.responses },
+                  prepared.configuredTypes.filter((type) => type.isActive),
+                  null,
+                ),
                 position,
                 profileSnapshot: {
                   firstName: attendee.identity.firstName,

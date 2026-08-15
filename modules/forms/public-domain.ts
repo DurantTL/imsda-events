@@ -49,6 +49,7 @@ export type PublicRegistrationIssue = {
     | "CONTACT_NAME_REQUIRED"
     | "ATTENDEE_NAME_REQUIRED"
     | "ATTENDEE_COUNT_INVALID"
+    | "ATTENDEE_TYPE_INVALID"
     | "PROMO_CODE_INVALID";
   fieldId: string | null;
   key: string;

@@ -34,6 +34,8 @@ export const formFieldSchema = z.object({
   scope: z.enum(formFieldScopes),
   required: z.boolean(),
   options: z.array(z.string().trim().min(1).max(120)).max(200).default([]),
+  optionSource: z.literal("ATTENDEE_TYPES").optional(),
+  optionLabels: z.record(z.string(), z.string().trim().min(1).max(120)).optional(),
   optionDescriptions: z.record(
     z.string(),
     z.string().trim().max(2000),
@@ -52,7 +54,7 @@ export const formFieldSchema = z.object({
   }).optional(),
   conditional: z.object({ fieldKey: z.string().trim().min(2).max(60), operator: z.enum(conditionOperators), value: z.string().max(120).default("") }).optional(),
 }).superRefine((field, context) => {
-  if (isChoiceFieldType(field.type) && field.options.length < 2) {
+  if (isChoiceFieldType(field.type) && field.options.length < 2 && !field.optionSource) {
     context.addIssue({ code: "custom", path: ["options"], message: "Choice fields need at least two choices." });
   }
   if ((field.type === "MULTISELECT" || field.type === "RANKED_CHOICE") && field.maxSelections && field.maxSelections > field.options.length) {
@@ -66,6 +68,15 @@ export const formFieldSchema = z.object({
   }
   for (const choice of Object.keys(field.optionDescriptions ?? {})) {
     if (!field.options.includes(choice)) context.addIssue({ code: "custom", path: ["optionDescriptions", choice], message: "Choice descriptions must reference a configured choice." });
+  }
+  for (const choice of Object.keys(field.optionLabels ?? {})) {
+    if (!field.options.includes(choice)) context.addIssue({ code: "custom", path: ["optionLabels", choice], message: "Choice labels must reference a configured choice." });
+  }
+  if (field.optionSource && (!isChoiceFieldType(field.type) || field.scope !== "ATTENDEE" || field.type === "MULTISELECT" || field.type === "RANKED_CHOICE")) {
+    context.addIssue({ code: "custom", path: ["optionSource"], message: "The attendee-type selector must be a single-choice attendee field." });
+  }
+  if (field.optionSource && !field.required) {
+    context.addIssue({ code: "custom", path: ["required"], message: "The attendee-type selector must be required." });
   }
   for (const choice of Object.keys(field.choicePricesCents ?? {})) {
     if (!field.options.includes(choice)) context.addIssue({ code: "custom", path: ["choicePricesCents", choice], message: "Choice prices must reference a configured choice." });
@@ -159,6 +170,9 @@ export const registrationFormDefinitionSchema = z.object({
     }
   }));
   const allFields = definition.sections.flatMap((section) => section.fields);
+  if (allFields.filter((field) => field.optionSource === "ATTENDEE_TYPES").length > 1) {
+    context.addIssue({ code: "custom", path: ["sections"], message: "A form can designate only one attendee-type selector." });
+  }
   const paymentField = definition.payment ? allFields.find((field) => field.key === definition.payment?.paymentMethodFieldKey) : null;
   if (definition.payment && !paymentField) context.addIssue({ code: "custom", path: ["payment", "paymentMethodFieldKey"], message: "Payment settings must reference a configured payment-method field." });
   if (definition.payment && paymentField?.scope === "ATTENDEE") context.addIssue({ code: "custom", path: ["payment", "paymentMethodFieldKey"], message: "The payment method must apply to the registration, not each attendee." });

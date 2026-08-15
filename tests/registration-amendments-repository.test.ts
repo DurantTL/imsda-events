@@ -17,8 +17,11 @@ vi.mock("@/modules/communications/transactional-messages", () => ({
 
 import {
   amendRegistration,
+  assertAmendmentAttendeeTypeSelections,
   previewRegistrationAmendment,
+  resolveAmendmentAttendeeType,
 } from "@/modules/registrations/amendments-repository";
+import type { RegistrationFormDefinition } from "@/modules/forms/definition";
 
 const actor = { id: "user-1", displayName: "Staff User" };
 const initialUpdatedAt = new Date("2026-08-04T12:00:00.000Z");
@@ -186,6 +189,8 @@ function repositoryFixture() {
       personId: "person-attendee",
       position: 0,
       attendeeType: "ATTENDEE",
+      attendeeTypeDefinitionId: null,
+      attendeeTypeDefinition: null,
       profileSnapshot: {
         firstName: "Avery",
         lastName: "Guest",
@@ -239,6 +244,9 @@ function repositoryFixture() {
     operations: [] as Array<Record<string, unknown>>,
   };
   const tx = {
+    eventAttendeeType: {
+      findMany: vi.fn(async () => []),
+    },
     registrationOperation: {
       findUnique: vi.fn(async ({ where }: { where: { eventId_clientRequestId: { clientRequestId: string } } }) => (
         operations.get(where.eventId_clientRequestId.clientRequestId) ?? null
@@ -266,7 +274,7 @@ function repositoryFixture() {
       deleteMany: vi.fn(async () => ({ count: 0 })),
       update: vi.fn(async ({ where, data }: {
         where: { id: string };
-        data: { position: number; attendeeType: string; profileSnapshot: Record<string, unknown>; formResponses: Record<string, unknown> };
+        data: { position: number; attendeeType: string; attendeeTypeDefinitionId: string | null; profileSnapshot: Record<string, unknown>; formResponses: Record<string, unknown> };
       }) => {
         const attendee = registration.attendees.find((candidate) => candidate.id === where.id)!;
         Object.assign(attendee, data);
@@ -353,6 +361,65 @@ beforeEach(() => {
 });
 
 describe("registration amendments repository", () => {
+  it("resolves sourced attendee type identity and preserves a deactivated snapshot", () => {
+    const sourcedDefinition = structuredClone(definition) as RegistrationFormDefinition;
+    sourcedDefinition.sections[1]!.fields.push({
+      id: "attendee-type-field",
+      key: "attendee_type",
+      label: "Attendee type",
+      helpText: "",
+      type: "RADIO",
+      scope: "ATTENDEE",
+      required: true,
+      options: ["ADULT"],
+      optionSource: "ATTENDEE_TYPES",
+    });
+    const configured = [{ id: "type-adult", code: "ADULT", label: "Adult", isActive: true }];
+    expect(resolveAmendmentAttendeeType(sourcedDefinition, { attendee_type: "ADULT" }, configured, null))
+      .toEqual({ attendeeType: "Adult", attendeeTypeDefinitionId: "type-adult" });
+    expect(resolveAmendmentAttendeeType(sourcedDefinition, { attendee_type: "YOUTH" }, configured, {
+      attendeeType: "Youth",
+      attendeeTypeDefinitionId: "type-youth",
+      attendeeTypeDefinition: { id: "type-youth", code: "YOUTH", label: "Youth" },
+    })).toEqual({ attendeeType: "Youth", attendeeTypeDefinitionId: "type-youth" });
+  });
+
+  it("rejects cross-attendee and new-attendee use of a deactivated type", () => {
+    const sourcedDefinition = structuredClone(definition) as RegistrationFormDefinition;
+    sourcedDefinition.sections[1]!.fields.push({
+      id: "attendee-type-field", key: "attendee_type", label: "Attendee type", helpText: "",
+      type: "RADIO", scope: "ATTENDEE", required: true, options: [], optionSource: "ATTENDEE_TYPES",
+    });
+    const configured = [{ code: "ADULT", isActive: true }, { code: "YOUTH", isActive: false }];
+    const current = [{ id: "attendee-1", attendeeTypeDefinition: { code: "ADULT" } }];
+    expect(() => assertAmendmentAttendeeTypeSelections(
+      sourcedDefinition,
+      [{ attendeeId: "attendee-1", responses: { attendee_type: "YOUTH" } }],
+      configured,
+      current,
+    )).toThrow("deactivated attendee type");
+    expect(() => assertAmendmentAttendeeTypeSelections(
+      sourcedDefinition,
+      [{ attendeeId: null, responses: { attendee_type: "YOUTH" } }],
+      configured,
+      current,
+    )).toThrow("deactivated attendee type");
+  });
+
+  it("preserves a deactivated type only for its existing attendee", () => {
+    const sourcedDefinition = structuredClone(definition) as RegistrationFormDefinition;
+    sourcedDefinition.sections[1]!.fields.push({
+      id: "attendee-type-field", key: "attendee_type", label: "Attendee type", helpText: "",
+      type: "RADIO", scope: "ATTENDEE", required: true, options: [], optionSource: "ATTENDEE_TYPES",
+    });
+    expect(() => assertAmendmentAttendeeTypeSelections(
+      sourcedDefinition,
+      [{ attendeeId: "attendee-1", responses: { attendee_type: "YOUTH" } }],
+      [{ code: "YOUTH", isActive: false }],
+      [{ id: "attendee-1", attendeeTypeDefinition: { code: "YOUTH" } }],
+    )).not.toThrow();
+  });
+
   it("enqueues one update for a real amendment and does not enqueue again on replay", async () => {
     repositoryFixture();
     const clientRequestId = "1616c563-e266-44b4-8c9a-d77e88ac3923";

@@ -11,6 +11,9 @@ import {
   type RegistrationFormDefinition,
 } from "@/modules/forms/definition";
 import { preparePublicRegistration } from "@/modules/forms/public-domain";
+import { listActiveAttendeeTypes } from "@/modules/attendee-types/repository";
+import { stripAttendeeTypeOptions, withAttendeeTypeOptions } from "@/modules/attendee-types/form-options";
+import type { AttendeeTypeOption } from "@/modules/attendee-types/domain";
 
 export class FormOperationError extends Error {
   constructor(
@@ -76,9 +79,9 @@ function usageResponseSetsFromJson(value: Prisma.JsonValue): Array<Record<string
   return [record];
 }
 
-function serializeForm(form: FormWithVersions) {
+function serializeForm(form: FormWithVersions, attendeeTypes: AttendeeTypeOption[] = []) {
   const versions = form.versions.map((version) => {
-    const definition = definitionFromJson(version.definition);
+    const definition = withAttendeeTypeOptions(definitionFromJson(version.definition), attendeeTypes);
     const validResponseSets = version.testSubmissions
       .filter((submission) => submission.isValid)
       .flatMap((submission) => usageResponseSetsFromJson(submission.responses));
@@ -126,13 +129,16 @@ async function loadForm(eventId: string, formId: string) {
 }
 
 export async function listRegistrationForms(eventId: string) {
-  const forms = await getPrisma().registrationForm.findMany({ where: { eventId }, orderBy: { updatedAt: "desc" }, include: formInclude });
-  return forms.map(serializeForm);
+  const [forms, attendeeTypes] = await Promise.all([
+    getPrisma().registrationForm.findMany({ where: { eventId }, orderBy: { updatedAt: "desc" }, include: formInclude }),
+    listActiveAttendeeTypes(eventId),
+  ]);
+  return forms.map((form) => serializeForm(form, attendeeTypes));
 }
 
 export async function getRegistrationForm(eventId: string, formId: string) {
-  const form = await loadForm(eventId, formId);
-  return form ? serializeForm(form) : null;
+  const [form, attendeeTypes] = await Promise.all([loadForm(eventId, formId), listActiveAttendeeTypes(eventId)]);
+  return form ? serializeForm(form, attendeeTypes) : null;
 }
 
 export function listFormTemplates() {
@@ -150,6 +156,7 @@ export async function createRegistrationForm(eventId: string, actorUserId: strin
   const template = getFormTemplate(templateKey);
   if (!template) throw new FormOperationError("TEMPLATE_NOT_FOUND", "That form template is not available.");
   const definition = registrationFormDefinitionSchema.parse(structuredClone(template.definition));
+  const storedDefinition = stripAttendeeTypeOptions(definition);
   const created = await getPrisma().$transaction(async (tx) => {
     const baseSlug = slugify(definition.title);
     let slug = baseSlug;
@@ -164,7 +171,7 @@ export async function createRegistrationForm(eventId: string, actorUserId: strin
         createdByUserId: actorUserId,
         name: definition.title,
         slug,
-        versions: { create: { createdByUserId: actorUserId, versionNumber: 1, definition: definition as Prisma.InputJsonValue } },
+        versions: { create: { createdByUserId: actorUserId, versionNumber: 1, definition: storedDefinition as Prisma.InputJsonValue } },
       },
     });
     await tx.auditLog.create({ data: {
@@ -183,6 +190,7 @@ export async function updateRegistrationForm(
   input: { definition: RegistrationFormDefinition; expectedUpdatedAt: string },
 ) {
   const definition = registrationFormDefinitionSchema.parse(input.definition);
+  const storedDefinition = stripAttendeeTypeOptions(definition);
   await getPrisma().$transaction(async (tx) => {
     let invalidatedTestCount = 0;
     const form = await tx.registrationForm.findFirst({ where: { id: formId, eventId }, include: { versions: { orderBy: { versionNumber: "desc" } } } });
@@ -191,14 +199,14 @@ export async function updateRegistrationForm(
     if (draft) {
       if (draft.updatedAt.getTime() !== new Date(input.expectedUpdatedAt).getTime()) throw new FormOperationError("EDIT_CONFLICT", "This draft changed in another session. Reload it before saving again.");
       invalidatedTestCount = (await tx.formTestSubmission.deleteMany({ where: { formVersionId: draft.id } })).count;
-      await tx.registrationFormVersion.update({ where: { id: draft.id }, data: { definition: definition as Prisma.InputJsonValue, createdByUserId: actorUserId } });
+      await tx.registrationFormVersion.update({ where: { id: draft.id }, data: { definition: storedDefinition as Prisma.InputJsonValue, createdByUserId: actorUserId } });
     } else {
       const source = form.versions[0];
       if (!source) throw new FormOperationError("NO_DRAFT", "This form has no version to edit.");
       if (source.updatedAt.getTime() !== new Date(input.expectedUpdatedAt).getTime()) throw new FormOperationError("EDIT_CONFLICT", "This version changed in another session. Reload it before creating a new draft.");
       await tx.registrationFormVersion.create({ data: {
         formId, createdByUserId: actorUserId, versionNumber: source.versionNumber + 1,
-        status: RegistrationFormStatus.DRAFT, definition: definition as Prisma.InputJsonValue,
+        status: RegistrationFormStatus.DRAFT, definition: storedDefinition as Prisma.InputJsonValue,
       } });
     }
     await tx.registrationForm.update({ where: { id: formId }, data: { name: definition.title, status: RegistrationFormStatus.DRAFT } });
@@ -283,7 +291,8 @@ export async function createTestSubmission(
     include: { form: { select: { name: true, event: { select: { timezone: true } } } } },
   });
   if (!version) throw new FormOperationError("VERSION_NOT_FOUND", "That form version is not available for testing.");
-  const definition = registrationFormDefinitionSchema.parse(version.definition);
+  const attendeeTypes = await listActiveAttendeeTypes(eventId);
+  const definition = withAttendeeTypeOptions(registrationFormDefinitionSchema.parse(version.definition), attendeeTypes);
   const priorValidResponses = await getPrisma().formTestSubmission.findMany({ where: { formVersionId: version.id, isValid: true }, select: { responses: true } });
   const usage = summarizeChoiceUsage(
     definition,

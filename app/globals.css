@@ -1925,6 +1925,8 @@ select:focus-visible {
 .field-settings .required-toggle { display: flex; align-items: center; align-self: end; flex-direction: row; padding: 7px 0; color: var(--ink); font-size: 0.61rem; text-transform: none; }
 .required-toggle input { width: auto; accent-color: var(--imsda-purple); }
 .choice-settings { margin: 0; border-top: 1px solid #e1e9ec; padding: 12px; }
+.builder-field-card[data-option-source="ATTENDEE_TYPES"] .choice-limit-editor,
+.builder-field-card[data-option-source="ATTENDEE_TYPES"] .late-pricing-controls { display: none; }
 .choice-settings > div:first-child { margin-bottom: 10px; }
 .choice-settings > div:first-child .eyebrow { margin-bottom: 3px; }
 .choice-settings > div:first-child > span { color: var(--muted); font-size: 0.56rem; }
