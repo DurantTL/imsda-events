@@ -13,6 +13,8 @@ import {
   registrationFormDefinitionSchema,
   type RegistrationFormField,
 } from "@/modules/forms/definition";
+import { withAttendeeTypeOptionsForAttendee } from "@/modules/attendee-types/form-options";
+import type { AttendeeTypeOption } from "@/modules/attendee-types/domain";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 
 type Responses = Record<string, unknown>;
@@ -146,7 +148,7 @@ function AmendmentField({
           onChange={(event) => onChange(event.target.value)}
         >
           <option value="">Choose one</option>
-          {field.options.map((option) => <option value={option} key={option}>{option}</option>)}
+          {field.options.map((option) => <option value={option} key={option}>{field.optionLabels?.[option] ?? option}</option>)}
         </select>
         {field.helpText && <small>{field.helpText}</small>}
       </label>
@@ -293,9 +295,6 @@ export function RegistrationAmendmentEditor({
     field.scope === "REGISTRATION"
     && field.type !== "CALCULATED"
     && isFieldVisible(field, responses)
-  ));
-  const attendeeFields = allFields.filter((field) => (
-    field.scope === "ATTENDEE" && field.type !== "CALCULATED"
   ));
 
   function invalidatePreview() {
@@ -491,7 +490,13 @@ export function RegistrationAmendmentEditor({
         </div>
         {attendees.map((attendee, attendeeIndex) => {
           const merged = { ...responses, ...attendee.responses };
-          const visibleFields = attendeeFields.filter((field) => isFieldVisible(field, merged));
+          const attendeeDefinition = withAttendeeTypeOptionsForAttendee(
+            definition,
+            (registration.publicSubmission?.attendeeTypeOptions ?? []) as AttendeeTypeOption[],
+            registration.attendees.find((candidate) => candidate.id === attendee.attendeeId)?.attendeeTypeDefinitionCode,
+          );
+          const visibleFields = attendeeDefinition.sections.flatMap((section) => section.fields)
+            .filter((field) => field.scope === "ATTENDEE" && field.type !== "CALCULATED" && isFieldVisible(field, merged));
           const firstName = valueString(attendee.responses.first_name);
           const lastName = valueString(attendee.responses.last_name);
           return (

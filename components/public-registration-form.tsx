@@ -929,6 +929,7 @@ export function PublicRegistrationForm({
     const optionDescription = (option: string) => (
       field.optionDescriptions?.[option]?.trim() ?? ""
     );
+    const optionLabel = (option: string) => field.optionLabels?.[option] ?? option;
 
     if (
       joiningWaitlist
@@ -1042,7 +1043,7 @@ export function PublicRegistrationForm({
                     onChange={() => context.setValue(field.key, option)}
                   />
                   <span>
-                    <strong>{option}</strong>
+                    <strong>{optionLabel(option)}</strong>
                     {optionDescription(option) && <small className="public-registration-option-description">{optionDescription(option)}</small>}
                     {details && <small className="public-registration-option-details">{details}</small>}
                   </span>
@@ -1075,7 +1076,7 @@ export function PublicRegistrationForm({
                     onChange={() => toggleChoice(option)}
                   />
                   <span>
-                    <strong>{option}</strong>
+                    <strong>{optionLabel(option)}</strong>
                     {optionDescription(option) && <small className="public-registration-option-description">{optionDescription(option)}</small>}
                     {details && <small className="public-registration-option-details">{details}</small>}
                   </span>
@@ -1109,7 +1110,7 @@ export function PublicRegistrationForm({
                   onClick={() => toggleChoice(option)}
                 >
                   <span>
-                    <strong>{option}</strong>
+                    <strong>{optionLabel(option)}</strong>
                     {optionDescription(option) && <small className="public-registration-option-description">{optionDescription(option)}</small>}
                     {details && <small className="public-registration-option-details">{details}</small>}
                   </span>
@@ -1159,7 +1160,7 @@ export function PublicRegistrationForm({
               const selected = context.values[field.key] === option;
               return {
                 value: option,
-                label: `${option}${details ? ` — ${details}` : ""}`,
+                label: `${optionLabel(option)}${details ? ` — ${details}` : ""}`,
                 disabled: rosterEnabled ? full && !selected : full,
               };
             })}
@@ -1168,7 +1169,7 @@ export function PublicRegistrationForm({
             <span className="public-registration-select-descriptions">
               {field.options.flatMap((option) => (
                 optionDescription(option)
-                  ? [<small key={option}><strong>{option}:</strong> {optionDescription(option)}</small>]
+                  ? [<small key={option}><strong>{optionLabel(option)}:</strong> {optionDescription(option)}</small>]
                   : []
               ))}
             </span>

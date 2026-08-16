@@ -6,6 +6,9 @@ import type {
   RegistrationUpdateInput,
 } from "@/modules/registrations/schemas";
 import { Prisma, type RegistrationStatus } from "@prisma/client";
+import { withAttendeeTypeOptions } from "@/modules/attendee-types/form-options";
+import type { AttendeeTypeOption } from "@/modules/attendee-types/domain";
+import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 
 type RegistrationWithRelations = Awaited<ReturnType<typeof getRegistrationQuery>>[number];
 type RegistrationReadClient = Prisma.TransactionClient | ReturnType<typeof getPrisma>;
@@ -31,6 +34,7 @@ function getRegistrationQuery(
         orderBy: [{ position: "asc" }, { createdAt: "asc" }],
         include: {
           person: true,
+          attendeeTypeDefinition: { select: { code: true } },
           checkIns: { where: { undoneAt: null }, orderBy: { checkedInAt: "desc" }, take: 1 },
         },
       },
@@ -73,6 +77,13 @@ function getRegistrationQuery(
         include: {
           formVersion: {
             select: { versionNumber: true, definition: true, form: { select: { name: true, slug: true } } },
+          },
+        },
+      },
+      event: {
+        select: {
+          attendeeTypes: {
+            orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
           },
         },
       },
@@ -119,6 +130,12 @@ function serializeRegistration(registration: RegistrationWithRelations) {
       : fallback
   );
 
+  const publicDefinition = registration.publicFormSubmission
+    ? withAttendeeTypeOptions(
+      registrationFormDefinitionSchema.parse(registration.publicFormSubmission.formVersion.definition),
+      registration.event.attendeeTypes as AttendeeTypeOption[],
+    )
+    : null;
   return {
     id: registration.id,
     confirmationCode: registration.confirmationCode,
@@ -150,6 +167,7 @@ function serializeRegistration(registration: RegistrationWithRelations) {
         email: typeof profile.email === "string" ? profile.email : attendee.person.normalizedEmail ?? "",
         phone: typeof profile.phone === "string" ? profile.phone : attendee.person.phone ?? "",
         attendeeType: attendee.attendeeType,
+        attendeeTypeDefinitionCode: attendee.attendeeTypeDefinition?.code ?? null,
         position: attendee.position,
         source: profile.source === "PUBLIC_REGISTRATION" ? "PUBLIC_REGISTRATION" as const : "STAFF" as const,
         responses: recordFromJson(attendee.formResponses),
@@ -200,7 +218,8 @@ function serializeRegistration(registration: RegistrationWithRelations) {
         : recordFromJson(registration.publicFormSubmission.responses),
       originalResponses: recordFromJson(registration.publicFormSubmission.responses),
       attendeeResponses: recordsFromJson(registration.publicFormSubmission.attendeeResponses),
-      definition: recordFromJson(registration.publicFormSubmission.formVersion.definition),
+      definition: publicDefinition ?? recordFromJson(registration.publicFormSubmission.formVersion.definition),
+      attendeeTypeOptions: registration.event.attendeeTypes,
       rosterEnabled: recordFromJson(
         recordFromJson(registration.publicFormSubmission.formVersion.definition).attendeeRoster,
       ).enabled === true,
@@ -215,7 +234,13 @@ function serializeRegistration(registration: RegistrationWithRelations) {
   };
 }
 
-export type RegistrationRecord = ReturnType<typeof serializeRegistration>;
+type SerializedRegistration = ReturnType<typeof serializeRegistration>;
+export type RegistrationRecord = Omit<SerializedRegistration, "attendees" | "publicSubmission"> & {
+  attendees: Array<Omit<SerializedRegistration["attendees"][number], "attendeeTypeDefinitionCode"> & { attendeeTypeDefinitionCode?: string | null }>;
+  publicSubmission: SerializedRegistration["publicSubmission"] extends infer Submission
+    ? Submission extends null ? null : Omit<Submission, "attendeeTypeOptions"> & { attendeeTypeOptions?: AttendeeTypeOption[] }
+    : never;
+};
 
 export type RegistrationAttendeeOperationErrorCode =
   | "REGISTRATION_NOT_FOUND"

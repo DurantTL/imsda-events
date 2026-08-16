@@ -47,6 +47,7 @@ import {
   recordPromoCodeRedemption,
   type ClaimedPromoCode,
 } from "@/modules/promo-codes/repository";
+import { attendeeTypeSelector, withAttendeeTypeOptions } from "@/modules/attendee-types/form-options";
 
 export type PublicRegistrationErrorCode =
   | "FORM_NOT_FOUND"
@@ -162,6 +163,10 @@ const publicEventSelect = {
   registrationClosesOn: true,
   waitlistEnabled: true,
   billingMode: true,
+  attendeeTypes: {
+    where: { isActive: true },
+    orderBy: [{ sortOrder: "asc" as const }, { label: "asc" as const }],
+  },
 } satisfies Prisma.EventSelect;
 
 function publishedFormQuery(eventSlug: string, formSlug: string) {
@@ -390,7 +395,7 @@ export async function getPublicRegistrationExperience(eventSlug: string, formSlu
   const form = await prisma.registrationForm.findFirst(publishedFormQuery(eventSlug, formSlug));
   const version = form?.versions[0];
   if (!form || !version) return null;
-  const definition = definitionFromJson(version.definition);
+  const definition = withAttendeeTypeOptions(definitionFromJson(version.definition), form.event.attendeeTypes);
   const now = new Date();
   const [reservations, occupied, waitingRegistrations] = await Promise.all([
     prisma.registrationCapacityReservation.findMany({
@@ -507,7 +512,7 @@ async function createPublicRegistrationTransaction(
     throw new PublicRegistrationError("FORM_VERSION_CHANGED", "This form was updated while it was open. Refresh the page before submitting.");
   }
 
-  const definition = definitionFromJson(version.definition);
+  const definition = withAttendeeTypeOptions(definitionFromJson(version.definition), form.event.attendeeTypes);
   if (form.event.billingMode === "DEFERRED_ORGANIZATION_INVOICE" && definition.payment?.enabled) {
     // A deferred-organization event must never create an attendee balance or
     // online payment. This form should never have been published with a
@@ -708,18 +713,38 @@ async function createPublicRegistrationTransaction(
     responses: Record<string, unknown>;
     identity: NonNullable<PreparedPublicAttendee["identity"]>;
   }> = [];
+  const configuredTypeSelector = attendeeTypeSelector(definition);
   for (const [position, attendee] of prepared.attendees.entries()) {
     if (!attendee.identity) {
       throw new PublicRegistrationError("INVALID_SUBMISSION", "Every attendee needs a valid name.", prepared.issues);
     }
     const attendeePerson = await resolveAttendeePerson(tx, attendee.identity, accountHolder, usedPersonIds);
-    const type = attendeeType({ ...prepared.registrationResponses, ...attendee.responses });
+    const mergedResponses = { ...prepared.registrationResponses, ...attendee.responses };
+    const selectedTypeCode = configuredTypeSelector
+      ? String(mergedResponses[configuredTypeSelector.key] ?? "")
+      : null;
+    const selectedType = selectedTypeCode
+      ? form.event.attendeeTypes.find((candidate) => candidate.code === selectedTypeCode)
+      : null;
+    if (configuredTypeSelector && !selectedType) {
+      throw new PublicRegistrationError("INVALID_SUBMISSION", "Select an active attendee type.", [{
+        kind: "validation",
+        code: "ATTENDEE_TYPE_INVALID",
+        fieldId: configuredTypeSelector.id,
+        key: configuredTypeSelector.key,
+        path: `attendees.${position}.responses.${configuredTypeSelector.key}`,
+        attendeeIndex: position,
+        message: "Select an active attendee type.",
+      }]);
+    }
+    const type = selectedType?.label ?? attendeeType(mergedResponses);
     const created = await tx.registrationAttendee.create({
       data: {
         eventId: form.eventId,
         registrationId: registration.id,
         personId: attendeePerson.id,
         attendeeType: type,
+        attendeeTypeDefinitionId: selectedType?.id ?? null,
         position,
         profileSnapshot: {
           firstName: attendee.identity.firstName,

@@ -25,6 +25,7 @@
     "registrations:cleanup": "tsx scripts/cleanup-imported-duplicates.ts",
     "event:readiness": "tsx scripts/event-readiness.ts",
     "event:shirt-sizes": "tsx scripts/shirt-size-audience.ts",
+    "attendee-types:backfill": "tsx scripts/backfill-attendee-types.ts",
     "issue:from-spec": "tsx scripts/spec-to-issue.ts",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate"
