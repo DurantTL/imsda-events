@@ -1,0 +1,50 @@
+.workspace { padding-bottom: 30px; }
+.actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.layout { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(320px, .9fr); align-items: start; gap: 16px; }
+.productList { display: grid; gap: 9px; }
+.productCard { display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid var(--line); border-radius: 13px; padding: 10px; background: #fbfcfd; }
+.productCard.selected { border-color: var(--imsda-purple); box-shadow: 0 0 0 2px var(--imsda-purple-soft); }
+.productSelect { display: flex; min-width: 0; flex: 1; align-items: center; gap: 11px; border: 0; background: transparent; color: inherit; padding: 0; text-align: left; cursor: pointer; }
+.productSelect > span:last-child { display: grid; gap: 2px; min-width: 0; }
+.productSelect strong { overflow: hidden; color: var(--imsda-navy); text-overflow: ellipsis; white-space: nowrap; }
+.productSelect small { color: var(--muted); font-size: .64rem; }
+.productSelect img, .artPlaceholder { width: 50px; height: 50px; flex: 0 0 50px; border-radius: 10px; object-fit: cover; }
+.artPlaceholder { display: grid; place-items: center; background: var(--imsda-purple-soft); color: var(--imsda-purple); }
+.cardActions { display: flex; gap: 3px; }
+.previewHelp { margin: -5px 0 14px; color: var(--muted); font-size: .67rem; line-height: 1.55; }
+.audienceToggle { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+.audienceToggle button { padding: 6px 10px; font-size: .64rem; }
+.audienceToggle button[aria-pressed="true"] { border-color: var(--imsda-purple); color: var(--imsda-purple); }
+.previewList { display: grid; gap: 10px; }
+.previewCard { display: grid; grid-template-columns: 60px minmax(0, 1fr); gap: 11px; border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
+.previewCard > img { width: 60px; height: 60px; border-radius: 10px; object-fit: cover; }
+.previewCard h3 { margin: 0; color: var(--imsda-navy); font-size: .82rem; }
+.previewCard p { margin: 3px 0 6px; color: var(--muted); font-size: .64rem; }
+.previewCard ul { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.previewCard li, .variantSummary div { display: flex; justify-content: space-between; gap: 8px; font-size: .66rem; }
+.previewCard li strong { color: var(--imsda-purple); }
+.variantSummary { display: grid; gap: 6px; margin-top: 15px; border-top: 1px solid var(--line); padding-top: 13px; font-size: .68rem; }
+.variantSummary > strong { color: var(--imsda-navy); }
+.variantHeading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.variantHeading .secondary-button { padding: 6px 8px; font-size: .62rem; }
+.variantRow { align-items: center; }
+.variantRow > span { display: grid; gap: 2px; }
+.variantRow > span:last-child { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--imsda-purple); font-weight: 800; }
+.variantRow small { color: var(--muted); font-size: .6rem; font-weight: 500; }
+.variantSummary div { color: var(--muted); }
+.editor { max-width: 650px; }
+.artworkControls { display: grid; gap: 11px; border: 1px solid var(--line); border-radius: 12px; background: #fbfcfd; padding: 12px; }
+.artworkControls label { display: grid; gap: 5px; }
+.artworkControls small, .variantNote { color: var(--muted); font-size: .63rem; }
+.variantNote { border-left: 3px solid var(--imsda-gold); background: var(--imsda-gold-soft); padding: 9px 11px; line-height: 1.55; }
+.variantNote strong { color: #76520b; }
+@media (max-width: 850px) { .layout { grid-template-columns: 1fr; } }
+@media (max-width: 520px) {
+  .actions { justify-content: stretch; }
+  .actions > button { flex: 1; }
+  .productCard { align-items: flex-start; }
+  .cardActions { flex-direction: column; }
+  .previewCard { grid-template-columns: 48px minmax(0, 1fr); }
+  .previewCard > img { width: 48px; height: 48px; }
+  .audienceToggle button { flex: 1 1 auto; }
+}
