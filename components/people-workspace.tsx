@@ -225,6 +225,8 @@ export function PeopleWorkspace({
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
   const [addingAttendee, setAddingAttendee] = useState(false);
+  const [editingAttendeeEmailId, setEditingAttendeeEmailId] = useState<string | null>(null);
+  const [savingAttendeeEmail, setSavingAttendeeEmail] = useState(false);
   const [amending, setAmending] = useState(false);
   const [lifecycleAction, setLifecycleAction] = useState<LifecycleAction | null>(null);
   const [operationDraft, setOperationDraft] = useState<RegistrationOperationDraft | null>(null);
@@ -387,10 +389,39 @@ export function PeopleWorkspace({
     }
   }
 
+  async function updateAttendeeEmail(event: React.FormEvent<HTMLFormElement>, attendeeId: string) {
+    event.preventDefault();
+    if (!selected) return;
+    setSavingAttendeeEmail(true);
+    setError("");
+    const form = new FormData(event.currentTarget);
+    try {
+      const response = await fetch(
+        `/api/events/${eventId}/registrations/${selected.id}/attendees/${attendeeId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: form.get("email") }),
+        },
+      );
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message ?? result.issues?.[0]?.message ?? "Unable to update the attendee's email.");
+      const updated = result.registration as RegistrationRecord;
+      setRegistrations((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setSelected(updated);
+      setEditingAttendeeEmailId(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to update the attendee's email.");
+    } finally {
+      setSavingAttendeeEmail(false);
+    }
+  }
+
   function beginTransfer() {
     setError("");
     setNotice("");
     setAddingAttendee(false);
+    setEditingAttendeeEmailId(null);
     setLifecycleAction(null);
     setOperationDraft({
       kind: "transfer",
@@ -409,6 +440,7 @@ export function PeopleWorkspace({
     setError("");
     setNotice("");
     setAddingAttendee(false);
+    setEditingAttendeeEmailId(null);
     setLifecycleAction(null);
     setOperationDraft({
       kind: "substitution",
@@ -691,9 +723,23 @@ export function PeopleWorkspace({
                     {canEdit && attendee.checkedIn && <p className="quiet-copy">Undo this attendee’s active check-in before a substitution can be reviewed.</p>}
                     <details open={selected.attendeeCount <= 5}>
                       <summary>{attendee.source === "PUBLIC_REGISTRATION" ? "Submitted choices and contact" : "Attendee details"}</summary>
-                      {(attendee.email || attendee.phone || Object.keys(attendee.responses).length > 0)
+                      {(attendee.email || attendee.phone || Object.keys(attendee.responses).length > 0 || canEdit)
                         ? <dl>
-                            {attendee.email && <div><dt>Email</dt><dd>{attendee.email}</dd></div>}
+                            <div>
+                              <dt>Email</dt>
+                              <dd>
+                                {editingAttendeeEmailId === attendee.id
+                                  ? <form className="inline-edit-form" onSubmit={(event) => updateAttendeeEmail(event, attendee.id)}>
+                                      <input name="email" type="email" defaultValue={attendee.email} autoFocus placeholder="attendee@example.com" />
+                                      <button className="text-button" type="submit" disabled={savingAttendeeEmail}>{savingAttendeeEmail ? "Saving…" : "Save"}</button>
+                                      <button className="text-button" type="button" onClick={() => { setEditingAttendeeEmailId(null); setError(""); }}>Cancel</button>
+                                    </form>
+                                  : <>
+                                      {attendee.email || <span className="quiet-copy">Not provided</span>}
+                                      {canEdit && <button className="text-button" type="button" onClick={() => { setError(""); setEditingAttendeeEmailId(attendee.id); }}><PencilLine aria-hidden="true" size={14} /> Edit</button>}
+                                    </>}
+                              </dd>
+                            </div>
                             {attendee.phone && <div><dt>Phone</dt><dd>{attendee.phone}</dd></div>}
                             {Object.entries(attendee.responses).map(([key, value]) => <div key={`${attendeeIndex}_${key}`}><dt>{selectedFieldLabels.get(key) ?? answerLabel(key)}</dt><dd>{answerValue(value)}</dd></div>)}
                           </dl>
