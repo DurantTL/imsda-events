@@ -2310,6 +2310,9 @@ select:focus-visible {
 .attendee-detail-card dl > div { display: grid; grid-template-columns: minmax(100px, 0.4fr) minmax(0, 1fr); gap: 10px; border-radius: 8px; background: var(--paper); padding: 8px 9px; }
 .attendee-detail-card dt { color: var(--muted); font-size: 0.61rem; font-weight: 700; }
 .attendee-detail-card dd { overflow-wrap: anywhere; margin: 0; font-size: 0.66rem; }
+.attendee-detail-card dd .text-button { margin-left: 8px; }
+.inline-edit-form { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.inline-edit-form input { flex: 1 1 160px; min-width: 0; border: 1px solid var(--line); border-radius: 7px; padding: 4px 8px; font-size: 0.66rem; }
 .attendee-operation-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 .attendee-operation-actions .text-button { white-space: nowrap; }
 .attendee-detail-card > .quiet-copy { margin: 0; border-top: 1px solid var(--line); background: var(--imsda-gold-soft); color: #765817; padding: 8px 12px; font-size: 0.58rem; }

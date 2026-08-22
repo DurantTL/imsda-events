@@ -247,7 +247,8 @@ export type RegistrationAttendeeOperationErrorCode =
   | "REGISTRATION_NOT_ACTIVE"
   | "PUBLIC_FORM_ATTENDEE_EDIT_REQUIRES_FORM"
   | "EVENT_CAPACITY_UNAVAILABLE"
-  | "REGISTRATION_ATTENDEE_CONFLICT";
+  | "REGISTRATION_ATTENDEE_CONFLICT"
+  | "ATTENDEE_NOT_FOUND";
 
 export class RegistrationAttendeeOperationError extends Error {
   constructor(
@@ -582,4 +583,50 @@ export async function addRegistrationAttendee(
     "REGISTRATION_ATTENDEE_CONFLICT",
     "Another attendee changed event capacity at the same time. Refresh and try again.",
   );
+}
+
+export async function updateRegistrationAttendeeEmail(
+  eventId: string,
+  registrationId: string,
+  attendeeId: string,
+  email: string,
+  actorUserId: string,
+) {
+  const prisma = getPrisma();
+  const attendee = await prisma.registrationAttendee.findFirst({
+    where: { id: attendeeId, registrationId, eventId },
+    select: { id: true, profileSnapshot: true, registration: { select: { confirmationCode: true } } },
+  });
+  if (!attendee) {
+    throw new RegistrationAttendeeOperationError(
+      "ATTENDEE_NOT_FOUND",
+      "The attendee could not be found on this registration.",
+    );
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.registrationAttendee.update({
+      where: { id: attendeeId },
+      data: {
+        profileSnapshot: {
+          ...recordFromJson(attendee.profileSnapshot),
+          email: email || null,
+        },
+      },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        eventId,
+        actorUserId,
+        action: "REGISTRATION_ATTENDEE_EMAIL_UPDATED",
+        entityType: "RegistrationAttendee",
+        entityId: attendeeId,
+        correlationId: crypto.randomUUID(),
+        summary: `Updated attendee email on registration ${attendee.registration.confirmationCode}.`,
+      },
+    });
+  });
+
+  return getRegistrationById(eventId, registrationId);
 }

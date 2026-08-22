@@ -58,6 +58,12 @@ export const attendeeInputSchema = z.object({
 
 export type AttendeeInput = z.infer<typeof attendeeInputSchema>;
 
+export const attendeeEmailUpdateSchema = z.strictObject({
+  email: emailField,
+});
+
+export type AttendeeEmailUpdateInput = z.infer<typeof attendeeEmailUpdateSchema>;
+
 const operationIdentityFields = {
   firstName: z.string().trim().min(1, "First name is required.").max(80),
   lastName: z.string().trim().min(1, "Last name is required.").max(80),
