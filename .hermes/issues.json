@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "provider": "github",
+  "repository": "DurantTL/imsda-events",
+  "ready_labels": ["codex-ready"],
+  "human_labels": ["needs-human", "needs-decision"],
+  "dependency_style": "depends-on-lines",
+  "roadmap": {
+    "issue": 98,
+    "style": "numbered-issue-list"
+  }
+}
