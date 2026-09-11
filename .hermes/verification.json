@@ -6,6 +6,31 @@
       "id": "whitespace",
       "kind": "verify",
       "command_id": "project.verify"
+    },
+    {
+      "id": "generate",
+      "kind": "verify",
+      "command_id": "project.generate"
+    },
+    {
+      "id": "lint",
+      "kind": "lint",
+      "command_id": "project.lint"
+    },
+    {
+      "id": "typecheck",
+      "kind": "typecheck",
+      "command_id": "project.typecheck"
+    },
+    {
+      "id": "tests",
+      "kind": "test",
+      "command_id": "project.test"
+    },
+    {
+      "id": "build",
+      "kind": "build",
+      "command_id": "project.build"
     }
   ]
 }
