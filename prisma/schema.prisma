@@ -155,6 +155,27 @@ enum MerchandiseCatalogStatus {
   APPROVED
 }
 
+enum MerchandiseQuoteStatus {
+  ACTIVE
+  PAYMENT_PENDING
+  RELEASED
+  COMPLETED
+}
+
+enum MerchandiseQuotePaymentMethod {
+  CARD
+  CASH
+  CHECK
+}
+
+enum MerchandiseReservationReleaseReason {
+  EXPIRED
+  FAILED_PAYMENT
+  CANCELLED_PAYMENT
+  ABANDONED
+  STALE_CATALOG
+}
+
 /// ATTENDEE_PAY is the existing behavior: attendees choose a payment method and
 /// may owe an online balance. DEFERRED_ORGANIZATION_INVOICE is for club/church
 /// group registrations (e.g. Spring Camporee): no attendee balance or online
@@ -418,6 +439,7 @@ model User {
   createdMerchandiseAvailability MerchandiseVariantAvailability[] @relation("MerchandiseAvailabilityCreatedBy")
   createdMerchandiseOrders       MerchandiseOrder[]               @relation("MerchandiseOrderCreatedBy")
   merchandiseOrderStatusChanges  MerchandiseOrderStatusChange[]   @relation("MerchandiseOrderStatusActor")
+  merchandiseQuotes              MerchandiseQuote[]                @relation("MerchandiseQuoteActor")
 
   @@index([accountStatus])
 }
@@ -954,6 +976,9 @@ model Event {
   merchandiseOrders                   MerchandiseOrder[]
   merchandiseOrderLines               MerchandiseOrderLine[]
   merchandiseOrderStatusChanges       MerchandiseOrderStatusChange[]
+  merchandiseQuotes                   MerchandiseQuote[]
+  merchandiseQuoteLines               MerchandiseQuoteLine[]
+  merchandiseInventoryReservations    MerchandiseInventoryReservation[]
   attendeeTypes                       EventAttendeeType[]
   attendeeClassifications             EventAttendeeClassification[]
 }
@@ -1139,6 +1164,7 @@ model Registration {
   operations              RegistrationOperation[]
   paymentChoiceOperations RegistrationPaymentChoiceOperation[]
   merchandiseOrders       MerchandiseOrder[]
+  merchandiseQuotes       MerchandiseQuote[]
 
   @@unique([eventId, confirmationCode])
   @@index([eventId, status])
@@ -1421,6 +1447,7 @@ model MerchandiseProduct {
   artwork    EventAsset?                  @relation("MerchandiseProductArtwork", fields: [artworkAssetId], references: [id], onDelete: Restrict)
   variants   MerchandiseProductVariant[]
   orderLines MerchandiseOrderLine[]
+  quoteLines MerchandiseQuoteLine[]
 
   @@index([eventId, isEnabled, isArchived, position])
 }
@@ -1443,6 +1470,8 @@ model MerchandiseProductVariant {
   product      MerchandiseProduct                @relation(fields: [productId], references: [id], onDelete: Cascade)
   availability MerchandiseVariantAvailability[]
   orderLines   MerchandiseOrderLine[]
+  quoteLines   MerchandiseQuoteLine[]
+  reservations MerchandiseInventoryReservation[]
 
   @@unique([productId, label])
   @@index([productId, isEnabled, position])
@@ -1477,6 +1506,7 @@ model MerchandiseVariantAvailability {
   variant    MerchandiseProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
   createdBy  User                      @relation("MerchandiseAvailabilityCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   orderLines MerchandiseOrderLine[]
+  quoteLines MerchandiseQuoteLine[]
 
   @@unique([variantId, versionNumber])
   @@index([variantId, isActive, salesStartsAt, salesEndsAt])
@@ -1485,14 +1515,109 @@ model MerchandiseVariantAvailability {
 /// Event-level switch and human approval gate for the catalog. Saving a draft
 /// never activates public sales; only an explicit APPROVED state can do that.
 model MerchandiseCatalog {
-  id        String                   @id @default(cuid())
-  eventId   String                   @unique
-  isEnabled Boolean                  @default(false)
-  status    MerchandiseCatalogStatus @default(DRAFT)
-  createdAt DateTime                 @default(now())
-  updatedAt DateTime                 @updatedAt
+  id                           String                   @id @default(cuid())
+  eventId                      String                   @unique
+  isEnabled                    Boolean                  @default(false)
+  status                       MerchandiseCatalogStatus @default(DRAFT)
+  taxRateBasisPoints           Int                      @default(0)
+  cardFeePercentageBasisPoints Int                      @default(290)
+  cardFeeFixedCents            Int                      @default(30)
+  quoteTtlMinutes              Int                      @default(15)
+  createdAt                    DateTime                 @default(now())
+  updatedAt                    DateTime                 @updatedAt
 
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+}
+
+/// An authoritative, expiring merchandise amount. The request fingerprint
+/// protects the browser idempotency key; the catalog fingerprint protects the
+/// persisted terms revalidated immediately before payment creation.
+model MerchandiseQuote {
+  id                    String                           @id @default(cuid())
+  eventId               String
+  registrationId        String?
+  actorUserId            String?
+  purchaserSnapshot     Json
+  clientRequestId       String
+  requestFingerprint    String
+  catalogFingerprint    String
+  paymentIdempotencyKey String                           @unique
+  status                MerchandiseQuoteStatus          @default(ACTIVE)
+  paymentMethod         MerchandiseQuotePaymentMethod
+  eligibilitySnapshot   String
+  subtotalCents         Int
+  taxCents              Int                              @default(0)
+  feeCents              Int                              @default(0)
+  totalCents            Int
+  expiresAt             DateTime
+  releasedAt            DateTime?
+  releaseReason         MerchandiseReservationReleaseReason?
+  completedAt           DateTime?
+  createdAt             DateTime                         @default(now())
+  updatedAt             DateTime                         @updatedAt
+
+  event         Event                             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration  Registration?                     @relation(fields: [registrationId], references: [id], onDelete: SetNull)
+  actor         User?                             @relation("MerchandiseQuoteActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  lines         MerchandiseQuoteLine[]
+  reservations  MerchandiseInventoryReservation[]
+
+  @@unique([eventId, clientRequestId])
+  @@index([eventId, status, expiresAt])
+  @@index([registrationId, createdAt])
+}
+
+/// Immutable quote line snapshot. No amount is accepted from the browser.
+model MerchandiseQuoteLine {
+  id                     String                  @id @default(cuid())
+  quoteId                String
+  eventId                String
+  productId              String?
+  productNameSnapshot    String
+  variantId              String?
+  variantLabelSnapshot   String
+  availabilityId         String?
+  unitPriceCentsSnapshot Int
+  quantity               Int
+  taxTreatmentSnapshot   MerchandiseTaxTreatment
+  feePolicySnapshot      MerchandiseFeePolicy
+  lineSubtotalCents      Int
+  lineTaxCents           Int
+  createdAt              DateTime                @default(now())
+
+  quote        MerchandiseQuote                @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  event        Event                           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  product      MerchandiseProduct?             @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variant      MerchandiseProductVariant?      @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  availability MerchandiseVariantAvailability? @relation(fields: [availabilityId], references: [id], onDelete: SetNull)
+
+  @@unique([quoteId, variantId])
+  @@index([eventId, createdAt])
+  @@index([variantId])
+}
+
+/// A reservation consumes configured stock only while unreleased and before
+/// expiry. Serializable quote creation protects the predicate that counts
+/// these rows, preventing two buyers from reserving the final item.
+model MerchandiseInventoryReservation {
+  id            String                               @id @default(cuid())
+  quoteId       String
+  eventId       String
+  variantId     String
+  quantity      Int
+  expiresAt     DateTime
+  releasedAt    DateTime?
+  releaseReason MerchandiseReservationReleaseReason?
+  completedAt   DateTime?
+  createdAt     DateTime                             @default(now())
+
+  quote   MerchandiseQuote          @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  event   Event                     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  variant MerchandiseProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  @@unique([quoteId, variantId])
+  @@index([variantId, releasedAt, expiresAt])
+  @@index([eventId, releasedAt, expiresAt])
 }
 
 /// A merchandise purchase. Deliberately independent of `Registration.status`
