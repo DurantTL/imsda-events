@@ -115,8 +115,9 @@ export function ImportWorkspace({ eventId, eventName, initialRuns, initialReconc
   const [selected, setSelected] = useState<ImportRunView | null>(initialRuns.find((run) => run.status === "PENDING") ?? null);
   const [reconciliation, setReconciliation] = useState(initialReconciliation);
   const [files, setFiles] = useState<File[]>([]);
+  const [sheetUrl, setSheetUrl] = useState("");
   const [filter, setFilter] = useState("ALL");
-  const [busy, setBusy] = useState<"preview" | "commit" | null>(null);
+  const [busy, setBusy] = useState<"preview" | "sheet" | "commit" | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [confirming, setConfirming] = useState(false);
@@ -189,6 +190,30 @@ export function ImportWorkspace({ eventId, eventName, initialRuns, initialReconc
     }
   }
 
+  async function previewFromSheet(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!sheetUrl.trim()) { setError("Paste the Google Sheet link first."); return; }
+    setBusy("sheet"); setError(""); setNotice("");
+    try {
+      const response = await fetch(`/api/events/${eventId}/imports/preview-sheet`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: sheetUrl.trim() }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message ?? "Unable to read that Google Sheet.");
+      const run = result.run as ImportRunView;
+      setSelected(run);
+      setRuns((current) => [run, ...current.filter((item) => item.id !== run.id)]);
+      setFilter("ALL");
+      setNotice(result.reused ? "This exact sheet snapshot was already previewed, so its existing idempotent run was reopened." : "Preview created from the Google Sheet. Review every issue and proposed action before committing.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to read that Google Sheet.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   function selectRun(run: ImportRunView) {
     setSelected(run); setFilter("ALL"); setError(""); setNotice("");
   }
@@ -197,9 +222,9 @@ export function ImportWorkspace({ eventId, eventName, initialRuns, initialReconc
     <div className="page-intro"><div><p className="eyebrow">Build 5 staging</p><h2>Import & reconcile</h2><p>Preview a CSV snapshot, inspect matching decisions, and commit validated records to {eventName} locally.</p></div><span className="count-badge"><ShieldCheck size={16} /> Read-only source</span></div>
 
     <div className="import-top-grid">
-      <section className="panel import-upload-panel"><div className="section-heading"><div><p className="eyebrow">Step 1</p><h2>Choose a source snapshot</h2></div><FileUp size={21} /></div><p className="quiet-copy">Choose the standard flat CSV, or select the WR26 Registrations and Attendees exports together. Add Seminars, SeminarPreferences, PromoCodes, Refunds, Waitlist, CheckIns, and TransferLog to preserve the complete history.</p><form className="import-upload-form" onSubmit={preview}><label className={files.length > 0 ? "file-drop selected" : "file-drop"}><input ref={inputRef} type="file" multiple accept=".csv,text/csv" onChange={(event) => setFiles(Array.from(event.target.files ?? []))} /><FileCheck2 size={24} /><span><strong>{files.length === 0 ? "Choose CSV files" : files.length === 1 ? files[0].name : `${files.length} WR26 sheet exports selected`}</strong><small>{files.length > 0 ? `${Math.max(1, Math.round(files.reduce((total, file) => total + file.size, 0) / 1024))} KB ready to preview` : "Select multiple files at once for a full WR26 migration"}</small></span></label><div className="template-links"><a href="/fixtures/wr26-import-template.csv" download><Download size={14} /> Flat CSV template</a><a href="/fixtures/wr26-import-sample.csv" download><Download size={14} /> Fictitious sample</a></div><button className="primary-button full-button" type="submit" disabled={busy !== null}>{busy === "preview" ? <><RefreshCw className="spin" size={16} /> Validating and matching…</> : <><FileCheck2 size={16} /> Preview import</>}</button></form></section>
+      <section className="panel import-upload-panel"><div className="section-heading"><div><p className="eyebrow">Step 1</p><h2>Choose a source snapshot</h2></div><FileUp size={21} /></div><p className="quiet-copy">Choose the standard flat CSV, or select the WR26 Registrations and Attendees exports together. Add Seminars, SeminarPreferences, PromoCodes, Refunds, Waitlist, CheckIns, and TransferLog to preserve the complete history.</p><form className="import-upload-form" onSubmit={preview}><label className={files.length > 0 ? "file-drop selected" : "file-drop"}><input ref={inputRef} type="file" multiple accept=".csv,text/csv" onChange={(event) => setFiles(Array.from(event.target.files ?? []))} /><FileCheck2 size={24} /><span><strong>{files.length === 0 ? "Choose CSV files" : files.length === 1 ? files[0].name : `${files.length} WR26 sheet exports selected`}</strong><small>{files.length > 0 ? `${Math.max(1, Math.round(files.reduce((total, file) => total + file.size, 0) / 1024))} KB ready to preview` : "Select multiple files at once for a full WR26 migration"}</small></span></label><div className="template-links"><a href="/fixtures/wr26-import-template.csv" download><Download size={14} /> Flat CSV template</a><a href="/fixtures/wr26-import-sample.csv" download><Download size={14} /> Fictitious sample</a></div><button className="primary-button full-button" type="submit" disabled={busy !== null}>{busy === "preview" ? <><RefreshCw className="spin" size={16} /> Validating and matching…</> : <><FileCheck2 size={16} /> Preview import</>}</button></form><div className="import-or-divider"><span>or</span></div><form className="import-sheet-form" onSubmit={previewFromSheet}><label htmlFor="wr26-sheet-url">Paste a Google Sheet link instead</label><p className="quiet-copy">Share the WR26 spreadsheet as “Anyone with the link can view”, then paste its URL below. IMSDA Events fetches the Registrations, Attendees, and other WR26 tabs by name and does a one-time, read-only pull — nothing is written back to the sheet.</p><input id="wr26-sheet-url" type="url" placeholder="https://docs.google.com/spreadsheets/d/..." value={sheetUrl} onChange={(event) => setSheetUrl(event.target.value)} /><button className="secondary-button full-button" type="submit" disabled={busy !== null}>{busy === "sheet" ? <><RefreshCw className="spin" size={16} /> Fetching sheet…</> : <><FileCheck2 size={16} /> Fetch & preview</>}</button></form></section>
 
-      <section className="panel reconciliation-panel"><div className="section-heading"><div><p className="eyebrow">Live local database</p><h2>Reconciliation totals</h2></div></div><div className="reconciliation-grid"><span><small>Registrations</small><strong>{reconciliation.target.registrations}</strong></span><span><small>Attendees</small><strong>{reconciliation.target.attendees}</strong></span><span><small>Registration value</small><strong>{money(reconciliation.target.totalAmountCents)}</strong></span></div>{reconciliation.latestRun ? <p className="reconciliation-note"><CheckCircle2 size={15} /> Last committed: {reconciliation.latestRun.fileName} · {reconciliation.latestRun.completedAt ? new Date(reconciliation.latestRun.completedAt).toLocaleString() : "complete"}</p> : <p className="reconciliation-note muted">No staging import has been committed yet.</p>}<div className="boundary-callout"><ShieldCheck size={18} /><span><strong>Production boundary intact</strong><small>No Google Sheets, Apps Script, payment, or legacy-system write is performed.</small></span></div></section>
+      <section className="panel reconciliation-panel"><div className="section-heading"><div><p className="eyebrow">Live local database</p><h2>Reconciliation totals</h2></div></div><div className="reconciliation-grid"><span><small>Registrations</small><strong>{reconciliation.target.registrations}</strong></span><span><small>Attendees</small><strong>{reconciliation.target.attendees}</strong></span><span><small>Registration value</small><strong>{money(reconciliation.target.totalAmountCents)}</strong></span></div>{reconciliation.latestRun ? <p className="reconciliation-note"><CheckCircle2 size={15} /> Last committed: {reconciliation.latestRun.fileName} · {reconciliation.latestRun.completedAt ? new Date(reconciliation.latestRun.completedAt).toLocaleString() : "complete"}</p> : <p className="reconciliation-note muted">No staging import has been committed yet.</p>}<div className="boundary-callout"><ShieldCheck size={18} /><span><strong>Production boundary intact</strong><small>Any Google Sheet access is a read-only, one-time pull for migration; no payment, Apps Script, or legacy-system write is ever performed.</small></span></div></section>
     </div>
 
     {error && <div className="inline-notice error" role="alert">{error}</div>}

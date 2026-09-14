@@ -1615,6 +1615,13 @@ select:focus-visible {
 .file-drop small { margin-top: 3px; color: var(--muted); font-size: 0.63rem; }
 .template-links { display: flex; gap: 15px; }
 .template-links a { display: inline-flex; align-items: center; gap: 5px; color: var(--imsda-purple); font-size: 0.64rem; font-weight: 700; text-decoration: none; }
+.import-or-divider { display: flex; align-items: center; gap: 10px; margin: 4px 0; color: var(--muted); font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.import-or-divider::before,
+.import-or-divider::after { content: ""; flex: 1; height: 1px; background: #dbe6ea; }
+.import-sheet-form { display: grid; gap: 8px; }
+.import-sheet-form label { font-size: 0.72rem; font-weight: 700; color: var(--imsda-navy); }
+.import-sheet-form input { border: 1px solid #a9c3ce; border-radius: 10px; padding: 11px 13px; font-size: 0.72rem; }
+.import-sheet-form input:focus-visible { outline: 2px solid var(--imsda-purple); outline-offset: 1px; }
 .reconciliation-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .reconciliation-grid span { border-radius: 12px; background: var(--paper); padding: 12px; }
 .reconciliation-grid small,
