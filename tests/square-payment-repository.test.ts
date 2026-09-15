@@ -234,6 +234,50 @@ describe("Square payment repository", () => {
     expect(JSON.stringify(checkout)).not.toContain("sandbox-access-token");
   });
 
+  it("still opens the card form for a pay-later registration that has a balance due", async () => {
+    const client = transactionClient();
+    client.registration.findUnique.mockResolvedValue({
+      ...registration(),
+      publicFormSubmission: {
+        ...registration().publicFormSubmission,
+        responses: { payment_method: "Pay later" },
+      },
+    });
+
+    const checkout = await getPublicSquareCheckout("a".repeat(43), {
+      client: client as never,
+      configuration,
+    });
+
+    expect(checkout).toMatchObject({
+      state: "READY",
+      amountCents: 8_000,
+      cardSelected: false,
+    });
+    expect(checkout?.square).not.toBeNull();
+    expect(checkout?.message).toContain("no added processing fee");
+  });
+
+  it("reports no balance rather than a card form once a pay-later registration is settled", async () => {
+    const client = transactionClient();
+    client.registration.findUnique.mockResolvedValue({
+      ...registration(),
+      payments: [{ amount: 100, refunds: [] }],
+      publicFormSubmission: {
+        ...registration().publicFormSubmission,
+        responses: { payment_method: "Pay later" },
+      },
+    });
+
+    const checkout = await getPublicSquareCheckout("a".repeat(43), {
+      client: client as never,
+      configuration,
+    });
+
+    expect(checkout).toMatchObject({ state: "NO_BALANCE", amountCents: 0 });
+    expect(checkout?.square).toBeNull();
+  });
+
   it("never offers online card payment for a deferred-organization-billing event, even if the form has a payment field", async () => {
     const client = transactionClient();
     client.registration.findUnique.mockResolvedValue({

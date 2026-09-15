@@ -22,6 +22,7 @@ import {
 import { RegistrationAmendmentEditor } from "@/components/registration-amendment-editor";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
+import { registrationMatchesSearch } from "@/modules/registrations/search";
 
 type LifecycleAction = "cancel" | "reactivate" | "waitlist" | "promote";
 type RegistrationOperationDraft = {
@@ -233,9 +234,7 @@ export function PeopleWorkspace({
   const dialogRef = useAccessibleDialog<HTMLElement>(Boolean(modal), closeModal);
 
   const visible = useMemo(() => registrations.filter((registration) => {
-    const attendeeSearch = registration.attendees.map((attendee) => `${attendee.firstName} ${attendee.lastName} ${attendee.email}`).join(" ");
-    const haystack = `${registration.accountHolder.firstName} ${registration.accountHolder.lastName} ${registration.accountHolder.email} ${registration.confirmationCode} ${attendeeSearch}`.toLowerCase();
-    const matchesQuery = haystack.includes(query.toLowerCase());
+    const matchesQuery = registrationMatchesSearch(registration, query);
     const isActive = registration.status === "SUBMITTED" || registration.status === "CONFIRMED";
     const matchesFilter = filter === "ALL"
       || (filter === "BALANCE" && isActive && registration.balanceCents > 0)

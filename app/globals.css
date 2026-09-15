@@ -1046,6 +1046,12 @@ select:focus-visible {
 .payment-history strong { font-size: 0.72rem; text-transform: capitalize; }
 .payment-history small { margin-top: 3px; color: var(--muted); font-size: 0.62rem; }
 .payment-icon { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 10px; background: var(--green-soft); color: var(--green); }
+.finance-attendee-names { color: var(--imsda-purple); font-style: italic; }
+.finance-attendee-list { display: grid; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
+.finance-attendee-list li { border-top: 1px solid #edf2f4; padding-top: 8px; }
+.finance-attendee-list li:first-child { border-top: 0; padding-top: 0; }
+.finance-attendee-list strong { display: block; font-size: 0.72rem; }
+.finance-attendee-list small { display: block; margin-top: 2px; color: var(--muted); font-size: 0.62rem; text-transform: capitalize; }
 
 .record-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .record-card { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 13px; border-radius: 16px; padding: 16px; }

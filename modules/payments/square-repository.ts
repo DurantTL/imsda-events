@@ -300,13 +300,6 @@ function checkoutFromRegistration(
       message: "A place is now available. Choose how you want to pay before continuing.",
     };
   }
-  if (!paymentSelection.cardSelected) {
-    return {
-      ...base,
-      state: "PAY_LATER",
-      message: "This registration selected the pay-later option. No online card form has been loaded.",
-    };
-  }
   if (amountCents <= 0) {
     return {
       ...base,
@@ -325,7 +318,14 @@ function checkoutFromRegistration(
   return {
     ...base,
     state: "READY",
-    message: "Secure card payment is available through Square.",
+    // Choosing pay-later at registration decides how the total was priced —
+    // it never decided whether a card may be used afterwards. A balance
+    // reminder that says "pay now" has to land on a page that can take the
+    // payment, so an outstanding balance opens the card form either way. The
+    // total is untouched: no card processing fee is added after the fact.
+    message: paymentSelection.cardSelected
+      ? "Secure card payment is available through Square."
+      : "This registration chose to pay later. The remaining balance can still be paid by card now, with no added processing fee.",
     square,
   };
 }
@@ -390,7 +390,6 @@ function operationErrorForCheckout(checkout: SquareCheckoutView): never {
   }
   if (
     checkout.state === "CHOICE_REQUIRED"
-    || checkout.state === "PAY_LATER"
     || checkout.state === "FORM_UNAVAILABLE"
   ) {
     throw new SquarePaymentOperationError(
