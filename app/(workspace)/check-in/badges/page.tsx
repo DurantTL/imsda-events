@@ -2,7 +2,12 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ContactRound, Shirt, Tags } from "lucide-react";
 import { AccessRestricted } from "@/components/access-restricted";
+import { BadgeBackgroundPicker } from "@/components/badge-background-picker";
 import { PrintReportButton } from "@/components/print-report-button";
+import {
+  getEventBadgeBackground,
+  listBadgeBackgroundOptions,
+} from "@/modules/checkin/badge-background-repository";
 import {
   badgeTemplates,
   buildBadgeLabels,
@@ -53,6 +58,11 @@ export default async function PrintableNameBadgesPage({
     statuses: activeRegistrationStatuses,
   });
   const labels = buildBadgeLabels(registrations);
+  const canConfigure = permissions.includes("CONFIGURE_EVENT");
+  const [background, backgroundOptions] = await Promise.all([
+    getEventBadgeBackground(event.id),
+    canConfigure ? listBadgeBackgroundOptions(event.id) : Promise.resolve([]),
+  ]);
   const sheets = paginateBadgeLabels(labels, templateId, startingPosition);
   const missingShirtSizes = labels.filter((label) => !label.shirtSize).length;
 
@@ -66,7 +76,7 @@ export default async function PrintableNameBadgesPage({
           <p>
             Print the active roster for {event.name} on the matching Avery
             product. Use “start at label” when part of the first sheet was
-            already used.
+            already used, and upload artwork to print behind every name.
           </p>
         </div>
         <div className="intro-actions badge-print-actions">
@@ -110,6 +120,16 @@ export default async function PrintableNameBadgesPage({
         </button>
       </form>
 
+      {canConfigure && (
+        <BadgeBackgroundPicker
+          eventId={event.id}
+          initialBackground={background
+            ? { id: background.id, displayName: background.displayName, url: background.url }
+            : null}
+          initialOptions={backgroundOptions}
+        />
+      )}
+
       <div className="badge-print-summary">
         <span><ContactRound aria-hidden="true" size={18} /><strong>{labels.length}</strong> badges</span>
         <span><Tags aria-hidden="true" size={18} /><strong>{sheets.length}</strong> sheets</span>
@@ -138,7 +158,22 @@ export default async function PrintableNameBadgesPage({
             >
               {sheet.map((label, slotIndex) => (
                 label ? (
-                  <article className="badge-label-card" key={label.attendeeId}>
+                  <article
+                    className={background ? "badge-label-card has-background" : "badge-label-card"}
+                    key={label.attendeeId}
+                  >
+                    {background && (
+                      // The background is served from a permission-checked
+                      // route rather than a public URL, so it must bypass the
+                      // optimizing image cache.
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        alt=""
+                        aria-hidden="true"
+                        className="badge-label-background"
+                        src={background.url}
+                      />
+                    )}
                     <header>{event.name}</header>
                     <div className="badge-label-name">
                       <strong>{label.firstName}</strong>

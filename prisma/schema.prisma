@@ -851,6 +851,7 @@ model EventAsset {
   uploadedBy User?              @relation("EventAssetUploadedBy", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
   links      EventContentLink[]
   merchandiseArtworkProducts MerchandiseProduct[] @relation("MerchandiseProductArtwork")
+  badgeBackgroundEvents      Event[]              @relation("EventBadgeBackground")
   @@index([eventId, createdAt])
 }
 
@@ -914,9 +915,14 @@ model Event {
   hotelGroupName       String?
   hotelRate            String?
   hotelInstructions    String?
+  /// Artwork printed behind every attendee name badge for this event. An
+  /// event's own uploaded image, so a conference badge does not have to be
+  /// laid out in another tool and hand-fed through a printer twice.
+  badgeBackgroundAssetId String?
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
 
+  badgeBackground                     EventAsset?        @relation("EventBadgeBackground", fields: [badgeBackgroundAssetId], references: [id], onDelete: Restrict)
   memberships                         EventMembership[]
   contentSections                     EventContentSection[]
   assets                              EventAsset[]
@@ -956,6 +962,8 @@ model Event {
   merchandiseOrderStatusChanges       MerchandiseOrderStatusChange[]
   attendeeTypes                       EventAttendeeType[]
   attendeeClassifications             EventAttendeeClassification[]
+
+  @@index([badgeBackgroundAssetId])
 }
 
 /// Event-owned identity used by registration, pricing, capacity, and restriction
