@@ -4,6 +4,10 @@ import { useMemo, useState } from "react";
 import { Banknote, CircleDollarSign, ReceiptText, RotateCcw, Search, WalletCards, X } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
+import {
+  attendeeSummaryLabel,
+  registrationMatchesSearch,
+} from "@/modules/registrations/search";
 
 type PaymentRecord = RegistrationRecord["payments"][number];
 const activeFinancialStatuses = new Set(["SUBMITTED", "CONFIRMED"]);
@@ -44,7 +48,7 @@ export function FinanceWorkspace({
   }), { billed: 0, received: 0, outstanding: 0, refunded: 0 }), [registrations]);
 
   const visible = useMemo(() => registrations.filter((registration) => {
-    const matchesSearch = `${registration.accountHolder.firstName} ${registration.accountHolder.lastName} ${registration.confirmationCode}`.toLowerCase().includes(query.toLowerCase());
+    const matchesSearch = registrationMatchesSearch(registration, query);
     const matchesFilter = filter === "ALL"
       || (filter === "ACTIVE" && activeFinancialStatuses.has(registration.status))
       || (filter === "BALANCE" && registration.balanceCents > 0)
@@ -107,7 +111,7 @@ export function FinanceWorkspace({
 
   return (
     <section className="page-stack">
-      <div className="page-intro"><div><p className="eyebrow">Financial operations</p><h2>Payments & balances</h2><p>Record offline payments, review Square card payments, and track confirmed refunds.</p></div><span className="count-badge"><WalletCards aria-hidden="true" size={17} /> {registrations.length} registrations</span></div>
+      <div className="page-intro"><div><p className="eyebrow">Financial operations</p><h2>Payments & balances</h2><p>Search by attendee or payer, record offline payments, review Square card payments, and track confirmed refunds.</p></div><span className="count-badge"><WalletCards aria-hidden="true" size={17} /> {registrations.length} registrations</span></div>
       <section className="finance-summary" aria-label="Financial summary">
         <article className="finance-stat"><span><ReceiptText aria-hidden="true" size={18} /></span><small>Active billed</small><strong>{money(totals.billed)}</strong></article>
         <article className="finance-stat"><span><Banknote aria-hidden="true" size={18} /></span><small>Net received</small><strong>{money(totals.received)}</strong></article>
@@ -115,18 +119,18 @@ export function FinanceWorkspace({
         <article className="finance-stat muted"><span><RotateCcw aria-hidden="true" size={18} /></span><small>Refunded</small><strong>{money(totals.refunded)}</strong></article>
       </section>
       <div className="toolbar panel">
-        <label className="search-field"><Search aria-hidden="true" size={18} /><span className="sr-only">Search financial records</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name or confirmation code" /></label>
+        <label className="search-field"><Search aria-hidden="true" size={18} /><span className="sr-only">Search financial records</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search attendee or payer name, email, or confirmation code" /></label>
         <label className="filter-field"><span className="sr-only">Filter financial records</span><select value={filter} onChange={(event) => setFilter(event.target.value)}><option value="ALL">All financial records</option><option value="ACTIVE">Active registrations</option><option value="BALANCE">Balance due</option><option value="PAID">Paid in full</option><option value="REFUNDED">Has refunds</option><option value="WAITLISTED">Waitlisted</option><option value="CANCELLED">Cancelled</option></select></label>
       </div>
       <section className="panel finance-list">
         <div className="finance-row finance-head"><span>Registration</span><span>Total</span><span>Received</span><span>Balance</span><span /></div>
         {visible.map((registration) => (
           <button className="finance-row finance-record" type="button" key={registration.id} onClick={() => openDetail(registration)}>
-            <span><strong>{registration.accountHolder.firstName} {registration.accountHolder.lastName}</strong><small>{registration.confirmationCode} · {registration.status.toLowerCase()} · {registration.attendeeCount} {registration.attendeeCount === 1 ? "person" : "people"}</small></span>
+            <span><strong>{registration.accountHolder.firstName} {registration.accountHolder.lastName}</strong><small>{registration.confirmationCode} · {registration.status.toLowerCase()} · {registration.attendeeCount} {registration.attendeeCount === 1 ? "person" : "people"}</small>{attendeeSummaryLabel(registration) && <small className="finance-attendee-names">{attendeeSummaryLabel(registration)}</small>}</span>
             <span>{money(registration.totalAmountCents)}</span><span>{money(registration.paidCents)}</span><span className={registration.balanceCents > 0 ? "balance-due" : "paid-balance"}>{money(registration.balanceCents)}</span><span>View</span>
           </button>
         ))}
-        {visible.length === 0 && <div className="empty-state"><Search aria-hidden="true" size={24} /><h3>No financial records found</h3><p>Try another search or balance filter.</p></div>}
+        {visible.length === 0 && <div className="empty-state"><Search aria-hidden="true" size={24} /><h3>No financial records found</h3><p>Search covers the payer, every attendee on the registration, and the confirmation code. Try another term or balance filter.</p></div>}
       </section>
 
       {modal && selected && (
@@ -136,6 +140,7 @@ export function FinanceWorkspace({
             {modal === "detail" ? (
               <div className="detail-stack">
                 <div className="detail-grid"><span><small>Total</small><strong>{money(selected.totalAmountCents)}</strong></span><span><small>Net received</small><strong>{money(selected.paidCents)}</strong></span><span><small>Balance</small><strong>{money(selected.balanceCents)}</strong></span><span><small>Payments</small><strong>{selected.payments.length}</strong></span></div>
+                <div><p className="eyebrow">Attendees on this registration</p><ul className="finance-attendee-list">{selected.attendees.map((attendee) => <li key={attendee.id}><span><strong>{attendee.firstName} {attendee.lastName}</strong><small>{attendee.attendeeType.toLowerCase()}{attendee.email ? ` · ${attendee.email}` : ""}</small></span></li>)}</ul>{selected.attendees.length === 0 && <p className="quiet-copy">No attendees are recorded on this registration.</p>}</div>
                 <div><p className="eyebrow">Payment history</p>{selected.payments.map((payment) => { const available = payment.amountCents - payment.refundedCents; const squareManaged = payment.method === "CARD_REFERENCE"; return <div className="payment-history" key={payment.id}><span className="payment-icon"><Banknote aria-hidden="true" size={17} /></span><span><strong>{money(payment.amountCents)} · {squareManaged ? "Square card" : payment.method.toLowerCase()}</strong><small>{payment.receivedAt ? new Date(payment.receivedAt).toLocaleString() : "Recorded manually"}{payment.refundedCents ? ` · ${money(payment.refundedCents)} refunded` : ""}{squareManaged && available > 0 ? " · refund through Square Dashboard" : ""}</small></span>{canManage && available > 0 && !squareManaged && <button className="text-button" type="button" onClick={() => { setSelectedPayment(payment); setError(""); setModal("refund"); }}>Refund</button>}</div>; })}{selected.payments.length === 0 && <p className="quiet-copy">No payments have been recorded.</p>}</div>
                 {canManage && selected.balanceCents > 0 && activeFinancialStatuses.has(selected.status) && <button className="primary-button full-button" type="button" onClick={() => { setError(""); setModal("payment"); }}><Banknote aria-hidden="true" size={17} /> Record payment</button>}
                 {!activeFinancialStatuses.has(selected.status) && <div className="inline-notice">This registration is {selected.status.toLowerCase()}. New payments are disabled, but existing payment and refund history remains available.</div>}

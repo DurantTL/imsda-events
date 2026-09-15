@@ -91,6 +91,7 @@ describe("Women’s Retreat registration visibility", () => {
       initialRegistrations: [registration("2026-07-30T18:13:05.955Z")],
       initialRegistrationId: "registration-1",
       canEdit: true,
+      canEmail: true,
     }));
 
     expect(markup).toContain("Jul 30, 2026, 1:13 PM CDT");
@@ -109,6 +110,7 @@ describe("Women’s Retreat registration visibility", () => {
       initialRegistrations: [registration(null)],
       initialRegistrationId: "registration-1",
       canEdit: true,
+      canEmail: true,
     }));
 
     expect(markup).toContain("Not submitted");

@@ -17,7 +17,6 @@ type SquareCheckout = {
   state:
     | "READY"
     | "CHOICE_REQUIRED"
-    | "PAY_LATER"
     | "NOT_CONFIGURED"
     | "NOT_ELIGIBLE"
     | "NO_BALANCE"
@@ -684,13 +683,11 @@ export function PublicSquarePayment({
             <strong>
               {checkout.state === "CHOICE_REQUIRED"
                 ? "Choose one option above"
-                : checkout.state === "PAY_LATER"
-                  ? "Pay later is selected"
-                  : checkout.state === "NOT_CONFIGURED"
-                    ? "Online payment is not available yet"
-                    : checkout.state === "NO_BALANCE"
-                      ? "No online payment is due"
-                      : "Online payment is unavailable"}
+                : checkout.state === "NOT_CONFIGURED"
+                  ? "Online payment is not available yet"
+                  : checkout.state === "NO_BALANCE"
+                    ? "No online payment is due"
+                    : "Online payment is unavailable"}
             </strong>
             <p>{checkout.message}</p>
           </div>

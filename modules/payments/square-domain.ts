@@ -18,7 +18,6 @@ export type SquarePaymentInput = z.infer<typeof squarePaymentInputSchema>;
 export type SquareCheckoutState =
   | "READY"
   | "CHOICE_REQUIRED"
-  | "PAY_LATER"
   | "NOT_CONFIGURED"
   | "NOT_ELIGIBLE"
   | "NO_BALANCE"

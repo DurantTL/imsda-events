@@ -5,7 +5,9 @@ import {
   ArrowRightLeft,
   Banknote,
   Ban,
+  CopyCheck,
   Download,
+  MailPlus,
   ExternalLink,
   Filter,
   ListPlus,
@@ -20,8 +22,10 @@ import {
   X,
 } from "lucide-react";
 import { RegistrationAmendmentEditor } from "@/components/registration-amendment-editor";
+import { SelectedAudienceDialog } from "@/components/selected-audience-dialog";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
+import { registrationMatchesSearch } from "@/modules/registrations/search";
 
 type LifecycleAction = "cancel" | "reactivate" | "waitlist" | "promote";
 type RegistrationOperationDraft = {
@@ -203,6 +207,7 @@ export function PeopleWorkspace({
   waitlistEnabled,
   initialRegistrations,
   canEdit,
+  canEmail,
   initialFilter = "ALL",
   initialRegistrationId,
 }: {
@@ -212,6 +217,7 @@ export function PeopleWorkspace({
   waitlistEnabled: boolean;
   initialRegistrations: RegistrationRecord[];
   canEdit: boolean;
+  canEmail: boolean;
   initialFilter?: string;
   initialRegistrationId?: string;
 }) {
@@ -230,12 +236,12 @@ export function PeopleWorkspace({
   const [amending, setAmending] = useState(false);
   const [lifecycleAction, setLifecycleAction] = useState<LifecycleAction | null>(null);
   const [operationDraft, setOperationDraft] = useState<RegistrationOperationDraft | null>(null);
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
+  const [emailingSelection, setEmailingSelection] = useState(false);
   const dialogRef = useAccessibleDialog<HTMLElement>(Boolean(modal), closeModal);
 
   const visible = useMemo(() => registrations.filter((registration) => {
-    const attendeeSearch = registration.attendees.map((attendee) => `${attendee.firstName} ${attendee.lastName} ${attendee.email}`).join(" ");
-    const haystack = `${registration.accountHolder.firstName} ${registration.accountHolder.lastName} ${registration.accountHolder.email} ${registration.confirmationCode} ${attendeeSearch}`.toLowerCase();
-    const matchesQuery = haystack.includes(query.toLowerCase());
+    const matchesQuery = registrationMatchesSearch(registration, query);
     const isActive = registration.status === "SUBMITTED" || registration.status === "CONFIRMED";
     const matchesFilter = filter === "ALL"
       || (filter === "BALANCE" && isActive && registration.balanceCents > 0)
@@ -243,6 +249,29 @@ export function PeopleWorkspace({
       || registration.status === filter;
     return matchesQuery && matchesFilter;
   }), [registrations, query, filter]);
+  // Selection is by identifier, not by row, so narrowing the search does not
+  // silently drop people already chosen — and "select all" means the list in
+  // front of you, which is the only set you actually reviewed.
+  // A stable array identity: the dialog reloads its preview when the audience
+  // changes, and a fresh array on every keystroke in the search box would make
+  // "changes" mean "re-rendered".
+  const selectedIdList = useMemo(() => [...selectedIds], [selectedIds]);
+  const visibleSelectedCount = visible.filter(
+    (registration) => selectedIds.has(registration.id),
+  ).length;
+  function toggleSelected(registrationId: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (!next.delete(registrationId)) next.add(registrationId);
+      return next;
+    });
+  }
+  function selectAllVisible() {
+    setSelectedIds((current) => new Set([
+      ...current,
+      ...visible.map((registration) => registration.id),
+    ]));
+  }
   const expectedPeople = registrations
     .filter((registration) => registration.status === "SUBMITTED" || registration.status === "CONFIRMED")
     .reduce((total, registration) => total + registration.attendeeCount, 0);
@@ -551,6 +580,7 @@ export function PeopleWorkspace({
         <div><p className="eyebrow">Registration hub</p><h2>People & registrations</h2><p>Review each party’s attendees, submitted choices, payments, emails, and operational status in one record. Times are shown in {eventTimezone}.</p></div>
         <div className="intro-actions">
           <span className="count-badge"><UsersRound aria-hidden="true" size={17} /> {expectedPeople} expected</span>
+          <a className="secondary-button" href={`/people/duplicates?event=${encodeURIComponent(eventId)}`}><CopyCheck aria-hidden="true" size={17} /> Find duplicates</a>
           <a className="secondary-button" href={`/api/events/${eventId}/exports/registrations`}><Download aria-hidden="true" size={17} /> Export CSV</a>
           {canEdit && <a className="primary-button" href={`/events/${eventSlug}`} target="_blank" rel="noreferrer"><ExternalLink aria-hidden="true" size={17} /> Start registration</a>}
         </div>
@@ -560,16 +590,48 @@ export function PeopleWorkspace({
         <label className="filter-field"><Filter aria-hidden="true" size={17} /><span className="sr-only">Filter registrations</span><select value={filter} onChange={(event) => setFilter(event.target.value)}><option value="ALL">All records</option><option value="BALANCE">Balance due</option><option value="PAID">Paid</option><option value="DRAFT">Draft</option><option value="WAITLISTED">Waitlisted</option><option value="CANCELLED">Cancelled</option></select></label>
       </div>
       <p className="result-summary">Showing {visible.length} of {registrations.length} registrations</p>
+      {canEmail && selectedIds.size > 0 && (
+        <div className="panel selection-bar">
+          <span><strong>{selectedIds.size}</strong> selected{visibleSelectedCount !== selectedIds.size ? ` · ${visibleSelectedCount} in this view` : ""}</span>
+          <div className="selection-bar-actions">
+            {visibleSelectedCount < visible.length && (
+              <button className="text-button" type="button" onClick={selectAllVisible}>Select all {visible.length} shown</button>
+            )}
+            <button className="text-button" type="button" onClick={() => setSelectedIds(new Set())}>Clear selection</button>
+            <button className="primary-button" type="button" onClick={() => setEmailingSelection(true)}><MailPlus aria-hidden="true" size={16} /> Email selected</button>
+          </div>
+        </div>
+      )}
       <div className="record-grid">
         {visible.map((registration) => (
-          <button className="record-card interactive-record" type="button" key={registration.id} onClick={() => openDetail(registration)}>
+          <div className="record-card-shell" key={registration.id}>
+          {canEmail && (
+            <label className="record-select">
+              <input
+                checked={selectedIds.has(registration.id)}
+                onChange={() => toggleSelected(registration.id)}
+                type="checkbox"
+              />
+              <span className="sr-only">Select {registration.confirmationCode} for a bulk email</span>
+            </label>
+          )}
+          <button className="record-card interactive-record" type="button" onClick={() => openDetail(registration)}>
             <span className={`person-avatar large ${statusTone(registration)}`}>{initials(registration)}</span>
             <span className="record-copy"><strong>{registration.accountHolder.firstName} {registration.accountHolder.lastName}</strong><small>{registration.confirmationCode} · {registration.attendeeCount} {registration.attendeeCount === 1 ? "person" : "people"}</small><small>{registration.attendeeCount > 1 ? registration.attendees.slice(0, 2).map((attendee) => `${attendee.firstName} ${attendee.lastName}`).join(", ") + (registration.attendeeCount > 2 ? ` +${registration.attendeeCount - 2} more` : "") : registration.accountHolder.email || "No email on file"} · {submittedDateTime(registration.submittedAt, eventTimezone)}</small></span>
             <span className={`status-chip ${statusTone(registration)}`}>{statusLabel(registration)}</span>
           </button>
+          </div>
         ))}
       </div>
       {visible.length === 0 && <div className="empty-state panel"><Search aria-hidden="true" size={24} /><h3>No matching registrations</h3><p>Try a different search or filter.</p></div>}
+
+      {emailingSelection && (
+        <SelectedAudienceDialog
+          eventId={eventId}
+          onClose={() => setEmailingSelection(false)}
+          registrationIds={selectedIdList}
+        />
+      )}
 
       {modal && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeModal(); }}>

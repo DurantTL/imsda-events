@@ -134,7 +134,13 @@ export async function removeEventAsset(eventId: string, assetId: string) {
     select: {
       id: true,
       storageKey: true,
-      _count: { select: { links: true, merchandiseArtworkProducts: true } },
+      _count: {
+        select: {
+          links: true,
+          merchandiseArtworkProducts: true,
+          badgeBackgroundEvents: true,
+        },
+      },
     },
   });
   if (!asset) {
@@ -150,6 +156,12 @@ export async function removeEventAsset(eventId: string, assetId: string) {
     throw new EventAssetError(
       "ASSET_IN_USE",
       "Remove this artwork from the merchandise products that use it before deleting it.",
+    );
+  }
+  if (asset._count.badgeBackgroundEvents > 0) {
+    throw new EventAssetError(
+      "ASSET_IN_USE",
+      "Remove this image as the name badge background before deleting it.",
     );
   }
   await prisma.eventAsset.delete({ where: { id: asset.id } });
