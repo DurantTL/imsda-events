@@ -56,6 +56,14 @@ import {
   type ShirtSizePreviewContext,
 } from "@/modules/communications/shirt-size-audience";
 import {
+  computeSelectedAudiencePreview,
+  type SelectedAudienceBatchInput,
+  type SelectedAudienceCandidate,
+  type SelectedAudiencePreview,
+  type SelectedAudienceTemplateKey,
+} from "@/modules/communications/selected-audience";
+import { enqueueSelectedAudienceMessage } from "@/modules/communications/transactional-messages";
+import {
   eventCollectsShirtSizes,
   shirtSizeFromResponses,
 } from "@/modules/registrations/shirt-sizes";
@@ -2909,5 +2917,329 @@ export async function enqueuePublicRegistrationMessages(
     registrantMessageIds,
     pendingMessageIds,
     deliveryMode: settings.deliveryMode,
+  };
+}
+
+/**
+ * Loads one staff-chosen audience and prices it exactly as the send will.
+ *
+ * Only the chosen registrations are read. The event-wide reminder loads every
+ * registration because its audience is every registration; here the selection
+ * is the query, and loading the rest to filter them out again would make a
+ * ten-person send cost the same as a thousand-person one.
+ */
+async function loadSelectedAudienceState(
+  eventId: string,
+  templateKey: SelectedAudienceTemplateKey,
+  registrationIds: readonly string[],
+  client: MessagingDatabaseClient,
+  now = new Date(),
+) {
+  const uniqueIds = [...new Set(registrationIds)];
+  const [event, settingsRow, template, registrations] = await Promise.all([
+    client.event.findUnique({
+      where: { id: eventId },
+      select: { id: true, name: true, supportContact: true, billingMode: true },
+    }),
+    client.eventMessageSettings.findUnique({ where: { eventId } }),
+    client.eventMessageTemplate.findUnique({
+      where: { eventId_key: { eventId, key: templateKey } },
+      include: {
+        versions: {
+          where: { status: "PUBLISHED" },
+          orderBy: { versionNumber: "desc" },
+          take: 1,
+        },
+      },
+    }),
+    client.registration.findMany({
+      // Scoped by eventId as well as id: an identifier from another event must
+      // read as "not a registration on this event", never as a recipient.
+      where: { eventId, id: { in: uniqueIds } },
+      orderBy: { id: "asc" },
+      select: {
+        id: true,
+        confirmationCode: true,
+        status: true,
+        totalAmount: true,
+        contactSnapshot: true,
+        accountHolderPerson: {
+          select: { firstName: true, lastName: true, normalizedEmail: true },
+        },
+        payments: {
+          where: { status: "SUCCEEDED" },
+          select: {
+            amount: true,
+            refunds: { where: { status: "SUCCEEDED" }, select: { amount: true } },
+          },
+        },
+      },
+    }),
+  ]);
+
+  if (!event) {
+    throw new MessagingError(
+      "MESSAGE_NOT_FOUND",
+      "That event is no longer available.",
+    );
+  }
+
+  const settings = settingsRow ?? fallbackSettings;
+  const version = template?.versions[0] ?? null;
+  const candidates: SelectedAudienceCandidate[] = registrations.map((registration) => {
+    const contact = recordFromJson(registration.contactSnapshot);
+    const contactValue = (
+      key: "firstName" | "lastName" | "email",
+      fallback: string,
+    ) => typeof contact[key] === "string" ? contact[key].trim() : fallback;
+    const netPaidCents = registration.payments.reduce((paymentTotal, payment) => {
+      const refundedCents = payment.refunds.reduce(
+        (refundTotal, refund) => refundTotal + moneyToCents(refund.amount),
+        0,
+      );
+      return paymentTotal + moneyToCents(payment.amount) - refundedCents;
+    }, 0);
+    return {
+      registrationId: registration.id,
+      confirmationCode: registration.confirmationCode,
+      status: registration.status,
+      recipientName: `${contactValue("firstName", registration.accountHolderPerson.firstName)} ${contactValue("lastName", registration.accountHolderPerson.lastName)}`.trim(),
+      recipientEmail: contactValue(
+        "email",
+        registration.accountHolderPerson.normalizedEmail ?? "",
+      ),
+      totalCents: moneyToCents(registration.totalAmount),
+      netPaidCents,
+    };
+  });
+
+  const preview = computeSelectedAudiencePreview(uniqueIds, candidates, {
+    eventId,
+    templateKey,
+    isDeferredOrganizationBilling:
+      event.billingMode === "DEFERRED_ORGANIZATION_INVOICE",
+    deliveryMode: settings.deliveryMode,
+    senderName: settings.senderName,
+    senderEmail: settings.senderEmail,
+    replyToEmail: settings.replyToEmail
+      || settings.senderEmail
+      || event.supportContact
+      || null,
+    templateEnabled: template?.isEnabled ?? true,
+    templateVersionId: version?.id ?? null,
+    templateVersionNumber: version?.versionNumber ?? null,
+  }, now);
+
+  return { event, settings, preview };
+}
+
+export async function getSelectedAudiencePreview(
+  eventId: string,
+  templateKey: SelectedAudienceTemplateKey,
+  registrationIds: readonly string[],
+): Promise<SelectedAudiencePreview> {
+  await ensureEventMessagingDefaults(eventId);
+  return (await loadSelectedAudienceState(
+    eventId,
+    templateKey,
+    registrationIds,
+    getPrisma(),
+  )).preview;
+}
+
+export type SelectedAudienceBatchOperation = {
+  batchId: string;
+  templateKey: SelectedAudienceTemplateKey;
+  messageIds: string[];
+  includedCount: number;
+  skippedCount: number;
+  deliveryMode: "DISABLED" | "LOCAL_CAPTURE" | "EXTERNAL_EMAIL";
+  queuedCount: number;
+  capturedCount: number;
+  suppressedCount: number;
+  replayed: boolean;
+};
+
+/**
+ * Writes one template to the staff-chosen audience they just reviewed.
+ *
+ * The fingerprint is the contract: if anything that would change what a
+ * recipient reads has moved since the preview — a balance paid, a template
+ * republished, delivery switched off — the batch is refused rather than sent
+ * against a page somebody read five minutes ago. Re-posting the same batch id
+ * returns the batch that already exists, so a double-submitted form does not
+ * email anyone twice.
+ */
+export async function enqueueSelectedAudienceBatch(
+  eventId: string,
+  input: SelectedAudienceBatchInput,
+  actorUserId: string,
+): Promise<SelectedAudienceBatchOperation> {
+  await ensureEventMessagingDefaults(eventId);
+  const prisma = getPrisma();
+  const operationEntityId = `selected-audience:${eventId}:${input.batchId}`;
+  let transactionResult:
+    | (Omit<SelectedAudienceBatchOperation, "capturedCount"> & {
+      existingCapturedCount: number;
+    })
+    | undefined;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      transactionResult = await prisma.$transaction(async (tx) => {
+        const existingAudit = await tx.auditLog.findFirst({
+          where: {
+            eventId,
+            action: "SELECTED_AUDIENCE_BATCH_ENQUEUED",
+            entityId: operationEntityId,
+          },
+          select: { metadata: true },
+        });
+        if (existingAudit) {
+          const metadata = recordFromJson(existingAudit.metadata);
+          if (metadata.previewFingerprint !== input.previewFingerprint) {
+            throw new MessagingError(
+              "IDEMPOTENCY_KEY_REUSED",
+              "This batch ID was already used with a different audience. Refresh the page and start again.",
+            );
+          }
+          const existingMessages = await tx.messageOutbox.findMany({
+            where: { eventId, correlationId: input.batchId },
+            orderBy: { createdAt: "asc" },
+            select: { id: true, status: true },
+          });
+          const storedMode = metadata.deliveryMode;
+          const deliveryMode = storedMode === "DISABLED"
+            || storedMode === "LOCAL_CAPTURE"
+            || storedMode === "EXTERNAL_EMAIL"
+            ? storedMode
+            : "LOCAL_CAPTURE";
+          return {
+            batchId: input.batchId,
+            templateKey: input.templateKey,
+            messageIds: existingMessages.map((message) => message.id),
+            includedCount: typeof metadata.includedCount === "number"
+              ? metadata.includedCount
+              : existingMessages.length,
+            skippedCount: typeof metadata.skippedCount === "number"
+              ? metadata.skippedCount
+              : 0,
+            deliveryMode,
+            queuedCount: deliveryMode === "EXTERNAL_EMAIL"
+              ? existingMessages.filter((message) => message.status !== "SUPPRESSED").length
+              : existingMessages.filter(
+                (message) => message.status === "PENDING"
+                  || message.status === "PROCESSING",
+              ).length,
+            suppressedCount: existingMessages.filter(
+              (message) => message.status === "SUPPRESSED",
+            ).length,
+            replayed: true,
+            existingCapturedCount: existingMessages.filter(
+              (message) => message.status === "CAPTURED",
+            ).length,
+          };
+        }
+
+        const state = await loadSelectedAudienceState(
+          eventId,
+          input.templateKey,
+          input.registrationIds,
+          tx,
+        );
+        if (state.preview.fingerprint !== input.previewFingerprint) {
+          throw new MessagingError(
+            "PREVIEW_CHANGED",
+            "These registrations changed since you reviewed them. Check the updated list before sending.",
+            { selectedAudiencePreview: state.preview },
+          );
+        }
+        if (state.preview.includedCount === 0) {
+          throw new MessagingError(
+            "EMPTY_AUDIENCE",
+            "None of the selected registrations can receive this message.",
+            { selectedAudiencePreview: state.preview },
+          );
+        }
+
+        const messageIds: string[] = [];
+        let queuedCount = 0;
+        let suppressedCount = 0;
+        for (const recipient of state.preview.recipients) {
+          const queued = await enqueueSelectedAudienceMessage(tx, {
+            eventId,
+            registrationId: recipient.registrationId,
+            templateKey: input.templateKey,
+            batchId: input.batchId,
+            correlationId: input.batchId,
+            announcementTitle: input.announcementTitle || undefined,
+            announcementBody: input.announcementBody || undefined,
+            metadata: {
+              trigger: "STAFF_SELECTED_AUDIENCE_BATCH",
+              batchId: input.batchId,
+              previewFingerprint: input.previewFingerprint,
+            },
+          });
+          messageIds.push(...queued.messageIds);
+          queuedCount += queued.pendingMessageIds.length;
+          suppressedCount += queued.messageIds.length - queued.pendingMessageIds.length;
+        }
+
+        const audit = await tx.auditLog.createMany({
+          data: [{
+            eventId,
+            actorUserId,
+            action: "SELECTED_AUDIENCE_BATCH_ENQUEUED",
+            entityType: "MessageBatch",
+            entityId: operationEntityId,
+            correlationId: input.batchId,
+            summary: `Created a ${input.templateKey} batch for ${state.preview.includedCount} chosen registration${state.preview.includedCount === 1 ? "" : "s"}.`,
+            metadata: {
+              batchId: input.batchId,
+              templateKey: input.templateKey,
+              previewFingerprint: input.previewFingerprint,
+              selectedCount: state.preview.selectedCount,
+              includedCount: state.preview.includedCount,
+              skippedCount: state.preview.skippedCount,
+              deliveryMode: state.settings.deliveryMode,
+              realDelivery: false,
+            },
+          }],
+          skipDuplicates: true,
+        });
+
+        return {
+          batchId: input.batchId,
+          templateKey: input.templateKey,
+          messageIds,
+          includedCount: state.preview.includedCount,
+          skippedCount: state.preview.skippedCount,
+          deliveryMode: state.settings.deliveryMode,
+          queuedCount,
+          suppressedCount,
+          replayed: audit.count === 0,
+          existingCapturedCount: 0,
+        };
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      break;
+    } catch (error) {
+      const retryable = error instanceof Prisma.PrismaClientKnownRequestError
+        && error.code === "P2034";
+      if (!retryable || attempt === 2) throw error;
+    }
+  }
+
+  if (!transactionResult) {
+    throw new Error("The selected-audience batch transaction did not complete.");
+  }
+
+  const capturedIds = transactionResult.deliveryMode === "LOCAL_CAPTURE"
+    ? await captureMessageIdsLocally(transactionResult.messageIds)
+    : [];
+  const { existingCapturedCount, ...operation } = transactionResult;
+  return {
+    ...operation,
+    queuedCount: Math.max(transactionResult.queuedCount - capturedIds.length, 0),
+    capturedCount: existingCapturedCount + capturedIds.length,
   };
 }

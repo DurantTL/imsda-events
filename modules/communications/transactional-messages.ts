@@ -31,7 +31,11 @@ type TransactionalTemplateKey =
   | "REGISTRATION_ACCESS_RECOVERY"
   | "EVENT_ANNOUNCEMENT"
   | "PAYMENT_RECEIPT"
-  | "REFUND_NOTICE";
+  | "REFUND_NOTICE"
+  // Sent one at a time by the transactional path only when staff choose a set
+  // of registrations to send it to; the event-wide reminder batch renders its
+  // own copy against the reminder audience.
+  | "BALANCE_REMINDER";
 
 type TransactionalMessageInput = {
   eventId: string;
@@ -621,6 +625,29 @@ export function enqueueEventAnnouncementMessage(
   return enqueueTransactionalMessage(tx, {
     ...input,
     templateKey: "EVENT_ANNOUNCEMENT",
+  });
+}
+
+/**
+ * One message in a staff-chosen batch.
+ *
+ * It goes through the same renderer as every automatic message, so the tokens,
+ * the disabled-template and delivery-mode suppression, the manage-link
+ * sentinel, and the per-registration idempotency key all behave identically.
+ * `transitionKey` carries the batch id, which is what makes re-posting the
+ * same batch reuse its messages instead of sending them twice.
+ */
+export function enqueueSelectedAudienceMessage(
+  tx: Prisma.TransactionClient,
+  input: Omit<TransactionalMessageInput, "templateKey" | "transitionKey"> & {
+    templateKey: "BALANCE_REMINDER" | "EVENT_ANNOUNCEMENT";
+    batchId: string;
+  },
+) {
+  const { batchId, ...rest } = input;
+  return enqueueTransactionalMessage(tx, {
+    ...rest,
+    transitionKey: `selected-audience:${batchId}`,
   });
 }
 

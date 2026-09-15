@@ -1067,6 +1067,18 @@ select:focus-visible {
 .duplicate-contact span { display: inline-flex; align-items: center; gap: 4px; }
 
 .record-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.record-card-shell { position: relative; display: grid; }
+.record-card-shell > .record-card { width: 100%; }
+.record-select { position: absolute; z-index: 1; top: 10px; right: 10px; display: grid; place-items: center; cursor: pointer; }
+.record-select input { width: 17px; height: 17px; accent-color: var(--imsda-purple); cursor: pointer; }
+.selection-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; }
+.selection-bar > span { font-size: 0.72rem; }
+.selection-bar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.selected-audience-skips { display: grid; gap: 8px; margin: 8px 0 0; padding: 0; list-style: none; }
+.selected-audience-skips li { border-top: 1px solid #edf2f4; padding-top: 8px; }
+.selected-audience-skips li:first-child { border-top: 0; padding-top: 0; }
+.selected-audience-skips span { display: block; font-size: 0.72rem; font-weight: 700; }
+.selected-audience-skips small { display: block; margin-top: 2px; color: var(--muted); font-size: 0.62rem; }
 .record-card { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 13px; border-radius: 16px; padding: 16px; }
 .record-card h3 { margin: 0; font-size: 0.84rem; }
 .record-card p,
