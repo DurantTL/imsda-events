@@ -26,7 +26,7 @@ runs, and the printable grouped retreat packets are all complete and covered by 
 
 | | What | Why it matters |
 | --- | --- | --- |
-| **A** | Phase 0 tail — merchandise purchase + the final email readiness gate | The last open *feature* work the retreat itself consumes |
+| **A** | Phase 0 tail — the final email and event-template readiness gate | The last open *feature* work the retreat itself consumes. Merchandise is **on hold** (§2.1) |
 | **B** | WR26 operational readiness — deployment rehearsal, config/migration review, Square exercise, sign-off | The only thing the repository genuinely cannot prove about itself; **has no GitHub issue at all** |
 | **C** | Attendee community depth | Shipped as a moderated message board. It is not a timeline, and there is no attendee lookup of any kind |
 
@@ -36,23 +36,46 @@ Everything else on the retreat's critical path is done.
 
 ## 2. Track A — Phase 0 tail (finish first)
 
-Ordered. These are existing issues; nothing new needs filing.
+With merchandise on hold (§2.1), this track is now **one issue**.
 
 | Order | Issue | State | Note |
 | --- | --- | --- | --- |
-| A1 | [#146](https://github.com/DurantTL/imsda-events/issues/146) — merchandise inventory reservations and server-side quotes | **In flight** — draft PR [#302](https://github.com/DurantTL/imsda-events/pull/302) | Only open PR in the repo. Finish and merge before A2. |
-| A2 | [#147](https://github.com/DurantTL/imsda-events/issues/147) — public and self-service merchandise purchase with Square | `codex-ready` | Depends on A1's quote/reservation contract. |
-| A3 | [#148](https://github.com/DurantTL/imsda-events/issues/148) — merchandise receipts, totals, refunds, staff adjustments | `codex-ready` | Closes the merchandise ledger. |
-| A4 | [#140](https://github.com/DurantTL/imsda-events/issues/140) — final email and event-template readiness gate | open, no `codex-ready` | Should run **after** A3, since merchandise receipts add message states the gate has to cover. |
+| A1 | [#140](https://github.com/DurantTL/imsda-events/issues/140) — final email and event-template readiness gate | open, no `codex-ready` | **Unblocked and can start now.** It was previously sequenced behind merchandise receipts, which would have added message states the gate had to cover. With merchandise held, the gate covers the retreat's shipped template set only. |
 
-Tracking epics [#66](https://github.com/DurantTL/imsda-events/issues/66) (email coverage),
-[#61](https://github.com/DurantTL/imsda-events/issues/61) (passwordless management),
-and [#54](https://github.com/DurantTL/imsda-events/issues/54) (merchandise) close out
-as their children land. They are not separately claimable.
+Tracking epics [#66](https://github.com/DurantTL/imsda-events/issues/66) (email coverage)
+and [#61](https://github.com/DurantTL/imsda-events/issues/61) (passwordless management)
+close out as their children land. They are not separately claimable.
 
 Note that #139, #274–#278, #59, #60, #141, #142, #143, #144, and #145 are already closed —
-the Phase 0 email matrix, the gap-closing confirmation emails, seminar self-service, and
-the merchandise catalog/ledger foundation all landed. A1–A4 really is the whole remainder.
+the Phase 0 email matrix, the gap-closing confirmation emails, seminar self-service, and the
+merchandise catalog/ledger foundation all landed. #140 really is the whole feature remainder.
+
+### 2.1 Merchandise — on hold
+
+**Decision, September 15, 2026: separately payable merchandise is not part of the Women's
+Retreat and is deferred.** It stays in the Phase 0 backlog on issue #98; it is simply not on
+this retreat's path.
+
+Held, not cancelled — no issue is closed and no code is reverted by this decision:
+
+- [#146](https://github.com/DurantTL/imsda-events/issues/146) — inventory reservations and
+  server-side quotes. Has an open draft PR,
+  [#302](https://github.com/DurantTL/imsda-events/pull/302), which is now the only merchandise
+  work in flight. **Whether to finish, park, or close that PR is a separate human decision**;
+  this roadmap does not make it.
+- [#147](https://github.com/DurantTL/imsda-events/issues/147) — public and self-service
+  purchase with Square.
+- [#148](https://github.com/DurantTL/imsda-events/issues/148) — receipts, totals, refunds,
+  and staff adjustments.
+- [#54](https://github.com/DurantTL/imsda-events/issues/54) — the tracking epic.
+
+What this changes for the retreat: shirt sizes are already collected as ordinary registration
+answers and reported through the existing shirt-size audience and packet reports, so **holding
+merchandise does not remove any shipped retreat capability.** What it defers is buying a shirt
+as a separate transaction after registration.
+
+If merchandise is picked back up later, the order remains #146 → #147 → #148, and #140 should
+be re-examined at that point for the receipt and refund message states it would add.
 
 ---
 
@@ -227,14 +250,17 @@ same shapes. Do not let it delay Track A or B.
 
 ## 6. Suggested sequence
 
-1. **A1–A3** merchandise (finish PR #302 first)
-2. **B** file the WR26 operational-readiness issue now, in parallel — it is human work and has lead time
-3. **A4** final email gate, run together with B4's real-client smoke test
-4. **C1, C2, C4** community timeline, post durability, moderation depth
-5. **C9** community lifecycle and clone behavior
-6. **Answer the §4.5 decisions**; then C5/C6 if approved, C3 anywhere it fits
-7. **D** generalization (#155, #153, #104) after the retreat runs
-8. C7/C8 remain Phase 4 unless a decision moves them
+Holding merchandise shortens the front of this list considerably — the retreat's remaining
+feature work is now one issue, and the readiness gate is the real long pole.
+
+1. **B** file the WR26 operational-readiness issue now — it is human work and has lead time
+2. **A1** final email gate (#140), run together with B4's real-client smoke test
+3. **C1, C2, C4** community timeline, post durability, moderation depth
+4. **C9** community lifecycle and clone behavior
+5. **Answer the §4.5 decisions**; then C5/C6 if approved, C3 anywhere it fits
+6. **D** generalization (#155, #153, #104) after the retreat runs
+7. C7/C8 remain Phase 4 unless a decision moves them
+8. Merchandise (#146–#148) resumes only if the hold in §2.1 is lifted
 
 ---
 
@@ -247,6 +273,9 @@ same shapes. Do not let it delay Track A or B.
       repository's stop-and-label rule.
 - [ ] Add these slices to issue #98 as a named Women's Retreat track, so #98 stays canonical and
       this document stays a focused view rather than a competing backlog.
+- [ ] Record the merchandise hold (§2.1) on #54, #146, #147, and #148 so the deferral is visible
+      to the issue tooling, and decide what happens to draft PR #302. Removing `codex-ready` from
+      #147 and #148 would stop an automated build from claiming held work.
 
 This document is a status and planning view. Issue #98 remains the ordered source of truth, and
 GitHub is authoritative for scope once an issue is approved.
