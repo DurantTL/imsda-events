@@ -225,8 +225,19 @@ export async function publishRegistrationForm(eventId: string, formId: string, a
     const draft = form.versions.find((version) => version.status === RegistrationFormStatus.DRAFT);
     if (!draft) throw new FormOperationError("NO_DRAFT", "This form has no draft version to publish.");
     const definition = registrationFormDefinitionSchema.parse(draft.definition);
-    const validTests = await tx.formTestSubmission.count({ where: { formVersionId: draft.id, isValid: true } });
-    if (validTests === 0) throw new FormOperationError("TEST_REQUIRED", "Run at least one valid test submission before publishing this draft.");
+    // The test gate proves a brand-new form can be filled in and priced at
+    // all. Once a version of this form has been published, that is proven,
+    // and later versions are usually a corrected label or a new price — so
+    // re-testing every revision only delayed the fix. The gate therefore
+    // applies to a form's first publication only. Saving a draft still
+    // deletes its tests, and running one is still available.
+    const previouslyPublishedCount = await tx.registrationFormVersion.count({
+      where: { formId, publishedAt: { not: null } },
+    });
+    if (previouslyPublishedCount === 0) {
+      const validTests = await tx.formTestSubmission.count({ where: { formVersionId: draft.id, isValid: true } });
+      if (validTests === 0) throw new FormOperationError("TEST_REQUIRED", "Run at least one valid test submission before publishing the first version of this form.");
+    }
     await tx.registrationFormVersion.updateMany({ where: { formId, status: RegistrationFormStatus.PUBLISHED }, data: { status: RegistrationFormStatus.ARCHIVED } });
     await tx.registrationFormVersion.update({ where: { id: draft.id }, data: { status: RegistrationFormStatus.PUBLISHED, publishedAt: new Date() } });
     await tx.registrationForm.update({ where: { id: formId }, data: { name: definition.title, status: RegistrationFormStatus.PUBLISHED } });
