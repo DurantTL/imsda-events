@@ -5,6 +5,7 @@ import {
   ArrowRightLeft,
   Banknote,
   Ban,
+  CopyCheck,
   Download,
   ExternalLink,
   Filter,
@@ -550,6 +551,7 @@ export function PeopleWorkspace({
         <div><p className="eyebrow">Registration hub</p><h2>People & registrations</h2><p>Review each party’s attendees, submitted choices, payments, emails, and operational status in one record. Times are shown in {eventTimezone}.</p></div>
         <div className="intro-actions">
           <span className="count-badge"><UsersRound aria-hidden="true" size={17} /> {expectedPeople} expected</span>
+          <a className="secondary-button" href={`/people/duplicates?event=${encodeURIComponent(eventId)}`}><CopyCheck aria-hidden="true" size={17} /> Find duplicates</a>
           <a className="secondary-button" href={`/api/events/${eventId}/exports/registrations`}><Download aria-hidden="true" size={17} /> Export CSV</a>
           {canEdit && <a className="primary-button" href={`/events/${eventSlug}`} target="_blank" rel="noreferrer"><ExternalLink aria-hidden="true" size={17} /> Start registration</a>}
         </div>

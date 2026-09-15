@@ -1053,6 +1053,19 @@ select:focus-visible {
 .finance-attendee-list strong { display: block; font-size: 0.72rem; }
 .finance-attendee-list small { display: block; margin-top: 2px; color: var(--muted); font-size: 0.62rem; text-transform: capitalize; }
 
+.duplicate-section { display: grid; gap: 14px; }
+.duplicate-group { border: 1px solid #e4ecef; border-radius: 12px; padding: 14px 16px; }
+.duplicate-group header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.duplicate-group header strong { font-size: 0.82rem; }
+.duplicate-group header small { width: 100%; color: var(--muted); font-size: 0.64rem; }
+.duplicate-member-list { display: grid; gap: 10px; margin: 12px 0 0; padding: 0; list-style: none; }
+.duplicate-member-list li { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 12px; border-top: 1px solid #edf2f4; padding-top: 10px; }
+.duplicate-member-list li:first-child { border-top: 0; padding-top: 0; }
+.duplicate-member-list strong { display: block; font-size: 0.74rem; }
+.duplicate-member-list small { display: block; margin-top: 3px; color: var(--muted); font-size: 0.62rem; }
+.duplicate-contact { display: flex; flex-wrap: wrap; gap: 10px; }
+.duplicate-contact span { display: inline-flex; align-items: center; gap: 4px; }
+
 .record-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .record-card { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 13px; border-radius: 16px; padding: 16px; }
 .record-card h3 { margin: 0; font-size: 0.84rem; }
