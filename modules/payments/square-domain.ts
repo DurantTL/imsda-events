@@ -1,6 +1,9 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
+import {
+  processingFeeForSubtotal,
+  registrationFormDefinitionSchema,
+} from "@/modules/forms/definition";
 import type {
   PromotedWaitlistPaymentChoiceView,
 } from "@/modules/payments/payment-choice-domain";
@@ -26,7 +29,16 @@ export type SquareCheckoutState =
 export type SquareCheckoutView = {
   state: SquareCheckoutState;
   message: string;
+  /** What the card is charged: the outstanding balance plus any surcharge. */
   amountCents: number;
+  /** The registration's outstanding balance, before any card surcharge. */
+  balanceCents: number;
+  /**
+   * The card processing surcharge inside `amountCents`. Non-zero only when
+   * the registration's total did not already price a card fee in, which is
+   * the pay-later registrant settling their balance by card.
+   */
+  surchargeCents: number;
   currency: "USD";
   cardSelected: boolean;
   paymentChoice: PromotedWaitlistPaymentChoiceView | null;
@@ -92,6 +104,29 @@ export function selectedCardPayment(input: {
     cardSelected:
       responses[payment.paymentMethodFieldKey] === payment.cardOptionValue,
   };
+}
+
+/**
+ * The card processing surcharge for settling `balanceCents` by card.
+ *
+ * A registration priced for card already carries its fee in the total, so it
+ * gets none. A pay-later one does not, and paying it by card later is the
+ * same transaction the card path always charged for — so it is charged the
+ * same way, grossed up so the conference still nets the balance owed. An
+ * event that absorbs the fee (`passFeeToRegistrant` off) gets zero here, the
+ * same as it does at registration.
+ *
+ * Computed on the outstanding balance rather than the original subtotal:
+ * someone who already sent a cheque for half is only running the remainder
+ * through the card, and that remainder is all the processor charges on.
+ */
+export function cardSurchargeForBalance(
+  definition: unknown,
+  balanceCents: number,
+) {
+  const parsed = registrationFormDefinitionSchema.safeParse(definition);
+  if (!parsed.success) return 0;
+  return processingFeeForSubtotal(parsed.data.payment, balanceCents, true);
 }
 
 export function providerIdempotencyKey(

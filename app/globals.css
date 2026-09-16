@@ -4542,6 +4542,10 @@ select:focus-visible {
   font-size: 0.64rem;
   line-height: 1.5;
 }
+.public-square-heading .public-square-fee-breakdown {
+  color: #805807;
+  font-weight: 700;
+}
 .public-square-sandbox {
   width: max-content;
   max-width: 100%;

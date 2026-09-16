@@ -133,6 +133,7 @@ function processingAttempt() {
     providerIdempotencyKey: "imsda_stable_provider_key",
     activeRegistrationKey: "registration-1",
     amountCents: 8_000,
+    surchargeCents: 0,
     currency: "USD",
     status: "PROCESSING",
     providerPaymentId: null,
@@ -154,6 +155,7 @@ function transactionClient() {
   return {
     registration: {
       findUnique: vi.fn().mockResolvedValue(registration()),
+      update: vi.fn().mockResolvedValue({ totalAmount: 102.7 }),
     },
     paymentAttempt: {
       findUnique: vi.fn(),
@@ -234,7 +236,7 @@ describe("Square payment repository", () => {
     expect(JSON.stringify(checkout)).not.toContain("sandbox-access-token");
   });
 
-  it("still opens the card form for a pay-later registration that has a balance due", async () => {
+  it("charges a pay-later balance the same card fee a card registration pays", async () => {
     const client = transactionClient();
     client.registration.findUnique.mockResolvedValue({
       ...registration(),
@@ -249,13 +251,87 @@ describe("Square payment repository", () => {
       configuration,
     });
 
+    // 2.9% + 30c grossed up on the $80.00 balance, so the conference still
+    // nets the balance owed — the same arithmetic the card path uses at
+    // registration.
     expect(checkout).toMatchObject({
       state: "READY",
-      amountCents: 8_000,
+      balanceCents: 8_000,
+      surchargeCents: 270,
+      amountCents: 8_270,
       cardSelected: false,
     });
     expect(checkout?.square).not.toBeNull();
-    expect(checkout?.message).toContain("no added processing fee");
+    expect(checkout?.message).toContain("card processing fee");
+  });
+
+  it("adds no surcharge to a registration whose total already priced the card fee in", async () => {
+    const client = transactionClient();
+
+    const checkout = await getPublicSquareCheckout("a".repeat(43), {
+      client: client as never,
+      configuration,
+    });
+
+    expect(checkout).toMatchObject({
+      state: "READY",
+      balanceCents: 8_000,
+      surchargeCents: 0,
+      amountCents: 8_000,
+      cardSelected: true,
+    });
+  });
+
+  it("adds no surcharge when the event absorbs the processing fee", async () => {
+    const client = transactionClient();
+    client.registration.findUnique.mockResolvedValue({
+      ...registration(),
+      publicFormSubmission: {
+        ...registration().publicFormSubmission,
+        responses: { payment_method: "Pay later" },
+        formVersion: {
+          status: "PUBLISHED",
+          definition: {
+            ...formDefinition,
+            payment: { ...formDefinition.payment, passFeeToRegistrant: false },
+          },
+        },
+      },
+    });
+
+    const checkout = await getPublicSquareCheckout("a".repeat(43), {
+      client: client as never,
+      configuration,
+    });
+
+    expect(checkout).toMatchObject({
+      state: "READY",
+      surchargeCents: 0,
+      amountCents: 8_000,
+    });
+  });
+
+  it("leaves the surcharge to the payment choice on a promoted waitlist registration", async () => {
+    const client = transactionClient();
+    client.registration.findUnique.mockResolvedValue({
+      ...registration(),
+      waitlistEntry: { status: "PROMOTED" },
+      paymentChoiceOperations: [{
+        id: "choice-1",
+        sequence: 1,
+        choice: "PAY_LATER",
+        baseSubtotalCents: 10_000,
+        processingFeeCents: 0,
+        resultingTotalCents: 10_000,
+      }],
+    });
+
+    const checkout = await getPublicSquareCheckout("a".repeat(43), {
+      client: client as never,
+      configuration,
+    });
+
+    expect(checkout).toMatchObject({ surchargeCents: 0, amountCents: 8_000 });
   });
 
   it("reports no balance rather than a card form once a pay-later registration is settled", async () => {
@@ -393,6 +469,142 @@ describe("Square payment repository", () => {
           "04a18ff0-a05a-487a-9e1b-8bd7d01adb05",
       },
     });
+  });
+
+  it("adds the card surcharge to the registration total only when the payment succeeds", async () => {
+    const tx = transactionClient();
+    const prisma = prismaFor(tx);
+    const attempt = { ...processingAttempt(), amountCents: 8_270, surchargeCents: 270 };
+    const succeeded = {
+      ...attempt,
+      paymentId: "payment-1",
+      activeRegistrationKey: null,
+      status: "SUCCEEDED",
+      providerPaymentId: "square-payment-1",
+      providerStatus: "COMPLETED",
+      providerStatusAt: new Date("2026-07-23T13:00:01.000Z"),
+      completedAt: new Date("2026-07-23T13:00:01.000Z"),
+      payment: {
+        id: "payment-1",
+        eventId: "event-1",
+        registrationId: "registration-1",
+        amount: 82.7,
+        status: "SUCCEEDED",
+        method: "CARD_REFERENCE",
+        externalReference: "square-payment-1",
+        receivedAt: new Date("2026-07-23T13:00:01.000Z"),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    };
+    tx.registration.findUnique.mockResolvedValue({
+      ...registration(),
+      publicFormSubmission: {
+        ...registration().publicFormSubmission,
+        responses: { payment_method: "Pay later" },
+      },
+    });
+    tx.paymentAttempt.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(attempt);
+    tx.paymentAttempt.create.mockResolvedValue(attempt);
+    tx.paymentAttempt.update.mockResolvedValue(succeeded);
+    tx.payment.create.mockResolvedValue(succeeded.payment);
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await createPublicSquarePayment(
+      "a".repeat(43),
+      {
+        sourceId: "cnon:card-nonce-ok",
+        idempotencyKey: attempt.clientIdempotencyKey,
+      },
+      {
+        configuration,
+        createPayment: vi.fn().mockResolvedValue({
+          id: "square-payment-1",
+          status: "COMPLETED",
+          amountCents: 8_270,
+          currency: "USD",
+          createdAt: "2026-07-23T13:00:00.000Z",
+          updatedAt: "2026-07-23T13:00:01.000Z",
+        }),
+        now: new Date("2026-07-23T13:00:01.000Z"),
+      },
+    );
+
+    expect(tx.paymentAttempt.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ amountCents: 8_270, surchargeCents: 270 }),
+    }));
+    expect(tx.registration.update).toHaveBeenCalledWith({
+      where: { id: "registration-1" },
+      data: { totalAmount: { increment: 2.7 } },
+      select: { totalAmount: true },
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        action: "REGISTRATION_CARD_SURCHARGE_APPLIED",
+      }),
+    }));
+  });
+
+  it("does not add the surcharge again when a webhook repeats an applied success", async () => {
+    const tx = transactionClient();
+    const prisma = prismaFor(tx);
+    const alreadySucceeded = {
+      ...processingAttempt(),
+      amountCents: 8_270,
+      surchargeCents: 270,
+      paymentId: "payment-1",
+      activeRegistrationKey: null,
+      status: "SUCCEEDED",
+      providerPaymentId: "square-payment-1",
+      providerStatus: "COMPLETED",
+      providerStatusAt: new Date("2026-07-23T13:00:01.000Z"),
+      completedAt: new Date("2026-07-23T13:00:01.000Z"),
+      payment: {
+        id: "payment-1",
+        eventId: "event-1",
+        registrationId: "registration-1",
+        amount: 82.7,
+        status: "SUCCEEDED",
+        method: "CARD_REFERENCE",
+        externalReference: "square-payment-1",
+        receivedAt: new Date("2026-07-23T13:00:01.000Z"),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    };
+    tx.squareWebhookEvent.findUnique.mockResolvedValue(null);
+    tx.squareWebhookEvent.create.mockResolvedValue({ status: "PROCESSED" });
+    tx.paymentAttempt.findUnique.mockResolvedValue(alreadySucceeded);
+    tx.paymentAttempt.findFirst.mockResolvedValue(alreadySucceeded);
+    tx.paymentAttempt.update.mockResolvedValue(alreadySucceeded);
+    tx.payment.update.mockResolvedValue(alreadySucceeded.payment);
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await processSquareWebhook(
+      {
+        providerEventId: "webhook-surcharge-1",
+        eventType: "payment.updated",
+        occurredAt: new Date("2026-07-23T13:00:02.000Z"),
+        kind: "PAYMENT",
+        payment: {
+          id: "square-payment-1",
+          status: "COMPLETED",
+          amount_money: { amount: 8_270, currency: "USD" },
+          location_id: "sandbox-location",
+          reference_id: alreadySucceeded.id,
+        },
+      } as unknown as ParsedSquareWebhookEvent,
+      "b".repeat(64),
+      { configuration, receivedAt: new Date("2026-07-23T13:00:02.000Z") },
+    );
+
+    // Proves the webhook actually reached the apply step rather than bailing
+    // out earlier, which would make the assertion below vacuous.
+    expect(tx.paymentAttempt.update).toHaveBeenCalled();
+    expect(tx.registration.update).not.toHaveBeenCalled();
   });
 
   it("charges the immutable database balance and never persists the source token", async () => {
@@ -637,6 +849,103 @@ describe("Square payment repository", () => {
     expect(dependencies.enqueuePaymentReceiptMessage).toHaveBeenCalledTimes(1);
     expect(dependencies.processQueuedMessageIdsAfterCommit)
       .toHaveBeenCalledTimes(1);
+  });
+
+  function surchargedRefundSetup(
+    tx: ReturnType<typeof transactionClient>,
+    refundAmountCents: number,
+    priorRefunds: Array<{ id: string; amount: number; status: string }> = [],
+  ) {
+    tx.squareWebhookEvent.findUnique.mockResolvedValue(null);
+    tx.squareWebhookEvent.create.mockResolvedValue({ status: "PROCESSED" });
+    tx.payment.findFirst.mockResolvedValue({
+      id: "payment-1",
+      eventId: "event-1",
+      registrationId: "registration-1",
+      amount: 82.7,
+      status: "SUCCEEDED",
+      method: "CARD_REFERENCE",
+      externalReference: "square-payment-1",
+      paymentAttempt: { id: "attempt-1", surchargeCents: 270 },
+      refunds: priorRefunds,
+      registration: { confirmationCode: "REG-ONE" },
+    });
+    tx.refund.findFirst.mockResolvedValue(null);
+    tx.refund.create.mockResolvedValue({
+      id: "refund-new",
+      eventId: "event-1",
+      paymentId: "payment-1",
+      amount: refundAmountCents / 100,
+      status: "SUCCEEDED",
+      externalReference: "square-refund-9",
+      reason: "Square card refund",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    dependencies.enqueueRefundNoticeMessage.mockResolvedValue({
+      pendingMessageIds: [],
+    });
+    return {
+      providerEventId: "square-refund-event-9",
+      eventType: "refund.updated",
+      occurredAt: new Date("2026-07-23T14:00:00.000Z"),
+      kind: "REFUND",
+      refund: {
+        id: "square-refund-9",
+        status: "COMPLETED",
+        amount_money: { amount: refundAmountCents, currency: "USD" },
+        payment_id: "square-payment-1",
+        location_id: "sandbox-location",
+      },
+    } as ParsedSquareWebhookEvent;
+  }
+
+  it("takes the card surcharge back off the total when the payment is fully refunded", async () => {
+    const tx = transactionClient();
+    const prisma = prismaFor(tx);
+    const event = surchargedRefundSetup(tx, 8_270);
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await processSquareWebhook(event, "c".repeat(64), { configuration });
+
+    expect(tx.registration.update).toHaveBeenCalledWith({
+      where: { id: "registration-1" },
+      data: { totalAmount: { decrement: 2.7 } },
+      select: { totalAmount: true },
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        action: "REGISTRATION_CARD_SURCHARGE_REVERSED",
+      }),
+    }));
+  });
+
+  it("keeps the card surcharge on a partial refund", async () => {
+    const tx = transactionClient();
+    const prisma = prismaFor(tx);
+    const event = surchargedRefundSetup(tx, 2_500);
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await processSquareWebhook(event, "d".repeat(64), { configuration });
+
+    expect(tx.registration.update).not.toHaveBeenCalled();
+  });
+
+  it("reverses the surcharge once partial refunds together cover the payment", async () => {
+    const tx = transactionClient();
+    const prisma = prismaFor(tx);
+    const event = surchargedRefundSetup(tx, 2_500, [
+      { id: "refund-earlier", amount: 57.7, status: "SUCCEEDED" },
+    ]);
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await processSquareWebhook(event, "e".repeat(64), { configuration });
+
+    expect(tx.registration.update).toHaveBeenCalledWith({
+      where: { id: "registration-1" },
+      data: { totalAmount: { decrement: 2.7 } },
+      select: { totalAmount: true },
+    });
   });
 
   it("records a completed Square refund against its card payment", async () => {
