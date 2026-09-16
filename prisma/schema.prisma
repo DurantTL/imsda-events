@@ -64,6 +64,19 @@ enum ExternalSystem {
   WR26
 }
 
+/// How an account-to-person link was established. Recorded on the link
+/// itself so the link's provenance survives independently of whoever reads
+/// it later — see `AttendeeAccountPersonLink` and `UserPersonLink`.
+enum PersonLinkProvenance {
+  /// The account holder verified their own identity (e.g. matched and
+  /// confirmed a prefilled record) without staff involvement.
+  SELF_SERVICE_VERIFICATION
+  /// A staff member established the link directly.
+  STAFF_ACTION
+  /// The link was produced by a data import.
+  IMPORT
+}
+
 enum RegistrationStatus {
   DRAFT
   SUBMITTED
@@ -424,6 +437,11 @@ model User {
   removedRegistrationTags        RegistrationTagAssignment[]      @relation("RegistrationTagRemovedBy")
   appliedAttendeeTags            AttendeeTagAssignment[]          @relation("AttendeeTagAppliedBy")
   removedAttendeeTags            AttendeeTagAssignment[]          @relation("AttendeeTagRemovedBy")
+  /// The person this staff account is explicitly linked to, if any. Grants
+  /// nothing by itself — see `UserPersonLink`.
+  personLink                        UserPersonLink?              @relation("UserPersonLinkUser")
+  actorOnUserPersonLinks             UserPersonLink[]             @relation("UserPersonLinkActor")
+  actorOnAttendeeAccountPersonLinks  AttendeeAccountPersonLink[]  @relation("AttendeeAccountPersonLinkActorUser")
 
   @@index([accountStatus])
 }
@@ -582,6 +600,10 @@ model AttendeeAccount {
   communityReports             CommunityReport[]        @relation("CommunityReportReporter")
   communityNotifications       CommunityNotification[]  @relation("CommunityNotificationRecipient")
   communityNotificationActions CommunityNotification[]  @relation("CommunityNotificationActor")
+  /// The person this attendee account is explicitly linked to, if any.
+  /// Grants nothing by itself — see `AttendeeAccountPersonLink`.
+  personLink                        AttendeeAccountPersonLink?  @relation("AttendeeAccountPersonLinkAccount")
+  actorOnAttendeeAccountPersonLinks AttendeeAccountPersonLink[] @relation("AttendeeAccountPersonLinkActorAccount")
 
   @@index([status])
 }
@@ -1170,6 +1192,8 @@ model Person {
   registrationEvents RegistrationAttendee[]
   externalIdentities ExternalIdentity[]
   notes              StaffNote[]
+  attendeeAccountLinks AttendeeAccountPersonLink[]
+  userLinks            UserPersonLink[]
 
   @@index([lastName, firstName])
 }
@@ -1184,18 +1208,102 @@ model Household {
   registrations Registration[]
 }
 
+/// A person's membership in a household, time-bounded so a past registration
+/// can read its historical household context instead of today's. Removing a
+/// member closes the row (`effectiveTo`); it is never deleted — mirrors the
+/// apply/remove-preserves-history shape of `RegistrationTagAssignment`.
+///
+/// `effectiveFrom` is nullable only for legacy rows awaiting the
+/// `household-membership:backfill` script (see
+/// `modules/people/household-backfill.ts`); every row created through the
+/// repository sets it. A null `effectiveFrom` is treated as "always active
+/// from before recorded history" by point-in-time resolution, and a null
+/// `effectiveTo` means the membership is still open.
+///
+/// A database-level exclusion constraint (added in the
+/// `identity_account_links_and_household_effective_dates` migration, since
+/// Prisma cannot express `EXCLUDE USING gist`) prevents two overlapping
+/// memberships of the same person in the same household — the person can
+/// still belong to several households at once, and can rejoin a household
+/// after leaving it, but never twice at once in the same one.
+///
+/// `canManage` is a household-convenience flag only (e.g. "can update this
+/// household's contact details"). It is NOT guardian authority. Guardian
+/// authority is declared explicitly, never inferred from household
+/// membership — that is #43's scope, not this model's.
 model HouseholdMember {
-  id           String   @id @default(cuid())
-  householdId  String
-  personId     String
-  relationship String?
-  canManage    Boolean  @default(false)
-  createdAt    DateTime @default(now())
+  id            String    @id @default(cuid())
+  householdId   String
+  personId      String
+  relationship  String?
+  /// Household-convenience flag, not guardian authority. See the model doc.
+  canManage     Boolean   @default(false)
+  effectiveFrom DateTime?
+  effectiveTo   DateTime?
+  createdAt     DateTime  @default(now())
 
   household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
   person    Person    @relation(fields: [personId], references: [id], onDelete: Cascade)
 
-  @@unique([householdId, personId])
+  @@index([householdId, personId])
+  @@index([personId])
+}
+
+/// Explicit, provenance-carrying link from an `AttendeeAccount` to a
+/// `Person`. This link grants nothing by itself: no staff permission, no
+/// event access, no cross-event visibility. `AttendeeAccount`, `Person`, and
+/// `RegistrationAttendee` remain distinct concepts — see
+/// `modules/access/authorization.ts`, which never reads this table.
+/// One account links to exactly one person (`accountId` is unique); a person
+/// may have several account links.
+model AttendeeAccountPersonLink {
+  id        String               @id @default(cuid())
+  accountId String
+  personId  String
+  provenance PersonLinkProvenance
+  /// Set when `provenance` is SELF_SERVICE_VERIFICATION: the account itself
+  /// performed the link. Mutually exclusive with `actorUserId` (enforced by
+  /// a database check constraint).
+  actorAttendeeAccountId String?
+  /// Set when `provenance` is STAFF_ACTION or IMPORT: the staff member who
+  /// performed the link or ran the import. Mutually exclusive with
+  /// `actorAttendeeAccountId`.
+  actorUserId String?
+  /// Free-text pointer to the evidence behind this link (a verification
+  /// token id, a staff note id, an import run id, ...). Required.
+  evidenceReference String
+  createdAt         DateTime @default(now())
+
+  account      AttendeeAccount  @relation("AttendeeAccountPersonLinkAccount", fields: [accountId], references: [id], onDelete: Cascade)
+  person       Person           @relation(fields: [personId], references: [id], onDelete: Cascade)
+  actorAccount AttendeeAccount? @relation("AttendeeAccountPersonLinkActorAccount", fields: [actorAttendeeAccountId], references: [id], onDelete: SetNull)
+  actorUser    User?            @relation("AttendeeAccountPersonLinkActorUser", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@unique([accountId])
+  @@index([personId])
+}
+
+/// Explicit, provenance-carrying link from a staff `User` to a `Person`.
+/// Same invariant as `AttendeeAccountPersonLink`: grants nothing by itself.
+/// One staff account links to exactly one person (`userId` is unique).
+model UserPersonLink {
+  id       String @id @default(cuid())
+  userId   String
+  personId String
+  provenance  PersonLinkProvenance
+  /// The staff member who established the link — themself for a
+  /// self-service verification of their own identity, or another staff
+  /// member for a staff action or import.
+  actorUserId String
+  /// Free-text pointer to the evidence behind this link.
+  evidenceReference String
+  createdAt         DateTime @default(now())
+
+  user      User   @relation("UserPersonLinkUser", fields: [userId], references: [id], onDelete: Cascade)
+  person    Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+  actorUser User   @relation("UserPersonLinkActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@unique([userId])
   @@index([personId])
 }
 

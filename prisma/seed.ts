@@ -55,6 +55,38 @@ async function seedCredential(userId: string) {
   });
 }
 
+/**
+ * `HouseholdMember` no longer has a `(householdId, personId)` unique index —
+ * a person can leave and later rejoin the same household, so the database
+ * only rules out two *overlapping* memberships. This keeps seeding
+ * idempotent without that index: it reuses (and updates) the still-open
+ * membership if one exists, and otherwise opens a new one.
+ */
+async function upsertActiveHouseholdMember(
+  householdId: string,
+  personId: string,
+  data: { relationship?: string; canManage?: boolean },
+) {
+  const existing = await prisma.householdMember.findFirst({
+    where: { householdId, personId, effectiveTo: null },
+  });
+  if (existing) {
+    return prisma.householdMember.update({
+      where: { id: existing.id },
+      data: { relationship: data.relationship ?? existing.relationship, canManage: data.canManage ?? existing.canManage },
+    });
+  }
+  return prisma.householdMember.create({
+    data: {
+      householdId,
+      personId,
+      relationship: data.relationship,
+      canManage: data.canManage ?? false,
+      effectiveFrom: new Date(),
+    },
+  });
+}
+
 async function main() {
   const admin = await prisma.user.upsert({
     where: { email: "admin@imsda-events.test" },
@@ -211,10 +243,9 @@ async function main() {
     update: {},
     create: { id: "hh_miller", name: "Miller household" },
   });
-  await prisma.householdMember.upsert({
-    where: { householdId_personId: { householdId: household.id, personId: people[1].id } },
-    update: { canManage: true },
-    create: { householdId: household.id, personId: people[1].id, relationship: "Account holder", canManage: true },
+  await upsertActiveHouseholdMember(household.id, people[1].id, {
+    relationship: "Account holder",
+    canManage: true,
   });
 
   const wr26 = events[0];
@@ -308,10 +339,8 @@ async function main() {
   ]);
 
   for (const [index, person] of partyMembers.entries()) {
-    await prisma.householdMember.upsert({
-      where: { householdId_personId: { householdId: household.id, personId: person.id } },
-      update: {},
-      create: { householdId: household.id, personId: person.id, relationship: index === 0 ? "Adult" : "Child" },
+    await upsertActiveHouseholdMember(household.id, person.id, {
+      relationship: index === 0 ? "Adult" : "Child",
     });
     await prisma.registrationAttendee.upsert({
       where: { registrationId_personId: { registrationId: registrations[1].id, personId: person.id } },
