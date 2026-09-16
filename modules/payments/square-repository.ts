@@ -23,6 +23,7 @@ import {
   type PromotedWaitlistPaymentChoiceView,
 } from "@/modules/payments/payment-choice-domain";
 import {
+  cardSurchargeForBalance,
   internalPaymentState,
   internalRefundStatus,
   moneyToCents,
@@ -246,9 +247,31 @@ function checkoutFromRegistration(
         formVersionStatus: submission.formVersion.status,
       })
     : { configured: false, cardSelected: false };
-  const amountCents = registrationBalanceCents(registration);
+  const balanceCents = registrationBalanceCents(registration);
+  // A registration priced for card already carries its fee in the total. One
+  // that chose pay-later does not, so settling it by card now adds the same
+  // surcharge the card path always charged — computed on what is actually
+  // being run through the card, which is the outstanding balance.
+  //
+  // A promoted waitlist registration is excluded because it already owns this
+  // decision: its payment choice re-prices the total and records the fee as an
+  // operation, and it asserts the total still matches that record. Two things
+  // writing one total is how a registration ends up disagreeing with itself,
+  // so a promoted registrant adds the fee by switching their choice to card,
+  // not by being surcharged here.
+  const surchargeCents = promotedWaitlist
+    || paymentSelection.cardSelected
+    || !submission
+    ? 0
+    : cardSurchargeForBalance(
+        submission.formVersion.definition,
+        balanceCents,
+      );
+  const amountCents = balanceCents + surchargeCents;
   const base = {
     amountCents,
+    balanceCents,
+    surchargeCents,
     currency: "USD" as const,
     cardSelected: paymentSelection.cardSelected,
     paymentChoice,
@@ -300,7 +323,7 @@ function checkoutFromRegistration(
       message: "A place is now available. Choose how you want to pay before continuing.",
     };
   }
-  if (amountCents <= 0) {
+  if (balanceCents <= 0) {
     return {
       ...base,
       state: "NO_BALANCE",
@@ -323,9 +346,9 @@ function checkoutFromRegistration(
     // reminder that says "pay now" has to land on a page that can take the
     // payment, so an outstanding balance opens the card form either way. The
     // total is untouched: no card processing fee is added after the fact.
-    message: paymentSelection.cardSelected
+    message: paymentSelection.cardSelected || surchargeCents === 0
       ? "Secure card payment is available through Square."
-      : "This registration chose to pay later. The remaining balance can still be paid by card now, with no added processing fee.",
+      : "This registration chose to pay later. The balance can still be paid by card now, with the same card processing fee a card registration is charged.",
     square,
   };
 }
@@ -556,6 +579,7 @@ async function preparePaymentAttempt(
       providerIdempotencyKey: providerKey,
       activeRegistrationKey: registration.id,
       amountCents: checkout.amountCents,
+      surchargeCents: checkout.surchargeCents,
       currency: "USD",
       status: "PROCESSING",
       requestCount: 1,
@@ -575,6 +599,8 @@ async function preparePaymentAttempt(
         provider: "SQUARE",
         environment: configuration.environment,
         amountCents: checkout.amountCents,
+        balanceCents: checkout.balanceCents,
+        surchargeCents: checkout.surchargeCents,
         currency: "USD",
         registrationAccessTokenId: access.accessTokenId,
       },
@@ -690,10 +716,43 @@ async function applyProviderPayment(
       },
     });
   }
-  const receipt = (
-    priorStatus !== "SUCCEEDED"
-    && state.attemptStatus === "SUCCEEDED"
-  )
+  const becameSuccessful = priorStatus !== "SUCCEEDED"
+    && state.attemptStatus === "SUCCEEDED";
+
+  // The surcharge joins the registration total only now, on the transition to
+  // succeeded, which is also what makes it idempotent: a webhook repeating a
+  // success the create call already applied does not add it twice, and an
+  // attempt the payer abandoned never adds it at all. Without this the
+  // registration would show the surcharge as an overpayment forever.
+  if (becameSuccessful && attempt.surchargeCents > 0) {
+    const registration = await tx.registration.update({
+      where: { id: attempt.registrationId },
+      data: {
+        totalAmount: { increment: attempt.surchargeCents / 100 },
+      },
+      select: { totalAmount: true },
+    });
+    await tx.auditLog.create({
+      data: {
+        eventId: attempt.eventId,
+        action: "REGISTRATION_CARD_SURCHARGE_APPLIED",
+        entityType: "Registration",
+        entityId: attempt.registrationId,
+        correlationId: randomUUID(),
+        summary: `Added the card processing fee to registration ${attempt.registration.confirmationCode} when its pay-later balance was settled by card.`,
+        metadata: {
+          paymentAttemptId: attempt.id,
+          paymentId: payment.id,
+          surchargeCents: attempt.surchargeCents,
+          chargedAmountCents: attempt.amountCents,
+          resultingTotalCents: moneyToCents(registration.totalAmount),
+          source,
+        },
+      },
+    });
+  }
+
+  const receipt = becameSuccessful
     ? await enqueuePaymentReceiptMessage(tx, {
         eventId: attempt.eventId,
         registrationId: attempt.registrationId,
@@ -1215,6 +1274,55 @@ async function applyRefundWebhook(
           reason: "Square card refund",
         },
       });
+  // A surcharge that has been refunded in full was never really charged, so
+  // the total gives it back. Without this, fully refunding a pay-later card
+  // payment leaves the registration owing exactly the processing fee.
+  //
+  // Only on a full reversal, and only on the transition into SUCCEEDED: a
+  // partial refund leaves the fee, because the card transaction it paid for
+  // did happen.
+  const surchargeCents = payment.paymentAttempt?.surchargeCents ?? 0;
+  if (
+    surchargeCents > 0
+    && effectiveStatus === "SUCCEEDED"
+    && existing?.status !== "SUCCEEDED"
+  ) {
+    const paymentAmountCents = Math.round(Number(payment.amount) * 100);
+    const refundedCents = payment.refunds.reduce(
+      (total, priorRefund) => total + (
+        priorRefund.id !== refund.id && priorRefund.status === "SUCCEEDED"
+          ? Math.round(Number(priorRefund.amount) * 100)
+          : 0
+      ),
+      amountCents,
+    );
+    if (refundedCents >= paymentAmountCents) {
+      const registration = await tx.registration.update({
+        where: { id: payment.registrationId },
+        data: { totalAmount: { decrement: surchargeCents / 100 } },
+        select: { totalAmount: true },
+      });
+      await tx.auditLog.create({
+        data: {
+          eventId: payment.eventId,
+          action: "REGISTRATION_CARD_SURCHARGE_REVERSED",
+          entityType: "Registration",
+          entityId: payment.registrationId,
+          correlationId: randomUUID(),
+          summary: `Removed the card processing fee from registration ${payment.registration.confirmationCode} after its card payment was fully refunded.`,
+          metadata: {
+            paymentId: payment.id,
+            refundId: refund.id,
+            surchargeCents,
+            refundedCents,
+            resultingTotalCents: moneyToCents(registration.totalAmount),
+            source: "WEBHOOK",
+          },
+        },
+      });
+    }
+  }
+
   if (!existing || existing.status !== effectiveStatus) {
     await tx.auditLog.create({
       data: {

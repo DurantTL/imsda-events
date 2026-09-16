@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  cardSurchargeForBalance,
   internalPaymentState,
   internalRefundStatus,
   parseSquareWebhookEvent,
@@ -39,6 +40,43 @@ const definition = {
     }],
   }],
 };
+
+describe("card surcharge for a balance settled later", () => {
+  it("grosses up so the conference nets the balance owed", () => {
+    // 2.9% + 30c: charging 8000 + 270 leaves 8000 after Square takes its cut.
+    expect(cardSurchargeForBalance(definition, 8_000)).toBe(270);
+  });
+
+  it("matches what the same amount would have been charged at registration", () => {
+    for (const balance of [1_000, 5_000, 8_000, 12_345, 250_000]) {
+      const surcharge = cardSurchargeForBalance(definition, balance);
+      const netAfterSquare = balance + surcharge
+        - Math.round((balance + surcharge) * 0.029) - 30;
+      expect(netAfterSquare).toBeGreaterThanOrEqual(balance);
+    }
+  });
+
+  it("charges nothing when the event absorbs the fee", () => {
+    expect(cardSurchargeForBalance({
+      ...definition,
+      payment: { ...definition.payment, passFeeToRegistrant: false },
+    }, 8_000)).toBe(0);
+  });
+
+  it("charges nothing when payment is not enabled or the definition is unusable", () => {
+    expect(cardSurchargeForBalance({
+      ...definition,
+      payment: { ...definition.payment, enabled: false },
+    }, 8_000)).toBe(0);
+    expect(cardSurchargeForBalance({ not: "a form" }, 8_000)).toBe(0);
+    expect(cardSurchargeForBalance(null, 8_000)).toBe(0);
+  });
+
+  it("charges nothing on a zero or negative balance", () => {
+    expect(cardSurchargeForBalance(definition, 0)).toBe(0);
+    expect(cardSurchargeForBalance(definition, -500)).toBe(0);
+  });
+});
 
 describe("Square payment domain", () => {
   it("uses only an immutable published form response to enable card payment", () => {
@@ -136,5 +174,21 @@ describe("Square payment domain", () => {
       paymentStatus: "SUCCEEDED",
     });
     expect(internalRefundStatus("COMPLETED")).toBe("SUCCEEDED");
+  });
+});
+
+describe("payment attempt surcharge migration", () => {
+  it("defaults existing attempts to no surcharge and bounds it by the charge", async () => {
+    const { readFileSync } = await import("node:fs");
+    const migration = readFileSync(
+      new URL(
+        "../prisma/migrations/20260916090000_payment_attempt_surcharge/migration.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    expect(migration).toContain('ADD COLUMN "surchargeCents" INTEGER NOT NULL DEFAULT 0');
+    expect(migration).toContain('"surchargeCents" >= 0');
+    expect(migration).toContain('"surchargeCents" <= "amountCents"');
   });
 });

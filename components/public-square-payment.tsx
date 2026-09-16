@@ -23,6 +23,8 @@ type SquareCheckout = {
     | "FORM_UNAVAILABLE";
   message: string;
   amountCents: number;
+  balanceCents: number;
+  surchargeCents: number;
   currency: "USD";
   cardSelected: boolean;
   paymentChoice: {
@@ -163,6 +165,8 @@ function unavailableCheckout(error: unknown): SquareCheckout {
       ? error.message
       : "Online payment is unavailable. Your registration is still saved.",
     amountCents: 0,
+    balanceCents: 0,
+    surchargeCents: 0,
     currency: "USD",
     cardSelected: false,
     paymentChoice: null,
@@ -715,6 +719,13 @@ export function PublicSquarePayment({
         <span><CreditCard size={20} aria-hidden="true" /></span>
         <div>
           <strong>Pay {money(checkout.amountCents)} securely with Square</strong>
+          {checkout.surchargeCents > 0 && (
+            <p className="public-square-fee-breakdown">
+              Balance {money(checkout.balanceCents)} + card processing{" "}
+              {money(checkout.surchargeCents)}. Paying by another method avoids
+              the processing fee — contact the event team to arrange it.
+            </p>
+          )}
           <p>
             Use an available digital wallet or enter a card. Payment details go
             directly to Square and are never stored by IMSDA Events.

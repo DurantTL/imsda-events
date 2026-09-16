@@ -1366,6 +1366,12 @@ model PaymentAttempt {
   providerIdempotencyKey    String               @unique
   activeRegistrationKey     String?              @unique
   amountCents               Int
+  /// The card processing surcharge inside `amountCents`, for a registration
+  /// whose total did not already price one in — a pay-later registrant
+  /// settling a balance by card. It is added to the registration total when
+  /// the payment succeeds, never at quote time, so an abandoned checkout
+  /// leaves the balance exactly as it was.
+  surchargeCents            Int                  @default(0)
   currency                  String               @default("USD")
   status                    PaymentAttemptStatus @default(PROCESSING)
   providerPaymentId         String?              @unique
