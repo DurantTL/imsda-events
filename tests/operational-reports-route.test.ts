@@ -17,13 +17,18 @@ const dependencies = vi.hoisted(() => {
     findActiveMembership: vi.fn(),
     getOperationalReport: vi.fn(),
     listRegistrations: vi.fn(),
+    listNotesForRegistration: vi.fn(),
   };
 });
 
-vi.mock("@/modules/access/authorization", () => ({
-  AccessDeniedError: dependencies.AccessDeniedError,
-  requirePermission: dependencies.requirePermission,
-}));
+vi.mock("@/modules/access/authorization", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/modules/access/authorization")>();
+  return {
+    ...actual,
+    AccessDeniedError: dependencies.AccessDeniedError,
+    requirePermission: dependencies.requirePermission,
+  };
+});
 vi.mock("@/modules/access/current-session", () => ({
   getCurrentSession: dependencies.getCurrentSession,
 }));
@@ -36,9 +41,13 @@ vi.mock("@/modules/reporting/repository", () => ({
 vi.mock("@/modules/registrations/repository", () => ({
   listRegistrations: dependencies.listRegistrations,
 }));
+vi.mock("@/modules/notes/repository", () => ({
+  listNotesForRegistration: dependencies.listNotesForRegistration,
+}));
 
 import { GET } from "@/app/api/events/[eventId]/reports/route";
 import { GET as registrationExportGET } from "@/app/api/events/[eventId]/exports/registrations/route";
+import { canReadNote } from "@/modules/notes/domain";
 
 const report = {
   summary: {
@@ -79,6 +88,11 @@ beforeEach(() => {
   dependencies.getCurrentSession.mockResolvedValue({ user: { id: "user_one" } });
   dependencies.getOperationalReport.mockResolvedValue(report);
   dependencies.listRegistrations.mockResolvedValue([]);
+  dependencies.listNotesForRegistration.mockResolvedValue([]);
+  dependencies.requirePermission.mockResolvedValue({
+    user: { id: "user_one", email: "user_one@example.test", displayName: "User One", globalRole: null },
+    membership: { eventId: "event_one", userId: "user_one", role: "READ_ONLY_STAFF", status: "ACTIVE", permissions: [] },
+  });
 });
 
 describe("registration export route", () => {
@@ -117,6 +131,44 @@ describe("registration export route", () => {
     expect(csv).toContain("Submitted at (ISO 8601)");
     expect(csv).toContain("2026-07-30T18:13:05.955Z");
     expect(csv).toContain('"REG-UNKNOWN","Synthetic Unknown","unknown@example.test","DRAFT","","1"');
+  });
+
+  it("includes a staff-wide note but excludes a note restricted to a permission the exporter does not hold", async () => {
+    dependencies.listRegistrations.mockResolvedValue([{
+      id: "registration_one",
+      confirmationCode: "REG-NOTES",
+      accountHolder: { firstName: "Synthetic", lastName: "Notes", email: "notes@example.test" },
+      status: "SUBMITTED",
+      submittedAt: "2026-07-30T18:13:05.955Z",
+      attendeeCount: 1,
+      totalAmountCents: 0,
+      paidCents: 0,
+      balanceCents: 0,
+    }]);
+    // The exporting user only holds VIEW_REPORTS (see the requirePermission
+    // mock above). Drive the mock with the real canReadNote rule so this
+    // asserts the same filtering the route relies on in production.
+    const allNotes = [
+      { id: "note_staff", body: "Arriving Saturday instead of Friday.", visibility: "STAFF" as const, restrictedPermission: null },
+      { id: "note_finance", body: "Refund pending finance approval — internal only.", visibility: "RESTRICTED" as const, restrictedPermission: "MANAGE_FINANCE" },
+    ];
+    dependencies.listNotesForRegistration.mockImplementation(async (_eventId: string, _registrationId: string, actorPermissions: Set<string>) => (
+      allNotes.filter((note) => canReadNote(note, actorPermissions))
+    ));
+
+    const response = await registrationExportGET(
+      new Request("https://events.imsda.test/api/events/event_one/exports/registrations"),
+      { params: Promise.resolve({ eventId: "event_one" }) },
+    );
+    const csv = await response.text();
+
+    expect(csv).toContain("Arriving Saturday instead of Friday.");
+    expect(csv).not.toContain("Refund pending finance approval");
+    expect(dependencies.listNotesForRegistration).toHaveBeenCalledWith(
+      "event_one",
+      "registration_one",
+      expect.any(Set),
+    );
   });
 });
 

@@ -953,6 +953,9 @@ select:focus-visible {
 .arrival-row small { margin-top: 3px; color: var(--muted); font-size: 0.66rem; }
 
 .status-chip { padding: 5px 8px; font-size: 0.61rem; }
+.tag-chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.tag-chip { color: #fff; text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35); gap: 8px; }
+.tag-chip .text-button { color: inherit; }
 .status-chip.green { background: var(--green-soft); color: var(--green); }
 .status-chip.gold { background: var(--imsda-gold-soft); color: #805807; }
 .status-chip.purple { background: var(--imsda-purple-soft); color: var(--imsda-purple); }

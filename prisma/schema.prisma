@@ -418,6 +418,12 @@ model User {
   createdMerchandiseAvailability MerchandiseVariantAvailability[] @relation("MerchandiseAvailabilityCreatedBy")
   createdMerchandiseOrders       MerchandiseOrder[]               @relation("MerchandiseOrderCreatedBy")
   merchandiseOrderStatusChanges  MerchandiseOrderStatusChange[]   @relation("MerchandiseOrderStatusActor")
+  authoredStaffNotes             StaffNote[]                      @relation("StaffNoteAuthor")
+  authoredStaffNoteRevisions     StaffNoteRevision[]              @relation("StaffNoteRevisionAuthor")
+  appliedRegistrationTags        RegistrationTagAssignment[]      @relation("RegistrationTagAppliedBy")
+  removedRegistrationTags        RegistrationTagAssignment[]      @relation("RegistrationTagRemovedBy")
+  appliedAttendeeTags            AttendeeTagAssignment[]          @relation("AttendeeTagAppliedBy")
+  removedAttendeeTags            AttendeeTagAssignment[]          @relation("AttendeeTagRemovedBy")
 
   @@index([accountStatus])
 }
@@ -962,6 +968,10 @@ model Event {
   merchandiseOrderStatusChanges       MerchandiseOrderStatusChange[]
   attendeeTypes                       EventAttendeeType[]
   attendeeClassifications             EventAttendeeClassification[]
+  tags                                EventTag[]
+  notes                               StaffNote[]
+  registrationTagAssignments          RegistrationTagAssignment[]
+  attendeeTagAssignments              AttendeeTagAssignment[]
 
   @@index([badgeBackgroundAssetId])
 }
@@ -1009,6 +1019,126 @@ model EventAttendeeClassification {
   @@index([eventId, kind, isActive, sortOrder, label])
 }
 
+enum NoteVisibility {
+  STAFF
+  RESTRICTED
+}
+
+/// Configured event vocabulary staff apply to registrations and attendees.
+/// Never free text: `normalizedName` enforces one spelling per event, so
+/// filters and exports do not fracture across near-duplicate tag names.
+model EventTag {
+  id             String   @id @default(cuid())
+  eventId        String
+  name           String
+  normalizedName String
+  color          String
+  description    String   @default("")
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  event                   Event                       @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registrationAssignments RegistrationTagAssignment[]
+  attendeeAssignments     AttendeeTagAssignment[]
+
+  @@unique([eventId, normalizedName])
+  @@index([eventId, isActive, name])
+}
+
+/// Applying and removing a tag are both recorded rows. Removal sets
+/// `removedAt`/`removedByUserId` rather than deleting the row, so the history
+/// that a tag was once applied survives even after it is taken off.
+model RegistrationTagAssignment {
+  id              String    @id @default(cuid())
+  eventId         String
+  registrationId  String
+  tagId           String
+  appliedByUserId String
+  appliedAt       DateTime  @default(now())
+  removedByUserId String?
+  removedAt       DateTime?
+
+  event        Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  tag          EventTag     @relation(fields: [tagId], references: [id], onDelete: Restrict)
+  appliedBy    User         @relation("RegistrationTagAppliedBy", fields: [appliedByUserId], references: [id], onDelete: Restrict)
+  removedBy    User?        @relation("RegistrationTagRemovedBy", fields: [removedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([eventId, registrationId, removedAt])
+  @@index([tagId, removedAt])
+}
+
+/// Attendee-level counterpart of `RegistrationTagAssignment`, same
+/// apply/remove-preserves-history shape.
+model AttendeeTagAssignment {
+  id              String    @id @default(cuid())
+  eventId         String
+  attendeeId      String
+  tagId           String
+  appliedByUserId String
+  appliedAt       DateTime  @default(now())
+  removedByUserId String?
+  removedAt       DateTime?
+
+  event     Event                @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  attendee  RegistrationAttendee @relation(fields: [attendeeId], references: [id], onDelete: Cascade)
+  tag       EventTag             @relation(fields: [tagId], references: [id], onDelete: Restrict)
+  appliedBy User                 @relation("AttendeeTagAppliedBy", fields: [appliedByUserId], references: [id], onDelete: Restrict)
+  removedBy User?                @relation("AttendeeTagRemovedBy", fields: [removedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([eventId, attendeeId, removedAt])
+  @@index([tagId, removedAt])
+}
+
+/// Attached to exactly one of a registration, an attendee, or a person (a
+/// database check constraint enforces the XOR Prisma cannot express). The
+/// note itself never carries body text — `StaffNoteRevision` rows are the
+/// append-only history, mirroring how `RegistrationOperation` treats history.
+/// Not for medical, safeguarding, or incident detail: see #44 and #79.
+model StaffNote {
+  id                   String         @id @default(cuid())
+  eventId              String
+  registrationId       String?
+  attendeeId           String?
+  personId             String?
+  visibility           NoteVisibility @default(STAFF)
+  /// Required, and only meaningful, when visibility is RESTRICTED: the named
+  /// EventPermission a viewer must hold to read this note's body.
+  restrictedPermission String?
+  authorUserId         String
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  event        Event                 @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration Registration?         @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  attendee     RegistrationAttendee? @relation(fields: [attendeeId], references: [id], onDelete: Cascade)
+  person       Person?               @relation(fields: [personId], references: [id], onDelete: Cascade)
+  author       User                  @relation("StaffNoteAuthor", fields: [authorUserId], references: [id], onDelete: Restrict)
+  revisions    StaffNoteRevision[]
+
+  @@index([eventId, registrationId])
+  @@index([eventId, attendeeId])
+  @@index([eventId, personId])
+}
+
+/// One row per version of a note's body, oldest first by `sequence`. Editing
+/// a note appends a revision; nothing is ever overwritten or deleted.
+model StaffNoteRevision {
+  id           String   @id @default(cuid())
+  noteId       String
+  sequence     Int
+  body         String
+  authorUserId String
+  createdAt    DateTime @default(now())
+
+  note   StaffNote @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  author User      @relation("StaffNoteRevisionAuthor", fields: [authorUserId], references: [id], onDelete: Restrict)
+
+  @@unique([noteId, sequence])
+  @@index([noteId, createdAt])
+}
+
 model EventMembership {
   id          String            @id @default(cuid())
   eventId     String
@@ -1039,6 +1169,7 @@ model Person {
   heldRegistrations  Registration[]
   registrationEvents RegistrationAttendee[]
   externalIdentities ExternalIdentity[]
+  notes              StaffNote[]
 
   @@index([lastName, firstName])
 }
@@ -1147,6 +1278,8 @@ model Registration {
   operations              RegistrationOperation[]
   paymentChoiceOperations RegistrationPaymentChoiceOperation[]
   merchandiseOrders       MerchandiseOrder[]
+  notes                   StaffNote[]
+  tagAssignments          RegistrationTagAssignment[]
 
   @@unique([eventId, confirmationCode])
   @@index([eventId, status])
@@ -1288,6 +1421,8 @@ model RegistrationAttendee {
   checkIns               CheckIn[]
   capacityReservations   RegistrationCapacityReservation[]
   substitutionOperations RegistrationOperation[]
+  notes                  StaffNote[]
+  tagAssignments         AttendeeTagAssignment[]
 
   @@unique([registrationId, personId])
   @@index([registrationId, position])

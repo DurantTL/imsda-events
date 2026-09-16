@@ -17,11 +17,17 @@ function getRegistrationQuery(
   client: RegistrationReadClient,
   eventId: string,
   statuses?: readonly RegistrationStatus[],
+  tagIds?: readonly string[],
 ) {
   return client.registration.findMany({
     where: {
       eventId,
       ...(statuses ? { status: { in: [...statuses] } } : {}),
+      // Tags are a filter dimension alongside status, not a second filter
+      // mechanism: an active (not removed) assignment to any listed tag.
+      ...(tagIds && tagIds.length > 0
+        ? { tagAssignments: { some: { tagId: { in: [...tagIds] }, removedAt: null } } }
+        : {}),
     },
     orderBy: [
       { submittedAt: { sort: "desc", nulls: "last" } },
@@ -263,12 +269,13 @@ export class RegistrationAttendeeOperationError extends Error {
 
 export async function listRegistrations(
   eventId: string,
-  options?: { statuses?: readonly RegistrationStatus[] },
+  options?: { statuses?: readonly RegistrationStatus[]; tagIds?: readonly string[] },
 ) {
   const registrations = await getRegistrationQuery(
     getPrisma(),
     eventId,
     options?.statuses,
+    options?.tagIds,
   );
   return registrations.map(serializeRegistration);
 }

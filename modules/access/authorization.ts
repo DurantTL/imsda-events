@@ -1,5 +1,5 @@
 import type { EventPermission, EventRole } from "@/modules/access/permissions";
-import { rolePermissions } from "@/modules/access/permissions";
+import { eventPermissions, rolePermissions } from "@/modules/access/permissions";
 
 export type AuthenticatedUser = {
   id: string;
@@ -67,6 +67,24 @@ export async function requireEventMembership(
   }
 
   return { user, membership };
+}
+
+/**
+ * The full set of permissions a user holds for an event: every named
+ * permission when they are a system admin, otherwise their role's grants plus
+ * any extra permissions on their membership. Shared by anything that needs to
+ * check more than one permission at once, such as a note whose visibility is
+ * restricted to a named permission the reader may or may not hold.
+ */
+export function effectivePermissions(
+  user: AuthenticatedUser,
+  membership: MembershipRecord | null,
+): EventPermission[] {
+  if (user.globalRole === "SYSTEM_ADMIN") return [...eventPermissions];
+  return [...new Set([
+    ...(membership ? rolePermissions[membership.role] : []),
+    ...(membership?.permissions ?? []),
+  ])];
 }
 
 export async function requirePermission(
