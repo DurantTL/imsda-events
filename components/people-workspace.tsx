@@ -22,6 +22,7 @@ import {
   X,
 } from "lucide-react";
 import { RegistrationAmendmentEditor } from "@/components/registration-amendment-editor";
+import { RegistrationNotesTagsPanel } from "@/components/registration-notes-tags-panel";
 import { SelectedAudienceDialog } from "@/components/selected-audience-dialog";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
@@ -854,6 +855,7 @@ export function PeopleWorkspace({
                     {selected.messages.length === 0 && <p className="quiet-copy">No registrant emails are linked to this registration yet.</p>}
                   </div>
                 </section>
+                <RegistrationNotesTagsPanel eventId={eventId} subjectPath={`registrations/${selected.id}`} canManage={canEdit} />
                 {selected.publicSubmission && <p className="quiet-copy">This registration came through a published form. Submitted attendees, choices, and pricing stay together as one auditable snapshot.</p>}
                 {addingAttendee && <form className="form-stack inset-form" onSubmit={addAttendee}><div className="form-grid two-column"><label>First name<input name="firstName" required /></label><label>Last name<input name="lastName" required /></label></div><div className="form-grid two-column"><label>Email<input name="email" type="email" /></label><label>Phone<input name="phone" type="tel" /></label></div><label>Attendee type<select name="attendeeType" defaultValue="ATTENDEE"><option value="ATTENDEE">Attendee</option><option value="WORKER">Event worker</option><option value="CHILD">Child</option></select></label>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><button className="secondary-button" type="button" onClick={() => { setAddingAttendee(false); setError(""); }}>Cancel</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Adding…" : "Add attendee"}</button></div></form>}
                 {canEdit && !addingAttendee && !lifecycleAction && (
