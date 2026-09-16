@@ -2,8 +2,10 @@
 
 import { useMemo, useState } from "react";
 import { CheckCircle2, ListChecks, Save } from "lucide-react";
+import { AddressFieldGroup } from "@/components/address-field-group";
 import { SearchableSelect } from "@/components/searchable-select";
 import type { EditableAttendeeField } from "@/modules/attendee-accounts/registration-answer-policy";
+import { formatAddressDisplay, isPlainAddressObject, type AddressValue } from "@/modules/forms/address";
 
 type EditableAttendee = {
   attendeeId: string;
@@ -231,6 +233,27 @@ export function AttendeeRegistrationAnswersForm({
                     />
                     {field.helpText && <small>{field.helpText}</small>}
                   </label>
+                );
+              }
+              if (field.type === "ADDRESS") {
+                if (locked) {
+                  return (
+                    <div className="amendment-locked-field" key={field.id}>
+                      <small>{field.label}</small>
+                      <strong>{formatAddressDisplay(value) || "Not provided"}</strong>
+                    </div>
+                  );
+                }
+                return (
+                  <AddressFieldGroup
+                    key={field.id}
+                    idPrefix={`${attendee.attendeeId}_${field.id}`}
+                    legend={<>{field.label}{field.required ? " *" : ""}</>}
+                    required={field.required}
+                    value={isPlainAddressObject(value) ? value as AddressValue : {}}
+                    onChange={(next) => updateAnswer(attendee.attendeeId, field.key, next)}
+                    helpText={field.helpText}
+                  />
                 );
               }
               return (

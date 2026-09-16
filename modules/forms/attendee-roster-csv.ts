@@ -1,9 +1,17 @@
+import {
+  addressCsvColumns,
+  addressCsvValues,
+  sanitizeAddressInput,
+  validateAddressValue,
+  type AddressValue,
+} from "@/modules/forms/address";
 import type {
   RegistrationFormDefinition,
   RegistrationFormField,
 } from "@/modules/forms/definition";
+import { toCsv } from "@/modules/reporting/csv";
 
-export type AttendeeRosterCsvValue = string | boolean | string[];
+export type AttendeeRosterCsvValue = string | boolean | string[] | AddressValue;
 export type AttendeeRosterCsvResponses = Record<string, AttendeeRosterCsvValue>;
 
 export class AttendeeRosterCsvError extends Error {
@@ -137,6 +145,16 @@ function convertValue(field: RegistrationFormField, rawValue: string, rowNumber:
       `Row ${rowNumber}: ${field.label} must be a number.`,
     );
   }
+  if (field.type === "ADDRESS") {
+    const parts = value.split("|").map((part) => part.trim());
+    const [line1 = "", line2 = "", locality = "", region = "", postalCode = "", country = ""] = parts;
+    const address = sanitizeAddressInput({ line1, line2, locality, region, postalCode, country });
+    const issues = validateAddressValue(field.label, address);
+    if (issues.length > 0) {
+      throw new AttendeeRosterCsvError(`Row ${rowNumber}: ${issues[0]}`);
+    }
+    return address;
+  }
   return value;
 }
 
@@ -216,4 +234,51 @@ export function parseAttendeeRosterCsv(
     });
     return responses;
   });
+}
+
+/**
+ * Column headers for a formula-safe attendee roster export. Address fields
+ * expand into their structured components plus a stable flattened display
+ * column instead of a single opaque cell.
+ */
+export function attendeeRosterExportColumns(
+  definition: RegistrationFormDefinition,
+): string[] {
+  return attendeeFields(definition).flatMap((field) => (
+    field.type === "ADDRESS" ? addressCsvColumns(field.label) : [field.label]
+  ));
+}
+
+function exportCell(field: RegistrationFormField, value: unknown): string[] {
+  if (field.type === "ADDRESS") return addressCsvValues(value);
+  if (Array.isArray(value)) return [value.map(String).join("; ")];
+  if (typeof value === "boolean") return [value ? "Yes" : "No"];
+  if (value === undefined || value === null) return [""];
+  return [String(value)];
+}
+
+/**
+ * One data row for a formula-safe attendee roster export, in the same
+ * column order as `attendeeRosterExportColumns`.
+ */
+export function attendeeRosterExportRow(
+  definition: RegistrationFormDefinition,
+  responses: Record<string, unknown>,
+): string[] {
+  return attendeeFields(definition).flatMap((field) => exportCell(field, responses[field.key]));
+}
+
+/**
+ * A complete formula-safe attendee roster export: every value passes
+ * through `csvCell` (via `toCsv`), which neutralizes leading `=`, `+`, `-`,
+ * and `@` characters so no cell can execute as a spreadsheet formula.
+ */
+export function exportAttendeeRosterCsv(
+  definition: RegistrationFormDefinition,
+  attendeeResponses: Array<Record<string, unknown>>,
+): string {
+  return toCsv([
+    attendeeRosterExportColumns(definition),
+    ...attendeeResponses.map((responses) => attendeeRosterExportRow(definition, responses)),
+  ]);
 }
