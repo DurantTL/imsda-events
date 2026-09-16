@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { sanitizeAddressInput } from "@/modules/forms/address";
 import {
   calculateFormTotal,
   calculateRosterTotal,
@@ -170,7 +171,7 @@ function normalizeResponsesForScope(
       continue;
     }
     if (field.type === "CALCULATED") continue;
-    responses[key] = normalizeResponseValue(value);
+    responses[key] = field.type === "ADDRESS" ? sanitizeAddressInput(value) : normalizeResponseValue(value);
   }
 
   // Re-evaluate until stable so a hidden controlling field cannot make another

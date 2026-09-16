@@ -20,9 +20,11 @@ import {
   Trash2,
   UsersRound,
 } from "lucide-react";
+import { AddressFieldGroup } from "@/components/address-field-group";
 import { BrandMark } from "@/components/brand-mark";
 import { RegistrationAccountPrompt } from "@/components/registration-account-prompt";
 import { SearchableSelect } from "@/components/searchable-select";
+import { hasAddressValue, isPlainAddressObject, type AddressValue } from "@/modules/forms/address";
 import {
   calculateFormTotal,
   calculateRosterTotal,
@@ -58,7 +60,7 @@ declare global {
   }
 }
 
-type ResponseValue = string | boolean | string[];
+type ResponseValue = string | boolean | string[] | AddressValue;
 type FormResponses = Record<string, ResponseValue>;
 type FormIssue = {
   key: string;
@@ -229,7 +231,9 @@ function hasResponses(responses: FormResponses) {
       ? value
       : Array.isArray(value)
         ? value.length > 0
-        : value.trim().length > 0
+        : typeof value === "string"
+          ? value.trim().length > 0
+          : hasAddressValue(value)
   ));
 }
 
@@ -1176,6 +1180,23 @@ export function PublicRegistrationForm({
           )}
           {fieldSupport(field, context)}
         </div>
+      );
+    }
+
+    if (field.type === "ADDRESS") {
+      return (
+        <AddressFieldGroup
+          key={field.id}
+          className={wrapperClass}
+          legend={fieldLabel(field)}
+          idPrefix={id}
+          required={field.required}
+          invalid={Boolean(issue)}
+          describedBy={description}
+          value={isPlainAddressObject(context.values[field.key]) ? context.values[field.key] as AddressValue : {}}
+          onChange={(next) => context.setValue(field.key, next)}
+          supporting={fieldSupport(field, context)}
+        />
       );
     }
 

@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { shirtSizeOptions } from "@/modules/registrations/shirt-sizes";
+import { hasAddressValue, isPlainAddressObject, validateAddressValue } from "@/modules/forms/address";
 
-export const formFieldTypes = ["TEXT", "LONG_TEXT", "EMAIL", "PHONE", "SELECT", "RADIO", "MULTISELECT", "RANKED_CHOICE", "CHECKBOX", "DATE", "NUMBER", "CALCULATED"] as const;
+export const formFieldTypes = ["TEXT", "LONG_TEXT", "EMAIL", "PHONE", "SELECT", "RADIO", "MULTISELECT", "RANKED_CHOICE", "CHECKBOX", "DATE", "NUMBER", "CALCULATED", "ADDRESS"] as const;
 export const formFieldScopes = ["REGISTRATION", "ATTENDEE"] as const;
 export const choiceFieldTypes = ["SELECT", "RADIO", "MULTISELECT", "RANKED_CHOICE"] as const;
 export const conditionOperators = ["EQUALS", "NOT_EQUALS", "INCLUDES", "NOT_EMPTY"] as const;
@@ -799,6 +800,7 @@ function hasValue(value: unknown) {
   if (typeof value === "boolean") return value;
   if (typeof value === "number") return Number.isFinite(value);
   if (Array.isArray(value)) return value.length > 0;
+  if (isPlainAddressObject(value)) return hasAddressValue(value);
   return typeof value === "string" && value.trim().length > 0;
 }
 
@@ -1008,6 +1010,11 @@ export function validateTestResponses(
         if (!Number.isFinite(numeric) || numeric < 0 || numeric > 100000) issues.push({ fieldId: field.id, key: field.key, message: `${field.label} must be a number from 0 to 100,000.` });
       }
       if (field.type === "CHECKBOX" && typeof value !== "boolean") issues.push({ fieldId: field.id, key: field.key, message: `${field.label} must be checked or unchecked.` });
+      if (field.type === "ADDRESS") {
+        for (const message of validateAddressValue(field.label, value)) {
+          issues.push({ fieldId: field.id, key: field.key, message });
+        }
+      }
       if ((field.type === "SELECT" || field.type === "RADIO") && !field.options.includes(String(value))) issues.push({ fieldId: field.id, key: field.key, message: `${field.label} must use one of its configured choices.` });
       if (field.type === "MULTISELECT" || field.type === "RANKED_CHOICE") {
         const selections = Array.isArray(value) ? value.map(String) : [];

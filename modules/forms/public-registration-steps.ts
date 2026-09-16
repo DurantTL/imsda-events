@@ -1,3 +1,4 @@
+import { formatAddressDisplay, isPlainAddressObject } from "@/modules/forms/address";
 import type {
   RegistrationFormDefinition,
   RegistrationFormField,
@@ -128,10 +129,11 @@ export function getPublicRegistrationStepPlan(
 }
 
 export function formatPublicRegistrationAnswer(
-  value: string | boolean | string[] | null | undefined,
+  value: unknown,
 ) {
   if (Array.isArray(value)) return value.length > 0 ? value.join(" → ") : null;
   if (typeof value === "boolean") return value ? "Accepted" : "Not accepted";
   if (typeof value === "string") return value.trim() || null;
+  if (isPlainAddressObject(value)) return formatAddressDisplay(value) || null;
   return null;
 }

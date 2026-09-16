@@ -1,3 +1,4 @@
+import { sanitizeAddressInput } from "@/modules/forms/address";
 import {
   getAvailabilityMode,
   isFieldVisible,
@@ -13,6 +14,7 @@ const editableFieldTypes = new Set<RegistrationFormField["type"]>([
   "RANKED_CHOICE",
   "CHECKBOX",
   "NUMBER",
+  "ADDRESS",
 ]);
 
 const protectedAttendeeKeys = new Set([
@@ -34,7 +36,7 @@ export type EditableAttendeeField = {
   key: string;
   label: string;
   helpText: string;
-  type: "SELECT" | "RADIO" | "MULTISELECT" | "RANKED_CHOICE" | "CHECKBOX" | "NUMBER";
+  type: "SELECT" | "RADIO" | "MULTISELECT" | "RANKED_CHOICE" | "CHECKBOX" | "NUMBER" | "ADDRESS";
   required: boolean;
   options: string[];
   minSelections: number | null;
@@ -164,10 +166,14 @@ export function prepareTieredAttendeeAnswerUpdate(input: {
     }
   }
 
+  const editableByKey = new Map(editable.map((field) => [field.key, field]));
   const responses = {
     ...input.currentResponses,
     ...Object.fromEntries(
-      Object.entries(input.changes).map(([key, value]) => [key, normalizedValue(value)]),
+      Object.entries(input.changes).map(([key, value]) => [
+        key,
+        editableByKey.get(key)?.type === "ADDRESS" ? sanitizeAddressInput(value) : normalizedValue(value),
+      ]),
     ),
   };
   const merged = { ...input.registrationResponses, ...responses };

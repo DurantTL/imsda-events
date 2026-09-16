@@ -8,6 +8,12 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
+import { AddressFieldGroup } from "@/components/address-field-group";
+import {
+  formatAddressDisplay,
+  isPlainAddressObject,
+  type AddressValue,
+} from "@/modules/forms/address";
 import {
   isFieldVisible,
   registrationFormDefinitionSchema,
@@ -117,9 +123,25 @@ function AmendmentField({
             ? value.join(", ") || "Not provided"
             : typeof value === "boolean"
               ? value ? "Yes" : "No"
-              : valueString(value) || "Not provided"}
+              : isPlainAddressObject(value)
+                ? formatAddressDisplay(value) || "Not provided"
+                : valueString(value) || "Not provided"}
         </strong>
       </div>
+    );
+  }
+
+  if (field.type === "ADDRESS") {
+    return (
+      <AddressFieldGroup
+        className="amendment-field"
+        legend={labelWithRequired(field)}
+        idPrefix={id}
+        required={field.required}
+        value={isPlainAddressObject(value) ? value as AddressValue : {}}
+        onChange={(next) => onChange(next)}
+        helpText={field.helpText}
+      />
     );
   }
 

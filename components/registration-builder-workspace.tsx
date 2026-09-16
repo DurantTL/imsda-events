@@ -24,7 +24,9 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { AddressFieldGroup } from "@/components/address-field-group";
 import { SearchableSelect } from "@/components/searchable-select";
+import type { AddressValue } from "@/modules/forms/address";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import { calculateFormTotal, calculateRosterTotal, conditionOperators, formFieldScopes, formFieldTypes, getAttendeeRosterConfig, getAvailabilityMode, imsdaChurchOptions, isChoiceFieldType, isFieldVisible, isLatePricingActive, localCalendarDate, type ChoiceUsage, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
@@ -32,6 +34,7 @@ import { promoCodeBuilderModule } from "@/modules/forms/builder-modules";
 import { getPublicRegistrationStepPlan, isPublicReviewSection, type PublicRegistrationStepId } from "@/modules/forms/public-registration-steps";
 import { shirtSizeOptions } from "@/modules/registrations/shirt-sizes";
 
+type PreviewValue = string | boolean | string[] | AddressValue;
 type TestSubmissionView = { id: string; isValid: boolean; submittedBy: string; createdAt: string; validation: Record<string, unknown>; responses: Record<string, unknown> };
 type FormVersionView = {
   id: string;
@@ -77,6 +80,7 @@ const fieldTypeLabels: Record<RegistrationFormField["type"], string> = {
   DATE: "Date",
   NUMBER: "Number",
   CALCULATED: "Automatic fee",
+  ADDRESS: "Address",
 };
 
 const choicePresets = [
@@ -112,14 +116,9 @@ const fieldModules: FieldModuleDefinition[] = [
     key: "address",
     category: "Common",
     name: "Mailing address",
-    description: "Street, city, state, ZIP, and country",
+    description: "One accessible address field with street, city, state, postal code, and country",
     fields: [
-      { key: "address_line_1", label: "Address line 1", helpText: "", placeholder: "Street address", type: "TEXT", scope: "REGISTRATION", required: true, options: [] },
-      { key: "address_line_2", label: "Address line 2", helpText: "", placeholder: "Apartment, suite, or unit", type: "TEXT", scope: "REGISTRATION", required: false, options: [] },
-      { key: "city", label: "City", helpText: "", placeholder: "City", type: "TEXT", scope: "REGISTRATION", required: true, options: [] },
-      { key: "state", label: "State / province", helpText: "", placeholder: "State", type: "TEXT", scope: "REGISTRATION", required: true, options: [] },
-      { key: "zip", label: "Postal code", helpText: "", placeholder: "ZIP or postal code", type: "TEXT", scope: "REGISTRATION", required: true, options: [] },
-      { key: "country", label: "Country", helpText: "", type: "SELECT", scope: "REGISTRATION", required: true, options: ["United States", "Canada", "Other"] },
+      { key: "mailing_address", label: "Mailing address", helpText: "", type: "ADDRESS", scope: "REGISTRATION", required: true, options: [] },
     ],
   },
   {
@@ -286,7 +285,7 @@ function defaultField(index: number): RegistrationFormField {
 
 type PreviewAttendee = {
   clientId: string;
-  responses: Record<string, string | boolean | string[]>;
+  responses: Record<string, PreviewValue>;
 };
 
 function blankPreviewAttendees(definition: RegistrationFormDefinition | null): PreviewAttendee[] {
@@ -325,7 +324,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
   const [selectedVersionId, setSelectedVersionId] = useState(selectedForm?.activeVersion.id ?? "");
   const selectedVersion = selectedForm?.versions.find((version) => version.id === selectedVersionId) ?? selectedForm?.activeVersion ?? null;
   const [definition, setDefinition] = useState<RegistrationFormDefinition | null>(selectedVersion?.definition ?? null);
-  const [responses, setResponses] = useState<Record<string, string | boolean | string[]>>({});
+  const [responses, setResponses] = useState<Record<string, PreviewValue>>({});
   const [previewAttendees, setPreviewAttendees] = useState<PreviewAttendee[]>(() => blankPreviewAttendees(selectedVersion?.definition ?? null));
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState<"create" | "save" | "test" | "publish" | "unpublish" | null>(null);
@@ -764,10 +763,10 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
   function renderPreviewField(
     field: RegistrationFormField,
     options: {
-      valueResponses?: Record<string, string | boolean | string[]>;
+      valueResponses?: Record<string, PreviewValue>;
       idPrefix?: string;
       attendeeIndex?: number | null;
-      onChange?: (key: string, value: string | boolean | string[]) => void;
+      onChange?: (key: string, value: PreviewValue) => void;
     } = {},
   ) {
     const valueResponses = options.valueResponses ?? responses;
@@ -777,7 +776,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
     const inputId = `preview_${options.idPrefix ?? "registration"}_${field.id}`;
     const selectedValues = Array.isArray(valueResponses[field.key]) ? valueResponses[field.key] as string[] : [];
     const maximum = field.maxSelections ?? (field.type === "RANKED_CHOICE" ? 2 : field.options.length);
-    const setValue = (value: string | boolean | string[]) => {
+    const setValue = (value: PreviewValue) => {
       if (options.onChange) options.onChange(field.key, value);
       else setResponses((current) => ({ ...current, [field.key]: value }));
     };
@@ -812,13 +811,14 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
     if (field.type === "RANKED_CHOICE") return <fieldset className={className} key={field.id}><legend>{fieldHeading}</legend><small>Choose {field.minSelections ?? (field.required ? Math.min(2, maximum) : 1)} and rank up to {maximum}. The first selected is first choice; the second is second choice.</small><div className="preview-ranking-list">{field.options.map((option) => { const rank = selectedValues.indexOf(option); const { full } = choiceStatus(option); return <button aria-pressed={rank >= 0} className={`${rank >= 0 ? "selected" : ""}${full ? " full" : ""}`.trim()} type="button" key={option} disabled={rank < 0 && (selectedValues.length >= maximum || full)} onClick={() => toggleChoice(option)}><span><strong>{option}</strong>{choiceDescription(option)}{choiceCount(option, true)}</span><b>{rank >= 0 ? (rank === 0 ? "1st choice" : rank === 1 ? "2nd choice" : `#${rank + 1}`) : full ? "Full" : "Choose"}</b></button>; })}</div>{supportingText}</fieldset>;
     if (field.type === "CHECKBOX") return <fieldset className={className} key={field.id}><legend>{fieldHeading}</legend><label className="preview-check"><input id={inputId} type="checkbox" checked={valueResponses[field.key] === true} onChange={(event) => setValue(event.target.checked)} /> <span>{field.placeholder || "Yes, I agree"}</span></label>{supportingText}</fieldset>;
     if (field.type === "CALCULATED") return <div className="preview-field preview-calculated-field" key={field.id}><span>{field.label}</span><small>Automatically included in the order total.{field.latePricing ? ` ${field.latePricing.label} begins ${new Date(`${field.latePricing.startsOn}T12:00:00`).toLocaleDateString()}.` : ""}</small></div>;
+    if (field.type === "ADDRESS") return <AddressFieldGroup key={field.id} className={className} legend={fieldHeading} idPrefix={inputId} required={field.required} invalid={Boolean(issue)} value={(valueResponses[field.key] as AddressValue | undefined) ?? {}} onChange={(next) => setValue(next)} helpText={field.helpText} supporting={issue && <small className="field-error">{issue.message}</small>} />;
     if (field.type === "SELECT") return <div className={className} key={field.id}><label htmlFor={inputId}>{fieldHeading}</label><SearchableSelect id={inputId} value={typeof valueResponses[field.key] === "string" ? valueResponses[field.key] as string : ""} required={field.required} invalid={Boolean(issue)} placeholder={`Search ${field.label.toLocaleLowerCase()}…`} options={field.options.map((option) => ({ value: option, label: optionLabel(option), disabled: choiceStatus(option).full && valueResponses[field.key] !== option }))} onChange={(value) => setValue(value)} />{supportingText}</div>;
 
     const common = { id: inputId, value: typeof valueResponses[field.key] === "string" ? valueResponses[field.key] as string : "", placeholder: field.placeholder ?? "", onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setValue(event.target.value) };
     return <label className={className} key={field.id}>{fieldHeading}{field.type === "LONG_TEXT" ? <textarea {...common} rows={4} /> : <input {...common} type={field.type === "EMAIL" ? "email" : field.type === "PHONE" ? "tel" : field.type === "DATE" ? "date" : field.type === "NUMBER" ? "number" : "text"} />}{supportingText}</label>;
   }
 
-  function setPreviewAttendeeValue(clientId: string, key: string, value: string | boolean | string[]) {
+  function setPreviewAttendeeValue(clientId: string, key: string, value: PreviewValue) {
     setPreviewAttendees((current) => current.map((attendee) => attendee.clientId === clientId
       ? { ...attendee, responses: { ...attendee.responses, [key]: value } }
       : attendee));
@@ -1031,10 +1031,10 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
               </div></section>}
               <details className="field-advanced"><summary><Settings2 size={14} /> Advanced options</summary><div className="field-settings">
                 <label>Field key<input disabled={!canEdit} value={field.key} maxLength={60} onChange={(event) => updateField(sectionIndex, fieldIndex, { key: fieldKey(event.target.value) })} /></label>
-                {!isChoiceFieldType(field.type) && <label>{field.type === "NUMBER" ? "Price per item" : field.type === "CALCULATED" ? "Standard price" : "Price when selected"}<span className="money-input"><b>$</b><input aria-label={`Price for ${field.label}`} disabled={!canEdit} type="number" min={0} max={100000} step="0.01" placeholder="0.00" value={field.priceCents === undefined ? "" : field.priceCents / 100} onChange={(event) => updateField(sectionIndex, fieldIndex, { priceCents: event.target.value === "" ? undefined : Math.round(Number(event.target.value) * 100), latePricing: event.target.value === "" ? undefined : field.latePricing })} /></span></label>}
+                {!isChoiceFieldType(field.type) && field.type !== "ADDRESS" && <label>{field.type === "NUMBER" ? "Price per item" : field.type === "CALCULATED" ? "Standard price" : "Price when selected"}<span className="money-input"><b>$</b><input aria-label={`Price for ${field.label}`} disabled={!canEdit} type="number" min={0} max={100000} step="0.01" placeholder="0.00" value={field.priceCents === undefined ? "" : field.priceCents / 100} onChange={(event) => updateField(sectionIndex, fieldIndex, { priceCents: event.target.value === "" ? undefined : Math.round(Number(event.target.value) * 100), latePricing: event.target.value === "" ? undefined : field.latePricing })} /></span></label>}
                 <label className="field-wide">Help text<input disabled={!canEdit} value={field.helpText} maxLength={240} placeholder="Optional guidance shown below the field" onChange={(event) => updateField(sectionIndex, fieldIndex, { helpText: event.target.value })} /></label>
-                {!Array.from(["SELECT", "RADIO", "MULTISELECT", "RANKED_CHOICE", "DATE", "CALCULATED"]).includes(field.type) && <label className="field-wide">{field.type === "CHECKBOX" ? "Agreement text" : "Placeholder"}<input disabled={!canEdit} value={field.placeholder ?? ""} maxLength={120} placeholder={field.type === "CHECKBOX" ? "Yes, I understand and agree" : "Example or short instruction"} onChange={(event) => updateField(sectionIndex, fieldIndex, { placeholder: event.target.value })} /></label>}
-                {!isChoiceFieldType(field.type) && <div className="field-full late-pricing-controls"><label className="required-toggle"><input disabled={!canEdit || field.priceCents === undefined} type="checkbox" checked={Boolean(field.latePricing)} onChange={(event) => updateField(sectionIndex, fieldIndex, { latePricing: event.target.checked ? { startsOn: localCalendarDate(), label: "Late registration pricing", priceCents: field.priceCents } : undefined })} /> Use a different price starting on a date</label>{field.priceCents === undefined && <small>Set the standard price first.</small>}{field.latePricing && <><label>Late pricing starts<input aria-label={`Late pricing starts for ${field.label}`} disabled={!canEdit} type="date" value={field.latePricing.startsOn} onChange={(event) => updateField(sectionIndex, fieldIndex, { latePricing: { ...field.latePricing!, startsOn: event.target.value } })} /></label><label>Late price<span className="money-input"><b>$</b><input aria-label={`Late price for ${field.label}`} disabled={!canEdit} type="number" min={0} max={100000} step="0.01" value={(field.latePricing.priceCents ?? field.priceCents ?? 0) / 100} onChange={(event) => updateField(sectionIndex, fieldIndex, { latePricing: { ...field.latePricing!, priceCents: Math.round(Number(event.target.value) * 100) } })} /></span></label><label>Pricing label<input aria-label={`Late pricing label for ${field.label}`} disabled={!canEdit} value={field.latePricing.label} maxLength={80} onChange={(event) => updateField(sectionIndex, fieldIndex, { latePricing: { ...field.latePricing!, label: event.target.value } })} /></label></>}</div>}
+                {!Array.from(["SELECT", "RADIO", "MULTISELECT", "RANKED_CHOICE", "DATE", "CALCULATED", "ADDRESS"]).includes(field.type) && <label className="field-wide">{field.type === "CHECKBOX" ? "Agreement text" : "Placeholder"}<input disabled={!canEdit} value={field.placeholder ?? ""} maxLength={120} placeholder={field.type === "CHECKBOX" ? "Yes, I understand and agree" : "Example or short instruction"} onChange={(event) => updateField(sectionIndex, fieldIndex, { placeholder: event.target.value })} /></label>}
+                {!isChoiceFieldType(field.type) && field.type !== "ADDRESS" && <div className="field-full late-pricing-controls"><label className="required-toggle"><input disabled={!canEdit || field.priceCents === undefined} type="checkbox" checked={Boolean(field.latePricing)} onChange={(event) => updateField(sectionIndex, fieldIndex, { latePricing: event.target.checked ? { startsOn: localCalendarDate(), label: "Late registration pricing", priceCents: field.priceCents } : undefined })} /> Use a different price starting on a date</label>{field.priceCents === undefined && <small>Set the standard price first.</small>}{field.latePricing && <><label>Late pricing starts<input aria-label={`Late pricing starts for ${field.label}`} disabled={!canEdit} type="date" value={field.latePricing.startsOn} onChange={(event) => updateField(sectionIndex, fieldIndex, { latePricing: { ...field.latePricing!, startsOn: event.target.value } })} /></label><label>Late price<span className="money-input"><b>$</b><input aria-label={`Late price for ${field.label}`} disabled={!canEdit} type="number" min={0} max={100000} step="0.01" value={(field.latePricing.priceCents ?? field.priceCents ?? 0) / 100} onChange={(event) => updateField(sectionIndex, fieldIndex, { latePricing: { ...field.latePricing!, priceCents: Math.round(Number(event.target.value) * 100) } })} /></span></label><label>Pricing label<input aria-label={`Late pricing label for ${field.label}`} disabled={!canEdit} value={field.latePricing.label} maxLength={80} onChange={(event) => updateField(sectionIndex, fieldIndex, { latePricing: { ...field.latePricing!, label: event.target.value } })} /></label></>}</div>}
                 <div className="field-full conditional-editor">
                   <label className="required-toggle"><input disabled={!canEdit || allFields.length < 2} type="checkbox" checked={Boolean(field.conditional)} onChange={(event) => { const controller = allFields.find((candidate) => candidate.id !== field.id && (field.scope === "ATTENDEE" || candidate.scope === "REGISTRATION")); updateField(sectionIndex, fieldIndex, { conditional: event.target.checked && controller ? { fieldKey: controller.key, operator: "EQUALS", value: controller.options[0] ?? "" } : undefined }); }} /> Show this field only when…</label>
                   {field.conditional && (() => { const controller = allFields.find((candidate) => candidate.key === field.conditional?.fieldKey); return <div className="conditional-grid">
