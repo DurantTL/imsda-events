@@ -197,6 +197,142 @@ File option. That site type natively loads a named Compose file and should be
 preferred when replacing this Dockerfile-only site. The post-deployment hook
 keeps the current site reliable without another database or domain move.
 
+### Protecting the override files from the host's 30-day cleanup script
+
+The production host runs `/root/xcloud-cleanup.sh` daily at 13:12, which
+deletes anything under any site's `.xcloud/` directory that hasn't been
+modified in 30 days. That sweep does not know these three files are a
+permanent, hand-maintained override rather than deploy scratch space, so it
+will delete `.env`, `docker-compose.yml`, and `docker-compose.env.yml` out
+from under a site that hasn't deployed (and therefore hasn't touched them)
+in a month.
+
+Install a daily touch job as `root` to keep them exempt:
+
+```bash
+cat > /etc/cron.d/imsda-xcloud-touch <<'EOF'
+# Keep the persistent xCloud runtime override files from being swept by
+# /root/xcloud-cleanup.sh's blanket "delete anything in .xcloud/ older than
+# 30 days" logic — see docs/DEPLOY-DOCKER.md for why these files must persist.
+0 5 * * * root touch /home/u_events/.xcloud/.env /home/u_events/.xcloud/docker-compose.yml /home/u_events/.xcloud/docker-compose.env.yml 2>/dev/null
+EOF
+chmod 644 /etc/cron.d/imsda-xcloud-touch
+```
+
+Files dropped into `/etc/cron.d/` are picked up automatically; no cron
+restart needed. Verify with `cat /etc/cron.d/imsda-xcloud-touch` (expect 4
+lines: 3 comment lines + 1 cron line) or `cat -A` if a terminal seems to be
+wrapping the line and you want to confirm it wasn't actually truncated.
+
+If `docker-compose.yml` doesn't currently exist on the host (see the
+incident below), that particular path in the `touch` command is a harmless
+no-op until the file is restored — leave it in the list as-is.
+
+### When the Dockerfile-only site stops regenerating `docker-compose.yml` at all
+
+Occasionally this site type stops writing `/home/u_events/.xcloud/docker-compose.yml`
+on deploy entirely — the dashboard's **Deploy** button reports success (or an
+`empty compose file` error) but the file is missing or empty afterward, and
+neither `scripts/xcloud-post-deploy.sh` nor the systemd guard above can help,
+because both depend on xCloud having produced *some* base Compose file to
+patch. When this happens, **file an xCloud support ticket** — this is a
+platform-level regression, not something fixable from inside the site — and
+until it's resolved, every deploy needs the manual rebuild-and-swap below
+instead of the dashboard Deploy button.
+
+#### Manual rebuild-and-swap
+
+This builds a fresh image from the current checkout, keeps the old container
+as a renamed (not deleted) safety net, and starts the new one wired
+identically to the old — same published port, same two networks, same
+restart policy. Run as `root` on the host. Substitute the actual container
+name (`docker ps` shows it; the pattern is `xcloud-site-<id>-app-1`), the
+site's internal Compose network name, the shared Postgres network name from
+the override file above, and the commit SHA being deployed.
+
+1. **Capture the live `DATABASE_URL`** from the still-running container to a
+   protected file — never to the screen, since it contains the database
+   password:
+
+```bash
+   umask 077
+   docker inspect xcloud-site-<id>-app-1 --format '{{range .Config.Env}}{{println .}}{{end}}' \
+     | grep '^DATABASE_URL=' > /home/u_events/.xcloud/.env.dburl
+   chown u_events:u_events /home/u_events/.xcloud/.env.dburl
+   chmod 600 /home/u_events/.xcloud/.env.dburl
+```
+
+2. **Build the new image from the current checkout:**
+
+```bash
+   cd /var/www/events.imsda.org
+   docker build -t imsda-events:manual-<short-sha> .
+```
+
+   Check the build actually finished (and didn't error) before continuing.
+
+3. **Rename the old container instead of removing it**, so rollback is one
+   command:
+
+```bash
+   docker stop xcloud-site-<id>-app-1
+   docker rename xcloud-site-<id>-app-1 xcloud-site-<id>-app-1-old
+```
+
+4. **Start the new container**, replicating the old one's exact port,
+   network, and restart configuration:
+
+```bash
+   docker run -d \
+     --name xcloud-site-<id>-app-1 \
+     --restart unless-stopped \
+     -p 127.0.0.1:8100:3100 \
+     --network xcloud-site-<id>_default \
+     --env-file /home/u_events/.xcloud/.env \
+     --env-file /home/u_events/.xcloud/.env.dburl \
+     -e NODE_ENV=production \
+     -e PORT=3100 \
+     -e APP_RELEASE_SHA=<full-sha> \
+     imsda-events:manual-<short-sha>
+
+   docker network connect postgresql_9kgaw_239292_xcloud-network xcloud-site-<id>-app-1
+```
+
+5. **Verify:**
+
+```bash
+   docker logs -f xcloud-site-<id>-app-1
+   # once it looks up and serving, Ctrl-C, then:
+   curl -s http://127.0.0.1:8100/api/health
+```
+
+   Confirm `status: ok`, the expected `release.sha`, and `database`/
+   `messageOutbox` both `ok`. Then check `https://events.imsda.org` through
+   the real domain (Cloudflare/Nginx), not just the internal `curl`, to
+   confirm routing actually reached the new container — and spot-check
+   whatever feature the deploy was for.
+
+**Rollback**, if anything looks wrong:
+
+```bash
+docker stop xcloud-site-<id>-app-1
+docker rm xcloud-site-<id>-app-1
+docker rename xcloud-site-<id>-app-1-old xcloud-site-<id>-app-1
+docker start xcloud-site-<id>-app-1
+```
+
+**Cleanup**, once the new container is confirmed good (the `-old` container
+can be kept a day or two first for extra insurance, no rush):
+
+```bash
+docker rm xcloud-site-<id>-app-1-old
+rm -f /home/u_events/.xcloud/.env.dburl
+```
+
+A `messageOutbox` `failed` count greater than zero in the health check is
+usually pre-existing and unrelated to the deploy itself — worth a look in the
+admin/ops view separately, but not a reason to roll back.
+
 ## Moving to a clean server and a new URL
 
 This deployment is designed to start from an empty server. It does not need a
