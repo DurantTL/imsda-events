@@ -816,6 +816,7 @@ export function PeopleWorkspace({
                     <div><p className="eyebrow">Finance</p><h3 id="registration-payment-history">Payment history</h3></div>
                     <strong>{selected.payments.length}</strong>
                   </header>
+                  {selected.onlinePaymentUnavailable && <p className="quiet-copy"><span className="status-chip coral">Online payment unavailable</span> This registration has a balance due but no active published card-payment configuration, so the registrant&rsquo;s manage link can&rsquo;t take a card payment. Publish the form&rsquo;s payment step, or record payment another way below.</p>}
                   <div className="registration-related-list">
                     {selected.payments.map((payment) => <article key={payment.id}>
                       <div>

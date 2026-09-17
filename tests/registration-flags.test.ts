@@ -59,4 +59,20 @@ describe("computeRegistrationFlags — computed at read time, never stored", () 
   it("only defines the flags the specification example calls out as computed conditions", () => {
     expect(registrationFlagKinds).toContain("BALANCE_DUE");
   });
+
+  it("flags a registration with a balance the attendee cannot pay online", () => {
+    const flags = computeRegistrationFlags(registration({
+      balanceCents: 12500,
+      onlinePaymentUnavailable: true,
+    } as never));
+    expect(flags.map((flag) => flag.kind)).toEqual(["BALANCE_DUE", "NO_ONLINE_PAYMENT_CONFIGURATION"]);
+  });
+
+  it("does not flag online payment when it is available", () => {
+    const flags = computeRegistrationFlags(registration({
+      balanceCents: 12500,
+      onlinePaymentUnavailable: false,
+    } as never));
+    expect(flags.map((flag) => flag.kind)).toEqual(["BALANCE_DUE"]);
+  });
 });

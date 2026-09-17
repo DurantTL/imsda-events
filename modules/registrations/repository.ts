@@ -9,6 +9,7 @@ import { Prisma, type RegistrationStatus } from "@prisma/client";
 import { withAttendeeTypeOptions } from "@/modules/attendee-types/form-options";
 import type { AttendeeTypeOption } from "@/modules/attendee-types/domain";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
+import { selectedCardPayment } from "@/modules/payments/square-domain";
 
 type RegistrationWithRelations = Awaited<ReturnType<typeof getRegistrationQuery>>[number];
 type RegistrationReadClient = Prisma.TransactionClient | ReturnType<typeof getPrisma>;
@@ -82,12 +83,13 @@ function getRegistrationQuery(
       publicFormSubmission: {
         include: {
           formVersion: {
-            select: { versionNumber: true, definition: true, form: { select: { name: true, slug: true } } },
+            select: { versionNumber: true, status: true, definition: true, form: { select: { name: true, slug: true } } },
           },
         },
       },
       event: {
         select: {
+          billingMode: true,
           attendeeTypes: {
             orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
           },
@@ -142,13 +144,35 @@ function serializeRegistration(registration: RegistrationWithRelations) {
       registration.event.attendeeTypes as AttendeeTypeOption[],
     )
     : null;
+  const balanceCents = Math.max(totalAmountCents - paidCents, 0);
+  // Mirrors the attendee-facing checkout eligibility check in
+  // modules/payments/square-repository.ts (checkoutFromRegistration): a
+  // registration with no submission through a currently published form with
+  // payment enabled hits "Online payment is unavailable" for the attendee
+  // with no warning anywhere on the staff side. Surface the same condition
+  // here so staff can fix it before an attendee reports the dead end,
+  // but only while it would actually block someone from paying what's owed.
+  const cardPaymentConfigured = registration.publicFormSubmission
+    ? selectedCardPayment({
+        definition: registration.publicFormSubmission.formVersion.definition,
+        responses: registration.publicFormSubmission.responses,
+        formVersionStatus: registration.publicFormSubmission.formVersion.status,
+      }).configured
+    : false;
+  const onlinePaymentUnavailable = (
+    registration.status === "SUBMITTED" || registration.status === "CONFIRMED"
+  )
+    && balanceCents > 0
+    && registration.event.billingMode !== "DEFERRED_ORGANIZATION_INVOICE"
+    && !cardPaymentConfigured;
   return {
     id: registration.id,
     confirmationCode: registration.confirmationCode,
     status: registration.status,
     totalAmountCents,
     paidCents,
-    balanceCents: Math.max(totalAmountCents - paidCents, 0),
+    balanceCents,
+    onlinePaymentUnavailable,
     submittedAt: registration.submittedAt?.toISOString() ?? null,
     createdAt: registration.createdAt.toISOString(),
     updatedAt: registration.updatedAt.toISOString(),

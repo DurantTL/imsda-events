@@ -71,6 +71,7 @@ function registrationRecord(status: "DRAFT" | "SUBMITTED", submitted: Date | nul
     messages: [],
     operations: [],
     publicFormSubmission: null,
+    event: { billingMode: "STANDARD", attendeeTypes: [] },
   };
 }
 
