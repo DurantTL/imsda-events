@@ -503,27 +503,23 @@ async function syncImportedDetails(
         externalReference: data.payment.externalReference,
       },
     });
+    // Once a payment exists, staff may have corrected its status, method, or
+    // received date in the app after the import ran. Re-importing the same
+    // (or an updated) sheet must never clobber that correction, so an
+    // existing payment is left untouched here; only a payment the importer
+    // itself is creating for the first time takes the sheet's values.
     const payment = existingPayment
-      ? await tx.payment.update({
-          where: { id: existingPayment.id },
-          data: {
-            amount: data.payment.amountCents / 100,
-            status: data.payment.status,
-            method: data.payment.method,
-            receivedAt: data.payment.receivedAt ? new Date(data.payment.receivedAt) : null,
-          },
-        })
-      : await tx.payment.create({
-          data: {
-            eventId,
-            registrationId,
-            amount: data.payment.amountCents / 100,
-            status: data.payment.status,
-            method: data.payment.method,
-            externalReference: data.payment.externalReference,
-            receivedAt: data.payment.receivedAt ? new Date(data.payment.receivedAt) : null,
-          },
-        });
+      ?? await tx.payment.create({
+        data: {
+          eventId,
+          registrationId,
+          amount: data.payment.amountCents / 100,
+          status: data.payment.status,
+          method: data.payment.method,
+          externalReference: data.payment.externalReference,
+          receivedAt: data.payment.receivedAt ? new Date(data.payment.receivedAt) : null,
+        },
+      });
     paymentId = payment.id;
   }
   if (paymentId) {
