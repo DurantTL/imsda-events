@@ -255,6 +255,32 @@ enum RegistrationFormStatus {
   ARCHIVED
 }
 
+/// What a policy version's acceptance represents. Consent, waiver,
+/// acknowledgment, and staff discretionary approval are never interchangeable:
+/// each kind carries its own evidence semantics in the slice that consumes
+/// these versions, and the kind is fixed for the life of the policy.
+enum PolicyKind {
+  CONSENT
+  WAIVER
+  ACKNOWLEDGMENT
+  APPROVAL_REQUIRED
+}
+
+/// Event-scoped policies belong to exactly one event (eventId set);
+/// organization-scoped policies have no eventId and any event may configure
+/// them. A policy applies to an event only through its applicability rows.
+enum PolicyScope {
+  EVENT
+  ORGANIZATION
+}
+
+/// Versions are never archived: a published version stays PUBLISHED forever so
+/// date-based selection and evidence references can always reach it.
+enum ConsentPolicyVersionStatus {
+  DRAFT
+  PUBLISHED
+}
+
 enum MfaMethod {
   TOTP
 }
@@ -424,6 +450,9 @@ model User {
   removedRegistrationTags        RegistrationTagAssignment[]      @relation("RegistrationTagRemovedBy")
   appliedAttendeeTags            AttendeeTagAssignment[]          @relation("AttendeeTagAppliedBy")
   removedAttendeeTags            AttendeeTagAssignment[]          @relation("AttendeeTagRemovedBy")
+  createdConsentPolicies         ConsentPolicy[]                  @relation("ConsentPolicyCreatedBy")
+  createdConsentPolicyVersions   ConsentPolicyVersion[]           @relation("ConsentPolicyVersionCreatedBy")
+  publishedConsentPolicyVersions ConsentPolicyVersion[]           @relation("ConsentPolicyVersionPublishedBy")
 
   @@index([accountStatus])
 }
@@ -972,6 +1001,8 @@ model Event {
   notes                               StaffNote[]
   registrationTagAssignments          RegistrationTagAssignment[]
   attendeeTagAssignments              AttendeeTagAssignment[]
+  consentPolicies                     ConsentPolicy[]
+  consentPolicyApplicabilities        EventConsentPolicyApplicability[]
 
   @@index([badgeBackgroundAssetId])
 }
@@ -991,8 +1022,9 @@ model EventAttendeeType {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  event     Event                  @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  attendees RegistrationAttendee[]
+  event                        Event                             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  attendees                    RegistrationAttendee[]
+  consentPolicyApplicabilities EventConsentPolicyApplicability[]
 
   @@unique([eventId, code])
   @@index([eventId, isActive, sortOrder, label])
@@ -2153,6 +2185,98 @@ model MessageTemplateVersion {
 
   @@unique([templateId, versionNumber])
   @@index([templateId, status, versionNumber])
+}
+
+/// A named consent, waiver, acknowledgment, or approval-required policy.
+/// `kind` and `scope` are fixed at creation. Organization-scoped policies have
+/// `eventId` null and may be configured by any event; event-scoped policies belong
+/// to exactly one event. Policy text itself is staff-entered data — no legal
+/// text belongs in this repository.
+model ConsentPolicy {
+  id               String      @id @default(cuid())
+  eventId          String?
+  kind             PolicyKind
+  scope            PolicyScope
+  slug             String
+  name             String
+  /// The most recently published version. Informational only — the version
+  /// presented to a person is selected by effective date, never by this.
+  currentVersionId String?     @unique
+  createdByUserId  String
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  event           Event?                            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  createdBy       User                              @relation("ConsentPolicyCreatedBy", fields: [createdByUserId], references: [id])
+  currentVersion  ConsentPolicyVersion?             @relation("ConsentPolicyCurrentVersion", fields: [currentVersionId], references: [id])
+  versions        ConsentPolicyVersion[]            @relation("ConsentPolicyVersions")
+  applicabilities EventConsentPolicyApplicability[]
+
+  @@unique([eventId, slug])
+  @@index([scope, updatedAt])
+}
+
+/// An immutable published (or in-progress draft) version of a policy's text.
+/// Once `publishedAt` is set, no field of this row is ever updated again — a
+/// correction is a new version with the next `versionNumber`. The repository
+/// guards this and a database trigger rejects any UPDATE of a published row.
+/// `isMaterialChange` is a human judgment the publisher records, not something
+/// inferred by diffing text; it is the input to re-consent in a later slice.
+model ConsentPolicyVersion {
+  id                String                     @id @default(cuid())
+  policyId          String
+  createdByUserId   String
+  publishedByUserId String?
+  versionNumber     Int
+  status            ConsentPolicyVersionStatus @default(DRAFT)
+  title             String
+  bodyText          String
+  contentHash       String?
+  effectiveFrom     DateTime?
+  effectiveTo       DateTime?
+  isMaterialChange  Boolean?
+  publishedAt       DateTime?
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+
+  policy          ConsentPolicy  @relation("ConsentPolicyVersions", fields: [policyId], references: [id], onDelete: Cascade)
+  currentOfPolicy ConsentPolicy? @relation("ConsentPolicyCurrentVersion")
+  createdBy       User           @relation("ConsentPolicyVersionCreatedBy", fields: [createdByUserId], references: [id])
+  publishedBy     User?          @relation("ConsentPolicyVersionPublishedBy", fields: [publishedByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([policyId, versionNumber])
+  @@index([policyId, status, versionNumber])
+  @@index([policyId, effectiveFrom, effectiveTo])
+}
+
+/// Per-event configuration of which policies apply, to whom, and whether
+/// agreement is required to proceed. `attendeeTypeDefinition` and the age band
+/// mirror `EventAttendeeType`; a null condition matches every attendee for
+/// that dimension. `role` is free-form staff-entered text — no attendee-role
+/// vocabulary exists elsewhere in this schema yet. The policy must be
+/// organization-scoped or belong to the same event; the migration enforces it.
+/// Rows are deactivated rather than deleted, and an attendee type referenced
+/// here cannot be deleted out from under a required policy.
+model EventConsentPolicyApplicability {
+  id                       String   @id @default(cuid())
+  eventId                  String
+  policyId                 String
+  attendeeTypeDefinitionId String?
+  role                     String?
+  minimumAge               Int?
+  maximumAge               Int?
+  isRequired               Boolean  @default(true)
+  isActive                 Boolean  @default(true)
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  event                  Event              @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  policy                 ConsentPolicy      @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  attendeeTypeDefinition EventAttendeeType? @relation(fields: [attendeeTypeDefinitionId], references: [id], onDelete: Restrict)
+
+  @@index([eventId, isActive])
+  @@index([policyId])
+  @@index([attendeeTypeDefinitionId])
 }
 
 model MessageOutbox {
