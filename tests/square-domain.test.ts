@@ -79,21 +79,21 @@ describe("card surcharge for a balance settled later", () => {
 });
 
 describe("Square payment domain", () => {
-  it("uses only an immutable published form response to enable card payment", () => {
+  it("keys card payment eligibility off the form's current status, not the submitted version's", () => {
     expect(selectedCardPayment({
       definition,
       responses: { payment_method: "Credit / debit card" },
-      formVersionStatus: "PUBLISHED",
+      formStatus: "PUBLISHED",
     })).toEqual({ configured: true, cardSelected: true });
     expect(selectedCardPayment({
       definition,
       responses: { payment_method: "Pay later" },
-      formVersionStatus: "PUBLISHED",
+      formStatus: "PUBLISHED",
     })).toEqual({ configured: true, cardSelected: false });
     expect(selectedCardPayment({
       definition,
       responses: { payment_method: "Credit / debit card" },
-      formVersionStatus: "ARCHIVED",
+      formStatus: "ARCHIVED",
     })).toEqual({ configured: false, cardSelected: false });
   });
 

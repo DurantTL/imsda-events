@@ -115,6 +115,7 @@ function registration() {
       formVersion: {
         status: "PUBLISHED",
         definition: formDefinition,
+        form: { status: "PUBLISHED" },
       },
     },
   };
@@ -295,6 +296,7 @@ describe("Square payment repository", () => {
             ...formDefinition,
             payment: { ...formDefinition.payment, passFeeToRegistrant: false },
           },
+          form: { status: "PUBLISHED" },
         },
       },
     });

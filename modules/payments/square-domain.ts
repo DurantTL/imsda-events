@@ -86,9 +86,19 @@ function record(value: unknown): Record<string, unknown> {
 export function selectedCardPayment(input: {
   definition: unknown;
   responses: unknown;
-  formVersionStatus: string;
+  /**
+   * The owning form's current status, not the submitted version's. A form
+   * version is archived the moment a newer one is published, so gating on
+   * the version would permanently strand every earlier registrant without
+   * online payment the instant staff fix a typo. What actually determines
+   * whether a card payment can be taken is whether this form is still
+   * published at all — the submitted version's own definition still decides
+   * the payment fields and pricing, since that is what the registrant
+   * actually answered.
+   */
+  formStatus: string;
 }) {
-  if (input.formVersionStatus !== "PUBLISHED") {
+  if (input.formStatus !== "PUBLISHED") {
     return { configured: false, cardSelected: false };
   }
   const definition = registrationFormDefinitionSchema.safeParse(
