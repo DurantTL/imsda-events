@@ -44,6 +44,7 @@ function registration(): RegistrationRecord {
     totalAmountCents: 25000,
     paidCents: 25000,
     balanceCents: 0,
+    onlinePaymentUnavailable: false,
     submittedAt: "2026-01-01T00:00:00.000Z",
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
