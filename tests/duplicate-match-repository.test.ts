@@ -124,7 +124,9 @@ function person(overrides: Partial<PersonRow> & { id: string }): PersonRow {
 }
 
 describe("generateMatchCandidates", () => {
-  it("surfaces a candidate for two people sharing a normalized email", async () => {
+  it("does not surface two different people who only share a normalized email", async () => {
+    // Households routinely register every member under one adult's email,
+    // so a shared email alone must never surface a candidate.
     const prisma = buildFakePrisma({
       people: [
         person({ id: "per_a", normalizedEmail: "shared@example.org" }),
@@ -134,10 +136,24 @@ describe("generateMatchCandidates", () => {
     mocks.getPrisma.mockReturnValue(prisma);
 
     const result = await generateMatchCandidates();
+    expect(result.created).toBe(0);
+    expect(result.evaluated).toBe(0);
+  });
+
+  it("surfaces a candidate for two people sharing a normalized phone", async () => {
+    const prisma = buildFakePrisma({
+      people: [
+        person({ id: "per_a", phone: "5551234567" }),
+        person({ id: "per_b", firstName: "Other", lastName: "Person", phone: "5551234567" }),
+      ],
+    });
+    mocks.getPrisma.mockReturnValue(prisma);
+
+    const result = await generateMatchCandidates();
     expect(result.created).toBe(1);
     expect(prisma.personMatchCandidate.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ personAId: "per_a", personBId: "per_b", confidence: "HIGH" }),
+        data: expect.objectContaining({ personAId: "per_a", personBId: "per_b", confidence: "MEDIUM" }),
       }),
     );
   });
@@ -199,8 +215,8 @@ describe("generateMatchCandidates", () => {
   it("is idempotent: a rerun over unchanged data creates nothing new", async () => {
     const prisma = buildFakePrisma({
       people: [
-        person({ id: "per_a", normalizedEmail: "shared@example.org" }),
-        person({ id: "per_b", firstName: "Other", lastName: "Person", normalizedEmail: "shared@example.org" }),
+        person({ id: "per_a", phone: "5551234567" }),
+        person({ id: "per_b", firstName: "Other", lastName: "Person", phone: "5551234567" }),
       ],
     });
     mocks.getPrisma.mockReturnValue(prisma);
@@ -217,8 +233,8 @@ describe("generateMatchCandidates", () => {
   it("does not regenerate a dismissed pair whose data has not changed", async () => {
     const prisma = buildFakePrisma({
       people: [
-        person({ id: "per_a", normalizedEmail: "shared@example.org" }),
-        person({ id: "per_b", firstName: "Other", lastName: "Person", normalizedEmail: "shared@example.org" }),
+        person({ id: "per_a", phone: "5551234567" }),
+        person({ id: "per_b", firstName: "Other", lastName: "Person", phone: "5551234567" }),
       ],
     });
     mocks.getPrisma.mockReturnValue(prisma);
@@ -238,19 +254,22 @@ describe("generateMatchCandidates", () => {
 
   it("regenerates a dismissed pair once the underlying data changes", async () => {
     const people = [
-      person({ id: "per_a", normalizedEmail: "shared@example.org" }),
-      person({ id: "per_b", firstName: "Other", lastName: "Person", normalizedEmail: "shared@example.org" }),
+      person({ id: "per_a", lastName: "Shared", phone: "5551234567" }),
+      person({ id: "per_b", firstName: "Other", lastName: "Shared", phone: "5551234567" }),
     ];
-    const prisma = buildFakePrisma({ people });
+    const householdMembers: HouseholdMemberRow[] = [];
+    const prisma = buildFakePrisma({ people, householdMembers });
     mocks.getPrisma.mockReturnValue(prisma);
 
     await generateMatchCandidates();
     const firstRow = await prisma.personMatchCandidate.findFirst({ where: { personAId: "per_a", personBId: "per_b", state: "OPEN" } });
     await dismissMatchCandidate(firstRow!.id, "user_staff", "Confirmed two different households.");
 
-    // The underlying data changes: person B's phone now also matches.
-    people[0].phone = "5551234567";
-    people[1].phone = "5551234567";
+    // The underlying data changes: they now also share a household.
+    householdMembers.push(
+      { personId: "per_a", householdId: "hh_1", effectiveTo: null },
+      { personId: "per_b", householdId: "hh_1", effectiveTo: null },
+    );
 
     const rerun = await generateMatchCandidates();
     expect(rerun.created).toBe(1);
@@ -261,15 +280,18 @@ describe("generateMatchCandidates", () => {
 
   it("supersedes the previous open candidate instead of creating a second open row for the same pair", async () => {
     const people = [
-      person({ id: "per_a", normalizedEmail: "shared@example.org" }),
-      person({ id: "per_b", firstName: "Other", lastName: "Person", normalizedEmail: "shared@example.org" }),
+      person({ id: "per_a", lastName: "Shared", phone: "5551234567" }),
+      person({ id: "per_b", firstName: "Other", lastName: "Shared", phone: "5551234567" }),
     ];
-    const prisma = buildFakePrisma({ people });
+    const householdMembers: HouseholdMemberRow[] = [];
+    const prisma = buildFakePrisma({ people, householdMembers });
     mocks.getPrisma.mockReturnValue(prisma);
 
     await generateMatchCandidates();
-    people[0].phone = "5551234567";
-    people[1].phone = "5551234567";
+    householdMembers.push(
+      { personId: "per_a", householdId: "hh_1", effectiveTo: null },
+      { personId: "per_b", householdId: "hh_1", effectiveTo: null },
+    );
     await generateMatchCandidates();
 
     const all = await candidatesFor(prisma, "per_a", "per_b");
@@ -280,8 +302,8 @@ describe("generateMatchCandidates", () => {
   it("running generation twice in a row never errors and never duplicates rows", async () => {
     const prisma = buildFakePrisma({
       people: [
-        person({ id: "per_a", normalizedEmail: "shared@example.org" }),
-        person({ id: "per_b", firstName: "Other", lastName: "Person", normalizedEmail: "shared@example.org" }),
+        person({ id: "per_a", phone: "5551234567" }),
+        person({ id: "per_b", firstName: "Other", lastName: "Person", phone: "5551234567" }),
       ],
     });
     mocks.getPrisma.mockReturnValue(prisma);
@@ -300,7 +322,7 @@ describe("dismissMatchCandidate", () => {
   it("requires a reason", async () => {
     const prisma = buildFakePrisma({
       candidates: [{
-        id: "cand_1", personAId: "per_a", personBId: "per_b", matchedSignals: ["EMAIL_MATCH"], contradictingSignals: [],
+        id: "cand_1", personAId: "per_a", personBId: "per_b", matchedSignals: ["PHONE_MATCH"], contradictingSignals: [],
         confidence: "HIGH", ruleVersion: 1, state: "OPEN", fingerprint: "fp1", computedAt: new Date(),
         dismissedAt: null, dismissedByUserId: null, dismissalReason: null,
       }],
@@ -312,7 +334,7 @@ describe("dismissMatchCandidate", () => {
   it("dismisses an open candidate and writes an audit entry", async () => {
     const prisma = buildFakePrisma({
       candidates: [{
-        id: "cand_1", personAId: "per_a", personBId: "per_b", matchedSignals: ["EMAIL_MATCH"], contradictingSignals: [],
+        id: "cand_1", personAId: "per_a", personBId: "per_b", matchedSignals: ["PHONE_MATCH"], contradictingSignals: [],
         confidence: "HIGH", ruleVersion: 1, state: "OPEN", fingerprint: "fp1", computedAt: new Date(),
         dismissedAt: null, dismissedByUserId: null, dismissalReason: null,
       }],
@@ -345,7 +367,7 @@ describe("deferMatchCandidate", () => {
   it("leaves the candidate open and only writes an audit entry", async () => {
     const prisma = buildFakePrisma({
       candidates: [{
-        id: "cand_1", personAId: "per_a", personBId: "per_b", matchedSignals: ["EMAIL_MATCH"], contradictingSignals: [],
+        id: "cand_1", personAId: "per_a", personBId: "per_b", matchedSignals: ["PHONE_MATCH"], contradictingSignals: [],
         confidence: "HIGH", ruleVersion: 1, state: "OPEN", fingerprint: "fp1", computedAt: new Date(),
         dismissedAt: null, dismissedByUserId: null, dismissalReason: null,
       }],
