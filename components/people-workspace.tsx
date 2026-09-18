@@ -16,6 +16,7 @@ import {
   Plus,
   RotateCcw,
   Search,
+  Send,
   UserCheck,
   UserRoundPen,
   UsersRound,
@@ -112,6 +113,19 @@ function paymentMethodLabel(value: string) {
   if (value === "CHECK") return "Check";
   if (value === "MANUAL") return "Manual";
   return answerLabel(value);
+}
+
+const confirmationTemplateKeys = new Set([
+  "REGISTRATION_CONFIRMATION_PAID",
+  "REGISTRATION_CONFIRMATION_UNPAID",
+  "WORKER_CONFIRMATION",
+]);
+
+function canResendConfirmationMessage(record: RegistrationRecord["messages"][number]) {
+  return confirmationTemplateKeys.has(record.templateKey)
+    && record.retryOfMessageId === null
+    && record.status !== "PENDING"
+    && record.status !== "PROCESSING";
 }
 
 function messageDelivery(record: RegistrationRecord["messages"][number]) {
@@ -239,6 +253,7 @@ export function PeopleWorkspace({
   const [operationDraft, setOperationDraft] = useState<RegistrationOperationDraft | null>(null);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const [emailingSelection, setEmailingSelection] = useState(false);
+  const [resendingMessageId, setResendingMessageId] = useState<string | null>(null);
   const dialogRef = useAccessibleDialog<HTMLElement>(Boolean(modal), closeModal);
 
   const visible = useMemo(() => registrations.filter((registration) => {
@@ -444,6 +459,39 @@ export function PeopleWorkspace({
       setError(caught instanceof Error ? caught.message : "Unable to update the attendee's email.");
     } finally {
       setSavingAttendeeEmail(false);
+    }
+  }
+
+  async function resendConfirmationEmail(message: RegistrationRecord["messages"][number]) {
+    if (!selected || !canResendConfirmationMessage(message)) return;
+    setResendingMessageId(message.id);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(
+        `/api/events/${eventId}/messages/${message.id}/resend-confirmation`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ clientRequestId: crypto.randomUUID() }),
+        },
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message ?? "Unable to resend the confirmation email.");
+      const refreshed = await fetch(`/api/events/${eventId}/registrations/${selected.id}`);
+      const refreshedResult = await refreshed.json().catch(() => ({}));
+      if (refreshed.ok && refreshedResult.registration) {
+        const updated = refreshedResult.registration as RegistrationRecord;
+        setRegistrations((current) => current.map((item) => item.id === updated.id ? updated : item));
+        setSelected(updated);
+      }
+      setNotice(result.operation?.replayed
+        ? "This confirmation was already resent for this request."
+        : `Confirmation email resent to ${result.operation?.recipientEmail ?? message.recipientEmail}.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to resend the confirmation email.");
+    } finally {
+      setResendingMessageId(null);
     }
   }
 
@@ -850,6 +898,17 @@ export function PeopleWorkspace({
                           <p>{message.bodyText}</p>
                           <small>Message type: {answerLabel(message.templateKey)}</small>
                           {message.lastError && <p className="form-error">Delivery issue: {message.lastError}</p>}
+                          {canEmail && canResendConfirmationMessage(message) && (
+                            <button
+                              className="text-button"
+                              type="button"
+                              disabled={resendingMessageId === message.id}
+                              onClick={() => resendConfirmationEmail(message)}
+                            >
+                              <Send aria-hidden="true" size={14} />
+                              {resendingMessageId === message.id ? "Resending…" : "Resend confirmation"}
+                            </button>
+                          )}
                         </div>
                       </details>;
                     })}
