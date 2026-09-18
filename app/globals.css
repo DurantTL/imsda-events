@@ -5803,15 +5803,32 @@ select:focus-visible {
   display: grid;
   min-width: 0;
   min-height: 0;
-  align-content: center;
-  justify-items: center;
   box-sizing: border-box;
   overflow: hidden;
   border: 1px dashed rgba(0, 59, 92, 0.16);
-  padding: 0.14in 0.18in;
   text-align: center;
 }
 .badge-label-card.is-empty { visibility: hidden; }
+.badge-label-inner {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.14in 0.18in;
+}
+/* Rotates the printed name/footer 90° inside the same physical die-cut slot
+   so it reads top-to-bottom once the badge is slid into a vertical ID
+   sleeve, without changing the slot positions on the Avery sheet. */
+.badge-sheet-orientation-portrait .badge-label-inner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--slot-h);
+  height: var(--slot-w);
+  padding: 0.12in 0.16in;
+  transform: translate(-50%, -50%) rotate(-90deg);
+}
 .badge-label-background {
   position: absolute;
   z-index: 0;
@@ -5859,6 +5876,10 @@ select:focus-visible {
   white-space: nowrap;
 }
 .badge-label-name strong:first-child { font-size: 20pt; }
+/* The rotated inner box is narrower than the original landscape card, so
+   trim type sizes slightly to keep names from ellipsizing as often. */
+.badge-sheet-orientation-portrait .badge-label-name strong { font-size: 15pt; }
+.badge-sheet-orientation-portrait .badge-label-name strong:first-child { font-size: 17pt; }
 .badge-label-card > p {
   overflow: hidden;
   width: 100%;

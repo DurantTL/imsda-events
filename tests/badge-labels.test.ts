@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   badgeTemplates,
   buildBadgeLabels,
+  normalizeBadgeOrientation,
   normalizeBadgeStartingPosition,
   normalizeBadgeTemplate,
   paginateBadgeLabels,
@@ -30,6 +31,12 @@ describe("printable badge labels", () => {
     expect(normalizeBadgeStartingPosition("6", 8)).toBe(6);
     expect(normalizeBadgeStartingPosition("9", 8)).toBe(1);
     expect(badgeTemplates["avery-5163"].perSheet).toBe(10);
+  });
+
+  it("defaults badge orientation to vertical for ID sleeves", () => {
+    expect(normalizeBadgeOrientation(undefined)).toBe("portrait");
+    expect(normalizeBadgeOrientation("landscape")).toBe("landscape");
+    expect(normalizeBadgeOrientation("sideways")).toBe("portrait");
   });
 
   it("leaves consumed labels blank on the first reusable sheet", () => {

@@ -13,12 +13,18 @@ export const badgeTemplateIds = [
 
 export type BadgeTemplateId = typeof badgeTemplateIds[number];
 
+export const badgeOrientations = ["portrait", "landscape"] as const;
+export type BadgeOrientation = typeof badgeOrientations[number];
+
 export const badgeTemplates: Record<BadgeTemplateId, {
   id: BadgeTemplateId;
   product: string;
   label: string;
   dimensions: string;
   perSheet: number;
+  /** Printed slot size on the physical sheet, in inches, as laid out today. */
+  slotWidthIn: number;
+  slotHeightIn: number;
 }> = {
   "avery-5395": {
     id: "avery-5395",
@@ -26,6 +32,8 @@ export const badgeTemplates: Record<BadgeTemplateId, {
     label: "Adhesive name badges",
     dimensions: "2⅓ × 3⅜ inches",
     perSheet: 8,
+    slotWidthIn: 3.375,
+    slotHeightIn: 2.333333,
   },
   "avery-5392": {
     id: "avery-5392",
@@ -33,6 +41,8 @@ export const badgeTemplates: Record<BadgeTemplateId, {
     label: "Name badge inserts",
     dimensions: "3 × 4 inches",
     perSheet: 6,
+    slotWidthIn: 4,
+    slotHeightIn: 3,
   },
   "avery-5163": {
     id: "avery-5163",
@@ -40,8 +50,16 @@ export const badgeTemplates: Record<BadgeTemplateId, {
     label: "Adhesive labels",
     dimensions: "2 × 4 inches",
     perSheet: 10,
+    slotWidthIn: 4,
+    slotHeightIn: 2,
   },
 };
+
+export function normalizeBadgeOrientation(value: string | undefined): BadgeOrientation {
+  return badgeOrientations.includes(value as BadgeOrientation)
+    ? value as BadgeOrientation
+    : "portrait";
+}
 
 export type BadgeLabel = {
   attendeeId: string;
