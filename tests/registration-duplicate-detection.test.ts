@@ -79,25 +79,47 @@ describe("duplicate detection keys", () => {
 });
 
 describe("duplicate report", () => {
-  it("flags the same person registered twice by email", () => {
+  it("does not flag attendees who only share an email address", () => {
+    // A group leader routinely registers several different people under
+    // her own email, so a shared attendee email alone must never flag a
+    // likely duplicate.
     const report = buildDuplicateReport([
       registration({
         id: "reg-1",
         code: "WR26-1001",
-        attendees: [{ id: "a1", firstName: "Marta", lastName: "Alvarez", email: "Marta@example.test" }],
+        attendees: [{ id: "a1", firstName: "Marta", lastName: "Alvarez", email: "leader@example.test" }],
       }),
       registration({
         id: "reg-2",
         code: "WR26-1002",
         submittedAt: "2026-08-04T00:00:00.000Z",
-        attendees: [{ id: "a2", firstName: "Marta", lastName: "Alvarez", email: "marta@example.test" }],
+        attendees: [{ id: "a2", firstName: "Joy", lastName: "Kimani", email: "leader@example.test" }],
+      }),
+    ]);
+
+    expect(report.attendeeGroups).toEqual([]);
+    expect(report.duplicatedAttendeeCount).toBe(0);
+  });
+
+  it("flags the same person registered twice by name and phone", () => {
+    const report = buildDuplicateReport([
+      registration({
+        id: "reg-1",
+        code: "WR26-1001",
+        attendees: [{ id: "a1", firstName: "Marta", lastName: "Alvarez", phone: "515-555-0134" }],
+      }),
+      registration({
+        id: "reg-2",
+        code: "WR26-1002",
+        submittedAt: "2026-08-04T00:00:00.000Z",
+        attendees: [{ id: "a2", firstName: "Marta", lastName: "Alvarez", phone: "(515) 555-0134" }],
       }),
     ]);
 
     expect(report.attendeeGroups).toHaveLength(1);
     expect(report.attendeeGroups[0]).toMatchObject({
       confidence: "LIKELY",
-      reason: "Same email address",
+      reason: "Same name and phone number",
       withinSingleRegistration: false,
     });
     expect(report.attendeeGroups[0].members.map((member) => member.confirmationCode))
@@ -110,17 +132,17 @@ describe("duplicate report", () => {
       registration({
         id: "reg-1",
         code: "WR26-1001",
-        attendees: [{ id: "a1", firstName: "Marta", lastName: "Alvarez", email: "marta@example.test", phone: "515-555-0134" }],
+        attendees: [{ id: "a1", firstName: "Marta", lastName: "Alvarez", phone: "515-555-0134" }],
       }),
       registration({
         id: "reg-2",
         code: "WR26-1002",
-        attendees: [{ id: "a2", firstName: "Marta", lastName: "Alvarez", email: "marta@example.test", phone: "(515) 555-0134" }],
+        attendees: [{ id: "a2", firstName: "Marta", lastName: "Alvarez", phone: "(515) 555-0134" }],
       }),
     ]);
 
     expect(report.attendeeGroups).toHaveLength(1);
-    expect(report.attendeeGroups[0].reason).toBe("Same email address");
+    expect(report.attendeeGroups[0].reason).toBe("Same name and phone number");
   });
 
   it("flags a name repeated inside one registration", () => {
@@ -200,8 +222,8 @@ describe("duplicate report", () => {
     const report = buildDuplicateReport([
       registration({ id: "reg-1", code: "WR26-1001", attendees: [{ id: "a1", firstName: "Joy", lastName: "Kimani" }] }),
       registration({ id: "reg-2", code: "WR26-1002", attendees: [{ id: "a2", firstName: "Joy", lastName: "Kimani" }] }),
-      registration({ id: "reg-3", code: "WR26-1003", attendees: [{ id: "a3", firstName: "Esther", lastName: "Boateng", email: "esther@example.test" }] }),
-      registration({ id: "reg-4", code: "WR26-1004", attendees: [{ id: "a4", firstName: "Esther", lastName: "Boateng", email: "esther@example.test" }] }),
+      registration({ id: "reg-3", code: "WR26-1003", attendees: [{ id: "a3", firstName: "Esther", lastName: "Boateng", phone: "515-555-0199" }] }),
+      registration({ id: "reg-4", code: "WR26-1004", attendees: [{ id: "a4", firstName: "Esther", lastName: "Boateng", phone: "(515) 555-0199" }] }),
     ]);
 
     expect(report.attendeeGroups.map((group) => group.confidence))
