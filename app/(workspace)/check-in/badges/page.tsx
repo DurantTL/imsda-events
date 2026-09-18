@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ContactRound, Shirt, Tags } from "lucide-react";
@@ -11,6 +12,7 @@ import {
 import {
   badgeTemplates,
   buildBadgeLabels,
+  normalizeBadgeOrientation,
   normalizeBadgeStartingPosition,
   normalizeBadgeTemplate,
   paginateBadgeLabels,
@@ -35,6 +37,7 @@ export default async function PrintableNameBadgesPage({
     event?: string;
     template?: string;
     start?: string;
+    orientation?: string;
   }>;
 }) {
   const query = await searchParams;
@@ -54,6 +57,7 @@ export default async function PrintableNameBadgesPage({
     query.start,
     template.perSheet,
   );
+  const orientation = normalizeBadgeOrientation(query.orientation);
   const registrations = await listRegistrations(event.id, {
     statuses: activeRegistrationStatuses,
   });
@@ -115,6 +119,13 @@ export default async function PrintableNameBadgesPage({
               ))}
           </select>
         </label>
+        <label>
+          <span>Badge orientation</span>
+          <select defaultValue={orientation} name="orientation">
+            <option value="portrait">Vertical — for ID sleeves</option>
+            <option value="landscape">Horizontal — as printed today</option>
+          </select>
+        </label>
         <button className="primary-button" type="submit">
           Apply layout
         </button>
@@ -153,8 +164,12 @@ export default async function PrintableNameBadgesPage({
           {sheets.map((sheet, sheetIndex) => (
             <section
               aria-label={`Badge sheet ${sheetIndex + 1}`}
-              className={`badge-sheet badge-sheet-${templateId}`}
+              className={`badge-sheet badge-sheet-${templateId} badge-sheet-orientation-${orientation}`}
               key={`sheet-${sheetIndex + 1}`}
+              style={{
+                "--slot-w": `${template.slotWidthIn}in`,
+                "--slot-h": `${template.slotHeightIn}in`,
+              } as CSSProperties}
             >
               {sheet.map((label, slotIndex) => (
                 label ? (
@@ -174,16 +189,18 @@ export default async function PrintableNameBadgesPage({
                         src={background.url}
                       />
                     )}
-                    <header>{event.name}</header>
-                    <div className="badge-label-name">
-                      <strong>{label.firstName}</strong>
-                      <strong>{label.lastName}</strong>
+                    <div className="badge-label-inner">
+                      <header>{event.name}</header>
+                      <div className="badge-label-name">
+                        <strong>{label.firstName}</strong>
+                        <strong>{label.lastName}</strong>
+                      </div>
+                      <p>{label.groupLabel}</p>
+                      <footer>
+                        <span>{label.attendeeType.toLowerCase()}</span>
+                        <span>{label.shirtSize ? `Shirt ${label.shirtSize}` : "Shirt size needed"}</span>
+                      </footer>
                     </div>
-                    <p>{label.groupLabel}</p>
-                    <footer>
-                      <span>{label.attendeeType.toLowerCase()}</span>
-                      <span>{label.shirtSize ? `Shirt ${label.shirtSize}` : "Shirt size needed"}</span>
-                    </footer>
                   </article>
                 ) : (
                   <div
