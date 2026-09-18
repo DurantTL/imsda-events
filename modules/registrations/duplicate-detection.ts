@@ -185,17 +185,20 @@ function byConfidenceThenSize(
     || left.key.localeCompare(right.key);
 }
 
+/**
+ * Email is deliberately not an attendee-matching rule. A group leader
+ * routinely registers several different people under her own email (a
+ * women's retreat table of six, a family of four), and attendees without
+ * their own collected email fall back to that shared contact address. That
+ * made "same email" the noisiest possible attendee rule — it was flagging
+ * a leader's whole party as the same person repeated.
+ */
 function buildAttendeeGroups(rows: AttendeeRow[]): DuplicateAttendeeGroup[] {
   const rules: Array<{
     confidence: DuplicateMatchConfidence;
     reason: string;
     key: (keys: MatchKeys) => string;
   }> = [
-    {
-      confidence: "LIKELY",
-      reason: "Same email address",
-      key: (keys) => keys.emailKey,
-    },
     {
       confidence: "LIKELY",
       reason: "Same name and phone number",
