@@ -106,7 +106,7 @@ describe("registration.onlinePaymentUnavailable", () => {
           versionNumber: 1,
           status: "PUBLISHED",
           definition: paymentDefinition,
-          form: { name: "Women's Retreat", slug: "womens-retreat" },
+          form: { name: "Women's Retreat", slug: "womens-retreat", status: "PUBLISHED" },
         },
       },
     })]);
@@ -116,7 +116,7 @@ describe("registration.onlinePaymentUnavailable", () => {
     expect(registration!.onlinePaymentUnavailable).toBe(false);
   });
 
-  it("flags a registration whose submitted form version is no longer published", async () => {
+  it("does not flag a registration whose own submitted version was archived by a later publish, as long as the form is still published", async () => {
     mocks.findMany.mockResolvedValue([baseRegistration({
       publicFormSubmission: {
         responses: { payment_method: "Credit / debit card" },
@@ -124,9 +124,29 @@ describe("registration.onlinePaymentUnavailable", () => {
         createdAt: new Date("2026-06-01T00:00:00.000Z"),
         formVersion: {
           versionNumber: 1,
-          status: "DRAFT",
+          status: "ARCHIVED",
           definition: paymentDefinition,
-          form: { name: "Women's Retreat", slug: "womens-retreat" },
+          form: { name: "Women's Retreat", slug: "womens-retreat", status: "PUBLISHED" },
+        },
+      },
+    })]);
+
+    const [registration] = await listRegistrations("evt_1");
+
+    expect(registration!.onlinePaymentUnavailable).toBe(false);
+  });
+
+  it("flags a registration whose form has been withdrawn entirely", async () => {
+    mocks.findMany.mockResolvedValue([baseRegistration({
+      publicFormSubmission: {
+        responses: { payment_method: "Credit / debit card" },
+        pricingSnapshot: {},
+        createdAt: new Date("2026-06-01T00:00:00.000Z"),
+        formVersion: {
+          versionNumber: 1,
+          status: "PUBLISHED",
+          definition: paymentDefinition,
+          form: { name: "Women's Retreat", slug: "womens-retreat", status: "ARCHIVED" },
         },
       },
     })]);

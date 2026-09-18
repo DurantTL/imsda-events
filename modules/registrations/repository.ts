@@ -83,7 +83,7 @@ function getRegistrationQuery(
       publicFormSubmission: {
         include: {
           formVersion: {
-            select: { versionNumber: true, status: true, definition: true, form: { select: { name: true, slug: true } } },
+            select: { versionNumber: true, status: true, definition: true, form: { select: { name: true, slug: true, status: true } } },
           },
         },
       },
@@ -156,7 +156,7 @@ function serializeRegistration(registration: RegistrationWithRelations) {
     ? selectedCardPayment({
         definition: registration.publicFormSubmission.formVersion.definition,
         responses: registration.publicFormSubmission.responses,
-        formVersionStatus: registration.publicFormSubmission.formVersion.status,
+        formStatus: registration.publicFormSubmission.formVersion.form.status,
       }).configured
     : false;
   const onlinePaymentUnavailable = (

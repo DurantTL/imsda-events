@@ -135,6 +135,7 @@ const checkoutRegistrationSelect = {
         select: {
           status: true,
           definition: true,
+          form: { select: { status: true } },
         },
       },
     },
@@ -244,7 +245,7 @@ function checkoutFromRegistration(
     ? selectedCardPayment({
         definition: submission.formVersion.definition,
         responses: submission.responses,
-        formVersionStatus: submission.formVersion.status,
+        formStatus: submission.formVersion.form.status,
       })
     : { configured: false, cardSelected: false };
   const balanceCents = registrationBalanceCents(registration);
