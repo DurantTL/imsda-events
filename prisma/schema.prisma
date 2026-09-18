@@ -436,6 +436,7 @@ model User {
   appliedRegistrationTags        RegistrationTagAssignment[]      @relation("RegistrationTagAppliedBy")
   removedRegistrationTags        RegistrationTagAssignment[]      @relation("RegistrationTagRemovedBy")
   appliedAttendeeTags            AttendeeTagAssignment[]          @relation("AttendeeTagAppliedBy")
+  dismissedPersonMatchCandidates PersonMatchCandidate[]           @relation("PersonMatchCandidateDismissedBy")
   removedAttendeeTags            AttendeeTagAssignment[]          @relation("AttendeeTagRemovedBy")
   /// The person this staff account is explicitly linked to, if any. Grants
   /// nothing by itself — see `UserPersonLink`.
@@ -1194,6 +1195,8 @@ model Person {
   notes              StaffNote[]
   attendeeAccountLinks AttendeeAccountPersonLink[]
   userLinks            UserPersonLink[]
+  matchCandidatesAsA   PersonMatchCandidate[] @relation("PersonMatchCandidateAsA")
+  matchCandidatesAsB   PersonMatchCandidate[] @relation("PersonMatchCandidateAsB")
 
   @@index([lastName, firstName])
 }
@@ -1206,6 +1209,67 @@ model Household {
 
   members       HouseholdMember[]
   registrations Registration[]
+}
+
+/// Which signals fired (or contradicted) when comparing two `Person`
+/// records for `PersonMatchCandidate`. Kept as an enum, not a free-text
+/// string, so evidence is queryable and the domain logic that emits it
+/// (`modules/people/duplicate-match-domain.ts`) stays exhaustive-checkable.
+/// A shared external identity and a normalized-email match are the two
+/// signals strong enough to stand alone; the rest only raise confidence in
+/// combination — see the domain module's rule table.
+enum PersonMatchSignal {
+  /// Both people have the same non-null normalized email address.
+  EMAIL_MATCH
+  /// Both people have the same non-null normalized phone number.
+  PHONE_MATCH
+  /// Both people have a normalized last name that is identical.
+  SAME_SURNAME
+  /// Both people have a normalized first and last name that are identical.
+  SAME_FULL_NAME
+  /// The two people share at least one currently-active household.
+  HOUSEHOLD_SHARED
+  /// The two people each have an `ExternalIdentity` with the same
+  /// `(provider, providerScope, externalId)` tuple. Strong evidence, never
+  /// proof — see the `PersonMatchCandidate` model doc and #40.
+  EXTERNAL_IDENTITY_SHARED
+  /// Both people have a non-null normalized email address, and they differ.
+  EMAIL_MISMATCH
+  /// Both people have a non-null normalized phone number, and they differ.
+  PHONE_MISMATCH
+}
+
+/// Deterministic, rule-based confidence for a `PersonMatchCandidate` — never
+/// a fuzzy score. Each tier is produced by an explicit, documented
+/// combination of `PersonMatchSignal`s in
+/// `modules/people/duplicate-match-domain.ts`, so a reviewer (or a future
+/// maintainer) can always trace a tier back to the exact rule that set it.
+enum PersonMatchConfidence {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+/// Lifecycle of a `PersonMatchCandidate`. Rows are never deleted — a
+/// candidate only ever moves forward through this enum, mirroring the
+/// append-only / time-bounded philosophy used elsewhere in this module
+/// (see `HouseholdMember`'s doc comment).
+enum PersonMatchState {
+  /// Awaiting staff review. The only state the review queue lists.
+  OPEN
+  /// A staff member decided this pair is not the same person, with a
+  /// required reason. Suppresses regeneration for the same underlying data
+  /// (see `PersonMatchCandidate.fingerprint`) until something about the
+  /// pair actually changes.
+  DISMISSED
+  /// Replaced by a newer OPEN candidate for the same pair (the rule version
+  /// or the underlying data changed while this one was still open). Kept
+  /// for history rather than deleted.
+  SUPERSEDED
+  /// Reserved for slice 3 (#127, merge/unmerge — not yet built). Nothing in
+  /// this codebase ever sets this value; it exists so the enum does not
+  /// need a breaking migration when merge ships.
+  MERGED
 }
 
 /// A person's membership in a household, time-bounded so a past registration
@@ -1355,6 +1419,63 @@ model ExternalIdentity {
   @@unique([personId, provider, providerScope])
   @@index([organizationId])
   @@index([personId])
+}
+
+/// Identity slice 2 (#126): a generated, reviewable suggestion that two
+/// `Person` records may be the same person. Candidates are evidence, never
+/// action — nothing in this codebase applies one automatically at any
+/// confidence. Applying a candidate (merging the two people) is slice 3
+/// (#127) and does not exist yet.
+///
+/// `personAId` is always lexicographically less than `personBId` (a
+/// canonical ordering enforced by the `PersonMatchCandidate_ordered_pair_check`
+/// database check constraint, since Prisma cannot express a self-referential
+/// unordered pair natively). This is what makes the pair itself, rather than
+/// an ordered `(x, y)` vs `(y, x)`, the unit the unique constraint below can
+/// reason about.
+///
+/// `fingerprint` is a deterministic hash of every input that produced
+/// `matchedSignals` / `contradictingSignals` (both people's normalized
+/// email, phone, and name, plus the sorted ids of any shared household and
+/// any shared external identity tuple) together with `ruleVersion`. Two
+/// generation runs over unchanged data produce the same fingerprint, which
+/// is what makes generation idempotent
+/// (`@@unique([personAId, personBId, fingerprint])`: a rerun that computes
+/// the same fingerprint for the same pair finds its own row and writes
+/// nothing) and what lets a dismissed pair stay suppressed until something
+/// about the two people actually changes (a changed fingerprint no longer
+/// matches the dismissed row, so generation creates a fresh OPEN row instead
+/// of reusing it — see `modules/people/duplicate-match-repository.ts`).
+model PersonMatchCandidate {
+  id                    String                 @id @default(cuid())
+  personAId             String
+  personBId             String
+  matchedSignals        PersonMatchSignal[]
+  contradictingSignals  PersonMatchSignal[]
+  confidence            PersonMatchConfidence
+  /// Bumped whenever `duplicate-match-domain.ts`'s matching rules change
+  /// behavior, so an old candidate never silently claims to have been
+  /// produced by rules that no longer exist.
+  ruleVersion           Int
+  state                 PersonMatchState       @default(OPEN)
+  /// See the model doc: a hash of the inputs (plus `ruleVersion`) that
+  /// produced this candidate.
+  fingerprint           String
+  computedAt            DateTime               @default(now())
+  dismissedAt           DateTime?
+  dismissedByUserId     String?
+  dismissalReason       String?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+
+  personA        Person @relation("PersonMatchCandidateAsA", fields: [personAId], references: [id], onDelete: Cascade)
+  personB        Person @relation("PersonMatchCandidateAsB", fields: [personBId], references: [id], onDelete: Cascade)
+  dismissedByUser User? @relation("PersonMatchCandidateDismissedBy", fields: [dismissedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([personAId, personBId, fingerprint])
+  @@index([personAId])
+  @@index([personBId])
+  @@index([state])
 }
 
 model Registration {

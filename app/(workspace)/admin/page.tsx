@@ -44,6 +44,13 @@ const platformModules = [
     href: "/admin/organizations",
   },
   {
+    name: "Possible duplicate people",
+    detail: "Rule-based match candidates with evidence — staff review, dismiss, or defer. Merge ships in a later slice.",
+    status: "IN_PROGRESS",
+    icon: UsersRound,
+    href: "/people/matches",
+  },
+  {
     name: "Treasury settlement",
     detail: "Post-event church billing from actual attendance and approved charge lines.",
     status: "PLANNED",
