@@ -19,6 +19,8 @@ import {
 } from "lucide-react";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { getSystemAdminDashboard } from "@/modules/system-admin/repository";
+import { getReleaseIdentity } from "@/lib/release";
+import packageInfo from "@/package.json";
 import styles from "./system-admin.module.css";
 
 export const metadata: Metadata = { title: "System administration" };
@@ -111,6 +113,7 @@ export default async function SystemAdminPage() {
   const dashboard = await getSystemAdminDashboard();
   const currentEvents = dashboard.events.filter((event) => event.timing !== "PAST");
   const pastEvents = dashboard.events.filter((event) => event.timing === "PAST");
+  const release = getReleaseIdentity();
 
   return (
     <section className={`page-stack ${styles.workspace}`}>
@@ -234,6 +237,19 @@ export default async function SystemAdminPage() {
             <div>
               <strong>Read-only command center</strong>
               <p>This first slice summarizes authoritative records and sends administrators to the existing workspace that can safely change them.</p>
+            </div>
+          </section>
+
+          <section className={styles.scope}>
+            <RefreshCw aria-hidden="true" size={20} />
+            <div>
+              <strong>System version</strong>
+              <p>
+                App v{packageInfo.version}
+                {release.sha ? ` · release ${release.sha.slice(0, 7)}` : " · release commit unknown"}
+                {release.buildId ? ` · build ${release.buildId}` : ""}
+              </p>
+              <p>Changes when this deployment last changed. Compare after a deploy to confirm it took.</p>
             </div>
           </section>
         </aside>

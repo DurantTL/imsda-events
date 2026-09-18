@@ -26,20 +26,28 @@ function context(overrides: Partial<PersonMatchContext["person"]> & { id: string
 }
 
 describe("computeMatchSignals", () => {
-  it("matches on a shared normalized email", () => {
-    const a = context({ id: "per_a", normalizedEmail: "avery@example.org" });
-    const b = context({ id: "per_b", firstName: "Different", lastName: "Name", normalizedEmail: "avery@example.org" });
+  it("does not treat a shared email as a signal", () => {
+    const a = context({ id: "per_a", normalizedEmail: "family@example.org" });
+    const b = context({ id: "per_b", firstName: "Different", lastName: "Name", normalizedEmail: "family@example.org" });
     const { matchedSignals, contradictingSignals } = computeMatchSignals(a, b);
-    expect(matchedSignals).toContain("EMAIL_MATCH");
-    expect(contradictingSignals).not.toContain("EMAIL_MISMATCH");
+    expect(matchedSignals).toEqual([]);
+    expect(contradictingSignals).toEqual([]);
   });
 
-  it("records a contradicting signal when both have emails that differ", () => {
-    const a = context({ id: "per_a", normalizedEmail: "avery@example.org" });
-    const b = context({ id: "per_b", normalizedEmail: "someoneelse@example.org" });
+  it("matches on a shared normalized phone", () => {
+    const a = context({ id: "per_a", phone: "555-100-2000" });
+    const b = context({ id: "per_b", firstName: "Different", lastName: "Name", phone: "(555) 100-2000" });
     const { matchedSignals, contradictingSignals } = computeMatchSignals(a, b);
-    expect(matchedSignals).not.toContain("EMAIL_MATCH");
-    expect(contradictingSignals).toContain("EMAIL_MISMATCH");
+    expect(matchedSignals).toContain("PHONE_MATCH");
+    expect(contradictingSignals).not.toContain("PHONE_MISMATCH");
+  });
+
+  it("records a contradicting signal when both have phones that differ", () => {
+    const a = context({ id: "per_a", phone: "555-100-2000" });
+    const b = context({ id: "per_b", phone: "555-999-8888" });
+    const { matchedSignals, contradictingSignals } = computeMatchSignals(a, b);
+    expect(matchedSignals).not.toContain("PHONE_MATCH");
+    expect(contradictingSignals).toContain("PHONE_MISMATCH");
   });
 
   it("matches on a shared external identity", () => {
@@ -67,10 +75,6 @@ describe("computeMatchSignals", () => {
 });
 
 describe("deriveConfidence", () => {
-  it("is HIGH for an email match", () => {
-    expect(deriveConfidence(["EMAIL_MATCH"])).toBe("HIGH");
-  });
-
   it("is HIGH for a shared external identity", () => {
     expect(deriveConfidence(["EXTERNAL_IDENTITY_SHARED"])).toBe("HIGH");
   });
@@ -94,8 +98,8 @@ describe("shouldSurfaceCandidate", () => {
     expect(shouldSurfaceCandidate(["SAME_FULL_NAME", "SAME_SURNAME"])).toBe(false);
   });
 
-  it("surfaces a shared email", () => {
-    expect(shouldSurfaceCandidate(["EMAIL_MATCH"])).toBe(true);
+  it("surfaces a shared phone", () => {
+    expect(shouldSurfaceCandidate(["PHONE_MATCH"])).toBe(true);
   });
 
   it("surfaces a shared surname plus household", () => {
@@ -114,9 +118,16 @@ describe("evaluatePersonMatch", () => {
     expect(evaluatePersonMatch(a, b)).toBeNull();
   });
 
-  it("returns a HIGH-confidence candidate for a shared email", () => {
-    const a = context({ id: "per_a", normalizedEmail: "same@example.org" });
-    const b = context({ id: "per_b", firstName: "Other", lastName: "Person", normalizedEmail: "same@example.org" });
+  it("returns null for two different people who merely share a household email", () => {
+    const a = context({ id: "per_a", firstName: "Kid", lastName: "One", normalizedEmail: "parent@example.org" });
+    const b = context({ id: "per_b", firstName: "Kid", lastName: "Two", normalizedEmail: "parent@example.org" });
+    expect(evaluatePersonMatch(a, b)).toBeNull();
+  });
+
+  it("returns a HIGH-confidence candidate for a shared external identity", () => {
+    const identity = { provider: "EADVENTIST", providerScope: "", externalId: "ea-5678" };
+    const a = context({ id: "per_a" }, { externalIdentities: [identity] });
+    const b = context({ id: "per_b", firstName: "Other", lastName: "Person" }, { externalIdentities: [identity] });
     const evaluation = evaluatePersonMatch(a, b);
     expect(evaluation).not.toBeNull();
     expect(evaluation?.confidence).toBe("HIGH");
@@ -134,8 +145,9 @@ describe("evaluatePersonMatch", () => {
   });
 
   it("is deterministic: the same inputs always produce the same fingerprint and confidence", () => {
-    const a = context({ id: "per_a", normalizedEmail: "same@example.org" });
-    const b = context({ id: "per_b", firstName: "Other", lastName: "Person", normalizedEmail: "same@example.org" });
+    const identity = { provider: "EADVENTIST", providerScope: "", externalId: "ea-9999" };
+    const a = context({ id: "per_a" }, { externalIdentities: [identity] });
+    const b = context({ id: "per_b", firstName: "Other", lastName: "Person" }, { externalIdentities: [identity] });
     const first = evaluatePersonMatch(a, b);
     const second = evaluatePersonMatch(a, b);
     expect(first).toEqual(second);
@@ -145,6 +157,19 @@ describe("evaluatePersonMatch", () => {
 describe("computeFingerprint", () => {
   it("changes when underlying data changes", () => {
     const base = {
+      personA: { id: "per_a", firstName: "Pat", lastName: "Miller", normalizedEmail: null, phone: null },
+      personB: { id: "per_b", firstName: "Pat", lastName: "Miller", normalizedEmail: null, phone: null },
+      ruleVersion: DUPLICATE_MATCH_RULE_VERSION,
+      sharedHouseholdIds: [],
+      sharedExternalIdentities: [],
+    };
+    const before = computeFingerprint(base);
+    const after = computeFingerprint({ ...base, personB: { ...base.personB, phone: "555-100-2000" } });
+    expect(after).not.toBe(before);
+  });
+
+  it("is unaffected by a change in email, since email is not a match input", () => {
+    const base = {
       personA: { id: "per_a", firstName: "Pat", lastName: "Miller", normalizedEmail: "pat@example.org", phone: null },
       personB: { id: "per_b", firstName: "Pat", lastName: "Miller", normalizedEmail: null, phone: null },
       ruleVersion: DUPLICATE_MATCH_RULE_VERSION,
@@ -153,7 +178,7 @@ describe("computeFingerprint", () => {
     };
     const before = computeFingerprint(base);
     const after = computeFingerprint({ ...base, personB: { ...base.personB, normalizedEmail: "pat@example.org" } });
-    expect(after).not.toBe(before);
+    expect(after).toBe(before);
   });
 });
 

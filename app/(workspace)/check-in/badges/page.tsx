@@ -20,6 +20,7 @@ import {
 import { activeRegistrationStatuses } from "@/modules/events/lifecycle";
 import { resolveEventContext } from "@/modules/events/selection";
 import { listRegistrations } from "@/modules/registrations/repository";
+import { eventCollectsShirtSizes } from "@/modules/registrations/shirt-sizes";
 
 export const metadata: Metadata = {
   title: "Printable name badges",
@@ -68,7 +69,10 @@ export default async function PrintableNameBadgesPage({
     canConfigure ? listBadgeBackgroundOptions(event.id) : Promise.resolve([]),
   ]);
   const sheets = paginateBadgeLabels(labels, templateId, startingPosition);
-  const missingShirtSizes = labels.filter((label) => !label.shirtSize).length;
+  const collectsShirtSizes = eventCollectsShirtSizes(event);
+  const missingShirtSizes = collectsShirtSizes
+    ? labels.filter((label) => !label.shirtSize).length
+    : 0;
 
   return (
     <section className="page-stack badge-print-page">
@@ -144,10 +148,12 @@ export default async function PrintableNameBadgesPage({
       <div className="badge-print-summary">
         <span><ContactRound aria-hidden="true" size={18} /><strong>{labels.length}</strong> badges</span>
         <span><Tags aria-hidden="true" size={18} /><strong>{sheets.length}</strong> sheets</span>
-        <span className={missingShirtSizes > 0 ? "is-warning" : ""}>
-          <Shirt aria-hidden="true" size={18} />
-          <strong>{missingShirtSizes}</strong> missing shirt sizes
-        </span>
+        {collectsShirtSizes && (
+          <span className={missingShirtSizes > 0 ? "is-warning" : ""}>
+            <Shirt aria-hidden="true" size={18} />
+            <strong>{missingShirtSizes}</strong> missing shirt sizes
+          </span>
+        )}
         <small>
           {template.product} · {template.dimensions} · {template.perSheet} per sheet
         </small>
@@ -198,7 +204,9 @@ export default async function PrintableNameBadgesPage({
                       <p>{label.groupLabel}</p>
                       <footer>
                         <span>{label.attendeeType.toLowerCase()}</span>
-                        <span>{label.shirtSize ? `Shirt ${label.shirtSize}` : "Shirt size needed"}</span>
+                        {collectsShirtSizes && (
+                          <span>{label.shirtSize ? `Shirt ${label.shirtSize}` : "Shirt size needed"}</span>
+                        )}
                       </footer>
                     </div>
                   </article>

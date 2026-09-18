@@ -8,13 +8,11 @@
 -- slice 3 (#127) and does not exist yet.
 
 CREATE TYPE "PersonMatchSignal" AS ENUM (
-  'EMAIL_MATCH',
   'PHONE_MATCH',
   'SAME_SURNAME',
   'SAME_FULL_NAME',
   'HOUSEHOLD_SHARED',
   'EXTERNAL_IDENTITY_SHARED',
-  'EMAIL_MISMATCH',
   'PHONE_MISMATCH'
 );
 

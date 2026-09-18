@@ -1215,12 +1215,12 @@ model Household {
 /// records for `PersonMatchCandidate`. Kept as an enum, not a free-text
 /// string, so evidence is queryable and the domain logic that emits it
 /// (`modules/people/duplicate-match-domain.ts`) stays exhaustive-checkable.
-/// A shared external identity and a normalized-email match are the two
-/// signals strong enough to stand alone; the rest only raise confidence in
-/// combination — see the domain module's rule table.
+/// A shared external identity is the only signal strong enough to stand
+/// alone; the rest only raise confidence in combination — see the domain
+/// module's rule table. Email is deliberately not a signal: IMSDA
+/// households routinely register every member under one adult's email, so
+/// a shared email is common between genuinely different people.
 enum PersonMatchSignal {
-  /// Both people have the same non-null normalized email address.
-  EMAIL_MATCH
   /// Both people have the same non-null normalized phone number.
   PHONE_MATCH
   /// Both people have a normalized last name that is identical.
@@ -1233,8 +1233,6 @@ enum PersonMatchSignal {
   /// `(provider, providerScope, externalId)` tuple. Strong evidence, never
   /// proof — see the `PersonMatchCandidate` model doc and #40.
   EXTERNAL_IDENTITY_SHARED
-  /// Both people have a non-null normalized email address, and they differ.
-  EMAIL_MISMATCH
   /// Both people have a non-null normalized phone number, and they differ.
   PHONE_MISMATCH
 }

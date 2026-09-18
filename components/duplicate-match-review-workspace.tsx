@@ -15,13 +15,11 @@ import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { PersonMatchCandidateRecord } from "@/modules/people/duplicate-match-repository";
 
 const signalLabels: Record<string, string> = {
-  EMAIL_MATCH: "Same email address",
   PHONE_MATCH: "Same phone number",
   SAME_SURNAME: "Same last name",
   SAME_FULL_NAME: "Same first and last name",
   HOUSEHOLD_SHARED: "Share a household",
   EXTERNAL_IDENTITY_SHARED: "Same external system identity",
-  EMAIL_MISMATCH: "Different email addresses",
   PHONE_MISMATCH: "Different phone numbers",
 };
 
@@ -157,7 +155,7 @@ export function DuplicateMatchReviewWorkspace({
         <section className="panel empty-state">
           <ShieldCheck aria-hidden="true" size={24} />
           <h3>Nothing open for review</h3>
-          <p>Run a scan to look for shared emails, phone numbers, household and surname overlaps, or shared external identities.</p>
+          <p>Run a scan to look for shared phone numbers, household and surname overlaps, or shared external identities.</p>
         </section>
       ) : (
         <section className="panel duplicate-section">
