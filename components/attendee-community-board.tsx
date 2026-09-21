@@ -8,11 +8,12 @@ import {
   Flag,
   MessageCircle,
   MessagesSquare,
+  Megaphone,
   Send,
   ShieldCheck,
 } from "lucide-react";
 
-type CommunityPost = {
+export type AttendeeTimelineCommunityPost = {
   id: string;
   parentId: string | null;
   body: string;
@@ -21,8 +22,40 @@ type CommunityPost = {
   authorName: string;
   isOwn: boolean;
   isReported: boolean;
-  replies: CommunityPost[];
+  replies: AttendeeTimelineCommunityPost[];
 };
+
+export type AttendeeTimelineAnnouncement = {
+  id: string;
+  title: string;
+  body: string;
+  priority: "NORMAL" | "IMPORTANT" | "URGENT";
+  publishedAt: string | null;
+};
+
+export type AttendeeTimelineItem =
+  | { kind: "OFFICIAL"; occurredAt: string; announcement: AttendeeTimelineAnnouncement }
+  | { kind: "COMMUNITY"; occurredAt: string; post: AttendeeTimelineCommunityPost };
+
+/**
+ * The attendee timeline deliberately combines only data already visible to a
+ * signed-in attendee. It never joins against registrations or attendee
+ * profiles, which keeps a shared feed from becoming an attendee directory.
+ */
+export function buildAttendeeTimelineItems(
+  announcements: AttendeeTimelineAnnouncement[],
+  posts: AttendeeTimelineCommunityPost[],
+  includeCommunityPosts: boolean,
+): AttendeeTimelineItem[] {
+  return [
+    ...announcements
+      .filter((announcement) => announcement.publishedAt)
+      .map((announcement) => ({ kind: "OFFICIAL" as const, occurredAt: announcement.publishedAt!, announcement })),
+    ...(includeCommunityPosts
+      ? posts.map((post) => ({ kind: "COMMUNITY" as const, occurredAt: post.createdAt, post }))
+      : []),
+  ].sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
+}
 
 export type AttendeeCommunityBoardData = {
   eventId: string;
@@ -39,7 +72,7 @@ export type AttendeeCommunityBoardData = {
     conductAccepted: boolean;
     notificationPreference: "NONE" | "REPLIES" | "ALL";
   };
-  posts: CommunityPost[];
+  posts: AttendeeTimelineCommunityPost[];
   notifications: Array<{
     id: string;
     kind: "NEW_POST" | "REPLY";
@@ -62,13 +95,22 @@ function dateTime(value: string) {
 
 export function AttendeeCommunityBoard({
   community,
+  announcements = [],
 }: {
   community: AttendeeCommunityBoardData;
+  announcements?: AttendeeTimelineAnnouncement[];
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const endpoint = `/api/attendee/events/${encodeURIComponent(community.eventId)}/community`;
   const unread = community.notifications.filter((notification) => !notification.read);
+  const canReadCommunity = community.settings.isEnabled
+    && community.participation.conductAccepted;
+  const timelineItems = buildAttendeeTimelineItems(
+    announcements,
+    community.posts,
+    canReadCommunity,
+  );
 
   async function action(body: Record<string, unknown>) {
     setBusy(true);
@@ -109,34 +151,24 @@ export function AttendeeCommunityBoard({
     });
   }
 
-  if (!community.settings.isEnabled) {
-    return (
-      <section className="public-manage-card attendee-community-board">
-        <div className="public-manage-card-heading">
-          <MessagesSquare size={21} aria-hidden="true" />
-          <div><p className="public-registration-eyebrow">Community</p><h2>Retreat community</h2></div>
-        </div>
-        <p className="public-manage-empty">The event team has not opened attendee discussion yet.</p>
-      </section>
-    );
-  }
-
   return (
-    <section className="public-manage-card attendee-community-board" id="community">
+    <section className="public-manage-card attendee-community-board" id="timeline">
       <header className="attendee-community-heading">
         <div className="public-manage-card-heading">
           <MessagesSquare size={21} aria-hidden="true" />
           <div>
-            <p className="public-registration-eyebrow">Community</p>
-            <h2>{community.eventName} Community</h2>
+            <p className="public-registration-eyebrow">Retreat updates</p>
+            <h2>{community.eventName} Timeline</h2>
           </div>
         </div>
-        <span>{community.posts.length} {community.posts.length === 1 ? "conversation" : "conversations"}</span>
+        <span>{timelineItems.length} {timelineItems.length === 1 ? "update" : "updates"}</span>
       </header>
 
       {error && <p className="inline-notice error" role="alert">{error}</p>}
 
-      {!community.participation.conductAccepted ? (
+      {!community.settings.isEnabled ? (
+        <p className="public-manage-empty">The event team has not opened attendee discussion yet. Official retreat updates appear here.</p>
+      ) : !community.participation.conductAccepted ? (
         <div className="attendee-community-conduct">
           <ShieldCheck size={24} aria-hidden="true" />
           <div>
@@ -215,9 +247,19 @@ export function AttendeeCommunityBoard({
             </form>
           )}
 
-          <div className="attendee-community-posts">
-            {community.posts.map((post) => (
-              <article className={`attendee-community-post is-${post.status.toLowerCase()}`} key={post.id}>
+          <div className="attendee-community-posts attendee-timeline-items">
+            {timelineItems.map((item) => item.kind === "OFFICIAL" ? (
+              <article className={`attendee-timeline-official is-${item.announcement.priority.toLowerCase()}`} key={`announcement:${item.announcement.id}`}>
+                <header>
+                  <div><Megaphone size={15} aria-hidden="true" /><strong>Official update</strong><small>{item.announcement.priority.toLowerCase()}</small></div>
+                  <time dateTime={item.occurredAt}>{dateTime(item.occurredAt)}</time>
+                </header>
+                <h3>{item.announcement.title}</h3>
+                <p>{item.announcement.body}</p>
+              </article>
+            ) : (() => {
+              const post = item.post;
+              return <article className={`attendee-community-post is-${post.status.toLowerCase()}`} key={`post:${post.id}`}>
                 <header>
                   <div><strong>{post.authorName}</strong>{post.isOwn && <small>You</small>}</div>
                   <time dateTime={post.createdAt}>{dateTime(post.createdAt)}</time>
@@ -283,12 +325,26 @@ export function AttendeeCommunityBoard({
                   </div>
                 )}
               </article>
-            ))}
-            {community.posts.length === 0 && (
-              <p className="public-manage-empty">No conversations yet. Start the first one when the retreat team opens posting.</p>
-            )}
+              ;
+            })())}
+            {timelineItems.length === 0 && <p className="public-manage-empty">No updates yet. Official retreat news and attendee conversations will appear here.</p>}
           </div>
         </>
+      )}
+
+      {!canReadCommunity && timelineItems.length > 0 && (
+        <div className="attendee-community-posts attendee-timeline-items">
+          {timelineItems.map((item) => item.kind === "OFFICIAL" && (
+            <article className={`attendee-timeline-official is-${item.announcement.priority.toLowerCase()}`} key={`announcement:${item.announcement.id}`}>
+              <header>
+                <div><Megaphone size={15} aria-hidden="true" /><strong>Official update</strong><small>{item.announcement.priority.toLowerCase()}</small></div>
+                <time dateTime={item.occurredAt}>{dateTime(item.occurredAt)}</time>
+              </header>
+              <h3>{item.announcement.title}</h3>
+              <p>{item.announcement.body}</p>
+            </article>
+          ))}
+        </div>
       )}
     </section>
   );

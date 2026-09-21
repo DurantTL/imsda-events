@@ -106,6 +106,16 @@ export default async function AttendeeEventHubPage({
   }
   const textSections = hub.contentSections.filter((section) => section.kind === "RICH_TEXT");
   const resourceSections = hub.contentSections.filter((section) => section.kind === "RESOURCE_LINKS");
+  const staffTimeline = staffCommunity
+    ? [
+        ...hub.announcements
+          .filter((announcement) => announcement.publishedAt)
+          .map((announcement) => ({ kind: "OFFICIAL" as const, occurredAt: announcement.publishedAt!, announcement })),
+        ...(staffCommunity.settings.isEnabled
+          ? staffCommunity.posts.map((post) => ({ kind: "COMMUNITY" as const, occurredAt: post.createdAt, post }))
+          : []),
+      ].sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
+    : [];
 
   return (
     <main className="public-registration-page attendee-retreat-hub">
@@ -241,7 +251,12 @@ export default async function AttendeeEventHubPage({
             )}
           </section>
 
-          {attendeeCommunity && <AttendeeCommunityBoard community={attendeeCommunity} />}
+          {attendeeCommunity && (
+            <AttendeeCommunityBoard
+              community={attendeeCommunity}
+              announcements={hub.announcements}
+            />
+          )}
 
           {staffCommunity && (
             <section className="public-manage-card attendee-community-board attendee-community-staff-preview">
@@ -257,13 +272,18 @@ export default async function AttendeeEventHubPage({
                   ? "Attendee discussion is enabled. This preview shows shared posts without impersonating a registrant."
                   : "Attendee discussion is currently disabled."}
               </p>
-              {staffCommunity.settings.isEnabled && staffCommunity.posts.length > 0 ? (
-                <div className="attendee-community-posts">
-                  {staffCommunity.posts.slice(0, 20).map((post) => (
-                    <article className={`attendee-community-post is-${post.status.toLowerCase()}`} key={post.id}>
-                      <header><strong>{post.authorName}</strong><time dateTime={post.createdAt}>{new Date(post.createdAt).toLocaleString()}</time></header>
-                      <p>{post.status === "PUBLISHED" ? post.body : "This post is not visible to attendees."}</p>
-                      {post.replies.filter((reply) => reply.status === "PUBLISHED").map((reply) => (
+              {staffTimeline.length > 0 ? (
+                <div className="attendee-community-posts attendee-timeline-items">
+                  {staffTimeline.map((item) => item.kind === "OFFICIAL" ? (
+                    <article className={`attendee-timeline-official is-${item.announcement.priority.toLowerCase()}`} key={`announcement:${item.announcement.id}`}>
+                      <header><div><Megaphone size={15} aria-hidden="true" /><strong>Official update</strong><small>{item.announcement.priority.toLowerCase()}</small></div><time dateTime={item.occurredAt}>{new Date(item.occurredAt).toLocaleString()}</time></header>
+                      <h3>{item.announcement.title}</h3><p>{item.announcement.body}</p>
+                    </article>
+                  ) : (
+                    <article className={`attendee-community-post is-${item.post.status.toLowerCase()}`} key={`post:${item.post.id}`}>
+                      <header><strong>{item.post.authorName}</strong><time dateTime={item.post.createdAt}>{new Date(item.post.createdAt).toLocaleString()}</time></header>
+                      <p>{item.post.status === "PUBLISHED" ? item.post.body : "This post is not visible to attendees."}</p>
+                      {item.post.replies.filter((reply) => reply.status === "PUBLISHED").map((reply) => (
                         <article className="community-staff-reply" key={reply.id}>
                           <strong>{reply.authorName}</strong><p>{reply.body}</p>
                         </article>
@@ -272,7 +292,7 @@ export default async function AttendeeEventHubPage({
                   ))}
                 </div>
               ) : (
-                <p className="public-manage-empty">No attendee conversations are visible.</p>
+                <p className="public-manage-empty">No shared timeline updates are visible.</p>
               )}
               <Link className="secondary-button" href={`/community?event=${encodeURIComponent(staffCommunity.eventId)}`}>
                 Open moderation controls
@@ -289,24 +309,6 @@ export default async function AttendeeEventHubPage({
         </div>
 
         <aside className="attendee-hub-side">
-          <section className="public-manage-card attendee-hub-updates">
-            <div className="public-manage-card-heading">
-              <Megaphone size={20} aria-hidden="true" />
-              <div><p className="public-registration-eyebrow">Staff updates</p><h2>Retreat feed</h2></div>
-            </div>
-            {hub.announcements.length > 0 ? (
-              <div className="attendee-hub-announcement-list">
-                {hub.announcements.map((announcement) => (
-                  <article className={`is-${announcement.priority.toLowerCase()}`} key={announcement.id}>
-                    <small>{announcement.priority.toLowerCase()}</small>
-                    <h3>{announcement.title}</h3>
-                    <p>{announcement.body}</p>
-                  </article>
-                ))}
-              </div>
-            ) : <p className="public-manage-empty">No staff updates have been published yet.</p>}
-          </section>
-
           {resourceSections.map((section) => (
             <section className="public-manage-card attendee-hub-resources" key={section.id}>
               <div className="public-manage-card-heading"><h2>{section.title}</h2></div>
