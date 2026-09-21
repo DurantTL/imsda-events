@@ -243,6 +243,53 @@ export async function getAttendeeCommunity(
   };
 }
 
+/**
+ * Searches only posts the requesting attendee could otherwise read. This is
+ * intentionally event-scoped and returns no registration, profile, or
+ * membership data, so search cannot turn the community into a directory.
+ */
+export async function searchAttendeeCommunityPosts(
+  account: AttendeeIdentity,
+  eventId: string,
+  query: string,
+) {
+  const event = await attendeeEventAccess(account, { id: eventId });
+  const settings = settingsRecord(event.communitySettings);
+  if (!settings.isEnabled) return [];
+  const participation = await getPrisma().communityParticipation.findUnique({
+    where: { eventId_accountId: { eventId: event.id, accountId: account.id } },
+    select: { acceptedConductVersion: true },
+  });
+  if (participation?.acceptedConductVersion !== settings.conductVersion) return [];
+
+  const posts = await getPrisma().communityPost.findMany({
+    where: {
+      eventId: event.id,
+      status: "PUBLISHED",
+      authorDeletedAt: null,
+      body: { contains: query, mode: "insensitive" },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+    select: {
+      id: true,
+      parentId: true,
+      body: true,
+      createdAt: true,
+      authorAccountId: true,
+      author: { select: { displayName: true } },
+    },
+  });
+  return posts.map((post) => ({
+    id: post.id,
+    parentId: post.parentId,
+    body: post.body,
+    createdAt: post.createdAt.toISOString(),
+    authorName: post.author.displayName,
+    isOwn: post.authorAccountId === account.id,
+  }));
+}
+
 export async function getStaffCommunity(eventId: string) {
   const event = await getPrisma().event.findUnique({
     where: { id: eventId },
