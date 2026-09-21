@@ -45,6 +45,14 @@ describe("attendee timeline", () => {
     expect(timeline[0]).toMatchObject({ kind: "OFFICIAL", announcement: { id: "announcement-1" } });
   });
 
+  it("keeps a pinned official update above newer community activity", () => {
+    const timeline = buildAttendeeTimelineItems([
+      { ...announcement, pinnedAt: "2026-10-08T16:00:00.000Z" },
+    ], [post], true);
+
+    expect(timeline.map((item) => item.kind)).toEqual(["OFFICIAL", "COMMUNITY"]);
+  });
+
   it("does not render an unpublished announcement without a published timestamp", () => {
     const timeline = buildAttendeeTimelineItems([
       { ...announcement, id: "draft-1", publishedAt: null },
