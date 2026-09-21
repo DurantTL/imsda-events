@@ -9,6 +9,7 @@ import {
   deleteCommunityPost,
   editCommunityPost,
   markCommunityNotificationsRead,
+  getAttendeeCommunityPostPage,
   reportCommunityPost,
   searchAttendeeCommunityPosts,
   updateCommunityNotifications,
@@ -118,7 +119,13 @@ async function getHandler(
     if (current.via !== "attendee" || !current.account) {
       return json({ message: "Sign in as an attendee to search the community." }, { status: 401 });
     }
-    const query = attendeeCommunitySearchSchema.parse(new URL(request.url).searchParams.get("q") ?? "");
+    const params = new URL(request.url).searchParams;
+    const cursor = params.get("cursor");
+    if (cursor !== null) {
+      const validCursor = z.string().min(1).max(100).parse(cursor);
+      return json(await getAttendeeCommunityPostPage(current.account, eventId, validCursor));
+    }
+    const query = attendeeCommunitySearchSchema.parse(params.get("q") ?? "");
     return json({ results: await searchAttendeeCommunityPosts(current.account, eventId, query) });
   } catch (error) {
     return apiError(error);
