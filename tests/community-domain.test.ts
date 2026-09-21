@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   attendeeCommunityActionSchema,
+  attendeeCommunitySearchSchema,
   staffCommunityActionSchema,
 } from "@/modules/community/domain";
 
@@ -35,6 +36,12 @@ describe("community action validation", () => {
     expect(() => attendeeCommunityActionSchema.parse({
       action: "EDIT_POST", postId: "post-1", body: "x",
     })).toThrow();
+  });
+
+  it("bounds attendee community search text", () => {
+    expect(attendeeCommunitySearchSchema.parse(" airport ride ")).toBe("airport ride");
+    expect(() => attendeeCommunitySearchSchema.parse("x")).toThrow();
+    expect(() => attendeeCommunitySearchSchema.parse("x".repeat(81))).toThrow();
   });
 
   it("requires a substantial conduct agreement and bounded retention", () => {
