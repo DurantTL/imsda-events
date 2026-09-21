@@ -10,6 +10,7 @@ import {
   MessagesSquare,
   Megaphone,
   Pencil,
+  Pin,
   Send,
   ShieldCheck,
   Trash2,
@@ -35,6 +36,7 @@ export type AttendeeTimelineAnnouncement = {
   body: string;
   priority: "NORMAL" | "IMPORTANT" | "URGENT";
   publishedAt: string | null;
+  pinnedAt?: string | null;
 };
 
 export type AttendeeTimelineItem =
@@ -58,7 +60,12 @@ export function buildAttendeeTimelineItems(
     ...(includeCommunityPosts
       ? posts.map((post) => ({ kind: "COMMUNITY" as const, occurredAt: post.createdAt, post }))
       : []),
-  ].sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
+  ].sort((left, right) => {
+    const leftPinned = left.kind === "OFFICIAL" && Boolean(left.announcement.pinnedAt);
+    const rightPinned = right.kind === "OFFICIAL" && Boolean(right.announcement.pinnedAt);
+    if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
+    return right.occurredAt.localeCompare(left.occurredAt);
+  });
 }
 
 export type AttendeeCommunityBoardData = {
@@ -77,6 +84,7 @@ export type AttendeeCommunityBoardData = {
     notificationPreference: "NONE" | "REPLIES" | "ALL";
   };
   posts: AttendeeTimelineCommunityPost[];
+  nextPostCursor: string | null;
   notifications: Array<{
     id: string;
     kind: "NEW_POST" | "REPLY";
@@ -119,6 +127,9 @@ export function AttendeeCommunityBoard({
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<CommunitySearchResult[] | null>(null);
   const [searching, setSearching] = useState(false);
+  const [posts, setPosts] = useState(community.posts);
+  const [nextPostCursor, setNextPostCursor] = useState(community.nextPostCursor);
+  const [loadingMore, setLoadingMore] = useState(false);
   const endpoint = `/api/attendee/events/${encodeURIComponent(community.eventId)}/community`;
   const draftPrefix = `imsda-community-draft:${community.eventId}:`;
   const unread = community.notifications.filter((notification) => !notification.read);
@@ -126,7 +137,7 @@ export function AttendeeCommunityBoard({
     && community.participation.conductAccepted;
   const timelineItems = buildAttendeeTimelineItems(
     announcements,
-    community.posts,
+    posts,
     canReadCommunity,
   );
 
@@ -246,6 +257,23 @@ export function AttendeeCommunityBoard({
       setError(caught instanceof Error ? caught.message : "The community search failed.");
     } finally {
       setSearching(false);
+    }
+  }
+
+  async function loadMorePosts() {
+    if (!nextPostCursor) return;
+    setLoadingMore(true);
+    setError("");
+    try {
+      const response = await fetch(`${endpoint}?cursor=${encodeURIComponent(nextPostCursor)}`, { cache: "no-store" });
+      const result = await response.json() as { message?: string; posts?: AttendeeTimelineCommunityPost[]; nextPostCursor?: string | null };
+      if (!response.ok) throw new Error(result.message ?? "Unable to load earlier conversations.");
+      setPosts((current) => [...current, ...(result.posts ?? [])]);
+      setNextPostCursor(result.nextPostCursor ?? null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to load earlier conversations.");
+    } finally {
+      setLoadingMore(false);
     }
   }
 
@@ -383,7 +411,7 @@ export function AttendeeCommunityBoard({
             {timelineItems.map((item) => item.kind === "OFFICIAL" ? (
               <article className={`attendee-timeline-official is-${item.announcement.priority.toLowerCase()}`} key={`announcement:${item.announcement.id}`}>
                 <header>
-                  <div><Megaphone size={15} aria-hidden="true" /><strong>Official update</strong><small>{item.announcement.priority.toLowerCase()}</small></div>
+                  <div><Megaphone size={15} aria-hidden="true" /><strong>Official update</strong>{item.announcement.pinnedAt && <small><Pin size={12} aria-hidden="true" /> Pinned</small>}<small>{item.announcement.priority.toLowerCase()}</small></div>
                   <time dateTime={item.occurredAt}>{dateTime(item.occurredAt)}</time>
                 </header>
                 <h3>{item.announcement.title}</h3>
@@ -498,6 +526,11 @@ export function AttendeeCommunityBoard({
             })())}
             {timelineItems.length === 0 && <p className="public-manage-empty">No updates yet. Official retreat news and attendee conversations will appear here.</p>}
           </div>
+          {nextPostCursor && (
+            <button className="secondary-button" disabled={loadingMore} onClick={() => void loadMorePosts()} type="button">
+              {loadingMore ? "Loading…" : "Load earlier conversations"}
+            </button>
+          )}
         </>
       )}
 
