@@ -6,6 +6,8 @@ import {
   acceptCommunityConduct,
   CommunityError,
   createCommunityPost,
+  deleteCommunityPost,
+  editCommunityPost,
   markCommunityNotificationsRead,
   reportCommunityPost,
   updateCommunityNotifications,
@@ -65,6 +67,12 @@ async function postHandler(
         break;
       case "CREATE_POST":
         await createCommunityPost(current.account, eventId, input);
+        break;
+      case "EDIT_POST":
+        await editCommunityPost(current.account, eventId, input);
+        break;
+      case "DELETE_POST":
+        await deleteCommunityPost(current.account, eventId, input);
         break;
       case "REPORT_POST":
         await reportCommunityPost(current.account, eventId, input);
