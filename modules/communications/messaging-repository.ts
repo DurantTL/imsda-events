@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 30007)
-Total output lines: 3271
-
 import "server-only";
 
 import { createHash, randomUUID } from "node:crypto";
@@ -567,7 +564,16 @@ async function loadBalanceReminderState(
   }
 
   const settings = settingsRow ?? fallbackSettings;
-  const version = template?.versions[0] ?? null;
+  const staticTemplate = templates[0] ?? null;
+  const staticVersion = staticTemplate?.versions[0] ?? null;
+  const confirmationTemplates = Object.fromEntries(templates.map((template) => {
+    const version = template.versions[0] ?? null;
+    return [template.key, {
+      isEnabled: template.isEnabled,
+      templateVersionId: version?.id ?? null,
+      templateVersionNumber: version?.versionNumber ?? null,
+    }];
+  }));
   const candidates: BalanceReminderCandidate[] = registrations.map((registration) => {
     const contact = recordFromJson(registration.contactSnapshot);
     const contactValue = (
@@ -600,6 +606,7 @@ async function loadBalanceReminderState(
       ),
       totalCents: moneyToCents(registration.totalAmount),
       netPaidCents,
+      attendeeType: registration.attendees[0]?.attendeeType ?? "ATTENDEE",
     };
   });
   const context: BalanceReminderPreviewContext = {
@@ -615,9 +622,10 @@ async function loadBalanceReminderState(
       || settings.senderEmail
       || event.supportContact
       || null,
-    templateEnabled: template?.isEnabled ?? true,
-    templateVersionId: version?.id ?? null,
-    templateVersionNumber: version?.versionNumber ?? null,
+    templateEnabled: staticTemplate?.isEnabled ?? true,
+    templateVersionId: staticVersion?.id ?? null,
+    templateVersionNumber: staticVersion?.versionNumber ?? null,
+    confirmationTemplates,
     eventSnapshot: {
       name: event.name,
       startsAt: event.startsAt.toISOString(),
@@ -1684,7 +1692,11 @@ export async function enqueueBalanceReminderBatch(
     } catch (error) {
       const retryable = error instanceof Prisma.PrismaClientKnownRequestError
         && error.code === "P2034";
-      if (!retryable || attempt === 2) throw e…7 tokens truncated…ansactionResult) {
+      if (!retryable || attempt === 2) throw error;
+    }
+  }
+
+  if (!transactionResult) {
     throw new Error("The reminder batch transaction did not complete.");
   }
 
@@ -2993,16 +3005,7 @@ async function loadSelectedAudienceState(
   }
 
   const settings = settingsRow ?? fallbackSettings;
-  const staticTemplate = templates[0] ?? null;
-  const staticVersion = staticTemplate?.versions[0] ?? null;
-  const confirmationTemplates = Object.fromEntries(templates.map((template) => {
-    const version = template.versions[0] ?? null;
-    return [template.key, {
-      isEnabled: template.isEnabled,
-      templateVersionId: version?.id ?? null,
-      templateVersionNumber: version?.versionNumber ?? null,
-    }];
-  }));
+  const version = template?.versions[0] ?? null;
   const candidates: SelectedAudienceCandidate[] = registrations.map((registration) => {
     const contact = recordFromJson(registration.contactSnapshot);
     const contactValue = (
@@ -3027,7 +3030,6 @@ async function loadSelectedAudienceState(
       ),
       totalCents: moneyToCents(registration.totalAmount),
       netPaidCents,
-      attendeeType: registration.attendees[0]?.attendeeType ?? "ATTENDEE",
     };
   });
 
@@ -3043,10 +3045,9 @@ async function loadSelectedAudienceState(
       || settings.senderEmail
       || event.supportContact
       || null,
-    templateEnabled: staticTemplate?.isEnabled ?? true,
-    templateVersionId: staticVersion?.id ?? null,
-    templateVersionNumber: staticVersion?.versionNumber ?? null,
-    confirmationTemplates,
+    templateEnabled: template?.isEnabled ?? true,
+    templateVersionId: version?.id ?? null,
+    templateVersionNumber: version?.versionNumber ?? null,
   }, now);
 
   return { event, settings, preview };
@@ -3135,7 +3136,9 @@ export async function enqueueSelectedAudienceBatch(
             : "LOCAL_CAPTURE";
           return {
             batchId: input.batchId,
-            templateKey: input.templateKey,
+            // "Send confirmation again" is one staff action, but each
+            // registration gets the confirmation that is true today.
+            templateKey: recipient.resolvedTemplateKey,
             messageIds: existingMessages.map((message) => message.id),
             includedCount: typeof metadata.includedCount === "number"
               ? metadata.includedCount
@@ -3188,9 +3191,7 @@ export async function enqueueSelectedAudienceBatch(
           const queued = await enqueueSelectedAudienceMessage(tx, {
             eventId,
             registrationId: recipient.registrationId,
-            // "Send confirmation again" is one staff action, but each
-            // registration gets the confirmation that is true today.
-            templateKey: recipient.resolvedTemplateKey,
+            templateKey: input.templateKey,
             batchId: input.batchId,
             correlationId: input.batchId,
             announcementTitle: input.announcementTitle || undefined,
