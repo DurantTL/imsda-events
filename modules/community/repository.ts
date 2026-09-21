@@ -189,7 +189,6 @@ export async function getAttendeeCommunity(
             reports: { where: { reporterAccountId: account.id }, select: { id: true } },
             replies: {
               orderBy: { createdAt: "asc" },
-              take: 100,
               select: {
                 id: true,
                 parentId: true,
