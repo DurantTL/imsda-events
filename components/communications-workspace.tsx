@@ -13,6 +13,7 @@ import {
   Mail,
   Megaphone,
   Plus,
+  Pin,
   RefreshCw,
   Save,
   Send,
@@ -425,6 +426,29 @@ export function CommunicationsWorkspace({
       setNotice("Announcement published to the local event feed.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to publish the announcement.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function setAnnouncementPinned(announcement: AnnouncementRecord, pinned: boolean) {
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`/api/events/${eventId}/announcements/${announcement.id}/pin`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pinned }),
+      });
+      const result = await response.json().catch(() => ({})) as ApiResult;
+      if (!response.ok || !result.announcement) throw new Error(result.message ?? "Unable to update the announcement pin.");
+      setAnnouncements((current) => current.map((row) => row.id === announcement.id
+        ? { ...row, pinnedAt: result.announcement!.pinnedAt }
+        : row));
+      setNotice(pinned ? "Official update pinned to the attendee timeline." : "Official update returned to chronological order.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to update the announcement pin.");
     } finally {
       setSaving(false);
     }
@@ -894,9 +918,14 @@ export function CommunicationsWorkspace({
                   </button>
                 )}
                 {canManage && announcement.status === "PUBLISHED" && (
-                  <button className="secondary-button publish-button" type="button" disabled={saving} onClick={() => broadcastAnnouncement(announcement)}>
-                    <Mail aria-hidden="true" size={16} /> Email active registrations
-                  </button>
+                  <>
+                    <button className="secondary-button publish-button" type="button" disabled={saving} onClick={() => void setAnnouncementPinned(announcement, !announcement.pinnedAt)}>
+                      <Pin aria-hidden="true" size={16} /> {announcement.pinnedAt ? "Unpin update" : "Pin to timeline"}
+                    </button>
+                    <button className="secondary-button publish-button" type="button" disabled={saving} onClick={() => broadcastAnnouncement(announcement)}>
+                      <Mail aria-hidden="true" size={16} /> Email active registrations
+                    </button>
+                  </>
                 )}
               </article>
             ))}
