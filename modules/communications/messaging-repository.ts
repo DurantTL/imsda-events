@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 30007)
+Total output lines: 3271
+
 import "server-only";
 
 import { createHash, randomUUID } from "node:crypto";
@@ -59,6 +62,7 @@ import {
   computeSelectedAudiencePreview,
   type SelectedAudienceBatchInput,
   type SelectedAudienceCandidate,
+  selectedAudienceConfirmationTemplateKeys,
   type SelectedAudiencePreview,
   type SelectedAudienceTemplateKey,
 } from "@/modules/communications/selected-audience";
@@ -1680,11 +1684,7 @@ export async function enqueueBalanceReminderBatch(
     } catch (error) {
       const retryable = error instanceof Prisma.PrismaClientKnownRequestError
         && error.code === "P2034";
-      if (!retryable || attempt === 2) throw error;
-    }
-  }
-
-  if (!transactionResult) {
+      if (!retryable || attempt === 2) throw e…7 tokens truncated…ansactionResult) {
     throw new Error("The reminder batch transaction did not complete.");
   }
 
@@ -2936,14 +2936,17 @@ async function loadSelectedAudienceState(
   now = new Date(),
 ) {
   const uniqueIds = [...new Set(registrationIds)];
-  const [event, settingsRow, template, registrations] = await Promise.all([
+  const sourceKeys: PrismaMessageTemplateKey[] = templateKey === "REGISTRATION_CONFIRMATION"
+    ? [...selectedAudienceConfirmationTemplateKeys]
+    : [templateKey];
+  const [event, settingsRow, templates, registrations] = await Promise.all([
     client.event.findUnique({
       where: { id: eventId },
       select: { id: true, name: true, supportContact: true, billingMode: true },
     }),
     client.eventMessageSettings.findUnique({ where: { eventId } }),
-    client.eventMessageTemplate.findUnique({
-      where: { eventId_key: { eventId, key: templateKey } },
+    client.eventMessageTemplate.findMany({
+      where: { eventId, key: { in: sourceKeys } },
       include: {
         versions: {
           where: { status: "PUBLISHED" },
@@ -2973,6 +2976,11 @@ async function loadSelectedAudienceState(
             refunds: { where: { status: "SUCCEEDED" }, select: { amount: true } },
           },
         },
+        attendees: {
+          orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+          take: 1,
+          select: { attendeeType: true },
+        },
       },
     }),
   ]);
@@ -2985,7 +2993,16 @@ async function loadSelectedAudienceState(
   }
 
   const settings = settingsRow ?? fallbackSettings;
-  const version = template?.versions[0] ?? null;
+  const staticTemplate = templates[0] ?? null;
+  const staticVersion = staticTemplate?.versions[0] ?? null;
+  const confirmationTemplates = Object.fromEntries(templates.map((template) => {
+    const version = template.versions[0] ?? null;
+    return [template.key, {
+      isEnabled: template.isEnabled,
+      templateVersionId: version?.id ?? null,
+      templateVersionNumber: version?.versionNumber ?? null,
+    }];
+  }));
   const candidates: SelectedAudienceCandidate[] = registrations.map((registration) => {
     const contact = recordFromJson(registration.contactSnapshot);
     const contactValue = (
@@ -3010,6 +3027,7 @@ async function loadSelectedAudienceState(
       ),
       totalCents: moneyToCents(registration.totalAmount),
       netPaidCents,
+      attendeeType: registration.attendees[0]?.attendeeType ?? "ATTENDEE",
     };
   });
 
@@ -3025,9 +3043,10 @@ async function loadSelectedAudienceState(
       || settings.senderEmail
       || event.supportContact
       || null,
-    templateEnabled: template?.isEnabled ?? true,
-    templateVersionId: version?.id ?? null,
-    templateVersionNumber: version?.versionNumber ?? null,
+    templateEnabled: staticTemplate?.isEnabled ?? true,
+    templateVersionId: staticVersion?.id ?? null,
+    templateVersionNumber: staticVersion?.versionNumber ?? null,
+    confirmationTemplates,
   }, now);
 
   return { event, settings, preview };
@@ -3169,15 +3188,21 @@ export async function enqueueSelectedAudienceBatch(
           const queued = await enqueueSelectedAudienceMessage(tx, {
             eventId,
             registrationId: recipient.registrationId,
-            templateKey: input.templateKey,
+            // "Send confirmation again" is one staff action, but each
+            // registration gets the confirmation that is true today.
+            templateKey: recipient.resolvedTemplateKey,
             batchId: input.batchId,
             correlationId: input.batchId,
             announcementTitle: input.announcementTitle || undefined,
             announcementBody: input.announcementBody || undefined,
             metadata: {
-              trigger: "STAFF_SELECTED_AUDIENCE_BATCH",
+              trigger: input.templateKey === "REGISTRATION_CONFIRMATION"
+                ? "STAFF_SELECTED_CONFIRMATION_BATCH"
+                : "STAFF_SELECTED_AUDIENCE_BATCH",
               batchId: input.batchId,
               previewFingerprint: input.previewFingerprint,
+              selectedTemplateKey: input.templateKey,
+              resolvedTemplateKey: recipient.resolvedTemplateKey,
             },
           });
           messageIds.push(...queued.messageIds);
