@@ -74,6 +74,7 @@ function listedRegistration(overrides: Record<string, unknown> = {}) {
       lastName: "Person",
       normalizedEmail: "canonical@example.test",
     },
+    attendees: [{ attendeeType: "ATTENDEE" }],
     payments: [{ amount: money("100.00"), refunds: [{ amount: money("25.00") }] }],
     ...overrides,
   };
@@ -103,6 +104,17 @@ function baseTransaction() {
           bodyTemplate: DEFAULT_MESSAGE_TEMPLATES.BALANCE_REMINDER.body,
         }],
       }),
+      findMany: vi.fn().mockResolvedValue([{
+        id: "template-balance",
+        key: "BALANCE_REMINDER",
+        isEnabled: true,
+        versions: [{
+          id: "version-balance-1",
+          versionNumber: 1,
+          subjectTemplate: DEFAULT_MESSAGE_TEMPLATES.BALANCE_REMINDER.subject,
+          bodyTemplate: DEFAULT_MESSAGE_TEMPLATES.BALANCE_REMINDER.body,
+        }],
+      }]),
     },
     messageTemplateVersion: { create: vi.fn() },
     event: { findUnique: vi.fn().mockResolvedValue(event) },
@@ -280,5 +292,76 @@ describe("selected-audience batch repository", () => {
       announcementBody: "",
       previewFingerprint: "d".repeat(64),
     }, "user-1")).rejects.toMatchObject({ code: "IDEMPOTENCY_KEY_REUSED" });
+  });
+
+  it("resolves a fresh paid and unpaid confirmation separately for each selected registration", async () => {
+    const tx = baseTransaction();
+    tx.registration.findMany.mockResolvedValue([
+      listedRegistration({
+        id: "registration-paid",
+        confirmationCode: "REG-PAID",
+        payments: [{ amount: money("200.00"), refunds: [] }],
+      }),
+      listedRegistration({
+        id: "registration-unpaid",
+        confirmationCode: "REG-UNPAID",
+        payments: [{ amount: money("25.00"), refunds: [] }],
+      }),
+    ]);
+    const confirmationKeys = [
+      "REGISTRATION_CONFIRMATION_PAID",
+      "REGISTRATION_CONFIRMATION_UNPAID",
+      "REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED",
+      "WORKER_CONFIRMATION",
+    ] as const;
+    tx.eventMessageTemplate.findMany.mockResolvedValue(confirmationKeys.map((key, index) => ({
+      id: `template-${key}`,
+      key,
+      isEnabled: true,
+      versions: [{
+        id: `version-${key}`,
+        versionNumber: index + 1,
+        subjectTemplate: DEFAULT_MESSAGE_TEMPLATES[key].subject,
+        bodyTemplate: DEFAULT_MESSAGE_TEMPLATES[key].body,
+      }],
+    })));
+    mocks.getPrisma.mockReturnValue(prismaFor(tx));
+
+    const preview = await getSelectedAudiencePreview(
+      "event-1",
+      "REGISTRATION_CONFIRMATION",
+      ["registration-paid", "registration-unpaid"],
+    );
+    expect(preview.recipients.map((recipient) => [
+      recipient.confirmationCode,
+      recipient.resolvedTemplateKey,
+    ])).toEqual([
+      ["REG-PAID", "REGISTRATION_CONFIRMATION_PAID"],
+      ["REG-UNPAID", "REGISTRATION_CONFIRMATION_UNPAID"],
+    ]);
+
+    await enqueueSelectedAudienceBatch("event-1", {
+      batchId,
+      templateKey: "REGISTRATION_CONFIRMATION",
+      registrationIds: ["registration-paid", "registration-unpaid"],
+      announcementTitle: "",
+      announcementBody: "",
+      previewFingerprint: preview.fingerprint,
+    }, "user-1");
+
+    expect(tx.messageOutbox.upsert).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      create: expect.objectContaining({
+        templateKey: "REGISTRATION_CONFIRMATION_PAID",
+        metadata: expect.objectContaining({
+          trigger: "STAFF_SELECTED_CONFIRMATION_BATCH",
+          selectedTemplateKey: "REGISTRATION_CONFIRMATION",
+        }),
+      }),
+    }));
+    expect(tx.messageOutbox.upsert).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      create: expect.objectContaining({
+        templateKey: "REGISTRATION_CONFIRMATION_UNPAID",
+      }),
+    }));
   });
 });

@@ -1082,6 +1082,13 @@ select:focus-visible {
 .selected-audience-skips li:first-child { border-top: 0; padding-top: 0; }
 .selected-audience-skips span { display: block; font-size: 0.72rem; font-weight: 700; }
 .selected-audience-skips small { display: block; margin-top: 2px; color: var(--muted); font-size: 0.62rem; }
+.selected-audience-recipients { display: grid; max-height: 260px; gap: 8px; overflow-y: auto; margin: 8px 0 0; border: 1px solid var(--line); border-radius: 10px; padding: 10px; list-style: none; background: #fbfcfd; }
+.selected-audience-recipients li { border-top: 1px solid #edf2f4; padding-top: 8px; }
+.selected-audience-recipients li:first-child { border-top: 0; padding-top: 0; }
+.selected-audience-recipients strong,
+.selected-audience-recipients small { display: block; overflow-wrap: anywhere; }
+.selected-audience-recipients strong { color: var(--ink); font-size: 0.7rem; }
+.selected-audience-recipients small { margin-top: 2px; color: var(--muted); font-size: 0.61rem; }
 .record-card { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 13px; border-radius: 16px; padding: 16px; }
 .record-card h3 { margin: 0; font-size: 0.84rem; }
 .record-card p,

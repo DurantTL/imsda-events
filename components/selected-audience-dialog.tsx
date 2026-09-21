@@ -35,6 +35,16 @@ function deliveryNote(operation: BatchOperation) {
   return "The messages are queued. They send when the outbox is processed.";
 }
 
+function previewDeliveryNote(preview: SelectedAudiencePreview) {
+  if (preview.deliveryMode === "DISABLED") {
+    return "Delivery is disabled. This batch will be recorded as suppressed and will not email anyone.";
+  }
+  if (preview.deliveryMode === "LOCAL_CAPTURE") {
+    return "Local capture is active. This batch will be recorded against each registration and will not email anyone.";
+  }
+  return "External email is active. Confirming this review queues one registration-specific email for every included row.";
+}
+
 /**
  * Sends one template to the registrations staff picked in the list.
  *
@@ -224,11 +234,34 @@ export function SelectedAudienceDialog({
                     <span><small>Balance covered</small><strong>{money(preview.totalBalanceCents)}</strong></span>
                   )}
                 </div>
+                <div className="inline-notice">
+                  <MailCheck aria-hidden="true" size={16} /> {previewDeliveryNote(preview)}
+                </div>
+                <p className="quiet-copy">You selected registrations, so delivery goes to each registration contact shown below—not automatically to every attendee. Registrations that share an address still receive separate registration-specific messages.</p>
                 {!preview.templateEnabled && (
                   <div className="inline-notice">
-                    <TriangleAlert aria-hidden="true" size={16} /> This template is disabled for the event. The messages would be recorded and suppressed rather than sent.
+                    <TriangleAlert aria-hidden="true" size={16} /> {templateKey === "REGISTRATION_CONFIRMATION"
+                      ? "One or more current confirmation templates are disabled for this event. Those messages would be recorded and suppressed rather than sent."
+                      : "This template is disabled for the event. The messages would be recorded and suppressed rather than sent."}
                   </div>
                 )}
+                <section aria-labelledby="selected-audience-recipients-title">
+                  <p className="eyebrow" id="selected-audience-recipients-title">Will receive this message</p>
+                  <ul className="selected-audience-recipients" aria-label="Included registration contacts">
+                    {preview.recipients.map((recipient) => (
+                      <li key={recipient.registrationId}>
+                        <strong>{recipient.recipientName}</strong>
+                        <small>{recipient.recipientEmail} · {recipient.confirmationCode}</small>
+                        {templateKey === "REGISTRATION_CONFIRMATION" && (
+                          <small>{recipient.resolvedTemplateLabel}{recipient.templateVersionNumber ? ` · version ${recipient.templateVersionNumber}` : ""}</small>
+                        )}
+                        {(templateKey === "BALANCE_REMINDER" || recipient.resolvedTemplateKey === "REGISTRATION_CONFIRMATION_UNPAID") && (
+                          <small>Balance due: {money(recipient.balanceCents)}</small>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
                 {preview.skipped.length > 0 && (
                   <div>
                     <p className="eyebrow">Not receiving this message</p>
@@ -257,8 +290,8 @@ export function SelectedAudienceDialog({
               >
                 <Send aria-hidden="true" size={16} />{" "}
                 {sending
-                  ? "Sending…"
-                  : `Send to ${preview?.includedCount ?? 0}`}
+                  ? "Creating batch…"
+                  : `Queue ${preview?.includedCount ?? 0} message${preview?.includedCount === 1 ? "" : "s"}`}
               </button>
             </div>
           </div>
