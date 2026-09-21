@@ -2078,6 +2078,10 @@ model CommunityPost {
   moderatedAt       DateTime?
   moderatedByUserId String?
   moderationNote    String?
+  /// Author deletion is a tombstone: the body and moderation/report evidence
+  /// remain available to authorized staff rather than being physically erased.
+  authorDeletedAt   DateTime?
+  lastEditedAt      DateTime?
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
 
@@ -2088,10 +2092,25 @@ model CommunityPost {
   moderatedBy   User?                   @relation("CommunityPostModeratedBy", fields: [moderatedByUserId], references: [id], onDelete: SetNull)
   reports       CommunityReport[]
   notifications CommunityNotification[]
+  revisions     CommunityPostRevision[]
 
   @@index([eventId, status, createdAt])
   @@index([parentId, createdAt])
   @@index([authorAccountId, createdAt])
+}
+
+/// Immutable prior bodies captured whenever an attendee edits their own post.
+/// The public community surface only shows that a post was edited; revision
+/// contents remain for authorized operational review and audit correlation.
+model CommunityPostRevision {
+  id        String        @id @default(cuid())
+  postId    String
+  body      String
+  createdAt DateTime      @default(now())
+
+  post CommunityPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId, createdAt])
 }
 
 model CommunityReport {

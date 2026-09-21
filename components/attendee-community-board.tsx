@@ -9,8 +9,10 @@ import {
   MessageCircle,
   MessagesSquare,
   Megaphone,
+  Pencil,
   Send,
   ShieldCheck,
+  Trash2,
 } from "lucide-react";
 
 export type AttendeeTimelineCommunityPost = {
@@ -22,6 +24,8 @@ export type AttendeeTimelineCommunityPost = {
   authorName: string;
   isOwn: boolean;
   isReported: boolean;
+  authorDeleted: boolean;
+  editedAt: string | null;
   replies: AttendeeTimelineCommunityPost[];
 };
 
@@ -151,6 +155,16 @@ export function AttendeeCommunityBoard({
     });
   }
 
+  function submitEdit(event: React.FormEvent<HTMLFormElement>, postId: string) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    void action({
+      action: "EDIT_POST",
+      postId,
+      body: String(form.get("body") ?? ""),
+    });
+  }
+
   return (
     <section className="public-manage-card attendee-community-board" id="timeline">
       <header className="attendee-community-heading">
@@ -265,8 +279,23 @@ export function AttendeeCommunityBoard({
                   <time dateTime={post.createdAt}>{dateTime(post.createdAt)}</time>
                 </header>
                 <p>{post.body}</p>
-                {post.status === "PUBLISHED" && (
+                {post.editedAt && !post.authorDeleted && <small className="community-edited-note">Edited {dateTime(post.editedAt)}</small>}
+                {post.status === "PUBLISHED" && !post.authorDeleted && (
                   <div className="attendee-community-post-actions">
+                    {post.isOwn && (
+                      <>
+                        <details>
+                          <summary><Pencil size={14} aria-hidden="true" /> Edit</summary>
+                          <form onSubmit={(event) => submitEdit(event, post.id)}>
+                            <textarea defaultValue={post.body} maxLength={1500} name="body" required rows={3} aria-label="Edit your post" />
+                            <button className="secondary-button" disabled={busy} type="submit">Save changes</button>
+                          </form>
+                        </details>
+                        <button className="text-button" disabled={busy} onClick={() => void action({ action: "DELETE_POST", postId: post.id })} type="button">
+                          <Trash2 size={14} aria-hidden="true" /> Delete
+                        </button>
+                      </>
+                    )}
                     {community.settings.allowReplies && (
                       <details>
                         <summary><MessageCircle size={14} aria-hidden="true" /> Reply</summary>
@@ -304,7 +333,20 @@ export function AttendeeCommunityBoard({
                           <time dateTime={reply.createdAt}>{dateTime(reply.createdAt)}</time>
                         </header>
                         <p>{reply.body}</p>
-                        {reply.status === "PUBLISHED" && !reply.isOwn && !reply.isReported && (
+                        {reply.editedAt && !reply.authorDeleted && <small className="community-edited-note">Edited {dateTime(reply.editedAt)}</small>}
+                        {reply.status === "PUBLISHED" && !reply.authorDeleted && reply.isOwn && (
+                          <div className="attendee-community-post-actions">
+                            <details>
+                              <summary><Pencil size={13} aria-hidden="true" /> Edit</summary>
+                              <form onSubmit={(event) => submitEdit(event, reply.id)}>
+                                <textarea defaultValue={reply.body} maxLength={1500} name="body" required rows={2} aria-label="Edit your reply" />
+                                <button className="secondary-button" disabled={busy} type="submit">Save changes</button>
+                              </form>
+                            </details>
+                            <button className="text-button" disabled={busy} onClick={() => void action({ action: "DELETE_POST", postId: reply.id })} type="button"><Trash2 size={13} aria-hidden="true" /> Delete</button>
+                          </div>
+                        )}
+                        {reply.status === "PUBLISHED" && !reply.authorDeleted && !reply.isOwn && !reply.isReported && (
                           <details>
                             <summary><Flag size={13} aria-hidden="true" /> Report reply</summary>
                             <form onSubmit={(event) => submitReport(event, reply.id)}>

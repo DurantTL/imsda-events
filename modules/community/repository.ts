@@ -24,6 +24,7 @@ export class CommunityError extends Error {
       | "COMMUNITY_POSTS_DISABLED"
       | "COMMUNITY_REPLIES_DISABLED"
       | "COMMUNITY_POST_NOT_FOUND"
+      | "COMMUNITY_POST_NOT_EDITABLE"
       | "COMMUNITY_ALREADY_REPORTED",
     message: string,
     public readonly status = 400,
@@ -100,6 +101,8 @@ type CommunityPostRecord = {
   authorName: string;
   isOwn: boolean;
   isReported: boolean;
+  authorDeleted: boolean;
+  editedAt: string | null;
   replies: CommunityPostRecord[];
 };
 
@@ -108,6 +111,8 @@ function postRecord(post: {
   parentId: string | null;
   body: string;
   status: CommunityPostStatus;
+  authorDeletedAt: Date | null;
+  lastEditedAt: Date | null;
   createdAt: Date;
   authorAccountId: string;
   author: { displayName: string };
@@ -117,13 +122,17 @@ function postRecord(post: {
     parentId: string | null;
     body: string;
     status: CommunityPostStatus;
+    authorDeletedAt: Date | null;
+    lastEditedAt: Date | null;
     createdAt: Date;
     authorAccountId: string;
     author: { displayName: string };
     reports?: Array<{ id: string }>;
   }>;
 }, accountId: string): CommunityPostRecord {
-  const visibleBody = post.status === "PUBLISHED"
+  const visibleBody = post.authorDeletedAt
+    ? "This post was deleted by its author."
+    : post.status === "PUBLISHED"
     ? post.body
     : post.status === "HIDDEN"
       ? "This post was hidden by the event team."
@@ -137,6 +146,8 @@ function postRecord(post: {
     authorName: post.author.displayName,
     isOwn: post.authorAccountId === accountId,
     isReported: Boolean(post.reports?.length),
+    authorDeleted: Boolean(post.authorDeletedAt),
+    editedAt: post.lastEditedAt?.toISOString() ?? null,
     replies: post.replies?.map((reply) => postRecord(reply, accountId)) ?? [],
   };
 }
@@ -167,6 +178,8 @@ export async function getAttendeeCommunity(
             parentId: true,
             body: true,
             status: true,
+            authorDeletedAt: true,
+            lastEditedAt: true,
             createdAt: true,
             authorAccountId: true,
             author: { select: { displayName: true } },
@@ -179,6 +192,8 @@ export async function getAttendeeCommunity(
                 parentId: true,
                 body: true,
                 status: true,
+                authorDeletedAt: true,
+                lastEditedAt: true,
                 createdAt: true,
                 authorAccountId: true,
                 author: { select: { displayName: true } },
@@ -199,7 +214,7 @@ export async function getAttendeeCommunity(
             readAt: true,
             createdAt: true,
             actor: { select: { displayName: true } },
-            post: { select: { id: true, body: true, status: true } },
+            post: { select: { id: true, body: true, status: true, authorDeletedAt: true } },
           },
         })
       : Promise.resolve([]),
@@ -221,7 +236,7 @@ export async function getAttendeeCommunity(
       createdAt: notification.createdAt.toISOString(),
       actorName: notification.actor.displayName,
       postId: notification.post.id,
-      excerpt: notification.post.status === "PUBLISHED"
+      excerpt: notification.post.status === "PUBLISHED" && !notification.post.authorDeletedAt
         ? notification.post.body.slice(0, 120)
         : "This community post is no longer visible.",
     })),
@@ -246,10 +261,13 @@ export async function getStaffCommunity(eventId: string) {
           body: true,
           status: true,
           moderationNote: true,
+          authorDeletedAt: true,
+          lastEditedAt: true,
           createdAt: true,
           authorAccountId: true,
           author: { select: { displayName: true, email: true } },
           reports: { where: { status: "OPEN" }, select: { id: true } },
+          revisions: { orderBy: { createdAt: "asc" }, select: { body: true, createdAt: true } },
           replies: {
             orderBy: { createdAt: "asc" },
             select: {
@@ -258,10 +276,13 @@ export async function getStaffCommunity(eventId: string) {
               body: true,
               status: true,
               moderationNote: true,
+              authorDeletedAt: true,
+              lastEditedAt: true,
               createdAt: true,
               authorAccountId: true,
               author: { select: { displayName: true, email: true } },
               reports: { where: { status: "OPEN" }, select: { id: true } },
+              revisions: { orderBy: { createdAt: "asc" }, select: { body: true, createdAt: true } },
             },
           },
         },
@@ -296,10 +317,16 @@ export async function getStaffCommunity(eventId: string) {
     body: post.body,
     status: post.status,
     moderationNote: post.moderationNote,
+    authorDeletedAt: post.authorDeletedAt?.toISOString() ?? null,
+    lastEditedAt: post.lastEditedAt?.toISOString() ?? null,
     createdAt: post.createdAt.toISOString(),
     authorName: post.author.displayName,
     authorEmail: post.author.email,
     openReports: post.reports.length,
+    revisions: post.revisions.map((revision) => ({
+      body: revision.body,
+      createdAt: revision.createdAt.toISOString(),
+    })),
   });
   return {
     eventId: event.id,
@@ -402,7 +429,7 @@ export async function createCommunityPost(
     await requirePostingParticipation(tx, event.id, account.id, settings.conductVersion);
     const parent = input.parentId
       ? await tx.communityPost.findFirst({
-          where: { id: input.parentId, eventId: event.id, parentId: null, status: "PUBLISHED" },
+          where: { id: input.parentId, eventId: event.id, parentId: null, status: "PUBLISHED", authorDeletedAt: null },
           select: { id: true, authorAccountId: true },
         })
       : null;
@@ -460,6 +487,90 @@ export async function createCommunityPost(
   });
 }
 
+/** Edit only an active post the signed-in attendee authored. */
+export async function editCommunityPost(
+  account: AttendeeIdentity,
+  eventId: string,
+  input: { postId: string; body: string },
+) {
+  const event = await attendeeEventAccess(account, { id: eventId });
+  const settings = settingsRecord(event.communitySettings);
+  if (!settings.isEnabled) throw new CommunityError("COMMUNITY_DISABLED", "The attendee community is not enabled.", 409);
+  return getPrisma().$transaction(async (tx) => {
+    await requirePostingParticipation(tx, event.id, account.id, settings.conductVersion);
+    const post = await tx.communityPost.findFirst({
+      where: {
+        id: input.postId,
+        eventId: event.id,
+        authorAccountId: account.id,
+        status: "PUBLISHED",
+        authorDeletedAt: null,
+      },
+      select: { id: true, body: true, parentId: true },
+    });
+    if (!post) throw new CommunityError("COMMUNITY_POST_NOT_EDITABLE", "Only your active community posts can be edited.", 409);
+    if (post.body === input.body) return post;
+    await tx.communityPostRevision.create({ data: { postId: post.id, body: post.body } });
+    const updated = await tx.communityPost.update({
+      where: { id: post.id },
+      data: { body: input.body, lastEditedAt: new Date() },
+    });
+    await tx.auditLog.create({
+      data: {
+        eventId: event.id,
+        action: post.parentId ? "COMMUNITY_REPLY_EDITED" : "COMMUNITY_POST_EDITED",
+        entityType: "CommunityPost",
+        entityId: post.id,
+        correlationId: randomUUID(),
+        summary: `${account.displayName} edited ${post.parentId ? "a community reply" : "a community post"}.`,
+        metadata: { attendeeAccountId: account.id },
+      },
+    });
+    return updated;
+  });
+}
+
+/**
+ * Author deletion is a tombstone: it never erases the original text, reports,
+ * revisions, or audit evidence available to authorized event staff.
+ */
+export async function deleteCommunityPost(
+  account: AttendeeIdentity,
+  eventId: string,
+  input: { postId: string },
+) {
+  const event = await attendeeEventAccess(account, { id: eventId });
+  return getPrisma().$transaction(async (tx) => {
+    const post = await tx.communityPost.findFirst({
+      where: {
+        id: input.postId,
+        eventId: event.id,
+        authorAccountId: account.id,
+        status: "PUBLISHED",
+        authorDeletedAt: null,
+      },
+      select: { id: true, parentId: true },
+    });
+    if (!post) throw new CommunityError("COMMUNITY_POST_NOT_EDITABLE", "Only your active community posts can be deleted.", 409);
+    const updated = await tx.communityPost.update({
+      where: { id: post.id },
+      data: { authorDeletedAt: new Date() },
+    });
+    await tx.auditLog.create({
+      data: {
+        eventId: event.id,
+        action: post.parentId ? "COMMUNITY_REPLY_AUTHOR_DELETED" : "COMMUNITY_POST_AUTHOR_DELETED",
+        entityType: "CommunityPost",
+        entityId: post.id,
+        correlationId: randomUUID(),
+        summary: `${account.displayName} deleted ${post.parentId ? "a community reply" : "a community post"}.`,
+        metadata: { attendeeAccountId: account.id, tombstone: true },
+      },
+    });
+    return updated;
+  });
+}
+
 export async function reportCommunityPost(
   account: AttendeeIdentity,
   eventId: string,
@@ -470,7 +581,7 @@ export async function reportCommunityPost(
     throw new CommunityError("COMMUNITY_DISABLED", "The attendee community is not enabled.", 409);
   }
   const post = await getPrisma().communityPost.findFirst({
-    where: { id: input.postId, eventId, status: "PUBLISHED" },
+    where: { id: input.postId, eventId, status: "PUBLISHED", authorDeletedAt: null },
     select: { id: true },
   });
   if (!post) throw new CommunityError("COMMUNITY_POST_NOT_FOUND", "That post is no longer available.", 404);

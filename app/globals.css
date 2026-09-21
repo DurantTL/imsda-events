@@ -6414,6 +6414,10 @@ select:focus-visible {
 .attendee-community-post time { color: var(--muted); font-size: 0.54rem; }
 .attendee-community-post > p,
 .attendee-community-replies article > p { margin: 8px 0; white-space: pre-wrap; color: var(--ink); font-size: 0.68rem; line-height: 1.55; }
+.community-edited-note { display: block; margin-top: -3px; color: var(--muted); font-size: 0.54rem; }
+.community-revision-history { margin: .6rem 0; font-size: .78rem; }
+.community-revision-history summary { cursor: pointer; color: var(--muted); }
+.community-revision-history p { margin: .5rem 0; padding-left: .65rem; border-left: 2px solid var(--border); }
 .attendee-community-post-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; border-top: 1px solid #edf2f4; padding-top: 8px; }
 .attendee-community-post-actions summary,
 .attendee-community-replies summary { display: flex; gap: 5px; align-items: center; cursor: pointer; color: var(--muted); font-size: 0.58rem; font-weight: 750; }

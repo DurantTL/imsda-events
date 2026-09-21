@@ -22,6 +22,21 @@ describe("community action validation", () => {
     })).toThrow();
   });
 
+  it("accepts bounded author edit and delete actions", () => {
+    expect(attendeeCommunityActionSchema.parse({
+      action: "EDIT_POST",
+      postId: "post-1",
+      body: "Corrected update",
+    })).toMatchObject({ action: "EDIT_POST" });
+    expect(attendeeCommunityActionSchema.parse({
+      action: "DELETE_POST",
+      postId: "post-1",
+    })).toMatchObject({ action: "DELETE_POST" });
+    expect(() => attendeeCommunityActionSchema.parse({
+      action: "EDIT_POST", postId: "post-1", body: "x",
+    })).toThrow();
+  });
+
   it("requires a substantial conduct agreement and bounded retention", () => {
     expect(staffCommunityActionSchema.parse({
       action: "UPDATE_SETTINGS",

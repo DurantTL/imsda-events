@@ -15,6 +15,15 @@ export const attendeeCommunityActionSchema = z.discriminatedUnion("action", [
     parentId: z.string().trim().min(1).max(100).nullable().optional(),
   }).strict(),
   z.object({
+    action: z.literal("EDIT_POST"),
+    postId: z.string().trim().min(1).max(100),
+    body: z.string().trim().min(2, "Write at least two characters.").max(1_500),
+  }).strict(),
+  z.object({
+    action: z.literal("DELETE_POST"),
+    postId: z.string().trim().min(1).max(100),
+  }).strict(),
+  z.object({
     action: z.literal("REPORT_POST"),
     postId: z.string().trim().min(1).max(100),
     reason: z.enum(communityReportReasons),
