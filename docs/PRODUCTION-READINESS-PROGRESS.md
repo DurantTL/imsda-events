@@ -145,6 +145,12 @@ Verified during development against PostgreSQL 16: a dump of the seeded database
 into a scratch database reporting `Registration=3`, `RegistrationAttendee=5`,
 `Payment=2`, `Person=5`.
 
+**WR26 preflight evidence — September 21, 2026:** a production dump restored into the separate
+scratch database `imsda_restore_verify_20260921` with matching counts: `Registration=175`,
+`RegistrationAttendee=238`, `Payment=96`, and `MessageOutbox=35`. The dump was copied off-host
+and its SHA-256 matched at both locations. This verifies recoverability of that snapshot; it
+does not resolve the unattended off-host-retention decision below.
+
 **Outstanding, and it is an operator decision, not a code change:** the dumps currently
 land in a Docker volume on the same host as the database. Bind `imsda_events_backups` to
 off-host storage or set `BACKUP_OFFSITE_COMMAND`. A dump that shares a host with its

@@ -14,6 +14,26 @@ Sources: open GitHub issues (208 open at time of writing), `docs/BUILD-STATUS-AN
 
 ---
 
+## Execution update — September 21, 2026
+
+This report was prepared before the WR26 handoff work below. The following delivery status
+supersedes its earlier descriptions of those items:
+
+- **C1 is partially delivered** in PR #336: the attendee hub now combines official
+  announcements and community posts into one chronological timeline. Staff pinning and cursor
+  pagination remain open in [#307](https://github.com/DurantTL/imsda-events/issues/307).
+- **C2 is complete**: PR #338 adds author edit/delete, tombstones, audit evidence, and
+  staff-visible revision history; PR #339 adds browser-local draft recovery, rate limits, and
+  event-scoped search over posts already visible to the requester. [#337](https://github.com/DurantTL/imsda-events/issues/337) is closed.
+- The operational-readiness tracking gap is resolved by
+  [#306](https://github.com/DurantTL/imsda-events/issues/306). It records the completed sandbox
+  workflow exercises and the remaining named human gates.
+- A production preflight PostgreSQL backup was restored into a scratch database and the result
+  was count-verified and copied off-host. This is evidence for #306; it does not replace the
+  remaining off-host retention/runbook decision.
+
+---
+
 ## 1. Where the retreat actually stands
 
 **The registration-through-check-in path is built and green.** Public individual/household/group
@@ -27,8 +47,8 @@ runs, and the printable grouped retreat packets are all complete and covered by 
 | | What | Why it matters |
 | --- | --- | --- |
 | **A** | Phase 0 tail — the final email and event-template readiness gate | The last open *feature* work the retreat itself consumes. Merchandise is **on hold** (§2.1) |
-| **B** | WR26 operational readiness — deployment rehearsal, config/migration review, Square exercise, sign-off | The only thing the repository genuinely cannot prove about itself; **has no GitHub issue at all** |
-| **C** | Attendee community depth | Shipped as a moderated message board. It is not a timeline, and there is no attendee lookup of any kind |
+| **B** | [#306](https://github.com/DurantTL/imsda-events/issues/306) — WR26 operational readiness — config/migration review and sign-off | The remaining launch evidence is human operational work, not a missing feature |
+| **C** | Attendee community depth | The shared official/community timeline and durable author controls are shipped; pinning, pagination, reactions, deeper moderation, and attendee discovery remain scoped separately |
 
 Everything else on the retreat's critical path is done.
 
@@ -82,14 +102,9 @@ be re-examined at that point for the receipt and refund message states it would 
 ## 3. Track B — WR26 operational readiness (the actual launch gate)
 
 `docs/BUILD-STATUS-AND-WR26-GAP-AUDIT.md` marks this **"Now."**
-`docs/PRODUCTION-READINESS-PROGRESS.md` item 9 marks it **"in progress."**
-**There is no GitHub issue for it.** That is the single biggest tracking gap found in this review:
-the one item both status documents call the current blocker is invisible to the issue tooling,
-labels, and any agent queue.
-
-**Recommended action: file one `needs-human` issue, "WR26 operational readiness and go-live
-sign-off," with these acceptance items.** Automation may prepare evidence; a human performs
-every production action.
+`docs/PRODUCTION-READINESS-PROGRESS.md` item 9 marks it **"in progress."** It is now tracked
+in [#306](https://github.com/DurantTL/imsda-events/issues/306) as a `needs-human` gate.
+Automation may prepare evidence; a human performs every production action.
 
 - B1 — Deployment rehearsal on the sandbox environment, with the release SHA proven through
   `/api/health` (the endpoint already reports release SHA and Next.js build ID).
@@ -104,6 +119,10 @@ every production action.
   readiness item 4.
 - B6 — Staff runbook, health checks, support contacts, and event-day sign-off.
 - B7 — Confirm no required retreat workflow depends on fictitious accounts or direct database editing.
+
+The completed #306 evidence includes the deployed release identification, migration review,
+Square sandbox exercises, core payment/registration workflow checks, and the verified preflight
+backup restore. Its remaining checkboxes are authoritative for the launch decision.
 
 Field-level encryption of medical/screening answers (readiness item 8) has been **explicitly
 removed from the retreat release gate** and stays a platform backlog item. Existing access
@@ -131,19 +150,19 @@ and the `CommunityParticipation` / `CommunityPost` / `CommunityReport` /
 - attendee reporting with five reasons, staff moderation queue, hide/remove with audit trail
 - retention cleanup measured from event end, run by the outbox sweep
 - read-only staff preview that cannot post as an attendee
+- one chronological attendee timeline combining official announcements and community posts
+- author edit/delete controls with tombstones, audit entries, and staff-visible prior versions
+- browser-local draft recovery, per-attendee post/reply rate limits, and event-scoped visible-post search
 
 That foundation is sound. The security and moderation boundaries are the expensive part and
-they are done correctly. **The problem is not correctness — it is that the surface is a
-message board, and a retreat needs a timeline and a way to find people.**
+they are done correctly. The remaining community work is depth and lifecycle behavior, not a
+missing basic timeline or author-control surface.
 
 ### 4.2 Confirmed gaps (verified in source, not assumed)
 
-**It is not a timeline.** The feed is `CommunityPost` rows only. Nothing else flows into it:
-published announcements, schedule moments, session/seminar starts, staff updates, and event
-content sections all live in separate surfaces on the retreat hub
-(`modules/attendee-accounts/retreat-hub-repository.ts` returns `announcements` and
-`contentSections` as their own arrays). An attendee sees a wall of chatter next to a
-separate wall of official information, in two places, with no shared chronology.
+**Timeline follow-up remains.** PR #336 combines published official announcements and community
+posts chronologically, preserving the existing attendee boundary. It did not add staff pinning
+or replace the current post/reply caps with cursor pagination; those remain #307 acceptance items.
 
 **There is no attendee lookup, at all.** `modules/people/` contains a README and no code —
 permanent people, households, and affiliations are documented as owned there but not yet built.
@@ -156,15 +175,13 @@ event-scoped operations search is still open work ([#180](https://github.com/Dur
 
 - no profiles of any kind — no display name distinct from registration name, no avatar, no
   church/club, no interests, no "what sessions am I in"
-- no reactions, no pinning, no official/staff badge on a post
-- no author edit or author delete; only staff moderation can change a post
+- no reactions or staff pinning
 - no media or photos (no object storage pipeline exists for community content)
-- no mentions, hashtags, or full-text search over posts
+- no mentions or hashtags
 - no groups — not by church, seminar, lodging, or interest
-- no cursor pagination; the board hard-caps at 50 top-level posts and 100 replies
+- no cursor pagination; the board still hard-caps at 50 top-level posts and 100 replies
   (`modules/community/repository.ts`), so an active retreat silently loses history from view
-- no per-attendee rate limiting, no block/mute, no community-only suspension
-- no drafts or failed-post recovery
+- no block/mute or community-only suspension
 - no read-only post-event window — retention deletes rather than archives
 - event cloning behavior for community settings and conduct text is not defined
 
@@ -193,8 +210,8 @@ before that line is presentation and moderation hygiene over data attendees alre
 
 | Slice | Scope | Risk | Suggested labels |
 | --- | --- | --- | --- |
-| **C1 — Unified retreat timeline (read)** | Merge published announcements, staff updates, event content moments, and community posts into one chronological, event-local feed on the retreat hub. Official items carry a staff badge and can be pinned. Community posts still originate only from `CommunityPost`; nothing new is disclosed. Cursor pagination replaces the 50/100 caps. | Low | `codex-ready` |
-| **C2 — Post durability and author control** | Author edit with visible edit history, author delete with tombstone, drafts and failed-post recovery, per-attendee rate limiting, and full-text search over visible posts. | Low | `codex-ready` |
+| **C1 — Unified retreat timeline (read)** | **Partially delivered in PR #336:** chronological official announcements plus community posts with official badges. Staff pinning and cursor pagination remain in #307. | Low | `codex-ready` after its remaining contract is narrowed |
+| **C2 — Post durability and author control** | **Completed by #338 and #339:** author edit/history/delete tombstones, local drafts, rate limits, and visible-post search. | Low | closed #337 |
 | **C3 — Reactions and engagement** | Reactions on posts and replies, privacy-safe aggregate counts for staff (active participants, posts, reach). No ranked feed — chronological stays the default. | Low | `codex-ready` |
 | **C4 — Moderation depth** | Moderation queue with escalation states, moderator notes, block/mute, community-only suspension that never touches event registration, spam controls, and repeat-abuse handling. Extends the existing report/moderate path. | Medium | `codex-ready` |
 | **C5 — Attendee community profiles** | Opt-in, event-scoped profile: display name separate from registration name, optional avatar, church/club, short bio, interests. Attendee previews exactly what others see. Legal name, DOB, email, phone, address, balance, medical data, room, minor status, and emergency contacts are never exposed. | **Needs decision** | `needs-decision`, `sensitive-data` |
@@ -203,8 +220,9 @@ before that line is presentation and moderation hygiene over data attendees alre
 | **C8 — Media** | Photos and approved media: object storage, type/size validation, metadata stripping, scanning, thumbnails, alt text, copyright reporting, authorized delivery rather than guessable URLs, retention and deletion. | **Needs human** | `needs-human`, `sensitive-data` |
 | **C9 — Lifecycle and retention** | Independent community open/close dates, a read-only post-event window before deletion, archive/export, and explicit clone behavior (settings and conduct text copy; posts, profiles, memberships, and reports never do). Also defines what happens to content when someone cancels, transfers, or is removed. | Low–Medium | `codex-ready` after C5 settles profile retention |
 
-**For the retreat specifically, C1 + C2 + C4 are the ones that change the experience most and
-carry the least policy risk.** They are buildable now. C9 should follow close behind, because
+**For the retreat specifically, the remaining C1 work and C4 are the community items that change
+the experience most and carry the least policy risk.** C4 remains blocked on its documented
+visibility and escalation decisions. C9 should follow close behind, because
 retention currently deletes with no read-only period, and an event clone's community behavior
 is undefined — both are easier to fix before a second retreat than after.
 
@@ -253,9 +271,9 @@ same shapes. Do not let it delay Track A or B.
 Holding merchandise shortens the front of this list considerably — the retreat's remaining
 feature work is now one issue, and the readiness gate is the real long pole.
 
-1. **B** file the WR26 operational-readiness issue now — it is human work and has lead time
-2. **A1** final email gate (#140), run together with B4's real-client smoke test
-3. **C1, C2, C4** community timeline, post durability, moderation depth
+1. **B** complete the remaining #306 human evidence and sign-off
+2. **A1** final email gate (#140), recording the existing real-client smoke-test evidence alongside it
+3. **C1 remaining scope and C4** only after their open contracts are resolved
 4. **C9** community lifecycle and clone behavior
 5. **Answer the §4.5 decisions**; then C5/C6 if approved, C3 anywhere it fits
 6. **D** generalization (#155, #153, #104) after the retreat runs
@@ -266,9 +284,8 @@ feature work is now one issue, and the readiness gate is the real long pole.
 
 ## 7. Tracking actions
 
-- [ ] File the WR26 operational-readiness issue (§3). It is the current blocker and has no issue.
-- [ ] Split #83 into C1–C9 as bounded children; keep #83 open as the tracking epic; mark only
-      C1–C4 (and C9, once C5 settles retention) `codex-ready`.
+- [x] File the WR26 operational-readiness issue — [#306](https://github.com/DurantTL/imsda-events/issues/306).
+- [x] Split #83 into bounded community children. C2 is closed as [#337](https://github.com/DurantTL/imsda-events/issues/337); C1 remains open as [#307](https://github.com/DurantTL/imsda-events/issues/307).
 - [ ] Record the §4.5 decisions on the relevant issues with the `needs-decision` label, per the
       repository's stop-and-label rule.
 - [ ] Add these slices to issue #98 as a named Women's Retreat track, so #98 stays canonical and
