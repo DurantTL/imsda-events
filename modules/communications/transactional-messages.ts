@@ -18,6 +18,10 @@ import {
 } from "@/modules/communications/message-blocks";
 
 type TransactionalTemplateKey =
+  | "REGISTRATION_CONFIRMATION_PAID"
+  | "REGISTRATION_CONFIRMATION_UNPAID"
+  | "REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED"
+  | "WORKER_CONFIRMATION"
   | "WAITLIST_JOINED"
   | "WAITLIST_PROMOTED"
   | "WAITLIST_REMOVED"
@@ -36,6 +40,14 @@ type TransactionalTemplateKey =
   // of registrations to send it to; the event-wide reminder batch renders its
   // own copy against the reminder audience.
   | "BALANCE_REMINDER";
+
+type SelectedAudienceMessageTemplateKey =
+  | "BALANCE_REMINDER"
+  | "EVENT_ANNOUNCEMENT"
+  | "REGISTRATION_CONFIRMATION_PAID"
+  | "REGISTRATION_CONFIRMATION_UNPAID"
+  | "REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED"
+  | "WORKER_CONFIRMATION";
 
 type TransactionalMessageInput = {
   eventId: string;
@@ -172,6 +184,9 @@ function paymentStateForTemplate(
   key: TransactionalTemplateKey,
   input: { totalCents: number; balanceCents: number },
 ): PaymentState {
+  if (key === "REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED") {
+    return "ORGANIZATION_INVOICED";
+  }
   if (key === "WAITLIST_JOINED") return "WAITLISTED";
   if (key === "WAITLIST_PROMOTED") return "WAITLIST_PROMOTED";
   if (key === "REGISTRATION_CANCELLED" || key === "WAITLIST_REMOVED") return "CANCELLED";
@@ -640,7 +655,7 @@ export function enqueueEventAnnouncementMessage(
 export function enqueueSelectedAudienceMessage(
   tx: Prisma.TransactionClient,
   input: Omit<TransactionalMessageInput, "templateKey" | "transitionKey"> & {
-    templateKey: "BALANCE_REMINDER" | "EVENT_ANNOUNCEMENT";
+    templateKey: SelectedAudienceMessageTemplateKey;
     batchId: string;
   },
 ) {
