@@ -411,6 +411,7 @@ model User {
   sessions                  UserSession[]
   resetTokens               PasswordResetToken[]
   announcements             Announcement[]
+  pinnedAnnouncements       Announcement[]        @relation("AnnouncementPinnedBy")
   auditLogs                 AuditLog[]
   importRuns                ImportRun[]
   createdRegistrationForms  RegistrationForm[]        @relation("RegistrationFormCreatedBy")
@@ -2021,13 +2022,17 @@ model Announcement {
   status          AnnouncementStatus   @default(DRAFT)
   priority        AnnouncementPriority @default(NORMAL)
   publishedAt     DateTime?
+  pinnedAt        DateTime?
+  pinnedByUserId  String?
   createdAt       DateTime             @default(now())
   updatedAt       DateTime             @updatedAt
 
   event     Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
   createdBy User  @relation(fields: [createdByUserId], references: [id])
+  pinnedBy  User? @relation("AnnouncementPinnedBy", fields: [pinnedByUserId], references: [id], onDelete: SetNull)
 
   @@index([eventId, status, publishedAt])
+  @@index([eventId, status, pinnedAt, publishedAt])
 }
 
 /// Event-level controls keep attendee discussion off until staff publish the
