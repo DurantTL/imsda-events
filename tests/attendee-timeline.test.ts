@@ -22,6 +22,8 @@ const post: AttendeeTimelineCommunityPost = {
   authorName: "Attendee",
   isOwn: false,
   isReported: false,
+  authorDeleted: false,
+  editedAt: null,
   replies: [],
 };
 
