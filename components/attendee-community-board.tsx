@@ -324,7 +324,8 @@ export function AttendeeCommunityBoard({
                     ))}
                   </div>
                 )}
-              </article>;
+              </article>
+              ;
             })())}
             {timelineItems.length === 0 && <p className="public-manage-empty">No updates yet. Official retreat news and attendee conversations will appear here.</p>}
           </div>
