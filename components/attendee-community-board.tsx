@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Bell,
   BellOff,
@@ -88,6 +88,15 @@ export type AttendeeCommunityBoardData = {
   }>;
 };
 
+type CommunitySearchResult = {
+  id: string;
+  parentId: string | null;
+  body: string;
+  createdAt: string;
+  authorName: string;
+  isOwn: boolean;
+};
+
 function dateTime(value: string) {
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
@@ -106,7 +115,12 @@ export function AttendeeCommunityBoard({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<CommunitySearchResult[] | null>(null);
+  const [searching, setSearching] = useState(false);
   const endpoint = `/api/attendee/events/${encodeURIComponent(community.eventId)}/community`;
+  const draftPrefix = `imsda-community-draft:${community.eventId}:`;
   const unread = community.notifications.filter((notification) => !notification.read);
   const canReadCommunity = community.settings.isEnabled
     && community.participation.conductAccepted;
@@ -116,7 +130,52 @@ export function AttendeeCommunityBoard({
     canReadCommunity,
   );
 
-  async function action(body: Record<string, unknown>) {
+  function draftKey(parentId?: string) {
+    return parentId ?? "new-post";
+  }
+
+  useEffect(() => {
+    try {
+      const recovered: Record<string, string> = {};
+      for (let index = 0; index < window.localStorage.length; index += 1) {
+        const storageKey = window.localStorage.key(index);
+        if (!storageKey?.startsWith(draftPrefix)) continue;
+        const body = window.localStorage.getItem(storageKey);
+        if (body) recovered[storageKey.slice(draftPrefix.length)] = body;
+      }
+      if (Object.keys(recovered).length > 0) setDrafts(recovered);
+    } catch {
+      // Draft recovery is a convenience. Private browsing or storage policy
+      // must never prevent an attendee from using the community.
+    }
+  }, [draftPrefix]);
+
+  function saveDraft(parentId: string | undefined, body: string) {
+    const key = draftKey(parentId);
+    setDrafts((current) => ({ ...current, [key]: body }));
+    try {
+      if (body) window.localStorage.setItem(`${draftPrefix}${key}`, body);
+      else window.localStorage.removeItem(`${draftPrefix}${key}`);
+    } catch {
+      // See draft-recovery note above.
+    }
+  }
+
+  function clearDraft(parentId?: string) {
+    const key = draftKey(parentId);
+    setDrafts((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+    try {
+      window.localStorage.removeItem(`${draftPrefix}${key}`);
+    } catch {
+      // See draft-recovery note above.
+    }
+  }
+
+  async function action(body: Record<string, unknown>, onSuccess?: () => void) {
     setBusy(true);
     setError("");
     try {
@@ -127,21 +186,22 @@ export function AttendeeCommunityBoard({
       });
       const result = await response.json() as { message?: string };
       if (!response.ok) throw new Error(result.message ?? "The community action failed.");
+      onSuccess?.();
       window.location.reload();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The community action failed.");
+      const message = caught instanceof Error ? caught.message : "The community action failed.";
+      setError(body.action === "CREATE_POST" ? `${message} Your draft is still saved on this device.` : message);
       setBusy(false);
     }
   }
 
   function submitPost(event: React.FormEvent<HTMLFormElement>, parentId?: string) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
     void action({
       action: "CREATE_POST",
-      body: String(form.get("body") ?? ""),
+      body: drafts[draftKey(parentId)] ?? "",
       parentId: parentId ?? null,
-    });
+    }, () => clearDraft(parentId));
   }
 
   function submitReport(event: React.FormEvent<HTMLFormElement>, postId: string) {
@@ -163,6 +223,27 @@ export function AttendeeCommunityBoard({
       postId,
       body: String(form.get("body") ?? ""),
     });
+  }
+
+  async function submitSearch(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const query = searchQuery.trim();
+    if (query.length < 2) {
+      setError("Enter at least two characters to search posts.");
+      return;
+    }
+    setSearching(true);
+    setError("");
+    try {
+      const response = await fetch(`${endpoint}?q=${encodeURIComponent(query)}`, { cache: "no-store" });
+      const result = await response.json() as { message?: string; results?: CommunitySearchResult[] };
+      if (!response.ok) throw new Error(result.message ?? "The community search failed.");
+      setSearchResults(result.results ?? []);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The community search failed.");
+    } finally {
+      setSearching(false);
+    }
   }
 
   return (
@@ -244,6 +325,37 @@ export function AttendeeCommunityBoard({
             </details>
           )}
 
+          <form className="attendee-community-search" onSubmit={submitSearch}>
+            <label htmlFor="community-search">Search attendee posts</label>
+            <div>
+              <input
+                id="community-search"
+                maxLength={80}
+                minLength={2}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search questions, rides, or updates"
+                type="search"
+                value={searchQuery}
+              />
+              <button className="secondary-button" disabled={searching} type="submit">{searching ? "Searching…" : "Search"}</button>
+              {searchResults && <button className="text-button" onClick={() => { setSearchQuery(""); setSearchResults(null); }} type="button">Clear</button>}
+            </div>
+            <small>Searches only visible posts and replies from this event.</small>
+          </form>
+
+          {searchResults && (
+            <section className="attendee-community-search-results" aria-live="polite">
+              <h3>{searchResults.length} {searchResults.length === 1 ? "matching post" : "matching posts"}</h3>
+              {searchResults.length === 0 ? <p>No visible posts match that search.</p> : searchResults.map((result) => (
+                <article key={result.id}>
+                  <header><strong>{result.authorName}</strong>{result.isOwn && <small>You</small>}<time dateTime={result.createdAt}>{dateTime(result.createdAt)}</time></header>
+                  <p>{result.body}</p>
+                  {result.parentId && <small>Reply</small>}
+                </article>
+              ))}
+            </section>
+          )}
+
           {community.settings.allowNewPosts && (
             <form className="attendee-community-compose" onSubmit={submitPost}>
               <label htmlFor="community-post-body">Start a conversation</label>
@@ -254,7 +366,10 @@ export function AttendeeCommunityBoard({
                 placeholder="Share a helpful update, question, encouragement, or retreat moment."
                 required
                 rows={3}
+                value={drafts[draftKey()] ?? ""}
+                onChange={(event) => saveDraft(undefined, event.target.value)}
               />
+              <small>Drafts stay on this device until sent.</small>
               <button className="primary-button" disabled={busy} type="submit">
                 <Send size={15} aria-hidden="true" /> Post
               </button>
@@ -300,7 +415,16 @@ export function AttendeeCommunityBoard({
                       <details>
                         <summary><MessageCircle size={14} aria-hidden="true" /> Reply</summary>
                         <form onSubmit={(event) => submitPost(event, post.id)}>
-                          <textarea maxLength={1500} name="body" required rows={2} aria-label={`Reply to ${post.authorName}`} />
+                          <textarea
+                            maxLength={1500}
+                            name="body"
+                            required
+                            rows={2}
+                            aria-label={`Reply to ${post.authorName}`}
+                            value={drafts[draftKey(post.id)] ?? ""}
+                            onChange={(event) => saveDraft(post.id, event.target.value)}
+                          />
+                          <small>Draft saved on this device.</small>
                           <button className="secondary-button" disabled={busy} type="submit">Post reply</button>
                         </form>
                       </details>
