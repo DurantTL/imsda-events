@@ -135,19 +135,22 @@ export function AttendeeCommunityBoard({
   }
 
   useEffect(() => {
-    try {
-      const recovered: Record<string, string> = {};
-      for (let index = 0; index < window.localStorage.length; index += 1) {
-        const storageKey = window.localStorage.key(index);
-        if (!storageKey?.startsWith(draftPrefix)) continue;
-        const body = window.localStorage.getItem(storageKey);
-        if (body) recovered[storageKey.slice(draftPrefix.length)] = body;
+    const frame = window.requestAnimationFrame(() => {
+      try {
+        const recovered: Record<string, string> = {};
+        for (let index = 0; index < window.localStorage.length; index += 1) {
+          const storageKey = window.localStorage.key(index);
+          if (!storageKey?.startsWith(draftPrefix)) continue;
+          const body = window.localStorage.getItem(storageKey);
+          if (body) recovered[storageKey.slice(draftPrefix.length)] = body;
+        }
+        if (Object.keys(recovered).length > 0) setDrafts(recovered);
+      } catch {
+        // Draft recovery is a convenience. Private browsing or storage policy
+        // must never prevent an attendee from using the community.
       }
-      if (Object.keys(recovered).length > 0) setDrafts(recovered);
-    } catch {
-      // Draft recovery is a convenience. Private browsing or storage policy
-      // must never prevent an attendee from using the community.
-    }
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [draftPrefix]);
 
   function saveDraft(parentId: string | undefined, body: string) {
