@@ -32,6 +32,11 @@ export const attendeeCommunityActionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("MARK_NOTIFICATIONS_READ") }).strict(),
 ]);
 
+export const attendeeCommunitySearchSchema = z.string()
+  .trim()
+  .min(2, "Enter at least two characters to search posts.")
+  .max(80, "Keep the search to 80 characters or fewer.");
+
 export const staffCommunityActionSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("UPDATE_SETTINGS"),
