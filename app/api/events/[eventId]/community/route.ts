@@ -5,6 +5,7 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { staffCommunityActionSchema } from "@/modules/community/domain";
 import {
   CommunityError,
+  getStaffCommunity,
   moderateCommunityPost,
   resolveCommunityReport,
   updateCommunitySettings,
@@ -32,6 +33,19 @@ function apiError(error: unknown) {
     error: "COMMUNITY_REQUEST_FAILED",
     message: "The community action could not be completed.",
   }, { status: 500 });
+}
+
+async function getHandler(request: Request, context: { params: Promise<{ eventId: string }> }) {
+  try {
+    const { eventId } = await context.params;
+    await requirePermission(await getCurrentSession(), eventId, "MANAGE_COMMUNICATIONS", findActiveMembership);
+    const cursor = new URL(request.url).searchParams.get("cursor");
+    const community = await getStaffCommunity(eventId, cursor ? z.string().min(1).max(100).parse(cursor) : undefined);
+    if (!community) return Response.json({ error: "COMMUNITY_NOT_FOUND" }, { status: 404 });
+    return Response.json({ posts: community.posts, nextPostCursor: community.nextPostCursor });
+  } catch (error) {
+    return apiError(error);
+  }
 }
 
 async function patchHandler(
@@ -66,4 +80,5 @@ async function patchHandler(
   }
 }
 
+export const GET = withRequestContext(getHandler);
 export const PATCH = withRequestContext(patchHandler);

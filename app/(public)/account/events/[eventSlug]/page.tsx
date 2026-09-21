@@ -114,7 +114,12 @@ export default async function AttendeeEventHubPage({
         ...(staffCommunity.settings.isEnabled
           ? staffCommunity.posts.map((post) => ({ kind: "COMMUNITY" as const, occurredAt: post.createdAt, post }))
           : []),
-      ].sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
+      ].sort((left, right) => {
+        const leftPinned = left.kind === "OFFICIAL" && Boolean(left.announcement.pinnedAt);
+        const rightPinned = right.kind === "OFFICIAL" && Boolean(right.announcement.pinnedAt);
+        if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
+        return right.occurredAt.localeCompare(left.occurredAt);
+      })
     : [];
 
   return (

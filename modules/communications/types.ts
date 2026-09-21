@@ -205,6 +205,7 @@ export type AnnouncementRecord = {
   status: string;
   priority: string;
   publishedAt: string | null;
+  pinnedAt: string | null;
   updatedAt: string;
 };
 

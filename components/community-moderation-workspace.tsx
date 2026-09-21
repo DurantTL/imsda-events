@@ -44,6 +44,7 @@ type StaffCommunity = {
       revisions: Array<{ body: string; createdAt: string }>;
     }>;
   }>;
+  nextPostCursor: string | null;
   reports: Array<{
     id: string;
     postId: string;
@@ -66,6 +67,9 @@ function when(value: string) {
 export function CommunityModerationWorkspace({ community }: { community: StaffCommunity }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [posts, setPosts] = useState(community.posts);
+  const [nextPostCursor, setNextPostCursor] = useState(community.nextPostCursor);
+  const [loadingMore, setLoadingMore] = useState(false);
   const endpoint = `/api/events/${encodeURIComponent(community.eventId)}/community`;
 
   async function action(body: Record<string, unknown>) {
@@ -83,6 +87,23 @@ export function CommunityModerationWorkspace({ community }: { community: StaffCo
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The community change failed.");
       setBusy(false);
+    }
+  }
+
+  async function loadMorePosts() {
+    if (!nextPostCursor) return;
+    setLoadingMore(true);
+    setError("");
+    try {
+      const response = await fetch(`${endpoint}?cursor=${encodeURIComponent(nextPostCursor)}`, { cache: "no-store" });
+      const result = await response.json() as { message?: string; posts?: StaffCommunity["posts"]; nextPostCursor?: string | null };
+      if (!response.ok) throw new Error(result.message ?? "Unable to load earlier conversations.");
+      setPosts((current) => [...current, ...(result.posts ?? [])]);
+      setNextPostCursor(result.nextPostCursor ?? null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to load earlier conversations.");
+    } finally {
+      setLoadingMore(false);
     }
   }
 
@@ -171,7 +192,7 @@ export function CommunityModerationWorkspace({ community }: { community: StaffCo
 
       <section className="community-staff-summary" aria-label="Community summary">
         <article><UsersRound size={20} aria-hidden="true" /><strong>{community.participantCount}</strong><span>participants</span></article>
-        <article><MessageSquareWarning size={20} aria-hidden="true" /><strong>{community.posts.length}</strong><span>conversations</span></article>
+        <article><MessageSquareWarning size={20} aria-hidden="true" /><strong>{posts.length}</strong><span>loaded conversations</span></article>
         <article className={community.reports.length ? "is-warning" : ""}><Flag size={20} aria-hidden="true" /><strong>{community.reports.length}</strong><span>open reports</span></article>
       </section>
 
@@ -210,9 +231,9 @@ export function CommunityModerationWorkspace({ community }: { community: StaffCo
             <Eye size={15} aria-hidden="true" /> Preview attendee view
           </a>
         </div>
-        {community.posts.length === 0 ? (
+        {posts.length === 0 ? (
           <p className="empty-state">No attendee conversations have been posted.</p>
-        ) : community.posts.map((post) => (
+        ) : posts.map((post) => (
           <article className="community-staff-post" key={post.id}>
             <header>
               <div><strong>{post.authorName}</strong><small>{post.authorEmail}</small></div>
@@ -259,6 +280,7 @@ export function CommunityModerationWorkspace({ community }: { community: StaffCo
             ))}
           </article>
         ))}
+        {nextPostCursor && <button className="secondary-button" disabled={loadingMore} onClick={() => void loadMorePosts()} type="button">{loadingMore ? "Loading…" : "Load earlier conversations"}</button>}
       </section>
     </div>
   );

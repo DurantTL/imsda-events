@@ -3,7 +3,7 @@ import { getPrisma } from "@/lib/prisma";
 export async function listAnnouncements(eventId: string) {
   const rows = await getPrisma().announcement.findMany({
     where: { eventId },
-    orderBy: [{ status: "desc" }, { updatedAt: "desc" }],
+    orderBy: [{ status: "desc" }, { pinnedAt: "desc" }, { updatedAt: "desc" }],
   });
   return rows.map((row) => ({
     id: row.id,
@@ -14,6 +14,7 @@ export async function listAnnouncements(eventId: string) {
     placement: row.placement,
     audience: row.audience,
     publishedAt: row.publishedAt?.toISOString() ?? null,
+    pinnedAt: row.pinnedAt?.toISOString() ?? null,
     updatedAt: row.updatedAt.toISOString(),
   }));
 }
@@ -69,6 +70,41 @@ export async function publishAnnouncement(eventId: string, announcementId: strin
         entityId: announcementId,
         correlationId: crypto.randomUUID(),
         summary: `Published announcement: ${existing.title}.`,
+      },
+    });
+    return announcement;
+  });
+}
+
+/** Pinning is limited to published official updates and records who changed it. */
+export async function setAnnouncementPinned(
+  eventId: string,
+  announcementId: string,
+  actorUserId: string,
+  pinned: boolean,
+) {
+  return getPrisma().$transaction(async (tx) => {
+    const existing = await tx.announcement.findFirst({
+      where: { id: announcementId, eventId, status: "PUBLISHED" },
+      select: { id: true, title: true, pinnedAt: true },
+    });
+    if (!existing) return null;
+    const announcement = await tx.announcement.update({
+      where: { id: existing.id },
+      data: pinned
+        ? { pinnedAt: new Date(), pinnedByUserId: actorUserId }
+        : { pinnedAt: null, pinnedByUserId: null },
+    });
+    await tx.auditLog.create({
+      data: {
+        eventId,
+        actorUserId,
+        action: pinned ? "ANNOUNCEMENT_PINNED" : "ANNOUNCEMENT_UNPINNED",
+        entityType: "Announcement",
+        entityId: announcement.id,
+        correlationId: crypto.randomUUID(),
+        summary: `${pinned ? "Pinned" : "Unpinned"} official announcement: ${announcement.title}.`,
+        metadata: { previousPinnedAt: existing.pinnedAt?.toISOString() ?? null },
       },
     });
     return announcement;

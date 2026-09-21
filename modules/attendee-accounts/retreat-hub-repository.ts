@@ -23,6 +23,7 @@ const retreatHubEventSelect = {
   announcements: {
     where: { status: "PUBLISHED" as const },
     orderBy: [
+      { pinnedAt: "desc" as const },
       { publishedAt: "desc" as const },
       { updatedAt: "desc" as const },
     ],
@@ -32,6 +33,7 @@ const retreatHubEventSelect = {
       body: true,
       priority: true,
       publishedAt: true,
+      pinnedAt: true,
     },
   },
   contentSections: {
@@ -82,11 +84,13 @@ function retreatHubAnnouncementRecords(event: {
     body: string;
     priority: "NORMAL" | "IMPORTANT" | "URGENT";
     publishedAt: Date | null;
+    pinnedAt: Date | null;
   }>;
 }) {
   return event.announcements.map((announcement) => ({
     ...announcement,
     publishedAt: announcement.publishedAt?.toISOString() ?? null,
+    pinnedAt: announcement.pinnedAt?.toISOString() ?? null,
   }));
 }
 

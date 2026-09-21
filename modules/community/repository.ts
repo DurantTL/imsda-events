@@ -155,6 +155,7 @@ function postRecord(post: {
 export async function getAttendeeCommunity(
   account: AttendeeIdentity,
   eventSlug: string,
+  postCursor?: string,
 ) {
   let event;
   try {
@@ -171,8 +172,10 @@ export async function getAttendeeCommunity(
     settings.isEnabled
       ? getPrisma().communityPost.findMany({
           where: { eventId: event.id, parentId: null },
-          orderBy: { createdAt: "desc" },
-          take: 50,
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          cursor: postCursor ? { id: postCursor } : undefined,
+          skip: postCursor ? 1 : undefined,
+          take: 26,
           select: {
             id: true,
             parentId: true,
@@ -186,7 +189,6 @@ export async function getAttendeeCommunity(
             reports: { where: { reporterAccountId: account.id }, select: { id: true } },
             replies: {
               orderBy: { createdAt: "asc" },
-              take: 100,
               select: {
                 id: true,
                 parentId: true,
@@ -228,7 +230,8 @@ export async function getAttendeeCommunity(
       conductAccepted: participation?.acceptedConductVersion === settings.conductVersion,
       notificationPreference: participation?.notificationPreference ?? "REPLIES",
     },
-    posts: posts.map((post) => postRecord(post, account.id)),
+    posts: posts.slice(0, 25).map((post) => postRecord(post, account.id)),
+    nextPostCursor: posts.length > 25 ? posts[24]!.id : null,
     notifications: notifications.map((notification) => ({
       id: notification.id,
       kind: notification.kind,
@@ -240,6 +243,46 @@ export async function getAttendeeCommunity(
         ? notification.post.body.slice(0, 120)
         : "This community post is no longer visible.",
     })),
+  };
+}
+
+/** Cursor pages repeat the same event, registration, and conduct boundary as the first timeline page. */
+export async function getAttendeeCommunityPostPage(
+  account: AttendeeIdentity,
+  eventId: string,
+  cursor?: string,
+) {
+  const event = await attendeeEventAccess(account, { id: eventId });
+  const settings = settingsRecord(event.communitySettings);
+  if (!settings.isEnabled) return { posts: [], nextPostCursor: null };
+  const participation = await getPrisma().communityParticipation.findUnique({
+    where: { eventId_accountId: { eventId: event.id, accountId: account.id } },
+    select: { acceptedConductVersion: true },
+  });
+  if (participation?.acceptedConductVersion !== settings.conductVersion) return { posts: [], nextPostCursor: null };
+  const posts = await getPrisma().communityPost.findMany({
+    where: { eventId: event.id, parentId: null },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    cursor: cursor ? { id: cursor } : undefined,
+    skip: cursor ? 1 : undefined,
+    take: 26,
+    select: {
+      id: true, parentId: true, body: true, status: true, authorDeletedAt: true, lastEditedAt: true, createdAt: true, authorAccountId: true,
+      author: { select: { displayName: true } },
+      reports: { where: { reporterAccountId: account.id }, select: { id: true } },
+      replies: {
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: {
+          id: true, parentId: true, body: true, status: true, authorDeletedAt: true, lastEditedAt: true, createdAt: true, authorAccountId: true,
+          author: { select: { displayName: true } },
+          reports: { where: { reporterAccountId: account.id }, select: { id: true } },
+        },
+      },
+    },
+  });
+  return {
+    posts: posts.slice(0, 25).map((post) => postRecord(post, account.id)),
+    nextPostCursor: posts.length > 25 ? posts[24]!.id : null,
   };
 }
 
@@ -290,7 +333,7 @@ export async function searchAttendeeCommunityPosts(
   }));
 }
 
-export async function getStaffCommunity(eventId: string) {
+export async function getStaffCommunity(eventId: string, postCursor?: string) {
   const event = await getPrisma().event.findUnique({
     where: { id: eventId },
     select: {
@@ -300,8 +343,10 @@ export async function getStaffCommunity(eventId: string) {
       communitySettings: true,
       communityPosts: {
         where: { parentId: null },
-        orderBy: { createdAt: "desc" },
-        take: 100,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        cursor: postCursor ? { id: postCursor } : undefined,
+        skip: postCursor ? 1 : undefined,
+        take: 26,
         select: {
           id: true,
           parentId: true,
@@ -381,10 +426,11 @@ export async function getStaffCommunity(eventId: string) {
     eventName: event.name,
     settings,
     participantCount: event._count.communityParticipations,
-    posts: event.communityPosts.map((post) => ({
+    posts: event.communityPosts.slice(0, 25).map((post) => ({
       ...staffPost(post),
       replies: post.replies.map(staffPost),
     })),
+    nextPostCursor: event.communityPosts.length > 25 ? event.communityPosts[24]!.id : null,
     reports: event.communityReports.map((report) => ({
       id: report.id,
       postId: report.postId,
