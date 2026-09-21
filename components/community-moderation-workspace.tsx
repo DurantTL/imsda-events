@@ -22,20 +22,26 @@ type StaffCommunity = {
     body: string;
     status: "PUBLISHED" | "HIDDEN" | "REMOVED";
     moderationNote: string | null;
+    authorDeletedAt: string | null;
+    lastEditedAt: string | null;
     createdAt: string;
     authorName: string;
     authorEmail: string;
     openReports: number;
+    revisions: Array<{ body: string; createdAt: string }>;
     replies: Array<{
       id: string;
       parentId: string | null;
       body: string;
       status: "PUBLISHED" | "HIDDEN" | "REMOVED";
       moderationNote: string | null;
+      authorDeletedAt: string | null;
+      lastEditedAt: string | null;
       createdAt: string;
       authorName: string;
       authorEmail: string;
       openReports: number;
+      revisions: Array<{ body: string; createdAt: string }>;
     }>;
   }>;
   reports: Array<{
@@ -213,7 +219,13 @@ export function CommunityModerationWorkspace({ community }: { community: StaffCo
               <span className={`status-chip ${post.status === "PUBLISHED" ? "green" : "gold"}`}>{post.status.toLowerCase()}</span>
             </header>
             <p>{post.body}</p>
-            <small>{when(post.createdAt)} · {post.openReports} open reports</small>
+            <small>{when(post.createdAt)} · {post.openReports} open reports{post.authorDeletedAt ? ` · author deleted ${when(post.authorDeletedAt)}` : ""}{post.lastEditedAt ? ` · last edited ${when(post.lastEditedAt)}` : ""}</small>
+            {post.revisions.length > 0 && (
+              <details className="community-revision-history">
+                <summary>{post.revisions.length} earlier version{post.revisions.length === 1 ? "" : "s"}</summary>
+                {post.revisions.map((revision, index) => <p key={`${revision.createdAt}:${index}`}><small>{when(revision.createdAt)}</small><br />{revision.body}</p>)}
+              </details>
+            )}
             <form onSubmit={(event) => moderationForm(event, post.id)}>
               <select defaultValue={post.status} name="status">
                 <option value="PUBLISHED">Visible</option>
@@ -227,6 +239,13 @@ export function CommunityModerationWorkspace({ community }: { community: StaffCo
               <article className="community-staff-reply" key={reply.id}>
                 <header><div><strong>{reply.authorName}</strong><small>{reply.authorEmail}</small></div><span>{reply.status.toLowerCase()}</span></header>
                 <p>{reply.body}</p>
+                <small>{when(reply.createdAt)}{reply.authorDeletedAt ? ` · author deleted ${when(reply.authorDeletedAt)}` : ""}{reply.lastEditedAt ? ` · last edited ${when(reply.lastEditedAt)}` : ""}</small>
+                {reply.revisions.length > 0 && (
+                  <details className="community-revision-history">
+                    <summary>{reply.revisions.length} earlier version{reply.revisions.length === 1 ? "" : "s"}</summary>
+                    {reply.revisions.map((revision, index) => <p key={`${revision.createdAt}:${index}`}><small>{when(revision.createdAt)}</small><br />{revision.body}</p>)}
+                  </details>
+                )}
                 <form onSubmit={(event) => moderationForm(event, reply.id)}>
                   <select defaultValue={reply.status} name="status">
                     <option value="PUBLISHED">Visible</option>
