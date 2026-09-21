@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import {
+  DEFAULT_MESSAGE_TEMPLATE_NAMES,
+  selectRegistrationMessageTemplate,
+  type MessageTemplateKey,
+} from "@/modules/communications/templates";
 import type { MessagingSettingsRecord } from "@/modules/communications/types";
 
 /**
@@ -26,6 +31,7 @@ import type { MessagingSettingsRecord } from "@/modules/communications/types";
 export const selectedAudienceTemplateKeys = [
   "BALANCE_REMINDER",
   "EVENT_ANNOUNCEMENT",
+  "REGISTRATION_CONFIRMATION",
 ] as const;
 
 export type SelectedAudienceTemplateKey =
@@ -33,9 +39,25 @@ export type SelectedAudienceTemplateKey =
 
 export const selectedAudienceTemplateLabels:
   Readonly<Record<SelectedAudienceTemplateKey, string>> = {
-    BALANCE_REMINDER: "Balance reminder",
-    EVENT_ANNOUNCEMENT: "Event announcement",
-  };
+  BALANCE_REMINDER: "Balance reminder",
+  EVENT_ANNOUNCEMENT: "Event announcement",
+  REGISTRATION_CONFIRMATION: "Send confirmation again",
+};
+
+export const selectedAudienceConfirmationTemplateKeys = [
+  "REGISTRATION_CONFIRMATION_PAID",
+  "REGISTRATION_CONFIRMATION_UNPAID",
+  "REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED",
+  "WORKER_CONFIRMATION",
+] as const satisfies readonly MessageTemplateKey[];
+
+export type SelectedAudienceConfirmationTemplateKey =
+  typeof selectedAudienceConfirmationTemplateKeys[number];
+
+export type SelectedAudienceResolvedTemplateKey =
+  | "BALANCE_REMINDER"
+  | "EVENT_ANNOUNCEMENT"
+  | SelectedAudienceConfirmationTemplateKey;
 
 export const selectedAudienceBatchInputSchema = z.strictObject({
   batchId: z.uuid(),
@@ -91,6 +113,7 @@ export type SelectedAudienceCandidate = {
   recipientEmail: string;
   totalCents: number;
   netPaidCents: number;
+  attendeeType: string;
 };
 
 export type SelectedAudienceRecipient = {
@@ -100,6 +123,12 @@ export type SelectedAudienceRecipient = {
   recipientEmail: string;
   totalCents: number;
   balanceCents: number;
+  /** The actual per-registration template, not the staff's broad action. */
+  resolvedTemplateKey: SelectedAudienceResolvedTemplateKey;
+  resolvedTemplateLabel: string;
+  templateEnabled: boolean;
+  templateVersionId: string | null;
+  templateVersionNumber: number | null;
 };
 
 export type SelectedAudienceSkip = {
@@ -136,12 +165,44 @@ export type SelectedAudiencePreviewContext = {
   templateEnabled: boolean;
   templateVersionId: string | null;
   templateVersionNumber: number | null;
+  /** Published sources for the four current-state confirmation variants. */
+  confirmationTemplates?: Partial<Record<
+    SelectedAudienceConfirmationTemplateKey,
+    {
+      isEnabled: boolean;
+      templateVersionId: string | null;
+      templateVersionNumber: number | null;
+    }
+  >>;
 };
 
 const emailSchema = z.email();
 
 function normalizedEmail(value: string) {
   return value.trim().toLowerCase();
+}
+
+function recipientTemplate(
+  candidate: SelectedAudienceCandidate,
+  context: SelectedAudiencePreviewContext,
+) {
+  const resolvedTemplateKey: SelectedAudienceResolvedTemplateKey = context.templateKey === "REGISTRATION_CONFIRMATION"
+    ? selectRegistrationMessageTemplate({
+      isWorker: candidate.attendeeType === "WORKER",
+      balanceCents: Math.max(candidate.totalCents - candidate.netPaidCents, 0),
+      isDeferredOrganizationBilling: context.isDeferredOrganizationBilling,
+    }) as SelectedAudienceConfirmationTemplateKey
+    : context.templateKey;
+  const confirmationSource = context.confirmationTemplates?.[
+    resolvedTemplateKey as SelectedAudienceConfirmationTemplateKey
+  ];
+  return {
+    resolvedTemplateKey,
+    resolvedTemplateLabel: DEFAULT_MESSAGE_TEMPLATE_NAMES[resolvedTemplateKey],
+    templateEnabled: confirmationSource?.isEnabled ?? context.templateEnabled,
+    templateVersionId: confirmationSource?.templateVersionId ?? context.templateVersionId,
+    templateVersionNumber: confirmationSource?.templateVersionNumber ?? context.templateVersionNumber,
+  };
 }
 
 /**
@@ -212,6 +273,7 @@ export function computeSelectedAudiencePreview(
       recipientEmail,
       totalCents: candidate.totalCents,
       balanceCents,
+      ...recipientTemplate(candidate, context),
     });
   }
 
@@ -223,10 +285,18 @@ export function computeSelectedAudiencePreview(
     senderName: context.senderName,
     senderEmail: context.senderEmail,
     replyToEmail: context.replyToEmail,
-    templateEnabled: context.templateEnabled,
-    templateVersionId: context.templateVersionId,
-    templateVersionNumber: context.templateVersionNumber,
-    recipients,
+    recipients: recipients.map((recipient) => ({
+      registrationId: recipient.registrationId,
+      confirmationCode: recipient.confirmationCode,
+      recipientName: recipient.recipientName,
+      recipientEmail: recipient.recipientEmail,
+      totalCents: recipient.totalCents,
+      balanceCents: recipient.balanceCents,
+      resolvedTemplateKey: recipient.resolvedTemplateKey,
+      templateEnabled: recipient.templateEnabled,
+      templateVersionId: recipient.templateVersionId,
+      templateVersionNumber: recipient.templateVersionNumber,
+    })),
     skipped: skipped.map((entry) => ({
       registrationId: entry.registrationId,
       code: entry.code,
@@ -245,8 +315,10 @@ export function computeSelectedAudiencePreview(
       0,
     ),
     deliveryMode: context.deliveryMode,
-    templateEnabled: context.templateEnabled,
-    templateVersionNumber: context.templateVersionNumber,
+    templateEnabled: recipients.every((recipient) => recipient.templateEnabled),
+    templateVersionNumber: context.templateKey === "REGISTRATION_CONFIRMATION"
+      ? null
+      : context.templateVersionNumber,
     recipients,
     skipped,
   };
