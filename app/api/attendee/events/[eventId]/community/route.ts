@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
-import { attendeeCommunityActionSchema } from "@/modules/community/domain";
+import { attendeeCommunityActionSchema, attendeeCommunitySearchSchema } from "@/modules/community/domain";
 import {
   acceptCommunityConduct,
   CommunityError,
@@ -10,10 +10,13 @@ import {
   editCommunityPost,
   markCommunityNotificationsRead,
   reportCommunityPost,
+  searchAttendeeCommunityPosts,
   updateCommunityNotifications,
 } from "@/modules/community/repository";
 import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
+import { applyRateLimitHeaders, type RateLimitOutcome } from "@/modules/rate-limit/domain";
+import { checkAttendeeCommunityPostRateLimit } from "@/modules/rate-limit/service";
 
 const privateHeaders = {
   "Cache-Control": "private, no-store, max-age=0",
@@ -51,6 +54,7 @@ async function postHandler(
 ) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
+  let rateLimit: RateLimitOutcome | undefined;
   try {
     const { eventId } = await context.params;
     const current = await getCurrentAttendee();
@@ -58,6 +62,20 @@ async function postHandler(
       return json({ message: "Sign in as an attendee to use the community." }, { status: 401 });
     }
     const input = attendeeCommunityActionSchema.parse(await request.json());
+    if (input.action === "CREATE_POST") {
+      rateLimit = await checkAttendeeCommunityPostRateLimit(
+        request,
+        current.account.id,
+        eventId,
+        input.parentId ? "reply" : "post",
+      );
+      if (!rateLimit.allowed) {
+        return applyRateLimitHeaders(
+          json({ message: "You are posting too quickly. Please wait and try again." }, { status: 429 }),
+          rateLimit,
+        );
+      }
+    }
     switch (input.action) {
       case "ACCEPT_CONDUCT":
         await acceptCommunityConduct(current.account, eventId);
@@ -81,10 +99,31 @@ async function postHandler(
         await markCommunityNotificationsRead(current.account, eventId);
         break;
     }
-    return json({ ok: true });
+    return rateLimit
+      ? applyRateLimitHeaders(json({ ok: true }), rateLimit)
+      : json({ ok: true });
+  } catch (error) {
+    const response = apiError(error);
+    return rateLimit ? applyRateLimitHeaders(response, rateLimit) : response;
+  }
+}
+
+async function getHandler(
+  request: Request,
+  context: { params: Promise<{ eventId: string }> },
+) {
+  try {
+    const { eventId } = await context.params;
+    const current = await getCurrentAttendee();
+    if (current.via !== "attendee" || !current.account) {
+      return json({ message: "Sign in as an attendee to search the community." }, { status: 401 });
+    }
+    const query = attendeeCommunitySearchSchema.parse(new URL(request.url).searchParams.get("q") ?? "");
+    return json({ results: await searchAttendeeCommunityPosts(current.account, eventId, query) });
   } catch (error) {
     return apiError(error);
   }
 }
 
+export const GET = withRequestContext(getHandler);
 export const POST = withRequestContext(postHandler);

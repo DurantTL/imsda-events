@@ -24,9 +24,11 @@ const mocks = vi.hoisted(() => {
     deleteCommunityPost: vi.fn(),
     reportCommunityPost: vi.fn(),
     markCommunityNotificationsRead: vi.fn(),
+    searchAttendeeCommunityPosts: vi.fn(),
     updateCommunitySettings: vi.fn(),
     moderateCommunityPost: vi.fn(),
     resolveCommunityReport: vi.fn(),
+    checkAttendeeCommunityPostRateLimit: vi.fn(),
   };
 });
 
@@ -55,12 +57,16 @@ vi.mock("@/modules/community/repository", () => ({
   deleteCommunityPost: mocks.deleteCommunityPost,
   reportCommunityPost: mocks.reportCommunityPost,
   markCommunityNotificationsRead: mocks.markCommunityNotificationsRead,
+  searchAttendeeCommunityPosts: mocks.searchAttendeeCommunityPosts,
   updateCommunitySettings: mocks.updateCommunitySettings,
   moderateCommunityPost: mocks.moderateCommunityPost,
   resolveCommunityReport: mocks.resolveCommunityReport,
 }));
+vi.mock("@/modules/rate-limit/service", () => ({
+  checkAttendeeCommunityPostRateLimit: mocks.checkAttendeeCommunityPostRateLimit,
+}));
 
-import { POST as attendeePost } from "@/app/api/attendee/events/[eventId]/community/route";
+import { GET as attendeeGet, POST as attendeePost } from "@/app/api/attendee/events/[eventId]/community/route";
 import { PATCH as staffPatch } from "@/app/api/events/[eventId]/community/route";
 
 const context = { params: Promise.resolve({ eventId: "event-1" }) };
@@ -87,6 +93,18 @@ beforeEach(() => {
   mocks.getCurrentAttendee.mockResolvedValue({ account, via: "attendee", sessionId: "session-1" });
   mocks.getCurrentSession.mockResolvedValue({ user: { id: "staff-1" } });
   mocks.requirePermission.mockResolvedValue({ user: { id: "staff-1" } });
+  mocks.checkAttendeeCommunityPostRateLimit.mockResolvedValue({
+    allowed: true,
+    decisions: [{
+      policy: "attendee.community.post.account",
+      allowed: true,
+      limit: 6,
+      remaining: 5,
+      count: 1,
+      windowSeconds: 900,
+      resetAfterSeconds: 900,
+    }],
+  });
 });
 
 describe("attendee community route", () => {
@@ -103,6 +121,27 @@ describe("attendee community route", () => {
       body: "Does anyone need help carrying bags?",
       parentId: null,
     });
+    expect(response.headers.get("ratelimit-remaining")).toBe("5");
+    expect(mocks.checkAttendeeCommunityPostRateLimit).toHaveBeenCalledWith(
+      expect.any(Request), account.id, "event-1", "post",
+    );
+  });
+
+  it("rejects an exhausted attendee post bucket before writing", async () => {
+    mocks.checkAttendeeCommunityPostRateLimit.mockResolvedValue({
+      allowed: false,
+      decisions: [{
+        policy: "attendee.community.post.account", allowed: false, limit: 6,
+        remaining: 0, count: 7, windowSeconds: 900, resetAfterSeconds: 311,
+      }],
+    });
+    const response = await attendeePost(request("POST", {
+      action: "CREATE_POST", body: "A message that should be limited.", parentId: null,
+    }), context);
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("311");
+    expect(mocks.createCommunityPost).not.toHaveBeenCalled();
   });
 
   it("does not let the staff attendee bridge post as a registrant", async () => {
@@ -113,6 +152,24 @@ describe("attendee community route", () => {
 
     expect(response.status).toBe(401);
     expect(mocks.acceptCommunityConduct).not.toHaveBeenCalled();
+  });
+
+  it("searches only through the signed-in attendee boundary", async () => {
+    mocks.searchAttendeeCommunityPosts.mockResolvedValue([{
+      id: "post-1", parentId: null, body: "Need a ride from the airport", createdAt: "2026-09-21T12:00:00.000Z", authorName: "Attendee Two", isOwn: false,
+    }]);
+    const response = await attendeeGet(new Request("https://events.imsda.test/api/community?q=ride"), context);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ results: [{ id: "post-1" }] });
+    expect(mocks.searchAttendeeCommunityPosts).toHaveBeenCalledWith(account, "event-1", "ride");
+  });
+
+  it("rejects a too-short community search without querying posts", async () => {
+    const response = await attendeeGet(new Request("https://events.imsda.test/api/community?q=x"), context);
+
+    expect(response.status).toBe(400);
+    expect(mocks.searchAttendeeCommunityPosts).not.toHaveBeenCalled();
   });
 
   it("routes author edits and tombstone deletes through the attendee boundary", async () => {

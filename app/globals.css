@@ -6390,8 +6390,24 @@ select:focus-visible {
 .attendee-community-notifications li { color: var(--muted); font-size: 0.61rem; }
 .attendee-community-notifications li strong { color: var(--ink); }
 .attendee-community-compose { display: grid; gap: 8px; margin-bottom: 15px; border-radius: 12px; background: #f7fafb; padding: 13px; }
+.attendee-community-search { display: grid; gap: 6px; margin: 0 0 13px; border: 1px solid #e2eaf0; border-radius: 11px; background: #fbfcfd; padding: 11px; }
+.attendee-community-search > label { font-size: 0.64rem; font-weight: 800; }
+.attendee-community-search > div { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.attendee-community-search input { flex: 1 1 220px; min-width: 0; }
+.attendee-community-search small { color: var(--muted); font-size: 0.55rem; }
+.attendee-community-search-results { display: grid; gap: 8px; margin: 0 0 14px; }
+.attendee-community-search-results h3 { margin: 0; font-size: 0.68rem; }
+.attendee-community-search-results > p { margin: 0; color: var(--muted); font-size: 0.62rem; }
+.attendee-community-search-results article { border-left: 3px solid #d8c8e7; border-radius: 8px; background: #f8fafb; padding: 9px 11px; }
+.attendee-community-search-results article header { display: flex; gap: 6px; align-items: baseline; }
+.attendee-community-search-results article header small { border-radius: 999px; background: var(--imsda-navy-soft); color: var(--imsda-navy); padding: 1px 5px; font-size: 0.49rem; font-weight: 800; }
+.attendee-community-search-results article time { margin-left: auto; color: var(--muted); font-size: 0.54rem; }
+.attendee-community-search-results article p { margin: 5px 0; white-space: pre-wrap; font-size: 0.64rem; line-height: 1.45; }
+.attendee-community-search-results article > small { color: var(--muted); font-size: 0.53rem; }
 .attendee-community-compose label { font-size: 0.68rem; font-weight: 800; }
 .attendee-community-compose button { justify-self: end; }
+.attendee-community-compose small,
+.attendee-community-replies form > small { color: var(--muted); font-size: 0.56rem; }
 .attendee-community-posts { display: grid; gap: 11px; }
 .attendee-timeline-items { margin-top: 14px; }
 .attendee-timeline-official { border: 1px solid #cbd9e5; border-left: 4px solid var(--imsda-navy); border-radius: 12px; background: #f8fbfd; padding: 13px; }

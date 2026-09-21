@@ -546,3 +546,29 @@ export async function checkPublicPaymentRateLimit(
     },
   ], configuration);
 }
+
+/**
+ * Community posting is authenticated, but an active registration should not
+ * make it possible to flood an event's attendee timeline. Posts and replies
+ * deliberately have separate, event-scoped attendee buckets: a helpful
+ * conversation can have more replies without permitting rapid new threads.
+ */
+export async function checkAttendeeCommunityPostRateLimit(
+  request: Request,
+  accountId: string,
+  eventId: string,
+  kind: "post" | "reply",
+) {
+  const configuration = getRateLimitConfiguration();
+  const accountEvent = hashRateLimitIdentifier(
+    "attendee-community-account-event",
+    `${accountId}\u0000${eventId}`,
+    configuration,
+  );
+  return evaluate([{
+    policy: `attendee.community.${kind}.account`,
+    limit: kind === "post" ? 6 : 12,
+    windowSeconds: fifteenMinutes,
+    identifierHashes: [accountEvent],
+  }], configuration);
+}
