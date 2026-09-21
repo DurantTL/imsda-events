@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => {
     acceptCommunityConduct: vi.fn(),
     updateCommunityNotifications: vi.fn(),
     createCommunityPost: vi.fn(),
+    editCommunityPost: vi.fn(),
+    deleteCommunityPost: vi.fn(),
     reportCommunityPost: vi.fn(),
     markCommunityNotificationsRead: vi.fn(),
     updateCommunitySettings: vi.fn(),
@@ -49,6 +51,8 @@ vi.mock("@/modules/community/repository", () => ({
   acceptCommunityConduct: mocks.acceptCommunityConduct,
   updateCommunityNotifications: mocks.updateCommunityNotifications,
   createCommunityPost: mocks.createCommunityPost,
+  editCommunityPost: mocks.editCommunityPost,
+  deleteCommunityPost: mocks.deleteCommunityPost,
   reportCommunityPost: mocks.reportCommunityPost,
   markCommunityNotificationsRead: mocks.markCommunityNotificationsRead,
   updateCommunitySettings: mocks.updateCommunitySettings,
@@ -109,6 +113,22 @@ describe("attendee community route", () => {
 
     expect(response.status).toBe(401);
     expect(mocks.acceptCommunityConduct).not.toHaveBeenCalled();
+  });
+
+  it("routes author edits and tombstone deletes through the attendee boundary", async () => {
+    await attendeePost(request("POST", {
+      action: "EDIT_POST",
+      postId: "post-1",
+      body: "Updated retreat note",
+    }), context);
+    await attendeePost(request("POST", { action: "DELETE_POST", postId: "post-1" }), context);
+
+    expect(mocks.editCommunityPost).toHaveBeenCalledWith(account, "event-1", {
+      action: "EDIT_POST", postId: "post-1", body: "Updated retreat note",
+    });
+    expect(mocks.deleteCommunityPost).toHaveBeenCalledWith(account, "event-1", {
+      action: "DELETE_POST", postId: "post-1",
+    });
   });
 
   it("rejects cross-origin mutations before reading attendee identity", async () => {
