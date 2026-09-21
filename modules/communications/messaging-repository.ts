@@ -3136,9 +3136,7 @@ export async function enqueueSelectedAudienceBatch(
             : "LOCAL_CAPTURE";
           return {
             batchId: input.batchId,
-            // "Send confirmation again" is one staff action, but each
-            // registration gets the confirmation that is true today.
-            templateKey: recipient.resolvedTemplateKey,
+            templateKey: input.templateKey,
             messageIds: existingMessages.map((message) => message.id),
             includedCount: typeof metadata.includedCount === "number"
               ? metadata.includedCount
@@ -3191,7 +3189,9 @@ export async function enqueueSelectedAudienceBatch(
           const queued = await enqueueSelectedAudienceMessage(tx, {
             eventId,
             registrationId: recipient.registrationId,
-            templateKey: input.templateKey,
+            // "Send confirmation again" is one staff action, but each
+            // registration gets the confirmation that is true today.
+            templateKey: recipient.resolvedTemplateKey,
             batchId: input.batchId,
             correlationId: input.batchId,
             announcementTitle: input.announcementTitle || undefined,
