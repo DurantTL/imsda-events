@@ -36,6 +36,7 @@ function candidate(
     recipientEmail: "marta@example.test",
     totalCents: 20_000,
     netPaidCents: 0,
+    attendeeType: "ATTENDEE",
     ...overrides,
   };
 }
@@ -99,6 +100,96 @@ describe("selected-audience preview", () => {
     );
 
     expect(preview.includedCount).toBe(1);
+  });
+
+  it("keeps shared-address registrations as separate reviewed recipients", () => {
+    const preview = computeSelectedAudiencePreview(
+      ["reg-1", "reg-2"],
+      [
+        candidate(),
+        candidate({
+          registrationId: "reg-2",
+          confirmationCode: "WR26-1002",
+          recipientEmail: "marta@example.test",
+        }),
+      ],
+      context({ templateKey: "EVENT_ANNOUNCEMENT" }),
+      now,
+    );
+
+    expect(preview.recipients.map((recipient) => [
+      recipient.confirmationCode,
+      recipient.recipientEmail,
+    ])).toEqual([
+      ["WR26-1001", "marta@example.test"],
+      ["WR26-1002", "marta@example.test"],
+    ]);
+  });
+
+  it("resolves current-state confirmation variants and fingerprints them", () => {
+    const paid = computeSelectedAudiencePreview(
+      ["reg-1"],
+      [candidate({ netPaidCents: 20_000 })],
+      context({
+        templateKey: "REGISTRATION_CONFIRMATION",
+        confirmationTemplates: {
+          REGISTRATION_CONFIRMATION_PAID: {
+            isEnabled: true,
+            templateVersionId: "paid-v1",
+            templateVersionNumber: 1,
+          },
+        },
+      }),
+      now,
+    );
+    const unpaid = computeSelectedAudiencePreview(
+      ["reg-1"],
+      [candidate()],
+      context({
+        templateKey: "REGISTRATION_CONFIRMATION",
+        confirmationTemplates: {
+          REGISTRATION_CONFIRMATION_UNPAID: {
+            isEnabled: true,
+            templateVersionId: "unpaid-v2",
+            templateVersionNumber: 2,
+          },
+        },
+      }),
+      now,
+    );
+
+    expect(paid.recipients[0]).toMatchObject({
+      resolvedTemplateKey: "REGISTRATION_CONFIRMATION_PAID",
+      templateVersionId: "paid-v1",
+    });
+    expect(unpaid.recipients[0]).toMatchObject({
+      resolvedTemplateKey: "REGISTRATION_CONFIRMATION_UNPAID",
+      templateVersionId: "unpaid-v2",
+      balanceCents: 20_000,
+    });
+    expect(unpaid.fingerprint).not.toBe(paid.fingerprint);
+  });
+
+  it("uses worker and organization-billed confirmation language without a payment demand", () => {
+    const worker = computeSelectedAudiencePreview(
+      ["reg-1"],
+      [candidate({ attendeeType: "WORKER" })],
+      context({ templateKey: "REGISTRATION_CONFIRMATION" }),
+      now,
+    );
+    const organizationBilled = computeSelectedAudiencePreview(
+      ["reg-1"],
+      [candidate()],
+      context({
+        templateKey: "REGISTRATION_CONFIRMATION",
+        isDeferredOrganizationBilling: true,
+      }),
+      now,
+    );
+
+    expect(worker.recipients[0].resolvedTemplateKey).toBe("WORKER_CONFIRMATION");
+    expect(organizationBilled.recipients[0].resolvedTemplateKey)
+      .toBe("REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED");
   });
 
   it("never reminds an organization-billed event about a balance", () => {
@@ -173,6 +264,13 @@ describe("selected-audience batch input", () => {
       ...base,
       templateKey: "BALANCE_REMINDER",
     }).announcementTitle).toBe("");
+  });
+
+  it("accepts the current-state confirmation action with no announcement text", () => {
+    expect(selectedAudienceBatchInputSchema.parse({
+      ...base,
+      templateKey: "REGISTRATION_CONFIRMATION",
+    }).templateKey).toBe("REGISTRATION_CONFIRMATION");
   });
 
   it("requires a title and a message for an announcement", () => {
