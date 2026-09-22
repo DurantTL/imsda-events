@@ -139,11 +139,29 @@ in the audit metadata as `acknowledgedOverExistingPaymentIds`.
 `npm run payments:match-audit` lists every hand-attached payment and marks the
 ones sitting on a registration that already had money, showing each existing
 payment and its reference beside it.
-`-- --void <paymentId> --reason "<why>"` reverses one, marking it `VOIDED`
-rather than deleting it: balances count only successful payments, so the money
-stops counting while the history and its audit trail survive. It refuses to
-touch a payment that was not hand-attached, so it cannot become a general way
-to erase payments.
+`-- --verify` asks Square whether the *other* reference on each registration is
+a payment it knows. That is the fact the question turns on, and only Square can
+answer it: a reference Square does not recognise is the spreadsheet's, and the
+attachment beside it is the same money a second time.
+
+Two repairs follow from that:
+
+- `-- --relink <id>[,<id>...] --reason "<why>"` moves the real provider id onto
+  the payment the import already created and voids the attachment. The money is
+  counted once *and* carries the id Square uses, so reconciliation stops
+  reporting it. This is the right repair whenever the import recorded the
+  payment under an unrecognised reference.
+- `-- --void <id>[,<id>...] --reason "<why>"` only reverses the attachment,
+  leaving the bad reference in place. Use it when the existing payment is
+  genuinely unrelated. Reconciliation will keep reporting that Square payment
+  as unrecorded, because as far as the database is concerned it still is.
+
+Both mark payments `VOIDED` rather than deleting them: balances count only
+successful payments, so the money stops counting while the history and its
+audit trail survive. Both refuse any payment that was not hand-attached, so
+neither can become a general way to erase payments, and `--relink` additionally
+refuses unless exactly one same-amount payment sits beside the attachment —
+an ambiguous pair needs a person to choose.
 
 There is no sandbox rehearsal for a site already on Production:
 `SQUARE_ENVIRONMENT` is one setting for the whole deployment, and flipping it
