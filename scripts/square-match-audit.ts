@@ -8,19 +8,35 @@
  * payment on top of that counts the money twice, and until the duplicate guard
  * existed nothing stopped it.
  *
- * Read-only by default. `--void <paymentId>` reverses exactly one attachment,
- * by marking that payment VOIDED rather than deleting it: balances count only
- * successful payments, so the money stops counting while the history and its
- * audit trail stay intact.
+ * Read-only by default.
+ *
+ * `--verify` asks Square whether the *other* reference on each registration is
+ * a payment it knows. That is the fact the whole question turns on, and only
+ * Square can answer it.
+ *
+ * `--void <ids>` reverses attachments, marking them VOIDED rather than
+ * deleting: balances count only successful payments, so the money stops
+ * counting while the history and its audit trail stay intact.
+ *
+ * `--relink <ids>` is the better repair where the import already recorded the
+ * payment under a reference Square does not recognise. It moves the real
+ * provider id onto that existing row and voids the attachment, so the money is
+ * counted once *and* carries the id Square uses — which is what stops
+ * reconciliation reporting it as missing on every future run. Voiding alone
+ * leaves the bad reference in place and the report never goes quiet.
  */
 import { loadEnvConfig } from "@next/env";
 import { PrismaClient, type Prisma } from "@prisma/client";
+import { getSquareConfiguration } from "@/modules/payments/square-config-domain";
+import { getSquarePayment } from "@/modules/payments/square-http";
 
 loadEnvConfig(process.cwd());
 
 const USAGE = "Usage:\n"
   + "  npm run payments:match-audit\n"
-  + "  npm run payments:match-audit -- --void <paymentId> --reason \"<why>\"";
+  + "  npm run payments:match-audit -- --verify\n"
+  + "  npm run payments:match-audit -- --relink <id>[,<id>...] --reason \"<why>\"\n"
+  + "  npm run payments:match-audit -- --void <id>[,<id>...] --reason \"<why>\"";
 
 function fail(message: string): never {
   console.error(`${message}\n\n${USAGE}`);
@@ -112,6 +128,144 @@ async function report(prisma: PrismaClient) {
   return suspect;
 }
 
+/**
+ * Ask Square about the reference already on each registration. A reference
+ * Square does not know is the spreadsheet's, and the attachment beside it is
+ * the same money a second time.
+ */
+async function verify(prisma: PrismaClient) {
+  const configuration = getSquareConfiguration();
+  if (!configuration.paymentConfigured) {
+    fail(`Square is not configured (${configuration.issue}).`);
+  }
+  const pairs = await attachedPairs(prisma);
+  if (pairs.length === 0) {
+    console.log("No attachment sits beside another payment.");
+    return 0;
+  }
+  let unknown = 0;
+  for (const pair of pairs) {
+    const reference = pair.sibling.externalReference;
+    if (!reference) {
+      unknown += 1;
+      console.log(`[no reference] ${pair.code} · the existing ${money(cents(pair.sibling.amount))} payment carries no reference at all.`);
+      continue;
+    }
+    let known: boolean;
+    try {
+      known = Boolean(await getSquarePayment(configuration, reference));
+    } catch {
+      console.log(`[unreachable]  ${pair.code} · Square did not answer for ${reference}.`);
+      continue;
+    }
+    if (known) {
+      console.log(`[real]         ${pair.code} · Square knows ${reference}. Two genuine payments — do not void without checking.`);
+    } else {
+      unknown += 1;
+      console.log(`[not in Square] ${pair.code} · Square has no payment ${reference}.`);
+      console.log(`                repair with: npm run payments:match-audit -- --relink ${pair.attached.id} --reason "<why>"`);
+    }
+  }
+  console.log(`\n${unknown} registration${unknown === 1 ? "" : "s"} carry a reference Square does not recognise.`);
+  return unknown;
+}
+
+/** Each hand-attached payment that sits beside exactly one same-amount payment. */
+async function attachedPairs(prisma: PrismaClient) {
+  const attachments = await prisma.auditLog.findMany({
+    where: { action: "SQUARE_PAYMENT_MANUALLY_MATCHED" },
+    orderBy: { createdAt: "desc" },
+    select: { entityId: true },
+  });
+  const pairs = [];
+  for (const attachment of attachments) {
+    if (!attachment.entityId) continue;
+    const attached = await prisma.payment.findUnique({
+      where: { id: attachment.entityId },
+      select: {
+        id: true,
+        eventId: true,
+        amount: true,
+        status: true,
+        externalReference: true,
+        registrationId: true,
+        registration: { select: { confirmationCode: true } },
+      },
+    });
+    if (!attached || attached.status === "VOIDED") continue;
+    const siblings = await prisma.payment.findMany({
+      where: {
+        registrationId: attached.registrationId,
+        id: { not: attached.id },
+        status: "SUCCEEDED",
+      },
+      select: { id: true, amount: true, externalReference: true },
+    });
+    const sameAmount = siblings.filter(
+      (sibling) => cents(sibling.amount) === cents(attached.amount),
+    );
+    // Only an unambiguous pair is repairable without a person choosing.
+    if (sameAmount.length !== 1) continue;
+    pairs.push({
+      code: attached.registration.confirmationCode,
+      attached,
+      sibling: sameAmount[0]!,
+    });
+  }
+  return pairs;
+}
+
+async function relink(
+  prisma: PrismaClient,
+  paymentIds: string[],
+  reason: string,
+) {
+  const pairs = await attachedPairs(prisma);
+  const byAttachedId = new Map(pairs.map((pair) => [pair.attached.id, pair]));
+  for (const paymentId of paymentIds) {
+    const pair = byAttachedId.get(paymentId);
+    if (!pair) {
+      console.log(`[skipped] ${paymentId} — not a hand-attached payment sitting beside exactly one same-amount payment.`);
+      continue;
+    }
+    const realReference = pair.attached.externalReference;
+    if (!realReference) {
+      console.log(`[skipped] ${paymentId} — the attachment carries no provider reference to move.`);
+      continue;
+    }
+    await prisma.$transaction(async (tx) => {
+      await tx.payment.update({
+        where: { id: pair.sibling.id },
+        data: { externalReference: realReference },
+      });
+      await tx.payment.update({
+        where: { id: pair.attached.id },
+        data: { status: "VOIDED" },
+      });
+      await tx.auditLog.create({
+        data: {
+          eventId: pair.attached.eventId,
+          action: "SQUARE_PAYMENT_RELINKED",
+          entityType: "Payment",
+          entityId: pair.sibling.id,
+          correlationId: crypto.randomUUID(),
+          summary: `Moved the Square provider reference onto the imported payment for registration ${pair.code}, and voided the duplicate attachment.`,
+          metadata: {
+            reason,
+            amountCents: cents(pair.attached.amount),
+            adoptedReference: realReference,
+            replacedReference: pair.sibling.externalReference,
+            voidedPaymentId: pair.attached.id,
+          },
+        },
+      });
+    });
+    console.log(`[relinked] ${pair.code} · ${money(cents(pair.attached.amount))}`);
+    console.log(`           ${pair.sibling.id} now carries ${realReference}`);
+    console.log(`           ${pair.attached.id} voided`);
+  }
+}
+
 async function voidPayment(
   prisma: PrismaClient,
   paymentId: string,
@@ -173,15 +327,37 @@ async function voidPayment(
   console.log("Balances count only successful payments, so this no longer counts as received.");
 }
 
+function idList(value: string) {
+  const ids = value.split(",").map((id) => id.trim()).filter(Boolean);
+  if (ids.length === 0) fail("No payment id was given.");
+  if (ids.some((id) => id.startsWith("<"))) {
+    fail("Replace the <paymentId> placeholder with a real id from the report.");
+  }
+  return ids;
+}
+
 async function main() {
   const argv = process.argv.slice(2);
-  const target = option(argv, "void");
   const prisma = new PrismaClient();
   try {
+    if (argv.includes("--verify")) {
+      process.exitCode = (await verify(prisma)) === 0 ? 0 : 1;
+      return;
+    }
+    const toRelink = option(argv, "relink");
+    if (toRelink) {
+      const reason = option(argv, "reason");
+      if (!reason) fail("--reason is required when relinking a payment.");
+      await relink(prisma, idList(toRelink), reason);
+      return;
+    }
+    const target = option(argv, "void");
     if (target) {
       const reason = option(argv, "reason");
       if (!reason) fail("--reason is required when voiding a payment.");
-      await voidPayment(prisma, target, reason);
+      for (const id of idList(target)) {
+        await voidPayment(prisma, id, reason);
+      }
       return;
     }
     process.exitCode = (await report(prisma)) === 0 ? 0 : 1;
