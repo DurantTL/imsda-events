@@ -81,6 +81,33 @@ at all means Square is not reaching the endpoint: check
 `SQUARE_WEBHOOK_SIGNATURE_KEY` and `SQUARE_WEBHOOK_NOTIFICATION_URL` against
 Square, since a mismatch rejects every real payment result.
 
+## Matching a payment by hand
+
+**Finance → Unmatched Square payments** lists every completed Square payment
+this database never recorded and lets a finance manager attach one to a
+registration. It is the fallback for money taken through a channel that carries
+no confirmation code at all — a separate registration site, a Square Online
+order, an invoice — where nothing can be matched automatically and the Square
+note is the only evidence of who paid.
+
+The rules that keep it honest:
+
+- `MANAGE_FINANCE` only, and cross-origin requests are rejected.
+- The browser names the provider payment and the registration; it never says
+  what the payment was worth. The amount, status, and location are re-read from
+  Square server-side, so a tampered request cannot invent or inflate a payment.
+- The recorded amount is exactly what Square took. Where that exceeds the
+  outstanding balance — typically the card fee the payer was charged on top —
+  the registration is left showing the overpayment rather than having its total
+  quietly rewritten. Why the gap exists is a finance judgement, not something
+  to infer.
+- A provider payment already recorded anywhere is refused, inside the
+  transaction, so two staff working the same list cannot double-record it.
+- No receipt is sent. These payments are routinely weeks old, and a surprise
+  receipt for money already paid causes more confusion than it settles.
+- Every attachment writes a `SQUARE_PAYMENT_MANUALLY_MATCHED` audit record
+  naming the staff member, the provider payment, and the overpayment.
+
 There is no sandbox rehearsal for a site already on Production:
 `SQUARE_ENVIRONMENT` is one setting for the whole deployment, and flipping it
 would orphan live payment attempts. Reconciliation is the safe substitute.

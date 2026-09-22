@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Banknote, CircleDollarSign, ReceiptText, RotateCcw, Search, WalletCards, X } from "lucide-react";
+import { Banknote, CircleDollarSign, CreditCard, ReceiptText, RotateCcw, Search, WalletCards, X } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 import {
@@ -111,7 +111,7 @@ export function FinanceWorkspace({
 
   return (
     <section className="page-stack">
-      <div className="page-intro"><div><p className="eyebrow">Financial operations</p><h2>Payments & balances</h2><p>Search by attendee or payer, record offline payments, review Square card payments, and track confirmed refunds.</p></div><span className="count-badge"><WalletCards aria-hidden="true" size={17} /> {registrations.length} registrations</span></div>
+      <div className="page-intro"><div><p className="eyebrow">Financial operations</p><h2>Payments & balances</h2><p>Search by attendee or payer, record offline payments, review Square card payments, and track confirmed refunds.</p></div><div className="page-intro-actions"><a className="secondary-button" href={`/finance/square-payments?event=${eventId}`}><CreditCard aria-hidden="true" size={17} /> Unmatched Square payments</a><span className="count-badge"><WalletCards aria-hidden="true" size={17} /> {registrations.length} registrations</span></div></div>
       <section className="finance-summary" aria-label="Financial summary">
         <article className="finance-stat"><span><ReceiptText aria-hidden="true" size={18} /></span><small>Active billed</small><strong>{money(totals.billed)}</strong></article>
         <article className="finance-stat"><span><Banknote aria-hidden="true" size={18} /></span><small>Net received</small><strong>{money(totals.received)}</strong></article>
