@@ -1,7 +1,7 @@
 # Club Ministry, Honors Weekend, and the 2026–27 event calendar
 
 Prepared September 22, 2026, against `main` at `274551b` (after PR #351). Updated the
-same day with how Honors Weekend 2026 actually ran.
+same day with how Honors Weekend 2026 actually ran and why its form glitched.
 
 This is a **review and plan only**. It records what was found across this
 repository, GitHub issue #98, the WR26 go-live review, and the earlier club system
@@ -228,6 +228,53 @@ A further 15 people were never assigned a site.
 7. Cabin assignment and check-in were done on paper. Check-in can move to the
    existing QR check-in; cabins can stay on paper for 2027.
 
+#### The 2026 registration form, and why it kept glitching
+
+Source: the Fluent Forms export of the live form, "Pathfinders Honors Weekend
+Registration" (form 71, 4,542 views). The export holds the form definition only,
+with no submissions. The live endpoint URL in its script is deliberately not
+reproduced here.
+
+**How the form worked:**
+1. The director acknowledges the event information and picks a **site**: Iowa,
+   Camp Heritage weekend 1, Camp Heritage weekend 2, or Kansas City Spanish.
+2. The director picks the **club** from a hard-coded list of 35 (or "Other" with
+   free text) and enters contact details.
+3. A section for the chosen site asks **how many attendees** and which honors
+   the club wants in each session. Session names differed by site:
+   - Iowa: "Sabbath afternoon" and "Saturday evening/Sunday";
+   - Camp Heritage: "Sabbath" and "Sunday";
+   - Kansas City: "Sabbath 2:30" and "Sabbath 5:30".
+4. About **2,000 lines of custom JavaScript** (plus 23 KB of CSS) then builds the
+   roster in the browser. For each person the director types a name, age, gender,
+   type (Pathfinder, staff, other adult, under-age) and dietary needs, then assigns
+   classes.
+5. The script enforces the rules **in the browser only**:
+   - age eligibility;
+   - the "2-session honor" rule (a Full class can't be combined with anything);
+   - youth-only seat counting;
+   - capacity, read from a Google Apps Script availability feed that is polled
+     on a timer;
+   - one hard-coded special rule: at most 3 Pathfinders per club in Iowa
+     Backpacking.
+6. The whole roster is written as **JSON into one hidden field** (`roster_storage`).
+   It's submitted through Fluent Forms, copied to the Google Sheet by a feed, and
+   confirmation emails come from the sheet's script.
+
+**Why it glitched, and what the new build must do instead:**
+
+| 2026 weakness | Effect | Requirement for 2027 |
+| --- | --- | --- |
+| Capacity and eligibility checked only in the browser, against a polled copy of the sheet | Two clubs could take the last seat. If the feed failed, the form said capacity "cannot be verified" and still allowed submission | Check seats and age **on the server**, inside the transaction that saves the registration (H5) |
+| Submission blocked by overriding jQuery's global `$.ajax` | Any Fluent Forms or theme update could silently break validation | No client-side interception; the server is the only gate |
+| The roster lived in one hidden JSON field | A script error, a reload, or a closed tab lost everything. Emails later failed on bad roster data (the email log shows "roster.filter is not a function") | Store attendees as real records. Save as you go (draft), with a clear review step before submitting |
+| No save or resume (form save state off) | Big clubs (up to 40 people) had to finish in one sitting | Drafts and resume (H3; a narrow #161) |
+| **No persistent people** | Every event, every person retyped (Caleb: "everyone had to re-input roster info manually every event") | **Club roster reused across events (H2/H3)** |
+| Club picked from a hard-coded list or typed as "Other" | Inconsistent club names in the data (for example "Teacher", "Coordinators", a bare number) | Club comes from the organization directory, tied to the director's grant (H1) |
+| Class lists hard-coded in both the form and the sheet, matched by text IDs | Two copies to keep in sync for every change | One catalog and offerings list in the database (H4) |
+| Special rules hard-coded in the script | Each new rule means editing code | Per-offering settings, starting with a **per-club limit** (H4) |
+| No self-service edits after submitting | Changes went through staff by email | Directors can edit their registration until the site deadline (H3) |
+
 ### 3.5 What IMSDA Events already has that club events can reuse
 
 | Capability | Where | Reuse for |
@@ -388,6 +435,9 @@ Each slice is one issue and one PR.
 - Each person carries an **attendee type** (youth, staff, adult, underage) and a
   dietary field, as in 2026.
 - A **Spanish-language version** of the form for sites that need it (decision D11).
+- **Saves as a draft** while the director works, so a reload or closed tab loses
+  nothing, unlike the 2026 form. It keeps the event-information acknowledgment
+  and the per-site head count.
 - Carves out narrow versions of #186, #188, and #194.
 
 **H4: Honor catalog, sites, and sessions**
@@ -396,9 +446,15 @@ Each slice is one issue and one PR.
 - Honors Weekend is **several sites** (in 2026: Camp Heritage weekend 1, Camp
   Heritage weekend 2, Des Moines, Kansas City). Each is a separate event, created
   quickly from the previous one.
-- For each site, staff add offerings: an honor with a **session** (Sabbath,
-  Sunday, or Full, where Full fills both), a **capacity**, an optional
-  **minimum age**, a **teacher name**, and a **location**.
+- For each site, staff name its **sessions**, because names differed by site
+  (Sabbath / Sunday; Sabbath afternoon / Saturday evening–Sunday; 2:30 / 5:30).
+- Staff then add offerings: an honor in a session, or a **2-session honor** that
+  fills both, with:
+  - a **capacity** (youth seats);
+  - an optional **minimum age**;
+  - an optional **per-club limit** (for example at most 3 Pathfinders per club,
+    which 2026 hard-coded for Iowa Backpacking);
+  - a **teacher name** and a **location**.
 - Eligibility for 2027 is **minimum age only**, which is all 2026 used. Maximum
   age, role, prerequisite honors, and Master Guide can wait (decision D5).
 - Carves out a narrow version of #197 and the offering part of #207.
@@ -409,7 +465,7 @@ Each slice is one issue and one PR.
   or one Full class. Only classes the person is old enough for, that still have
   seats, are shown.
 - **Seats count youth only.** Staff and adults may join a class without using a
-  seat, as in 2026.
+  seat, as in 2026. Per-club limits count youth only too.
 - Seats are checked and taken in the **same serializable transaction that saves
   the registration**, the way event capacity already works, so a class can never
   be overfilled. A full class is refused with a clear message.
@@ -545,5 +601,7 @@ are simple, narrow them the same way as H1–H6.
 - The "Honors Weekend 2026" Google Sheet (access-controlled; it holds real
   attendee data, so only structure and totals were used, and it is deliberately
   not linked here).
+- The Fluent Forms export of the 2026 "Pathfinders Honors Weekend Registration"
+  form (form definition, custom script, and settings; no submissions).
 - Production command center screenshot, September 22, 2026: Spring Camporee 2027
   draft, Apr 29 – May 2, 2027, Camp Heritage, MO.
