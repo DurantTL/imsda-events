@@ -30,6 +30,7 @@ export class SquareMatchOperationError extends Error {
       | "REGISTRATION_NOT_FOUND"
       | "REGISTRATION_NOT_PAYABLE",
     message: string,
+    public readonly details: Record<string, unknown> = {},
   ) {
     super(message);
     this.name = "SquareMatchOperationError";
@@ -188,19 +189,41 @@ export async function attachSquarePaymentToRegistration(
   // on the provider id alone cannot see it, so the money would be counted
   // twice — which is exactly what happened before this guard existed.
   //
-  // A successful payment for the same amount is the signal. The caller has to
-  // say plainly that it is genuinely a second payment before this proceeds.
-  const sameAmount = registration.payments.find(
-    (existing) => moneyToCents(existing.amount) === provider.amountCents,
-  );
-  if (sameAmount && !input.acknowledgeDuplicate) {
+  // Nor can the amount settle it: that same import records a successful
+  // payment at the registration's Final Amount, while the external checkout
+  // charged the fee on top, so the two differ by the fee on the very rows most
+  // at risk. Any money already received is therefore the signal, and the
+  // existing payments go back to the caller so a person can see what is there
+  // rather than being asked to trust a verdict.
+  //
+  // This screen exists for payments nothing recorded, so a registration that
+  // already shows money is worth a second look by definition. A group paying
+  // in genuine instalments is the false positive, and it costs one confirming
+  // press.
+  if (registration.payments.length > 0 && !input.acknowledgeDuplicate) {
+    const netPaidCents = registration.payments.reduce((total, existing) => {
+      const refunded = existing.refunds.reduce(
+        (sum, refund) => sum + moneyToCents(refund.amount),
+        0,
+      );
+      return total + moneyToCents(existing.amount) - refunded;
+    }, 0);
     throw new SquareMatchOperationError(
       "PAYMENT_LIKELY_DUPLICATE",
-      `Registration ${registration.confirmationCode} already has a ${
-        provider.amountCents / 100
-      } payment recorded under reference ${
-        sameAmount.externalReference ?? "none"
-      }. This is very likely the same money under a different reference.`,
+      `Registration ${registration.confirmationCode} already shows ${
+        registration.payments.length
+      } payment${registration.payments.length === 1 ? "" : "s"} received.`,
+      {
+        netPaidCents,
+        attachingCents: provider.amountCents,
+        resultingPaidCents: netPaidCents + provider.amountCents,
+        totalCents: moneyToCents(registration.totalAmount),
+        existingPayments: registration.payments.map((existing) => ({
+          id: existing.id,
+          amountCents: moneyToCents(existing.amount),
+          externalReference: existing.externalReference,
+        })),
+      },
     );
   }
 
@@ -248,7 +271,9 @@ export async function attachSquarePaymentToRegistration(
           balanceBeforeCents: balanceCents,
           overpaidCents: Math.max(provider.amountCents - balanceCents, 0),
           staffNote: input.note?.slice(0, 500) ?? null,
-          acknowledgedDuplicateOf: sameAmount?.id ?? null,
+          acknowledgedOverExistingPaymentIds: input.acknowledgeDuplicate
+            ? registration.payments.map((existing) => existing.id)
+            : [],
         },
       },
     });

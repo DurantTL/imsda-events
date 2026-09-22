@@ -47,7 +47,7 @@ function failure(error: unknown, fallback: string) {
   }
   if (error instanceof SquareMatchOperationError) {
     return Response.json(
-      { error: error.code, message: error.message },
+      { error: error.code, message: error.message, details: error.details },
       { status: statusForCode[error.code], headers: noStoreHeaders },
     );
   }

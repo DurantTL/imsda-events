@@ -122,14 +122,23 @@ reconciler reports the real payment as unrecorded, and attaching it creates a
 second `Payment` row for money already counted. `Payment.externalReference`
 carries no unique constraint, so nothing at the database level prevents it.
 
-The guard is the amount: a successful payment on the registration for the same
-amount as the provider payment refuses the attachment with
-`PAYMENT_LIKELY_DUPLICATE`, and the screen makes a human confirm it is
-genuinely a second payment before proceeding. The acknowledged duplicate is
-recorded in the audit metadata as `acknowledgedDuplicateOf`.
+The amount cannot settle it either. That same import records a successful
+payment at the registration's **Final Amount** (`wr26-bundle.ts`), while the
+external checkout charged the card fee on top — so the duplicate pair routinely
+differs by the fee, on exactly the rows most at risk.
+
+So the guard is any money at all: a registration that already shows a
+successful payment refuses the attachment with `PAYMENT_LIKELY_DUPLICATE`,
+returning the existing payments and their references so a person can compare
+them against the Square receipt rather than trust a verdict. This screen exists
+for payments nothing recorded, so a registration already showing money is worth
+a second look by definition. A group paying in genuine instalments is the false
+positive, and it costs one confirming press. What was acknowledged is recorded
+in the audit metadata as `acknowledgedOverExistingPaymentIds`.
 
 `npm run payments:match-audit` lists every hand-attached payment and marks the
-ones that duplicate an existing payment on the same registration.
+ones sitting on a registration that already had money, showing each existing
+payment and its reference beside it.
 `-- --void <paymentId> --reason "<why>"` reverses one, marking it `VOIDED`
 rather than deleting it: balances count only successful payments, so the money
 stops counting while the history and its audit trail survive. It refuses to

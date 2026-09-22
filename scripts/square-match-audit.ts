@@ -86,28 +86,29 @@ async function report(prisma: PrismaClient) {
       },
       select: { id: true, amount: true, externalReference: true },
     });
-    const twin = siblings.find(
-      (sibling) => cents(sibling.amount) === cents(payment.amount),
-    );
+    // Any other money on the registration is the signal, not a matching
+    // amount. The import records a successful payment at the registration's
+    // Final Amount while the external checkout charged the fee on top, so the
+    // duplicate pair routinely differs by the fee.
     const voided = payment.status === "VOIDED";
-    if (twin && !voided) suspect += 1;
+    if (siblings.length > 0 && !voided) suspect += 1;
 
-    const mark = voided ? "voided" : twin ? "DUPLICATE" : "ok";
+    const mark = voided ? "voided" : siblings.length > 0 ? "CHECK" : "ok";
     console.log(`[${mark}] ${payment.registration.confirmationCode} · ${money(cents(payment.amount))}`);
     console.log(`        attached ${attachment.createdAt.toISOString()} · payment ${payment.id}`);
     console.log(`        reference ${payment.externalReference ?? "none"}`);
-    if (twin) {
-      console.log(`        same amount already on this registration as ${twin.id}`);
-      console.log(`        under reference ${twin.externalReference ?? "none"}`);
-      if (!voided) {
-        console.log(`        reverse with: npm run payments:match-audit -- --void ${payment.id} --reason "<why>"`);
-      }
+    for (const sibling of siblings) {
+      console.log(`        also on this registration: ${money(cents(sibling.amount))} · ${sibling.id}`);
+      console.log(`            under reference ${sibling.externalReference ?? "none"}`);
+    }
+    if (siblings.length > 0 && !voided) {
+      console.log(`        reverse with: npm run payments:match-audit -- --void ${payment.id} --reason "<why>"`);
     }
   }
 
   console.log(suspect === 0
-    ? "\nNo attachment duplicates an existing payment."
-    : `\n${suspect} attachment${suspect === 1 ? "" : "s"} duplicate money already recorded.`);
+    ? "\nNo attachment sits on a registration that already had money."
+    : `\n${suspect} attachment${suspect === 1 ? " sits" : "s sit"} on a registration that already had money. Compare each against the Square receipt before voiding — a group paying in instalments looks the same here.`);
   return suspect;
 }
 

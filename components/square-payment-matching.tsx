@@ -42,6 +42,18 @@ const findingCopy: Record<string, { label: string; guidance: string }> = {
   },
 };
 
+type DuplicateDetails = {
+  netPaidCents?: number;
+  attachingCents?: number;
+  resultingPaidCents?: number;
+  totalCents?: number;
+  existingPayments?: Array<{
+    id: string;
+    amountCents: number;
+    externalReference: string | null;
+  }>;
+};
+
 function trailingName(note: string | null) {
   if (!note) return "";
   const segments = note.split(/[\u2013\u2014|]/);
@@ -89,7 +101,9 @@ export function SquarePaymentMatching({
   const [chosen, setChosen] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [duplicateWarning, setDuplicateWarning] = useState("");
+  const [duplicateWarning, setDuplicateWarning] = useState<
+    { message: string; details: DuplicateDetails } | null
+  >(null);
   const dialogRef = useAccessibleDialog<HTMLElement>(Boolean(active), close);
 
   const payable = useMemo(
@@ -106,7 +120,7 @@ export function SquarePaymentMatching({
     setActive(finding);
     setError("");
     setChosen(finding.registrationId);
-    setDuplicateWarning("");
+    setDuplicateWarning(null);
     // With no registration resolved, the note is the only evidence there is,
     // and these notes read "<item> \u2013 <attendee name>". Seeding the search
     // with the trailing segment puts the likely person on screen immediately.
@@ -120,7 +134,7 @@ export function SquarePaymentMatching({
     setError("");
     setChosen(null);
     setQuery("");
-    setDuplicateWarning("");
+    setDuplicateWarning(null);
   }
 
   async function attach() {
@@ -146,7 +160,10 @@ export function SquarePaymentMatching({
         // same amount. Say so and make them press again, rather than letting a
         // second row be created on a single click.
         if (result.error === "PAYMENT_LIKELY_DUPLICATE") {
-          setDuplicateWarning(result.message ?? "");
+          setDuplicateWarning({
+            message: result.message ?? "",
+            details: (result.details ?? {}) as DuplicateDetails,
+          });
           return;
         }
         throw new Error(result.message ?? "Unable to attach this payment.");
@@ -165,7 +182,7 @@ export function SquarePaymentMatching({
       setActive(null);
       setChosen(null);
       setQuery("");
-      setDuplicateWarning("");
+      setDuplicateWarning(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to attach this payment.");
     } finally {
@@ -337,7 +354,7 @@ export function SquarePaymentMatching({
                           checked={chosen === registration.id}
                           onChange={() => {
                             setChosen(registration.id);
-                            setDuplicateWarning("");
+                            setDuplicateWarning(null);
                           }}
                         />
                         <span>
@@ -364,14 +381,30 @@ export function SquarePaymentMatching({
 
               {duplicateWarning && (
                 <div className="inline-notice" role="alert">
-                  <strong>This looks like money already recorded.</strong>
-                  <p>{duplicateWarning}</p>
+                  <strong>This registration already shows money received.</strong>
+                  <p>{duplicateWarning.message}</p>
+                  <ul>
+                    {(duplicateWarning.details.existingPayments ?? []).map((existing) => (
+                      <li key={existing.id}>
+                        {money(existing.amountCents)} · reference{" "}
+                        {existing.externalReference ?? "none"}
+                      </li>
+                    ))}
+                  </ul>
                   <p>
-                    The spreadsheet import stored whatever payment reference it
-                    was given, so the same payment can already be here under an
-                    id Square does not use. Attaching it again counts the money
-                    twice. Only continue if you have checked the registration
-                    and this really is a second payment.
+                    Attaching this would take the registration to{" "}
+                    {money(duplicateWarning.details.resultingPaidCents ?? 0)}{" "}
+                    received against a{" "}
+                    {money(duplicateWarning.details.totalCents ?? 0)} total.
+                  </p>
+                  <p>
+                    The spreadsheet import recorded whatever payment reference
+                    it was given, and recorded the amount as the registration
+                    total rather than what the card was charged. So the same
+                    money can already be here under a reference Square does not
+                    use, for a different amount. Compare the references above
+                    against the Square receipt. Only continue if this is
+                    genuinely a separate payment.
                   </p>
                 </div>
               )}
@@ -390,7 +423,7 @@ export function SquarePaymentMatching({
                   {saving
                     ? "Attaching…"
                     : duplicateWarning
-                      ? "Attach anyway — this is a second payment"
+                      ? "Attach anyway — this is a separate payment"
                       : "Attach payment"}
                 </button>
               </div>
