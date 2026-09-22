@@ -1,6 +1,9 @@
 import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
+import { logError } from "@/lib/logger";
+import { getOutboxQueueHealth } from "@/modules/communications/outbox-sweep";
+import { getSweepHeartbeat } from "@/modules/operations/sweep-heartbeat-repository";
 import {
   buildSystemAdminDashboard,
   type SystemAdminEventSource,
@@ -77,7 +80,7 @@ export async function getSystemAdminDashboard(now = new Date()) {
                 { warnings: { gt: 0 } },
               ],
             },
-            select: { id: true },
+            select: { status: true, errors: true },
           },
           messageOutbox: {
             where: {
@@ -124,7 +127,8 @@ export async function getSystemAdminDashboard(now = new Date()) {
     activeStaffCount: event.memberships.length,
     publishedFormCount: event.registrationForms.length,
     waitingCount: event.waitlistEntries.length,
-    importIssueCount: event.importRuns.length,
+    importIssueCount: event.importRuns.filter((run) => run.status === "FAILED" || run.errors > 0).length,
+    importWarningCount: event.importRuns.filter((run) => run.status !== "FAILED" && run.errors === 0).length,
     deliveryIssueCount: event.messageOutbox.length,
   }));
 
@@ -135,4 +139,33 @@ export async function getSystemAdminDashboard(now = new Date()) {
     systemAdminCount,
     unresolvedAlertCount,
   }, now);
+}
+
+/**
+ * The live signals behind the command center's "System health" panel: whether
+ * the scheduled email sweep is still running, whether email is backing up, and
+ * which alerts are still open. Each read fails on its own so one broken signal
+ * shows as "unknown" instead of taking the page down.
+ */
+export async function getSystemHealth(now = new Date()) {
+  const [sweep, outbox, alerts] = await Promise.all([
+    getSweepHeartbeat(now).catch((error) => {
+      logError("Command center could not read the sweep heartbeat", error);
+      return null;
+    }),
+    getOutboxQueueHealth(now).catch((error) => {
+      logError("Command center could not read the email queue", error);
+      return null;
+    }),
+    getPrisma().alertNotification.findMany({
+      where: { resolvedAt: null },
+      orderBy: { firstSeenAt: "asc" },
+      take: 5,
+      select: { key: true, severity: true, summary: true, firstSeenAt: true },
+    }).catch((error) => {
+      logError("Command center could not read open alerts", error);
+      return null;
+    }),
+  ]);
+  return { sweep, outbox, alerts };
 }

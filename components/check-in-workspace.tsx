@@ -19,6 +19,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import { CheckInPaymentDue } from "@/components/check-in-payment-due";
 import { CheckInScanner } from "@/components/check-in-scanner";
 import { useOfflineCheckInQueue } from "@/components/use-offline-check-in-queue";
 import { offlineCheckInErrorMessage } from "@/modules/checkin/domain";
@@ -27,6 +28,8 @@ import type { RegistrationRecord } from "@/modules/registrations/repository";
 type Arrival = RegistrationRecord["attendees"][number] & {
   confirmationCode: string;
   email: string;
+  balanceCents: number;
+  partySize: number;
 };
 
 export function CheckInWorkspace({
@@ -34,11 +37,14 @@ export function CheckInWorkspace({
   eventId,
   initialRegistrations,
   canCheckIn,
+  showBalances,
 }: {
   eventName: string;
   eventId: string;
   initialRegistrations: RegistrationRecord[];
   canCheckIn: boolean;
+  /** False for events billed to an organization: attendees owe nothing at the door. */
+  showBalances: boolean;
 }) {
   const [arrivals, setArrivals] = useState<Arrival[]>(
     initialRegistrations.flatMap((registration) => (
@@ -46,9 +52,22 @@ export function CheckInWorkspace({
         ...attendee,
         confirmationCode: registration.confirmationCode,
         email: registration.accountHolder.email,
+        balanceCents: showBalances ? registration.balanceCents : 0,
+        partySize: registration.attendees.length,
       }))
     )),
   );
+  const paymentDueByConfirmationCode = useMemo(() => Object.fromEntries(
+    showBalances
+      ? initialRegistrations
+        .filter((registration) => registration.balanceCents > 0)
+        .map((registration) => [registration.confirmationCode, {
+          balanceCents: registration.balanceCents,
+          partySize: registration.attendees.length,
+        }])
+      : [],
+  ), [initialRegistrations, showBalances]);
+  const owingCount = Object.keys(paymentDueByConfirmationCode).length;
   const [query, setQuery] = useState("");
   const [undoPendingId, setUndoPendingId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
@@ -373,6 +392,7 @@ export function CheckInWorkspace({
             .filter((item) => item.state === "CONFLICT")
             .map((item) => item.attendeeId)}
           eventId={eventId}
+          paymentDueByConfirmationCode={paymentDueByConfirmationCode}
           onConfirmCheckIn={(attendee) => requestCheckIn(attendee.id)}
           queuedAttendeeIds={queue
             .filter((item) => item.state === "QUEUED")
@@ -400,6 +420,14 @@ export function CheckInWorkspace({
           <div>
             <p className="eyebrow">Arrival roster</p>
             <h2>Expected attendees</h2>
+            {owingCount > 0 && (
+              <small className="checkin-balance-note">
+                {owingCount} {owingCount === 1 ? "registration still owes" : "registrations still owe"} money.{" "}
+                Card amounts include Square&rsquo;s in-person fee (2.6% + 15&cent;).{" "}
+                Balances are as of when this page loaded &mdash; refresh after
+                finance records a payment.
+              </small>
+            )}
           </div>
           <span className="count-badge">
             <UsersRound aria-hidden="true" size={16} /> {visible.length} shown
@@ -421,6 +449,11 @@ export function CheckInWorkspace({
                   {arrival.confirmationCode} ·{" "}
                   {arrival.attendeeType.toLowerCase()}
                 </small>
+                <CheckInPaymentDue
+                  balanceCents={arrival.balanceCents}
+                  confirmationCode={arrival.confirmationCode}
+                  partySize={arrival.partySize}
+                />
               </span>
               <span className="arrival-time">
                 {arrival.checkedInAt

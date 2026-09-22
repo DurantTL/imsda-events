@@ -479,10 +479,28 @@ export async function checkPublicPromoQuoteRateLimit(
   ], configuration);
 }
 
+/**
+ * Per-operation budgets for private manage-link requests, per 15 minutes.
+ *
+ * `pass` is the attendee QR image. It gets its own, larger client budget
+ * because it is fetched far more often and from shared addresses: every open
+ * of a confirmation or announcement email loads it through the mail
+ * provider's image proxy, and at check-in a whole retreat pulls up passes on
+ * the same venue Wi-Fi. Under the ordinary read budget, one email blast or
+ * one arrival rush could refuse passes to everyone behind that address. The
+ * token itself is a long random secret, so the looser client budget does not
+ * make guessing one practical; the per-token budgets still cap any one link.
+ */
+const publicManageBudgets = {
+  read: { client: 120, token: 120, clientToken: 60 },
+  update: { client: 30, token: 20, clientToken: 10 },
+  pass: { client: 600, token: 240, clientToken: 120 },
+} as const;
+
 export async function checkPublicManageRateLimit(
   request: Request,
   token: string,
-  operation: "read" | "update",
+  operation: keyof typeof publicManageBudgets,
 ) {
   const configuration = getRateLimitConfiguration();
   const { client } = requestIdentities(request, configuration);
@@ -491,23 +509,23 @@ export async function checkPublicManageRateLimit(
     token,
     configuration,
   );
-  const read = operation === "read";
+  const budget = publicManageBudgets[operation];
   return evaluate([
     {
       policy: `public.manage.${operation}.client`,
-      limit: read ? 120 : 30,
+      limit: budget.client,
       windowSeconds: fifteenMinutes,
       identifierHashes: [client],
     },
     {
       policy: `public.manage.${operation}.token`,
-      limit: read ? 120 : 20,
+      limit: budget.token,
       windowSeconds: fifteenMinutes,
       identifierHashes: [tokenHash],
     },
     {
       policy: `public.manage.${operation}.client-token`,
-      limit: read ? 60 : 10,
+      limit: budget.clientToken,
       windowSeconds: fifteenMinutes,
       identifierHashes: [client, tokenHash],
     },

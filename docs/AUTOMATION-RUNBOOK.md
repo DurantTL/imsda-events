@@ -48,5 +48,6 @@ including merge, deployment, production data changes, refunds, bulk sends,
 pricing/capacity changes, identity merges, and medical or insurance rules. When
 a material behavioral requirement is unclear, add `needs-decision` and stop.
 
-The [build-status and WR26 audit](BUILD-STATUS-AND-WR26-GAP-AUDIT.md) is the
-canonical roadmap and contains the execution-plan template.
+GitHub issue [#98](https://github.com/DurantTL/imsda-events/issues/98) is the
+canonical ordered roadmap. The [build-status and WR26 audit](BUILD-STATUS-AND-WR26-GAP-AUDIT.md)
+is historical status evidence and contains the execution-plan template.

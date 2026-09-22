@@ -209,17 +209,18 @@ export function SquarePaymentMatching({
           </p>
         </div>
         <span className="count-badge">
-          <CreditCard aria-hidden="true" size={17} /> {outstanding.length} unmatched
+          <CreditCard aria-hidden="true" size={17} />{" "}
+          {unavailable ? "Not checked" : `${outstanding.length} unmatched`}
         </span>
       </div>
 
       {unavailable && (
-        <div className="inline-notice" role="alert">
+        <div className="inline-notice error" role="alert">
           <strong>Square could not be reached.</strong> {unavailable}
         </div>
       )}
       {squareUnreachable && !unavailable && (
-        <div className="inline-notice" role="alert">
+        <div className="inline-notice error" role="alert">
           Square stopped responding partway through, so this list may be
           incomplete.
         </div>
@@ -268,12 +269,29 @@ export function SquarePaymentMatching({
             <span>Match</span>
           </button>
         ))}
-        {outstanding.length === 0 && (
+        {outstanding.length === 0 && unavailable && (
           <div className="empty-state">
             <CreditCard aria-hidden="true" size={24} />
-            <h3>Nothing is waiting to be matched</h3>
+            <h3>Square payments were not checked</h3>
             <p>
-              {examined > 0
+              This is not an all-clear. Any card payments taken outside IMSDA
+              Events, including in the Square app at check-in, are still
+              unknown until Square can be reached.
+            </p>
+          </div>
+        )}
+        {outstanding.length === 0 && !unavailable && (
+          <div className="empty-state">
+            <CreditCard aria-hidden="true" size={24} />
+            <h3>
+              {squareUnreachable
+                ? "Nothing found so far"
+                : "Nothing is waiting to be matched"}
+            </h3>
+            <p>
+              {squareUnreachable
+                ? `The ${examined} Square payments read before Square stopped responding are recorded. Reload to check the rest.`
+                : examined > 0
                 ? `All ${examined} completed Square payments in the last ${windowDays} days are recorded.`
                 : "No completed Square payments were found in this window."}
             </p>
@@ -433,8 +451,8 @@ export function SquarePaymentMatching({
       )}
 
       <p className="quiet-copy">
-        Reviewing the last {windowDays} days · {examined} completed Square
-        payments examined ·{" "}
+        Reviewing the last {windowDays} days ·{" "}
+        {unavailable ? "Square was not reached" : `${examined} completed Square payments examined`} ·{" "}
         <Link href={`/finance?event=${eventId}`}>Back to finance</Link>
       </p>
     </section>

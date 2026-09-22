@@ -226,3 +226,18 @@ The payment endpoint is private to a registration management link:
 to `POST /api/webhooks/square`. A promoted waitlist registrant saves an
 explicit choice through `POST /api/public/manage/:token/payment-choice`; that
 route never calls Square.
+
+## Card payments taken at check-in
+
+Check-in staff take door payments in the Square app on their phones. The
+check-in roster and scanner show each owing registration's balance, the amount
+to key into the Square app, and the confirmation code to type into the Square
+payment note (`modules/payments/in-person-card.ts`).
+
+- The card amount grosses the balance up by Square's **in-person** rate,
+  2.6% + 15¢, approved for WR26. It is deliberately separate from the event's
+  online card fee, which uses Square's online rate.
+- Nothing is charged or recorded by IMSDA Events at the door. The payment lands
+  in Square, and finance attaches it on **Payments → Unmatched Square
+  payments**, which recognizes the confirmation code in the note.
+- Events billed to an organization show no balance at check-in.

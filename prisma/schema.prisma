@@ -794,6 +794,18 @@ model AlertNotification {
   @@index([resolvedAt])
 }
 
+/**
+ * When each unattended job last finished. The outbox sweep also runs the alert
+ * scan, so it cannot raise an alert about itself stopping; this row is what
+ * lets `/api/health` and the command center notice a sweep that went quiet.
+ */
+model SystemJobHeartbeat {
+  job             String    @id
+  lastSucceededAt DateTime?
+  lastFailedAt    DateTime?
+  updatedAt       DateTime  @updatedAt
+}
+
 model RateLimitBucket {
   id              String   @id @default(cuid())
   policy          String

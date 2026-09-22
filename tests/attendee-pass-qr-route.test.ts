@@ -63,6 +63,11 @@ describe("private attendee QR route", () => {
       token,
       "attendee_456",
     );
+    expect(mocks.checkPublicManageRateLimit).toHaveBeenCalledWith(
+      expect.any(Request),
+      token,
+      "pass",
+    );
     expect(mocks.qrToString).toHaveBeenCalledWith(
       "imsda-pass.v1.payload.signature",
       expect.objectContaining({

@@ -1,76 +1,34 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import {
   Activity,
   ArrowRight,
-  BadgeDollarSign,
-  Building2,
+  BellRing,
   CalendarPlus,
   CheckCircle2,
   CircleAlert,
-  ClipboardCheck,
   CloudCog,
-  HeartPulse,
+  Map as MapIcon,
+  MailCheck,
   RefreshCw,
   ShieldCheck,
   TentTree,
+  Timer,
   UsersRound,
 } from "lucide-react";
 import { getCurrentSession } from "@/modules/access/current-session";
-import { getSystemAdminDashboard } from "@/modules/system-admin/repository";
+import { getSystemAdminDashboard, getSystemHealth } from "@/modules/system-admin/repository";
+import type { SetupWarningKind } from "@/modules/system-admin/dashboard";
 import { getReleaseIdentity } from "@/lib/release";
 import packageInfo from "@/package.json";
 import styles from "./system-admin.module.css";
 
 export const metadata: Metadata = { title: "System administration" };
 
-const platformModules = [
-  {
-    name: "Event operations",
-    detail: "Registration, payments, communications, imports, check-in, badges, reports, and assignments.",
-    status: "LIVE",
-    icon: CheckCircle2,
-  },
-  {
-    name: "WR26 launch work",
-    detail: "Full bundle import, aligned form steps, shirt reconfirmation, and Avery badge output.",
-    status: "IN_PROGRESS",
-    icon: ClipboardCheck,
-  },
-  {
-    name: "Churches and club rosters",
-    detail: "Shared organizations, club years, members, consent, and stable provider identities.",
-    status: "IN_PROGRESS",
-    icon: Building2,
-    href: "/admin/organizations",
-  },
-  {
-    name: "Possible duplicate people",
-    detail: "Rule-based match candidates with evidence — staff review, dismiss, or defer. Merge ships in a later slice.",
-    status: "IN_PROGRESS",
-    icon: UsersRound,
-    href: "/people/matches",
-  },
-  {
-    name: "Treasury settlement",
-    detail: "Post-event church billing from actual attendance and approved charge lines.",
-    status: "PLANNED",
-    icon: BadgeDollarSign,
-  },
-  {
-    name: "Camp medical operations",
-    detail: "Emergency workspace, audited access, confidential reports, and an expiring offline packet.",
-    status: "PLANNED",
-    icon: HeartPulse,
-  },
-  {
-    name: "External systems",
-    detail: "eAdventist organizations, UltraCamp operations, and Sterling clearance synchronization.",
-    status: "PLANNED",
-    icon: CloudCog,
-  },
-] as const;
+/** Where the build plan lives. The command center shows live state, not the plan. */
+const ROADMAP_URL = "https://github.com/DurantTL/imsda-events/issues/98";
 
 function money(cents: number) {
   return new Intl.NumberFormat("en-US", {
@@ -96,24 +54,106 @@ function phaseLabel(value: string) {
   }[value] ?? value;
 }
 
-function statusLabel(value: typeof platformModules[number]["status"]) {
-  return {
-    LIVE: "Live",
-    IN_PROGRESS: "In progress",
-    NEXT: "Next",
-    PLANNED: "Planned",
-  }[value];
+function countdown(timing: string, daysUntilStart: number | null) {
+  if (timing === "IN_PROGRESS") return "Happening now";
+  if (daysUntilStart === null) return null;
+  if (daysUntilStart <= 1) return "Starts tomorrow";
+  return `Starts in ${daysUntilStart} days`;
 }
+
+function ago(ms: number) {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 1) return "less than a minute ago";
+  if (minutes < 90) return `${minutes} ${minutes === 1 ? "minute" : "minutes"} ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} hours ago`;
+  return `${Math.round(hours / 24)} days ago`;
+}
+
+const warningHref: Record<SetupWarningKind, string> = {
+  UNPUBLISHED: "/more/event-settings",
+  NO_PUBLISHED_FORM: "/registration-builder",
+  IMPORT_ISSUES: "/imports",
+  IMPORT_WARNINGS: "/imports",
+  DELIVERY_ISSUES: "/communications?view=deliveries",
+};
+
+function withEvent(href: string, eventQuery: string) {
+  return `${href}${href.includes("?") ? "&" : "?"}${eventQuery}`;
+}
+
+type HealthRow = {
+  name: string;
+  state: "ok" | "warn" | "bad" | "unknown";
+  label: string;
+  detail: string;
+  icon: typeof Activity;
+  extra?: ReactNode;
+};
+
+const healthClass = {
+  ok: styles.healthOk,
+  warn: styles.healthWarn,
+  bad: styles.healthBad,
+  unknown: styles.healthUnknown,
+};
 
 export default async function SystemAdminPage() {
   const { user } = await getCurrentSession();
   if (!user) redirect("/login");
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
 
-  const dashboard = await getSystemAdminDashboard();
+  const [dashboard, health] = await Promise.all([
+    getSystemAdminDashboard(),
+    getSystemHealth(),
+  ]);
   const currentEvents = dashboard.events.filter((event) => event.timing !== "PAST");
   const pastEvents = dashboard.events.filter((event) => event.timing === "PAST");
   const release = getReleaseIdentity();
+
+  const { sweep, outbox, alerts } = health;
+  const healthRows: HealthRow[] = [
+    {
+      name: "Email sweep",
+      icon: Timer,
+      ...(!sweep
+        ? { state: "unknown" as const, label: "Unknown", detail: "The last sweep time could not be read." }
+        : sweep.status === "ok"
+          ? { state: "ok" as const, label: "Running", detail: `Last ran ${ago(sweep.ageMs ?? 0)}. Retries email, raises alerts, and prunes community content.` }
+          : sweep.status === "stale"
+            ? { state: "bad" as const, label: "Stopped?", detail: `Last ran ${ago(sweep.ageMs ?? 0)}. Failed email is not being retried and no alerts are raised until it runs again. Check the five-minute script on the server.` }
+            : sweep.status === "failing"
+              ? { state: "bad" as const, label: "Failing", detail: "The latest sweep reached the app but failed. Check the app logs for “Outbox sweep failed”." }
+              : { state: "warn" as const, label: "Not seen", detail: "No sweep has reported yet. Make sure the five-minute script posts to /api/internal/outbox/sweep." }),
+    },
+    {
+      name: "Email queue",
+      icon: MailCheck,
+      ...(!outbox
+        ? { state: "unknown" as const, label: "Unknown", detail: "The email queue could not be read." }
+        : outbox.status === "ok"
+          ? { state: "ok" as const, label: "Flowing", detail: `${outbox.pending} waiting · ${outbox.failed} gave up after retries.` }
+          : { state: "warn" as const, label: "Backing up", detail: `${outbox.reasons.join(". ")}. A large announcement can cause this briefly.` }),
+    },
+    {
+      name: "Open alerts",
+      icon: BellRing,
+      ...(!alerts
+        ? { state: "unknown" as const, label: "Unknown", detail: "Open alerts could not be read." }
+        : alerts.length === 0
+          ? { state: "ok" as const, label: "None", detail: "Nothing the alert scan is still reporting." }
+          : {
+              state: "bad" as const,
+              label: `${dashboard.summary.unresolvedAlertCount} open`,
+              detail: "Cleared automatically once the condition is fixed.",
+              extra: (
+                <ul className={styles.alertList}>
+                  {alerts.map((alert) => <li key={alert.key}>{alert.summary}</li>)}
+                </ul>
+              ),
+            }),
+    },
+  ];
 
   return (
     <section className={`page-stack ${styles.workspace}`}>
@@ -122,7 +162,7 @@ export default async function SystemAdminPage() {
           <span className={styles.adminBadge}><ShieldCheck aria-hidden="true" size={16} /> System administrator</span>
           <p className="eyebrow">One IMSDA operations platform</p>
           <h2>System command center</h2>
-          <p>Manage every event, watch cross-system exceptions, and follow the CMMS, treasury, medical, and provider-integration build from one place.</p>
+          <p>Every event, the system&rsquo;s health, and the exceptions that need someone. Each link opens the event workspace that can change the record.</p>
         </div>
         <div className={styles.heroActions}>
           <Link className="primary-button" href="/event-setup"><CalendarPlus aria-hidden="true" size={16} /> Create event</Link>
@@ -135,7 +175,7 @@ export default async function SystemAdminPage() {
       <section className={styles.metrics} aria-label="System summary">
         <article><span className={styles.metricIcon}><TentTree aria-hidden="true" size={20} /></span><strong>{dashboard.summary.currentEventCount}</strong><p>Current events</p><small>{dashboard.summary.publishedEventCount} published across {dashboard.summary.eventCount} total</small></article>
         <article><span className={styles.metricIcon}><UsersRound aria-hidden="true" size={20} /></span><strong>{dashboard.summary.attendeeCount}</strong><p>Expected attendees</p><small>{dashboard.summary.registrationCount} active registrations</small></article>
-        <article className={dashboard.summary.operationalIssueCount > 0 ? styles.needsAttention : undefined}><span className={styles.metricIcon}><CircleAlert aria-hidden="true" size={20} /></span><strong>{dashboard.summary.operationalIssueCount}</strong><p>Operational exceptions</p><small>{dashboard.summary.unresolvedAlertCount} unresolved system alerts</small></article>
+        <article className={dashboard.summary.operationalIssueCount > 0 ? styles.needsAttention : undefined}><span className={styles.metricIcon}><CircleAlert aria-hidden="true" size={20} /></span><strong>{dashboard.summary.operationalIssueCount}</strong><p>Operational exceptions</p><small>{dashboard.summary.unresolvedAlertCount} open system alerts · failed imports and email</small></article>
         <article><span className={styles.metricIcon}><ShieldCheck aria-hidden="true" size={20} /></span><strong>{dashboard.summary.activeUserCount}</strong><p>Active staff accounts</p><small>{dashboard.summary.pendingUserCount} pending · {dashboard.summary.systemAdminCount} system admins</small></article>
       </section>
 
@@ -149,11 +189,15 @@ export default async function SystemAdminPage() {
           <div className={styles.eventList}>
             {currentEvents.map((event) => {
               const query = `event=${encodeURIComponent(event.id)}`;
+              const when = countdown(event.timing, event.daysUntilStart);
               return (
                 <article className={styles.eventCard} key={event.id}>
                   <div className={styles.eventMain}>
                     <div className={styles.eventTitle}>
-                      <span className={`${styles.phase} ${event.registrationPhase === "OPEN" ? styles.phaseOpen : ""}`}>{phaseLabel(event.registrationPhase)}</span>
+                      <span>
+                        <span className={`${styles.phase} ${event.registrationPhase === "OPEN" ? styles.phaseOpen : ""}`}>{phaseLabel(event.registrationPhase)}</span>
+                        {when && <span className={styles.countdown}>{when}</span>}
+                      </span>
                       <h3>{event.name}</h3>
                       <p>{dateRange(event.startsAt, event.endsAt, event.timezone)} · {event.location ?? "Location pending"}</p>
                     </div>
@@ -165,17 +209,30 @@ export default async function SystemAdminPage() {
                     <span><strong>{event.attendeeCount}</strong><small>Attendees</small></span>
                     <span><strong>{event.checkedInCount}</strong><small>Checked in</small></span>
                     <span><strong>{event.waitingCount}</strong><small>Waitlisted</small></span>
-                    <span><strong>{money(event.ledgerBalanceCents)}</strong><small>Current ledger balance</small></span>
+                    <span>
+                      <Link href={`/finance?${query}`} title="Money still owed on active registrations">
+                        <strong>{money(event.ledgerBalanceCents)}</strong><small>Outstanding balance</small>
+                      </Link>
+                    </span>
                   </div>
 
                   <div className={styles.eventFooter}>
                     <div className={styles.eventWarnings}>
                       {event.setupWarnings.length === 0
                         ? <span className={styles.ready}><CheckCircle2 aria-hidden="true" size={14} /> No setup or delivery exceptions detected</span>
-                        : event.setupWarnings.map((warning) => <span key={warning}><CircleAlert aria-hidden="true" size={14} /> {warning}</span>)}
+                        : event.setupWarnings.map((warning) => (
+                          <Link
+                            className={warning.exception ? styles.exception : undefined}
+                            href={withEvent(warningHref[warning.kind], query)}
+                            key={warning.kind}
+                          >
+                            <CircleAlert aria-hidden="true" size={14} /> {warning.label}
+                          </Link>
+                        ))}
                     </div>
                     <div className={styles.eventLinks}>
                       <Link href={`/registration-builder?${query}`}>Form</Link>
+                      <Link href={`/finance/square-payments?${query}`}>Square matching</Link>
                       <Link href={`/more/promo-codes?${query}`}>Promo codes</Link>
                       <Link href={`/staff?${query}`}>Team</Link>
                       <Link href={`/more/health?${query}`}>Health</Link>
@@ -210,33 +267,34 @@ export default async function SystemAdminPage() {
         </section>
 
         <aside className={styles.sideColumn}>
-          <section className={styles.roadmap}>
+          <section className={styles.roadmap} id="system-health">
             <div className={styles.sectionHeading}>
-              <div><p className="eyebrow">Unified system</p><h2>Platform modules</h2><p>Live operations and the accepted build sequence.</p></div>
+              <div><p className="eyebrow">Live</p><h2>System health</h2><p>The unattended jobs nobody watches until they stop. Read when this page loaded.</p></div>
             </div>
             <div className={styles.moduleList}>
-              {platformModules.map(({ name, detail, status, icon: Icon, ...module }) => (
+              {healthRows.map(({ name, state, label, detail, icon: Icon, extra }) => (
                 <article key={name}>
                   <span className={styles.moduleIcon}><Icon aria-hidden="true" size={18} /></span>
                   <span>
-                    <strong>
-                      {"href" in module
-                        ? <Link href={module.href}>{name}</Link>
-                        : name}
-                    </strong>
+                    <strong>{name}</strong>
                     <small>{detail}</small>
+                    {extra}
                   </span>
-                  <em className={styles[`status${status}`]}>{statusLabel(status)}</em>
+                  <em className={healthClass[state]}>{label}</em>
                 </article>
               ))}
             </div>
           </section>
 
           <section className={styles.scope}>
-            <Activity aria-hidden="true" size={20} />
+            <MapIcon aria-hidden="true" size={20} />
             <div>
-              <strong>Read-only command center</strong>
-              <p>This first slice summarizes authoritative records and sends administrators to the existing workspace that can safely change them.</p>
+              <strong>Build roadmap</strong>
+              <p>
+                What is being built next, and in what order, is kept in{" "}
+                <a href={ROADMAP_URL} rel="noreferrer" target="_blank">GitHub issue #98</a>.
+                This page only shows what is live.
+              </p>
             </div>
           </section>
 

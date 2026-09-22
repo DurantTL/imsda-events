@@ -97,3 +97,29 @@ describe("rate-limit subject privacy", () => {
     expect(serializedRules).not.toContain(rawUserAgent);
   });
 });
+
+describe("private manage-link budgets", () => {
+  it("gives attendee QR images a larger client budget than other reads", async () => {
+    const request = new Request("https://events.imsda.test/api/public/manage/token", {
+      headers: { "x-forwarded-for": "192.0.2.10" },
+    });
+
+    await checkPublicManageRateLimit(request, "private-token", "read");
+    await checkPublicManageRateLimit(request, "private-token", "pass");
+
+    const [read, pass] = repositoryMocks.enforceRateLimitRules.mock.calls.map(
+      ([rules]) => (rules as Array<{ policy: string; limit: number }>)
+        .map(({ policy, limit }) => [policy, limit]),
+    );
+    expect(read).toEqual([
+      ["public.manage.read.client", 120],
+      ["public.manage.read.token", 120],
+      ["public.manage.read.client-token", 60],
+    ]);
+    expect(pass).toEqual([
+      ["public.manage.pass.client", 600],
+      ["public.manage.pass.token", 240],
+      ["public.manage.pass.client-token", 120],
+    ]);
+  });
+});
