@@ -23,5 +23,5 @@ export default async function CheckInPage({ searchParams }: { searchParams: Prom
   const registrations = await listRegistrations(event.id, {
     statuses: activeRegistrationStatuses,
   });
-  return <CheckInWorkspace key={event.id} eventName={event.name} eventId={event.id} initialRegistrations={registrations} canCheckIn={permissions.includes("MANAGE_CHECK_IN")} />;
+  return <CheckInWorkspace key={event.id} eventName={event.name} eventId={event.id} initialRegistrations={registrations} canCheckIn={permissions.includes("MANAGE_CHECK_IN")} showBalances={event.billingMode !== "DEFERRED_ORGANIZATION_INVOICE"} />;
 }

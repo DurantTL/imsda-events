@@ -6567,3 +6567,21 @@ select:focus-visible {
 @media (max-width: 640px) {
   .address-field-grid { grid-template-columns: 1fr; }
 }
+
+/* Check-in: remaining balance and the Square-app card amount. */
+.checkin-payment-due {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+  border: 1px solid #ddcd9e;
+  border-radius: 9px;
+  background: var(--imsda-gold-soft);
+  color: #6f5316;
+  padding: 6px 8px;
+  font-size: 0.64rem;
+  line-height: 1.5;
+}
+.checkin-payment-due > svg { flex: 0 0 auto; margin-top: 2px; }
+.checkin-payment-due b { font-weight: 800; }
+.checkin-balance-note { display: block; max-width: 720px; margin-top: 4px; color: var(--muted); font-size: 0.66rem; line-height: 1.5; }

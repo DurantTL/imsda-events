@@ -18,6 +18,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
+import { CheckInPaymentDue } from "@/components/check-in-payment-due";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { CheckInActionResult } from "@/components/use-offline-check-in-queue";
 
@@ -89,6 +90,7 @@ export function CheckInScanner({
   onConfirmCheckIn,
   queuedAttendeeIds,
   conflictAttendeeIds,
+  paymentDueByConfirmationCode = {},
 }: {
   eventId: string;
   onConfirmCheckIn: (
@@ -96,6 +98,7 @@ export function CheckInScanner({
   ) => Promise<CheckInActionResult>;
   queuedAttendeeIds: string[];
   conflictAttendeeIds: string[];
+  paymentDueByConfirmationCode?: Record<string, { balanceCents: number; partySize: number }>;
 }) {
   const [open, setOpen] = useState(false);
   const [cameraState, setCameraState] = useState<CameraState>("idle");
@@ -497,6 +500,13 @@ export function CheckInScanner({
                         ? "signed QR pass"
                         : "confirmation-code lookup"}
                     </p>
+                    {paymentDueByConfirmationCode[resolution.confirmationCode] && (
+                      <CheckInPaymentDue
+                        balanceCents={paymentDueByConfirmationCode[resolution.confirmationCode].balanceCents}
+                        confirmationCode={resolution.confirmationCode}
+                        partySize={paymentDueByConfirmationCode[resolution.confirmationCode].partySize}
+                      />
+                    )}
                   </div>
                 </div>
                 <div className="check-in-review-list">
