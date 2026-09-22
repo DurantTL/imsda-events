@@ -158,6 +158,17 @@ Two repairs follow from that:
   the existing reference *is* a payment Square knows — that is two real
   payments, not one mislabelled — and tells you to attach through Finance
   instead when the registration has no matching payment to point at.
+- `-- --auto-link` proposes every pair at once, reading the person's name from
+  each Square note — the same evidence a staff member reads off the receipt.
+  Doing a backlog of these by hand means one chance per row to transpose two
+  same-amount payments, and a transposition is silent and permanent: both
+  registrations keep the right money, so nothing downstream notices they hold
+  each other's provider reference. A pair is proposed only when the name
+  resolves to exactly one payable registration, that registration holds exactly
+  one successful payment for exactly the provider's amount, and Square does not
+  recognise the reference it currently carries. Anything less is printed as a
+  skip with its reason. Two proposals landing on one registration abort the
+  whole run. It writes nothing without `--commit --reason "<why>"`.
 - `-- --void <id>[,<id>...] --reason "<why>"` only reverses the attachment,
   leaving the bad reference in place. Use it when the existing payment is
   genuinely unrelated. Reconciliation will keep reporting that Square payment

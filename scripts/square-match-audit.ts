@@ -29,6 +29,10 @@ import { loadEnvConfig } from "@next/env";
 import { PrismaClient, type Prisma } from "@prisma/client";
 import { getSquareConfiguration } from "@/modules/payments/square-config-domain";
 import { getSquarePayment } from "@/modules/payments/square-http";
+import {
+  collectSquareReconciliationReport,
+  isActionable,
+} from "@/modules/payments/square-reconciliation";
 
 loadEnvConfig(process.cwd());
 
@@ -37,6 +41,8 @@ const USAGE = "Usage:\n"
   + "  npm run payments:match-audit -- --verify\n"
   + "  npm run payments:match-audit -- --relink <id>[,<id>...] --reason \"<why>\"\n"
   + "  npm run payments:match-audit -- --link <squareId>=<code>[,...] --reason \"<why>\"\n"
+  + "  npm run payments:match-audit -- --auto-link [--days <n>]\n"
+  + "  npm run payments:match-audit -- --auto-link --commit --reason \"<why>\"\n"
   + "  npm run payments:match-audit -- --void <id>[,<id>...] --reason \"<why>\"";
 
 function fail(message: string): never {
@@ -400,6 +406,192 @@ async function link(
   }
 }
 
+/**
+ * The person a Square note names. These notes read "<item> \u2013 <attendee
+ * name>", which is the only thing connecting a payment from a channel that
+ * writes bare order numbers to a registration in this database. It is the same
+ * evidence a staff member reads off the receipt.
+ */
+function namedPerson(note: string | null) {
+  if (!note) return null;
+  const segments = note.split(/[\u2013\u2014|]/);
+  if (segments.length < 2) return null;
+  const words = (segments[segments.length - 1] ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word.length > 1);
+  if (words.length < 2) return null;
+  return { firstName: words[0]!, lastName: words[words.length - 1]! };
+}
+
+/**
+ * Pair every unmatched Square payment with the registration that already holds
+ * its money, by the name on the note.
+ *
+ * Doing fourteen of these by hand means fourteen chances to transpose two
+ * same-amount rows, and a transposition here is silent and permanent: both
+ * registrations keep the right money, so nothing downstream ever notices that
+ * they hold each other's provider reference.
+ *
+ * So the machine proposes and a person disposes. A pair is only proposed when
+ * the name resolves to exactly one payable registration, that registration
+ * holds exactly one successful payment for exactly the provider's amount, and
+ * Square does not recognise the reference that payment currently carries.
+ * Anything less is printed as a skip with its reason and left alone. Nothing is
+ * written without --commit.
+ */
+async function autoLink(
+  prisma: PrismaClient,
+  options: { days: number; commit: boolean; reason: string | null },
+) {
+  const configuration = getSquareConfiguration();
+  if (!configuration.paymentConfigured) {
+    fail(`Square is not configured (${configuration.issue}).`);
+  }
+  const beginTime = new Date(
+    Date.now() - options.days * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const report = await collectSquareReconciliationReport(
+    prisma,
+    configuration,
+    { beginTime },
+  );
+  if (report.unreachableSquare) {
+    fail("Square could not be reached. Nothing was examined.");
+  }
+
+  const proposals: Array<{
+    providerPaymentId: string;
+    confirmationCode: string;
+    amountCents: number;
+    paymentId: string;
+    staleReference: string | null;
+  }> = [];
+
+  for (const finding of report.findings.filter(isActionable)) {
+    const label = `${money(finding.amountCents)} ${finding.providerPaymentId}`;
+    const person = namedPerson(finding.note);
+    if (!person) {
+      console.log(`[skip] ${label} — its note names no person.`);
+      continue;
+    }
+    const name = `${person.firstName} ${person.lastName}`;
+    const registrations = await prisma.registration.findMany({
+      where: {
+        status: { in: ["SUBMITTED", "CONFIRMED"] },
+        payments: {
+          some: { status: "SUCCEEDED", amount: finding.amountCents / 100 },
+        },
+        OR: [
+          {
+            accountHolderPerson: {
+              firstName: { equals: person.firstName, mode: "insensitive" },
+              lastName: { equals: person.lastName, mode: "insensitive" },
+            },
+          },
+          {
+            attendees: {
+              some: {
+                person: {
+                  firstName: { equals: person.firstName, mode: "insensitive" },
+                  lastName: { equals: person.lastName, mode: "insensitive" },
+                },
+              },
+            },
+          },
+        ],
+      },
+      select: {
+        confirmationCode: true,
+        payments: {
+          where: { status: "SUCCEEDED" },
+          select: { id: true, amount: true, externalReference: true },
+        },
+      },
+      take: 2,
+    });
+    if (registrations.length === 0) {
+      console.log(`[skip] ${label} — no payable registration for ${name} holds ${money(finding.amountCents)}.`);
+      continue;
+    }
+    if (registrations.length > 1) {
+      console.log(`[skip] ${label} — ${name} matches more than one registration holding that amount.`);
+      continue;
+    }
+    const registration = registrations[0]!;
+    const candidates = registration.payments.filter(
+      (payment) => cents(payment.amount) === finding.amountCents,
+    );
+    if (candidates.length !== 1) {
+      console.log(`[skip] ${label} — ${registration.confirmationCode} holds ${candidates.length} payments of that amount.`);
+      continue;
+    }
+    const existing = candidates[0]!;
+    if (existing.externalReference === finding.providerPaymentId) {
+      console.log(`[skip] ${label} — ${registration.confirmationCode} already points at it.`);
+      continue;
+    }
+    if (existing.externalReference) {
+      const known = await getSquarePayment(
+        configuration,
+        existing.externalReference,
+      ).catch(() => null);
+      if (known) {
+        console.log(`[skip] ${label} — ${registration.confirmationCode} carries ${existing.externalReference}, which Square recognises. Two real payments.`);
+        continue;
+      }
+    }
+    proposals.push({
+      providerPaymentId: finding.providerPaymentId,
+      confirmationCode: registration.confirmationCode,
+      amountCents: finding.amountCents,
+      paymentId: existing.id,
+      staleReference: existing.externalReference,
+    });
+    console.log(`[pair] ${label} \u2192 ${registration.confirmationCode} (${name})`);
+    console.log(`       replaces ${existing.externalReference ?? "no reference"}`);
+  }
+
+  // A registration must not be claimed twice: two same-amount payments whose
+  // notes name the same person would otherwise both land on one row.
+  const claimed = new Map<string, number>();
+  for (const proposal of proposals) {
+    claimed.set(
+      proposal.confirmationCode,
+      (claimed.get(proposal.confirmationCode) ?? 0) + 1,
+    );
+  }
+  const contested = [...claimed].filter(([, count]) => count > 1);
+  if (contested.length > 0) {
+    console.log("");
+    for (const [code] of contested) {
+      console.log(`[conflict] ${code} was proposed more than once. Nothing will be written.`);
+    }
+    fail("Ambiguous proposals. Resolve these by hand with --link.");
+  }
+
+  console.log(`\n${proposals.length} pair${proposals.length === 1 ? "" : "s"} proposed.`);
+  if (proposals.length === 0) return 0;
+
+  if (!options.commit) {
+    console.log("Nothing was written. Re-run with --commit and --reason to apply:\n");
+    console.log("  npm run payments:match-audit -- --auto-link --commit \\");
+    console.log(`    --days ${options.days} --reason "<why>"`);
+    return proposals.length;
+  }
+  if (!options.reason) fail("--reason is required with --commit.");
+  console.log("");
+  await link(
+    prisma,
+    proposals.map((proposal) => ({
+      providerPaymentId: proposal.providerPaymentId,
+      confirmationCode: proposal.confirmationCode,
+    })),
+    options.reason,
+  );
+  return proposals.length;
+}
+
 async function voidPayment(
   prisma: PrismaClient,
   paymentId: string,
@@ -483,6 +675,18 @@ async function main() {
       const reason = option(argv, "reason");
       if (!reason) fail("--reason is required when relinking a payment.");
       await relink(prisma, idList(toRelink), reason);
+      return;
+    }
+    if (argv.includes("--auto-link")) {
+      const days = Number(option(argv, "days") ?? 90);
+      if (!Number.isInteger(days) || days < 1 || days > 365) {
+        fail("--days must be a whole number from 1 to 365.");
+      }
+      await autoLink(prisma, {
+        days,
+        commit: argv.includes("--commit"),
+        reason: option(argv, "reason"),
+      });
       return;
     }
     const toLink = option(argv, "link");
