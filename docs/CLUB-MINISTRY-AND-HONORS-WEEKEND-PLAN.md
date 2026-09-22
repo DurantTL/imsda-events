@@ -1,6 +1,7 @@
 # Club Ministry, Honors Weekend, and the 2026–27 event calendar
 
-Prepared September 22, 2026, against `main` at `274551b` (after PR #351).
+Prepared September 22, 2026, against `main` at `274551b` (after PR #351). Updated the
+same day with how Honors Weekend 2026 actually ran.
 
 This is a **review and plan only**. It records what was found across this
 repository, GitHub issue #98, the WR26 go-live review, and the earlier club system
@@ -17,7 +18,9 @@ stays the canonical roadmap. Nothing here changes #98 until a human approves it.
   path WR26 needed is built.
 - **The calendar has moved, and the roadmap has not.** The next deadlines are club
   events, not the Phase 1 platform order in #98:
-  - Honors Weekend in December 2026, working by November.
+  - Honors Weekend: registration opens in December 2026, so it must work by
+    November. The events themselves follow in late winter (the 2026 events ran
+    February 28 – March 8 at four sites).
   - Spring Camporee: registration opens in January or February 2027; the event runs
     April 29 – May 2, 2027.
   - Camp Meeting: registration opens at the end of March 2027; the event is in June 2027.
@@ -33,6 +36,12 @@ stays the canonical roadmap. Nothing here changes #98 until a human approves it.
   issues beyond the broad [#68](https://github.com/DurantTL/imsda-events/issues/68)
   and [#197](https://github.com/DurantTL/imsda-events/issues/197). This report
   captures it.
+- **The system actually used for Honors Weekend 2026** was a Fluent Forms
+  registration feeding a Google Sheet. It ran four separate events with their own
+  class lists, 50 club registrations covering 475 people, first-come class
+  selection with live seat counts, and printed check-in sheets. Section 3.4
+  records how it worked, using totals only. That working practice, not CMMS-1, is
+  what Honors Weekend 2027 has to match or beat.
 - **The owner decision on #68 (July 31, 2026) still governs.** CMMS-1 is a
   workflow reference only. Its code is never copied; club features are rebuilt
   natively here, and data migrates once through a reviewed import.
@@ -40,8 +49,9 @@ stays the canonical roadmap. Nothing here changes #98 until a human approves it.
   director workspace (#193) sits behind about a dozen large issues. Section 6
   proposes six narrow slices that reuse what this platform already has, so clubs
   register once and pick who is going for each event.
-- **Ten decisions** are needed from Caleb and Club Ministry (Section 9). The first
-  three change the build and are needed this week.
+- **Decisions** are needed from Caleb and Club Ministry (Section 9). The 2026
+  spreadsheet already answers several of them; D3, D4, and D11 change the build and
+  are needed this week.
 
 ---
 
@@ -50,7 +60,7 @@ stays the canonical roadmap. Nothing here changes #98 until a human approves it.
 | Event | Registration opens | Event dates | Billing | Status here |
 | --- | --- | --- | --- | --- |
 | Women's Retreat 2026 (WR26) | Done (imported from another system) | Oct 9–11, 2026 | Attendee pay | Live; operational items remain (Section 4) |
-| **Honors Weekend 2026** | **November 2026 (date to confirm)** | **December 2026 (date to confirm)** | To confirm | **Nothing built for honors yet** |
+| **Honors Weekend 2027** | **December 2026** (2026 opened January 1) | **Late winter 2027, at several sites** (2026: Feb 28 – Mar 8, four events) | To confirm (no payment data in the 2026 sheet) | **Nothing built for honors yet** |
 | Spring Camporee 2027 | January or February 2027 | Apr 29 – May 2, 2027, Camp Heritage, MO | Church-billed (planned) | Draft event exists in production |
 | Camp Meeting 2027 | End of March 2027 | June 2027 | Attendee pay (planned) | Hard-coded form; lodging/meals not built |
 
@@ -62,6 +72,8 @@ Confirmed answers from Caleb (September 22, 2026):
 - **Honor/class sign-ups with capacity limits** are needed.
 - **Camp Meeting** needs rooms/tents/RV sites **and** meal plans in the system.
 - WR26 door payments use Square's **in-person rate (2.6% + 15¢)**. Shipped in #351.
+- Honors Weekend **registration opens in December 2026**. The honors process to
+  build from is the one actually used in 2026 (Section 3.4).
 
 ---
 
@@ -127,7 +139,96 @@ selection wizard, bulk enrollment, and certificates.
 - There is no lasting synchronization between the two systems.
 - CMMS-1 retires once every needed workflow has a home here.
 
-### 3.4 What IMSDA Events already has that club events can reuse
+### 3.4 How Honors Weekend 2026 actually ran
+
+Source: the "Honors Weekend 2026" Google Sheet owned by the communication
+department. It holds real attendee data, so **only structure and totals are
+recorded here**. No names, contact details, or individual records were copied
+into this repository.
+
+**Tooling:**
+- A WordPress Fluent Forms registration with a custom roster builder.
+- A Google Apps Script that wrote each submission into sheets: Registrations,
+  Roster, ClassEnrollments, and an email log. The script also sent confirmation,
+  resend, and forward emails.
+- Registration codes looked like `REG-…`.
+- Registration was open **January 1 – March 2, 2026**.
+
+**Events and sites.** Honors Weekend was four separate events, each with its own
+class list and its own roster:
+
+| Site | Dates (2026) | People | Youth | Staff | Adults |
+| --- | --- | --- | --- | --- | --- |
+| Camp Heritage, weekend 1 | Feb 28 – Mar 1 | 75 | 41 | 20 | 13 |
+| Camp Heritage, weekend 2 | Mar 7–8 | 180 | 120 | 45 | 9 |
+| Des Moines, Iowa | Mar 7–8 | 155 | 114 | 33 | 6 |
+| Kansas City Multicultural (**Spanish-language form**) | Mar 7 | 51 | 31 | 16 | 3 |
+
+A further 15 people were never assigned a site.
+
+**Registrations:**
+- There were **50 registrations from 29 clubs**, covering **475 people**. One
+  director (or registrant) entered the whole club's list; sizes ranged from 1 to
+  40. A club sometimes registered more than once, for another site or for later
+  additions.
+- Each person had a name, age, gender, dietary restriction (45 people listed
+  one), site, **attendee type**, and chosen classes.
+- Attendee types: youth 313, staff 121, adult 31, and "underage" 10, meaning
+  younger than the attendance age.
+- **Nobody was kept between events.** Every person was retyped on every
+  registration. This is the "register once" gap Caleb described.
+
+**Classes:**
+- **65 class offerings**, each tied to one site, with an ID, name, capacity
+  (mostly 10–30, some 6–8), current enrolled count, optional **minimum age**
+  (12–14 on 14 classes; no maximum ages used), and teacher.
+- At Camp Heritage each class had a **session type**:
+  - **Sabbath**;
+  - **Sunday**;
+  - **Full**, meaning both days, which fills both slots.
+
+  Des Moines and Kansas City left session type blank.
+- **Each person chose up to two classes during registration.** Most youth took
+  two: 222 took two, 89 took one.
+- Staff and adults could also take classes.
+- There were **750 class enrollments** in all, and **8 classes filled**.
+- **Placement was first-come with live seat counts.** The current enrolled count
+  was maintained against capacity as registrations arrived. There was no ranking
+  and no after-the-deadline placement.
+- **Only youth counted toward a class's capacity** (`countsTowardLimit` was true
+  for youth and false for staff, adults, and underage). Adults in a class did
+  not take seats.
+
+**On site:**
+- Sheets per site with a **Checked In** column.
+- **Lodging (cabin) assignments** at Camp Heritage.
+- Class rosters per class, and site rosters with youth, staff, and adult totals.
+
+**Background checks:**
+- A "Sterling Check" sheet listed each staff member and adult with a check
+  result: **Good**, **Not Found**, **Not Compliant**, or **Error**.
+- About 100 people were checked by hand; 93 were recorded as Good.
+- Adult background-check readiness is therefore already part of Honors Weekend
+  practice, not only Camporee.
+
+**What this changes in the plan:**
+1. **The event is one of several sites and sessions, not one weekend.** Staff need
+   to set up several related events (or one event with sites) quickly.
+2. **Class selection happens at registration, first-come, with live seat counts.**
+   That is how directors are used to working. It also means class capacity must
+   be checked inside the same serializable transaction that saves the
+   registration, as registration capacity already is.
+3. **Class periods are session types** (Sabbath, Sunday, Full), with up to two
+   classes per person and "Full" filling both.
+4. **Capacity counts youth only.** Minimum age is the only eligibility rule
+   actually used.
+5. **A Spanish-language form** is needed for at least one site.
+6. **Staff and adult background-check status** is needed for Honors Weekend as
+   well as Camporee.
+7. Cabin assignment and check-in were done on paper. Check-in can move to the
+   existing QR check-in; cabins can stay on paper for 2027.
+
+### 3.5 What IMSDA Events already has that club events can reuse
 
 | Capability | Where | Reuse for |
 | --- | --- | --- |
@@ -139,20 +240,22 @@ selection wizard, bulk enrollment, and certificates.
 | Confirmation email, QR passes, check-in, badges, reports, announcements | existing modules | Unchanged for club events |
 | Attendee sign-in (password or Google) | `modules/attendee-accounts` | Director sign-in |
 
-### 3.5 Gap map: CMMS-1 capability → where it lands here
+### 3.6 Gap map: CMMS-1 capability → where it lands here
 
-| CMMS-1 capability | Exists here? | Honors Weekend (Dec) | Camporee (Apr) | Camp Meeting (Jun) | Home |
+| CMMS-1 / 2026 capability | Exists here? | Honors Weekend 2027 (registration opens Dec) | Camporee (Apr) | Camp Meeting (Jun) | Home |
 | --- | --- | --- | --- | --- | --- |
 | Director linked to a club | Directory only; no director role | **Needed** | Needed | — | H1 (narrow #193) |
 | Yearly roster + rollover | No | **Needed** | Needed | — | H2 (narrow #183/#184) |
 | Register from roster, select who's going | Group form exists; no roster source | **Needed** | Needed | — | H3 (narrow #186/#188/#194) |
 | Club-level vs per-attendee questions | Yes (form sections + attendee roster) | Reuse | Reuse | — | existing |
-| Honor catalog + eligibility | No | **Needed** | Maybe | — | H4 (narrow #197) |
-| Class periods, offerings, capacity, teacher | Room limits only (program assignments) | **Needed** | Maybe | — | H4 |
-| Ranked preferences, placement, waitlist | Ranked + batch placement exists | **Needed** | Maybe | — | H5 (reuse program assignments) |
-| Teacher rosters (print) | Printable run rosters exist | **Needed** | — | — | H6 |
-| Class attendance + honor sign-off | No | Paper is acceptable for Dec | Nice | — | #209/#197 later |
-| Background-check readiness | No (policy gate #218) | Decision D7 | **Needed** | Maybe | #115, #113, #218 |
+| Several sites/sessions for one Honors Weekend | Separate events only | **Needed** (4 in 2026) | — | — | H4 |
+| Honor catalog + minimum age | No | **Needed** | Maybe | — | H4 (narrow #197) |
+| Session types (Sabbath, Sunday, Full), offerings, capacity, teacher | Room limits only (program assignments) | **Needed** | Maybe | — | H4 |
+| Class selection at registration, first-come, live seats, youth-only capacity | Registration capacity is serializable; no per-class seats | **Needed** | Maybe | — | H5 |
+| Spanish-language registration | Not supported | **Needed** (1 site) | Maybe | Maybe | H3 (decision D11) |
+| Teacher and site rosters (print) | Printable run rosters exist | **Needed** | — | — | H6 |
+| Class attendance + honor sign-off | No | Paper, as in 2026 | Nice | — | #209/#197 later |
+| Background-check readiness | No (policy gate #218) | **Done by hand in 2026**; needed | **Needed** | Maybe | #115, #113, #218 |
 | Post-event church invoice | Billing mode only | Manual report acceptable | **Needed by May** | — | #165–#167 |
 | Campsite assignment | No | — | Likely | Needed (sites) | #89 / #198–#200 |
 | Lodging (rooms, tents, RV) | No | — | — | **Needed** | #198–#200 |
@@ -160,7 +263,7 @@ selection wizard, bulk enrollment, and certificates.
 | Medical/dietary manifests | Per-event registration answers only | Per-event questions | Per-event questions | Per-event questions | Protected records wait on gate #189 |
 | Monthly/year-end reports, TLT, nominations, scoring | No | — | — | — | Later bounded modules (#68) |
 
-### 3.6 Why the current issue chain misses November
+### 3.7 Why the current issue chain misses November
 
 The planned path to "a director registers the club and picks classes" runs through
 the following, in order:
@@ -265,9 +368,11 @@ Each slice is one issue and one PR.
   guardian contact, and the source.
 - Directors add, edit, and deactivate members. Every change is audited and history
   is kept. Rollover (copying last year's active members) can come after December.
-- **Seeding:** a one-time reviewed CSV import, either from a CMMS-1 export or a
-  spreadsheet from Club Ministry. It follows the preview → match → review → apply
-  pattern used for WR26 and keeps CMMS IDs as external identifiers.
+- **Seeding:** a one-time reviewed CSV import. The source could be a CMMS-1 export,
+  a Club Ministry spreadsheet, or the **2026 Honors Weekend registrations**: 29
+  clubs and 475 people, with ages but no birth dates. It follows the preview →
+  match → review → apply pattern used for WR26 and keeps source IDs. Importing
+  real minors' records is a human-approved production import (decision D4).
 - No medical, insurance, or background-check fields (principle 5).
 - Carves out narrow versions of #183 and #184.
 
@@ -280,35 +385,50 @@ Each slice is one issue and one PR.
   club per event. The director can reopen it to add or remove people until the
   deadline.
 - The same roster serves Camporee in the spring, so the club registers once.
+- Each person carries an **attendee type** (youth, staff, adult, underage) and a
+  dietary field, as in 2026.
+- A **Spanish-language version** of the form for sites that need it (decision D11).
 - Carves out narrow versions of #186, #188, and #194.
 
-**H4: Honor catalog and class periods**
-- Staff maintain an honor catalog (name, code, type, description). CMMS-1's
-  catalog can seed it through a reviewed import.
-- For an event, staff define class periods (label and time) and offerings. An
-  offering is an honor in a period, with a **capacity**, **teacher name**, and
-  **location**.
-- Eligibility rules for December: **minimum and maximum age** and **member role**.
-  Prerequisite honors and Master Guide can wait (decision D5).
+**H4: Honor catalog, sites, and sessions**
+- Staff maintain an honor catalog (name, code, description). The 65 offerings
+  from 2026 (54 distinct honors) can seed it.
+- Honors Weekend is **several sites** (in 2026: Camp Heritage weekend 1, Camp
+  Heritage weekend 2, Des Moines, Kansas City). Each is a separate event, created
+  quickly from the previous one.
+- For each site, staff add offerings: an honor with a **session** (Sabbath,
+  Sunday, or Full, where Full fills both), a **capacity**, an optional
+  **minimum age**, a **teacher name**, and a **location**.
+- Eligibility for 2027 is **minimum age only**, which is all 2026 used. Maximum
+  age, role, prerequisite honors, and Master Guide can wait (decision D5).
 - Carves out a narrow version of #197 and the offering part of #207.
 
-**H5: Honor preferences and placement**
-- Directors enter each attendee's **ranked choices per class period** (for example
-  first to third choice) as part of H3, and only eligible offerings are shown.
-- **Recommended for December:** staff run a placement after the preference
-  deadline using the existing **program-assignments** engine, run once per class
-  period. It is already built, fair, reviewed before applying, and never
-  overfills. Unplaced attendees are listed for staff to resolve.
-- **Alternative (decision D1):** the CMMS-1 style, where directors place their own
-  kids with live seat counts and a waitlist. It is more new code, capacity-sensitive,
-  and riskier for November.
+**H5: Class selection at registration (first-come, live seats)**
+- **This matches how 2026 worked.** While registering, the director picks up to
+  **one class per session** for each person: a Sabbath class and a Sunday class,
+  or one Full class. Only classes the person is old enough for, that still have
+  seats, are shown.
+- **Seats count youth only.** Staff and adults may join a class without using a
+  seat, as in 2026.
+- Seats are checked and taken in the **same serializable transaction that saves
+  the registration**, the way event capacity already works, so a class can never
+  be overfilled. A full class is refused with a clear message.
+- Directors can change classes (and free seats) until the site's deadline.
+- **Fallback:** if first-come proves unfair, the existing **program-assignments**
+  engine (ranked choices, reviewed batch placement) can run a site instead.
+  That's an event-level choice, not a rebuild.
+- Waitlists can wait until after 2027.
 - Carves out a narrow version of #208.
 
-**H6: Teacher rosters and printouts**
-- A printable roster per offering (teacher, period, location, and attendee name,
-  club, age) and per club (each kid's schedule).
-- Uses the existing program-assignment print and CSV views, labeled for honors.
-- Class attendance and honor sign-off move to after December (#209 and #197).
+**H6: Teacher, site, and club rosters**
+- Printable and CSV rosters, replacing the 2026 sheets:
+  - per class: teacher, session, location, and each attendee's name, club, age,
+    and type, with youth/seat totals;
+  - per site: youth, staff, and adult totals, with a check-in column;
+  - per club: each person's schedule.
+- Check-in on the day uses the existing QR check-in, with paper as the fallback.
+- Cabin assignment stays on paper for 2027. Class attendance and honor sign-off
+  come later (#209, #197).
 
 **Order:** H1 → H2 → H3, with H4 in parallel; then H5 → H6. Rehearse with one or
 two real directors before registration opens.
@@ -337,13 +457,14 @@ two real directors before registration opens.
 
 | When | Work |
 | --- | --- |
-| Now → Oct 9 | WR26 operational items (Section 4). **Start H1 and H2** (no payment code touched). **Get decisions D1–D4.** |
+| Now → Oct 9 | WR26 operational items (Section 4). **Start H1 and H2** (no payment code touched). **Get decisions D3, D4, D11.** |
 | Oct 9–11 | **WR26** |
 | Oct 12 → Oct 31 | H3, H4 |
-| Nov 1 → mid-Nov | H5, H6; seed rosters and the catalog; rehearse with 1–2 directors |
-| Mid/late Nov | **Honors Weekend registration opens** (date D3) |
-| Dec | **Honors Weekend**; teacher rosters on paper; church billing by report |
-| Dec → Jan | Background-check readiness (#115, #113; #218 approval); roster rollover; Camporee setup from template (#152, #157); campsite grouping (#89) |
+| Nov 1 → Nov 20 | H5, H6; seed rosters and the honor catalog; rehearse with 1–2 directors |
+| Late Nov | Buffer; set up the 2027 sites and offerings |
+| **Dec 2026** | **Honors Weekend registration opens** |
+| Dec → Jan | Background-check readiness for Honors Weekend staff and adults (#115, #113; #218 approval); roster rollover; Camporee setup from template (#152, #157); campsite grouping (#89) |
+| Late Feb – Mar 2027 | **Honors Weekend sites** (2026 pattern); rosters from H6; QR check-in |
 | Jan/Feb | **Camporee registration opens** |
 | Feb → Mar | Camp Meeting: #153, #155, #104; lodging #198–#200; meals #210; #327 |
 | End of March | **Camp Meeting registration opens** |
@@ -351,8 +472,8 @@ two real directors before registration opens.
 | May | Church invoicing (#165–#167); honors attendance and sign-off (#209, #197) |
 | June | **Camp Meeting** |
 
-February and March are the tightest stretch: Camp Meeting lodging and meals are
-built while Camporee registration is live. If Camp Meeting's lodging and meal needs
+February and March are the tightest stretch: Honors Weekend runs, Camporee
+registration is live, and Camp Meeting lodging and meals are being built. If Camp Meeting's lodging and meal needs
 are simple, narrow them the same way as H1–H6.
 
 ---
@@ -381,7 +502,9 @@ are simple, narrow them the same way as H1–H6.
 | --- | --- | --- |
 | Decisions D1–D4 arrive late | November slips | Start H1/H2 now; they do not depend on D1–D4 |
 | Directors do not keep rosters current | Wrong attendees or ages break eligibility | Seed from CMMS/spreadsheet; H3 lets directors add a person while registering |
-| Live seat-count placement (if chosen) | Overfilled classes under concurrency | Use batch placement for December (H5 recommendation) |
+| First-come live seats | Overfilled classes when directors register at the same moment | Take seats inside the registration's serializable transaction (H5), as event capacity already does; test concurrent submissions |
+| Registration opening day | Directors rush the most popular classes at once | First-come was already accepted in 2026; rehearse with directors; keep the program-assignments fallback |
+| Several sites to set up | Staff hand-build four events | Create each 2027 site from the previous one (#157 narrow) or a copy script |
 | Minors' data seen by the wrong director | Privacy incident | H1 grants are explicit and scoped; tests for other-club access |
 | Medical data pulled onto rosters | Crosses the unapproved protected-records gate | Principle 5; medical stays per-event |
 | Automation claims unrelated `codex-ready` work | Effort goes to wallets or mobile | Section 7, item 3 |
@@ -393,16 +516,17 @@ are simple, narrow them the same way as H1–H6.
 
 | # | Decision | Owner | Blocks |
 | --- | --- | --- | --- |
-| **D1** | **How honors are placed:** kids rank choices and staff run placement after the deadline (recommended, already built), or directors place kids live with seat counts and a waitlist (CMMS-1 style) | Caleb + Club Ministry | H5 |
-| **D2** | **How many class periods**, and does each kid take one honor per period? | Club Ministry | H4, H5 |
-| **D3** | **Honors Weekend dates, location, registration open/close dates, price, and billing** (church-billed like Camporee?) | Club Ministry | H3, event setup |
-| **D4** | **Roster and catalog source:** can CMMS-1 (or a spreadsheet) provide current rosters and the honor catalog for a one-time import? Is CMMS-1 in use today? | Caleb | H2, H4 seeding |
-| D5 | Eligibility needed in December: age and role only, or also prerequisite honors and Master Guide? | Club Ministry | H4 |
+| D1 | **Answered by 2026 practice:** classes are chosen at registration, first-come, with live seats (H5). Confirm this stays for 2027, or choose ranked batch placement for some sites | Caleb + Club Ministry | H5 |
+| D2 | **Answered by 2026 practice:** Camp Heritage used Sabbath, Sunday, and Full sessions, with up to two classes per person. Confirm, and say whether Des Moines and Kansas City should use sessions too | Club Ministry | H4, H5 |
+| **D3** | **2027 sites and dates, registration open and close dates, price, and billing.** Church-billed like Camporee? Attendee pay? Free? (The 2026 sheet has no payment data) | Club Ministry | H3, site setup |
+| **D4** | **Roster and catalog source:** seed rosters from the 2026 Honors Weekend registrations, a CMMS-1 export, or a Club Ministry spreadsheet? Importing real minors' records needs a named human approval. Is CMMS-1 in use today? | Caleb | H2, H4 seeding |
+| D5 | **Answered by 2026 practice:** minimum age was the only rule used. Confirm that no maximum age, role, or prerequisite honor is needed for 2027 | Club Ministry | H4 |
 | D6 | Who gets director access (director only, or deputies too), and how is a director verified before the grant? | Caleb + Club Ministry | H1 |
-| D7 | Does Honors Weekend require adults to be background-check cleared, or only Camporee? | Club Ministry | #115/#218 timing |
-| D8 | Do teachers need their own sign-in in December, or are printed rosters enough? | Club Ministry | H6 scope |
-| D9 | Fallback: if November slips, is running Honors Weekend 2026 once on CMMS-1 acceptable? (It conflicts with #68's direction; one-time use only.) | Caleb | Contingency |
+| D7 | **Answered by 2026 practice:** staff and adults were checked against Sterling. Confirm this is required for 2027, and who approves the status mapping (#218) | Club Ministry | #115/#218 timing |
+| D8 | Do teachers need their own sign-in, or are printed rosters enough (as in 2026)? | Club Ministry | H6 scope |
+| D9 | Fallback: if November slips, reuse the 2026 Fluent Forms and Google Sheet process for one more year? | Caleb | Contingency |
 | D10 | Camp Meeting: which lodging types (rooms, tents, RV), whether meals are plans or per-meal, and whether either is paid online | Camp Meeting team | #198–#200, #210 |
+| **D11** | **Spanish-language registration:** which sites need it, and should the confirmation emails be translated too? | Club Ministry | H3 |
 
 ---
 
@@ -418,5 +542,8 @@ are simple, narrow them the same way as H1–H6.
   `app/actions/{roster,event-registration,enrollment,honors,teacher}-actions.ts`,
   `docs/system-specification.md`, `docs/build-plan-review.md`,
   `tasks/phase-4-honors-ui.md`.
+- The "Honors Weekend 2026" Google Sheet (access-controlled; it holds real
+  attendee data, so only structure and totals were used, and it is deliberately
+  not linked here).
 - Production command center screenshot, September 22, 2026: Spring Camporee 2027
   draft, Apr 29 – May 2, 2027, Camp Heritage, MO.
