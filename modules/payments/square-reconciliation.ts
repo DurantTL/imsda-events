@@ -40,6 +40,12 @@ export type SquareReconciliationFindingCode =
   | "AMBIGUOUS_REGISTRATION"
   /** Unrecorded, and the amount does not equal the outstanding balance. */
   | "AMOUNT_MISMATCH"
+  /**
+   * Unrecorded here, but the registration it names already shows no balance.
+   * Never applied automatically: it is as likely to be a duplicate charge, or
+   * a payment belonging to someone else, as a real second payment.
+   */
+  | "ALREADY_SETTLED"
   /** Unrecorded, and taken at a Square location this app does not serve. */
   | "OTHER_LOCATION";
 
@@ -52,6 +58,17 @@ export type SquareReconciliationFinding = {
   confirmationCode: string | null;
   balanceCents: number | null;
   detail: string;
+  /**
+   * What Square carries on the payment, for a human deciding which
+   * registration it belongs to. The reconciliation script never prints these —
+   * a note routinely names an attendee — but the staff-only matching screen
+   * needs them, because for payments whose reference names no registration
+   * they are the only evidence there is.
+   */
+  note: string | null;
+  referenceId: string | null;
+  /** Set when exactly one payable registration resolved, for a preselection. */
+  registrationId: string | null;
 };
 
 export type SquareReconciliationReport = {
@@ -83,6 +100,7 @@ const actionableCodes = new Set<SquareReconciliationFindingCode>([
   "NO_REGISTRATION",
   "AMBIGUOUS_REGISTRATION",
   "AMOUNT_MISMATCH",
+  "ALREADY_SETTLED",
 ]);
 
 export function isActionable(finding: SquareReconciliationFinding) {
@@ -101,6 +119,9 @@ async function classify(
     createdAt: payment.createdAt,
     confirmationCode: null as string | null,
     balanceCents: null as number | null,
+    note: payment.note,
+    referenceId: payment.referenceId,
+    registrationId: null as string | null,
   };
 
   const recorded = await prisma.payment.findFirst({
@@ -152,6 +173,7 @@ async function classify(
       status: { in: ["SUBMITTED", "CONFIRMED"] },
     },
     select: {
+      id: true,
       confirmationCode: true,
       totalAmount: true,
       payments: {
@@ -183,16 +205,20 @@ async function classify(
   if (payment.amountCents !== balanceCents) {
     return {
       ...base,
-      code: "AMOUNT_MISMATCH",
+      code: balanceCents === 0 ? "ALREADY_SETTLED" : "AMOUNT_MISMATCH",
       confirmationCode: registration.confirmationCode,
+      registrationId: registration.id,
       balanceCents,
-      detail: "The amount does not equal the outstanding balance, so it needs a human decision.",
+      detail: balanceCents === 0
+        ? "That registration already shows no outstanding balance, so this may be a duplicate or belong elsewhere."
+        : "The amount does not equal the outstanding balance, so it needs a human decision.",
     };
   }
   return {
     ...base,
     code: "APPLICABLE",
     confirmationCode: registration.confirmationCode,
+    registrationId: registration.id,
     balanceCents,
     detail: "Unrecorded here, and it settles the balance exactly. Replay the Square webhook to apply it.",
   };

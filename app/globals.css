@@ -877,6 +877,14 @@ select:focus-visible {
   gap: 15px;
 }
 
+/* Actions sitting alongside a page heading, beside its count badge. */
+.page-intro-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 9px;
+}
+
 .section-heading { margin-bottom: 17px; }
 .section-heading h2,
 .panel h2 { font-size: 1.12rem; }

@@ -56,6 +56,34 @@ export type SquareListedPayment = {
   createdAt: string | null;
 };
 
+function squareListedPayment(
+  payment: Record<string, unknown>,
+): SquareListedPayment | null {
+  if (typeof payment.id !== "string" || !payment.id) return null;
+  const amountMoney = record(payment.amount_money);
+  return {
+    id: payment.id,
+    status: typeof payment.status === "string" ? payment.status : "UNKNOWN",
+    amountCents: typeof amountMoney.amount === "number"
+      && Number.isSafeInteger(amountMoney.amount)
+      ? amountMoney.amount
+      : 0,
+    currency: typeof amountMoney.currency === "string"
+      ? amountMoney.currency
+      : "",
+    note: typeof payment.note === "string" ? payment.note : null,
+    referenceId: typeof payment.reference_id === "string"
+      ? payment.reference_id
+      : null,
+    locationId: typeof payment.location_id === "string"
+      ? payment.location_id
+      : null,
+    createdAt: typeof payment.created_at === "string"
+      ? payment.created_at
+      : null,
+  };
+}
+
 /**
  * One page of the location's payments, newest first. Read-only, and the only
  * Square call in this codebase that is safe to run against Production from an
@@ -137,30 +165,8 @@ export async function listSquarePayments(
   const rows = Array.isArray(parsed.payments) ? parsed.payments : [];
   const payments: SquareListedPayment[] = [];
   for (const row of rows) {
-    const payment = record(row);
-    const amountMoney = record(payment.amount_money);
-    if (typeof payment.id !== "string" || !payment.id) continue;
-    payments.push({
-      id: payment.id,
-      status: typeof payment.status === "string" ? payment.status : "UNKNOWN",
-      amountCents: typeof amountMoney.amount === "number"
-        && Number.isSafeInteger(amountMoney.amount)
-        ? amountMoney.amount
-        : 0,
-      currency: typeof amountMoney.currency === "string"
-        ? amountMoney.currency
-        : "",
-      note: typeof payment.note === "string" ? payment.note : null,
-      referenceId: typeof payment.reference_id === "string"
-        ? payment.reference_id
-        : null,
-      locationId: typeof payment.location_id === "string"
-        ? payment.location_id
-        : null,
-      createdAt: typeof payment.created_at === "string"
-        ? payment.created_at
-        : null,
-    });
+    const payment = squareListedPayment(record(row));
+    if (payment) payments.push(payment);
   }
   return {
     payments,
@@ -168,4 +174,68 @@ export async function listSquarePayments(
       ? parsed.cursor
       : null,
   };
+}
+
+/**
+ * One payment by its provider id. Read-only, and the server's own source of
+ * truth when a staff member attaches an unmatched payment by hand: the browser
+ * says which Square payment to attach, never what it was worth.
+ */
+export async function getSquarePayment(
+  configuration: SquareRuntimeConfiguration,
+  providerPaymentId: string,
+  fetcher: Fetcher = fetch,
+): Promise<SquareListedPayment | null> {
+  if (!configuration.paymentConfigured) {
+    throw new SquareAdapterError(
+      "SQUARE_NOT_CONFIGURED",
+      "Square is not configured for this environment.",
+      false,
+    );
+  }
+  let response: Response;
+  try {
+    response = await fetcher(
+      `${configuration.apiUrl}/v2/payments/${encodeURIComponent(providerPaymentId)}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${configuration.accessToken}`,
+          "Square-Version": configuration.apiVersion,
+        },
+        cache: "no-store",
+        signal: AbortSignal.timeout(12_000),
+      },
+    );
+  } catch {
+    throw new SquareAdapterError(
+      "SQUARE_REQUEST_UNCERTAIN",
+      "Square did not answer the payment lookup.",
+      true,
+    );
+  }
+  if (response.status === 404) return null;
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new SquareAdapterError(
+      "SQUARE_INVALID_RESPONSE",
+      "Square returned an unreadable payment lookup.",
+      response.ok || response.status >= 500,
+    );
+  }
+  if (!response.ok) {
+    const error = providerError(body);
+    throw new SquareAdapterError(
+      response.status >= 500 || response.status === 429
+        ? "SQUARE_REQUEST_UNCERTAIN"
+        : "SQUARE_REQUEST_REJECTED",
+      error.detail,
+      response.status >= 500 || response.status === 429,
+      error.code,
+    );
+  }
+  return squareListedPayment(record(record(body).payment));
 }
