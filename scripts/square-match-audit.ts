@@ -28,7 +28,10 @@
 import { loadEnvConfig } from "@next/env";
 import { PrismaClient, type Prisma } from "@prisma/client";
 import { getSquareConfiguration } from "@/modules/payments/square-config-domain";
-import { getSquarePayment } from "@/modules/payments/square-http";
+import {
+  getSquareOrderText,
+  getSquarePayment,
+} from "@/modules/payments/square-http";
 import {
   collectSquareReconciliationReport,
   isActionable,
@@ -308,7 +311,16 @@ async function relink(
  */
 async function link(
   prisma: PrismaClient,
-  pairs: Array<{ providerPaymentId: string; confirmationCode: string }>,
+  pairs: Array<{
+    providerPaymentId: string;
+    confirmationCode: string;
+    /**
+     * The exact payment row, when the caller already resolved it. A
+     * confirmation code is unique within an event, not across the database,
+     * so re-finding a registration by code alone can land on another event's.
+     */
+    paymentId?: string;
+  }>,
   reason: string,
 ) {
   const configuration = getSquareConfiguration();
@@ -334,7 +346,12 @@ async function link(
     }
 
     const registration = await prisma.registration.findFirst({
-      where: { confirmationCode: pair.confirmationCode },
+      where: pair.paymentId
+        ? {
+            confirmationCode: pair.confirmationCode,
+            payments: { some: { id: pair.paymentId } },
+          }
+        : { confirmationCode: pair.confirmationCode },
       select: {
         id: true,
         eventId: true,
@@ -349,8 +366,18 @@ async function link(
       console.log(`[skipped] ${pair.confirmationCode} — no registration carries that confirmation code.`);
       continue;
     }
+    if (!pair.paymentId) {
+      const sharing = await prisma.registration.count({
+        where: { confirmationCode: pair.confirmationCode },
+      });
+      if (sharing > 1) {
+        console.log(`[skipped] ${pair.confirmationCode} — more than one event uses that code. Nothing changed.`);
+        continue;
+      }
+    }
     const candidates = registration.payments.filter(
-      (payment) => cents(payment.amount) === provider.amountCents,
+      (payment) => cents(payment.amount) === provider.amountCents
+        && (!pair.paymentId || payment.id === pair.paymentId),
     );
     if (candidates.length === 0) {
       console.log(`[skipped] ${pair.confirmationCode} — no successful ${money(provider.amountCents)} payment to point at.`);
@@ -407,21 +434,37 @@ async function link(
 }
 
 /**
- * The person a Square note names. These notes read "<item> \u2013 <attendee
- * name>", which is the only thing connecting a payment from a channel that
- * writes bare order numbers to a registration in this database. It is the same
- * evidence a staff member reads off the receipt.
+ * Every pair of adjacent words in a Square note that could be a person's name.
+ *
+ * The note's shape is not ours to control and varies by channel — a dash, a
+ * colon, nothing at all — so guessing at a separator just fails silently on
+ * the next variation. Instead every adjacent pair is offered to the database
+ * and the database decides: a pair that names nobody matches nothing, and the
+ * caller already requires the whole note to resolve to exactly one
+ * registration. Being generous here costs a few queries; being specific cost
+ * a deployment.
  */
-function namedPerson(note: string | null) {
-  if (!note) return null;
-  const segments = note.split(/[\u2013\u2014|]/);
-  if (segments.length < 2) return null;
-  const words = (segments[segments.length - 1] ?? "")
-    .trim()
+function candidateNames(note: string | null) {
+  if (!note) return [];
+  const words = note
+    .replace(/[^\p{L}\p{N}\s'-]/gu, " ")
     .split(/\s+/)
-    .filter((word) => word.length > 1);
-  if (words.length < 2) return null;
-  return { firstName: words[0]!, lastName: words[words.length - 1]! };
+    .filter((word) => word.length > 1 && /^\p{L}/u.test(word));
+  const pairs: Array<{ firstName: string; lastName: string }> = [];
+  for (let index = 0; index + 1 < words.length; index += 1) {
+    pairs.push({ firstName: words[index]!, lastName: words[index + 1]! });
+  }
+  // Names sit at the end of these strings ("<item> - <attendee>"), so when a
+  // long one has to be cut it is the start that goes, not the name.
+  return pairs.slice(-12);
+}
+
+function sameName(
+  candidate: { firstName: string; lastName: string },
+  person: { firstName: string; lastName: string },
+) {
+  return candidate.firstName.toLowerCase() === person.firstName.toLowerCase()
+    && candidate.lastName.toLowerCase() === person.lastName.toLowerCase();
 }
 
 /**
@@ -470,39 +513,62 @@ async function autoLink(
 
   for (const finding of report.findings.filter(isActionable)) {
     const label = `${money(finding.amountCents)} ${finding.providerPaymentId}`;
-    const person = namedPerson(finding.note);
-    if (!person) {
-      console.log(`[skip] ${label} — its note names no person.`);
+    // The payment note is only half the evidence. A payment-link or Square
+    // Online checkout writes what was bought — usually the attendee's name —
+    // onto the order's line items, and leaves the payment note generic.
+    const orderText = finding.orderId
+      ? await getSquareOrderText(configuration, finding.orderId)
+      : null;
+    const evidence = [finding.note, ...(orderText ?? [])]
+      .filter((text): text is string => Boolean(text && text.trim()));
+    const evidenceLabel = evidence.length > 0
+      ? evidence.join(" | ")
+      : finding.orderId && orderText === null
+        ? "(no note; the order could not be read — check the token has ORDERS_READ)"
+        : "(none)";
+    const seen = new Set<string>();
+    const names = evidence.flatMap(candidateNames).filter((name) => {
+      const key = `${name.firstName}\u0000${name.lastName}`.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (names.length === 0) {
+      console.log(`[skip] ${label} — nothing on the payment or its order to read a name from.`);
+      console.log(`       evidence: ${evidenceLabel}`);
       continue;
     }
-    const name = `${person.firstName} ${person.lastName}`;
-    const registrations = await prisma.registration.findMany({
+    const matches = await prisma.registration.findMany({
       where: {
         status: { in: ["SUBMITTED", "CONFIRMED"] },
         payments: {
           some: { status: "SUCCEEDED", amount: finding.amountCents / 100 },
         },
-        OR: [
+        OR: names.flatMap((name) => [
           {
             accountHolderPerson: {
-              firstName: { equals: person.firstName, mode: "insensitive" },
-              lastName: { equals: person.lastName, mode: "insensitive" },
+              firstName: { equals: name.firstName, mode: "insensitive" as const },
+              lastName: { equals: name.lastName, mode: "insensitive" as const },
             },
           },
           {
             attendees: {
               some: {
                 person: {
-                  firstName: { equals: person.firstName, mode: "insensitive" },
-                  lastName: { equals: person.lastName, mode: "insensitive" },
+                  firstName: { equals: name.firstName, mode: "insensitive" as const },
+                  lastName: { equals: name.lastName, mode: "insensitive" as const },
                 },
               },
             },
           },
-        ],
+        ]),
       },
       select: {
         confirmationCode: true,
+        accountHolderPerson: { select: { firstName: true, lastName: true } },
+        attendees: {
+          select: { person: { select: { firstName: true, lastName: true } } },
+        },
         payments: {
           where: { status: "SUCCEEDED" },
           select: { id: true, amount: true, externalReference: true },
@@ -510,15 +576,29 @@ async function autoLink(
       },
       take: 2,
     });
-    if (registrations.length === 0) {
-      console.log(`[skip] ${label} — no payable registration for ${name} holds ${money(finding.amountCents)}.`);
+    if (matches.length === 0) {
+      console.log(`[skip] ${label} — no payable registration holding that amount matches a name in the evidence.`);
+      console.log(`       evidence: ${evidenceLabel}`);
       continue;
     }
-    if (registrations.length > 1) {
-      console.log(`[skip] ${label} — ${name} matches more than one registration holding that amount.`);
+    if (matches.length > 1) {
+      console.log(`[skip] ${label} — the evidence matches more than one registration holding that amount.`);
+      console.log(`       evidence: ${evidenceLabel}`);
       continue;
     }
-    const registration = registrations[0]!;
+    const registration = matches[0]!;
+    const holder = registration.accountHolderPerson;
+    const matchedHolder = names.find((name) => sameName(name, holder));
+    const matchedAttendee = matchedHolder
+      ? null
+      : names.find((name) => registration.attendees.some(
+          (attendee) => sameName(name, attendee.person),
+        ));
+    const matched = matchedHolder
+      ? `${holder.firstName} ${holder.lastName} (account holder)`
+      : matchedAttendee
+        ? `${matchedAttendee.firstName} ${matchedAttendee.lastName} (attendee; booked by ${holder.firstName} ${holder.lastName})`
+        : `${holder.firstName} ${holder.lastName}`;
     const candidates = registration.payments.filter(
       (payment) => cents(payment.amount) === finding.amountCents,
     );
@@ -548,7 +628,9 @@ async function autoLink(
       paymentId: existing.id,
       staleReference: existing.externalReference,
     });
-    console.log(`[pair] ${label} \u2192 ${registration.confirmationCode} (${name})`);
+    console.log(`[pair] ${label} \u2192 ${registration.confirmationCode}`);
+    console.log(`       matched  ${matched}`);
+    console.log(`       evidence ${evidenceLabel}`);
     console.log(`       replaces ${existing.externalReference ?? "no reference"}`);
   }
 
@@ -586,6 +668,7 @@ async function autoLink(
     proposals.map((proposal) => ({
       providerPaymentId: proposal.providerPaymentId,
       confirmationCode: proposal.confirmationCode,
+      paymentId: proposal.paymentId,
     })),
     options.reason,
   );
