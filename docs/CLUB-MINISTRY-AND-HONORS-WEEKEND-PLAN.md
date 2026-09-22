@@ -49,9 +49,15 @@ stays the canonical roadmap. Nothing here changes #98 until a human approves it.
   director workspace (#193) sits behind about a dozen large issues. Section 6
   proposes six narrow slices that reuse what this platform already has, so clubs
   register once and pick who is going for each event.
-- **Decisions:** most are now answered: the locations, rosters kept on file,
-  first-come classes, sessions, minimum age, and background checks. Still open:
-  **billing (D3)** and **birth date vs. age (D12)**, plus smaller items (Section 9).
+- **Two new platform-wide requirements:**
+  - **The whole site in Spanish, at 100%**: public pages, forms, emails, the
+    attendee hub, director screens, and the staff workspace (Section 6.4).
+  - **Encrypted birth dates** on club rosters, with the database security that
+    implies (Section 6.5).
+- **Decisions:** billing (church), locations, rosters kept on file, birth dates,
+  first-come classes, sessions, minimum age, and background checks are settled.
+  Still open: who reviews the Spanish, and sign-off on the birth-date security
+  design (Section 9).
 
 ---
 
@@ -60,7 +66,7 @@ stays the canonical roadmap. Nothing here changes #98 until a human approves it.
 | Event | Registration opens | Event dates | Billing | Status here |
 | --- | --- | --- | --- | --- |
 | Women's Retreat 2026 (WR26) | Done (imported from another system) | Oct 9–11, 2026 | Attendee pay | Live; operational items remain (Section 4) |
-| **Honors Weekend 2027** | **December 2026** (2026 opened January 1) | **Dates: _to fill in_.** Same four locations as 2026: Camp Heritage weekend 1, Camp Heritage weekend 2, Des Moines, Kansas City Multicultural (Spanish) | To confirm (no payment data in the 2026 sheet) | **Nothing built for honors yet** |
+| **Honors Weekend 2027** | **December 2026** (2026 opened January 1) | **Dates: _to fill in_.** Same four locations as 2026: Camp Heritage weekend 1, Camp Heritage weekend 2, Des Moines, Kansas City Multicultural (Spanish) | **Church-billed** (existing deferred-organization billing, #143) | **Nothing built for honors yet** |
 | Spring Camporee 2027 | January or February 2027 | Apr 29 – May 2, 2027, Camp Heritage, MO | Church-billed (planned) | Draft event exists in production |
 | Camp Meeting 2027 | End of March 2027 | June 2027 | Attendee pay (planned) | Hard-coded form; lodging/meals not built |
 
@@ -80,6 +86,11 @@ Confirmed answers from Caleb (September 22, 2026):
   event**, and the system **keeps those people on file** for later events and for
   the eventual club system inside IMSDA Events. No bulk import of the 2026
   spreadsheet or CMMS-1 records is planned.
+- Honors Weekend is **billed to the church**.
+- Rosters record a **birth date**, and that requires the database to be secure
+  (Section 6.5).
+- **The whole website must be translatable, with Spanish at 100%.** This is a main
+  focus, not a single-site add-on (Section 6.4).
 
 ---
 
@@ -305,7 +316,7 @@ reproduced here.
 | Honor catalog + minimum age | No | **Needed** | Maybe | — | H4 (narrow #197) |
 | Session types (Sabbath, Sunday, Full), offerings, capacity, teacher | Room limits only (program assignments) | **Needed** | Maybe | — | H4 |
 | Class selection at registration, first-come, live seats, youth-only capacity | Registration capacity is serializable; no per-class seats | **Needed** | Maybe | — | H5 |
-| Spanish-language registration | Not supported | **Needed** (1 site) | Maybe | Maybe | H3 (decision D11) |
+| Spanish, site-wide (2026: one Spanish-only form) | Not supported | **Needed** (whole site, 100%) | **Needed** | **Needed** | S1–S6 (Section 6.4) |
 | Teacher and site rosters (print) | Printable run rosters exist | **Needed** | — | — | H6 |
 | Class attendance + honor sign-off | No | Paper, as in 2026 | Nice | — | #209/#197 later |
 | Background-check readiness | No (policy gate #218) | **Done by hand in 2026**; needed | **Needed** | Maybe | #115, #113, #218 |
@@ -431,8 +442,10 @@ Each slice is one issue and one PR.
   (#183–#185), without re-entering anyone.
 - **No bulk import** of the 2026 spreadsheet or CMMS-1 records. Real minors'
   records only enter through their own director's registration.
-- **Age:** 2026 collected age only. Asking for a **birth date** (or grade) lets age
-  update itself every year; decision D12.
+- **Birth date, encrypted.** Each roster person has a birth date so age is always
+  right for minimum-age classes, attendee type, and later years. It's stored
+  encrypted and shown only to that club's directors and authorized staff
+  (Section 6.5). H2 cannot ship to real directors until that design is signed off.
 - No medical, insurance, or background-check fields (principle 5). Dietary needs
   and other event questions stay on each event's registration.
 - Carves out narrow versions of #183 and #184.
@@ -443,15 +456,21 @@ Each slice is one issue and one PR.
   - **adds anyone new**, who is saved to the roster for next time (H2).
 - The event's published form opens **pre-filled** with those people and asks only
   that event's questions: club-level and per-attendee.
-- On submit, it becomes an ordinary registration linked to the club: billing as
-  the event is set up (decision D3), confirmation email, QR, check-in, and
+- On submit, it becomes an ordinary registration linked to the club: **billed to
+  the church** (existing deferred-organization billing, #143), confirmation email, QR, check-in, and
   reports all unchanged. One registration per
   club per event. The director can reopen it to add or remove people until the
   deadline.
 - The same roster serves Camporee in the spring, so the club registers once.
 - Each person carries an **attendee type** (youth, staff, adult, underage) and a
   dietary field, as in 2026.
-- A **Spanish-language version** of the form for sites that need it (decision D11).
+- **Fully bilingual** (English and Spanish) from the first release, including
+  error messages and confirmation emails (Section 6.4). The Kansas City site
+  defaults to Spanish.
+- **Birth dates never go into the registration answers.** Answers are stored
+  unencrypted today, so the form reads and writes birth dates only through the
+  encrypted roster. The registration keeps just the **age on the event date**,
+  which is what eligibility and reports need.
 - **Saves as a draft** while the director works, so a reload or closed tab loses
   nothing, unlike the 2026 form. It keeps the event-information acknowledgment
   and the per-site head count.
@@ -527,27 +546,108 @@ two real directors before registration opens.
 | Meal plans and selections | Confirmed requirement | #210 (+ #211 meal credentials, #212 kitchen counts if needed) |
 | Hosted Square payment fallback | Attendee-paid event | #327 (product decisions recorded Sept 21) |
 
-### 6.4 Timeline
+### 6.4 The whole site in Spanish, at 100%
+
+Caleb's direction: the whole website must be translatable, with Spanish complete,
+and this is a main focus. It is a platform workstream, not an Honors Weekend
+feature. It touches every screen, so it's planned as its own slices (S1–S6).
+
+**Size today (approximate counts from the source):**
+- 112 page and component files: about 1,470 text passages and 180 labels or
+  placeholders.
+- About 300 error and status messages returned by the server.
+- About 1,800 lines of email templates and blocks.
+- 61 places that hard-code US English date, number, or currency formatting.
+- Staff-written content that must be translatable too: form fields, options, help
+  text, event pages, announcements, and message templates.
+
+That is about 2,500–3,000 translation keys: roughly three times CMMS-1, which had
+about 1,000 keys in English and Spanish.
+
+**Lessons carried over:**
+- **From CMMS-1:** it used `next-intl`, kept the language choice in a cookie, and
+  fell back to English for any missing key. Its own localization audit found the
+  trap: when most screens still hard-code English, the language switch *looks*
+  broken. So **100% must be enforced by the build, not by effort.**
+- **From Next.js 16:** middleware is now `proxy`, and the bundled guide
+  (`node_modules/next/dist/docs/01-app/02-guides/internationalization.md`) is the
+  reference. Any library (including `next-intl`) must be confirmed against
+  Next 16 before it is adopted.
+
+**Slices:**
+
+| Slice | Scope | Needed for |
+| --- | --- | --- |
+| **S1 Foundation** | ADR for the language approach. Language choice: signed-in preference, then cookie, then browser language, with a visible switch. Separate English and Spanish message catalogs. Shared date, number, and currency formatting replaces the 61 hard-coded `en-US` spots. Server messages become codes plus translated text. **A CI check that fails on hard-coded user-facing text and on any missing Spanish key** | Everything below |
+| **S2 Public and attendee** | Event pages, registration form screens, the private manage page, payment, passes, attendee sign-in and hub, community | Honors Weekend (Dec) |
+| **S3 Staff-written content** | English and Spanish versions of each form field, option, section, and help text; event content; announcements. Staff enter both side by side. An event marked bilingual can't publish until its Spanish is complete | Honors Weekend (Dec) |
+| **S4 Email** | Every template in both languages. Each registration and account records its language, and email goes out in that language | Honors Weekend (Dec) |
+| **S5 Director and club screens** | H1–H6 are built bilingual from the start, never retrofitted | Honors Weekend (Dec) |
+| **S6 Staff workspace** | All 30 workspace pages, printouts, badges, CSV headers, and PDFs | Target: end of March 2027 (Camp Meeting registration) |
+
+**Translation quality:** draft Spanish can be machine-assisted, but **a named
+Spanish reviewer approves every catalog before release** (decision D13).
+Church and SDA terms need a glossary that the reviewer keeps.
+
+### 6.5 Birth dates and database security
+
+Birth dates for club members, most of them minors, are personal data. Today:
+- **Registration answers are stored unencrypted** as JSON. ADR 0005 already names
+  this as the platform's main outstanding data risk.
+- **The encryption tool already exists.** `lib/secret-box.ts` provides AES-256-GCM
+  with a separate derived key per purpose; it already protects MFA secrets.
+  ADR 0005 (protected records, **proposed, not yet approved**) plans to reuse it.
+
+**Proposed design for birth dates (a narrow addendum to ADR 0005, needing named
+sign-off, decision D14):**
+1. **Encrypted at rest.** The roster birth date is stored only as ciphertext
+   under its own derived key. It's never kept in registration answers, audit
+   summaries, logs, analytics, or error reports.
+2. **Minimum necessary.** Eligibility, attendee type, rosters, and exports use the
+   **age on the event date**, computed on the server. The birth date itself is
+   shown only to that club's directors and staff with the sensitive-data
+   permission. Each reveal or export of full birth dates is audited.
+3. **Scoped access.** Director grants (H1) are explicit and limited to their own
+   club, with tests proving other clubs' people, counts, and search results never
+   leak.
+4. **Key custody.** `SECRET_ENCRYPTION_KEY` becomes irreplaceable: losing it loses
+   every birth date. It must be backed up separately from the database, with a
+   named custodian and a written rotation procedure. That is a human decision.
+5. **Around the database:**
+   - off-host, encrypted backups with a tested restore (WR26 go-live item F5);
+   - database reachable only from the app host;
+   - TLS end to end;
+   - MFA for every account that can see club data;
+   - a retention rule for people who leave a club.
+
+This also puts in place the pattern the full protected-records work (#189–#192)
+needs, without claiming to finish it: medical and insurance data stay off rosters
+until ADR 0005 is approved.
+
+### 6.6 Timeline
 
 | When | Work |
 | --- | --- |
-| Now → Oct 9 | WR26 operational items (Section 4). **Start H1 and H2** (no payment code touched). **Get decision D3 (billing) and D12 (birth date).** |
+| Now → Oct 9 | WR26 operational items (Section 4). **Start S1 (language foundation) and H1.** Draft the birth-date addendum to ADR 0005 for sign-off (D14); name the Spanish reviewer (D13). |
 | Oct 9–11 | **WR26** |
-| Oct 12 → Oct 31 | H3, H4 |
-| Nov 1 → Nov 20 | H5, H6; seed the honor catalog; rehearse with 1–2 directors (rosters start empty and fill as clubs register) |
+| Oct 12 → Oct 31 | H2 (encrypted birth dates, once D14 is signed off), H3, H4, all bilingual; S2 and S4 |
+| Nov 1 → Nov 20 | H5, H6; S3 (Spanish form and event content); seed the honor catalog; Spanish review of every public, form, and email catalog; rehearse with 1–2 directors, including one Spanish-speaking director |
 | Late Nov | Buffer; set up the 2027 sites and offerings |
 | **Dec 2026** | **Honors Weekend registration opens** |
 | Dec → Jan | Background-check readiness for Honors Weekend staff and adults (#115, #113; #218 approval); roster rollover; Camporee setup from template (#152, #157); campsite grouping (#89) |
 | Late Feb – Mar 2027 | **Honors Weekend sites** (2026 pattern); rosters from H6; QR check-in |
 | Jan/Feb | **Camporee registration opens** |
+| Dec → Mar | **S6 staff workspace translation**, a page group at a time |
 | Feb → Mar | Camp Meeting: #153, #155, #104; lodging #198–#200; meals #210; #327 |
-| End of March | **Camp Meeting registration opens** |
+| End of March | **Camp Meeting registration opens**, fully bilingual; **100% Spanish across the site** |
 | Apr 29 – May 2 | **Camporee** |
 | May | Church invoicing (#165–#167); honors attendance and sign-off (#209, #197) |
 | June | **Camp Meeting** |
 
-February and March are the tightest stretch: Honors Weekend runs, Camporee
-registration is live, and Camp Meeting lodging and meals are being built. If Camp Meeting's lodging and meal needs
+October–November is now the tightest stretch: the Honors Weekend slices, the
+language foundation, and the public translation all land together. February and
+March follow: Honors Weekend runs, Camporee registration is live, Camp Meeting
+lodging and meals are built, and staff translation finishes. If Camp Meeting's lodging and meal needs
 are simple, narrow them the same way as H1–H6.
 
 ---
@@ -564,7 +664,12 @@ are simple, narrow them the same way as H1–H6.
    (wallet, passkeys, mobile, site builder, surveys, transport, issued assets, and
    so on), so automated builds work toward November, April, and June. Restore the
    label as the calendar moves.
-4. Record on #68 that Honors Weekend will be built from narrow slices of #183–#197,
+4. Add a **bilingual platform** epic with slices S1–S6 (Section 6.4), ordered
+   ahead of everything except WR26 and H1–H6. S1 blocks all other new UI work,
+   so nothing new is built English-only.
+5. Add the **birth-date encryption addendum to ADR 0005** as a human-gated item
+   blocking H2 in production.
+6. Record on #68 that Honors Weekend will be built from narrow slices of #183–#197,
    with CMMS-1 as the reference, and that the full capability matrix (#195) follows
    after December.
 
@@ -574,7 +679,10 @@ are simple, narrow them the same way as H1–H6.
 
 | Risk | Effect | Mitigation |
 | --- | --- | --- |
-| Billing (D3) or birth date (D12) decided late | November slips | Start H1 now; H2 needs D12 by mid-October, and H3 needs D3 by the end of October |
+| Birth-date design (D14) or Spanish reviewer (D13) decided late | H2 can't go live, or Spanish can't ship | Draft the addendum this week; H1, S1, H3, and H4 proceed meanwhile |
+| Translation volume (about 2,500–3,000 keys) alongside H1–H6 | November slips | Translate public, forms, and email first (S2–S4); staff workspace (S6) runs through March; the CI gate stops new English-only screens |
+| Partial translation looks broken (the CMMS-1 lesson) | Spanish users lose trust | The build fails on missing keys; bilingual events can't publish until their Spanish content is complete |
+| Lost encryption key | Every birth date unrecoverable | Separate key backup, named custodian, rotation runbook (D14) |
 | Directors do not keep rosters current | Wrong ages break eligibility at the next event | Directors confirm each person when they tick them for an event; birth dates (D12) keep ages current |
 | First-year roster entry effort | 2027 is still full entry, once | Draft saving; every later event starts from the kept roster |
 | First-come live seats | Overfilled classes when directors register at the same moment | Take seats inside the registration's serializable transaction (H5), as event capacity already does; test concurrent submissions |
@@ -593,7 +701,7 @@ are simple, narrow them the same way as H1–H6.
 | --- | --- | --- | --- |
 | D1 | **Answered by 2026 practice:** classes are chosen at registration, first-come, with live seats (H5). Confirm this stays for 2027, or choose ranked batch placement for some sites | Caleb + Club Ministry | H5 |
 | D2 | **Answered by 2026 practice:** Camp Heritage used Sabbath, Sunday, and Full sessions, with up to two classes per person. Confirm, and say whether Des Moines and Kansas City should use sessions too | Club Ministry | H4, H5 |
-| **D3** | **Answered in part:** same four locations; dates are fill-in. **Still open:** registration close dates, price, and billing. Church-billed like Camporee? Attendee pay? Free? (The 2026 sheet has no payment data) | Club Ministry | H3, site setup |
+| D3 | **Answered:** same four locations; dates are fill-in; **billed to the church**. Registration close dates and the per-person rate are still set with the event | Club Ministry | H3, site setup |
 | D4 | **Answered:** directors enter rosters while registering; the system keeps them on file for future events and the eventual club system. No bulk import. The honor catalog is seeded by staff from the 2026 class list | Caleb | H2, H4 |
 | D5 | **Answered by 2026 practice:** minimum age was the only rule used. Confirm that no maximum age, role, or prerequisite honor is needed for 2027 | Club Ministry | H4 |
 | D6 | Who gets director access (director only, or deputies too), and how is a director verified before the grant? | Caleb + Club Ministry | H1 |
@@ -601,8 +709,11 @@ are simple, narrow them the same way as H1–H6.
 | D8 | Do teachers need their own sign-in, or are printed rosters enough (as in 2026)? | Club Ministry | H6 scope |
 | D9 | Fallback: if November slips, reuse the 2026 Fluent Forms and Google Sheet process for one more year? | Caleb | Contingency |
 | D10 | Camp Meeting: which lodging types (rooms, tents, RV), whether meals are plans or per-meal, and whether either is paid online | Camp Meeting team | #198–#200, #210 |
-| D11 | **Answered in part:** the Kansas City Multicultural site is Spanish-language, as in 2026. Still open: should its confirmation emails and the director screens be in Spanish too? | Club Ministry | H3 |
-| **D12** | **Birth date or age on the roster?** 2026 collected age only. A birth date keeps ages right in later years and for minimum-age classes; grade is an alternative | Club Ministry | H2 |
+| D11 | **Superseded:** the whole site is translatable, with Spanish at 100% (Section 6.4). The Kansas City site defaults to Spanish | Caleb | S1–S6 |
+| D12 | **Answered:** rosters store a **birth date**, and it must be secured (Section 6.5) | Caleb | H2 |
+| **D13** | **Who reviews and approves the Spanish?** A named native speaker (staff or volunteer) signs off each catalog and keeps the SDA-term glossary | Caleb | S2–S6 release |
+| **D14** | **Sign-off on the birth-date security design** (Section 6.5): encryption, who can see it, audit, key custodian, key backup and rotation, retention | Caleb + conference leadership | H2 in production |
+| D15 | **How the language is chosen:** a cookie and preference with no URL change (like CMMS-1), or `/es/…` addresses for public pages (better for sharing and search)? | Caleb | S1 |
 
 ---
 
