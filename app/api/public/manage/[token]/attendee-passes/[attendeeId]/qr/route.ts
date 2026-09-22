@@ -41,7 +41,7 @@ async function getHandler(request: Request, context: RouteContext) {
   let rateLimit: RateLimitOutcome | undefined;
   try {
     const { token, attendeeId } = await context.params;
-    rateLimit = await checkPublicManageRateLimit(request, token, "read");
+    rateLimit = await checkPublicManageRateLimit(request, token, "pass");
     if (!rateLimit.allowed) {
       return privateJson({
         error: "RATE_LIMITED",
