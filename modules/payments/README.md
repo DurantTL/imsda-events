@@ -108,6 +108,43 @@ The rules that keep it honest:
 - Every attachment writes a `SQUARE_PAYMENT_MANUALLY_MATCHED` audit record
   naming the staff member, the provider payment, and the overpayment.
 
+### Two reference namespaces
+
+The reference this app records is not the only one in circulation. The WR26
+import copies a **"Square Payment ID"** column straight out of the source
+spreadsheet, unverified (`modules/imports/wr26-bundle.ts`). Where that column
+held an id from another namespace — an order id, a tender id, a legacy id —
+the registration already carries the right payment under a reference Square
+would not recognise.
+
+That breaks matching on the provider id alone in both directions: the
+reconciler reports the real payment as unrecorded, and attaching it creates a
+second `Payment` row for money already counted. `Payment.externalReference`
+carries no unique constraint, so nothing at the database level prevents it.
+
+The amount cannot settle it either. That same import records a successful
+payment at the registration's **Final Amount** (`wr26-bundle.ts`), while the
+external checkout charged the card fee on top — so the duplicate pair routinely
+differs by the fee, on exactly the rows most at risk.
+
+So the guard is any money at all: a registration that already shows a
+successful payment refuses the attachment with `PAYMENT_LIKELY_DUPLICATE`,
+returning the existing payments and their references so a person can compare
+them against the Square receipt rather than trust a verdict. This screen exists
+for payments nothing recorded, so a registration already showing money is worth
+a second look by definition. A group paying in genuine instalments is the false
+positive, and it costs one confirming press. What was acknowledged is recorded
+in the audit metadata as `acknowledgedOverExistingPaymentIds`.
+
+`npm run payments:match-audit` lists every hand-attached payment and marks the
+ones sitting on a registration that already had money, showing each existing
+payment and its reference beside it.
+`-- --void <paymentId> --reason "<why>"` reverses one, marking it `VOIDED`
+rather than deleting it: balances count only successful payments, so the money
+stops counting while the history and its audit trail survive. It refuses to
+touch a payment that was not hand-attached, so it cannot become a general way
+to erase payments.
+
 There is no sandbox rehearsal for a site already on Production:
 `SQUARE_ENVIRONMENT` is one setting for the whole deployment, and flipping it
 would orphan live payment attempts. Reconciliation is the safe substitute.

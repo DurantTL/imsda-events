@@ -182,6 +182,86 @@ describe("attaching a Square payment by hand", () => {
     expect(tx.payment.create).not.toHaveBeenCalled();
   });
 
+  // The WR26 import copied an unverified "Square Payment ID" column out of the
+  // source spreadsheet, so the same real payment can already be recorded under
+  // a reference Square would not recognise. Deduplicating on the provider id
+  // alone cannot see it.
+  it("refuses when the registration already shows money received", async () => {
+    const tx = transactionClient();
+    dependencies.getPrisma.mockReturnValue(prismaFor(tx, registration({
+      payments: [{
+        id: "payment-imported",
+        amount: 145,
+        externalReference: "sheet-supplied-id",
+        refunds: [],
+      }],
+    })));
+
+    await expect(attach()).rejects.toMatchObject({
+      code: "PAYMENT_LIKELY_DUPLICATE",
+      details: expect.objectContaining({
+        netPaidCents: 14_500,
+        attachingCents: 14_951,
+        resultingPaidCents: 29_451,
+        existingPayments: [expect.objectContaining({
+          id: "payment-imported",
+          externalReference: "sheet-supplied-id",
+        })],
+      }),
+    });
+    expect(tx.payment.create).not.toHaveBeenCalled();
+  });
+
+  it("proceeds once a human confirms it is genuinely a second payment", async () => {
+    const tx = transactionClient();
+    dependencies.getPrisma.mockReturnValue(prismaFor(tx, registration({
+      payments: [{
+        id: "payment-imported",
+        amount: 145,
+        externalReference: "sheet-supplied-id",
+        refunds: [],
+      }],
+    })));
+
+    await attachSquarePaymentToRegistration(
+      "event-1",
+      "registration-9",
+      "user-1",
+      {
+        providerPaymentId: "square-payment-ext-1",
+        acknowledgeDuplicate: true,
+      },
+      { configuration },
+    );
+
+    expect(tx.payment.create).toHaveBeenCalled();
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        metadata: expect.objectContaining({
+          acknowledgedOverExistingPaymentIds: ["payment-imported"],
+        }),
+      }),
+    }));
+  });
+
+  // A refunded payment leaves no money received, so it must not stand in the
+  // way of recording the replacement.
+  it("attaches without confirmation when a registration has no money on it", async () => {
+    const tx = transactionClient();
+    dependencies.getPrisma.mockReturnValue(prismaFor(tx, registration()));
+
+    await attach();
+
+    expect(tx.payment.create).toHaveBeenCalled();
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        metadata: expect.objectContaining({
+          acknowledgedOverExistingPaymentIds: [],
+        }),
+      }),
+    }));
+  });
+
   it("refuses a registration outside the event", async () => {
     const tx = transactionClient();
     dependencies.getPrisma.mockReturnValue(prismaFor(tx, null));
@@ -215,10 +295,21 @@ describe("attaching a Square payment by hand", () => {
   it("subtracts prior payments when reporting the balance it settled", async () => {
     const tx = transactionClient();
     dependencies.getPrisma.mockReturnValue(prismaFor(tx, registration({
-      payments: [{ amount: 45, refunds: [] }],
+      payments: [{ id: "payment-part", amount: 45, refunds: [] }],
     })));
 
-    const result = await attach();
+    // Money already received now needs confirming, so acknowledge it to reach
+    // the balance arithmetic this test is about.
+    const result = await attachSquarePaymentToRegistration(
+      "event-1",
+      "registration-9",
+      "user-1",
+      {
+        providerPaymentId: "square-payment-ext-1",
+        acknowledgeDuplicate: true,
+      },
+      { configuration },
+    );
 
     expect(result.balanceBeforeCents).toBe(10_000);
     expect(result.overpaidCents).toBe(4_951);
