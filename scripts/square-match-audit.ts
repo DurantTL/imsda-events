@@ -36,6 +36,7 @@ import {
   collectSquareReconciliationReport,
   isActionable,
 } from "@/modules/payments/square-reconciliation";
+import { squareSubmissionNumbers } from "@/modules/payments/square-domain";
 
 loadEnvConfig(process.cwd());
 
@@ -533,77 +534,131 @@ async function autoLink(
       seen.add(key);
       return true;
     });
-    if (names.length === 0) {
-      console.log(`[skip] ${label} — nothing on the payment or its order to read a name from.`);
+    const registrationSelect = {
+      confirmationCode: true,
+      accountHolderPerson: { select: { firstName: true, lastName: true } },
+      attendees: {
+        select: { person: { select: { firstName: true, lastName: true } } },
+      },
+      payments: {
+        where: { status: "SUCCEEDED" as const },
+        select: { id: true, amount: true, externalReference: true },
+      },
+    };
+
+    // A form submission number is an exact key: the external form writes it
+    // onto the payment, and the WR26 import stored the same number on the
+    // registration as its FF Entry ID. It outranks names entirely, and it is
+    // not narrowed by amount, so a submission whose money differs is reported
+    // as that rather than silently falling through to a name guess.
+    const submissions = squareSubmissionNumbers(evidence);
+    if (submissions.length > 1) {
+      console.log(`[skip] ${label} — the evidence names more than one form submission (${submissions.map((number) => `#${number}`).join(", ")}).`);
       console.log(`       evidence: ${evidenceLabel}`);
       continue;
     }
-    const matches = await prisma.registration.findMany({
-      where: {
-        status: { in: ["SUBMITTED", "CONFIRMED"] },
-        payments: {
-          some: { status: "SUCCEEDED", amount: finding.amountCents / 100 },
+    const submission = submissions[0] ?? null;
+
+    let matches: Array<Prisma.RegistrationGetPayload<{ select: typeof registrationSelect }>>;
+    if (submission) {
+      matches = await prisma.registration.findMany({
+        where: {
+          status: { in: ["SUBMITTED", "CONFIRMED"] },
+          // The sheet may have stored the bare number or kept the "#".
+          OR: [
+            { contactSnapshot: { path: ["ffEntryId"], equals: submission } },
+            { contactSnapshot: { path: ["ffEntryId"], equals: `#${submission}` } },
+          ],
         },
-        OR: names.flatMap((name) => [
-          {
-            accountHolderPerson: {
-              firstName: { equals: name.firstName, mode: "insensitive" as const },
-              lastName: { equals: name.lastName, mode: "insensitive" as const },
-            },
+        select: registrationSelect,
+        take: 2,
+      });
+      if (matches.length === 0) {
+        console.log(`[skip] ${label} — no payable registration carries form submission #${submission}.`);
+        console.log(`       evidence: ${evidenceLabel}`);
+        continue;
+      }
+      if (matches.length > 1) {
+        console.log(`[skip] ${label} — more than one registration carries form submission #${submission}.`);
+        continue;
+      }
+    } else {
+      if (names.length === 0) {
+        console.log(`[skip] ${label} — nothing on the payment or its order to read a name or submission from.`);
+        console.log(`       evidence: ${evidenceLabel}`);
+        continue;
+      }
+      matches = await prisma.registration.findMany({
+        where: {
+          status: { in: ["SUBMITTED", "CONFIRMED"] },
+          payments: {
+            some: { status: "SUCCEEDED", amount: finding.amountCents / 100 },
           },
-          {
-            attendees: {
-              some: {
-                person: {
-                  firstName: { equals: name.firstName, mode: "insensitive" as const },
-                  lastName: { equals: name.lastName, mode: "insensitive" as const },
+          OR: names.flatMap((name) => [
+            {
+              accountHolderPerson: {
+                firstName: { equals: name.firstName, mode: "insensitive" as const },
+                lastName: { equals: name.lastName, mode: "insensitive" as const },
+              },
+            },
+            {
+              attendees: {
+                some: {
+                  person: {
+                    firstName: { equals: name.firstName, mode: "insensitive" as const },
+                    lastName: { equals: name.lastName, mode: "insensitive" as const },
+                  },
                 },
               },
             },
-          },
-        ]),
-      },
-      select: {
-        confirmationCode: true,
-        accountHolderPerson: { select: { firstName: true, lastName: true } },
-        attendees: {
-          select: { person: { select: { firstName: true, lastName: true } } },
+          ]),
         },
-        payments: {
-          where: { status: "SUCCEEDED" },
-          select: { id: true, amount: true, externalReference: true },
-        },
-      },
-      take: 2,
-    });
-    if (matches.length === 0) {
-      console.log(`[skip] ${label} — no payable registration holding that amount matches a name in the evidence.`);
-      console.log(`       evidence: ${evidenceLabel}`);
-      continue;
+        select: registrationSelect,
+        take: 2,
+      });
+      if (matches.length === 0) {
+        console.log(`[skip] ${label} — no payable registration holding that amount matches a name in the evidence.`);
+        console.log(`       evidence: ${evidenceLabel}`);
+        continue;
+      }
+      if (matches.length > 1) {
+        console.log(`[skip] ${label} — the evidence matches more than one registration holding that amount.`);
+        console.log(`       evidence: ${evidenceLabel}`);
+        continue;
+      }
     }
-    if (matches.length > 1) {
-      console.log(`[skip] ${label} — the evidence matches more than one registration holding that amount.`);
-      console.log(`       evidence: ${evidenceLabel}`);
-      continue;
-    }
+
     const registration = matches[0]!;
     const holder = registration.accountHolderPerson;
-    const matchedHolder = names.find((name) => sameName(name, holder));
-    const matchedAttendee = matchedHolder
-      ? null
-      : names.find((name) => registration.attendees.some(
-          (attendee) => sameName(name, attendee.person),
-        ));
-    const matched = matchedHolder
-      ? `${holder.firstName} ${holder.lastName} (account holder)`
-      : matchedAttendee
-        ? `${matchedAttendee.firstName} ${matchedAttendee.lastName} (attendee; booked by ${holder.firstName} ${holder.lastName})`
-        : `${holder.firstName} ${holder.lastName}`;
+    let matched: string;
+    if (submission) {
+      matched = `form submission #${submission} (booked by ${holder.firstName} ${holder.lastName})`;
+    } else {
+      const matchedHolder = names.find((name) => sameName(name, holder));
+      const matchedAttendee = matchedHolder
+        ? null
+        : names.find((name) => registration.attendees.some(
+            (attendee) => sameName(name, attendee.person),
+          ));
+      matched = matchedHolder
+        ? `${holder.firstName} ${holder.lastName} (account holder)`
+        : matchedAttendee
+          ? `${matchedAttendee.firstName} ${matchedAttendee.lastName} (attendee; booked by ${holder.firstName} ${holder.lastName})`
+          : `${holder.firstName} ${holder.lastName}`;
+    }
     const candidates = registration.payments.filter(
       (payment) => cents(payment.amount) === finding.amountCents,
     );
-    if (candidates.length !== 1) {
-      console.log(`[skip] ${label} — ${registration.confirmationCode} holds ${candidates.length} payments of that amount.`);
+    if (candidates.length === 0) {
+      const held = registration.payments
+        .map((payment) => money(cents(payment.amount)))
+        .join(", ") || "no payments";
+      console.log(`[skip] ${label} — ${registration.confirmationCode} (${matched}) holds ${held}, not ${money(finding.amountCents)}.`);
+      console.log("       Not a mislabelled payment. Attach it through Finance if the money was never recorded.");
+      continue;
+    }
+    if (candidates.length > 1) {
+      console.log(`[skip] ${label} — ${registration.confirmationCode} holds ${candidates.length} payments of that amount. Pick one with --link.`);
       continue;
     }
     const existing = candidates[0]!;

@@ -158,8 +158,19 @@ Two repairs follow from that:
   the existing reference *is* a payment Square knows — that is two real
   payments, not one mislabelled — and tells you to attach through Finance
   instead when the registration has no matching payment to point at.
-- `-- --auto-link` proposes every pair at once, reading the person's name from
-  each Square note — the same evidence a staff member reads off the receipt.
+- `-- --auto-link` proposes every pair at once.
+
+  It matches first on the **form submission number**. The external registration
+  form writes `… - Submission #4259` onto the payment, and the WR26 import
+  stored that same number on each registration as its FF Entry ID
+  (`contactSnapshot.ffEntryId`). That is an exact key between the two systems
+  and outranks names entirely. It is deliberately not narrowed by amount, so a
+  submission whose money differs is reported as that — pointing at Finance —
+  rather than falling through to a name guess.
+
+  Only when a payment carries no submission number does it fall back to reading
+  a person's name from the Square note — the same evidence a staff member reads
+  off the receipt.
   It offers every adjacent pair of words in the note to the database rather
   than assuming a separator, because the note's shape belongs to whichever
   channel took the money and varies between them. A pair naming nobody matches

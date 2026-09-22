@@ -334,3 +334,24 @@ export function squareConfirmationCodeCandidates(payment: {
   }
   return [...candidates].slice(0, 10);
 }
+
+/**
+ * The form submission numbers a Square payment names, read from the payment
+ * note and its order's line items.
+ *
+ * The external registration form writes "... - Submission #4259" onto the
+ * payment, and the WR26 import stored that same number on each registration
+ * as its FF Entry ID. It is an exact key between the two systems, which is
+ * worth far more than matching on names: payers and attendees are often
+ * different people, and names repeat.
+ */
+export function squareSubmissionNumbers(texts: Array<string | null | undefined>) {
+  const numbers = new Set<string>();
+  for (const text of texts) {
+    if (typeof text !== "string") continue;
+    for (const match of text.matchAll(/submission\s*#\s*(\d{1,12})/gi)) {
+      numbers.add(match[1]!);
+    }
+  }
+  return [...numbers];
+}

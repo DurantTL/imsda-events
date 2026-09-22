@@ -8,6 +8,7 @@ import {
   registrationBalanceCents,
   selectedCardPayment,
   squareConfirmationCodeCandidates,
+  squareSubmissionNumbers,
   squareWebhookPayloadHash,
   verifySquareWebhookSignature,
 } from "@/modules/payments/square-domain";
@@ -236,5 +237,38 @@ describe("confirmation codes inside a Square payment", () => {
     const note = Array.from({ length: 30 }, (_, index) => `WR26-10${index}`)
       .join(" ");
     expect(squareConfirmationCodeCandidates({ note })).toHaveLength(10);
+  });
+});
+
+describe("form submission numbers on a Square payment", () => {
+  it("reads the submission number the registration form writes", () => {
+    expect(squareSubmissionNumbers([
+      "Women's Retreat 2026 Registration - Submission #4259",
+      "WR26 - Registration Total",
+    ])).toEqual(["4259"]);
+  });
+
+  it("tolerates spacing and case, and deduplicates across texts", () => {
+    expect(squareSubmissionNumbers([
+      "submission # 4259",
+      "SUBMISSION#4259",
+      null,
+      undefined,
+    ])).toEqual(["4259"]);
+  });
+
+  it("returns every distinct number so an ambiguous payment can be refused", () => {
+    expect(squareSubmissionNumbers([
+      "Submission #4259",
+      "Submission #4260",
+    ])).toEqual(["4259", "4260"]);
+  });
+
+  it("finds nothing in text that names no submission", () => {
+    expect(squareSubmissionNumbers([
+      "Adventurer Family Campout",
+      "Regular",
+      "Women's Retreat 2026 #4259",
+    ])).toEqual([]);
   });
 });
