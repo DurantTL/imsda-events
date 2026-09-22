@@ -122,10 +122,26 @@ async function report(prisma: PrismaClient) {
     }
   }
 
+  if (suspect > 0) {
+    console.log("\nRun --verify first: it asks Square which of these references are real,");
+    console.log("and prints the repair command for the ones that are not.");
+  }
   console.log(suspect === 0
     ? "\nNo attachment sits on a registration that already had money."
     : `\n${suspect} attachment${suspect === 1 ? " sits" : "s sit"} on a registration that already had money. Compare each against the Square receipt before voiding — a group paying in instalments looks the same here.`);
   return suspect;
+}
+
+/**
+ * The ids, assembled. A shell eats an unquoted <placeholder> as a redirect
+ * before the script ever runs, so the only safe way to hand someone forty ids
+ * is to print the command they can paste.
+ */
+function printRepairCommand(paymentIds: string[]) {
+  if (paymentIds.length === 0) return;
+  console.log("\nRepair them all with:\n");
+  console.log(`  npm run payments:match-audit -- --relink ${paymentIds.join(",")} \\`);
+  console.log(`    --reason "imported payment carried a reference Square does not recognise"`);
 }
 
 /**
@@ -144,6 +160,7 @@ async function verify(prisma: PrismaClient) {
     return 0;
   }
   let unknown = 0;
+  const repairable: string[] = [];
   for (const pair of pairs) {
     const reference = pair.sibling.externalReference;
     if (!reference) {
@@ -162,11 +179,12 @@ async function verify(prisma: PrismaClient) {
       console.log(`[real]         ${pair.code} · Square knows ${reference}. Two genuine payments — do not void without checking.`);
     } else {
       unknown += 1;
+      repairable.push(pair.attached.id);
       console.log(`[not in Square] ${pair.code} · Square has no payment ${reference}.`);
-      console.log(`                repair with: npm run payments:match-audit -- --relink ${pair.attached.id} --reason "<why>"`);
     }
   }
   console.log(`\n${unknown} registration${unknown === 1 ? "" : "s"} carry a reference Square does not recognise.`);
+  printRepairCommand(repairable);
   return unknown;
 }
 
