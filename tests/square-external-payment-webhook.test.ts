@@ -181,6 +181,59 @@ describe("Square payments taken outside IMSDA Events", () => {
     expect(tx.payment.create).toHaveBeenCalled();
   });
 
+  // The WR26 import takes the source system's "Registration ID" verbatim as the
+  // confirmation code, and that system puts the same id in the Square payment's
+  // reference. So a real payment link charge names the registration in a field
+  // no human typed, while its item name is free prose that names nobody.
+  it("matches an imported registration from the reference the source system wrote", async () => {
+    const tx = transactionClient();
+    tx.registration.findMany.mockResolvedValue([payableRegistration({
+      confirmationCode: "WR26-1780602786558-7AC3",
+      totalAmount: 149.51,
+    })]);
+
+    const result = await run(tx, externalPaymentEvent({
+      amount_money: { amount: 14_951, currency: "USD" },
+      note: "Women's Retreat 2026 \u2013 Elisabeth Cowan",
+      reference_id: "WR26-1780602786558-7AC3",
+    }));
+
+    expect(result).toMatchObject({ status: "PROCESSED", paymentStatus: "SUCCEEDED" });
+    expect(tx.registration.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          confirmationCode: {
+            in: expect.arrayContaining(["WR26-1780602786558-7AC3"]),
+          },
+        }),
+      }),
+    );
+    expect(tx.payment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ amount: 149.51 }),
+      }),
+    );
+  });
+
+  // The year in an item name is a candidate, so a registration whose code is
+  // literally that year would make the match ambiguous. Refusing is the safe
+  // outcome, but it must be a refusal and not a wrong registration.
+  it("refuses rather than guessing when prose in the item name also matches a registration", async () => {
+    const tx = transactionClient();
+    tx.registration.findMany.mockResolvedValue([
+      payableRegistration({ confirmationCode: "WR26-1780602786558-7AC3" }),
+      payableRegistration({ id: "registration-11", confirmationCode: "2026" }),
+    ]);
+
+    const result = await run(tx, externalPaymentEvent({
+      note: "Women's Retreat 2026 \u2013 Elisabeth Cowan",
+      reference_id: "WR26-1780602786558-7AC3",
+    }));
+
+    expect(result).toEqual({ status: "IGNORED", duplicate: false });
+    expect(tx.payment.create).not.toHaveBeenCalled();
+  });
+
   it("subtracts what was already paid before comparing the amount", async () => {
     const tx = transactionClient();
     tx.registration.findMany.mockResolvedValue([payableRegistration({
