@@ -12,7 +12,10 @@ import {
   isActionable,
   type SquareReconciliationFinding,
 } from "@/modules/payments/square-reconciliation";
-import { registrationBalanceCents } from "@/modules/payments/square-domain";
+import {
+  moneyToCents,
+  registrationBalanceCents,
+} from "@/modules/payments/square-domain";
 
 export class SquareMatchOperationError extends Error {
   constructor(
@@ -23,6 +26,7 @@ export class SquareMatchOperationError extends Error {
       | "PROVIDER_PAYMENT_NOT_COMPLETED"
       | "PROVIDER_PAYMENT_WRONG_LOCATION"
       | "PAYMENT_ALREADY_RECORDED"
+      | "PAYMENT_LIKELY_DUPLICATE"
       | "REGISTRATION_NOT_FOUND"
       | "REGISTRATION_NOT_PAYABLE",
     message: string,
@@ -92,7 +96,16 @@ export async function attachSquarePaymentToRegistration(
   eventId: string,
   registrationId: string,
   actorUserId: string,
-  input: { providerPaymentId: string; note?: string },
+  input: {
+    providerPaymentId: string;
+    note?: string;
+    /**
+     * Set only when a human has looked at the existing payment and confirmed
+     * this is a genuine second payment, not the same money under another
+     * reference.
+     */
+    acknowledgeDuplicate?: boolean;
+  },
   options: { configuration?: SquareRuntimeConfiguration } = {},
 ) {
   const configuration = options.configuration ?? getSquareConfiguration();
@@ -142,7 +155,9 @@ export async function attachSquarePaymentToRegistration(
       payments: {
         where: { status: "SUCCEEDED" },
         select: {
+          id: true,
           amount: true,
+          externalReference: true,
           refunds: { where: { status: "SUCCEEDED" }, select: { amount: true } },
         },
       },
@@ -164,6 +179,30 @@ export async function attachSquarePaymentToRegistration(
     );
   }
   const balanceCents = registrationBalanceCents(registration);
+
+  // The reference this app records is not the only one in circulation. The
+  // WR26 import copied a "Square Payment ID" column straight out of the source
+  // spreadsheet (`wr26-bundle.ts`), unverified, and where that column held an
+  // id from another namespace the same real payment is already on the
+  // registration under a reference Square would not recognise. Deduplicating
+  // on the provider id alone cannot see it, so the money would be counted
+  // twice — which is exactly what happened before this guard existed.
+  //
+  // A successful payment for the same amount is the signal. The caller has to
+  // say plainly that it is genuinely a second payment before this proceeds.
+  const sameAmount = registration.payments.find(
+    (existing) => moneyToCents(existing.amount) === provider.amountCents,
+  );
+  if (sameAmount && !input.acknowledgeDuplicate) {
+    throw new SquareMatchOperationError(
+      "PAYMENT_LIKELY_DUPLICATE",
+      `Registration ${registration.confirmationCode} already has a ${
+        provider.amountCents / 100
+      } payment recorded under reference ${
+        sameAmount.externalReference ?? "none"
+      }. This is very likely the same money under a different reference.`,
+    );
+  }
 
   const payment = await prisma.$transaction(async (tx) => {
     // Inside the transaction: two staff members working the same list must not
@@ -209,6 +248,7 @@ export async function attachSquarePaymentToRegistration(
           balanceBeforeCents: balanceCents,
           overpaidCents: Math.max(provider.amountCents - balanceCents, 0),
           staffNote: input.note?.slice(0, 500) ?? null,
+          acknowledgedDuplicateOf: sameAmount?.id ?? null,
         },
       },
     });

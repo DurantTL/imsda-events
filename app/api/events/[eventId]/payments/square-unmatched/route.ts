@@ -17,6 +17,7 @@ const attachSchema = z.strictObject({
   providerPaymentId: z.string().trim().min(1).max(255),
   registrationId: z.string().trim().min(1).max(64),
   note: z.string().trim().max(500).optional(),
+  acknowledgeDuplicate: z.boolean().optional(),
 });
 
 const statusForCode: Record<SquareMatchOperationError["code"], number> = {
@@ -26,6 +27,7 @@ const statusForCode: Record<SquareMatchOperationError["code"], number> = {
   PROVIDER_PAYMENT_NOT_COMPLETED: 409,
   PROVIDER_PAYMENT_WRONG_LOCATION: 409,
   PAYMENT_ALREADY_RECORDED: 409,
+  PAYMENT_LIKELY_DUPLICATE: 409,
   REGISTRATION_NOT_FOUND: 404,
   REGISTRATION_NOT_PAYABLE: 409,
 };
@@ -97,7 +99,11 @@ async function postHandler(
       eventId,
       input.registrationId,
       access.user.id,
-      { providerPaymentId: input.providerPaymentId, note: input.note },
+      {
+        providerPaymentId: input.providerPaymentId,
+        note: input.note,
+        acknowledgeDuplicate: input.acknowledgeDuplicate,
+      },
     );
     return Response.json(result, { status: 201, headers: noStoreHeaders });
   } catch (error) {

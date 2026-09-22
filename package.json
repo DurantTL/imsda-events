@@ -25,6 +25,7 @@
     "registrations:cleanup": "tsx scripts/cleanup-imported-duplicates.ts",
     "event:readiness": "tsx scripts/event-readiness.ts",
     "payments:reconcile": "tsx scripts/payments-reconcile.ts",
+    "payments:match-audit": "tsx scripts/square-match-audit.ts",
     "event:shirt-sizes": "tsx scripts/shirt-size-audience.ts",
     "attendee-types:backfill": "tsx scripts/backfill-attendee-types.ts",
     "household-membership:backfill": "tsx scripts/backfill-household-membership-effective-dates.ts",

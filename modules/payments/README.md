@@ -108,6 +108,34 @@ The rules that keep it honest:
 - Every attachment writes a `SQUARE_PAYMENT_MANUALLY_MATCHED` audit record
   naming the staff member, the provider payment, and the overpayment.
 
+### Two reference namespaces
+
+The reference this app records is not the only one in circulation. The WR26
+import copies a **"Square Payment ID"** column straight out of the source
+spreadsheet, unverified (`modules/imports/wr26-bundle.ts`). Where that column
+held an id from another namespace — an order id, a tender id, a legacy id —
+the registration already carries the right payment under a reference Square
+would not recognise.
+
+That breaks matching on the provider id alone in both directions: the
+reconciler reports the real payment as unrecorded, and attaching it creates a
+second `Payment` row for money already counted. `Payment.externalReference`
+carries no unique constraint, so nothing at the database level prevents it.
+
+The guard is the amount: a successful payment on the registration for the same
+amount as the provider payment refuses the attachment with
+`PAYMENT_LIKELY_DUPLICATE`, and the screen makes a human confirm it is
+genuinely a second payment before proceeding. The acknowledged duplicate is
+recorded in the audit metadata as `acknowledgedDuplicateOf`.
+
+`npm run payments:match-audit` lists every hand-attached payment and marks the
+ones that duplicate an existing payment on the same registration.
+`-- --void <paymentId> --reason "<why>"` reverses one, marking it `VOIDED`
+rather than deleting it: balances count only successful payments, so the money
+stops counting while the history and its audit trail survive. It refuses to
+touch a payment that was not hand-attached, so it cannot become a general way
+to erase payments.
+
 There is no sandbox rehearsal for a site already on Production:
 `SQUARE_ENVIRONMENT` is one setting for the whole deployment, and flipping it
 would orphan live payment attempts. Reconciliation is the safe substitute.

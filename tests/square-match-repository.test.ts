@@ -182,6 +182,75 @@ describe("attaching a Square payment by hand", () => {
     expect(tx.payment.create).not.toHaveBeenCalled();
   });
 
+  // The WR26 import copied an unverified "Square Payment ID" column out of the
+  // source spreadsheet, so the same real payment can already be recorded under
+  // a reference Square would not recognise. Deduplicating on the provider id
+  // alone cannot see it.
+  it("refuses when the registration already has a payment for the same amount", async () => {
+    const tx = transactionClient();
+    dependencies.getPrisma.mockReturnValue(prismaFor(tx, registration({
+      payments: [{
+        id: "payment-imported",
+        amount: 149.51,
+        externalReference: "sheet-supplied-id",
+        refunds: [],
+      }],
+    })));
+
+    await expect(attach()).rejects.toMatchObject({
+      code: "PAYMENT_LIKELY_DUPLICATE",
+    });
+    expect(tx.payment.create).not.toHaveBeenCalled();
+  });
+
+  it("proceeds once a human confirms it is genuinely a second payment", async () => {
+    const tx = transactionClient();
+    dependencies.getPrisma.mockReturnValue(prismaFor(tx, registration({
+      payments: [{
+        id: "payment-imported",
+        amount: 149.51,
+        externalReference: "sheet-supplied-id",
+        refunds: [],
+      }],
+    })));
+
+    await attachSquarePaymentToRegistration(
+      "event-1",
+      "registration-9",
+      "user-1",
+      {
+        providerPaymentId: "square-payment-ext-1",
+        acknowledgeDuplicate: true,
+      },
+      { configuration },
+    );
+
+    expect(tx.payment.create).toHaveBeenCalled();
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        metadata: expect.objectContaining({
+          acknowledgedDuplicateOf: "payment-imported",
+        }),
+      }),
+    }));
+  });
+
+  it("allows a different amount through without a duplicate confirmation", async () => {
+    const tx = transactionClient();
+    dependencies.getPrisma.mockReturnValue(prismaFor(tx, registration({
+      payments: [{
+        id: "payment-imported",
+        amount: 45,
+        externalReference: "sheet-supplied-id",
+        refunds: [],
+      }],
+    })));
+
+    await attach();
+
+    expect(tx.payment.create).toHaveBeenCalled();
+  });
+
   it("refuses a registration outside the event", async () => {
     const tx = transactionClient();
     dependencies.getPrisma.mockReturnValue(prismaFor(tx, null));

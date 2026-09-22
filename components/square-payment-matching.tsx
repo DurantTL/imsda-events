@@ -89,6 +89,7 @@ export function SquarePaymentMatching({
   const [chosen, setChosen] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [duplicateWarning, setDuplicateWarning] = useState("");
   const dialogRef = useAccessibleDialog<HTMLElement>(Boolean(active), close);
 
   const payable = useMemo(
@@ -105,6 +106,7 @@ export function SquarePaymentMatching({
     setActive(finding);
     setError("");
     setChosen(finding.registrationId);
+    setDuplicateWarning("");
     // With no registration resolved, the note is the only evidence there is,
     // and these notes read "<item> \u2013 <attendee name>". Seeding the search
     // with the trailing segment puts the likely person on screen immediately.
@@ -118,6 +120,7 @@ export function SquarePaymentMatching({
     setError("");
     setChosen(null);
     setQuery("");
+    setDuplicateWarning("");
   }
 
   async function attach() {
@@ -133,11 +136,19 @@ export function SquarePaymentMatching({
           body: JSON.stringify({
             providerPaymentId: active.providerPaymentId,
             registrationId: chosen,
+            ...(duplicateWarning ? { acknowledgeDuplicate: true } : {}),
           }),
         },
       );
       const result = await response.json();
       if (!response.ok) {
+        // The server found money already recorded on this registration for the
+        // same amount. Say so and make them press again, rather than letting a
+        // second row be created on a single click.
+        if (result.error === "PAYMENT_LIKELY_DUPLICATE") {
+          setDuplicateWarning(result.message ?? "");
+          return;
+        }
         throw new Error(result.message ?? "Unable to attach this payment.");
       }
       setOutstanding((current) => current.filter(
@@ -154,6 +165,7 @@ export function SquarePaymentMatching({
       setActive(null);
       setChosen(null);
       setQuery("");
+      setDuplicateWarning("");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to attach this payment.");
     } finally {
@@ -323,7 +335,10 @@ export function SquarePaymentMatching({
                           name="registration"
                           value={registration.id}
                           checked={chosen === registration.id}
-                          onChange={() => setChosen(registration.id)}
+                          onChange={() => {
+                            setChosen(registration.id);
+                            setDuplicateWarning("");
+                          }}
                         />
                         <span>
                           <strong>
@@ -347,6 +362,19 @@ export function SquarePaymentMatching({
                 )}
               </div>
 
+              {duplicateWarning && (
+                <div className="inline-notice" role="alert">
+                  <strong>This looks like money already recorded.</strong>
+                  <p>{duplicateWarning}</p>
+                  <p>
+                    The spreadsheet import stored whatever payment reference it
+                    was given, so the same payment can already be here under an
+                    id Square does not use. Attaching it again counts the money
+                    twice. Only continue if you have checked the registration
+                    and this really is a second payment.
+                  </p>
+                </div>
+              )}
               {error && <p className="form-error" role="alert">{error}</p>}
               <div className="form-actions">
                 <button className="secondary-button" type="button" onClick={close}>
@@ -359,7 +387,11 @@ export function SquarePaymentMatching({
                   disabled={saving || !chosen}
                 >
                   <Link2 aria-hidden="true" size={17} />{" "}
-                  {saving ? "Attaching…" : "Attach payment"}
+                  {saving
+                    ? "Attaching…"
+                    : duplicateWarning
+                      ? "Attach anyway — this is a second payment"
+                      : "Attach payment"}
                 </button>
               </div>
             </div>
