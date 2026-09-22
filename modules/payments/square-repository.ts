@@ -30,6 +30,7 @@ import {
   providerIdempotencyKey,
   registrationBalanceCents,
   selectedCardPayment,
+  squareConfirmationCodeCandidates,
   type ParsedSquareWebhookEvent,
   type SquareCheckoutView,
   type SquarePaymentInput,
@@ -1041,6 +1042,180 @@ async function storeIgnoredWebhook(
   return { status: "IGNORED" as const, duplicate: false };
 }
 
+/**
+ * A Square payment with no IMSDA payment attempt behind it — an invoice, a
+ * payment link, or a Virtual Terminal charge taken by staff outside the app.
+ * These used to be dropped on the floor with an IGNORED row, which is how a
+ * registration could be settled in Square and still read as unpaid here.
+ *
+ * It is applied only when the provider payment is unambiguous on every axis:
+ * completed, in USD, carrying exactly one confirmation code that resolves to
+ * exactly one payable registration, for exactly that registration's
+ * outstanding balance. Anything short of that is recorded as IGNORED with the
+ * reason that stopped it, which is what `npm run payments:reconcile` reports
+ * for a human to settle by hand. Guessing at a partial amount or an ambiguous
+ * code would mark the wrong registration paid, and nothing downstream would
+ * catch it.
+ */
+async function applyExternalSquarePayment(
+  tx: Prisma.TransactionClient,
+  event: ParsedSquareWebhookEvent,
+  payloadHash: string,
+  receivedAt: Date,
+) {
+  const payment = event.payment!;
+  const unmatched = "No IMSDA Square payment attempt matches this provider payment";
+  const ignore = (detail: string) => storeIgnoredWebhook(
+    tx,
+    event,
+    payloadHash,
+    receivedAt,
+    `${unmatched}, and ${detail}`,
+    payment.id,
+  );
+
+  if (internalPaymentState(payment.status).paymentStatus !== "SUCCEEDED") {
+    return ignore(`Square reports it as ${payment.status.toLowerCase()}.`);
+  }
+  if (payment.amount_money.currency !== "USD") {
+    return ignore("it is not in USD.");
+  }
+
+  // Square sends payment.created and payment.updated for the same payment, and
+  // each carries its own event id, so the caller's duplicate check does not
+  // cover this. The provider payment id does.
+  const alreadyApplied = await tx.payment.findFirst({
+    where: { externalReference: payment.id, method: "CARD_REFERENCE" },
+    select: { id: true, eventId: true },
+  });
+  if (alreadyApplied) {
+    await tx.squareWebhookEvent.create({
+      data: {
+        eventId: alreadyApplied.eventId,
+        providerEventId: event.providerEventId,
+        eventType: event.eventType,
+        objectId: payment.id,
+        payloadHash,
+        status: "PROCESSED",
+        reason: "This provider payment was already recorded.",
+        occurredAt: event.occurredAt,
+        receivedAt,
+        processedAt: receivedAt,
+      },
+    });
+    return { status: "PROCESSED" as const, duplicate: false };
+  }
+
+  const candidates = squareConfirmationCodeCandidates(payment);
+  if (candidates.length === 0) {
+    return ignore("its note and reference carry no confirmation code.");
+  }
+
+  // `take: 2` is the ambiguity check: a confirmation code is unique within an
+  // event, not across the database, so two events can legitimately share one.
+  const registrations = await tx.registration.findMany({
+    where: {
+      confirmationCode: { in: candidates },
+      status: { in: ["SUBMITTED", "CONFIRMED"] },
+    },
+    select: {
+      id: true,
+      eventId: true,
+      confirmationCode: true,
+      totalAmount: true,
+      payments: {
+        where: { status: "SUCCEEDED" },
+        select: {
+          amount: true,
+          refunds: {
+            where: { status: "SUCCEEDED" },
+            select: { amount: true },
+          },
+        },
+      },
+    },
+    take: 2,
+  });
+  if (registrations.length === 0) {
+    return ignore("no payable registration carries the confirmation code it names.");
+  }
+  if (registrations.length > 1) {
+    return ignore("the confirmation code it names matches more than one registration.");
+  }
+
+  const registration = registrations[0]!;
+  const balanceCents = registrationBalanceCents(registration);
+  if (balanceCents === 0) {
+    return ignore(`registration ${registration.confirmationCode} has no outstanding balance.`);
+  }
+  if (payment.amount_money.amount !== balanceCents) {
+    return ignore(`its amount does not equal the outstanding balance on registration ${registration.confirmationCode}.`);
+  }
+
+  const receivedAtProvider = providerTimestamp(
+    payment.updated_at ?? payment.created_at ?? null,
+    event.occurredAt,
+  );
+  const created = await tx.payment.create({
+    data: {
+      eventId: registration.eventId,
+      registrationId: registration.id,
+      amount: balanceCents / 100,
+      status: "SUCCEEDED",
+      method: "CARD_REFERENCE",
+      externalReference: payment.id,
+      receivedAt: receivedAtProvider,
+    },
+  });
+  await tx.auditLog.create({
+    data: {
+      eventId: registration.eventId,
+      action: "SQUARE_EXTERNAL_PAYMENT_APPLIED",
+      entityType: "Payment",
+      entityId: created.id,
+      correlationId: randomUUID(),
+      summary: `Applied a Square payment taken outside IMSDA Events to registration ${registration.confirmationCode}.`,
+      metadata: {
+        provider: "SQUARE",
+        providerPaymentId: payment.id,
+        providerStatus: payment.status,
+        amountCents: balanceCents,
+        currency: payment.amount_money.currency,
+        matchedConfirmationCode: registration.confirmationCode,
+        candidateCount: candidates.length,
+        source: "WEBHOOK",
+      },
+    },
+  });
+  const receipt = await enqueuePaymentReceiptMessage(tx, {
+    eventId: registration.eventId,
+    registrationId: registration.id,
+    paymentId: created.id,
+    amountCents: balanceCents,
+    providerPaymentId: payment.id,
+  });
+  await tx.squareWebhookEvent.create({
+    data: {
+      eventId: registration.eventId,
+      providerEventId: event.providerEventId,
+      eventType: event.eventType,
+      objectId: payment.id,
+      payloadHash,
+      status: "PROCESSED",
+      reason: "Matched by confirmation code to a payment taken outside IMSDA Events.",
+      occurredAt: event.occurredAt,
+      receivedAt,
+      processedAt: receivedAt,
+    },
+  });
+  return {
+    status: "PROCESSED" as const,
+    duplicate: false,
+    paymentStatus: "SUCCEEDED" as const,
+    pendingMessageIds: receipt.pendingMessageIds,
+  };
+}
+
 async function applyPaymentWebhook(
   tx: Prisma.TransactionClient,
   event: ParsedSquareWebhookEvent,
@@ -1074,13 +1249,11 @@ async function applyPaymentWebhook(
     include: attemptInclude,
   });
   if (!attempt) {
-    return storeIgnoredWebhook(
+    return applyExternalSquarePayment(
       tx,
       event,
       payloadHash,
       receivedAt,
-      "No IMSDA Square payment attempt matches this provider payment.",
-      payment.id
     );
   }
   if (

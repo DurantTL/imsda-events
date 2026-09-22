@@ -7,6 +7,7 @@ import {
   providerIdempotencyKey,
   registrationBalanceCents,
   selectedCardPayment,
+  squareConfirmationCodeCandidates,
   squareWebhookPayloadHash,
   verifySquareWebhookSignature,
 } from "@/modules/payments/square-domain";
@@ -190,5 +191,50 @@ describe("payment attempt surcharge migration", () => {
     expect(migration).toContain('ADD COLUMN "surchargeCents" INTEGER NOT NULL DEFAULT 0');
     expect(migration).toContain('"surchargeCents" >= 0');
     expect(migration).toContain('"surchargeCents" <= "amountCents"');
+  });
+});
+
+describe("confirmation codes inside a Square payment", () => {
+  it("reads a code out of prose in the note", () => {
+    expect(squareConfirmationCodeCandidates({
+      note: "Womens Retreat balance WR26-4417, paid by phone",
+    })).toEqual(["WR26-4417"]);
+  });
+
+  it("reads the note and the reference together, upper-cased and deduplicated", () => {
+    expect(squareConfirmationCodeCandidates({
+      note: "reg-00a1f2b3",
+      reference_id: "REG-00A1F2B3",
+    })).toEqual(["REG-00A1F2B3"]);
+  });
+
+  it("ignores prose that carries no digit, so a note alone cannot name a registration", () => {
+    expect(squareConfirmationCodeCandidates({
+      note: "IMSDA registration balance paid in full",
+    })).toEqual([]);
+  });
+
+  it("ignores tokens too short to be a confirmation code", () => {
+    expect(squareConfirmationCodeCandidates({ note: "Pew 4 A1" })).toEqual([]);
+  });
+
+  it("drops a trailing hyphen left by punctuation", () => {
+    expect(squareConfirmationCodeCandidates({
+      note: "WR26-4417-",
+    })).toEqual(["WR26-4417"]);
+  });
+
+  it("returns nothing when neither field is present", () => {
+    expect(squareConfirmationCodeCandidates({})).toEqual([]);
+    expect(squareConfirmationCodeCandidates({
+      note: null,
+      reference_id: null,
+    })).toEqual([]);
+  });
+
+  it("caps how many codes one payment can name", () => {
+    const note = Array.from({ length: 30 }, (_, index) => `WR26-10${index}`)
+      .join(" ");
+    expect(squareConfirmationCodeCandidates({ note })).toHaveLength(10);
   });
 });

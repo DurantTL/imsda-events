@@ -186,6 +186,7 @@ const squarePaymentObjectSchema = z.object({
   amount_money: squareMoneySchema,
   location_id: z.string().trim().min(1).max(255).optional(),
   reference_id: z.string().trim().min(1).max(255).optional(),
+  note: z.string().trim().max(500).optional(),
   created_at: z.string().datetime({ offset: true }).optional(),
   updated_at: z.string().datetime({ offset: true }).optional(),
 }).passthrough();
@@ -299,4 +300,37 @@ export function internalRefundStatus(providerStatus: string) {
     return "FAILED" as const;
   }
   return "PENDING" as const;
+}
+
+/**
+ * The confirmation codes a Square payment might be pointing at, read out of
+ * the two free-text fields staff control when money is taken outside this
+ * app: a Square invoice, a payment link, or the Virtual Terminal. A payment
+ * this app created carries the attempt id in `reference_id` and is matched
+ * directly, so it never reaches here.
+ *
+ * A candidate must contain a digit. That keeps ordinary prose in a note
+ * ("IMSDA registration") from being looked up as a code, at the deliberate
+ * cost of never auto-applying against a confirmation code that has no digit
+ * at all — that payment is recorded as ignored with its reason and shows up
+ * on the reconciliation report for a human instead.
+ */
+const confirmationCodeCandidatePattern = /[A-Z0-9][A-Z0-9-]{2,39}/g;
+
+export function squareConfirmationCodeCandidates(payment: {
+  note?: string | null;
+  reference_id?: string | null;
+}) {
+  const candidates = new Set<string>();
+  for (const field of [payment.note, payment.reference_id]) {
+    if (typeof field !== "string") continue;
+    const matches = field.toUpperCase().matchAll(
+      confirmationCodeCandidatePattern,
+    );
+    for (const match of matches) {
+      const token = match[0].replace(/-+$/, "");
+      if (token.length >= 4 && /\d/.test(token)) candidates.add(token);
+    }
+  }
+  return [...candidates].slice(0, 10);
 }
