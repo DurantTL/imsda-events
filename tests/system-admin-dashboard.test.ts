@@ -30,6 +30,7 @@ function event(
     publishedFormCount: 1,
     waitingCount: 0,
     importIssueCount: 0,
+    importWarningCount: 0,
     deliveryIssueCount: 0,
     ...overrides,
   };
@@ -118,10 +119,40 @@ describe("system administrator dashboard", () => {
     }), now);
 
     expect(dashboard.events.map((entry) => entry.id)).toEqual(["draft", "past"]);
-    expect(dashboard.events[0].setupWarnings).toEqual([
+    expect(dashboard.events[0].setupWarnings.map((warning) => warning.label)).toEqual([
       "Event is not published",
       "No published registration form",
     ]);
     expect(dashboard.events[0].registrationPhase).toBe("DRAFT");
+  });
+
+  it("links each warning and counts import warnings without calling them exceptions", () => {
+    const dashboard = buildSystemAdminDashboard(source({
+      events: [event({ importIssueCount: 1, importWarningCount: 9, deliveryIssueCount: 5 })],
+    }), now);
+
+    expect(dashboard.events[0].setupWarnings).toEqual([
+      { kind: "IMPORT_ISSUES", label: "1 import run failed or rejected rows", exception: true },
+      { kind: "IMPORT_WARNINGS", label: "9 import runs have warnings", exception: false },
+      { kind: "DELIVERY_ISSUES", label: "5 emails failed or bounced", exception: true },
+    ]);
+    expect(dashboard.events[0].exceptionCount).toBe(6);
+    expect(dashboard.summary.operationalIssueCount).toBe(6);
+  });
+
+  it("counts whole days until an upcoming event starts", () => {
+    const dashboard = buildSystemAdminDashboard(source({
+      events: [
+        event({ id: "soon", startsAt: new Date("2026-07-29T15:00:00.000Z") }),
+        event({
+          id: "now",
+          startsAt: new Date("2026-07-27T12:00:00.000Z"),
+          endsAt: new Date("2026-07-28T12:00:00.000Z"),
+        }),
+      ],
+    }), now);
+
+    expect(Object.fromEntries(dashboard.events.map((entry) => [entry.id, entry.daysUntilStart])))
+      .toEqual({ soon: 2, now: null });
   });
 });

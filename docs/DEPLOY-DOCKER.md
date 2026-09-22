@@ -290,6 +290,7 @@ the override file above, and the commit SHA being deployed.
      --network xcloud-site-<id>_default \
      --env-file /home/u_events/.xcloud/.env \
      --env-file /home/u_events/.xcloud/.env.dburl \
+     -v imsda_events_assets:/app/storage/event-assets \
      -e NODE_ENV=production \
      -e PORT=3100 \
      -e APP_RELEASE_SHA=<full-sha> \
@@ -311,6 +312,12 @@ the override file above, and the commit SHA being deployed.
    the real domain (Cloudflare/Nginx), not just the internal `curl`, to
    confirm routing actually reached the new container — and spot-check
    whatever feature the deploy was for.
+
+   Also open one uploaded file — the event badge artwork or a schedule on the
+   event page. The `-v imsda_events_assets:...` line above is what attaches the
+   uploads volume; a container started without it looks healthy but serves a
+   404 for every uploaded file. Nothing is lost: stop it and start it again
+   with the volume.
 
 **Rollback**, if anything looks wrong:
 
@@ -452,7 +459,20 @@ What pages, and when:
 | A Resend webhook failed verification | watch | the webhook, immediately |
 
 The scan runs at the end of the outbox sweep, so its frequency is
-`OUTBOX_SWEEP_INTERVAL_SECONDS` (300 by default). A condition that persists pages
+`OUTBOX_SWEEP_INTERVAL_SECONDS` (300 by default).
+
+Because the scan rides on the sweep, **a sweep that stops cannot alert about
+itself.** Each successful sweep therefore records when it finished, and
+`/api/health` reports it as `outboxSweep`: `ok`, `stale` (no successful sweep
+for 15 minutes — three missed five-minute runs), `failing` (the latest run
+failed), or `never` (nothing has reported since this was added). `stale` and
+`failing` turn the health `status` to `degraded` while still answering 200, so
+an external uptime monitor watching `/api/health` for anything other than
+`"status":"ok"` is what catches a stopped sweeper. The System command center
+shows the same signal. Whatever runs the sweep on the host — the Compose
+`outbox-sweeper` service or a cron entry — must `POST` to
+`/api/internal/outbox/sweep` with the `OUTBOX_SWEEP_TOKEN` bearer token for
+any of this to register. A condition that persists pages
 once per `ALERT_REPEAT_MINUTES` (60 by default) rather than every run; when it
 stops being true it is cleared, so a recurrence pages immediately.
 

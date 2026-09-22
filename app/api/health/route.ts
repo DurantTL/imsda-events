@@ -4,6 +4,7 @@ import { logError } from "@/lib/logger";
 import { dispatchUnsuppressedAlert } from "@/modules/operations/alerting";
 import { withRequestContext } from "@/lib/request-context";
 import { getReleaseIdentity } from "@/lib/release";
+import { getSweepHeartbeat } from "@/modules/operations/sweep-heartbeat-repository";
 
 /**
  * Liveness and readiness in one response.
@@ -49,15 +50,29 @@ async function getHandler() {
     logError("Outbox health check failed", error);
   }
 
+  // The sweep runs the alert scan, so a stopped sweep cannot alert about
+  // itself; an uptime monitor reading this response is what catches it. A
+  // sweep that has never reported is shown but does not degrade the status,
+  // so a fresh deployment is not unhealthy before its first run.
+  let outboxSweep: Awaited<ReturnType<typeof getSweepHeartbeat>> | null = null;
+  try {
+    outboxSweep = await getSweepHeartbeat();
+  } catch (error) {
+    logError("Outbox sweep heartbeat check failed", error);
+  }
+  const sweepDegraded = outboxSweep?.status === "stale" || outboxSweep?.status === "failing";
+
   return Response.json({
-    status: outbox && outbox.status !== "ok" ? "degraded" : "ok",
+    status: (outbox && outbox.status !== "ok") || sweepDegraded ? "degraded" : "ok",
     checkedAt,
     release,
     services: {
       application: "ok",
       database: "ok",
       messageOutbox: outbox?.status ?? "unknown",
+      outboxSweep: outboxSweep?.status ?? "unknown",
     },
+    outboxSweep,
     messageOutbox: outbox
       ? {
           status: outbox.status,

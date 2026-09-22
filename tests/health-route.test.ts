@@ -4,6 +4,7 @@ const dependencies = vi.hoisted(() => ({
   getPrisma: vi.fn(),
   getOutboxQueueHealth: vi.fn(),
   getReleaseIdentity: vi.fn(),
+  getSweepHeartbeat: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -13,6 +14,9 @@ vi.mock("@/modules/communications/outbox-sweep", () => ({
 }));
 vi.mock("@/lib/release", () => ({
   getReleaseIdentity: dependencies.getReleaseIdentity,
+}));
+vi.mock("@/modules/operations/sweep-heartbeat-repository", () => ({
+  getSweepHeartbeat: dependencies.getSweepHeartbeat,
 }));
 
 import { GET } from "@/app/api/health/route";
@@ -28,10 +32,18 @@ const healthyQueue = {
   eventsWithDueMessages: 0,
 };
 
+const recentSweep = {
+  status: "ok" as const,
+  lastSucceededAt: "2026-10-09T12:00:00.000Z",
+  lastFailedAt: null,
+  ageMs: 60_000,
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   dependencies.getPrisma.mockReturnValue({ $queryRaw: vi.fn().mockResolvedValue([{ "?column?": 1 }]) });
   dependencies.getOutboxQueueHealth.mockResolvedValue(healthyQueue);
+  dependencies.getSweepHeartbeat.mockResolvedValue(recentSweep);
   dependencies.getReleaseIdentity.mockReturnValue({
     sha: "d27839dcabf253111bf4a014cb526db3b1c57469",
     buildId: "next-build-id",
@@ -99,6 +111,51 @@ describe("health endpoint", () => {
       status: "ok",
       services: { messageOutbox: "unknown" },
       messageOutbox: null,
+    });
+  });
+
+  it("reports degraded when the scheduled sweep has gone quiet", async () => {
+    dependencies.getSweepHeartbeat.mockResolvedValue({
+      ...recentSweep,
+      status: "stale",
+      ageMs: 40 * 60_000,
+    });
+
+    const response = await GET(healthRequest());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "degraded",
+      services: { outboxSweep: "stale" },
+      outboxSweep: { ageMs: 40 * 60_000 },
+    });
+  });
+
+  it("does not degrade before the first sweep has reported", async () => {
+    dependencies.getSweepHeartbeat.mockResolvedValue({
+      status: "never",
+      lastSucceededAt: null,
+      lastFailedAt: null,
+      ageMs: null,
+    });
+
+    const response = await GET(healthRequest());
+
+    await expect(response.json()).resolves.toMatchObject({
+      status: "ok",
+      services: { outboxSweep: "never" },
+    });
+  });
+
+  it("marks the sweep unknown when its heartbeat cannot be read", async () => {
+    dependencies.getSweepHeartbeat.mockRejectedValue(new Error("query failed"));
+
+    const response = await GET(healthRequest());
+
+    await expect(response.json()).resolves.toMatchObject({
+      status: "ok",
+      services: { outboxSweep: "unknown" },
+      outboxSweep: null,
     });
   });
 });

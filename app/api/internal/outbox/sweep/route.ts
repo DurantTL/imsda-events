@@ -5,6 +5,7 @@ import {
 } from "@/modules/communications/outbox-sweep";
 import { pruneExpiredCommunityContent } from "@/modules/community/repository";
 import { runAlertScan } from "@/modules/operations/alert-scan";
+import { recordSweepHeartbeat } from "@/modules/operations/sweep-heartbeat-repository";
 import { withRequestContext } from "@/lib/request-context";
 
 /**
@@ -25,6 +26,11 @@ async function postHandler(request: Request) {
 
   try {
     const result = await sweepOutbox();
+    // Recorded before the alert scan so a scan failure cannot hide a sweep
+    // that worked, and never allowed to fail the sweep itself.
+    await recordSweepHeartbeat("SUCCEEDED").catch((error) => {
+      logError("Could not record the outbox sweep heartbeat", error);
+    });
     // The sweep already runs every few minutes, which makes it the natural
     // place to read the system's signals: one cron, one credential, and the
     // queue's state is known here anyway. A scan failure must not make a
@@ -52,6 +58,7 @@ async function postHandler(request: Request) {
     });
   } catch (error) {
     logError("Outbox sweep failed", error);
+    await recordSweepHeartbeat("FAILED").catch(() => undefined);
     return Response.json(
       { error: "SWEEP_FAILED", message: "The outbox sweep could not complete." },
       { status: 500 }

@@ -382,20 +382,66 @@
   white-space: nowrap;
 }
 
-.statusLIVE {
+.healthOk {
   background: var(--green-soft);
   color: var(--green);
 }
 
-.statusIN_PROGRESS,
-.statusNEXT {
+.healthWarn {
   background: var(--imsda-gold-soft);
   color: #76520b;
 }
 
-.statusPLANNED {
+.healthBad {
+  background: #fff1ef;
+  color: var(--coral);
+}
+
+.healthUnknown {
   background: var(--imsda-navy-soft);
   color: var(--imsda-navy);
+}
+
+.alertList {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  color: var(--coral);
+  font-size: 0.54rem;
+  line-height: 1.5;
+}
+
+.countdown {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 0.54rem;
+  font-weight: 800;
+}
+
+.eventWarnings a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #7b5610;
+  font-size: 0.55rem;
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-color: rgba(123, 86, 16, 0.35);
+  text-underline-offset: 3px;
+}
+
+.eventWarnings a.exception {
+  color: var(--coral);
+  text-decoration-color: rgba(169, 85, 73, 0.35);
+}
+
+.eventStats a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.eventStats a:hover small {
+  color: var(--imsda-purple);
+  text-decoration: underline;
 }
 
 .scope {
@@ -538,4 +584,10 @@
     grid-column: 2;
     justify-self: start;
   }
+}
+
+.scope a {
+  color: var(--imsda-navy);
+  font-weight: 800;
+  text-underline-offset: 3px;
 }

@@ -28,8 +28,20 @@ export type SystemAdminEventSource = {
   activeStaffCount: number;
   publishedFormCount: number;
   waitingCount: number;
+  /** Import runs that failed or rejected rows. */
   importIssueCount: number;
+  /** Import runs that completed with warnings only — worth a look, not an exception. */
+  importWarningCount: number;
   deliveryIssueCount: number;
+};
+
+export type SetupWarningKind = "UNPUBLISHED" | "NO_PUBLISHED_FORM" | "IMPORT_ISSUES" | "IMPORT_WARNINGS" | "DELIVERY_ISSUES";
+
+export type SetupWarning = {
+  kind: SetupWarningKind;
+  label: string;
+  /** Counted in "operational exceptions". Import warnings are listed but not counted. */
+  exception: boolean;
 };
 
 export type SystemAdminDashboardSource = {
@@ -66,23 +78,36 @@ export function buildSystemAdminDashboard(source: SystemAdminDashboardSource, no
       (total, registration) => total + registrationBalance(registration),
       0,
     );
-    const setupWarnings = [
-      !event.isPublished ? "Event is not published" : null,
-      event.publishedFormCount === 0 ? "No published registration form" : null,
+    const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+    const setupWarnings: SetupWarning[] = [
+      !event.isPublished
+        ? { kind: "UNPUBLISHED" as const, label: "Event is not published", exception: false }
+        : null,
+      event.publishedFormCount === 0
+        ? { kind: "NO_PUBLISHED_FORM" as const, label: "No published registration form", exception: false }
+        : null,
       event.importIssueCount > 0
-        ? `${event.importIssueCount} import ${event.importIssueCount === 1 ? "issue" : "issues"}`
+        ? { kind: "IMPORT_ISSUES" as const, label: plural(event.importIssueCount, "import run failed or rejected rows", "import runs failed or rejected rows"), exception: true }
+        : null,
+      event.importWarningCount > 0
+        ? { kind: "IMPORT_WARNINGS" as const, label: plural(event.importWarningCount, "import run has warnings", "import runs have warnings"), exception: false }
         : null,
       event.deliveryIssueCount > 0
-        ? `${event.deliveryIssueCount} delivery ${event.deliveryIssueCount === 1 ? "issue" : "issues"}`
+        ? { kind: "DELIVERY_ISSUES" as const, label: plural(event.deliveryIssueCount, "email failed or bounced", "emails failed or bounced"), exception: true }
         : null,
-    ].filter((warning): warning is string => Boolean(warning));
+    ].filter((warning): warning is SetupWarning => warning !== null);
+    const timing = eventTiming(event, now);
 
     return {
       ...event,
       activeRegistrationCount: activeRegistrations.length,
       ledgerBalanceCents,
       registrationPhase: evaluateEventRegistrationPhase(event, now),
-      timing: eventTiming(event, now),
+      timing,
+      /** Whole days until the event starts; null once it has started. */
+      daysUntilStart: timing === "UPCOMING"
+        ? Math.ceil((event.startsAt.getTime() - now.getTime()) / 86_400_000)
+        : null,
       setupWarnings,
       exceptionCount: event.importIssueCount + event.deliveryIssueCount,
     };
