@@ -672,7 +672,13 @@ export function enqueuePaymentReceiptMessage(
     eventId: string;
     registrationId: string;
     paymentId: string;
-    paymentAttemptId: string;
+    /**
+     * Absent for a payment Square took outside this app (an invoice, a payment
+     * link, the Virtual Terminal), which the webhook matches by confirmation
+     * code and so has no attempt behind it. The provider payment id alone
+     * still keys the transition uniquely.
+     */
+    paymentAttemptId?: string | null;
     amountCents: number;
     providerPaymentId: string;
     correlationId?: string;
@@ -683,12 +689,12 @@ export function enqueuePaymentReceiptMessage(
     registrationId: input.registrationId,
     templateKey: "PAYMENT_RECEIPT",
     correlationId: input.correlationId ?? randomUUID(),
-    transitionKey: `square-payment:${input.paymentAttemptId}:${input.providerPaymentId}`,
+    transitionKey: `square-payment:${input.paymentAttemptId ?? "external"}:${input.providerPaymentId}`,
     paymentAmountCents: input.amountCents,
     paymentReference: input.providerPaymentId,
     metadata: {
       paymentId: input.paymentId,
-      paymentAttemptId: input.paymentAttemptId,
+      paymentAttemptId: input.paymentAttemptId ?? null,
       provider: "SQUARE",
     },
   });

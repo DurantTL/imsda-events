@@ -1,6 +1,18 @@
 import "server-only";
 
 import type { SquareRuntimeConfiguration } from "@/modules/payments/square-config";
+import {
+  providerError,
+  record,
+  SquareAdapterError,
+  type Fetcher,
+} from "@/modules/payments/square-http";
+
+export {
+  listSquarePayments,
+  SquareAdapterError,
+  type SquareListedPayment,
+} from "@/modules/payments/square-http";
 
 export type SquarePaymentStatus =
   | "APPROVED"
@@ -19,22 +31,6 @@ export type SquarePaymentResult = {
   updatedAt: string | null;
 };
 
-export class SquareAdapterError extends Error {
-  constructor(
-    public readonly code:
-      | "SQUARE_NOT_CONFIGURED"
-      | "SQUARE_REQUEST_REJECTED"
-      | "SQUARE_REQUEST_UNCERTAIN"
-      | "SQUARE_INVALID_RESPONSE",
-    message: string,
-    public readonly retryable: boolean,
-    public readonly providerCode: string | null = null,
-  ) {
-    super(message);
-    this.name = "SquareAdapterError";
-  }
-}
-
 type CreateSquarePaymentInput = {
   sourceId: string;
   idempotencyKey: string;
@@ -44,25 +40,6 @@ type CreateSquarePaymentInput = {
   referenceId: string;
   note: string;
 };
-
-type Fetcher = typeof fetch;
-
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-function providerError(value: unknown) {
-  const body = record(value);
-  const first = Array.isArray(body.errors) ? record(body.errors[0]) : {};
-  return {
-    code: typeof first.code === "string" ? first.code : null,
-    detail: typeof first.detail === "string"
-      ? first.detail
-      : "Square could not process this payment request.",
-  };
-}
 
 export async function createSquarePayment(
   configuration: SquareRuntimeConfiguration,
