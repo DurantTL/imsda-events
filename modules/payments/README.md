@@ -151,6 +151,13 @@ Two repairs follow from that:
   counted once *and* carries the id Square uses, so reconciliation stops
   reporting it. This is the right repair whenever the import recorded the
   payment under an unrecognised reference.
+- `-- --link <squareId>=<code>[,...] --reason "<why>"` does the same repair for
+  a payment nobody attached by hand. `--relink` finds its pair through the
+  attachment; a payment that was never attached leaves no such trail, so a
+  person reads the Square receipt and names the registration. It refuses when
+  the existing reference *is* a payment Square knows — that is two real
+  payments, not one mislabelled — and tells you to attach through Finance
+  instead when the registration has no matching payment to point at.
 - `-- --void <id>[,<id>...] --reason "<why>"` only reverses the attachment,
   leaving the bad reference in place. Use it when the existing payment is
   genuinely unrelated. Reconciliation will keep reporting that Square payment
