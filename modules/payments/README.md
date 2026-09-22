@@ -160,6 +160,11 @@ Two repairs follow from that:
   instead when the registration has no matching payment to point at.
 - `-- --auto-link` proposes every pair at once, reading the person's name from
   each Square note — the same evidence a staff member reads off the receipt.
+  It offers every adjacent pair of words in the note to the database rather
+  than assuming a separator, because the note's shape belongs to whichever
+  channel took the money and varies between them. A pair naming nobody matches
+  nothing, so generosity here is free; a skip prints the note so the next case
+  is diagnosable without another deployment.
   Doing a backlog of these by hand means one chance per row to transpose two
   same-amount payments, and a transposition is silent and permanent: both
   registrations keep the right money, so nothing downstream notices they hold

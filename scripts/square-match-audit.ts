@@ -407,21 +407,27 @@ async function link(
 }
 
 /**
- * The person a Square note names. These notes read "<item> \u2013 <attendee
- * name>", which is the only thing connecting a payment from a channel that
- * writes bare order numbers to a registration in this database. It is the same
- * evidence a staff member reads off the receipt.
+ * Every pair of adjacent words in a Square note that could be a person's name.
+ *
+ * The note's shape is not ours to control and varies by channel — a dash, a
+ * colon, nothing at all — so guessing at a separator just fails silently on
+ * the next variation. Instead every adjacent pair is offered to the database
+ * and the database decides: a pair that names nobody matches nothing, and the
+ * caller already requires the whole note to resolve to exactly one
+ * registration. Being generous here costs a few queries; being specific cost
+ * a deployment.
  */
-function namedPerson(note: string | null) {
-  if (!note) return null;
-  const segments = note.split(/[\u2013\u2014|]/);
-  if (segments.length < 2) return null;
-  const words = (segments[segments.length - 1] ?? "")
-    .trim()
+function candidateNames(note: string | null) {
+  if (!note) return [];
+  const words = note
+    .replace(/[^\p{L}\p{N}\s'-]/gu, " ")
     .split(/\s+/)
-    .filter((word) => word.length > 1);
-  if (words.length < 2) return null;
-  return { firstName: words[0]!, lastName: words[words.length - 1]! };
+    .filter((word) => word.length > 1 && /^\p{L}/u.test(word));
+  const pairs: Array<{ firstName: string; lastName: string }> = [];
+  for (let index = 0; index + 1 < words.length; index += 1) {
+    pairs.push({ firstName: words[index]!, lastName: words[index + 1]! });
+  }
+  return pairs.slice(0, 12);
 }
 
 /**
@@ -470,39 +476,40 @@ async function autoLink(
 
   for (const finding of report.findings.filter(isActionable)) {
     const label = `${money(finding.amountCents)} ${finding.providerPaymentId}`;
-    const person = namedPerson(finding.note);
-    if (!person) {
-      console.log(`[skip] ${label} — its note names no person.`);
+    const names = candidateNames(finding.note);
+    if (names.length === 0) {
+      console.log(`[skip] ${label} — its note has no words to read a name from.`);
+      console.log(`       note: ${finding.note ?? "(none)"}`);
       continue;
     }
-    const name = `${person.firstName} ${person.lastName}`;
-    const registrations = await prisma.registration.findMany({
+    const matches = await prisma.registration.findMany({
       where: {
         status: { in: ["SUBMITTED", "CONFIRMED"] },
         payments: {
           some: { status: "SUCCEEDED", amount: finding.amountCents / 100 },
         },
-        OR: [
+        OR: names.flatMap((name) => [
           {
             accountHolderPerson: {
-              firstName: { equals: person.firstName, mode: "insensitive" },
-              lastName: { equals: person.lastName, mode: "insensitive" },
+              firstName: { equals: name.firstName, mode: "insensitive" as const },
+              lastName: { equals: name.lastName, mode: "insensitive" as const },
             },
           },
           {
             attendees: {
               some: {
                 person: {
-                  firstName: { equals: person.firstName, mode: "insensitive" },
-                  lastName: { equals: person.lastName, mode: "insensitive" },
+                  firstName: { equals: name.firstName, mode: "insensitive" as const },
+                  lastName: { equals: name.lastName, mode: "insensitive" as const },
                 },
               },
             },
           },
-        ],
+        ]),
       },
       select: {
         confirmationCode: true,
+        accountHolderPerson: { select: { firstName: true, lastName: true } },
         payments: {
           where: { status: "SUCCEEDED" },
           select: { id: true, amount: true, externalReference: true },
@@ -510,15 +517,18 @@ async function autoLink(
       },
       take: 2,
     });
-    if (registrations.length === 0) {
-      console.log(`[skip] ${label} — no payable registration for ${name} holds ${money(finding.amountCents)}.`);
+    if (matches.length === 0) {
+      console.log(`[skip] ${label} — no payable registration holding that amount matches any name in the note.`);
+      console.log(`       note: ${finding.note ?? "(none)"}`);
       continue;
     }
-    if (registrations.length > 1) {
-      console.log(`[skip] ${label} — ${name} matches more than one registration holding that amount.`);
+    if (matches.length > 1) {
+      console.log(`[skip] ${label} — the note matches more than one registration holding that amount.`);
+      console.log(`       note: ${finding.note ?? "(none)"}`);
       continue;
     }
-    const registration = registrations[0]!;
+    const registration = matches[0]!;
+    const name = `${registration.accountHolderPerson.firstName} ${registration.accountHolderPerson.lastName}`;
     const candidates = registration.payments.filter(
       (payment) => cents(payment.amount) === finding.amountCents,
     );
