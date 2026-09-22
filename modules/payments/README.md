@@ -163,8 +163,16 @@ Two repairs follow from that:
   It offers every adjacent pair of words in the note to the database rather
   than assuming a separator, because the note's shape belongs to whichever
   channel took the money and varies between them. A pair naming nobody matches
-  nothing, so generosity here is free; a skip prints the note so the next case
-  is diagnosable without another deployment.
+  nothing, so generosity here is free.
+
+  The payment note is only half the evidence. A payment-link or Square Online
+  checkout writes what was bought — usually the attendee — onto the **order's
+  line items** and leaves the note generic, so each order is read as well
+  (`GET /v2/orders/{id}`, which needs the `ORDERS_READ` permission; without it
+  the order is skipped and the note alone is used). Every `[pair]` line prints
+  which name matched, whether it was the account holder or an attendee, and
+  the evidence it came from, so the dry run can actually be checked. Skips
+  print the evidence too.
   Doing a backlog of these by hand means one chance per row to transpose two
   same-amount payments, and a transposition is silent and permanent: both
   registrations keep the right money, so nothing downstream notices they hold

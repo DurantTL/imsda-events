@@ -53,6 +53,12 @@ export type SquareListedPayment = {
   note: string | null;
   referenceId: string | null;
   locationId: string | null;
+  /**
+   * The Square order behind the payment, when there is one. A Square Online or
+   * payment-link checkout writes what was bought — often the attendee's name —
+   * onto the order's line items, not onto the payment's note.
+   */
+  orderId: string | null;
   createdAt: string | null;
 };
 
@@ -77,6 +83,9 @@ function squareListedPayment(
       : null,
     locationId: typeof payment.location_id === "string"
       ? payment.location_id
+      : null,
+    orderId: typeof payment.order_id === "string" && payment.order_id
+      ? payment.order_id
       : null,
     createdAt: typeof payment.created_at === "string"
       ? payment.created_at
@@ -238,4 +247,53 @@ export async function getSquarePayment(
     );
   }
   return squareListedPayment(record(record(body).payment));
+}
+
+/**
+ * The human-readable text on a Square order's line items: each item's name,
+ * variation, and note. Read-only.
+ *
+ * Returns null rather than throwing when the order cannot be read — most often
+ * because the access token was not granted ORDERS_READ — so a caller can fall
+ * back to whatever other evidence it has instead of failing the whole run.
+ */
+export async function getSquareOrderText(
+  configuration: SquareRuntimeConfiguration,
+  orderId: string,
+  fetcher: Fetcher = fetch,
+): Promise<string[] | null> {
+  let response: Response;
+  try {
+    response = await fetcher(
+      `${configuration.apiUrl}/v2/orders/${encodeURIComponent(orderId)}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${configuration.accessToken}`,
+          "Square-Version": configuration.apiVersion,
+        },
+        cache: "no-store",
+        signal: AbortSignal.timeout(12_000),
+      },
+    );
+  } catch {
+    return null;
+  }
+  if (!response.ok) return null;
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    return null;
+  }
+  const lineItems = record(record(body).order).line_items;
+  if (!Array.isArray(lineItems)) return [];
+  const text: string[] = [];
+  for (const entry of lineItems) {
+    const item = record(entry);
+    for (const field of [item.name, item.variation_name, item.note]) {
+      if (typeof field === "string" && field.trim()) text.push(field.trim());
+    }
+  }
+  return text;
 }

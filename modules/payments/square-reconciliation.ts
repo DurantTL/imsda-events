@@ -67,6 +67,8 @@ export type SquareReconciliationFinding = {
    */
   note: string | null;
   referenceId: string | null;
+  /** The Square order behind the payment, whose line items may name the attendee. */
+  orderId: string | null;
   /** Set when exactly one payable registration resolved, for a preselection. */
   registrationId: string | null;
 };
@@ -121,6 +123,7 @@ async function classify(
     balanceCents: null as number | null,
     note: payment.note,
     referenceId: payment.referenceId,
+    orderId: payment.orderId,
     registrationId: null as string | null,
   };
 
