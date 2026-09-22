@@ -36,6 +36,7 @@ const USAGE = "Usage:\n"
   + "  npm run payments:match-audit\n"
   + "  npm run payments:match-audit -- --verify\n"
   + "  npm run payments:match-audit -- --relink <id>[,<id>...] --reason \"<why>\"\n"
+  + "  npm run payments:match-audit -- --link <squareId>=<code>[,...] --reason \"<why>\"\n"
   + "  npm run payments:match-audit -- --void <id>[,<id>...] --reason \"<why>\"";
 
 function fail(message: string): never {
@@ -284,6 +285,121 @@ async function relink(
   }
 }
 
+/**
+ * Point an imported payment at the Square payment it has always been.
+ *
+ * `--relink` only reaches payments someone attached by hand, because it finds
+ * the pair through that attachment. A channel that never carried a
+ * confirmation code leaves no such trail: reconciliation reports the Square
+ * payment as unrecorded, the money is already on the registration under a
+ * reference Square does not recognise, and nothing in the data connects them.
+ * Only a person reading the Square receipt can say which registration it is,
+ * so they name it here.
+ *
+ * Refuses when the existing reference *is* a payment Square knows — that is
+ * two real payments, not one mislabelled, and overwriting would erase a true
+ * reference.
+ */
+async function link(
+  prisma: PrismaClient,
+  pairs: Array<{ providerPaymentId: string; confirmationCode: string }>,
+  reason: string,
+) {
+  const configuration = getSquareConfiguration();
+  if (!configuration.paymentConfigured) {
+    fail(`Square is not configured (${configuration.issue}).`);
+  }
+  for (const pair of pairs) {
+    const provider = await getSquarePayment(
+      configuration,
+      pair.providerPaymentId,
+    ).catch(() => null);
+    if (!provider) {
+      console.log(`[skipped] ${pair.providerPaymentId} — Square has no such payment.`);
+      continue;
+    }
+    if (provider.status !== "COMPLETED") {
+      console.log(`[skipped] ${pair.providerPaymentId} — Square reports it as ${provider.status.toLowerCase()}.`);
+      continue;
+    }
+    if (provider.locationId && provider.locationId !== configuration.locationId) {
+      console.log(`[skipped] ${pair.providerPaymentId} — taken at another Square location.`);
+      continue;
+    }
+
+    const registration = await prisma.registration.findFirst({
+      where: { confirmationCode: pair.confirmationCode },
+      select: {
+        id: true,
+        eventId: true,
+        confirmationCode: true,
+        payments: {
+          where: { status: "SUCCEEDED" },
+          select: { id: true, amount: true, externalReference: true },
+        },
+      },
+    });
+    if (!registration) {
+      console.log(`[skipped] ${pair.confirmationCode} — no registration carries that confirmation code.`);
+      continue;
+    }
+    const candidates = registration.payments.filter(
+      (payment) => cents(payment.amount) === provider.amountCents,
+    );
+    if (candidates.length === 0) {
+      console.log(`[skipped] ${pair.confirmationCode} — no successful ${money(provider.amountCents)} payment to point at.`);
+      console.log("           Attach it through Finance instead; the money is not recorded here.");
+      continue;
+    }
+    if (candidates.length > 1) {
+      console.log(`[skipped] ${pair.confirmationCode} — more than one ${money(provider.amountCents)} payment. Pick one by hand.`);
+      continue;
+    }
+    const existing = candidates[0]!;
+    if (existing.externalReference === provider.id) {
+      console.log(`[already] ${pair.confirmationCode} — already points at ${provider.id}.`);
+      continue;
+    }
+    if (existing.externalReference) {
+      const known = await getSquarePayment(
+        configuration,
+        existing.externalReference,
+      ).catch(() => null);
+      if (known) {
+        console.log(`[refused] ${pair.confirmationCode} — its current reference ${existing.externalReference} is a real Square payment.`);
+        console.log("           Two genuine payments, not one mislabelled. Nothing changed.");
+        continue;
+      }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.payment.update({
+        where: { id: existing.id },
+        data: { externalReference: provider.id },
+      });
+      await tx.auditLog.create({
+        data: {
+          eventId: registration.eventId,
+          action: "SQUARE_PAYMENT_RELINKED",
+          entityType: "Payment",
+          entityId: existing.id,
+          correlationId: crypto.randomUUID(),
+          summary: `Pointed the imported payment for registration ${registration.confirmationCode} at the Square payment it records.`,
+          metadata: {
+            reason,
+            amountCents: provider.amountCents,
+            adoptedReference: provider.id,
+            replacedReference: existing.externalReference,
+            source: "MANUAL_LINK",
+          },
+        },
+      });
+    });
+    console.log(`[linked]  ${registration.confirmationCode} · ${money(provider.amountCents)}`);
+    console.log(`          ${existing.id} now carries ${provider.id}`);
+  }
+}
+
 async function voidPayment(
   prisma: PrismaClient,
   paymentId: string,
@@ -367,6 +483,23 @@ async function main() {
       const reason = option(argv, "reason");
       if (!reason) fail("--reason is required when relinking a payment.");
       await relink(prisma, idList(toRelink), reason);
+      return;
+    }
+    const toLink = option(argv, "link");
+    if (toLink) {
+      const reason = option(argv, "reason");
+      if (!reason) fail("--reason is required when linking a payment.");
+      const pairs = idList(toLink).map((entry) => {
+        const [providerPaymentId, confirmationCode] = entry.split("=");
+        if (!providerPaymentId || !confirmationCode) {
+          fail(`Each --link entry must read <squareId>=<confirmationCode>; got "${entry}".`);
+        }
+        return {
+          providerPaymentId,
+          confirmationCode: confirmationCode.toUpperCase(),
+        };
+      });
+      await link(prisma, pairs, reason);
       return;
     }
     const target = option(argv, "void");
