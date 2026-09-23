@@ -21,7 +21,7 @@ const upcomingLimit = 6;
 
 /**
  * The public front door (#373). Members, club leaders, and visitors start
- * here; staff sign in from the small link in the header.
+ * here. Staff sign-in is deliberately not linked (decision 2026-09-23).
  */
 export default async function Home() {
   const today = conferenceToday();
@@ -41,12 +41,11 @@ export default async function Home() {
             <BrandMark />
             <span><strong>IMSDA</strong><small>Events</small></span>
           </a>
-          {session.user ? (
+          {/* Staff sign-in isn't linked from the public site; administrators use /login directly. */}
+          {session.user && (
             <Link className="text-button" href="/overview">
               <LayoutDashboard size={16} aria-hidden="true" /> <span>Staff workspace</span>
             </Link>
-          ) : (
-            <Link className="text-button" href="/login">Staff sign in</Link>
           )}
         </div>
       </header>

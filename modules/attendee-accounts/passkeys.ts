@@ -37,7 +37,8 @@ export class PasskeyError extends Error {
       | "NO_PASSKEYS"
       | "CHALLENGE_EXPIRED"
       | "PASSKEY_NOT_VERIFIED"
-      | "PASSKEY_NOT_FOUND",
+      | "PASSKEY_NOT_FOUND"
+      | "LAST_SECOND_STEP",
     message: string,
   ) {
     super(message);
@@ -209,6 +210,14 @@ export async function finishPasskeyRegistration(
 export async function removePasskey(account: Account, sessionId: string, passkeyId: string, now = new Date()) {
   await requireChangeAllowed(account.id, sessionId, now);
   await getPrisma().$transaction(async (tx) => {
+    // Two-step sign-in can't be switched off (decision 2026-09-23): the last method stays.
+    const [enrollment, remaining] = await Promise.all([
+      tx.attendeeMfaEnrollment.findUnique({ where: { accountId: account.id }, select: { status: true } }),
+      tx.attendeePasskey.count({ where: { accountId: account.id, revokedAt: null, id: { not: passkeyId } } }),
+    ]);
+    if (enrollment?.status !== "ACTIVE" && remaining === 0) {
+      throw new PasskeyError("LAST_SECOND_STEP", "Add another passkey or an authenticator app before removing your only one.");
+    }
     const removed = await tx.attendeePasskey.updateMany({
       where: { id: passkeyId, accountId: account.id, revokedAt: null },
       data: { revokedAt: now },

@@ -228,43 +228,18 @@ export async function regenerateRecoveryCodes(userId: string) {
 }
 
 /**
- * Removes the second factor. Refused for an account whose role requires one —
- * removing it would leave a privileged account on a password alone, and the
- * next sign-in would demand enrolment anyway.
+ * Two-factor sign-in can't be turned off by anyone (decision 2026-09-23). A
+ * lost device is handled by a system administrator resetting it, which is
+ * audited and makes the person set it up again at their next sign-in.
  */
-export async function disableMfa(userId: string, code: string, options: { now?: Date } = {}) {
-  const now = options.now ?? new Date();
-  const { subject } = await subjectFor(userId);
-  if (requiresMfa(subject)) {
-    throw new MfaError(
-      "MFA_REQUIRED_BY_ROLE",
-      "This account administers events, so it must keep an authenticator. Remove its administrator access first.",
-    );
-  }
-
-  const enrollment = await getPrisma().userMfaEnrollment.findUnique({
-    where: { userId },
-    select: { id: true, status: true, sealedSecret: true, lastUsedStep: true },
-  });
-  if (enrollment?.status !== "ACTIVE") {
-    throw new MfaError("MFA_NOT_ENROLLED", "This account has no authenticator to remove.");
-  }
-
-  const accepted = await consumeSecondFactor(enrollment, code, now);
-  if (!accepted.valid) {
-    throw new MfaError("MFA_CODE_INVALID", "That code is not right.");
-  }
-
-  await getPrisma().userMfaEnrollment.delete({ where: { id: enrollment.id } });
-  await writeAuditLog({
-    actorUserId: userId,
-    action: "MFA_DISABLED",
-    entityType: "User",
-    entityId: userId,
-    correlationId: randomUUID(),
-    summary: "The authenticator was removed from this account.",
-    metadata: { method: "TOTP" },
-  });
+export async function disableMfa(userId: string, code: string, options: { now?: Date } = {}): Promise<never> {
+  void userId;
+  void code;
+  void options;
+  throw new MfaError(
+    "MFA_REQUIRED_BY_ROLE",
+    "Two-factor sign-in can't be turned off. If you lose your device, ask a system administrator to reset it.",
+  );
 }
 
 type EnrollmentRecord = {
