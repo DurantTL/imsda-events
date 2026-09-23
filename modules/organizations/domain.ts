@@ -9,6 +9,7 @@ export const externalSystemLabels = {
   STERLING: "Sterling Volunteers",
   CMMS: "CMMS",
   WR26: "WR26",
+  FLUENT_FORMS: "Old website form",
 } as const;
 
 export function normalizeOrganizationName(value: string) {

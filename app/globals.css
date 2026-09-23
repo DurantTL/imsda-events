@@ -6631,6 +6631,33 @@ select:focus-visible {
 .club-roster-stack { display: grid; gap: 16px; }
 .club-roster-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .club-roster-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0; }
+.roster-needs-birth-date { display: inline-block; margin-left: 8px; vertical-align: 1px; }
+.roster-birth-date-notice { margin: 12px 0 0; }
+.club-import-upload { display: grid; justify-items: center; gap: 6px; padding: 36px 16px; border-style: dashed; cursor: pointer; text-align: center; }
+.club-import-upload input { max-width: 100%; }
+.club-import-upload small { color: var(--muted); }
+.club-import-summary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.club-import-summary p { margin: 0; }
+.club-import-club > summary { display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none; }
+.club-import-club > summary::-webkit-details-marker { display: none; }
+.club-import-club > summary > span:nth-child(2) { display: grid; flex: 1; gap: 2px; min-width: 0; }
+.club-import-club > summary small { color: var(--muted); font-size: 0.72rem; }
+.club-import-club[open] > summary { margin-bottom: 14px; }
+.club-import-problems { margin: 0 0 12px; padding-left: 18px; color: var(--coral, #b42318); font-size: 0.78rem; }
+.club-import-subhead { margin: 18px 0 8px; font-size: 0.9rem; }
+.club-import-table input:not([type=checkbox]), .club-import-table select { width: 100%; min-width: 90px; border: 1px solid #cbdbe2; border-radius: 8px; padding: 6px 8px; font-size: 0.76rem; }
+.club-import-table .club-import-email { min-width: 220px; }
+.club-import-next { margin-top: 14px; }
+.club-import-table .club-import-age { width: 70px; min-width: 60px; }
+.club-import-results { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.club-import-results li { display: flex; gap: 8px; align-items: flex-start; font-size: 0.82rem; }
+.club-invite-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.club-invite-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.club-invite-list li > span:first-child { display: grid; flex: 1; gap: 2px; min-width: 180px; }
+.club-invite-list small { color: var(--muted); font-size: 0.72rem; }
+.club-invite-actions { display: flex; gap: 6px; }
+.club-admin-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.club-invite-card { margin-bottom: 16px; }
 .club-roster-section { display: grid; gap: 8px; margin-top: 14px; }
 .club-roster-section-title { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--ink); font-size: 0.95rem; }
 .club-team-list li { flex-wrap: wrap; align-items: center; }

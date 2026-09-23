@@ -2,9 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowRight, CalendarDays, CircleDollarSign, ShieldAlert, ShieldCheck, UserRound, UsersRound } from "lucide-react";
+import { ClubInviteAccept } from "@/components/club-invite-accept";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { getAttendeeMfaStatus } from "@/modules/attendee-accounts/mfa-service";
 import { listRegistrationsForVerifiedEmail, type AttendeeRegistrationSummary } from "@/modules/attendee-accounts/registrations-repository";
+import { listInvitesForAccount } from "@/modules/club-imports/invites";
 import { listDirectedClubs } from "@/modules/organizations/director-access";
 import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
 
@@ -31,13 +33,15 @@ function upcomingOnly(registrations: AttendeeRegistrationSummary[], now = new Da
 
 /** The account's front page: where things stand, and a way into each area. */
 export default async function AttendeeAccountOverviewPage() {
-  const { account } = await getCurrentAttendee();
+  const { account, via } = await getCurrentAttendee();
   if (!account) redirect("/account/sign-in");
 
-  const [registrations, mfaStatus, clubs] = await Promise.all([
+  const [registrations, mfaStatus, clubs, invites] = await Promise.all([
     listRegistrationsForVerifiedEmail(account.verifiedEmail),
     getAttendeeMfaStatus(account.id),
     listDirectedClubs(account.id),
+    // Only the person themselves may accept, so staff viewing an account don't see them.
+    via === "attendee" ? listInvitesForAccount(account.verifiedEmail) : Promise.resolve([]),
   ]);
   const upcoming = upcomingOnly(registrations);
   const next = upcoming[0];
@@ -53,6 +57,8 @@ export default async function AttendeeAccountOverviewPage() {
           <p>Signed in as <strong>{account.verifiedEmail}</strong></p>
         </div>
       </section>
+
+      {invites.length > 0 && <ClubInviteAccept invites={invites} />}
 
       <div className="account-overview-grid">
         <section className="public-manage-card account-overview-card">
