@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { Eye, Pencil, Plus, Power, Save, Trash2, UsersRound, X } from "lucide-react";
 import { BirthDateField } from "@/components/birth-date-field";
+import { RosterCsvImport } from "@/components/roster-csv-import";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import {
   clubClassLevelLabels,
@@ -161,6 +162,16 @@ export function ClubRosterWorkspace({
             <input checked={showInactive} onChange={(event) => setShowInactive(event.target.checked)} type="checkbox" />
             Show inactive people
           </label>
+          <span className="roster-csv-actions">
+            <RosterCsvImport
+              base={base}
+              onImported={(updated, message) => {
+                setMembers(updated);
+                setBirthDates(null);
+                setNotice(message);
+              }}
+            />
+          </span>
           {!canSeeBirthDates ? null : birthDates ? (
             <button className="text-button" onClick={() => setBirthDates(null)} type="button">
               <Eye aria-hidden="true" size={14} /> Hide birth dates
