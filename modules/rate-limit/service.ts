@@ -451,16 +451,19 @@ export async function checkPublicRegistrationRateLimit(
     `${eventSlug.trim().toLowerCase()}/${formSlug.trim().toLowerCase()}`,
     configuration,
   );
+  // About one registration a minute from one address (WR26): an office or a
+  // church coordinator entering several people back to back is not stopped,
+  // while a script still is.
   return evaluate([
     {
       policy: "public.registration.client",
-      limit: 12,
+      limit: 30,
       windowSeconds: fifteenMinutes,
       identifierHashes: [client],
     },
     {
       policy: "public.registration.client-form",
-      limit: 5,
+      limit: 15,
       windowSeconds: fifteenMinutes,
       identifierHashes: [client, form],
     },
@@ -482,13 +485,14 @@ export async function checkPublicPromoQuoteRateLimit(
   return evaluate([
     {
       policy: "public.promo-quote.client",
-      limit: 30,
+      limit: 60,
       windowSeconds: fifteenMinutes,
       identifierHashes: [client],
     },
     {
+      // Room for one check per registration plus re-checks when the price changes.
       policy: "public.promo-quote.client-form",
-      limit: 15,
+      limit: 45,
       windowSeconds: fifteenMinutes,
       identifierHashes: [client, form],
     },

@@ -11,6 +11,7 @@ vi.mock("@/lib/prisma", () => ({ getPrisma: dependencies.getPrisma }));
 
 import {
   applyProgramAssignments,
+  getProgramAssignmentPreview,
   ProgramAssignmentError,
 } from "@/modules/program-assignments/repository";
 
@@ -334,5 +335,39 @@ describe("program assignment repository", () => {
       data: expect.objectContaining({ supersedesRunId: "run_prior" }),
     });
     expect(tx.programAssignmentRun).not.toHaveProperty("update");
+  });
+
+  it("reads every version of the form and can leave out an attendee type (WR26)", async () => {
+    const { prisma, tx } = fixture();
+    const teen = {
+      id: "registration_teen",
+      status: "SUBMITTED",
+      confirmationCode: "REG-TEEN",
+      submittedAt,
+      attendees: [{
+        id: "attendee_teen",
+        position: 0,
+        attendeeType: "ATTENDEE",
+        formResponses: { attendee_type: "Teen", session_one_preferences: ["Prayer"] },
+        profileSnapshot: { firstName: "Tess", lastName: "Teen" },
+        person: { firstName: "Tess", lastName: "Teen" },
+      }],
+    };
+    tx.registration.findMany.mockResolvedValue([...(await tx.registration.findMany()), teen]);
+    dependencies.getPrisma.mockReturnValue({ ...prisma, ...tx });
+
+    const all = await getProgramAssignmentPreview("event_one", { formVersionId: "version_one", fieldId: "session_one" });
+    expect(tx.registration.findMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ publicFormSubmission: { formVersion: { formId: "form_one" } } }),
+    }));
+    expect(all.summary.attendees).toBe(2);
+
+    const withoutTeens = await getProgramAssignmentPreview("event_one", {
+      formVersionId: "version_one",
+      fieldId: "session_one",
+      leaveOutAttendeeTypes: ["teen"],
+    });
+    expect(withoutTeens.summary.attendees).toBe(1);
+    expect(withoutTeens.assignments.map((assignment) => assignment.attendeeId)).toEqual(["attendee_one"]);
   });
 });

@@ -111,7 +111,7 @@ describe("program assignment routes", () => {
     );
     expect(dependencies.getProgramAssignmentPreview).toHaveBeenCalledWith(
       "event_one",
-      { formVersionId: "version_one", fieldId: "session_one" },
+      { formVersionId: "version_one", fieldId: "session_one", leaveOutAttendeeTypes: [] },
     );
   });
 
@@ -142,6 +142,7 @@ describe("program assignment routes", () => {
       {
         formVersionId: "version_one",
         fieldId: "session_one",
+        leaveOutAttendeeTypes: [],
         previewFingerprint: "a".repeat(64),
         clientRequestId,
       },

@@ -977,9 +977,12 @@ export function validateTestResponses(
   options: {
     ignoreAvailability?: boolean;
     ignoredFieldKeys?: readonly string[];
+    /** Required fields that may be left empty (checked normally when answered). */
+    optionalFieldKeys?: readonly string[];
   } = {},
 ) {
   const ignoredFieldKeys = new Set(options.ignoredFieldKeys ?? []);
+  const optionalFieldKeys = new Set(options.optionalFieldKeys ?? []);
   const issues: Array<{ fieldId: string; key: string; message: string }> = [];
   for (const section of definition.sections) {
     for (const field of section.fields) {
@@ -987,7 +990,7 @@ export function validateTestResponses(
       if (ignoredFieldKeys.has(field.key)) continue;
       if (!isFieldVisible(field, responses)) continue;
       const value = responses[field.key];
-      if (field.required && !hasValue(value)) {
+      if (field.required && !optionalFieldKeys.has(field.key) && !hasValue(value)) {
         issues.push({ fieldId: field.id, key: field.key, message: `${field.label} is required.` });
         continue;
       }

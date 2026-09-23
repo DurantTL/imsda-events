@@ -93,6 +93,7 @@ export function ProgramAssignmentsWorkspace({
     && field.formVersionId === selectedVersionId
   )) ?? availableFields[0] ?? null;
   const [preview, setPreview] = useState<RankedAssignmentPreview | null>(null);
+  const [leaveOut, setLeaveOut] = useState<string[]>([]);
   const [runs, setRuns] = useState(initialRuns);
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -107,6 +108,13 @@ export function ProgramAssignmentsWorkspace({
     setPreview(null);
     applyRequestId.current = "";
     setError("");
+    setNotice("");
+  }
+
+  function toggleLeaveOut(type: string, checked: boolean) {
+    setLeaveOut((current) => checked ? [...current, type] : current.filter((value) => value !== type));
+    setPreview(null);
+    applyRequestId.current = "";
     setNotice("");
   }
 
@@ -128,6 +136,7 @@ export function ProgramAssignmentsWorkspace({
         formVersionId: selectedField.formVersionId,
         fieldId: selectedField.fieldId,
       });
+      for (const type of leaveOut) search.append("leaveOut", type);
       const response = await fetch(
         `/api/events/${encodeURIComponent(eventId)}/program-assignments?${search.toString()}`,
         { cache: "no-store" },
@@ -163,6 +172,7 @@ export function ProgramAssignmentsWorkspace({
           body: JSON.stringify({
             formVersionId: preview.formVersionId,
             fieldId: preview.fieldId,
+            leaveOutAttendeeTypes: leaveOut,
             previewFingerprint: preview.sourceFingerprint,
             clientRequestId: applyRequestId.current,
           }),
@@ -253,7 +263,7 @@ export function ProgramAssignmentsWorkspace({
           <div>
             <p className="eyebrow">Choose one session</p>
             <h3>What are you assigning?</h3>
-            <p>Each published form version stays separate so its choices and limits cannot be mixed accidentally.</p>
+            <p>Rankings from every version of the form are included, so no one is left out when the form was republished. Choices and room limits come from the newest version.</p>
           </div>
           <div className="assignment-select-grid">
             <label>
@@ -264,7 +274,7 @@ export function ProgramAssignmentsWorkspace({
               >
                 {formVersions.map((field) => (
                   <option value={field.formVersionId} key={field.formVersionId}>
-                    {field.formName} · version {field.formVersionNumber}
+                    {field.formName} · all versions (newest is {field.formVersionNumber})
                   </option>
                 ))}
               </select>
@@ -283,6 +293,24 @@ export function ProgramAssignmentsWorkspace({
               </select>
             </label>
           </div>
+          {selectedField && selectedField.attendeeTypeOptions.length > 0 && (
+            <fieldset className="assignment-leave-out">
+              <legend>Leave out of this assignment</legend>
+              <p>For people in their own program, such as Teens. Their rankings are ignored, not erased.</p>
+              <div>
+                {selectedField.attendeeTypeOptions.map((type) => (
+                  <label className="checkbox-label" key={type}>
+                    <input
+                      checked={leaveOut.includes(type)}
+                      onChange={(event) => toggleLeaveOut(type, event.target.checked)}
+                      type="checkbox"
+                    />
+                    {type}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
           {selectedField && (
             <div className="assignment-field-hint">
               <span>{selectedField.optionCount} choices</span>
@@ -325,7 +353,10 @@ export function ProgramAssignmentsWorkspace({
                 <div>
                   <p className="eyebrow">Nothing saved yet</p>
                   <h3>Review the preview</h3>
-                  <p>Built from submitted and confirmed registrations for this exact published form version.</p>
+                  <p>
+                    Built from submitted and confirmed registrations on every version of this form
+                    {leaveOut.length > 0 ? `, leaving out ${leaveOut.join(", ")}` : ""}.
+                  </p>
                 </div>
                 <span className="review-badge">Preview only</span>
               </div>
@@ -421,7 +452,7 @@ export function ProgramAssignmentsWorkspace({
                   : <><FileCheck2 aria-hidden="true" size={16} /> Apply reviewed assignments</>}
               </button>
               {preview.summary.attendees === 0 && (
-                <p className="quiet-copy">There are no submitted or confirmed attendees from this form version to assign.</p>
+                <p className="quiet-copy">There are no submitted or confirmed attendees on this form to assign.</p>
               )}
             </div>
           </section>

@@ -70,7 +70,7 @@ export async function updateTieredRegistrationAnswersWithClient(
         select: {
           responses: true,
           formVersionId: true,
-          formVersion: { select: { definition: true } },
+          formVersion: { select: { definition: true, formId: true } },
         },
       },
       attendees: {
@@ -153,7 +153,8 @@ export async function updateTieredRegistrationAnswersWithClient(
           optionValue: { not: null },
           run: {
             eventId: registration.eventId,
-            formVersionId: submission.formVersionId,
+            // Runs cover every version of the form (WR26).
+            formId: submission.formVersion.formId,
             fieldKeySnapshot: { in: [...seminarKeys] },
             invalidatedAt: null,
             supersededBy: { none: {} },
@@ -253,7 +254,7 @@ export async function updateTieredRegistrationAnswersWithClient(
     const invalidated = await tx.programAssignmentRun.updateMany({
       where: {
         eventId: registration.eventId,
-        formVersionId: submission.formVersionId,
+        formId: submission.formVersion.formId,
         fieldKeySnapshot: { in: changedFields },
         invalidatedAt: null,
         assignments: {

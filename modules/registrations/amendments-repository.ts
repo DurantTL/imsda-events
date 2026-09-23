@@ -772,6 +772,9 @@ async function prepareAmendment(
     timeZone: registration.event.timezone,
     now: pricingInstant,
     usage: choiceUsageFromReservations(definition, otherReservations),
+    // A staff seminar override (with its reason) may clear someone's picks,
+    // e.g. a Teen in the Teen program (WR26), even though the question is required.
+    optionalFieldKeys: seminarPreferencesChanged ? seminarKeys : [],
   });
   if (!prepared.isValid) {
     throw new RegistrationAmendmentError(

@@ -65,6 +65,7 @@ async function getHandler(
     const selection = programAssignmentSelectionSchema.parse({
       formVersionId: search.get("formVersionId"),
       fieldId: search.get("fieldId"),
+      leaveOutAttendeeTypes: search.getAll("leaveOut"),
     });
     const preview = await getProgramAssignmentPreview(eventId, selection);
     return Response.json(

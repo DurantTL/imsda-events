@@ -514,4 +514,32 @@ describe("registration amendments repository", () => {
       }),
     });
   });
+
+  it("lets staff clear a required seminar ranking with a reason, e.g. a Teen (WR26)", async () => {
+    const { registration } = repositoryFixture();
+    const input = {
+      clientRequestId: "5f0f8f3a-2b5c-4f59-9d8e-0d6f3d7c1a11",
+      expectedUpdatedAt: registration.updatedAt.toISOString(),
+      reason: "",
+      responses: {
+        lodging: registrationResponses.lodging,
+        email: registrationResponses.email,
+        primary_contact_name: registrationResponses.primary_contact_name,
+      },
+      attendees: [{
+        attendeeId: "attendee-1",
+        clientId: "attendee-row-1",
+        responses: { ...attendeeResponses, seminar_preferences: [] as string[] },
+      }],
+      previewOnly: true as const,
+    };
+    await expect(previewRegistrationAmendment("event-1", "registration-1", input))
+      .rejects.toThrow("Enter a reason for a staff seminar preference override.");
+    const preview = await previewRegistrationAmendment("event-1", "registration-1", {
+      ...input,
+      reason: "Teen program; no seminars.",
+    });
+    expect(preview.quoteFingerprint).toMatch(/^[a-f0-9]{64}$/);
+  });
 });
+

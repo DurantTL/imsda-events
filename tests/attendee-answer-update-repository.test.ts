@@ -56,7 +56,7 @@ function fixture() {
     publicFormSubmission: {
       responses: { immutable_registration_answer: "original" },
       formVersionId: "form-version-1",
-      formVersion: { definition },
+      formVersion: { definition, formId: "form-1" },
     },
     attendees: [{
       id: "attendee-1",
@@ -126,7 +126,7 @@ describe("tiered attendee answer updates", () => {
     expect(tx.programAssignmentRun.updateMany).toHaveBeenCalledWith({
       where: {
         eventId: "event-1",
-        formVersionId: "form-version-1",
+        formId: "form-1",
         fieldKeySnapshot: { in: ["session_preferences"] },
         invalidatedAt: null,
         assignments: {
