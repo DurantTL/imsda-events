@@ -14,6 +14,7 @@ import {
   Utensils,
 } from "lucide-react";
 import { AccessRestricted } from "@/components/access-restricted";
+import { EmailRegistrationsButton } from "@/components/email-registrations-button";
 import { PrintReportButton } from "@/components/print-report-button";
 import { resolveEventContext } from "@/modules/events/selection";
 import type {
@@ -252,6 +253,44 @@ export default async function OperationalReportsPage({
             </div>}
       </section>
 
+      <section className="panel report-panel" id="attendee-types">
+        <div className="section-heading report-section-heading">
+          <div className="report-title">
+            <span className="report-icon navy"><UsersRound aria-hidden="true" size={19} /></span>
+            <div><p className="eyebrow">People</p><h2>Attendees by type</h2><p>One list per attendee type from the form, such as Adult, Teen, or Child. The Teen list is the Teen Program roster.</p></div>
+          </div>
+          <a className="secondary-button report-download" href={reportDownloadHref(event.id, "attendee-types")}><Download aria-hidden="true" size={15} /> Download CSV</a>
+        </div>
+        {report.attendeeTypeGroups.length === 0
+          ? <EmptyReport>No active attendees are available yet.</EmptyReport>
+          : <div className="roster-report-groups">
+              {report.attendeeTypeGroups.map((group) => (
+                <article className="roster-report-group" key={group.id}>
+                  <header>
+                    <div><h3>{group.label}</h3><p>{/teen/i.test(group.label) ? "Teen Program roster" : "Attendee type"}</p></div>
+                    <span>{group.attendees.length} {group.attendees.length === 1 ? "person" : "people"}</span>
+                  </header>
+                  <div className="report-table-wrap">
+                    <table className="report-table roster-table">
+                      <caption className="sr-only">{group.label} attendees</caption>
+                      <thead><tr><th scope="col">Attendee</th><th scope="col">Group</th><th scope="col">Registration</th><th scope="col">Account holder</th></tr></thead>
+                      <tbody>
+                        {group.attendees.map((attendee) => (
+                          <tr key={attendee.attendeeId}>
+                            <th scope="row" translate="no">{attendee.lastName}, {attendee.firstName}</th>
+                            <td>{attendee.groupLabel ?? "—"}</td>
+                            <td><Link className="report-record-link" href={`/people${peopleQuery}&registration=${encodeURIComponent(attendee.registrationId)}`}>{attendee.confirmationCode}</Link></td>
+                            <td translate="no">{attendee.accountHolderName}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </article>
+              ))}
+            </div>}
+      </section>
+
       <section className="panel report-panel" id="meal-counts">
         <div className="section-heading report-section-heading">
           <div className="report-title">
@@ -302,9 +341,44 @@ export default async function OperationalReportsPage({
             <span className="report-icon gold"><HandHeart aria-hidden="true" size={19} /></span>
             <div><p className="eyebrow">Service team</p><h2>Volunteer responses</h2><p>Shows structured willingness-to-help choices for staff follow-up and shift planning.</p></div>
           </div>
-          <a className="secondary-button report-download" href={reportDownloadHref(event.id, "volunteers")}><Download aria-hidden="true" size={15} /> Download volunteer CSV</a>
+          <span className="report-download-group">
+            {permissions.includes("MANAGE_COMMUNICATIONS") && (
+              <EmailRegistrationsButton
+                eventId={event.id}
+                label="Email volunteers"
+                registrationIds={report.volunteerRoster.map((volunteer) => volunteer.registrationId)}
+              />
+            )}
+            <a className="secondary-button report-download" href={reportDownloadHref(event.id, "volunteer-roster")}><Download aria-hidden="true" size={15} /> Volunteer list CSV</a>
+            <a className="secondary-button report-download" href={reportDownloadHref(event.id, "volunteers")}><Download aria-hidden="true" size={15} /> Counts CSV</a>
+          </span>
         </div>
         <CountFields fields={report.volunteers} emptyCopy="No structured volunteer fields are configured on an active registration form yet." />
+        <article className="roster-report-group" id="volunteer-roster">
+          <header>
+            <div><h3>Who said yes</h3><p>Everyone who answered yes to a volunteer question, with a phone number to reach them. &ldquo;Email volunteers&rdquo; writes to each registration&rsquo;s contact after you preview it.</p></div>
+            <span>{report.volunteerRoster.length} {report.volunteerRoster.length === 1 ? "person" : "people"}</span>
+          </header>
+          {report.volunteerRoster.length === 0
+            ? <EmptyReport>No one has said yes to a volunteer question yet.</EmptyReport>
+            : <div className="report-table-wrap">
+                <table className="report-table roster-table">
+                  <caption className="sr-only">Volunteers</caption>
+                  <thead><tr><th scope="col">Volunteer</th><th scope="col">Answer</th><th scope="col">Phone</th><th scope="col">Group</th><th scope="col">Registration</th></tr></thead>
+                  <tbody>
+                    {report.volunteerRoster.map((volunteer) => (
+                      <tr key={`${volunteer.attendeeId}-${volunteer.question}`}>
+                        <th scope="row" translate="no">{volunteer.lastName}, {volunteer.firstName}<small className="quiet-copy"> · {volunteer.attendeeType}</small></th>
+                        <td>{volunteer.answer}{report.volunteers.length > 1 && <small className="quiet-copy"> · {volunteer.question}</small>}</td>
+                        <td translate="no">{volunteer.phone || "—"}</td>
+                        <td>{volunteer.groupLabel ?? "—"}</td>
+                        <td><Link className="report-record-link" href={`/people${peopleQuery}&registration=${encodeURIComponent(volunteer.registrationId)}`}>{volunteer.confirmationCode}</Link></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>}
+        </article>
       </section>
 
       <section className="panel report-panel" id="attendance-counts">

@@ -355,4 +355,26 @@ describe("registration form definitions", () => {
 
     expect(result.issues.some((issue) => issue.key === "housing_selection" && issue.message.includes("limit of 2"))).toBe(true);
   });
+
+  it("makes a required field optional for matching attendees only (WR26 Teens and seminars)", () => {
+    const definition = structuredClone(formTemplates.find((template) => template.key === "womens_retreat_export")!.definition);
+    const fields = definition.sections.flatMap((section) => section.fields);
+    const seminar = fields.find((field) => field.type === "RANKED_CHOICE" && field.scope === "ATTENDEE" && field.required)!;
+    const typeField = fields.find((field) => field.key === "attendee_type")!;
+    seminar.optionalWhen = { fieldKey: typeField.key, operator: "EQUALS", value: "Teen" };
+    const parsed = registrationFormDefinitionSchema.parse(definition);
+    const parsedSeminar = parsed.sections.flatMap((section) => section.fields).find((field) => field.key === seminar.key)!;
+
+    const seminarIssue = (responses: Record<string, unknown>) => validateTestResponses(parsed, responses, {}, "ATTENDEE")
+      .issues.find((issue) => issue.key === seminar.key);
+
+    expect(seminarIssue({ attendee_type: "Adult" })?.message).toMatch(/required/);
+    expect(seminarIssue({ attendee_type: "Teen" })).toBeUndefined();
+    // A Teen may still rank, and one choice is enough.
+    expect(seminarIssue({ attendee_type: "Teen", [seminar.key]: [parsedSeminar.options[0]] })).toBeUndefined();
+
+    seminar.optionalWhen = { fieldKey: seminar.key, operator: "EQUALS", value: "x" };
+    expect(registrationFormDefinitionSchema.safeParse(definition).success).toBe(false);
+  });
 });
+

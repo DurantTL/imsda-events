@@ -3154,6 +3154,8 @@ select:focus-visible {
 .public-registration-field:is(fieldset) { border: 0; padding: 0; }
 .public-registration-field legend { width: 100%; margin: 0 0 2px; padding: 0; }
 .public-registration-field-label { display: block; }
+.public-registration-optional-mark { color: var(--muted); }
+.public-registration-optional-note { display: block; margin-top: 2px; color: var(--muted); font-size: 0.72em; font-weight: 600; }
 .public-registration-field-label > span:first-of-type { color: var(--coral); }
 .public-registration-field > small { color: var(--muted); font-size: 0.7rem; font-weight: 500; line-height: 1.5; }
 
@@ -7043,3 +7045,5 @@ select:focus-visible {
   .honor-class-sheet { break-before: page; }
   .report-table td.honor-roster-box { border: 1px solid #555; }
 }
+
+.report-download-group { display: flex; flex-wrap: wrap; gap: 8px; }

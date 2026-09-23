@@ -1067,6 +1067,7 @@ model Event {
   registrations                       Registration[]
   attendees                           RegistrationAttendee[]
   payments                            Payment[]
+  registrationAdjustments             RegistrationAdjustment[]
   refunds                             Refund[]
   checkIns                            CheckIn[]
   announcements                       Announcement[]
@@ -1760,6 +1761,7 @@ model Registration {
   tagAssignments          RegistrationTagAssignment[]
   clubRegistration        ClubEventRegistration?
   honorEnrollments        HonorEnrollment[]
+  adjustments             RegistrationAdjustment[]
 
   @@unique([eventId, confirmationCode])
   @@index([eventId, status])
@@ -1809,6 +1811,7 @@ model PromoCode {
 
   event       Event                 @relation(fields: [eventId], references: [id], onDelete: Cascade)
   redemptions PromoCodeRedemption[]
+  adjustments RegistrationAdjustment[]
 
   @@unique([eventId, normalizedCode])
   @@index([eventId, isActive, updatedAt])
@@ -1947,6 +1950,42 @@ model RegistrationOperation {
   @@index([registrationId, createdAt])
   @@index([attendeeId, createdAt])
   @@index([actorUserId, createdAt])
+}
+
+/// A staff change to what a registration owes (#396): a scholarship, a
+/// discount, a promo code applied after submission, or a correction.
+/// `amountCents` is negative when it lowers the amount owed. Lines are never
+/// edited; a reversal is a new line pointing at the one it cancels. The
+/// registration total is the priced total plus every line.
+model RegistrationAdjustment {
+  id                    String                     @id @default(cuid())
+  eventId               String
+  registrationId        String
+  kind                  RegistrationAdjustmentKind
+  amountCents           Int
+  reason                String
+  promoCodeId           String?
+  promoCodeSnapshot     String?
+  reversesAdjustmentId  String?                    @unique
+  createdByUserId       String?
+  createdByNameSnapshot String
+  createdAt             DateTime                   @default(now())
+
+  event        Event                   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration Registration            @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  promoCode    PromoCode?              @relation(fields: [promoCodeId], references: [id], onDelete: SetNull)
+  reverses     RegistrationAdjustment? @relation("AdjustmentReversal", fields: [reversesAdjustmentId], references: [id], onDelete: Restrict)
+  reversedBy   RegistrationAdjustment? @relation("AdjustmentReversal")
+
+  @@index([registrationId, createdAt])
+  @@index([eventId, kind])
+}
+
+enum RegistrationAdjustmentKind {
+  SCHOLARSHIP
+  DISCOUNT
+  PROMO_CODE
+  CORRECTION
 }
 
 model Payment {

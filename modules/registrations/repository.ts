@@ -49,6 +49,20 @@ function getRegistrationQuery(
         where: { status: "SUCCEEDED" },
         include: { refunds: { where: { status: "SUCCEEDED" } } },
       },
+      adjustments: {
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: {
+          id: true,
+          kind: true,
+          amountCents: true,
+          reason: true,
+          promoCodeSnapshot: true,
+          reversesAdjustmentId: true,
+          reversedBy: { select: { id: true } },
+          createdByNameSnapshot: true,
+          createdAt: true,
+        },
+      },
       messages: {
         where: { recipientKind: "REGISTRANT" },
         orderBy: { createdAt: "desc" },
@@ -223,6 +237,17 @@ function serializeRegistration(registration: RegistrationWithRelations) {
         reason: refund.reason ?? "",
         createdAt: refund.createdAt.toISOString(),
       })),
+    })),
+    adjustments: registration.adjustments.map((adjustment) => ({
+      id: adjustment.id,
+      kind: adjustment.kind,
+      amountCents: adjustment.amountCents,
+      reason: adjustment.reason,
+      promoCode: adjustment.promoCodeSnapshot,
+      reversesAdjustmentId: adjustment.reversesAdjustmentId,
+      reversed: Boolean(adjustment.reversedBy),
+      createdBy: adjustment.createdByNameSnapshot,
+      createdAt: adjustment.createdAt.toISOString(),
     })),
     messages: registration.messages.map((message) => ({
       id: message.id,

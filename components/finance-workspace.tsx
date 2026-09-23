@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Banknote, CircleDollarSign, CreditCard, ReceiptText, RotateCcw, Search, WalletCards, X } from "lucide-react";
+import { BadgePercent, Banknote, CircleDollarSign, CreditCard, ReceiptText, RotateCcw, Search, WalletCards, X } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 import {
@@ -10,6 +10,15 @@ import {
 } from "@/modules/registrations/search";
 
 type PaymentRecord = RegistrationRecord["payments"][number];
+type AdjustmentRecord = RegistrationRecord["adjustments"][number];
+type AdjustmentKind = "SCHOLARSHIP" | "DISCOUNT" | "PROMO_CODE" | "CORRECTION";
+
+const adjustmentKindLabels: Record<AdjustmentKind, string> = {
+  SCHOLARSHIP: "Scholarship",
+  DISCOUNT: "Discount",
+  PROMO_CODE: "Promo code",
+  CORRECTION: "Correction",
+};
 const activeFinancialStatuses = new Set(["SUBMITTED", "CONFIRMED"]);
 
 function money(cents: number) {
@@ -35,7 +44,9 @@ export function FinanceWorkspace({
   const [filter, setFilter] = useState(initialFilter);
   const [selected, setSelected] = useState<RegistrationRecord | null>(initialSelected);
   const [selectedPayment, setSelectedPayment] = useState<PaymentRecord | null>(null);
-  const [modal, setModal] = useState<"detail" | "payment" | "refund" | null>(initialSelected ? "detail" : null);
+  const [modal, setModal] = useState<"detail" | "payment" | "refund" | "adjust" | "reverse" | null>(initialSelected ? "detail" : null);
+  const [adjustKind, setAdjustKind] = useState<AdjustmentKind>("SCHOLARSHIP");
+  const [selectedAdjustment, setSelectedAdjustment] = useState<AdjustmentRecord | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const dialogRef = useAccessibleDialog<HTMLElement>(Boolean(modal), closeModal);
@@ -109,6 +120,53 @@ export function FinanceWorkspace({
     finally { setSaving(false); }
   }
 
+  /** Scholarship, discount, late promo code, or correction (#396). */
+  async function saveAdjustment(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    setSaving(true); setError("");
+    const form = new FormData(event.currentTarget);
+    const amountCents = Math.round(Number(form.get("amount") ?? 0) * 100);
+    const reason = String(form.get("reason") ?? "");
+    const body = adjustKind === "PROMO_CODE"
+      ? { kind: adjustKind, code: String(form.get("code") ?? ""), reason }
+      : adjustKind === "CORRECTION"
+        ? { kind: adjustKind, amountCents: form.get("direction") === "RAISE" ? amountCents : -amountCents, reason }
+        : { kind: adjustKind, amountCents, reason };
+    try {
+      const response = await fetch(`/api/events/${eventId}/registrations/${selected.id}/adjustments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message ?? "Unable to adjust the amount owed.");
+      applyRegistration(result.registration);
+      setModal("detail");
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Unable to adjust the amount owed."); }
+    finally { setSaving(false); }
+  }
+
+  async function reverseAdjustment(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected || !selectedAdjustment) return;
+    setSaving(true); setError("");
+    const form = new FormData(event.currentTarget);
+    try {
+      const response = await fetch(`/api/events/${eventId}/registrations/${selected.id}/adjustments/${selectedAdjustment.id}/reverse`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: String(form.get("reason") ?? "") }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message ?? "Unable to reverse the adjustment.");
+      applyRegistration(result.registration);
+      setSelectedAdjustment(null);
+      setModal("detail");
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Unable to reverse the adjustment."); }
+    finally { setSaving(false); }
+  }
+
   return (
     <section className="page-stack">
       <div className="page-intro"><div><p className="eyebrow">Financial operations</p><h2>Payments & balances</h2><p>Search by attendee or payer, record offline payments, review Square card payments, and track confirmed refunds.</p></div><div className="page-intro-actions"><a className="secondary-button" href={`/finance/square-payments?event=${eventId}`}><CreditCard aria-hidden="true" size={17} /> Unmatched Square payments</a><span className="count-badge"><WalletCards aria-hidden="true" size={17} /> {registrations.length} registrations</span></div></div>
@@ -136,15 +194,78 @@ export function FinanceWorkspace({
       {modal && selected && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeModal(); }}>
           <section className="modal-card" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="finance-modal-title" tabIndex={-1}>
-            <div className="modal-head"><div><p className="eyebrow">{selected.confirmationCode}</p><h2 id="finance-modal-title">{modal === "payment" ? "Record a payment" : modal === "refund" ? "Record a refund" : `${selected.accountHolder.firstName} ${selected.accountHolder.lastName}`}</h2></div><button className="icon-button" type="button" onClick={closeModal} aria-label="Close dialog"><X aria-hidden="true" size={18} /></button></div>
+            <div className="modal-head"><div><p className="eyebrow">{selected.confirmationCode}</p><h2 id="finance-modal-title">{modal === "payment" ? "Record a payment" : modal === "refund" ? "Record a refund" : modal === "adjust" ? "Adjust amount owed" : modal === "reverse" ? "Reverse adjustment" : `${selected.accountHolder.firstName} ${selected.accountHolder.lastName}`}</h2></div><button className="icon-button" type="button" onClick={closeModal} aria-label="Close dialog"><X aria-hidden="true" size={18} /></button></div>
             {modal === "detail" ? (
               <div className="detail-stack">
                 <div className="detail-grid"><span><small>Total</small><strong>{money(selected.totalAmountCents)}</strong></span><span><small>Net received</small><strong>{money(selected.paidCents)}</strong></span><span><small>Balance</small><strong>{money(selected.balanceCents)}</strong></span><span><small>Payments</small><strong>{selected.payments.length}</strong></span></div>
                 <div><p className="eyebrow">Attendees on this registration</p><ul className="finance-attendee-list">{selected.attendees.map((attendee) => <li key={attendee.id}><span><strong>{attendee.firstName} {attendee.lastName}</strong><small>{attendee.attendeeType.toLowerCase()}{attendee.email ? ` · ${attendee.email}` : ""}</small></span></li>)}</ul>{selected.attendees.length === 0 && <p className="quiet-copy">No attendees are recorded on this registration.</p>}</div>
                 <div><p className="eyebrow">Payment history</p>{selected.payments.map((payment) => { const available = payment.amountCents - payment.refundedCents; const squareManaged = payment.method === "CARD_REFERENCE"; return <div className="payment-history" key={payment.id}><span className="payment-icon"><Banknote aria-hidden="true" size={17} /></span><span><strong>{money(payment.amountCents)} · {squareManaged ? "Square card" : payment.method.toLowerCase()}</strong><small>{payment.receivedAt ? new Date(payment.receivedAt).toLocaleString() : "Recorded manually"}{payment.refundedCents ? ` · ${money(payment.refundedCents)} refunded` : ""}{squareManaged && available > 0 ? " · refund through Square Dashboard" : ""}</small></span>{canManage && available > 0 && !squareManaged && <button className="text-button" type="button" onClick={() => { setSelectedPayment(payment); setError(""); setModal("refund"); }}>Refund</button>}</div>; })}{selected.payments.length === 0 && <p className="quiet-copy">No payments have been recorded.</p>}</div>
+                {(selected.adjustments.length > 0 || (canManage && activeFinancialStatuses.has(selected.status))) && (
+                  <div>
+                    <p className="eyebrow">Adjustments</p>
+                    {selected.adjustments.map((adjustment) => (
+                      <div className="payment-history" key={adjustment.id}>
+                        <span className="payment-icon"><BadgePercent aria-hidden="true" size={17} /></span>
+                        <span>
+                          <strong>
+                            {adjustment.amountCents < 0 ? "−" : "+"}{money(Math.abs(adjustment.amountCents))} · {adjustmentKindLabels[adjustment.kind]}
+                            {adjustment.promoCode ? ` ${adjustment.promoCode}` : ""}
+                            {adjustment.reversesAdjustmentId ? " (reversal)" : adjustment.reversed ? " (reversed)" : ""}
+                          </strong>
+                          <small>{adjustment.reason} · {adjustment.createdBy} · {new Date(adjustment.createdAt).toLocaleDateString()}</small>
+                        </span>
+                        {canManage && !adjustment.reversesAdjustmentId && !adjustment.reversed && activeFinancialStatuses.has(selected.status) && (
+                          <button className="text-button" type="button" onClick={() => { setSelectedAdjustment(adjustment); setError(""); setModal("reverse"); }}>Reverse</button>
+                        )}
+                      </div>
+                    ))}
+                    {selected.adjustments.length === 0 && <p className="quiet-copy">No scholarships, discounts, or corrections.</p>}
+                    {canManage && activeFinancialStatuses.has(selected.status) && (
+                      <button className="secondary-button full-button" type="button" onClick={() => { setError(""); setAdjustKind("SCHOLARSHIP"); setModal("adjust"); }}>
+                        <BadgePercent aria-hidden="true" size={17} /> Adjust amount owed
+                      </button>
+                    )}
+                  </div>
+                )}
                 {canManage && selected.balanceCents > 0 && activeFinancialStatuses.has(selected.status) && <button className="primary-button full-button" type="button" onClick={() => { setError(""); setModal("payment"); }}><Banknote aria-hidden="true" size={17} /> Record payment</button>}
                 {!activeFinancialStatuses.has(selected.status) && <div className="inline-notice">This registration is {selected.status.toLowerCase()}. New payments are disabled, but existing payment and refund history remains available.</div>}
               </div>
+            ) : modal === "adjust" ? (
+              <form className="form-stack" onSubmit={saveAdjustment}>
+                <div className="inline-notice">Current total {money(selected.totalAmountCents)} · paid {money(selected.paidCents)} · balance {money(selected.balanceCents)}</div>
+                <label>Type
+                  <select value={adjustKind} onChange={(event) => { setAdjustKind(event.target.value as AdjustmentKind); setError(""); }}>
+                    <option value="SCHOLARSHIP">Scholarship — lowers the amount owed</option>
+                    <option value="DISCOUNT">Discount — lowers the amount owed</option>
+                    <option value="PROMO_CODE">Promo code — apply an event code now</option>
+                    <option value="CORRECTION">Correction — fix a wrong amount either way</option>
+                  </select>
+                </label>
+                {adjustKind === "PROMO_CODE" ? (
+                  <label>Promo code<input name="code" maxLength={40} required autoComplete="off" placeholder="EARLYBIRD" />
+                    <small className="quiet-copy">Checked against the price and the date they registered, and counts as one use of the code.</small>
+                  </label>
+                ) : (
+                  <>
+                    {adjustKind === "CORRECTION" && (
+                      <label>Direction<select name="direction" defaultValue="LOWER"><option value="LOWER">Lower the amount owed</option><option value="RAISE">Raise the amount owed</option></select></label>
+                    )}
+                    <label>Amount<input name="amount" type="number" min="0.01" step="0.01" required /></label>
+                  </>
+                )}
+                <label>Reason<textarea name="reason" minLength={3} maxLength={500} rows={3} required placeholder="For example: WR26 scholarship approved by the committee" /></label>
+                {error && <p className="form-error" role="alert">{error}</p>}
+                <div className="form-actions"><button className="secondary-button" type="button" onClick={() => setModal("detail")}>Back</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving…" : "Save adjustment"}</button></div>
+              </form>
+            ) : modal === "reverse" ? (
+              <form className="form-stack" onSubmit={reverseAdjustment}>
+                <div className="inline-notice">
+                  This adds an opposite line of {money(Math.abs(selectedAdjustment?.amountCents ?? 0))}. The original stays on record.
+                </div>
+                <label>Reason<textarea name="reason" minLength={3} maxLength={500} rows={3} required placeholder="Why is this being reversed?" /></label>
+                {error && <p className="form-error" role="alert">{error}</p>}
+                <div className="form-actions"><button className="secondary-button" type="button" onClick={() => setModal("detail")}>Back</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving…" : "Reverse adjustment"}</button></div>
+              </form>
             ) : modal === "payment" ? (
               <form className="form-stack" onSubmit={recordPayment}><label>Amount<input name="amount" type="number" min="0.01" step="0.01" required defaultValue={Math.max(selected.balanceCents, 0) / 100} /></label><label>Method<select name="method" defaultValue="CHECK"><option value="CHECK">Check</option><option value="CASH">Cash</option><option value="MANUAL">Other manual payment</option></select></label><label>Reference or note<input name="reference" maxLength={120} placeholder="Check number or staff note" /></label>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><button className="secondary-button" type="button" onClick={() => setModal("detail")}>Back</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving…" : "Record payment"}</button></div></form>
             ) : (

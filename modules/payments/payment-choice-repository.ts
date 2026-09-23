@@ -14,6 +14,7 @@ import {
 } from "@/modules/payments/payment-choice-domain";
 import { moneyToCents } from "@/modules/payments/square-domain";
 import { authorizeRegistrationAccessToken } from "@/modules/public-access/repository";
+import { adjustmentTotalCents } from "@/modules/registrations/adjustments";
 
 export type PaymentChoiceOperationErrorCode =
   | "REGISTRATION_ACCESS_UNAVAILABLE"
@@ -222,7 +223,9 @@ async function choosePromotedWaitlistPaymentInTransaction(
 
   const expectedCurrentTotal = latest?.resultingTotalCents
     ?? preservedQuote.payLaterTotalCents;
-  const currentTotal = moneyToCents(registration.totalAmount);
+  // Staff adjustments (#396) sit on top of the quoted total.
+  const adjustmentsCents = await adjustmentTotalCents(tx, registration.id);
+  const currentTotal = moneyToCents(registration.totalAmount) - adjustmentsCents;
   if (
     currentTotal !== expectedCurrentTotal
     || (
@@ -256,7 +259,7 @@ async function choosePromotedWaitlistPaymentInTransaction(
 
   await tx.registration.update({
     where: { id: registration.id },
-    data: { totalAmount: centsAsDecimal(result.totalCents) },
+    data: { totalAmount: centsAsDecimal(Math.max(result.totalCents + adjustmentsCents, 0)) },
   });
   await tx.registrationPaymentChoiceOperation.create({
     data: {

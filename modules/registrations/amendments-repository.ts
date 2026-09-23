@@ -24,6 +24,7 @@ import {
   applyPromoCodeToCalculation,
   type PromoCodeEvaluation,
 } from "@/modules/promo-codes/domain";
+import { adjustmentTotalCents } from "@/modules/registrations/adjustments";
 import { registrationOperationFingerprint } from "@/modules/registrations/operations-domain";
 import { getRegistrationByIdWithClient } from "@/modules/registrations/repository";
 import { withAttendeeTypeOptions, attendeeTypeSelector } from "@/modules/attendee-types/form-options";
@@ -623,7 +624,7 @@ function hasMeaningfulAttendeeVisibleChange(
     registrationResponses: nextRegistrationResponses,
     attendees: nextAttendees,
     capacitySelections: capacitySelections(nextCapacitySelections),
-    totalCents: prepared.pricedCalculation.totalCents,
+    totalCents: prepared.finalTotalCents,
   });
 }
 
@@ -821,7 +822,9 @@ async function prepareAmendment(
     registration.promoCodeRedemption,
   );
   const netPaidCents = paidCents(registration);
-  if (pricedCalculation.totalCents < netPaidCents) {
+  // Staff adjustments (#396) stay on top of whatever the new answers cost.
+  const adjustmentsCents = await adjustmentTotalCents(tx, registration.id);
+  if (Math.max(pricedCalculation.totalCents + adjustmentsCents, 0) < netPaidCents) {
     throw new RegistrationAmendmentError(
       "PAYMENT_ADJUSTMENT_REQUIRED",
       "This change would lower the registration total below the amount already paid. Record the required refund or adjustment in Finance before completing this amendment.",
@@ -868,7 +871,7 @@ async function prepareAmendment(
       attendeeId: attendee.attendeeId,
       responses: prepared.attendees[index]?.responses ?? {},
     })),
-    totalCents: pricedCalculation.totalCents,
+    totalCents: Math.max(pricedCalculation.totalCents + adjustmentsCents, 0),
     activeReservationIds: registration.capacityReservations.map((reservation) => reservation.id).sort(),
   });
 
@@ -883,6 +886,8 @@ async function prepareAmendment(
     removedAttendees,
     quoteFingerprint,
     paidCents: netPaidCents,
+    adjustmentsCents,
+    finalTotalCents: Math.max(pricedCalculation.totalCents + adjustmentsCents, 0),
     addedAttendeeCount: input.attendees.filter((attendee) => !attendee.attendeeId).length,
     seminarPreferencesChanged,
     configuredTypes,
@@ -891,7 +896,7 @@ async function prepareAmendment(
 
 function amendmentPreview(prepared: PreparedAmendment) {
   const previousTotalCents = cents(prepared.registration.totalAmount);
-  const totalCents = prepared.pricedCalculation.totalCents;
+  const totalCents = prepared.finalTotalCents;
   return {
     quoteFingerprint: prepared.quoteFingerprint,
     previousTotalCents,
@@ -1128,7 +1133,7 @@ export async function amendRegistration(
 
         await tx.registration.update({
           where: { id: registrationId },
-          data: { totalAmount: prepared.pricedCalculation.totalCents / 100 },
+          data: { totalAmount: prepared.finalTotalCents / 100 },
         });
         if (prepared.registration.promoCodeRedemption) {
           const discountAmountCents = typeof (
@@ -1259,13 +1264,13 @@ export async function amendRegistration(
             entityType: "RegistrationOperation",
             entityId: amendmentId,
             correlationId: input.clientRequestId,
-            summary: `Amended registration ${prepared.registration.confirmationCode}: ${prepared.registration.attendees.length} to ${prepared.prepared.attendees.length} attendees and ${cents(prepared.registration.totalAmount) / 100} to ${prepared.pricedCalculation.totalCents / 100}.`,
+            summary: `Amended registration ${prepared.registration.confirmationCode}: ${prepared.registration.attendees.length} to ${prepared.prepared.attendees.length} attendees and ${cents(prepared.registration.totalAmount) / 100} to ${prepared.finalTotalCents / 100}.`,
             metadata: {
               operationId: amendmentId,
               clientRequestId: input.clientRequestId,
               reason: input.reason,
               priorTotalCents: cents(prepared.registration.totalAmount),
-              resultingTotalCents: prepared.pricedCalculation.totalCents,
+              resultingTotalCents: prepared.finalTotalCents,
               priorAttendeeCount: prepared.registration.attendees.length,
               resultingAttendeeCount: prepared.prepared.attendees.length,
               addedAttendeeCount: input.attendees.filter((attendee) => !attendee.attendeeId).length,

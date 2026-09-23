@@ -360,4 +360,47 @@ describe("operational reports", () => {
     expect(csv).toContain("\"'=HYPERLINK(\"\"https://bad.example\"\")\"");
     expect(csv).toContain("\"'=SUM(1,1) Example\"");
   });
+
+  it("lists attendees by their attendee-type answer, e.g. the Teen Program roster (WR26)", () => {
+    const report = buildOperationalReport([
+      registration({
+        attendees: [
+          { id: "attendee_one", firstName: "Ana", lastName: "Rivera", attendeeType: "ATTENDEE", position: 0, responses: { attendee_type: "Adult" } },
+          { id: "attendee_two", firstName: "Tess", lastName: "Rivera", attendeeType: "ATTENDEE", position: 1, responses: { attendee_type: "Teen" } },
+        ],
+      }),
+      registration({ id: "reg_staff", confirmationCode: "REG-STAFF", publicSubmission: null, attendees: [
+        { id: "attendee_three", firstName: "Kai", lastName: "Moss", attendeeType: "ATTENDEE", position: 0, responses: { attendee_type: "Teen" } },
+      ] }),
+    ]);
+    const teen = report.attendeeTypeGroups.find((group) => group.label === "Teen")!;
+    expect(teen.attendees.map((attendee) => attendee.firstName)).toEqual(["Kai", "Tess"]);
+    expect(teen.attendees.find((attendee) => attendee.firstName === "Tess")?.groupLabel).toBe("Central Congregation");
+    const csv = operationalReportCsv(report, "attendee-types");
+    expect(csv.split("\n")[0]).toContain("Attendee type");
+    expect(csv).toContain("Teen");
+  });
+
+  it("lists everyone who said yes to a volunteer question, with a phone (WR26)", () => {
+    const volunteerDefinition = structuredClone(definition) as typeof definition;
+    (volunteerDefinition.sections as unknown as unknown[]).push({
+      id: "section_contact",
+      title: "Contact",
+      description: "",
+      fields: [
+        { id: "field_phone", key: "attendee_phone", label: "Phone", helpText: "", type: "PHONE", scope: "ATTENDEE", required: false, options: [] },
+      ] as never,
+    });
+    const report = buildOperationalReport([registration({
+      attendees: [
+        { id: "a1", firstName: "Ana", lastName: "Rivera", attendeeType: "ATTENDEE", position: 0, responses: { volunteer: "Yes", attendee_phone: "515-555-0100" } },
+        { id: "a2", firstName: "Luis", lastName: "Rivera", attendeeType: "ATTENDEE", position: 1, responses: { volunteer: "No" } },
+      ],
+      publicSubmission: { definition: volunteerDefinition, responses: { community_affiliation_2027: "Central Congregation" }, attendeeResponses: [] },
+    })]);
+    expect(report.volunteerRoster.map((row) => [row.firstName, row.answer, row.phone, row.groupLabel])).toEqual([
+      ["Ana", "Yes", "515-555-0100", "Central Congregation"],
+    ]);
+    expect(operationalReportCsv(report, "volunteer-roster")).toContain("515-555-0100");
+  });
 });

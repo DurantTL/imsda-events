@@ -77,6 +77,7 @@ function registration(
     attendeeCount: 1,
     checkedInCount: 0,
     payments: [],
+    adjustments: [],
     messages: [],
     publicSubmission: null,
   };
