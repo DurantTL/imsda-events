@@ -74,6 +74,7 @@ function baseRegistration(overrides: Record<string, unknown> = {}) {
     },
     attendees: [],
     payments: [],
+    adjustments: [],
     messages: [],
     operations: [],
     publicFormSubmission: null,

@@ -68,6 +68,7 @@ function registrationRecord(status: "DRAFT" | "SUBMITTED", submitted: Date | nul
       checkIns: [],
     }],
     payments: [],
+    adjustments: [],
     messages: [],
     operations: [],
     publicFormSubmission: null,

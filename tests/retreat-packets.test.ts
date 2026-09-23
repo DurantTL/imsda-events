@@ -73,6 +73,7 @@ function registration(): RegistrationRecord {
     attendeeCount: 1,
     checkedInCount: 0,
     payments: [],
+    adjustments: [],
     messages: [],
     publicSubmission: {
       formName: "Women’s Retreat",

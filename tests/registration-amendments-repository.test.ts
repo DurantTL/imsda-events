@@ -291,6 +291,7 @@ function repositoryFixture() {
       }),
     },
     promoCodeRedemption: { update: vi.fn() },
+    registrationAdjustment: { aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: null } }) },
     person: { findUnique: vi.fn(), create: vi.fn() },
     auditLog: { create: vi.fn(async () => ({})) },
   };
