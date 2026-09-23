@@ -37,11 +37,15 @@ import {
 import { issueRegistrationAccessToken } from "@/modules/public-access/repository";
 import { logError } from "@/lib/logger";
 import {
+  applyAttendeePromoCodes,
   applyPromoCodeToCalculation,
+  attendeePromoCodeField,
   promoCodeField,
+  type AttendeePromoDiscount,
 } from "@/modules/promo-codes/domain";
 import {
   claimPromoCode,
+  evaluateAttendeePromoCodes,
   PromoCodeOperationError,
   PublicPromoCodeError,
   recordPromoCodeRedemption,
@@ -706,6 +710,45 @@ async function createPublicRegistrationTransaction(
     }
   }
 
+  // Per-person codes (#397): each claimed on that person's share. Any that
+  // can't be used stop the submission with a message on that person.
+  const configuredAttendeePromoField = attendeePromoCodeField(definition);
+  let attendeeDiscounts: AttendeePromoDiscount[] = [];
+  if (configuredAttendeePromoField) {
+    const evaluated = await evaluateAttendeePromoCodes(tx, {
+      eventId: form.eventId,
+      field: configuredAttendeePromoField,
+      attendees: prepared.attendees,
+      calculation: prepared.calculation,
+      pricingDate: prepared.pricingDate,
+      claim: true,
+    });
+    if (evaluated.issues.length > 0) {
+      throw new PublicRegistrationError(
+        "INVALID_SUBMISSION",
+        "Review the promo codes and submit again.",
+        evaluated.issues.map((issue) => ({
+          kind: "validation" as const,
+          code: "PROMO_CODE_INVALID",
+          fieldId: issue.fieldId,
+          key: issue.key,
+          path: issue.path,
+          attendeeIndex: issue.attendeeIndex,
+          message: issue.message,
+        })),
+      );
+    }
+    attendeeDiscounts = evaluated.discounts;
+    if (attendeeDiscounts.length > 0) {
+      pricedCalculation = applyAttendeePromoCodes(
+        definition,
+        prepared.registrationResponses,
+        prepared.calculation,
+        attendeeDiscounts,
+      );
+    }
+  }
+
   const admittedCalculation: FormCalculation & {
     preDiscountSubtotalCents?: number;
     discountAmountCents?: number;
@@ -848,6 +891,25 @@ async function createPublicRegistrationTransaction(
     });
   }
 
+  // Each per-person discount is kept as that person's promo-code line, so
+  // Finance shows it by name and amendments reprice underneath it (#396/#397).
+  for (const discount of attendeeDiscounts) {
+    const attendee = createdAttendees[discount.attendeeIndex];
+    if (!attendee || discount.discountAmountCents <= 0) continue;
+    await tx.registrationAdjustment.create({
+      data: {
+        eventId: form.eventId,
+        registrationId: registration.id,
+        kind: "PROMO_CODE",
+        amountCents: -discount.discountAmountCents,
+        reason: "Promo code entered at registration.",
+        promoCodeSnapshot: discount.code,
+        promoCodeId: discount.promoCodeId ?? null,
+        registrationAttendeeId: attendee.attendeeId,
+        createdByNameSnapshot: "Registration form",
+      },
+    });
+  }
   const snapshot: PricingSnapshot = {
     currency: definition.payment?.currency ?? "USD",
     formVersionId: version.id,

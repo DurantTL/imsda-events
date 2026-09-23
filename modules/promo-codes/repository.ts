@@ -9,14 +9,19 @@ import { getPrisma } from "@/lib/prisma";
 import { calendarDateInTimeZone } from "@/modules/forms/public-domain";
 import {
   registrationFormDefinitionSchema,
+  type FormCalculation,
   type RegistrationFormDefinition,
 } from "@/modules/forms/definition";
 import { preparePublicRegistration } from "@/modules/forms/public-domain";
 import {
+  applyAttendeePromoCodes,
   applyPromoCodeToCalculation,
+  attendeePromoCodeField,
+  attendeeShareCents,
   evaluatePromoCode,
   normalizePromoCode,
   promoCodeField,
+  type AttendeePromoDiscount,
   type DiscountedFormCalculation,
   type PromoCodeEvaluation,
   type PromoCodeFailureReason,
@@ -365,12 +370,96 @@ async function findPromoForCode(
   });
 }
 
+export type AttendeePromoIssue = {
+  attendeeIndex: number;
+  fieldId: string;
+  key: string;
+  path: string;
+  message: string;
+};
+
+/**
+ * Checks every attendee's own promo code (#397): each priced on that person's
+ * share, each counted as one use. With `claim`, uses are taken for real (at
+ * submission); without, the count is simulated so the form can warn when the
+ * same code is entered more times than it has uses left.
+ */
+export async function evaluateAttendeePromoCodes(
+  client: Prisma.TransactionClient | ReturnType<typeof getPrisma>,
+  input: {
+    eventId: string;
+    field: { id: string; key: string };
+    attendees: ReadonlyArray<{ responses: Record<string, unknown> }>;
+    calculation: FormCalculation;
+    pricingDate: string;
+    claim: boolean;
+  },
+) {
+  const discounts: AttendeePromoDiscount[] = [];
+  const issues: AttendeePromoIssue[] = [];
+  const usedHere = new Map<string, number>();
+  for (const [attendeeIndex, attendee] of input.attendees.entries()) {
+    const raw = attendee.responses[input.field.key];
+    const submittedCode = typeof raw === "string" ? raw.trim() : "";
+    if (!submittedCode) continue;
+    const issueFor = (message: string) => issues.push({
+      attendeeIndex,
+      fieldId: input.field.id,
+      key: input.field.key,
+      path: `attendees.${attendeeIndex}.responses.${input.field.key}`,
+      message,
+    });
+    const eligibleSubtotalCents = attendeeShareCents(input.calculation, attendeeIndex);
+    if (input.claim) {
+      try {
+        const claimed = await claimPromoCode(client as Prisma.TransactionClient, {
+          eventId: input.eventId,
+          submittedCode,
+          eligibleSubtotalCents,
+          pricingDate: input.pricingDate,
+          fieldId: input.field.id,
+        });
+        discounts.push({ attendeeIndex, code: claimed.promoCode.code, discountAmountCents: claimed.evaluation.discountAmountCents, promoCodeId: claimed.promoCode.id });
+      } catch (error) {
+        if (error instanceof PublicPromoCodeError || error instanceof PromoCodeOperationError) {
+          issueFor(error.message);
+          continue;
+        }
+        throw error;
+      }
+      continue;
+    }
+    const promo = await findPromoForCode(client, input.eventId, submittedCode);
+    const earlierUses = promo ? usedHere.get(promo.id) ?? 0 : 0;
+    const evaluation = evaluatePromoCode(
+      promo ? { ...storedPromoRule(promo), redeemedCount: promo.redeemedCount + earlierUses } : null,
+      { submittedCode, eligibleSubtotalCents, pricingDate: input.pricingDate },
+    );
+    if (!evaluation.valid) {
+      issueFor(
+        evaluation.reason === "USE_LIMIT_REACHED" && earlierUses > 0
+          ? `${normalizePromoCode(submittedCode)} has no uses left for another person in this registration.`
+          : evaluation.message,
+      );
+      continue;
+    }
+    usedHere.set(promo!.id, earlierUses + 1);
+    discounts.push({ attendeeIndex, code: evaluation.code, discountAmountCents: evaluation.discountAmountCents });
+  }
+  return { discounts, issues };
+}
+
+export type PublicAttendeePromoQuote = DiscountedFormCalculation & {
+  attendeeDiscounts: AttendeePromoDiscount[];
+  attendeeIssues: AttendeePromoIssue[];
+};
+
 export async function getPublicPromoCodeQuote(
   eventSlug: string,
   formSlug: string,
   input: PublicPromoCodeQuoteInput,
   now = new Date(),
-): Promise<PublicPromoCodeQuote> {
+): Promise<PublicPromoCodeQuote | PublicAttendeePromoQuote> {
   const prisma = getPrisma();
   const form = await prisma.registrationForm.findFirst(
     publicFormQuery(eventSlug, formSlug),
@@ -391,6 +480,30 @@ export async function getPublicPromoCodeQuote(
   const definition = registrationFormDefinitionSchema.parse(
     version.definition,
   );
+  const attendeeField = attendeePromoCodeField(definition);
+  if (attendeeField) {
+    // Per person (#397): every attendee's code is checked together; problems
+    // come back as warnings on that person rather than failing the quote.
+    const prepared = preparePublicRegistration(definition, {
+      versionId: input.versionId,
+      idempotencyKey: "00000000-0000-4000-8000-000000000000",
+      responses: input.responses,
+      attendees: input.attendees,
+      website: "",
+    }, { timeZone: form.event.timezone, now, ignoreAvailability: true });
+    const { discounts, issues } = await evaluateAttendeePromoCodes(prisma, {
+      eventId: form.eventId,
+      field: attendeeField,
+      attendees: prepared.attendees,
+      calculation: prepared.calculation,
+      pricingDate: prepared.pricingDate,
+      claim: false,
+    });
+    return {
+      ...applyAttendeePromoCodes(definition, prepared.registrationResponses, prepared.calculation, discounts),
+      attendeeIssues: issues,
+    } satisfies PublicAttendeePromoQuote;
+  }
   const field = requirePromoField(definition);
   const responses = {
     ...input.responses,
