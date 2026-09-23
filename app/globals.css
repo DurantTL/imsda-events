@@ -6847,6 +6847,20 @@ select:focus-visible {
 .calendar-admin-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .calendar-admin-actions input { width: 150px; border: 1px solid #cbdbe2; border-radius: 10px; padding: 8px 10px; font-size: 0.76rem; }
 .calendar-admin-actions .secondary-button { min-height: 40px; }
+.home-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.home-action {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; min-height: 76px;
+  border: 1px solid var(--line); border-radius: 16px; background: #fff; padding: 16px; color: var(--ink); text-decoration: none;
+}
+.home-action:hover { border-color: var(--imsda-navy); }
+.home-action > svg:first-child { color: var(--imsda-navy); }
+.home-action span { display: grid; gap: 3px; min-width: 0; }
+.home-action strong { font-size: 0.98rem; }
+.home-action small { overflow-wrap: anywhere; color: var(--muted); font-size: 0.74rem; line-height: 1.4; }
+.home-more { margin: 0; font-size: 0.82rem; font-weight: 700; }
+@media (max-width: 760px) {
+  .home-actions { grid-template-columns: minmax(0, 1fr); }
+}
 @media (max-width: 1228px) {
   .calendar-layout { margin-right: 24px; margin-left: 24px; }
 }
