@@ -136,7 +136,7 @@ export default async function AttendeeEventHubPage({
               ? `/overview?event=${encodeURIComponent(staffPreviewEventId)}`
               : staffSession.user
                 ? "/overview"
-                : "/account"}
+                : "/account/registrations"}
           >
             <ArrowLeft size={15} aria-hidden="true" />
             {staffPreviewEventId || staffSession.user

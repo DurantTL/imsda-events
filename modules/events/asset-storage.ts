@@ -75,9 +75,12 @@ export function safeDisplayName(rawName: string, type: AllowedAssetType) {
   return base || `upload.${ALLOWED_ASSET_TYPES[type].extension}`;
 }
 
+// Uploaded files live outside the app bundle, at a path set at runtime. The
+// turbopackIgnore markers stop the build from treating that as a reason to
+// copy the whole project into the server output.
 function storageRoot() {
   return process.env.ASSET_STORAGE_DIR?.trim()
-    || path.join(process.cwd(), "storage", "event-assets");
+    || path.join(/*turbopackIgnore: true*/ process.cwd(), "storage", "event-assets");
 }
 
 /**
@@ -89,8 +92,8 @@ function storageRoot() {
  */
 function resolveStoragePath(storageKey: string) {
   const root = storageRoot();
-  const resolved = path.resolve(root, storageKey);
-  const rootWithSep = path.resolve(root) + path.sep;
+  const resolved = path.resolve(/*turbopackIgnore: true*/ root, storageKey);
+  const rootWithSep = path.resolve(/*turbopackIgnore: true*/ root) + path.sep;
   if (!resolved.startsWith(rootWithSep)) {
     throw new Error("An event asset path resolved outside its storage directory.");
   }
@@ -111,12 +114,12 @@ export async function writeAsset(
   // The event id partitions the directory; the file name is generated. Neither
   // comes from the upload.
   const storageKey = path.join(
-    eventId,
+    /*turbopackIgnore: true*/ eventId,
     `${randomUUID()}.${ALLOWED_ASSET_TYPES[type].extension}`,
   );
   const destination = resolveStoragePath(storageKey);
-  await mkdir(path.dirname(destination), { recursive: true });
-  await writeFile(destination, bytes, { mode: 0o640 });
+  await mkdir(/*turbopackIgnore: true*/ path.dirname(destination), { recursive: true });
+  await writeFile(/*turbopackIgnore: true*/ destination, bytes, { mode: 0o640 });
   return {
     storageKey,
     byteSize: bytes.byteLength,
@@ -125,12 +128,12 @@ export async function writeAsset(
 }
 
 export async function readAsset(storageKey: string) {
-  return readFile(resolveStoragePath(storageKey));
+  return readFile(/*turbopackIgnore: true*/ resolveStoragePath(storageKey));
 }
 
 export async function deleteAsset(storageKey: string) {
   try {
-    await unlink(resolveStoragePath(storageKey));
+    await unlink(/*turbopackIgnore: true*/ resolveStoragePath(storageKey));
   } catch (error) {
     // A file already gone is the state we wanted. Anything else is worth
     // knowing about, but never worth failing the request the user made.
