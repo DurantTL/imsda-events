@@ -160,9 +160,9 @@ missing basic timeline or author-control surface.
 
 ### 4.2 Confirmed gaps (verified in source, not assumed)
 
-**Timeline follow-up remains.** PR #336 combines published official announcements and community
-posts chronologically, preserving the existing attendee boundary. It did not add staff pinning
-or replace the current post/reply caps with cursor pagination; those remain #307 acceptance items.
+**Timeline follow-up is complete.** PR #336 combines published official announcements and community
+posts chronologically, preserving the existing attendee boundary. PR #341 (closing #307) added staff
+pinning and cursor pagination.
 
 **There is no attendee lookup, at all.** `modules/people/` contains a README and no code —
 permanent people, households, and affiliations are documented as owned there but not yet built.
@@ -175,12 +175,10 @@ event-scoped operations search is still open work ([#180](https://github.com/Dur
 
 - no profiles of any kind — no display name distinct from registration name, no avatar, no
   church/club, no interests, no "what sessions am I in"
-- no reactions or staff pinning
+- no reactions (staff pinning shipped in #341)
 - no media or photos (no object storage pipeline exists for community content)
 - no mentions or hashtags
 - no groups — not by church, seminar, lodging, or interest
-- no cursor pagination; the board still hard-caps at 50 top-level posts and 100 replies
-  (`modules/community/repository.ts`), so an active retreat silently loses history from view
 - no block/mute or community-only suspension
 - no read-only post-event window — retention deletes rather than archives
 - event cloning behavior for community settings and conduct text is not defined
@@ -210,7 +208,7 @@ before that line is presentation and moderation hygiene over data attendees alre
 
 | Slice | Scope | Risk | Suggested labels |
 | --- | --- | --- | --- |
-| **C1 — Unified retreat timeline (read)** | **Partially delivered in PR #336:** chronological official announcements plus community posts with official badges. Staff pinning and cursor pagination remain in #307. | Low | `codex-ready` after its remaining contract is narrowed |
+| **C1 — Unified retreat timeline (read)** | **Delivered** in PR #336 (chronological official announcements plus community posts with official badges) and PR #341 (staff pinning and cursor pagination, closing #307). | Low | Done |
 | **C2 — Post durability and author control** | **Completed by #338 and #339:** author edit/history/delete tombstones, local drafts, rate limits, and visible-post search. | Low | closed #337 |
 | **C3 — Reactions and engagement** | Reactions on posts and replies, privacy-safe aggregate counts for staff (active participants, posts, reach). No ranked feed — chronological stays the default. | Low | `codex-ready` |
 | **C4 — Moderation depth** | Moderation queue with escalation states, moderator notes, block/mute, community-only suspension that never touches event registration, spam controls, and repeat-abuse handling. Extends the existing report/moderate path. | Medium | `codex-ready` |

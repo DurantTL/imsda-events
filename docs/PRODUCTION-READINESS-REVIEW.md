@@ -275,7 +275,7 @@ open backlog.
 **What the plan gets right and should be preserved:** the guardrail that external integrations
 never block a core registration transaction; server-authoritative pricing recomputation; immutable
 form versions; and the Square production lock behind a separate explicit unlock
-(`integrations/square/client.ts:38`). These are the decisions that make the codebase trustworthy,
+(`lib/env.ts` and `modules/payments/square-config-domain.ts`). These are the decisions that make the codebase trustworthy,
 and none of them should be relaxed to move faster on the items above.
 
 ---

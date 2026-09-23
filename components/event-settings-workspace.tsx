@@ -170,6 +170,9 @@ export function EventSettingsWorkspace({
       }
       if (mode === "create") {
         allowNextNavigation();
+        // A full load on purpose: the staff header's event switcher is rendered
+        // on the server and has to pick up the event that was just created.
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination
         window.location.assign(`/more/event-settings?event=${encodeURIComponent(result.event.id)}&created=1`);
         return;
       }

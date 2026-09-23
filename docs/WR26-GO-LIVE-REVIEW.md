@@ -362,7 +362,7 @@ Friday morning when the check-in tablet will not scan. What it needs to contain:
   having, and neither is a launch blocker.
 - **Square production unlock.** A separate named human decision, correctly locked behind
   both `SQUARE_ENVIRONMENT=production` and `SQUARE_ENABLE_PRODUCTION=true`
-  (`integrations/square/client.ts:36-39`), with the startup contract enforcing the pairing.
+  (`lib/env.ts` and `modules/payments/square-config-domain.ts`), with the startup contract enforcing the pairing.
 
 ---
 
