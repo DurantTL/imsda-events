@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { KeyRound } from "lucide-react";
 
-export function RosterUnlockForm() {
+export function RosterUnlockForm({ label = "Open roster" }: { label?: string }) {
   const router = useRouter();
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
@@ -45,7 +45,7 @@ export function RosterUnlockForm() {
         />
       </label>
       <button className="primary-button" disabled={saving} type="submit">
-        <KeyRound aria-hidden="true" size={15} /> Open roster
+        <KeyRound aria-hidden="true" size={15} /> {label}
       </button>
       {error && <p className="form-error" role="alert">{error}</p>}
     </form>

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ShieldCheck } from "lucide-react";
+import { PasskeyUnlockButton } from "@/components/passkey-unlock-button";
 import { RosterUnlockForm } from "@/components/roster-unlock-form";
 import type { RosterAccessState } from "@/modules/club-rosters/access";
 
@@ -29,19 +30,26 @@ export function ClubAccessGate({ access }: { access: RosterAccessState }) {
   }
   if (access.state === "MFA_SETUP") {
     return (
-      <Gate title="Set up an authenticator first">
+      <Gate title="Set up two-step sign-in first">
         <p>
           Rosters hold birth dates for young people, so they need two-step sign-in.{" "}
-          <Link href="/account/security">Set up an authenticator on your account</Link>, then come back.
+          <Link href="/account/security">Set up an authenticator app or a passkey</Link>, then come back.
         </p>
       </Gate>
     );
   }
   if (access.state === "MFA_UNLOCK") {
     return (
-      <Gate title="Enter your authenticator code">
-        <p>Enter the six-digit code from your authenticator app to open your club for this session.</p>
-        <RosterUnlockForm />
+      <Gate title="Confirm it's you">
+        <p>
+          {access.methods.passkey && access.methods.code
+            ? "Use your passkey, or enter the six-digit code from your authenticator app, to open your club for this session."
+            : access.methods.passkey
+              ? "Use your passkey to open your club for this session."
+              : "Enter the six-digit code from your authenticator app to open your club for this session."}
+        </p>
+        {access.methods.passkey && <PasskeyUnlockButton label="Open with a passkey" />}
+        {access.methods.code && <RosterUnlockForm />}
       </Gate>
     );
   }

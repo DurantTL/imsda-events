@@ -6877,3 +6877,22 @@ select:focus-visible {
   .calendar-admin-actions .secondary-button { flex: 1; width: auto; min-width: 44px; min-height: 44px; justify-content: center; }
   .calendar-admin-actions label + .secondary-button { flex: none; }
 }
+
+/* Passkeys */
+.account-security-main { display: grid; gap: 16px; min-width: 0; }
+.passkey-unlock { display: grid; justify-items: start; gap: 8px; margin-top: 12px; }
+.passkey-unlock .form-error { margin: 0; }
+.passkey-list { display: grid; gap: 8px; margin: 12px 0; padding: 0; list-style: none; }
+.passkey-list li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.passkey-list li > svg { color: var(--imsda-navy); }
+.passkey-list strong, .passkey-list small { display: block; }
+.passkey-list small { margin-top: 2px; color: var(--muted); font-size: 0.7rem; }
+.passkey-list .secondary-button { width: auto; min-width: 44px; min-height: 44px; justify-content: center; }
+.passkey-add { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; margin-top: 12px; }
+.passkey-add label { display: grid; flex: 1 1 200px; gap: 6px; color: var(--ink); font-size: 0.72rem; font-weight: 700; }
+.passkey-add input { border: 1px solid #cbdbe2; border-radius: 10px; padding: 10px 11px; font-size: 0.85rem; }
+.passkey-manager .public-manage-security-note { margin-top: 12px; }
+@media (max-width: 580px) {
+  .passkey-add .primary-button { width: 100%; justify-content: center; }
+}
+.passkey-manager > p { margin: 6px 0 0; font-size: 0.8rem; line-height: 1.5; }

@@ -2,12 +2,13 @@ import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { passkeysConfigured } from "@/modules/attendee-accounts/passkeys";
 import { listDirectedClubs, type DirectedClub } from "@/modules/organizations/director-access";
 
 /**
  * Who may open a club roster (ADR 0005 Addendum A): only a current director
  * or deputy of that club (H1), signed in with their own attendee session,
- * with an authenticator set up and entered during this session.
+ * with an authenticator or passkey set up and used during this session.
  */
 
 export const ROSTER_UNLOCK_HOURS = 12;
@@ -17,7 +18,7 @@ export type RosterAccessState =
   | { state: "NOT_FOUND" }
   | { state: "OWN_SESSION_REQUIRED"; club: DirectedClub }
   | { state: "MFA_SETUP"; club: DirectedClub }
-  | { state: "MFA_UNLOCK"; club: DirectedClub }
+  | { state: "MFA_UNLOCK"; club: DirectedClub; methods: { code: boolean; passkey: boolean } }
   | { state: "OPEN"; club: DirectedClub; accountId: string; sessionId: string };
 
 export async function getRosterAccessState(organizationId: string, now = new Date()): Promise<RosterAccessState> {
@@ -28,14 +29,18 @@ export async function getRosterAccessState(organizationId: string, now = new Dat
   if (!club) return { state: "NOT_FOUND" };
   if (via !== "attendee" || !sessionId) return { state: "OWN_SESSION_REQUIRED", club };
 
-  const [enrollment, session] = await Promise.all([
+  const [enrollment, passkeyCount, session, passkeysOn] = await Promise.all([
     getPrisma().attendeeMfaEnrollment.findUnique({ where: { accountId: account.id }, select: { status: true } }),
+    getPrisma().attendeePasskey.count({ where: { accountId: account.id, revokedAt: null } }),
     getPrisma().attendeeSession.findUnique({ where: { id: sessionId }, select: { secondFactorVerifiedAt: true } }),
+    passkeysConfigured(),
   ]);
-  if (enrollment?.status !== "ACTIVE") return { state: "MFA_SETUP", club };
+  // An authenticator app or a passkey (once passkeys are switched on) is the second step.
+  const methods = { code: enrollment?.status === "ACTIVE", passkey: passkeysOn && passkeyCount > 0 };
+  if (!methods.code && !methods.passkey) return { state: "MFA_SETUP", club };
   const verifiedAt = session?.secondFactorVerifiedAt;
   if (!verifiedAt || now.getTime() - verifiedAt.getTime() > ROSTER_UNLOCK_HOURS * 3_600_000) {
-    return { state: "MFA_UNLOCK", club };
+    return { state: "MFA_UNLOCK", club, methods };
   }
   return { state: "OPEN", club, accountId: account.id, sessionId };
 }
@@ -64,9 +69,9 @@ export async function requireRosterAccess(organizationId: string, now = new Date
     case "OWN_SESSION_REQUIRED":
       throw new RosterAccessError("OWN_SESSION_REQUIRED", 403, "Sign in with your own attendee account to open the roster.");
     case "MFA_SETUP":
-      throw new RosterAccessError("MFA_SETUP_REQUIRED", 403, "Set up an authenticator on your account before opening the roster.");
+      throw new RosterAccessError("MFA_SETUP_REQUIRED", 403, "Set up an authenticator or passkey on your account before opening the roster.");
     case "MFA_UNLOCK":
-      throw new RosterAccessError("MFA_UNLOCK_REQUIRED", 403, "Enter the code from your authenticator app to open the roster.");
+      throw new RosterAccessError("MFA_UNLOCK_REQUIRED", 403, "Confirm it's you with your authenticator code or passkey to open the roster.");
   }
 }
 

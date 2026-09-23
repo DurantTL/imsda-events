@@ -636,6 +636,7 @@ model AttendeeAccount {
   sessions                     AttendeeSession[]
   tokens                       AttendeeAccountToken[]
   mfaEnrollment                AttendeeMfaEnrollment?
+  passkeys                     AttendeePasskey[]
   stepUpCodes                  AttendeeStepUpCode[]
   messages                     MessageOutbox[]          @relation("AttendeeMessageRecipient")
   communityParticipations      CommunityParticipation[]
@@ -713,7 +714,8 @@ model AttendeeSession {
   secondFactorVerifiedAt DateTime?
   createdAt     DateTime  @default(now())
 
-  account AttendeeAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  account           AttendeeAccount            @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  passkeyChallenges AttendeePasskeyChallenge[]
 
   @@index([accountId, expiresAt])
   @@index([expiresAt, revokedAt])
@@ -965,6 +967,10 @@ model PlatformSettings {
   defaultSenderEmail        String?
   defaultReplyToEmail       String?
   defaultAttendeeEditPolicy AttendeeEditPolicy @default(VERIFY_EVERY_EDIT)
+  /// The WebAuthn relying-party ID (the site's domain, e.g. "events.imsda.org").
+  /// Passkeys stay hidden until it is set and matches the page's origin, so an
+  /// unconfigured or misconfigured deployment falls back to authenticator codes.
+  passkeyRpId               String?
   updatedAt                 DateTime           @updatedAt
   updatedByUserId           String?
 
@@ -2869,4 +2875,47 @@ model CalendarEntry {
   updatedAt       DateTime            @updatedAt
 
   @@index([isPublished, startsOn])
+}
+
+/// A passkey an attendee registered as their second step (e.g. to open club
+/// rosters). Only the public key is stored; nothing biometric ever reaches
+/// the server. Removing one sets `revokedAt` and it never verifies again.
+model AttendeePasskey {
+  id           String    @id @default(cuid())
+  accountId    String
+  credentialId String    @unique
+  publicKey    Bytes
+  counter      BigInt    @default(0)
+  transports   String[]  @default([])
+  deviceType   String
+  backedUp     Boolean   @default(false)
+  name         String
+  lastUsedAt   DateTime?
+  revokedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  account AttendeeAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, revokedAt])
+}
+
+enum PasskeyChallengePurpose {
+  REGISTER
+  VERIFY
+}
+
+/// A one-time WebAuthn challenge, tied to the attendee session that asked for
+/// it and consumed on first use so a response can't be replayed.
+model AttendeePasskeyChallenge {
+  id        String                  @id @default(cuid())
+  sessionId String
+  purpose   PasskeyChallengePurpose
+  challenge String                  @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime                @default(now())
+
+  session AttendeeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, purpose])
 }
