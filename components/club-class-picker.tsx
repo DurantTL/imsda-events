@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Award, Save } from "lucide-react";
+import { formatCalendarDate } from "@/modules/club-registrations/domain";
 import type { ClassSelectionWorkspace } from "@/modules/honors/enrollment-repository";
 
 type Offering = ClassSelectionWorkspace["offerings"][number];
@@ -114,14 +115,14 @@ export function ClubClassPicker({
     <section className="public-manage-card" aria-labelledby="class-picker-heading">
       <div className="public-manage-card-heading club-roster-heading">
         <div>
-          <p className="public-registration-eyebrow">Next step</p>
+          <p className="public-registration-eyebrow">Step 3 of 3 · Classes</p>
           <h2 id="class-picker-heading"><Award size={18} aria-hidden="true" /> Choose classes</h2>
         </div>
       </div>
       <p>
         Pick one class per session, or one class that fills every session. Seats go to the first
         clubs to save, and only youth use a seat.
-        {workspace.registrationClosesOn ? ` You can change classes until ${workspace.registrationClosesOn}.` : ""}
+        {workspace.registrationClosesOn ? ` You can change classes until ${formatCalendarDate(workspace.registrationClosesOn)}.` : ""}
       </p>
       {notice && <div className="inline-notice success" role="status">{notice}</div>}
       {error && <div className="inline-notice error" role="alert">{error}</div>}
@@ -171,9 +172,12 @@ export function ClubClassPicker({
         })}
       </div>
       {workspace.open && (
-        <button className="primary-button" disabled={saving} onClick={save} type="button">
-          <Save aria-hidden="true" size={16} /> {saving ? "Saving…" : "Save classes"}
-        </button>
+        <div className="club-sticky-bar">
+          <span className="field-help">{Object.values(selections).reduce((total, ids) => total + ids.length, 0)} classes chosen</span>
+          <button className="primary-button" disabled={saving} onClick={save} type="button">
+            <Save aria-hidden="true" size={16} /> {saving ? "Saving…" : "Save classes"}
+          </button>
+        </div>
       )}
     </section>
   );

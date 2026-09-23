@@ -6651,3 +6651,35 @@ select:focus-visible {
 .club-class-person legend small { color: var(--muted); font-size: 0.68rem; }
 .club-class-person label { display: grid; gap: 4px; color: var(--ink); font-size: 0.72rem; font-weight: 700; }
 .club-class-person select { border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd; padding: 8px 10px; font-size: 0.76rem; }
+
+/* Director experience polish: phones first */
+.club-roster-layout > *, .club-roster-stack > * { min-width: 0; }
+.public-manage-card-heading h2 { display: flex; align-items: center; gap: 8px; }
+.club-roster-heading { flex-wrap: wrap; }
+.club-event-action { align-self: center; white-space: nowrap; padding: 8px 14px; }
+.club-going-list li { padding: 0; }
+.club-going-list label { width: 100%; padding: 12px 14px; cursor: pointer; }
+.club-going-list li:has(input:checked) { border-color: var(--imsda-purple); background: var(--imsda-purple-soft); }
+.club-going-list input { width: 20px; height: 20px; flex: none; }
+.club-sticky-bar {
+  position: sticky; bottom: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center;
+  justify-content: space-between; gap: 10px; margin: 16px -4px 0; padding: 12px 4px;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.85), #fff 30%);
+}
+.club-class-person legend { float: left; width: 100%; margin: 0 0 4px; padding: 0; }
+.club-class-person legend + * { clear: both; }
+@media (max-width: 640px) {
+  .club-roster-layout { width: calc(100% - 24px); }
+  .roster-card-table, .roster-card-table tbody, .roster-card-table tr, .roster-card-table td { display: block; width: 100%; box-sizing: border-box; }
+  .roster-card-table { min-width: 0; }
+  .club-roster-heading .secondary-button { width: auto; }
+  .roster-card-table thead { display: none; }
+  .roster-card-table tr { position: relative; margin-bottom: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .roster-card-table td { border: 0; padding: 2px 0; }
+  .roster-card-table td[data-label] { display: flex; justify-content: space-between; gap: 12px; font-size: 0.8rem; }
+  .roster-card-table td[data-label]::before { content: attr(data-label); color: var(--muted); font-weight: 600; }
+  .roster-card-table .roster-card-name { margin-bottom: 6px; font-size: 0.9rem; }
+  .roster-card-table td.roster-card-actions { display: flex; width: 100%; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+  .roster-card-table .roster-card-actions .secondary-button { min-width: 44px; min-height: 44px; }
+  .club-sticky-bar .primary-button { flex: 1; justify-content: center; }
+}

@@ -10,7 +10,7 @@ import {
   type RosterAttendee,
 } from "@/components/public-registration-form";
 import { clubRosterAttendeeTypeLabels } from "@/modules/club-rosters/domain";
-import { rosterMemberIdFromClientId } from "@/modules/club-registrations/domain";
+import { formatCalendarDate, rosterMemberIdFromClientId } from "@/modules/club-registrations/domain";
 import type { ClubEventWorkspace } from "@/modules/club-registrations/repository";
 import type { PublicRegistrationExperience } from "@/modules/forms/public-repository";
 
@@ -137,6 +137,7 @@ export function ClubRegistrationWorkspace({
           <button className="secondary-button" onClick={() => { void flush(); setStep("who"); }} type="button">
             <ArrowLeft aria-hidden="true" size={15} /> Change who&apos;s going
           </button>
+          <span className="public-registration-eyebrow">Step 2 of 3 · Event form</span>
           <span className="field-help" role="status">{saveLabel}</span>
         </div>
         <PublicRegistrationForm
@@ -156,14 +157,14 @@ export function ClubRegistrationWorkspace({
     <section className="public-manage-card">
       <div className="public-manage-card-heading club-roster-heading">
         <div>
-          <p className="public-registration-eyebrow">Step 1 of 2</p>
+          <p className="public-registration-eyebrow">Step 1 of 3 · Who&apos;s going</p>
           <h2>Who&apos;s going?</h2>
         </div>
         <span className="count-badge">{selected.length} chosen</span>
       </div>
       <p>
-        Tick everyone from your roster who is attending. Ages are as of the event
-        ({workspace.event.eventDate}). Your choices save automatically.
+        Tap everyone from your roster who is attending. Ages are as of the first day of the
+        event, {formatCalendarDate(workspace.event.eventDate)}. Your choices save automatically.
       </p>
       {workspace.roster.length === 0 ? (
         <p className="public-manage-empty">
@@ -202,7 +203,7 @@ export function ClubRegistrationWorkspace({
           </ul>
         </>
       )}
-      <div className="club-registration-toolbar">
+      <div className="club-registration-toolbar club-sticky-bar">
         <Link className="secondary-button" href={`/account/clubs/${organizationId}`} onClick={() => { void flush(); }}>
           <UserPlus aria-hidden="true" size={15} /> Add someone new to the roster
         </Link>
@@ -212,7 +213,7 @@ export function ClubRegistrationWorkspace({
           onClick={() => { void flush(); setStep("form"); }}
           type="button"
         >
-          Continue to the event form <ArrowRight aria-hidden="true" size={15} />
+          Continue with {selected.length} {selected.length === 1 ? "person" : "people"} <ArrowRight aria-hidden="true" size={15} />
         </button>
       </div>
     </section>
