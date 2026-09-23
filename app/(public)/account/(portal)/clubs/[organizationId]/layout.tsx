@@ -1,9 +1,11 @@
 import { notFound, redirect } from "next/navigation";
 import { AccountSectionNav } from "@/components/account-section-nav";
+import Link from "next/link";
 import { ClubAccessGate } from "@/components/club-access-gate";
+import { ClubGateSlot } from "@/components/club-gate-slot";
 import { getRosterAccessState } from "@/modules/club-rosters/access";
 import { clubYearFor } from "@/modules/club-rosters/domain";
-import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
+import { clubCapabilities, clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
 
 /**
  * Every club screen shares the club's name, its tabs, and the authenticator
@@ -41,14 +43,31 @@ export default async function ClubLayout({
               { href: base, label: "Club home" },
               { href: `${base}/roster`, label: "Roster" },
               { href: `${base}/events`, label: "Events & classes", matchChildren: true },
+              ...(access.capabilities.submitReports ? [{ href: `${base}/reports`, label: "Monthly reports", matchChildren: true }] : []),
               ...(access.capabilities.manageTeam ? [{ href: `${base}/team`, label: "Team" }] : []),
               ...(access.capabilities.editProfile ? [{ href: `${base}/profile`, label: "Club profile" }] : []),
             ]}
             label="Club"
             variant="secondary"
           />
-        ) : access.state === "NO_ROSTER" ? null : (
-          <ClubAccessGate access={access} />
+        ) : access.state === "NO_ROSTER" ? (
+          <AccountSectionNav
+            items={[
+              { href: base, label: "Club home" },
+              ...(access.capabilities.submitReports ? [{ href: `${base}/reports`, label: "Monthly reports", matchChildren: true }] : []),
+            ]}
+            label="Club"
+            variant="secondary"
+          />
+        ) : (
+          <ClubGateSlot>
+            <ClubAccessGate access={access} />
+            {"club" in access && clubCapabilities(access.club.role).submitReports && (
+              <p className="field-help club-gate-reports">
+                Monthly reports don&apos;t need this step: <Link href={`${base}/reports`}>open monthly reports</Link>.
+              </p>
+            )}
+          </ClubGateSlot>
         )}
         {children}
       </div>

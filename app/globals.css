@@ -6658,6 +6658,30 @@ select:focus-visible {
 .club-invite-actions { display: flex; gap: 6px; }
 .club-admin-links { display: flex; flex-wrap: wrap; gap: 8px; }
 .club-invite-card { margin-bottom: 16px; }
+.club-report-form { display: grid; gap: 16px; }
+.club-report-form fieldset { min-width: 0; margin: 0; }
+.club-report-form legend { float: left; width: 100%; margin-bottom: 8px; padding: 0; }
+.club-report-total { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; position: sticky; top: 8px; z-index: 2; }
+@media (max-width: 760px) { .club-report-total { position: static; } }
+.club-gate-reports { margin: 8px 0 0; }
+.club-report-total h2 { margin: 2px 0 4px; font-size: 1.6rem; }
+.club-report-total .field-help { margin: 0; }
+.club-report-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); padding: 10px 0; }
+.club-report-item label { display: grid; flex: 1; gap: 2px; min-width: 0; }
+.club-report-item small { color: var(--muted); font-size: 0.72rem; font-weight: 500; }
+.club-report-item select { width: 110px; flex: 0 0 auto; }
+.club-report-item.has-problem select { border-color: #b42318; }
+.club-report-auto { background: #f6f9fa; border-radius: 10px; padding: 10px 12px; }
+.club-report-auto > span { display: grid; gap: 2px; }
+.club-report-problem { display: flex; align-items: center; gap: 4px; color: #b42318 !important; }
+.club-report-sub { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 12px; }
+.club-report-checks { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.club-report-honor { margin: 0; }
+.club-report-back { justify-self: start; }
+.club-reports-grid th small { display: block; color: var(--muted); font-weight: 500; font-size: 0.68rem; }
+.club-reports-missing { color: #b42318; font-weight: 700; }
+.club-reports-due { color: var(--imsda-purple); }
+.club-reports-future { color: var(--muted); }
 .club-roster-section { display: grid; gap: 8px; margin-top: 14px; }
 .club-roster-section-title { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--ink); font-size: 0.95rem; }
 .club-team-list li { flex-wrap: wrap; align-items: center; }

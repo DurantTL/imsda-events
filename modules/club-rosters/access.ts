@@ -107,3 +107,38 @@ export async function markRosterUnlocked(sessionId: string, now = new Date()) {
     data: { secondFactorVerifiedAt: now },
   });
 }
+
+export type ClubRoleAccess =
+  | { state: "SIGN_IN" }
+  | { state: "NOT_FOUND" }
+  | { state: "OWN_SESSION_REQUIRED"; club: DirectedClub; capabilities: ClubCapabilities }
+  | { state: "OK"; club: DirectedClub; capabilities: ClubCapabilities; accountId: string };
+
+/**
+ * Club screens that hold no birth dates (monthly reports, #377) need the
+ * person's own sign-in and a club role, but not the second step the roster
+ * needs.
+ */
+export async function getClubRoleAccess(organizationId: string, now = new Date()): Promise<ClubRoleAccess> {
+  const { account, via } = await getCurrentAttendee();
+  if (!account) return { state: "SIGN_IN" };
+  const club = (await listDirectedClubs(account.id, now)).find((candidate) => candidate.organizationId === organizationId);
+  if (!club) return { state: "NOT_FOUND" };
+  const capabilities = clubCapabilities(club.role);
+  if (via !== "attendee") return { state: "OWN_SESSION_REQUIRED", club, capabilities };
+  return { state: "OK", club, capabilities, accountId: account.id };
+}
+
+/** For API routes: the club role with `need`, or an error that never reveals another club. */
+export async function requireClubCapability(organizationId: string, need: keyof ClubCapabilities, now = new Date()) {
+  const access = await getClubRoleAccess(organizationId, now);
+  if (access.state === "SIGN_IN") throw new RosterAccessError("SIGN_IN_REQUIRED", 401, "Sign in to open your club.");
+  if (access.state === "NOT_FOUND") throw new RosterAccessError("NOT_FOUND", 404, "That club could not be found.");
+  if (access.state === "OWN_SESSION_REQUIRED") {
+    throw new RosterAccessError("OWN_SESSION_REQUIRED", 403, "Sign in with your own attendee account to change club information.");
+  }
+  if (!access.capabilities[need]) {
+    throw new RosterAccessError("ROLE_NOT_ALLOWED", 403, "Your club role doesn't include this. Ask your club director.");
+  }
+  return access;
+}
