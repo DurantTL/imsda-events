@@ -117,11 +117,14 @@ async function loadAssignmentSource(
   const field = assignmentField(definition, selection.fieldId);
   assertAssignableField(field);
 
+  // Every version of this form, not just the one picked: a form republished
+  // mid-registration must not drop the people who registered on an earlier
+  // version (WR26). Answers are matched by the field's key.
   const registrations = await client.registration.findMany({
     where: {
       eventId,
       status: { in: ["SUBMITTED", "CONFIRMED"] },
-      publicFormSubmission: { formVersionId: version.id },
+      publicFormSubmission: { formVersion: { formId: version.form.id } },
     },
     orderBy: [
       { submittedAt: "asc" },
@@ -151,6 +154,7 @@ async function loadAssignmentSource(
     },
   });
 
+  const leaveOut = new Set((selection.leaveOutAttendeeTypes ?? []).map((value) => value.toLowerCase()));
   const participants = registrations.flatMap((registration) => {
     // Prisma keeps the full enum type after filtering, so retain a runtime guard
     // before passing the narrower lifecycle states to the assignment engine.
@@ -162,10 +166,12 @@ async function loadAssignmentSource(
     }
     const registrationStatus: "SUBMITTED" | "CONFIRMED" =
       registration.status;
-    return registration.attendees.map((attendee) => {
+    return registration.attendees.flatMap((attendee) => {
       const responses = recordFromJson(attendee.formResponses);
+      const typeAnswer = typeof responses.attendee_type === "string" ? responses.attendee_type.trim().toLowerCase() : "";
+      if (typeAnswer && leaveOut.has(typeAnswer)) return [];
       const profile = recordFromJson(attendee.profileSnapshot);
-      return {
+      return [{
         attendeeId: attendee.id,
         registrationId: registration.id,
         registrationStatus,
@@ -184,7 +190,7 @@ async function loadAssignmentSource(
         ),
         attendeeType: attendee.attendeeType,
         preferences: responses[field.key],
-      };
+      }];
     });
   });
 
@@ -222,6 +228,8 @@ export type ProgramAssignmentWorkspaceField = {
   optionCount: number;
   limitedOptionCount: number;
   unlimitedOptionCount: number;
+  /** Answers to the form's attendee-type question, for "leave out" (WR26). */
+  attendeeTypeOptions: string[];
 };
 
 export type ProgramAssignmentDiagnostic = {
@@ -327,6 +335,9 @@ export async function getProgramAssignmentWorkspace(eventId: string) {
 
   const fields: ProgramAssignmentWorkspaceField[] = [];
   const diagnostics: ProgramAssignmentDiagnostic[] = [];
+  // Newest version first: an assignment covers every version of its form, so
+  // each ranked field is offered once, with the newest version's choices.
+  const offered = new Set<string>();
   for (const version of versions) {
     const parsed = registrationFormDefinitionSchema.safeParse(version.definition);
     if (!parsed.success) {
@@ -338,7 +349,9 @@ export async function getProgramAssignmentWorkspace(eventId: string) {
       });
       continue;
     }
-    for (const field of parsed.data.sections.flatMap((section) => section.fields)) {
+    const allFields = parsed.data.sections.flatMap((section) => section.fields);
+    const attendeeTypeOptions = allFields.find((candidate) => candidate.key === "attendee_type")?.options ?? [];
+    for (const field of allFields) {
       if (
         field.type !== "RANKED_CHOICE"
         || getAvailabilityMode(field) !== "RANKED_INTEREST"
@@ -352,7 +365,11 @@ export async function getProgramAssignmentWorkspace(eventId: string) {
         });
         continue;
       }
+      const offeredKey = `${version.form.id}::${field.key}`;
+      if (offered.has(offeredKey)) continue;
+      offered.add(offeredKey);
       fields.push({
+        attendeeTypeOptions,
         formId: version.form.id,
         formName: version.form.name,
         formVersionId: version.id,
@@ -493,8 +510,8 @@ export async function applyProgramAssignments(
     const prior = await tx.programAssignmentRun.findFirst({
       where: {
         eventId,
-        formVersionId: input.formVersionId,
-        fieldId: input.fieldId,
+        formId: preview.formId,
+        fieldKeySnapshot: preview.fieldKey,
       },
       orderBy: [{ appliedAt: "desc" }, { id: "desc" }],
       select: { id: true },

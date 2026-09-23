@@ -395,6 +395,7 @@ export function preparePublicRegistration(
     usage?: ChoiceUsage;
     ignoreAvailability?: boolean;
     ignoredFieldKeys?: readonly string[];
+    optionalFieldKeys?: readonly string[];
   },
 ) {
   const roster = getAttendeeRosterConfig(definition);
@@ -410,6 +411,7 @@ export function preparePublicRegistration(
       {
         ignoreAvailability: options.ignoreAvailability,
         ignoredFieldKeys: options.ignoredFieldKeys,
+        optionalFieldKeys: options.optionalFieldKeys,
       },
     );
     const identity = extractPublicContactIdentity(definition, normalized.responses);
@@ -500,6 +502,7 @@ export function preparePublicRegistration(
     {
       ignoreAvailability: options.ignoreAvailability,
       ignoredFieldKeys: options.ignoredFieldKeys,
+      optionalFieldKeys: options.optionalFieldKeys,
     },
   );
   issues.push(...mapValidationIssues(registrationValidation.issues, null));
@@ -522,6 +525,7 @@ export function preparePublicRegistration(
       {
         ignoreAvailability: options.ignoreAvailability,
         ignoredFieldKeys: options.ignoredFieldKeys,
+        optionalFieldKeys: options.optionalFieldKeys,
       },
     );
     const identity = extractPublicAttendeeIdentity(

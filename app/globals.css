@@ -106,6 +106,33 @@
   font-weight: 600;
 }
 
+.assignment-leave-out {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.assignment-leave-out legend {
+  padding: 0 4px;
+  font-size: 0.66rem;
+  font-weight: 800;
+}
+
+.assignment-leave-out p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
+.assignment-leave-out div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
 .assignment-field-hint {
   display: flex;
   flex-wrap: wrap;

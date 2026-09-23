@@ -549,6 +549,10 @@ export function RegistrationAmendmentEditor({
       <label className="amendment-field">
         <span>Reason or staff note</span>
         <textarea rows={3} maxLength={500} value={reason} placeholder="Optional — saved with the amendment audit record" onChange={(event) => { setReason(event.target.value); invalidatePreview(); }} />
+        <small className="quiet-copy">
+          Required when seminar picks change. To take someone out of seminars (for example a Teen in the Teen
+          program), unselect all of their picks and give the reason here.
+        </small>
       </label>
       {issues.length > 0 && (
         <div className="form-error" role="alert">
