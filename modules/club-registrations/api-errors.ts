@@ -3,6 +3,7 @@ import { logError } from "@/lib/logger";
 import { RosterAccessError } from "@/modules/club-rosters/access";
 import { ClubRegistrationError } from "@/modules/club-registrations/repository";
 import { PublicRegistrationError } from "@/modules/forms/public-repository";
+import { ClassSelectionError } from "@/modules/honors/enrollment-repository";
 
 const noStore = { "Cache-Control": "no-store" };
 
@@ -21,6 +22,12 @@ export function clubRegistrationApiError(error: unknown, action: string) {
   }
   if (error instanceof ClubRegistrationError) {
     const status = error.code === "EVENT_NOT_FOUND" ? 404 : error.code === "DRAFT_TOO_LARGE" ? 413 : 409;
+    return Response.json({ error: error.code, message: error.message }, { status, headers: noStore });
+  }
+  if (error instanceof ClassSelectionError) {
+    const status = error.code === "NOT_REGISTERED" || error.code === "ATTENDEE_NOT_FOUND"
+      ? 404
+      : error.code === "DEADLINE_PASSED" ? 410 : error.code === "SELECTION_INVALID" ? 422 : 409;
     return Response.json({ error: error.code, message: error.message }, { status, headers: noStore });
   }
   if (error instanceof PublicRegistrationError) {

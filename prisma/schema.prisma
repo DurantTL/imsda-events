@@ -1043,6 +1043,7 @@ model Event {
   honorOfferings                      HonorOffering[]
   clubRegistrations                   ClubEventRegistration[]
   clubRegistrationDrafts              ClubRegistrationDraft[]
+  honorEnrollments                    HonorEnrollment[]
   registrationOperations              RegistrationOperation[]
   registrationPaymentChoiceOperations RegistrationPaymentChoiceOperation[]
   communitySettings                   EventCommunitySettings?
@@ -1458,6 +1459,7 @@ model Organization {
   rosterMembers      ClubRosterMember[]
   eventRegistrations ClubEventRegistration[]
   registrationDrafts ClubRegistrationDraft[]
+  honorEnrollments   HonorEnrollment[]
 
   @@index([type, isActive, name])
   @@index([parentOrganizationId, isActive])
@@ -1610,6 +1612,7 @@ model Registration {
   notes                   StaffNote[]
   tagAssignments          RegistrationTagAssignment[]
   clubRegistration        ClubEventRegistration?
+  honorEnrollments        HonorEnrollment[]
 
   @@unique([eventId, confirmationCode])
   @@index([eventId, status])
@@ -1753,6 +1756,7 @@ model RegistrationAttendee {
   substitutionOperations RegistrationOperation[]
   notes                  StaffNote[]
   tagAssignments         AttendeeTagAssignment[]
+  honorEnrollments       HonorEnrollment[]
 
   @@unique([registrationId, personId])
   @@index([registrationId, position])
@@ -2729,9 +2733,10 @@ model HonorOffering {
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
 
-  event   Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  honor   Honor         @relation(fields: [honorId], references: [id], onDelete: Restrict)
-  session HonorSession? @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  event       Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  honor       Honor             @relation(fields: [honorId], references: [id], onDelete: Restrict)
+  session     HonorSession?     @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  enrollments HonorEnrollment[]
 
   @@unique([sessionId, honorId])
   @@index([eventId, isActive])
@@ -2804,5 +2809,30 @@ model ClubRegistrationDraft {
   updatedBy AttendeeAccount? @relation("ClubRegistrationDraftUpdatedBy", fields: [updatedByAccountId], references: [id], onDelete: SetNull)
 
   @@unique([eventId, organizationId])
+}
+
+/// A person's place in an Honors Weekend class (#359). Taken on the server
+/// inside a serializable transaction with the class rows locked, so a class
+/// can't be overfilled. Only youth consume a seat (`consumesSeat`).
+model HonorEnrollment {
+  id                     String   @id @default(cuid())
+  eventId                String
+  offeringId             String
+  registrationId         String
+  registrationAttendeeId String
+  organizationId         String
+  consumesSeat           Boolean
+  createdAt              DateTime @default(now())
+
+  event                Event                @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  offering             HonorOffering        @relation(fields: [offeringId], references: [id], onDelete: Restrict)
+  registration         Registration         @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  registrationAttendee RegistrationAttendee @relation(fields: [registrationAttendeeId], references: [id], onDelete: Cascade)
+  organization         Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([registrationAttendeeId, offeringId])
+  @@index([offeringId, consumesSeat])
+  @@index([offeringId, organizationId, consumesSeat])
+  @@index([registrationId])
 }
 
