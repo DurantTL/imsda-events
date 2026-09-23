@@ -449,7 +449,8 @@ Each slice is one issue and one PR.
 - **Birth date, encrypted.** Each roster person has a birth date so age is always
   right for minimum-age classes, attendee type, and later years. It's stored
   encrypted and shown only to that club's directors and authorized staff
-  (Section 6.5). H2 cannot ship to real directors until that design is signed off.
+  (Section 6.5). The design was approved on 2026-09-22 (ADR 0005 Addendum A); H2
+  goes live for real directors once `docs/SERVER-SECURITY-CHECKLIST.md` is done.
 - No medical, insurance, or background-check fields (principle 5). Dietary needs
   and other event questions stay on each event's registration.
 - Carves out narrow versions of #183 and #184.
@@ -597,6 +598,14 @@ done early because staff will recommend it from day one:
 
 ### 6.5 Birth dates and database security
 
+> **Approved 2026-09-22** by Caleb Durant, with changes, as ADR 0005 Addendum A.
+> Changes from the proposal below:
+> - only the club's own directors and system administrators see full birth dates;
+> - no automatic retention: each club decides;
+> - custodian Jonathan Swena.
+>
+> The server items are in `docs/SERVER-SECURITY-CHECKLIST.md`.
+
 Birth dates for club members, most of them minors, are personal data. Today:
 - **Registration answers are stored unencrypted** as JSON. ADR 0005 already names
   this as the platform's main outstanding data risk.
@@ -716,7 +725,7 @@ are simple, narrow them the same way as H1–H6.
 | D11 | **Answered:** English first; Spanish through browser translation (Chrome and others), as on WordPress. The site is made translation-safe (T1) | Caleb | T1 |
 | D12 | **Answered:** rosters store a **birth date**, and it must be secured (Section 6.5) | Caleb | H2 |
 | D13 | Not needed now: there is no built-in Spanish text to review | — | — |
-| **D14** | **Sign-off on the birth-date security design** (Section 6.5): encryption, who can see it, audit, key custodian, key backup and rotation, retention | Caleb + conference leadership | H2 in production |
+| D14 | **Answered 2026-09-22 (Caleb Durant):** design approved, recorded as ADR 0005 Addendum A. Full birth dates are visible only to that club's directors and system administrators; key custodian Jonathan Swena, with the key copy on an external, on-premises server once it is built; no automatic retention, since each club decides when to remove people. Server work is tracked in `docs/SERVER-SECURITY-CHECKLIST.md` | Caleb | H2 in production |
 | D15 | Not needed now: there is no language switch in the site | — | — |
 
 ---
