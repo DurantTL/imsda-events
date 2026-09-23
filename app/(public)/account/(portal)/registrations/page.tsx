@@ -11,20 +11,10 @@ import {
   ShieldCheck,
   UsersRound,
 } from "lucide-react";
-import { BrandMark } from "@/components/brand-mark";
-import { AttendeeSignOutButton } from "@/components/attendee-sign-out-button";
-import { AttendeeAuthReturn } from "@/components/attendee-sign-in-form";
-import { AttendeeProfileForm } from "@/components/attendee-profile-form";
 import { AttendeeRegistrationContactForm } from "@/components/attendee-registration-contact-form";
 import { AttendeeRegistrationAnswersForm } from "@/components/attendee-registration-answers-form";
-import { MfaManager } from "@/components/mfa-manager";
 import { PublicSquarePayment } from "@/components/public-square-payment";
-import { getCurrentSession } from "@/modules/access/current-session";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
-import { getAttendeeMfaStatus } from "@/modules/attendee-accounts/mfa-service";
-import { getAttendeeProfile } from "@/modules/attendee-accounts/profile-service";
-import { listDirectedClubs } from "@/modules/organizations/director-access";
-import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
 import {
   listRegistrationsForVerifiedEmail,
   type AttendeeRegistrationSummary,
@@ -146,40 +136,18 @@ function RegistrationCard({
   );
 }
 
-export default async function AttendeeAccountPage() {
-  const [{ account, via }, staffSession] = await Promise.all([
-    getCurrentAttendee(),
-    getCurrentSession(),
-  ]);
+export default async function AttendeeRegistrationsPage() {
+  const { account, via } = await getCurrentAttendee();
   if (!account) redirect("/account/sign-in");
 
   const registrations = await listRegistrationsForVerifiedEmail(account.verifiedEmail);
-  const mfaStatus = await getAttendeeMfaStatus(account.id);
-  const profile = await getAttendeeProfile(account.id);
-  const directedClubs = await listDirectedClubs(account.id);
 
   return (
-    <main className="public-registration-page public-manage-page">
-      <AttendeeAuthReturn />
-      <header className="public-registration-header">
-        <div className="public-registration-header-inner">
-          <a
-            className="public-registration-brand public-event-brand-link"
-            href="https://imsda.org/"
-          >
-            <BrandMark />
-            <span><strong>IMSDA</strong><small>Events</small></span>
-          </a>
-          {staffSession.user
-            ? <Link className="text-button" href="/overview">Back to staff workspace</Link>
-            : <AttendeeSignOutButton />}
-        </div>
-      </header>
-
-      <section className="public-registration-hero public-manage-hero">
+    <>
+      <section className="public-registration-hero public-manage-hero account-page-hero">
         <div>
           <p className="public-registration-eyebrow">Your registrations</p>
-          <h1>Hello, {account.displayName}</h1>
+          <h1>Registrations</h1>
           <p>
             Everything registered with <strong>{account.verifiedEmail}</strong>
           </p>
@@ -188,37 +156,6 @@ export default async function AttendeeAccountPage() {
 
       <div className="public-manage-layout">
         <div className="public-manage-main">
-          {directedClubs.length > 0 && (
-            <section className="public-manage-card" aria-labelledby="my-clubs-heading">
-              <div className="public-manage-card-heading">
-                <p className="public-registration-eyebrow">Club ministries</p>
-                <h2 id="my-clubs-heading">My clubs</h2>
-              </div>
-              <ul className="public-manage-club-list">
-                {directedClubs.map((club) => (
-                  <li key={club.organizationId}>
-                    <UsersRound size={17} aria-hidden="true" />
-                    <span>
-                      <strong translate="no">{club.name}</strong>
-                      <small>
-                        {clubDirectorRoleLabels[club.role]}
-                        {club.sponsoringChurch && (
-                          <> · <span translate="no">{club.sponsoringChurch}</span></>
-                        )}
-                      </small>
-                    </span>
-                    <Link className="primary-button club-event-action" href={`/account/clubs/${club.organizationId}`}>
-                      Open roster <ArrowRight size={14} aria-hidden="true" />
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-              <p className="public-manage-empty">
-                Keep your club roster here. Club event registration will use it, so you won&apos;t retype anyone.
-              </p>
-            </section>
-          )}
-          {via === "attendee" && <AttendeeProfileForm initialProfile={profile} />}
           {registrations.length > 0
             ? registrations.map((registration) => (
               <RegistrationCard
@@ -265,13 +202,8 @@ export default async function AttendeeAccountPage() {
               rooms, activities, cancellations, or transfers still go through the event team.
             </p>
           </section>
-          <MfaManager
-            initialStatus={mfaStatus}
-            endpoint="/api/attendee/mfa"
-            attendee
-          />
         </aside>
       </div>
-    </main>
+    </>
   );
 }

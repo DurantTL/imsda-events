@@ -14,7 +14,9 @@ import { BROWSER_TRANSLATE_HELP_URL, TranslateHint } from "@/components/translat
  */
 const keyFiles = [
   "app/(public)/manage/[token]/page.tsx",
-  "app/(public)/account/page.tsx",
+  "app/(public)/account/(portal)/page.tsx",
+  "app/(public)/account/(portal)/registrations/page.tsx",
+  "app/(public)/account/(portal)/clubs/[organizationId]/events/[eventId]/page.tsx",
   "app/(public)/account/events/[eventSlug]/page.tsx",
   "components/public-registration-form.tsx",
   "components/public-square-payment.tsx",

@@ -2,6 +2,7 @@ import "server-only";
 
 import { z } from "zod";
 import { getPrisma } from "@/lib/prisma";
+import { isValidRelyingPartyId } from "@/modules/attendee-accounts/passkey-domain";
 
 export const PLATFORM_SETTINGS_ID = "platform";
 
@@ -41,6 +42,11 @@ export const platformSettingsInputSchema = z.object({
   defaultAttendeeEditPolicy: z
     .enum(["TIERED", "VERIFY_EVERY_EDIT"])
     .default("VERIFY_EVERY_EDIT"),
+  /** The site's own domain, with no https:// or path. Blank keeps passkeys off. */
+  passkeyRpId: optionalField(
+    z.string().max(253).transform((value) => value.toLowerCase())
+      .refine(isValidRelyingPartyId, "Enter just the domain, like events.imsda.org."),
+  ),
 }).strict();
 
 export type PlatformSettingsInput = z.infer<typeof platformSettingsInputSchema>;
@@ -75,6 +81,7 @@ export async function getPlatformSettings(): Promise<PlatformSettingsRecord> {
     defaultSenderEmail: row.defaultSenderEmail,
     defaultReplyToEmail: row.defaultReplyToEmail,
     defaultAttendeeEditPolicy: row.defaultAttendeeEditPolicy,
+    passkeyRpId: row.passkeyRpId,
     updatedAt: row.updatedAt.toISOString(),
     updatedByName: row.updatedBy?.displayName ?? null,
   };
@@ -112,6 +119,7 @@ export async function updatePlatformSettings(
               defaultReplyToEmail: before.defaultReplyToEmail,
               defaultTimezone: before.defaultTimezone,
               defaultAttendeeEditPolicy: before.defaultAttendeeEditPolicy,
+              passkeyRpId: before.passkeyRpId,
             }
             : null,
           after: {
@@ -120,6 +128,7 @@ export async function updatePlatformSettings(
             defaultReplyToEmail: input.defaultReplyToEmail,
             defaultTimezone: input.defaultTimezone,
             defaultAttendeeEditPolicy: input.defaultAttendeeEditPolicy,
+            passkeyRpId: input.passkeyRpId ?? null,
           },
         },
       },

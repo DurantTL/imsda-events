@@ -636,6 +636,7 @@ model AttendeeAccount {
   sessions                     AttendeeSession[]
   tokens                       AttendeeAccountToken[]
   mfaEnrollment                AttendeeMfaEnrollment?
+  passkeys                     AttendeePasskey[]
   stepUpCodes                  AttendeeStepUpCode[]
   messages                     MessageOutbox[]          @relation("AttendeeMessageRecipient")
   communityParticipations      CommunityParticipation[]
@@ -713,7 +714,8 @@ model AttendeeSession {
   secondFactorVerifiedAt DateTime?
   createdAt     DateTime  @default(now())
 
-  account AttendeeAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  account           AttendeeAccount            @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  passkeyChallenges AttendeePasskeyChallenge[]
 
   @@index([accountId, expiresAt])
   @@index([expiresAt, revokedAt])
@@ -965,6 +967,10 @@ model PlatformSettings {
   defaultSenderEmail        String?
   defaultReplyToEmail       String?
   defaultAttendeeEditPolicy AttendeeEditPolicy @default(VERIFY_EVERY_EDIT)
+  /// The WebAuthn relying-party ID (the site's domain, e.g. "events.imsda.org").
+  /// Passkeys stay hidden until it is set and matches the page's origin, so an
+  /// unconfigured or misconfigured deployment falls back to authenticator codes.
+  passkeyRpId               String?
   updatedAt                 DateTime           @updatedAt
   updatedByUserId           String?
 
@@ -1010,6 +1016,11 @@ model Event {
   /// event's own uploaded image, so a conference badge does not have to be
   /// laid out in another tool and hand-fed through a printer twice.
   badgeBackgroundAssetId String?
+  /// Published events appear on the public conference calendar unless a
+  /// system administrator hides them there (#107). Unpublished events never do.
+  showOnCalendar       Boolean            @default(true)
+  /// Short label for filtering the public calendar, e.g. "Youth" or "Camp meeting".
+  calendarCategory     String?
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
 
@@ -2836,3 +2847,75 @@ model HonorEnrollment {
   @@index([registrationId])
 }
 
+
+enum CalendarEntryStatus {
+  SCHEDULED
+  POSTPONED
+  CANCELLED
+}
+
+/// An informational item on the public conference calendar (#107) for
+/// something registered or managed elsewhere. Dates are calendar dates in the
+/// conference's time zone; `timeLabel` is shown as written ("7–9 pm").
+model CalendarEntry {
+  id              String              @id @default(cuid())
+  title           String
+  description     String              @default("")
+  startsOn        String
+  endsOn          String
+  timeLabel       String              @default("")
+  location        String              @default("")
+  category        String              @default("")
+  linkUrl         String?
+  status          CalendarEntryStatus @default(SCHEDULED)
+  isPublished     Boolean             @default(false)
+  createdByUserId String
+  updatedByUserId String
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@index([isPublished, startsOn])
+}
+
+/// A passkey an attendee registered as their second step (e.g. to open club
+/// rosters). Only the public key is stored; nothing biometric ever reaches
+/// the server. Removing one sets `revokedAt` and it never verifies again.
+model AttendeePasskey {
+  id           String    @id @default(cuid())
+  accountId    String
+  credentialId String    @unique
+  publicKey    Bytes
+  counter      BigInt    @default(0)
+  transports   String[]  @default([])
+  deviceType   String
+  backedUp     Boolean   @default(false)
+  name         String
+  lastUsedAt   DateTime?
+  revokedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  account AttendeeAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, revokedAt])
+}
+
+enum PasskeyChallengePurpose {
+  REGISTER
+  VERIFY
+}
+
+/// A one-time WebAuthn challenge, tied to the attendee session that asked for
+/// it and consumed on first use so a response can't be replayed.
+model AttendeePasskeyChallenge {
+  id        String                  @id @default(cuid())
+  sessionId String
+  purpose   PasskeyChallengePurpose
+  challenge String                  @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime                @default(now())
+
+  session AttendeeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, purpose])
+}

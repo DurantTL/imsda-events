@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Building2, Mail, Save } from "lucide-react";
+import { Building2, KeyRound, Mail, Save } from "lucide-react";
 import type { PlatformSettingsRecord } from "@/modules/system-admin/platform-settings";
 
 type Draft = {
@@ -14,6 +14,7 @@ type Draft = {
   defaultSenderEmail: string;
   defaultReplyToEmail: string;
   defaultAttendeeEditPolicy: "TIERED" | "VERIFY_EVERY_EDIT";
+  passkeyRpId: string;
 };
 
 function draftFrom(settings: PlatformSettingsRecord): Draft {
@@ -27,6 +28,7 @@ function draftFrom(settings: PlatformSettingsRecord): Draft {
     defaultSenderEmail: settings.defaultSenderEmail ?? "",
     defaultReplyToEmail: settings.defaultReplyToEmail ?? "",
     defaultAttendeeEditPolicy: settings.defaultAttendeeEditPolicy,
+    passkeyRpId: settings.passkeyRpId ?? "",
   };
 }
 
@@ -108,6 +110,23 @@ export function PlatformSettingsWorkspace({
           </label>
           <label>Public website<input type="url" placeholder="https://imsda.org" {...field("publicWebsiteUrl")} /></label>
           <label>Support contact<input type="email" placeholder="support@imsda.org" {...field("supportContact")} /></label>
+        </section>
+
+        <section className="panel">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow"><KeyRound aria-hidden="true" size={14} /> Sign-in</p>
+              <h2>Passkeys</h2>
+            </div>
+          </div>
+          <label>
+            Passkey domain
+            <input autoCapitalize="off" autoComplete="off" placeholder="events.imsda.org" spellCheck={false} {...field("passkeyRpId")} />
+            <small>
+              The site&apos;s own domain, with no https:// or path. Club directors can then use a passkey instead of an authenticator
+              code. Leave blank to keep passkeys off. Changing it later makes every existing passkey stop working.
+            </small>
+          </label>
         </section>
 
         <section className="panel">

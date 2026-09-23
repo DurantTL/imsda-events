@@ -15,6 +15,8 @@ vi.mock("@/lib/prisma", () => ({
   getPrisma: () => ({
     attendeeMfaEnrollment: { findUnique: async () => ({ status: "ACTIVE" }) },
     attendeeSession: { findUnique: async () => ({ secondFactorVerifiedAt: new Date() }) },
+    attendeePasskey: { count: async () => 0 },
+    platformSettings: { findUnique: async () => ({ passkeyRpId: null }) },
     event: { findFirst: mocks.eventFindFirst },
     clubRosterMember: { findMany: mocks.rosterFindMany },
     clubRegistrationDraft: { upsert: mocks.draftUpsert },

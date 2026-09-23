@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   listDirectedClubs: vi.fn(),
   findEnrollment: vi.fn(),
   findSession: vi.fn(),
+  countPasskeys: vi.fn(),
+  findSettings: vi.fn(),
   rejectCrossOriginRequest: vi.fn(),
   verifyAttendeeSecondFactor: vi.fn(),
   updateSession: vi.fn(),
@@ -18,6 +20,8 @@ vi.mock("@/lib/prisma", () => ({
   getPrisma: () => ({
     attendeeMfaEnrollment: { findUnique: mocks.findEnrollment },
     attendeeSession: { findUnique: mocks.findSession, update: mocks.updateSession },
+    attendeePasskey: { count: mocks.countPasskeys },
+    platformSettings: { findUnique: mocks.findSettings },
   }),
 }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.getCurrentAttendee }));
@@ -57,6 +61,8 @@ beforeEach(() => {
   mocks.listDirectedClubs.mockResolvedValue([club]);
   mocks.findEnrollment.mockResolvedValue({ status: "ACTIVE" });
   mocks.findSession.mockResolvedValue({ secondFactorVerifiedAt: new Date(Date.now() - 60_000) });
+  mocks.countPasskeys.mockResolvedValue(0);
+  mocks.findSettings.mockResolvedValue({ passkeyRpId: null });
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
   mocks.checkRateLimit.mockResolvedValue({ allowed: true, decisions: [] });
   mocks.listRoster.mockResolvedValue([]);
@@ -90,6 +96,23 @@ describe("who may open a roster", () => {
     const stale = new Date(now.getTime() - (ROSTER_UNLOCK_HOURS * 3_600_000 + 1));
     mocks.findSession.mockResolvedValue({ secondFactorVerifiedAt: stale });
     await expect(getRosterAccessState("club-1", now)).resolves.toMatchObject({ state: "MFA_UNLOCK" });
+  });
+
+  it("accepts a passkey as the second step only once passkeys are switched on", async () => {
+    mocks.findEnrollment.mockResolvedValue(null);
+    mocks.countPasskeys.mockResolvedValue(1);
+    mocks.findSession.mockResolvedValue({ secondFactorVerifiedAt: null });
+    // A passkey on file doesn't count while an administrator has passkeys off.
+    await expect(getRosterAccessState("club-1", now)).resolves.toMatchObject({ state: "MFA_SETUP" });
+
+    mocks.findSettings.mockResolvedValue({ passkeyRpId: "events.imsda.test" });
+    await expect(getRosterAccessState("club-1", now)).resolves.toMatchObject({
+      state: "MFA_UNLOCK",
+      methods: { code: false, passkey: true },
+    });
+
+    mocks.findEnrollment.mockResolvedValue({ status: "ACTIVE" });
+    await expect(getRosterAccessState("club-1", now)).resolves.toMatchObject({ methods: { code: true, passkey: true } });
   });
 });
 
