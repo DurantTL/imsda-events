@@ -237,3 +237,61 @@ export function applyPromoCodeToCalculation(
   };
 }
 
+
+/**
+ * A promo code field asked of each attendee (#397): codes are per person, so
+ * a form has either this or the registration-level field, never both (field
+ * keys are unique).
+ */
+export function attendeePromoCodeField(
+  definition: RegistrationFormDefinition,
+): RegistrationFormField | null {
+  return definition.sections
+    .flatMap((section) => section.fields)
+    .find((field) => (
+      field.key === "promo_code"
+      && field.scope === "ATTENDEE"
+      && field.type === "TEXT"
+    )) ?? null;
+}
+
+/** One person's share of a roster calculation: their own line items. */
+export function attendeeShareCents(calculation: FormCalculation, attendeeIndex: number) {
+  return Math.max(0, calculation.lineItems
+    .filter((line) => line.attendeeIndex === attendeeIndex)
+    .reduce((total, line) => total + line.amountCents, 0));
+}
+
+export type AttendeePromoDiscount = {
+  attendeeIndex: number;
+  code: string;
+  discountAmountCents: number;
+  /** Known once the use is claimed at submission. */
+  promoCodeId?: string;
+};
+
+/** Applies per-person discounts, each already limited to that person's share. */
+export function applyAttendeePromoCodes(
+  definition: RegistrationFormDefinition,
+  registrationResponses: Record<string, unknown>,
+  calculation: FormCalculation,
+  discounts: readonly AttendeePromoDiscount[],
+): DiscountedFormCalculation & { attendeeDiscounts: AttendeePromoDiscount[] } {
+  const preDiscountSubtotalCents = Math.max(0, calculation.subtotalCents);
+  const discountAmountCents = Math.min(
+    preDiscountSubtotalCents,
+    discounts.reduce((total, discount) => total + Math.max(0, discount.discountAmountCents), 0),
+  );
+  const subtotalCents = preDiscountSubtotalCents - discountAmountCents;
+  const processingFeeCents = processingFeeForDiscountedSubtotal(definition, registrationResponses, subtotalCents);
+  return {
+    ...calculation,
+    preDiscountSubtotalCents,
+    discountAmountCents,
+    promoCode: [...new Set(discounts.map((discount) => discount.code))].join(", "),
+    subtotalCents,
+    processingFeeCents,
+    totalCents: subtotalCents + processingFeeCents,
+    attendeeDiscounts: [...discounts],
+  };
+}

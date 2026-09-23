@@ -143,14 +143,15 @@ export const registrationFormDefinitionSchema = z.object({
         field.key === "promo_code"
         && (
           field.type !== "TEXT"
-          || field.scope !== "REGISTRATION"
           || field.required
+          // Per-person codes (#397) need an attendee roster to price each share.
+          || (field.scope === "ATTENDEE" && !definition.attendeeRoster?.enabled)
         )
       ) {
         context.addIssue({
           code: "custom",
           path: ["sections", sectionIndex, "fields", fieldIndex],
-          message: "The Promo code module must remain an optional registration-level short text field.",
+          message: "The Promo code module must be an optional short text field, asked once per registration or once per attendee on a roster form.",
         });
       }
     });

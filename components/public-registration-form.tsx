@@ -133,6 +133,12 @@ type PromoCodeQuote = FormCalculation & {
   promoCode: string;
 };
 
+/** Per-person codes (#397): every attendee's code, checked together. */
+type AttendeePromoQuote = PromoCodeQuote & {
+  attendeeDiscounts: Array<{ attendeeIndex: number; code: string; discountAmountCents: number }>;
+  attendeeIssues: Array<{ attendeeIndex: number; fieldId: string; key: string; path: string; message: string }>;
+};
+
 export type PublicRegistrationFormProps = {
   event: PublicEvent;
   form: PublicForm;
@@ -364,6 +370,8 @@ export function PublicRegistrationForm({
   const [promoCodeQuote, setPromoCodeQuote] = useState<PromoCodeQuote | null>(null);
   /** The price the quote was made for; the quote holds while the price does. */
   const [promoQuoteBasis, setPromoQuoteBasis] = useState("");
+  const [attendeePromo, setAttendeePromo] = useState<{ quote: AttendeePromoQuote; basis: string; codes: string } | null>(null);
+  const [attendeePromoChecking, setAttendeePromoChecking] = useState(false);
   const [promoCodeApplying, setPromoCodeApplying] = useState(false);
   const [promoCodeNotice, setPromoCodeNotice] = useState("");
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
@@ -401,7 +409,24 @@ export function PublicRegistrationForm({
   // An applied code survives answers that don't change the price (checking the
   // acknowledgment, picking pay later); a price change re-checks it below.
   const calculationBasis = useMemo(() => promoCalculationBasis(baseCalculation), [baseCalculation]);
-  const activeQuote = promoCodeQuote && promoQuoteBasis === calculationBasis ? promoCodeQuote : null;
+  const attendeePromoField = useMemo(
+    () => rosterEnabled
+      ? allFields.find((field) => field.key === "promo_code" && field.scope === "ATTENDEE" && field.type === "TEXT") ?? null
+      : null,
+    [allFields, rosterEnabled],
+  );
+  const attendeeCodes = attendeePromoField
+    ? attendees.map((attendee) => String(attendee.responses[attendeePromoField.key] ?? "").trim().toUpperCase())
+    : [];
+  const attendeeCodesSignature = attendeeCodes.join("|");
+  const activeAttendeePromo = attendeePromo
+    && attendeePromo.basis === calculationBasis
+    && attendeePromo.codes === attendeeCodesSignature
+    ? attendeePromo.quote
+    : null;
+  const activeQuote = promoCodeQuote && promoQuoteBasis === calculationBasis
+    ? promoCodeQuote
+    : activeAttendeePromo && activeAttendeePromo.discountAmountCents > 0 ? activeAttendeePromo : null;
   const calculation: FormCalculation | PromoCodeQuote =
     activeQuote ?? baseCalculation;
   const displayedDiscountCents =
@@ -539,6 +564,22 @@ export function PublicRegistrationForm({
           undefined,
           { ignoredFieldKeys },
         ).issues;
+    if (attendeePromoField && attendeeCodes.some(Boolean)) {
+      const promoIssues = attendeeCodes.flatMap((code, attendeeIndex) => {
+        if (!code) return [];
+        const path = `attendees.${attendeeIndex}.responses.${attendeePromoField.key}`;
+        const serverIssue = activeAttendeePromo?.attendeeIssues.find((issue) => issue.attendeeIndex === attendeeIndex);
+        if (activeAttendeePromo && !serverIssue) return [];
+        return [{
+          fieldId: attendeePromoField.id,
+          key: attendeePromoField.key,
+          path,
+          attendeeIndex,
+          message: serverIssue?.message ?? "Select Apply to check this promo code before continuing.",
+        }];
+      });
+      if (promoIssues.length > 0) return [...validationIssues, ...promoIssues];
+    }
     if (promoField && promoCodeValue && !promoCodeApplied) {
       return [
         ...validationIssues,
@@ -638,6 +679,71 @@ export function PublicRegistrationForm({
       setPromoCodeApplying(false);
     }
   }
+
+  /** Checks every person's code at once (#397); problems come back per person. */
+  async function applyAttendeePromoCodes() {
+    if (!attendeePromoField || attendeePromoChecking) return;
+    const firstCode = attendeeCodes.find(Boolean);
+    if (!firstCode) {
+      setAttendeePromo(null);
+      return;
+    }
+    const requestBasis = calculationBasis;
+    const requestCodes = attendeeCodesSignature;
+    setAttendeePromoChecking(true);
+    setError("");
+    setIssues((current) => current.filter((issue) => issue.key !== attendeePromoField.key));
+    try {
+      const response = await fetch(
+        `/api/public/events/${encodeURIComponent(event.slug)}/forms/${encodeURIComponent(form.slug)}/promo-code`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            versionId: form.versionId,
+            code: firstCode,
+            responses: registrationResponses,
+            attendees: attendees.map((attendee) => ({ clientId: attendee.clientId, responses: attendee.responses })),
+          }),
+        },
+      );
+      const result = await response.json().catch(() => ({})) as { quote?: AttendeePromoQuote; message?: string };
+      if (!response.ok || !result.quote || !Array.isArray(result.quote.attendeeIssues)) {
+        throw new Error(result.message ?? "The promo codes could not be checked right now. Try again.");
+      }
+      setAttendeePromo({ quote: result.quote, basis: requestBasis, codes: requestCodes });
+      setIdempotencyKey(null);
+    } catch (caught) {
+      setAttendeePromo(null);
+      setError(caught instanceof Error ? caught.message : "The promo codes could not be checked right now. Try again.");
+    } finally {
+      setAttendeePromoChecking(false);
+    }
+  }
+
+  function attendeePromoNotice(attendeeIndex: number) {
+    if (!activeAttendeePromo || !attendeeCodes[attendeeIndex]) return null;
+    const issue = activeAttendeePromo.attendeeIssues.find((candidate) => candidate.attendeeIndex === attendeeIndex);
+    if (issue) return { ok: false, text: issue.message };
+    const applied = activeAttendeePromo.attendeeDiscounts.find((candidate) => candidate.attendeeIndex === attendeeIndex);
+    return applied ? { ok: true, text: `${applied.code} applied — ${money(applied.discountAmountCents)} off for this person.` } : null;
+  }
+
+  // Price changed under checked codes: check them again (debounced).
+  const attendeePromoNeedsRecheck = Boolean(
+    attendeePromo
+    && attendeePromo.codes === attendeeCodesSignature
+    && attendeePromo.basis !== calculationBasis,
+  );
+  const applyAttendeePromoRef = useRef(applyAttendeePromoCodes);
+  useEffect(() => {
+    applyAttendeePromoRef.current = applyAttendeePromoCodes;
+  });
+  useEffect(() => {
+    if (!attendeePromoNeedsRecheck || attendeePromoChecking) return;
+    const timer = window.setTimeout(() => void applyAttendeePromoRef.current(), 700);
+    return () => window.clearTimeout(timer);
+  }, [attendeePromoNeedsRecheck, attendeePromoChecking, calculationBasis]);
 
   // When the price changes under an applied code, check it again for the new
   // price instead of dropping it. Debounced so typing doesn't spend the limit.
@@ -1008,6 +1114,46 @@ export function PublicRegistrationForm({
             <strong>No payment is requested while you are on the waitlist.</strong>
             <small>The event team will contact you before any payment is due.</small>
           </span>
+        </div>
+      );
+    }
+
+    if (field.key === "promo_code" && context.attendeeIndex !== null && attendeePromoField) {
+      const attendeeIndex = context.attendeeIndex;
+      const value = typeof context.values[field.key] === "string" ? context.values[field.key] as string : "";
+      const notice = attendeePromoNotice(attendeeIndex);
+      return (
+        <div className={`${wrapperClass} public-registration-promo-field`} key={field.id}>
+          <label htmlFor={id}>{fieldLabel(field, context)}</label>
+          <div className="public-registration-promo-control">
+            <input
+              id={id}
+              value={value}
+              type="text"
+              maxLength={32}
+              autoCapitalize="characters"
+              autoComplete="off"
+              placeholder={field.placeholder ?? "Enter this person's code"}
+              aria-invalid={Boolean(issue)}
+              aria-describedby={description}
+              onChange={(inputEvent) => context.setValue(field.key, inputEvent.target.value)}
+              onKeyDown={(keyboardEvent) => {
+                if (keyboardEvent.key === "Enter") {
+                  keyboardEvent.preventDefault();
+                  void applyAttendeePromoCodes();
+                }
+              }}
+            />
+            <button type="button" disabled={!value.trim() || attendeePromoChecking} onClick={() => void applyAttendeePromoCodes()}>
+              {attendeePromoChecking ? "Checking…" : "Apply"}
+            </button>
+          </div>
+          {fieldSupport(field, context)}
+          {notice && (
+            <small className={notice.ok ? "public-registration-promo-success" : "field-error"} role={notice.ok ? "status" : "alert"} aria-live="polite">
+              {notice.ok && <BadgePercent size={15} aria-hidden="true" />} {notice.text}
+            </small>
+          )}
         </div>
       );
     }

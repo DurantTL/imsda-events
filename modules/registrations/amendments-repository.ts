@@ -250,6 +250,13 @@ function assertProtectedFieldsUnchanged(
       );
     }
     const responses = recordFromJson(current.formResponses);
+    // Per-person promo codes (#397) are money, handled in Finance.
+    if (stableJson(responses.promo_code ?? null) !== stableJson(attendeeInput.responses.promo_code ?? null)) {
+      throw new RegistrationAmendmentError(
+        "PROTECTED_FIELD_CHANGED",
+        "Promo codes cannot be changed through a registration amendment. Use Adjust amount owed in Finance.",
+      );
+    }
     for (const key of protectedAttendeeIdentityKeys) {
       if (stableJson(responses[key]) !== stableJson(attendeeInput.responses[key])) {
         throw new RegistrationAmendmentError(
