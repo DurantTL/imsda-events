@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import Link from "next/link";
-import { Activity, Award, ChartNoAxesCombined, FileText, FileUp, HeartPulse, ListChecks, MessagesSquare, PanelsTopLeft, Settings2, TicketPercent, UserCog } from "lucide-react";
+import { Activity, Award, ChartNoAxesCombined, FileText, FileUp, HeartPulse, ListChecks, MessagesSquare, PanelsTopLeft, Settings2, TicketPercent, UserCog, UsersRound } from "lucide-react";
 import { MfaManager, type MfaStatus } from "@/components/mfa-manager";
 import { SessionManager } from "@/components/session-manager";
 import { getMfaStatus } from "@/modules/access/mfa-service";
@@ -9,6 +9,7 @@ import { listUserSessions, SESSION_COOKIE_NAME, SESSION_IDLE_TIMEOUT_SECONDS } f
 import { listRecentAuditActivity } from "@/modules/audit/audit-service";
 import { resolveEventContext } from "@/modules/events/selection";
 import { canAccessOperationalHealth } from "@/modules/operations/access";
+import { resolveClubOversight } from "@/modules/club-rosters/event-oversight";
 import { canManageProgramAssignments } from "@/modules/program-assignments/access";
 
 export const metadata: Metadata = { title: "More" };
@@ -20,12 +21,14 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
   const sessionToken = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
   const sessions = await listUserSessions(user.id, sessionToken);
   const mfaStatus = await getMfaStatus(user.id) as MfaStatus;
+  const clubOversight = (await resolveClubOversight(event.id)).allowed;
 
   return (
     <section className="page-stack">
       <div className="page-intro"><div><p className="eyebrow">Event administration</p><h2>Settings & activity</h2><p>Choose a task or review recent changes for {event.name}.</p></div></div>
       <div className="foundation-grid">
         {canAccessOperationalHealth(permissions) && <Link className="panel foundation-card" href={`/more/health?event=${event.id}`}><span><HeartPulse aria-hidden="true" size={21} /></span><h3>Operational health</h3><p>Review failed or delayed work, open balances, import exceptions, and capacity warnings.</p><small>Review exceptions</small></Link>}
+        {clubOversight && <Link className="panel foundation-card" href={`/more/clubs?event=${event.id}`}><span><UsersRound aria-hidden="true" size={21} /></span><h3>Clubs</h3><p>Every registered club&apos;s roster (ages only) and all clubs&apos; monthly reports, view only.</p><small>Open clubs</small></Link>}
         {permissions.includes("VIEW_REPORTS") && <Link className="panel foundation-card" href={`/more/reports?event=${event.id}`}><span><ChartNoAxesCombined aria-hidden="true" size={21} /></span><h3>Operational reports</h3><p>Print active attendee rosters and review meal, housing, and ranked seminar totals.</p><small>Open reports</small></Link>}
         {canManageProgramAssignments(permissions) && <Link className="panel foundation-card" href={`/more/program-assignments?event=${event.id}`}><span><ListChecks aria-hidden="true" size={21} /></span><h3>Seminar assignments</h3><p>Turn attendee rankings and room limits into reviewed, printable session rosters.</p><small>Preview assignments</small></Link>}
         {permissions.includes("MANAGE_COMMUNICATIONS") && <Link className="panel foundation-card" href={`/community?event=${event.id}`}><span><MessagesSquare aria-hidden="true" size={21} /></span><h3>Attendee community</h3><p>Open or pause discussion, review attendee reports, and moderate posts and replies.</p><small>Moderate community</small></Link>}

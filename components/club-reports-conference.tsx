@@ -9,7 +9,22 @@ import type { ClubYearSummary } from "@/modules/club-reports/repository";
 const shortMonth = (month: string) => new Date(`${month}-15T12:00:00Z`).toLocaleDateString("en-US", { month: "short", timeZone: "UTC" });
 
 /** Every club's monthly points for a club year (#377): missing reports, the registration bonus, and year to date. */
-export function ClubReportsConference({ clubYear, initialClubs, now }: { clubYear: string; initialClubs: ClubYearSummary[]; now: string }) {
+export function ClubReportsConference({
+  clubYear,
+  initialClubs,
+  now,
+  viewOnlyReportHref,
+}: {
+  clubYear: string;
+  initialClubs: ClubYearSummary[];
+  now: string;
+  /**
+   * Event managers (#387) see this view only: no export, no registration
+   * ticks, and only submitted reports open, at this address.
+   */
+  viewOnlyReportHref?: { base: string; query: string };
+}) {
+  const viewOnly = Boolean(viewOnlyReportHref);
   const [clubs, setClubs] = useState(initialClubs);
   const [error, setError] = useState("");
   const months = clubYearMonths(clubYear);
@@ -41,14 +56,16 @@ export function ClubReportsConference({ clubYear, initialClubs, now }: { clubYea
           <p>
             Points per club and month. <strong>Missing</strong> means the due date (the 10th of the next month) has passed with no
             report. Tick <em>Registration</em> when a club&apos;s yearly registration came in on time; it adds 1,500 points.
-            Select a month to open or file that report.
+            {viewOnly ? "Select a submitted month to view that report." : "Select a month to open or file that report."}
           </p>
         </div>
-        <div className="intro-actions">
-          <a className="secondary-button" href={`/api/admin/club-reports/export?year=${encodeURIComponent(clubYear)}`}>
-            <Download aria-hidden="true" size={15} /> Download CSV
-          </a>
-        </div>
+        {!viewOnly && (
+          <div className="intro-actions">
+            <a className="secondary-button" href={`/api/admin/club-reports/export?year=${encodeURIComponent(clubYear)}`}>
+              <Download aria-hidden="true" size={15} /> Download CSV
+            </a>
+          </div>
+        )}
       </div>
       {error && <div className="inline-notice error" role="alert">{error}</div>}
       <p className="field-help">{clubs.length} active clubs · {missingTotal} missing reports so far.</p>
@@ -73,11 +90,16 @@ export function ClubReportsConference({ clubYear, initialClubs, now }: { clubYea
                   {months.map((month) => {
                     const report = club.reports[month];
                     const future = month > now.slice(0, 7);
-                    const href = `/admin/clubs/reports/${encodeURIComponent(club.id)}/${month}`;
+                    const href = viewOnlyReportHref
+                      ? `${viewOnlyReportHref.base}/${encodeURIComponent(club.id)}/${month}${viewOnlyReportHref.query}`
+                      : `/admin/clubs/reports/${encodeURIComponent(club.id)}/${month}`;
                     if (report) {
                       return <td key={month}><Link href={href}>{report.totalPoints}</Link>{!report.onTime && <small> late</small>}</td>;
                     }
                     if (future) return <td key={month} className="club-reports-future">—</td>;
+                    if (viewOnly) {
+                      return <td key={month} className={isLockedForClub(month, today) ? "club-reports-missing" : "club-reports-due"}>{isLockedForClub(month, today) ? "Missing" : "Due"}</td>;
+                    }
                     return (
                       <td key={month}>
                         {isLockedForClub(month, today)
@@ -87,12 +109,16 @@ export function ClubReportsConference({ clubYear, initialClubs, now }: { clubYea
                     );
                   })}
                   <td>
-                    <input
-                      aria-label={`${club.name} yearly registration on time`}
-                      checked={club.registrationOnTime}
-                      onChange={(event) => void toggleRegistration(club, event.target.checked)}
-                      type="checkbox"
-                    />
+                    {viewOnly
+                      ? (club.registrationOnTime ? "On time" : "—")
+                      : (
+                        <input
+                          aria-label={`${club.name} yearly registration on time`}
+                          checked={club.registrationOnTime}
+                          onChange={(event) => void toggleRegistration(club, event.target.checked)}
+                          type="checkbox"
+                        />
+                      )}
                   </td>
                   <td><strong>{yearToDate(Object.values(club.reports), club.registrationOnTime).toLocaleString("en-US")}</strong></td>
                 </tr>
