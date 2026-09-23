@@ -53,6 +53,7 @@ export function ClubRosterWorkspace({
   }
 
   const active = members.filter((member) => member.status === "ACTIVE");
+  const needBirthDates = active.filter((member) => member.birthDateNeeded).length;
   const visible = showInactive ? members : active;
   const sections = [
     { key: "STAFF", title: "Staff", empty: "No staff on the roster yet.", people: visible.filter((member) => rosterSectionOf(member.attendeeType) === "STAFF") },
@@ -141,6 +142,12 @@ export function ClubRosterWorkspace({
           </div>
           <span className="count-badge">{active.length} active</span>
         </div>
+        {needBirthDates > 0 && (
+          <p className="inline-notice roster-birth-date-notice" role="status">
+            {needBirthDates === 1 ? "1 person needs" : `${needBirthDates} people need`} a birth date. The age from the
+            registration form is shown until you add one; edit each person to add it.
+          </p>
+        )}
         <div className="club-roster-tools">
           <label className="checkbox-label">
             <input checked={showInactive} onChange={(event) => setShowInactive(event.target.checked)} type="checkbox" />
@@ -188,11 +195,16 @@ export function ClubRosterWorkspace({
                     <tbody>
                       {section.people.map((member) => (
                         <tr key={member.id}>
-                          <td className="roster-card-name" translate="no"><strong>{member.lastName}, {member.firstName}</strong></td>
+                          <td className="roster-card-name">
+                            <strong translate="no">{member.lastName}, {member.firstName}</strong>
+                            {member.birthDateNeeded && <span className="status-chip gold roster-needs-birth-date">Birth date needed</span>}
+                          </td>
                           <td data-label="Type">{clubRosterAttendeeTypeLabels[member.attendeeType]}</td>
                           <td data-label="Class">{member.classLevel ? clubClassLevelLabels[member.classLevel] : "—"}</td>
                           <td data-label="Role">{member.role || "—"}</td>
-                          <td data-label="Age" translate="no">{member.age ?? "—"}</td>
+                          <td data-label="Age" translate="no">
+                            {member.age ?? (member.reportedAge !== null ? `${member.reportedAge} (reported)` : "—")}
+                          </td>
                           {birthDates && <td data-label="Birth date" translate="no">{birthDates[member.id] ?? "—"}</td>}
                           <td data-label="Status">
                             <span className={`status-chip ${member.status === "ACTIVE" ? "green" : "gold"}`}>

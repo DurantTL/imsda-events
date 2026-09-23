@@ -32,6 +32,7 @@ const memberSelect = {
   attendeeType: true,
   role: true,
   classLevel: true,
+  reportedAge: true,
   gender: true,
   sealedBirthDate: true,
   status: true,
@@ -59,6 +60,9 @@ function serializeMember(member: StoredMember, today: string) {
     status: member.status,
     source: member.source,
     age: ageFrom(member, today),
+    /** Imported without a birth date (#376): the form's age, until a birth date is added. */
+    reportedAge: member.sealedBirthDate ? null : member.reportedAge,
+    birthDateNeeded: !member.sealedBirthDate,
     updatedAt: member.updatedAt.toISOString(),
   };
 }
@@ -219,7 +223,7 @@ export async function updateRosterMember(
         ...(input.classLevel === undefined ? {} : { classLevel: input.classLevel }),
         ...(input.gender === undefined ? {} : { gender: input.gender }),
         ...(input.status === undefined ? {} : { status: input.status }),
-        ...(input.birthDate === undefined ? {} : { sealedBirthDate: sealBirthDate(input.birthDate) }),
+        ...(input.birthDate === undefined ? {} : { sealedBirthDate: sealBirthDate(input.birthDate), reportedAge: null }),
       },
     });
     const action = input.status === "INACTIVE" && member.status !== "INACTIVE"
@@ -250,6 +254,7 @@ export async function removeRosterMember(organizationId: string, memberId: strin
         gender: null,
         role: "",
         classLevel: null,
+        reportedAge: null,
         personId: null,
       },
     });
