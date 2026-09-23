@@ -81,6 +81,42 @@ export function TeamDirectoryWorkspace({
     }
   }
 
+  /** Reset two-step, send a reset link, or change the email (#386). */
+  async function accountAction(
+    member: TeamDirectory["members"][number],
+    body: { action: "reset-two-step" } | { action: "send-password-reset" } | { action: "change-email"; email: string },
+  ) {
+    setBusyUserId(member.id);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`/api/admin/users/${member.id}/actions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.directory) throw new Error(result.message ?? "That account could not be updated.");
+      setDirectory(result.directory);
+      setNotice(`${member.displayName}: ${result.message}`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "That account could not be updated.");
+    } finally {
+      setBusyUserId("");
+    }
+  }
+
+  function resetTwoStep(member: TeamDirectory["members"][number]) {
+    if (!window.confirm(`Reset two-step sign-in for ${member.displayName}? Their authenticator is removed and they're signed out; they set it up again at their next sign-in.`)) return;
+    void accountAction(member, { action: "reset-two-step" });
+  }
+
+  function changeEmail(member: TeamDirectory["members"][number]) {
+    const email = window.prompt(`New sign-in email for ${member.displayName}:`, member.email);
+    if (!email || email.trim().toLowerCase() === member.email) return;
+    void accountAction(member, { action: "change-email", email });
+  }
+
   async function setDisabled(userId: string, displayName: string, disabled: boolean) {
     if (disabled && !window.confirm(
       `Disable sign-in for ${displayName}? Their sessions end immediately and they cannot sign in until this is undone.`,
@@ -185,10 +221,13 @@ export function TeamDirectoryWorkspace({
                   </td>
                   <td>{whenever(member.lastSignedInAt)}</td>
                   <td>
-                    {member.memberships.length === 0
-                      ? "No events"
-                      : `${member.memberships.length} event${member.memberships.length === 1 ? "" : "s"}`}
-                    {member.memberships.length > 0 && (
+                    {member.globalRole === "SYSTEM_ADMIN"
+                      // A system administrator has every event; per-event rows would suggest limits that don't apply.
+                      ? <><strong>All events</strong><small>System administrators have full access to every event.</small></>
+                      : member.memberships.length === 0
+                        ? "No events"
+                        : `${member.memberships.length} event${member.memberships.length === 1 ? "" : "s"}`}
+                    {member.globalRole !== "SYSTEM_ADMIN" && member.memberships.length > 0 && (
                       <small>
                         {member.memberships
                           .map((membership) => `${membership.eventName} — ${friendly(membership.role)}`)
@@ -206,6 +245,17 @@ export function TeamDirectoryWorkspace({
                       >
                         <Pencil size={14} aria-hidden="true" /> Edit profile
                       </button>
+                      <button className="secondary-button" disabled={busyUserId === member.id} onClick={() => void accountAction(member, { action: "send-password-reset" })} type="button">
+                        Send password reset
+                      </button>
+                      <button className="secondary-button" disabled={busyUserId === member.id} onClick={() => changeEmail(member)} type="button">
+                        Change email
+                      </button>
+                      {member.id !== currentUserId && member.mfaStatus !== "NONE" && (
+                        <button className="secondary-button" disabled={busyUserId === member.id} onClick={() => resetTwoStep(member)} type="button">
+                          Reset two-step
+                        </button>
+                      )}
                       {member.id === currentUserId ? (
                         // The refusal is enforced server-side too; showing it
                         // here saves someone finding out by being refused.

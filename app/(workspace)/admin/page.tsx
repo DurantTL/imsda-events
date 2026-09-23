@@ -170,6 +170,7 @@ export default async function SystemAdminPage() {
         <div className={styles.heroActions}>
           <Link className="primary-button" href="/event-setup"><CalendarPlus aria-hidden="true" size={16} /> Create event</Link>
           <Link className="secondary-button" href="/admin/team"><UsersRound aria-hidden="true" size={15} /> Team</Link>
+          <Link className="secondary-button" href="/admin/accounts"><UsersRound aria-hidden="true" size={15} /> Accounts</Link>
           <Link className="secondary-button" href="/admin/settings"><CloudCog aria-hidden="true" size={15} /> Platform settings</Link>
           <Link className="secondary-button" href="/admin/organizations"><Church aria-hidden="true" size={15} /> Churches and clubs</Link>
           <Link className="secondary-button" href="/admin/honors"><Award aria-hidden="true" size={15} /> Honor catalog</Link>
