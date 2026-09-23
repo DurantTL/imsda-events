@@ -44,7 +44,7 @@ export default async function ClubLayout({
               { href: `${base}/roster`, label: "Roster" },
               { href: `${base}/events`, label: "Events & classes", matchChildren: true },
               ...(access.capabilities.submitReports ? [{ href: `${base}/reports`, label: "Monthly reports", matchChildren: true }] : []),
-              ...(access.capabilities.manageTeam ? [{ href: `${base}/team`, label: "Team" }] : []),
+              ...(access.capabilities.manageTeam ? [{ href: `${base}/team`, label: "Club admins" }] : []),
               ...(access.capabilities.editProfile ? [{ href: `${base}/profile`, label: "Club profile" }] : []),
             ]}
             label="Club"

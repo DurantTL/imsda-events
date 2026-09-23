@@ -236,7 +236,7 @@ export function ClubReportForm({
         {!readOnly && (
           <div>
             <button className="primary-button" disabled={saving || problems.length > 0} type="submit">
-              <Save aria-hidden="true" size={16} /> {report ? "Save changes" : "Submit report"} · {total} points
+              <Save aria-hidden="true" size={16} /> {report ? "Save changes" : "Save report"} · {total} points
             </button>
           </div>
         )}

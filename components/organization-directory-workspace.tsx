@@ -325,11 +325,11 @@ export function OrganizationDirectoryWorkspace({
                   {organization.type === "CLUB" && (
                     <>
                       <Link
-                        aria-label={`Team for ${organization.name}`}
+                        aria-label={`Club admins for ${organization.name}`}
                         className="secondary-button"
                         href={`/admin/organizations/${organization.id}/directors`}
                       >
-                        <UserCog aria-hidden="true" size={14} /> Team
+                        <UserCog aria-hidden="true" size={14} /> Club admins
                       </Link>
                       <Link
                         aria-label={`Profile for ${organization.name}`}

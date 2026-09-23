@@ -111,7 +111,7 @@ export function ClubDirectorsWorkspace({
     <section className="page-stack">
       <div className="page-intro">
         <div>
-          <p className="eyebrow">Club team</p>
+          <p className="eyebrow">Club admins</p>
           <h2 translate="no">{club.name}</h2>
           <p>
             Directors, deputies, registrars, and reporters sign in with their own

@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Eye, Pencil, Plus, Power, Save, Trash2, UsersRound, X } from "lucide-react";
+import { BirthDateField } from "@/components/birth-date-field";
+import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import {
   clubClassLevelLabels,
   clubRosterAttendeeTypeLabels,
@@ -32,24 +34,25 @@ export function ClubRosterWorkspace({
 }) {
   const [members, setMembers] = useState(initialMembers);
   const [editing, setEditing] = useState<RosterMemberRecord | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [birthDates, setBirthDates] = useState<Record<string, string> | null>(null);
   const [showInactive, setShowInactive] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const base = `/api/attendee/clubs/${encodeURIComponent(organizationId)}/roster`;
-  const formId = "club-roster-form";
+  const closeDialog = useCallback(() => {
+    setDialogOpen(false);
+    setEditing(null);
+  }, []);
+  const dialogRef = useAccessibleDialog<HTMLElement>(dialogOpen, closeDialog);
 
-  function beginEdit(member: RosterMemberRecord) {
+  /** Add and edit happen in a pop-up (#383), so the list never scrolls away. */
+  function openDialog(member: RosterMemberRecord | null) {
     setEditing(member);
     setNotice("");
     setError("");
-    // The form sits below the list; on a phone it's off screen, so bring it to the person.
-    window.requestAnimationFrame(() => {
-      const form = document.getElementById(formId);
-      form?.scrollIntoView({ behavior: "smooth", block: "start" });
-      form?.querySelector<HTMLInputElement>("input[name=firstName]")?.focus({ preventScroll: true });
-    });
+    setDialogOpen(true);
   }
 
   const active = members.filter((member) => member.status === "ACTIVE");
@@ -105,9 +108,9 @@ export function ClubRosterWorkspace({
       }, "Saved.")
       : await call(base, "POST", { ...details, birthDate }, "Added to the roster.");
     if (result) {
-      setEditing(null);
       setBirthDates(null);
       formElement.reset();
+      closeDialog();
     }
   }
 
@@ -140,7 +143,12 @@ export function ClubRosterWorkspace({
             <p className="public-registration-eyebrow">Club year {clubYear}</p>
             <h2>Roster</h2>
           </div>
-          <span className="count-badge">{active.length} active</span>
+          <div className="club-roster-heading-actions">
+            <span className="count-badge">{active.length} active</span>
+            <button className="primary-button" disabled={saving} onClick={() => openDialog(null)} type="button">
+              <Plus aria-hidden="true" size={16} /> Add to roster
+            </button>
+          </div>
         </div>
         {needBirthDates > 0 && (
           <p className="inline-notice roster-birth-date-notice" role="status">
@@ -212,7 +220,7 @@ export function ClubRosterWorkspace({
                             </span>
                           </td>
                           <td className="honor-row-actions roster-card-actions">
-                            <button aria-label={`Edit ${member.firstName} ${member.lastName}`} className="secondary-button" disabled={saving} onClick={() => beginEdit(member)} type="button">
+                            <button aria-label={`Edit ${member.firstName} ${member.lastName}`} className="secondary-button" disabled={saving} onClick={() => openDialog(member)} type="button">
                               <Pencil aria-hidden="true" size={13} />
                             </button>
                             <button
@@ -239,18 +247,20 @@ export function ClubRosterWorkspace({
         )}
       </section>
 
-      <form className="public-manage-card form-stack" key={editing?.id ?? "new"} id={formId} onSubmit={save}>
-        <div className="public-manage-card-heading club-roster-heading">
+      {dialogOpen && (
+        <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) closeDialog(); }} role="presentation">
+      <section aria-labelledby="roster-dialog-title" aria-modal="true" className="modal-card roster-dialog" ref={dialogRef} role="dialog" tabIndex={-1}>
+      <form className="form-stack" key={editing?.id ?? "new"} onSubmit={save}>
+        <div className="modal-head">
           <div>
             <p className="public-registration-eyebrow">{editing ? "Edit" : "Add someone"}</p>
-            <h2 translate={editing ? "no" : undefined}>{editing ? `${editing.firstName} ${editing.lastName}` : "Add to the roster"}</h2>
+            <h2 id="roster-dialog-title" translate={editing ? "no" : undefined}>{editing ? `${editing.firstName} ${editing.lastName}` : "Add to the roster"}</h2>
           </div>
-          {editing && (
-            <button className="secondary-button" onClick={() => setEditing(null)} type="button">
-              <X aria-hidden="true" size={14} /> Cancel
-            </button>
-          )}
+          <button aria-label="Close" className="icon-button modal-close-button" onClick={closeDialog} type="button">
+            <X aria-hidden="true" size={18} />
+          </button>
         </div>
+        {error && <div className="inline-notice error" role="alert">{error}</div>}
         <div className="form-grid two-column">
           <label>
             First name
@@ -260,15 +270,12 @@ export function ClubRosterWorkspace({
             Last name
             <input autoComplete="off" defaultValue={editing?.lastName ?? ""} maxLength={80} name="lastName" required />
           </label>
-          <label>
-            Birth date{editing ? " (leave blank to keep)" : ""}
-            <input
-              defaultValue={editing && birthDates ? birthDates[editing.id] ?? "" : ""}
-              name="birthDate"
-              required={!editing}
-              type="date"
-            />
-          </label>
+          <BirthDateField
+            defaultValue={editing && birthDates ? birthDates[editing.id] ?? "" : ""}
+            label={editing && !editing.birthDateNeeded ? "Birth date (leave blank to keep)" : "Birth date"}
+            name="birthDate"
+            required={!editing}
+          />
           <label>
             Type
             <select defaultValue={editing?.attendeeType ?? "YOUTH"} name="attendeeType">
@@ -288,7 +295,7 @@ export function ClubRosterWorkspace({
           </label>
           <label>
             Role (optional)
-            <input defaultValue={editing?.role ?? ""} maxLength={60} name="role" placeholder="e.g. Pathfinder, Counselor, TLT" />
+            <input defaultValue={editing ? editing.role : "Pathfinder"} maxLength={60} name="role" placeholder="e.g. Pathfinder, Counselor, TLT" />
           </label>
           <label>
             Gender (optional)
@@ -304,13 +311,17 @@ export function ClubRosterWorkspace({
           Birth dates are encrypted and shown only to your club&apos;s director and deputy. Registrars and event
           staff see age only. Don&apos;t enter medical or insurance information here.
         </p>
-        <div>
+        <div className="form-actions">
+          <button className="secondary-button" disabled={saving} onClick={closeDialog} type="button">Cancel</button>
           <button className="primary-button" disabled={saving} type="submit">
             {editing ? <Save aria-hidden="true" size={16} /> : <Plus aria-hidden="true" size={16} />}
             {editing ? " Save" : " Add to roster"}
           </button>
         </div>
       </form>
+      </section>
+        </div>
+      )}
     </div>
   );
 }
