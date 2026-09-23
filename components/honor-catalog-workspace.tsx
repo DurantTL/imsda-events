@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Award, Pencil, Plus, Save, X } from "lucide-react";
+import { CsvImportDialog } from "@/components/csv-import-dialog";
 import type { HonorRecord } from "@/modules/honors/repository";
 
 type CatalogResponse = { honors?: HonorRecord[]; message?: string; issues?: Array<{ message?: string }> };
@@ -66,6 +67,26 @@ export function HonorCatalogWorkspace({ initialHonors }: { initialHonors: HonorR
             site then chooses its sessions, classes, and seats under More → Honors
             Weekend classes.
           </p>
+        </div>
+        <div className="intro-actions honor-csv-actions">
+          <CsvImportDialog
+            eyebrow="Honor catalog CSV"
+            help={(
+              <p>
+                Fill in the CSV template (Code, Name, Description, Active) and save it
+                as CSV. Honors are matched by code: new codes are added, known codes are updated with what the file fills in.
+                Honors missing from the file are left alone; nothing is deleted.
+              </p>
+            )}
+            importUrl="/api/admin/honors/import"
+            onImported={(result) => {
+              if (Array.isArray(result.honors)) setHonors(result.honors as HonorRecord[]);
+              setNotice(`Honor catalog updated: ${Number(result.added ?? 0)} added, ${Number(result.updated ?? 0)} updated.`);
+            }}
+            templateHref="/api/admin/honors/template"
+            title="Import honors"
+            variant="staff"
+          />
         </div>
       </div>
 

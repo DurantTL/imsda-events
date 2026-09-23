@@ -3,6 +3,7 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
+import type { HonorImportStep } from "@/modules/honors/catalog-csv";
 import {
   normalizeHonorCode,
   normalizeHonorText,
@@ -419,4 +420,51 @@ export async function updateHonorOffering(
     }, tx);
   });
   return getEventHonorSetup(eventId);
+}
+
+/**
+ * Applies a planned honor CSV import (#385) in one transaction: the catalog
+ * is shared by every site, so it changes all at once or not at all.
+ * Audited with counts.
+ */
+export async function applyHonorImport(steps: readonly HonorImportStep[], actorUserId: string) {
+  const adds = steps.filter((step) => step.action === "ADD");
+  const updates = steps.filter((step) => step.action === "UPDATE" && step.honorId);
+  try {
+    await getPrisma().$transaction(async (tx) => {
+      if (adds.length > 0) {
+        await tx.honor.createMany({
+          data: adds.map(({ row }) => ({
+            code: row.code,
+            name: row.name,
+            normalizedName: normalizeHonorText(row.name),
+            description: row.description ?? "",
+            isActive: row.isActive ?? true,
+          })),
+        });
+      }
+      for (const { row, honorId } of updates) {
+        await tx.honor.update({
+          where: { id: honorId! },
+          data: {
+            name: row.name,
+            normalizedName: normalizeHonorText(row.name),
+            ...(row.description === undefined ? {} : { description: row.description }),
+            ...(row.isActive === undefined ? {} : { isActive: row.isActive }),
+          },
+        });
+      }
+      await writeAuditLog({
+        actorUserId,
+        action: "HONOR_CATALOG_IMPORTED",
+        entityType: "Honor",
+        summary: `Imported the honor catalog: ${adds.length} added, ${updates.length} updated.`,
+        metadata: { rows: steps.length, added: adds.length, updated: updates.length, skipped: steps.length - adds.length - updates.length },
+      }, tx);
+    });
+  } catch (error) {
+    if (isUniqueConstraint(error)) throw codeConflict();
+    throw error;
+  }
+  return { added: adds.length, updated: updates.length, honors: await listHonors() };
 }
