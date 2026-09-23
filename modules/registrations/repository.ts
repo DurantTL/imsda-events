@@ -57,6 +57,7 @@ function getRegistrationQuery(
           amountCents: true,
           reason: true,
           promoCodeSnapshot: true,
+          registrationAttendeeId: true,
           reversesAdjustmentId: true,
           reversedBy: { select: { id: true } },
           createdByNameSnapshot: true,
@@ -244,6 +245,13 @@ function serializeRegistration(registration: RegistrationWithRelations) {
       amountCents: adjustment.amountCents,
       reason: adjustment.reason,
       promoCode: adjustment.promoCodeSnapshot,
+      attendeeId: adjustment.registrationAttendeeId,
+      attendeeName: (() => {
+        const attendee = registration.attendees.find((candidate) => candidate.id === adjustment.registrationAttendeeId);
+        if (!attendee) return null;
+        const profile = recordFromJson(attendee.profileSnapshot);
+        return `${typeof profile.firstName === "string" ? profile.firstName : attendee.person.firstName} ${typeof profile.lastName === "string" ? profile.lastName : attendee.person.lastName}`.trim();
+      })(),
       reversesAdjustmentId: adjustment.reversesAdjustmentId,
       reversed: Boolean(adjustment.reversedBy),
       createdBy: adjustment.createdByNameSnapshot,

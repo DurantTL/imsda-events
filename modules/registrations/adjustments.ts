@@ -23,17 +23,21 @@ export const createAdjustmentSchema = z.discriminatedUnion("kind", [
     kind: z.enum(["SCHOLARSHIP", "DISCOUNT"]),
     amountCents: z.number().int().min(1, "Enter an amount.").max(10_000_000),
     reason: z.string().trim().min(3, "Enter a reason.").max(500),
+    attendeeId: z.string().trim().min(1).max(64).optional(),
   }).strict(),
   z.object({
     kind: z.literal("CORRECTION"),
     /** Positive raises the amount owed; negative lowers it. */
     amountCents: z.number().int().min(-10_000_000).max(10_000_000).refine((value) => value !== 0, "Enter an amount."),
     reason: z.string().trim().min(3, "Enter a reason.").max(500),
+    attendeeId: z.string().trim().min(1).max(64).optional(),
   }).strict(),
   z.object({
     kind: z.literal("PROMO_CODE"),
     code: z.string().trim().min(1, "Enter a promo code.").max(40),
     reason: z.string().trim().min(3, "Enter a reason.").max(500),
+    /** One person in the registration (#397): the code prices that person's share only. */
+    attendeeId: z.string().trim().min(1).max(64).optional(),
   }).strict(),
 ]);
 
@@ -51,7 +55,9 @@ export type AdjustmentErrorCode =
   | "TOTAL_BELOW_ZERO"
   | "TOTAL_BELOW_PAID"
   | "PROMO_ALREADY_APPLIED"
-  | "PROMO_INVALID";
+  | "PROMO_INVALID"
+  | "ATTENDEE_NOT_FOUND"
+  | "ATTENDEE_PRICE_UNKNOWN";
 
 export class AdjustmentError extends Error {
   constructor(public readonly code: AdjustmentErrorCode, message: string) {
@@ -64,6 +70,35 @@ type Client = Prisma.TransactionClient;
 
 function cents(value: { toString(): string } | number) {
   return Math.round(Number(value) * 100);
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+/**
+ * One person's share of the priced registration, from the latest pricing
+ * snapshot (an amendment's, else the submission's): the line items carrying
+ * their attendee index. Null when the registration has no per-person pricing
+ * (entered by staff, or a single-person form).
+ */
+function attendeePriceCents(
+  registration: { publicFormSubmission: { pricingSnapshot: unknown } | null; operations: Array<{ afterSnapshot: unknown }> },
+  attendeeIndex: number,
+) {
+  const amended = record(record(registration.operations[0]?.afterSnapshot).pricingSnapshot);
+  const snapshot = Object.keys(amended).length > 0 ? amended : record(registration.publicFormSubmission?.pricingSnapshot);
+  const lines = Array.isArray(snapshot.lineItems) ? snapshot.lineItems.map(record) : [];
+  const own = lines.filter((line) => line.attendeeIndex === attendeeIndex && typeof line.amountCents === "number");
+  if (own.length === 0) return null;
+  return own.reduce((total, line) => total + (line.amountCents as number), 0);
+}
+
+function attendeeName(attendee: { profileSnapshot: unknown; person: { firstName: string; lastName: string } }) {
+  const profile = record(attendee.profileSnapshot);
+  const first = typeof profile.firstName === "string" ? profile.firstName : attendee.person.firstName;
+  const last = typeof profile.lastName === "string" ? profile.lastName : attendee.person.lastName;
+  return `${first} ${last}`.trim();
 }
 
 function money(value: number) {
@@ -90,6 +125,17 @@ async function loadRegistration(tx: Client, eventId: string, registrationId: str
       submittedAt: true,
       createdAt: true,
       promoCodeRedemption: { select: { id: true } },
+      attendees: {
+        orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+        select: { id: true, profileSnapshot: true, person: { select: { firstName: true, lastName: true } } },
+      },
+      publicFormSubmission: { select: { pricingSnapshot: true } },
+      operations: {
+        where: { type: "AMENDMENT" },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { afterSnapshot: true },
+      },
       payments: {
         where: { status: "SUCCEEDED" },
         select: { amount: true, refunds: { where: { status: "SUCCEEDED" }, select: { amount: true } } },
@@ -156,22 +202,49 @@ export async function createRegistrationAdjustment(
     let kind: RegistrationAdjustmentKind = input.kind;
     let changeCents: number;
     let promo: { id: string; code: string } | null = null;
+    const attendeeIndex = input.attendeeId
+      ? registration.attendees.findIndex((attendee) => attendee.id === input.attendeeId)
+      : -1;
+    if (input.attendeeId && attendeeIndex < 0) {
+      throw new AdjustmentError("ATTENDEE_NOT_FOUND", "That person isn't on this registration.");
+    }
+    const attendee = attendeeIndex >= 0 ? registration.attendees[attendeeIndex]! : null;
 
     if (input.kind === "PROMO_CODE") {
-      const promoAdjustment = await tx.registrationAdjustment.findFirst({
+      // Per person only (#397): one code per person, and never on top of a
+      // whole-registration code.
+      const activePromos = await tx.registrationAdjustment.findMany({
         where: { registrationId, kind: "PROMO_CODE", reversedBy: null, reversesAdjustmentId: null },
-        select: { id: true },
+        select: { registrationAttendeeId: true },
       });
-      if (registration.promoCodeRedemption || promoAdjustment) {
+      const wholeRegistrationPromo = Boolean(registration.promoCodeRedemption)
+        || activePromos.some((existing) => !existing.registrationAttendeeId);
+      if (wholeRegistrationPromo || (!attendee && activePromos.length > 0)) {
         throw new AdjustmentError(
           "PROMO_ALREADY_APPLIED",
-          "This registration already has a promo code. Use a discount instead, or reverse the earlier code first.",
+          attendee
+            ? "This registration already has a code for everyone on it, so a per-person code would double up. Reverse that code first."
+            : "This registration already has a promo code. Use a discount instead, or reverse the earlier code first.",
         );
       }
-      // The code is judged against the price before any adjustments, on the
-      // date the person registered — so an early-bird code still counts for
-      // someone who registered in the early-bird window.
-      const pricedCents = registration.totalCents - await adjustmentTotalCents(tx, registrationId);
+      if (attendee && activePromos.some((existing) => existing.registrationAttendeeId === attendee.id)) {
+        throw new AdjustmentError(
+          "PROMO_ALREADY_APPLIED",
+          `${attendeeName(attendee)} already has a promo code. Reverse it first to use a different one.`,
+        );
+      }
+      // The code is judged against the price before any adjustments (or that
+      // person's share of it), on the date the person registered — so an
+      // early-bird code still counts for someone who registered in the
+      // early-bird window.
+      const personCents = attendee ? attendeePriceCents(registration, attendeeIndex) : null;
+      if (attendee && personCents === null) {
+        throw new AdjustmentError(
+          "ATTENDEE_PRICE_UNKNOWN",
+          `There's no per-person price on file for ${attendeeName(attendee)}. Apply the code to the whole registration, or use a discount for the amount.`,
+        );
+      }
+      const pricedCents = personCents ?? registration.totalCents - await adjustmentTotalCents(tx, registrationId);
       const pricingDate = (registration.submittedAt ?? registration.createdAt).toISOString().slice(0, 10);
       try {
         const claimed = await claimPromoCode(tx, {
@@ -206,6 +279,7 @@ export async function createRegistrationAdjustment(
         reason: input.reason,
         promoCodeId: promo?.id ?? null,
         promoCodeSnapshot: promo?.code ?? null,
+        registrationAttendeeId: attendee?.id ?? null,
         createdByUserId: actorUserId,
         createdByNameSnapshot: await actorName(tx, actorUserId),
       },
@@ -228,6 +302,7 @@ export async function createRegistrationAdjustment(
         totalBeforeCents: registration.totalCents,
         totalAfterCents: nextTotal,
         promoCode: promo?.code ?? null,
+        registrationAttendeeId: attendee?.id ?? null,
       },
     }, tx);
   });
@@ -246,7 +321,7 @@ export async function reverseRegistrationAdjustment(
     const registration = await loadRegistration(tx, eventId, registrationId);
     const original = await tx.registrationAdjustment.findFirst({
       where: { id: adjustmentId, registrationId, eventId },
-      select: { id: true, kind: true, amountCents: true, promoCodeId: true, promoCodeSnapshot: true, reversesAdjustmentId: true, reversedBy: { select: { id: true } } },
+      select: { id: true, kind: true, amountCents: true, promoCodeId: true, promoCodeSnapshot: true, registrationAttendeeId: true, reversesAdjustmentId: true, reversedBy: { select: { id: true } } },
     });
     if (!original || original.reversesAdjustmentId) {
       throw new AdjustmentError("ADJUSTMENT_NOT_FOUND", "That adjustment could not be found.");
@@ -265,6 +340,7 @@ export async function reverseRegistrationAdjustment(
         reason,
         promoCodeId: original.promoCodeId,
         promoCodeSnapshot: original.promoCodeSnapshot,
+        registrationAttendeeId: original.registrationAttendeeId,
         reversesAdjustmentId: original.id,
         createdByUserId: actorUserId,
         createdByNameSnapshot: await actorName(tx, actorUserId),
