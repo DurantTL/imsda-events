@@ -8,6 +8,7 @@ import {
   rosterGenderPrefill,
   rosterMemberIdFromClientId,
   rosterOwnedResponses,
+  rosterRolePrefill,
 } from "@/modules/club-registrations/domain";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 
@@ -55,4 +56,14 @@ describe("club form mapping", () => {
     expect(clubFormProblem(form([field("first_name"), field("last_name")], false))).toMatch(/list of attendees/);
     expect(clubFormProblem(form([field("first_name"), field("last_name"), field("birthday", "DATE", "ATTENDEE", [], "Birthday")]))).toMatch(/birth dates/);
   });
+
+  it("prefills the roster role so directors don't re-pick it for everyone", () => {
+    const roleForm = form([field("first_name"), field("last_name"), field("attendee_type", "RADIO", "ATTENDEE", ["Pathfinder", "TLT", "Staff", "Child"])]);
+    expect(rosterRolePrefill(roleForm, { ...person, role: " pathfinder ", attendeeType: "YOUTH" })).toEqual({ attendee_type: "Pathfinder" });
+    expect(rosterRolePrefill(roleForm, { ...person, role: "Counselor", attendeeType: "STAFF" })).toEqual({ attendee_type: "Staff" });
+    expect(rosterRolePrefill(roleForm, { ...person, role: "", attendeeType: "UNDERAGE" })).toEqual({ attendee_type: "Child" });
+    expect(rosterRolePrefill(roleForm, { ...person, role: "Explorer", attendeeType: "YOUTH" })).toEqual({});
+    expect(rosterRolePrefill(form([field("first_name"), field("last_name")]), { ...person, role: "Pathfinder" })).toEqual({});
+  });
 });
+

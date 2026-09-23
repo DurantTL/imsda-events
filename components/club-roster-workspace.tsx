@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Eye, Pencil, Plus, Power, Save, Trash2, UsersRound, X } from "lucide-react";
 import {
   clubRosterAttendeeTypeLabels,
@@ -33,6 +33,18 @@ export function ClubRosterWorkspace({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const base = `/api/attendee/clubs/${encodeURIComponent(organizationId)}/roster`;
+  const formRef = useRef<HTMLFormElement>(null);
+
+  function beginEdit(member: RosterMemberRecord) {
+    setEditing(member);
+    setNotice("");
+    setError("");
+    // The form sits below the list; on a phone it's off screen, so bring it to the person.
+    window.requestAnimationFrame(() => {
+      formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      formRef.current?.querySelector<HTMLInputElement>("input[name=firstName]")?.focus({ preventScroll: true });
+    });
+  }
 
   const active = members.filter((member) => member.status === "ACTIVE");
   const visible = showInactive ? members : active;
@@ -140,7 +152,7 @@ export function ClubRosterWorkspace({
           </p>
         ) : (
           <div className="report-table-wrap">
-            <table className="report-table">
+            <table className="report-table roster-card-table">
               <thead>
                 <tr>
                   <th>Name</th>
@@ -155,18 +167,18 @@ export function ClubRosterWorkspace({
               <tbody>
                 {visible.map((member) => (
                   <tr key={member.id}>
-                    <td translate="no"><strong>{member.lastName}, {member.firstName}</strong></td>
-                    <td>{clubRosterAttendeeTypeLabels[member.attendeeType]}</td>
-                    <td>{member.role || "—"}</td>
-                    <td translate="no">{member.age ?? "—"}</td>
-                    {birthDates && <td translate="no">{birthDates[member.id] ?? "—"}</td>}
-                    <td>
+                    <td className="roster-card-name" translate="no"><strong>{member.lastName}, {member.firstName}</strong></td>
+                    <td data-label="Type">{clubRosterAttendeeTypeLabels[member.attendeeType]}</td>
+                    <td data-label="Role">{member.role || "—"}</td>
+                    <td data-label="Age" translate="no">{member.age ?? "—"}</td>
+                    {birthDates && <td data-label="Birth date" translate="no">{birthDates[member.id] ?? "—"}</td>}
+                    <td data-label="Status">
                       <span className={`status-chip ${member.status === "ACTIVE" ? "green" : "gold"}`}>
                         {clubRosterStatusLabels[member.status]}
                       </span>
                     </td>
-                    <td className="honor-row-actions">
-                      <button aria-label={`Edit ${member.firstName} ${member.lastName}`} className="secondary-button" disabled={saving} onClick={() => { setEditing(member); setNotice(""); setError(""); }} type="button">
+                    <td className="honor-row-actions roster-card-actions">
+                      <button aria-label={`Edit ${member.firstName} ${member.lastName}`} className="secondary-button" disabled={saving} onClick={() => beginEdit(member)} type="button">
                         <Pencil aria-hidden="true" size={13} />
                       </button>
                       <button
@@ -190,7 +202,7 @@ export function ClubRosterWorkspace({
         )}
       </section>
 
-      <form className="public-manage-card form-stack" key={editing?.id ?? "new"} onSubmit={save}>
+      <form className="public-manage-card form-stack" key={editing?.id ?? "new"} onSubmit={save} ref={formRef}>
         <div className="public-manage-card-heading club-roster-heading">
           <div>
             <p className="public-registration-eyebrow">{editing ? "Edit" : "Add someone"}</p>

@@ -9,6 +9,7 @@ import {
   clubFormProblem,
   lockedAttendeeFieldKeys,
   rosterGenderPrefill,
+  rosterRolePrefill,
   rosterMemberIdFromClientId,
   rosterOwnedResponses,
   type RosterPerson,
@@ -201,7 +202,12 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
         attendeeType: member.attendeeType,
         role: member.role,
         ownedResponses: experience ? rosterOwnedResponses(experience.form.definition, person) : {},
-        prefillResponses: experience ? rosterGenderPrefill(experience.form.definition, person) : {},
+        prefillResponses: experience
+          ? {
+            ...rosterGenderPrefill(experience.form.definition, person),
+            ...rosterRolePrefill(experience.form.definition, { ...person, role: member.role, attendeeType: member.attendeeType }),
+          }
+          : {},
       };
     })
     .sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName));

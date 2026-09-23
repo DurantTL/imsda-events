@@ -70,6 +70,8 @@ export type RosterPerson = {
   lastName: string;
   ageOnEventDate: number | null;
   gender: "FEMALE" | "MALE" | null;
+  role?: string;
+  attendeeType?: "YOUTH" | "STAFF" | "ADULT" | "UNDERAGE";
 };
 
 /** The roster-owned answers for one attendee. Names and age always come from the roster. */
@@ -95,3 +97,40 @@ export function rosterGenderPrefill(definition: RegistrationFormDefinition, pers
   const option = field?.options.find((candidate) => candidate.toLowerCase() === wanted);
   return field && option ? { [field.key]: option } : {};
 }
+
+const TYPE_OPTION_NAMES: Record<string, string[]> = {
+  STAFF: ["staff"],
+  ADULT: ["adult", "staff"],
+  UNDERAGE: ["child", "underage"],
+};
+
+/**
+ * A starting answer for the form's roster-role question (e.g. Pathfinder,
+ * TLT, Staff, Child), so a director doesn't re-pick it for every person. The
+ * roster's own role wins when it matches an option; otherwise its type does.
+ * Only a prefill: the director can still change it.
+ */
+export function rosterRolePrefill(definition: RegistrationFormDefinition, person: RosterPerson) {
+  const field = attendeeFields(definition).find((candidate) => (
+    candidate.key === "attendee_type" && ["RADIO", "SELECT"].includes(candidate.type) && candidate.options.length > 0
+  ));
+  if (!field) return {};
+  const byName = new Map(field.options.map((option) => [option.trim().toLowerCase(), option]));
+  const role = person.role?.trim().toLowerCase();
+  const fromRole = role ? byName.get(role) : undefined;
+  const fromType = person.attendeeType
+    ? (TYPE_OPTION_NAMES[person.attendeeType] ?? []).map((name) => byName.get(name)).find(Boolean)
+    : undefined;
+  const option = fromRole ?? fromType;
+  return option ? { [field.key]: option } : {};
+}
+
+/** "2026-12-05" as "December 5, 2026", without letting a time zone move the day. */
+export function formatCalendarDate(calendarDate: string) {
+  const [year, month, day] = calendarDate.split("-").map(Number);
+  if (!year || !month || !day) return calendarDate;
+  return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString("en-US", {
+    timeZone: "UTC", month: "long", day: "numeric", year: "numeric",
+  });
+}
+

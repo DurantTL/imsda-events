@@ -188,7 +188,6 @@ export default async function AttendeeAccountPage() {
 
       <div className="public-manage-layout">
         <div className="public-manage-main">
-          {via === "attendee" && <AttendeeProfileForm initialProfile={profile} />}
           {directedClubs.length > 0 && (
             <section className="public-manage-card" aria-labelledby="my-clubs-heading">
               <div className="public-manage-card-heading">
@@ -208,7 +207,7 @@ export default async function AttendeeAccountPage() {
                         )}
                       </small>
                     </span>
-                    <Link className="text-button" href={`/account/clubs/${club.organizationId}`}>
+                    <Link className="primary-button club-event-action" href={`/account/clubs/${club.organizationId}`}>
                       Open roster <ArrowRight size={14} aria-hidden="true" />
                     </Link>
                   </li>
@@ -219,6 +218,7 @@ export default async function AttendeeAccountPage() {
               </p>
             </section>
           )}
+          {via === "attendee" && <AttendeeProfileForm initialProfile={profile} />}
           {registrations.length > 0
             ? registrations.map((registration) => (
               <RegistrationCard

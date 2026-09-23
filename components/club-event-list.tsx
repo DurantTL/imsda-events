@@ -43,7 +43,7 @@ export function ClubEventList({ events, organizationId }: { events: ClubEventSum
                   <span className={`status-chip ${status.tone}`}>{status.label}</span>
                 </span>
                 {(event.registration || (event.available && event.phase === "OPEN")) && (
-                  <Link className="text-button" href={`/account/clubs/${organizationId}/events/${event.id}`}>
+                  <Link className={event.registration ? "secondary-button club-event-action" : "primary-button club-event-action"} href={`/account/clubs/${organizationId}/events/${event.id}`}>
                     {event.registration ? "View" : event.draft ? "Continue" : "Register"} <ArrowRight size={14} aria-hidden="true" />
                   </Link>
                 )}
