@@ -19,7 +19,8 @@ export class AttendeeMfaError extends Error {
     public readonly code:
       | "MFA_NOT_ENROLLED"
       | "MFA_ALREADY_ACTIVE"
-      | "MFA_CODE_INVALID",
+      | "MFA_CODE_INVALID"
+      | "MFA_REMOVAL_NOT_ALLOWED",
     message: string,
   ) {
     super(message);
@@ -217,16 +218,16 @@ export async function verifyAttendeeSecondFactor(
   }
 }
 
-export async function disableAttendeeMfa(accountId: string, code: string, now = new Date()) {
-  const enrollment = await getPrisma().attendeeMfaEnrollment.findUnique({
-    where: { accountId },
-    select: { id: true, status: true, sealedSecret: true, lastUsedStep: true },
-  });
-  if (enrollment?.status !== "ACTIVE") {
-    throw new AttendeeMfaError("MFA_NOT_ENROLLED", "This account has no authenticator.");
-  }
-  if (!await consumeSecondFactor(enrollment, code, now)) {
-    throw new AttendeeMfaError("MFA_CODE_INVALID", "That code is not right.");
-  }
-  await getPrisma().attendeeMfaEnrollment.delete({ where: { id: enrollment.id } });
+/**
+ * Nobody can turn off their own second step (decision 2026-09-23). A lost
+ * device is reset by a system administrator instead.
+ */
+export async function disableAttendeeMfa(accountId: string, code: string, now = new Date()): Promise<never> {
+  void accountId;
+  void code;
+  void now;
+  throw new AttendeeMfaError(
+    "MFA_REMOVAL_NOT_ALLOWED",
+    "Two-step sign-in can't be turned off. If you lose your device, ask the conference office to reset it.",
+  );
 }

@@ -3042,20 +3042,26 @@ model AttendeePasskey {
 enum PasskeyChallengePurpose {
   REGISTER
   VERIFY
+  SIGN_IN
 }
 
 /// A one-time WebAuthn challenge, tied to the attendee session that asked for
 /// it and consumed on first use so a response can't be replayed.
+/// A single-use passkey prompt. REGISTER and VERIFY belong to a signed-in
+/// session; SIGN_IN (#374) has none yet: it is tied to the browser by a
+/// short-lived cookie holding its id, and the account is found only from the
+/// verified credential.
 model AttendeePasskeyChallenge {
   id        String                  @id @default(cuid())
-  sessionId String
+  sessionId String?
   purpose   PasskeyChallengePurpose
   challenge String                  @unique
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime                @default(now())
 
-  session AttendeeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  session AttendeeSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([sessionId, purpose])
+  @@index([purpose, expiresAt])
 }

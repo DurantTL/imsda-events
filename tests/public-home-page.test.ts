@@ -44,12 +44,12 @@ beforeEach(() => {
 });
 
 describe("public front page (#373)", () => {
-  it("is public: account, club, and calendar first, staff sign-in as a small link", async () => {
+  it("is public: account, club, and calendar, with no link to staff sign-in", async () => {
     const html = await render();
     expect(html).toContain('href="/account"');
     expect(html).toContain('href="/account/clubs"');
     expect(html).toContain('href="/calendar"');
-    expect(html).toContain('href="/login"');
+    expect(html).not.toContain('href="/login"');
     expect(html).not.toContain('href="/overview"');
     expect(html).toContain("Nothing is on the calendar yet");
   });
@@ -67,7 +67,7 @@ describe("public front page (#373)", () => {
     mocks.getCurrentSession.mockResolvedValue({ user: { id: "user-1" } });
     const html = await render();
     expect(html).toContain('href="/overview"');
-    expect(html).not.toContain("Staff sign in");
+    expect(html).not.toContain('href="/login"');
   });
 
   it("greets a signed-in attendee", async () => {

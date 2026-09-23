@@ -3,6 +3,7 @@ import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { markRosterUnlocked } from "@/modules/club-rosters/access";
 import {
   AttendeeMfaError,
   beginAttendeeMfaEnrollment,
@@ -44,6 +45,12 @@ async function accountId() {
   return (await getCurrentAttendee()).account?.id ?? null;
 }
 
+/** Setting up an authenticator proves a code, so this sign-in has passed its second step. */
+async function markThisSessionVerified() {
+  const { via, sessionId } = await getCurrentAttendee();
+  if (via === "attendee" && sessionId) await markRosterUnlocked(sessionId);
+}
+
 async function getHandler() {
   const id = await accountId();
   return id
@@ -65,6 +72,7 @@ async function postHandler(request: Request) {
     }
     if (input.action === "confirm") {
       const confirmed = await confirmAttendeeMfaEnrollment(id, input.code);
+      await markThisSessionVerified();
       return Response.json({ ...confirmed, status: await getAttendeeMfaStatus(id) });
     }
     if (input.action === "regenerate-recovery-codes") {

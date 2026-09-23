@@ -180,6 +180,9 @@ describe("using and removing passkeys", () => {
     await addPasskey();
     await expect(removePasskey(account, "session-1", "pk-1", now)).rejects.toMatchObject({ code: "RECENT_VERIFICATION_REQUIRED" });
     state.session = { secondFactorVerifiedAt: now };
+    // With no authenticator app, the only passkey is the only second step and stays.
+    await expect(removePasskey(account, "session-1", "pk-1", now)).rejects.toMatchObject({ code: "LAST_SECOND_STEP" });
+    state.enrollment = { status: "ACTIVE" };
     await expect(removePasskey(account, "session-1", "pk-1", now)).resolves.toEqual([]);
     await expect(removePasskey(account, "session-1", "pk-1", now)).rejects.toMatchObject({ code: "PASSKEY_NOT_FOUND" });
     await expect(beginPasskeyVerification(account, "session-1", origin, now)).rejects.toMatchObject({ code: "NO_PASSKEYS" });

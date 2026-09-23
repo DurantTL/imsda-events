@@ -6,16 +6,21 @@ import { AttendeeSignOutButton } from "@/components/attendee-sign-out-button";
 import { BrandMark } from "@/components/brand-mark";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { accountNeedsSecondStep } from "@/modules/attendee-accounts/sign-in-gate";
 import { listDirectedClubs } from "@/modules/organizations/director-access";
 
 /**
  * The signed-in attendee area: one header and one row of tabs, with each
  * job (registrations, clubs, profile, sign-in security) on its own page.
- * Every page still checks the session itself; this layout is only chrome.
+ * Every page still checks the session itself; this layout is only chrome,
+ * except that it sends club roles to /account/two-step until this session has
+ * passed a second step.
  */
 export default async function AccountPortalLayout({ children }: { children: React.ReactNode }) {
-  const [{ account }, staffSession] = await Promise.all([getCurrentAttendee(), getCurrentSession()]);
+  const [{ account, via, sessionId }, staffSession] = await Promise.all([getCurrentAttendee(), getCurrentSession()]);
   if (!account) redirect("/account/sign-in");
+  // Club roles pass a second step before any account page (staff viewing an account use their own).
+  if (via === "attendee" && (await accountNeedsSecondStep(account.id, sessionId)) !== "OK") redirect("/account/two-step");
   const clubs = await listDirectedClubs(account.id);
 
   const items: AccountNavItem[] = [

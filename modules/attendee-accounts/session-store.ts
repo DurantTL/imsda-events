@@ -49,7 +49,15 @@ export const ATTENDEE_SESSION_IDLE_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
 /** As for staff: `lastSeenAt` resolution only has to be far finer than the idle window. */
 export const ATTENDEE_SESSION_TOUCH_INTERVAL_SECONDS = 5 * 60;
 
-export async function createAttendeeSession(accountId: string, userAgent: string | null) {
+/**
+ * `secondFactorVerifiedAt` is set only by a sign-in that already proved the
+ * second step itself: a passkey with user verification (#374).
+ */
+export async function createAttendeeSession(
+  accountId: string,
+  userAgent: string | null,
+  options: { secondFactorVerifiedAt?: Date } = {},
+) {
   const token = createOpaqueToken();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + ATTENDEE_SESSION_LIFETIME_SECONDS * 1000);
@@ -60,6 +68,7 @@ export async function createAttendeeSession(accountId: string, userAgent: string
       expiresAt,
       lastSeenAt: now,
       userAgentHash: hashUserAgent(userAgent),
+      ...(options.secondFactorVerifiedAt ? { secondFactorVerifiedAt: options.secondFactorVerifiedAt } : {}),
     },
   });
   return { token, expiresAt };

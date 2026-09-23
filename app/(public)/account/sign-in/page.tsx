@@ -7,7 +7,9 @@ import {
   attendeeSignInErrorMessage,
 } from "@/components/attendee-google-button";
 import { isGoogleSignInConfigured } from "@/integrations/oauth/google";
+import { PasskeySignInButton } from "@/components/passkey-sign-in-button";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { passkeysConfigured } from "@/modules/attendee-accounts/passkeys";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +29,8 @@ export default async function AttendeeSignInPage({
   const { error } = await searchParams;
   const errorMessage = attendeeSignInErrorMessage(error);
   const googleAvailable = isGoogleSignInConfigured();
+  // Hidden until the passkey domain is set in Platform settings.
+  const passkeysAvailable = await passkeysConfigured();
 
   return (
     <main className="auth-page">
@@ -41,9 +45,10 @@ export default async function AttendeeSignInPage({
           <p>Sign in to see every registration made with your email address.</p>
         </div>
         {errorMessage && <p className="form-error" role="alert">{errorMessage}</p>}
-        {googleAvailable && (
+        {(googleAvailable || passkeysAvailable) && (
           <>
-            <AttendeeGoogleButton label="Sign in with Google" />
+            {passkeysAvailable && <PasskeySignInButton />}
+            {googleAvailable && <AttendeeGoogleButton label="Sign in with Google" />}
             <p className="auth-divider"><span>or</span></p>
           </>
         )}

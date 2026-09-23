@@ -81,16 +81,6 @@ export function MfaManager({
     }
   }
 
-  async function disable(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const result = await call({ action: "disable", code: form.get("code") });
-    if (result) {
-      setStatus(result.status);
-      setRecoveryCodes(null);
-    }
-  }
-
   return (
     <section className="panel">
       <div className="section-heading">
@@ -169,14 +159,9 @@ export function MfaManager({
           <button className="secondary-button" type="button" disabled={busy} onClick={regenerate}>
             <KeyRound size={16} /> Issue new recovery codes
           </button>
-          {!status.required && (
-            <form className="form-stack" onSubmit={disable}>
-              <OneTimeCodeInput label="Remove the authenticator — enter a current code to confirm" />
-              <div className="form-actions">
-                <button className="secondary-button" type="submit" disabled={busy}>Turn off two-factor</button>
-              </div>
-            </form>
-          )}
+          <p className="field-help">
+            Two-step sign-in stays on. If you lose your device, use a recovery code, or ask a system administrator to reset it.
+          </p>
         </>
       )}
     </section>

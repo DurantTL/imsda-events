@@ -318,22 +318,12 @@ describe("removing a second factor", () => {
       .rejects.toBeInstanceOf(MfaError);
   });
 
-  it("removes it for an account that is not obliged to have one", async () => {
+  it("is refused for everyone, even with a right code (decision 2026-09-23)", async () => {
     const { state } = prismaFixture({ user: { memberships: [{ role: "CHECK_IN_STAFF" }] } });
 
-    await disableMfa("user-1", totpCode(SECRET, now), { now });
-
-    expect(state.deletedEnrollments).toEqual(["enrol-1"]);
-    expect(dependencies.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({
-      action: "MFA_DISABLED",
-    }));
-  });
-
-  it("will not remove it on a wrong code", async () => {
-    const { state } = prismaFixture({ user: { memberships: [{ role: "CHECK_IN_STAFF" }] } });
-
-    await expect(disableMfa("user-1", "000000", { now }))
-      .rejects.toMatchObject({ code: "MFA_CODE_INVALID" });
+    await expect(disableMfa("user-1", totpCode(SECRET, now), { now }))
+      .rejects.toMatchObject({ code: "MFA_REQUIRED_BY_ROLE" });
     expect(state.deletedEnrollments).toEqual([]);
+    expect(dependencies.writeAuditLog).not.toHaveBeenCalledWith(expect.objectContaining({ action: "MFA_DISABLED" }));
   });
 });

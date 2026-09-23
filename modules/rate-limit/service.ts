@@ -390,6 +390,22 @@ export async function checkAttendeeOAuthCallbackRateLimit(request: Request) {
   }], configuration);
 }
 
+/**
+ * Passkey sign-in (#374) names no account until the credential is checked,
+ * so it is limited per client: loosely for asking for a prompt, and as
+ * tightly as password sign-in for answering one.
+ */
+export async function checkAttendeePasskeySignInRateLimit(request: Request, stage: "options" | "verify") {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  return evaluate([{
+    policy: stage === "options" ? "attendee.passkey-sign-in.options.client" : "attendee.passkey-sign-in.verify.client",
+    limit: stage === "options" ? 30 : 20,
+    windowSeconds: fifteenMinutes,
+    identifierHashes: [client],
+  }], configuration);
+}
+
 export async function checkAttendeeSignInRateLimit(
   request: Request,
   email: string,

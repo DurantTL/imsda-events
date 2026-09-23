@@ -12,6 +12,7 @@ const statusFor: Record<PasskeyError["code"], number> = {
   CHALLENGE_EXPIRED: 400,
   PASSKEY_NOT_VERIFIED: 400,
   PASSKEY_NOT_FOUND: 404,
+  LAST_SECOND_STEP: 409,
 };
 
 export class PasskeySessionError extends Error {}
