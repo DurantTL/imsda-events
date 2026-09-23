@@ -392,6 +392,31 @@ enum MessageProviderDeliveryStatus {
 
 /// Whether an Honors Weekend offering fills one named session or every session
 /// of its event (the 2026 "2-session honor").
+enum ClubRosterAttendeeType {
+  YOUTH
+  STAFF
+  ADULT
+  UNDERAGE
+}
+
+enum ClubRosterGender {
+  FEMALE
+  MALE
+}
+
+/// REMOVED means the club took the person off: birth date and personal
+/// fields are erased and the row stays only as history.
+enum ClubRosterStatus {
+  ACTIVE
+  INACTIVE
+  REMOVED
+}
+
+enum ClubRosterSource {
+  DIRECTOR
+  REGISTRATION
+}
+
 enum HonorOfferingSpan {
   SINGLE_SESSION
   ALL_SESSIONS
@@ -624,6 +649,7 @@ model AttendeeAccount {
   actorOnAttendeeAccountPersonLinks AttendeeAccountPersonLink[] @relation("AttendeeAccountPersonLinkActorAccount")
   /// Clubs this account directs. Explicit staff grants only — never inferred.
   clubDirectorGrants                ClubDirectorGrant[]
+  createdClubRosterMembers          ClubRosterMember[]          @relation("ClubRosterMemberCreatedBy")
 
   @@index([status])
 }
@@ -680,6 +706,9 @@ model AttendeeSession {
   lastSeenAt    DateTime  @default(now())
   revokedAt     DateTime?
   userAgentHash String?
+  /// When this session last passed the authenticator check that opens club
+  /// rosters (ADR 0005 Addendum A). Sign-in alone never sets it.
+  secondFactorVerifiedAt DateTime?
   createdAt     DateTime  @default(now())
 
   account AttendeeAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
@@ -1230,6 +1259,7 @@ model Person {
   userLinks            UserPersonLink[]
   matchCandidatesAsA   PersonMatchCandidate[] @relation("PersonMatchCandidateAsA")
   matchCandidatesAsB   PersonMatchCandidate[] @relation("PersonMatchCandidateAsB")
+  clubRosterMemberships ClubRosterMember[]
 
   @@index([lastName, firstName])
 }
@@ -1421,6 +1451,7 @@ model Organization {
   childOrganizations Organization[]     @relation("OrganizationHierarchy")
   externalIdentities ExternalIdentity[]
   directorGrants     ClubDirectorGrant[]
+  rosterMembers      ClubRosterMember[]
 
   @@index([type, isActive, name])
   @@index([parentOrganizationId, isActive])
@@ -2699,3 +2730,33 @@ model HonorOffering {
   @@index([eventId, isActive])
   @@index([honorId])
 }
+
+/// One person on one club's roster for one club year (#356). Birth dates are
+/// sealed with `lib/secret-box.ts` (purpose `club-roster:birth-date`) and never
+/// stored in plain text (ADR 0005 Addendum A).
+model ClubRosterMember {
+  id                   String                 @id @default(cuid())
+  organizationId       String
+  clubYear             String
+  personId             String?
+  attendeeType         ClubRosterAttendeeType
+  role                 String                 @default("")
+  gender               ClubRosterGender?
+  sealedBirthDate      String?
+  status               ClubRosterStatus       @default(ACTIVE)
+  source               ClubRosterSource
+  sourceRegistrationId String?
+  createdByAccountId   String?
+  removedAt            DateTime?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  person       Person?          @relation(fields: [personId], references: [id], onDelete: SetNull)
+  createdBy    AttendeeAccount? @relation("ClubRosterMemberCreatedBy", fields: [createdByAccountId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, clubYear, personId])
+  @@index([organizationId, clubYear, status])
+  @@index([personId])
+}
+

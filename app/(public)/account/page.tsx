@@ -208,11 +208,14 @@ export default async function AttendeeAccountPage() {
                         )}
                       </small>
                     </span>
+                    <Link className="text-button" href={`/account/clubs/${club.organizationId}`}>
+                      Open roster <ArrowRight size={14} aria-hidden="true" />
+                    </Link>
                   </li>
                 ))}
               </ul>
               <p className="public-manage-empty">
-                Club rosters and event registration for your club will appear here.
+                Keep your club roster here. Club event registration will use it, so you won&apos;t retype anyone.
               </p>
             </section>
           )}
