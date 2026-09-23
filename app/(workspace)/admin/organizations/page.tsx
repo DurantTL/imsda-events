@@ -20,6 +20,7 @@ export default async function OrganizationsPage() {
         </Link>
         <Link className="secondary-button" href="/admin/clubs/import">Import clubs</Link>
         <Link className="secondary-button" href="/admin/clubs/invites">Club invites</Link>
+        <Link className="secondary-button" href="/admin/clubs/reports">Monthly reports</Link>
       </div>
       <OrganizationDirectoryWorkspace
         initialOrganizations={await listOrganizations()}

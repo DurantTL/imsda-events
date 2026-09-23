@@ -6,6 +6,9 @@ import { clubYearFor } from "@/modules/club-rosters/domain";
 import { listRoster } from "@/modules/club-rosters/repository";
 import { formatCalendarDate } from "@/modules/club-registrations/domain";
 import { listClubEvents } from "@/modules/club-registrations/repository";
+import { calendarDateIn } from "@/modules/calendar/domain";
+import { formatDueDate, isLockedForClub, reportDueDate, reportMonthLabel, reportableMonths } from "@/modules/club-reports/domain";
+import { getClubReportYear } from "@/modules/club-reports/repository";
 import { clubDirectorRoleLabels, clubRoleDescriptions } from "@/modules/organizations/director-grants-domain";
 
 export const metadata: Metadata = { title: "Club home" };
@@ -16,7 +19,7 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
   const { organizationId } = await params;
   const access = await getRosterAccessState(organizationId);
   if (access.state === "NO_ROSTER") {
-    // A reporter (#375): no roster, no registrations. Monthly reports arrive with C5.
+    // A reporter (#375): no roster, no registrations, just monthly reports (#377).
     return (
       <section className="public-manage-card" aria-labelledby="club-role-heading">
         <div className="public-manage-card-heading">
@@ -24,18 +27,23 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
           <h2 id="club-role-heading">Monthly reports</h2>
         </div>
         <p className="public-manage-empty">
-          <FileText size={17} aria-hidden="true" /> {clubRoleDescriptions[access.club.role]} Monthly report forms will
-          appear here once the conference opens them.
+          <FileText size={17} aria-hidden="true" /> {clubRoleDescriptions[access.club.role]}
         </p>
+        <Link className="primary-button club-event-action" href={`/account/clubs/${organizationId}/reports`}>
+          Open monthly reports <ArrowRight size={14} aria-hidden="true" />
+        </Link>
       </section>
     );
   }
   if (access.state !== "OPEN") return null;
 
   const base = `/account/clubs/${organizationId}`;
-  const [members, events] = await Promise.all([
-    listRoster(organizationId, clubYearFor(new Date())),
+  const now = new Date();
+  const clubYear = clubYearFor(now);
+  const [members, events, reportYear] = await Promise.all([
+    listRoster(organizationId, clubYear),
     listClubEvents(organizationId),
+    access.capabilities.submitReports ? getClubReportYear(organizationId, clubYear) : Promise.resolve(null),
   ]);
   const active = members.filter((member) => member.status === "ACTIVE");
   const youth = active.filter((member) => member.attendeeType !== "STAFF" && member.attendeeType !== "ADULT");
@@ -45,6 +53,19 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
   const steps: Array<{ key: string; text: string; href: string; action: string }> = [];
   if (active.length === 0) {
     steps.push({ key: "roster", text: "Add your club members to this year's roster.", href: `${base}/roster`, action: "Add people" });
+  }
+  if (reportYear) {
+    // Last month's report, while it can still be submitted on time.
+    const submitted = new Set(reportYear.reports.map((report) => report.reportMonth));
+    for (const month of reportableMonths(clubYear, now)) {
+      if (submitted.has(month) || isLockedForClub(month, now) || reportDueDate(month).slice(0, 7) !== calendarDateIn(now).slice(0, 7)) continue;
+      steps.push({
+        key: `report-${month}`,
+        text: `Submit the ${reportMonthLabel(month)} monthly report by ${formatDueDate(reportDueDate(month))}.`,
+        href: `${base}/reports/${month}`,
+        action: "Submit",
+      });
+    }
   }
   for (const event of open) {
     steps.push({
