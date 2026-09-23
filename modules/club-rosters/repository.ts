@@ -289,18 +289,25 @@ export async function removeRosterMember(organizationId: string, memberId: strin
 }
 
 /** Full birth dates for the roster, for an authorized director. Audited without the dates. */
-export async function revealRosterBirthDates(organizationId: string, clubYear: string, actor: Actor) {
+/** Staff reveal from the "Open club" view (#386) is audited as the staff user. */
+export async function revealRosterBirthDates(organizationId: string, clubYear: string, actor: Actor | { userId: string }) {
   const members = await getPrisma().clubRosterMember.findMany({
     where: { organizationId, clubYear, status: { not: "REMOVED" }, sealedBirthDate: { not: null } },
     select: { id: true, sealedBirthDate: true },
   });
   const birthDates = Object.fromEntries(members.map((member) => [member.id, openBirthDate(member.sealedBirthDate!)]));
   await writeAuditLog({
+    ...("userId" in actor ? { actorUserId: actor.userId } : {}),
     action: "CLUB_ROSTER_BIRTH_DATES_REVEALED",
     entityType: "Organization",
     entityId: organizationId,
     summary: "Showed full birth dates on a club roster.",
-    metadata: { organizationId, clubYear, count: members.length, actorAttendeeAccountId: actor.accountId },
+    metadata: {
+      organizationId,
+      clubYear,
+      count: members.length,
+      ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { viewedAsStaff: true }),
+    },
   });
   return birthDates;
 }

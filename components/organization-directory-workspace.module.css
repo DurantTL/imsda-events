@@ -12,6 +12,11 @@
   border-radius: 16px;
   background: #fbfcfd;
   padding: 15px;
+  min-width: 0;
+}
+
+.actions > * {
+  white-space: nowrap;
 }
 
 .organizationCard.inactive {
@@ -128,10 +133,20 @@
 
 .actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 7px;
   border-top: 1px solid var(--line);
   padding-top: 11px;
+}
+
+.deleteList {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.72rem;
+  line-height: 1.5;
 }
 
 .formHelp {
