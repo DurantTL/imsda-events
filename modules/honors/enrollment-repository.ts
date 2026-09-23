@@ -113,10 +113,13 @@ async function loadOfferings(client: Prisma.TransactionClient, eventId: string) 
   }));
 }
 
+/** Seats held by active registrations; a cancelled club registration gives its seats back. */
+export const seatHoldingEnrollment = { consumesSeat: true, registration: { status: { in: ["SUBMITTED", "CONFIRMED"] } } } satisfies Prisma.HonorEnrollmentWhereInput;
+
 async function seatCounts(client: Prisma.TransactionClient, eventId: string, organizationId: string) {
   const [all, club] = await Promise.all([
-    client.honorEnrollment.groupBy({ by: ["offeringId"], where: { eventId, consumesSeat: true }, _count: { _all: true } }),
-    client.honorEnrollment.groupBy({ by: ["offeringId"], where: { eventId, organizationId, consumesSeat: true }, _count: { _all: true } }),
+    client.honorEnrollment.groupBy({ by: ["offeringId"], where: { eventId, ...seatHoldingEnrollment }, _count: { _all: true } }),
+    client.honorEnrollment.groupBy({ by: ["offeringId"], where: { eventId, organizationId, ...seatHoldingEnrollment }, _count: { _all: true } }),
   ]);
   return {
     taken: new Map(all.map((row) => [row.offeringId, row._count._all])),

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import {
+  Award,
   BedDouble,
   Baby,
   CalendarCheck2,
@@ -195,6 +196,7 @@ export default async function OperationalReportsPage({
         <div className="intro-actions report-actions">
           <Link className="secondary-button" href={`/more${peopleQuery}`}>Back to More</Link>
           <Link className="secondary-button" href={`/more/reports/packets${peopleQuery}`}><PackageOpen aria-hidden="true" size={15} /> Group packets</Link>
+          <Link className="secondary-button" href={`/more/honors/rosters${peopleQuery}`}><Award aria-hidden="true" size={15} /> Honors rosters</Link>
           <PrintReportButton />
         </div>
       </div>
