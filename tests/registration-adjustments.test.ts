@@ -104,7 +104,7 @@ describe("registration adjustments (#396)", () => {
   });
 
   it("explains an invalid code, and allows only one code per registration", async () => {
-    mocks.claimPromoCode.mockRejectedValue(new PublicPromoCodeError("That promo code ended on 2026-05-01."));
+    mocks.claimPromoCode.mockRejectedValue(new PublicPromoCodeError("ENDED", "That promo code ended on 2026-05-01."));
     await expect(createRegistrationAdjustment("event-1", "reg-1", "user-1", { kind: "PROMO_CODE", code: "OLD", reason: "Try it" }))
       .rejects.toMatchObject({ code: "PROMO_INVALID", message: "That promo code ended on 2026-05-01." });
 
