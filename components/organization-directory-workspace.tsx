@@ -2,13 +2,13 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { BadgeCheck, Building2, Church, IdCard, Link2, Pencil, Plus, Save, ShieldCheck, UserCog, UsersRound, X } from "lucide-react";
+import { BadgeCheck, Building2, Church, Eye, IdCard, Link2, Pencil, Plus, Save, ShieldCheck, Trash2, UserCog, UsersRound, X } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import {
   externalSystemLabels,
   organizationTypeLabels,
 } from "@/modules/organizations/domain";
-import type { OrganizationRecord } from "@/modules/organizations/repository";
+import type { OrganizationDeletionCheck, OrganizationRecord } from "@/modules/organizations/repository";
 import styles from "./organization-directory-workspace.module.css";
 
 type OrganizationEditor =
@@ -19,6 +19,7 @@ type OrganizationEditor =
       organization: OrganizationRecord;
       identity?: OrganizationRecord["externalIdentities"][number];
     }
+  | { kind: "delete"; organization: OrganizationRecord; check: OrganizationDeletionCheck | null }
   | null;
 
 type OrganizationResponse = {
@@ -98,6 +99,47 @@ export function OrganizationDirectoryWorkspace({
     setEditor({ kind: "identity", organization, identity });
   }
 
+  /** Deleting asks the server what would go with it first (#386). */
+  async function beginDelete(organization: OrganizationRecord) {
+    setError("");
+    setNotice("");
+    setEditor({ kind: "delete", organization, check: null });
+    try {
+      const response = await fetch(`/api/admin/organizations/${organization.id}/deletion`);
+      const result = await response.json().catch(() => ({})) as { check?: OrganizationDeletionCheck; message?: string };
+      if (!response.ok || !result.check) throw new Error(result.message ?? "That church or club could not be checked.");
+      const check = result.check;
+      setEditor((current) => current?.kind === "delete" && current.organization.id === organization.id
+        ? { ...current, check }
+        : current);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "That church or club could not be checked.");
+    }
+  }
+
+  async function confirmDelete(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (editor?.kind !== "delete") return;
+    const form = new FormData(event.currentTarget);
+    const name = editor.organization.name;
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/admin/organizations/${editor.organization.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmName: String(form.get("confirmName") ?? "") }),
+      });
+      await readResponse(response);
+      setEditor(null);
+      setNotice(`Deleted ${name}.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "That church or club could not be deleted.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function readResponse(response: Response) {
     const result = await response.json().catch(() => ({})) as OrganizationResponse;
     if (!response.ok || !result.organizations) {
@@ -112,7 +154,7 @@ export function OrganizationDirectoryWorkspace({
 
   async function saveOrganization(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!editor || editor.kind === "identity") return;
+    if (!editor || editor.kind === "identity" || editor.kind === "delete") return;
     setSaving(true);
     setError("");
     const form = new FormData(event.currentTarget);
@@ -325,6 +367,13 @@ export function OrganizationDirectoryWorkspace({
                   {organization.type === "CLUB" && (
                     <>
                       <Link
+                        aria-label={`Open ${organization.name} as a view-only club`}
+                        className="secondary-button"
+                        href={`/admin/organizations/${organization.id}/club`}
+                      >
+                        <Eye aria-hidden="true" size={14} /> Open club
+                      </Link>
+                      <Link
                         aria-label={`Club admins for ${organization.name}`}
                         className="secondary-button"
                         href={`/admin/organizations/${organization.id}/directors`}
@@ -340,6 +389,14 @@ export function OrganizationDirectoryWorkspace({
                       </Link>
                     </>
                   )}
+                  <button
+                    aria-label={`Delete ${organization.name}`}
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => beginDelete(organization)}
+                  >
+                    <Trash2 aria-hidden="true" size={14} /> Delete
+                  </button>
                 </div>
               </article>
             ))}
@@ -362,13 +419,17 @@ export function OrganizationDirectoryWorkspace({
             <div className="modal-head">
               <div>
                 <p className="eyebrow">
-                  {editor.kind === "identity" ? "Provider identity" : "Shared organization"}
+                  {editor.kind === "identity"
+                    ? "Provider identity"
+                    : editor.kind === "delete" ? "Delete for good" : "Shared organization"}
                 </p>
                 <h2 id="organization-editor-title">
                   {editor.kind === "create"
                     ? "Add church or club"
                     : editor.kind === "edit"
                       ? `Edit ${editor.organization.name}`
+                      : editor.kind === "delete"
+                        ? `Delete ${editor.organization.name}`
                       : editor.identity
                         ? `Correct ${externalSystemLabels[editor.identity.provider]}`
                         : `Link ${editor.organization.name}`}
@@ -385,7 +446,54 @@ export function OrganizationDirectoryWorkspace({
               </button>
             </div>
 
-            {editor.kind === "identity" ? (
+            {editor.kind === "delete" ? (
+              <form className="form-stack" onSubmit={confirmDelete}>
+                {!editor.check ? (
+                  error ? null : <p className="quiet-copy">Checking what this would remove…</p>
+                ) : editor.check.blockers.length > 0 ? (
+                  <>
+                    <p className="quiet-copy">This can&apos;t be deleted yet:</p>
+                    <ul className={styles.deleteList}>
+                      {editor.check.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}
+                    </ul>
+                  </>
+                ) : (
+                  <>
+                    <p className="quiet-copy">
+                      This can&apos;t be undone. Deleting removes the {editor.check.type === "CLUB" ? "club" : "church"} and
+                      everything that belongs only to it:
+                    </p>
+                    <ul className={styles.deleteList}>
+                      {editor.check.type === "CLUB" && (
+                        <>
+                          <li>{editor.check.removes.rosterMembers} roster {editor.check.removes.rosterMembers === 1 ? "entry" : "entries"}, with their birth dates</li>
+                          <li>{editor.check.removes.clubRoles} club admin {editor.check.removes.clubRoles === 1 ? "role" : "roles"} and {editor.check.removes.invites} {editor.check.removes.invites === 1 ? "invite" : "invites"}</li>
+                          <li>{editor.check.removes.monthlyReports} monthly {editor.check.removes.monthlyReports === 1 ? "report" : "reports"} and the club profile</li>
+                        </>
+                      )}
+                      <li>{editor.check.removes.providerIdentifiers} provider {editor.check.removes.providerIdentifiers === 1 ? "identifier" : "identifiers"}</li>
+                    </ul>
+                    <p className="quiet-copy">People&apos;s own accounts are not deleted. To keep the history, deactivate it instead.</p>
+                    <label>
+                      <span>Type <strong translate="no">{editor.check.name}</strong> to confirm</span>
+                      <input autoComplete="off" name="confirmName" required maxLength={200} />
+                    </label>
+                  </>
+                )}
+                {error && <p className="form-error" role="alert">{error}</p>}
+                <div className="form-actions">
+                  <button className="secondary-button" disabled={saving} onClick={closeEditor} type="button">
+                    {editor.check?.blockers.length ? "Close" : "Cancel"}
+                  </button>
+                  {editor.check && editor.check.blockers.length === 0 && (
+                    <button className="primary-button lifecycle-danger-button" disabled={saving} type="submit">
+                      <Trash2 aria-hidden="true" size={15} />
+                      {saving ? "Deleting…" : "Delete for good"}
+                    </button>
+                  )}
+                </div>
+              </form>
+            ) : editor.kind === "identity" ? (
               <form className="form-stack" onSubmit={saveIdentity}>
                 <label>
                   Provider

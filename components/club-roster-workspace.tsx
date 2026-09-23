@@ -26,12 +26,18 @@ export function ClubRosterWorkspace({
   clubYear,
   initialMembers,
   organizationId,
+  readOnly = false,
+  birthDatesEndpoint,
 }: {
   /** Directors and deputies only; a registrar enters birth dates but sees ages (#375). */
   canSeeBirthDates: boolean;
   clubYear: string;
   initialMembers: RosterMemberRecord[];
   organizationId: string;
+  /** Staff "Open club" view (#386): see the roster the director sees, change nothing. */
+  readOnly?: boolean;
+  /** Where "Show birth dates" asks; staff use their own audited route. */
+  birthDatesEndpoint?: string;
 }) {
   const [members, setMembers] = useState(initialMembers);
   const [editing, setEditing] = useState<RosterMemberRecord | null>(null);
@@ -129,7 +135,7 @@ export function ClubRosterWorkspace({
   }
 
   async function revealBirthDates() {
-    const result = await call(`${base}/birth-dates`, "POST", {}, "");
+    const result = await call(birthDatesEndpoint ?? `${base}/birth-dates`, "POST", {}, "");
     if (result?.birthDates) setBirthDates(result.birthDates);
   }
 
@@ -146,15 +152,17 @@ export function ClubRosterWorkspace({
           </div>
           <div className="club-roster-heading-actions">
             <span className="count-badge">{active.length} active</span>
-            <button className="primary-button" disabled={saving} onClick={() => openDialog(null)} type="button">
-              <Plus aria-hidden="true" size={16} /> Add to roster
-            </button>
+            {!readOnly && (
+              <button className="primary-button" disabled={saving} onClick={() => openDialog(null)} type="button">
+                <Plus aria-hidden="true" size={16} /> Add to roster
+              </button>
+            )}
           </div>
         </div>
         {needBirthDates > 0 && (
           <p className="inline-notice roster-birth-date-notice" role="status">
             {needBirthDates === 1 ? "1 person needs" : `${needBirthDates} people need`} a birth date. The age from the
-            registration form is shown until you add one; edit each person to add it.
+            registration form is shown until {readOnly ? "the club adds one." : "you add one; edit each person to add it."}
           </p>
         )}
         <div className="club-roster-tools">
@@ -162,16 +170,18 @@ export function ClubRosterWorkspace({
             <input checked={showInactive} onChange={(event) => setShowInactive(event.target.checked)} type="checkbox" />
             Show inactive people
           </label>
-          <span className="roster-csv-actions">
-            <RosterCsvImport
-              base={base}
-              onImported={(updated, message) => {
-                setMembers(updated);
-                setBirthDates(null);
-                setNotice(message);
-              }}
-            />
-          </span>
+          {!readOnly && (
+            <span className="roster-csv-actions">
+              <RosterCsvImport
+                base={base}
+                onImported={(updated, message) => {
+                  setMembers(updated);
+                  setBirthDates(null);
+                  setNotice(message);
+                }}
+              />
+            </span>
+          )}
           {!canSeeBirthDates ? null : birthDates ? (
             <button className="text-button" onClick={() => setBirthDates(null)} type="button">
               <Eye aria-hidden="true" size={14} /> Hide birth dates
@@ -184,8 +194,9 @@ export function ClubRosterWorkspace({
         </div>
         {visible.length === 0 ? (
           <p className="public-manage-empty">
-            <UsersRound size={17} aria-hidden="true" /> No one is on the roster yet. Add people below, or they&apos;ll be
-            added when you register your club for an event.
+            <UsersRound size={17} aria-hidden="true" /> {readOnly
+              ? "No one is on this club's roster yet."
+              : "No one is on the roster yet. Add people below, or they'll be added when you register your club for an event."}
           </p>
         ) : (
           sections.map((section) => (
@@ -208,7 +219,7 @@ export function ClubRosterWorkspace({
                         <th>Age</th>
                         {birthDates && <th>Birth date</th>}
                         <th>Status</th>
-                        <th><span className="sr-only">Actions</span></th>
+                        {!readOnly && <th><span className="sr-only">Actions</span></th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -230,7 +241,7 @@ export function ClubRosterWorkspace({
                               {clubRosterStatusLabels[member.status]}
                             </span>
                           </td>
-                          <td className="honor-row-actions roster-card-actions">
+                          {!readOnly && <td className="honor-row-actions roster-card-actions">
                             <button aria-label={`Edit ${member.firstName} ${member.lastName}`} className="secondary-button" disabled={saving} onClick={() => openDialog(member)} type="button">
                               <Pencil aria-hidden="true" size={13} />
                             </button>
@@ -246,7 +257,7 @@ export function ClubRosterWorkspace({
                             <button aria-label={`Remove ${member.firstName} ${member.lastName}`} className="secondary-button" disabled={saving} onClick={() => remove(member)} type="button">
                               <Trash2 aria-hidden="true" size={13} />
                             </button>
-                          </td>
+                          </td>}
                         </tr>
                       ))}
                     </tbody>

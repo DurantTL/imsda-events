@@ -43,6 +43,8 @@ export type OrganizationOperationErrorCode =
   | "ORGANIZATION_PARENT_NOT_ALLOWED"
   | "ORGANIZATION_PARENT_INVALID"
   | "ORGANIZATION_HAS_ACTIVE_CLUBS"
+  | "ORGANIZATION_DELETE_BLOCKED"
+  | "ORGANIZATION_DELETE_NAME_MISMATCH"
   | "EXTERNAL_IDENTITY_NOT_FOUND"
   | "EXTERNAL_IDENTITY_CONFLICT"
   | "CLUB_REQUIRED"
@@ -364,5 +366,111 @@ export async function updateOrganizationExternalIdentity(
     }
     throw error;
   }
+  return listOrganizations();
+}
+
+/**
+ * What deleting a church or club would take with it, and what stops it (#386).
+ *
+ * A church with clubs under it is kept: move or delete the clubs first. A club
+ * that has registered for an event, or has honor enrollments, is part of that
+ * event's record and payments, so it is kept too — deactivate it instead.
+ * Everything else a club owns (roster, club admins, invites, monthly reports,
+ * profile) is deleted with it.
+ */
+export async function getOrganizationDeletionCheck(
+  organizationId: string,
+  client: Prisma.TransactionClient = getPrisma(),
+) {
+  const organization = await client.organization.findUnique({
+    where: { id: organizationId },
+    select: {
+      id: true,
+      type: true,
+      name: true,
+      _count: {
+        select: {
+          childOrganizations: true,
+          eventRegistrations: true,
+          honorEnrollments: true,
+          rosterMembers: true,
+          directorGrants: true,
+          clubInvites: true,
+          monthlyReports: true,
+          externalIdentities: true,
+        },
+      },
+    },
+  });
+  if (!organization) {
+    throw new OrganizationOperationError(
+      "ORGANIZATION_NOT_FOUND",
+      "That church or club could not be found.",
+    );
+  }
+  const counts = organization._count;
+  const blockers: string[] = [];
+  if (counts.childOrganizations > 0) {
+    blockers.push(`${counts.childOrganizations} club${counts.childOrganizations === 1 ? " is" : "s are"} listed under this church. Move or delete ${counts.childOrganizations === 1 ? "it" : "them"} first.`);
+  }
+  if (counts.eventRegistrations > 0) {
+    blockers.push(`This club has registered for ${counts.eventRegistrations} event${counts.eventRegistrations === 1 ? "" : "s"}. Those registrations and payments are kept, so deactivate the club instead.`);
+  }
+  if (counts.honorEnrollments > 0) {
+    blockers.push(`This club has ${counts.honorEnrollments} honor enrollment${counts.honorEnrollments === 1 ? "" : "s"}. Deactivate the club instead.`);
+  }
+  return {
+    id: organization.id,
+    type: organization.type,
+    name: organization.name,
+    blockers,
+    removes: {
+      rosterMembers: counts.rosterMembers,
+      clubRoles: counts.directorGrants,
+      invites: counts.clubInvites,
+      monthlyReports: counts.monthlyReports,
+      providerIdentifiers: counts.externalIdentities,
+    },
+  };
+}
+
+export type OrganizationDeletionCheck = Awaited<ReturnType<typeof getOrganizationDeletionCheck>>;
+
+/** Deletes a church or club for good, after the name is typed to confirm it (#386). */
+export async function deleteOrganization(
+  organizationId: string,
+  confirmName: string,
+  actorUserId: string,
+) {
+  await getPrisma().$transaction(async (tx) => {
+    const check = await getOrganizationDeletionCheck(organizationId, tx);
+    if (confirmName.trim() !== check.name.trim()) {
+      throw new OrganizationOperationError(
+        "ORGANIZATION_DELETE_NAME_MISMATCH",
+        `Type the name exactly as shown (${check.name}) to delete it.`,
+      );
+    }
+    if (check.blockers.length > 0) {
+      throw new OrganizationOperationError("ORGANIZATION_DELETE_BLOCKED", check.blockers[0]!);
+    }
+    // Restrict relations first; the rest cascade with the organization.
+    await tx.clubRosterMember.deleteMany({ where: { organizationId } });
+    await tx.clubDirectorGrant.deleteMany({ where: { organizationId } });
+    const deleted = await tx.organization.deleteMany({ where: { id: organizationId } });
+    if (deleted.count !== 1) {
+      throw new OrganizationOperationError(
+        "ORGANIZATION_NOT_FOUND",
+        "That church or club could not be found.",
+      );
+    }
+    await writeAuditLog({
+      actorUserId,
+      action: "ORGANIZATION_DELETED",
+      entityType: "Organization",
+      entityId: organizationId,
+      summary: `Deleted a ${check.type.toLocaleLowerCase("en-US")}.`,
+      metadata: { type: check.type, ...check.removes },
+    }, tx);
+  });
   return listOrganizations();
 }
