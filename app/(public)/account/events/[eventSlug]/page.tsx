@@ -189,14 +189,14 @@ export default async function AttendeeEventHubPage({
             ) : hub.registrations.map((registration) => (
               <article key={registration.id}>
                 <header>
-                  <strong>Confirmation {registration.confirmationCode}</strong>
+                  <strong>Confirmation <span translate="no">{registration.confirmationCode}</span></strong>
                   <span>{registration.status.toLowerCase()}</span>
                 </header>
                 <ul>
                   {registration.attendees.map((attendee) => (
                     <li key={attendee.id}>
                       <UsersRound size={16} aria-hidden="true" />
-                      <span>{attendee.name}</span>
+                      <span translate="no">{attendee.name}</span>
                       {attendee.checkedInAt
                         ? <small><CheckCircle2 size={14} aria-hidden="true" /> Checked in</small>
                         : <small><QrCode size={14} aria-hidden="true" /> Open the pass below at check-in</small>}
@@ -210,7 +210,7 @@ export default async function AttendeeEventHubPage({
                       <article className="public-attendee-pass" key={attendee.id}>
                         <div className="public-attendee-pass-heading">
                           <span><QrCode size={19} aria-hidden="true" /></span>
-                          <strong>{attendee.name}</strong>
+                          <strong translate="no">{attendee.name}</strong>
                         </div>
                         {/* Private dynamic image; the response explicitly disables caching. */}
                         {/* eslint-disable-next-line @next/next/no-img-element */}

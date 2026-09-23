@@ -6585,3 +6585,22 @@ select:focus-visible {
 .checkin-payment-due > svg { flex: 0 0 auto; margin-top: 2px; }
 .checkin-payment-due b { font-weight: 800; }
 .checkin-balance-note { display: block; max-width: 720px; margin-top: 4px; color: var(--muted); font-size: 0.66rem; line-height: 1.5; }
+
+/* Browser-translation tip on public pages (English-first; see components/translate-hint.tsx). */
+.translate-hint {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  border-bottom: 1px solid rgba(0, 59, 92, 0.08);
+  background: var(--imsda-navy-soft);
+  color: var(--imsda-navy);
+  padding: 8px 16px;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  text-align: left;
+}
+.translate-hint > svg { flex: 0 0 auto; margin-top: 2px; }
+.translate-hint a { color: var(--imsda-navy); font-weight: 700; text-underline-offset: 3px; }
+.public-registration-embed .translate-hint { display: none; }

@@ -23,13 +23,15 @@ export function CheckInPaymentDue({
       <CreditCard aria-hidden="true" size={14} />
       <span>
         <b>
-          {formatCents(quote.balanceCents)} due
-          {partySize > 1 ? ` for all ${partySize} people on ${confirmationCode}` : ""}
+          <span translate="no">{formatCents(quote.balanceCents)}</span> due
+          {partySize > 1 && (
+            <> for all {partySize} people on <span translate="no">{confirmationCode}</span></>
+          )}
         </b>
-        {" · "}Card in Square app: <b>{formatCents(quote.cardTotalCents)}</b>
-        {" "}(includes {formatCents(quote.cardFeeCents)} card fee)
-        {" · "}Cash or check: {formatCents(quote.balanceCents)}
-        {" · "}Square note: <b>{confirmationCode}</b>
+        {" · "}Card in Square app: <b translate="no">{formatCents(quote.cardTotalCents)}</b>
+        {" "}(includes <span translate="no">{formatCents(quote.cardFeeCents)}</span> card fee)
+        {" · "}Cash or check: <span translate="no">{formatCents(quote.balanceCents)}</span>
+        {" · "}Square note: <b translate="no">{confirmationCode}</b>
       </span>
     </span>
   );

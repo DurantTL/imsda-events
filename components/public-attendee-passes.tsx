@@ -34,7 +34,7 @@ export function PublicAttendeePasses({
                 <span><QrCode size={19} aria-hidden="true" /></span>
                 <div>
                   <small>Attendee {index + 1}</small>
-                  <strong>{attendee.name}</strong>
+                  <strong translate="no">{attendee.name}</strong>
                 </div>
               </div>
               {/* Private, dynamic QR images must bypass the optimizing image cache. */}
@@ -63,7 +63,7 @@ export function PublicAttendeePasses({
           <strong>QR unavailable?</strong>
           <p>
             Staff can find everyone on this registration with confirmation code{" "}
-            <span>{confirmationCode}</span>.
+            <span translate="no">{confirmationCode}</span>.
           </p>
         </div>
       </div>
