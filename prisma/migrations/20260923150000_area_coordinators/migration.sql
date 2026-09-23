@@ -5,6 +5,7 @@ CREATE TABLE "AreaCoordinatorGrant" (
     "attendeeAccountId" TEXT NOT NULL,
     "grantedByUserId" TEXT,
     "grantedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "expiresAt" TIMESTAMP(3),
     "revokedAt" TIMESTAMP(3),
     "revokedByUserId" TEXT,
     "updatedAt" TIMESTAMP(3) NOT NULL,

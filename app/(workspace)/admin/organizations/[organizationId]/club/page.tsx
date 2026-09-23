@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { Eye, IdCard, UserCog } from "lucide-react";
+import { ActAsButton } from "@/components/act-as-button";
 import { ClubOverview } from "@/components/club-overview";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { getPrisma } from "@/lib/prisma";
@@ -37,6 +38,11 @@ export default async function StaffOpenClubPage({ params }: { params: Promise<{ 
         <Link className="secondary-button" href={`/admin/organizations/${organizationId}/profile`}>
           <IdCard aria-hidden="true" size={14} /> Profile
         </Link>
+        <ActAsButton
+          confirmText={`Act as ${club.name}'s Director for the next 2 hours? Your own account gets a real Director role (recorded, shown in Club admins, and ending by itself), so you can see and fix things exactly as the director would.`}
+          endpoint={`/api/admin/organizations/${encodeURIComponent(organizationId)}/act-as-director`}
+          label="Act as Director (2 hours)"
+        />
       </div>
 
       <div className="page-intro">

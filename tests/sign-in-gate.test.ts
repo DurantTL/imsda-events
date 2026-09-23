@@ -41,6 +41,8 @@ describe("second step after the password (decision 2026-09-23)", () => {
     await expect(accountNeedsSecondStep("account-1", "session-1")).resolves.toBe("VERIFY");
     mocks.areaGrant.mockResolvedValue({ revokedAt: new Date() });
     await expect(accountNeedsSecondStep("account-1", "session-1")).resolves.toBe("OK");
+    mocks.areaGrant.mockResolvedValue({ revokedAt: null, expiresAt: new Date(Date.now() - 1000) });
+    await expect(accountNeedsSecondStep("account-1", "session-1")).resolves.toBe("OK");
   });
 
   it("leaves ordinary attendees on password-only sign-in", async () => {

@@ -21,9 +21,9 @@ export async function accountNeedsSecondStep(accountId: string, sessionId: strin
   const prisma = getPrisma();
   const [clubs, areaGrant] = await Promise.all([
     listDirectedClubs(accountId, now),
-    prisma.areaCoordinatorGrant.findUnique({ where: { attendeeAccountId: accountId }, select: { revokedAt: true } }),
+    prisma.areaCoordinatorGrant.findUnique({ where: { attendeeAccountId: accountId }, select: { revokedAt: true, expiresAt: true } }),
   ]);
-  const areaCoordinator = Boolean(areaGrant && !areaGrant.revokedAt);
+  const areaCoordinator = Boolean(areaGrant && !areaGrant.revokedAt && (!areaGrant.expiresAt || areaGrant.expiresAt > now));
   if (clubs.length === 0 && !areaCoordinator) return "OK";
   const [session, enrollment, passkeyCount, passkeysOn] = await Promise.all([
     prisma.attendeeSession.findUnique({ where: { id: sessionId }, select: { secondFactorVerifiedAt: true } }),

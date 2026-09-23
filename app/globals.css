@@ -7047,3 +7047,6 @@ select:focus-visible {
 }
 
 .report-download-group { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.act-as { display: grid; gap: 6px; }
+.act-as .inline-notice a { font-weight: 800; }
