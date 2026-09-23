@@ -162,7 +162,7 @@ export async function updateHonor(honorId: string, input: HonorUpdate, actorUser
 // Sessions and offerings (per event; CONFIGURE_EVENT)
 
 async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: string) {
-  const [sessions, offerings] = await Promise.all([
+  const [sessions, offerings, enrollmentCounts] = await Promise.all([
     client.honorSession.findMany({
       where: { eventId },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
@@ -185,7 +185,18 @@ async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: st
         honor: { select: { code: true, name: true, isActive: true } },
       },
     }),
+    client.honorEnrollment.groupBy({
+      by: ["offeringId", "consumesSeat"],
+      where: { eventId },
+      _count: { _all: true },
+    }),
   ]);
+  const seatsTaken = new Map<string, number>();
+  const enrolled = new Map<string, number>();
+  for (const row of enrollmentCounts) {
+    enrolled.set(row.offeringId, (enrolled.get(row.offeringId) ?? 0) + row._count._all);
+    if (row.consumesSeat) seatsTaken.set(row.offeringId, row._count._all);
+  }
   return {
     sessions: sessions.map((session) => ({
       id: session.id,
@@ -207,6 +218,8 @@ async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: st
       teacherName: offering.teacherName,
       location: offering.location,
       isActive: offering.isActive,
+      seatsTaken: seatsTaken.get(offering.id) ?? 0,
+      enrolled: enrolled.get(offering.id) ?? 0,
     })),
   };
 }

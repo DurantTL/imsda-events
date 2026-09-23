@@ -40,6 +40,7 @@ function fakeDatabase() {
   });
 
   const client = {
+    honorEnrollment: { groupBy: async () => [] },
     event: { findUnique: async ({ where }: { where: Row }) => db.events.find((event) => event.id === where.id) ?? null },
     honor: {
       findUnique: async ({ where }: { where: Row }) => db.honors.find((honor) => honor.id === where.id) ?? null,

@@ -311,7 +311,7 @@ export function HonorsSetupWorkspace({
               <thead>
                 <tr>
                   <th>Honor</th>
-                  <th>Youth seats</th>
+                  <th>Youth seats taken</th>
                   <th>Min. age</th>
                   <th>Per club</th>
                   <th>Teacher</th>
@@ -324,7 +324,10 @@ export function HonorsSetupWorkspace({
                 {group.offerings.map((offering) => (
                   <tr key={offering.id}>
                     <td><strong>{offering.honorName}</strong><br /><small><code>{offering.honorCode}</code></small></td>
-                    <td>{offering.capacity}</td>
+                    <td>
+                      {offering.seatsTaken} / {offering.capacity}
+                      {offering.enrolled > offering.seatsTaken && <><br /><small>+{offering.enrolled - offering.seatsTaken} staff</small></>}
+                    </td>
                     <td>{offering.minimumAge ?? "—"}</td>
                     <td>{offering.perClubLimit ?? "—"}</td>
                     <td translate="no">{offering.teacherName || "—"}</td>

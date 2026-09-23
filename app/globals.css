@@ -6644,3 +6644,10 @@ select:focus-visible {
 .club-registration-form { min-height: 0; background: transparent; padding: 0; }
 .club-registration-form .public-registration-layout { width: 100%; margin: 0; padding: 0; }
 .public-registration-page input[readonly] { background: #eef2f4; color: var(--muted); cursor: default; }
+.club-class-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin: 14px 0; }
+.club-class-person { display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 0; }
+.club-class-person legend { padding: 0 4px; }
+.club-class-person legend strong, .club-class-person legend small { display: block; }
+.club-class-person legend small { color: var(--muted); font-size: 0.68rem; }
+.club-class-person label { display: grid; gap: 4px; color: var(--ink); font-size: 0.72rem; font-weight: 700; }
+.club-class-person select { border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd; padding: 8px 10px; font-size: 0.76rem; }

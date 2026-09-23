@@ -38,3 +38,5 @@ jobs:
       - run: npm run db:deploy
       - run: npm run db:seed
       - run: npm run verify
+      # Real-database check that Honors Weekend class seats hold under concurrent saves (#359).
+      - run: npm run test:honor-capacity

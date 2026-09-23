@@ -4,11 +4,13 @@ import { notFound, redirect } from "next/navigation";
 import { CheckCircle2 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 import { ClubAccessGate } from "@/components/club-access-gate";
+import { ClubClassPicker } from "@/components/club-class-picker";
 import { ClubRegistrationWorkspace } from "@/components/club-registration-workspace";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { attendeeProfilePrefill, getAttendeeProfile } from "@/modules/attendee-accounts/profile-service";
 import { getRosterAccessState } from "@/modules/club-rosters/access";
 import { ClubRegistrationError, getClubEventWorkspace } from "@/modules/club-registrations/repository";
+import { getClassSelectionWorkspace } from "@/modules/honors/enrollment-repository";
 
 export const metadata: Metadata = { title: "Club registration" };
 export const dynamic = "force-dynamic";
@@ -32,6 +34,8 @@ export default async function ClubEventRegistrationPage({
       throw error;
     }
   }
+
+  const classes = workspace?.registration ? await getClassSelectionWorkspace(organizationId, eventId) : null;
 
   let contactPrefill: Record<string, string> = {};
   if (workspace?.experience) {
@@ -93,6 +97,7 @@ export default async function ClubEventRegistrationPage({
             </p>
           </section>
         )}
+        {classes && <ClubClassPicker eventId={eventId} initialWorkspace={classes} organizationId={organizationId} />}
         {workspace && !workspace.registration && workspace.problem && (
           <section className="public-manage-card">
             <p className="public-manage-empty">{workspace.problem} Let the event team know so they can fix the form.</p>
