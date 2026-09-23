@@ -107,7 +107,7 @@ export default async function PublicManagePage({
           <p className="public-registration-eyebrow">Registration confirmation</p>
           <h1>{view.event.name}</h1>
           <p>
-            Confirmation <strong>{view.registration.confirmationCode}</strong>
+            Confirmation <strong translate="no">{view.registration.confirmationCode}</strong>
           </p>
         </div>
         <div className={`public-manage-status public-manage-status-${view.registration.statusTone}`}>
@@ -177,7 +177,7 @@ export default async function PublicManagePage({
                     <span><UsersRound size={17} aria-hidden="true" /></span>
                     <div>
                       <small>Attendee {index + 1}</small>
-                      <strong>{attendee.name}</strong>
+                      <strong translate="no">{attendee.name}</strong>
                       {view.event.shirtSizesAvailable && (
                         <em>
                           Shirt: {attendee.shirtSize ?? "not selected"}
@@ -248,25 +248,25 @@ export default async function PublicManagePage({
                 {view.order.lineItems.map((item, index) => (
                   <div key={`${item.label}-${index}`}>
                     <span>{item.label}{item.pricingLabel && <small>{item.pricingLabel}</small>}</span>
-                    <strong>{money(item.amountCents)}</strong>
+                    <strong translate="no">{money(item.amountCents)}</strong>
                   </div>
                 ))}
                 <div>
                   <span>Subtotal</span>
-                  <strong>{money(view.order.preDiscountSubtotalCents)}</strong>
+                  <strong translate="no">{money(view.order.preDiscountSubtotalCents)}</strong>
                 </div>
                 <div className="is-discount">
-                  <span>Promo code {view.order.promoCode}</span>
-                  <strong>−{money(view.order.discountAmountCents)}</strong>
+                  <span>Promo code <span translate="no">{view.order.promoCode}</span></span>
+                  <strong translate="no">−{money(view.order.discountAmountCents)}</strong>
                 </div>
                 <div>
                   <span>Discounted subtotal</span>
-                  <strong>{money(view.order.subtotalCents)}</strong>
+                  <strong translate="no">{money(view.order.subtotalCents)}</strong>
                 </div>
                 {view.order.processingFeeCents > 0 && (
                   <div>
                     <span>Card processing</span>
-                    <strong>{money(view.order.processingFeeCents)}</strong>
+                    <strong translate="no">{money(view.order.processingFeeCents)}</strong>
                   </div>
                 )}
               </div>
@@ -274,21 +274,21 @@ export default async function PublicManagePage({
             <dl className="public-manage-payment-grid">
               <div>
                 <dt>Registration total</dt>
-                <dd>{money(view.payment.totalCents)}</dd>
+                <dd translate="no">{money(view.payment.totalCents)}</dd>
               </div>
               <div>
                 <dt>Successful payments, net of refunds</dt>
-                <dd>{money(view.payment.paidCents)}</dd>
+                <dd translate="no">{money(view.payment.paidCents)}</dd>
               </div>
               {view.payment.refundedCents > 0 && (
                 <div>
                   <dt>Refunds recorded</dt>
-                  <dd>{money(view.payment.refundedCents)}</dd>
+                  <dd translate="no">{money(view.payment.refundedCents)}</dd>
                 </div>
               )}
               <div className="is-due">
                 <dt>Amount due now</dt>
-                <dd>{money(view.payment.amountDueCents)}</dd>
+                <dd translate="no">{money(view.payment.amountDueCents)}</dd>
               </div>
             </dl>
             <PublicSquarePayment token={token} />

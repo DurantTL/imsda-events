@@ -631,7 +631,7 @@ export function PublicSquarePayment({
             </strong>
             <small>{cardChoice?.detail}</small>
           </span>
-          <b>{money(cardChoice?.totalCents ?? 0)}</b>
+          <b translate="no">{money(cardChoice?.totalCents ?? 0)}</b>
         </button>
         <button
           type="button"
@@ -654,7 +654,7 @@ export function PublicSquarePayment({
             </strong>
             <small>{payLaterChoice?.detail}</small>
           </span>
-          <b>{money(payLaterChoice?.totalCents ?? 0)}</b>
+          <b translate="no">{money(payLaterChoice?.totalCents ?? 0)}</b>
         </button>
       </div>
       {paymentChoice.locked && (
@@ -718,11 +718,11 @@ export function PublicSquarePayment({
       <div className="public-square-heading">
         <span><CreditCard size={20} aria-hidden="true" /></span>
         <div>
-          <strong>Pay {money(checkout.amountCents)} securely with Square</strong>
+          <strong>Pay <span translate="no">{money(checkout.amountCents)}</span> securely with Square</strong>
           {checkout.surchargeCents > 0 && (
             <p className="public-square-fee-breakdown">
-              Balance {money(checkout.balanceCents)} + card processing{" "}
-              {money(checkout.surchargeCents)}. Paying by another method avoids
+              Balance <span translate="no">{money(checkout.balanceCents)}</span> + card processing{" "}
+              <span translate="no">{money(checkout.surchargeCents)}</span>. Paying by another method avoids
               the processing fee — contact the event team to arrange it.
             </p>
           )}
@@ -764,7 +764,7 @@ export function PublicSquarePayment({
         {submittingMethod === "CARD" ? (
           <><LoaderCircle size={17} className="is-spinning" /> Confirming with Square…</>
         ) : (
-          <><ShieldCheck size={17} /> Pay {money(checkout.amountCents)}</>
+          <><ShieldCheck size={17} /> Pay <span translate="no">{money(checkout.amountCents)}</span></>
         )}
       </button>
       {!paymentChoice && noticeElement}

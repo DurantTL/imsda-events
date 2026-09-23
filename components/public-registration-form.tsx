@@ -24,6 +24,7 @@ import { AddressFieldGroup } from "@/components/address-field-group";
 import { BrandMark } from "@/components/brand-mark";
 import { RegistrationAccountPrompt } from "@/components/registration-account-prompt";
 import { SearchableSelect } from "@/components/searchable-select";
+import { TranslateHint } from "@/components/translate-hint";
 import { hasAddressValue, isPlainAddressObject, type AddressValue } from "@/modules/forms/address";
 import {
   calculateFormTotal,
@@ -1022,7 +1023,7 @@ export function PublicRegistrationForm({
       return (
         <div className={`${wrapperClass} public-registration-calculated`} key={field.id}>
           <span><strong>{field.label}</strong><small>Automatically included in your order.</small></span>
-          <strong>{lineItem ? money(lineItem.amountCents) : "Included"}</strong>
+          <strong>{lineItem ? <span translate="no">{money(lineItem.amountCents)}</span> : "Included"}</strong>
         </div>
       );
     }
@@ -1628,7 +1629,7 @@ export function PublicRegistrationForm({
               <ol className="public-registration-review-attendees">
                 {attendeeAnswerGroups.map((group) => (
                   <li key={group.id}>
-                    <strong>{group.name}</strong>
+                    <strong translate="no">{group.name}</strong>
                     {answerList(group.answers, "No additional answers entered.")}
                   </li>
                 ))}
@@ -1661,31 +1662,31 @@ export function PublicRegistrationForm({
                     {item.label}
                     {item.pricingLabel && <small>{item.pricingLabel}</small>}
                   </span>
-                  <strong>{money(item.amountCents)}</strong>
+                  <strong translate="no">{money(item.amountCents)}</strong>
                 </div>
               ))}
-              <div><span>Subtotal</span><strong>{money(displayedPreDiscountSubtotalCents)}</strong></div>
+              <div><span>Subtotal</span><strong translate="no">{money(displayedPreDiscountSubtotalCents)}</strong></div>
               {displayedDiscountCents > 0 && (
                 <>
                   <div className="is-discount">
                     <span>Promo code {displayedPromoCode}</span>
-                    <strong>−{money(displayedDiscountCents)}</strong>
+                    <strong translate="no">−{money(displayedDiscountCents)}</strong>
                   </div>
                   <div>
                     <span>Discounted subtotal</span>
-                    <strong>{money(calculation.subtotalCents)}</strong>
+                    <strong translate="no">{money(calculation.subtotalCents)}</strong>
                   </div>
                 </>
               )}
               {calculation.processingFeeCents > 0 && (
                 <div>
                   <span>Card processing</span>
-                  <strong>{money(calculation.processingFeeCents)}</strong>
+                  <strong translate="no">{money(calculation.processingFeeCents)}</strong>
                 </div>
               )}
               <div className="is-total">
                 <span>{joiningWaitlist ? "Estimated if promoted" : deferredOrganizationBilling ? "Estimated total" : "Total"}</span>
-                <strong>
+                <strong translate="no">
                   {money(
                     joiningWaitlist
                       ? calculation.subtotalCents
@@ -1944,7 +1945,7 @@ export function PublicRegistrationForm({
             <p className="public-registration-confirmation-message">{confirmation.message}</p>
             <div className="public-registration-code">
               <small>{waitlisted ? "Waitlist reference" : "Confirmation code"}</small>
-              <strong>{confirmation.confirmationCode}</strong>
+              <strong translate="no">{confirmation.confirmationCode}</strong>
             </div>
             <div className="public-registration-local-warning" role="status">
               <ShieldCheck size={20} aria-hidden="true" />
@@ -1979,7 +1980,7 @@ export function PublicRegistrationForm({
                 </div>
               )}
               <div><dt>{waitlisted ? "Estimate date" : "Pricing date"}</dt><dd>{formatPricingDate(confirmation.pricingDate)}</dd></div>
-              <div><dt>{waitlisted ? "Estimated total if promoted" : deferredOrganizationBilling ? "Estimated total" : "Total recorded"}</dt><dd>{money(confirmation.totalCents)}</dd></div>
+              <div><dt>{waitlisted ? "Estimated total if promoted" : deferredOrganizationBilling ? "Estimated total" : "Total recorded"}</dt><dd translate="no">{money(confirmation.totalCents)}</dd></div>
             </dl>
             {!waitlisted && deferredOrganizationBilling && (
               <p className="public-registration-review-waitlist">
@@ -1996,17 +1997,17 @@ export function PublicRegistrationForm({
               <section className="public-registration-confirmation-order" aria-label="Recorded order">
                 <h2>{waitlisted ? "Estimated order if promoted" : deferredOrganizationBilling ? "Estimated order" : "Recorded order"}</h2>
                 {confirmation.lineItems.map((item) => (
-                  <div key={item.key}><span>{item.label}{item.pricingLabel && <small>{item.pricingLabel}</small>}</span><strong>{money(item.amountCents)}</strong></div>
+                  <div key={item.key}><span>{item.label}{item.pricingLabel && <small>{item.pricingLabel}</small>}</span><strong translate="no">{money(item.amountCents)}</strong></div>
                 ))}
-                <div><span>Subtotal</span><strong>{money(confirmation.preDiscountSubtotalCents)}</strong></div>
+                <div><span>Subtotal</span><strong translate="no">{money(confirmation.preDiscountSubtotalCents)}</strong></div>
                 {confirmation.discountAmountCents > 0 && (
                   <>
-                    <div className="is-discount"><span>Promo code {confirmation.promoCode}</span><strong>−{money(confirmation.discountAmountCents)}</strong></div>
-                    <div><span>Discounted subtotal</span><strong>{money(confirmation.subtotalCents)}</strong></div>
+                    <div className="is-discount"><span>Promo code {confirmation.promoCode}</span><strong translate="no">−{money(confirmation.discountAmountCents)}</strong></div>
+                    <div><span>Discounted subtotal</span><strong translate="no">{money(confirmation.subtotalCents)}</strong></div>
                   </>
                 )}
-                {confirmation.processingFeeCents > 0 && <div><span>Card processing</span><strong>{money(confirmation.processingFeeCents)}</strong></div>}
-                <div className="is-total"><span>{deferredOrganizationBilling ? "Estimated total" : "Total"}</span><strong>{money(confirmation.totalCents)}</strong></div>
+                {confirmation.processingFeeCents > 0 && <div><span>Card processing</span><strong translate="no">{money(confirmation.processingFeeCents)}</strong></div>}
+                <div className="is-total"><span>{deferredOrganizationBilling ? "Estimated total" : "Total"}</span><strong translate="no">{money(confirmation.totalCents)}</strong></div>
               </section>
             )}
             {confirmation.managePath && (
@@ -2054,6 +2055,7 @@ export function PublicRegistrationForm({
           <span className="public-registration-secure">{joiningWaitlist ? <Clock3 size={16} aria-hidden="true" /> : <LockKeyhole size={16} aria-hidden="true" />} {joiningWaitlist ? "Event waitlist" : "Secure event registration"}</span>
         </div>
       </header>
+      <TranslateHint />
 
       <section className="public-registration-hero">
         <div>
@@ -2215,17 +2217,17 @@ export function PublicRegistrationForm({
           {calculation.lineItems.length === 0 ? <p className="public-registration-summary-empty">Select any priced options to see your total.</p> : (
             <div className="public-registration-summary-lines">
               {calculation.lineItems.map((item) => (
-                <div key={item.key}><span>{item.label}{item.pricingLabel && <small>{item.pricingLabel}</small>}</span><strong>{money(item.amountCents)}</strong></div>
+                <div key={item.key}><span>{item.label}{item.pricingLabel && <small>{item.pricingLabel}</small>}</span><strong translate="no">{money(item.amountCents)}</strong></div>
               ))}
-              <div><span>Subtotal</span><strong>{money(displayedPreDiscountSubtotalCents)}</strong></div>
+              <div><span>Subtotal</span><strong translate="no">{money(displayedPreDiscountSubtotalCents)}</strong></div>
               {displayedDiscountCents > 0 && (
                 <>
-                  <div className="is-discount"><span>Promo code {displayedPromoCode}</span><strong>−{money(displayedDiscountCents)}</strong></div>
-                  <div><span>Discounted subtotal</span><strong>{money(calculation.subtotalCents)}</strong></div>
+                  <div className="is-discount"><span>Promo code {displayedPromoCode}</span><strong translate="no">−{money(displayedDiscountCents)}</strong></div>
+                  <div><span>Discounted subtotal</span><strong translate="no">{money(calculation.subtotalCents)}</strong></div>
                 </>
               )}
-              {calculation.processingFeeCents > 0 && <div><span>Card processing</span><strong>{money(calculation.processingFeeCents)}</strong></div>}
-              <div className="is-total"><span>{joiningWaitlist ? "Estimated if promoted" : deferredOrganizationBilling ? "Estimated total" : "Total"}</span><strong>{money(joiningWaitlist ? calculation.subtotalCents : calculation.totalCents)}</strong></div>
+              {calculation.processingFeeCents > 0 && <div><span>Card processing</span><strong translate="no">{money(calculation.processingFeeCents)}</strong></div>}
+              <div className="is-total"><span>{joiningWaitlist ? "Estimated if promoted" : deferredOrganizationBilling ? "Estimated total" : "Total"}</span><strong translate="no">{money(joiningWaitlist ? calculation.subtotalCents : calculation.totalCents)}</strong></div>
             </div>
           )}
           <small className="public-registration-pricing-date">Pricing verified for {formatPricingDate(pricingDate)}</small>

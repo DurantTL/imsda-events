@@ -495,7 +495,7 @@ export function CheckInScanner({
                     <p className="eyebrow">Visible staff confirmation</p>
                     <h3 id="check-in-review-title">Review before check-in</h3>
                     <p>
-                      {resolution.confirmationCode} ·{" "}
+                      <span translate="no">{resolution.confirmationCode}</span> ·{" "}
                       {resolution.source === "QR_PASS"
                         ? "signed QR pass"
                         : "confirmation-code lookup"}
@@ -523,7 +523,7 @@ export function CheckInScanner({
                           {attendee.firstName[0]}{attendee.lastName[0]}
                         </span>
                         <div>
-                          <strong>{attendee.firstName} {attendee.lastName}</strong>
+                          <strong translate="no">{attendee.firstName} {attendee.lastName}</strong>
                           <small>{attendeeTypeLabel(attendee.attendeeType)}</small>
                         </div>
                         {attendee.checkedIn || savedState === "CONFIRMED" ? (

@@ -69,7 +69,7 @@ function RegistrationCard({
       <div className="public-manage-card-heading attendee-registration-heading">
         <div>
           <p className="public-registration-eyebrow">{registration.event.name}</p>
-          <h2>Confirmation {registration.confirmationCode}</h2>
+          <h2>Confirmation <span translate="no">{registration.confirmationCode}</span></h2>
         </div>
         <span className={`attendee-status-pill attendee-status-pill-${registration.status.tone}`}>
           <ShieldCheck size={15} aria-hidden="true" />

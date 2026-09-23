@@ -15,6 +15,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
+import { TranslateHint } from "@/components/translate-hint";
 import { contentBlocks } from "@/modules/events/content-schemas";
 import { getPublicEventLanding } from "@/modules/events/public-repository";
 
@@ -86,6 +87,7 @@ export default async function PublicEventPage({
           </a>
         </div>
       </header>
+      <TranslateHint />
 
       <section className="public-registration-hero public-event-hero">
         <div>

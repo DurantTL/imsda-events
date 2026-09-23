@@ -444,9 +444,9 @@ export function CheckInWorkspace({
                 {arrival.firstName[0]}{arrival.lastName[0]}
               </span>
               <span>
-                <strong>{arrival.firstName} {arrival.lastName}</strong>
+                <strong translate="no">{arrival.firstName} {arrival.lastName}</strong>
                 <small>
-                  {arrival.confirmationCode} ·{" "}
+                  <span translate="no">{arrival.confirmationCode}</span> ·{" "}
                   {arrival.attendeeType.toLowerCase()}
                 </small>
                 <CheckInPaymentDue
