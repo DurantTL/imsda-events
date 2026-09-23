@@ -650,6 +650,8 @@ model AttendeeAccount {
   /// Clubs this account directs. Explicit staff grants only — never inferred.
   clubDirectorGrants                ClubDirectorGrant[]
   createdClubRosterMembers          ClubRosterMember[]          @relation("ClubRosterMemberCreatedBy")
+  submittedClubRegistrations        ClubEventRegistration[]     @relation("ClubEventRegistrationSubmittedBy")
+  clubRegistrationDrafts            ClubRegistrationDraft[]     @relation("ClubRegistrationDraftUpdatedBy")
 
   @@index([status])
 }
@@ -1039,6 +1041,8 @@ model Event {
   programAssignmentRuns               ProgramAssignmentRun[]
   honorSessions                       HonorSession[]
   honorOfferings                      HonorOffering[]
+  clubRegistrations                   ClubEventRegistration[]
+  clubRegistrationDrafts              ClubRegistrationDraft[]
   registrationOperations              RegistrationOperation[]
   registrationPaymentChoiceOperations RegistrationPaymentChoiceOperation[]
   communitySettings                   EventCommunitySettings?
@@ -1452,6 +1456,8 @@ model Organization {
   externalIdentities ExternalIdentity[]
   directorGrants     ClubDirectorGrant[]
   rosterMembers      ClubRosterMember[]
+  eventRegistrations ClubEventRegistration[]
+  registrationDrafts ClubRegistrationDraft[]
 
   @@index([type, isActive, name])
   @@index([parentOrganizationId, isActive])
@@ -1603,6 +1609,7 @@ model Registration {
   merchandiseOrders       MerchandiseOrder[]
   notes                   StaffNote[]
   tagAssignments          RegistrationTagAssignment[]
+  clubRegistration        ClubEventRegistration?
 
   @@unique([eventId, confirmationCode])
   @@index([eventId, status])
@@ -2758,5 +2765,44 @@ model ClubRosterMember {
   @@unique([organizationId, clubYear, personId])
   @@index([organizationId, clubYear, status])
   @@index([personId])
+}
+
+/// A club's single registration for a club event (#358): an ordinary
+/// Registration, billed to the church, tied to the club that made it.
+model ClubEventRegistration {
+  id                   String   @id @default(cuid())
+  eventId              String
+  organizationId       String
+  registrationId       String   @unique
+  submittedByAccountId String?
+  createdAt            DateTime @default(now())
+
+  event        Event            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  registration Registration     @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  submittedBy  AttendeeAccount? @relation("ClubEventRegistrationSubmittedBy", fields: [submittedByAccountId], references: [id], onDelete: SetNull)
+
+  @@unique([eventId, organizationId])
+  @@index([organizationId])
+}
+
+/// A director's unsubmitted club registration, saved as they work so a reload
+/// or closed tab loses nothing. Never holds birth dates: people are roster IDs.
+model ClubRegistrationDraft {
+  id                 String   @id @default(cuid())
+  eventId            String
+  organizationId     String
+  selectedMemberIds  String[]
+  responses          Json     @default("{}")
+  attendeeResponses  Json     @default("{}")
+  updatedByAccountId String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  event     Event            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  updatedBy AttendeeAccount? @relation("ClubRegistrationDraftUpdatedBy", fields: [updatedByAccountId], references: [id], onDelete: SetNull)
+
+  @@unique([eventId, organizationId])
 }
 

@@ -58,7 +58,32 @@ export type PublicRegistrationErrorCode =
   | "REGISTRATION_NOT_OPEN"
   | "REGISTRATION_CLOSED"
   | "IDEMPOTENCY_CONFLICT"
-  | "SUBMISSION_CONFLICT";
+  | "SUBMISSION_CONFLICT"
+  | "CLUB_REGISTRATION_UNAVAILABLE"
+  | "CLUB_ALREADY_REGISTERED"
+  | "CLUB_ATTENDEES_INVALID";
+
+/**
+ * A club registration (#358) runs through this same transaction so it gets the
+ * same validation, capacity, confirmation, and audit as any registration. The
+ * club module supplies the roster people: it fixes their names and age from
+ * the roster, inside this transaction, so the client can't substitute anyone.
+ */
+export type ClubSubmissionContext = {
+  organizationId: string;
+  submittedByAccountId: string;
+  prepareAttendees: (
+    tx: Prisma.TransactionClient,
+    args: {
+      definition: RegistrationFormDefinition;
+      event: { id: string; startsAt: Date; timezone: string };
+      input: PublicRegistrationInput;
+    },
+  ) => Promise<{
+    input: PublicRegistrationInput;
+    attendees: Map<string, { personId: string; rosterMemberId: string; ageOnEventDate: number | null }>;
+  }>;
+};
 
 export class PublicRegistrationError extends Error {
   constructor(
@@ -502,9 +527,11 @@ async function createPublicRegistrationTransaction(
   tx: Prisma.TransactionClient,
   eventSlug: string,
   formSlug: string,
-  input: PublicRegistrationInput,
+  submittedInput: PublicRegistrationInput,
   now: Date,
+  club?: ClubSubmissionContext,
 ) {
+  let input = submittedInput;
   const form = await tx.registrationForm.findFirst(publishedFormQuery(eventSlug, formSlug));
   const version = form?.versions[0];
   if (!form || !version) throw new PublicRegistrationError("FORM_NOT_FOUND", "That public registration form is not available.");
@@ -522,9 +549,33 @@ async function createPublicRegistrationTransaction(
       `Registration form ${form.slug} has card payment enabled for a deferred-organization-billing event. Disable payment on the form or change the event's billing mode.`
     );
   }
+  let clubAttendees: Awaited<ReturnType<ClubSubmissionContext["prepareAttendees"]>>["attendees"] | null = null;
+  if (club) {
+    if (form.event.billingMode !== "DEFERRED_ORGANIZATION_INVOICE") {
+      throw new PublicRegistrationError(
+        "CLUB_REGISTRATION_UNAVAILABLE",
+        "This event isn't set up for club registration billed to the church.",
+      );
+    }
+    const clubPrepared = await club.prepareAttendees(tx, { definition, event: form.event, input });
+    input = clubPrepared.input;
+    clubAttendees = clubPrepared.attendees;
+  }
   const requestHash = submissionHash(input);
   const replay = await findExistingConfirmation(tx, version.id, input.idempotencyKey, requestHash, definition);
   if (replay) return replay;
+  if (club) {
+    const existingClubRegistration = await tx.clubEventRegistration.findUnique({
+      where: { eventId_organizationId: { eventId: form.eventId, organizationId: club.organizationId } },
+      select: { id: true },
+    });
+    if (existingClubRegistration) {
+      throw new PublicRegistrationError(
+        "CLUB_ALREADY_REGISTERED",
+        "Your club is already registered for this event.",
+      );
+    }
+  }
 
   const phase = evaluateEventRegistrationPhase(form.event, now);
   if (phase === "UPCOMING") {
@@ -718,7 +769,13 @@ async function createPublicRegistrationTransaction(
     if (!attendee.identity) {
       throw new PublicRegistrationError("INVALID_SUBMISSION", "Every attendee needs a valid name.", prepared.issues);
     }
-    const attendeePerson = await resolveAttendeePerson(tx, attendee.identity, accountHolder, usedPersonIds);
+    const clubAttendee = clubAttendees?.get(attendee.clientId) ?? null;
+    if (clubAttendees && !clubAttendee) {
+      throw new PublicRegistrationError("CLUB_ATTENDEES_INVALID", "Everyone on a club registration must come from the club roster.");
+    }
+    const attendeePerson = clubAttendee
+      ? { id: clubAttendee.personId }
+      : await resolveAttendeePerson(tx, attendee.identity, accountHolder, usedPersonIds);
     const mergedResponses = { ...prepared.registrationResponses, ...attendee.responses };
     const selectedTypeCode = configuredTypeSelector
       ? String(mergedResponses[configuredTypeSelector.key] ?? "")
@@ -751,8 +808,13 @@ async function createPublicRegistrationTransaction(
           lastName: attendee.identity.lastName,
           email: attendee.identity.email,
           phone: attendee.identity.phone || null,
-          source: "PUBLIC_REGISTRATION",
+          source: clubAttendee ? "CLUB_REGISTRATION" : "PUBLIC_REGISTRATION",
           formVersionId: version.id,
+          ...(clubAttendee ? {
+            clubOrganizationId: club!.organizationId,
+            clubRosterMemberId: clubAttendee.rosterMemberId,
+            ageOnEventDate: clubAttendee.ageOnEventDate,
+          } : {}),
         },
         formResponses: attendee.responses as Prisma.InputJsonValue,
       },
@@ -841,6 +903,19 @@ async function createPublicRegistrationTransaction(
       })),
     });
   }
+  if (club) {
+    await tx.clubEventRegistration.create({
+      data: {
+        eventId: form.eventId,
+        organizationId: club.organizationId,
+        registrationId: registration.id,
+        submittedByAccountId: club.submittedByAccountId,
+      },
+    });
+    await tx.clubRegistrationDraft.deleteMany({
+      where: { eventId: form.eventId, organizationId: club.organizationId },
+    });
+  }
   const submissionCorrelationId = randomUUID();
   const queuedMessages = isWaitlisted
     ? await enqueueWaitlistJoinedMessage(tx, {
@@ -879,7 +954,9 @@ async function createPublicRegistrationTransaction(
     data: {
       eventId: form.eventId,
       actorUserId: null,
-      action: isWaitlisted ? "PUBLIC_REGISTRATION_WAITLISTED" : "PUBLIC_REGISTRATION_SUBMITTED",
+      action: club
+        ? "CLUB_REGISTRATION_SUBMITTED"
+        : isWaitlisted ? "PUBLIC_REGISTRATION_WAITLISTED" : "PUBLIC_REGISTRATION_SUBMITTED",
       entityType: "Registration",
       entityId: registration.id,
       correlationId: submissionCorrelationId,
@@ -903,6 +980,7 @@ async function createPublicRegistrationTransaction(
         emailSent: false,
         messageCount: queuedMessages.messageIds.length,
         messageDeliveryMode: queuedMessages.deliveryMode,
+        ...(club ? { clubOrganizationId: club.organizationId, submittedByAttendeeAccountId: club.submittedByAccountId } : {}),
       },
     },
   });
@@ -941,12 +1019,13 @@ export async function submitPublicRegistration(
   formSlug: string,
   input: PublicRegistrationInput,
   now = new Date(),
+  club?: ClubSubmissionContext,
 ) {
   const prisma = getPrisma();
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
       const result = await prisma.$transaction(
-        (tx) => createPublicRegistrationTransaction(tx, eventSlug, formSlug, input, now),
+        (tx) => createPublicRegistrationTransaction(tx, eventSlug, formSlug, input, now, club),
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
       );
       let processed = {

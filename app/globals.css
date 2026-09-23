@@ -6634,3 +6634,13 @@ select:focus-visible {
 .roster-unlock-form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; }
 .roster-unlock-form input { width: 140px; border: 1px solid #cbdbe2; border-radius: 10px; padding: 10px 11px; font-size: 0.9rem; letter-spacing: 0.12em; }
 .roster-unlock-form .form-error { flex-basis: 100%; margin: 0; }
+.club-going-list { display: grid; gap: 6px; margin: 8px 0 16px; padding: 0; list-style: none; }
+.club-going-list li { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.club-going-list label { align-items: flex-start !important; font-size: 0.78rem !important; color: var(--ink) !important; }
+.club-going-list strong, .club-going-list small { display: block; }
+.club-going-list small { margin-top: 2px; color: var(--muted); font-size: 0.7rem; font-weight: 500; }
+.club-registration-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.public-manage-club-list li .status-chip { display: inline-block; margin-top: 6px; }
+.club-registration-form { min-height: 0; background: transparent; padding: 0; }
+.club-registration-form .public-registration-layout { width: 100%; margin: 0; padding: 0; }
+.public-registration-page input[readonly] { background: #eef2f4; color: var(--muted); cursor: default; }

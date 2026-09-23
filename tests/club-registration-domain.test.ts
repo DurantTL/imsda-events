@@ -1,0 +1,58 @@
+import { describe, expect, it } from "vitest";
+import {
+  attendeeAgeKey,
+  attendeeNameKeys,
+  clubAttendeeClientId,
+  clubFormProblem,
+  lockedAttendeeFieldKeys,
+  rosterGenderPrefill,
+  rosterMemberIdFromClientId,
+  rosterOwnedResponses,
+} from "@/modules/club-registrations/domain";
+import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
+
+const field = (key: string, type = "TEXT", scope: "ATTENDEE" | "REGISTRATION" = "ATTENDEE", options: string[] = [], label = key) => (
+  { id: `f_${key}`, key, label, helpText: "", type, scope, required: ["first_name", "last_name", "attendee_name"].includes(key), options }
+);
+
+function form(fields: ReturnType<typeof field>[], roster = true) {
+  return registrationFormDefinitionSchema.parse({
+    title: "Club form",
+    description: "",
+    confirmationMessage: "Done",
+    ...(roster ? { attendeeRoster: { enabled: true, minAttendees: 1, maxAttendees: 50, attendeeLabel: "Member", addButtonLabel: "Add" } } : {}),
+    sections: [{ id: "s_contact", title: "Contact", description: "", fields: [field("email", "EMAIL", "REGISTRATION"), field("contact_name", "TEXT", "REGISTRATION")] },
+      { id: "s_roster", title: "Roster", description: "", fields }],
+  });
+}
+
+const person = { firstName: "Alex", lastName: "Sample", ageOnEventDate: 11, gender: "FEMALE" as const };
+
+describe("club form mapping", () => {
+  it("round-trips roster IDs through form client IDs", () => {
+    expect(rosterMemberIdFromClientId(clubAttendeeClientId("abc"))).toBe("abc");
+    expect(rosterMemberIdFromClientId("initial-attendee-1")).toBeNull();
+  });
+
+  it("finds split or full attendee name fields and the age field", () => {
+    const split = form([field("first_name"), field("last_name"), field("attendee_age", "NUMBER")]);
+    expect(attendeeNameKeys(split)).toEqual({ kind: "split", first: "first_name", last: "last_name" });
+    expect(attendeeAgeKey(split)).toBe("attendee_age");
+    expect(lockedAttendeeFieldKeys(split)).toEqual(["first_name", "last_name", "attendee_age"]);
+    expect(rosterOwnedResponses(split, person)).toEqual({ first_name: "Alex", last_name: "Sample", attendee_age: "11" });
+
+    const full = form([field("attendee_name")]);
+    expect(rosterOwnedResponses(full, person)).toEqual({ attendee_name: "Alex Sample" });
+  });
+
+  it("prefills gender only when the form offers a matching option", () => {
+    expect(rosterGenderPrefill(form([field("first_name"), field("last_name"), field("gender", "SELECT", "ATTENDEE", ["Female", "Male"])]), person)).toEqual({ gender: "Female" });
+    expect(rosterGenderPrefill(form([field("first_name"), field("last_name")]), person)).toEqual({});
+  });
+
+  it("explains why a form can't take club registrations", () => {
+    expect(clubFormProblem(form([field("first_name"), field("last_name")]))).toBeNull();
+    expect(clubFormProblem(form([field("first_name"), field("last_name")], false))).toMatch(/list of attendees/);
+    expect(clubFormProblem(form([field("first_name"), field("last_name"), field("birthday", "DATE", "ATTENDEE", [], "Birthday")]))).toMatch(/birth dates/);
+  });
+});

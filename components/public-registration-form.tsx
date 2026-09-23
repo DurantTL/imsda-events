@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowDown,
@@ -61,8 +61,8 @@ declare global {
   }
 }
 
-type ResponseValue = string | boolean | string[] | AddressValue;
-type FormResponses = Record<string, ResponseValue>;
+export type ResponseValue = string | boolean | string[] | AddressValue;
+export type FormResponses = Record<string, ResponseValue>;
 type FormIssue = {
   key: string;
   message: string;
@@ -70,7 +70,7 @@ type FormIssue = {
   path?: string;
   attendeeIndex?: number | null;
 };
-type RosterAttendee = { clientId: string; responses: FormResponses };
+export type RosterAttendee = { clientId: string; responses: FormResponses };
 type FieldRenderContext = {
   values: FormResponses;
   visibilityResponses: FormResponses;
@@ -146,6 +146,19 @@ export type PublicRegistrationFormProps = {
   initialResponses?: FormResponses;
   initialAttendeeResponses?: FormResponses;
   embedded?: boolean;
+  /**
+   * Club registration (#358): the people come from the club roster, so the
+   * party is fixed (no add, remove, or CSV) and their roster-owned fields are
+   * read-only. Submits to the club endpoint and reports every change so the
+   * page can keep a draft.
+   */
+  club?: {
+    initialAttendees: RosterAttendee[];
+    lockedAttendeeFieldKeys: string[];
+    submitUrl: string;
+    onDraftChange?: (draft: { responses: FormResponses; attendees: RosterAttendee[] }) => void;
+    onSubmitted?: () => void;
+  };
 };
 
 const moneyFormatter = new Intl.NumberFormat("en-US", {
@@ -287,6 +300,7 @@ export function PublicRegistrationForm({
   initialResponses = {},
   initialAttendeeResponses = {},
   embedded = false,
+  club,
 }: PublicRegistrationFormProps) {
   const { definition } = form;
   const eventsSiteNavigation = embedded
@@ -307,6 +321,7 @@ export function PublicRegistrationForm({
   const [responses, setResponses] = useState<FormResponses>(initialResponses);
   const [registrationResponses, setRegistrationResponses] = useState<FormResponses>(initialResponses);
   const [attendees, setAttendees] = useState<RosterAttendee[]>(() => {
+    if (club) return club.initialAttendees;
     const initial = initialRoster(roster.minAttendees);
     if (initial.length > 0) {
       let firstAttendeeResponses = initialAttendeeResponses;
@@ -341,6 +356,14 @@ export function PublicRegistrationForm({
   const [promoCodeNotice, setPromoCodeNotice] = useState("");
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
   const [accountChoice, setAccountChoice] = useState<"without" | "create">("without");
+  const lockedAttendeeFieldKeys = useMemo(
+    () => new Set(club?.lockedAttendeeFieldKeys ?? []),
+    [club?.lockedAttendeeFieldKeys],
+  );
+  const onClubDraftChange = club?.onDraftChange;
+  useEffect(() => {
+    onClubDraftChange?.({ responses: rosterEnabled ? registrationResponses : responses, attendees });
+  }, [onClubDraftChange, rosterEnabled, registrationResponses, responses, attendees]);
   const errorSummaryRef = useRef<HTMLDivElement>(null);
   const stepHeadingRef = useRef<HTMLHeadingElement>(null);
   const rosterCsvInputRef = useRef<HTMLInputElement>(null);
@@ -1239,6 +1262,7 @@ export function PublicRegistrationForm({
             inputMode={field.type === "PHONE" ? "tel" : field.type === "NUMBER" ? "numeric" : undefined}
             autoComplete={autoComplete}
             required={field.required}
+            readOnly={context.attendeeIndex !== null && lockedAttendeeFieldKeys.has(field.key)}
             placeholder={field.placeholder ?? ""}
             aria-invalid={Boolean(issue)}
             aria-describedby={description}
@@ -1515,7 +1539,7 @@ export function PublicRegistrationForm({
           className="public-registration-roster-block"
           key={`${step.id}_attendee_roster`}
         >
-          {renderRoster(1, allowedFieldKeys, step.managesAttendees)}
+          {renderRoster(1, allowedFieldKeys, step.managesAttendees && !club)}
         </div>,
       );
     }
@@ -1858,7 +1882,7 @@ export function PublicRegistrationForm({
     const submissionKey = idempotencyKey ?? crypto.randomUUID();
     if (!idempotencyKey) setIdempotencyKey(submissionKey);
     try {
-      const response = await fetch(`/api/public/events/${encodeURIComponent(event.slug)}/forms/${encodeURIComponent(form.slug)}/registrations`, {
+      const response = await fetch(club?.submitUrl ?? `/api/public/events/${encodeURIComponent(event.slug)}/forms/${encodeURIComponent(form.slug)}/registrations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1897,6 +1921,7 @@ export function PublicRegistrationForm({
         return;
       }
       setConfirmation(result.confirmation);
+      club?.onSubmitted?.();
       window.imsdaEmbedScrollTop?.();
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch {
@@ -1925,6 +1950,16 @@ export function PublicRegistrationForm({
     setCurrentStepId(registrationSteps[0]?.id ?? "__review");
     window.imsdaEmbedScrollTop?.();
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  if (confirmation && club) {
+    return (
+      <section className="public-manage-card" role="status">
+        <p className="public-registration-eyebrow">Submitted</p>
+        <h2>Your club is registered</h2>
+        <p>Confirmation <strong translate="no">{confirmation.confirmationCode}</strong>. Loading your registration…</p>
+      </section>
+    );
   }
 
   if (confirmation) {
@@ -2047,8 +2082,10 @@ export function PublicRegistrationForm({
     );
   }
 
+  const Shell = club ? "div" : "main";
   return (
-    <main className="public-registration-page">
+    <Shell className={club ? "public-registration-page club-registration-form" : "public-registration-page"}>
+      {!club && (<>
       <header className="public-registration-header">
         <div className="public-registration-header-inner">
           <a {...eventsSiteNavigation} className="public-registration-brand public-event-brand-link" href={`/events/${event.slug}`}><BrandMark /><span><strong>IMSDA</strong><small>Events</small></span></a>
@@ -2068,6 +2105,7 @@ export function PublicRegistrationForm({
           <span><MapPin size={18} aria-hidden="true" /> {event.location ?? "Location to be announced"}</span>
         </div>
       </section>
+      </>)}
 
       <form className="public-registration-layout" noValidate onSubmit={submit}>
         <div className="public-registration-form-column">
@@ -2234,6 +2272,6 @@ export function PublicRegistrationForm({
           <div className="public-registration-summary-note">{joiningWaitlist ? <Clock3 size={15} aria-hidden="true" /> : <LockKeyhole size={15} aria-hidden="true" />}<span>{joiningWaitlist ? "This estimate is not charged while you are on the waitlist." : deferredOrganizationBilling ? "No payment is due online. Your organization will be billed later based on final attendance." : "Final pricing and availability are confirmed securely on submission."}</span></div>
         </aside>
       </form>
-    </main>
+    </Shell>
   );
 }
