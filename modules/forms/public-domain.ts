@@ -79,7 +79,7 @@ export type PreparedPublicAttendee = {
   identity: PublicAttendeeIdentity | null;
 };
 
-const fullNameKeys = [
+export const fullNameKeys = [
   "full_name",
   "name",
   "contact_name",
@@ -91,7 +91,7 @@ const fullNameKeys = [
   "household_name",
 ] as const;
 
-const splitNameKeyPairs = [
+export const splitNameKeyPairs = [
   { first: "first_name", last: "last_name" },
   {
     first: "primary_contact_first_name",
