@@ -3,7 +3,7 @@ import { ClubTeamWorkspace } from "@/components/club-team-workspace";
 import { getRosterAccessState } from "@/modules/club-rosters/access";
 import { listClubTeam } from "@/modules/organizations/director-grants-repository";
 
-export const metadata: Metadata = { title: "Club team" };
+export const metadata: Metadata = { title: "Club admins" };
 export const dynamic = "force-dynamic";
 
 /** Directors and deputies give and remove the Registrar and Reporter roles (#375). */

@@ -74,7 +74,7 @@ export default async function ClubReportsPage({ params }: { params: Promise<{ or
                   </small>
                 </span>
                 <Link className={`${report ? "secondary-button" : "primary-button"} club-event-action`} href={`${base}/${month}`}>
-                  {report ? (locked ? "View" : "Edit") : "Submit"} <ArrowRight size={14} aria-hidden="true" />
+                  {report ? (locked ? "View report" : "Open report") : "Open report"} <ArrowRight size={14} aria-hidden="true" />
                 </Link>
               </li>
             );

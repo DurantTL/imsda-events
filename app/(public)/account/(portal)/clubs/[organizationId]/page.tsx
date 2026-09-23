@@ -61,9 +61,9 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
       if (submitted.has(month) || isLockedForClub(month, now) || reportDueDate(month).slice(0, 7) !== calendarDateIn(now).slice(0, 7)) continue;
       steps.push({
         key: `report-${month}`,
-        text: `Submit the ${reportMonthLabel(month)} monthly report by ${formatDueDate(reportDueDate(month))}.`,
+        text: `The ${reportMonthLabel(month)} monthly report is due ${formatDueDate(reportDueDate(month))}.`,
         href: `${base}/reports/${month}`,
-        action: "Submit",
+        action: "Open report",
       });
     }
   }

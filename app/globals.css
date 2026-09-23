@@ -6687,6 +6687,11 @@ select:focus-visible {
 .two-step-body { display: grid; gap: 16px; }
 .passkey-sign-in { display: grid; gap: 8px; margin-bottom: 10px; }
 .passkey-sign-in-button { width: 100%; justify-content: center; min-height: 46px; }
+.club-roster-heading-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.roster-dialog { width: min(640px, 100%); }
+.birth-date-field { min-width: 0; margin: 0; padding: 0; border: 0; grid-column: 1 / -1; }
+.birth-date-field legend { margin-bottom: 6px; padding: 0; color: var(--ink); font-size: 0.78rem; font-weight: 700; }
+.birth-date-parts { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.8fr) minmax(0, 1fr); gap: 6px; }
 .club-roster-section { display: grid; gap: 8px; margin-top: 14px; }
 .club-roster-section-title { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--ink); font-size: 0.95rem; }
 .club-team-list li { flex-wrap: wrap; align-items: center; }

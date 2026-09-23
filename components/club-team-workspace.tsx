@@ -75,7 +75,7 @@ export function ClubTeamWorkspace({
         <div className="public-manage-card-heading club-roster-heading">
           <div>
             <p className="public-registration-eyebrow">Who can help run the club</p>
-            <h2 id="club-team-heading">Team</h2>
+            <h2 id="club-team-heading">Club admins</h2>
           </div>
           <span className="count-badge">{team.length}</span>
         </div>
@@ -135,7 +135,7 @@ export function ClubTeamWorkspace({
         </p>
         <div>
           <button className="primary-button" disabled={saving} type="submit">
-            <UserPlus aria-hidden="true" size={16} /> Add to team
+            <UserPlus aria-hidden="true" size={16} /> Add club admin
           </button>
         </div>
       </form>
