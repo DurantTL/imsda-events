@@ -6631,6 +6631,13 @@ select:focus-visible {
 .club-roster-stack { display: grid; gap: 16px; }
 .club-roster-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .club-roster-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0; }
+.club-roster-section { display: grid; gap: 8px; margin-top: 14px; }
+.club-roster-section-title { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--ink); font-size: 0.95rem; }
+.club-team-list li { flex-wrap: wrap; align-items: center; }
+.club-team-list li > span:first-child { min-width: 180px; }
+.club-team-list li > .status-chip { flex: 0 0 auto; }
+.club-team-note { color: var(--muted); font-size: 0.7rem; }
+.club-role-help { display: grid; gap: 4px; margin: 0; padding-left: 18px; }
 .roster-unlock-form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; }
 .roster-unlock-form input { width: 140px; border: 1px solid #cbdbe2; border-radius: 10px; padding: 10px 11px; font-size: 0.9rem; letter-spacing: 0.12em; }
 .roster-unlock-form .form-error { flex-basis: 100%; margin: 0; }

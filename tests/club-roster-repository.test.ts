@@ -27,6 +27,7 @@ const youth = {
   birthDate: "2014-12-06",
   attendeeType: "YOUTH" as const,
   role: "Pathfinder",
+  classLevel: null,
   gender: "FEMALE" as const,
 };
 

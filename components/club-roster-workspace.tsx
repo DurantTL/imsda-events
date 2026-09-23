@@ -1,11 +1,13 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Eye, Pencil, Plus, Power, Save, Trash2, UsersRound, X } from "lucide-react";
 import {
+  clubClassLevelLabels,
   clubRosterAttendeeTypeLabels,
   clubRosterGenderLabels,
   clubRosterStatusLabels,
+  rosterSectionOf,
 } from "@/modules/club-rosters/domain";
 import type { RosterMemberRecord } from "@/modules/club-rosters/repository";
 
@@ -17,10 +19,13 @@ type RosterResponse = {
 };
 
 export function ClubRosterWorkspace({
+  canSeeBirthDates,
   clubYear,
   initialMembers,
   organizationId,
 }: {
+  /** Directors and deputies only; a registrar enters birth dates but sees ages (#375). */
+  canSeeBirthDates: boolean;
   clubYear: string;
   initialMembers: RosterMemberRecord[];
   organizationId: string;
@@ -33,7 +38,7 @@ export function ClubRosterWorkspace({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const base = `/api/attendee/clubs/${encodeURIComponent(organizationId)}/roster`;
-  const formRef = useRef<HTMLFormElement>(null);
+  const formId = "club-roster-form";
 
   function beginEdit(member: RosterMemberRecord) {
     setEditing(member);
@@ -41,13 +46,18 @@ export function ClubRosterWorkspace({
     setError("");
     // The form sits below the list; on a phone it's off screen, so bring it to the person.
     window.requestAnimationFrame(() => {
-      formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      formRef.current?.querySelector<HTMLInputElement>("input[name=firstName]")?.focus({ preventScroll: true });
+      const form = document.getElementById(formId);
+      form?.scrollIntoView({ behavior: "smooth", block: "start" });
+      form?.querySelector<HTMLInputElement>("input[name=firstName]")?.focus({ preventScroll: true });
     });
   }
 
   const active = members.filter((member) => member.status === "ACTIVE");
   const visible = showInactive ? members : active;
+  const sections = [
+    { key: "STAFF", title: "Staff", empty: "No staff on the roster yet.", people: visible.filter((member) => rosterSectionOf(member.attendeeType) === "STAFF") },
+    { key: "MEMBERS", title: "Members", empty: "No Pathfinders on the roster yet.", people: visible.filter((member) => rosterSectionOf(member.attendeeType) === "MEMBERS") },
+  ] as const;
 
   async function call(url: string, method: string, body: unknown, success: string) {
     setSaving(true);
@@ -84,6 +94,7 @@ export function ClubRosterWorkspace({
       lastName: String(form.get("lastName") ?? ""),
       attendeeType: String(form.get("attendeeType") ?? "YOUTH"),
       role: String(form.get("role") ?? ""),
+      classLevel: String(form.get("classLevel") ?? "") || null,
       gender: String(form.get("gender") ?? "") || null,
     };
     const result = editing
@@ -135,7 +146,7 @@ export function ClubRosterWorkspace({
             <input checked={showInactive} onChange={(event) => setShowInactive(event.target.checked)} type="checkbox" />
             Show inactive people
           </label>
-          {birthDates ? (
+          {!canSeeBirthDates ? null : birthDates ? (
             <button className="text-button" onClick={() => setBirthDates(null)} type="button">
               <Eye aria-hidden="true" size={14} /> Hide birth dates
             </button>
@@ -151,58 +162,72 @@ export function ClubRosterWorkspace({
             added when you register your club for an event.
           </p>
         ) : (
-          <div className="report-table-wrap">
-            <table className="report-table roster-card-table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Type</th>
-                  <th>Role</th>
-                  <th>Age</th>
-                  {birthDates && <th>Birth date</th>}
-                  <th>Status</th>
-                  <th><span className="sr-only">Actions</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((member) => (
-                  <tr key={member.id}>
-                    <td className="roster-card-name" translate="no"><strong>{member.lastName}, {member.firstName}</strong></td>
-                    <td data-label="Type">{clubRosterAttendeeTypeLabels[member.attendeeType]}</td>
-                    <td data-label="Role">{member.role || "—"}</td>
-                    <td data-label="Age" translate="no">{member.age ?? "—"}</td>
-                    {birthDates && <td data-label="Birth date" translate="no">{birthDates[member.id] ?? "—"}</td>}
-                    <td data-label="Status">
-                      <span className={`status-chip ${member.status === "ACTIVE" ? "green" : "gold"}`}>
-                        {clubRosterStatusLabels[member.status]}
-                      </span>
-                    </td>
-                    <td className="honor-row-actions roster-card-actions">
-                      <button aria-label={`Edit ${member.firstName} ${member.lastName}`} className="secondary-button" disabled={saving} onClick={() => beginEdit(member)} type="button">
-                        <Pencil aria-hidden="true" size={13} />
-                      </button>
-                      <button
-                        aria-label={`${member.status === "ACTIVE" ? "Mark inactive" : "Mark active"}: ${member.firstName} ${member.lastName}`}
-                        className="secondary-button"
-                        disabled={saving}
-                        onClick={() => setStatus(member, member.status === "ACTIVE" ? "INACTIVE" : "ACTIVE")}
-                        type="button"
-                      >
-                        <Power aria-hidden="true" size={13} />
-                      </button>
-                      <button aria-label={`Remove ${member.firstName} ${member.lastName}`} className="secondary-button" disabled={saving} onClick={() => remove(member)} type="button">
-                        <Trash2 aria-hidden="true" size={13} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          sections.map((section) => (
+            <div className="club-roster-section" key={section.key}>
+              <h3 className="club-roster-section-title">
+                {section.title} <span className="count-badge">{section.people.length}</span>
+              </h3>
+              {section.people.length === 0 ? (
+                <p className="field-help">{section.empty}</p>
+              ) : (
+                <div className="report-table-wrap">
+                  <table className="report-table roster-card-table">
+                    <caption className="sr-only">{section.title}</caption>
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Type</th>
+                        <th>Class</th>
+                        <th>Role</th>
+                        <th>Age</th>
+                        {birthDates && <th>Birth date</th>}
+                        <th>Status</th>
+                        <th><span className="sr-only">Actions</span></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {section.people.map((member) => (
+                        <tr key={member.id}>
+                          <td className="roster-card-name" translate="no"><strong>{member.lastName}, {member.firstName}</strong></td>
+                          <td data-label="Type">{clubRosterAttendeeTypeLabels[member.attendeeType]}</td>
+                          <td data-label="Class">{member.classLevel ? clubClassLevelLabels[member.classLevel] : "—"}</td>
+                          <td data-label="Role">{member.role || "—"}</td>
+                          <td data-label="Age" translate="no">{member.age ?? "—"}</td>
+                          {birthDates && <td data-label="Birth date" translate="no">{birthDates[member.id] ?? "—"}</td>}
+                          <td data-label="Status">
+                            <span className={`status-chip ${member.status === "ACTIVE" ? "green" : "gold"}`}>
+                              {clubRosterStatusLabels[member.status]}
+                            </span>
+                          </td>
+                          <td className="honor-row-actions roster-card-actions">
+                            <button aria-label={`Edit ${member.firstName} ${member.lastName}`} className="secondary-button" disabled={saving} onClick={() => beginEdit(member)} type="button">
+                              <Pencil aria-hidden="true" size={13} />
+                            </button>
+                            <button
+                              aria-label={`${member.status === "ACTIVE" ? "Mark inactive" : "Mark active"}: ${member.firstName} ${member.lastName}`}
+                              className="secondary-button"
+                              disabled={saving}
+                              onClick={() => setStatus(member, member.status === "ACTIVE" ? "INACTIVE" : "ACTIVE")}
+                              type="button"
+                            >
+                              <Power aria-hidden="true" size={13} />
+                            </button>
+                            <button aria-label={`Remove ${member.firstName} ${member.lastName}`} className="secondary-button" disabled={saving} onClick={() => remove(member)} type="button">
+                              <Trash2 aria-hidden="true" size={13} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ))
         )}
       </section>
 
-      <form className="public-manage-card form-stack" key={editing?.id ?? "new"} onSubmit={save} ref={formRef}>
+      <form className="public-manage-card form-stack" key={editing?.id ?? "new"} id={formId} onSubmit={save}>
         <div className="public-manage-card-heading club-roster-heading">
           <div>
             <p className="public-registration-eyebrow">{editing ? "Edit" : "Add someone"}</p>
@@ -241,6 +266,15 @@ export function ClubRosterWorkspace({
             </select>
           </label>
           <label>
+            Class
+            <select defaultValue={editing?.classLevel ?? ""} name="classLevel">
+              <option value="">None</option>
+              {Object.entries(clubClassLevelLabels).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
             Role (optional)
             <input defaultValue={editing?.role ?? ""} maxLength={60} name="role" placeholder="e.g. Pathfinder, Counselor, TLT" />
           </label>
@@ -255,8 +289,8 @@ export function ClubRosterWorkspace({
           </label>
         </div>
         <p className="field-help">
-          Birth dates are encrypted and shown only to your club&apos;s directors. Event staff see age only.
-          Don&apos;t enter medical or insurance information here.
+          Birth dates are encrypted and shown only to your club&apos;s director and deputy. Registrars and event
+          staff see age only. Don&apos;t enter medical or insurance information here.
         </p>
         <div>
           <button className="primary-button" disabled={saving} type="submit">

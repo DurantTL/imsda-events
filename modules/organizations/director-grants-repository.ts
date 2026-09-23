@@ -4,10 +4,14 @@ import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
+  clubDirectorRoleLabels,
+  clubRoleIsAssignableByClub,
+  directorGrantIsActive,
   directorGrantStatus,
   directorGrantWindowsOverlap,
+  type ClubRole,
 } from "@/modules/organizations/director-grants-domain";
-import type { CreateDirectorGrantInput } from "@/modules/organizations/director-grants-schemas";
+import type { CreateClubTeamGrantInput, CreateDirectorGrantInput } from "@/modules/organizations/director-grants-schemas";
 import { OrganizationOperationError } from "@/modules/organizations/repository";
 
 const grantInclude = {
@@ -129,7 +133,7 @@ export async function createDirectorGrant(
     if (existing.some((grant) => directorGrantWindowsOverlap(grant, { effectiveFrom, effectiveTo }))) {
       throw new OrganizationOperationError(
         "DIRECTOR_GRANT_CONFLICT",
-        "This person already has a director grant for this club during those dates. Revoke or end it first.",
+        "This person already has a role in this club during those dates. Revoke or end it first.",
       );
     }
 
@@ -149,7 +153,7 @@ export async function createDirectorGrant(
       action: "CLUB_DIRECTOR_GRANTED",
       entityType: "ClubDirectorGrant",
       entityId: grant.id,
-      summary: `Granted ${input.role === "DEPUTY" ? "deputy director" : "director"} access to ${club.name}.`,
+      summary: `Granted ${clubDirectorRoleLabels[input.role].toLocaleLowerCase("en-US")} access to ${club.name}.`,
       metadata: {
         organizationId,
         attendeeAccountId: account.id,
@@ -182,18 +186,143 @@ export async function revokeDirectorGrant(
         select: { id: true },
       });
       throw grant
-        ? new OrganizationOperationError("DIRECTOR_GRANT_ALREADY_REVOKED", "That director grant was already revoked.")
-        : new OrganizationOperationError("DIRECTOR_GRANT_NOT_FOUND", "That director grant could not be found.");
+        ? new OrganizationOperationError("DIRECTOR_GRANT_ALREADY_REVOKED", "That role was already revoked.")
+        : new OrganizationOperationError("DIRECTOR_GRANT_NOT_FOUND", "That role could not be found.");
     }
     await writeAuditLog({
       actorUserId,
       action: "CLUB_DIRECTOR_REVOKED",
       entityType: "ClubDirectorGrant",
       entityId: grantId,
-      summary: `Revoked a director grant for ${club.name}.`,
+      summary: `Revoked a club role for ${club.name}.`,
       metadata: { organizationId, reason },
     }, tx);
   });
 
   return listDirectorGrants(organizationId, now);
+}
+
+/**
+ * The club's current team as its own director or deputy sees it (#375):
+ * active roles only, with names and account emails. No staff reasons or
+ * history, which stay on the staff screen.
+ */
+export async function listClubTeam(organizationId: string, now = new Date()) {
+  const grants = await getPrisma().clubDirectorGrant.findMany({
+    where: {
+      organizationId,
+      revokedAt: null,
+      effectiveFrom: { lte: now },
+      OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
+    },
+    orderBy: [{ role: "asc" }, { attendeeAccount: { displayName: "asc" } }],
+    select: {
+      id: true,
+      role: true,
+      effectiveFrom: true,
+      effectiveTo: true,
+      revokedAt: true,
+      attendeeAccount: { select: { id: true, displayName: true, email: true } },
+    },
+  });
+  return grants
+    .filter((grant) => directorGrantIsActive(grant, now))
+    .map((grant) => ({
+      id: grant.id,
+      role: grant.role as ClubRole,
+      accountId: grant.attendeeAccount.id,
+      displayName: grant.attendeeAccount.displayName,
+      email: grant.attendeeAccount.email,
+      since: grant.effectiveFrom.toISOString(),
+      removableByClub: clubRoleIsAssignableByClub(grant.role),
+    }));
+}
+
+export type ClubTeamMember = Awaited<ReturnType<typeof listClubTeam>>[number];
+
+/** A club director or deputy gives someone the Registrar or Reporter role. Audited. */
+export async function grantClubTeamRole(
+  organizationId: string,
+  input: CreateClubTeamGrantInput,
+  actorAccountId: string,
+  now = new Date(),
+) {
+  if (!clubRoleIsAssignableByClub(input.role)) {
+    throw new OrganizationOperationError("DIRECTOR_GRANT_ROLE_NOT_ALLOWED", "Only conference staff can assign directors and deputies.");
+  }
+  await serializable(async (tx) => {
+    const club = await requireClub(tx, organizationId, { mustBeActive: true });
+    const account = await tx.attendeeAccount.findUnique({
+      where: { email: input.email },
+      select: { id: true, status: true, emailVerifiedAt: true, disabledAt: true },
+    });
+    if (!account || account.status !== "ACTIVE" || !account.emailVerifiedAt || account.disabledAt) {
+      throw new OrganizationOperationError(
+        "ATTENDEE_ACCOUNT_NOT_FOUND",
+        "No active, verified account uses that email. Ask them to create one at /account/sign-up and verify their email, then try again.",
+      );
+    }
+    const existing = await tx.clubDirectorGrant.findMany({
+      where: { organizationId, attendeeAccountId: account.id, revokedAt: null },
+      select: { effectiveFrom: true, effectiveTo: true },
+    });
+    if (existing.some((grant) => directorGrantWindowsOverlap(grant, { effectiveFrom: now, effectiveTo: null }))) {
+      throw new OrganizationOperationError(
+        "DIRECTOR_GRANT_CONFLICT",
+        "This person already has a role in this club. Remove it first to change it.",
+      );
+    }
+    const grant = await tx.clubDirectorGrant.create({
+      data: {
+        organizationId,
+        attendeeAccountId: account.id,
+        role: input.role,
+        effectiveFrom: now,
+        reason: "Given by the club's director or deputy.",
+        grantedByAccountId: actorAccountId,
+      },
+      select: { id: true },
+    });
+    await writeAuditLog({
+      action: "CLUB_ROLE_GRANTED",
+      entityType: "ClubDirectorGrant",
+      entityId: grant.id,
+      summary: `Club leader gave ${clubDirectorRoleLabels[input.role].toLocaleLowerCase("en-US")} access to ${club.name}.`,
+      metadata: { organizationId, attendeeAccountId: account.id, role: input.role, actorAttendeeAccountId: actorAccountId },
+    }, tx);
+  });
+  return listClubTeam(organizationId, now);
+}
+
+/** A club director or deputy removes a Registrar or Reporter. Directors and deputies are removed by staff only. */
+export async function revokeClubTeamRole(
+  organizationId: string,
+  grantId: string,
+  actorAccountId: string,
+  now = new Date(),
+) {
+  await serializable(async (tx) => {
+    const club = await requireClub(tx, organizationId, { mustBeActive: false });
+    const grant = await tx.clubDirectorGrant.findFirst({
+      where: { id: grantId, organizationId },
+      select: { id: true, role: true, revokedAt: true, attendeeAccountId: true },
+    });
+    if (!grant) throw new OrganizationOperationError("DIRECTOR_GRANT_NOT_FOUND", "That role could not be found.");
+    if (!clubRoleIsAssignableByClub(grant.role)) {
+      throw new OrganizationOperationError("DIRECTOR_GRANT_ROLE_NOT_ALLOWED", "Only conference staff can remove directors and deputies.");
+    }
+    if (grant.revokedAt) throw new OrganizationOperationError("DIRECTOR_GRANT_ALREADY_REVOKED", "That role was already removed.");
+    await tx.clubDirectorGrant.update({
+      where: { id: grantId },
+      data: { revokedAt: now, revokedByAccountId: actorAccountId, revokeReason: "Removed by the club's director or deputy." },
+    });
+    await writeAuditLog({
+      action: "CLUB_ROLE_REVOKED",
+      entityType: "ClubDirectorGrant",
+      entityId: grantId,
+      summary: `Club leader removed a ${clubDirectorRoleLabels[grant.role].toLocaleLowerCase("en-US")} from ${club.name}.`,
+      metadata: { organizationId, attendeeAccountId: grant.attendeeAccountId, role: grant.role, actorAttendeeAccountId: actorAccountId },
+    }, tx);
+  });
+  return listClubTeam(organizationId, now);
 }

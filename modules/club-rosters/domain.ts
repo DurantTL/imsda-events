@@ -11,6 +11,29 @@ export const clubRosterAttendeeTypeLabels = {
   UNDERAGE: "Underage",
 } as const;
 
+/** Pathfinder class levels (#375), in the order a Pathfinder moves through them. */
+export const clubClassLevelLabels = {
+  FRIEND: "Friend",
+  COMPANION: "Companion",
+  EXPLORER: "Explorer",
+  RANGER: "Ranger",
+  VOYAGER: "Voyager",
+  GUIDE: "Guide",
+  TLT: "TLT",
+  MASTER_GUIDE: "Master Guide",
+} as const;
+
+export type ClubClassLevel = keyof typeof clubClassLevelLabels;
+
+export const clubClassLevels = Object.keys(clubClassLevelLabels) as ClubClassLevel[];
+
+/** The roster screen's two lists (#375): staff and adults, and the club's members. */
+export type RosterSection = "STAFF" | "MEMBERS";
+
+export function rosterSectionOf(attendeeType: keyof typeof clubRosterAttendeeTypeLabels): RosterSection {
+  return attendeeType === "STAFF" || attendeeType === "ADULT" ? "STAFF" : "MEMBERS";
+}
+
 export const clubRosterGenderLabels = { FEMALE: "Female", MALE: "Male" } as const;
 
 export const clubRosterStatusLabels = {

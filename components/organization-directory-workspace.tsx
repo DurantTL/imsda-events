@@ -2,19 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import {
-  BadgeCheck,
-  Building2,
-  Church,
-  Link2,
-  Pencil,
-  Plus,
-  Save,
-  ShieldCheck,
-  UserCog,
-  UsersRound,
-  X,
-} from "lucide-react";
+import { BadgeCheck, Building2, Church, IdCard, Link2, Pencil, Plus, Save, ShieldCheck, UserCog, UsersRound, X } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import {
   externalSystemLabels,
@@ -335,13 +323,22 @@ export function OrganizationDirectoryWorkspace({
                     <Pencil aria-hidden="true" size={14} /> Edit
                   </button>
                   {organization.type === "CLUB" && (
-                    <Link
-                      aria-label={`Directors for ${organization.name}`}
-                      className="secondary-button"
-                      href={`/admin/organizations/${organization.id}/directors`}
-                    >
-                      <UserCog aria-hidden="true" size={14} /> Directors
-                    </Link>
+                    <>
+                      <Link
+                        aria-label={`Team for ${organization.name}`}
+                        className="secondary-button"
+                        href={`/admin/organizations/${organization.id}/directors`}
+                      >
+                        <UserCog aria-hidden="true" size={14} /> Team
+                      </Link>
+                      <Link
+                        aria-label={`Profile for ${organization.name}`}
+                        className="secondary-button"
+                        href={`/admin/organizations/${organization.id}/profile`}
+                      >
+                        <IdCard aria-hidden="true" size={14} /> Profile
+                      </Link>
+                    </>
                   )}
                 </div>
               </article>

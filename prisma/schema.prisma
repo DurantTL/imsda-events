@@ -56,11 +56,28 @@ enum OrganizationType {
   CLUB
 }
 
-/// A club director's authority over one club (#354). DEPUTY carries the same
-/// club access as DIRECTOR; the role is recorded for people, not for rules.
+/// A person's authority over one club (#354, #375). DEPUTY carries the same
+/// club access as DIRECTOR. REGISTRAR keeps the roster and registers for
+/// events but sees ages, never full birth dates. REPORTER submits monthly
+/// reports only. Order matters: the first role listed wins when one person
+/// holds two.
 enum ClubDirectorRole {
   DIRECTOR
   DEPUTY
+  REGISTRAR
+  REPORTER
+}
+
+/// Pathfinder class level on a club roster (#375). No level is stored as null.
+enum ClubClassLevel {
+  FRIEND
+  COMPANION
+  EXPLORER
+  RANGER
+  VOYAGER
+  GUIDE
+  TLT
+  MASTER_GUIDE
 }
 
 enum ExternalSystem {
@@ -650,6 +667,8 @@ model AttendeeAccount {
   actorOnAttendeeAccountPersonLinks AttendeeAccountPersonLink[] @relation("AttendeeAccountPersonLinkActorAccount")
   /// Clubs this account directs. Explicit staff grants only — never inferred.
   clubDirectorGrants                ClubDirectorGrant[]
+  grantedClubRoles                  ClubDirectorGrant[]              @relation("ClubDirectorGrantGrantedByAccount")
+  revokedClubRoles                  ClubDirectorGrant[]              @relation("ClubDirectorGrantRevokedByAccount")
   createdClubRosterMembers          ClubRosterMember[]          @relation("ClubRosterMemberCreatedBy")
   submittedClubRegistrations        ClubEventRegistration[]     @relation("ClubEventRegistrationSubmittedBy")
   clubRegistrationDrafts            ClubRegistrationDraft[]     @relation("ClubRegistrationDraftUpdatedBy")
@@ -1471,10 +1490,27 @@ model Organization {
   eventRegistrations ClubEventRegistration[]
   registrationDrafts ClubRegistrationDraft[]
   honorEnrollments   HonorEnrollment[]
+  clubProfile        ClubProfile?
 
   @@index([type, isActive, name])
   @@index([parentOrganizationId, isActive])
   @@index([normalizedName])
+}
+
+/// What a club tells people about itself (#375): editable by its director or
+/// deputy and by conference staff. `listPublicly` is for a later "find a club".
+model ClubProfile {
+  organizationId    String   @id
+  meetingPlace      String   @default("")
+  meetingSchedule   String   @default("")
+  contactEmail      String   @default("")
+  contactPhone      String   @default("")
+  publicDescription String   @default("")
+  listPublicly      Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }
 
 /**
@@ -1493,16 +1529,21 @@ model ClubDirectorGrant {
   effectiveTo       DateTime?
   reason            String
   grantedByUserId   String?
+  /// Set when the club's own director or deputy gave the role (#375).
+  grantedByAccountId String?
   revokedAt         DateTime?
   revokedByUserId   String?
+  revokedByAccountId String?
   revokeReason      String?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 
-  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  attendeeAccount AttendeeAccount @relation(fields: [attendeeAccountId], references: [id], onDelete: Restrict)
-  grantedBy       User?           @relation("ClubDirectorGrantGrantedBy", fields: [grantedByUserId], references: [id], onDelete: SetNull)
-  revokedBy       User?           @relation("ClubDirectorGrantRevokedBy", fields: [revokedByUserId], references: [id], onDelete: SetNull)
+  organization     Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  attendeeAccount  AttendeeAccount  @relation(fields: [attendeeAccountId], references: [id], onDelete: Restrict)
+  grantedBy        User?            @relation("ClubDirectorGrantGrantedBy", fields: [grantedByUserId], references: [id], onDelete: SetNull)
+  revokedBy        User?            @relation("ClubDirectorGrantRevokedBy", fields: [revokedByUserId], references: [id], onDelete: SetNull)
+  grantedByAccount AttendeeAccount? @relation("ClubDirectorGrantGrantedByAccount", fields: [grantedByAccountId], references: [id], onDelete: SetNull)
+  revokedByAccount AttendeeAccount? @relation("ClubDirectorGrantRevokedByAccount", fields: [revokedByAccountId], references: [id], onDelete: SetNull)
 
   @@index([attendeeAccountId, revokedAt])
   @@index([organizationId, revokedAt])
@@ -2764,6 +2805,7 @@ model ClubRosterMember {
   personId             String?
   attendeeType         ClubRosterAttendeeType
   role                 String                 @default("")
+  classLevel           ClubClassLevel?
   gender               ClubRosterGender?
   sealedBirthDate      String?
   status               ClubRosterStatus       @default(ACTIVE)

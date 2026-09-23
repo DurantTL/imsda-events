@@ -13,7 +13,7 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
   if (originError) return originError;
   try {
     const { organizationId, eventId } = await context.params;
-    const access = await requireRosterAccess(organizationId);
+    const access = await requireRosterAccess(organizationId, new Date(), "registerForEvents");
     const body = await request.text();
     if (Buffer.byteLength(body) > maximumBodyBytes) {
       return Response.json({ error: "REQUEST_TOO_LARGE", message: "This registration is too large." }, { status: 413 });
