@@ -701,7 +701,8 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
     const fields = module.fields.map((source) => {
       const cloned = structuredClone(source);
       const conditional = cloned.conditional ? { ...cloned.conditional, fieldKey: moduleKeys.get(cloned.conditional.fieldKey) ?? cloned.conditional.fieldKey } : undefined;
-      return { ...cloned, id: localId("field"), key: moduleKeys.get(source.key)!, conditional };
+      const optionalWhen = cloned.optionalWhen ? { ...cloned.optionalWhen, fieldKey: moduleKeys.get(cloned.optionalWhen.fieldKey) ?? cloned.optionalWhen.fieldKey } : undefined;
+      return { ...cloned, id: localId("field"), key: moduleKeys.get(source.key)!, conditional, optionalWhen };
     });
     const section = definition.sections[sectionIndex];
     const sections = definition.sections.map((candidate, index) => index === sectionIndex
@@ -1015,9 +1016,10 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
                   updateField(sectionIndex, fieldIndex, {
                     scope,
                     conditional: scope === "REGISTRATION" && controller?.scope === "ATTENDEE" ? undefined : field.conditional,
+                    optionalWhen: scope === "REGISTRATION" && allFields.find((candidate) => candidate.key === field.optionalWhen?.fieldKey)?.scope === "ATTENDEE" ? undefined : field.optionalWhen,
                   });
                 }}>{formFieldScopes.map((scope) => <option key={scope} value={scope}>{scope === "ATTENDEE" ? "Each attendee" : "Registration"}</option>)}</select></label>
-                <label className="required-toggle"><input disabled={!canEdit || field.type === "CALCULATED" || field.optionSource === "ATTENDEE_TYPES"} type="checkbox" checked={field.optionSource === "ATTENDEE_TYPES" ? true : field.required} onChange={(event) => updateField(sectionIndex, fieldIndex, { required: event.target.checked })} /> Required{field.optionSource === "ATTENDEE_TYPES" && <small> — the attendee-type selector is always required</small>}</label>
+                <label className="required-toggle"><input disabled={!canEdit || field.type === "CALCULATED" || field.optionSource === "ATTENDEE_TYPES"} type="checkbox" checked={field.optionSource === "ATTENDEE_TYPES" ? true : field.required} onChange={(event) => updateField(sectionIndex, fieldIndex, { required: event.target.checked, optionalWhen: event.target.checked ? field.optionalWhen : undefined })} /> Required{field.optionSource === "ATTENDEE_TYPES" && <small> — the attendee-type selector is always required</small>}</label>
                 {(field.type === "SELECT" || field.type === "RADIO") && field.scope === "ATTENDEE" && <label className="required-toggle"><input disabled={!canEdit || (!field.optionSource && allFields.some((candidate) => candidate.optionSource === "ATTENDEE_TYPES"))} type="checkbox" checked={field.optionSource === "ATTENDEE_TYPES"} onChange={(event) => updateField(sectionIndex, fieldIndex, { optionSource: event.target.checked ? "ATTENDEE_TYPES" : undefined, optionLabels: event.target.checked ? field.optionLabels : undefined, required: event.target.checked ? true : field.required, availabilityMode: event.target.checked ? "NONE" : field.availabilityMode, choiceLimits: event.target.checked ? undefined : field.choiceLimits, choicePricesCents: event.target.checked ? undefined : field.choicePricesCents, latePricing: event.target.checked ? undefined : field.latePricing })} /> Source attendee types from event configuration</label>}
               </div>
               {isChoiceFieldType(field.type) && <section className="choice-settings"><div><p className="eyebrow">Choices, descriptions, pricing &amp; capacity</p><span>Add optional descriptions when people need more information before choosing.</span></div><div className="field-settings">
@@ -1043,6 +1045,16 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
                     {field.conditional.operator !== "NOT_EMPTY" && <label>Answer{controller && isChoiceFieldType(controller.type) ? <select disabled={!canEdit} value={field.conditional.value} onChange={(event) => updateField(sectionIndex, fieldIndex, { conditional: { ...field.conditional!, value: event.target.value } })}><option value="">Choose…</option>{controller.options.map((option) => <option key={option}>{option}</option>)}</select> : <input disabled={!canEdit} value={field.conditional.value} placeholder="Expected answer" onChange={(event) => updateField(sectionIndex, fieldIndex, { conditional: { ...field.conditional!, value: event.target.value } })} />}</label>}
                   </div>; })()}
                 </div>
+                {field.required && field.type !== "CALCULATED" && (
+                  <div className="field-full conditional-editor">
+                    <label className="required-toggle"><input disabled={!canEdit || allFields.length < 2} type="checkbox" checked={Boolean(field.optionalWhen)} onChange={(event) => { const controller = allFields.find((candidate) => candidate.optionSource === "ATTENDEE_TYPES" || candidate.key === "attendee_type") ?? allFields.find((candidate) => candidate.id !== field.id && (field.scope === "ATTENDEE" || candidate.scope === "REGISTRATION")); updateField(sectionIndex, fieldIndex, { optionalWhen: event.target.checked && controller && controller.id !== field.id ? { fieldKey: controller.key, operator: "EQUALS", value: controller.options.find((option) => /teen/i.test(option)) ?? controller.options[0] ?? "" } : undefined }); }} /> Not required when… <small>(still shown and answerable, marked with *)</small></label>
+                    {field.optionalWhen && (() => { const controller = allFields.find((candidate) => candidate.key === field.optionalWhen?.fieldKey); return <div className="conditional-grid">
+                      <label>Field<select disabled={!canEdit} value={field.optionalWhen.fieldKey} onChange={(event) => { const nextController = allFields.find((candidate) => candidate.key === event.target.value); updateField(sectionIndex, fieldIndex, { optionalWhen: { ...field.optionalWhen!, fieldKey: event.target.value, value: nextController?.options[0] ?? "" } }); }}>{allFields.filter((candidate) => candidate.id !== field.id && (field.scope === "ATTENDEE" || candidate.scope === "REGISTRATION")).map((candidate) => <option key={candidate.id} value={candidate.key}>{candidate.label}</option>)}</select></label>
+                      <label>Condition<select disabled={!canEdit} value={field.optionalWhen.operator} onChange={(event) => updateField(sectionIndex, fieldIndex, { optionalWhen: { ...field.optionalWhen!, operator: event.target.value as typeof conditionOperators[number] } })}>{conditionOperators.map((operator) => <option key={operator} value={operator}>{conditionLabels[operator]}</option>)}</select></label>
+                      {field.optionalWhen.operator !== "NOT_EMPTY" && <label>Answer{controller && isChoiceFieldType(controller.type) ? <select disabled={!canEdit} value={field.optionalWhen.value} onChange={(event) => updateField(sectionIndex, fieldIndex, { optionalWhen: { ...field.optionalWhen!, value: event.target.value } })}><option value="">Choose…</option>{controller.options.map((option) => <option key={option}>{option}</option>)}</select> : <input disabled={!canEdit} value={field.optionalWhen.value} placeholder="Expected answer" onChange={(event) => updateField(sectionIndex, fieldIndex, { optionalWhen: { ...field.optionalWhen!, value: event.target.value } })} />}</label>}
+                    </div>; })()}
+                  </div>
+                )}
               </div></details>
             </div>}
           </article>)}</div>

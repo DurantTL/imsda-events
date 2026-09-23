@@ -360,4 +360,25 @@ describe("operational reports", () => {
     expect(csv).toContain("\"'=HYPERLINK(\"\"https://bad.example\"\")\"");
     expect(csv).toContain("\"'=SUM(1,1) Example\"");
   });
+
+  it("lists attendees by their attendee-type answer, e.g. the Teen Program roster (WR26)", () => {
+    const report = buildOperationalReport([
+      registration({
+        attendees: [
+          { id: "attendee_one", firstName: "Ana", lastName: "Rivera", attendeeType: "ATTENDEE", position: 0, responses: { attendee_type: "Adult" } },
+          { id: "attendee_two", firstName: "Tess", lastName: "Rivera", attendeeType: "ATTENDEE", position: 1, responses: { attendee_type: "Teen" } },
+        ],
+      }),
+      registration({ id: "reg_staff", confirmationCode: "REG-STAFF", publicSubmission: null, attendees: [
+        { id: "attendee_three", firstName: "Kai", lastName: "Moss", attendeeType: "ATTENDEE", position: 0, responses: { attendee_type: "Teen" } },
+      ] }),
+    ]);
+    const teen = report.attendeeTypeGroups.find((group) => group.label === "Teen")!;
+    expect(teen.attendees.map((attendee) => attendee.firstName)).toEqual(["Kai", "Tess"]);
+    expect(teen.attendees.find((attendee) => attendee.firstName === "Tess")?.groupLabel).toBe("Central Congregation");
+    const csv = operationalReportCsv(report, "attendee-types");
+    expect(csv.split("\n")[0]).toContain("Attendee type");
+    expect(csv).toContain("Teen");
+  });
 });
+

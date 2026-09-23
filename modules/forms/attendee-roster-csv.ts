@@ -196,7 +196,7 @@ export function parseAttendeeRosterCsv(
 
   const mappedKeys = new Set(mappedFields.map((field) => field.key));
   const missingRequired = fields.find((field) => (
-    field.required && !field.conditional && !mappedKeys.has(field.key)
+    field.required && !field.conditional && !field.optionalWhen && !mappedKeys.has(field.key)
   ));
   if (missingRequired) {
     throw new AttendeeRosterCsvError(
@@ -224,7 +224,9 @@ export function parseAttendeeRosterCsv(
     const responses: AttendeeRosterCsvResponses = {};
     mappedFields.forEach((field, columnIndex) => {
       const rawValue = row[columnIndex] ?? "";
-      if (field.required && !field.conditional && !rawValue.trim()) {
+      // "Optional when" fields (e.g. seminars for Teens) are checked on the
+      // full form after import, where the attendee type is known.
+      if (field.required && !field.conditional && !field.optionalWhen && !rawValue.trim()) {
         throw new AttendeeRosterCsvError(
           `Row ${rowNumber}: ${field.label} is required.`,
         );

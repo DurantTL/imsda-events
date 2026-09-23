@@ -54,6 +54,11 @@ export const formFieldSchema = z.object({
     choicePricesCents: z.record(z.string(), priceCentsSchema).optional(),
   }).optional(),
   conditional: z.object({ fieldKey: z.string().trim().min(2).max(60), operator: z.enum(conditionOperators), value: z.string().max(120).default("") }).optional(),
+  /**
+   * A required field that becomes optional when this matches, e.g. seminar
+   * rankings for Teens (WR26): shown with a note, answerable, never forced.
+   */
+  optionalWhen: z.object({ fieldKey: z.string().trim().min(2).max(60), operator: z.enum(conditionOperators), value: z.string().max(120).default("") }).optional(),
 }).superRefine((field, context) => {
   if (isChoiceFieldType(field.type) && field.options.length < 2 && !field.optionSource) {
     context.addIssue({ code: "custom", path: ["options"], message: "Choice fields need at least two choices." });
@@ -168,6 +173,14 @@ export const registrationFormDefinitionSchema = z.object({
       : null;
     if (field.scope === "REGISTRATION" && controller?.scope === "ATTENDEE") {
       context.addIssue({ code: "custom", path: ["sections", sectionIndex, "fields", fieldIndex, "conditional"], message: "A registration-level field cannot depend on an attendee answer." });
+    }
+    if (field.optionalWhen) {
+      const optionalController = definition.sections.flatMap((candidate) => candidate.fields).find((candidate) => candidate.key === field.optionalWhen?.fieldKey);
+      if (!optionalController || optionalController.key === field.key) {
+        context.addIssue({ code: "custom", path: ["sections", sectionIndex, "fields", fieldIndex, "optionalWhen"], message: "\"Optional when\" must reference another configured field." });
+      } else if (field.scope === "REGISTRATION" && optionalController.scope === "ATTENDEE") {
+        context.addIssue({ code: "custom", path: ["sections", sectionIndex, "fields", fieldIndex, "optionalWhen"], message: "A registration-level field cannot depend on an attendee answer." });
+      }
     }
   }));
   const allFields = definition.sections.flatMap((section) => section.fields);
@@ -804,14 +817,30 @@ function hasValue(value: unknown) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+type FieldCondition = NonNullable<RegistrationFormField["conditional"]>;
+
+function conditionMatches(condition: FieldCondition, responses: Record<string, unknown>) {
+  const actual = responses[condition.fieldKey];
+  const expected = condition.value;
+  if (condition.operator === "NOT_EMPTY") return hasValue(actual);
+  if (condition.operator === "INCLUDES") return Array.isArray(actual) ? actual.map(String).includes(expected) : String(actual ?? "").includes(expected);
+  if (condition.operator === "NOT_EQUALS") return String(actual ?? "") !== expected;
+  return String(actual ?? "") === expected;
+}
+
 export function isFieldVisible(field: RegistrationFormField, responses: Record<string, unknown>) {
   if (!field.conditional) return true;
-  const actual = responses[field.conditional.fieldKey];
-  const expected = field.conditional.value;
-  if (field.conditional.operator === "NOT_EMPTY") return hasValue(actual);
-  if (field.conditional.operator === "INCLUDES") return Array.isArray(actual) ? actual.map(String).includes(expected) : String(actual ?? "").includes(expected);
-  if (field.conditional.operator === "NOT_EQUALS") return String(actual ?? "") !== expected;
-  return String(actual ?? "") === expected;
+  return conditionMatches(field.conditional, responses);
+}
+
+/** Whether a required field has been made optional for this person by "optional when". */
+export function isFieldOptionalByCondition(field: RegistrationFormField, responses: Record<string, unknown>) {
+  return Boolean(field.required && field.optionalWhen && conditionMatches(field.optionalWhen, responses));
+}
+
+/** Required for this person: required, and not excused by "optional when". */
+export function isFieldRequired(field: RegistrationFormField, responses: Record<string, unknown>) {
+  return field.required && !isFieldOptionalByCondition(field, responses);
 }
 
 export function getAttendeeRosterConfig(definition: RegistrationFormDefinition): AttendeeRosterConfig {
@@ -990,7 +1019,8 @@ export function validateTestResponses(
       if (ignoredFieldKeys.has(field.key)) continue;
       if (!isFieldVisible(field, responses)) continue;
       const value = responses[field.key];
-      if (field.required && !optionalFieldKeys.has(field.key) && !hasValue(value)) {
+      const requiredHere = isFieldRequired(field, responses);
+      if (requiredHere && !optionalFieldKeys.has(field.key) && !hasValue(value)) {
         issues.push({ fieldId: field.id, key: field.key, message: `${field.label} is required.` });
         continue;
       }
@@ -1022,7 +1052,10 @@ export function validateTestResponses(
       if (field.type === "MULTISELECT" || field.type === "RANKED_CHOICE") {
         const selections = Array.isArray(value) ? value.map(String) : [];
         const maximum = field.maxSelections ?? (field.type === "RANKED_CHOICE" ? 2 : field.options.length);
-        const minimum = field.minSelections ?? (field.required ? (field.type === "RANKED_CHOICE" ? Math.min(2, maximum) : 1) : 0);
+        // Someone excused by "optional when" may give just one choice.
+        const minimum = !requiredHere && field.required
+          ? 1
+          : field.minSelections ?? (field.required ? (field.type === "RANKED_CHOICE" ? Math.min(2, maximum) : 1) : 0);
         if (!Array.isArray(value) || selections.some((selection) => !field.options.includes(selection))) issues.push({ fieldId: field.id, key: field.key, message: `${field.label} contains an invalid choice.` });
         else if (new Set(selections).size !== selections.length) issues.push({ fieldId: field.id, key: field.key, message: `${field.label} cannot contain duplicate choices.` });
         else if (selections.length < minimum) issues.push({ fieldId: field.id, key: field.key, message: `${field.label} requires ${minimum} choices.` });

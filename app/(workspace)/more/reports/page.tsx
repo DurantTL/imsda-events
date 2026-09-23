@@ -252,6 +252,44 @@ export default async function OperationalReportsPage({
             </div>}
       </section>
 
+      <section className="panel report-panel" id="attendee-types">
+        <div className="section-heading report-section-heading">
+          <div className="report-title">
+            <span className="report-icon navy"><UsersRound aria-hidden="true" size={19} /></span>
+            <div><p className="eyebrow">People</p><h2>Attendees by type</h2><p>One list per attendee type from the form, such as Adult, Teen, or Child. The Teen list is the Teen Program roster.</p></div>
+          </div>
+          <a className="secondary-button report-download" href={reportDownloadHref(event.id, "attendee-types")}><Download aria-hidden="true" size={15} /> Download CSV</a>
+        </div>
+        {report.attendeeTypeGroups.length === 0
+          ? <EmptyReport>No active attendees are available yet.</EmptyReport>
+          : <div className="roster-report-groups">
+              {report.attendeeTypeGroups.map((group) => (
+                <article className="roster-report-group" key={group.id}>
+                  <header>
+                    <div><h3>{group.label}</h3><p>{/teen/i.test(group.label) ? "Teen Program roster" : "Attendee type"}</p></div>
+                    <span>{group.attendees.length} {group.attendees.length === 1 ? "person" : "people"}</span>
+                  </header>
+                  <div className="report-table-wrap">
+                    <table className="report-table roster-table">
+                      <caption className="sr-only">{group.label} attendees</caption>
+                      <thead><tr><th scope="col">Attendee</th><th scope="col">Group</th><th scope="col">Registration</th><th scope="col">Account holder</th></tr></thead>
+                      <tbody>
+                        {group.attendees.map((attendee) => (
+                          <tr key={attendee.attendeeId}>
+                            <th scope="row" translate="no">{attendee.lastName}, {attendee.firstName}</th>
+                            <td>{attendee.groupLabel ?? "—"}</td>
+                            <td><Link className="report-record-link" href={`/people${peopleQuery}&registration=${encodeURIComponent(attendee.registrationId)}`}>{attendee.confirmationCode}</Link></td>
+                            <td translate="no">{attendee.accountHolderName}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </article>
+              ))}
+            </div>}
+      </section>
+
       <section className="panel report-panel" id="meal-counts">
         <div className="section-heading report-section-heading">
           <div className="report-title">

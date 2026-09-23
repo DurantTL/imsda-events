@@ -31,6 +31,7 @@ import {
   calculateRosterTotal,
   getAttendeeRosterConfig,
   getAvailabilityMode,
+  isFieldOptionalByCondition,
   isFieldVisible,
   isLatePricingActive,
   validateTestResponses,
@@ -959,7 +960,20 @@ export function PublicRegistrationForm({
     ].filter(Boolean).join(" ") || undefined;
   }
 
-  function fieldLabel(field: RegistrationFormField) {
+  function fieldLabel(field: RegistrationFormField, context: FieldRenderContext) {
+    // "Optional when" (WR26): e.g. seminars are asked of Teens but not required.
+    if (isFieldOptionalByCondition(field, context.visibilityResponses)) {
+      const note = field.optionalWhen?.operator === "EQUALS" && field.optionalWhen.value
+        ? `Optional for ${field.optionalWhen.value}`
+        : "Optional for this attendee";
+      return (
+        <span className="public-registration-field-label">
+          {field.label}
+          <span aria-hidden="true" className="public-registration-optional-mark"> *</span>
+          <small className="public-registration-optional-note"> * {note}</small>
+        </span>
+      );
+    }
     return (
       <span className="public-registration-field-label">
         {field.label}
@@ -972,7 +986,8 @@ export function PublicRegistrationForm({
     const issue = issueFor(field, context);
     const selectedValues = Array.isArray(context.values[field.key]) ? context.values[field.key] as string[] : [];
     const maximum = field.maxSelections ?? (field.type === "RANKED_CHOICE" ? 2 : field.options.length);
-    const minimum = field.minSelections ?? (field.required ? (field.type === "RANKED_CHOICE" ? Math.min(2, maximum) : 1) : 0);
+    const excused = isFieldOptionalByCondition(field, context.visibilityResponses);
+    const minimum = excused ? 0 : field.minSelections ?? (field.required ? (field.type === "RANKED_CHOICE" ? Math.min(2, maximum) : 1) : 0);
     const wrapperClass = `public-registration-field${issue ? " public-registration-field-invalid" : ""}`;
     const description = describedBy(field, context);
     const id = controlId(field, context.idContext);
@@ -1003,7 +1018,7 @@ export function PublicRegistrationForm({
         : "";
       return (
         <div className={`${wrapperClass} public-registration-promo-field`} key={field.id}>
-          <label htmlFor={id}>{fieldLabel(field)}</label>
+          <label htmlFor={id}>{fieldLabel(field, context)}</label>
           <div className="public-registration-promo-control">
             <input
               id={id}
@@ -1075,8 +1090,8 @@ export function PublicRegistrationForm({
 
     if (field.type === "RADIO") {
       return (
-        <fieldset className={wrapperClass} key={field.id} aria-invalid={Boolean(issue)} aria-required={field.required} aria-describedby={description}>
-          <legend>{fieldLabel(field)}</legend>
+        <fieldset className={wrapperClass} key={field.id} aria-invalid={Boolean(issue)} aria-required={field.required && !excused} aria-describedby={description}>
+          <legend>{fieldLabel(field, context)}</legend>
           <div className="public-registration-choice-list">
             {field.options.map((option, index) => {
               const { full } = choiceState(field, option);
@@ -1108,8 +1123,8 @@ export function PublicRegistrationForm({
 
     if (field.type === "MULTISELECT") {
       return (
-        <fieldset className={wrapperClass} key={field.id} aria-invalid={Boolean(issue)} aria-required={field.required} aria-describedby={description}>
-          <legend>{fieldLabel(field)}</legend>
+        <fieldset className={wrapperClass} key={field.id} aria-invalid={Boolean(issue)} aria-required={field.required && !excused} aria-describedby={description}>
+          <legend>{fieldLabel(field, context)}</legend>
           <small>Choose {minimum > 0 ? `at least ${minimum} and ` : ""}up to {maximum}.</small>
           <div className="public-registration-choice-list">
             {field.options.map((option, index) => {
@@ -1141,9 +1156,11 @@ export function PublicRegistrationForm({
 
     if (field.type === "RANKED_CHOICE") {
       return (
-        <fieldset className={wrapperClass} key={field.id} aria-invalid={Boolean(issue)} aria-required={field.required} aria-describedby={description}>
-          <legend>{fieldLabel(field)}</legend>
-          <small>Choose {minimum} and rank up to {maximum}. Select choices in preference order.</small>
+        <fieldset className={wrapperClass} key={field.id} aria-invalid={Boolean(issue)} aria-required={field.required && !excused} aria-describedby={description}>
+          <legend>{fieldLabel(field, context)}</legend>
+          <small>
+            {minimum > 0 ? `Choose ${minimum} and rank up to ${maximum}.` : `Optional — rank up to ${maximum} if you'd like.`} Select choices in preference order.
+          </small>
           <div className="public-registration-ranking-list">
             {field.options.map((option, index) => {
               const rank = selectedValues.indexOf(option);
@@ -1176,8 +1193,8 @@ export function PublicRegistrationForm({
 
     if (field.type === "CHECKBOX") {
       return (
-        <fieldset className={wrapperClass} key={field.id} aria-invalid={Boolean(issue)} aria-required={field.required} aria-describedby={description}>
-          <legend>{fieldLabel(field)}</legend>
+        <fieldset className={wrapperClass} key={field.id} aria-invalid={Boolean(issue)} aria-required={field.required && !excused} aria-describedby={description}>
+          <legend>{fieldLabel(field, context)}</legend>
           <label className="public-registration-check">
             <input
               id={id}
@@ -1195,11 +1212,11 @@ export function PublicRegistrationForm({
     if (field.type === "SELECT") {
       return (
         <div className={wrapperClass} key={field.id}>
-          <label htmlFor={id}>{fieldLabel(field)}</label>
+          <label htmlFor={id}>{fieldLabel(field, context)}</label>
           <SearchableSelect
             id={id}
             value={typeof context.values[field.key] === "string" ? context.values[field.key] as string : ""}
-            required={field.required}
+            required={field.required && !excused}
             invalid={Boolean(issue)}
             describedBy={description}
             placeholder={`Search ${field.label.toLocaleLowerCase()}…`}
@@ -1234,9 +1251,9 @@ export function PublicRegistrationForm({
         <AddressFieldGroup
           key={field.id}
           className={wrapperClass}
-          legend={fieldLabel(field)}
+          legend={fieldLabel(field, context)}
           idPrefix={id}
-          required={field.required}
+          required={field.required && !excused}
           invalid={Boolean(issue)}
           describedBy={description}
           value={isPlainAddressObject(context.values[field.key]) ? context.values[field.key] as AddressValue : {}}
@@ -1263,13 +1280,13 @@ export function PublicRegistrationForm({
       : autoCompletePurpose;
     return (
       <label className={wrapperClass} key={field.id}>
-        {fieldLabel(field)}
+        {fieldLabel(field, context)}
         {field.type === "LONG_TEXT" ? (
           <textarea
             id={id}
             value={value}
             rows={4}
-            required={field.required}
+            required={field.required && !excused}
             placeholder={field.placeholder ?? ""}
             aria-invalid={Boolean(issue)}
             aria-describedby={description}
@@ -1283,7 +1300,7 @@ export function PublicRegistrationForm({
             min={field.type === "NUMBER" ? 0 : undefined}
             inputMode={field.type === "PHONE" ? "tel" : field.type === "NUMBER" ? "numeric" : undefined}
             autoComplete={autoComplete}
-            required={field.required}
+            required={field.required && !excused}
             readOnly={context.attendeeIndex !== null && lockedAttendeeFieldKeys.has(field.key)}
             placeholder={field.placeholder ?? ""}
             aria-invalid={Boolean(issue)}

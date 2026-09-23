@@ -13,6 +13,7 @@ export const operationalReportKinds = [
   "childcare",
   "volunteers",
   "attendance",
+  "attendee-types",
 ] as const;
 
 export type OperationalReportKind = typeof operationalReportKinds[number];
@@ -51,6 +52,8 @@ export type OperationalRosterRow = {
   lastName: string;
   attendeeType: string;
   accountHolderName: string;
+  /** The registration's group answer (club, church, …), when there is one. */
+  groupLabel?: string | null;
 };
 
 export type OperationalRosterGroup = {
@@ -99,6 +102,8 @@ export type OperationalReport = {
     attendanceSelections: number;
   };
   rosterGroups: OperationalRosterGroup[];
+  /** Attendees grouped by their attendee-type answer — e.g. the Teen Program roster (WR26). */
+  attendeeTypeGroups: OperationalRosterGroup[];
   meals: OperationalCountField[];
   housing: OperationalCountField[];
   seminars: OperationalSeminarField[];
@@ -481,6 +486,7 @@ export function buildOperationalReport(
     activeStatusSet.has(registration.status)
   ));
   const rosterGroups = new Map<string, OperationalRosterGroup>();
+  const typeGroups = new Map<string, OperationalRosterGroup>();
   const mealFields = new Map<string, MutableCountField>();
   const housingFields = new Map<string, MutableCountField>();
   const seminarFields = new Map<string, MutableSeminarField>();
@@ -509,6 +515,28 @@ export function buildOperationalReport(
     const accountHolderName = normalizeWords(
       `${registration.accountHolder.firstName} ${registration.accountHolder.lastName}`,
     );
+    registration.attendees.forEach((attendee, index) => {
+      const currentResponses = Object.keys(attendee.responses ?? {}).length > 0
+        ? attendee.responses
+        : registration.publicSubmission?.attendeeResponses[index] ?? {};
+      const typeLabel = stringAnswer(currentResponses.attendee_type) ?? normalizeWords(attendee.attendeeType.toLocaleLowerCase("en-US").replace(/_/g, " "));
+      const typeKey = normalizedIdentity(typeLabel);
+      let typeGroup = typeGroups.get(typeKey);
+      if (!typeGroup) {
+        typeGroup = { id: `type-${identifier(typeKey)}`, label: typeLabel, fieldLabel: "Attendee type", attendees: [] };
+        typeGroups.set(typeKey, typeGroup);
+      }
+      typeGroup.attendees.push({
+        attendeeId: attendee.id,
+        registrationId: registration.id,
+        confirmationCode: registration.confirmationCode,
+        firstName: attendee.firstName,
+        lastName: attendee.lastName,
+        attendeeType: typeLabel,
+        accountHolderName,
+        groupLabel: grouping.fieldLabel ? grouping.label : null,
+      });
+    });
     for (const attendee of registration.attendees) {
       group.attendees.push({
         attendeeId: attendee.id,
@@ -566,6 +594,15 @@ export function buildOperationalReport(
       if (left.fieldLabel !== null && right.fieldLabel === null) return -1;
       return left.label.localeCompare(right.label);
     });
+  const attendeeTypeGroups = [...typeGroups.values()]
+    .map((group) => ({
+      ...group,
+      attendees: group.attendees.sort((left, right) => (
+        left.lastName.localeCompare(right.lastName)
+        || left.firstName.localeCompare(right.firstName)
+      )),
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label));
   const meals = finishCountFields(mealFields);
   const housing = finishCountFields(housingFields);
   const seminars = finishSeminarFields(seminarFields);
@@ -589,6 +626,7 @@ export function buildOperationalReport(
       attendanceSelections: attendance.reduce((total, field) => total + field.total, 0),
     },
     rosterGroups: finishedRosterGroups,
+    attendeeTypeGroups,
     meals,
     housing,
     seminars,
@@ -626,6 +664,30 @@ export function operationalReportCsv(
           attendee.firstName,
           attendee.attendeeType,
           attendee.accountHolderName,
+        ]);
+      }
+    }
+    return toCsv(rows);
+  }
+
+  if (kind === "attendee-types") {
+    const rows: Array<Array<string | number>> = [[
+      "Attendee type",
+      "Attendee last name",
+      "Attendee first name",
+      "Confirmation code",
+      "Account holder",
+      "Group",
+    ]];
+    for (const group of report.attendeeTypeGroups) {
+      for (const attendee of group.attendees) {
+        rows.push([
+          group.label,
+          attendee.lastName,
+          attendee.firstName,
+          attendee.confirmationCode,
+          attendee.accountHolderName,
+          attendee.groupLabel ?? "",
         ]);
       }
     }
