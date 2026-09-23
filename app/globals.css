@@ -6682,6 +6682,8 @@ select:focus-visible {
 .club-reports-missing { color: #b42318; font-weight: 700; }
 .club-reports-due { color: var(--imsda-purple); }
 .club-reports-future { color: var(--muted); }
+.passkey-sign-in { display: grid; gap: 8px; margin-bottom: 10px; }
+.passkey-sign-in-button { width: 100%; justify-content: center; min-height: 46px; }
 .club-roster-section { display: grid; gap: 8px; margin-top: 14px; }
 .club-roster-section-title { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--ink); font-size: 0.95rem; }
 .club-team-list li { flex-wrap: wrap; align-items: center; }

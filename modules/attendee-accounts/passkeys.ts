@@ -10,6 +10,7 @@ import {
   type RegistrationResponseJSON,
 } from "@simplewebauthn/server";
 import { getPrisma } from "@/lib/prisma";
+import { createAttendeeSession } from "@/modules/attendee-accounts/session-store";
 import { logWarn } from "@/lib/logger";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
@@ -21,9 +22,11 @@ import {
 import { PLATFORM_SETTINGS_ID } from "@/modules/system-admin/platform-settings";
 
 /**
- * Passkeys as an attendee's second step (the alternative to an authenticator
- * code). They open club rosters exactly as a code does; they are not a way to
- * sign in, and sign-in never depends on them.
+ * Passkeys for attendees: the alternative to an authenticator code as the
+ * second step (opening club rosters exactly as a code does), and since #374 a
+ * way to sign in with no email or password. Because every passkey here needs
+ * user verification (fingerprint, face, or PIN), a passkey sign-in also
+ * counts as the second step. Password and Google sign-in never depend on them.
  */
 
 export class PasskeyError extends Error {
@@ -297,4 +300,107 @@ export async function getPasskeySettings(accountId: string, sessionId: string | 
     hasAuthenticator,
     needsConfirmation: hasSecondStep && !hasRecentSecondFactor(session?.secondFactorVerifiedAt, now),
   };
+}
+
+/** Neutral on purpose: an unknown, revoked, or refused passkey all read the same. */
+const SIGN_IN_REFUSED = "That passkey didn't sign you in. Try again, or sign in with your email and password.";
+
+/**
+ * Starts a passkey sign-in (#374). No account is named: the browser offers the
+ * person's own passkeys for this site. The challenge is single-use, expires in
+ * five minutes, and its id goes in a cookie so only this browser can answer it.
+ */
+export async function beginPasskeySignIn(requestOrigin: string | null, now = new Date()) {
+  const { rpId } = await requireRelyingParty(requestOrigin);
+  const prisma = getPrisma();
+  // Anyone can ask for a sign-in prompt, so expired ones are cleared as new ones are made.
+  await prisma.attendeePasskeyChallenge.deleteMany({ where: { purpose: "SIGN_IN", expiresAt: { lt: now } } });
+  const options = await generateAuthenticationOptions({ rpID: rpId, userVerification: "required" });
+  const challenge = await prisma.attendeePasskeyChallenge.create({
+    data: { purpose: "SIGN_IN", challenge: options.challenge, expiresAt: new Date(now.getTime() + PASSKEY_CHALLENGE_MINUTES * 60_000) },
+    select: { id: true },
+  });
+  return { options, challengeId: challenge.id };
+}
+
+function decodeUserHandle(value: string | undefined) {
+  if (!value) return null;
+  try {
+    return Buffer.from(value, "base64url").toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Finishes a passkey sign-in: the challenge is spent first, so a failed
+ * answer can't be retried against it. Only an active passkey on an active,
+ * verified account signs in. The new session is marked as having passed the
+ * second step, because the passkey itself required the person's fingerprint,
+ * face, or PIN.
+ */
+export async function finishPasskeySignIn(
+  challengeId: string | null,
+  requestOrigin: string | null,
+  response: AuthenticationResponseJSON,
+  userAgent: string | null,
+  now = new Date(),
+) {
+  const relyingParty = await requireRelyingParty(requestOrigin);
+  const prisma = getPrisma();
+  if (!challengeId) throw new PasskeyError("CHALLENGE_EXPIRED", "That passkey prompt expired. Please try again.");
+  const challenge = await prisma.attendeePasskeyChallenge.findFirst({
+    where: { id: challengeId, purpose: "SIGN_IN", sessionId: null, usedAt: null, expiresAt: { gt: now } },
+    select: { id: true, challenge: true },
+  });
+  if (!challenge) throw new PasskeyError("CHALLENGE_EXPIRED", "That passkey prompt expired. Please try again.");
+  const claimed = await prisma.attendeePasskeyChallenge.updateMany({ where: { id: challenge.id, usedAt: null }, data: { usedAt: now } });
+  if (claimed.count !== 1) throw new PasskeyError("CHALLENGE_EXPIRED", "That passkey prompt expired. Please try again.");
+
+  const passkey = await prisma.attendeePasskey.findFirst({
+    where: { credentialId: response.id, revokedAt: null },
+    include: { account: { select: { id: true, status: true, emailVerifiedAt: true, disabledAt: true } } },
+  });
+  const account = passkey?.account;
+  if (!passkey || !account || account.status !== "ACTIVE" || !account.emailVerifiedAt || account.disabledAt) {
+    throw new PasskeyError("PASSKEY_NOT_VERIFIED", SIGN_IN_REFUSED);
+  }
+  // The authenticator names the account it was made for; it must be this passkey's.
+  const userHandle = decodeUserHandle(response.response.userHandle);
+  if (userHandle !== null && userHandle !== account.id) throw new PasskeyError("PASSKEY_NOT_VERIFIED", SIGN_IN_REFUSED);
+
+  let verification: Awaited<ReturnType<typeof verifyAuthenticationResponse>>;
+  try {
+    verification = await verifyAuthenticationResponse({
+      response,
+      expectedChallenge: challenge.challenge,
+      expectedOrigin: relyingParty.origin,
+      expectedRPID: relyingParty.rpId,
+      credential: {
+        id: passkey.credentialId,
+        publicKey: new Uint8Array(passkey.publicKey),
+        counter: Number(passkey.counter),
+        transports: transportsOf(passkey.transports),
+      },
+      requireUserVerification: true,
+    });
+  } catch (error) {
+    logWarn("Passkey sign-in failed", { reason: error instanceof Error ? error.message : "unknown" });
+    throw new PasskeyError("PASSKEY_NOT_VERIFIED", SIGN_IN_REFUSED);
+  }
+  if (!verification.verified) throw new PasskeyError("PASSKEY_NOT_VERIFIED", SIGN_IN_REFUSED);
+
+  await prisma.attendeePasskey.update({
+    where: { id: passkey.id },
+    data: { counter: BigInt(verification.authenticationInfo.newCounter), lastUsedAt: now },
+  });
+  const session = await createAttendeeSession(account.id, userAgent, { secondFactorVerifiedAt: now });
+  await writeAuditLog({
+    action: "ATTENDEE_PASSKEY_SIGN_IN",
+    entityType: "AttendeePasskey",
+    entityId: passkey.id,
+    summary: "An attendee signed in with a passkey.",
+    metadata: { actorAttendeeAccountId: account.id },
+  });
+  return { accountId: account.id, session };
 }
