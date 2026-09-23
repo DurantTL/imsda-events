@@ -14,6 +14,7 @@ export const operationalReportKinds = [
   "volunteers",
   "attendance",
   "attendee-types",
+  "volunteer-roster",
 ] as const;
 
 export type OperationalReportKind = typeof operationalReportKinds[number];
@@ -54,6 +55,13 @@ export type OperationalRosterRow = {
   accountHolderName: string;
   /** The registration's group answer (club, church, …), when there is one. */
   groupLabel?: string | null;
+};
+
+/** Someone who said yes to a volunteer question (WR26). */
+export type OperationalVolunteerRow = OperationalRosterRow & {
+  question: string;
+  answer: string;
+  phone: string;
 };
 
 export type OperationalRosterGroup = {
@@ -104,6 +112,8 @@ export type OperationalReport = {
   rosterGroups: OperationalRosterGroup[];
   /** Attendees grouped by their attendee-type answer — e.g. the Teen Program roster (WR26). */
   attendeeTypeGroups: OperationalRosterGroup[];
+  /** Everyone who answered yes to a volunteer question, with a phone to reach them. */
+  volunteerRoster: OperationalVolunteerRow[];
   meals: OperationalCountField[];
   housing: OperationalCountField[];
   seminars: OperationalSeminarField[];
@@ -479,6 +489,32 @@ function finishSeminarFields(collection: Map<string, MutableSeminarField>) {
     .sort((left, right) => left.label.localeCompare(right.label));
 }
 
+function volunteerAnswer(value: unknown) {
+  if (value === true) return "Yes";
+  const answers = Array.isArray(value) ? value.map(String) : typeof value === "string" ? [value] : [];
+  const meaningful = answers.map((answer) => normalizeWords(answer)).filter((answer) => (
+    answer && answer.length <= 120 && !/^(?:no|not|none|n\/a|maybe later)\b/i.test(answer)
+  ));
+  return meaningful.length > 0 ? meaningful.join(", ") : null;
+}
+
+function phoneAnswer(fields: FieldMetadata[], scope: OperationalReportScope, responses: JsonRecord) {
+  for (const { field } of fields) {
+    if (field.scope !== scope || field.type !== "PHONE") continue;
+    const value = responses[field.key];
+    if (typeof value === "string" && value.trim()) return value.trim().slice(0, 40);
+  }
+  return "";
+}
+
+function volunteerQuestions(fields: FieldMetadata[]) {
+  return fields.filter((metadata) => (
+    !isSensitiveField(metadata)
+    && (choiceFieldTypeSet.has(metadata.field.type) || metadata.field.type === "CHECKBOX")
+    && volunteerSemanticPattern.test(fieldContextText(metadata))
+  ));
+}
+
 export function buildOperationalReport(
   registrations: OperationalReportRegistration[],
 ): OperationalReport {
@@ -487,6 +523,7 @@ export function buildOperationalReport(
   ));
   const rosterGroups = new Map<string, OperationalRosterGroup>();
   const typeGroups = new Map<string, OperationalRosterGroup>();
+  const volunteerRoster: OperationalVolunteerRow[] = [];
   const mealFields = new Map<string, MutableCountField>();
   const housingFields = new Map<string, MutableCountField>();
   const seminarFields = new Map<string, MutableSeminarField>();
@@ -519,7 +556,8 @@ export function buildOperationalReport(
       const currentResponses = Object.keys(attendee.responses ?? {}).length > 0
         ? attendee.responses
         : registration.publicSubmission?.attendeeResponses[index] ?? {};
-      const typeLabel = stringAnswer(currentResponses.attendee_type) ?? normalizeWords(attendee.attendeeType.toLocaleLowerCase("en-US").replace(/_/g, " "));
+      const fallbackType = normalizeWords(attendee.attendeeType.toLocaleLowerCase("en-US").replace(/_/g, " "));
+      const typeLabel = stringAnswer(currentResponses.attendee_type) ?? (fallbackType.charAt(0).toLocaleUpperCase("en-US") + fallbackType.slice(1));
       const typeKey = normalizedIdentity(typeLabel);
       let typeGroup = typeGroups.get(typeKey);
       if (!typeGroup) {
@@ -562,10 +600,47 @@ export function buildOperationalReport(
       attendanceFields,
     );
 
+    const volunteerFieldList = volunteerQuestions(fields);
+    const registrationPhone = phoneAnswer(fields, "REGISTRATION", registrationResponses);
+    for (const { field } of volunteerFieldList.filter(({ field }) => field.scope === "REGISTRATION")) {
+      const answer = volunteerAnswer(registrationResponses[field.key]);
+      if (!answer) continue;
+      volunteerRoster.push({
+        attendeeId: `${registration.id}:${field.key}`,
+        registrationId: registration.id,
+        confirmationCode: registration.confirmationCode,
+        firstName: registration.accountHolder.firstName,
+        lastName: registration.accountHolder.lastName,
+        attendeeType: "Registration contact",
+        accountHolderName,
+        groupLabel: grouping.fieldLabel ? grouping.label : null,
+        question: field.label,
+        answer,
+        phone: registrationPhone,
+      });
+    }
+
     registration.attendees.forEach((attendee, index) => {
       const currentResponses = Object.keys(attendee.responses ?? {}).length > 0
         ? attendee.responses
         : registration.publicSubmission?.attendeeResponses[index] ?? {};
+      for (const { field } of volunteerFieldList.filter(({ field }) => field.scope === "ATTENDEE")) {
+        const answer = volunteerAnswer(currentResponses[field.key]);
+        if (!answer) continue;
+        volunteerRoster.push({
+          attendeeId: attendee.id,
+          registrationId: registration.id,
+          confirmationCode: registration.confirmationCode,
+          firstName: attendee.firstName,
+          lastName: attendee.lastName,
+          attendeeType: stringAnswer(currentResponses.attendee_type) ?? attendee.attendeeType,
+          accountHolderName,
+          groupLabel: grouping.fieldLabel ? grouping.label : null,
+          question: field.label,
+          answer,
+          phone: phoneAnswer(fields, "ATTENDEE", currentResponses) || registrationPhone,
+        });
+      }
       addResponseFields(
         fields,
         "ATTENDEE",
@@ -627,6 +702,11 @@ export function buildOperationalReport(
     },
     rosterGroups: finishedRosterGroups,
     attendeeTypeGroups,
+    volunteerRoster: volunteerRoster.sort((left, right) => (
+      left.lastName.localeCompare(right.lastName)
+      || left.firstName.localeCompare(right.firstName)
+      || left.question.localeCompare(right.question)
+    )),
     meals,
     housing,
     seminars,
@@ -666,6 +746,34 @@ export function operationalReportCsv(
           attendee.accountHolderName,
         ]);
       }
+    }
+    return toCsv(rows);
+  }
+
+  if (kind === "volunteer-roster") {
+    const rows: Array<Array<string | number>> = [[
+      "Last name",
+      "First name",
+      "Attendee type",
+      "Volunteer question",
+      "Answer",
+      "Phone",
+      "Group",
+      "Confirmation code",
+      "Account holder",
+    ]];
+    for (const volunteer of report.volunteerRoster) {
+      rows.push([
+        volunteer.lastName,
+        volunteer.firstName,
+        volunteer.attendeeType,
+        volunteer.question,
+        volunteer.answer,
+        volunteer.phone,
+        volunteer.groupLabel ?? "",
+        volunteer.confirmationCode,
+        volunteer.accountHolderName,
+      ]);
     }
     return toCsv(rows);
   }
