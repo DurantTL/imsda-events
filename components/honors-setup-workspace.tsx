@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Award, CalendarRange, Copy, Pencil, Plus, Power, Save, Trash2, X } from "lucide-react";
+import Link from "next/link";
+import { Award, CalendarRange, ClipboardList, Copy, Pencil, Plus, Power, Save, Trash2, X } from "lucide-react";
 import { honorOfferingSpanLabels } from "@/modules/honors/domain";
 import type { HonorCopyPlan } from "@/modules/honors/copy";
 import type { EventHonorSetup } from "@/modules/honors/repository";
@@ -166,7 +167,12 @@ export function HonorsSetupWorkspace({
             selection opens.
           </p>
         </div>
-        <span className="count-badge">{totalSeats} youth seats</span>
+        <div className="intro-actions">
+          <span className="count-badge">{totalSeats} youth seats</span>
+          <Link className="secondary-button" href={`/more/honors/rosters?event=${encodeURIComponent(eventId)}`}>
+            <ClipboardList aria-hidden="true" size={15} /> Rosters
+          </Link>
+        </div>
       </div>
 
       {notice && <div className="inline-notice success" role="status">{notice}</div>}

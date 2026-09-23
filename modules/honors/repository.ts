@@ -187,7 +187,8 @@ async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: st
     }),
     client.honorEnrollment.groupBy({
       by: ["offeringId", "consumesSeat"],
-      where: { eventId },
+      // Cancelled club registrations give their seats back (see seatHoldingEnrollment).
+      where: { eventId, registration: { status: { in: ["SUBMITTED", "CONFIRMED"] } } },
       _count: { _all: true },
     }),
   ]);

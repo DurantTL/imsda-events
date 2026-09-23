@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2 } from "lucide-react";
 import { ClubClassPicker } from "@/components/club-class-picker";
 import { ClubRegistrationWorkspace } from "@/components/club-registration-workspace";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
@@ -81,6 +81,16 @@ export default async function ClubEventRegistrationPage({
         </section>
       )}
       {classes && <ClubClassPicker eventId={eventId} initialWorkspace={classes} organizationId={organizationId} />}
+      {classes && classes.offerings.length > 0 && (
+        <section className="public-manage-card club-schedule-link">
+          <p>
+            <CalendarDays size={17} aria-hidden="true" /> See everyone&apos;s classes by session, to print or share with your staff.
+          </p>
+          <Link className="secondary-button club-event-action" href={`/account/clubs/${organizationId}/events/${eventId}/schedule`}>
+            Class schedule <ArrowRight aria-hidden="true" size={14} />
+          </Link>
+        </section>
+      )}
       {!workspace.registration && workspace.problem && (
         <section className="public-manage-card">
           <p className="public-manage-empty">{workspace.problem} Let the event team know so they can fix the form.</p>

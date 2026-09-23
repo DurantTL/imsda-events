@@ -6896,3 +6896,34 @@ select:focus-visible {
   .passkey-add .primary-button { width: 100%; justify-content: center; }
 }
 .passkey-manager > p { margin: 6px 0 0; font-size: 0.8rem; line-height: 1.5; }
+
+/* Honors Weekend rosters (#360) */
+.honor-roster-downloads { display: flex; justify-content: flex-end; }
+.honor-class-sheet h2 small { margin-left: 6px; color: var(--muted); font-size: 0.72rem; font-weight: 600; }
+.report-table td.honor-roster-box { width: 64px; text-align: center; }
+.club-schedule { display: grid; gap: 10px; }
+.club-schedule-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.club-schedule-actions > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.club-schedule-actions .text-button { display: inline-flex; align-items: center; gap: 4px; }
+.club-schedule-table th small, .club-schedule-table td small { display: block; color: var(--muted); font-size: 0.7rem; font-weight: 500; }
+.club-schedule-link { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.club-schedule-link p { display: flex; align-items: center; gap: 8px; margin: 0; }
+@media (max-width: 640px) {
+  .club-schedule-table, .club-schedule-table tbody, .club-schedule-table tr, .club-schedule-table td, .club-schedule-table th { display: block; width: 100%; box-sizing: border-box; }
+  .club-schedule-table { min-width: 0; }
+  .club-schedule-table thead { display: none; }
+  .club-schedule-table tr { margin-bottom: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+  .club-schedule-table th, .club-schedule-table td { border: 0; padding: 2px 0; }
+  .club-schedule-table th { margin-bottom: 4px; font-size: 0.9rem; }
+  .club-schedule-table td[data-label] { display: flex; justify-content: space-between; gap: 12px; text-align: right; }
+  .club-schedule-table td[data-label]::before { content: attr(data-label); flex: 1 1 auto; color: var(--muted); font-weight: 600; text-align: left; }
+  .club-schedule-actions .secondary-button { width: auto; min-height: 44px; }
+  .club-schedule-table td small { display: block; }
+}
+@media print {
+  .account-nav, .account-portal .public-registration-header, .account-portal .account-page-hero,
+  .club-schedule-actions, .honor-roster-downloads, .retreat-packet-selector { display: none !important; }
+  .club-schedule { border: 0; box-shadow: none; padding: 0; }
+  .honor-class-sheet { break-before: page; }
+  .report-table td.honor-roster-box { border: 1px solid #555; }
+}

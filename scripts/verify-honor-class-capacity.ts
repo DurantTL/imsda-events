@@ -1,13 +1,17 @@
 /**
  * Proves Honors Weekend class seats hold under concurrent saves (#359):
- * two clubs racing for the last seat, exactly one wins. Runs against a real
+ * two clubs racing for the last seat, exactly one wins. Also checks that the
+ * printed class rosters (#360) count the same seats, and that a cancelled club
+ * registration gives its seats back. Runs against a real
  * PostgreSQL database with fictitious rows it creates and removes itself.
  *
  *   npm run test:honor-capacity
  */
 import { loadEnvConfig } from "@next/env";
 import { PrismaClient } from "@prisma/client";
-import { ClassSelectionError, setClassSelections } from "../modules/honors/enrollment-repository";
+import { ClassSelectionError, getClassSelectionWorkspace, setClassSelections } from "../modules/honors/enrollment-repository";
+import { buildClassRosters } from "../modules/honors/roster-domain";
+import { getHonorRosterData } from "../modules/honors/roster-repository";
 
 loadEnvConfig(process.cwd());
 
@@ -110,6 +114,27 @@ async function main() {
     .then(() => null, (error: unknown) => error);
   assert(limited instanceof ClassSelectionError && limited.code === "CLUB_LIMIT_REACHED", "second youth from one club should hit the per-club limit");
   console.log("ok  freed seat reused; per-club limit refused a second youth");
+
+  // 4. The printed class roster counts exactly the seats H5 counts.
+  const rosterSeats = async () => {
+    const data = await getHonorRosterData(eventId, { includeDietary: false });
+    assert(data, "roster data should load");
+    return buildClassRosters(data.sessions, data.offerings, data.enrollments, data.attendees)
+      .find((roster) => roster.offering.id === offeringId)!;
+  };
+  const liveSeats = async () => (await getClassSelectionWorkspace(clubs[0], eventId, now))
+    .offerings.find((offering) => offering.id === offeringId)!.seatsTaken;
+  const before = await rosterSeats();
+  assert(before.youthSeats === (await liveSeats()) && before.youthSeats === 1, `roster ${before.youthSeats} vs live seats`);
+  assert(before.people.length === 2, `class roster should list the youth and the staff member, found ${before.people.length}`);
+  console.log("ok  class roster seats match live seat counts");
+
+  // 5. Cancelling a club's registration gives its seats back, in both places.
+  await prisma.registration.updateMany({ where: { eventId, confirmationCode: `REG-${clubs[1]}` }, data: { status: "CANCELLED" } });
+  const after = await rosterSeats();
+  assert(after.youthSeats === 0 && after.people.length === 0, "a cancelled club should leave the class roster");
+  assert((await liveSeats()) === 0, "a cancelled club's seats should be free again");
+  console.log("ok  cancelled registration freed its seats and left the roster");
 }
 
 main()
