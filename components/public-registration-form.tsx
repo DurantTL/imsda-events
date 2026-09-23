@@ -166,6 +166,15 @@ const moneyFormatter = new Intl.NumberFormat("en-US", {
   currency: "USD",
 });
 
+/** What a promo quote depends on: the pre-discount lines and the processing fee. */
+function promoCalculationBasis(calculation: FormCalculation) {
+  return JSON.stringify([
+    calculation.subtotalCents,
+    calculation.processingFeeCents,
+    calculation.lineItems.map((item) => [item.key, item.amountCents, item.attendeeIndex ?? null]),
+  ]);
+}
+
 function money(cents: number) {
   return moneyFormatter.format(cents / 100);
 }
@@ -352,6 +361,8 @@ export function PublicRegistrationForm({
   const [submitting, setSubmitting] = useState(false);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [promoCodeQuote, setPromoCodeQuote] = useState<PromoCodeQuote | null>(null);
+  /** The price the quote was made for; the quote holds while the price does. */
+  const [promoQuoteBasis, setPromoQuoteBasis] = useState("");
   const [promoCodeApplying, setPromoCodeApplying] = useState(false);
   const [promoCodeNotice, setPromoCodeNotice] = useState("");
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
@@ -386,14 +397,18 @@ export function PublicRegistrationForm({
       : calculateFormTotal(definition, responses, pricingDate),
     [attendees, definition, pricingDate, registrationResponses, responses, rosterEnabled],
   );
+  // An applied code survives answers that don't change the price (checking the
+  // acknowledgment, picking pay later); a price change re-checks it below.
+  const calculationBasis = useMemo(() => promoCalculationBasis(baseCalculation), [baseCalculation]);
+  const activeQuote = promoCodeQuote && promoQuoteBasis === calculationBasis ? promoCodeQuote : null;
   const calculation: FormCalculation | PromoCodeQuote =
-    promoCodeQuote ?? baseCalculation;
+    activeQuote ?? baseCalculation;
   const displayedDiscountCents =
-    promoCodeQuote?.discountAmountCents ?? 0;
+    activeQuote?.discountAmountCents ?? 0;
   const displayedPreDiscountSubtotalCents =
-    promoCodeQuote?.preDiscountSubtotalCents
+    activeQuote?.preDiscountSubtotalCents
     ?? calculation.subtotalCents;
-  const displayedPromoCode = promoCodeQuote?.promoCode ?? null;
+  const displayedPromoCode = activeQuote?.promoCode ?? null;
   const visibleFieldKeys = useMemo(() => {
     const visible = new Set<string>();
     if (!rosterEnabled) {
@@ -467,7 +482,12 @@ export function PublicRegistrationForm({
       ).trim()
     : "";
   const promoCodeApplied = Boolean(
+    activeQuote
+    && promoCodeValue.toUpperCase() === activeQuote.promoCode.toUpperCase(),
+  );
+  const promoCodeNeedsRecheck = Boolean(
     promoCodeQuote
+    && !activeQuote
     && promoCodeValue.toUpperCase() === promoCodeQuote.promoCode.toUpperCase(),
   );
 
@@ -537,6 +557,7 @@ export function PublicRegistrationForm({
 
   async function applyPromoCode() {
     if (!promoField || !promoCodeValue || promoCodeApplying) return;
+    const requestBasis = calculationBasis;
     setPromoCodeApplying(true);
     setPromoCodeNotice("Checking this code…");
     setError("");
@@ -593,6 +614,7 @@ export function PublicRegistrationForm({
         }));
       }
       setPromoCodeQuote(quote);
+      setPromoQuoteBasis(requestBasis);
       setPromoCodeNotice(
         `${quote.promoCode} applied — ${money(quote.discountAmountCents)} off.`,
       );
@@ -615,6 +637,18 @@ export function PublicRegistrationForm({
       setPromoCodeApplying(false);
     }
   }
+
+  // When the price changes under an applied code, check it again for the new
+  // price instead of dropping it. Debounced so typing doesn't spend the limit.
+  const applyPromoCodeRef = useRef(applyPromoCode);
+  useEffect(() => {
+    applyPromoCodeRef.current = applyPromoCode;
+  });
+  useEffect(() => {
+    if (!promoCodeNeedsRecheck || promoCodeApplying) return;
+    const timer = window.setTimeout(() => void applyPromoCodeRef.current(), 700);
+    return () => window.clearTimeout(timer);
+  }, [promoCodeNeedsRecheck, promoCodeApplying, calculationBasis]);
 
   function removePromoCode() {
     if (!promoField) return;
@@ -667,8 +701,6 @@ export function PublicRegistrationForm({
     });
     setIssues((current) => current.filter((issue) => issue.key !== key));
     setError("");
-    setPromoCodeQuote(null);
-    setPromoCodeNotice("");
     setIdempotencyKey(null);
   }
 
@@ -702,8 +734,6 @@ export function PublicRegistrationForm({
       && !(issue.path === undefined && issue.key === key)
     )));
     setError("");
-    setPromoCodeQuote(null);
-    setPromoCodeNotice("");
     setIdempotencyKey(null);
   }
 
@@ -755,8 +785,6 @@ export function PublicRegistrationForm({
     setAttendees((current) => [...current, { clientId, responses: {} }]);
     setIssues([]);
     setError("");
-    setPromoCodeQuote(null);
-    setPromoCodeNotice("");
     setIdempotencyKey(null);
     setRosterAnnouncement(`${roster.attendeeLabel} ${nextNumber} added.`);
     window.requestAnimationFrame(() => document.getElementById(`public_attendee_${safeId(clientId)}`)?.focus());
@@ -797,8 +825,6 @@ export function PublicRegistrationForm({
         responses,
       })));
       setIssues([]);
-      setPromoCodeQuote(null);
-      setPromoCodeNotice("");
       setIdempotencyKey(null);
       setRosterAnnouncement(
         `${importedResponses.length} attendee${importedResponses.length === 1 ? "" : "s"} loaded from the CSV. Review every person before continuing.`,
@@ -826,8 +852,6 @@ export function PublicRegistrationForm({
     setAttendees((current) => current.filter((_, attendeeIndex) => attendeeIndex !== index));
     setIssues([]);
     setError("");
-    setPromoCodeQuote(null);
-    setPromoCodeNotice("");
     setIdempotencyKey(null);
     setRosterAnnouncement(`${roster.attendeeLabel} ${index + 1} removed.`);
     window.requestAnimationFrame(() => {
@@ -847,8 +871,6 @@ export function PublicRegistrationForm({
     });
     setIssues([]);
     setError("");
-    setPromoCodeQuote(null);
-    setPromoCodeNotice("");
     setIdempotencyKey(null);
     setRosterAnnouncement(`${roster.attendeeLabel} moved to position ${nextIndex + 1}.`);
     window.requestAnimationFrame(() => document.getElementById(`public_attendee_${safeId(clientId)}`)?.focus());
