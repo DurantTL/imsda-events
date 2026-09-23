@@ -6692,6 +6692,9 @@ select:focus-visible {
 .birth-date-field { min-width: 0; margin: 0; padding: 0; border: 0; grid-column: 1 / -1; }
 .birth-date-field legend { margin-bottom: 6px; padding: 0; color: var(--ink); font-size: 0.78rem; font-weight: 700; }
 .birth-date-parts { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.8fr) minmax(0, 1fr); gap: 6px; }
+.accounts-search { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.accounts-search label { flex: 1; min-width: 220px; }
+.accounts-search input { width: 100%; }
 .honor-csv-actions { display: flex; flex-wrap: wrap; gap: 4px 14px; }
 .roster-csv-actions { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; }
 .roster-csv-dialog { width: min(760px, 100%); }
