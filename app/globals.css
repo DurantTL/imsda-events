@@ -6683,3 +6683,86 @@ select:focus-visible {
   .roster-card-table .roster-card-actions .secondary-button { min-width: 44px; min-height: 44px; }
   .club-sticky-bar .primary-button { flex: 1; justify-content: center; }
 }
+
+/* Account and club pages (split into separate screens) */
+.account-nav { max-width: 1180px; margin: 18px auto 0; }
+.account-nav ul {
+  display: flex; gap: 4px; margin: 0; padding: 4px; overflow-x: auto; list-style: none;
+  border: 1px solid var(--line); border-radius: 14px; background: #fff;
+  scrollbar-width: none; scroll-padding-inline: 8px;
+}
+.account-nav ul::-webkit-scrollbar { display: none; }
+.account-nav li { flex: none; }
+.account-nav a {
+  display: inline-flex; min-height: 42px; align-items: center; border-radius: 10px; padding: 8px 15px;
+  color: var(--muted); font-size: 0.76rem; font-weight: 800; text-decoration: none; white-space: nowrap;
+}
+.account-nav a:hover { background: var(--imsda-navy-soft); color: var(--imsda-navy); }
+.account-nav a[aria-current="page"] { background: var(--imsda-navy); color: #fff; }
+.account-nav a:focus-visible { outline: 3px solid var(--imsda-purple); outline-offset: 1px; }
+.account-nav-secondary { width: 100%; margin: 0; }
+.account-nav-secondary ul { border-width: 0 0 1px; border-radius: 0; background: transparent; padding: 0; gap: 2px; }
+.account-nav-secondary a { min-height: 44px; border-bottom: 3px solid transparent; border-radius: 0; padding: 8px 14px 6px; }
+.account-nav-secondary a:hover { background: transparent; }
+.account-nav-secondary a[aria-current="page"] { border-bottom-color: var(--imsda-navy); background: transparent; color: var(--imsda-navy); }
+.account-page-hero { min-height: 0; margin-top: 16px; padding: 26px 32px; }
+.account-page-hero h1 { font-size: 1.9rem; }
+.account-page-body { display: grid; gap: 16px; max-width: 1180px; margin: 0 auto 48px; }
+.account-page-body > * { min-width: 0; }
+.account-security-grid { grid-template-columns: minmax(0, 1fr) 340px; align-items: start; }
+.account-overview-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 16px;
+  max-width: 1180px; margin: 0 auto 48px;
+}
+.account-overview-card { display: flex; flex-direction: column; gap: 6px; }
+.account-overview-card > .public-registration-eyebrow { display: flex; align-items: center; gap: 6px; margin: 0; }
+.account-overview-card h2 { margin: 4px 0 0; font-size: 1.05rem; }
+.account-overview-card p { margin: 0; }
+.account-overview-link { align-self: flex-start; margin-top: auto; }
+.account-overview-card .field-help { margin-bottom: 10px; }
+.account-overview-alert { display: flex; align-items: center; gap: 6px; color: #9a4a12; font-size: 0.78rem; font-weight: 800; margin-bottom: 10px !important; }
+.account-overview-list { display: grid; gap: 6px; margin: 4px 0 6px; padding: 0; list-style: none; }
+.account-overview-list a {
+  display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: 10px; min-height: 48px;
+  border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; color: var(--ink); text-decoration: none;
+}
+.account-overview-list a:hover { border-color: var(--imsda-navy); background: var(--imsda-navy-soft); }
+.account-overview-list small { grid-row: 2; color: var(--muted); font-size: 0.7rem; }
+.account-overview-list svg { grid-row: 1 / 3; grid-column: 2; color: var(--imsda-navy); }
+.club-home-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.club-home-stat {
+  display: grid; grid-template-columns: auto 1fr; align-items: center; column-gap: 10px;
+  border: 1px solid var(--line); border-radius: 16px; background: #fff; padding: 14px 16px;
+  color: var(--ink); text-decoration: none;
+}
+.club-home-stat:hover { border-color: var(--imsda-navy); }
+.club-home-stat svg { grid-row: 1 / 3; color: var(--imsda-navy); }
+.club-home-stat strong { font-size: 1.5rem; line-height: 1.1; }
+.club-home-stat span { color: var(--muted); font-size: 0.72rem; font-weight: 700; }
+.club-event-heading { display: grid; gap: 4px; }
+.club-event-heading .text-button { justify-self: start; display: inline-flex; align-items: center; gap: 4px; }
+.club-event-heading h2 { margin: 2px 0 0; }
+.club-event-heading p { margin: 0; }
+@media (max-width: 1228px) {
+  .account-nav, .account-page-body, .account-overview-grid { margin-right: 24px; margin-left: 24px; }
+  .account-nav-secondary { margin: 0; }
+}
+@media (max-width: 900px) {
+  .account-security-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .club-home-stats { gap: 8px; }
+  .club-home-stat { grid-template-columns: 1fr; padding: 10px 12px; }
+  .club-home-stat svg { display: none; }
+  .club-home-stat strong { font-size: 1.3rem; }
+  .club-home-stat span { font-size: 0.66rem; line-height: 1.3; }
+  .account-nav-primary ul { mask-image: linear-gradient(to right, #000 88%, transparent); }
+}
+@media (max-width: 580px) {
+  .account-nav, .account-page-body, .account-overview-grid { margin-right: 12px; margin-left: 12px; }
+  .account-nav { margin-top: 12px; }
+  .account-nav-secondary { margin: 0; }
+  .account-page-hero { margin-top: 12px; padding: 20px; }
+  .account-page-hero h1 { font-size: 1.6rem; }
+  .account-overview-grid { gap: 12px; }
+}
