@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { LogOut, Mail, Search, ShieldOff } from "lucide-react";
+import { LogOut, Mail, MapPinned, Search, ShieldOff } from "lucide-react";
 import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
 import type { AttendeeAccountSummary } from "@/modules/system-admin/user-admin";
 
@@ -37,7 +37,7 @@ export function AttendeeAccountsWorkspace({ initialAccounts }: { initialAccounts
     }
   }
 
-  async function act(account: AttendeeAccountSummary, body: Record<string, string>) {
+  async function act(account: AttendeeAccountSummary, body: Record<string, string | boolean>) {
     setBusy(account.id);
     setError("");
     setNotice("");
@@ -96,7 +96,12 @@ export function AttendeeAccountsWorkspace({ initialAccounts }: { initialAccounts
                       <small translate="no">{account.email}</small>
                       {account.disabled && <><br /><span className="status-chip coral">Disabled</span></>}
                     </td>
-                    <td>{account.clubRoles.length === 0 ? "—" : account.clubRoles.map((role) => `${clubDirectorRoleLabels[role.role]}, ${role.clubName}`).join("; ")}</td>
+                    <td>
+                      {account.areaCoordinator && <><span className="status-chip green">Area Coordinator</span>{account.clubRoles.length > 0 && <br />}</>}
+                      {account.clubRoles.length === 0
+                        ? (account.areaCoordinator ? null : "—")
+                        : account.clubRoles.map((role) => `${clubDirectorRoleLabels[role.role]}, ${role.clubName}`).join("; ")}
+                    </td>
                     <td>
                       {account.authenticatorOn ? "Authenticator" : ""}
                       {account.authenticatorOn && account.passkeyCount > 0 ? " + " : ""}
@@ -116,6 +121,17 @@ export function AttendeeAccountsWorkspace({ initialAccounts }: { initialAccounts
                             <ShieldOff aria-hidden="true" size={14} /> Reset two-step
                           </button>
                         )}
+                        <button
+                          className="secondary-button"
+                          disabled={busy === account.id}
+                          onClick={() => window.confirm(account.areaCoordinator
+                            ? `Remove Area Coordinator from ${account.email}? They'll no longer see other clubs.`
+                            : `Make ${account.email} an Area Coordinator? They'll see every club, view only (ages, not birth dates), after a second sign-in step.`)
+                            && void act(account, { action: "area-coordinator", on: !account.areaCoordinator })}
+                          type="button"
+                        >
+                          <MapPinned aria-hidden="true" size={14} /> {account.areaCoordinator ? "Remove Area Coordinator" : "Make Area Coordinator"}
+                        </button>
                         <button
                           className="secondary-button"
                           disabled={busy === account.id}

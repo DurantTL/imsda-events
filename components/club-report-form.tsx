@@ -44,6 +44,7 @@ export function ClubReportForm({
   prefill,
   expectedOnTime,
   readOnly,
+  readOnlyNote,
   variant = "account",
 }: {
   endpoint: string;
@@ -54,6 +55,8 @@ export function ClubReportForm({
   /** On-time points this report will get: fixed once submitted, otherwise whether today is by the due date. */
   expectedOnTime: number;
   readOnly: boolean;
+  /** Replaces the "closed after the due date" note, e.g. for an Area Coordinator's view (#387). */
+  readOnlyNote?: string;
   variant?: "account" | "staff";
 }) {
   const [report, setReport] = useState(initial);
@@ -132,7 +135,7 @@ export function ClubReportForm({
       </div>
 
       {readOnly && (
-        <div className="inline-notice" role="status">This report closed after {dueLabel}. Ask the conference office if something needs to change.</div>
+        <div className="inline-notice" role="status">{readOnlyNote ?? `This report closed after ${dueLabel}. Ask the conference office if something needs to change.`}</div>
       )}
       {notice && <div className="inline-notice success" role="status">{notice}</div>}
       {error && <div className="inline-notice error" role="alert">{error}</div>}

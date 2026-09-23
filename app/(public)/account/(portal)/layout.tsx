@@ -7,6 +7,7 @@ import { BrandMark } from "@/components/brand-mark";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { accountNeedsSecondStep } from "@/modules/attendee-accounts/sign-in-gate";
+import { isAreaCoordinator } from "@/modules/organizations/area-coordinators";
 import { listDirectedClubs } from "@/modules/organizations/director-access";
 
 /**
@@ -21,12 +22,15 @@ export default async function AccountPortalLayout({ children }: { children: Reac
   if (!account) redirect("/account/sign-in");
   // Club roles pass a second step before any account page (staff viewing an account use their own).
   if (via === "attendee" && (await accountNeedsSecondStep(account.id, sessionId)) !== "OK") redirect("/account/two-step");
-  const clubs = await listDirectedClubs(account.id);
+  const [clubs, areaCoordinator] = await Promise.all([listDirectedClubs(account.id), isAreaCoordinator(account.id)]);
 
   const items: AccountNavItem[] = [
     { href: "/account", label: "Overview" },
     { href: "/account/registrations", label: "Registrations" },
-    ...(clubs.length > 0 ? [{ href: "/account/clubs", label: clubs.length === 1 ? "My club" : "My clubs", matchChildren: true }] : []),
+    // Area Coordinators see every club (#387), so the tab is just "Clubs".
+    ...(areaCoordinator
+      ? [{ href: "/account/clubs", label: "Clubs", matchChildren: true, alsoMatchPrefix: "/account/area/" }]
+      : clubs.length > 0 ? [{ href: "/account/clubs", label: clubs.length === 1 ? "My club" : "My clubs", matchChildren: true }] : []),
     { href: "/account/profile", label: "Profile" },
     { href: "/account/security", label: "Security" },
   ];

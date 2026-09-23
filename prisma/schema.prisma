@@ -683,6 +683,7 @@ model AttendeeAccount {
   actorOnAttendeeAccountPersonLinks AttendeeAccountPersonLink[] @relation("AttendeeAccountPersonLinkActorAccount")
   /// Clubs this account directs. Explicit staff grants only — never inferred.
   clubDirectorGrants                ClubDirectorGrant[]
+  areaCoordinatorGrant              AreaCoordinatorGrant?
   grantedClubRoles                  ClubDirectorGrant[]              @relation("ClubDirectorGrantGrantedByAccount")
   acceptedClubInvites               ClubInvite[]                     @relation("ClubInviteAcceptedAccount")
   revokedClubRoles                  ClubDirectorGrant[]              @relation("ClubDirectorGrantRevokedByAccount")
@@ -1516,6 +1517,26 @@ model Organization {
   @@index([type, isActive, name])
   @@index([parentOrganizationId, isActive])
   @@index([normalizedName])
+}
+
+/// An Area Coordinator (#387): sees every club, view only, from their own
+/// account. Given and taken away by system administrators; one row per
+/// account, kept after removal for the record.
+model AreaCoordinatorGrant {
+  id                String    @id @default(cuid())
+  attendeeAccountId String    @unique
+  grantedByUserId   String?
+  grantedAt         DateTime  @default(now())
+  /// Set when a system administrator acts as an Area Coordinator for a while
+  /// (#387); null for a lasting role.
+  expiresAt         DateTime?
+  revokedAt         DateTime?
+  revokedByUserId   String?
+  updatedAt         DateTime  @updatedAt
+
+  attendeeAccount AttendeeAccount @relation(fields: [attendeeAccountId], references: [id], onDelete: Cascade)
+
+  @@index([revokedAt])
 }
 
 model ClubInvite {

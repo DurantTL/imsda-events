@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { requireSystemAdministrator } from "@/modules/organizations/access";
+import { setAreaCoordinator } from "@/modules/organizations/area-coordinators";
 import { changeAttendeeEmail, resetAttendeeTwoStep, signOutAttendeeEverywhere } from "@/modules/system-admin/user-admin";
 import { userAdminApiError } from "@/modules/system-admin/user-admin-api";
 import { withRequestContext } from "@/lib/request-context";
@@ -8,6 +9,7 @@ import { withRequestContext } from "@/lib/request-context";
 const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("reset-two-step") }).strict(),
   z.object({ action: z.literal("sign-out") }).strict(),
+  z.object({ action: z.literal("area-coordinator"), on: z.boolean() }).strict(),
   z.object({ action: z.literal("change-email"), email: z.string().trim().toLowerCase().pipe(z.email("Enter a valid email address.")) }).strict(),
 ]);
 
@@ -22,6 +24,14 @@ async function postHandler(request: Request, context: { params: Promise<{ accoun
     if (input.action === "reset-two-step") {
       await resetAttendeeTwoStep(accountId, actor.id);
       return Response.json({ message: "Two-step sign-in reset and signed out everywhere. Club roles will set it up again at their next sign-in." });
+    }
+    if (input.action === "area-coordinator") {
+      await setAreaCoordinator(accountId, input.on, actor.id);
+      return Response.json({
+        message: input.on
+          ? "Now an Area Coordinator: sees every club, view only, after a second sign-in step."
+          : "No longer an Area Coordinator.",
+      });
     }
     if (input.action === "sign-out") {
       await signOutAttendeeEverywhere(accountId, actor.id);

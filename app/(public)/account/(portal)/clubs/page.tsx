@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowRight, UsersRound } from "lucide-react";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { isAreaCoordinator, listClubsForArea } from "@/modules/organizations/area-coordinators";
 import { listDirectedClubs } from "@/modules/organizations/director-access";
 import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
 
@@ -16,7 +17,51 @@ export const metadata: Metadata = {
 export default async function MyClubsPage() {
   const { account } = await getCurrentAttendee();
   if (!account) redirect("/account/sign-in");
-  const clubs = await listDirectedClubs(account.id);
+  const [clubs, areaCoordinator] = await Promise.all([listDirectedClubs(account.id), isAreaCoordinator(account.id)]);
+  if (areaCoordinator) {
+    // An Area Coordinator sees every club (#387): their own open as usual;
+    // the rest open view only.
+    const own = new Map(clubs.map((club) => [club.organizationId, club]));
+    const allClubs = await listClubsForArea();
+    return (
+      <>
+        <section className="public-registration-hero public-manage-hero account-page-hero">
+          <div>
+            <p className="public-registration-eyebrow">Area Coordinator</p>
+            <h1>Clubs</h1>
+          </div>
+        </section>
+        <div className="account-page-body">
+          <section className="public-manage-card">
+            <p className="field-help">Every active club. Clubs you don&apos;t run open view only, with ages instead of birth dates.</p>
+            <ul className="public-manage-club-list">
+              {allClubs.map((club) => {
+                const mine = own.get(club.organizationId);
+                return (
+                  <li key={club.organizationId}>
+                    <UsersRound size={17} aria-hidden="true" />
+                    <span>
+                      <strong translate="no">{club.name}</strong>
+                      <small>
+                        {mine ? clubDirectorRoleLabels[mine.role] : "View only"}
+                        {club.sponsoringChurch && <> · <span translate="no">{club.sponsoringChurch}</span></>}
+                      </small>
+                    </span>
+                    <Link
+                      className={`${mine ? "primary-button" : "secondary-button"} club-event-action`}
+                      href={mine ? `/account/clubs/${club.organizationId}` : `/account/area/${club.organizationId}`}
+                    >
+                      Open <ArrowRight size={14} aria-hidden="true" />
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        </div>
+      </>
+    );
+  }
   // Most directors run one club: take them straight to it.
   if (clubs.length === 1) redirect(`/account/clubs/${clubs[0].organizationId}`);
 
