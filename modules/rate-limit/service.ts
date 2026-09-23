@@ -590,3 +590,34 @@ export async function checkAttendeeCommunityPostRateLimit(
     identifierHashes: [accountEvent],
   }], configuration);
 }
+
+/**
+ * Entering an authenticator code to open club rosters (#356). Tight on the
+ * account because a six-digit code is guessable given enough tries.
+ */
+export async function checkAttendeeRosterUnlockRateLimit(
+  request: Request,
+  accountId: string,
+) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  const account = hashRateLimitIdentifier(
+    "attendee-roster-unlock",
+    accountId,
+    configuration,
+  );
+  return evaluate([
+    {
+      policy: "attendee.roster-unlock.client",
+      limit: 20,
+      windowSeconds: fifteenMinutes,
+      identifierHashes: [client],
+    },
+    {
+      policy: "attendee.roster-unlock.account",
+      limit: 5,
+      windowSeconds: fifteenMinutes,
+      identifierHashes: [account],
+    },
+  ], configuration);
+}
