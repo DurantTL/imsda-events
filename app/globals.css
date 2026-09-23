@@ -1603,6 +1603,7 @@ select:focus-visible {
 .auth-back-link { display: inline-flex; align-items: center; gap: 5px; color: var(--imsda-purple); font-size: 0.67rem; font-weight: 700; text-decoration: none; }
 .checkbox-label { display: flex !important; align-items: center; grid-template-columns: auto 1fr; gap: 6px !important; color: var(--muted) !important; font-size: 0.64rem !important; font-weight: 500 !important; }
 .checkbox-label input { accent-color: var(--imsda-purple); }
+.form-stack .checkbox-label input { width: auto; }
 .local-credentials { display: grid; gap: 3px; margin-top: 22px; border: 1px solid #eadca9; border-radius: 13px; background: var(--imsda-gold-soft); color: #69501a; padding: 12px 14px; font-size: 0.67rem; }
 .local-credentials strong { color: #5e4611; font-size: 0.68rem; }
 .local-credentials small { margin-top: 3px; color: #8e742e; }
@@ -6610,3 +6611,15 @@ select:focus-visible {
 .translate-hint > svg { flex: 0 0 auto; margin-top: 2px; }
 .translate-hint a { color: var(--imsda-navy); font-weight: 700; text-underline-offset: 3px; }
 .public-registration-embed .translate-hint { display: none; }
+
+/* Honors Weekend setup (#357) */
+.honor-session-list { display: grid; gap: 8px; margin: 0 0 16px; padding: 0; list-style: none; }
+.honor-session-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px; color: var(--imsda-purple); }
+.honor-session-list strong { color: var(--ink); font-size: 0.76rem; }
+.honor-session-list small { margin-right: auto; color: var(--muted); font-size: 0.66rem; }
+.honor-inline-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+.honor-inline-form label { display: grid; flex: 1 1 180px; gap: 6px; color: var(--ink); font-size: 0.7rem; font-weight: 700; }
+.honor-inline-form select { border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd; padding: 10px 11px; font-size: 0.78rem; }
+.honor-group-heading { margin: 18px 0 8px; color: var(--ink); font-size: 0.8rem; }
+.honor-row-actions { display: flex; gap: 6px; }
+

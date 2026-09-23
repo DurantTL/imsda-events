@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import Link from "next/link";
-import { Activity, ChartNoAxesCombined, FileText, FileUp, HeartPulse, ListChecks, MessagesSquare, PanelsTopLeft, Settings2, TicketPercent, UserCog } from "lucide-react";
+import { Activity, Award, ChartNoAxesCombined, FileText, FileUp, HeartPulse, ListChecks, MessagesSquare, PanelsTopLeft, Settings2, TicketPercent, UserCog } from "lucide-react";
 import { MfaManager, type MfaStatus } from "@/components/mfa-manager";
 import { SessionManager } from "@/components/session-manager";
 import { getMfaStatus } from "@/modules/access/mfa-service";
@@ -31,6 +31,7 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
         {permissions.includes("MANAGE_COMMUNICATIONS") && <Link className="panel foundation-card" href={`/community?event=${event.id}`}><span><MessagesSquare aria-hidden="true" size={21} /></span><h3>Attendee community</h3><p>Open or pause discussion, review attendee reports, and moderate posts and replies.</p><small>Moderate community</small></Link>}
         {permissions.includes("MANAGE_FINANCE") && <Link className="panel foundation-card" href={`/more/promo-codes?event=${event.id}`}><span><TicketPercent aria-hidden="true" size={21} /></span><h3>Promo codes</h3><p>Create bounded registration discounts, schedule dates, and review use limits.</p><small>Manage discounts</small></Link>}
         {permissions.includes("CONFIGURE_EVENT") && <Link className="panel foundation-card" href={`/more/event-settings?event=${event.id}`}><span><Settings2 aria-hidden="true" size={21} /></span><h3>Event settings</h3><p>Edit dates, location, capacity, registration availability, and publishing.</p><small>Open settings</small></Link>}
+        {permissions.includes("CONFIGURE_EVENT") && <Link className="panel foundation-card" href={`/more/honors?event=${event.id}`}><span><Award aria-hidden="true" size={21} /></span><h3>Honors Weekend classes</h3><p>Name this site&apos;s sessions and set the honor classes, seats, and age limits it offers.</p><small>Set up classes</small></Link>}
         {permissions.includes("CONFIGURE_EVENT") && <Link className="panel foundation-card" href={`/more/event-content?event=${event.id}`}><span><FileText aria-hidden="true" size={21} /></span><h3>Event page</h3><p>Speaker bios, seminar descriptions, lodging, schedules, and downloads shown publicly.</p><small>Edit page</small></Link>}
         {permissions.includes("MANAGE_FORMS") && <Link className="panel foundation-card" href={`/registration-builder?event=${event.id}`}><span><PanelsTopLeft aria-hidden="true" size={21} /></span><h3>Registration form</h3><p>Build, test, and publish the form people use to register.</p><small>Open form builder</small></Link>}
         {permissions.includes("MANAGE_IMPORTS") && <Link className="panel foundation-card" href={`/imports?event=${event.id}`}><span><FileUp aria-hidden="true" size={21} /></span><h3>Import registrations</h3><p>Preview a CSV, review every change, then import approved records.</p><small>Open imports</small></Link>}
