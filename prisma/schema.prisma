@@ -390,6 +390,13 @@ enum MessageProviderDeliveryStatus {
   SUPPRESSED
 }
 
+/// Whether an Honors Weekend offering fills one named session or every session
+/// of its event (the 2026 "2-session honor").
+enum HonorOfferingSpan {
+  SINGLE_SESSION
+  ALL_SESSIONS
+}
+
 enum ProgramAssignmentOutcome {
   ASSIGNED
   UNASSIGNED
@@ -1001,6 +1008,8 @@ model Event {
   promoCodes                          PromoCode[]
   promoCodeRedemptions                PromoCodeRedemption[]
   programAssignmentRuns               ProgramAssignmentRun[]
+  honorSessions                       HonorSession[]
+  honorOfferings                      HonorOffering[]
   registrationOperations              RegistrationOperation[]
   registrationPaymentChoiceOperations RegistrationPaymentChoiceOperation[]
   communitySettings                   EventCommunitySettings?
@@ -2626,4 +2635,67 @@ model ProgramAttendeeAssignment {
   @@unique([runId, attendeeIdSnapshot])
   @@index([runId, optionValue, stableOrder])
   @@index([runId, outcome, stableOrder])
+}
+
+/// Staff-maintained catalog of Pathfinder/Adventurer honors (#357). Global,
+/// not per event, so every Honors Weekend site offers from the same list.
+model Honor {
+  id             String   @id @default(cuid())
+  code           String   @unique
+  name           String
+  normalizedName String
+  description    String   @default("")
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  offerings HonorOffering[]
+
+  @@index([isActive, name])
+  @@index([normalizedName])
+}
+
+/// A named class period at one Honors Weekend site (event). Names differ by
+/// site, so they are data, never hard-coded.
+model HonorSession {
+  id             String   @id @default(cuid())
+  eventId        String
+  name           String
+  normalizedName String
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  event     Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  offerings HonorOffering[]
+
+  @@unique([eventId, normalizedName])
+  @@index([eventId, sortOrder])
+}
+
+/// An honor taught at a site: in one session, or across all sessions.
+/// `capacity` counts youth seats only. The migration adds CHECK constraints
+/// and a partial unique index for ALL_SESSIONS offerings.
+model HonorOffering {
+  id           String            @id @default(cuid())
+  eventId      String
+  honorId      String
+  sessionId    String?
+  span         HonorOfferingSpan
+  capacity     Int
+  minimumAge   Int?
+  perClubLimit Int?
+  teacherName  String            @default("")
+  location     String            @default("")
+  isActive     Boolean           @default(true)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  event   Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  honor   Honor         @relation(fields: [honorId], references: [id], onDelete: Restrict)
+  session HonorSession? @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+
+  @@unique([sessionId, honorId])
+  @@index([eventId, isActive])
+  @@index([honorId])
 }
