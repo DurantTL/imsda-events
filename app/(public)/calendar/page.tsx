@@ -1,13 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { CalendarDays, CalendarPlus, ChevronLeft, ChevronRight, Clock3, ExternalLink, List, MapPin } from "lucide-react";
+import { CalendarDays, CalendarPlus, ChevronLeft, ChevronRight, List } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
+import { AgendaItem, ItemLink } from "@/components/calendar-agenda-item";
 import {
   calendarCategories,
-  calendarStatusLabels,
   filterByCategory,
   firstOfMonth,
-  formatDateRange,
   itemsOnDate,
   itemsOverlapping,
   lastOfMonth,
@@ -33,7 +32,6 @@ export const metadata: Metadata = {
 type SearchParams = Promise<{ view?: string; month?: string; category?: string }>;
 
 const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const shortMonths = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function calendarHref(params: { view?: string; month?: string; category?: string }) {
   const search = new URLSearchParams();
@@ -42,48 +40,6 @@ function calendarHref(params: { view?: string; month?: string; category?: string
   if (params.category) search.set("category", params.category);
   const query = search.toString();
   return query ? `/calendar?${query}` : "/calendar";
-}
-
-function ItemLink({ item, children, className }: { item: CalendarItem; children: React.ReactNode; className?: string }) {
-  if (!item.href) return <span className={className}>{children}</span>;
-  if (item.href.startsWith("/")) return <Link className={className} href={item.href}>{children}</Link>;
-  return <a className={className} href={item.href} rel="noreferrer" target="_blank">{children}</a>;
-}
-
-function AgendaItem({ item }: { item: CalendarItem }) {
-  const [, month, day] = item.startsOn.split("-").map(Number);
-  return (
-    <li className={`calendar-agenda-item calendar-kind-${item.kind.toLowerCase()} calendar-status-${item.status.toLowerCase()}`}>
-      <span className="calendar-date-badge" aria-hidden="true">
-        <small>{shortMonths[month - 1]}</small>
-        <strong>{day}</strong>
-      </span>
-      <div className="calendar-agenda-body">
-        <div className="calendar-agenda-tags">
-          <span className="calendar-kind-label">{item.kind === "EVENT" ? "IMSDA event" : "Conference date"}</span>
-          {item.category && <span className="calendar-category-tag">{item.category}</span>}
-          {item.status !== "SCHEDULED" && <span className="status-chip coral">{calendarStatusLabels[item.status]}</span>}
-          {item.registrationOpen && <span className="status-chip green">Registration open</span>}
-        </div>
-        <h3><ItemLink item={item}>{item.title}</ItemLink></h3>
-        <p className="calendar-agenda-meta">
-          <span><CalendarDays size={14} aria-hidden="true" /> {formatDateRange(item.startsOn, item.endsOn)}</span>
-          {item.timeLabel && <span><Clock3 size={14} aria-hidden="true" /> {item.timeLabel}</span>}
-          {item.location && <span><MapPin size={14} aria-hidden="true" /> {item.location}</span>}
-        </p>
-        {item.description && <p className="calendar-agenda-description">{item.description}</p>}
-      </div>
-      {item.href && item.status !== "CANCELLED" && (
-        <ItemLink
-          className={`${item.registrationOpen ? "primary-button" : "secondary-button"} calendar-agenda-action`}
-          item={item}
-        >
-          {item.kind === "EVENT" ? (item.registrationOpen ? "Register" : "Details") : "More info"}
-          {item.href.startsWith("/") ? <ChevronRight size={14} aria-hidden="true" /> : <ExternalLink size={14} aria-hidden="true" />}
-        </ItemLink>
-      )}
-    </li>
-  );
 }
 
 function groupByMonth(items: CalendarItem[], from: string) {

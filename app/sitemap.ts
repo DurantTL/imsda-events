@@ -7,6 +7,10 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const baseUrl = (process.env.APP_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
   const events = await listPublicEventSitemapEntries();
   return [{
+    url: `${baseUrl}/`,
+    changeFrequency: "daily" as const,
+    priority: 1,
+  }, {
     url: `${baseUrl}/calendar`,
     changeFrequency: "daily" as const,
     priority: 0.9,
