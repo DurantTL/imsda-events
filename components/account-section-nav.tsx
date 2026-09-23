@@ -9,10 +9,13 @@ export type AccountNavItem = {
   label: string;
   /** Also active on pages below this one (e.g. every club screen for "My clubs"). */
   matchChildren?: boolean;
+  /** Another section this tab owns (e.g. Area Coordinator club pages under "Clubs"). */
+  alsoMatchPrefix?: string;
 };
 
 function isActive(pathname: string, item: AccountNavItem) {
   if (pathname === item.href) return true;
+  if (item.alsoMatchPrefix && pathname.startsWith(item.alsoMatchPrefix)) return true;
   return Boolean(item.matchChildren) && pathname.startsWith(`${item.href}/`);
 }
 

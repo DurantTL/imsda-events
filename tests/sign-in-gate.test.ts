@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   enrollment: vi.fn(),
   passkeyCount: vi.fn(),
   passkeysConfigured: vi.fn(),
+  areaGrant: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -14,6 +15,7 @@ vi.mock("@/lib/prisma", () => ({
     attendeeSession: { findUnique: mocks.session },
     attendeeMfaEnrollment: { findUnique: mocks.enrollment },
     attendeePasskey: { count: mocks.passkeyCount },
+    areaCoordinatorGrant: { findUnique: mocks.areaGrant },
   }),
 }));
 vi.mock("@/modules/organizations/director-access", () => ({ listDirectedClubs: mocks.listDirectedClubs }));
@@ -29,9 +31,18 @@ beforeEach(() => {
   mocks.enrollment.mockResolvedValue({ status: "ACTIVE" });
   mocks.passkeyCount.mockResolvedValue(0);
   mocks.passkeysConfigured.mockResolvedValue(true);
+  mocks.areaGrant.mockResolvedValue(null);
 });
 
 describe("second step after the password (decision 2026-09-23)", () => {
+  it("asks Area Coordinators for a second step too (#387), but not once the role is removed", async () => {
+    mocks.listDirectedClubs.mockResolvedValue([]);
+    mocks.areaGrant.mockResolvedValue({ revokedAt: null });
+    await expect(accountNeedsSecondStep("account-1", "session-1")).resolves.toBe("VERIFY");
+    mocks.areaGrant.mockResolvedValue({ revokedAt: new Date() });
+    await expect(accountNeedsSecondStep("account-1", "session-1")).resolves.toBe("OK");
+  });
+
   it("leaves ordinary attendees on password-only sign-in", async () => {
     mocks.listDirectedClubs.mockResolvedValue([]);
     await expect(accountNeedsSecondStep("account-1", "session-1")).resolves.toBe("OK");

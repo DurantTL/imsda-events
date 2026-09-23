@@ -98,6 +98,7 @@ export async function listAttendeeAccounts(query: string, limit = 50) {
       mfaEnrollment: { select: { status: true } },
       _count: { select: { passkeys: { where: { revokedAt: null } } } },
       sessions: { orderBy: { createdAt: "desc" }, take: 1, select: { createdAt: true } },
+      areaCoordinatorGrant: { select: { revokedAt: true } },
       clubDirectorGrants: {
         where: { revokedAt: null, OR: [{ effectiveTo: null }, { effectiveTo: { gt: new Date() } }] },
         select: { role: true, organization: { select: { name: true } } },
@@ -115,6 +116,7 @@ export async function listAttendeeAccounts(query: string, limit = 50) {
     authenticatorOn: account.mfaEnrollment?.status === "ACTIVE",
     passkeyCount: account._count.passkeys,
     clubRoles: account.clubDirectorGrants.map((grant) => ({ role: grant.role, clubName: grant.organization.name })),
+    areaCoordinator: Boolean(account.areaCoordinatorGrant && !account.areaCoordinatorGrant.revokedAt),
   }));
 }
 
