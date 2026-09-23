@@ -13,5 +13,5 @@ export default async function ClubRosterPage({ params }: { params: Promise<{ org
   if (access.state !== "OPEN") return null;
   const clubYear = clubYearFor(new Date());
   const members = await listRoster(organizationId, clubYear);
-  return <ClubRosterWorkspace clubYear={clubYear} initialMembers={members} organizationId={organizationId} />;
+  return <ClubRosterWorkspace canSeeBirthDates={access.capabilities.seeBirthDates} clubYear={clubYear} initialMembers={members} organizationId={organizationId} />;
 }

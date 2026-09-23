@@ -15,7 +15,7 @@ async function putHandler(request: Request, context: { params: Promise<{ organiz
   if (originError) return originError;
   try {
     const { organizationId, eventId } = await context.params;
-    const access = await requireRosterAccess(organizationId);
+    const access = await requireRosterAccess(organizationId, new Date(), "registerForEvents");
     const { selections } = selectionsSchema.parse(await request.json());
     const workspace = await setClassSelections(organizationId, eventId, access.accountId, selections);
     return Response.json({ workspace }, { headers: { "Cache-Control": "no-store" } });

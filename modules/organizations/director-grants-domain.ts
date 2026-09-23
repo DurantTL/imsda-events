@@ -7,7 +7,58 @@
 export const clubDirectorRoleLabels = {
   DIRECTOR: "Director",
   DEPUTY: "Deputy",
+  REGISTRAR: "Registrar",
+  REPORTER: "Reporter",
 } as const;
+
+export type ClubRole = keyof typeof clubDirectorRoleLabels;
+
+export const clubRoleDescriptions: Record<ClubRole, string> = {
+  DIRECTOR: "Runs the club: roster, events, team, and club profile.",
+  DEPUTY: "Same access as the director.",
+  REGISTRAR: "Keeps the roster and registers the club for events. Sees ages, not full birth dates.",
+  REPORTER: "Submits the club's monthly reports. No roster access.",
+};
+
+/**
+ * What each club role may do (#375). One table so every page and route asks
+ * the same question. Full birth dates stay with directors and deputies
+ * (ADR 0005 Addendum A); a registrar can type one in but sees ages only.
+ */
+export type ClubCapabilities = {
+  roster: boolean;
+  registerForEvents: boolean;
+  seeBirthDates: boolean;
+  manageTeam: boolean;
+  editProfile: boolean;
+  submitReports: boolean;
+};
+
+const leader: ClubCapabilities = {
+  roster: true, registerForEvents: true, seeBirthDates: true, manageTeam: true, editProfile: true, submitReports: true,
+};
+
+const capabilitiesByRole: Record<ClubRole, ClubCapabilities> = {
+  DIRECTOR: leader,
+  DEPUTY: leader,
+  REGISTRAR: {
+    roster: true, registerForEvents: true, seeBirthDates: false, manageTeam: false, editProfile: false, submitReports: false,
+  },
+  REPORTER: {
+    roster: false, registerForEvents: false, seeBirthDates: false, manageTeam: false, editProfile: false, submitReports: true,
+  },
+};
+
+export function clubCapabilities(role: ClubRole): ClubCapabilities {
+  return capabilitiesByRole[role];
+}
+
+/** Roles a club's own director or deputy may give or take away. Conference staff may give any role. */
+export const clubAssignableRoles = ["REGISTRAR", "REPORTER"] as const satisfies readonly ClubRole[];
+
+export function clubRoleIsAssignableByClub(role: ClubRole) {
+  return (clubAssignableRoles as readonly ClubRole[]).includes(role);
+}
 
 export type DirectorGrantStatus = "SCHEDULED" | "ACTIVE" | "ENDED" | "REVOKED";
 

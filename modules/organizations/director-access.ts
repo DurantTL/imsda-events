@@ -2,17 +2,19 @@ import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import type { ClubRole } from "@/modules/organizations/director-grants-domain";
 
 /**
  * The one question every club screen asks (#354): which clubs does this
- * signed-in person direct right now? Only unrevoked grants inside their date
- * window, on active clubs, count.
+ * signed-in person hold a role in right now, and which role? Only unrevoked
+ * grants inside their date window, on active clubs, count. What the role
+ * allows is `clubCapabilities` (#375).
  */
 
 export type DirectedClub = {
   organizationId: string;
   name: string;
-  role: "DIRECTOR" | "DEPUTY";
+  role: ClubRole;
   sponsoringChurch: string | null;
 };
 
@@ -38,7 +40,8 @@ export async function listDirectedClubs(attendeeAccountId: string, now = new Dat
     },
   });
 
-  // DIRECTOR sorts before DEPUTY, so the first row per club is the higher role.
+  // Roles sort in enum order (director, deputy, registrar, reporter), so the
+  // first row per club is the broadest role.
   const clubs = new Map<string, DirectedClub>();
   for (const grant of grants) {
     if (clubs.has(grant.organization.id)) continue;

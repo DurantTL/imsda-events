@@ -41,11 +41,13 @@ export default async function ClubLayout({
               { href: base, label: "Club home" },
               { href: `${base}/roster`, label: "Roster" },
               { href: `${base}/events`, label: "Events & classes", matchChildren: true },
+              ...(access.capabilities.manageTeam ? [{ href: `${base}/team`, label: "Team" }] : []),
+              ...(access.capabilities.editProfile ? [{ href: `${base}/profile`, label: "Club profile" }] : []),
             ]}
             label="Club"
             variant="secondary"
           />
-        ) : (
+        ) : access.state === "NO_ROSTER" ? null : (
           <ClubAccessGate access={access} />
         )}
         {children}

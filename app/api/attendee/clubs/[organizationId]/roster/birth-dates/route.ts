@@ -11,7 +11,7 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
   if (originError) return originError;
   try {
     const { organizationId } = await context.params;
-    const access = await requireRosterAccess(organizationId);
+    const access = await requireRosterAccess(organizationId, new Date(), "seeBirthDates");
     const birthDates = await revealRosterBirthDates(organizationId, clubYearFor(new Date()), { accountId: access.accountId });
     return Response.json({ birthDates }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {

@@ -3,6 +3,8 @@ import { logError } from "@/lib/logger";
 import { AttendeeMfaError } from "@/modules/attendee-accounts/mfa-service";
 import { RosterAccessError } from "@/modules/club-rosters/access";
 import { RosterOperationError } from "@/modules/club-rosters/repository";
+import { organizationApiError } from "@/modules/organizations/api-errors";
+import { OrganizationOperationError } from "@/modules/organizations/repository";
 
 export function rosterApiError(error: unknown, action: string) {
   if (error instanceof ZodError) {
@@ -18,6 +20,8 @@ export function rosterApiError(error: unknown, action: string) {
     const status = error.code === "MEMBER_NOT_FOUND" ? 404 : error.code === "BIRTH_DATE_INVALID" ? 400 : 409;
     return Response.json({ error: error.code, message: error.message }, { status });
   }
+  // Club team and profile changes (#375) raise the directory's own errors.
+  if (error instanceof OrganizationOperationError) return organizationApiError(error, action);
   if (error instanceof AttendeeMfaError) {
     return Response.json(
       { error: error.code, message: error.message },

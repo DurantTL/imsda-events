@@ -327,6 +327,15 @@ birth dates need their own protection.
    (registration managers, finance, and check-in staff). They see age only.
    Every reveal or export of full birth dates is audited, without the date
    itself.
+
+   **Club Registrar and Reporter roles** (decided 2026-09-23, #375): a
+   director or deputy may give a club **Registrar** the roster and event
+   registration. A registrar can type a birth date in when adding or editing
+   someone, but sees **ages only**, never the full date, and needs the same
+   authenticator or passkey step as a director. A **Reporter** submits monthly
+   reports and has no roster access at all. Directors and deputies give and
+   remove these two roles themselves; only conference staff assign directors
+   and deputies. Every grant and removal is audited.
 4. **Scoped access.** A director reaches only their own club's people. Tests
    prove that other clubs' people, counts, and search results never leak, and
    that a club the person does not direct answers 404.

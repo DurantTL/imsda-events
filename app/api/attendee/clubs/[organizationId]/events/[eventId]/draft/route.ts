@@ -18,7 +18,7 @@ async function putHandler(request: Request, context: RouteContext) {
   if (originError) return originError;
   try {
     const { organizationId, eventId } = await context.params;
-    const access = await requireRosterAccess(organizationId);
+    const access = await requireRosterAccess(organizationId, new Date(), "registerForEvents");
     const input = draftSchema.parse(await request.json());
     return Response.json(await saveClubRegistrationDraft(organizationId, eventId, access.accountId, input));
   } catch (error) {

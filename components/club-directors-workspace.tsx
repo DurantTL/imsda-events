@@ -78,7 +78,7 @@ export function ClubDirectorsWorkspace({
       });
       await readResponse(response);
       formElement.reset();
-      setNotice("Director assigned. They will see this club under My clubs on their account.");
+      setNotice("Role given. They will see this club under My club on their account.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The director could not be assigned.");
     } finally {
@@ -99,7 +99,7 @@ export function ClubDirectorsWorkspace({
         body: JSON.stringify({ reason }),
       });
       await readResponse(response);
-      setNotice("Director access revoked.");
+      setNotice("Club access revoked.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The grant could not be revoked.");
     } finally {
@@ -111,12 +111,13 @@ export function ClubDirectorsWorkspace({
     <section className="page-stack">
       <div className="page-intro">
         <div>
-          <p className="eyebrow">Club directors</p>
+          <p className="eyebrow">Club team</p>
           <h2 translate="no">{club.name}</h2>
           <p>
-            Directors sign in with their own attendee account to manage this
-            club&apos;s roster and event registrations. Every grant and
-            revocation is recorded in the audit log.
+            Directors, deputies, registrars, and reporters sign in with their own
+            attendee account. Directors and deputies can also give and remove the
+            Registrar and Reporter roles themselves. Every grant and revocation is
+            recorded in the audit log.
           </p>
         </div>
       </div>
@@ -129,7 +130,7 @@ export function ClubDirectorsWorkspace({
           <div className="section-heading">
             <div>
               <p className="eyebrow">New grant</p>
-              <h2>Assign a director</h2>
+              <h2>Give a club role</h2>
             </div>
           </div>
           <div className="form-grid two-column">
@@ -140,8 +141,9 @@ export function ClubDirectorsWorkspace({
             <label>
               Role
               <select defaultValue="DIRECTOR" name="role">
-                <option value="DIRECTOR">{clubDirectorRoleLabels.DIRECTOR}</option>
-                <option value="DEPUTY">{clubDirectorRoleLabels.DEPUTY}</option>
+                {Object.entries(clubDirectorRoleLabels).map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
               </select>
             </label>
             <label>
@@ -163,7 +165,7 @@ export function ClubDirectorsWorkspace({
           </p>
           <div>
             <button className="primary-button" disabled={saving} type="submit">
-              <UserPlus aria-hidden="true" size={16} /> Assign director
+              <UserPlus aria-hidden="true" size={16} /> Give role
             </button>
           </div>
         </form>
