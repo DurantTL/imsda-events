@@ -23,6 +23,8 @@ import { getCurrentSession } from "@/modules/access/current-session";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { getAttendeeMfaStatus } from "@/modules/attendee-accounts/mfa-service";
 import { getAttendeeProfile } from "@/modules/attendee-accounts/profile-service";
+import { listDirectedClubs } from "@/modules/organizations/director-access";
+import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
 import {
   listRegistrationsForVerifiedEmail,
   type AttendeeRegistrationSummary,
@@ -154,6 +156,7 @@ export default async function AttendeeAccountPage() {
   const registrations = await listRegistrationsForVerifiedEmail(account.verifiedEmail);
   const mfaStatus = await getAttendeeMfaStatus(account.id);
   const profile = await getAttendeeProfile(account.id);
+  const directedClubs = await listDirectedClubs(account.id);
 
   return (
     <main className="public-registration-page public-manage-page">
@@ -186,6 +189,33 @@ export default async function AttendeeAccountPage() {
       <div className="public-manage-layout">
         <div className="public-manage-main">
           {via === "attendee" && <AttendeeProfileForm initialProfile={profile} />}
+          {directedClubs.length > 0 && (
+            <section className="public-manage-card" aria-labelledby="my-clubs-heading">
+              <div className="public-manage-card-heading">
+                <p className="public-registration-eyebrow">Club ministries</p>
+                <h2 id="my-clubs-heading">My clubs</h2>
+              </div>
+              <ul className="public-manage-club-list">
+                {directedClubs.map((club) => (
+                  <li key={club.organizationId}>
+                    <UsersRound size={17} aria-hidden="true" />
+                    <span>
+                      <strong translate="no">{club.name}</strong>
+                      <small>
+                        {clubDirectorRoleLabels[club.role]}
+                        {club.sponsoringChurch && (
+                          <> · <span translate="no">{club.sponsoringChurch}</span></>
+                        )}
+                      </small>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className="public-manage-empty">
+                Club rosters and event registration for your club will appear here.
+              </p>
+            </section>
+          )}
           {registrations.length > 0
             ? registrations.map((registration) => (
               <RegistrationCard

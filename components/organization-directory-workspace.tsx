@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import {
   BadgeCheck,
@@ -10,6 +11,7 @@ import {
   Plus,
   Save,
   ShieldCheck,
+  UserCog,
   UsersRound,
   X,
 } from "lucide-react";
@@ -332,6 +334,15 @@ export function OrganizationDirectoryWorkspace({
                   >
                     <Pencil aria-hidden="true" size={14} /> Edit
                   </button>
+                  {organization.type === "CLUB" && (
+                    <Link
+                      aria-label={`Directors for ${organization.name}`}
+                      className="secondary-button"
+                      href={`/admin/organizations/${organization.id}/directors`}
+                    >
+                      <UserCog aria-hidden="true" size={14} /> Directors
+                    </Link>
+                  )}
                 </div>
               </article>
             ))}

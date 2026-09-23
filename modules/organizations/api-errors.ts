@@ -20,10 +20,11 @@ export function organizationApiError(error: unknown, action: string) {
     );
   }
   if (error instanceof OrganizationOperationError) {
-    const status = error.code === "ORGANIZATION_NOT_FOUND"
-      || error.code === "EXTERNAL_IDENTITY_NOT_FOUND"
+    const status = error.code.endsWith("_NOT_FOUND")
       ? 404
-      : 409;
+      : error.code === "DIRECTOR_GRANT_WINDOW_INVALID" || error.code === "CLUB_REQUIRED"
+        ? 400
+        : 409;
     return Response.json(
       { error: error.code, message: error.message },
       { status },
