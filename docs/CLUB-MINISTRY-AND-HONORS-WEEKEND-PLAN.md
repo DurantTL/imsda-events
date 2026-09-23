@@ -50,14 +50,15 @@ stays the canonical roadmap. Nothing here changes #98 until a human approves it.
   proposes six narrow slices that reuse what this platform already has, so clubs
   register once and pick who is going for each event.
 - **Two new platform-wide requirements:**
-  - **The whole site in Spanish, at 100%**: public pages, forms, emails, the
-    attendee hub, director screens, and the staff workspace (Section 6.4).
+  - **Spanish through the browser's own translation**, English first: the site
+    is built in English and made safe for Chrome (and other browsers) to
+    translate, as WordPress was with gTranslate (Section 6.4).
   - **Encrypted birth dates** on club rosters, with the database security that
     implies (Section 6.5).
 - **Decisions:** billing (church), locations, rosters kept on file, birth dates,
   first-come classes, sessions, minimum age, and background checks are settled.
-  Still open: who reviews the Spanish, and sign-off on the birth-date security
-  design (Section 9).
+  Spanish comes through browser translation. Still open: sign-off on the
+  birth-date security design (Section 9).
 
 ---
 
@@ -89,8 +90,10 @@ Confirmed answers from Caleb (September 22, 2026):
 - Honors Weekend is **billed to the church**.
 - Rosters record a **birth date**, and that requires the database to be secure
   (Section 6.5).
-- **The whole website must be translatable, with Spanish at 100%.** This is a main
-  focus, not a single-site add-on (Section 6.4).
+- **English first.** Spanish comes through the visitor's browser translation
+  (Chrome and others), as it did on WordPress with the gTranslate plugin. The
+  site must translate cleanly that way (Section 6.4). A built-in Spanish version
+  is not planned now.
 
 ---
 
@@ -239,7 +242,8 @@ A further 15 people were never assigned a site.
    classes per person and "Full" filling both.
 4. **Capacity counts youth only.** Minimum age is the only eligibility rule
    actually used.
-5. **A Spanish-language form** is needed for at least one site.
+5. **Spanish speakers need to be able to register** (one site used a Spanish
+   form in 2026). For 2027 that's through browser translation (Section 6.4).
 6. **Staff and adult background-check status** is needed for Honors Weekend as
    well as Camporee.
 7. Cabin assignment and check-in were done on paper. Check-in can move to the
@@ -316,7 +320,7 @@ reproduced here.
 | Honor catalog + minimum age | No | **Needed** | Maybe | — | H4 (narrow #197) |
 | Session types (Sabbath, Sunday, Full), offerings, capacity, teacher | Room limits only (program assignments) | **Needed** | Maybe | — | H4 |
 | Class selection at registration, first-come, live seats, youth-only capacity | Registration capacity is serializable; no per-class seats | **Needed** | Maybe | — | H5 |
-| Spanish, site-wide (2026: one Spanish-only form) | Not supported | **Needed** (whole site, 100%) | **Needed** | **Needed** | S1–S6 (Section 6.4) |
+| Spanish (2026: one Spanish-only form) | Not supported | **Browser translation** | Browser translation | Browser translation | T1 (Section 6.4) |
 | Teacher and site rosters (print) | Printable run rosters exist | **Needed** | — | — | H6 |
 | Class attendance + honor sign-off | No | Paper, as in 2026 | Nice | — | #209/#197 later |
 | Background-check readiness | No (policy gate #218) | **Done by hand in 2026**; needed | **Needed** | Maybe | #115, #113, #218 |
@@ -464,9 +468,8 @@ Each slice is one issue and one PR.
 - The same roster serves Camporee in the spring, so the club registers once.
 - Each person carries an **attendee type** (youth, staff, adult, underage) and a
   dietary field, as in 2026.
-- **Fully bilingual** (English and Spanish) from the first release, including
-  error messages and confirmation emails (Section 6.4). The Kansas City site
-  defaults to Spanish.
+- **English, and safe to translate in the browser** (Section 6.4). Staff may add
+  short Spanish instructions to the Kansas City site's form text.
 - **Birth dates never go into the registration answers.** Answers are stored
   unencrypted today, so the form reads and writes birth dates only through the
   encrypted roster. The registration keeps just the **age on the event date**,
@@ -546,48 +549,51 @@ two real directors before registration opens.
 | Meal plans and selections | Confirmed requirement | #210 (+ #211 meal credentials, #212 kitchen counts if needed) |
 | Hosted Square payment fallback | Attendee-paid event | #327 (product decisions recorded Sept 21) |
 
-### 6.4 The whole site in Spanish, at 100%
+### 6.4 Spanish: English first, translated by the browser
 
-Caleb's direction: the whole website must be translatable, with Spanish complete,
-and this is a main focus. It is a platform workstream, not an Honors Weekend
-feature. It touches every screen, so it's planned as its own slices (S1–S6).
+**Decision (Caleb, September 23, 2026):** the site is built **in English first**.
+Spanish-speaking visitors use their browser's built-in translation (Chrome's
+"Translate this page", or the equivalent in other browsers). That's how the
+WordPress site worked, with the gTranslate plugin and browser translation. A
+built-in Spanish version (translation catalogs and reviewed Spanish text) is
+**not planned now**. It can be revisited later without rework if T1 is done.
 
-**Size today (approximate counts from the source):**
-- 112 page and component files: about 1,470 text passages and 180 labels or
-  placeholders.
-- About 300 error and status messages returned by the server.
-- About 1,800 lines of email templates and blocks.
-- 61 places that hard-code US English date, number, or currency formatting.
-- Staff-written content that must be translatable too: form fields, options, help
-  text, event pages, announcements, and message templates.
+**Why not a Google Translate widget on the site:**
+- The app's security policy (`next.config.ts`) only allows the app's own scripts
+  and Square's, on purpose.
+- Embedding a translate widget would load Google's script on pages that show
+  children's names, ages, medical answers, and private manage links, and would
+  send that text to Google.
+- As far as we know, Google stopped offering its website widget to new sites
+  around 2019; existing embeds still work but it's unsupported.
+- Browser translation needs nothing on our side, and visitors already know it.
 
-That is about 2,500–3,000 translation keys: roughly three times CMMS-1, which had
-about 1,000 keys in English and Spanish.
+**T1: Make the site safe for browser translation.** A small, bounded slice,
+done early because staff will recommend it from day one:
+- The page declares its language correctly (`<html lang="en">` already does).
+- **Mark what must never be translated** with `translate="no"`: people's names,
+  club names, confirmation codes, money, dates entered by people, email
+  addresses, and form inputs. Otherwise a translator can turn a name into a word.
+- **Protect against a known crash.** Browser translators rewrite the page's text
+  in place, and React apps (like this one) can crash or lose typing when that
+  happens mid-form. The standard fixes: keep changing text wrapped in its own
+  element, and don't let React swap bare text nodes a translator has replaced.
+- **Test the key flows with Chrome translation to Spanish turned on:**
+  - public event page and registration, including the club flow (H3) and class
+    selection (H5);
+  - the manage page and payment;
+  - the director screens;
+  - check-in.
+- Add a short "use your browser's Translate" note with a link to how-to steps on
+  the public event and registration pages.
 
-**Lessons carried over:**
-- **From CMMS-1:** it used `next-intl`, kept the language choice in a cookie, and
-  fell back to English for any missing key. Its own localization audit found the
-  trap: when most screens still hard-code English, the language switch *looks*
-  broken. So **100% must be enforced by the build, not by effort.**
-- **From Next.js 16:** middleware is now `proxy`, and the bundled guide
-  (`node_modules/next/dist/docs/01-app/02-guides/internationalization.md`) is the
-  reference. Any library (including `next-intl`) must be confirmed against
-  Next 16 before it is adopted.
-
-**Slices:**
-
-| Slice | Scope | Needed for |
-| --- | --- | --- |
-| **S1 Foundation** | ADR for the language approach. Language choice: signed-in preference, then cookie, then browser language, with a visible switch. Separate English and Spanish message catalogs. Shared date, number, and currency formatting replaces the 61 hard-coded `en-US` spots. Server messages become codes plus translated text. **A CI check that fails on hard-coded user-facing text and on any missing Spanish key** | Everything below |
-| **S2 Public and attendee** | Event pages, registration form screens, the private manage page, payment, passes, attendee sign-in and hub, community | Honors Weekend (Dec) |
-| **S3 Staff-written content** | English and Spanish versions of each form field, option, section, and help text; event content; announcements. Staff enter both side by side. An event marked bilingual can't publish until its Spanish is complete | Honors Weekend (Dec) |
-| **S4 Email** | Every template in both languages. Each registration and account records its language, and email goes out in that language | Honors Weekend (Dec) |
-| **S5 Director and club screens** | H1–H6 are built bilingual from the start, never retrofitted | Honors Weekend (Dec) |
-| **S6 Staff workspace** | All 30 workspace pages, printouts, badges, CSV headers, and PDFs | Target: end of March 2027 (Camp Meeting registration) |
-
-**Translation quality:** draft Spanish can be machine-assisted, but **a named
-Spanish reviewer approves every catalog before release** (decision D13).
-Church and SDA terms need a glossary that the reviewer keeps.
+**What browser translation does not cover (known limits, accepted for now):**
+- Confirmation and other **emails stay English**.
+- Printouts and PDFs stay English.
+- SDA terms such as "Pathfinder", honor names, and "Sabbath" may be translated
+  oddly.
+- **Consent and waiver text** will only be machine-translated. The English text
+  remains the one people agree to.
 
 ### 6.5 Birth dates and database security
 
@@ -628,26 +634,24 @@ until ADR 0005 is approved.
 
 | When | Work |
 | --- | --- |
-| Now → Oct 9 | WR26 operational items (Section 4). **Start S1 (language foundation) and H1.** Draft the birth-date addendum to ADR 0005 for sign-off (D14); name the Spanish reviewer (D13). |
+| Now → Oct 9 | WR26 operational items (Section 4). **Start H1 and T1 (browser-translation safety).** Draft the birth-date addendum to ADR 0005 for sign-off (D14). |
 | Oct 9–11 | **WR26** |
-| Oct 12 → Oct 31 | H2 (encrypted birth dates, once D14 is signed off), H3, H4, all bilingual; S2 and S4 |
-| Nov 1 → Nov 20 | H5, H6; S3 (Spanish form and event content); seed the honor catalog; Spanish review of every public, form, and email catalog; rehearse with 1–2 directors, including one Spanish-speaking director |
+| Oct 12 → Oct 31 | H2 (encrypted birth dates, once D14 is signed off), H3, H4 |
+| Nov 1 → Nov 20 | H5, H6; seed the honor catalog; re-test key flows with Chrome translation to Spanish; rehearse with 1–2 directors, including one Spanish-speaking director using browser translation |
 | Late Nov | Buffer; set up the 2027 sites and offerings |
 | **Dec 2026** | **Honors Weekend registration opens** |
 | Dec → Jan | Background-check readiness for Honors Weekend staff and adults (#115, #113; #218 approval); roster rollover; Camporee setup from template (#152, #157); campsite grouping (#89) |
 | Late Feb – Mar 2027 | **Honors Weekend sites** (2026 pattern); rosters from H6; QR check-in |
 | Jan/Feb | **Camporee registration opens** |
-| Dec → Mar | **S6 staff workspace translation**, a page group at a time |
 | Feb → Mar | Camp Meeting: #153, #155, #104; lodging #198–#200; meals #210; #327 |
-| End of March | **Camp Meeting registration opens**, fully bilingual; **100% Spanish across the site** |
+| End of March | **Camp Meeting registration opens** |
 | Apr 29 – May 2 | **Camporee** |
 | May | Church invoicing (#165–#167); honors attendance and sign-off (#209, #197) |
 | June | **Camp Meeting** |
 
-October–November is now the tightest stretch: the Honors Weekend slices, the
-language foundation, and the public translation all land together. February and
-March follow: Honors Weekend runs, Camporee registration is live, Camp Meeting
-lodging and meals are built, and staff translation finishes. If Camp Meeting's lodging and meal needs
+October–November is the tightest stretch, when the Honors Weekend slices land.
+February and March follow: Honors Weekend runs, Camporee registration is live,
+and Camp Meeting lodging and meals are built. If Camp Meeting's lodging and meal needs
 are simple, narrow them the same way as H1–H6.
 
 ---
@@ -664,9 +668,9 @@ are simple, narrow them the same way as H1–H6.
    (wallet, passkeys, mobile, site builder, surveys, transport, issued assets, and
    so on), so automated builds work toward November, April, and June. Restore the
    label as the calendar moves.
-4. Add a **bilingual platform** epic with slices S1–S6 (Section 6.4), ordered
-   ahead of everything except WR26 and H1–H6. S1 blocks all other new UI work,
-   so nothing new is built English-only.
+4. Add **T1, browser-translation safety** (Section 6.4), as one bounded issue
+   next to H1. Record "English first; Spanish through browser translation" on #98,
+   so no one starts a built-in translation project unasked.
 5. Add the **birth-date encryption addendum to ADR 0005** as a human-gated item
    blocking H2 in production.
 6. Record on #68 that Honors Weekend will be built from narrow slices of #183–#197,
@@ -679,9 +683,9 @@ are simple, narrow them the same way as H1–H6.
 
 | Risk | Effect | Mitigation |
 | --- | --- | --- |
-| Birth-date design (D14) or Spanish reviewer (D13) decided late | H2 can't go live, or Spanish can't ship | Draft the addendum this week; H1, S1, H3, and H4 proceed meanwhile |
-| Translation volume (about 2,500–3,000 keys) alongside H1–H6 | November slips | Translate public, forms, and email first (S2–S4); staff workspace (S6) runs through March; the CI gate stops new English-only screens |
-| Partial translation looks broken (the CMMS-1 lesson) | Spanish users lose trust | The build fails on missing keys; bilingual events can't publish until their Spanish content is complete |
+| Birth-date design (D14) decided late | H2 can't go live | Draft the addendum this week; H1, T1, H3, and H4 proceed meanwhile |
+| Browser translation breaks a form mid-entry | A Spanish-speaking director loses their work | T1 fixes and Chrome-translate tests; H3 draft saving means nothing is lost on a reload |
+| English-only emails, consent text, and odd SDA terms | Confusion for Spanish-speaking families | Accepted for now; staff add short Spanish notes to the Kansas City form text; revisit a built-in Spanish version after Camp Meeting |
 | Lost encryption key | Every birth date unrecoverable | Separate key backup, named custodian, rotation runbook (D14) |
 | Directors do not keep rosters current | Wrong ages break eligibility at the next event | Directors confirm each person when they tick them for an event; birth dates (D12) keep ages current |
 | First-year roster entry effort | 2027 is still full entry, once | Draft saving; every later event starts from the kept roster |
@@ -709,11 +713,11 @@ are simple, narrow them the same way as H1–H6.
 | D8 | Do teachers need their own sign-in, or are printed rosters enough (as in 2026)? | Club Ministry | H6 scope |
 | D9 | Fallback: if November slips, reuse the 2026 Fluent Forms and Google Sheet process for one more year? | Caleb | Contingency |
 | D10 | Camp Meeting: which lodging types (rooms, tents, RV), whether meals are plans or per-meal, and whether either is paid online | Camp Meeting team | #198–#200, #210 |
-| D11 | **Superseded:** the whole site is translatable, with Spanish at 100% (Section 6.4). The Kansas City site defaults to Spanish | Caleb | S1–S6 |
+| D11 | **Answered:** English first; Spanish through browser translation (Chrome and others), as on WordPress. The site is made translation-safe (T1) | Caleb | T1 |
 | D12 | **Answered:** rosters store a **birth date**, and it must be secured (Section 6.5) | Caleb | H2 |
-| **D13** | **Who reviews and approves the Spanish?** A named native speaker (staff or volunteer) signs off each catalog and keeps the SDA-term glossary | Caleb | S2–S6 release |
+| D13 | Not needed now: there is no built-in Spanish text to review | — | — |
 | **D14** | **Sign-off on the birth-date security design** (Section 6.5): encryption, who can see it, audit, key custodian, key backup and rotation, retention | Caleb + conference leadership | H2 in production |
-| D15 | **How the language is chosen:** a cookie and preference with no URL change (like CMMS-1), or `/es/…` addresses for public pages (better for sharing and search)? | Caleb | S1 |
+| D15 | Not needed now: there is no language switch in the site | — | — |
 
 ---
 
