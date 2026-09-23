@@ -56,6 +56,13 @@ enum OrganizationType {
   CLUB
 }
 
+/// A club director's authority over one club (#354). DEPUTY carries the same
+/// club access as DIRECTOR; the role is recorded for people, not for rules.
+enum ClubDirectorRole {
+  DIRECTOR
+  DEPUTY
+}
+
 enum ExternalSystem {
   EADVENTIST
   ULTRACAMP
@@ -439,6 +446,8 @@ model User {
   appliedAttendeeTags            AttendeeTagAssignment[]          @relation("AttendeeTagAppliedBy")
   dismissedPersonMatchCandidates PersonMatchCandidate[]           @relation("PersonMatchCandidateDismissedBy")
   removedAttendeeTags            AttendeeTagAssignment[]          @relation("AttendeeTagRemovedBy")
+  grantedClubDirectorships       ClubDirectorGrant[]              @relation("ClubDirectorGrantGrantedBy")
+  revokedClubDirectorships       ClubDirectorGrant[]              @relation("ClubDirectorGrantRevokedBy")
   /// The person this staff account is explicitly linked to, if any. Grants
   /// nothing by itself — see `UserPersonLink`.
   personLink                        UserPersonLink?              @relation("UserPersonLinkUser")
@@ -606,6 +615,8 @@ model AttendeeAccount {
   /// Grants nothing by itself — see `AttendeeAccountPersonLink`.
   personLink                        AttendeeAccountPersonLink?  @relation("AttendeeAccountPersonLinkAccount")
   actorOnAttendeeAccountPersonLinks AttendeeAccountPersonLink[] @relation("AttendeeAccountPersonLinkActorAccount")
+  /// Clubs this account directs. Explicit staff grants only — never inferred.
+  clubDirectorGrants                ClubDirectorGrant[]
 
   @@index([status])
 }
@@ -1400,10 +1411,42 @@ model Organization {
   parentOrganization Organization?      @relation("OrganizationHierarchy", fields: [parentOrganizationId], references: [id], onDelete: Restrict)
   childOrganizations Organization[]     @relation("OrganizationHierarchy")
   externalIdentities ExternalIdentity[]
+  directorGrants     ClubDirectorGrant[]
 
   @@index([type, isActive, name])
   @@index([parentOrganizationId, isActive])
   @@index([normalizedName])
+}
+
+/**
+ * Explicit, time-bounded, revocable authority for an attendee account to act
+ * for one club (#354). Nothing else grants it: not an email domain, not
+ * registering a club, not a form answer, not roster membership. A grant counts
+ * only between `effectiveFrom` and `effectiveTo` and while `revokedAt` is empty;
+ * revoking keeps the row so past actions stay attributed.
+ */
+model ClubDirectorGrant {
+  id                String           @id @default(cuid())
+  organizationId    String
+  attendeeAccountId String
+  role              ClubDirectorRole @default(DIRECTOR)
+  effectiveFrom     DateTime         @default(now())
+  effectiveTo       DateTime?
+  reason            String
+  grantedByUserId   String?
+  revokedAt         DateTime?
+  revokedByUserId   String?
+  revokeReason      String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  attendeeAccount AttendeeAccount @relation(fields: [attendeeAccountId], references: [id], onDelete: Restrict)
+  grantedBy       User?           @relation("ClubDirectorGrantGrantedBy", fields: [grantedByUserId], references: [id], onDelete: SetNull)
+  revokedBy       User?           @relation("ClubDirectorGrantRevokedBy", fields: [revokedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([attendeeAccountId, revokedAt])
+  @@index([organizationId, revokedAt])
 }
 
 /**

@@ -4273,6 +4273,12 @@ select:focus-visible {
 .attendee-status-pill-waiting { background: var(--imsda-purple-soft); color: var(--imsda-purple); }
 .attendee-status-pill-cancelled { background: #fff1ef; color: var(--coral); }
 .public-manage-empty > svg { vertical-align: -3px; margin-right: 5px; }
+.public-manage-club-list { display: grid; gap: 10px; margin: 16px 0 0; padding: 0; list-style: none; }
+.public-manage-club-list li { display: flex; align-items: flex-start; gap: 10px; color: var(--imsda-purple); }
+.public-manage-club-list strong,
+.public-manage-club-list small { display: block; }
+.public-manage-club-list strong { color: var(--ink); font-size: 0.82rem; }
+.public-manage-club-list small { margin-top: 2px; color: var(--muted); font-size: 0.7rem; }
 
 .public-attendee-pass-section { border-top: 4px solid var(--green); }
 .public-attendee-pass-grid {
