@@ -25,7 +25,11 @@ vi.mock("@/lib/prisma", () => ({ getPrisma: () => ({ $transaction: async (work: 
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: mocks.writeAuditLog }));
 vi.mock("@/modules/registrations/repository", () => ({ getRegistrationById: mocks.getRegistrationById }));
 vi.mock("@/modules/promo-codes/repository", () => {
-  class PublicPromoCodeError extends Error {}
+  class PublicPromoCodeError extends Error {
+    constructor(public readonly reason: string, message: string) {
+      super(message);
+    }
+  }
   class PromoCodeOperationError extends Error {}
   return { claimPromoCode: mocks.claimPromoCode, PublicPromoCodeError, PromoCodeOperationError };
 });
