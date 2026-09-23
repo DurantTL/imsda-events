@@ -1907,6 +1907,7 @@ model RegistrationAttendee {
   notes                  StaffNote[]
   tagAssignments         AttendeeTagAssignment[]
   honorEnrollments       HonorEnrollment[]
+  adjustments            RegistrationAdjustment[]
 
   @@unique([registrationId, personId])
   @@index([registrationId, position])
@@ -1966,6 +1967,8 @@ model RegistrationAdjustment {
   reason                String
   promoCodeId           String?
   promoCodeSnapshot     String?
+  /// Set when the adjustment is for one person in the registration (#397).
+  registrationAttendeeId String?
   reversesAdjustmentId  String?                    @unique
   createdByUserId       String?
   createdByNameSnapshot String
@@ -1974,11 +1977,13 @@ model RegistrationAdjustment {
   event        Event                   @relation(fields: [eventId], references: [id], onDelete: Cascade)
   registration Registration            @relation(fields: [registrationId], references: [id], onDelete: Cascade)
   promoCode    PromoCode?              @relation(fields: [promoCodeId], references: [id], onDelete: SetNull)
+  attendee     RegistrationAttendee?   @relation(fields: [registrationAttendeeId], references: [id], onDelete: SetNull)
   reverses     RegistrationAdjustment? @relation("AdjustmentReversal", fields: [reversesAdjustmentId], references: [id], onDelete: Restrict)
   reversedBy   RegistrationAdjustment? @relation("AdjustmentReversal")
 
   @@index([registrationId, createdAt])
   @@index([eventId, kind])
+  @@index([registrationAttendeeId])
 }
 
 enum RegistrationAdjustmentKind {

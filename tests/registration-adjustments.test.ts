@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   registrationUpdate: vi.fn(),
   adjustmentAggregate: vi.fn(),
   adjustmentFindFirst: vi.fn(),
+  adjustmentFindMany: vi.fn(),
   adjustmentCreate: vi.fn(),
   promoUpdateMany: vi.fn(),
   userFindUnique: vi.fn(),
@@ -15,7 +16,7 @@ const mocks = vi.hoisted(() => ({
 
 const tx = {
   registration: { findFirst: mocks.registrationFindFirst, update: mocks.registrationUpdate },
-  registrationAdjustment: { aggregate: mocks.adjustmentAggregate, findFirst: mocks.adjustmentFindFirst, create: mocks.adjustmentCreate },
+  registrationAdjustment: { aggregate: mocks.adjustmentAggregate, findFirst: mocks.adjustmentFindFirst, findMany: mocks.adjustmentFindMany, create: mocks.adjustmentCreate },
   promoCode: { updateMany: mocks.promoUpdateMany },
   user: { findUnique: mocks.userFindUnique },
 };
@@ -50,6 +51,15 @@ function registration(overrides: Record<string, unknown> = {}) {
     submittedAt: new Date("2026-06-01T15:00:00Z"),
     createdAt: new Date("2026-06-01T15:00:00Z"),
     promoCodeRedemption: null,
+    attendees: [
+      { id: "att-1", profileSnapshot: { firstName: "Ann", lastName: "Lee" }, person: { firstName: "Ann", lastName: "Lee" } },
+      { id: "att-2", profileSnapshot: { firstName: "Sara", lastName: "Lee" }, person: { firstName: "Sara", lastName: "Lee" } },
+    ],
+    publicFormSubmission: { pricingSnapshot: { lineItems: [
+      { key: "fee-0", amountCents: 14500, attendeeIndex: 0 },
+      { key: "fee-1", amountCents: 12500, attendeeIndex: 1 },
+    ] } },
+    operations: [],
     payments: [],
     ...overrides,
   };
@@ -60,6 +70,7 @@ beforeEach(() => {
   mocks.registrationFindFirst.mockResolvedValue(registration());
   mocks.adjustmentAggregate.mockResolvedValue({ _sum: { amountCents: null } });
   mocks.adjustmentFindFirst.mockResolvedValue(null);
+  mocks.adjustmentFindMany.mockResolvedValue([]);
   mocks.adjustmentCreate.mockResolvedValue({ id: "adj-1" });
   mocks.userFindUnique.mockResolvedValue({ displayName: "Finance Staff" });
   mocks.getRegistrationById.mockResolvedValue({ id: "reg-1" });
@@ -115,6 +126,8 @@ describe("registration adjustments (#396)", () => {
     mocks.registrationFindFirst.mockResolvedValue(registration({ promoCodeRedemption: { id: "red-1" } }));
     await expect(createRegistrationAdjustment("event-1", "reg-1", "user-1", { kind: "PROMO_CODE", code: "EARLY", reason: "Second code" }))
       .rejects.toMatchObject({ code: "PROMO_ALREADY_APPLIED" });
+    await expect(createRegistrationAdjustment("event-1", "reg-1", "user-1", { kind: "PROMO_CODE", code: "EARLY", reason: "On top", attendeeId: "att-1" }))
+      .rejects.toMatchObject({ code: "PROMO_ALREADY_APPLIED" });
   });
 
   it("reverses with an opposite line and gives a promo use back", async () => {
@@ -134,5 +147,31 @@ describe("registration adjustments (#396)", () => {
     mocks.registrationFindFirst.mockResolvedValue(registration({ status: "CANCELLED" }));
     await expect(createRegistrationAdjustment("event-1", "reg-1", "user-1", { kind: "DISCOUNT", amountCents: 100, reason: "Nope" }))
       .rejects.toMatchObject({ code: "REGISTRATION_NOT_ADJUSTABLE" });
+  });
+
+  it("prices a per-person code on that person's share, one code each (#397)", async () => {
+    mocks.registrationFindFirst.mockResolvedValue(registration({ totalAmount: 270 }));
+    mocks.claimPromoCode.mockResolvedValue({ promoCode: { id: "promo-1", code: "EARLY" }, evaluation: { discountAmountCents: 1250 } });
+    await createRegistrationAdjustment("event-1", "reg-1", "user-1", { kind: "PROMO_CODE", code: "EARLY", reason: "Early bird", attendeeId: "att-2" });
+    expect(mocks.claimPromoCode).toHaveBeenCalledWith(tx, expect.objectContaining({ eligibleSubtotalCents: 12500 }));
+    expect(mocks.adjustmentCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ amountCents: -1250, registrationAttendeeId: "att-2" }) });
+
+    mocks.adjustmentFindMany.mockResolvedValue([{ registrationAttendeeId: "att-2" }]);
+    await expect(createRegistrationAdjustment("event-1", "reg-1", "user-1", { kind: "PROMO_CODE", code: "EARLY", reason: "Again", attendeeId: "att-2" }))
+      .rejects.toMatchObject({ code: "PROMO_ALREADY_APPLIED", message: expect.stringContaining("Sara Lee already has a promo code") });
+    // A whole-registration code can't be added on top of per-person codes.
+    await expect(createRegistrationAdjustment("event-1", "reg-1", "user-1", { kind: "PROMO_CODE", code: "EARLY", reason: "Whole" }))
+      .rejects.toMatchObject({ code: "PROMO_ALREADY_APPLIED" });
+    // The other person can still have their own.
+    await createRegistrationAdjustment("event-1", "reg-1", "user-1", { kind: "PROMO_CODE", code: "EARLY", reason: "Early bird", attendeeId: "att-1" });
+    expect(mocks.claimPromoCode).toHaveBeenLastCalledWith(tx, expect.objectContaining({ eligibleSubtotalCents: 14500 }));
+  });
+
+  it("refuses a per-person code when there's no per-person price, or an unknown person", async () => {
+    mocks.registrationFindFirst.mockResolvedValue(registration({ publicFormSubmission: null }));
+    await expect(createRegistrationAdjustment("event-1", "reg-1", "user-1", { kind: "PROMO_CODE", code: "EARLY", reason: "x y", attendeeId: "att-1" }))
+      .rejects.toMatchObject({ code: "ATTENDEE_PRICE_UNKNOWN" });
+    await expect(createRegistrationAdjustment("event-1", "reg-1", "user-1", { kind: "SCHOLARSHIP", amountCents: 100, reason: "x y", attendeeId: "nobody" }))
+      .rejects.toMatchObject({ code: "ATTENDEE_NOT_FOUND" });
   });
 });

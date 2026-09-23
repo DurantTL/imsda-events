@@ -128,11 +128,12 @@ export function FinanceWorkspace({
     const form = new FormData(event.currentTarget);
     const amountCents = Math.round(Number(form.get("amount") ?? 0) * 100);
     const reason = String(form.get("reason") ?? "");
+    const attendeeId = String(form.get("attendeeId") ?? "") || undefined;
     const body = adjustKind === "PROMO_CODE"
-      ? { kind: adjustKind, code: String(form.get("code") ?? ""), reason }
+      ? { kind: adjustKind, code: String(form.get("code") ?? ""), reason, attendeeId }
       : adjustKind === "CORRECTION"
-        ? { kind: adjustKind, amountCents: form.get("direction") === "RAISE" ? amountCents : -amountCents, reason }
-        : { kind: adjustKind, amountCents, reason };
+        ? { kind: adjustKind, amountCents: form.get("direction") === "RAISE" ? amountCents : -amountCents, reason, attendeeId }
+        : { kind: adjustKind, amountCents, reason, attendeeId };
     try {
       const response = await fetch(`/api/events/${eventId}/registrations/${selected.id}/adjustments`, {
         method: "POST",
@@ -210,6 +211,7 @@ export function FinanceWorkspace({
                           <strong>
                             {adjustment.amountCents < 0 ? "−" : "+"}{money(Math.abs(adjustment.amountCents))} · {adjustmentKindLabels[adjustment.kind]}
                             {adjustment.promoCode ? ` ${adjustment.promoCode}` : ""}
+                            {adjustment.attendeeName ? ` · ${adjustment.attendeeName}` : ""}
                             {adjustment.reversesAdjustmentId ? " (reversal)" : adjustment.reversed ? " (reversed)" : ""}
                           </strong>
                           <small>{adjustment.reason} · {adjustment.createdBy} · {new Date(adjustment.createdAt).toLocaleDateString()}</small>
@@ -241,6 +243,15 @@ export function FinanceWorkspace({
                     <option value="CORRECTION">Correction — fix a wrong amount either way</option>
                   </select>
                 </label>
+                {selected.attendees.length > 1 && (
+                  <label>For
+                    <select name="attendeeId" defaultValue="">
+                      <option value="">{adjustKind === "PROMO_CODE" ? "Whole registration" : "Whole registration (not one person)"}</option>
+                      {selected.attendees.map((attendee) => <option key={attendee.id} value={attendee.id}>{attendee.firstName} {attendee.lastName}</option>)}
+                    </select>
+                    {adjustKind === "PROMO_CODE" && <small className="quiet-copy">Codes are per person: pick someone to price the code on their share only. Each person can have one code.</small>}
+                  </label>
+                )}
                 {adjustKind === "PROMO_CODE" ? (
                   <label>Promo code<input name="code" maxLength={40} required autoComplete="off" placeholder="EARLYBIRD" />
                     <small className="quiet-copy">Checked against the price and the date they registered, and counts as one use of the code.</small>
