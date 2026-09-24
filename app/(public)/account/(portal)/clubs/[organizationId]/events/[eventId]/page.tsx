@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2 } from "lucide-react";
 import { ClubClassPicker } from "@/components/club-class-picker";
+import { ClubRegistrationEditor } from "@/components/club-registration-editor";
 import { ClubRegistrationWorkspace } from "@/components/club-registration-workspace";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { attendeeProfilePrefill, getAttendeeProfile } from "@/modules/attendee-accounts/profile-service";
@@ -76,9 +77,18 @@ export default async function ClubEventRegistrationPage({
               </li>
             ))}
           </ul>
-          <p className="public-manage-empty">
-            Need to add or remove someone? Contact the event team for now. Director edits are coming next.
-          </p>
+          {workspace.event.edit.open && workspace.experience
+            ? (
+              <ClubRegistrationEditor
+                organizationId={organizationId}
+                workspace={{ ...workspace, registration: workspace.registration, experience: workspace.experience }}
+              />
+            )
+            : (
+              <p className="public-manage-empty">
+                {workspace.event.edit.open ? "Contact the event team to add or remove someone." : workspace.event.edit.message}
+              </p>
+            )}
         </section>
       )}
       {classes && <ClubClassPicker eventId={eventId} initialWorkspace={classes} organizationId={organizationId} />}

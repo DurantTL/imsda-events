@@ -30,12 +30,87 @@ import { getRegistrationByIdWithClient } from "@/modules/registrations/repositor
 import { withAttendeeTypeOptions, attendeeTypeSelector } from "@/modules/attendee-types/form-options";
 import type { RegistrationAmendmentInput } from "@/modules/registrations/schemas";
 
-type AmendmentActor = {
-  id: string;
-  displayName: string;
-};
+/**
+ * Who is amending. A staff user amends any registration through the staff
+ * UI. A club director (H3b, #366) may only amend their own club's
+ * registration, through the club portal, and is recorded on the operation
+ * with their attendee account id instead of a staff user id — the two are
+ * different id spaces, so `RegistrationOperation.actorUserId` /
+ * `actorAttendeeAccountId` are mutually exclusive (enforced by a database
+ * check constraint), same shape as `AttendeeAccountPersonLink`'s actor.
+ */
+export type AmendmentActor =
+  | { kind: "STAFF"; id: string; displayName: string }
+  | { kind: "CLUB_DIRECTOR"; attendeeAccountId: string; displayName: string };
 
 type AmendmentInputAttendee = RegistrationAmendmentInput["attendees"][number];
+
+/**
+ * Profile-snapshot markers a trusted server caller may carry onto an amended
+ * attendee (club registration, H3b #366), the same markers the original club
+ * submission set. Never part of the public amendment schema: the staff route
+ * can't set them, and only these keys, with these types, are ever written.
+ * Names, contact details, and birth dates are never among them.
+ */
+export type AmendmentProfileMetadata = {
+  clubOrganizationId?: string;
+  clubRosterMemberId?: string;
+  ageOnEventDate?: number | null;
+  temporary?: boolean;
+  temporaryAttendeeType?: "ADULT" | "YOUTH";
+  clubGuestId?: string;
+};
+
+/**
+ * Server-only facts about one amended attendee, keyed by the attendee's
+ * `clientId` in `AmendmentServerOptions.attendees`. `personId` links a newly
+ * added attendee to a known person (a club roster member) instead of
+ * matching by name and email; `rosterName` see above; `email` replaces the form-derived email for
+ * person matching and the snapshot (a club guest's own email, as the submit
+ * path does).
+ */
+export type AmendmentAttendeeServerOptions = {
+  personId?: string;
+  email?: string | null;
+  profileMetadata?: AmendmentProfileMetadata;
+  /**
+   * The name of the club roster person this kept attendee is linked to. When
+   * set, and only then, the attendee may be renamed, and only to exactly
+   * this name: a name corrected on the roster after submitting flows through
+   * (the roster is the source of truth), while any other name change is
+   * still refused. Staff amendments never set it, so their Substitute rule
+   * is unchanged.
+   */
+  rosterName?: { firstName: string; lastName: string };
+};
+
+export type AmendmentServerOptions = {
+  attendees?: ReadonlyMap<string, AmendmentAttendeeServerOptions>;
+  /**
+   * Replaces the fingerprint of the amendment input for replay checks. A
+   * caller that builds the amendment from its own request (the club director
+   * path) fingerprints that request, so a retry is recognized even after the
+   * registration has moved on, and a reused request ID with different content
+   * is refused.
+   */
+  requestFingerprint?: string;
+};
+
+function allowedProfileMetadata(metadata: AmendmentProfileMetadata | undefined) {
+  if (!metadata) return {};
+  const allowed: Record<string, string | number | boolean | null> = {};
+  if (typeof metadata.clubOrganizationId === "string") allowed.clubOrganizationId = metadata.clubOrganizationId;
+  if (typeof metadata.clubRosterMemberId === "string") allowed.clubRosterMemberId = metadata.clubRosterMemberId;
+  if (metadata.ageOnEventDate === null || (typeof metadata.ageOnEventDate === "number" && Number.isInteger(metadata.ageOnEventDate))) {
+    allowed.ageOnEventDate = metadata.ageOnEventDate;
+  }
+  if (typeof metadata.temporary === "boolean") allowed.temporary = metadata.temporary;
+  if (metadata.temporaryAttendeeType === "ADULT" || metadata.temporaryAttendeeType === "YOUTH") {
+    allowed.temporaryAttendeeType = metadata.temporaryAttendeeType;
+  }
+  if (typeof metadata.clubGuestId === "string") allowed.clubGuestId = metadata.clubGuestId;
+  return allowed;
+}
 
 export type RegistrationAmendmentErrorCode =
   | "REGISTRATION_NOT_FOUND"
@@ -225,6 +300,7 @@ function assertProtectedFieldsUnchanged(
   priorRegistrationResponses: Record<string, unknown>,
   input: RegistrationAmendmentInput,
   currentAttendees: AmendmentRegistration["attendees"],
+  serverOptions: AmendmentServerOptions,
 ) {
   for (const key of protectedRegistrationFieldKeys(definition)) {
     if (
@@ -257,11 +333,16 @@ function assertProtectedFieldsUnchanged(
         "Promo codes cannot be changed through a registration amendment. Use Adjust amount owed in Finance.",
       );
     }
+    // A roster-linked rename is checked against the roster name once the
+    // answers are parsed (see `prepareAmendment`), not refused here.
+    if (serverOptions.attendees?.get(attendeeInput.clientId)?.rosterName) continue;
     for (const key of protectedAttendeeIdentityKeys) {
       if (stableJson(responses[key]) !== stableJson(attendeeInput.responses[key])) {
         throw new RegistrationAmendmentError(
           "ATTENDEE_IDENTITY_CHANGED",
           `Use Substitute for a name change to ${current.person.firstName} ${current.person.lastName}. Choices and non-name details can be amended here.`,
+          [],
+          { attendeeId: current.id, attendeeName: `${current.person.firstName} ${current.person.lastName}`.trim() },
         );
       }
     }
@@ -446,6 +527,17 @@ function samePersonName(
 ) {
   return left.firstName.trim().toLowerCase() === right.firstName.trim().toLowerCase()
     && left.lastName.trim().toLowerCase() === right.lastName.trim().toLowerCase();
+}
+
+/** Same whole name, however a full-name answer happens to split. */
+function sameFullName(
+  left: { firstName: string; lastName: string },
+  right: { firstName: string; lastName: string },
+) {
+  const normalized = (name: { firstName: string; lastName: string }) => (
+    `${name.firstName} ${name.lastName}`.trim().replace(/\s+/g, " ").toLowerCase()
+  );
+  return normalized(left) === normalized(right);
 }
 
 async function resolveNewAttendeePerson(
@@ -651,6 +743,7 @@ async function prepareAmendment(
   eventId: string,
   registrationId: string,
   input: RegistrationAmendmentInput,
+  serverOptions: AmendmentServerOptions = {},
 ) {
   const registration = await loadRegistration(tx, eventId, registrationId);
   if (!registration) {
@@ -707,6 +800,7 @@ async function prepareAmendment(
     currentRegistrationResponses,
     input,
     registration.attendees,
+    serverOptions,
   );
 
   const currentById = new Map(
@@ -750,6 +844,11 @@ async function prepareAmendment(
     throw new RegistrationAmendmentError(
       "ATTENDEE_HAS_HISTORY",
       `${blockedRemoval.person.firstName} ${blockedRemoval.person.lastName} cannot be removed because check-in or substitution history is attached.`,
+      [],
+      {
+        attendeeId: blockedRemoval.id,
+        attendeeName: `${blockedRemoval.person.firstName} ${blockedRemoval.person.lastName}`.trim(),
+      },
     );
   }
 
@@ -792,14 +891,36 @@ async function prepareAmendment(
     );
   }
 
+  let rosterRenamedCount = 0;
   prepared.attendees.forEach((attendee, index) => {
     const inputAttendee = input.attendees[index];
     if (!inputAttendee?.attendeeId || !attendee.identity) return;
     const current = currentById.get(inputAttendee.attendeeId);
+    const rosterName = serverOptions.attendees?.get(inputAttendee.clientId)?.rosterName;
+    if (current && rosterName) {
+      if (!sameFullName(attendee.identity, rosterName)) {
+        throw new RegistrationAmendmentError(
+          "ATTENDEE_IDENTITY_CHANGED",
+          `Use Substitute for a name change to ${current.person.firstName} ${current.person.lastName}.`,
+          [],
+          { attendeeId: current.id, attendeeName: `${current.person.firstName} ${current.person.lastName}`.trim() },
+        );
+      }
+      const snapshot = recordFromJson(current.profileSnapshot);
+      if (!sameFullName(attendee.identity, {
+        firstName: typeof snapshot.firstName === "string" ? snapshot.firstName : "",
+        lastName: typeof snapshot.lastName === "string" ? snapshot.lastName : "",
+      })) {
+        rosterRenamedCount += 1;
+      }
+      return;
+    }
     if (current && !sameName(attendee.identity, current)) {
       throw new RegistrationAmendmentError(
         "ATTENDEE_IDENTITY_CHANGED",
         `Use Substitute for a name change to ${current.person.firstName} ${current.person.lastName}.`,
+        [],
+        { attendeeId: current.id, attendeeName: `${current.person.firstName} ${current.person.lastName}`.trim() },
       );
     }
   });
@@ -898,6 +1019,7 @@ async function prepareAmendment(
     addedAttendeeCount: input.attendees.filter((attendee) => !attendee.attendeeId).length,
     seminarPreferencesChanged,
     configuredTypes,
+    rosterRenamedCount,
   };
 }
 
@@ -920,13 +1042,49 @@ function amendmentPreview(prepared: PreparedAmendment) {
   };
 }
 
+/**
+ * The registration-scope answers an amendment must echo back unchanged to
+ * pass `assertProtectedFieldsUnchanged`, and the `updatedAt` an amendment's
+ * `expectedUpdatedAt` must match. Same precedence `prepareAmendment` uses
+ * internally (the latest amendment's snapshot, falling back to the original
+ * submission): a caller that only ever amends attendees, never registration
+ * fields, can read this once and pass it straight through. Returns null when
+ * the registration can't be amended at all (not found, wrong event, or
+ * never submitted through a published form).
+ */
+export async function currentRegistrationAnswers(eventId: string, registrationId: string) {
+  const registration = await getPrisma().registration.findFirst({
+    where: { id: registrationId, eventId },
+    select: {
+      updatedAt: true,
+      publicFormSubmission: { select: { responses: true } },
+      operations: {
+        where: { type: "AMENDMENT" },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { afterSnapshot: true },
+      },
+    },
+  });
+  if (!registration || !registration.publicFormSubmission) return null;
+  const latest = recordFromJson(registration.operations[0]?.afterSnapshot);
+  const current = recordFromJson(latest.registrationResponses);
+  return {
+    updatedAt: registration.updatedAt.toISOString(),
+    responses: Object.keys(current).length > 0
+      ? current
+      : recordFromJson(registration.publicFormSubmission.responses),
+  };
+}
+
 export async function previewRegistrationAmendment(
   eventId: string,
   registrationId: string,
   input: RegistrationAmendmentInput,
+  serverOptions: AmendmentServerOptions = {},
 ) {
   return getPrisma().$transaction(async (tx) => (
-    amendmentPreview(await prepareAmendment(tx, eventId, registrationId, input))
+    amendmentPreview(await prepareAmendment(tx, eventId, registrationId, input, serverOptions))
   ));
 }
 
@@ -941,8 +1099,9 @@ export async function amendRegistration(
   input: RegistrationAmendmentInput,
   actor: AmendmentActor,
   now = new Date(),
+  serverOptions: AmendmentServerOptions = {},
 ) {
-  const requestFingerprint = registrationOperationFingerprint({
+  const requestFingerprint = serverOptions.requestFingerprint ?? registrationOperationFingerprint({
     eventId,
     registrationId,
     operation: "AMENDMENT",
@@ -992,7 +1151,7 @@ export async function amendRegistration(
           };
         }
 
-        const prepared = await prepareAmendment(tx, eventId, registrationId, input);
+        const prepared = await prepareAmendment(tx, eventId, registrationId, input, serverOptions);
         if (input.quoteFingerprint !== prepared.quoteFingerprint) {
           throw new RegistrationAmendmentError(
             "QUOTE_CHANGED",
@@ -1038,6 +1197,11 @@ export async function amendRegistration(
               `Attendee ${position + 1} needs a valid name.`,
             );
           }
+          const attendeeOptions = serverOptions.attendees?.get(inputAttendee.clientId);
+          const profileMetadata = allowedProfileMetadata(attendeeOptions?.profileMetadata);
+          const identity = attendeeOptions && "email" in attendeeOptions
+            ? { ...attendee.identity, email: attendeeOptions.email ?? attendee.identity.email }
+            : attendee.identity;
           if (inputAttendee.attendeeId) {
             const current = currentById.get(inputAttendee.attendeeId);
             if (!current) {
@@ -1058,10 +1222,12 @@ export async function amendRegistration(
                 ),
                 profileSnapshot: {
                   ...recordFromJson(current.profileSnapshot),
-                  firstName: attendee.identity.firstName,
-                  lastName: attendee.identity.lastName,
-                  email: attendee.identity.email,
-                  phone: attendee.identity.phone || null,
+                  // Server-only markers go first, so identity always wins.
+                  ...profileMetadata,
+                  firstName: identity.firstName,
+                  lastName: identity.lastName,
+                  email: identity.email,
+                  phone: identity.phone || null,
                 },
                 formResponses: attendee.responses as Prisma.InputJsonValue,
               },
@@ -1071,12 +1237,17 @@ export async function amendRegistration(
               responses: attendee.responses,
             });
           } else {
-            const person = await resolveNewAttendeePerson(
-              tx,
-              attendee.identity,
-              prepared.registration.accountHolderPerson,
-              usedPersonIds,
-            );
+            // A known person (a club roster member) is linked directly, the
+            // same as the club submit path; otherwise match by name/email.
+            const person = attendeeOptions?.personId
+              ? { id: attendeeOptions.personId }
+              : await resolveNewAttendeePerson(
+                  tx,
+                  identity,
+                  prepared.registration.accountHolderPerson,
+                  usedPersonIds,
+                );
+            usedPersonIds.add(person.id);
             const created = await tx.registrationAttendee.create({
               data: {
                 eventId,
@@ -1090,10 +1261,12 @@ export async function amendRegistration(
                 ),
                 position,
                 profileSnapshot: {
-                  firstName: attendee.identity.firstName,
-                  lastName: attendee.identity.lastName,
-                  email: attendee.identity.email,
-                  phone: attendee.identity.phone || null,
+                  // Server-only markers go first, so identity always wins.
+                  ...profileMetadata,
+                  firstName: identity.firstName,
+                  lastName: identity.lastName,
+                  email: identity.email,
+                  phone: identity.phone || null,
                   source: "PUBLIC_REGISTRATION_AMENDMENT",
                   formVersionId: prepared.registration.publicFormSubmission!.formVersionId,
                 },
@@ -1255,7 +1428,8 @@ export async function amendRegistration(
             type: "AMENDMENT",
             clientRequestId: input.clientRequestId,
             requestFingerprint,
-            actorUserId: actor.id,
+            actorUserId: actor.kind === "STAFF" ? actor.id : null,
+            actorAttendeeAccountId: actor.kind === "CLUB_DIRECTOR" ? actor.attendeeAccountId : null,
             actorNameSnapshot: actor.displayName,
             beforeSnapshot: beforeSnapshot as Prisma.InputJsonValue,
             afterSnapshot: afterSnapshot as Prisma.InputJsonValue,
@@ -1266,7 +1440,13 @@ export async function amendRegistration(
         await tx.auditLog.create({
           data: {
             eventId,
-            actorUserId: actor.id,
+            // A director actor has no staff `User` row for this FK, so it
+            // stays null here (same pattern as attendee self-service
+            // answer updates); the director's attendee account id is
+            // recorded structurally on the operation above and, redundantly
+            // for audit queries that only scan AuditLog, in metadata below.
+            // Never their name or birth date.
+            actorUserId: actor.kind === "STAFF" ? actor.id : null,
             action: "REGISTRATION_AMENDED",
             entityType: "RegistrationOperation",
             entityId: amendmentId,
@@ -1276,6 +1456,8 @@ export async function amendRegistration(
               operationId: amendmentId,
               clientRequestId: input.clientRequestId,
               reason: input.reason,
+              actorKind: actor.kind,
+              actorAttendeeAccountId: actor.kind === "CLUB_DIRECTOR" ? actor.attendeeAccountId : null,
               priorTotalCents: cents(prepared.registration.totalAmount),
               resultingTotalCents: prepared.finalTotalCents,
               priorAttendeeCount: prepared.registration.attendees.length,
@@ -1285,6 +1467,9 @@ export async function amendRegistration(
               pricingDate: prepared.prepared.pricingDate,
               originalSubmissionPreserved: true,
               seminarPreferenceOverride: prepared.seminarPreferencesChanged,
+              // How many kept people took a corrected club roster name (a
+              // count only; names stay out of audit metadata).
+              rosterNameUpdatedCount: prepared.rosterRenamedCount,
             },
           },
         });

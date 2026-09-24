@@ -23,7 +23,7 @@ import {
 } from "@/modules/registrations/amendments-repository";
 import type { RegistrationFormDefinition } from "@/modules/forms/definition";
 
-const actor = { id: "user-1", displayName: "Staff User" };
+const actor = { kind: "STAFF" as const, id: "user-1", displayName: "Staff User" };
 const initialUpdatedAt = new Date("2026-08-04T12:00:00.000Z");
 const definition = {
   title: "Amendment test form",

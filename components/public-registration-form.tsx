@@ -64,7 +64,7 @@ declare global {
 
 export type ResponseValue = string | boolean | string[] | AddressValue;
 export type FormResponses = Record<string, ResponseValue>;
-type FormIssue = {
+export type FormIssue = {
   key: string;
   message: string;
   fieldId?: string | null;
@@ -165,6 +165,13 @@ export type PublicRegistrationFormProps = {
     submitUrl: string;
     onDraftChange?: (draft: { responses: FormResponses; attendees: RosterAttendee[] }) => void;
     onSubmitted?: () => void;
+    /**
+     * Reopening a submitted club registration (H3b, #366): the page saves the
+     * edited attendees itself instead of submitting a new registration.
+     * Field issues come back with the attendee index they belong to.
+     */
+    submitEdit?: (attendees: RosterAttendee[]) => Promise<{ ok: true } | { ok: false; message: string; issues: FormIssue[] }>;
+    submitLabel?: string;
   };
 };
 
@@ -2061,6 +2068,23 @@ export function PublicRegistrationForm({
       return;
     }
 
+    if (club?.submitEdit) {
+      setSubmitting(true);
+      setIssues([]);
+      setError("");
+      try {
+        const outcome = await club.submitEdit(attendees);
+        if (outcome.ok) club.onSubmitted?.();
+        else showIssues(outcome.issues, outcome.message, stepForIssue(outcome.issues[0]) ?? currentStep);
+      } catch {
+        setError("We could not reach the registration service. Your answers are still here; please try again.");
+        window.requestAnimationFrame(() => errorSummaryRef.current?.focus());
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
     setSubmitting(true);
     setIssues([]);
     setError("");
@@ -2427,7 +2451,7 @@ export function PublicRegistrationForm({
               <div><ShieldCheck size={21} aria-hidden="true" /><span><strong>Server-verified registration</strong><small>Pricing and remaining capacity are checked again when you submit.</small></span></div>
               {cardSelected && !joiningWaitlist && !deferredOrganizationBilling && <p>Submitting saves the registration first. Your private registration page will then offer secure Square checkout when Sandbox or Production payments are configured.</p>}
               <button type="submit" disabled={submitting}>
-                <ClipboardCheck size={19} aria-hidden="true" /> {submitting ? "Submitting…" : joiningWaitlist ? "Join waitlist" : "Submit registration"}
+                <ClipboardCheck size={19} aria-hidden="true" /> {submitting ? "Submitting…" : club?.submitLabel ?? (joiningWaitlist ? "Join waitlist" : "Submit registration")}
               </button>
             </section>
           )}

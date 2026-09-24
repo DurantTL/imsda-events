@@ -38,6 +38,31 @@ export const clubGuestSchema = z.object({
 
 export const clubGuestsSchema = z.array(clubGuestSchema).max(MAX_CLUB_GUESTS, `Add up to ${MAX_CLUB_GUESTS} extra people.`);
 
+/**
+ * H3b (#366): a director reopens a submitted club registration to add or
+ * remove roster people and extra people, or change their answers, before the
+ * event's registration deadline. `keptGuestIds` names the extra people
+ * already on the registration to keep (their `clubGuestId`, or the attendee
+ * id for one submitted before guests carried one); `newGuests` are brand-new
+ * extra people this edit adds. `keptOffRosterAttendeeIds` names registered
+ * people who are no longer on the club's active roster and should stay
+ * (required, so a client can never drop them by leaving the list out).
+ * `attendeeResponses` is keyed by client id: a roster person by
+ * `clubAttendeeClientId`, a guest (kept or new) by `clubGuestClientId`, an
+ * off-roster person by `clubExistingAttendeeClientId`.
+ */
+export const clubRegistrationEditInputSchema = z.object({
+  clientRequestId: z.uuid(),
+  expectedUpdatedAt: z.iso.datetime(),
+  selectedMemberIds: z.array(z.string().trim().min(1)).max(500),
+  keptGuestIds: z.array(z.string().trim().min(1).max(100)).max(MAX_CLUB_GUESTS),
+  keptOffRosterAttendeeIds: z.array(z.string().trim().min(1).max(100)).max(500),
+  newGuests: clubGuestsSchema,
+  attendeeResponses: z.record(z.string(), z.record(z.string(), z.unknown())),
+}).strict();
+
+export type ClubRegistrationEditInput = z.infer<typeof clubRegistrationEditInputSchema>;
+
 /** Guests saved in a draft, dropping anything that no longer reads as one. */
 export function guestsFromJson(value: unknown): ClubGuest[] {
   const parsed = clubGuestsSchema.safeParse(value);
@@ -50,6 +75,17 @@ export function clubGuestClientId(guestId: string) {
 
 export function guestIdFromClientId(clientId: string) {
   return clientId.startsWith(GUEST_PREFIX) ? clientId.slice(GUEST_PREFIX.length) : null;
+}
+
+const EXISTING_PREFIX = "attendee:";
+
+/**
+ * A registered person who is no longer on the club's active roster (H3b,
+ * #366), keyed by their registration attendee id: kept as registered, with
+ * no roster lookup.
+ */
+export function clubExistingAttendeeClientId(attendeeId: string) {
+  return `${EXISTING_PREFIX}${attendeeId}`;
 }
 
 /** Adults among guests are background-checked like everyone else. */
@@ -197,6 +233,32 @@ export function rosterRolePrefill(definition: RegistrationFormDefinition, person
     : undefined;
   const option = fromRole ?? fromType;
   return option ? { [field.key]: option } : {};
+}
+
+/**
+ * Whether a director may still reopen a submitted club registration (H3b,
+ * #366): only while registration is open, judged in the event's own time
+ * zone, the same "open" the submit path requires. An event with no closing
+ * date stays editable through its start date and closes the day after.
+ * `today` and `eventDate` are calendar dates in the event's time zone.
+ */
+export function clubRegistrationEditWindow(input: {
+  phase: "DRAFT" | "UPCOMING" | "OPEN" | "CLOSED";
+  registrationClosesOn: string | null;
+  today: string;
+  eventDate: string;
+}): { open: true } | { open: false; message: string } {
+  if (input.phase === "UPCOMING" || input.phase === "DRAFT") {
+    return { open: false, message: "Registration for this event isn't open, so your registration can't be changed right now. Contact the event team." };
+  }
+  if (input.phase === "CLOSED") {
+    const closing = input.registrationClosesOn ? ` after ${formatCalendarDate(input.registrationClosesOn)}` : "";
+    return { open: false, message: `Registration closed${closing}. Contact the event team to add or remove someone.` };
+  }
+  if (!input.registrationClosesOn && input.today > input.eventDate) {
+    return { open: false, message: "This event is under way, so your registration can't be changed here. Contact the event team to add or remove someone." };
+  }
+  return { open: true };
 }
 
 /** "2026-12-05" as "December 5, 2026", without letting a time zone move the day. */

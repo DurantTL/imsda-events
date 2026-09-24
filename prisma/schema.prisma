@@ -690,6 +690,9 @@ model AttendeeAccount {
   createdClubRosterMembers          ClubRosterMember[]          @relation("ClubRosterMemberCreatedBy")
   submittedClubRegistrations        ClubEventRegistration[]     @relation("ClubEventRegistrationSubmittedBy")
   clubRegistrationDrafts            ClubRegistrationDraft[]     @relation("ClubRegistrationDraftUpdatedBy")
+  /// Club registration amendments this account made as a director reopening
+  /// their own club's registration (H3b, #366).
+  amendedRegistrationOperations     RegistrationOperation[]     @relation("RegistrationOperationActorAttendeeAccount")
 
   @@index([status])
 }
@@ -1961,22 +1964,30 @@ model RegistrationOperation {
   type               RegistrationOperationType
   clientRequestId    String
   requestFingerprint String
-  actorUserId        String
+  /// Set when the amendment engine ran for a staff user. Mutually exclusive
+  /// with `actorAttendeeAccountId` (enforced by a database check
+  /// constraint), same XOR shape as `AttendeeAccountPersonLink`.
+  actorUserId        String?
+  /// Set when a club director reopened and amended their own club
+  /// registration (H3b, #366) instead of a staff user amending it.
+  actorAttendeeAccountId String?
   actorNameSnapshot  String
   beforeSnapshot     Json
   afterSnapshot      Json
   responseSnapshot   Json
   createdAt          DateTime                  @default(now())
 
-  event        Event                 @relation(fields: [eventId], references: [id], onDelete: Restrict)
-  registration Registration          @relation(fields: [registrationId], references: [id], onDelete: Restrict)
-  attendee     RegistrationAttendee? @relation(fields: [attendeeId], references: [id], onDelete: Restrict)
-  actor        User                  @relation("RegistrationOperationActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  event               Event                 @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  registration        Registration          @relation(fields: [registrationId], references: [id], onDelete: Restrict)
+  attendee            RegistrationAttendee? @relation(fields: [attendeeId], references: [id], onDelete: Restrict)
+  actor               User?                 @relation("RegistrationOperationActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  actorAttendeeAccount AttendeeAccount?     @relation("RegistrationOperationActorAttendeeAccount", fields: [actorAttendeeAccountId], references: [id], onDelete: Restrict)
 
   @@unique([eventId, clientRequestId])
   @@index([registrationId, createdAt])
   @@index([attendeeId, createdAt])
   @@index([actorUserId, createdAt])
+  @@index([actorAttendeeAccountId, createdAt])
 }
 
 /// A staff change to what a registration owes (#396): a scholarship, a

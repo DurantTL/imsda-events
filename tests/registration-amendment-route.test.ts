@@ -139,6 +139,17 @@ beforeEach(() => {
 });
 
 describe("registration amendment route", () => {
+  it("rejects client-set attendee profile metadata (server-only, #366)", async () => {
+    const response = await POST(request({
+      ...baseBody,
+      attendees: [{ ...attendee, attendeeMetadata: { firstName: "Forged", clubRosterMemberId: "m1" } }],
+    }), context);
+
+    expect(response.status).toBe(400);
+    expect(mocks.previewRegistrationAmendment).not.toHaveBeenCalled();
+    expect(mocks.amendRegistration).not.toHaveBeenCalled();
+  });
+
   it("requires same-origin application/json before authorizing", async () => {
     mocks.rejectCrossOriginRequest.mockReturnValueOnce(
       Response.json({ error: "CROSS_ORIGIN_REQUEST_BLOCKED" }, { status: 403 }),
@@ -198,7 +209,7 @@ describe("registration amendment route", () => {
       "event-1",
       "registration-1",
       commitBody,
-      { id: "user-1", displayName: "Staff User" },
+      { kind: "STAFF", id: "user-1", displayName: "Staff User" },
     );
     expect(mocks.previewRegistrationAmendment).not.toHaveBeenCalled();
     expect(mocks.processQueuedMessageIdsAfterCommit).toHaveBeenCalledWith([
