@@ -23,7 +23,13 @@ import { clubYearFor, type ClubClassLevel } from "@/modules/club-rosters/domain"
  * is trusted as a total.
  */
 
-export type ClubReportErrorCode = "CLUB_REPORT_LOCKED" | "CLUB_REPORT_MONTH_INVALID" | "CLUB_REPORT_INVALID_POINTS" | "CLUB_NOT_FOUND";
+export type ClubReportErrorCode =
+  | "CLUB_REPORT_LOCKED"
+  | "CLUB_REPORT_MONTH_INVALID"
+  | "CLUB_REPORT_INVALID_POINTS"
+  | "CLUB_REPORT_NOT_SUBMITTED"
+  | "CLUB_REPORT_NOT_FOUND"
+  | "CLUB_NOT_FOUND";
 
 export class ClubReportError extends Error {
   constructor(public readonly code: ClubReportErrorCode, message: string) {
@@ -53,6 +59,8 @@ const reportSelect = {
   totalPoints: true,
   signatureName: true,
   signedOn: true,
+  status: true,
+  submittedAt: true,
   firstSubmittedAt: true,
   updatedAt: true,
 } satisfies Prisma.ClubMonthlyReportSelect;
@@ -65,7 +73,8 @@ function serializeReport(report: StoredReport) {
     classLevels: report.classLevels as ClubClassLevel[],
     points: (report.points ?? {}) as PickedPoints,
     honors: (Array.isArray(report.honors) ? report.honors : []) as ReportHonor[],
-    firstSubmittedAt: report.firstSubmittedAt.toISOString(),
+    submittedAt: report.submittedAt ? report.submittedAt.toISOString() : null,
+    firstSubmittedAt: report.firstSubmittedAt ? report.firstSubmittedAt.toISOString() : null,
     updatedAt: report.updatedAt.toISOString(),
   };
 }
@@ -108,9 +117,10 @@ export async function getClubReportYear(organizationId: string, clubYear: string
 }
 
 /**
- * Saves a report. A club may submit a month up to the current one, and may
- * change it until the due date; after that only staff can. On-time points
- * come from the first submission and never change on later edits.
+ * Saves a report as a draft or a submission. A club may file a month up to
+ * the current one, and may change or reopen it until the due date; after
+ * that only staff can. On-time points come from the first time a report
+ * reaches SUBMITTED, and never change on later edits, reopens, or resubmits.
  */
 export async function saveClubReport(
   organizationId: string,
@@ -132,7 +142,7 @@ export async function saveClubReport(
     if (!club || club.type !== "CLUB") throw new ClubReportError("CLUB_NOT_FOUND", "That club could not be found.");
     const existing = await tx.clubMonthlyReport.findUnique({
       where: { organizationId_reportMonth: { organizationId, reportMonth } },
-      select: { id: true, firstSubmittedAt: true },
+      select: { id: true, status: true, firstSubmittedAt: true },
     });
     const isClub = "accountId" in actor;
     if (existing && isClub && isLockedForClub(reportMonth, now)) {
@@ -141,8 +151,9 @@ export async function saveClubReport(
         `This report closed after ${reportDueDate(reportMonth)}. Ask the conference office if something needs to change.`,
       );
     }
-    const firstSubmittedAt = existing?.firstSubmittedAt ?? now;
-    const onTime = onTimePoints(reportMonth, firstSubmittedAt);
+    const becomingSubmittedNow = input.status === "SUBMITTED" && !existing?.firstSubmittedAt;
+    const firstSubmittedAt = input.status === "SUBMITTED" ? (existing?.firstSubmittedAt ?? now) : (existing?.firstSubmittedAt ?? null);
+    const onTime = input.status === "SUBMITTED" && firstSubmittedAt ? onTimePoints(reportMonth, firstSubmittedAt) : 0;
     const points: PickedPoints = Object.fromEntries(Object.entries(input.points).filter(([, value]) => value !== undefined));
     const honors = input.honors.filter((honor) => honor.name.trim() || honor.participants !== null);
     const data = {
@@ -161,31 +172,26 @@ export async function saveClubReport(
       totalPoints: onTime + pickedTotal(points),
       signatureName: input.signatureName,
       signedOn: input.signedOn,
+      status: input.status,
+      submittedAt: input.status === "SUBMITTED" ? now : null,
+      firstSubmittedAt,
+      ...(isClub && becomingSubmittedNow ? { submittedByAccountId: actor.accountId } : {}),
       ...(isClub ? { updatedByAccountId: actor.accountId, updatedByUserId: null } : { updatedByUserId: actor.userId }),
     };
     const saved = existing
       ? await tx.clubMonthlyReport.update({ where: { id: existing.id }, data, select: reportSelect })
-      : await tx.clubMonthlyReport.create({
-        data: {
-          ...data,
-          organizationId,
-          reportMonth,
-          firstSubmittedAt,
-          ...(isClub ? { submittedByAccountId: actor.accountId } : {}),
-        },
-        select: reportSelect,
-      });
+      : await tx.clubMonthlyReport.create({ data: { ...data, organizationId, reportMonth }, select: reportSelect });
+    const action = input.status === "DRAFT" ? "CLUB_REPORT_DRAFT_SAVED" : becomingSubmittedNow ? "CLUB_REPORT_SUBMITTED" : "CLUB_REPORT_UPDATED";
     await writeAuditLog({
       ...(isClub ? {} : { actorUserId: actor.userId }),
-      action: existing ? "CLUB_REPORT_UPDATED" : "CLUB_REPORT_SUBMITTED",
+      action,
       entityType: "ClubMonthlyReport",
       entityId: saved.id,
-      summary: `${existing ? "Updated" : "Submitted"} the ${reportMonth} monthly report for ${club.name}.`,
+      summary: `${input.status === "DRAFT" ? "Saved a draft of" : becomingSubmittedNow ? "Submitted" : "Updated"} the ${reportMonth} monthly report for ${club.name}.`,
       metadata: {
         organizationId,
         reportMonth,
-        totalPoints: saved.totalPoints,
-        onTimePoints: onTime,
+        reportId: saved.id,
         ...(isClub ? { actorAttendeeAccountId: actor.accountId } : {}),
       },
     }, tx);
@@ -193,7 +199,50 @@ export async function saveClubReport(
   });
 }
 
-/** The conference view (#377): every active club, its reports for the year, and its standing. */
+/**
+ * Reopens a SUBMITTED report to DRAFT so a director can change it (#426).
+ * Allowed until the report's due date — the same rule that already locks a
+ * club out of editing (`isLockedForClub`); after that only staff can act.
+ * `firstSubmittedAt` and any on-time credit already earned stay untouched.
+ */
+export async function reopenClubReport(organizationId: string, reportMonth: string, accountId: string, now = new Date()) {
+  if (isLockedForClub(reportMonth, now)) {
+    throw new ClubReportError(
+      "CLUB_REPORT_LOCKED",
+      `This report closed after ${reportDueDate(reportMonth)}. Ask the conference office if something needs to change.`,
+    );
+  }
+  const prisma = getPrisma();
+  return prisma.$transaction(async (tx) => {
+    const club = await tx.organization.findUnique({ where: { id: organizationId }, select: { type: true, name: true } });
+    if (!club || club.type !== "CLUB") throw new ClubReportError("CLUB_NOT_FOUND", "That club could not be found.");
+    const existing = await tx.clubMonthlyReport.findUnique({
+      where: { organizationId_reportMonth: { organizationId, reportMonth } },
+      select: { id: true, status: true },
+    });
+    if (!existing) throw new ClubReportError("CLUB_REPORT_NOT_FOUND", "That report could not be found.");
+    if (existing.status !== "SUBMITTED") throw new ClubReportError("CLUB_REPORT_NOT_SUBMITTED", "This report is already a draft.");
+    const saved = await tx.clubMonthlyReport.update({
+      where: { id: existing.id },
+      data: { status: "DRAFT", submittedAt: null, updatedByAccountId: accountId, updatedByUserId: null },
+      select: reportSelect,
+    });
+    await writeAuditLog({
+      action: "CLUB_REPORT_REOPENED",
+      entityType: "ClubMonthlyReport",
+      entityId: saved.id,
+      summary: `Reopened the ${reportMonth} monthly report for ${club.name} as a draft.`,
+      metadata: { organizationId, reportMonth, reportId: saved.id, actorAttendeeAccountId: accountId },
+    }, tx);
+    return serializeReport(saved);
+  });
+}
+
+/**
+ * The conference view (#377): every active club, its reports for the year,
+ * and its standing. Only SUBMITTED reports show — a club's own draft is not
+ * shown to staff or an Area Coordinator as filed (#426).
+ */
 export async function listClubReportsForYear(clubYear: string) {
   const prisma = getPrisma();
   const [clubs, reports, standings] = await Promise.all([
@@ -203,7 +252,7 @@ export async function listClubReportsForYear(clubYear: string) {
       select: { id: true, name: true, parentOrganization: { select: { name: true } } },
     }),
     prisma.clubMonthlyReport.findMany({
-      where: { clubYear },
+      where: { clubYear, status: "SUBMITTED" },
       select: { organizationId: true, reportMonth: true, totalPoints: true, onTimePoints: true, firstSubmittedAt: true },
     }),
     prisma.clubYearStanding.findMany({ where: { clubYear }, select: { organizationId: true, registrationOnTime: true } }),

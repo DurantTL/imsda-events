@@ -14,7 +14,8 @@ async function putHandler(request: Request, context: { params: Promise<{ organiz
     const actor = await requireSystemAdministrator();
     const { organizationId, month } = await context.params;
     if (!isReportMonth(month)) return Response.json({ error: "CLUB_REPORT_MONTH_INVALID", message: "That month isn't valid." }, { status: 400 });
-    const input = clubReportInputSchema.parse(await request.json());
+    // Staff files or corrects directly; there's no staff-side draft (#426).
+    const input = clubReportInputSchema.parse({ ...(await request.json()), status: "SUBMITTED" });
     return Response.json({ report: await saveClubReport(organizationId, month, input, { userId: actor.id }) });
   } catch (error) {
     return clubReportApiError(error, "Saving a club's monthly report");

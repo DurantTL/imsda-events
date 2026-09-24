@@ -1526,6 +1526,7 @@ model Organization {
   clubProfile        ClubProfile?
   clubInvites        ClubInvite[]
   monthlyReports     ClubMonthlyReport[]
+  meetingNotes       ClubMeetingNote[]
   yearStandings      ClubYearStanding[]
 
   @@index([type, isActive, name])
@@ -1587,9 +1588,21 @@ model ClubInvite {
   @@index([organizationId, status])
 }
 
+/// Draft or filed (#426). A report starts DRAFT; SUBMITTED is what staff and
+/// Area Coordinators see as filed. A club may reopen a SUBMITTED report back
+/// to DRAFT until the report's due date, the same rule that already locks
+/// edits (`isLockedForClub`).
+enum ClubReportStatus {
+  DRAFT
+  SUBMITTED
+}
+
 /// One club's monthly report (#377), replacing the old website's form 114.
 /// `points` holds the picked value per item (see `modules/club-reports`);
 /// `onTimePoints` is worked out from `firstSubmittedAt` and never picked.
+/// `status`/`submittedAt` are the draft/submit state (#426); `firstSubmittedAt`
+/// is set the first time a report reaches SUBMITTED and never moves after,
+/// even across a reopen and resubmit, so on-time credit can't be replayed.
 model ClubMonthlyReport {
   id                   String           @id @default(cuid())
   organizationId       String
@@ -1609,7 +1622,9 @@ model ClubMonthlyReport {
   totalPoints          Int
   signatureName        String
   signedOn             String
-  firstSubmittedAt     DateTime
+  status               ClubReportStatus @default(DRAFT)
+  submittedAt          DateTime?
+  firstSubmittedAt     DateTime?
   submittedByAccountId String?
   updatedByAccountId   String?
   updatedByUserId      String?
@@ -1620,6 +1635,29 @@ model ClubMonthlyReport {
 
   @@unique([organizationId, reportMonth])
   @@index([clubYear, reportMonth])
+  @@index([clubYear, status])
+}
+
+/// One club meeting's notes (#426): a simple record so a monthly report's
+/// attendance and honors don't have to be retyped. No names of young people —
+/// counts only; free text is the club's own.
+model ClubMeetingNote {
+  id                 String   @id @default(cuid())
+  organizationId     String
+  meetingDate        String
+  pathfinderCount    Int?
+  tltCount           Int?
+  staffCount         Int?
+  honors             Json     @default("[]")
+  notes              String   @default("")
+  createdByAccountId String?
+  updatedByAccountId String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, meetingDate])
 }
 
 /// A club's standing for one club year (#377): whether the yearly

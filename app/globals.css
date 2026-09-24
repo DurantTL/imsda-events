@@ -6880,6 +6880,8 @@ select:focus-visible {
 .club-report-sub { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 12px; }
 .club-report-checks { display: flex; flex-wrap: wrap; gap: 8px 16px; }
 .club-report-honor { margin: 0; }
+.club-report-honor-row { display: flex; align-items: center; gap: 6px; }
+.club-report-honor-row input { flex: 1; }
 .club-report-back { justify-self: start; }
 .club-reports-grid th small { display: block; color: var(--muted); font-weight: 500; font-size: 0.68rem; }
 .club-reports-missing { color: #b42318; font-weight: 700; }

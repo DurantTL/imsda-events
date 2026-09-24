@@ -27,6 +27,8 @@ export const clubReportInputSchema = z.object({
   }).strict()).max(3, "List at most 3 honors.").default([]),
   signatureName: z.string().trim().min(2, "Type your full name to sign the report.").max(120),
   signedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Enter the date you signed."),
+  /** DRAFT keeps a partial report; SUBMITTED marks it filed for the conference (#426). */
+  status: z.enum(["DRAFT", "SUBMITTED"]),
 }).strict();
 
 export type ClubReportInput = z.infer<typeof clubReportInputSchema>;

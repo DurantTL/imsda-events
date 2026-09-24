@@ -22,7 +22,8 @@ export default async function StaffClubReportPage({ params }: { params: Promise<
   if (!isReportMonth(month) || month > calendarDateIn(now).slice(0, 7)) notFound();
   const club = await getPrisma().organization.findUnique({ where: { id: organizationId }, select: { type: true, name: true } });
   if (!club || club.type !== "CLUB") notFound();
-  const [report, prefill] = await Promise.all([getClubReport(organizationId, month), reportPrefill(organizationId, now)]);
+  const [report, rosterPrefill] = await Promise.all([getClubReport(organizationId, month), reportPrefill(organizationId, now)]);
+  const prefill = { ...rosterPrefill, averageAttendance: null, honors: [] };
   const clubYear = clubYearFor(new Date(`${month}-15T12:00:00Z`));
   return (
     <section className="page-stack">

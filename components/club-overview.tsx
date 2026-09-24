@@ -38,7 +38,9 @@ export async function ClubOverview({
   ]);
   const active = members.filter((member) => member.status === "ACTIVE");
   const registered = events.filter((event) => event.registration);
-  const reportsByMonth = new Map(reportYear.reports.map((report) => [report.reportMonth, report]));
+  // A club's own draft isn't shown here as filed (#426); staff open the report itself to see or edit one.
+  const submittedReports = reportYear.reports.filter((report) => report.status === "SUBMITTED");
+  const reportsByMonth = new Map(submittedReports.map((report) => [report.reportMonth, report]));
   const months = reportableMonths(clubYear, now).reverse();
 
   return (

@@ -28,6 +28,7 @@ export default async function ClubReportsPage({ params }: { params: Promise<{ or
   const now = new Date();
   const clubYear = clubYearFor(now);
   const { reports, registrationOnTime } = await getClubReportYear(organizationId, clubYear);
+  const submittedReports = reports.filter((report) => report.status === "SUBMITTED");
   const byMonth = new Map(reports.map((report) => [report.reportMonth, report]));
   const months = [...reportableMonths(clubYear, now)].reverse();
   const base = `/account/clubs/${organizationId}/reports`;
@@ -37,13 +38,13 @@ export default async function ClubReportsPage({ params }: { params: Promise<{ or
       <div className="club-home-stats">
         <div className="club-home-stat">
           <CheckCircle2 size={20} aria-hidden="true" />
-          <strong>{yearToDate(reports, registrationOnTime).toLocaleString("en-US")}</strong>
+          <strong>{yearToDate(submittedReports, registrationOnTime).toLocaleString("en-US")}</strong>
           <span>points this club year ({clubYear})</span>
         </div>
         <div className="club-home-stat">
           <Clock3 size={20} aria-hidden="true" />
-          <strong>{reports.length}</strong>
-          <span>{reports.length === 1 ? "report submitted" : "reports submitted"}</span>
+          <strong>{submittedReports.length}</strong>
+          <span>{submittedReports.length === 1 ? "report submitted" : "reports submitted"}</span>
         </div>
         <div className="club-home-stat">
           <CheckCircle2 size={20} aria-hidden="true" />
@@ -60,16 +61,17 @@ export default async function ClubReportsPage({ params }: { params: Promise<{ or
         <ul className="public-manage-club-list">
           {months.map((month) => {
             const report = byMonth.get(month);
+            const submitted = report?.status === "SUBMITTED";
             const due = formatDueDate(reportDueDate(month));
             const locked = isLockedForClub(month, now);
             return (
               <li key={month}>
-                {report ? <CheckCircle2 size={17} aria-hidden="true" /> : <CircleAlert size={17} aria-hidden="true" />}
+                {submitted ? <CheckCircle2 size={17} aria-hidden="true" /> : <CircleAlert size={17} aria-hidden="true" />}
                 <span>
                   <strong>{reportMonthLabel(month)}</strong>
                   <small>
                     {report
-                      ? `${report.totalPoints} points${report.onTimePoints ? "" : " · late"}${locked ? " · closed" : ` · editable until ${due}`}`
+                      ? `${report.status === "DRAFT" ? "Draft" : `${report.totalPoints} points${report.onTimePoints ? "" : " · late"}`}${locked ? " · closed" : ` · editable until ${due}`}`
                       : locked ? `Missing · was due ${due}` : `Due ${due}`}
                   </small>
                 </span>

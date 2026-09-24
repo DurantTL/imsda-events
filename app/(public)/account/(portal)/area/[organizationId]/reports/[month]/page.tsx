@@ -19,8 +19,9 @@ export default async function AreaClubReportPage({ params }: { params: Promise<{
   const club = await getPrisma().organization.findUnique({ where: { id: organizationId }, select: { type: true, name: true, isActive: true } });
   if (!club || club.type !== "CLUB" || !club.isActive) notFound();
   const report = await getClubReport(organizationId, month);
-  if (!report) notFound();
-  const prefill = await reportPrefill(organizationId, new Date());
+  if (!report || report.status !== "SUBMITTED") notFound();
+  const rosterPrefill = await reportPrefill(organizationId, new Date());
+  const prefill = { ...rosterPrefill, averageAttendance: null, honors: [] };
 
   return (
     <>

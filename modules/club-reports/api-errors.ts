@@ -12,7 +12,11 @@ export function clubReportApiError(error: unknown, action: string) {
     return Response.json({ error: error.code, message: error.message }, { status: error.status });
   }
   if (error instanceof ClubReportError) {
-    const status = error.code === "CLUB_NOT_FOUND" ? 404 : error.code === "CLUB_REPORT_LOCKED" ? 409 : 400;
+    const status = error.code === "CLUB_NOT_FOUND" || error.code === "CLUB_REPORT_NOT_FOUND"
+      ? 404
+      : error.code === "CLUB_REPORT_LOCKED"
+        ? 409
+        : 400;
     return Response.json({ error: error.code, message: error.message }, { status });
   }
   logError(`${action} failed`, error);
