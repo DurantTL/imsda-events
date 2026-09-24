@@ -7157,3 +7157,22 @@ select:focus-visible {
 
 .act-as { display: grid; gap: 6px; }
 .act-as .inline-notice a { font-weight: 800; }
+
+/* Club assignments (#410): staff screen, send preview, and the director's read-only block. */
+.compact-list { display: grid; gap: 3px; margin: 0; padding: 0 0 0 16px; font-size: 0.66rem; line-height: 1.45; }
+.compact-list li { overflow-wrap: anywhere; }
+.assignment-edit-form { display: grid; gap: 8px; min-width: 220px; }
+.assignment-edit-form label { display: grid; gap: 4px; color: var(--ink); font-size: 0.62rem; font-weight: 700; }
+.assignment-edit-form input,
+.assignment-edit-form textarea { width: 100%; border: 1px solid #cbdbe2; border-radius: 9px; background: #fbfcfd; color: var(--ink); padding: 8px 9px; font-size: 0.72rem; outline: 0; }
+.assignment-edit-form textarea { min-height: 64px; resize: vertical; line-height: 1.5; }
+.assignment-edit-form input:focus,
+.assignment-edit-form textarea:focus { border-color: var(--imsda-purple); box-shadow: 0 0 0 3px rgba(88, 44, 131, 0.1); }
+.club-assignment-preview { display: grid; gap: 12px; margin-top: 14px; border-top: 1px solid var(--line); padding-top: 14px; }
+.club-assignment-preview > p { margin: 0; }
+.club-assignment-preview .primary-button { justify-self: start; }
+.club-assignment-sample { display: grid; gap: 6px; }
+.club-assignment-sample p { margin: 0; font-size: 0.7rem; }
+.club-assignments-block { margin-top: 16px; }
+.club-assignments-block h3 { margin: 0; font-size: 0.9rem; }
+.club-assignments-block .public-manage-club-list { margin-top: 10px; }

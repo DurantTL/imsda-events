@@ -8,7 +8,7 @@
 -- engine (#89) if that lands later.
 
 -- AlterEnum
-ALTER TYPE "MessageTemplateKey" ADD VALUE 'CLUB_ASSIGNMENTS';
+ALTER TYPE "MessageTemplateKey" ADD VALUE IF NOT EXISTS 'CLUB_ASSIGNMENTS';
 
 -- CreateTable
 CREATE TABLE "ClubEventAssignment" (
@@ -59,7 +59,10 @@ COMMIT;
 -- Seed the CLUB_ASSIGNMENTS template for every existing event, matching how
 -- SHIRT_SIZE_REQUEST (20260727210000) backfilled events that predate a new
 -- message. `ALTER TYPE ... ADD VALUE` cannot run in the same transaction as a
--- statement that uses the new value, hence the COMMIT above.
+-- statement that uses the new value, hence the COMMIT above. The subject and
+-- body are identical to DEFAULT_MESSAGE_TEMPLATES.CLUB_ASSIGNMENTS
+-- (tests/message-templates.test.ts asserts this), so a backfilled event and a
+-- newly created one send the same words.
 INSERT INTO "EventMessageTemplate" (
     "id",
     "eventId",
@@ -97,7 +100,7 @@ SELECT
     1,
     'PUBLISHED',
     'Your club''s assignments for {{event_name}}',
-    E'Hello {{recipient_name}},\n\nHere is what staff have set for registration {{confirmation_code}} at {{event_name}}:\n\n{{club_assignments_block}}\n\nQuestions? Contact {{contact_email}}.\n\n**[View your registration]({{portal_url}})**',
+    E'# Your club''s assignments for {{event_name}}\n\nHello {{recipient_name}},\n\nHere is what staff have set for registration **{{confirmation_code}}**:\n\n{{club_assignments_block}}\n\n**[View your registration]({{portal_url}})**\n\n---\n\nQuestions? Contact {{contact_email}}.',
     CURRENT_TIMESTAMP,
     CURRENT_TIMESTAMP,
     CURRENT_TIMESTAMP

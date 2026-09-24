@@ -55,6 +55,20 @@ const refundNoticeMigration = readFileSync(
   ),
   "utf8",
 );
+const clubAssignmentsMigration = readFileSync(
+  new URL(
+    "../prisma/migrations/20260924130000_club_event_assignments/migration.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+
+/** Unescapes a PostgreSQL string literal ('...' or E'...') as the migration writes it. */
+function sqlLiteral(source: string) {
+  const escaped = source.startsWith("E'");
+  const inner = source.slice(escaped ? 2 : 1, -1).replaceAll("''", "'");
+  return escaped ? inner.replaceAll("\\n", "\n") : inner;
+}
 describe("message templates", () => {
   it("ships twenty-two valid plaintext defaults", () => {
     expect(MESSAGE_TEMPLATE_KEYS).toEqual([
@@ -135,6 +149,16 @@ describe("message templates", () => {
     expect(refundNoticeMigration).toContain("{{refund_reference}}");
     expect(refundNoticeMigration).not.toContain('UPDATE "MessageTemplateVersion"');
     expect(refundNoticeMigration).not.toContain('UPDATE "MessageOutbox"');
+  });
+
+  it("seeds the club assignments template with exactly the default subject and body", () => {
+    expect(clubAssignmentsMigration).toContain("ADD VALUE IF NOT EXISTS 'CLUB_ASSIGNMENTS'");
+    const seeded = clubAssignmentsMigration.match(
+      /'PUBLISHED',\s*\n\s*('(?:[^']|'')*'),\s*\n\s*(E'(?:[^'\\]|''|\\.)*'),/,
+    );
+    expect(seeded).not.toBeNull();
+    expect(sqlLiteral(seeded![1])).toBe(DEFAULT_MESSAGE_TEMPLATES.CLUB_ASSIGNMENTS.subject);
+    expect(sqlLiteral(seeded![2])).toBe(DEFAULT_MESSAGE_TEMPLATES.CLUB_ASSIGNMENTS.body);
   });
 
   it("rejects unknown tokens in either field and line breaks in a subject", () => {

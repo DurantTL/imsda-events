@@ -1,5 +1,6 @@
 import "server-only";
 
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
@@ -109,7 +110,8 @@ export async function listClubAssignments(eventId: string): Promise<ClubAssignme
  * Staff sets or edits one club's assignment. `version` always increments on a
  * real change, which is what "changed since sent" is derived from; it is left
  * unchanged when the saved fields are identical to what is already stored, so
- * clicking save twice with no edit doesn't manufacture a resend.
+ * clicking save twice with no edit doesn't manufacture a resend (and writes
+ * neither a row update nor an audit entry).
  */
 export async function upsertClubAssignment(
   eventId: string,
@@ -118,52 +120,62 @@ export async function upsertClubAssignment(
   actorUserId: string,
 ) {
   const prisma = getPrisma();
-  const clubRegistration = await prisma.clubEventRegistration.findUnique({
-    where: { eventId_organizationId: { eventId, organizationId } },
-    select: { id: true, registration: { select: { status: true } } },
-  });
-  if (!clubRegistration || !["SUBMITTED", "CONFIRMED"].includes(clubRegistration.registration.status)) {
-    throw new ClubAssignmentError("NOT_FOUND", "That club has no active registration for this event.");
+  // Read, compare, write, and audit as one serializable unit: two staff
+  // saving at once must not both see "unchanged" or both bump from the same
+  // version, and an audit row must never describe a write that lost the race.
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await prisma.$transaction(async (tx) => {
+        const clubRegistration = await tx.clubEventRegistration.findUnique({
+          where: { eventId_organizationId: { eventId, organizationId } },
+          select: { id: true, registration: { select: { status: true } } },
+        });
+        if (!clubRegistration || !["SUBMITTED", "CONFIRMED"].includes(clubRegistration.registration.status)) {
+          throw new ClubAssignmentError("NOT_FOUND", "That club has no active registration for this event.");
+        }
+        const existing = await tx.clubEventAssignment.findUnique({
+          where: { clubEventRegistrationId: clubRegistration.id },
+        });
+        const changed = !existing
+          || existing.campsiteLocation !== input.campsiteLocation
+          || existing.campsiteNotes !== input.campsiteNotes
+          || existing.dutyLabel !== input.dutyLabel
+          || existing.dutyDay !== input.dutyDay
+          || existing.dutyTime !== input.dutyTime
+          || existing.activityLabel !== input.activityLabel
+          || existing.notes !== input.notes;
+        if (!changed) return existing;
+        const saved = await tx.clubEventAssignment.upsert({
+          where: { clubEventRegistrationId: clubRegistration.id },
+          create: {
+            eventId,
+            organizationId,
+            clubEventRegistrationId: clubRegistration.id,
+            ...input,
+            updatedByUserId: actorUserId,
+          },
+          update: { ...input, version: { increment: 1 }, updatedByUserId: actorUserId },
+        });
+        // No attendee names, ages, or free text beyond the assignment fields
+        // themselves — this is staff's own words about campsite/duty/activity,
+        // never roster or medical data.
+        await writeAuditLog({
+          eventId,
+          actorUserId,
+          action: "CLUB_ASSIGNMENT_UPDATED",
+          entityType: "ClubEventAssignment",
+          entityId: saved.id,
+          summary: `Updated the club assignment for organization ${organizationId}.`,
+          metadata: { organizationId, version: saved.version },
+        }, tx);
+        return saved;
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    } catch (error) {
+      const retryable = error instanceof Prisma.PrismaClientKnownRequestError
+        && (error.code === "P2002" || error.code === "P2034");
+      if (!retryable || attempt >= 2) throw error;
+    }
   }
-  const existing = await prisma.clubEventAssignment.findUnique({
-    where: { clubEventRegistrationId: clubRegistration.id },
-  });
-  const changed = !existing
-    || existing.campsiteLocation !== input.campsiteLocation
-    || existing.campsiteNotes !== input.campsiteNotes
-    || existing.dutyLabel !== input.dutyLabel
-    || existing.dutyDay !== input.dutyDay
-    || existing.dutyTime !== input.dutyTime
-    || existing.activityLabel !== input.activityLabel
-    || existing.notes !== input.notes;
-  const saved = await prisma.clubEventAssignment.upsert({
-    where: { clubEventRegistrationId: clubRegistration.id },
-    create: {
-      eventId,
-      organizationId,
-      clubEventRegistrationId: clubRegistration.id,
-      ...input,
-      updatedByUserId: actorUserId,
-    },
-    update: changed
-      ? { ...input, version: { increment: 1 }, updatedByUserId: actorUserId }
-      : { updatedByUserId: actorUserId },
-  });
-  if (changed) {
-    // No attendee names, ages, or free text beyond the assignment fields
-    // themselves — this is staff's own words about campsite/duty/activity,
-    // never roster or medical data.
-    await writeAuditLog({
-      eventId,
-      actorUserId,
-      action: "CLUB_ASSIGNMENT_UPDATED",
-      entityType: "ClubEventAssignment",
-      entityId: saved.id,
-      summary: `Updated the club assignment for organization ${organizationId}.`,
-      metadata: { organizationId, version: saved.version },
-    });
-  }
-  return saved;
 }
 
 function assignmentPublicFields(row: {

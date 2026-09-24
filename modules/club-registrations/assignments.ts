@@ -103,6 +103,12 @@ function singleString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+/** A NUMBER form field may be stored as a number or as its text. */
+function numberOrString(value: unknown): string | null {
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : null;
+  return singleString(value);
+}
+
 export function readClubAssignmentPreferences(
   responses: Record<string, unknown> | null | undefined,
 ): ClubAssignmentPreferences {
@@ -116,7 +122,7 @@ export function readClubAssignmentPreferences(
     tents: singleString(r.tents),
     trailers: singleString(r.trailers),
     kitchenCanopy: singleString(r.kitchen_canopy),
-    totalSquareFeet: singleString(r.total_sqft),
+    totalSquareFeet: numberOrString(r.total_sqft),
   };
 }
 
@@ -134,6 +140,16 @@ export function hasAnyClubAssignmentPreferences(preferences: ClubAssignmentPrefe
 }
 
 /**
+ * One staff-typed value as a single Markdown list item: line breaks and runs
+ * of whitespace collapse to one space (so a note can't end the list or start
+ * a heading), and square brackets are dropped (so it can't open a link),
+ * matching how `message-blocks.ts` neutralises configured link text.
+ */
+function listValue(value: string) {
+  return value.replace(/[[\]]/g, "").replace(/\s+/g, " ").trim();
+}
+
+/**
  * The assignment email / club packet (#411) block: a short Markdown section
  * naming only what staff actually set. No medical, no birth dates — this
  * reads only the three assignment fields and free-text notes, nothing from
@@ -141,18 +157,23 @@ export function hasAnyClubAssignmentPreferences(preferences: ClubAssignmentPrefe
  */
 export function clubAssignmentEmailBlock(fields: ClubAssignmentFields): string {
   const lines: string[] = [];
-  if (has(fields.campsiteLocation)) {
-    lines.push(`- **Campsite:** ${fields.campsiteLocation.trim()}${has(fields.campsiteNotes) ? ` — ${fields.campsiteNotes.trim()}` : ""}`);
+  const campsite = listValue(fields.campsiteLocation);
+  const campsiteNotes = listValue(fields.campsiteNotes);
+  const duty = listValue(fields.dutyLabel);
+  const activity = listValue(fields.activityLabel);
+  const notes = listValue(fields.notes);
+  if (campsite) {
+    lines.push(`- **Campsite:** ${campsite}${campsiteNotes ? ` — ${campsiteNotes}` : ""}`);
   }
-  if (has(fields.dutyLabel)) {
-    const when = [fields.dutyDay.trim(), fields.dutyTime.trim()].filter(Boolean).join(" ");
-    lines.push(`- **Duty:** ${fields.dutyLabel.trim()}${when ? ` — ${when}` : ""}`);
+  if (duty) {
+    const when = [listValue(fields.dutyDay), listValue(fields.dutyTime)].filter(Boolean).join(" ");
+    lines.push(`- **Duty:** ${duty}${when ? ` — ${when}` : ""}`);
   }
-  if (has(fields.activityLabel)) {
-    lines.push(`- **Activity:** ${fields.activityLabel.trim()}`);
+  if (activity) {
+    lines.push(`- **Activity:** ${activity}`);
   }
-  if (has(fields.notes)) {
-    lines.push(`- **Notes:** ${fields.notes.trim()}`);
+  if (notes) {
+    lines.push(`- **Notes:** ${notes}`);
   }
   return lines.join("\n");
 }

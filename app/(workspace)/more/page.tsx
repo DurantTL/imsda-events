@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import Link from "next/link";
-import { Activity, Award, ChartNoAxesCombined, FileText, FileUp, HeartPulse, ListChecks, MessagesSquare, PanelsTopLeft, Settings2, TicketPercent, UserCog, UsersRound } from "lucide-react";
+import { Activity, Award, ChartNoAxesCombined, FileText, FileUp, HeartPulse, ListChecks, MessagesSquare, PanelsTopLeft, Settings2, Tent, TicketPercent, UserCog, UsersRound } from "lucide-react";
 import { MfaManager, type MfaStatus } from "@/components/mfa-manager";
 import { SessionManager } from "@/components/session-manager";
 import { getMfaStatus } from "@/modules/access/mfa-service";
@@ -11,6 +11,7 @@ import { resolveEventContext } from "@/modules/events/selection";
 import { canAccessOperationalHealth } from "@/modules/operations/access";
 import { resolveClubOversight } from "@/modules/club-rosters/event-oversight";
 import { canManageProgramAssignments } from "@/modules/program-assignments/access";
+import { canManageClubAssignments } from "@/modules/club-registrations/assignments-access";
 
 export const metadata: Metadata = { title: "More" };
 
@@ -21,7 +22,7 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
   const sessionToken = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
   const sessions = await listUserSessions(user.id, sessionToken);
   const mfaStatus = await getMfaStatus(user.id) as MfaStatus;
-  const clubOversight = (await resolveClubOversight(event.id)).allowed;
+  const { allowed: clubOversight, clubEvent } = await resolveClubOversight(event.id);
 
   return (
     <section className="page-stack">
@@ -31,6 +32,7 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
         {clubOversight && <Link className="panel foundation-card" href={`/more/clubs?event=${event.id}`}><span><UsersRound aria-hidden="true" size={21} /></span><h3>Clubs</h3><p>Every registered club&apos;s roster (ages only) and all clubs&apos; monthly reports, view only.</p><small>Open clubs</small></Link>}
         {permissions.includes("VIEW_REPORTS") && <Link className="panel foundation-card" href={`/more/reports?event=${event.id}`}><span><ChartNoAxesCombined aria-hidden="true" size={21} /></span><h3>Operational reports</h3><p>Print active attendee rosters and review meal, housing, and ranked seminar totals.</p><small>Open reports</small></Link>}
         {canManageProgramAssignments(permissions) && <Link className="panel foundation-card" href={`/more/program-assignments?event=${event.id}`}><span><ListChecks aria-hidden="true" size={21} /></span><h3>Seminar assignments</h3><p>Turn attendee rankings and room limits into reviewed, printable session rosters.</p><small>Preview assignments</small></Link>}
+        {clubEvent && canManageClubAssignments(permissions) && <Link className="panel foundation-card" href={`/more/club-assignments?event=${event.id}`}><span><Tent aria-hidden="true" size={21} /></span><h3>Club assignments</h3><p>Set each registered club&apos;s campsite, duty, and activity, then email directors after review.</p><small>Assign clubs</small></Link>}
         {permissions.includes("MANAGE_COMMUNICATIONS") && <Link className="panel foundation-card" href={`/community?event=${event.id}`}><span><MessagesSquare aria-hidden="true" size={21} /></span><h3>Attendee community</h3><p>Open or pause discussion, review attendee reports, and moderate posts and replies.</p><small>Moderate community</small></Link>}
         {permissions.includes("MANAGE_FINANCE") && <Link className="panel foundation-card" href={`/more/promo-codes?event=${event.id}`}><span><TicketPercent aria-hidden="true" size={21} /></span><h3>Promo codes</h3><p>Create bounded registration discounts, schedule dates, and review use limits.</p><small>Manage discounts</small></Link>}
         {permissions.includes("CONFIGURE_EVENT") && <Link className="panel foundation-card" href={`/more/event-settings?event=${event.id}`}><span><Settings2 aria-hidden="true" size={21} /></span><h3>Event settings</h3><p>Edit dates, location, capacity, registration availability, and publishing.</p><small>Open settings</small></Link>}

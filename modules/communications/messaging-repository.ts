@@ -33,6 +33,7 @@ import {
   type ClubAssignmentCandidate,
   type ClubAssignmentPreview,
   type ClubAssignmentPreviewContext,
+  type ClubAssignmentRecipient,
   type ClubAssignmentSendSelection,
 } from "@/modules/communications/club-assignment-audience";
 import { emptyClubAssignmentFields } from "@/modules/club-registrations/assignments";
@@ -2107,13 +2108,63 @@ async function loadClubAssignmentState(
     templateVersionId: version?.id ?? null,
     templateVersionNumber: version?.versionNumber ?? null,
   };
+  const source = {
+    isEnabled: template?.isEnabled ?? true,
+    templateVersionId: version?.id ?? null,
+    subject: version?.subjectTemplate ?? DEFAULT_MESSAGE_TEMPLATES.CLUB_ASSIGNMENTS.subject,
+    body: version?.bodyTemplate ?? DEFAULT_MESSAGE_TEMPLATES.CLUB_ASSIGNMENTS.body,
+  };
+  const preview = computeClubAssignmentPreview(candidates, context, selection, now);
+  const first = preview.recipients[0];
+  if (first) {
+    const rendered = renderClubAssignmentMessage(source, event, settings, first);
+    preview.sample = {
+      organizationId: first.organizationId,
+      subject: rendered.subject,
+      // The private link is minted per message at delivery; a preview shows
+      // a stand-in instead so no token is ever issued for a review.
+      body: rendered.body.replaceAll(REGISTRATION_MANAGE_LINK_SENTINEL, CLUB_ASSIGNMENT_PREVIEW_LINK),
+    };
+  }
   return {
     event,
     settings,
-    template,
-    version,
-    preview: computeClubAssignmentPreview(candidates, context, selection, now),
+    source,
+    preview,
   };
+}
+
+const CLUB_ASSIGNMENT_PREVIEW_LINK = "https://events.imsda.org/manage/preview-link-not-live";
+
+/**
+ * Renders one club's assignment email. Shared by the preview sample and the
+ * batch itself so the wording staff review is the wording that is queued.
+ */
+function renderClubAssignmentMessage(
+  source: { subject: string; body: string },
+  event: { name: string; supportContact: string | null },
+  settings: { replyToEmail: string | null; senderEmail: string | null },
+  recipient: Pick<ClubAssignmentRecipient, "recipientName" | "confirmationCode" | "assignmentBlock">,
+) {
+  return renderMessageTemplate(
+    { subject: source.subject, body: source.body },
+    {
+      recipient_name: recipient.recipientName,
+      registrant_name: recipient.recipientName,
+      event_name: event.name,
+      confirmation_code: recipient.confirmationCode,
+      club_assignments_block: recipient.assignmentBlock,
+      portal_url: REGISTRATION_MANAGE_LINK_SENTINEL,
+      reply_to_email: settings.replyToEmail
+        || settings.senderEmail
+        || event.supportContact
+        || "the IMSDA event office",
+      contact_email: event.supportContact
+        || settings.replyToEmail
+        || settings.senderEmail
+        || "the IMSDA event office",
+    },
+  );
 }
 
 export async function getClubAssignmentMessagePreview(
@@ -2140,9 +2191,10 @@ export type ClubAssignmentBatchOperation = {
  * guarantees as `enqueueShirtSizeRequestBatch`: fingerprint equality before
  * writing, one outbox row per club keyed on a per-batch idempotency key,
  * replay returns the original batch, and enqueue stops short of sending. The
- * one addition: each included club's `ClubEventAssignment.lastEmailSentAt`
- * and `lastEmailedVersion` are stamped in the same transaction, which is what
- * makes "changed since sent" derivable afterward.
+ * one addition: each included club whose row is not suppressed has its
+ * `ClubEventAssignment.lastEmailSentAt` and `lastEmailedVersion` stamped in
+ * the same transaction, which is what makes "changed since sent" (and the
+ * ALREADY_SENT skip) derivable afterward.
  */
 export async function enqueueClubAssignmentBatch(
   eventId: string,
@@ -2221,12 +2273,7 @@ export async function enqueueClubAssignmentBatch(
           );
         }
 
-        const source = {
-          isEnabled: state.template?.isEnabled ?? true,
-          templateVersionId: state.version?.id ?? null,
-          subject: state.version?.subjectTemplate ?? DEFAULT_MESSAGE_TEMPLATES.CLUB_ASSIGNMENTS.subject,
-          body: state.version?.bodyTemplate ?? DEFAULT_MESSAGE_TEMPLATES.CLUB_ASSIGNMENTS.body,
-        };
+        const source = state.source;
         const suppressed = state.settings.deliveryMode === "DISABLED" || !source.isEnabled;
         const correlationId = input.batchId;
         const messageIds: string[] = [];
@@ -2234,25 +2281,7 @@ export async function enqueueClubAssignmentBatch(
         let suppressedCount = 0;
 
         for (const recipient of state.preview.recipients) {
-          const rendered = renderMessageTemplate(
-            { subject: source.subject, body: source.body },
-            {
-              recipient_name: recipient.recipientName,
-              registrant_name: recipient.recipientName,
-              event_name: state.event.name,
-              confirmation_code: recipient.confirmationCode,
-              club_assignments_block: recipient.assignmentBlock,
-              portal_url: REGISTRATION_MANAGE_LINK_SENTINEL,
-              reply_to_email: state.settings.replyToEmail
-                || state.settings.senderEmail
-                || state.event.supportContact
-                || "the IMSDA event office",
-              contact_email: state.event.supportContact
-                || state.settings.replyToEmail
-                || state.settings.senderEmail
-                || "the IMSDA event office",
-            },
-          );
+          const rendered = renderClubAssignmentMessage(source, state.event, state.settings, recipient);
           if (!rendered.isComplete) {
             throw new MessagingError(
               "INVALID_TEMPLATE",
@@ -2301,13 +2330,15 @@ export async function enqueueClubAssignmentBatch(
           if (message.status === "PENDING") queuedCount += 1;
           if (message.status === "SUPPRESSED") suppressedCount += 1;
 
-          // Stamped even when delivery is suppressed: staff reviewed and
-          // created this batch for this exact assignment version, which is
-          // the event "changed since sent" is measured against.
-          await tx.clubEventAssignment.update({
-            where: { clubEventRegistrationId: recipient.clubEventRegistrationId },
-            data: { lastEmailSentAt: now, lastEmailedVersion: recipient.version },
-          });
+          // A suppressed row never reaches the club, so it must not count as
+          // sent: the club stays eligible for the next batch once delivery or
+          // the template is switched back on.
+          if (message.status !== "SUPPRESSED") {
+            await tx.clubEventAssignment.update({
+              where: { clubEventRegistrationId: recipient.clubEventRegistrationId },
+              data: { lastEmailSentAt: now, lastEmailedVersion: recipient.version },
+            });
+          }
         }
 
         const audit = await tx.auditLog.createMany({

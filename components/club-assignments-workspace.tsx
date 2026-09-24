@@ -37,6 +37,46 @@ function preferenceLines(preferences: ClubAssignmentRow["preferences"]) {
   return lines;
 }
 
+const deliveryModeLabels: Record<ClubAssignmentPreview["deliveryMode"], string> = {
+  EXTERNAL_EMAIL: "Emails are queued, not sent; Process email queue in the Delivery log sends them.",
+  LOCAL_CAPTURE: "Local capture: messages are captured inside IMSDA Events and no email is sent.",
+  DISABLED: "Delivery is off: rows are recorded as suppressed and no email is sent.",
+};
+
+function sendButtonLabel(preview: ClubAssignmentPreview) {
+  const count = preview.includedCount;
+  const plural = count === 1 ? "" : "s";
+  if (preview.deliveryMode === "DISABLED" || !preview.templateEnabled) return `Record ${count} suppressed row${plural}`;
+  if (preview.deliveryMode === "LOCAL_CAPTURE") return `Capture ${count} local preview${plural}`;
+  return `Queue ${count} assignment email${plural}`;
+}
+
+type BatchOperation = {
+  replayed: boolean;
+  deliveryMode: ClubAssignmentPreview["deliveryMode"];
+  queuedCount: number;
+  capturedCount: number;
+  suppressedCount: number;
+};
+
+function batchNotice(operation: BatchOperation) {
+  if (operation.replayed) {
+    return "This exact batch was already recorded, so no duplicate messages were created.";
+  }
+  if (operation.suppressedCount > 0) {
+    return `${operation.suppressedCount} club assignment row${operation.suppressedCount === 1 ? " was" : "s were"} recorded as suppressed. Delivery or the template is off, so no email was sent and these clubs still show as not sent.`;
+  }
+  if (operation.deliveryMode === "EXTERNAL_EMAIL") {
+    return `${operation.queuedCount} club assignment email${operation.queuedCount === 1 ? " is" : "s are"} queued but not sent. Review the Delivery log, then use Process email queue when ready.`;
+  }
+  return `${operation.capturedCount} club assignment email${operation.capturedCount === 1 ? " was" : "s were"} captured locally. No email was sent.`;
+}
+
+/** The email block's Markdown list, as plain lines for the preview table. */
+function blockLines(block: string) {
+  return block.split("\n").map((line) => line.replace(/^- /, "").replaceAll("**", "")).filter(Boolean);
+}
+
 export function ClubAssignmentsWorkspace({
   eventId,
   eventName,
@@ -57,6 +97,9 @@ export function ClubAssignmentsWorkspace({
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [sendScope, setSendScope] = useState<{ scope: "ONE"; organizationId: string } | { scope: "ALL_SET" }>({ scope: "ALL_SET" });
   const [sendResult, setSendResult] = useState<string>("");
+  const [sendError, setSendError] = useState<string>("");
+  const [batchId, setBatchId] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
 
   function beginEdit(row: ClubAssignmentRow) {
     setEditingId(row.organizationId);
@@ -105,49 +148,75 @@ export function ClubAssignmentsWorkspace({
     return "PARTIAL";
   }
 
+  async function refreshAssignments() {
+    try {
+      const response = await fetch(`/api/events/${eventId}/club-assignments`, { cache: "no-store" });
+      const data = await response.json().catch(() => ({}));
+      if (response.ok && Array.isArray(data.assignments)) setAssignments(data.assignments);
+    } catch {
+      // The send already succeeded; a stale sent badge is fixed by a reload.
+    }
+  }
+
+  function showPreview(next: ClubAssignmentPreview | null) {
+    setPreview(next);
+    // A batch ID belongs to one reviewed preview: a new preview is a new
+    // review, so it gets a new ID and a fresh confirmation.
+    setBatchId("");
+    setConfirmed(false);
+  }
+
   async function loadPreview(scope: { scope: "ONE"; organizationId: string } | { scope: "ALL_SET" }) {
     setSendScope(scope);
     setLoadingPreview(true);
     setSendResult("");
+    setSendError("");
     try {
       const search = new URLSearchParams({ scope: scope.scope });
       if (scope.scope === "ONE") search.set("organizationId", scope.organizationId);
       const response = await fetch(`/api/events/${eventId}/club-assignment-messages?${search.toString()}`);
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message ?? "Could not load the preview.");
-      setPreview(data.clubAssignmentPreview);
+      showPreview(data.clubAssignmentPreview);
     } catch (err) {
-      setSendResult(err instanceof Error ? err.message : "Could not load the preview.");
-      setPreview(null);
+      setSendError(err instanceof Error ? err.message : "Could not load the preview.");
+      showPreview(null);
     } finally {
       setLoadingPreview(false);
     }
   }
 
-  async function sendBatch() {
-    if (!preview) return;
+  async function sendBatch(submitEvent: React.FormEvent<HTMLFormElement>) {
+    submitEvent.preventDefault();
+    if (!preview || !confirmed) return;
+    // Minted once per reviewed preview and reused on a retry (a double click,
+    // a dropped response), so the server replays instead of queueing twice.
+    const clientBatchId = batchId || crypto.randomUUID();
+    setBatchId(clientBatchId);
     setLoadingPreview(true);
+    setSendResult("");
+    setSendError("");
     try {
       const response = await fetch(`/api/events/${eventId}/club-assignment-messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          batchId: crypto.randomUUID(),
+          batchId: clientBatchId,
           previewFingerprint: preview.fingerprint,
           scope: sendScope.scope,
           ...(sendScope.scope === "ONE" ? { organizationId: sendScope.organizationId } : {}),
         }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message ?? "Could not send the batch.");
-      setSendResult(`Sent to ${data.operation.includedCount} club${data.operation.includedCount === 1 ? "" : "s"}.`);
-      setPreview(null);
-      setAssignments((rows) => rows.map((row) => {
-        const included = preview.recipients.some((recipient) => recipient.organizationId === row.organizationId);
-        return included ? { ...row, lastEmailedVersion: row.version, changedSinceSent: false, lastEmailSentAt: new Date().toISOString() } : row;
-      }));
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.operation) {
+        if (data.clubAssignmentPreview) showPreview(data.clubAssignmentPreview);
+        throw new Error(data.message ?? "Could not create the batch.");
+      }
+      showPreview(null);
+      setSendResult(batchNotice(data.operation));
+      await refreshAssignments();
     } catch (err) {
-      setSendResult(err instanceof Error ? err.message : "Could not send the batch.");
+      setSendError(err instanceof Error ? err.message : "Could not create the batch.");
     } finally {
       setLoadingPreview(false);
     }
@@ -247,31 +316,103 @@ export function ClubAssignmentsWorkspace({
       {canSend && (
         <section className="panel">
           <h3>Assignment email</h3>
-          <p className="field-help">Preview before sending. Staff can send to one club or to every club that is fully set.</p>
+          <p className="field-help">Preview before sending. Send to one club, or to every fully set club that hasn&rsquo;t already received its current assignment.</p>
           <div className="intro-actions">
             <button type="button" className="secondary-button" onClick={() => loadPreview({ scope: "ALL_SET" })} disabled={loadingPreview}>
               Preview every fully assigned club
             </button>
           </div>
           {preview && (
-            <div className="club-assignment-preview">
+            <form className="club-assignment-preview" onSubmit={sendBatch}>
               <p>
-                {preview.includedCount} club{preview.includedCount === 1 ? "" : "s"} will be emailed
+                <strong>{preview.includedCount}</strong> club{preview.includedCount === 1 ? "" : "s"} included
                 {preview.skippedCount > 0 ? `, ${preview.skippedCount} skipped` : ""}.
+                {" "}{deliveryModeLabels[preview.deliveryMode]}
               </p>
+              {!preview.templateEnabled && (
+                <p className="form-error" role="alert">
+                  <CircleAlert aria-hidden="true" size={15} /> The Club assignments template is disabled. This batch will be recorded as suppressed and no email will be sent.
+                </p>
+              )}
+              {preview.recipients.some((recipient) => recipient.alreadySentThisVersion) && (
+                <p className="form-error" role="alert">
+                  <CircleAlert aria-hidden="true" size={15} /> {preview.recipients.filter((recipient) => recipient.alreadySentThisVersion).map((recipient) => recipient.organizationName).join(", ")} already received this exact assignment. Sending again resends the same email.
+                </p>
+              )}
+              {preview.recipients.length > 0 && (
+                <div className="report-table-wrap">
+                  <table className="report-table">
+                    <caption className="sr-only">Clubs that will be emailed</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col">Club</th>
+                        <th scope="col">Director</th>
+                        <th scope="col">Email</th>
+                        <th scope="col">Assignment</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.recipients.map((recipient) => (
+                        <tr key={recipient.organizationId}>
+                          <th scope="row" translate="no">
+                            {recipient.organizationName}
+                            <br /><small>{recipient.confirmationCode}</small>
+                            {recipient.alreadySentThisVersion && <><br /><span className="status-chip gold">Already sent this version</span></>}
+                          </th>
+                          <td translate="no">{recipient.recipientName}</td>
+                          <td translate="no">{recipient.recipientEmail}</td>
+                          <td>
+                            <ul className="quiet-copy compact-list">
+                              {blockLines(recipient.assignmentBlock).map((line) => <li key={line}>{line}</li>)}
+                            </ul>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
               {preview.skipped.length > 0 && (
-                <ul className="quiet-copy compact-list">
-                  {preview.skipped.map((skip) => <li key={skip.organizationId}>{skip.organizationName || skip.organizationId}: {skip.label}</li>)}
-                </ul>
+                <>
+                  <p className="field-help">Skipped</p>
+                  <ul className="quiet-copy compact-list">
+                    {preview.skipped.map((skip) => <li key={skip.organizationId}>{skip.organizationName || skip.organizationId}: {skip.label}</li>)}
+                  </ul>
+                </>
+              )}
+              {preview.sample && (
+                <div className="club-assignment-sample">
+                  <p className="field-help">
+                    Sample message for {preview.recipients.find((recipient) => recipient.organizationId === preview.sample?.organizationId)?.organizationName ?? "the first club"}
+                    {preview.templateVersionNumber !== null ? ` (template version ${preview.templateVersionNumber})` : ""}
+                  </p>
+                  <p><strong>Subject:</strong> {preview.sample.subject}</p>
+                  <pre className="message-body-snapshot">{preview.sample.body}</pre>
+                </div>
               )}
               {preview.includedCount > 0 && (
-                <button type="button" className="primary-button" disabled={loadingPreview} onClick={sendBatch}>
-                  <Send aria-hidden="true" size={14} /> Send
-                </button>
+                <>
+                  <label className="message-enabled-toggle reminder-confirm-check">
+                    <input
+                      type="checkbox"
+                      checked={confirmed}
+                      required
+                      onChange={(event) => setConfirmed(event.target.checked)}
+                    />
+                    <span>
+                      <strong>I reviewed all {preview.includedCount} club{preview.includedCount === 1 ? "" : "s"} and the sample message above.</strong>
+                      <small>If an assignment, contact, template, or sender setting changes before this is created, IMSDA Events will stop and require a new review.</small>
+                    </span>
+                  </label>
+                  <button type="submit" className="primary-button" disabled={loadingPreview || !confirmed}>
+                    <Send aria-hidden="true" size={14} /> {sendButtonLabel(preview)}
+                  </button>
+                </>
               )}
-            </div>
+            </form>
           )}
-          {sendResult && <p className="field-help">{sendResult}</p>}
+          {sendError && <p className="form-error" role="alert"><CircleAlert aria-hidden="true" size={15} /> {sendError}</p>}
+          {sendResult && <p className="field-help" role="status">{sendResult}</p>}
         </section>
       )}
     </section>

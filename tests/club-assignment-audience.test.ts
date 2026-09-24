@@ -91,13 +91,43 @@ describe("computeClubAssignmentPreview", () => {
     expect(preview.skipped[0].code).toBe("NOT_FOUND");
   });
 
-  it("marks a recipient whose current version already went out", () => {
+  it("ALL_SET skips a club whose current version was already emailed", () => {
     const preview = computeClubAssignmentPreview(
       [candidate({ version: 2, lastEmailedVersion: 2 })],
       context,
       { scope: "ALL_SET" },
     );
+    expect(preview.includedCount).toBe(0);
+    expect(preview.skipped).toEqual([expect.objectContaining({ organizationId: "org_1", code: "ALREADY_SENT" })]);
+  });
+
+  it("ONE scope still allows an explicit resend, flagged as already sent this version", () => {
+    const preview = computeClubAssignmentPreview(
+      [candidate({ version: 2, lastEmailedVersion: 2 })],
+      context,
+      { scope: "ONE", organizationId: "org_1" },
+    );
+    expect(preview.includedCount).toBe(1);
     expect(preview.recipients[0].alreadySentThisVersion).toBe(true);
+    expect(preview.recipients[0].organizationName).toBe("Pathfinder Pioneers");
+  });
+
+  it("changes the fingerprint once a send stamps the version, so a stale reviewed batch can't resend it", () => {
+    const beforeSend = computeClubAssignmentPreview([candidate({ lastEmailedVersion: null })], context, { scope: "ONE", organizationId: "org_1" });
+    const afterSend = computeClubAssignmentPreview([candidate({ lastEmailedVersion: 2 })], context, { scope: "ONE", organizationId: "org_1" });
+    expect(beforeSend.includedCount).toBe(1);
+    expect(afterSend.includedCount).toBe(1);
+    expect(beforeSend.fingerprint).not.toBe(afterSend.fingerprint);
+  });
+
+  it("changes the fingerprint when the published template version changes", () => {
+    const first = computeClubAssignmentPreview([candidate()], context, { scope: "ALL_SET" });
+    const republished = computeClubAssignmentPreview(
+      [candidate()],
+      { ...context, templateVersionId: "msgver_2", templateVersionNumber: 2 },
+      { scope: "ALL_SET" },
+    );
+    expect(first.fingerprint).not.toBe(republished.fingerprint);
   });
 
   it("does not mark a recipient as already sent after a change bumped the version", () => {

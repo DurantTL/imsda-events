@@ -6,6 +6,11 @@
  * only partially assigned is left out of the "every fully assigned club"
  * batch — that message tells a director what they're doing, so sending it
  * before anything is decided would tell them nothing true.
+ *
+ * "Every fully assigned club" also skips a club whose current assignment
+ * version was already emailed (ALREADY_SENT): re-sends happen only after a
+ * change bumps the version. Staff can still resend one club explicitly with
+ * the ONE scope, where the preview flags it as already sent.
  */
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -38,17 +43,20 @@ export type ClubAssignmentSkipReasonCode =
   | "NOT_FOUND"
   | "INACTIVE_REGISTRATION"
   | "NOT_FULLY_ASSIGNED"
-  | "INVALID_CONTACT_EMAIL";
+  | "INVALID_CONTACT_EMAIL"
+  | "ALREADY_SENT";
 
 const skipReasonLabels: Record<ClubAssignmentSkipReasonCode, string> = {
   NOT_FOUND: "Not a club on this event",
   INACTIVE_REGISTRATION: "Not submitted or confirmed",
   NOT_FULLY_ASSIGNED: "Campsite, duty, and activity aren't all set yet",
   INVALID_CONTACT_EMAIL: "Missing or invalid contact email",
+  ALREADY_SENT: "Already emailed this version; edit the assignment or send to this club alone to resend",
 };
 
 export type ClubAssignmentRecipient = {
   organizationId: string;
+  organizationName: string;
   clubEventRegistrationId: string;
   registrationId: string;
   confirmationCode: string;
@@ -56,6 +64,7 @@ export type ClubAssignmentRecipient = {
   recipientEmail: string;
   assignmentBlock: string;
   version: number;
+  lastEmailedVersion: number | null;
   alreadySentThisVersion: boolean;
 };
 
@@ -77,6 +86,12 @@ export type ClubAssignmentPreview = {
   templateVersionNumber: number | null;
   recipients: ClubAssignmentRecipient[];
   skipped: ClubAssignmentSkip[];
+  /**
+   * The first recipient's message rendered through the event's published
+   * template, so staff read the real wording before sending. Filled in by the
+   * repository (it needs the template); null when no club is included.
+   */
+  sample: { organizationId: string; subject: string; body: string } | null;
 };
 
 export type ClubAssignmentPreviewContext = {
@@ -141,8 +156,14 @@ export function computeClubAssignmentPreview(
       skip(candidate, "INVALID_CONTACT_EMAIL");
       continue;
     }
+    const alreadySentThisVersion = candidate.lastEmailedVersion === candidate.version;
+    if (alreadySentThisVersion && selection.scope === "ALL_SET") {
+      skip(candidate, "ALREADY_SENT");
+      continue;
+    }
     recipients.push({
       organizationId: candidate.organizationId,
+      organizationName: candidate.organizationName,
       clubEventRegistrationId: candidate.clubEventRegistrationId,
       registrationId: candidate.registrationId,
       confirmationCode: candidate.confirmationCode,
@@ -150,12 +171,13 @@ export function computeClubAssignmentPreview(
       recipientEmail,
       assignmentBlock: clubAssignmentEmailBlock(candidate.fields),
       version: candidate.version,
-      alreadySentThisVersion: candidate.lastEmailedVersion === candidate.version,
+      lastEmailedVersion: candidate.lastEmailedVersion,
+      alreadySentThisVersion,
     });
   }
 
   const fingerprint = createHash("sha256").update(JSON.stringify({
-    version: 1,
+    version: 2,
     eventId: context.eventId,
     scope: selection.scope,
     selectedOrganizationId: selection.scope === "ONE" ? selection.organizationId : null,
@@ -163,12 +185,18 @@ export function computeClubAssignmentPreview(
     senderName: context.senderName,
     senderEmail: context.senderEmail,
     replyToEmail: context.replyToEmail,
+    templateEnabled: context.templateEnabled,
+    templateVersionId: context.templateVersionId,
+    templateVersionNumber: context.templateVersionNumber,
     recipients: recipients.map((recipient) => ({
       organizationId: recipient.organizationId,
       confirmationCode: recipient.confirmationCode,
       recipientEmail: recipient.recipientEmail,
       assignmentBlock: recipient.assignmentBlock,
       version: recipient.version,
+      // A send stamps this, so a batch reviewed before another send finished
+      // no longer matches and can't email the same version twice.
+      lastEmailedVersion: recipient.lastEmailedVersion,
     })),
     skipped: skipped.map((entry) => ({ organizationId: entry.organizationId, code: entry.code })),
   })).digest("hex");
@@ -184,5 +212,6 @@ export function computeClubAssignmentPreview(
     templateVersionNumber: context.templateVersionNumber,
     recipients,
     skipped,
+    sample: null,
   };
 }

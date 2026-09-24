@@ -10,7 +10,7 @@ import { ClubRegistrationWorkspace } from "@/components/club-registration-worksp
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { attendeeProfilePrefill, getAttendeeProfile } from "@/modules/attendee-accounts/profile-service";
 import { getRosterAccessState } from "@/modules/club-rosters/access";
-import { getClubAssignmentForClub } from "@/modules/club-registrations/assignments-repository";
+import { loadDirectorClubAssignment } from "@/modules/club-registrations/director-assignment";
 import { isChurchBilledStatus, notBilledLabel } from "@/modules/club-registrations/church-owed";
 import { ClubRegistrationError, getClubEventWorkspace } from "@/modules/club-registrations/repository";
 import { activeRegistrationStatuses } from "@/modules/events/lifecycle";
@@ -44,8 +44,9 @@ export default async function ClubEventRegistrationPage({
 
   const classes = workspace.registration ? await getClassSelectionWorkspace(organizationId, eventId) : null;
   // #410: only shown once staff have set something — an empty section would
-  // tell a director less than nothing.
-  const assignment = workspace.registration ? await getClubAssignmentForClub(eventId, organizationId) : null;
+  // tell a director less than nothing. The loader re-checks this club's
+  // roster access itself rather than trusting the check above.
+  const assignment = workspace.registration ? await loadDirectorClubAssignment(organizationId, eventId) : null;
 
   let contactPrefill: Record<string, string> = {};
   if (workspace.experience) {
