@@ -105,6 +105,14 @@ describe("club import (#376)", () => {
     expect(result.message).toMatch(/already has an imported registration/);
   });
 
+  it("refuses a club with no sponsoring church, creating nothing", async () => {
+    const [result] = await importClubs([item({ churchId: null, newChurchName: "" })], "admin-1", now);
+    expect(result).toMatchObject({ status: "FAILED" });
+    expect(result.message).toMatch(/sponsoring church/);
+    expect(mocks.orgCreate).not.toHaveBeenCalled();
+    expect(mocks.rosterCreate).not.toHaveBeenCalled();
+  });
+
   it("refuses an inactive club with the same name", async () => {
     mocks.orgFindFirst.mockImplementation(({ where }: { where: { type: string } }) => Promise.resolve(
       where.type === "CLUB" ? { id: "club-1", isActive: false, parentOrganizationId: null } : null,

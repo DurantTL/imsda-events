@@ -43,6 +43,7 @@ import {
   selectRegistrationMessageTemplate,
   type MessageTemplateContext,
   type MessageTemplateKey,
+  withChurchBilledLinkWording,
 } from "@/modules/communications/templates";
 import {
   computeBalanceReminderPreview,
@@ -1287,6 +1288,7 @@ export async function sendTestMessage(
         timezone: true,
         location: true,
         supportContact: true,
+        billingMode: true,
         ...EVENT_LODGING_SELECT,
       },
     }),
@@ -1345,7 +1347,13 @@ export async function sendTestMessage(
     ...(source?.tokens ?? {}),
   };
   const rendered = renderMessageTemplate(
-    { subject: version.subjectTemplate, body: version.bodyTemplate },
+    {
+      subject: version.subjectTemplate,
+      body: withChurchBilledLinkWording(
+        version.bodyTemplate,
+        event.billingMode === "DEFERRED_ORGANIZATION_INVOICE",
+      ),
+    },
     context,
   );
   if (!rendered.isComplete) {
@@ -2870,7 +2878,7 @@ export async function enqueuePublicRegistrationMessages(
   for (const recipient of recipients) {
     const source = publishedTemplateSource(templates, recipient.templateKey);
     const rendered = renderMessageTemplate(
-      { subject: source.subject, body: source.body },
+      { subject: source.subject, body: withChurchBilledLinkWording(source.body, isDeferredOrganizationBilling) },
       { ...commonContext, recipient_name: recipient.name },
     );
     if (!rendered.isComplete) {

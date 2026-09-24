@@ -75,6 +75,12 @@ describe("club profile (#375)", () => {
       .rejects.toMatchObject({ code: "ORGANIZATION_PARENT_INVALID" });
   });
 
+  it("requires a sponsoring church; a club can't be left without one", async () => {
+    await expect(updateClubProfile("club-1", input({ sponsoringChurchId: null }), { accountId: "account-1" }))
+      .rejects.toMatchObject({ code: "ORGANIZATION_PARENT_REQUIRED" });
+    expect(mocks.updateOrganization).not.toHaveBeenCalled();
+  });
+
   it("rejects a bad contact email but allows a blank one", () => {
     expect(clubProfileInputSchema.safeParse({ name: "Club", contactEmail: "not-an-email" }).success).toBe(false);
     expect(clubProfileInputSchema.safeParse({ name: "Club", contactEmail: "" }).success).toBe(true);

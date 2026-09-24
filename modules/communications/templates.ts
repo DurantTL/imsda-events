@@ -1067,6 +1067,21 @@ export function collapseBlankLines(value: string) {
   return value.replace(/\n{3,}/g, "\n\n").trim();
 }
 
+const DEFAULT_PORTAL_LINK_LABEL = "View, pay, or edit your registration";
+const CHURCH_BILLED_PORTAL_LINK_LABEL = "View or edit your registration";
+
+/**
+ * On a church-billed event nothing is paid online (the church is invoiced),
+ * so the default portal link drops "pay". Only the default label changes:
+ * events store their own copy of the template, and staff-written wording is
+ * left as they wrote it.
+ */
+export function withChurchBilledLinkWording(body: string, isChurchBilled: boolean) {
+  return isChurchBilled
+    ? body.replaceAll(DEFAULT_PORTAL_LINK_LABEL, CHURCH_BILLED_PORTAL_LINK_LABEL)
+    : body;
+}
+
 export function renderMessageTemplate(
   template: Pick<MessageTemplateDefinition, "subject" | "body">,
   context: MessageTemplateContext,

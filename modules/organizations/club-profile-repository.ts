@@ -67,7 +67,10 @@ export async function updateClubProfile(organizationId: string, input: ClubProfi
     if (!club || club.type !== "CLUB") {
       throw new OrganizationOperationError("ORGANIZATION_NOT_FOUND", "That club could not be found.");
     }
-    if (input.sponsoringChurchId !== null && input.sponsoringChurchId !== club.parentOrganizationId) {
+    if (input.sponsoringChurchId === null) {
+      throw new OrganizationOperationError("ORGANIZATION_PARENT_REQUIRED", "Choose the club's sponsoring church. Every club needs one.");
+    }
+    if (input.sponsoringChurchId !== club.parentOrganizationId) {
       const church = await tx.organization.findUnique({
         where: { id: input.sponsoringChurchId },
         select: { type: true, isActive: true },

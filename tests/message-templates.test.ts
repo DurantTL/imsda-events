@@ -16,6 +16,7 @@ import {
   renderTemplateText,
   selectRegistrationMessageTemplate,
   validateMessageTemplate,
+  withChurchBilledLinkWording,
 } from "@/modules/communications/templates";
 import type { MessageTemplateKeyValue } from "@/modules/communications/types";
 
@@ -396,5 +397,19 @@ describe("message templates", () => {
       ),
     ).toBe("September 25 – 27, 2026");
     expect(formatMessageDateRange(null)).toBe("Dates to be announced");
+  });
+});
+
+describe("church-billed portal link wording", () => {
+  const body = "**[View, pay, or edit your registration]({{portal_url}})**";
+
+  it("drops \"pay\" from the default label on a church-billed event only", () => {
+    expect(withChurchBilledLinkWording(body, true)).toBe("**[View or edit your registration]({{portal_url}})**");
+    expect(withChurchBilledLinkWording(body, false)).toBe(body);
+  });
+
+  it("leaves staff-written link wording as written", () => {
+    const custom = "**[Update your club's registration]({{portal_url}})**";
+    expect(withChurchBilledLinkWording(custom, true)).toBe(custom);
   });
 });

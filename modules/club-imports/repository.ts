@@ -102,6 +102,9 @@ async function importOne(item: ClubImportItem, actorUserId: string, now: Date): 
         }
       }
 
+      // Every club has a sponsoring church; church-billed events invoice it.
+      if (!churchId) throw new ImportRefused("Choose or create the club's sponsoring church before importing.");
+
       const normalizedName = normalizeOrganizationName(item.clubName);
       let club = await tx.organization.findFirst({ where: { type: "CLUB", normalizedName }, select: { id: true, isActive: true, parentOrganizationId: true } });
       if (club && !club.isActive) throw new ImportRefused("A club with that name is inactive. Reactivate it first, or give the import another name.");
@@ -111,7 +114,7 @@ async function importOne(item: ClubImportItem, actorUserId: string, now: Date): 
           data: { type: "CLUB", name: item.clubName, normalizedName, parentOrganizationId: churchId },
           select: { id: true, isActive: true, parentOrganizationId: true },
         });
-      } else if (!club.parentOrganizationId && churchId) {
+      } else if (!club.parentOrganizationId) {
         await tx.organization.update({ where: { id: club.id }, data: { parentOrganizationId: churchId } });
       }
 

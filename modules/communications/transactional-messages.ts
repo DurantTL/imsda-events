@@ -9,6 +9,7 @@ import {
   formatMessageMoney,
   renderMessageTemplate,
   type MessageTemplateContext,
+  withChurchBilledLinkWording,
 } from "@/modules/communications/templates";
 import {
   buildHotelInformationBlock,
@@ -392,7 +393,10 @@ async function enqueueTransactionalMessage(
     || settings.replyToEmail
     || settings.senderEmail
     || "the IMSDA event office";
-  const publishedBody = source?.bodyTemplate ?? fallback.body;
+  const publishedBody = withChurchBilledLinkWording(
+    source?.bodyTemplate ?? fallback.body,
+    isDeferredOrganizationBilling,
+  );
   const bodyTemplate = input.changeCategory === "SEMINAR_PREFERENCES"
     && input.seminarPreferences
     && !publishedBody.includes("{{seminar_preferences}}")

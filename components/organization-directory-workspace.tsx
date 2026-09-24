@@ -590,8 +590,9 @@ export function OrganizationDirectoryWorkspace({
                         ? editor.organization.parentOrganizationId ?? ""
                         : ""}
                       name="parentOrganizationId"
+                      required
                     >
-                      <option value="">Not assigned yet</option>
+                      <option disabled value="">Choose a church</option>
                       {activeChurches.map((church) => (
                         <option key={church.id} value={church.id}>{church.name}</option>
                       ))}

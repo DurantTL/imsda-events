@@ -83,6 +83,25 @@ describe("organization repository invariants", () => {
     expect(mocks.create).not.toHaveBeenCalled();
   });
 
+  it("requires every club to have a sponsoring church, on create and on edit", async () => {
+    await expect(createOrganization({
+      type: "CLUB",
+      name: "North Pathfinders",
+      parentOrganizationId: null,
+      isActive: true,
+    }, "actor-1")).rejects.toMatchObject({ code: "ORGANIZATION_PARENT_REQUIRED" });
+
+    mocks.findUnique.mockResolvedValue({ id: "club-1", type: "CLUB", name: "North Pathfinders", isActive: true });
+    await expect(updateOrganization("club-1", {
+      name: "North Pathfinders",
+      parentOrganizationId: null,
+      isActive: true,
+      expectedUpdatedAt: "2026-07-27T12:00:00.000Z",
+    }, "actor-1")).rejects.toMatchObject({ code: "ORGANIZATION_PARENT_REQUIRED" });
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+
   it("creates a club and records an audit entry without changing event data", async () => {
     mocks.findUnique.mockResolvedValue({ type: "CHURCH", isActive: true });
     mocks.create.mockResolvedValue({
@@ -140,17 +159,19 @@ describe("organization repository invariants", () => {
   });
 
   it("detects a stale organization edit instead of overwriting it", async () => {
-    mocks.findUnique.mockResolvedValue({
-      id: "club-1",
-      type: "CLUB",
-      name: "North Pathfinders",
-      isActive: true,
-    });
+    mocks.findUnique
+      .mockResolvedValueOnce({
+        id: "club-1",
+        type: "CLUB",
+        name: "North Pathfinders",
+        isActive: true,
+      })
+      .mockResolvedValueOnce({ type: "CHURCH", isActive: true });
     mocks.updateMany.mockResolvedValue({ count: 0 });
 
     await expect(updateOrganization("club-1", {
       name: "North Pathfinder Club",
-      parentOrganizationId: null,
+      parentOrganizationId: "church-1",
       isActive: true,
       expectedUpdatedAt: "2026-07-27T12:00:00.000Z",
     }, "actor-1")).rejects.toMatchObject({

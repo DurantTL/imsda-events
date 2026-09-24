@@ -219,6 +219,7 @@ export function ClubImportWorkspace() {
                   <label>
                     Sponsoring church{draft.churchName ? ` (form: ${draft.churchName})` : ""}
                     <select
+                      required
                       onChange={(event) => {
                         const value = event.target.value;
                         update(index, (d) => ({
@@ -229,7 +230,7 @@ export function ClubImportWorkspace() {
                       }}
                       value={churchValue}
                     >
-                      <option value="">None</option>
+                      <option disabled value="">Choose a church</option>
                       {(draft.newChurchName || draft.churchName) && (
                         <option value={NEW_CHURCH}>Create church: {draft.newChurchName || draft.churchName}</option>
                       )}
