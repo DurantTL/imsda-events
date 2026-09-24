@@ -54,6 +54,29 @@ const baseDefinition: TestDefinition = {
   ],
 };
 
+/** The same form, priced like Spring Camporee (#409): a per-person fee with
+ * late pricing, and a registration-level meal-sponsorship credit capped at
+ * the headcount. */
+function pricedDefinitionWith(creditCentsPerUnit: number): TestDefinition {
+  return {
+    ...baseDefinition,
+    sections: [
+      baseDefinition.sections[0]!,
+      { id: "meals", title: "Meals", description: "", fields: [
+        { id: "s_sponsor_count", key: "meal_sponsorship_count", label: "People sponsored", helpText: "", type: "NUMBER", scope: "REGISTRATION", required: false, options: [], creditCentsPerUnit, capUnitsAtAttendeeCount: true },
+      ] },
+      { ...baseDefinition.sections[1]!, fields: [
+        ...baseDefinition.sections[1]!.fields,
+        { id: "a_fee", key: "registration_fee", label: "Registration fee", helpText: "", type: "CALCULATED", scope: "ATTENDEE", required: false, options: [], priceCents: 900, latePricing: { startsOn: "2026-10-05", label: "Late pricing", priceCents: 1400 } },
+      ] },
+    ],
+  };
+}
+
+/** Priced like Spring Camporee (#409): $9/person fee with late pricing, and a
+ * $5-per-person meal-sponsorship credit capped at the headcount. */
+const pricedDefinition = pricedDefinitionWith(-500);
+
 /** The same form with a required attendee question nobody's roster can prefill. */
 const shirtDefinition: TestDefinition = {
   ...baseDefinition,
@@ -81,7 +104,7 @@ const seminarDefinition: TestDefinition = {
   ],
 };
 
-const registrationResponses = {
+const registrationResponses: Record<string, unknown> = {
   primary_contact_first_name: "Test",
   primary_contact_last_name: "Director",
   email: "director@example.test",
@@ -549,6 +572,41 @@ describe("club registration edit (H3b, #366)", () => {
     prisma.clubEventRegistration.findUnique.mockResolvedValue(null);
     await expect(amendClubRegistration("club-1", "event-1", "director-1", baseEdit(), beforeDeadline))
       .rejects.toMatchObject({ code: "REGISTRATION_NOT_FOUND" });
+  });
+
+  it("re-prices a priced registration the same way submit does: original pricing date, meal credit capped at the new headcount (#409)", async () => {
+    const { registration, prisma } = fixture({ definition: pricedDefinition });
+    // Submitted 2026-10-01, before the 2026-10-05 late date; the edit itself
+    // happens after that date (`beforeDeadline` = 2026-10-16), but H3b keeps
+    // pricing on the original submit date, so the $9 (not $14) fee applies.
+    registration.publicFormSubmission.responses = { ...registration.publicFormSubmission.responses, meal_sponsorship_count: 5 };
+
+    await amendClubRegistration("club-1", "event-1", "director-1", {
+      ...baseEdit(),
+      selectedMemberIds: ["m1", "m3"],
+    }, beforeDeadline);
+
+    // 2 people × $9 (original-date pricing, not the $14 late fee) − meal
+    // credit capped at the 2-person headcount (not the 5 claimed): 1800 − 1000.
+    expect(prisma.registration.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ totalAmount: 8 }) }));
+  });
+
+  it("floors a priced registration's amount owed at $0 on amendment when the meal credit would exceed the fees (#409)", async () => {
+    // A credit equal to the per-person fee: crediting the whole headcount
+    // would land exactly on $0 (never negative) once floored.
+    const { registration, prisma } = fixture({
+      definition: pricedDefinitionWith(-900),
+      attendees: [attendee("attendee-m1", "m1", "Alex", "Sample", 11)],
+    });
+    registration.publicFormSubmission.responses = { ...registration.publicFormSubmission.responses, meal_sponsorship_count: 1 };
+
+    await amendClubRegistration("club-1", "event-1", "director-1", {
+      ...baseEdit(),
+      selectedMemberIds: ["m1"],
+    }, beforeDeadline);
+
+    // 1 person × $9 − 1 person fed × $9 = $0, floored (never negative).
+    expect(prisma.registration.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ totalAmount: 0 }) }));
   });
 });
 

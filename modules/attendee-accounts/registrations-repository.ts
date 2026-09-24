@@ -256,6 +256,10 @@ export type AttendeeRegistrationSummary = {
     timezone: string;
     location: string | null;
     attendeeEditPolicy: "TIERED" | "VERIFY_EVERY_EDIT";
+    // A deferred-organization event bills the responsible church directly
+    // (#409): the recorded amount is what the church owes, never an
+    // attendee or director balance, so no payment is ever requested here.
+    isDeferredOrganizationBilling: boolean;
   };
   contact: {
     firstName: string;
@@ -319,6 +323,7 @@ export async function listRegistrationsForVerifiedEmail(
           timezone: true,
           location: true,
           attendeeEditPolicy: true,
+          billingMode: true,
           seminarPreferenceClosesOn: true,
           seminarPreferenceSelfServiceLocked: true,
           programAssignmentRuns: {
@@ -366,9 +371,12 @@ export async function listRegistrationsForVerifiedEmail(
 
   return registrations.map((registration) => {
     const totalCents = moneyToCents(registration.totalAmount);
+    const isDeferredOrganizationBilling = registration.event.billingMode === "DEFERRED_ORGANIZATION_INVOICE";
     // The same arithmetic the payment path and the private management page use,
     // so a balance shown here can never disagree with the one shown there.
-    const balanceCents = registrationBalanceCents(registration);
+    // A deferred-organization event's recorded amount is what the church
+    // owes (#409), never an attendee or director balance to pay online.
+    const balanceCents = isDeferredOrganizationBilling ? 0 : registrationBalanceCents(registration);
     const parsedDefinition = registration.publicFormSubmission
       ? registrationFormDefinitionSchema.safeParse(
           registration.publicFormSubmission.formVersion.definition,
@@ -443,6 +451,7 @@ export async function listRegistrationsForVerifiedEmail(
         timezone: registration.event.timezone,
         location: registration.event.location,
         attendeeEditPolicy: registration.event.attendeeEditPolicy,
+        isDeferredOrganizationBilling,
       },
       contact: publicContactFromSnapshot(
         registration.contactSnapshot,

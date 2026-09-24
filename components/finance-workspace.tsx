@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { BadgePercent, Banknote, CircleDollarSign, CreditCard, ReceiptText, RotateCcw, Search, WalletCards, X } from "lucide-react";
+import { BadgePercent, Banknote, Building2, CircleDollarSign, CreditCard, ReceiptText, RotateCcw, Search, WalletCards, X } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 import {
@@ -170,7 +170,7 @@ export function FinanceWorkspace({
 
   return (
     <section className="page-stack">
-      <div className="page-intro"><div><p className="eyebrow">Financial operations</p><h2>Payments & balances</h2><p>Search by attendee or payer, record offline payments, review Square card payments, and track confirmed refunds.</p></div><div className="page-intro-actions"><a className="secondary-button" href={`/finance/square-payments?event=${eventId}`}><CreditCard aria-hidden="true" size={17} /> Unmatched Square payments</a><span className="count-badge"><WalletCards aria-hidden="true" size={17} /> {registrations.length} registrations</span></div></div>
+      <div className="page-intro"><div><p className="eyebrow">Financial operations</p><h2>Payments & balances</h2><p>Search by attendee or payer, record offline payments, review Square card payments, and track confirmed refunds.</p></div><div className="page-intro-actions"><a className="secondary-button" href={`/finance/church-owed?event=${eventId}`}><Building2 aria-hidden="true" size={17} /> Owed by churches</a><a className="secondary-button" href={`/finance/square-payments?event=${eventId}`}><CreditCard aria-hidden="true" size={17} /> Unmatched Square payments</a><span className="count-badge"><WalletCards aria-hidden="true" size={17} /> {registrations.length} registrations</span></div></div>
       <section className="finance-summary" aria-label="Financial summary">
         <article className="finance-stat"><span><ReceiptText aria-hidden="true" size={18} /></span><small>Active billed</small><strong>{money(totals.billed)}</strong></article>
         <article className="finance-stat"><span><Banknote aria-hidden="true" size={18} /></span><small>Net received</small><strong>{money(totals.received)}</strong></article>
@@ -185,7 +185,7 @@ export function FinanceWorkspace({
         <div className="finance-row finance-head"><span>Registration</span><span>Total</span><span>Received</span><span>Balance</span><span /></div>
         {visible.map((registration) => (
           <button className="finance-row finance-record" type="button" key={registration.id} onClick={() => openDetail(registration)}>
-            <span><strong>{registration.accountHolder.firstName} {registration.accountHolder.lastName}</strong><small>{registration.confirmationCode} · {registration.status.toLowerCase()} · {registration.attendeeCount} {registration.attendeeCount === 1 ? "person" : "people"}</small>{attendeeSummaryLabel(registration) && <small className="finance-attendee-names">{attendeeSummaryLabel(registration)}</small>}</span>
+            <span><strong>{registration.accountHolder.firstName} {registration.accountHolder.lastName}</strong><small>{registration.confirmationCode} · {registration.status.toLowerCase()} · {registration.attendeeCount} {registration.attendeeCount === 1 ? "person" : "people"}{registration.isDeferredOrganizationBilling ? " · billed to church" : ""}</small>{attendeeSummaryLabel(registration) && <small className="finance-attendee-names">{attendeeSummaryLabel(registration)}</small>}</span>
             <span>{money(registration.totalAmountCents)}</span><span>{money(registration.paidCents)}</span><span className={registration.balanceCents > 0 ? "balance-due" : "paid-balance"}>{money(registration.balanceCents)}</span><span>View</span>
           </button>
         ))}
@@ -198,6 +198,9 @@ export function FinanceWorkspace({
             <div className="modal-head"><div><p className="eyebrow">{selected.confirmationCode}</p><h2 id="finance-modal-title">{modal === "payment" ? "Record a payment" : modal === "refund" ? "Record a refund" : modal === "adjust" ? "Adjust amount owed" : modal === "reverse" ? "Reverse adjustment" : `${selected.accountHolder.firstName} ${selected.accountHolder.lastName}`}</h2></div><button className="icon-button" type="button" onClick={closeModal} aria-label="Close dialog"><X aria-hidden="true" size={18} /></button></div>
             {modal === "detail" ? (
               <div className="detail-stack">
+                {selected.isDeferredOrganizationBilling && (
+                  <div className="inline-notice">This registration is billed to the church directly. The total is what the church owes, not an attendee balance — no online payment applies.</div>
+                )}
                 <div className="detail-grid"><span><small>Total</small><strong>{money(selected.totalAmountCents)}</strong></span><span><small>Net received</small><strong>{money(selected.paidCents)}</strong></span><span><small>Balance</small><strong>{money(selected.balanceCents)}</strong></span><span><small>Payments</small><strong>{selected.payments.length}</strong></span></div>
                 <div><p className="eyebrow">Attendees on this registration</p><ul className="finance-attendee-list">{selected.attendees.map((attendee) => <li key={attendee.id}><span><strong>{attendee.firstName} {attendee.lastName}</strong><small>{attendee.attendeeType.toLowerCase()}{attendee.email ? ` · ${attendee.email}` : ""}</small></span></li>)}</ul>{selected.attendees.length === 0 && <p className="quiet-copy">No attendees are recorded on this registration.</p>}</div>
                 <div><p className="eyebrow">Payment history</p>{selected.payments.map((payment) => { const available = payment.amountCents - payment.refundedCents; const squareManaged = payment.method === "CARD_REFERENCE"; return <div className="payment-history" key={payment.id}><span className="payment-icon"><Banknote aria-hidden="true" size={17} /></span><span><strong>{money(payment.amountCents)} · {squareManaged ? "Square card" : payment.method.toLowerCase()}</strong><small>{payment.receivedAt ? new Date(payment.receivedAt).toLocaleString() : "Recorded manually"}{payment.refundedCents ? ` · ${money(payment.refundedCents)} refunded` : ""}{squareManaged && available > 0 ? " · refund through Square Dashboard" : ""}</small></span>{canManage && available > 0 && !squareManaged && <button className="text-button" type="button" onClick={() => { setSelectedPayment(payment); setError(""); setModal("refund"); }}>Refund</button>}</div>; })}{selected.payments.length === 0 && <p className="quiet-copy">No payments have been recorded.</p>}</div>

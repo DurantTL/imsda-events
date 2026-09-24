@@ -14,6 +14,11 @@ import { getClassSelectionWorkspace } from "@/modules/honors/enrollment-reposito
 export const metadata: Metadata = { title: "Club registration" };
 export const dynamic = "force-dynamic";
 
+const moneyFormatter = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+function moneyLabel(cents: number) {
+  return moneyFormatter.format(cents / 100);
+}
+
 export default async function ClubEventRegistrationPage({
   params,
 }: {
@@ -65,6 +70,9 @@ export default async function ClubEventRegistrationPage({
           <p>
             Confirmation <strong translate="no">{workspace.registration.confirmationCode}</strong> ·{" "}
             {workspace.registration.attendees.length} going. A confirmation email was sent to the contact on the registration.
+          </p>
+          <p className="field-help">
+            Amount owed by your church: <strong translate="no">{moneyLabel(workspace.registration.amountOwedCents)}</strong> · billed directly, not paid online.
           </p>
           <ul className="public-manage-club-list">
             {workspace.registration.attendees.map((attendee, index) => (

@@ -49,6 +49,7 @@ function registration(
     paidCents: 0,
     balanceCents: 12_500,
     onlinePaymentUnavailable: false,
+    isDeferredOrganizationBilling: false,
     submittedAt,
     createdAt: "2026-07-30T18:13:05.955Z",
     updatedAt: "2026-07-30T18:13:05.955Z",

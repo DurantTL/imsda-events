@@ -240,6 +240,66 @@ describe("registration form definitions", () => {
     expect(fee.latePricing?.label).toBe("Late registration pricing");
   });
 
+  it("applies the Spring Camporee meal-sponsorship credit, capped at headcount (#409)", () => {
+    const definition = formTemplates.find((template) => template.key === "spring_camporee_export")!.definition;
+    const roster = [
+      { first_name: "Pat", last_name: "Finder" },
+      { first_name: "Sam", last_name: "Scout" },
+    ];
+
+    // Within the cap: 2 people × $9 − 1 person fed × $5.
+    expect(calculateRosterTotal(
+      definition,
+      { sponsoring_meals: "Yes", meal_sponsorship_count: 1 },
+      roster,
+      "2026-04-10",
+    )).toMatchObject({ subtotalCents: 1300, totalCents: 1300 });
+
+    // Over the cap: sponsoring more people than the club actually registered
+    // caps the credit at the headcount (2), never crediting more than that.
+    expect(calculateRosterTotal(
+      definition,
+      { sponsoring_meals: "Yes", meal_sponsorship_count: 5 },
+      roster,
+      "2026-04-10",
+    )).toMatchObject({ subtotalCents: 800, totalCents: 800 });
+
+    // No sponsorship: the credit field is hidden and contributes nothing.
+    expect(calculateRosterTotal(
+      definition,
+      { sponsoring_meals: "No" },
+      roster,
+      "2026-04-10",
+    )).toMatchObject({ subtotalCents: 1800, totalCents: 1800 });
+  });
+
+  it("floors a registration's total at $0 when a credit exceeds the priced fees, generically", () => {
+    // A synthetic form, not the Camporee template: proves the floor lives in
+    // the pricing engine itself (#409), not in any one form's numbers.
+    const definition = registrationFormDefinitionSchema.parse({
+      title: "Synthetic credit form",
+      description: "",
+      confirmationMessage: "Registered.",
+      attendeeRoster: { enabled: true, minAttendees: 1, maxAttendees: 10, attendeeLabel: "Person", addButtonLabel: "Add" },
+      sections: [
+        { id: "reg", title: "Registration", description: "", fields: [
+          { id: "credit", key: "sponsor_count", label: "People sponsored", helpText: "", type: "NUMBER", scope: "REGISTRATION", required: false, options: [], creditCentsPerUnit: -1000, capUnitsAtAttendeeCount: true },
+        ] },
+        { id: "roster", title: "Roster", description: "", fields: [
+          { id: "first", key: "first_name", label: "First name", helpText: "", type: "TEXT", scope: "ATTENDEE", required: true, options: [] },
+          { id: "last", key: "last_name", label: "Last name", helpText: "", type: "TEXT", scope: "ATTENDEE", required: true, options: [] },
+          { id: "fee", key: "fee", label: "Fee", helpText: "", type: "CALCULATED", scope: "ATTENDEE", required: false, options: [], priceCents: 900 },
+        ] },
+      ],
+    });
+    const roster = [{ first_name: "Pat", last_name: "Finder" }];
+    // One person, one $9 fee, a $10-per-unit credit capped at the headcount
+    // (1): 900 − 1000 would be negative without the floor.
+    const calculation = calculateRosterTotal(definition, { sponsor_count: 1 }, roster, "2026-01-01");
+    expect(calculation.subtotalCents).toBe(0);
+    expect(calculation.totalCents).toBe(0);
+  });
+
   it("resolves the Spring Camporee club and director as the deferred-organization billing identity", () => {
     expect(resolveResponsibleOrganization({ club_name: "Ankeny Son-Seekers" })).toBe("Ankeny Son-Seekers");
     expect(resolveResponsibleOrganization({
