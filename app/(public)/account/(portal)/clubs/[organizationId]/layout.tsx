@@ -43,7 +43,10 @@ export default async function ClubLayout({
               { href: base, label: "Club home" },
               { href: `${base}/roster`, label: "Roster" },
               { href: `${base}/events`, label: "Events & classes", matchChildren: true },
-              ...(access.capabilities.submitReports ? [{ href: `${base}/reports`, label: "Monthly reports", matchChildren: true }] : []),
+              ...(access.capabilities.submitReports ? [
+                { href: `${base}/notes`, label: "Meeting notes", matchChildren: true },
+                { href: `${base}/reports`, label: "Monthly reports", matchChildren: true },
+              ] : []),
               ...(access.capabilities.manageTeam ? [{ href: `${base}/team`, label: "Club admins" }] : []),
               ...(access.capabilities.editProfile ? [{ href: `${base}/profile`, label: "Club profile" }] : []),
             ]}
@@ -54,7 +57,10 @@ export default async function ClubLayout({
           <AccountSectionNav
             items={[
               { href: base, label: "Club home" },
-              ...(access.capabilities.submitReports ? [{ href: `${base}/reports`, label: "Monthly reports", matchChildren: true }] : []),
+              ...(access.capabilities.submitReports ? [
+                { href: `${base}/notes`, label: "Meeting notes", matchChildren: true },
+                { href: `${base}/reports`, label: "Monthly reports", matchChildren: true },
+              ] : []),
             ]}
             label="Club"
             variant="secondary"

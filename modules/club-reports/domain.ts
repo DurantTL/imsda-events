@@ -62,7 +62,8 @@ export function reportProblems(input: { points: PickedPoints; honors: readonly R
     }
   }
   const namedHonors = input.honors.filter((honor) => honor.name.trim()).length;
-  if (input.honors.length > MAX_HONORS) problems.push({ key: "honorsList", message: `List at most ${MAX_HONORS} honors.` });
+  const filledHonors = input.honors.filter((honor) => honor.name.trim() || honor.participants !== null).length;
+  if (filledHonors > MAX_HONORS) problems.push({ key: "honorsList", message: `List at most ${MAX_HONORS} honors.` });
   if ((input.points.honors ?? 0) > namedHonors * 25) {
     problems.push({
       key: "honors",

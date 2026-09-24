@@ -26,7 +26,8 @@ export default async function EventClubReportPage({
   const club = await getPrisma().organization.findUnique({ where: { id: organizationId }, select: { type: true, name: true } });
   if (!club || club.type !== "CLUB") notFound();
   const report = await getClubReport(organizationId, month);
-  if (!report) notFound();
+  if (!report || report.status !== "SUBMITTED") notFound();
+  const rosterPrefill = await reportPrefill(organizationId, new Date());
   return (
     <section className="page-stack">
       <Link className="secondary-button more-back-link" href={`/more/clubs/reports?event=${event.id}`}>Back to monthly reports</Link>
@@ -37,7 +38,7 @@ export default async function EventClubReportPage({
         expectedOnTime={0}
         initial={report}
         monthLabel={reportMonthLabel(month)}
-        prefill={await reportPrefill(organizationId, new Date())}
+        prefill={{ ...rosterPrefill, averageAttendance: null, honors: [] }}
         readOnly
         readOnlyNote="View only. The club files and changes its own reports."
         variant="staff"
