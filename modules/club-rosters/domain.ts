@@ -181,7 +181,8 @@ export function missingRosterFields(member: MissingFieldMember): string[] {
   if (!member.gender) missing.push(rosterFieldLabels.gender);
   // Only youth are in a class; staff and adults are usually "None" (#424).
   if (member.attendeeType === "YOUTH" && !member.classLevel) missing.push(rosterFieldLabels.classLevel);
-  if (!member.role) missing.push(rosterFieldLabels.role);
+  // A blank role only matters for youth; staff and adults show their type.
+  if (member.attendeeType === "YOUTH" && !member.role) missing.push(rosterFieldLabels.role);
   if (!member.attendeeType) missing.push(rosterFieldLabels.attendeeType);
   return missing;
 }

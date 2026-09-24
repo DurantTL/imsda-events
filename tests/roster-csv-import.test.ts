@@ -116,8 +116,8 @@ describe("roster CSV (#384, #424)", () => {
     const plan = planRosterImport(parseRosterCsv(file, 2026), []);
     expect(plan.map((step) => step.action)).toEqual(["ADD", "ADD", "ADD"]);
     expect(plan[0].message).toBe("Will be added. Will default: Type → Youth, Role → Pathfinder. Missing: Gender, Current class.");
-    // Staff don't get Pathfinder or need a class; their blank role is still missing.
-    expect(plan[1].message).toBe("Will be added. Missing: Role.");
+    // Staff don't get Pathfinder, need a class, or need a role (they show their type).
+    expect(plan[1].message).toBe("Will be added.");
     expect(plan[2].message).toBe("Will be added.");
   });
 

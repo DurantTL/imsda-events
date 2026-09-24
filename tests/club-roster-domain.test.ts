@@ -106,7 +106,7 @@ describe("club roster rules", () => {
     expect(missingRosterFields({ ...complete, birthDateNeeded: true })).toEqual(["Birth date"]);
     expect(missingRosterFields({ ...complete, gender: null, classLevel: null, role: "" })).toEqual(["Gender", "Current class", "Role"]);
     expect(missingRosterFields({ attendeeType: null, role: "", classLevel: null, gender: null, birthDateNeeded: true }))
-      .toEqual(["Birth date", "Gender", "Role", "Type"]);
+      .toEqual(["Birth date", "Gender", "Type"]);
   });
 
   it("only asks youth for a current class (#424)", () => {
@@ -114,5 +114,7 @@ describe("club roster rules", () => {
     expect(missingRosterFields(staff)).toEqual([]);
     expect(missingRosterFields({ ...staff, attendeeType: "ADULT" })).toEqual([]);
     expect(missingRosterFields({ ...staff, attendeeType: "YOUTH" })).toEqual(["Current class"]);
+    // A blank role only matters for youth; staff show their type instead.
+    expect(missingRosterFields({ ...staff, role: "" })).toEqual([]);
   });
 });
