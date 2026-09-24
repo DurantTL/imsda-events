@@ -20,6 +20,7 @@ import {
 } from "@/modules/communications/email-delivery";
 import type {
   BalanceReminderBatchInput,
+  ClubAssignmentBatchInput,
   ConfirmationResendInput,
   MessageRetryInput,
   MessagingSettingsInput,
@@ -27,6 +28,14 @@ import type {
   MessageTestInput,
   ShirtSizeRequestBatchInput,
 } from "@/modules/communications/schemas";
+import {
+  computeClubAssignmentPreview,
+  type ClubAssignmentCandidate,
+  type ClubAssignmentPreview,
+  type ClubAssignmentPreviewContext,
+  type ClubAssignmentSendSelection,
+} from "@/modules/communications/club-assignment-audience";
+import { emptyClubAssignmentFields } from "@/modules/club-registrations/assignments";
 import {
   messageRetryIdempotencyKey,
   messageRetryRequestFingerprint,
@@ -1996,6 +2005,361 @@ export async function enqueueShirtSizeRequestBatch(
 
   if (!transactionResult) {
     throw new Error("The shirt-size request batch transaction did not complete.");
+  }
+
+  const capturedIds = transactionResult.deliveryMode === "LOCAL_CAPTURE"
+    ? await captureMessageIdsLocally(transactionResult.messageIds)
+    : [];
+  const { existingCapturedCount, ...operation } = transactionResult;
+  return {
+    ...operation,
+    queuedCount: Math.max(transactionResult.queuedCount - capturedIds.length, 0),
+    capturedCount: existingCapturedCount + capturedIds.length,
+  };
+}
+
+/**
+ * Loads the state a club assignment batch needs: the event, message
+ * settings, the CLUB_ASSIGNMENTS template, and every active club
+ * registration with its recipient contact and current assignment.
+ */
+async function loadClubAssignmentState(
+  eventId: string,
+  client: MessagingDatabaseClient,
+  selection: ClubAssignmentSendSelection,
+  now = new Date(),
+) {
+  const [event, settingsRow, template, registrations] = await Promise.all([
+    client.event.findUnique({
+      where: { id: eventId },
+      select: { id: true, name: true, supportContact: true },
+    }),
+    client.eventMessageSettings.findUnique({ where: { eventId } }),
+    client.eventMessageTemplate.findUnique({
+      where: { eventId_key: { eventId, key: "CLUB_ASSIGNMENTS" } },
+      include: {
+        versions: { where: { status: "PUBLISHED" }, orderBy: { versionNumber: "desc" }, take: 1 },
+      },
+    }),
+    client.clubEventRegistration.findMany({
+      where: { eventId },
+      orderBy: { id: "asc" },
+      select: {
+        id: true,
+        organizationId: true,
+        organization: { select: { name: true } },
+        registration: {
+          select: {
+            id: true,
+            confirmationCode: true,
+            status: true,
+            contactSnapshot: true,
+            accountHolderPerson: { select: { firstName: true, lastName: true, normalizedEmail: true } },
+          },
+        },
+        assignment: true,
+      },
+    }),
+  ]);
+
+  if (!event) {
+    throw new MessagingError("MESSAGE_NOT_FOUND", "That event is no longer available.");
+  }
+
+  const settings = settingsRow ?? fallbackSettings;
+  const version = template?.versions[0] ?? null;
+  const candidates: ClubAssignmentCandidate[] = registrations.map((row) => {
+    const contact = recordFromJson(row.registration.contactSnapshot);
+    const contactValue = (key: "firstName" | "lastName" | "email", fallback: string) => (
+      typeof contact[key] === "string" ? contact[key].trim() : fallback
+    );
+    const firstName = contactValue("firstName", row.registration.accountHolderPerson.firstName);
+    const lastName = contactValue("lastName", row.registration.accountHolderPerson.lastName);
+    return {
+      organizationId: row.organizationId,
+      organizationName: row.organization.name,
+      clubEventRegistrationId: row.id,
+      registrationId: row.registration.id,
+      confirmationCode: row.registration.confirmationCode,
+      registrationStatus: row.registration.status,
+      recipientName: `${firstName} ${lastName}`.trim(),
+      recipientEmail: contactValue("email", row.registration.accountHolderPerson.normalizedEmail ?? ""),
+      fields: row.assignment ? {
+        campsiteLocation: row.assignment.campsiteLocation,
+        campsiteNotes: row.assignment.campsiteNotes,
+        dutyLabel: row.assignment.dutyLabel,
+        dutyDay: row.assignment.dutyDay,
+        dutyTime: row.assignment.dutyTime,
+        activityLabel: row.assignment.activityLabel,
+        notes: row.assignment.notes,
+      } : emptyClubAssignmentFields,
+      version: row.assignment?.version ?? 1,
+      lastEmailedVersion: row.assignment?.lastEmailedVersion ?? null,
+    };
+  });
+  const context: ClubAssignmentPreviewContext = {
+    eventId,
+    deliveryMode: settings.deliveryMode,
+    senderName: settings.senderName,
+    senderEmail: settings.senderEmail,
+    replyToEmail: settings.replyToEmail || settings.senderEmail || event.supportContact || null,
+    templateEnabled: template?.isEnabled ?? true,
+    templateVersionId: version?.id ?? null,
+    templateVersionNumber: version?.versionNumber ?? null,
+  };
+  return {
+    event,
+    settings,
+    template,
+    version,
+    preview: computeClubAssignmentPreview(candidates, context, selection, now),
+  };
+}
+
+export async function getClubAssignmentMessagePreview(
+  eventId: string,
+  selection: ClubAssignmentSendSelection,
+): Promise<ClubAssignmentPreview> {
+  await ensureEventMessagingDefaults(eventId);
+  return (await loadClubAssignmentState(eventId, getPrisma(), selection)).preview;
+}
+
+export type ClubAssignmentBatchOperation = {
+  batchId: string;
+  messageIds: string[];
+  includedCount: number;
+  deliveryMode: "DISABLED" | "LOCAL_CAPTURE" | "EXTERNAL_EMAIL";
+  queuedCount: number;
+  capturedCount: number;
+  suppressedCount: number;
+  replayed: boolean;
+};
+
+/**
+ * Enqueues the reviewed club assignment batch (#410). Structurally the same
+ * guarantees as `enqueueShirtSizeRequestBatch`: fingerprint equality before
+ * writing, one outbox row per club keyed on a per-batch idempotency key,
+ * replay returns the original batch, and enqueue stops short of sending. The
+ * one addition: each included club's `ClubEventAssignment.lastEmailSentAt`
+ * and `lastEmailedVersion` are stamped in the same transaction, which is what
+ * makes "changed since sent" derivable afterward.
+ */
+export async function enqueueClubAssignmentBatch(
+  eventId: string,
+  input: ClubAssignmentBatchInput,
+  actorUserId: string,
+): Promise<ClubAssignmentBatchOperation> {
+  await ensureEventMessagingDefaults(eventId);
+  const prisma = getPrisma();
+  const selection: ClubAssignmentSendSelection = input.scope === "ONE"
+    ? { scope: "ONE", organizationId: input.organizationId ?? "" }
+    : { scope: "ALL_SET" };
+  let transactionResult:
+    | (Omit<ClubAssignmentBatchOperation, "capturedCount"> & { existingCapturedCount: number })
+    | undefined;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      transactionResult = await prisma.$transaction(async (tx) => {
+        const now = new Date();
+        const operationEntityId = `club-assignments:${eventId}:${input.batchId}`;
+        const existingAudit = await tx.auditLog.findFirst({
+          where: { eventId, action: "CLUB_ASSIGNMENTS_BATCH_ENQUEUED", entityId: operationEntityId },
+          select: { metadata: true },
+        });
+        if (existingAudit) {
+          const metadata = recordFromJson(existingAudit.metadata);
+          const storedFingerprint = typeof metadata.previewFingerprint === "string" ? metadata.previewFingerprint : "";
+          if (storedFingerprint !== input.previewFingerprint) {
+            throw new MessagingError(
+              "IDEMPOTENCY_KEY_REUSED",
+              "This batch ID was already used with a different preview. Refresh the page and create a new batch.",
+            );
+          }
+          const existingMessages = await tx.messageOutbox.findMany({
+            where: { eventId, templateKey: "CLUB_ASSIGNMENTS", correlationId: input.batchId },
+            orderBy: { createdAt: "asc" },
+            select: { id: true, status: true },
+          });
+          const storedMode = metadata.deliveryMode;
+          const deliveryMode = storedMode === "DISABLED" || storedMode === "LOCAL_CAPTURE" || storedMode === "EXTERNAL_EMAIL"
+            ? storedMode
+            : "LOCAL_CAPTURE";
+          const initialQueuedCount = typeof metadata.initialQueuedCount === "number"
+            ? metadata.initialQueuedCount
+            : existingMessages.filter((message) => message.status !== "SUPPRESSED").length;
+          const currentCapturedCount = existingMessages.filter((message) => message.status === "CAPTURED").length;
+          return {
+            batchId: input.batchId,
+            messageIds: existingMessages.map((message) => message.id),
+            includedCount: typeof metadata.includedCount === "number" ? metadata.includedCount : existingMessages.length,
+            deliveryMode,
+            queuedCount: deliveryMode === "EXTERNAL_EMAIL"
+              ? initialQueuedCount
+              : existingMessages.filter((message) => message.status === "PENDING" || message.status === "PROCESSING").length,
+            suppressedCount: typeof metadata.initialSuppressedCount === "number"
+              ? metadata.initialSuppressedCount
+              : existingMessages.filter((message) => message.status === "SUPPRESSED").length,
+            replayed: true,
+            existingCapturedCount: currentCapturedCount,
+          };
+        }
+
+        const state = await loadClubAssignmentState(eventId, tx, selection);
+        if (state.preview.fingerprint !== input.previewFingerprint) {
+          throw new MessagingError(
+            "PREVIEW_CHANGED",
+            "The club assignment audience changed. Review the updated preview before creating the batch.",
+            { clubAssignmentPreview: state.preview },
+          );
+        }
+        if (state.preview.includedCount === 0) {
+          throw new MessagingError(
+            "EMPTY_AUDIENCE",
+            "No club is ready for the assignment email right now.",
+            { clubAssignmentPreview: state.preview },
+          );
+        }
+
+        const source = {
+          isEnabled: state.template?.isEnabled ?? true,
+          templateVersionId: state.version?.id ?? null,
+          subject: state.version?.subjectTemplate ?? DEFAULT_MESSAGE_TEMPLATES.CLUB_ASSIGNMENTS.subject,
+          body: state.version?.bodyTemplate ?? DEFAULT_MESSAGE_TEMPLATES.CLUB_ASSIGNMENTS.body,
+        };
+        const suppressed = state.settings.deliveryMode === "DISABLED" || !source.isEnabled;
+        const correlationId = input.batchId;
+        const messageIds: string[] = [];
+        let queuedCount = 0;
+        let suppressedCount = 0;
+
+        for (const recipient of state.preview.recipients) {
+          const rendered = renderMessageTemplate(
+            { subject: source.subject, body: source.body },
+            {
+              recipient_name: recipient.recipientName,
+              registrant_name: recipient.recipientName,
+              event_name: state.event.name,
+              confirmation_code: recipient.confirmationCode,
+              club_assignments_block: recipient.assignmentBlock,
+              portal_url: REGISTRATION_MANAGE_LINK_SENTINEL,
+              reply_to_email: state.settings.replyToEmail
+                || state.settings.senderEmail
+                || state.event.supportContact
+                || "the IMSDA event office",
+              contact_email: state.event.supportContact
+                || state.settings.replyToEmail
+                || state.settings.senderEmail
+                || "the IMSDA event office",
+            },
+          );
+          if (!rendered.isComplete) {
+            throw new MessagingError(
+              "INVALID_TEMPLATE",
+              `The club assignments template has unresolved tokens: ${rendered.unresolvedTokens.join(", ")}.`,
+            );
+          }
+          const idempotencyKey = `club-assignments:${eventId}:${input.batchId}:${recipient.organizationId}`;
+          const message = await tx.messageOutbox.upsert({
+            where: { idempotencyKey },
+            update: {},
+            create: {
+              eventId,
+              registrationId: recipient.registrationId,
+              templateVersionId: source.templateVersionId,
+              templateKey: "CLUB_ASSIGNMENTS",
+              recipientKind: "REGISTRANT",
+              recipientEmail: recipient.recipientEmail,
+              recipientName: recipient.recipientName,
+              senderNameSnapshot: state.settings.senderName,
+              senderEmailSnapshot: state.settings.senderEmail,
+              replyToEmailSnapshot: state.settings.replyToEmail,
+              subjectSnapshot: rendered.subject,
+              bodyTextSnapshot: rendered.body,
+              bodyHtmlSnapshot: rendered.bodyHtml,
+              metadata: {
+                trigger: "STAFF_CLUB_ASSIGNMENTS_BATCH",
+                batchId: input.batchId,
+                previewFingerprint: input.previewFingerprint,
+                organizationId: recipient.organizationId,
+                confirmationCode: recipient.confirmationCode,
+                deliveryMode: state.settings.deliveryMode,
+                realDelivery: state.settings.deliveryMode === "EXTERNAL_EMAIL",
+              },
+              idempotencyKey,
+              correlationId,
+              status: suppressed ? "SUPPRESSED" : "PENDING",
+              lastError: suppressed
+                ? state.settings.deliveryMode === "DISABLED"
+                  ? "Delivery is disabled for this event."
+                  : "The club assignments template is disabled."
+                : null,
+            },
+            select: { id: true, status: true },
+          });
+          messageIds.push(message.id);
+          if (message.status === "PENDING") queuedCount += 1;
+          if (message.status === "SUPPRESSED") suppressedCount += 1;
+
+          // Stamped even when delivery is suppressed: staff reviewed and
+          // created this batch for this exact assignment version, which is
+          // the event "changed since sent" is measured against.
+          await tx.clubEventAssignment.update({
+            where: { clubEventRegistrationId: recipient.clubEventRegistrationId },
+            data: { lastEmailSentAt: now, lastEmailedVersion: recipient.version },
+          });
+        }
+
+        const audit = await tx.auditLog.createMany({
+          data: [{
+            eventId,
+            actorUserId,
+            action: "CLUB_ASSIGNMENTS_BATCH_ENQUEUED",
+            entityType: "MessageBatch",
+            entityId: operationEntityId,
+            correlationId,
+            summary: suppressed
+              ? `Recorded a suppressed club assignments batch for ${state.preview.includedCount} club${state.preview.includedCount === 1 ? "" : "s"}; no email was sent.`
+              : state.settings.deliveryMode === "LOCAL_CAPTURE"
+                ? `Created a local club assignments batch for ${state.preview.includedCount} club${state.preview.includedCount === 1 ? "" : "s"}; no email was sent.`
+                : `Queued a club assignments batch for ${state.preview.includedCount} club${state.preview.includedCount === 1 ? "" : "s"} for later explicit email processing.`,
+            metadata: {
+              batchId: input.batchId,
+              scope: input.scope,
+              previewFingerprint: input.previewFingerprint,
+              includedCount: state.preview.includedCount,
+              skippedCount: state.preview.skippedCount,
+              deliveryMode: state.settings.deliveryMode,
+              templateEnabled: source.isEnabled,
+              templateVersionId: source.templateVersionId,
+              initialQueuedCount: queuedCount,
+              initialSuppressedCount: suppressedCount,
+              realDelivery: false,
+            },
+          }],
+          skipDuplicates: true,
+        });
+
+        return {
+          batchId: input.batchId,
+          messageIds,
+          includedCount: state.preview.includedCount,
+          deliveryMode: state.settings.deliveryMode,
+          queuedCount,
+          suppressedCount,
+          replayed: audit.count === 0,
+          existingCapturedCount: 0,
+        };
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      break;
+    } catch (error) {
+      const retryable = error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034";
+      if (!retryable || attempt === 2) throw error;
+    }
+  }
+
+  if (!transactionResult) {
+    throw new Error("The club assignments batch transaction did not complete.");
   }
 
   const capturedIds = transactionResult.deliveryMode === "LOCAL_CAPTURE"

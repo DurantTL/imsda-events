@@ -22,6 +22,7 @@ export const MESSAGE_TEMPLATE_KEYS = [
   "SHIRT_SIZE_REQUEST",
   "REGISTRATION_ACCESS_RECOVERY",
   "EVENT_ANNOUNCEMENT",
+  "CLUB_ASSIGNMENTS",
 ] as const;
 
 export type MessageTemplateKey = (typeof MESSAGE_TEMPLATE_KEYS)[number];
@@ -70,6 +71,7 @@ export const MESSAGE_TEMPLATE_TOKEN_KEYS = [
   "checkin_block",
   "checkin_qr_url",
   "checkin_qr_image",
+  "club_assignments_block",
 ] as const;
 
 export type MessageTemplateToken = (typeof MESSAGE_TEMPLATE_TOKEN_KEYS)[number];
@@ -128,6 +130,7 @@ export const MARKDOWN_MESSAGE_TEMPLATE_TOKENS: ReadonlySet<MessageTemplateToken>
   "checkin_qr_image",
   "portal_url",
   "announcement_body",
+  "club_assignments_block",
 ]);
 
 export type MessageTemplateContext = Partial<
@@ -164,6 +167,7 @@ export const DEFAULT_MESSAGE_TEMPLATE_NAMES: Readonly<Record<MessageTemplateKey,
   SHIRT_SIZE_REQUEST: "Shirt size request",
   REGISTRATION_ACCESS_RECOVERY: "Private registration link recovery",
   EVENT_ANNOUNCEMENT: "Event announcement",
+  CLUB_ASSIGNMENTS: "Club assignments",
 };
 
 export const DEFAULT_MESSAGE_TEMPLATE_DESCRIPTIONS: Readonly<
@@ -211,6 +215,8 @@ export const DEFAULT_MESSAGE_TEMPLATE_DESCRIPTIONS: Readonly<
     "Sent when a registrant proves knowledge of a confirmation code and its current contact email, with a newly issued private management link.",
   EVENT_ANNOUNCEMENT:
     "Sends a published event-feed announcement to active registration contacts after an explicit staff broadcast action.",
+  CLUB_ASSIGNMENTS:
+    "Sent only after staff review a batch of clubs whose campsite, duty, and activity are all set. Tells a club director what staff assigned; re-sent after an assignment changes.",
 };
 
 export const DEFAULT_MESSAGE_TEMPLATE_SUBJECTS: Readonly<
@@ -252,6 +258,8 @@ export const DEFAULT_MESSAGE_TEMPLATE_SUBJECTS: Readonly<
     "Your private registration link: {{event_name}} ({{confirmation_code}})",
   EVENT_ANNOUNCEMENT:
     "{{event_name}} update: {{announcement_title}}",
+  CLUB_ASSIGNMENTS:
+    "Your club's assignments for {{event_name}}",
 };
 
 export const DEFAULT_MESSAGE_TEMPLATE_BODIES: Readonly<Record<MessageTemplateKey, string>> = {
@@ -651,6 +659,21 @@ export const DEFAULT_MESSAGE_TEMPLATE_BODIES: Readonly<Record<MessageTemplateKey
     "",
     "Questions? Contact {{contact_email}}.",
   ].join("\n"),
+  CLUB_ASSIGNMENTS: [
+    "# Your club's assignments for {{event_name}}",
+    "",
+    "Hello {{recipient_name}},",
+    "",
+    "Here is what staff have set for registration **{{confirmation_code}}**:",
+    "",
+    "{{club_assignments_block}}",
+    "",
+    "**[View your registration]({{portal_url}})**",
+    "",
+    "---",
+    "",
+    "Questions? Contact {{contact_email}}.",
+  ].join("\n"),
 };
 
 export const DEFAULT_MESSAGE_TEMPLATES: Readonly<
@@ -825,6 +848,11 @@ export const MESSAGE_TEMPLATE_TOKEN_OPTIONS: readonly {
     description:
       "The pass QR image, for a single-attendee registration only. A party has one code per attendee, so this renders nothing and the check-in block links to the portal instead.",
   },
+  {
+    key: "club_assignments_block",
+    label: "Club assignments block",
+    description: "The club's staff-set campsite, duty, and activity, as a short list. Only what staff set is shown.",
+  },
 ];
 
 /**
@@ -899,6 +927,11 @@ export const SAMPLE_MESSAGE_TEMPLATE_CONTEXT: Readonly<
   ].join("\n"),
   checkin_qr_url: "https://events.example.test/manage/sample-preview-link",
   checkin_qr_image: "https://events.example.test/manage/sample-preview-link/qr.png",
+  club_assignments_block: [
+    "- **Campsite:** Field C, site 12 — near the east restrooms",
+    "- **Duty:** Flag raising / lowering — Friday morning",
+    "- **Activity:** Lead singing around campfire at your campsite",
+  ].join("\n"),
 });
 
 const templateTokenPattern = /\{\{([^{}]+)\}\}/g;

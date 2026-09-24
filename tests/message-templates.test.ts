@@ -56,7 +56,7 @@ const refundNoticeMigration = readFileSync(
   "utf8",
 );
 describe("message templates", () => {
-  it("ships twenty-one valid plaintext defaults", () => {
+  it("ships twenty-two valid plaintext defaults", () => {
     expect(MESSAGE_TEMPLATE_KEYS).toEqual([
       "REGISTRATION_CONFIRMATION_PAID",
       "REGISTRATION_CONFIRMATION_UNPAID",
@@ -79,8 +79,9 @@ describe("message templates", () => {
       "SHIRT_SIZE_REQUEST",
       "REGISTRATION_ACCESS_RECOVERY",
       "EVENT_ANNOUNCEMENT",
+      "CLUB_ASSIGNMENTS",
     ]);
-    expect(DEFAULT_MESSAGE_TEMPLATE_LIST).toHaveLength(21);
+    expect(DEFAULT_MESSAGE_TEMPLATE_LIST).toHaveLength(22);
 
     for (const key of MESSAGE_TEMPLATE_KEYS) {
       const template = DEFAULT_MESSAGE_TEMPLATES[key];

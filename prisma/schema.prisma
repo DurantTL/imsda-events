@@ -363,6 +363,7 @@ enum MessageTemplateKey {
   ATTENDEE_EDIT_VERIFICATION
   REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED
   CLUB_INVITE
+  CLUB_ASSIGNMENTS
 }
 
 enum MessageTemplateStatus {
@@ -493,6 +494,7 @@ model User {
   platformSettingsUpdates   PlatformSettings[]        @relation("PlatformSettingsUpdatedBy")
   uploadedEventAssets       EventAsset[]              @relation("EventAssetUploadedBy")
   appliedProgramAssignments ProgramAssignmentRun[]    @relation("ProgramAssignmentAppliedBy")
+  clubAssignmentUpdates     ClubEventAssignment[]     @relation("ClubEventAssignmentUpdatedBy")
   registrationOperations    RegistrationOperation[]   @relation("RegistrationOperationActor")
   accountMessages           MessageOutbox[]           @relation("AccountMessageRecipient")
   mfaEnrollment             UserMfaEnrollment?
@@ -1099,6 +1101,7 @@ model Event {
   honorOfferings                      HonorOffering[]
   clubRegistrations                   ClubEventRegistration[]
   clubRegistrationDrafts              ClubRegistrationDraft[]
+  clubAssignments                     ClubEventAssignment[]
   honorEnrollments                    HonorEnrollment[]
   registrationOperations              RegistrationOperation[]
   registrationPaymentChoiceOperations RegistrationPaymentChoiceOperation[]
@@ -1516,6 +1519,7 @@ model Organization {
   rosterMembers      ClubRosterMember[]
   eventRegistrations ClubEventRegistration[]
   registrationDrafts ClubRegistrationDraft[]
+  eventAssignments   ClubEventAssignment[]
   honorEnrollments   HonorEnrollment[]
   clubProfile        ClubProfile?
   clubInvites        ClubInvite[]
@@ -3038,9 +3042,48 @@ model ClubEventRegistration {
   organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   registration Registration     @relation(fields: [registrationId], references: [id], onDelete: Cascade)
   submittedBy  AttendeeAccount? @relation("ClubEventRegistrationSubmittedBy", fields: [submittedByAccountId], references: [id], onDelete: SetNull)
+  assignment   ClubEventAssignment?
 
   @@unique([eventId, organizationId])
   @@index([organizationId])
+}
+
+/// A staff-set campsite/duty/activity assignment for one club's event
+/// registration (#410). Kept separate from `ClubEventRegistration` /
+/// `PublicRegistrationSubmission` so a club's submitted preferences and
+/// staff's assignment decisions never overwrite each other. Simple and
+/// replaceable by the general grouping engine (#89) if that lands later.
+///
+/// `version` bumps on every staff edit; `lastEmailedVersion` records which
+/// version the assignment email last went out for. When they differ (or
+/// nothing has been sent yet while something is set), the assignment has
+/// "changed since sent".
+model ClubEventAssignment {
+  id                      String   @id @default(cuid())
+  eventId                 String
+  organizationId          String
+  clubEventRegistrationId String   @unique
+  campsiteLocation        String   @default("")
+  campsiteNotes           String   @default("")
+  dutyLabel               String   @default("")
+  dutyDay                 String   @default("")
+  dutyTime                String   @default("")
+  activityLabel           String   @default("")
+  notes                   String   @default("")
+  version                 Int      @default(1)
+  lastEmailSentAt         DateTime?
+  lastEmailedVersion      Int?
+  updatedByUserId         String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  event                 Event                @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  organization           Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clubEventRegistration ClubEventRegistration @relation(fields: [clubEventRegistrationId], references: [id], onDelete: Cascade)
+  updatedBy             User?                 @relation("ClubEventAssignmentUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([eventId, organizationId])
+  @@index([eventId, updatedAt])
 }
 
 /// A director's unsubmitted club registration, saved as they work so a reload

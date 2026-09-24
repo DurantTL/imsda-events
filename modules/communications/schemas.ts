@@ -84,6 +84,21 @@ export const shirtSizeRequestBatchInputSchema = z.object({
   batchId: z.uuid(),
 }).strict();
 
+export const clubAssignmentBatchInputSchema = z.object({
+  previewFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  batchId: z.uuid(),
+  scope: z.enum(["ONE", "ALL_SET"]),
+  organizationId: z.string().trim().min(1).max(64).optional(),
+}).strict().superRefine((value, context) => {
+  if (value.scope === "ONE" && !value.organizationId) {
+    context.addIssue({
+      code: "custom",
+      path: ["organizationId"],
+      message: "Choose a club to send to.",
+    });
+  }
+});
+
 export const confirmationResendInputSchema = z.object({
   clientRequestId: z.uuid(),
   correctedRecipientEmail: z.union([
@@ -111,5 +126,8 @@ export type ShirtSizeRequestBatchInput = z.infer<
 >;
 export type ConfirmationResendInput = z.infer<
   typeof confirmationResendInputSchema
+>;
+export type ClubAssignmentBatchInput = z.infer<
+  typeof clubAssignmentBatchInputSchema
 >;
 export type MessageRetryInput = z.infer<typeof messageRetryInputSchema>;
