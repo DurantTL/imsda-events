@@ -92,11 +92,12 @@ const FREE_TEXT_FIELD_TYPES = new Set<RegistrationFormField["type"]>(["TEXT", "L
 // A narrower subset of `sensitiveFieldPattern` in
 // modules/attendee-accounts/registration-answer-policy.ts (ADR 0005 §5): it
 // leaves out "dietary", "age", "emergency" and the like, so the Camporee's
-// "Dietary restrictions" convenience field (ADR 0005 §1) stays allowed. Only
-// free text is checked, so the "Medical personnel?" checkbox and the yes/no
-// medical-need flag never match.
+// "Dietary restrictions" convenience field (ADR 0005 §1) stays allowed. Food
+// allergies may be listed as free text (decided on PR #418), so "allergy" is
+// not a trigger word either. Only free text is checked, so the "Medical
+// personnel?" checkbox and the yes/no medical-need flag never match.
 const MEDICAL_FREE_TEXT_PATTERN =
-  /\b(?:medic\w*|meds?|health|allerg\w*|accessib\w*|disabil\w*|special\s*needs?|insur\w*)\b/i;
+  /\b(?:medic\w*|meds?|health|accessib\w*|disabil\w*|special\s*needs?|insur\w*)\b/i;
 
 function looksLikeMedicalFreeText(field: RegistrationFormField) {
   // Snake_case keys become words so `medical_info` matches as well as its label.
@@ -124,7 +125,7 @@ export function clubFormProblem(definition: RegistrationFormDefinition) {
   const medicalFields = medicalFreeTextFields(definition);
   if (medicalFields.length > 0) {
     const labels = medicalFields.map((field) => `"${field.label}"`).join(", ");
-    return `The event's form asks attendees a free-text medical, allergy, health, or accessibility question (${labels}). Registration answers aren't encrypted, so replace it with a checkbox or yes/no question and republish.`;
+    return `The event's form asks attendees a free-text medical, health, or accessibility question (${labels}). Registration answers aren't encrypted, so replace it with a checkbox or yes/no question and republish.`;
   }
   return null;
 }

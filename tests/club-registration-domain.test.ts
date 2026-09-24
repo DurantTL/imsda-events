@@ -56,10 +56,10 @@ describe("club form mapping", () => {
     expect(clubFormProblem(form([field("first_name"), field("last_name")]))).toBeNull();
     expect(clubFormProblem(form([field("first_name"), field("last_name")], false))).toMatch(/list of attendees/);
     expect(clubFormProblem(form([field("first_name"), field("last_name"), field("birthday", "DATE", "ATTENDEE", [], "Birthday")]))).toMatch(/birth dates/);
-    expect(clubFormProblem(form([field("first_name"), field("last_name"), field("medical_notes", "LONG_TEXT", "ATTENDEE", [], "Medical or accessibility notes")]))).toMatch(/free-text medical, allergy, health, or accessibility question \("Medical or accessibility notes"\)/);
+    expect(clubFormProblem(form([field("first_name"), field("last_name"), field("medical_notes", "LONG_TEXT", "ATTENDEE", [], "Medical or accessibility notes")]))).toMatch(/free-text medical, health, or accessibility question \("Medical or accessibility notes"\)/);
   });
 
-  it("flags attendee free-text medical/health fields but not dietary, checkbox, or yes/no ones (#408)", () => {
+  it("flags attendee free-text medical/health fields but not dietary, food-allergy, checkbox, or yes/no ones (#408)", () => {
     const medicalNote = field("medical_notes", "LONG_TEXT", "ATTENDEE", [], "Medical or accessibility notes");
     const healthNote = field("health_notes", "TEXT", "ATTENDEE", [], "Health conditions to know about");
     const allergyNote = field("allergy_notes", "LONG_TEXT", "ATTENDEE", [], "Allergy details");
@@ -74,12 +74,13 @@ describe("club form mapping", () => {
 
     const matches = medicalFreeTextFields(form([
       field("first_name"), field("last_name"),
-      medicalNote, healthNote, allergyNote, keyOnly, medications, accessibilityNeeds, dietaryAllergies,
+      medicalNote, healthNote, keyOnly, medications, accessibilityNeeds,
+      allergyNote, dietaryAllergies,
       dietary, medicalPersonnelCheckbox, medicalNeedFlag, registrationScopedMedical,
     ])).map((f) => f.key);
 
     expect(matches).toEqual([
-      "medical_notes", "health_notes", "allergy_notes", "medical_info", "current_meds", "access", "diet",
+      "medical_notes", "health_notes", "medical_info", "current_meds", "access",
     ]);
   });
 
