@@ -169,7 +169,7 @@ export function FinanceWorkspace({
         <article className="finance-stat"><span><ReceiptText aria-hidden="true" size={18} /></span><small>Active billed</small><strong>{money(totals.billed)}</strong></article>
         <article className="finance-stat"><span><Banknote aria-hidden="true" size={18} /></span><small>Net received</small><strong>{money(totals.received)}</strong></article>
         <article className="finance-stat warning"><span><CircleDollarSign aria-hidden="true" size={18} /></span><small>Outstanding</small><strong>{money(totals.outstanding)}</strong></article>
-        {hasChurchBilled && <article className="finance-stat"><span><Building2 aria-hidden="true" size={18} /></span><small>Billed to churches (estimated)</small><strong>{money(totals.churchBilled)}</strong></article>}
+        {hasChurchBilled && <article className="finance-stat"><span><Building2 aria-hidden="true" size={18} /></span><small>Billed to churches (estimated, all registrations)</small><strong>{money(totals.churchBilled)}</strong></article>}
         <article className="finance-stat muted"><span><RotateCcw aria-hidden="true" size={18} /></span><small>Refunded</small><strong>{money(totals.refunded)}</strong></article>
       </section>
       <div className="toolbar panel">

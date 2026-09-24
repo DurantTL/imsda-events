@@ -74,7 +74,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
     { label: "Registrations", value: metrics.registrations, detail: canSeeSensitiveData ? `${registrations.filter((registration) => registration.status === "CONFIRMED").length} confirmed` : "Event total", tone: "navy", visible: true },
     { label: "Expected people", value: metrics.people, detail: canSeeSensitiveData ? `${workerCount} event ${workerCount === 1 ? "worker" : "workers"}` : "Event total", tone: "purple", visible: true },
     metrics.isDeferredOrganizationBilling
-      ? { label: "Billed to churches", value: money(metrics.churchBilledCents), detail: "Estimated · billed after the event, not paid online", tone: "gold", visible: canViewReports }
+      ? { label: "Billed to churches", value: money(metrics.churchBilledCents), detail: "Estimated, all registrations · billed after the event, not paid online", tone: "gold", visible: canViewReports }
       : { label: "Pending payment", value: metrics.pendingPaymentCount, detail: `${money(metrics.outstandingCents)} outstanding`, tone: "gold", visible: canViewReports },
     { label: "Checked in", value: metrics.checkedIn, detail: `${metrics.people - metrics.checkedIn} awaiting arrival`, tone: "green", visible: true },
   ].filter((metric) => metric.visible);

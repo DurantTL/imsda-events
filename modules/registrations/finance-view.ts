@@ -60,6 +60,6 @@ export function matchesFinanceFilter(registration: FinanceViewRegistration, filt
     case "REFUNDED": return registration.payments.some((payment) => payment.refundedCents > 0);
     case "WAITLISTED": return registration.status === "WAITLISTED";
     case "CANCELLED": return registration.status === "CANCELLED";
-    default: return true;
+    default: return false;
   }
 }

@@ -42,5 +42,7 @@ describe("finance workspace figures (#409)", () => {
     expect(rows.filter((row) => matchesFinanceFilter(row, "PAID"))).toEqual([attendeePaid]);
     expect(rows.filter((row) => matchesFinanceFilter(row, "CHURCH_BILLED"))).toEqual([churchBilled]);
     expect(rows.filter((row) => matchesFinanceFilter(row, "ALL"))).toHaveLength(4);
+    // An unknown filter lists nothing, as the finance screen always did.
+    expect(rows.filter((row) => matchesFinanceFilter(row, "junk"))).toEqual([]);
   });
 });
