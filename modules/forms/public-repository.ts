@@ -85,7 +85,17 @@ export type ClubSubmissionContext = {
     },
   ) => Promise<{
     input: PublicRegistrationInput;
-    attendees: Map<string, { personId: string; rosterMemberId: string; ageOnEventDate: number | null }>;
+    /**
+     * Per attendee: a roster person (personId and rosterMemberId), or an extra
+     * person for this event only (#388; `guest` set, personId null), who is
+     * matched or created like any public attendee.
+     */
+    attendees: Map<string, {
+      personId: string | null;
+      rosterMemberId: string | null;
+      ageOnEventDate: number | null;
+      guest?: { email: string | null; attendeeType: "ADULT" | "YOUTH" };
+    }>;
   }>;
 };
 
@@ -816,9 +826,12 @@ async function createPublicRegistrationTransaction(
     if (clubAttendees && !clubAttendee) {
       throw new PublicRegistrationError("CLUB_ATTENDEES_INVALID", "Everyone on a club registration must come from the club roster.");
     }
-    const attendeePerson = clubAttendee
+    const attendeeIdentity = clubAttendee?.guest
+      ? { ...attendee.identity, email: clubAttendee.guest.email ?? attendee.identity.email }
+      : attendee.identity;
+    const attendeePerson = clubAttendee?.personId
       ? { id: clubAttendee.personId }
-      : await resolveAttendeePerson(tx, attendee.identity, accountHolder, usedPersonIds);
+      : await resolveAttendeePerson(tx, attendeeIdentity, accountHolder, usedPersonIds);
     const mergedResponses = { ...prepared.registrationResponses, ...attendee.responses };
     const selectedTypeCode = configuredTypeSelector
       ? String(mergedResponses[configuredTypeSelector.key] ?? "")
@@ -849,14 +862,16 @@ async function createPublicRegistrationTransaction(
         profileSnapshot: {
           firstName: attendee.identity.firstName,
           lastName: attendee.identity.lastName,
-          email: attendee.identity.email,
+          email: attendeeIdentity.email,
           phone: attendee.identity.phone || null,
           source: clubAttendee ? "CLUB_REGISTRATION" : "PUBLIC_REGISTRATION",
           formVersionId: version.id,
           ...(clubAttendee ? {
             clubOrganizationId: club!.organizationId,
-            clubRosterMemberId: clubAttendee.rosterMemberId,
+            ...(clubAttendee.rosterMemberId ? { clubRosterMemberId: clubAttendee.rosterMemberId } : {}),
             ageOnEventDate: clubAttendee.ageOnEventDate,
+            // For this event only: never on the club roster (#388).
+            ...(clubAttendee.guest ? { temporary: true, temporaryAttendeeType: clubAttendee.guest.attendeeType } : {}),
           } : {}),
         },
         formResponses: attendee.responses as Prisma.InputJsonValue,

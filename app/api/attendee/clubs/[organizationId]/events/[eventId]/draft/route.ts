@@ -3,10 +3,12 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { requireRosterAccess } from "@/modules/club-rosters/access";
 import { clubRegistrationApiError } from "@/modules/club-registrations/api-errors";
 import { saveClubRegistrationDraft } from "@/modules/club-registrations/repository";
+import { clubGuestsSchema } from "@/modules/club-registrations/domain";
 import { withRequestContext } from "@/lib/request-context";
 
 const draftSchema = z.object({
   selectedMemberIds: z.array(z.string().min(1).max(64)).max(50),
+  guests: clubGuestsSchema.default([]),
   responses: z.record(z.string(), z.unknown()),
   attendeeResponses: z.record(z.string(), z.record(z.string(), z.unknown())),
 }).strict();

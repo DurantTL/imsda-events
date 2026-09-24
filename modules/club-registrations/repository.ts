@@ -7,6 +7,11 @@ import { ageOn, clubYearFor } from "@/modules/club-rosters/domain";
 import {
   clubAttendeeClientId,
   clubFormProblem,
+  clubGuestClientId,
+  guestIdFromClientId,
+  guestIsAdult,
+  guestsFromJson,
+  type ClubGuest,
   lockedAttendeeFieldKeys,
   rosterGenderPrefill,
   rosterRolePrefill,
@@ -33,7 +38,7 @@ import { calendarDateInEventTimeZone, evaluateEventRegistrationPhase } from "@/m
 
 export class ClubRegistrationError extends Error {
   constructor(
-    public readonly code: "EVENT_NOT_FOUND" | "FORM_UNAVAILABLE" | "MEMBER_NOT_ON_ROSTER" | "DRAFT_TOO_LARGE",
+    public readonly code: "EVENT_NOT_FOUND" | "FORM_UNAVAILABLE" | "MEMBER_NOT_ON_ROSTER" | "DRAFT_TOO_LARGE" | "GUEST_INVALID",
     message: string,
   ) {
     super(message);
@@ -231,14 +236,20 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
         status: clubRegistration.registration.status,
         submittedAt: clubRegistration.createdAt.toISOString(),
         attendees: clubRegistration.registration.attendees.map(({ profileSnapshot }) => {
-          const snapshot = profileSnapshot as { firstName?: string; lastName?: string; ageOnEventDate?: number | null };
-          return { firstName: snapshot.firstName ?? "", lastName: snapshot.lastName ?? "", ageOnEventDate: snapshot.ageOnEventDate ?? null };
+          const snapshot = profileSnapshot as { firstName?: string; lastName?: string; ageOnEventDate?: number | null; temporary?: boolean };
+          return {
+            firstName: snapshot.firstName ?? "",
+            lastName: snapshot.lastName ?? "",
+            ageOnEventDate: snapshot.ageOnEventDate ?? null,
+            temporary: snapshot.temporary === true,
+          };
         }),
       }
       : null,
     draft: draft
       ? {
         selectedMemberIds: draft.selectedMemberIds,
+        guests: guestsFromJson(draft.guests),
         responses: draft.responses as Record<string, unknown>,
         attendeeResponses: draft.attendeeResponses as Record<string, Record<string, unknown>>,
         updatedAt: draft.updatedAt.toISOString(),
@@ -251,6 +262,7 @@ export type ClubEventWorkspace = Awaited<ReturnType<typeof getClubEventWorkspace
 
 export type ClubRegistrationDraftInput = {
   selectedMemberIds: string[];
+  guests: ClubGuest[];
   responses: Record<string, unknown>;
   attendeeResponses: Record<string, Record<string, unknown>>;
 };
@@ -271,11 +283,16 @@ export async function saveClubRegistrationDraft(
   if (input.selectedMemberIds.some((memberId) => !allowed.has(memberId))) {
     throw new ClubRegistrationError("MEMBER_NOT_ON_ROSTER", "Everyone going must be active on your club roster.");
   }
+  const guestKeys = new Set(input.guests.map((guest) => clubGuestClientId(guest.id)));
+  if (guestKeys.size !== input.guests.length) {
+    throw new ClubRegistrationError("GUEST_INVALID", "Each extra person needs their own entry. Refresh the page and try again.");
+  }
   const attendeeResponses = Object.fromEntries(
-    Object.entries(input.attendeeResponses).filter(([memberId]) => allowed.has(memberId)),
+    Object.entries(input.attendeeResponses).filter(([key]) => allowed.has(key) || guestKeys.has(key)),
   );
   const data = {
     selectedMemberIds: input.selectedMemberIds,
+    guests: input.guests as Prisma.InputJsonValue,
     responses: input.responses as Prisma.InputJsonValue,
     attendeeResponses: attendeeResponses as Prisma.InputJsonValue,
     updatedByAccountId: accountId,
@@ -304,9 +321,34 @@ export function clubAttendeePreparer(organizationId: string): ClubSubmissionCont
     }
     const members = await activeRosterFor(tx, organizationId, event);
     const byId = new Map(members.map((member) => [member.id, member]));
+    // Extra people come from the saved draft, never the request, so the
+    // client can only choose them, not change who they are (#388).
+    const draft = await tx.clubRegistrationDraft.findUnique({
+      where: { eventId_organizationId: { eventId: event.id, organizationId } },
+      select: { guests: true },
+    });
+    const guestsById = new Map(guestsFromJson(draft?.guests).map((guest) => [guest.id, guest]));
     const eventDate = calendarDateInEventTimeZone(event.startsAt, event.timezone);
-    const resolved = new Map<string, { personId: string; rosterMemberId: string; ageOnEventDate: number | null }>();
+    const resolved: Awaited<ReturnType<ClubSubmissionContext["prepareAttendees"]>>["attendees"] = new Map();
     const rewritten = attendees.map((attendee) => {
+      const guestId = guestIdFromClientId(attendee.clientId);
+      if (guestId !== null) {
+        const guest = guestsById.get(guestId);
+        if (!guest) {
+          throw new PublicRegistrationError(
+            "CLUB_ATTENDEES_INVALID",
+            "An extra person on this registration wasn't saved. Go back to Who's going, check the extra people, and try again.",
+          );
+        }
+        resolved.set(attendee.clientId, {
+          personId: null,
+          rosterMemberId: null,
+          ageOnEventDate: guest.age,
+          guest: { email: guest.email, attendeeType: guestIsAdult(guest) ? "ADULT" : "YOUTH" },
+        });
+        const person = { firstName: guest.firstName, lastName: guest.lastName, ageOnEventDate: guest.age, gender: null };
+        return { ...attendee, responses: { ...attendee.responses, ...rosterOwnedResponses(definition as RegistrationFormDefinition, person) } };
+      }
       const memberId = rosterMemberIdFromClientId(attendee.clientId);
       const member = memberId ? byId.get(memberId) : undefined;
       if (!member || !member.personId) {

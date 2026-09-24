@@ -67,3 +67,18 @@ describe("club form mapping", () => {
   });
 });
 
+
+describe("extra people not on the roster (#388)", () => {
+  it("validates a guest and keeps saved guests that still read as guests", async () => {
+    const { clubGuestSchema, guestsFromJson, clubGuestClientId, guestIdFromClientId, guestIsAdult } = await import("@/modules/club-registrations/domain");
+    expect(clubGuestSchema.parse({ id: "abc123def", firstName: " Pat ", lastName: "Driver", age: 42, email: "" }))
+      .toEqual({ id: "abc123def", firstName: "Pat", lastName: "Driver", age: 42, email: null });
+    expect(clubGuestSchema.safeParse({ id: "abc123def", firstName: "Pat", lastName: "Driver", age: 200, email: null }).success).toBe(false);
+    expect(clubGuestSchema.safeParse({ id: "bad id!", firstName: "Pat", lastName: "Driver", age: 30, email: null }).success).toBe(false);
+    expect(guestsFromJson("nonsense")).toEqual([]);
+    expect(guestIdFromClientId(clubGuestClientId("abc123def"))).toBe("abc123def");
+    expect(guestIdFromClientId("member:m1")).toBeNull();
+    expect(guestIsAdult({ age: 17 })).toBe(false);
+    expect(guestIsAdult({ age: 18 })).toBe(true);
+  });
+});

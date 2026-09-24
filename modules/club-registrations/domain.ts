@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { RegistrationFormDefinition, RegistrationFormField } from "@/modules/forms/definition";
 import { fullNameKeys, splitNameKeyPairs } from "@/modules/forms/public-domain";
 
@@ -14,6 +15,46 @@ export function clubAttendeeClientId(rosterMemberId: string) {
 
 export function rosterMemberIdFromClientId(clientId: string) {
   return clientId.startsWith(MEMBER_PREFIX) ? clientId.slice(MEMBER_PREFIX.length) : null;
+}
+
+const GUEST_PREFIX = "guest:";
+
+/**
+ * Someone going who isn't on the roster (#388), e.g. a parent driver. For
+ * this event only: never added to the roster or kept for another event.
+ */
+export type ClubGuest = { id: string; firstName: string; lastName: string; age: number; email: string | null };
+
+export const MAX_CLUB_GUESTS = 25;
+
+export const clubGuestSchema = z.object({
+  id: z.string().regex(/^[a-z0-9]{6,24}$/, "Refresh the page and add the person again."),
+  firstName: z.string().trim().min(1, "Enter a first name.").max(80),
+  lastName: z.string().trim().min(1, "Enter a last name.").max(80),
+  age: z.number().int("Enter the age in whole years.").min(0, "Enter an age from 0 to 120.").max(120, "Enter an age from 0 to 120."),
+  email: z.string().trim().toLowerCase().email("Enter a valid email, or leave it blank.").max(254).nullable()
+    .or(z.literal("").transform(() => null)),
+}).strict();
+
+export const clubGuestsSchema = z.array(clubGuestSchema).max(MAX_CLUB_GUESTS, `Add up to ${MAX_CLUB_GUESTS} extra people.`);
+
+/** Guests saved in a draft, dropping anything that no longer reads as one. */
+export function guestsFromJson(value: unknown): ClubGuest[] {
+  const parsed = clubGuestsSchema.safeParse(value);
+  return parsed.success ? parsed.data : [];
+}
+
+export function clubGuestClientId(guestId: string) {
+  return `${GUEST_PREFIX}${guestId}`;
+}
+
+export function guestIdFromClientId(clientId: string) {
+  return clientId.startsWith(GUEST_PREFIX) ? clientId.slice(GUEST_PREFIX.length) : null;
+}
+
+/** Adults among guests are background-checked like everyone else. */
+export function guestIsAdult(guest: Pick<ClubGuest, "age">) {
+  return guest.age >= 18;
 }
 
 function attendeeFields(definition: RegistrationFormDefinition) {
