@@ -65,8 +65,10 @@ builds, naming the variable in the deploy output.
 > add it before its next deploy, or the app container will refuse to start.
 
 `SECRET_ENCRYPTION_KEY` seals the TOTP secrets behind two-factor
-authentication. **Changing it makes every enrolled authenticator unreadable** —
-rotate it only together with `npm run admin:reset-mfa` for each affected account.
+authentication and every club roster birth date (ADR 0005 Addendum A).
+**Changing it makes every enrolled authenticator unreadable and loses every
+roster birth date for good.** Never change it without the re-seal procedure and
+the key backup in `docs/SERVER-SECURITY-CHECKLIST.md` (items 2, 3, 9, and 11).
 
 The last two are what send activation and password-reset email. They are
 required rather than optional because there is no manual substitute at scale: an
