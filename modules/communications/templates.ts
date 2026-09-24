@@ -668,7 +668,7 @@ export const DEFAULT_MESSAGE_TEMPLATE_BODIES: Readonly<Record<MessageTemplateKey
     "",
     "{{club_assignments_block}}",
     "",
-    "**[View your registration]({{portal_url}})**",
+    "**[Open your club's event page]({{portal_url}})**",
     "",
     "---",
     "",

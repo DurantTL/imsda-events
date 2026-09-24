@@ -100,7 +100,7 @@ SELECT
     1,
     'PUBLISHED',
     'Your club''s assignments for {{event_name}}',
-    E'# Your club''s assignments for {{event_name}}\n\nHello {{recipient_name}},\n\nHere is what staff have set for registration **{{confirmation_code}}**:\n\n{{club_assignments_block}}\n\n**[View your registration]({{portal_url}})**\n\n---\n\nQuestions? Contact {{contact_email}}.',
+    E'# Your club''s assignments for {{event_name}}\n\nHello {{recipient_name}},\n\nHere is what staff have set for registration **{{confirmation_code}}**:\n\n{{club_assignments_block}}\n\n**[Open your club''s event page]({{portal_url}})**\n\n---\n\nQuestions? Contact {{contact_email}}.',
     CURRENT_TIMESTAMP,
     CURRENT_TIMESTAMP,
     CURRENT_TIMESTAMP

@@ -12,6 +12,7 @@ import {
 import {
   getResendEmailAvailability,
 } from "@/integrations/email/resend";
+import { getServerEnv } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
 import {
   ExternalEmailDeliveryError,
@@ -2118,12 +2119,12 @@ async function loadClubAssignmentState(
   const first = preview.recipients[0];
   if (first) {
     const rendered = renderClubAssignmentMessage(source, event, settings, first);
+    // The link is the club portal page (sign-in required), not a private
+    // token link, so the preview shows exactly what will be sent.
     preview.sample = {
       organizationId: first.organizationId,
       subject: rendered.subject,
-      // The private link is minted per message at delivery; a preview shows
-      // a stand-in instead so no token is ever issued for a review.
-      body: rendered.body.replaceAll(REGISTRATION_MANAGE_LINK_SENTINEL, CLUB_ASSIGNMENT_PREVIEW_LINK),
+      body: rendered.body,
     };
   }
   return {
@@ -2134,7 +2135,17 @@ async function loadClubAssignmentState(
   };
 }
 
-const CLUB_ASSIGNMENT_PREVIEW_LINK = "https://events.imsda.org/manage/preview-link-not-live";
+/**
+ * The director's club event page, where the assignments are shown. It needs
+ * sign-in and a second factor, so a forwarded email never exposes the
+ * roster the way a private registration link would.
+ */
+function clubEventPortalUrl(eventId: string, organizationId: string) {
+  return new URL(
+    `/account/clubs/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(eventId)}`,
+    getServerEnv().APP_BASE_URL,
+  ).toString();
+}
 
 /**
  * Renders one club's assignment email. Shared by the preview sample and the
@@ -2142,9 +2153,9 @@ const CLUB_ASSIGNMENT_PREVIEW_LINK = "https://events.imsda.org/manage/preview-li
  */
 function renderClubAssignmentMessage(
   source: { subject: string; body: string },
-  event: { name: string; supportContact: string | null },
+  event: { id: string; name: string; supportContact: string | null },
   settings: { replyToEmail: string | null; senderEmail: string | null },
-  recipient: Pick<ClubAssignmentRecipient, "recipientName" | "confirmationCode" | "assignmentBlock">,
+  recipient: Pick<ClubAssignmentRecipient, "organizationId" | "recipientName" | "confirmationCode" | "assignmentBlock">,
 ) {
   return renderMessageTemplate(
     { subject: source.subject, body: source.body },
@@ -2154,7 +2165,7 @@ function renderClubAssignmentMessage(
       event_name: event.name,
       confirmation_code: recipient.confirmationCode,
       club_assignments_block: recipient.assignmentBlock,
-      portal_url: REGISTRATION_MANAGE_LINK_SENTINEL,
+      portal_url: clubEventPortalUrl(event.id, recipient.organizationId),
       reply_to_email: settings.replyToEmail
         || settings.senderEmail
         || event.supportContact

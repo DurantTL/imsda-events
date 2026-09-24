@@ -6,6 +6,7 @@ import {
   canSendClubAssignmentMessages,
 } from "@/modules/club-registrations/assignments-access";
 import { listClubAssignments } from "@/modules/club-registrations/assignments-repository";
+import { resolveClubOversight } from "@/modules/club-rosters/event-oversight";
 import { resolveEventContext } from "@/modules/events/selection";
 
 export const metadata: Metadata = { title: "Club assignments" };
@@ -24,6 +25,16 @@ export default async function ClubAssignmentsPage({
       <AccessRestricted
         title="Club assignments are restricted"
         detail="Ask an event administrator for registration-management access before assigning campsites, duties, or activities."
+      />
+    );
+  }
+  // Only club (church-billed) events have club registrations to assign.
+  const { clubEvent } = await resolveClubOversight(event.id);
+  if (!clubEvent) {
+    return (
+      <AccessRestricted
+        title="Club assignments are for club events"
+        detail="This event doesn't take club registrations. Choose a club event to assign campsites, duties, and activities."
       />
     );
   }

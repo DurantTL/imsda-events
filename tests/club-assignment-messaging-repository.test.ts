@@ -163,9 +163,10 @@ describe("club assignment batch repository", () => {
     const upsert = calls[0][0];
     expect(upsert.where).toEqual({ idempotencyKey: `club-assignments:event-1:${batchA}:org-a` });
     expect(upsert.create.recipientEmail).toBe("director-a@example.test");
-    // The queued body is the reviewed sample, apart from the private link
-    // which delivery mints per message.
-    expect(upsert.create.bodyTextSnapshot).toContain(REGISTRATION_MANAGE_LINK_SENTINEL);
+    // The link is the club's portal page (sign-in required), never a private
+    // registration link that opens the roster without signing in.
+    expect(upsert.create.bodyTextSnapshot).not.toContain(REGISTRATION_MANAGE_LINK_SENTINEL);
+    expect(upsert.create.bodyTextSnapshot).toContain("/account/clubs/org-a/events/event-1");
     expect(tx.clubEventAssignment.update).toHaveBeenCalledWith({
       where: { clubEventRegistrationId: "cer-a" },
       data: { lastEmailSentAt: expect.any(Date), lastEmailedVersion: 2 },
