@@ -733,6 +733,7 @@ export const formTemplates: FormTemplate[] = [
           templateField("sc_member_age", "attendee_age", "Age", "NUMBER", true, [], { scope: "ATTENDEE" }),
           templateField("sc_member_gender", "gender", "Gender", "SELECT", false, ["Female", "Male", "Prefer not to answer"], { scope: "ATTENDEE" }),
           templateField("sc_member_role", "attendee_type", "Roster role", "RADIO", true, ["Pathfinder", "TLT", "Staff", "Child"], { scope: "ATTENDEE" }),
+          templateField("sc_member_first_time", "first_time_camper", "First time at Camporee?", "CHECKBOX", false, [], { scope: "ATTENDEE" }),
           templateField("sc_member_medical_personnel", "medical_personnel", "Medical personnel?", "CHECKBOX", false, [], { scope: "ATTENDEE", conditional: { fieldKey: "attendee_type", operator: "EQUALS", value: "Staff" } }),
           templateField("sc_member_master_guide", "master_guide_investiture", "Master Guide investiture?", "CHECKBOX", false, [], { scope: "ATTENDEE", conditional: { fieldKey: "attendee_type", operator: "EQUALS", value: "Staff" } }),
           templateField("sc_member_dietary", "dietary_needs", "Dietary restrictions", "LONG_TEXT", false, [], { scope: "ATTENDEE" }),

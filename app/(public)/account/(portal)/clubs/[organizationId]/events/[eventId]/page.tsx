@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, QrCode } from "lucide-react";
+import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, Printer, QrCode } from "lucide-react";
 import { ClubClassPicker } from "@/components/club-class-picker";
 import { ClubPassQr } from "@/components/club-pass-qr";
 import { clubPassIsAvailable } from "@/modules/checkin/club-pass-token";
@@ -114,6 +114,11 @@ export default async function ClubEventRegistrationPage({
               </li>
             ))}
           </ul>
+          {(activeRegistrationStatuses as readonly string[]).includes(workspace.registration.status) && (
+            <Link className="secondary-button club-event-action" href={`/account/clubs/${organizationId}/events/${eventId}/packet`}>
+              <Printer aria-hidden="true" size={14} /> Print club packet
+            </Link>
+          )}
           {assignment && (
             <div className="public-manage-card club-assignments-block">
               <h3>Your assignments</h3>
