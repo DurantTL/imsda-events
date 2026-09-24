@@ -30,6 +30,7 @@ so doing them once covers both.
 | 8 | Confirm MFA for everyone who can see club data | Caleb Durant | Real birth dates | ☐ |
 | 9 | Write the key rotation procedure | Jonathan Swena | Before the first rotation | ☐ |
 | 10 | Tell club directors how removal works | Caleb Durant | Director onboarding | ☐ |
+| 11 | Lock down how the encryption key is reached | Jonathan Swena | Real birth dates | ☐ |
 
 ## The items
 
@@ -119,6 +120,48 @@ so doing them once covers both.
     become staff).
   - **Remove** erases their birth date and personal details.
 - **Proof:** the onboarding note or email is sent.
+
+### 11. Lock down how the encryption key is reached
+- **Why:** the question was whether the key should sit behind a separate login
+  account or inside SSH, whichever is more secure to set, reach, rotate, and
+  manage. The answer is **both, in layers**: SSH is the only way in, and a
+  separate account owns the key. Today the key sits in
+  `/home/u_events/.xcloud/.env` (mode 600) together with every other
+  production secret (`docs/DEPLOY-DOCKER.md`). So anyone who can log in as the
+  site user, or reveal environment variables in the hosting panel, can read it.
+- **Recommended setup** (the custodian adapts it to the host):
+  1. **Only SSH, with keys.** Log in to the server by SSH key only. Turn off
+     password login. Give access only to the named people on item 1's list.
+  2. **The key isn't shown in a web panel.** If the hosting panel (xCloud) can
+     display environment variables, anyone with a panel login can read the
+     key. Keep the key out of the panel and in the server file only, or, if the
+     panel must hold it, require MFA on every panel login and limit panel access
+     to the same named people.
+  3. **A separate account for the master copy.** The master copy of the key
+     lives on the backup server (item 2) under an account used only by the
+     custodian. It is not the account that receives the database dumps
+     (item 4).
+  4. **The app never shows or changes the key.** There's no admin screen for
+     it, on purpose. Setting and rotating it are server tasks done over SSH,
+     following item 9. Nobody should ever be able to read it back through the
+     app.
+  5. **The daily "touch" job must keep running.** The host's 30-day cleanup
+     deletes `.xcloud/.env` unless the touch job in `docs/DEPLOY-DOCKER.md`
+     keeps it fresh. Losing that file loses the running copy of the key. The
+     backup copy (item 2) is what makes that recoverable.
+  6. **Never paste it** into chat, email, tickets, GitHub, or screenshots.
+     Compare checksums, never the value.
+- **What changing the key breaks:** it seals authenticator (MFA) secrets and
+  club roster birth dates. If it's changed without the re-seal procedure
+  (item 9), every roster birth date is lost and everyone must set up MFA again.
+  Any future health records would be sealed with it too
+  (`docs/HEALTH-RECORDS-OPTIONS-REPORT.md`).
+- **Proof:**
+  - the custodian records who has SSH and panel access to the production
+    server;
+  - password login is off;
+  - the panel either doesn't hold the key or requires MFA;
+  - the master copy's account is separate from the backup account.
 
 ## Log
 
