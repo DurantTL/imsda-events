@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, QrCode } from "lucide-react";
 import { ClubClassPicker } from "@/components/club-class-picker";
 import { ClubPassQr } from "@/components/club-pass-qr";
+import { clubPassIsAvailable } from "@/modules/checkin/club-pass-token";
 import { ClubRegistrationEditor } from "@/components/club-registration-editor";
 import { ClubRegistrationWorkspace } from "@/components/club-registration-workspace";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
@@ -83,7 +84,8 @@ export default async function ClubEventRegistrationPage({
               )
               : notBilledLabel(workspace.registration.status)}
           </p>
-          {(activeRegistrationStatuses as readonly string[]).includes(workspace.registration.status) && (
+          {(activeRegistrationStatuses as readonly string[]).includes(workspace.registration.status)
+            && clubPassIsAvailable(new Date(workspace.event.endsAt)) && (
             // Q1 (#412): one QR for the whole club, not one per member.
             // Staff scan it (or the confirmation code) to open this club's
             // check-in view directly; clubs still check in per member there.

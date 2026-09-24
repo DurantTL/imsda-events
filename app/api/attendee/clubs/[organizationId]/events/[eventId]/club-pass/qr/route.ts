@@ -64,7 +64,10 @@ async function getHandler(_request: Request, context: Context) {
       },
     });
   } catch (error) {
-    return rosterApiError(error, "Loading the club check-in QR");
+    // Errors are private too, so no shared cache keeps a 401 or 404.
+    const response = rosterApiError(error, "Loading the club check-in QR");
+    for (const [name, value] of Object.entries(privateHeaders)) response.headers.set(name, value);
+    return response;
   }
 }
 

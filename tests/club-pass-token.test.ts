@@ -148,4 +148,25 @@ describe("club pass tokens (#412)", () => {
       source: productionSource,
     })).toThrowError(expect.objectContaining({ code: "PASS_MALFORMED" }));
   });
+
+  it("signs in its own namespace, so swapping the prefix never makes one pass verify as the other", () => {
+    const clubToken = createToken();
+    const attendeeToken = createAttendeePassToken({
+      eventId: "event_123",
+      attendeeId: "attendee_456",
+      expiresAt: new Date("2026-10-13T17:00:00.000Z"),
+    }, productionSource);
+    const options = { expectedEventId: "event_123", now: new Date("2026-10-10T12:00:00.000Z"), source: productionSource };
+
+    // Same payload and signature, relabelled with the other type's prefix.
+    const attendeeAsClub = attendeeToken.replace(/^imsda-pass\.v1\./, "imsda-club-pass.v1.");
+    const clubAsAttendee = clubToken.replace(/^imsda-club-pass\.v1\./, "imsda-pass.v1.");
+    expect(attendeeAsClub).not.toBe(attendeeToken);
+    expect(clubAsAttendee).not.toBe(clubToken);
+
+    expect(() => verifyClubPassToken(attendeeAsClub, options))
+      .toThrowError(expect.objectContaining({ code: "PASS_INVALID" }));
+    expect(() => verifyAttendeePassToken(clubAsAttendee, options))
+      .toThrowError(expect.objectContaining({ code: "PASS_INVALID" }));
+  });
 });

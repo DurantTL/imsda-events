@@ -346,6 +346,7 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
       id: event.id,
       name: event.name,
       startsAt: event.startsAt.toISOString(),
+      endsAt: event.endsAt.toISOString(),
       timezone: event.timezone,
       eventDate,
       phase: evaluateEventRegistrationPhase(event, now),

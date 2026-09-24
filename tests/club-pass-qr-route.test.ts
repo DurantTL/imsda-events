@@ -66,6 +66,7 @@ describe("director's club check-in QR route (#412)", () => {
     const response = await GET(new Request("https://events.imsda.test/x"), context("club-2"));
 
     expect(response.status).toBe(404);
+    expect(response.headers.get("cache-control")).toContain("no-store");
     expect(mocks.createDirectorClubPass).not.toHaveBeenCalled();
     expect(mocks.toString).not.toHaveBeenCalled();
   });
@@ -75,6 +76,7 @@ describe("director's club check-in QR route (#412)", () => {
     const response = await GET(new Request("https://events.imsda.test/x"), context());
 
     expect(response.status).toBe(401);
+    expect(response.headers.get("cache-control")).toContain("no-store");
     expect(mocks.createDirectorClubPass).not.toHaveBeenCalled();
   });
 
