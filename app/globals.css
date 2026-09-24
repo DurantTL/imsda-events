@@ -6690,6 +6690,75 @@ select:focus-visible {
   .retreat-packet-cover dl div { background: white; border: 1px solid #aaa; }
 }
 
+/* Club packet (Q1, #411): one letter sheet, printed double-sided */
+.club-packet { display: grid; gap: 20px; }
+.club-packet-side { border: 1px solid #cfdde4; border-radius: 16px; background: white; padding: 22px; box-shadow: 0 8px 24px rgba(27, 55, 68, .06); }
+.club-packet-header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; border-bottom: 3px solid var(--imsda-purple); padding-bottom: 10px; margin-bottom: 12px; }
+.club-packet-header p { margin: 0 0 2px; color: var(--imsda-purple); font-size: 0.6rem; font-weight: 850; text-transform: uppercase; }
+.club-packet-header h2 { margin: 0; font-size: 1.05rem; }
+.club-packet-dates { color: var(--muted) !important; font-size: 0.62rem !important; font-weight: 700 !important; text-transform: none !important; }
+.club-packet-header dl { display: grid; gap: 3px; text-align: right; }
+.club-packet-header dl div { display: flex; gap: 6px; justify-content: flex-end; font-size: 0.58rem; }
+.club-packet-header dt { color: var(--muted); font-weight: 700; text-transform: uppercase; }
+.club-packet-header dd { margin: 0; font-weight: 800; }
+.club-packet-summary h3,
+.club-packet-roster h3,
+.club-packet-back-grid h3 { margin: 0 0 6px; font-size: 0.74rem; }
+.club-packet-summary dl,
+.club-packet-back-grid dl { display: grid; gap: 3px; margin: 0 0 10px; }
+.club-packet-summary dl div,
+.club-packet-back-grid dl div { display: grid; grid-template-columns: 130px 1fr; gap: 6px; font-size: 0.63rem; }
+.club-packet-summary dt,
+.club-packet-back-grid dt { color: var(--muted); font-weight: 700; }
+.club-packet-summary dd,
+.club-packet-back-grid dd { margin: 0; }
+.club-packet-headcounts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-top: 6px; }
+.club-packet-headcounts article { border-radius: 8px; background: #f7fafb; padding: 7px; text-align: center; }
+.club-packet-headcounts article strong { display: block; font-size: 1rem; }
+.club-packet-headcounts article span { color: var(--muted); font-size: 0.56rem; }
+.club-packet-headcounts .club-packet-total { background: var(--imsda-navy-soft); }
+.club-packet-roster { margin-top: 14px; }
+.club-packet-roster-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; align-items: baseline; margin-bottom: 6px; }
+.club-packet-key { margin: 0; color: var(--muted); font-size: 0.54rem; display: flex; align-items: center; gap: 4px; }
+.club-packet-roster-columns { column-count: 3; column-gap: 14px; margin: 0; padding: 0; list-style: none; }
+.club-packet-roster-columns li { display: flex; align-items: center; gap: 6px; break-inside: avoid; border-bottom: 1px solid #eef2f4; padding: 3px 0; font-size: 0.6rem; }
+.club-packet-check { flex: 0 0 auto; width: 10px; height: 10px; border: 1px solid #667; border-radius: 2px; }
+.club-packet-roster-name { flex: 1 1 auto; font-weight: 700; }
+.club-packet-roster-meta { flex: 0 0 auto; color: var(--muted); font-size: 0.56rem; }
+.club-packet-back-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.club-packet-checklist { display: grid; gap: 3px; margin: 0 0 10px; padding: 0; list-style: none; font-size: 0.6rem; }
+.club-packet-checklist li { display: flex; align-items: center; gap: 5px; }
+.club-packet-empty { margin: 0 0 10px; color: var(--muted); font-size: 0.6rem; }
+.club-packet-owed { margin: 0; font-size: 0.7rem; }
+.club-packet-qr { display: grid; justify-items: center; gap: 6px; text-align: center; }
+.club-packet-qr h3 { display: flex; align-items: center; gap: 5px; }
+.club-packet-qr img { border: 1px solid #dce5ea; border-radius: 8px; }
+
+@media (max-width: 760px) {
+  .club-packet-back-grid { grid-template-columns: 1fr; }
+  .club-packet-roster-columns { column-count: 1; }
+}
+
+@media print {
+  .club-packet { gap: 0; }
+  .club-packet-side {
+    break-after: page;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0;
+    width: 7.5in;
+    min-height: 10in;
+  }
+  .club-packet-side:last-of-type { break-after: auto; }
+  .club-packet-header { border-color: #333; }
+  .club-packet-roster-columns li,
+  .club-packet-summary dl div,
+  .club-packet-back-grid dl div { font-size: 8pt; }
+  .club-packet-headcounts article,
+  .club-packet-key { background: white; }
+}
+
 .address-field-group {
   display: grid;
   gap: 6px;
