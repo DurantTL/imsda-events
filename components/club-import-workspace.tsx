@@ -17,6 +17,9 @@ function draftProblems(draft: Draft) {
   if (draft.alreadyImported) problems.push(`Already imported into ${draft.alreadyImported.name}.`);
   if (draft.existingClub && !draft.existingClub.isActive) problems.push("A club with this name is inactive. Rename it or reactivate that club first.");
   if (draft.clubName.trim().length < 2) problems.push("Give the club a name.");
+  if (!draft.churchId && !draft.newChurchName && !(draft.existingClub?.isActive && draft.existingClub.hasSponsoringChurch)) {
+    problems.push("Choose or create the club's sponsoring church.");
+  }
   const missingLast = draft.people.filter((person) => person.include && !person.lastName.trim()).length;
   if (missingLast) problems.push(`${missingLast} ${missingLast === 1 ? "person has" : "people have"} no last name. Add one or skip them.`);
   return problems;

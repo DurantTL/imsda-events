@@ -35,6 +35,7 @@ import {
 import {
   MESSAGE_TEMPLATE_TOKEN_KEYS,
   renderMessageTemplate,
+  withChurchBilledLinkWording,
   SAMPLE_MESSAGE_TEMPLATE_CONTEXT,
 } from "@/modules/communications/templates";
 import type {
@@ -50,6 +51,8 @@ import type {
 type CommunicationsWorkspaceProps = {
   eventId: string;
   eventName: string;
+  /** Church-billed events send the portal link as "View or edit". */
+  isChurchBilled?: boolean;
   initialAnnouncements: AnnouncementRecord[];
   initialMessaging: MessagingWorkspaceData | null;
   canManage: boolean;
@@ -157,9 +160,9 @@ const templateLabels: Record<string, string> = {
  * send is escaped here too, so staff never see formatting the real message
  * cannot produce.
  */
-function renderPreview(subject: string, body: string, eventName: string) {
+function renderPreview(subject: string, body: string, eventName: string, isChurchBilled: boolean) {
   const rendered = renderMessageTemplate(
-    { subject, body },
+    { subject, body: withChurchBilledLinkWording(body, isChurchBilled) },
     { ...SAMPLE_MESSAGE_TEMPLATE_CONTEXT, event_name: eventName },
   );
   return {
@@ -217,6 +220,7 @@ function canResendConfirmation(message: MessageOutboxRecord | null) {
 export function CommunicationsWorkspace({
   eventId,
   eventName,
+  isChurchBilled = false,
   initialAnnouncements,
   initialMessaging,
   canManage,
@@ -290,8 +294,8 @@ export function CommunicationsWorkspace({
   const [retryRequestId, setRetryRequestId] = useState("");
 
   const preview = useMemo(
-    () => renderPreview(templateSubject, templateBody, eventName),
-    [templateSubject, templateBody, eventName],
+    () => renderPreview(templateSubject, templateBody, eventName, isChurchBilled),
+    [templateSubject, templateBody, eventName, isChurchBilled],
   );
 
   const templateDirty = Boolean(selectedTemplate && (

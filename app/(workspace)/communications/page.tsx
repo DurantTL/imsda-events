@@ -93,6 +93,7 @@ export default async function CommunicationsPage({
       key={event.id}
       eventId={event.id}
       eventName={event.name}
+      isChurchBilled={event.billingMode === "DEFERRED_ORGANIZATION_INVOICE"}
       initialAnnouncements={announcements}
       initialMessaging={messaging}
       canManage={canManage}

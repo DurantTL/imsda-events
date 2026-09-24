@@ -578,6 +578,9 @@ describe("church-billed (deferred-organization) lifecycle messages", () => {
     const deferredBody = queuedMessage(deferred.upsert).create.bodyTextSnapshot;
     expect(deferredBody).toContain("View or edit your registration");
     expect(deferredBody).not.toContain("View, pay, or edit your registration");
+    const deferredHtml = queuedMessage(deferred.upsert).create.bodyHtmlSnapshot;
+    expect(deferredHtml).toContain("View or edit your registration");
+    expect(deferredHtml).not.toContain("View, pay, or edit your registration");
 
     const attendeePay = withBillingMode("ATTENDEE_PAY");
     await enqueueWaitlistPromotedMessage(attendeePay.tx as never, input);
