@@ -42,6 +42,12 @@ import {
 import { registrationOperationFingerprint } from "@/modules/registrations/operations-domain";
 import type { RegistrationAmendmentInput } from "@/modules/registrations/schemas";
 import { moneyToCents } from "@/modules/payments/square-domain";
+import {
+  churchOwedCents,
+  isChurchBilledStatus,
+  sortChurchAmountsOwed,
+  type ChurchAmountOwedRow,
+} from "@/modules/club-registrations/church-owed";
 
 /**
  * Club registration (#358): a director picks who's going from the roster and
@@ -152,7 +158,7 @@ export async function listClubEvents(organizationId: string, now = new Date()) {
           confirmationCode: registration.confirmationCode,
           status: registration.status,
           attendeeCount: registration._count.attendees,
-          amountOwedCents: moneyToCents(registration.totalAmount),
+          amountOwedCents: churchOwedCents(registration.status, moneyToCents(registration.totalAmount)),
         }
         : null,
       draft: draft ? { updatedAt: draft.updatedAt.toISOString(), selectedCount: draft.selectedMemberIds.length } : null,
@@ -164,16 +170,20 @@ export async function listClubEvents(organizationId: string, now = new Date()) {
 export type ClubEventSummary = Awaited<ReturnType<typeof listClubEvents>>[number];
 
 /**
- * What each club owes for an event billed to the church (#409): read-only,
- * for staff finance screens. This is never an attendee or director balance
- * and never a card payment — the amount is what the pricing engine already
- * recorded on the club's registration (`Registration.totalAmount`).
+ * What each club's church owes for an event billed to the church (#409):
+ * read-only, for staff finance screens. This is never an attendee or director
+ * balance and never a card payment — the amount is the estimate the pricing
+ * engine already recorded on the club's registration
+ * (`Registration.totalAmount`), and only a submitted or confirmed
+ * registration is billed. Waitlisted and cancelled clubs stay listed, owing $0.
  */
-export async function listChurchAmountsOwed(eventId: string) {
+export async function listChurchAmountsOwed(eventId: string): Promise<ChurchAmountOwedRow[]> {
   const rows = await getPrisma().clubEventRegistration.findMany({
     where: { eventId },
     select: {
-      organization: { select: { id: true, name: true } },
+      organization: {
+        select: { id: true, name: true, parentOrganization: { select: { id: true, name: true } } },
+      },
       registration: {
         select: {
           confirmationCode: true,
@@ -184,19 +194,20 @@ export async function listChurchAmountsOwed(eventId: string) {
       },
     },
   });
-  return rows
-    .map((row) => ({
-      organizationId: row.organization.id,
-      organizationName: row.organization.name,
-      confirmationCode: row.registration.confirmationCode,
-      status: row.registration.status,
-      attendeeCount: row.registration._count.attendees,
-      amountOwedCents: moneyToCents(row.registration.totalAmount),
-    }))
-    .sort((left, right) => left.organizationName.localeCompare(right.organizationName));
+  return sortChurchAmountsOwed(rows.map((row) => ({
+    organizationId: row.organization.id,
+    organizationName: row.organization.name,
+    churchId: row.organization.parentOrganization?.id ?? null,
+    churchName: row.organization.parentOrganization?.name ?? null,
+    confirmationCode: row.registration.confirmationCode,
+    status: row.registration.status,
+    attendeeCount: row.registration._count.attendees,
+    isBilled: isChurchBilledStatus(row.registration.status),
+    amountOwedCents: churchOwedCents(row.registration.status, moneyToCents(row.registration.totalAmount)),
+  })));
 }
 
-export type ChurchAmountOwed = Awaited<ReturnType<typeof listChurchAmountsOwed>>[number];
+export type ChurchAmountOwed = ChurchAmountOwedRow;
 
 async function requireClubEvent(eventId: string): Promise<ClubEvent> {
   const event = await getPrisma().event.findFirst({
@@ -320,7 +331,10 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
         // What the church owes for this registration (#409): priced by the
         // same engine as any other registration, never an attendee balance
         // or a card payment — this event bills the church directly.
-        amountOwedCents: moneyToCents(clubRegistration.registration.totalAmount),
+        amountOwedCents: churchOwedCents(
+          clubRegistration.registration.status,
+          moneyToCents(clubRegistration.registration.totalAmount),
+        ),
         // The registration-scope answers as they stand now, so a reopened
         // edit can evaluate attendee questions that depend on them. The
         // edit never changes these.

@@ -51,6 +51,11 @@ export type OperationalHealthSource = {
     confirmationCode: string;
     status: string;
     totalAmountCents: number;
+    /**
+     * A church-billed (deferred-organization) registration's total is what
+     * its church owes after the event (#409), never an attendee balance.
+     */
+    isDeferredOrganizationBilling?: boolean;
     submittedAt: Date | null;
     createdAt: Date;
     payments: Array<{
@@ -191,7 +196,9 @@ function registrationBalance(
   }, 0);
   return {
     paidCents,
-    balanceCents: Math.max(registration.totalAmountCents - paidCents, 0),
+    balanceCents: registration.isDeferredOrganizationBilling
+      ? 0
+      : Math.max(registration.totalAmountCents - paidCents, 0),
   };
 }
 

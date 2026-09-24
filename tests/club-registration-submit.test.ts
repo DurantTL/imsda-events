@@ -245,6 +245,43 @@ describe("club registration submit", () => {
     expect(tx.registration.create.mock.calls[0][0].data).toMatchObject({ totalAmount: 13 });
   });
 
+  it("prices a club submitted after the late date at the late fee, through the real submit path (#409)", async () => {
+    const lateForm = registrationFormDefinitionSchema.parse({
+      title: "Late-priced club form",
+      description: "",
+      confirmationMessage: "Registered.",
+      attendeeRoster: { enabled: true, minAttendees: 1, maxAttendees: 50, attendeeLabel: "Club member", addButtonLabel: "Add" },
+      sections: [
+        { id: "contact", title: "Contact", description: "", fields: [
+          field("c_first", "primary_contact_first_name", "First name", "TEXT", "REGISTRATION", true),
+          field("c_last", "primary_contact_last_name", "Last name", "TEXT", "REGISTRATION", true),
+          field("c_email", "email", "Email", "EMAIL", "REGISTRATION", true),
+        ] },
+        { id: "roster", title: "Roster", description: "", fields: [
+          field("a_first", "first_name", "First name", "TEXT", "ATTENDEE", true),
+          field("a_last", "last_name", "Last name", "TEXT", "ATTENDEE", true),
+          field("a_age", "attendee_age", "Age", "NUMBER", "ATTENDEE", true),
+          field("a_diet", "dietary_needs", "Dietary needs", "LONG_TEXT", "ATTENDEE"),
+          {
+            ...field("a_fee", "registration_fee", "Registration fee", "CALCULATED", "ATTENDEE"),
+            priceCents: 900,
+            latePricing: { startsOn: "2026-10-10", label: "Late registration", priceCents: 1400 },
+          },
+        ] },
+      ],
+    });
+
+    // Before the late date: 2 people × $9.
+    const early = fixture({ form: lateForm });
+    await submit(baseInput, club(), new Date("2026-10-05T15:00:00.000Z"));
+    expect(early.registration.create.mock.calls[0][0].data).toMatchObject({ totalAmount: 18 });
+
+    // After the late date: 2 people × $14, still what the church owes.
+    const late = fixture({ form: lateForm });
+    await submit(baseInput, club(), new Date("2026-10-15T15:00:00.000Z"));
+    expect(late.registration.create.mock.calls[0][0].data).toMatchObject({ totalAmount: 28 });
+  });
+
   it("only runs for events billed to the church", async () => {
     const tx = fixture({ billingMode: "ATTENDEE_PAY" });
     await expect(submit()).rejects.toMatchObject({ code: "CLUB_REGISTRATION_UNAVAILABLE" });

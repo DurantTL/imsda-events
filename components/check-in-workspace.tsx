@@ -25,6 +25,7 @@ import { CheckInScanner } from "@/components/check-in-scanner";
 import { useOfflineCheckInQueue } from "@/components/use-offline-check-in-queue";
 import { offlineCheckInErrorMessage } from "@/modules/checkin/domain";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
+import { attendeeBalanceCents } from "@/modules/registrations/finance-view";
 
 type Arrival = RegistrationRecord["attendees"][number] & {
   confirmationCode: string;
@@ -56,7 +57,7 @@ export function CheckInWorkspace({
         ...attendee,
         confirmationCode: registration.confirmationCode,
         email: registration.accountHolder.email,
-        balanceCents: showBalances ? registration.balanceCents : 0,
+        balanceCents: showBalances ? attendeeBalanceCents(registration) : 0,
         partySize: registration.attendees.length,
       }))
     )),
@@ -64,9 +65,9 @@ export function CheckInWorkspace({
   const paymentDueByConfirmationCode = useMemo(() => Object.fromEntries(
     showBalances
       ? initialRegistrations
-        .filter((registration) => registration.balanceCents > 0)
+        .filter((registration) => attendeeBalanceCents(registration) > 0)
         .map((registration) => [registration.confirmationCode, {
-          balanceCents: registration.balanceCents,
+          balanceCents: attendeeBalanceCents(registration),
           partySize: registration.attendees.length,
         }])
       : [],

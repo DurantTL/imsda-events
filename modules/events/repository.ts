@@ -433,6 +433,7 @@ export async function getEventOverview(eventId: string) {
         collectsShirtSizes: true,
         checksAdultBackgrounds: true,
         autoPromoteWaitlist: true,
+        billingMode: true,
       },
     }),
     prisma.registration.findMany({
@@ -462,9 +463,18 @@ export async function getEventOverview(eventId: string) {
 
   if (!event) return null;
 
+  // A church-billed event (#409) never has attendee balances: its recorded
+  // totals are what churches owe, billed after the event, so they count as
+  // billed to churches rather than as outstanding or pending payment.
+  const isDeferredOrganizationBilling = event.billingMode === "DEFERRED_ORGANIZATION_INVOICE";
   let outstandingCents = 0;
   let pendingPaymentCount = 0;
+  let churchBilledCents = 0;
   for (const registration of registrations) {
+    if (isDeferredOrganizationBilling) {
+      churchBilledCents += Math.max(Math.round(Number(registration.totalAmount) * 100), 0);
+      continue;
+    }
     const paid = registration.payments.reduce((paymentTotal, payment) => {
       const refunded = payment.refunds.reduce(
         (refundTotal, refund) => refundTotal + Math.round(Number(refund.amount) * 100),
@@ -486,6 +496,8 @@ export async function getEventOverview(eventId: string) {
       expected: Math.max(attendeeCount - checkedInCount, 0),
       pendingPaymentCount,
       outstandingCents,
+      isDeferredOrganizationBilling,
+      churchBilledCents,
       waitlistedRegistrations: await prisma.registrationWaitlistEntry.count({
         where: { eventId, status: "WAITING" },
       }),

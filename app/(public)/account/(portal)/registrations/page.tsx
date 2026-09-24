@@ -93,10 +93,12 @@ function RegistrationCard({
           </dd>
         </div>
         <div>
-          <dt><CircleDollarSign size={17} aria-hidden="true" /> {registration.event.isDeferredOrganizationBilling ? "Amount owed" : "Balance"}</dt>
+          <dt><CircleDollarSign size={17} aria-hidden="true" /> {registration.churchBilling ? "Estimated amount owed by your church" : "Balance"}</dt>
           <dd>
-            {registration.event.isDeferredOrganizationBilling
-              ? `${money(registration.totalCents)} · billed to your church, not paid online`
+            {registration.churchBilling
+              ? registration.churchBilling.billed
+                ? `${money(registration.churchBilling.amountOwedCents)} · ${registration.churchBilling.label}`
+                : registration.churchBilling.label
               : registration.balanceCents > 0
                 ? `${money(registration.balanceCents)} due of ${money(registration.totalCents)}`
                 : `Paid in full · ${money(registration.totalCents)}`}

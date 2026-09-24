@@ -8,6 +8,7 @@ import { ClubRegistrationWorkspace } from "@/components/club-registration-worksp
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { attendeeProfilePrefill, getAttendeeProfile } from "@/modules/attendee-accounts/profile-service";
 import { getRosterAccessState } from "@/modules/club-rosters/access";
+import { isChurchBilledStatus, notBilledLabel } from "@/modules/club-registrations/church-owed";
 import { ClubRegistrationError, getClubEventWorkspace } from "@/modules/club-registrations/repository";
 import { getClassSelectionWorkspace } from "@/modules/honors/enrollment-repository";
 
@@ -72,7 +73,13 @@ export default async function ClubEventRegistrationPage({
             {workspace.registration.attendees.length} going. A confirmation email was sent to the contact on the registration.
           </p>
           <p className="field-help">
-            Amount owed by your church: <strong translate="no">{moneyLabel(workspace.registration.amountOwedCents)}</strong> · billed directly, not paid online.
+            {isChurchBilledStatus(workspace.registration.status)
+              ? (
+                <>
+                  Estimated amount owed by your church: <strong translate="no">{moneyLabel(workspace.registration.amountOwedCents)}</strong> · billed to the church after the event, not paid online.
+                </>
+              )
+              : notBilledLabel(workspace.registration.status)}
           </p>
           <ul className="public-manage-club-list">
             {workspace.registration.attendees.map((attendee, index) => (

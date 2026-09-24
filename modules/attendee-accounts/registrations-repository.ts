@@ -24,6 +24,7 @@ import {
   type PublicRegistrationStatusSummary,
   type PublicContactUpdateInput,
 } from "@/modules/public-access/domain";
+import { churchOwedCents, isChurchBilledStatus, notBilledLabel } from "@/modules/club-registrations/church-owed";
 
 /**
  * Every registration an account may see: those whose contact address is the
@@ -261,6 +262,12 @@ export type AttendeeRegistrationSummary = {
     // attendee or director balance, so no payment is ever requested here.
     isDeferredOrganizationBilling: boolean;
   };
+  /**
+   * On a church-billed event only: whether the church is billed for this
+   * registration right now (submitted or confirmed), the estimated amount it
+   * owes ($0 while waitlisted or cancelled), and the wording to show.
+   */
+  churchBilling: { billed: boolean; amountOwedCents: number; label: string } | null;
   contact: {
     firstName: string;
     lastName: string;
@@ -453,6 +460,15 @@ export async function listRegistrationsForVerifiedEmail(
         attendeeEditPolicy: registration.event.attendeeEditPolicy,
         isDeferredOrganizationBilling,
       },
+      churchBilling: isDeferredOrganizationBilling
+        ? {
+          billed: isChurchBilledStatus(registration.status),
+          amountOwedCents: churchOwedCents(registration.status, totalCents),
+          label: isChurchBilledStatus(registration.status)
+            ? "billed to your church after the event, not paid online"
+            : notBilledLabel(registration.status),
+        }
+        : null,
       contact: publicContactFromSnapshot(
         registration.contactSnapshot,
         {

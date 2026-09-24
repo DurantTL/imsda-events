@@ -1218,7 +1218,12 @@ async function loadTestRegistrationContext(
     );
     return total + moneyToCents(payment.amount) - refunded;
   }, 0);
-  const balanceCents = Math.max(totalCents - netPaidCents, 0);
+  const isDeferredOrganizationBilling =
+    registration.event?.billingMode === "DEFERRED_ORGANIZATION_INVOICE";
+  // A church-billed registration has no attendee balance to show or collect.
+  const balanceCents = isDeferredOrganizationBilling
+    ? 0
+    : Math.max(totalCents - netPaidCents, 0);
   const paymentInstructionsText = registration.event?.billingMode === "ATTENDEE_PAY"
     && balanceCents > 0
     ? registration.event?.paymentInstructionVersions?.[0]?.instructions?.trim() || ""
@@ -1244,9 +1249,11 @@ async function loadTestRegistrationContext(
       // the outbox row below carries the real registrationId.
       portal_url: REGISTRATION_MANAGE_LINK_SENTINEL,
       payment_status_block: buildPaymentStatusBlock({
-        state: totalCents <= 0
-          ? "COMPLIMENTARY"
-          : balanceCents > 0 ? "BALANCE_DUE" : "PAID",
+        state: isDeferredOrganizationBilling
+          ? "ORGANIZATION_INVOICED"
+          : totalCents <= 0
+            ? "COMPLIMENTARY"
+            : balanceCents > 0 ? "BALANCE_DUE" : "PAID",
         totalCents,
         paidCents: netPaidCents,
         balanceCents,
@@ -2804,7 +2811,10 @@ export async function enqueuePublicRegistrationMessages(
     confirmation_code: input.registration.confirmationCode,
     attendee_summary: attendeeSummary,
     total_amount: formatMessageMoney(input.calculation.totalCents),
-    balance_amount: formatMessageMoney(input.calculation.totalCents),
+    // A church-billed registration never creates an attendee balance.
+    balance_amount: formatMessageMoney(
+      isDeferredOrganizationBilling ? 0 : input.calculation.totalCents,
+    ),
     payment_instructions: paymentInstructionsText,
     portal_url: REGISTRATION_MANAGE_LINK_SENTINEL,
     reply_to_email: settings.replyToEmail || settings.senderEmail || "the IMSDA event office",

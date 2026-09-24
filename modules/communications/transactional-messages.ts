@@ -182,14 +182,23 @@ function paymentInstructions(
  */
 function paymentStateForTemplate(
   key: TransactionalTemplateKey,
-  input: { totalCents: number; balanceCents: number },
+  input: {
+    totalCents: number;
+    balanceCents: number;
+    billingMode?: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE" | null;
+  },
 ): PaymentState {
   if (key === "REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED") {
     return "ORGANIZATION_INVOICED";
   }
   if (key === "WAITLIST_JOINED") return "WAITLISTED";
-  if (key === "WAITLIST_PROMOTED") return "WAITLIST_PROMOTED";
   if (key === "REGISTRATION_CANCELLED" || key === "WAITLIST_REMOVED") return "CANCELLED";
+  // A church-billed (deferred-organization) event never asks the attendee or
+  // director to pay: every other message says the organization is invoiced.
+  if (input.billingMode === "DEFERRED_ORGANIZATION_INVOICE") {
+    return "ORGANIZATION_INVOICED";
+  }
+  if (key === "WAITLIST_PROMOTED") return "WAITLIST_PROMOTED";
   if (input.totalCents <= 0) return "COMPLIMENTARY";
   return input.balanceCents > 0 ? "BALANCE_DUE" : "PAID";
 }
@@ -357,7 +366,13 @@ async function enqueueTransactionalMessage(
     ),
     0,
   );
-  const balanceCents = Math.max(totalCents - paidCents + refundedCents, 0);
+  const isDeferredOrganizationBilling =
+    registration.event.billingMode === "DEFERRED_ORGANIZATION_INVOICE";
+  // Nothing is payable online on a church-billed event, so no token may
+  // present the estimated church amount as an attendee balance.
+  const balanceCents = isDeferredOrganizationBilling
+    ? 0
+    : Math.max(totalCents - paidCents + refundedCents, 0);
   const waitlistPosition = input.waitlistPosition
     ?? registration.waitlistEntry?.position
     ?? 0;
@@ -415,7 +430,11 @@ async function enqueueTransactionalMessage(
     registration_contact_email: recipientEmail,
     hotel_information: buildHotelInformationBlock(registration.event),
     payment_status_block: buildPaymentStatusBlock({
-      state: paymentStateForTemplate(input.templateKey, { totalCents, balanceCents }),
+      state: paymentStateForTemplate(input.templateKey, {
+        totalCents,
+        balanceCents,
+        billingMode: registration.event.billingMode,
+      }),
       totalCents,
       paidCents,
       balanceCents,

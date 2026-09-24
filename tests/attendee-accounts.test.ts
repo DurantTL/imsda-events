@@ -216,14 +216,14 @@ describe("verified attendee registration views", () => {
     });
   });
 
-  it("never shows a deferred-organization registration's amount as a payable balance (#409)", async () => {
+  function deferredRegistrationFixture(status: string) {
     dependencies.getPrisma.mockReturnValue({
       $queryRaw: vi.fn().mockResolvedValue([{ id: "registration-1" }]),
       registration: {
         findMany: vi.fn().mockResolvedValue([{
           id: "registration-1",
           confirmationCode: "REG-CLUB",
-          status: "SUBMITTED",
+          status,
           submittedAt: new Date("2026-08-01T12:00:00.000Z"),
           updatedAt: new Date("2026-08-01T13:00:00.000Z"),
           // What the church owes, priced by the same engine as any other
@@ -256,6 +256,10 @@ describe("verified attendee registration views", () => {
         }]),
       },
     });
+  }
+
+  it("never shows a deferred-organization registration's amount as a payable balance (#409)", async () => {
+    deferredRegistrationFixture("SUBMITTED");
 
     const [registration] = await listRegistrationsForVerifiedEmail("director@example.test");
 
@@ -263,6 +267,25 @@ describe("verified attendee registration views", () => {
     // Never a balance to pay: this is billed to the church directly.
     expect(registration?.balanceCents).toBe(0);
     expect(registration?.event.isDeferredOrganizationBilling).toBe(true);
+    expect(registration?.churchBilling).toEqual({
+      billed: true,
+      amountOwedCents: 6300,
+      label: "billed to your church after the event, not paid online",
+    });
+  });
+
+  it("shows nothing owed by the church while a club is waitlisted or cancelled (#409)", async () => {
+    deferredRegistrationFixture("WAITLISTED");
+    const [waitlisted] = await listRegistrationsForVerifiedEmail("director@example.test");
+    expect(waitlisted?.churchBilling).toEqual({
+      billed: false,
+      amountOwedCents: 0,
+      label: "No amount owed while waitlisted",
+    });
+
+    deferredRegistrationFixture("CANCELLED");
+    const [cancelled] = await listRegistrationsForVerifiedEmail("director@example.test");
+    expect(cancelled?.churchBilling).toMatchObject({ billed: false, amountOwedCents: 0, label: "Cancelled — nothing owed" });
   });
 });
 

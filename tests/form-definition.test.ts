@@ -298,6 +298,41 @@ describe("registration form definitions", () => {
     const calculation = calculateRosterTotal(definition, { sponsor_count: 1 }, roster, "2026-01-01");
     expect(calculation.subtotalCents).toBe(0);
     expect(calculation.totalCents).toBe(0);
+    // The stored line items still add up to the floored subtotal: the credit
+    // line is clamped to the $9 the fees leave, not recorded as −$10.
+    expect(calculation.lineItems.reduce((sum, item) => sum + item.amountCents, 0)).toBe(0);
+    expect(calculation.lineItems.find((item) => item.key === "sponsor_count")?.amountCents).toBe(-900);
+  });
+
+  it("gives the meal-sponsorship credit once per person, however many meals are picked (#409)", () => {
+    const definition = formTemplates.find((template) => template.key === "spring_camporee_export")!.definition;
+    const roster = [
+      { first_name: "Pat", last_name: "Finder" },
+      { first_name: "Sam", last_name: "Scout" },
+    ];
+    const oneMeal = calculateRosterTotal(
+      definition,
+      { sponsoring_meals: "Yes", meal_sponsorship_count: 1, meal_times: ["Friday lunch"] },
+      roster,
+      "2026-04-10",
+    );
+    const everyMeal = calculateRosterTotal(
+      definition,
+      {
+        sponsoring_meals: "Yes",
+        meal_sponsorship_count: 1,
+        meal_times: ["Friday lunch", "Friday supper", "Sabbath lunch", "Sabbath supper"],
+      },
+      roster,
+      "2026-04-10",
+    );
+    expect(oneMeal.totalCents).toBe(1300);
+    expect(everyMeal.totalCents).toBe(1300);
+    const fields = definition.sections.flatMap((section) => section.fields);
+    const countField = fields.find((field) => field.key === "meal_sponsorship_count")!;
+    expect(countField.label).toBe("People your club is sponsoring a meal for");
+    expect(countField.helpText).toContain("once, however many meals");
+    expect(JSON.stringify(fields)).not.toMatch(/per-meal/);
   });
 
   it("resolves the Spring Camporee club and director as the deferred-organization billing identity", () => {

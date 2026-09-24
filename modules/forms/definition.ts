@@ -754,8 +754,8 @@ export const formTemplates: FormTemplate[] = [
           templateField("sc_game_support", "game_support", "Saturday night game help", "MULTISELECT", true, ["Bring a game", "Lead a game"], { minSelections: 1, maxSelections: 2, conditional: { fieldKey: "special_activities", operator: "INCLUDES", value: "Bring a game and/or lead a game Saturday night" } }),
           templateField("sc_game", "game_name", "Game name", "TEXT", true, [], { conditional: { fieldKey: "game_support", operator: "INCLUDES", value: "Bring a game" } }),
           templateField("sc_oregon", "oregon_trail_adult", "Adult assisting with Oregon Trail", "TEXT", true, [], { conditional: { fieldKey: "special_activities", operator: "INCLUDES", value: "Adult assist with Oregon Trail Friday afternoon" } }),
-          templateField("sc_sponsor", "sponsoring_meals", "Will the club sponsor meals?", "RADIO", true, ["No", "Yes"], { helpText: "A $5 per-person, per-meal credit is applied to the event invoice." }),
-          templateField("sc_sponsor_count", "meal_sponsorship_count", "People sponsored per meal", "NUMBER", true, [], { conditional: { fieldKey: "sponsoring_meals", operator: "EQUALS", value: "Yes" }, creditCentsPerUnit: -500, capUnitsAtAttendeeCount: true }),
+          templateField("sc_sponsor", "sponsoring_meals", "Will the club sponsor meals?", "RADIO", true, ["No", "Yes"], { helpText: "Sponsoring meals earns a $5 credit per person sponsored, once, off the amount your church owes." }),
+          templateField("sc_sponsor_count", "meal_sponsorship_count", "People your club is sponsoring a meal for", "NUMBER", true, [], { helpText: "A $5 credit per person sponsored (once, however many meals) comes off the amount your church owes, up to the number of people registered.", conditional: { fieldKey: "sponsoring_meals", operator: "EQUALS", value: "Yes" }, creditCentsPerUnit: -500, capUnitsAtAttendeeCount: true }),
           templateField("sc_meal_times", "meal_times", "Sponsored meal times", "MULTISELECT", true, ["Friday lunch", "Friday lunch — delivered to office", "Friday supper", "Friday supper — delivered to office", "Sabbath lunch", "Sabbath supper"], { minSelections: 1, maxSelections: 6, conditional: { fieldKey: "sponsoring_meals", operator: "EQUALS", value: "Yes" } }),
           templateField("sc_partner", "partner_club", "Partner club for events", "TEXT"),
           templateField("sc_ribbons", "event_ribbons", "Would your club like event ribbons?", "RADIO", true, ["Yes", "No"]),
@@ -946,12 +946,27 @@ function pricedLineItem(
 function finalizeCalculation(
   definition: RegistrationFormDefinition,
   registrationResponses: Record<string, unknown>,
-  lineItems: FormCalculation["lineItems"],
+  rawLineItems: FormCalculation["lineItems"],
 ) {
-  // A credit line item can carry the sum negative (a per-person meal
-  // sponsorship credit, #409); floor here, generically, rather than in any
-  // one form, so no registration is ever billed less than $0.
-  const subtotalCents = Math.max(0, lineItems.reduce((total, item) => total + item.amountCents, 0));
+  // A credit line item (a per-person meal sponsorship credit, #409) could
+  // carry the sum negative. Clamp each credit, generically rather than in any
+  // one form, to what the charges leave, so no registration is ever billed
+  // less than $0 and the stored line items always add up to the subtotal.
+  let remainingCents = rawLineItems.reduce(
+    (total, item) => total + Math.max(item.amountCents, 0),
+    0,
+  );
+  const lineItems: FormCalculation["lineItems"] = [];
+  for (const item of rawLineItems) {
+    if (item.amountCents >= 0) {
+      lineItems.push(item);
+      continue;
+    }
+    const appliedCents = Math.max(item.amountCents, -remainingCents);
+    remainingCents += appliedCents;
+    if (appliedCents !== 0) lineItems.push({ ...item, amountCents: appliedCents });
+  }
+  const subtotalCents = lineItems.reduce((total, item) => total + item.amountCents, 0);
   const payment = definition.payment;
   const cardSelected = Boolean(payment?.enabled && registrationResponses[payment.paymentMethodFieldKey] === payment.cardOptionValue);
   const processingFeeCents = processingFeeForSubtotal(
