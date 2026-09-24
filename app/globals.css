@@ -1493,6 +1493,44 @@ select:focus-visible {
   font-weight: 800;
 }
 
+.club-check-in-panel { border-top: 4px solid var(--imsda-purple); }
+.club-billed-badge { background: var(--imsda-gold-soft, #fbf2da); color: #805807; }
+.club-check-in-campsite {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+.club-check-in-actions { display: flex; flex-wrap: wrap; gap: 9px; margin: 13px 0; }
+.club-check-in-list { display: grid; gap: 8px; }
+.club-check-in-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: white;
+  padding: 9px 12px;
+}
+.club-check-in-attendee { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.club-check-in-attendee input[type="checkbox"] { width: 17px; height: 17px; }
+.club-check-in-attendee strong,
+.club-check-in-attendee small { display: block; }
+.club-check-in-attendee strong { color: var(--ink); font-size: 0.74rem; }
+.club-check-in-attendee small { margin-top: 2px; color: var(--muted); font-size: 0.62rem; }
+.club-check-in-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .communications-grid { align-items: start; }
 .announcement-list { display: grid; gap: 12px; }
 .announcement-card { border-left: 4px solid var(--green); border-radius: 17px; padding: 19px; }

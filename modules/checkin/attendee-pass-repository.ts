@@ -96,6 +96,27 @@ function tokenError(error: AttendeePassTokenError) {
   );
 }
 
+const registrationAttendeesSelect = {
+  orderBy: [{ position: "asc" as const }, { createdAt: "asc" as const }],
+  select: {
+    id: true,
+    attendeeType: true,
+    profileSnapshot: true,
+    person: {
+      select: {
+        firstName: true,
+        lastName: true,
+      },
+    },
+    checkIns: {
+      where: { undoneAt: null },
+      orderBy: { checkedInAt: "desc" as const },
+      take: 1,
+      select: { checkedInAt: true },
+    },
+  },
+};
+
 async function resolveSignedPass(
   eventId: string,
   token: string,
@@ -129,8 +150,14 @@ async function resolveSignedPass(
       },
       registration: {
         select: {
+          id: true,
           confirmationCode: true,
           status: true,
+          // Q1 (#412): a club registration's QR pass opens the whole club's
+          // view, not just the scanned person, the same as entering the
+          // confirmation code does. Only club membership is checked here;
+          // nothing about the club's billing or roster is in the token.
+          clubRegistration: { select: { id: true } },
         },
       },
       checkIns: {
@@ -152,6 +179,17 @@ async function resolveSignedPass(
       "REGISTRATION_NOT_ELIGIBLE",
       "This registration is no longer eligible for check-in.",
     );
+  }
+  if (attendee.registration.clubRegistration) {
+    const roster = await getPrisma().registrationAttendee.findMany({
+      where: { registrationId: attendee.registration.id },
+      ...registrationAttendeesSelect,
+    });
+    return {
+      source: "QR_PASS",
+      confirmationCode: attendee.registration.confirmationCode,
+      attendees: roster.map(serializeAttendee),
+    };
   }
   return {
     source: "QR_PASS",
@@ -175,26 +213,7 @@ async function resolveConfirmationCode(
     select: {
       confirmationCode: true,
       status: true,
-      attendees: {
-        orderBy: [{ position: "asc" }, { createdAt: "asc" }],
-        select: {
-          id: true,
-          attendeeType: true,
-          profileSnapshot: true,
-          person: {
-            select: {
-              firstName: true,
-              lastName: true,
-            },
-          },
-          checkIns: {
-            where: { undoneAt: null },
-            orderBy: { checkedInAt: "desc" },
-            take: 1,
-            select: { checkedInAt: true },
-          },
-        },
-      },
+      attendees: registrationAttendeesSelect,
     },
   });
   if (!registration) {

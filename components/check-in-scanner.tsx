@@ -20,8 +20,10 @@ import {
 } from "react";
 import { CheckInPaymentDue } from "@/components/check-in-payment-due";
 import { BackgroundCheckBadge } from "@/components/background-check-flags";
+import { ClubCheckInPanel } from "@/components/club-check-in-panel";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { CheckInActionResult } from "@/components/use-offline-check-in-queue";
+import type { ClubCheckInInfo } from "@/modules/club-registrations/repository";
 
 type ResolvedAttendee = {
   id: string;
@@ -93,6 +95,7 @@ export function CheckInScanner({
   conflictAttendeeIds,
   paymentDueByConfirmationCode = {},
   backgroundFlaggedAttendeeIds = [],
+  clubsByConfirmationCode = {},
 }: {
   eventId: string;
   onConfirmCheckIn: (
@@ -103,6 +106,8 @@ export function CheckInScanner({
   paymentDueByConfirmationCode?: Record<string, { balanceCents: number; partySize: number }>;
   /** Adults at a youth or children's event without a current check (#388). Shown, never blocking. */
   backgroundFlaggedAttendeeIds?: string[];
+  /** Q1 (#412): scanning a club's code opens the same club view a name search finds. */
+  clubsByConfirmationCode?: Record<string, ClubCheckInInfo>;
 }) {
   const [open, setOpen] = useState(false);
   const [cameraState, setCameraState] = useState<CameraState>("idle");
@@ -115,6 +120,7 @@ export function CheckInScanner({
   const [actionStateById, setActionStateById] = useState<
     Record<string, CheckInActionResult["status"]>
   >({});
+  const [bulkBusy, setBulkBusy] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -314,6 +320,54 @@ export function CheckInScanner({
     }
   }
 
+  async function confirmCheckInMany(attendeeIds: string[]) {
+    const attendeesById = new Map(
+      (resolution?.attendees ?? []).map((attendee) => [attendee.id, attendee]),
+    );
+    setBulkBusy(true);
+    setError("");
+    setNotice("");
+    let confirmedCount = 0;
+    let queuedCount = 0;
+    let reviewCount = 0;
+    for (const attendeeId of attendeeIds) {
+      const attendee = attendeesById.get(attendeeId);
+      if (!attendee || attendee.checkedIn) continue;
+      try {
+        const result = await onConfirmCheckIn(attendee);
+        setActionStateById((current) => ({
+          ...current,
+          [attendee.id]: result.status,
+        }));
+        if (result.status === "CONFIRMED") {
+          confirmedCount += 1;
+          const checkedInAt = result.checkedInAt ?? new Date().toISOString();
+          setResolution((current) => current ? {
+            ...current,
+            attendees: current.attendees.map((entry) => (
+              entry.id === attendee.id
+                ? { ...entry, checkedIn: true, checkedInAt }
+                : entry
+            )),
+          } : current);
+        } else if (result.status === "QUEUED") {
+          queuedCount += 1;
+        } else {
+          reviewCount += 1;
+        }
+      } catch {
+        reviewCount += 1;
+      }
+    }
+    setBulkBusy(false);
+    setNotice(
+      `Checked in ${confirmedCount} of ${attendeeIds.length}`
+      + (queuedCount > 0 ? `, ${queuedCount} queued offline` : "")
+      + (reviewCount > 0 ? `, ${reviewCount} need review` : "")
+      + ".",
+    );
+  }
+
   return (
     <>
       <button
@@ -488,7 +542,33 @@ export function CheckInScanner({
               </div>
             )}
 
-            {resolution && (
+            {resolution && clubsByConfirmationCode[resolution.confirmationCode] && (
+              // Q1 (#412): scanning a club's QR pass or confirmation code
+              // opens the same club view a name search finds.
+              <ClubCheckInPanel
+                amountOwedCents={clubsByConfirmationCode[resolution.confirmationCode].amountOwedCents}
+                attendees={resolution.attendees.map((attendee) => ({
+                  id: attendee.id,
+                  firstName: attendee.firstName,
+                  lastName: attendee.lastName,
+                  attendeeType: attendee.attendeeType,
+                  checkedIn: attendee.checkedIn || actionStateById[attendee.id] === "CONFIRMED",
+                  backgroundFlagged: backgroundFlaggedAttendeeIds.includes(attendee.id),
+                  savedState: actionStateById[attendee.id] === "CONFLICT" || conflictAttendeeIds.includes(attendee.id)
+                    ? "CONFLICT"
+                    : actionStateById[attendee.id] === "QUEUED" || queuedAttendeeIds.includes(attendee.id)
+                      ? "QUEUED"
+                      : undefined,
+                }))}
+                busy={bulkBusy}
+                canCheckIn
+                confirmationCode={resolution.confirmationCode}
+                onCheckInMany={confirmCheckInMany}
+                organizationName={clubsByConfirmationCode[resolution.confirmationCode].organizationName}
+              />
+            )}
+
+            {resolution && !clubsByConfirmationCode[resolution.confirmationCode] && (
               <section
                 aria-labelledby="check-in-review-title"
                 className="check-in-review"

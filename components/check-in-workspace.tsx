@@ -22,10 +22,12 @@ import {
 import { CheckInPaymentDue } from "@/components/check-in-payment-due";
 import { BackgroundCheckBadge } from "@/components/background-check-flags";
 import { CheckInScanner } from "@/components/check-in-scanner";
+import { ClubCheckInPanel } from "@/components/club-check-in-panel";
 import { useOfflineCheckInQueue } from "@/components/use-offline-check-in-queue";
 import { offlineCheckInErrorMessage } from "@/modules/checkin/domain";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 import { attendeeBalanceCents } from "@/modules/registrations/finance-view";
+import type { ClubCheckInInfo } from "@/modules/club-registrations/repository";
 
 type Arrival = RegistrationRecord["attendees"][number] & {
   confirmationCode: string;
@@ -41,6 +43,7 @@ export function CheckInWorkspace({
   canCheckIn,
   showBalances,
   backgroundFlaggedAttendeeIds = [],
+  clubs = [],
 }: {
   eventName: string;
   eventId: string;
@@ -50,6 +53,8 @@ export function CheckInWorkspace({
   showBalances: boolean;
   /** Adults at a youth or children's event without a current check (#388). Shown, never blocking. */
   backgroundFlaggedAttendeeIds?: string[];
+  /** Active club registrations for this event (#412): who to check in as a group, and what their church owes. */
+  clubs?: ClubCheckInInfo[];
 }) {
   const [arrivals, setArrivals] = useState<Arrival[]>(
     initialRegistrations.flatMap((registration) => (
@@ -106,11 +111,14 @@ export function CheckInWorkspace({
     onConfirmed: applyConfirmedCheckIn,
   });
 
+  const clubByConfirmationCode = useMemo(() => new Map(
+    clubs.map((club) => [club.confirmationCode, club]),
+  ), [clubs]);
   const visible = useMemo(() => arrivals.filter((arrival) => (
-    `${arrival.firstName} ${arrival.lastName} ${arrival.confirmationCode} ${arrival.email}`
+    `${arrival.firstName} ${arrival.lastName} ${arrival.confirmationCode} ${arrival.email} ${clubByConfirmationCode.get(arrival.confirmationCode)?.organizationName ?? ""}`
       .toLowerCase()
       .includes(query.toLowerCase())
-  )), [arrivals, query]);
+  )), [arrivals, query, clubByConfirmationCode]);
   const queueByAttendee = useMemo(() => new Map(
     queue.map((item) => [item.attendeeId, item]),
   ), [queue]);
@@ -122,6 +130,41 @@ export function CheckInWorkspace({
   const queued = queue.filter((item) => item.state === "QUEUED").length;
   const conflicts = queue.length - queued;
   const online = connectionState === "ONLINE";
+
+  // Q1 (#412): search by club name or confirmation code opens the same club
+  // view as scanning the club's code. Only clubs the query actually matches,
+  // so an empty search stays uncluttered.
+  const matchedClubs = useMemo(() => {
+    const trimmed = query.trim().toLowerCase();
+    if (!trimmed) return [];
+    return clubs.filter((club) => (
+      club.organizationName.toLowerCase().includes(trimmed)
+      || club.confirmationCode.toLowerCase().includes(trimmed)
+    ));
+  }, [clubs, query]);
+  const [bulkBusyCode, setBulkBusyCode] = useState<string | null>(null);
+
+  async function checkInMany(confirmationCode: string, clubLabel: string, attendeeIds: string[]) {
+    if (!canCheckIn || attendeeIds.length === 0) return;
+    setBulkBusyCode(confirmationCode);
+    setMessage("");
+    let confirmed = 0;
+    let queuedCount = 0;
+    let needsReview = 0;
+    for (const attendeeId of attendeeIds) {
+      const result = await requestCheckIn(attendeeId);
+      if (result.status === "CONFIRMED") confirmed += 1;
+      else if (result.status === "QUEUED") queuedCount += 1;
+      else needsReview += 1;
+    }
+    setBulkBusyCode(null);
+    setMessage(
+      `${clubLabel}: checked in ${confirmed} of ${attendeeIds.length}`
+      + (queuedCount > 0 ? `, ${queuedCount} queued offline` : "")
+      + (needsReview > 0 ? `, ${needsReview} need review` : "")
+      + ".",
+    );
+  }
 
   async function toggleCheckIn(arrival: Arrival) {
     if (!canCheckIn) return;
@@ -399,6 +442,7 @@ export function CheckInWorkspace({
           eventId={eventId}
           paymentDueByConfirmationCode={paymentDueByConfirmationCode}
           backgroundFlaggedAttendeeIds={backgroundFlaggedAttendeeIds}
+          clubsByConfirmationCode={Object.fromEntries(clubByConfirmationCode)}
           onConfirmCheckIn={(attendee) => requestCheckIn(attendee.id)}
           queuedAttendeeIds={queue
             .filter((item) => item.state === "QUEUED")
@@ -409,7 +453,7 @@ export function CheckInWorkspace({
           <span className="sr-only">Search arrivals</span>
           <input
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search name, email, or confirmation code"
+            placeholder="Search name, club, or confirmation code"
             value={query}
           />
         </label>
@@ -420,6 +464,39 @@ export function CheckInWorkspace({
           {message}
         </div>
       )}
+
+      {matchedClubs.map((club) => {
+        const clubAttendees = arrivals
+          .filter((arrival) => arrival.confirmationCode === club.confirmationCode)
+          .map((arrival) => {
+            const savedItem = queueByAttendee.get(arrival.id);
+            return {
+              id: arrival.id,
+              firstName: arrival.firstName,
+              lastName: arrival.lastName,
+              attendeeType: arrival.attendeeType,
+              checkedIn: arrival.checkedIn,
+              backgroundFlagged: backgroundFlaggedAttendeeIds.includes(arrival.id),
+              savedState: savedItem?.state,
+            };
+          });
+        return (
+          <ClubCheckInPanel
+            attendees={clubAttendees}
+            busy={bulkBusyCode === club.confirmationCode || unreadableItemCount > 0}
+            canCheckIn={canCheckIn}
+            amountOwedCents={club.amountOwedCents}
+            confirmationCode={club.confirmationCode}
+            key={club.confirmationCode}
+            onCheckInMany={(attendeeIds) => checkInMany(
+              club.confirmationCode,
+              club.organizationName,
+              attendeeIds,
+            )}
+            organizationName={club.organizationName}
+          />
+        );
+      })}
 
       <section className="panel">
         <div className="section-heading">

@@ -54,3 +54,25 @@ Discard only removes that device's saved retry; it never undoes server state.
 Only the `CHECK_IN` action uses this queue. Undo remains an explicit online-only
 mutation, and payment actions are never queued. The implementation does not
 install a service worker or cache authenticated pages.
+
+## Checking in a whole club at once (Q1, #412)
+
+Staff find a club by confirmation code or club name in the arrival roster's
+search, or by scanning any member's QR pass or the confirmation code — both
+paths open the same club view (`components/club-check-in-panel.tsx`), listing
+every attendee with the amount estimated billed to the church
+(`modules/club-registrations/church-owed.ts`, read-only, never a door
+payment) and any flags, including a missing background check (#405/#388).
+Only an active (submitted or confirmed) club registration is offered, the
+same eligibility single-attendee check-in already enforces
+(`modules/club-registrations/repository.ts`'s `listClubCheckInInfo`); a
+waitlisted or cancelled club is not checked in here.
+
+**Check in all** and **Check in selected** call the exact same per-attendee
+`checkInAttendee` path as a single row's check-in, one attendee at a time
+through the same offline queue — never a bulk endpoint — so each person gets
+their own check-in record and undo, idempotent retries, and reports behave
+identically. Someone already checked in (by this device, another scan, or
+another staff member) is skipped rather than re-sent, so repeats never
+duplicate or error. Campsite and assignments don't exist yet (#410); the club
+view leaves that slot clearly empty instead of inventing that schema.
