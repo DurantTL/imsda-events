@@ -125,16 +125,24 @@ describe("roster routes", () => {
 
   it("refuses a locked roster with 403 and adds nothing", async () => {
     mocks.findSession.mockResolvedValue({ secondFactorVerifiedAt: null });
-    const response = await POST(request({ firstName: "A", lastName: "B", birthDate: "2014-01-01", attendeeType: "YOUTH" }), clubContext());
+    const response = await POST(request({ firstName: "A", lastName: "B", birthDate: "2014-01-01", attendeeType: "YOUTH", gender: "FEMALE" }), clubContext());
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toMatchObject({ error: "MFA_UNLOCK_REQUIRED" });
     expect(mocks.addRosterMember).not.toHaveBeenCalled();
   });
 
   it("adds to the director's own club for the current club year", async () => {
-    const response = await POST(request({ firstName: "A", lastName: "B", birthDate: "2014-01-01", attendeeType: "YOUTH" }), clubContext());
+    const response = await POST(request({ firstName: "A", lastName: "B", birthDate: "2014-01-01", attendeeType: "YOUTH", gender: "FEMALE" }), clubContext());
     expect(response.status).toBe(201);
-    expect(mocks.addRosterMember).toHaveBeenCalledWith("club-1", expect.stringMatching(/^\d{4}-\d{2}$/), expect.objectContaining({ birthDate: "2014-01-01" }), { accountId: "director-1" });
+    expect(mocks.addRosterMember).toHaveBeenCalledWith("club-1", expect.stringMatching(/^\d{4}-\d{2}$/), expect.objectContaining({ birthDate: "2014-01-01", gender: "FEMALE" }), { accountId: "director-1" });
+  });
+
+  it("defaults a blank role by type on create: youth become Pathfinder, staff stay blank (#424)", async () => {
+    const base = { firstName: "A", lastName: "B", birthDate: "1990-01-01", gender: "MALE", role: "" };
+    expect((await POST(request({ ...base, attendeeType: "STAFF" }), clubContext())).status).toBe(201);
+    expect(mocks.addRosterMember).toHaveBeenLastCalledWith("club-1", expect.any(String), expect.objectContaining({ attendeeType: "STAFF", role: "" }), { accountId: "director-1" });
+    expect((await POST(request({ ...base, birthDate: "2014-01-01", attendeeType: "YOUTH" }), clubContext())).status).toBe(201);
+    expect(mocks.addRosterMember).toHaveBeenLastCalledWith("club-1", expect.any(String), expect.objectContaining({ attendeeType: "YOUTH", role: "Pathfinder" }), { accountId: "director-1" });
   });
 
   it("rejects cross-origin writes before anything else", async () => {

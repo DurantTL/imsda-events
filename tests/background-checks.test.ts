@@ -80,6 +80,17 @@ describe("Sterling Volunteers CSV (#388)", () => {
     expect(normalizeCheckDate("2/29/2027")).toBeNull();
   });
 
+  it("never reads a two-digit year as a birth-date century (#424)", () => {
+    // An expiration of 6/30/28 must not become 1928 and read as long expired.
+    expect(normalizeCheckDate("6/30/28")).toBeNull();
+    expect(normalizeCheckDate("6/30/2028")).toBe("2028-06-30");
+    expect(normalizeCheckDate("2031-02-14")).toBe("2031-02-14");
+    const rows = parseSterlingCsv("First name,Last name,Email,Expiration date\nAna,Rivera,ana@example.test,6/30/28\nBo,Lee,bo@example.test,6/30/2028");
+    expect(rows[0]!.expiresOn).toBeNull();
+    expect(rows[0]!.problems).toContain("The expiration date isn't a date.");
+    expect(rows[1]).toMatchObject({ expiresOn: "2028-06-30", problems: [] });
+  });
+
   it("is current through the expiration day", () => {
     expect(backgroundCheckState({ expiresOn: "2026-10-04" }, "2026-10-04")).toBe("CURRENT");
     expect(backgroundCheckState({ expiresOn: "2026-10-03" }, "2026-10-04")).toBe("EXPIRED");

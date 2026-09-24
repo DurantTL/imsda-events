@@ -1,4 +1,4 @@
-import { normalizeBirthDate } from "@/modules/club-rosters/csv-import";
+import { parseRosterBirthDateInput } from "@/modules/club-rosters/domain";
 import { CsvImportError, parseCsvMatrix } from "@/modules/imports/csv-parser";
 import { toCsv } from "@/modules/reporting/csv";
 
@@ -83,10 +83,15 @@ export function isClearStatus(status: string | null) {
 
 const clean = (value: string | undefined) => (value ?? "").normalize("NFKC").replace(/\s+/g, " ").trim();
 
-/** "2026-09-23", "9/23/2026", "09/23/2026", or "9/23/2026 10:15 AM" → "2026-09-23". */
+/**
+ * "2026-09-23", "9/23/2026", "09/23/2026", or "9/23/2026 10:15 AM" → "2026-09-23".
+ * Two-digit years (`6/30/28`) are rejected: check and expiration dates run
+ * into the future, so the roster's birth-date century rule would misread
+ * them (#424).
+ */
 export function normalizeCheckDate(value: string) {
   const date = clean(value).split(/[ T]/)[0] ?? "";
-  const normalized = normalizeBirthDate(date);
+  const normalized = parseRosterBirthDateInput(date, undefined, { allowTwoDigitYear: false });
   if (!normalized) return null;
   const [year, month, day] = normalized.split("-").map(Number);
   const probe = new Date(Date.UTC(year!, month! - 1, day!));

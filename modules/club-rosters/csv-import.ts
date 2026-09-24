@@ -1,5 +1,12 @@
 import { classLevelFrom } from "@/modules/club-imports/domain";
 import type { ClubClassLevel } from "@/modules/club-rosters/domain";
+import {
+  clubRosterAttendeeTypeLabels,
+  missingRosterFields,
+  parseRosterBirthDateInput,
+  rosterFieldLabels,
+  rosterRoleOrDefault,
+} from "@/modules/club-rosters/domain";
 import { parseCsvMatrix } from "@/modules/imports/csv-parser";
 import { toCsv } from "@/modules/reporting/csv";
 
@@ -13,7 +20,7 @@ import { toCsv } from "@/modules/reporting/csv";
  * file (no birth dates), only what the file says and what will happen.
  */
 
-export const ROSTER_CSV_HEADERS = ["First name", "Last name", "Birth date", "Type", "Class", "Role", "Gender"] as const;
+export const ROSTER_CSV_HEADERS = ["First name", "Last name", "Birth date", "Type", "Current class", "Role", "Gender"] as const;
 export const MAX_ROSTER_CSV_ROWS = 500;
 export const MAX_ROSTER_CSV_BYTES = 200_000;
 
@@ -47,6 +54,7 @@ const headerKeys: Record<string, keyof Omit<RosterCsvRow, "line" | "problems">> 
   type: "attendeeType",
   class: "classLevel",
   classlevel: "classLevel",
+  currentclass: "classLevel",
   role: "role",
   gender: "gender",
 };
@@ -60,21 +68,12 @@ const typeValues: Record<string, AttendeeType> = {
   underage: "UNDERAGE",
 };
 
-/** "2014-04-17", "4/17/2014", or "04/17/2014" → "2014-04-17". */
-export function normalizeBirthDate(value: string) {
-  const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(value);
-  const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value);
-  const parts = iso ? [iso[1], iso[2], iso[3]] : us ? [us[3], us[1], us[2]] : null;
-  if (!parts) return null;
-  const [year, month, day] = parts;
-  return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
-}
-
 const clean = (value: string | undefined) => (value ?? "").normalize("NFKC").replace(/\s+/g, " ").trim();
 
 export class RosterCsvError extends Error {}
 
-export function parseRosterCsv(text: string): RosterCsvRow[] {
+/** "2014-04-17", "4/17/2014", or "4/17/14" → "2014-04-17" (#424: the shared century rule). */
+export function parseRosterCsv(text: string, currentYear = new Date().getFullYear()): RosterCsvRow[] {
   if (text.length > MAX_ROSTER_CSV_BYTES) throw new RosterCsvError("That file is too large. Upload up to 500 people at a time.");
   const matrix = parseCsvMatrix(text.replace(/^﻿/, ""));
   if (matrix.length === 0) throw new RosterCsvError("That file is empty. Download the template and fill it in.");
@@ -96,9 +95,9 @@ export function parseRosterCsv(text: string): RosterCsvRow[] {
       }
       if (value === "") return;
       if (key === "birthDate") {
-        const date = normalizeBirthDate(value);
+        const date = parseRosterBirthDateInput(value, currentYear);
         if (date) row.birthDate = date;
-        else row.problems.push(`Birth date "${value}" isn't a date. Use 2014-04-17 or 4/17/2014.`);
+        else row.problems.push(`Birth date "${value}" isn't a date. Use 2014-04-17, 4/17/2014, or 4/17/14.`);
       } else if (key === "attendeeType") {
         const type = typeValues[value.toLowerCase()];
         if (type) row.attendeeType = type;
@@ -123,6 +122,46 @@ export function parseRosterCsv(text: string): RosterCsvRow[] {
 
 function nameKey(firstName: string, lastName: string) {
   return `${firstName} ${lastName}`.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
+}
+
+const csvFieldOrder = ["birthDate", "attendeeType", "classLevel", "role", "gender"] as const;
+
+/** The roster's fields (#424) an empty CSV cell left blank on this row. */
+export function missingRosterCsvFields(row: RosterCsvRow): string[] {
+  return csvFieldOrder.filter((field) => row[field] === undefined).map((field) => rosterFieldLabels[field]);
+}
+
+/**
+ * What a new person from this row will be saved with (#424): a blank type is
+ * Youth, and a blank role defaults by type (youth → "Pathfinder", others stay
+ * blank). The import route saves exactly this.
+ */
+export function rosterCsvAddDefaults(row: RosterCsvRow) {
+  const attendeeType: AttendeeType = row.attendeeType ?? "YOUTH";
+  return { attendeeType, role: rosterRoleOrDefault(row.role, attendeeType) };
+}
+
+/**
+ * The preview line for a new person (#424): which blanks get a default, then
+ * what will still be missing on the roster afterwards.
+ */
+function addMessage(row: RosterCsvRow) {
+  const { attendeeType, role } = rosterCsvAddDefaults(row);
+  const defaults: string[] = [];
+  if (row.attendeeType === undefined) defaults.push(`${rosterFieldLabels.attendeeType} → ${clubRosterAttendeeTypeLabels[attendeeType]}`);
+  if (!(row.role ?? "").trim() && role) defaults.push(`${rosterFieldLabels.role} → ${role}`);
+  const missing = missingRosterFields({
+    attendeeType,
+    role,
+    classLevel: row.classLevel ?? null,
+    gender: row.gender ?? null,
+    birthDateNeeded: !row.birthDate,
+  });
+  return [
+    "Will be added.",
+    defaults.length > 0 ? `Will default: ${defaults.join(", ")}.` : "",
+    missing.length > 0 ? `Missing: ${missing.join(", ")}.` : "",
+  ].filter(Boolean).join(" ");
 }
 
 export type RosterImportStep = {
@@ -152,11 +191,16 @@ export function planRosterImport(rows: readonly RosterCsvRow[], existing: Readon
     const matches = byName.get(key) ?? [];
     if (matches.length > 1) return skip("More than one person on the roster has this name. Edit them by hand.");
     if (matches.length === 1) {
-      const changes = ["birthDate", "attendeeType", "classLevel", "role", "gender"].filter((field) => row[field as keyof RosterCsvRow] !== undefined);
+      const changes = csvFieldOrder.filter((field) => row[field] !== undefined);
       if (changes.length === 0) return { line: row.line, name, action: "SKIP", memberId: matches[0], message: "Already on the roster; nothing to change.", row };
-      return { line: row.line, name, action: "UPDATE", memberId: matches[0], message: "Will update what the file fills in.", row };
+      // Blank cells on an update keep what's on file (#424), so they're only noted, not called missing.
+      const blank = missingRosterCsvFields(row);
+      const message = blank.length > 0
+        ? `Will update what the file fills in. Blank in file: ${blank.join(", ")} (kept as on file).`
+        : "Will update what the file fills in.";
+      return { line: row.line, name, action: "UPDATE", memberId: matches[0], message, row };
     }
     if (!row.birthDate) return skip("New people need a birth date.");
-    return { line: row.line, name, action: "ADD", memberId: null, message: "Will be added.", row };
+    return { line: row.line, name, action: "ADD", memberId: null, message: addMessage(row), row };
   });
 }

@@ -10,6 +10,8 @@ import {
   clubRosterAttendeeTypeLabels,
   clubRosterGenderLabels,
   clubRosterStatusLabels,
+  defaultRosterRole,
+  missingRosterFields,
   rosterSectionOf,
 } from "@/modules/club-rosters/domain";
 import type { RosterMemberRecord } from "@/modules/club-rosters/repository";
@@ -41,6 +43,8 @@ export function ClubRosterWorkspace({
 }) {
   const [members, setMembers] = useState(initialMembers);
   const [editing, setEditing] = useState<RosterMemberRecord | null>(null);
+  /** The type picked in the dialog, so the Role placeholder shows the blank-role default (#424). */
+  const [formType, setFormType] = useState<string>("YOUTH");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [birthDates, setBirthDates] = useState<Record<string, string> | null>(null);
   const [showInactive, setShowInactive] = useState(false);
@@ -57,6 +61,7 @@ export function ClubRosterWorkspace({
   /** Add and edit happen in a pop-up (#383), so the list never scrolls away. */
   function openDialog(member: RosterMemberRecord | null) {
     setEditing(member);
+    setFormType(member?.attendeeType ?? "YOUTH");
     setNotice("");
     setError("");
     setDialogOpen(true);
@@ -122,8 +127,18 @@ export function ClubRosterWorkspace({
   }
 
   async function setStatus(member: RosterMemberRecord, status: "ACTIVE" | "INACTIVE") {
-    await call(`${base}/${encodeURIComponent(member.id)}`, "PATCH", { status },
+    return call(`${base}/${encodeURIComponent(member.id)}`, "PATCH", { status },
       status === "INACTIVE" ? "Marked inactive. They stay on file." : "Marked active.");
+  }
+
+  /** Deactivate/reactivate lives in the edit dialog now (#424), with a confirmation there. */
+  async function confirmSetStatus(member: RosterMemberRecord) {
+    const next = member.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
+    const verb = next === "INACTIVE" ? "Deactivate" : "Reactivate";
+    const confirmed = window.confirm(`${verb} ${member.firstName} ${member.lastName}?`);
+    if (!confirmed) return;
+    const result = await setStatus(member, next);
+    if (result) closeDialog();
   }
 
   async function remove(member: RosterMemberRecord) {
@@ -214,7 +229,7 @@ export function ClubRosterWorkspace({
                       <tr>
                         <th>Name</th>
                         <th>Type</th>
-                        <th>Class</th>
+                        <th>Current class</th>
                         <th>Role</th>
                         <th>Age</th>
                         {birthDates && <th>Birth date</th>}
@@ -223,14 +238,20 @@ export function ClubRosterWorkspace({
                       </tr>
                     </thead>
                     <tbody>
-                      {section.people.map((member) => (
+                      {section.people.map((member) => {
+                        const missing = missingRosterFields(member);
+                        return (
                         <tr key={member.id}>
                           <td className="roster-card-name">
                             <strong translate="no">{member.lastName}, {member.firstName}</strong>
-                            {member.birthDateNeeded && <span className="status-chip gold roster-needs-birth-date">Birth date needed</span>}
+                            {missing.length > 0 && (
+                              <span className="status-chip gold roster-needs-birth-date roster-missing-info" title={`Missing: ${missing.join(", ")}`}>
+                                Missing info: {missing.join(", ")}
+                              </span>
+                            )}
                           </td>
                           <td data-label="Type">{clubRosterAttendeeTypeLabels[member.attendeeType]}</td>
-                          <td data-label="Class">{member.classLevel ? clubClassLevelLabels[member.classLevel] : "—"}</td>
+                          <td data-label="Current class">{member.classLevel ? clubClassLevelLabels[member.classLevel] : "—"}</td>
                           <td data-label="Role">{member.role || "—"}</td>
                           <td data-label="Age" translate="no">
                             {member.age ?? (member.reportedAge !== null ? `${member.reportedAge} (reported)` : "—")}
@@ -245,21 +266,13 @@ export function ClubRosterWorkspace({
                             <button aria-label={`Edit ${member.firstName} ${member.lastName}`} className="secondary-button" disabled={saving} onClick={() => openDialog(member)} type="button">
                               <Pencil aria-hidden="true" size={13} />
                             </button>
-                            <button
-                              aria-label={`${member.status === "ACTIVE" ? "Mark inactive" : "Mark active"}: ${member.firstName} ${member.lastName}`}
-                              className="secondary-button"
-                              disabled={saving}
-                              onClick={() => setStatus(member, member.status === "ACTIVE" ? "INACTIVE" : "ACTIVE")}
-                              type="button"
-                            >
-                              <Power aria-hidden="true" size={13} />
-                            </button>
                             <button aria-label={`Remove ${member.firstName} ${member.lastName}`} className="secondary-button" disabled={saving} onClick={() => remove(member)} type="button">
                               <Trash2 aria-hidden="true" size={13} />
                             </button>
                           </td>}
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -300,14 +313,14 @@ export function ClubRosterWorkspace({
           />
           <label>
             Type
-            <select defaultValue={editing?.attendeeType ?? "YOUTH"} name="attendeeType">
+            <select defaultValue={editing?.attendeeType ?? "YOUTH"} name="attendeeType" onChange={(event) => setFormType(event.target.value)}>
               {Object.entries(clubRosterAttendeeTypeLabels).map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
           </label>
           <label>
-            Class
+            Current class
             <select defaultValue={editing?.classLevel ?? ""} name="classLevel">
               <option value="">None</option>
               {Object.entries(clubClassLevelLabels).map(([value, label]) => (
@@ -317,12 +330,13 @@ export function ClubRosterWorkspace({
           </label>
           <label>
             Role (optional)
-            <input defaultValue={editing ? editing.role : "Pathfinder"} maxLength={60} name="role" placeholder="e.g. Pathfinder, Counselor, TLT" />
+            {/* Left blank, youth save as "Pathfinder"; staff and adults stay blank (#424). */}
+            <input defaultValue={editing?.role ?? ""} maxLength={60} name="role" placeholder={defaultRosterRole(formType)} />
           </label>
           <label>
-            Gender (optional)
-            <select defaultValue={editing?.gender ?? ""} name="gender">
-              <option value="">Not given</option>
+            Gender
+            <select defaultValue={editing?.gender ?? ""} name="gender" required>
+              <option disabled value="">Choose one</option>
               {Object.entries(clubRosterGenderLabels).map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
               ))}
@@ -334,6 +348,16 @@ export function ClubRosterWorkspace({
           staff see age only. Don&apos;t enter medical or insurance information here.
         </p>
         <div className="form-actions">
+          {editing && (
+            <button
+              className="secondary-button roster-dialog-status-action"
+              disabled={saving}
+              onClick={() => confirmSetStatus(editing)}
+              type="button"
+            >
+              <Power aria-hidden="true" size={14} /> {editing.status === "ACTIVE" ? "Deactivate" : "Reactivate"}
+            </button>
+          )}
           <button className="secondary-button" disabled={saving} onClick={closeDialog} type="button">Cancel</button>
           <button className="primary-button" disabled={saving} type="submit">
             {editing ? <Save aria-hidden="true" size={16} /> : <Plus aria-hidden="true" size={16} />}

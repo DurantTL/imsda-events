@@ -6833,10 +6833,12 @@ select:focus-visible {
 .club-roster-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .club-roster-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0; }
 .roster-needs-birth-date { display: inline-block; margin-left: 8px; vertical-align: 1px; }
+.roster-dialog-status-action { margin-right: auto; }
 .roster-birth-date-notice { margin: 12px 0 0; }
-.club-import-upload { display: grid; justify-items: center; gap: 6px; padding: 36px 16px; border-style: dashed; cursor: pointer; text-align: center; }
+.club-import-upload { display: grid; justify-items: center; gap: 6px; padding: 36px 16px; border-style: dashed; cursor: pointer; text-align: center; transition: background-color 0.1s, border-color 0.1s; }
 .club-import-upload input { max-width: 100%; }
 .club-import-upload small { color: var(--muted); }
+.club-import-upload-dragging { background: var(--imsda-purple-soft); border-color: var(--imsda-purple); }
 .club-import-summary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 .club-import-summary p { margin: 0; }
 .club-import-club > summary { display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none; }
@@ -6890,9 +6892,8 @@ select:focus-visible {
 .passkey-sign-in-button { width: 100%; justify-content: center; min-height: 46px; }
 .club-roster-heading-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .roster-dialog { width: min(640px, 100%); }
-.birth-date-field { min-width: 0; margin: 0; padding: 0; border: 0; grid-column: 1 / -1; }
-.birth-date-field legend { margin-bottom: 6px; padding: 0; color: var(--ink); font-size: 0.78rem; font-weight: 700; }
-.birth-date-parts { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.8fr) minmax(0, 1fr); gap: 6px; }
+.birth-date-field { min-width: 0; }
+.birth-date-parsed { display: block; margin-top: 4px; }
 .accounts-search { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .accounts-search label { flex: 1; min-width: 220px; }
 .accounts-search input { width: 100%; }
