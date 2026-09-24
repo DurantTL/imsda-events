@@ -1,10 +1,11 @@
 import { z } from "zod";
+import { isMeetingDate } from "@/modules/club-meeting-notes/domain";
 
 /** A meeting note as the club submits it (#426). Counts are typed in; no birth dates or names. */
 const count = z.number().int().min(0, "Counts can't be negative.").max(999).nullable();
 
 export const meetingNoteInputSchema = z.object({
-  meetingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Enter the meeting date."),
+  meetingDate: z.string().refine(isMeetingDate, "Enter a real meeting date."),
   pathfinderCount: count.default(null),
   tltCount: count.default(null),
   staffCount: count.default(null),

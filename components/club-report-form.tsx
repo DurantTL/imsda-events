@@ -101,7 +101,8 @@ export function ClubReportForm({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  const onTime = report?.onTimePoints ?? expectedOnTime;
+  // A draft stores no on-time points yet; show what submitting now would earn.
+  const onTime = report?.status === "SUBMITTED" ? report.onTimePoints : expectedOnTime;
   const total = onTime + pickedTotal(points);
   const problems = useMemo(() => reportProblems({ points, honors, classLevels }), [points, honors, classLevels]);
   const problemFor = (key: PointItemKey | "honorsList") => problems.find((problem) => problem.key === key)?.message;
@@ -185,6 +186,7 @@ export function ClubReportForm({
 
   const card = variant === "account" ? "public-manage-card" : "panel";
   const eyebrow = variant === "account" ? "public-registration-eyebrow" : "eyebrow";
+  // Keyed only on the four counts, so a refresh leaves other typed fields alone.
   const countsKey = countsRefresh ? "refreshed" : "initial";
   const countValue = (field: "averageAttendance" | "pathfinderCount" | "tltCount" | "staffCount", reportValue: number | null | undefined, prefillValue: number | null) => {
     if (countsRefresh) return countsRefresh[field] ?? "";
@@ -230,13 +232,13 @@ export function ClubReportForm({
 
       <fieldset className={`${card} form-stack`} disabled={readOnly || saving}>
         <legend className={eyebrow}>Club facts</legend>
-        <div className="form-grid two-column" key={countsKey}>
+        <div className="form-grid two-column">
           <label>Meeting place<input defaultValue={report?.meetingPlace ?? prefill.meetingPlace} maxLength={200} name="meetingPlace" /></label>
           <label>Meeting day and time<input defaultValue={report?.meetingSchedule ?? prefill.meetingSchedule} maxLength={120} name="meetingSchedule" /></label>
-          <label>Average attendance<input defaultValue={countValue("averageAttendance", report?.averageAttendance, prefill.averageAttendance)} inputMode="numeric" max={999} min={0} name="averageAttendance" type="number" /></label>
-          <label>Number of Pathfinders<input defaultValue={countValue("pathfinderCount", report?.pathfinderCount, prefill.pathfinderCount)} inputMode="numeric" max={999} min={0} name="pathfinderCount" type="number" /></label>
-          <label>Number of TLTs<input defaultValue={countValue("tltCount", report?.tltCount, prefill.tltCount)} inputMode="numeric" max={999} min={0} name="tltCount" type="number" /></label>
-          <label>Number of staff<input defaultValue={countValue("staffCount", report?.staffCount, prefill.staffCount)} inputMode="numeric" max={999} min={0} name="staffCount" type="number" /></label>
+          <label>Average attendance<input key={`${countsKey}-averageAttendance`} defaultValue={countValue("averageAttendance", report?.averageAttendance, prefill.averageAttendance)} inputMode="numeric" max={999} min={0} name="averageAttendance" type="number" /></label>
+          <label>Number of Pathfinders<input key={`${countsKey}-pathfinderCount`} defaultValue={countValue("pathfinderCount", report?.pathfinderCount, prefill.pathfinderCount)} inputMode="numeric" max={999} min={0} name="pathfinderCount" type="number" /></label>
+          <label>Number of TLTs<input key={`${countsKey}-tltCount`} defaultValue={countValue("tltCount", report?.tltCount, prefill.tltCount)} inputMode="numeric" max={999} min={0} name="tltCount" type="number" /></label>
+          <label>Number of staff<input key={`${countsKey}-staffCount`} defaultValue={countValue("staffCount", report?.staffCount, prefill.staffCount)} inputMode="numeric" max={999} min={0} name="staffCount" type="number" /></label>
           <label>Investiture date (if set)<input defaultValue={report?.investitureDate ?? ""} name="investitureDate" type="date" /></label>
         </div>
       </fieldset>
@@ -326,8 +328,8 @@ export function ClubReportForm({
         </div>
         {!readOnly && (
           <div className="intro-actions">
-            {allowDraft && (
-              <button className="secondary-button" disabled={saving} name="intent" type="submit" value="draft">
+            {allowDraft && (!report || isDraft) && (
+              <button className="secondary-button" disabled={saving} formNoValidate name="intent" type="submit" value="draft">
                 <Save aria-hidden="true" size={16} /> Save draft
               </button>
             )}

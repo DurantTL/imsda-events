@@ -64,6 +64,8 @@ export default async function ClubReportsPage({ params }: { params: Promise<{ or
             const submitted = report?.status === "SUBMITTED";
             const due = formatDueDate(reportDueDate(month));
             const locked = isLockedForClub(month, now);
+            // A draft never locks; it can still be submitted after the due date.
+            const closed = locked && report?.status === "SUBMITTED";
             return (
               <li key={month}>
                 {submitted ? <CheckCircle2 size={17} aria-hidden="true" /> : <CircleAlert size={17} aria-hidden="true" />}
@@ -71,12 +73,12 @@ export default async function ClubReportsPage({ params }: { params: Promise<{ or
                   <strong>{reportMonthLabel(month)}</strong>
                   <small>
                     {report
-                      ? `${report.status === "DRAFT" ? "Draft" : `${report.totalPoints} points${report.onTimePoints ? "" : " · late"}`}${locked ? " · closed" : ` · editable until ${due}`}`
+                      ? `${report.status === "DRAFT" ? "Draft" : `${report.totalPoints} points${report.onTimePoints ? "" : " · late"}`}${closed ? " · closed" : locked ? ` · was due ${due}` : ` · editable until ${due}`}`
                       : locked ? `Missing · was due ${due}` : `Due ${due}`}
                   </small>
                 </span>
                 <Link className={`${report ? "secondary-button" : "primary-button"} club-event-action`} href={`${base}/${month}`}>
-                  {report ? (locked ? "View report" : "Open report") : "Open report"} <ArrowRight size={14} aria-hidden="true" />
+                  {closed ? "View report" : "Open report"} <ArrowRight size={14} aria-hidden="true" />
                 </Link>
               </li>
             );

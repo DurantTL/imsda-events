@@ -133,7 +133,10 @@ export async function saveClubReport(
   if (!clubYearMonths(clubYear).includes(reportMonth) || reportMonth > calendarDateIn(now).slice(0, 7)) {
     throw new ClubReportError("CLUB_REPORT_MONTH_INVALID", "Reports can be filed for this month or earlier months only.");
   }
-  const problems = reportProblems({ points: input.points, honors: input.honors, classLevels: input.classLevels });
+  // A draft may be half finished; the point rules apply when it's submitted (#426).
+  const problems = input.status === "SUBMITTED"
+    ? reportProblems({ points: input.points, honors: input.honors, classLevels: input.classLevels })
+    : [];
   if (problems.length > 0) throw new ClubReportError("CLUB_REPORT_INVALID_POINTS", problems.map((problem) => problem.message).join(" "));
 
   const prisma = getPrisma();
@@ -142,10 +145,15 @@ export async function saveClubReport(
     if (!club || club.type !== "CLUB") throw new ClubReportError("CLUB_NOT_FOUND", "That club could not be found.");
     const existing = await tx.clubMonthlyReport.findUnique({
       where: { organizationId_reportMonth: { organizationId, reportMonth } },
-      select: { id: true, status: true, firstSubmittedAt: true },
+      select: { id: true, status: true, firstSubmittedAt: true, submittedAt: true, totalPoints: true, onTimePoints: true },
     });
     const isClub = "accountId" in actor;
-    if (existing && isClub && isLockedForClub(reportMonth, now)) {
+    const pastDue = isLockedForClub(reportMonth, now);
+    // Only a submitted report locks for the club after the due date. A draft can
+    // still go in late: a first submission earns no on-time points, and a reopened
+    // report keeps its original credit, with the late change recorded in the
+    // audit log for the office to review.
+    if (existing?.status === "SUBMITTED" && isClub && pastDue) {
       throw new ClubReportError(
         "CLUB_REPORT_LOCKED",
         `This report closed after ${reportDueDate(reportMonth)}. Ask the conference office if something needs to change.`,
@@ -173,7 +181,7 @@ export async function saveClubReport(
       signatureName: input.signatureName,
       signedOn: input.signedOn,
       status: input.status,
-      submittedAt: input.status === "SUBMITTED" ? now : null,
+      submittedAt: input.status === "SUBMITTED" ? (existing?.status === "SUBMITTED" ? existing.submittedAt : now) : null,
       firstSubmittedAt,
       ...(isClub && becomingSubmittedNow ? { submittedByAccountId: actor.accountId } : {}),
       ...(isClub ? { updatedByAccountId: actor.accountId, updatedByUserId: null } : { updatedByUserId: actor.userId }),
@@ -192,6 +200,15 @@ export async function saveClubReport(
         organizationId,
         reportMonth,
         reportId: saved.id,
+        status: input.status,
+        totalPoints: saved.totalPoints,
+        onTimePoints: saved.onTimePoints,
+        ...(existing?.status === "SUBMITTED"
+          ? { previousTotalPoints: existing.totalPoints, previousOnTimePoints: existing.onTimePoints }
+          : {}),
+        ...(isClub && pastDue && input.status === "SUBMITTED" && existing?.firstSubmittedAt && existing.status === "DRAFT"
+          ? { resubmittedAfterDueDate: true }
+          : {}),
         ...(isClub ? { actorAttendeeAccountId: actor.accountId } : {}),
       },
     }, tx);
@@ -232,7 +249,14 @@ export async function reopenClubReport(organizationId: string, reportMonth: stri
       entityType: "ClubMonthlyReport",
       entityId: saved.id,
       summary: `Reopened the ${reportMonth} monthly report for ${club.name} as a draft.`,
-      metadata: { organizationId, reportMonth, reportId: saved.id, actorAttendeeAccountId: accountId },
+      metadata: {
+        organizationId,
+        reportMonth,
+        reportId: saved.id,
+        totalPoints: saved.totalPoints,
+        onTimePoints: saved.onTimePoints,
+        actorAttendeeAccountId: accountId,
+      },
     }, tx);
     return serializeReport(saved);
   });

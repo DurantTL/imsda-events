@@ -25,11 +25,18 @@ export const clubReportInputSchema = z.object({
     name: z.string().trim().max(80),
     participants: count,
   }).strict()).max(3, "List at most 3 honors.").default([]),
-  signatureName: z.string().trim().min(2, "Type your full name to sign the report.").max(120),
-  signedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Enter the date you signed."),
+  signatureName: z.string().trim().max(120).default(""),
+  signedOn: z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Enter the date you signed."), z.literal("")]).default(""),
   /** DRAFT keeps a partial report; SUBMITTED marks it filed for the conference (#426). */
   status: z.enum(["DRAFT", "SUBMITTED"]),
-}).strict();
+}).strict().superRefine((report, context) => {
+  // A draft may be unsigned; only a submission needs the signature (#426).
+  if (report.status !== "SUBMITTED") return;
+  if (report.signatureName.length < 2) {
+    context.addIssue({ code: "custom", path: ["signatureName"], message: "Type your full name to sign the report." });
+  }
+  if (!report.signedOn) context.addIssue({ code: "custom", path: ["signedOn"], message: "Enter the date you signed." });
+});
 
 export type ClubReportInput = z.infer<typeof clubReportInputSchema>;
 

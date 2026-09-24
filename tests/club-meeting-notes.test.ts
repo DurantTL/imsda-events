@@ -106,6 +106,25 @@ describe("no names, counts only — averaging a month's meeting notes (#426)", (
     ]));
     expect(summary?.honors).toHaveLength(2);
   });
+
+  it("matches honor names case-insensitively and keeps only the 3 most-worked honors", () => {
+    const summary = notesMonthlySummary([
+      { pathfinderCount: null, tltCount: null, staffCount: null, honors: [{ name: "Knots", participants: 4 }, { name: "First Aid", participants: 7 }] },
+      { pathfinderCount: null, tltCount: null, staffCount: null, honors: [{ name: "knots", participants: 6 }, { name: "Camping", participants: null }, { name: "Stars", participants: 2 }] },
+    ]);
+    expect(summary?.honors).toEqual([
+      { name: "First Aid", participants: 7 },
+      { name: "Knots", participants: 6 },
+      { name: "Stars", participants: 2 },
+    ]);
+  });
+
+  it("refuses a meeting date that isn't on the calendar", () => {
+    const base = { honors: [], notes: "" };
+    expect(meetingNoteInputSchema.safeParse({ ...base, meetingDate: "2026-02-31" }).success).toBe(false);
+    expect(meetingNoteInputSchema.safeParse({ ...base, meetingDate: "2026-13-01" }).success).toBe(false);
+    expect(meetingNoteInputSchema.safeParse({ ...base, meetingDate: "2026-02-28" }).success).toBe(true);
+  });
 });
 
 describe("what a new report may pull from meeting notes", () => {

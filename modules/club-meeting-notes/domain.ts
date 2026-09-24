@@ -1,4 +1,4 @@
-import type { ReportHonor } from "@/modules/club-reports/domain";
+import { MAX_HONORS, type ReportHonor } from "@/modules/club-reports/domain";
 
 /**
  * Club meeting notes (#426): one simple record per meeting so the monthly
@@ -10,8 +10,11 @@ export type MeetingNoteCounts = { pathfinderCount: number | null; tltCount: numb
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+/** A real calendar date in YYYY-MM-DD form (rejects 2026-02-31). */
 export function isMeetingDate(value: string) {
-  return DATE.test(value);
+  if (!DATE.test(value)) return false;
+  const parsed = new Date(`${value}T12:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
 /** "2026-10-14" → "2026-10". */
@@ -41,26 +44,34 @@ export function notesMonthlySummary(notes: ReadonlyArray<MeetingNoteCounts & { h
     .filter((note) => note.pathfinderCount !== null || note.tltCount !== null || note.staffCount !== null)
     .map((note) => (note.pathfinderCount ?? 0) + (note.tltCount ?? 0) + (note.staffCount ?? 0));
 
-  const honorParticipants = new Map<string, number | null>();
+  // Honors match case-insensitively; the first spelling seen is kept.
+  const honorParticipants = new Map<string, ReportHonor>();
   for (const note of notes) {
     for (const honor of note.honors) {
       const name = honor.name.trim();
       if (!name) continue;
-      const current = honorParticipants.get(name);
+      const key = name.toLowerCase();
+      const current = honorParticipants.get(key);
       if (current === undefined) {
-        honorParticipants.set(name, honor.participants);
-      } else if (honor.participants !== null && (current === null || honor.participants > current)) {
-        honorParticipants.set(name, honor.participants);
+        honorParticipants.set(key, { name, participants: honor.participants });
+      } else if (honor.participants !== null && (current.participants === null || honor.participants > current.participants)) {
+        current.participants = honor.participants;
       }
     }
   }
+  // A report lists at most MAX_HONORS; keep the ones the most Pathfinders worked on.
+  const honors = [...honorParticipants.values()]
+    .map((honor, order) => ({ honor, order }))
+    .sort((a, b) => (b.honor.participants ?? -1) - (a.honor.participants ?? -1) || a.order - b.order)
+    .slice(0, MAX_HONORS)
+    .map(({ honor }) => honor);
 
   return {
     averageAttendance: average(attendanceValues),
     pathfinderCount: average(pathfinderValues),
     tltCount: average(tltValues),
     staffCount: average(staffValues),
-    honors: [...honorParticipants.entries()].map(([name, participants]) => ({ name, participants })) as ReportHonor[],
+    honors,
   };
 }
 

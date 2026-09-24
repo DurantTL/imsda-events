@@ -9,6 +9,7 @@ import {
   ON_TIME_POINTS,
   formatDueDate,
   isLockedForClub,
+  onTimePoints,
   isReportMonth,
   reportDueDate,
   reportMonthLabel,
@@ -52,12 +53,12 @@ export default async function ClubReportPage({ params }: { params: Promise<{ org
         allowDraft
         dueLabel={formatDueDate(due)}
         endpoint={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/reports/${month}`}
-        expectedOnTime={locked ? 0 : ON_TIME_POINTS}
+        expectedOnTime={report?.firstSubmittedAt ? onTimePoints(month, new Date(report.firstSubmittedAt)) : locked ? 0 : ON_TIME_POINTS}
         initial={report}
         monthLabel={reportMonthLabel(month)}
         notesPrefill={notesPrefill}
         prefill={prefill}
-        readOnly={Boolean(report) && locked}
+        readOnly={report?.status === "SUBMITTED" && locked}
         reopenEndpoint={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/reports/${month}/reopen`}
       />
     </>

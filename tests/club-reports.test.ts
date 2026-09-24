@@ -139,7 +139,7 @@ describe("saving a report", () => {
   });
 
   it("locks the club out after the due date but not conference staff", async () => {
-    mocks.reportFindUnique.mockResolvedValue({ id: "report-1", firstSubmittedAt: new Date("2026-11-02T15:00:00Z") });
+    mocks.reportFindUnique.mockResolvedValue({ id: "report-1", status: "SUBMITTED", firstSubmittedAt: new Date("2026-11-02T15:00:00Z") });
     const after = new Date("2026-11-12T15:00:00Z");
     await expect(saveClubReport("club-1", "2026-10", input(), { accountId: "account-1" }, after)).rejects.toMatchObject({ code: "CLUB_REPORT_LOCKED" });
     await expect(saveClubReport("club-1", "2026-10", input(), { userId: "staff-1" }, after)).resolves.toBeTruthy();
@@ -215,6 +215,47 @@ describe("draft and submit", () => {
     expect(mocks.reportUpdate.mock.calls[0][0].data).toMatchObject({ onTimePoints: 25 });
     expect(mocks.reportUpdate.mock.calls[0][0].data).not.toHaveProperty("submittedByAccountId");
     expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "CLUB_REPORT_UPDATED" }), client);
+  });
+});
+
+describe("drafts past the due date (#426)", () => {
+  const after = new Date("2026-11-12T15:00:00Z");
+
+  it("lets a never-submitted draft go in late, with no on-time points", async () => {
+    mocks.reportFindUnique.mockResolvedValue({ id: "report-1", status: "DRAFT", firstSubmittedAt: null, submittedAt: null, totalPoints: 0, onTimePoints: 0 });
+    await saveClubReport("club-1", "2026-10", input(), { accountId: "account-1" }, after);
+    expect(mocks.reportUpdate.mock.calls[0][0].data).toMatchObject({ status: "SUBMITTED", onTimePoints: 0, firstSubmittedAt: after });
+  });
+
+  it("lets a reopened report be resubmitted late, keeps its credit, and records the late change", async () => {
+    mocks.reportFindUnique.mockResolvedValue({
+      id: "report-1",
+      status: "DRAFT",
+      firstSubmittedAt: new Date("2026-11-05T15:00:00Z"),
+      submittedAt: null,
+      totalPoints: 0,
+      onTimePoints: 0,
+    });
+    await saveClubReport("club-1", "2026-10", input(), { accountId: "account-1" }, after);
+    expect(mocks.reportUpdate.mock.calls[0][0].data).toMatchObject({ status: "SUBMITTED", onTimePoints: 25, submittedAt: after });
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      action: "CLUB_REPORT_UPDATED",
+      metadata: expect.objectContaining({ resubmittedAfterDueDate: true, totalPoints: 200, onTimePoints: 25 }),
+    }), client);
+  });
+
+  it("saves an unsigned, half-finished draft without the point rules", async () => {
+    const draft = clubReportInputSchema.parse({ points: { honors: 50 }, honors: [], status: "DRAFT" });
+    await expect(saveClubReport("club-1", "2026-10", draft, { accountId: "account-1" }, new Date("2026-11-05T15:00:00Z"))).resolves.toBeTruthy();
+    expect(clubReportInputSchema.safeParse({ points: { honors: 50 }, honors: [], status: "SUBMITTED" }).success).toBe(false);
+  });
+
+  it("keeps the original submitted date on a later edit that stays submitted", async () => {
+    const submittedAt = new Date("2026-11-05T15:00:00Z");
+    mocks.reportFindUnique.mockResolvedValue({ id: "report-1", status: "SUBMITTED", firstSubmittedAt: submittedAt, submittedAt, totalPoints: 200, onTimePoints: 25 });
+    await saveClubReport("club-1", "2026-10", input(), { accountId: "account-1" }, new Date("2026-11-07T15:00:00Z"));
+    expect(mocks.reportUpdate.mock.calls[0][0].data.submittedAt).toEqual(submittedAt);
+    expect(mocks.writeAuditLog.mock.calls[0][0].metadata).toMatchObject({ previousTotalPoints: 200, previousOnTimePoints: 25 });
   });
 });
 
