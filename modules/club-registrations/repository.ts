@@ -39,6 +39,7 @@ import {
   RegistrationAmendmentError,
   type AmendmentAttendeeServerOptions,
 } from "@/modules/registrations/amendments-repository";
+import { registrationOperationFingerprint } from "@/modules/registrations/operations-domain";
 import type { RegistrationAmendmentInput } from "@/modules/registrations/schemas";
 
 /**
@@ -449,7 +450,7 @@ function recordFromJson(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
-type CurrentClubAttendee = { id: string; profileSnapshot: unknown; formResponses: unknown };
+type CurrentClubAttendee = { id: string; personId: string | null; profileSnapshot: unknown; formResponses: unknown };
 
 // Answer keys that identify a person. The amendment engine refuses any change
 // to them on a kept attendee, so a kept extra person or off-roster person
@@ -538,14 +539,22 @@ export async function amendClubRegistration(
   }
   const registrationId = clubRegistration.registrationId;
 
-  // A retried save (same request id) returns what the first one did, even
-  // though the registration has moved on since.
+  // A retried save (same request id and same content) returns what the first
+  // one did, even though the registration has moved on since. The same id
+  // with different content is refused.
+  const { clientRequestId, ...editContent } = input;
+  const requestFingerprint = registrationOperationFingerprint({
+    eventId,
+    registrationId,
+    operation: "AMENDMENT",
+    payload: { clubEdit: editContent },
+  });
   const replay = await getPrisma().registrationOperation.findUnique({
-    where: { eventId_clientRequestId: { eventId, clientRequestId: input.clientRequestId } },
-    select: { registrationId: true, type: true, responseSnapshot: true },
+    where: { eventId_clientRequestId: { eventId, clientRequestId } },
+    select: { registrationId: true, type: true, requestFingerprint: true, responseSnapshot: true },
   });
   if (replay) {
-    if (replay.registrationId !== registrationId || replay.type !== "AMENDMENT") {
+    if (replay.registrationId !== registrationId || replay.type !== "AMENDMENT" || replay.requestFingerprint !== requestFingerprint) {
       throw new RegistrationAmendmentError(
         "IDEMPOTENCY_KEY_REUSED",
         "That amendment request ID was already used for different changes. Start a new review.",
@@ -559,7 +568,7 @@ export async function amendClubRegistration(
     currentRegistrationAnswers(eventId, registrationId),
     getPrisma().registrationAttendee.findMany({
       where: { registrationId },
-      select: { id: true, profileSnapshot: true, formResponses: true },
+      select: { id: true, personId: true, profileSnapshot: true, formResponses: true },
     }) as Promise<CurrentClubAttendee[]>,
     activeRosterFor(getPrisma(), organizationId, event),
   ]);
@@ -610,6 +619,26 @@ export async function amendClubRegistration(
     || input.newGuests.some((guest) => currentByGuestId.has(guest.id))
   ) {
     throw new ClubRegistrationError("GUEST_INVALID", "Each extra person needs their own entry. Refresh the page and try again.");
+  }
+
+  // A newly added roster person who is already on this registration under
+  // another entry (an extra person, or someone kept from off the roster)
+  // would be registered twice; say so instead of failing as a conflict.
+  const keptAttendees = [
+    ...input.selectedMemberIds.flatMap((memberId) => currentByMemberId.get(memberId) ?? []),
+    ...input.keptGuestIds.flatMap((guestId) => currentByGuestId.get(guestId) ?? []),
+    ...input.keptOffRosterAttendeeIds.flatMap((attendeeId) => offRosterById.get(attendeeId) ?? []),
+  ];
+  const keptPersonIds = new Set(keptAttendees.flatMap((attendee) => attendee.personId ?? []));
+  const alreadyRegistered = input.selectedMemberIds
+    .filter((memberId) => !currentByMemberId.has(memberId))
+    .map((memberId) => membersById.get(memberId)!)
+    .find((member) => member.personId && keptPersonIds.has(member.personId));
+  if (alreadyRegistered) {
+    throw new ClubRegistrationError(
+      "ATTENDEES_INVALID",
+      `${alreadyRegistered.person?.firstName ?? ""} ${alreadyRegistered.person?.lastName ?? ""}`.trim() + " is already on this registration. Untick their other entry before adding them from the roster.",
+    );
   }
 
   const eventDate = calendarDateInEventTimeZone(event.startsAt, event.timezone);
@@ -729,14 +758,14 @@ export async function amendClubRegistration(
     previewOnly: true,
   };
   try {
-    const preview = await previewRegistrationAmendment(eventId, registrationId, amendmentInput, { attendees: serverOptions });
+    const preview = await previewRegistrationAmendment(eventId, registrationId, amendmentInput, { attendees: serverOptions, requestFingerprint });
     const response = await amendRegistration(
       eventId,
       registrationId,
       { ...amendmentInput, previewOnly: false, quoteFingerprint: preview.quoteFingerprint },
       { kind: "CLUB_DIRECTOR", attendeeAccountId: accountId, displayName: account?.displayName ?? "Club director" },
       now,
-      { attendees: serverOptions },
+      { attendees: serverOptions, requestFingerprint },
     );
     return clubEditResult(response);
   } catch (error) {

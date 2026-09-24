@@ -256,7 +256,7 @@ export function clubRegistrationEditWindow(input: {
     return { open: false, message: `Registration closed${closing}. Contact the event team to add or remove someone.` };
   }
   if (!input.registrationClosesOn && input.today > input.eventDate) {
-    return { open: false, message: "This event has started, so your registration can't be changed here. Contact the event team to add or remove someone." };
+    return { open: false, message: "This event is under way, so your registration can't be changed here. Contact the event team to add or remove someone." };
   }
   return { open: true };
 }

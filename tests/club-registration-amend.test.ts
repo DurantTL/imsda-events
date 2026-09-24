@@ -178,7 +178,7 @@ function fixture({
     })) },
     clubEventRegistration: { findUnique: vi.fn(async (): Promise<{ registrationId: string } | null> => ({ registrationId: "registration-1" })) },
     registrationAttendee: {
-      findMany: vi.fn(async () => registration.attendees.map((a) => ({ id: a.id, profileSnapshot: a.profileSnapshot, formResponses: a.formResponses }))),
+      findMany: vi.fn(async () => registration.attendees.map((a) => ({ id: a.id, personId: a.personId, profileSnapshot: a.profileSnapshot, formResponses: a.formResponses }))),
       count: vi.fn(async () => 0),
       deleteMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) => {
         registration.attendees = registration.attendees.filter((a) => !where.id.in.includes(a.id));
@@ -501,6 +501,31 @@ describe("club registration edit (H3b, #366)", () => {
     expect(replay.result).toEqual(first.result);
     expect(Object.keys(replay.result).sort()).toEqual(["attendeeCount", "confirmationCode", "updatedAt"]);
     expect(JSON.stringify(replay)).not.toMatch(/Staff-only|Staff Person|adjustments|lineItems/);
+  });
+
+  it("refuses a reused request ID with different content instead of replaying the first save", async () => {
+    const { prisma } = fixture();
+    const edit = { ...baseEdit(), keptOffRosterAttendeeIds: ["attendee-m2"] };
+    await amendClubRegistration("club-1", "event-1", "director-1", edit, beforeDeadline);
+    const changed = { ...edit, keptOffRosterAttendeeIds: [] as string[] };
+    await expect(amendClubRegistration("club-1", "event-1", "director-1", changed, beforeDeadline))
+      .rejects.toMatchObject({ code: "IDEMPOTENCY_KEY_REUSED" });
+    expect(prisma.registrationOperation.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses adding a roster person who is already on the registration as another entry, with a clear message", async () => {
+    const { prisma } = fixture({
+      attendees: [attendee("attendee-m1", "m1", "Alex", "Sample", 11), { ...legacyGuest("attendee-g1"), personId: "person-m3" }],
+    });
+    await expect(amendClubRegistration("club-1", "event-1", "director-1", {
+      ...baseEdit(),
+      selectedMemberIds: ["m1", "m3"],
+      keptGuestIds: ["attendee-g1"],
+    }, beforeDeadline)).rejects.toMatchObject({
+      code: "ATTENDEES_INVALID",
+      message: expect.stringMatching(/Casey New is already on this registration/),
+    });
+    expect(prisma.registrationOperation.create).not.toHaveBeenCalled();
   });
 
   it("refuses selecting someone who isn't active on the roster", async () => {

@@ -86,6 +86,14 @@ export type AmendmentAttendeeServerOptions = {
 
 export type AmendmentServerOptions = {
   attendees?: ReadonlyMap<string, AmendmentAttendeeServerOptions>;
+  /**
+   * Replaces the fingerprint of the amendment input for replay checks. A
+   * caller that builds the amendment from its own request (the club director
+   * path) fingerprints that request, so a retry is recognized even after the
+   * registration has moved on, and a reused request ID with different content
+   * is refused.
+   */
+  requestFingerprint?: string;
 };
 
 function allowedProfileMetadata(metadata: AmendmentProfileMetadata | undefined) {
@@ -1093,7 +1101,7 @@ export async function amendRegistration(
   now = new Date(),
   serverOptions: AmendmentServerOptions = {},
 ) {
-  const requestFingerprint = registrationOperationFingerprint({
+  const requestFingerprint = serverOptions.requestFingerprint ?? registrationOperationFingerprint({
     eventId,
     registrationId,
     operation: "AMENDMENT",
