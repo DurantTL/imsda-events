@@ -63,7 +63,9 @@ export function ClubPacketSheet({ packet, qrSrc }: { packet: ClubPacket; qrSrc: 
             <div><dt>Sponsoring church</dt><dd translate="no">{packet.club.sponsoringChurch ?? "—"}</dd></div>
             <div><dt>Director</dt><dd translate="no">{packet.club.directorName}</dd></div>
             <div><dt>Director email / phone</dt><dd translate="no">{packet.club.email} · {packet.club.phone}</dd></div>
-            <div><dt>Submitted</dt><dd>{packet.club.submittedAt ? new Date(packet.club.submittedAt).toLocaleDateString() : "—"}</dd></div>
+            <div><dt>Submitted</dt><dd>{packet.club.submittedAt
+                ? new Date(packet.club.submittedAt).toLocaleDateString("en-US", { timeZone: packet.event.timezone, month: "short", day: "numeric", year: "numeric" })
+                : "—"}</dd></div>
           </dl>
           <div className="club-packet-headcounts">
             <article><strong>{headcounts.pathfinder}</strong><span>Pathfinders</span></article>
@@ -79,7 +81,7 @@ export function ClubPacketSheet({ packet, qrSrc }: { packet: ClubPacket; qrSrc: 
             <h3>Attendee roster · check-in list</h3>
             <p className="club-packet-key">
               <CheckSquare aria-hidden="true" size={12} /> Check in
-              &nbsp;·&nbsp;★ First-time camper &nbsp;·&nbsp;[M] Medical personnel &nbsp;·&nbsp;[MG] Master Guide investiture &nbsp;·&nbsp;⚠ Dietary restriction
+              &nbsp;·&nbsp;[M] Medical personnel &nbsp;·&nbsp;[MG] Master Guide investiture &nbsp;·&nbsp;⚠ Dietary restriction
             </p>
           </div>
           <ul className="club-packet-roster-columns">
@@ -93,7 +95,7 @@ export function ClubPacketSheet({ packet, qrSrc }: { packet: ClubPacket; qrSrc: 
                   {attendee.hasDietaryNeed && " ⚠"}
                 </span>
                 <span className="club-packet-roster-meta">
-                  {attendee.roleAbbreviation} · {attendee.ageOnEventDate ?? "—"} · {attendee.gender ? attendee.gender[0] : "—"}
+                  {attendee.roleAbbreviation} · {attendee.ageOnEventDate ?? "—"} · {attendee.gender === "Female" ? "F" : attendee.gender === "Male" ? "M" : "—"}
                 </span>
               </li>
             ))}
@@ -118,7 +120,7 @@ export function ClubPacketSheet({ packet, qrSrc }: { packet: ClubPacket; qrSrc: 
             <h3>Assignment</h3>
             {packet.assignment ? (
               <dl>
-                <div><dt>Campsite</dt><dd translate="no">{packet.assignment.campsiteLocation || "—"}</dd></div>
+                <div><dt>Campsite</dt><dd translate="no">{[packet.assignment.campsiteLocation, packet.assignment.campsiteNotes].filter(Boolean).join(" · ") || "—"}</dd></div>
                 <div><dt>Duty</dt><dd>{[packet.assignment.dutyLabel, packet.assignment.dutyDay, packet.assignment.dutyTime].filter(Boolean).join(" · ") || "—"}</dd></div>
                 <div><dt>Activity</dt><dd>{packet.assignment.activityLabel || "—"}</dd></div>
                 {packet.assignment.notes && <div><dt>Notes</dt><dd>{packet.assignment.notes}</dd></div>}

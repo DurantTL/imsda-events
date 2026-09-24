@@ -95,6 +95,15 @@ export function clubHeadcounts(attendees: ClubRosterAttendee[]): ClubHeadcounts 
   return { ...counts, total: attendees.length };
 }
 
+/** A text answer, or a NUMBER field's value written out (e.g. square footage). */
+function textOrNumber(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return textValue(value);
+}
+
+// Answers that mean "no dietary need", so they don't earn a ⚠.
+const NO_DIETARY_NEED = /^(none|no|n\/?a|nil|nothing|-+)\.?$/i;
+
 function textValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -159,10 +168,10 @@ export function buildClubEventRecord(input: BuildClubEventRecordInput): ClubEven
     phone: textValue(responses.phone),
     submittedAt: input.submittedAt,
     camping: {
-      tents: textValue(responses.tents),
-      trailers: textValue(responses.trailers),
-      kitchenCanopy: textValue(responses.kitchen_canopy),
-      totalSqft: textValue(responses.total_sqft),
+      tents: textOrNumber(responses.tents),
+      trailers: textOrNumber(responses.trailers),
+      kitchenCanopy: textOrNumber(responses.kitchen_canopy),
+      totalSqft: textOrNumber(responses.total_sqft),
       campNextTo: textValue(responses.camp_next_to),
     },
     dutyAreas: stringList(responses.duty_areas),
@@ -173,9 +182,7 @@ export function buildClubEventRecord(input: BuildClubEventRecordInput): ClubEven
     eventRibbons: textValue(responses.event_ribbons),
     sabbathSkit: textValue(responses.sabbath_skit),
     sponsoringMeals: boolValue(responses.sponsoring_meals) || textValue(responses.sponsoring_meals) === "Yes",
-    mealSponsorshipCount: textValue(responses.meal_sponsorship_count) || (
-      numberFromResponse(responses.meal_sponsorship_count) !== null ? String(numberFromResponse(responses.meal_sponsorship_count)) : ""
-    ),
+    mealSponsorshipCount: textOrNumber(responses.meal_sponsorship_count),
     mealTimes: stringList(responses.meal_times),
     baptismNames: textValue(responses.baptism_names),
     bibleNames: textValue(responses.bible_names),
@@ -188,7 +195,10 @@ export function buildClubEventRecord(input: BuildClubEventRecordInput): ClubEven
       gender: textValue(attendee.responses.gender) || null,
       medicalPersonnel: boolValue(attendee.responses.medical_personnel),
       masterGuideInvestiture: boolValue(attendee.responses.master_guide_investiture),
-      hasDietaryNeed: textValue(attendee.responses.dietary_needs).length > 0,
+      hasDietaryNeed: (() => {
+        const answer = textValue(attendee.responses.dietary_needs);
+        return answer.length > 0 && !NO_DIETARY_NEED.test(answer);
+      })(),
     })),
     amountOwedCents: input.amountOwedCents,
     lateRateApplied: lateRateFromPricingSnapshot(input.pricingSnapshot, input.lateRateLabel),

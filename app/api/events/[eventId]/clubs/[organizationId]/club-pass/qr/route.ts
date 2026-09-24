@@ -4,6 +4,7 @@ import { getCurrentSession } from "@/modules/access/current-session";
 import { createDirectorClubPass } from "@/modules/checkin/club-pass-repository";
 import { findActiveMembership } from "@/modules/events/repository";
 import { requireClubReportsAccess } from "@/modules/reporting/club-reports-access";
+import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
 
 const privateHeaders = {
@@ -64,6 +65,7 @@ async function getHandler(_request: Request, context: Context) {
       for (const [name, value] of Object.entries(privateHeaders)) response.headers.set(name, value);
       return response;
     }
+    logError("Unable to render staff club pass QR", error);
     const response = Response.json({ error: "CLUB_PASS_QR_FAILED" }, { status: 500 });
     for (const [name, value] of Object.entries(privateHeaders)) response.headers.set(name, value);
     return response;

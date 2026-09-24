@@ -6748,7 +6748,7 @@ select:focus-visible {
     box-shadow: none;
     padding: 0;
     width: 7.5in;
-    min-height: 10in;
+    min-height: 9.8in;
   }
   .club-packet-side:last-of-type { break-after: auto; }
   .club-packet-header { border-color: #333; }

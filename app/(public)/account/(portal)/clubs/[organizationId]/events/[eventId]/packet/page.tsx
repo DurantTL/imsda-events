@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { ClubPacketSheet } from "@/components/club-packet-sheet";
 import { PrintReportButton } from "@/components/print-report-button";
+import { getRosterAccessState } from "@/modules/club-rosters/access";
 import { loadDirectorClubPacket } from "@/modules/reporting/director-club-packet";
 
 export const metadata: Metadata = { title: "Club packet" };
@@ -19,7 +21,12 @@ export default async function DirectorClubPacketPage({
 }) {
   const { organizationId, eventId } = await params;
   const packet = await loadDirectorClubPacket(organizationId, eventId);
-  if (!packet) return null;
+  if (!packet) {
+    // The club layout shows the sign-in / unlock prompts; an open club with
+    // no active registration for this event is simply not found.
+    if ((await getRosterAccessState(organizationId)).state === "OPEN") notFound();
+    return null;
+  }
 
   return (
     <section className="page-stack retreat-packet-workspace">

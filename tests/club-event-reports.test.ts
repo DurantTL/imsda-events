@@ -100,6 +100,28 @@ describe("buildClubEventRecord", () => {
     expect(sam.masterGuideInvestiture).toBe(true);
   });
 
+  it("reads NUMBER-field camping answers, such as a numeric square footage", () => {
+    const base = clubInput();
+    const record = buildClubEventRecord(clubInput({
+      registrationResponses: { ...base.registrationResponses, total_sqft: 900, trailers: 2, meal_sponsorship_count: 12 },
+    }));
+    expect(record.camping.totalSqft).toBe("900");
+    expect(record.camping.trailers).toBe("2");
+    expect(record.mealSponsorshipCount).toBe("12");
+  });
+
+  it("doesn't mark a dietary need for answers like \"None\" or \"N/A\"", () => {
+    const answers = ["None", "none.", "N/A", "n/a", "No", "-", "", "Vegetarian"];
+    const record = buildClubEventRecord(clubInput({
+      attendees: answers.map((dietary, index) => attendee({
+        id: `att-${index}`,
+        responses: { attendee_type: "Pathfinder", dietary_needs: dietary },
+      })),
+    }));
+    expect(record.attendees.map((person) => person.hasDietaryNeed))
+      .toEqual([false, false, false, false, false, false, false, true]);
+  });
+
   it("leaves lateRateApplied false when no line item carries the late-pricing label", () => {
     const record = buildClubEventRecord(clubInput({ pricingSnapshot: { lineItems: [{ key: "fee-1", pricingLabel: undefined }] } }));
     expect(record.lateRateApplied).toBe(false);
