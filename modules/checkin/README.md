@@ -90,3 +90,20 @@ whole club" disclosure, so one late child's pass can't record the whole club
 as arrived. A confirmation-code lookup has no scanned person and opens the
 plain club view. Campsite and assignments don't exist yet (#410); the club
 view leaves that slot clearly empty instead of inventing that schema.
+
+### The club's own QR (Q1, #412)
+
+Clubs don't get individual per-member QR codes beyond what already exists;
+instead a director can show one QR (`club-pass-token.ts`,
+`club-pass-repository.ts`) that opens the plain club view directly — the
+same view a confirmation-code lookup or a member's own pass opens, with no
+scanned person. It is event-scoped, signed with the same secret mechanism
+and 48-hours-after-event expiry as an attendee pass, but is a structurally
+distinct token: a different top-level prefix (`imsda-club-pass.v1…`), a
+different HMAC namespace, and its own `type` field in the signed payload, so
+an attendee pass and a club pass can never be mistaken for one another even
+though both verify against `ATTENDEE_PASS_SIGNING_SECRET`. The scan/lookup
+route (`pass-lookup.ts`) tells the two apart by token prefix before either
+is verified. Only an active (submitted or confirmed) club registration gets
+a working pass; a director reaches only her own club's QR
+(`requireRosterAccess`, the same gate the club event page already uses).

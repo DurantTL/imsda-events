@@ -65,13 +65,23 @@ type BarcodeDetectorConstructor = new (
   options: { formats: string[] },
 ) => BarcodeDetectorInstance;
 
+/**
+ * Q1 (#412): a club's own QR ("imsda-club-pass.v1…") is a distinct token
+ * type from an attendee's ("imsda-pass.v1…"), but the scanner reads either
+ * the same way — it just forwards whatever it found to the resolve route,
+ * which tells the two apart.
+ */
+function isRecognizedPassToken(value: string) {
+  return value.startsWith("imsda-pass.v1.") || value.startsWith("imsda-club-pass.v1.");
+}
+
 export function extractAttendeePassToken(value: string) {
   const candidate = value.trim();
-  if (candidate.startsWith("imsda-pass.v1.")) return candidate;
+  if (isRecognizedPassToken(candidate)) return candidate;
   try {
     const parsed = new URL(candidate);
     const pass = parsed.searchParams.get("pass")?.trim() ?? "";
-    return pass.startsWith("imsda-pass.v1.") ? pass : null;
+    return isRecognizedPassToken(pass) ? pass : null;
   } catch {
     return null;
   }
@@ -139,6 +149,12 @@ export function CheckInScanner({
   const animationFrameRef = useRef<number | null>(null);
   const scanLoopActiveRef = useRef(false);
   const detectingRef = useRef(false);
+  // Escape closes through this same function (see useAccessibleDialog), so a
+  // plain `bulkBusy || checkingInId` check in closeScanner would need those
+  // state values fresh at keydown time. The ref keeps that guard correct
+  // regardless of when the key fires mid bulk run.
+  const bulkGuardRef = useRef({ bulkBusy: false, checkingInId: null as string | null });
+  bulkGuardRef.current = { bulkBusy, checkingInId };
   const dialogRef = useAccessibleDialog<HTMLElement>(open, closeScanner);
 
   function stopCamera(updateState = true) {
@@ -155,6 +171,12 @@ export function CheckInScanner({
   }
 
   function closeScanner() {
+    // A bulk club run is in flight in the background even once the camera
+    // and lookup are idle; closing mid-run would hide its progress and
+    // summary. Escape reaches this through useAccessibleDialog's keydown
+    // handler, so the check must read live state via the ref, not a stale
+    // closure.
+    if (bulkGuardRef.current.bulkBusy || bulkGuardRef.current.checkingInId) return;
     stopCamera(false);
     setOpen(false);
     setCameraState("idle");

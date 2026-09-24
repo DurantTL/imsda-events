@@ -4471,6 +4471,43 @@ select:focus-visible {
   letter-spacing: 0.04em;
 }
 
+/* Q1 (#412): the club's own single check-in QR, on the director's club event page. */
+.club-pass-card {
+  display: grid;
+  justify-items: center;
+  gap: 9px;
+  margin-top: 14px;
+  border: 1px solid #dce6ea;
+  border-radius: 15px;
+  background: #fbfcfd;
+  padding: 14px;
+}
+.club-pass-card > img {
+  display: block;
+  width: min(100%, 220px);
+  height: auto;
+  aspect-ratio: 1;
+  border: 1px solid #dce6ea;
+  border-radius: 12px;
+  background: white;
+}
+.club-pass-card > p {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  max-width: 320px;
+  color: var(--muted);
+  font-size: 0.61rem;
+  line-height: 1.5;
+  text-align: center;
+}
+.club-pass-card > p svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--green);
+}
+
 .public-manage-payment-card { border-top: 4px solid var(--imsda-gold); }
 .public-manage-payment-grid {
   display: grid;

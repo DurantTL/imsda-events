@@ -71,7 +71,7 @@ function attendeeName(
   };
 }
 
-function serializeAttendee(attendee: {
+export function serializeAttendee(attendee: {
   id: string;
   attendeeType: string;
   profileSnapshot: unknown;
@@ -102,7 +102,11 @@ function tokenError(error: AttendeePassTokenError) {
   );
 }
 
-const registrationAttendeesSelect = {
+/**
+ * Shared with the club pass resolver (`club-pass-repository.ts`) so a club
+ * pass roster is serialized identically to an attendee pass roster.
+ */
+export const registrationAttendeesSelect = {
   orderBy: [{ position: "asc" as const }, { createdAt: "asc" as const }],
   select: {
     id: true,

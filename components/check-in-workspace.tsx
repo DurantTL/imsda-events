@@ -89,6 +89,25 @@ export function CheckInWorkspace({
   const [query, setQuery] = useState("");
   const [undoPendingId, setUndoPendingId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  // This device's latest result per attendee from a club run, so a row that
+  // failed reads "Needs review" even when nothing was saved to the queue.
+  const [bulkResultById, setBulkResultById] = useState<
+    Record<string, SequentialCheckInStatus>
+  >({});
+
+  // Q1 (#412) reviewer leftover: bulkResultById only ever grew, so a club
+  // run's CONFLICT could keep marking someone "Needs review" long after it
+  // was resolved another way. Clear an attendee's entry wherever their
+  // outcome is superseded: a confirmed check-in (here), a successful undo,
+  // and a discarded saved retry.
+  const clearBulkResult = useCallback((attendeeId: string) => {
+    setBulkResultById((current) => {
+      if (!(attendeeId in current)) return current;
+      const next = { ...current };
+      delete next[attendeeId];
+      return next;
+    });
+  }, []);
 
   const applyConfirmedCheckIn = useCallback((
     attendeeId: string,
@@ -99,8 +118,9 @@ export function CheckInWorkspace({
         ? { ...item, checkedIn: true, checkedInAt }
         : item
     )));
+    clearBulkResult(attendeeId);
     setMessage("A saved check-in was confirmed by the server.");
-  }, []);
+  }, [clearBulkResult]);
 
   const {
     queue,
@@ -152,11 +172,6 @@ export function CheckInWorkspace({
   }, [clubs, query]);
   const [bulkBusyCode, setBulkBusyCode] = useState<string | null>(null);
   const [bulkProgress, setBulkProgress] = useState<ClubCheckInProgress | null>(null);
-  // This device's latest result per attendee from a club run, so a row that
-  // failed reads "Needs review" even when nothing was saved to the queue.
-  const [bulkResultById, setBulkResultById] = useState<
-    Record<string, SequentialCheckInStatus>
-  >({});
 
   async function checkInMany(confirmationCode: string, clubLabel: string, attendeeIds: string[]) {
     if (!canCheckIn || attendeeIds.length === 0 || bulkBusyCode) return;
@@ -223,6 +238,7 @@ export function CheckInWorkspace({
           ? { ...item, checkedIn: false, checkedInAt: null }
           : item
       )));
+      clearBulkResult(arrival.id);
       setMessage(
         `Check-in undone for ${arrival.firstName} ${arrival.lastName}.`,
       );
@@ -237,12 +253,13 @@ export function CheckInWorkspace({
     }
   }
 
-  function discardSavedItem(idempotencyKey: string, attendeeLabel: string) {
+  function discardSavedItem(idempotencyKey: string, attendeeId: string, attendeeLabel: string) {
     const confirmed = window.confirm(
       `Discard the saved retry for ${attendeeLabel}? This only removes the retry from this device. It does not undo a server check-in.`,
     );
     if (!confirmed) return;
     if (discardQueueItem(idempotencyKey)) {
+      clearBulkResult(attendeeId);
       setMessage(`Discarded the saved retry for ${attendeeLabel}.`);
     }
   }
@@ -435,6 +452,7 @@ export function CheckInWorkspace({
                       disabled={processing}
                       onClick={() => discardSavedItem(
                         item.idempotencyKey,
+                        item.attendeeId,
                         label,
                       )}
                       type="button"
@@ -579,6 +597,11 @@ export function CheckInWorkspace({
                   || undoPendingId === arrival.id
                   || (arrival.checkedIn && !online)
                   || (!arrival.checkedIn && unreadableItemCount > 0)
+                  // A club run in progress already sends this attendee's
+                  // check-in through checkInSequentially if they're in that
+                  // club; a second, independent request from this row would
+                  // race it (reviewer leftover).
+                  || (!arrival.checkedIn && bulkBusyCode !== null)
                 }
                 onClick={() => void toggleCheckIn(arrival)}
                 title={arrival.checkedIn && !online

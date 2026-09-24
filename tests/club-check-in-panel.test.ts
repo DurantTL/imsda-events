@@ -48,6 +48,19 @@ describe("who a bulk club check-in reaches (#412)", () => {
     expect(pendingAttendeeIds(roster)).toEqual(["a1", "a3"]);
   });
 
+  it("also leaves out someone whose last attempt failed even though nothing was saved to the queue (reviewer leftover)", () => {
+    const roster = [
+      attendee({ id: "a1" }),
+      attendee({ id: "a2", lastResult: "CONFLICT" }),
+      attendee({ id: "a3", lastResult: "QUEUED" }),
+    ];
+    // a2 matches the same "Needs review" rule clubAttendeeStatusLabel uses,
+    // so it must be excluded from "Check in all" exactly like a2 with a
+    // saved CONFLICT is above — savedState and lastResult are not allowed
+    // to disagree about who gets left out.
+    expect(pendingAttendeeIds(roster)).toEqual(["a1", "a3"]);
+  });
+
   it("retries a needs-review attendee only when staff explicitly tick them for 'Check in selected'", () => {
     const roster = [
       attendee({ id: "a1" }),
@@ -219,6 +232,24 @@ describe("club check-in panel markup (#412)", () => {
     expect(markup).toContain("Needs review");
     expect(markup).toContain("left out of “Check in all”");
     expect(markup).toContain("Check in all (0)");
+  });
+
+  it("matches the review note to the count 'Check in all' actually excludes, even for a lastResult-only conflict", () => {
+    const markup = renderToStaticMarkup(createElement(ClubCheckInPanel, {
+      organizationName: "Ankeny Son-Seekers",
+      confirmationCode: "REG-A1",
+      amountOwedCents: null,
+      canCheckIn: true,
+      busy: false,
+      onCheckInMany: () => {},
+      attendees: [
+        attendee({ id: "a1" }),
+        attendee({ id: "a2", firstName: "Riley", lastName: "Roamer", lastResult: "CONFLICT" }),
+      ],
+    }));
+    expect(markup).toContain("Check in all (1)");
+    expect(markup).toContain("1 person needs");
+    expect(markup).toContain("left out of “Check in all”");
   });
 });
 

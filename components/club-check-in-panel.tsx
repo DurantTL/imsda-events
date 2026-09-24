@@ -43,13 +43,18 @@ function money(cents: number) {
  * held for staff review. Someone already checked in — by this device,
  * another scan, or another staff member's action in the meantime — is
  * skipped here, never re-sent, so a repeat tap never asks the server to
- * duplicate a check-in. A saved check-in that needs review (queue state
- * CONFLICT) is never retried by "Check in all"; staff retry it on purpose
- * through "Check in selected" or that row's own retry.
+ * duplicate a check-in. Anyone needing review — a saved check-in stuck at
+ * CONFLICT, or this device's last result for them was CONFLICT even though
+ * nothing was saved to the queue — is never retried by "Check in all";
+ * staff retry them on purpose through "Check in selected" or that row's own
+ * retry. This is the same "Needs review" rule `clubAttendeeStatusLabel`
+ * uses, so the review note below always names exactly who was left out.
  */
 export function pendingAttendeeIds(attendees: ClubCheckInAttendeeView[]) {
   return attendees
-    .filter((attendee) => !attendee.checkedIn && attendee.savedState !== "CONFLICT")
+    .filter((attendee) => (
+      !attendee.checkedIn && clubAttendeeStatusLabel(attendee) !== "Needs review"
+    ))
     .map((attendee) => attendee.id);
 }
 

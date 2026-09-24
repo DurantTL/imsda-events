@@ -44,7 +44,11 @@ vi.mock("@/modules/events/repository", () => ({
 }));
 vi.mock("@/modules/checkin/attendee-pass-repository", () => ({
   AttendeePassResolutionError: mocks.AttendeePassResolutionError,
-  resolveAttendeePassForEvent: mocks.resolveAttendeePassForEvent,
+}));
+// The route dispatches through pass-lookup.ts (#412: also routes a club
+// pass), which is what actually calls the attendee resolver.
+vi.mock("@/modules/checkin/pass-lookup", () => ({
+  resolvePassLookupForEvent: mocks.resolveAttendeePassForEvent,
 }));
 
 import { POST } from "@/app/api/events/[eventId]/attendee-passes/resolve/route";

@@ -5,10 +5,8 @@ import {
 } from "@/modules/access/authorization";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
-import {
-  AttendeePassResolutionError,
-  resolveAttendeePassForEvent,
-} from "@/modules/checkin/attendee-pass-repository";
+import { AttendeePassResolutionError } from "@/modules/checkin/attendee-pass-repository";
+import { resolvePassLookupForEvent } from "@/modules/checkin/pass-lookup";
 import { findActiveMembership } from "@/modules/events/repository";
 import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
@@ -121,7 +119,7 @@ async function postHandler(request: Request, context: RouteContext) {
     }
 
     const lookup = lookupSchema.parse(JSON.parse(rawBody));
-    const resolution = await resolveAttendeePassForEvent(eventId, lookup);
+    const resolution = await resolvePassLookupForEvent(eventId, lookup);
     return json({ resolution });
   } catch (error) {
     return errorResponse(error);

@@ -17,5 +17,17 @@ describe("attendee pass scanner input", () => {
     )).toBeNull();
     expect(extractAttendeePassToken("plain attendee name")).toBeNull();
   });
+
+  // Q1 (#412): a club's own QR is a distinct token; the scanner reads it the
+  // same way it reads an attendee's, and just forwards it to the resolve
+  // route, which tells the two token types apart.
+  it("also accepts a club's own signed QR pass, compact or embedded in a URL", () => {
+    expect(extractAttendeePassToken(
+      "imsda-club-pass.v1.payload.signature",
+    )).toBe("imsda-club-pass.v1.payload.signature");
+    expect(extractAttendeePassToken(
+      "https://events.imsda.org/check-in?event=event_123&pass=imsda-club-pass.v1.payload.signature",
+    )).toBe("imsda-club-pass.v1.payload.signature");
+  });
 });
 
