@@ -20,6 +20,7 @@ vi.mock("@/modules/club-rosters/repository", async () => {
 });
 
 import { DELETE, PATCH } from "@/app/api/attendee/clubs/[organizationId]/roster/[memberId]/route";
+import { RosterOperationError } from "@/modules/club-rosters/repository";
 
 const ctx = { params: Promise.resolve({ organizationId: "club-1", memberId: "member-1" }) };
 const request = (method: string, body: unknown) => new Request("https://events.imsda.test/api/attendee/clubs/club-1/roster/member-1", {
@@ -47,22 +48,34 @@ describe("editing a roster member (#424)", () => {
     expect(mocks.updateRosterMember).not.toHaveBeenCalled();
   });
 
-  it("saves a full edit with Male or Female, defaulting a blank role to Pathfinder", async () => {
+  it("saves a full edit with Male or Female, leaving the blank-role default to the type on file", async () => {
     const response = await PATCH(request("PATCH", {
       firstName: "A", lastName: "B", birthDate: "2014-01-01", attendeeType: "YOUTH", role: "", classLevel: null, gender: "MALE",
     }), ctx);
     expect(response.status).toBe(200);
-    expect(mocks.updateRosterMember).toHaveBeenCalledWith("club-1", "member-1", expect.objectContaining({ role: "Pathfinder", gender: "MALE" }), { accountId: "director-1" });
+    expect(mocks.updateRosterMember).toHaveBeenCalledWith(
+      "club-1", "member-1", expect.objectContaining({ role: "", gender: "MALE" }), { accountId: "director-1" }, undefined, { requireGender: true },
+    );
+  });
+
+  it("rejects a details edit that leaves out gender when none is on file", async () => {
+    mocks.updateRosterMember.mockRejectedValueOnce(new RosterOperationError("GENDER_REQUIRED", "Choose Male or Female."));
+    const response = await PATCH(request("PATCH", { firstName: "A", lastName: "B", role: "Counselor" }), ctx);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "GENDER_REQUIRED", message: "Choose Male or Female." });
+    expect(mocks.updateRosterMember).toHaveBeenCalledWith(
+      "club-1", "member-1", { firstName: "A", lastName: "B", role: "Counselor" }, { accountId: "director-1" }, undefined, { requireGender: true },
+    );
   });
 
   it("deactivates and reactivates by status alone, without needing gender", async () => {
     let response = await PATCH(request("PATCH", { status: "INACTIVE" }), ctx);
     expect(response.status).toBe(200);
-    expect(mocks.updateRosterMember).toHaveBeenCalledWith("club-1", "member-1", { status: "INACTIVE" }, { accountId: "director-1" });
+    expect(mocks.updateRosterMember).toHaveBeenCalledWith("club-1", "member-1", { status: "INACTIVE" }, { accountId: "director-1" }, undefined, { requireGender: true });
 
     response = await PATCH(request("PATCH", { status: "ACTIVE" }), ctx);
     expect(response.status).toBe(200);
-    expect(mocks.updateRosterMember).toHaveBeenCalledWith("club-1", "member-1", { status: "ACTIVE" }, { accountId: "director-1" });
+    expect(mocks.updateRosterMember).toHaveBeenCalledWith("club-1", "member-1", { status: "ACTIVE" }, { accountId: "director-1" }, undefined, { requireGender: true });
   });
 
   it("still removes a person with a confirmation, unaffected by the gender rule", async () => {

@@ -4,7 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { openBirthDate, sealBirthDate } from "@/modules/club-rosters/birth-dates";
-import { ageOn, birthDateProblem, calendarDateOf } from "@/modules/club-rosters/domain";
+import { ageOn, birthDateProblem, calendarDateOf, defaultRosterRole } from "@/modules/club-rosters/domain";
 import type { RosterMemberInput, RosterMemberUpdate } from "@/modules/club-rosters/schemas";
 
 /**
@@ -13,7 +13,7 @@ import type { RosterMemberInput, RosterMemberUpdate } from "@/modules/club-roste
  * roster row, never a person's name or birth date.
  */
 
-export type RosterErrorCode = "MEMBER_NOT_FOUND" | "DUPLICATE_MEMBER" | "BIRTH_DATE_INVALID" | "MEMBER_REMOVED";
+export type RosterErrorCode = "MEMBER_NOT_FOUND" | "DUPLICATE_MEMBER" | "BIRTH_DATE_INVALID" | "MEMBER_REMOVED" | "GENDER_REQUIRED";
 
 export class RosterOperationError extends Error {
   constructor(public readonly code: RosterErrorCode, message: string) {
@@ -202,10 +202,23 @@ export async function updateRosterMember(
   input: RosterMemberUpdate,
   actor: Actor,
   now = new Date(),
+  options: { requireGender?: boolean } = {},
 ) {
   if (input.birthDate !== undefined) assertBirthDate(input.birthDate, now);
   await getPrisma().$transaction(async (tx) => {
     const member = await findMember(tx, organizationId, memberId);
+    // A details edit from the roster form (#424) must leave the person with a
+    // gender, sent or already on file. Marking someone active or inactive
+    // doesn't touch their details, so it stays exempt.
+    const editsDetails = Object.keys(input).some((field) => field !== "status");
+    if (options.requireGender && editsDetails && (input.gender === undefined ? member.gender : input.gender) === null) {
+      throw new RosterOperationError("GENDER_REQUIRED", "Choose Male or Female.");
+    }
+    // A blank role defaults by the type the person ends up with (#424): youth
+    // become "Pathfinder", staff and adults stay blank. A typed role is kept.
+    const role = input.role === undefined
+      ? undefined
+      : input.role.trim() || defaultRosterRole(input.attendeeType ?? member.attendeeType);
     const firstName = input.firstName ?? member.person?.firstName ?? "";
     const lastName = input.lastName ?? member.person?.lastName ?? "";
     const birthDate = input.birthDate ?? (member.sealedBirthDate ? openBirthDate(member.sealedBirthDate) : "");
@@ -219,7 +232,7 @@ export async function updateRosterMember(
       where: { id: memberId },
       data: {
         ...(input.attendeeType === undefined ? {} : { attendeeType: input.attendeeType }),
-        ...(input.role === undefined ? {} : { role: input.role }),
+        ...(role === undefined ? {} : { role }),
         ...(input.classLevel === undefined ? {} : { classLevel: input.classLevel }),
         ...(input.gender === undefined ? {} : { gender: input.gender }),
         ...(input.status === undefined ? {} : { status: input.status }),

@@ -139,6 +139,51 @@ describe("club roster storage", () => {
     expect(db.members[0]).toMatchObject({ role: "Pathfinder", status: "ACTIVE" });
   });
 
+  it("defaults a blank role on edit by the type the person ends up with, never replacing a typed one (#424)", async () => {
+    const staffId = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Legacy", attendeeType: "STAFF", role: "" }, actor, { now });
+    const youthId = await addRosterMember("club-1", "2026-27", { ...youth, role: "" }, actor, { now });
+    const staff = () => db.members.find((member) => member.id === staffId)!;
+    const kid = () => db.members.find((member) => member.id === youthId)!;
+
+    // Editing a legacy staff member with an empty role keeps it empty.
+    await updateRosterMember("club-1", staffId, { firstName: "Legacy", role: "", gender: "MALE" }, actor, now, { requireGender: true });
+    expect(staff().role).toBe("");
+    // A youth's blank role (type on file, or sent) becomes Pathfinder.
+    await updateRosterMember("club-1", youthId, { role: "  " }, actor, now, { requireGender: true });
+    expect(kid().role).toBe("Pathfinder");
+    // Switching a staff member to youth with a blank role defaults by the new type.
+    await updateRosterMember("club-1", staffId, { attendeeType: "YOUTH", role: "" }, actor, now);
+    expect(staff().role).toBe("Pathfinder");
+    // ...and back to staff, a blank role stays blank.
+    await updateRosterMember("club-1", staffId, { attendeeType: "STAFF", role: "" }, actor, now);
+    expect(staff().role).toBe("");
+    // A typed role is kept as typed; an edit without role leaves it alone.
+    await updateRosterMember("club-1", staffId, { role: "Counselor" }, actor, now);
+    await updateRosterMember("club-1", staffId, { attendeeType: "YOUTH" }, actor, now);
+    expect(staff().role).toBe("Counselor");
+  });
+
+  it("requires a gender on a details edit when none is on file, but not for status alone (#424)", async () => {
+    const id = await addRosterMember("club-1", "2026-27", { ...youth, gender: null }, actor, { now });
+    const stored = () => db.members.find((member) => member.id === id)!;
+
+    await expect(updateRosterMember("club-1", id, { firstName: "Renamed", role: "TLT" }, actor, now, { requireGender: true }))
+      .rejects.toMatchObject({ code: "GENDER_REQUIRED", message: "Choose Male or Female." });
+    expect(stored()).toMatchObject({ role: "Pathfinder", gender: null });
+
+    await updateRosterMember("club-1", id, { status: "INACTIVE" }, actor, now, { requireGender: true });
+    expect(stored().status).toBe("INACTIVE");
+
+    // The CSV import doesn't ask for it: an update there may leave gender unknown.
+    await updateRosterMember("club-1", id, { role: "TLT" }, actor, now);
+    expect(stored().role).toBe("TLT");
+
+    await updateRosterMember("club-1", id, { role: "Pathfinder", gender: "FEMALE" }, actor, now, { requireGender: true });
+    // Once one is on file, later details edits that leave gender out are fine.
+    await updateRosterMember("club-1", id, { firstName: "Again" }, actor, now, { requireGender: true });
+    expect(stored()).toMatchObject({ gender: "FEMALE" });
+  });
+
   it("deactivating keeps the person and their history", async () => {
     const id = await addRosterMember("club-1", "2026-27", youth, actor, { now });
     await updateRosterMember("club-1", id, { status: "INACTIVE" }, actor, now);

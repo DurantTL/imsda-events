@@ -10,6 +10,7 @@ import {
   clubRosterAttendeeTypeLabels,
   clubRosterGenderLabels,
   clubRosterStatusLabels,
+  defaultRosterRole,
   missingRosterFields,
   rosterSectionOf,
 } from "@/modules/club-rosters/domain";
@@ -42,6 +43,8 @@ export function ClubRosterWorkspace({
 }) {
   const [members, setMembers] = useState(initialMembers);
   const [editing, setEditing] = useState<RosterMemberRecord | null>(null);
+  /** The type picked in the dialog, so the Role placeholder shows the blank-role default (#424). */
+  const [formType, setFormType] = useState<string>("YOUTH");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [birthDates, setBirthDates] = useState<Record<string, string> | null>(null);
   const [showInactive, setShowInactive] = useState(false);
@@ -58,6 +61,7 @@ export function ClubRosterWorkspace({
   /** Add and edit happen in a pop-up (#383), so the list never scrolls away. */
   function openDialog(member: RosterMemberRecord | null) {
     setEditing(member);
+    setFormType(member?.attendeeType ?? "YOUTH");
     setNotice("");
     setError("");
     setDialogOpen(true);
@@ -309,7 +313,7 @@ export function ClubRosterWorkspace({
           />
           <label>
             Type
-            <select defaultValue={editing?.attendeeType ?? "YOUTH"} name="attendeeType">
+            <select defaultValue={editing?.attendeeType ?? "YOUTH"} name="attendeeType" onChange={(event) => setFormType(event.target.value)}>
               {Object.entries(clubRosterAttendeeTypeLabels).map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
               ))}
@@ -326,7 +330,8 @@ export function ClubRosterWorkspace({
           </label>
           <label>
             Role (optional)
-            <input defaultValue={editing?.role ?? ""} maxLength={60} name="role" placeholder="Pathfinder" />
+            {/* Left blank, youth save as "Pathfinder"; staff and adults stay blank (#424). */}
+            <input defaultValue={editing?.role ?? ""} maxLength={60} name="role" placeholder={defaultRosterRole(formType)} />
           </label>
           <label>
             Gender

@@ -137,6 +137,14 @@ describe("roster routes", () => {
     expect(mocks.addRosterMember).toHaveBeenCalledWith("club-1", expect.stringMatching(/^\d{4}-\d{2}$/), expect.objectContaining({ birthDate: "2014-01-01", gender: "FEMALE" }), { accountId: "director-1" });
   });
 
+  it("defaults a blank role by type on create: youth become Pathfinder, staff stay blank (#424)", async () => {
+    const base = { firstName: "A", lastName: "B", birthDate: "1990-01-01", gender: "MALE", role: "" };
+    expect((await POST(request({ ...base, attendeeType: "STAFF" }), clubContext())).status).toBe(201);
+    expect(mocks.addRosterMember).toHaveBeenLastCalledWith("club-1", expect.any(String), expect.objectContaining({ attendeeType: "STAFF", role: "" }), { accountId: "director-1" });
+    expect((await POST(request({ ...base, birthDate: "2014-01-01", attendeeType: "YOUTH" }), clubContext())).status).toBe(201);
+    expect(mocks.addRosterMember).toHaveBeenLastCalledWith("club-1", expect.any(String), expect.objectContaining({ attendeeType: "YOUTH", role: "Pathfinder" }), { accountId: "director-1" });
+  });
+
   it("rejects cross-origin writes before anything else", async () => {
     mocks.rejectCrossOriginRequest.mockReturnValue(Response.json({}, { status: 403 }));
     expect((await POST(request({}), clubContext())).status).toBe(403);

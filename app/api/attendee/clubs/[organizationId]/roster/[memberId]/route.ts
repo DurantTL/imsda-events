@@ -20,7 +20,8 @@ async function patchHandler(request: Request, context: RouteContext) {
     const { organizationId, memberId } = await context.params;
     const access = await requireRosterAccess(organizationId);
     const input = rosterMemberUpdateSchema.parse(await request.json());
-    await updateRosterMember(organizationId, memberId, input, { accountId: access.accountId });
+    // A details edit must leave the person with a gender (#424); status-only edits are exempt.
+    await updateRosterMember(organizationId, memberId, input, { accountId: access.accountId }, undefined, { requireGender: true });
     return Response.json(await roster(organizationId));
   } catch (error) {
     return rosterApiError(error, "Updating a roster entry");

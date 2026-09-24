@@ -17,7 +17,7 @@ export function rosterApiError(error: unknown, action: string) {
     return Response.json({ error: error.code, message: error.message }, { status: error.status });
   }
   if (error instanceof RosterOperationError) {
-    const status = error.code === "MEMBER_NOT_FOUND" ? 404 : error.code === "BIRTH_DATE_INVALID" ? 400 : 409;
+    const status = error.code === "MEMBER_NOT_FOUND" ? 404 : error.code === "BIRTH_DATE_INVALID" || error.code === "GENDER_REQUIRED" ? 400 : 409;
     return Response.json({ error: error.code, message: error.message }, { status });
   }
   // Club team and profile changes (#375) raise the directory's own errors.

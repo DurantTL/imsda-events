@@ -96,11 +96,46 @@ describe("roster CSV (#384, #424)", () => {
       ["Riley", "SKIP"],
       ["Sam Sample", "SKIP"],
     ]);
-    expect(plan[0].message).toMatch(/Missing: Role\./);
-    expect(plan[1].message).toMatch(/Missing: Birth date, Current class, Gender\./);
-    expect(plan[2].message).toMatch(/birth date/);
-    expect(plan[2].message).toMatch(/Missing: Birth date, Type, Current class, Role, Gender\./);
+    // A new youth with a blank role: the default is named, and nothing is left missing.
+    expect(plan[0].message).toBe("Will be added. Will default: Role → Pathfinder.");
+    // An update keeps what's on file for blank cells, so they're "blank in file", not missing.
+    expect(plan[1].message).toBe("Will update what the file fills in. Blank in file: Birth date, Current class, Gender (kept as on file).");
+    // Skipped rows say why, without a missing-fields list on top.
+    expect(plan[2].message).toBe("New people need a birth date.");
     expect(plan[4].message).toMatch(/isn't a date/);
+    expect(plan[4].message).not.toMatch(/Missing|Blank in file/);
+  });
+
+  it("names the defaults a new row gets by type, and only what's still missing (#424)", () => {
+    const file = [
+      "First name,Last name,Birth date,Type,Current class,Role,Gender",
+      "Kit,Blank,4/17/14,,,,",
+      "Lee,Staffer,3/2/1980,Staff,,,M",
+      "Mo,Adult,3/2/1981,Adult,,Deacon,F",
+    ].join("\n");
+    const plan = planRosterImport(parseRosterCsv(file, 2026), []);
+    expect(plan.map((step) => step.action)).toEqual(["ADD", "ADD", "ADD"]);
+    expect(plan[0].message).toBe("Will be added. Will default: Type → Youth, Role → Pathfinder. Missing: Gender, Current class.");
+    // Staff don't get Pathfinder or need a class; their blank role is still missing.
+    expect(plan[1].message).toBe("Will be added. Missing: Role.");
+    expect(plan[2].message).toBe("Will be added.");
+  });
+
+  it("saves a staff row's blank role as blank, and a blank type as a Pathfinder youth (#424)", async () => {
+    const file = [
+      "First name,Last name,Birth date,Type,Current class,Role,Gender",
+      "Kit,Blank,4/17/2014,,,,",
+      "Lee,Staffer,3/2/1980,Staff,,,M",
+    ].join("\n");
+    mocks.listRoster.mockResolvedValue([]);
+    const response = await POST(request({ csv: file, confirm: true }), ctx);
+    expect(response.status).toBe(200);
+    expect(mocks.addRosterMember).toHaveBeenNthCalledWith(1, "club-1", expect.any(String), expect.objectContaining({
+      firstName: "Kit", attendeeType: "YOUTH", role: "Pathfinder", gender: null,
+    }), { accountId: "account-1" });
+    expect(mocks.addRosterMember).toHaveBeenNthCalledWith(2, "club-1", expect.any(String), expect.objectContaining({
+      firstName: "Lee", attendeeType: "STAFF", role: "", gender: "MALE",
+    }), { accountId: "account-1" });
   });
 
   it("refuses to guess between two people with the same name", () => {

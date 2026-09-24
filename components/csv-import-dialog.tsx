@@ -1,11 +1,23 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Download, FileUp, Upload, X } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 
 export type CsvImportStep = { line: number; name: string; action: "ADD" | "UPDATE" | "SKIP"; message: string };
 type ImportResponse = { steps?: CsvImportStep[]; message?: string; issues?: Array<{ message?: string }> } & Record<string, unknown>;
+
+/**
+ * Whether a chosen or dropped file is a CSV (#424). Browsers and operating
+ * systems label CSVs inconsistently: some drops arrive with no type at all,
+ * and Windows often calls them `application/vnd.ms-excel` or `text/plain`. So
+ * a `.csv` name (any case) is trusted whatever its type, and `text/csv` is
+ * trusted whatever the name. The server still parses and checks the content.
+ */
+export function isCsvFile(file: { name: string; type: string }) {
+  const type = file.type.toLowerCase().split(";")[0]!.trim();
+  return type === "text/csv" || file.name.trim().toLowerCase().endsWith(".csv");
+}
 
 const actionLabels = { ADD: "Add", UPDATE: "Update", SKIP: "Skip" } as const;
 const actionTone = { ADD: "green", UPDATE: "purple", SKIP: "gold" } as const;
@@ -40,6 +52,9 @@ export function CsvImportDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
+  // Entering and leaving the label's own children fires dragleave on the
+  // label too, so count enters and leaves instead of flickering (#424).
+  const dragDepth = useRef(0);
   const close = useCallback(() => {
     setOpen(false);
     setCsv(null);
@@ -47,6 +62,7 @@ export function CsvImportDialog({
     setDone(false);
     setError("");
     setDragging(false);
+    dragDepth.current = 0;
   }, []);
   const dialogRef = useAccessibleDialog<HTMLElement>(open, close);
 
@@ -80,7 +96,6 @@ export function CsvImportDialog({
     await openFile(file);
   }
 
-  const isCsvFile = (file: File) => file.name.toLowerCase().endsWith(".csv") || file.type === "text/csv";
 
   async function openFile(file: File) {
     if (!isCsvFile(file)) {
@@ -92,8 +107,15 @@ export function CsvImportDialog({
     await send(text, false);
   }
 
+  function onDragEnter(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    dragDepth.current += 1;
+    if (!busy) setDragging(true);
+  }
+
   function onDrop(event: React.DragEvent<HTMLLabelElement>) {
     event.preventDefault();
+    dragDepth.current = 0;
     setDragging(false);
     if (busy) return;
     const files = event.dataTransfer.files;
@@ -112,7 +134,8 @@ export function CsvImportDialog({
 
   function onDragLeave(event: React.DragEvent<HTMLLabelElement>) {
     event.preventDefault();
-    setDragging(false);
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
   }
 
   const counts = { ADD: 0, UPDATE: 0, SKIP: 0 };
@@ -139,6 +162,7 @@ export function CsvImportDialog({
                 <div className="field-help">{help}</div>
                 <label
                   className={`club-import-upload${dragging ? " club-import-upload-dragging" : ""}`}
+                  onDragEnter={onDragEnter}
                   onDragLeave={onDragLeave}
                   onDragOver={onDragOver}
                   onDrop={onDrop}

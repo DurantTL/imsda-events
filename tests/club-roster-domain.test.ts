@@ -4,9 +4,11 @@ import {
   birthDateProblem,
   centuryForTwoDigitYear,
   clubYearFor,
+  defaultRosterRole,
   missingRosterFields,
   parseCalendarDate,
   parseRosterBirthDateInput,
+  rosterRoleOrDefault,
 } from "@/modules/club-rosters/domain";
 import { rosterMemberInputSchema, rosterMemberUpdateSchema } from "@/modules/club-rosters/schemas";
 
@@ -41,14 +43,24 @@ describe("club roster rules", () => {
     expect(() => rosterMemberUpdateSchema.parse({ status: "REMOVED" })).toThrow();
   });
 
-  it("saves an empty role as Pathfinder (#424)", () => {
+  it("defaults an empty role by type: youth become Pathfinder, staff and adults stay blank (#424)", () => {
     const base = { firstName: "Test", lastName: "Youth", birthDate: "2014-06-15", attendeeType: "YOUTH", gender: "MALE" };
     expect(rosterMemberInputSchema.parse({ ...base, role: "" })).toMatchObject({ role: "Pathfinder" });
     expect(rosterMemberInputSchema.parse({ ...base, role: "  " })).toMatchObject({ role: "Pathfinder" });
     expect(rosterMemberInputSchema.parse({ ...base, role: "Counselor" })).toMatchObject({ role: "Counselor" });
-    expect(rosterMemberUpdateSchema.parse({ role: "" })).toEqual({ role: "Pathfinder" });
-    // A status-only edit (deactivate/reactivate) doesn't touch role at all.
+    for (const attendeeType of ["STAFF", "ADULT", "UNDERAGE"]) {
+      expect(rosterMemberInputSchema.parse({ ...base, attendeeType, role: "" })).toMatchObject({ role: "" });
+      expect(rosterMemberInputSchema.parse({ ...base, attendeeType })).toMatchObject({ role: "" });
+    }
+    expect(rosterMemberInputSchema.parse({ ...base, attendeeType: "STAFF", role: "Director" })).toMatchObject({ role: "Director" });
+    // An edit can't see the stored type, so the schema leaves a blank role blank;
+    // updateRosterMember applies the default from the type the person ends up with.
+    expect(rosterMemberUpdateSchema.parse({ role: "" })).toEqual({ role: "" });
     expect(rosterMemberUpdateSchema.parse({ status: "INACTIVE" })).toEqual({ status: "INACTIVE" });
+    expect(defaultRosterRole("YOUTH")).toBe("Pathfinder");
+    expect(defaultRosterRole("STAFF")).toBe("");
+    expect(rosterRoleOrDefault(" TLT ", "YOUTH")).toBe("TLT");
+    expect(rosterRoleOrDefault(undefined, "ADULT")).toBe("");
   });
 
   it("requires Male or Female to add or edit someone, but not to only change status (#424)", () => {
@@ -81,6 +93,11 @@ describe("club roster rules", () => {
     expect(parseRosterBirthDateInput("not a date")).toBeNull();
     expect(parseRosterBirthDateInput("1/1/1899")).toBeNull();
     expect(parseRosterBirthDateInput("1/1/1900")).toBe("1900-01-01");
+
+    // Dates that aren't birth dates can turn the century rule off: M/D/YY is then rejected.
+    expect(parseRosterBirthDateInput("6/30/28", 2026, { allowTwoDigitYear: false })).toBeNull();
+    expect(parseRosterBirthDateInput("6/30/2028", 2026, { allowTwoDigitYear: false })).toBe("2028-06-30");
+    expect(parseRosterBirthDateInput("2028-06-30", 2026, { allowTwoDigitYear: false })).toBe("2028-06-30");
   });
 
   it("flags a roster member missing any field the roster collects (#424)", () => {
@@ -89,6 +106,13 @@ describe("club roster rules", () => {
     expect(missingRosterFields({ ...complete, birthDateNeeded: true })).toEqual(["Birth date"]);
     expect(missingRosterFields({ ...complete, gender: null, classLevel: null, role: "" })).toEqual(["Gender", "Current class", "Role"]);
     expect(missingRosterFields({ attendeeType: null, role: "", classLevel: null, gender: null, birthDateNeeded: true }))
-      .toEqual(["Birth date", "Gender", "Current class", "Role", "Type"]);
+      .toEqual(["Birth date", "Gender", "Role", "Type"]);
+  });
+
+  it("only asks youth for a current class (#424)", () => {
+    const staff = { attendeeType: "STAFF", role: "Counselor", classLevel: null, gender: "MALE", birthDateNeeded: false };
+    expect(missingRosterFields(staff)).toEqual([]);
+    expect(missingRosterFields({ ...staff, attendeeType: "ADULT" })).toEqual([]);
+    expect(missingRosterFields({ ...staff, attendeeType: "YOUTH" })).toEqual(["Current class"]);
   });
 });

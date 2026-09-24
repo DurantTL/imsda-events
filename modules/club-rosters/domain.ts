@@ -102,12 +102,21 @@ export function centuryForTwoDigitYear(twoDigit: number, currentYear: number) {
  * follow the century rule above. Returns null for anything that isn't a real
  * calendar date (`02/30/2014`) or a year before 1900; it doesn't check
  * whether the date is in the future or implausibly old — use
- * `birthDateProblem` for that.
+ * `birthDateProblem` for that. Pass `allowTwoDigitYear: false` for dates
+ * that aren't birth dates (a background check's expiration, say), where the
+ * century rule would misread `6/30/28` as 1928: `M/D/YY` is then rejected.
  */
-export function parseRosterBirthDateInput(value: string, currentYear = new Date().getFullYear()): string | null {
+export function parseRosterBirthDateInput(
+  value: string,
+  currentYear = new Date().getFullYear(),
+  options: { allowTwoDigitYear?: boolean } = {},
+): string | null {
+  const { allowTwoDigitYear = true } = options;
   const trimmed = value.trim();
   const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(trimmed);
-  const us = /^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/.exec(trimmed);
+  const us = allowTwoDigitYear
+    ? /^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/.exec(trimmed)
+    : /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(trimmed);
   let year: number;
   let month: number;
   let day: number;
@@ -125,6 +134,21 @@ export function parseRosterBirthDateInput(value: string, currentYear = new Date(
   if (year < 1900) return null;
   const isoDate = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
   return parseCalendarDate(isoDate) ? isoDate : null;
+}
+
+/**
+ * The role a blank Role field saves as (#424): "Pathfinder" for youth, and
+ * nothing for staff and adults, whose rows then fall back to their type label
+ * as before. A role someone typed is never replaced.
+ */
+export function defaultRosterRole(attendeeType: string | null | undefined) {
+  return attendeeType === "YOUTH" ? "Pathfinder" : "";
+}
+
+/** A typed role, or the default for the type when it was left blank (#424). */
+export function rosterRoleOrDefault(role: string | null | undefined, attendeeType: string | null | undefined) {
+  const typed = (role ?? "").trim();
+  return typed || defaultRosterRole(attendeeType);
 }
 
 /** The roster's own fields, for the "Missing info" flag (#424). */
@@ -147,7 +171,7 @@ type MissingFieldMember = {
 
 /**
  * What a roster member is missing among the fields the roster collects
- * (#424): birth date, gender, current class, role, and type. Pure; worked
+ * (#424): birth date, gender, current class (youth only), role, and type. Pure; worked
  * out from the record alone, so it needs no schema change and never opens a
  * sealed birth date.
  */
@@ -155,7 +179,8 @@ export function missingRosterFields(member: MissingFieldMember): string[] {
   const missing: string[] = [];
   if (member.birthDateNeeded) missing.push(rosterFieldLabels.birthDate);
   if (!member.gender) missing.push(rosterFieldLabels.gender);
-  if (!member.classLevel) missing.push(rosterFieldLabels.classLevel);
+  // Only youth are in a class; staff and adults are usually "None" (#424).
+  if (member.attendeeType === "YOUTH" && !member.classLevel) missing.push(rosterFieldLabels.classLevel);
   if (!member.role) missing.push(rosterFieldLabels.role);
   if (!member.attendeeType) missing.push(rosterFieldLabels.attendeeType);
   return missing;

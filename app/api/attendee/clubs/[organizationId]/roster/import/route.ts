@@ -3,7 +3,7 @@ import { writeAuditLog } from "@/modules/audit/audit-service";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { requireRosterAccess } from "@/modules/club-rosters/access";
 import { rosterApiError } from "@/modules/club-rosters/api-errors";
-import { MAX_ROSTER_CSV_BYTES, parseRosterCsv, planRosterImport, RosterCsvError } from "@/modules/club-rosters/csv-import";
+import { MAX_ROSTER_CSV_BYTES, parseRosterCsv, planRosterImport, rosterCsvAddDefaults, RosterCsvError } from "@/modules/club-rosters/csv-import";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import { addRosterMember, listRoster, RosterOperationError, updateRosterMember } from "@/modules/club-rosters/repository";
 import { withRequestContext } from "@/lib/request-context";
@@ -49,14 +49,14 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
       const { row } = step;
       try {
         if (step.action === "ADD") {
-          const type = row.attendeeType ?? "YOUTH";
+          /** Blank type → Youth; blank role defaults by type (#424), same as the roster form and the preview. */
+          const { attendeeType, role } = rosterCsvAddDefaults(row);
           await addRosterMember(organizationId, clubYear, {
             firstName: row.firstName,
             lastName: row.lastName,
             birthDate: row.birthDate!,
-            attendeeType: type,
-            /** Empty role saves as "Pathfinder" (#424), same as the roster form. */
-            role: row.role || "Pathfinder",
+            attendeeType,
+            role,
             classLevel: row.classLevel ?? null,
             gender: row.gender ?? null,
           }, actor);

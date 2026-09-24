@@ -1,6 +1,12 @@
 import { classLevelFrom } from "@/modules/club-imports/domain";
 import type { ClubClassLevel } from "@/modules/club-rosters/domain";
-import { parseRosterBirthDateInput, rosterFieldLabels } from "@/modules/club-rosters/domain";
+import {
+  clubRosterAttendeeTypeLabels,
+  missingRosterFields,
+  parseRosterBirthDateInput,
+  rosterFieldLabels,
+  rosterRoleOrDefault,
+} from "@/modules/club-rosters/domain";
 import { parseCsvMatrix } from "@/modules/imports/csv-parser";
 import { toCsv } from "@/modules/reporting/csv";
 
@@ -125,6 +131,39 @@ export function missingRosterCsvFields(row: RosterCsvRow): string[] {
   return csvFieldOrder.filter((field) => row[field] === undefined).map((field) => rosterFieldLabels[field]);
 }
 
+/**
+ * What a new person from this row will be saved with (#424): a blank type is
+ * Youth, and a blank role defaults by type (youth → "Pathfinder", others stay
+ * blank). The import route saves exactly this.
+ */
+export function rosterCsvAddDefaults(row: RosterCsvRow) {
+  const attendeeType: AttendeeType = row.attendeeType ?? "YOUTH";
+  return { attendeeType, role: rosterRoleOrDefault(row.role, attendeeType) };
+}
+
+/**
+ * The preview line for a new person (#424): which blanks get a default, then
+ * what will still be missing on the roster afterwards.
+ */
+function addMessage(row: RosterCsvRow) {
+  const { attendeeType, role } = rosterCsvAddDefaults(row);
+  const defaults: string[] = [];
+  if (row.attendeeType === undefined) defaults.push(`${rosterFieldLabels.attendeeType} → ${clubRosterAttendeeTypeLabels[attendeeType]}`);
+  if (!(row.role ?? "").trim() && role) defaults.push(`${rosterFieldLabels.role} → ${role}`);
+  const missing = missingRosterFields({
+    attendeeType,
+    role,
+    classLevel: row.classLevel ?? null,
+    gender: row.gender ?? null,
+    birthDateNeeded: !row.birthDate,
+  });
+  return [
+    "Will be added.",
+    defaults.length > 0 ? `Will default: ${defaults.join(", ")}.` : "",
+    missing.length > 0 ? `Missing: ${missing.join(", ")}.` : "",
+  ].filter(Boolean).join(" ");
+}
+
 export type RosterImportStep = {
   line: number;
   name: string;
@@ -145,10 +184,7 @@ export function planRosterImport(rows: readonly RosterCsvRow[], existing: Readon
   return rows.map((row): RosterImportStep => {
     const name = `${row.firstName} ${row.lastName}`.trim();
     const key = nameKey(row.firstName, row.lastName);
-    /** Every empty field is flagged, the same way a missing birth date is flagged today (#424). */
-    const missing = missingRosterCsvFields(row);
-    const withMissing = (message: string) => (missing.length > 0 ? `${message} Missing: ${missing.join(", ")}.` : message);
-    const skip = (message: string): RosterImportStep => ({ line: row.line, name, action: "SKIP", memberId: null, message: withMissing(message), row });
+    const skip = (message: string): RosterImportStep => ({ line: row.line, name, action: "SKIP", memberId: null, message, row });
     if (row.problems.length > 0) return skip(row.problems.join(" "));
     if (seen.has(key)) return skip("This name is already earlier in the file.");
     seen.add(key);
@@ -156,10 +192,15 @@ export function planRosterImport(rows: readonly RosterCsvRow[], existing: Readon
     if (matches.length > 1) return skip("More than one person on the roster has this name. Edit them by hand.");
     if (matches.length === 1) {
       const changes = csvFieldOrder.filter((field) => row[field] !== undefined);
-      if (changes.length === 0) return { line: row.line, name, action: "SKIP", memberId: matches[0], message: withMissing("Already on the roster; nothing to change."), row };
-      return { line: row.line, name, action: "UPDATE", memberId: matches[0], message: withMissing("Will update what the file fills in."), row };
+      if (changes.length === 0) return { line: row.line, name, action: "SKIP", memberId: matches[0], message: "Already on the roster; nothing to change.", row };
+      // Blank cells on an update keep what's on file (#424), so they're only noted, not called missing.
+      const blank = missingRosterCsvFields(row);
+      const message = blank.length > 0
+        ? `Will update what the file fills in. Blank in file: ${blank.join(", ")} (kept as on file).`
+        : "Will update what the file fills in.";
+      return { line: row.line, name, action: "UPDATE", memberId: matches[0], message, row };
     }
     if (!row.birthDate) return skip("New people need a birth date.");
-    return { line: row.line, name, action: "ADD", memberId: null, message: withMissing("Will be added."), row };
+    return { line: row.line, name, action: "ADD", memberId: null, message: addMessage(row), row };
   });
 }
