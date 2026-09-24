@@ -86,6 +86,64 @@ describe("attendee pass repository", () => {
       }],
     });
     expect(JSON.stringify(resolution)).not.toContain("never-return@example.test");
+    // Non-club scans are unchanged: no scanned-person marker.
+    expect(Object.keys(resolution)).not.toContain("scannedAttendeeId");
+  });
+
+  it("resolves a club member's QR pass to the whole club roster (#412), not just the scanned person", async () => {
+    const findFirst = vi.fn().mockResolvedValue({
+      ...attendeeRecord(),
+      registration: {
+        id: "registration_club_1",
+        confirmationCode: "REG-CLUB123",
+        status: "CONFIRMED",
+        clubRegistration: { id: "club_reg_1" },
+      },
+    });
+    const findMany = vi.fn().mockResolvedValue([
+      {
+        id: "attendee_456",
+        attendeeType: "RETREAT_GUEST",
+        profileSnapshot: { firstName: "Snapshot", lastName: "Guest" },
+        person: { firstName: "Canonical", lastName: "Person" },
+        checkIns: [],
+      },
+      {
+        id: "attendee_789",
+        attendeeType: "YOUTH",
+        profileSnapshot: { firstName: "Other", lastName: "Pathfinder" },
+        person: { firstName: "Other", lastName: "Pathfinder" },
+        checkIns: [{ checkedInAt: new Date("2026-10-10T13:00:00.000Z") }],
+      },
+    ]);
+    dependencies.getPrisma.mockReturnValue({
+      registrationAttendee: { findFirst, findMany },
+    });
+    const token = createAttendeePassToken({
+      eventId: "event_123",
+      attendeeId: "attendee_456",
+      expiresAt: new Date("2026-10-13T17:00:00.000Z"),
+    });
+
+    const resolution = await resolveAttendeePassForEvent(
+      "event_123",
+      { kind: "pass", value: token },
+      new Date("2026-10-10T12:00:00.000Z"),
+    );
+
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { registrationId: "registration_club_1" },
+    }));
+    expect(resolution.source).toBe("QR_PASS");
+    expect(resolution.confirmationCode).toBe("REG-CLUB123");
+    expect(resolution.attendees.map((attendee) => attendee.id)).toEqual([
+      "attendee_456",
+      "attendee_789",
+    ]);
+    expect(resolution.attendees[1]).toMatchObject({ checkedIn: true });
+    // The person actually scanned is named, so staff check them in by
+    // default instead of the whole club.
+    expect(resolution.scannedAttendeeId).toBe("attendee_456");
   });
 
   it("rejects a pass for another event before querying attendee data", async () => {
@@ -140,6 +198,8 @@ describe("attendee pass repository", () => {
       checkedIn: true,
       checkedInAt: "2026-10-10T13:15:00.000Z",
     });
+    // A confirmation-code lookup has no scanned person.
+    expect(Object.keys(resolution)).not.toContain("scannedAttendeeId");
   });
 
   it("blocks cancelled registrations even when their signed QR remains cryptographically valid", async () => {

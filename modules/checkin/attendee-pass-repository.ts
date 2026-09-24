@@ -28,6 +28,12 @@ export type ResolvedAttendeePass = {
     checkedIn: boolean;
     checkedInAt: string | null;
   }>;
+  /**
+   * Q1 (#412): only for a club member's own QR pass, which returns the whole
+   * club roster. Names the person actually scanned, so staff check that
+   * person in by default instead of the whole club.
+   */
+  scannedAttendeeId?: string;
 };
 
 export class AttendeePassResolutionError extends Error {
@@ -65,7 +71,7 @@ function attendeeName(
   };
 }
 
-function serializeAttendee(attendee: {
+export function serializeAttendee(attendee: {
   id: string;
   attendeeType: string;
   profileSnapshot: unknown;
@@ -95,6 +101,31 @@ function tokenError(error: AttendeePassTokenError) {
     "This QR pass is invalid or does not belong to the selected event.",
   );
 }
+
+/**
+ * Shared with the club pass resolver (`club-pass-repository.ts`) so a club
+ * pass roster is serialized identically to an attendee pass roster.
+ */
+export const registrationAttendeesSelect = {
+  orderBy: [{ position: "asc" as const }, { createdAt: "asc" as const }],
+  select: {
+    id: true,
+    attendeeType: true,
+    profileSnapshot: true,
+    person: {
+      select: {
+        firstName: true,
+        lastName: true,
+      },
+    },
+    checkIns: {
+      where: { undoneAt: null },
+      orderBy: { checkedInAt: "desc" as const },
+      take: 1,
+      select: { checkedInAt: true },
+    },
+  },
+};
 
 async function resolveSignedPass(
   eventId: string,
@@ -129,8 +160,15 @@ async function resolveSignedPass(
       },
       registration: {
         select: {
+          id: true,
           confirmationCode: true,
           status: true,
+          // Q1 (#412): a club registration's QR pass opens the club's view
+          // with the scanned person identified (scannedAttendeeId), so
+          // staff can check in that one person or, by explicit choice, the
+          // club. Only club membership is checked here; nothing about the
+          // club's billing or roster is in the token.
+          clubRegistration: { select: { id: true } },
         },
       },
       checkIns: {
@@ -152,6 +190,18 @@ async function resolveSignedPass(
       "REGISTRATION_NOT_ELIGIBLE",
       "This registration is no longer eligible for check-in.",
     );
+  }
+  if (attendee.registration.clubRegistration) {
+    const roster = await getPrisma().registrationAttendee.findMany({
+      where: { registrationId: attendee.registration.id },
+      ...registrationAttendeesSelect,
+    });
+    return {
+      source: "QR_PASS",
+      confirmationCode: attendee.registration.confirmationCode,
+      attendees: roster.map(serializeAttendee),
+      scannedAttendeeId: attendee.id,
+    };
   }
   return {
     source: "QR_PASS",
@@ -175,26 +225,7 @@ async function resolveConfirmationCode(
     select: {
       confirmationCode: true,
       status: true,
-      attendees: {
-        orderBy: [{ position: "asc" }, { createdAt: "asc" }],
-        select: {
-          id: true,
-          attendeeType: true,
-          profileSnapshot: true,
-          person: {
-            select: {
-              firstName: true,
-              lastName: true,
-            },
-          },
-          checkIns: {
-            where: { undoneAt: null },
-            orderBy: { checkedInAt: "desc" },
-            take: 1,
-            select: { checkedInAt: true },
-          },
-        },
-      },
+      attendees: registrationAttendeesSelect,
     },
   });
   if (!registration) {

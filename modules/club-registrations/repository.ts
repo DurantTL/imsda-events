@@ -30,7 +30,11 @@ import {
   submitPublicRegistration,
   type ClubSubmissionContext,
 } from "@/modules/forms/public-repository";
-import { calendarDateInEventTimeZone, evaluateEventRegistrationPhase } from "@/modules/events/lifecycle";
+import {
+  activeRegistrationStatuses,
+  calendarDateInEventTimeZone,
+  evaluateEventRegistrationPhase,
+} from "@/modules/events/lifecycle";
 import { isSeminarPreferenceField } from "@/modules/attendee-accounts/registration-answer-policy";
 import {
   amendRegistration,
@@ -209,6 +213,37 @@ export async function listChurchAmountsOwed(eventId: string): Promise<ChurchAmou
 
 export type ChurchAmountOwed = ChurchAmountOwedRow;
 
+export type ClubCheckInInfo = {
+  organizationId: string;
+  organizationName: string;
+  confirmationCode: string;
+  /** Read-only estimate billed to the church (#409); never an attendee balance or a door payment. */
+  amountOwedCents: number;
+};
+
+/**
+ * Clubs eligible for check-in at this event (#412): one row per active
+ * (submitted or confirmed) club registration, the same eligibility rule
+ * single-attendee check-in already enforces. Lets check-in staff find a
+ * whole club by confirmation code or club name and see what its church owes,
+ * without exposing an attendee balance or a payment action.
+ */
+export async function listClubCheckInInfo(eventId: string): Promise<ClubCheckInInfo[]> {
+  const rows = await getPrisma().clubEventRegistration.findMany({
+    where: { eventId, registration: { status: { in: [...activeRegistrationStatuses] } } },
+    select: {
+      organization: { select: { id: true, name: true } },
+      registration: { select: { confirmationCode: true, status: true, totalAmount: true } },
+    },
+  });
+  return rows.map((row) => ({
+    organizationId: row.organization.id,
+    organizationName: row.organization.name,
+    confirmationCode: row.registration.confirmationCode,
+    amountOwedCents: churchOwedCents(row.registration.status, moneyToCents(row.registration.totalAmount)),
+  }));
+}
+
 async function requireClubEvent(eventId: string): Promise<ClubEvent> {
   const event = await getPrisma().event.findFirst({
     where: { id: eventId, isPublished: true, billingMode: "DEFERRED_ORGANIZATION_INVOICE" },
@@ -311,6 +346,7 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
       id: event.id,
       name: event.name,
       startsAt: event.startsAt.toISOString(),
+      endsAt: event.endsAt.toISOString(),
       timezone: event.timezone,
       eventDate,
       phase: evaluateEventRegistrationPhase(event, now),

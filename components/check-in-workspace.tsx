@@ -22,10 +22,20 @@ import {
 import { CheckInPaymentDue } from "@/components/check-in-payment-due";
 import { BackgroundCheckBadge } from "@/components/background-check-flags";
 import { CheckInScanner } from "@/components/check-in-scanner";
+import {
+  ClubCheckInPanel,
+  type ClubCheckInProgress,
+} from "@/components/club-check-in-panel";
 import { useOfflineCheckInQueue } from "@/components/use-offline-check-in-queue";
+import {
+  checkInSequentially,
+  sequentialCheckInSummary,
+  type SequentialCheckInStatus,
+} from "@/modules/checkin/bulk-check-in";
 import { offlineCheckInErrorMessage } from "@/modules/checkin/domain";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 import { attendeeBalanceCents } from "@/modules/registrations/finance-view";
+import type { ClubCheckInInfo } from "@/modules/club-registrations/repository";
 
 type Arrival = RegistrationRecord["attendees"][number] & {
   confirmationCode: string;
@@ -41,6 +51,7 @@ export function CheckInWorkspace({
   canCheckIn,
   showBalances,
   backgroundFlaggedAttendeeIds = [],
+  clubs = [],
 }: {
   eventName: string;
   eventId: string;
@@ -50,6 +61,8 @@ export function CheckInWorkspace({
   showBalances: boolean;
   /** Adults at a youth or children's event without a current check (#388). Shown, never blocking. */
   backgroundFlaggedAttendeeIds?: string[];
+  /** Active club registrations for this event (#412): who to check in as a group, and what their church owes. */
+  clubs?: ClubCheckInInfo[];
 }) {
   const [arrivals, setArrivals] = useState<Arrival[]>(
     initialRegistrations.flatMap((registration) => (
@@ -76,6 +89,25 @@ export function CheckInWorkspace({
   const [query, setQuery] = useState("");
   const [undoPendingId, setUndoPendingId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  // This device's latest result per attendee from a club run, so a row that
+  // failed reads "Needs review" even when nothing was saved to the queue.
+  const [bulkResultById, setBulkResultById] = useState<
+    Record<string, SequentialCheckInStatus>
+  >({});
+
+  // Q1 (#412) reviewer leftover: bulkResultById only ever grew, so a club
+  // run's CONFLICT could keep marking someone "Needs review" long after it
+  // was resolved another way. Clear an attendee's entry wherever their
+  // outcome is superseded: a confirmed check-in (here), a successful undo,
+  // and a discarded saved retry.
+  const clearBulkResult = useCallback((attendeeId: string) => {
+    setBulkResultById((current) => {
+      if (!(attendeeId in current)) return current;
+      const next = { ...current };
+      delete next[attendeeId];
+      return next;
+    });
+  }, []);
 
   const applyConfirmedCheckIn = useCallback((
     attendeeId: string,
@@ -86,8 +118,9 @@ export function CheckInWorkspace({
         ? { ...item, checkedIn: true, checkedInAt }
         : item
     )));
+    clearBulkResult(attendeeId);
     setMessage("A saved check-in was confirmed by the server.");
-  }, []);
+  }, [clearBulkResult]);
 
   const {
     queue,
@@ -106,11 +139,14 @@ export function CheckInWorkspace({
     onConfirmed: applyConfirmedCheckIn,
   });
 
+  const clubByConfirmationCode = useMemo(() => new Map(
+    clubs.map((club) => [club.confirmationCode, club]),
+  ), [clubs]);
   const visible = useMemo(() => arrivals.filter((arrival) => (
-    `${arrival.firstName} ${arrival.lastName} ${arrival.confirmationCode} ${arrival.email}`
+    `${arrival.firstName} ${arrival.lastName} ${arrival.confirmationCode} ${arrival.email} ${clubByConfirmationCode.get(arrival.confirmationCode)?.organizationName ?? ""}`
       .toLowerCase()
-      .includes(query.toLowerCase())
-  )), [arrivals, query]);
+      .includes(query.trim().toLowerCase())
+  )), [arrivals, query, clubByConfirmationCode]);
   const queueByAttendee = useMemo(() => new Map(
     queue.map((item) => [item.attendeeId, item]),
   ), [queue]);
@@ -122,6 +158,44 @@ export function CheckInWorkspace({
   const queued = queue.filter((item) => item.state === "QUEUED").length;
   const conflicts = queue.length - queued;
   const online = connectionState === "ONLINE";
+
+  // Q1 (#412): search by club name or confirmation code opens the same club
+  // view as scanning the club's code. Only clubs the query actually matches,
+  // so an empty search stays uncluttered.
+  const matchedClubs = useMemo(() => {
+    const trimmed = query.trim().toLowerCase();
+    if (!trimmed) return [];
+    return clubs.filter((club) => (
+      club.organizationName.toLowerCase().includes(trimmed)
+      || club.confirmationCode.toLowerCase().includes(trimmed)
+    ));
+  }, [clubs, query]);
+  const [bulkBusyCode, setBulkBusyCode] = useState<string | null>(null);
+  const [bulkProgress, setBulkProgress] = useState<ClubCheckInProgress | null>(null);
+
+  async function checkInMany(confirmationCode: string, clubLabel: string, attendeeIds: string[]) {
+    if (!canCheckIn || attendeeIds.length === 0 || bulkBusyCode) return;
+    setBulkBusyCode(confirmationCode);
+    setBulkProgress({ current: 0, total: attendeeIds.length });
+    setMessage("");
+    try {
+      const outcome = await checkInSequentially(
+        attendeeIds,
+        requestCheckIn,
+        ({ current, total }) => setBulkProgress({ current, total }),
+      );
+      setBulkResultById((current) => ({
+        ...current,
+        ...Object.fromEntries(Object.entries(outcome.perAttendee).map(
+          ([attendeeId, result]) => [attendeeId, result.status],
+        )),
+      }));
+      setMessage(`${clubLabel}: ${sequentialCheckInSummary(attendeeIds, outcome, attendeeLabel)}`);
+    } finally {
+      setBulkBusyCode(null);
+      setBulkProgress(null);
+    }
+  }
 
   async function toggleCheckIn(arrival: Arrival) {
     if (!canCheckIn) return;
@@ -164,6 +238,7 @@ export function CheckInWorkspace({
           ? { ...item, checkedIn: false, checkedInAt: null }
           : item
       )));
+      clearBulkResult(arrival.id);
       setMessage(
         `Check-in undone for ${arrival.firstName} ${arrival.lastName}.`,
       );
@@ -178,12 +253,13 @@ export function CheckInWorkspace({
     }
   }
 
-  function discardSavedItem(idempotencyKey: string, attendeeLabel: string) {
+  function discardSavedItem(idempotencyKey: string, attendeeId: string, attendeeLabel: string) {
     const confirmed = window.confirm(
       `Discard the saved retry for ${attendeeLabel}? This only removes the retry from this device. It does not undo a server check-in.`,
     );
     if (!confirmed) return;
     if (discardQueueItem(idempotencyKey)) {
+      clearBulkResult(attendeeId);
       setMessage(`Discarded the saved retry for ${attendeeLabel}.`);
     }
   }
@@ -376,6 +452,7 @@ export function CheckInWorkspace({
                       disabled={processing}
                       onClick={() => discardSavedItem(
                         item.idempotencyKey,
+                        item.attendeeId,
                         label,
                       )}
                       type="button"
@@ -399,7 +476,9 @@ export function CheckInWorkspace({
           eventId={eventId}
           paymentDueByConfirmationCode={paymentDueByConfirmationCode}
           backgroundFlaggedAttendeeIds={backgroundFlaggedAttendeeIds}
+          clubsByConfirmationCode={Object.fromEntries(clubByConfirmationCode)}
           onConfirmCheckIn={(attendee) => requestCheckIn(attendee.id)}
+          savedQueueUnreadable={unreadableItemCount > 0}
           queuedAttendeeIds={queue
             .filter((item) => item.state === "QUEUED")
             .map((item) => item.attendeeId)}
@@ -409,7 +488,7 @@ export function CheckInWorkspace({
           <span className="sr-only">Search arrivals</span>
           <input
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search name, email, or confirmation code"
+            placeholder="Search name, club, or confirmation code"
             value={query}
           />
         </label>
@@ -420,6 +499,42 @@ export function CheckInWorkspace({
           {message}
         </div>
       )}
+
+      {matchedClubs.map((club) => {
+        const clubAttendees = arrivals
+          .filter((arrival) => arrival.confirmationCode === club.confirmationCode)
+          .map((arrival) => {
+            const savedItem = queueByAttendee.get(arrival.id);
+            return {
+              id: arrival.id,
+              firstName: arrival.firstName,
+              lastName: arrival.lastName,
+              attendeeType: arrival.attendeeType,
+              checkedIn: arrival.checkedIn,
+              backgroundFlagged: backgroundFlaggedAttendeeIds.includes(arrival.id),
+              savedState: savedItem?.state,
+              lastResult: bulkResultById[arrival.id],
+            };
+          });
+        return (
+          <ClubCheckInPanel
+            attendees={clubAttendees}
+            busy={bulkBusyCode !== null}
+            progress={bulkBusyCode === club.confirmationCode ? bulkProgress : null}
+            savedQueueUnreadable={unreadableItemCount > 0}
+            canCheckIn={canCheckIn}
+            amountOwedCents={club.amountOwedCents}
+            confirmationCode={club.confirmationCode}
+            key={club.confirmationCode}
+            onCheckInMany={(attendeeIds) => checkInMany(
+              club.confirmationCode,
+              club.organizationName,
+              attendeeIds,
+            )}
+            organizationName={club.organizationName}
+          />
+        );
+      })}
 
       <section className="panel">
         <div className="section-heading">
@@ -482,6 +597,11 @@ export function CheckInWorkspace({
                   || undoPendingId === arrival.id
                   || (arrival.checkedIn && !online)
                   || (!arrival.checkedIn && unreadableItemCount > 0)
+                  // A club run in progress already sends this attendee's
+                  // check-in through checkInSequentially if they're in that
+                  // club; a second, independent request from this row would
+                  // race it (reviewer leftover).
+                  || (!arrival.checkedIn && bulkBusyCode !== null)
                 }
                 onClick={() => void toggleCheckIn(arrival)}
                 title={arrival.checkedIn && !online

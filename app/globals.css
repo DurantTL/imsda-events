@@ -1493,6 +1493,69 @@ select:focus-visible {
   font-weight: 800;
 }
 
+.club-check-in-panel { border-top: 4px solid var(--imsda-purple); }
+.club-billed-badge { background: var(--imsda-gold-soft, #fbf2da); color: #805807; }
+.club-check-in-campsite {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+.club-check-in-actions { display: flex; flex-wrap: wrap; gap: 9px; margin: 13px 0; }
+.club-check-in-list { display: grid; gap: 8px; }
+.club-check-in-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: white;
+  padding: 9px 12px;
+}
+.club-check-in-attendee { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.club-check-in-attendee input[type="checkbox"] { width: 17px; height: 17px; }
+.club-check-in-attendee strong,
+.club-check-in-attendee small { display: block; }
+.club-check-in-attendee strong { color: var(--ink); font-size: 0.74rem; }
+.club-check-in-attendee small { margin-top: 2px; color: var(--muted); font-size: 0.62rem; }
+.club-check-in-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.club-check-in-list li.is-review { border-color: #f0b8b0; background: #fff6f5; }
+.club-check-in-list li.is-review .club-check-in-status { color: #b42318; }
+.club-check-in-list li.is-scanned { border-color: var(--imsda-purple); }
+.club-check-in-progress { margin: 8px 0 0; color: var(--ink); font-size: 0.7rem; font-weight: 700; }
+.club-check-in-progress:empty { display: none; }
+.club-check-in-review-note { margin: 0 0 10px; color: #b42318; font-size: 0.66rem; }
+.club-check-in-blocked { display: flex; align-items: center; gap: 7px; margin: 10px 0 0; }
+.club-check-in-scanned {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 13px 0;
+  border: 2px solid var(--imsda-purple);
+  border-radius: 12px;
+  background: var(--imsda-purple-soft, #f3effa);
+  padding: 12px;
+}
+.club-check-in-scanned strong,
+.club-check-in-scanned small { display: block; }
+.club-check-in-scanned strong { color: var(--ink); font-size: 0.85rem; }
+.club-check-in-scanned small { margin-top: 2px; color: var(--muted); font-size: 0.64rem; }
+.club-check-in-scanned .eyebrow { margin: 0 0 2px; }
+.club-check-in-whole > summary { cursor: pointer; color: var(--ink); font-size: 0.72rem; font-weight: 700; }
+
 .communications-grid { align-items: start; }
 .announcement-list { display: grid; gap: 12px; }
 .announcement-card { border-left: 4px solid var(--green); border-radius: 17px; padding: 19px; }
@@ -4406,6 +4469,43 @@ select:focus-visible {
   color: var(--imsda-navy);
   font-weight: 900;
   letter-spacing: 0.04em;
+}
+
+/* Q1 (#412): the club's own single check-in QR, on the director's club event page. */
+.club-pass-card {
+  display: grid;
+  justify-items: center;
+  gap: 9px;
+  margin-top: 14px;
+  border: 1px solid #dce6ea;
+  border-radius: 15px;
+  background: #fbfcfd;
+  padding: 14px;
+}
+.club-pass-card > img {
+  display: block;
+  width: min(100%, 220px);
+  height: auto;
+  aspect-ratio: 1;
+  border: 1px solid #dce6ea;
+  border-radius: 12px;
+  background: white;
+}
+.club-pass-card > p {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  max-width: 320px;
+  color: var(--muted);
+  font-size: 0.61rem;
+  line-height: 1.5;
+  text-align: center;
+}
+.club-pass-card > p svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--green);
 }
 
 .public-manage-payment-card { border-top: 4px solid var(--imsda-gold); }

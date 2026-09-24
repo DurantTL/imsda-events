@@ -54,3 +54,56 @@ Discard only removes that device's saved retry; it never undoes server state.
 Only the `CHECK_IN` action uses this queue. Undo remains an explicit online-only
 mutation, and payment actions are never queued. The implementation does not
 install a service worker or cache authenticated pages.
+
+## Checking in a whole club at once (Q1, #412)
+
+Staff find a club by confirmation code or club name in the arrival roster's
+search, or by scanning any member's QR pass or the confirmation code — both
+paths open the same club view (`components/club-check-in-panel.tsx`), listing
+every attendee with the amount estimated billed to the church
+(`modules/club-registrations/church-owed.ts`, read-only, never a door
+payment) and any flags, including a missing background check (#405/#388).
+Only an active (submitted or confirmed) club registration is offered, the
+same eligibility single-attendee check-in already enforces
+(`modules/club-registrations/repository.ts`'s `listClubCheckInInfo`); a
+waitlisted or cancelled club is not checked in here.
+
+**Check in all** and **Check in selected** call the exact same per-attendee
+`checkInAttendee` path as a single row's check-in, one attendee at a time
+through the same offline queue — never a bulk endpoint — so each person gets
+their own check-in record and undo, idempotent retries, and reports behave
+identically. Someone already checked in (by this device, another scan, or
+another staff member) is skipped rather than re-sent, so repeats never
+duplicate or error. Both club views run the same loop,
+`checkInSequentially` in `modules/checkin/bulk-check-in.ts`: one attendee at
+a time, a failure for one person is recorded as needing review and the loop
+carries on, progress is announced ("Checking in 12 of 40…"), and the summary
+names who needs review. A saved check-in already held for review (queue state
+`CONFLICT`) is left out of **Check in all**; staff retry it on purpose by
+ticking it for **Check in selected** or with its own retry. Unreadable saved
+queue data disables the club view in both places.
+
+Scanning one member's own QR pass returns the club roster plus
+`scannedAttendeeId`. The scanner highlights that person and makes "Check in
+<name>" the primary action; the whole club sits behind an explicit "Open
+whole club" disclosure, so one late child's pass can't record the whole club
+as arrived. A confirmation-code lookup has no scanned person and opens the
+plain club view. Campsite and assignments don't exist yet (#410); the club
+view leaves that slot clearly empty instead of inventing that schema.
+
+### The club's own QR (Q1, #412)
+
+Clubs don't get individual per-member QR codes beyond what already exists;
+instead a director can show one QR (`club-pass-token.ts`,
+`club-pass-repository.ts`) that opens the plain club view directly — the
+same view a confirmation-code lookup or a member's own pass opens, with no
+scanned person. It is event-scoped, signed with the same secret mechanism
+and 48-hours-after-event expiry as an attendee pass, but is a structurally
+distinct token: a different top-level prefix (`imsda-club-pass.v1…`), a
+different HMAC namespace, and its own `type` field in the signed payload, so
+an attendee pass and a club pass can never be mistaken for one another even
+though both verify against `ATTENDEE_PASS_SIGNING_SECRET`. The scan/lookup
+route (`pass-lookup.ts`) tells the two apart by token prefix before either
+is verified. Only an active (submitted or confirmed) club registration gets
+a working pass; a director reaches only her own club's QR
+(`requireRosterAccess`, the same gate the club event page already uses).

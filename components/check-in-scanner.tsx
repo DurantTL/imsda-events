@@ -20,8 +20,17 @@ import {
 } from "react";
 import { CheckInPaymentDue } from "@/components/check-in-payment-due";
 import { BackgroundCheckBadge } from "@/components/background-check-flags";
+import {
+  ClubCheckInPanel,
+  type ClubCheckInProgress,
+} from "@/components/club-check-in-panel";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { CheckInActionResult } from "@/components/use-offline-check-in-queue";
+import type { ClubCheckInInfo } from "@/modules/club-registrations/repository";
+import {
+  checkInSequentially,
+  sequentialCheckInSummary,
+} from "@/modules/checkin/bulk-check-in";
 
 type ResolvedAttendee = {
   id: string;
@@ -36,6 +45,8 @@ type PassResolution = {
   source: "QR_PASS" | "CONFIRMATION_CODE";
   confirmationCode: string;
   attendees: ResolvedAttendee[];
+  /** Q1 (#412): set when a club member's own QR pass was scanned. */
+  scannedAttendeeId?: string;
 };
 
 type CameraState =
@@ -54,13 +65,23 @@ type BarcodeDetectorConstructor = new (
   options: { formats: string[] },
 ) => BarcodeDetectorInstance;
 
+/**
+ * Q1 (#412): a club's own QR ("imsda-club-pass.v1…") is a distinct token
+ * type from an attendee's ("imsda-pass.v1…"), but the scanner reads either
+ * the same way — it just forwards whatever it found to the resolve route,
+ * which tells the two apart.
+ */
+function isRecognizedPassToken(value: string) {
+  return value.startsWith("imsda-pass.v1.") || value.startsWith("imsda-club-pass.v1.");
+}
+
 export function extractAttendeePassToken(value: string) {
   const candidate = value.trim();
-  if (candidate.startsWith("imsda-pass.v1.")) return candidate;
+  if (isRecognizedPassToken(candidate)) return candidate;
   try {
     const parsed = new URL(candidate);
     const pass = parsed.searchParams.get("pass")?.trim() ?? "";
-    return pass.startsWith("imsda-pass.v1.") ? pass : null;
+    return isRecognizedPassToken(pass) ? pass : null;
   } catch {
     return null;
   }
@@ -93,6 +114,8 @@ export function CheckInScanner({
   conflictAttendeeIds,
   paymentDueByConfirmationCode = {},
   backgroundFlaggedAttendeeIds = [],
+  clubsByConfirmationCode = {},
+  savedQueueUnreadable = false,
 }: {
   eventId: string;
   onConfirmCheckIn: (
@@ -103,6 +126,10 @@ export function CheckInScanner({
   paymentDueByConfirmationCode?: Record<string, { balanceCents: number; partySize: number }>;
   /** Adults at a youth or children's event without a current check (#388). Shown, never blocking. */
   backgroundFlaggedAttendeeIds?: string[];
+  /** Q1 (#412): scanning a club's code opens the same club view a name search finds. */
+  clubsByConfirmationCode?: Record<string, ClubCheckInInfo>;
+  /** Unreadable saved-queue data blocks new club check-ins, as on the roster. */
+  savedQueueUnreadable?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [cameraState, setCameraState] = useState<CameraState>("idle");
@@ -115,11 +142,19 @@ export function CheckInScanner({
   const [actionStateById, setActionStateById] = useState<
     Record<string, CheckInActionResult["status"]>
   >({});
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<ClubCheckInProgress | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const scanLoopActiveRef = useRef(false);
   const detectingRef = useRef(false);
+  // Escape closes through this same function (see useAccessibleDialog), so a
+  // plain `bulkBusy || checkingInId` check in closeScanner would need those
+  // state values fresh at keydown time. The ref keeps that guard correct
+  // regardless of when the key fires mid bulk run.
+  const bulkGuardRef = useRef({ bulkBusy: false, checkingInId: null as string | null });
+  bulkGuardRef.current = { bulkBusy, checkingInId };
   const dialogRef = useAccessibleDialog<HTMLElement>(open, closeScanner);
 
   function stopCamera(updateState = true) {
@@ -136,6 +171,12 @@ export function CheckInScanner({
   }
 
   function closeScanner() {
+    // A bulk club run is in flight in the background even once the camera
+    // and lookup are idle; closing mid-run would hide its progress and
+    // summary. Escape reaches this through useAccessibleDialog's keydown
+    // handler, so the check must read live state via the ref, not a stale
+    // closure.
+    if (bulkGuardRef.current.bulkBusy || bulkGuardRef.current.checkingInId) return;
     stopCamera(false);
     setOpen(false);
     setCameraState("idle");
@@ -277,7 +318,7 @@ export function CheckInScanner({
   }
 
   async function confirmCheckIn(attendee: ResolvedAttendee) {
-    if (attendee.checkedIn) return;
+    if (attendee.checkedIn || bulkBusy) return;
     setCheckingInId(attendee.id);
     setError("");
     setNotice("");
@@ -314,6 +355,60 @@ export function CheckInScanner({
     }
   }
 
+  async function confirmCheckInMany(attendeeIds: string[]) {
+    if (bulkBusy || checkingInId) return;
+    const attendeesById = new Map(
+      (resolution?.attendees ?? []).map((attendee) => [attendee.id, attendee]),
+    );
+    const ids = attendeeIds.filter((attendeeId) => {
+      const attendee = attendeesById.get(attendeeId);
+      return attendee && !attendee.checkedIn;
+    });
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    setBulkProgress({ current: 0, total: ids.length });
+    setError("");
+    setNotice("");
+    try {
+      const outcome = await checkInSequentially(
+        ids,
+        (attendeeId) => onConfirmCheckIn(attendeesById.get(attendeeId)!),
+        ({ current, total }) => setBulkProgress({ current, total }),
+      );
+      setActionStateById((current) => ({
+        ...current,
+        ...Object.fromEntries(Object.entries(outcome.perAttendee).map(
+          ([attendeeId, result]) => [attendeeId, result.status],
+        )),
+      }));
+      const confirmedAt = new Map(
+        Object.entries(outcome.perAttendee)
+          .filter(([, result]) => result.status === "CONFIRMED")
+          .map(([attendeeId, result]) => [
+            attendeeId,
+            result.checkedInAt ?? new Date().toISOString(),
+          ]),
+      );
+      setResolution((current) => current ? {
+        ...current,
+        attendees: current.attendees.map((entry) => (
+          confirmedAt.has(entry.id)
+            ? { ...entry, checkedIn: true, checkedInAt: confirmedAt.get(entry.id)! }
+            : entry
+        )),
+      } : current);
+      const summary = sequentialCheckInSummary(ids, outcome, (attendeeId) => {
+        const attendee = attendeesById.get(attendeeId);
+        return attendee ? `${attendee.firstName} ${attendee.lastName}` : "Unknown attendee";
+      });
+      if (outcome.needsReview > 0) setError(summary);
+      else setNotice(summary);
+    } finally {
+      setBulkBusy(false);
+      setBulkProgress(null);
+    }
+  }
+
   return (
     <>
       <button
@@ -344,6 +439,7 @@ export function CheckInScanner({
               event.target === event.currentTarget
               && !lookupBusy
               && !checkingInId
+              && !bulkBusy
             ) {
               closeScanner();
             }
@@ -366,7 +462,7 @@ export function CheckInScanner({
               <button
                 aria-label="Close attendee pass scanner"
                 className="icon-button"
-                disabled={Boolean(checkingInId)}
+                disabled={Boolean(checkingInId) || bulkBusy}
                 onClick={closeScanner}
                 type="button"
               >
@@ -488,7 +584,44 @@ export function CheckInScanner({
               </div>
             )}
 
-            {resolution && (
+            {resolution && clubsByConfirmationCode[resolution.confirmationCode] && (
+              // Q1 (#412): a club's confirmation code opens the same club view
+              // a name search finds. A member's own QR pass opens it too, but
+              // with that person highlighted and their single check-in as the
+              // primary action; the whole club is an explicit extra choice.
+              <ClubCheckInPanel
+                amountOwedCents={clubsByConfirmationCode[resolution.confirmationCode].amountOwedCents}
+                attendees={resolution.attendees.map((attendee) => ({
+                  id: attendee.id,
+                  firstName: attendee.firstName,
+                  lastName: attendee.lastName,
+                  attendeeType: attendee.attendeeType,
+                  checkedIn: attendee.checkedIn || actionStateById[attendee.id] === "CONFIRMED",
+                  backgroundFlagged: backgroundFlaggedAttendeeIds.includes(attendee.id),
+                  savedState: conflictAttendeeIds.includes(attendee.id)
+                    ? "CONFLICT"
+                    : queuedAttendeeIds.includes(attendee.id)
+                      ? "QUEUED"
+                      : undefined,
+                  lastResult: actionStateById[attendee.id],
+                }))}
+                busy={bulkBusy || Boolean(checkingInId)}
+                canCheckIn
+                confirmationCode={resolution.confirmationCode}
+                headingLevel={3}
+                onCheckInMany={confirmCheckInMany}
+                onCheckInScanned={(attendeeId) => {
+                  const attendee = resolution.attendees.find((entry) => entry.id === attendeeId);
+                  if (attendee) return confirmCheckIn(attendee);
+                }}
+                organizationName={clubsByConfirmationCode[resolution.confirmationCode].organizationName}
+                progress={bulkProgress}
+                savedQueueUnreadable={savedQueueUnreadable}
+                scannedAttendeeId={resolution.source === "QR_PASS" ? resolution.scannedAttendeeId : undefined}
+              />
+            )}
+
+            {resolution && !clubsByConfirmationCode[resolution.confirmationCode] && (
               <section
                 aria-labelledby="check-in-review-title"
                 className="check-in-review"

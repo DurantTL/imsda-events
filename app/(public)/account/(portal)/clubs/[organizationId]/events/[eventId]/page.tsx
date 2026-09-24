@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, QrCode } from "lucide-react";
 import { ClubClassPicker } from "@/components/club-class-picker";
+import { ClubPassQr } from "@/components/club-pass-qr";
+import { clubPassIsAvailable } from "@/modules/checkin/club-pass-token";
 import { ClubRegistrationEditor } from "@/components/club-registration-editor";
 import { ClubRegistrationWorkspace } from "@/components/club-registration-workspace";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
@@ -10,6 +12,7 @@ import { attendeeProfilePrefill, getAttendeeProfile } from "@/modules/attendee-a
 import { getRosterAccessState } from "@/modules/club-rosters/access";
 import { isChurchBilledStatus, notBilledLabel } from "@/modules/club-registrations/church-owed";
 import { ClubRegistrationError, getClubEventWorkspace } from "@/modules/club-registrations/repository";
+import { activeRegistrationStatuses } from "@/modules/events/lifecycle";
 import { getClassSelectionWorkspace } from "@/modules/honors/enrollment-repository";
 
 export const metadata: Metadata = { title: "Club registration" };
@@ -81,6 +84,20 @@ export default async function ClubEventRegistrationPage({
               )
               : notBilledLabel(workspace.registration.status)}
           </p>
+          {(activeRegistrationStatuses as readonly string[]).includes(workspace.registration.status)
+            && clubPassIsAvailable(new Date(workspace.event.endsAt)) && (
+            // Q1 (#412): one QR for the whole club, not one per member.
+            // Staff scan it (or the confirmation code) to open this club's
+            // check-in view directly; clubs still check in per member there.
+            <div className="club-pass-card">
+              <ClubPassQr eventId={eventId} organizationId={organizationId} />
+              <p className="field-help">
+                <QrCode aria-hidden="true" size={15} /> Show this at check-in
+                so staff can open your club&rsquo;s list. Confirmation{" "}
+                <strong translate="no">{workspace.registration.confirmationCode}</strong> works too.
+              </p>
+            </div>
+          )}
           <ul className="public-manage-club-list">
             {workspace.registration.attendees.map((attendee, index) => (
               <li key={`${attendee.lastName}-${attendee.firstName}-${index}`}>
