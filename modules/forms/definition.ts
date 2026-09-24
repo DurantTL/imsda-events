@@ -713,7 +713,7 @@ export const formTemplates: FormTemplate[] = [
           templateField("sc_member_medical_personnel", "medical_personnel", "Medical personnel?", "CHECKBOX", false, [], { scope: "ATTENDEE", conditional: { fieldKey: "attendee_type", operator: "EQUALS", value: "Staff" } }),
           templateField("sc_member_master_guide", "master_guide_investiture", "Master Guide investiture?", "CHECKBOX", false, [], { scope: "ATTENDEE", conditional: { fieldKey: "attendee_type", operator: "EQUALS", value: "Staff" } }),
           templateField("sc_member_dietary", "dietary_needs", "Dietary restrictions", "LONG_TEXT", false, [], { scope: "ATTENDEE" }),
-          templateField("sc_member_medical", "medical_or_accessibility_notes", "Medical or accessibility notes", "LONG_TEXT", false, [], { scope: "ATTENDEE" }),
+          templateField("sc_member_medical_flag", "medical_or_accessibility_need", "Has a medical or accessibility need the club director knows about", "RADIO", false, ["No", "Yes"], { scope: "ATTENDEE", helpText: "No details here — talk with your club director about any support the attendee needs." }),
           templateField("sc_member_fee", "registration_fee", "Registration fee", "CALCULATED", false, [], { scope: "ATTENDEE", priceCents: 900, latePricing: { startsOn: "2026-04-11", label: "Late registration pricing", priceCents: 1400 } }),
         ] },
         { id: "sc_activities", title: "Schedule & activities", description: "Choose the club’s duties and activities. Duty choices can be given limits as assignments fill.", fields: [

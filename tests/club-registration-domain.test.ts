@@ -5,12 +5,13 @@ import {
   clubAttendeeClientId,
   clubFormProblem,
   lockedAttendeeFieldKeys,
+  medicalFreeTextFields,
   rosterGenderPrefill,
   rosterMemberIdFromClientId,
   rosterOwnedResponses,
   rosterRolePrefill,
 } from "@/modules/club-registrations/domain";
-import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
+import { formTemplates, registrationFormDefinitionSchema } from "@/modules/forms/definition";
 
 const field = (key: string, type = "TEXT", scope: "ATTENDEE" | "REGISTRATION" = "ATTENDEE", options: string[] = [], label = key) => (
   { id: `f_${key}`, key, label, helpText: "", type, scope, required: ["first_name", "last_name", "attendee_name"].includes(key), options }
@@ -55,6 +56,47 @@ describe("club form mapping", () => {
     expect(clubFormProblem(form([field("first_name"), field("last_name")]))).toBeNull();
     expect(clubFormProblem(form([field("first_name"), field("last_name")], false))).toMatch(/list of attendees/);
     expect(clubFormProblem(form([field("first_name"), field("last_name"), field("birthday", "DATE", "ATTENDEE", [], "Birthday")]))).toMatch(/birth dates/);
+    expect(clubFormProblem(form([field("first_name"), field("last_name"), field("medical_notes", "LONG_TEXT", "ATTENDEE", [], "Medical or accessibility notes")]))).toMatch(/free-text medical, health, or accessibility question \("Medical or accessibility notes"\)/);
+  });
+
+  it("flags attendee free-text medical/health fields but not dietary, food-allergy, checkbox, or yes/no ones (#408)", () => {
+    const medicalNote = field("medical_notes", "LONG_TEXT", "ATTENDEE", [], "Medical or accessibility notes");
+    const healthNote = field("health_notes", "TEXT", "ATTENDEE", [], "Health conditions to know about");
+    const allergyNote = field("allergy_notes", "LONG_TEXT", "ATTENDEE", [], "Allergy details");
+    const dietary = field("dietary_needs", "LONG_TEXT", "ATTENDEE", [], "Dietary restrictions");
+    const medicalPersonnelCheckbox = field("medical_personnel", "CHECKBOX", "ATTENDEE", [], "Medical personnel?");
+    const medicalNeedFlag = field("medical_or_accessibility_need", "RADIO", "ATTENDEE", ["No", "Yes"], "Has a medical or accessibility need the club director knows about");
+    const keyOnly = field("medical_info", "LONG_TEXT", "ATTENDEE", [], "Anything the camp nurse should know");
+    const medications = field("current_meds", "TEXT", "ATTENDEE", [], "Medications");
+    const accessibilityNeeds = field("access", "LONG_TEXT", "ATTENDEE", [], "Accessibility needs");
+    const dietaryAllergies = field("diet", "LONG_TEXT", "ATTENDEE", [], "Dietary needs / allergies");
+    const registrationScopedMedical = field("registrant_medical_notes", "LONG_TEXT", "REGISTRATION", [], "Medical notes");
+
+    const matches = medicalFreeTextFields(form([
+      field("first_name"), field("last_name"),
+      medicalNote, healthNote, keyOnly, medications, accessibilityNeeds,
+      allergyNote, dietaryAllergies,
+      dietary, medicalPersonnelCheckbox, medicalNeedFlag, registrationScopedMedical,
+    ])).map((f) => f.key);
+
+    expect(matches).toEqual([
+      "medical_notes", "health_notes", "medical_info", "current_meds", "access",
+    ]);
+  });
+
+  it("has no free-text medical field on the seeded Spring Camporee template (#408)", () => {
+    const camporee = formTemplates.find((template) => template.key === "spring_camporee_export");
+    expect(camporee).toBeDefined();
+    const definition = registrationFormDefinitionSchema.parse(camporee!.definition);
+    expect(medicalFreeTextFields(definition)).toEqual([]);
+    expect(clubFormProblem(definition)).toBeNull();
+
+    const rosterSection = definition.sections.find((section) => section.id === "sc_roster");
+    const rosterKeys = rosterSection?.fields.map((f) => f.key) ?? [];
+    expect(rosterKeys).toContain("dietary_needs");
+    expect(rosterKeys).toContain("medical_personnel");
+    expect(rosterKeys).toContain("medical_or_accessibility_need");
+    expect(rosterKeys).not.toContain("medical_or_accessibility_notes");
   });
 
   it("prefills the roster role so directors don't re-pick it for everyone", () => {

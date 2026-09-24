@@ -87,12 +87,45 @@ export function birthDateFields(definition: RegistrationFormDefinition): Registr
     .filter((field) => BIRTH_DATE_PATTERN.test(field.key) || BIRTH_DATE_PATTERN.test(field.label));
 }
 
+const FREE_TEXT_FIELD_TYPES = new Set<RegistrationFormField["type"]>(["TEXT", "LONG_TEXT"]);
+
+// A narrower subset of `sensitiveFieldPattern` in
+// modules/attendee-accounts/registration-answer-policy.ts (ADR 0005 §5): it
+// leaves out "dietary", "age", "emergency" and the like, so the Camporee's
+// "Dietary restrictions" convenience field (ADR 0005 §1) stays allowed. Food
+// allergies may be listed as free text (decided on PR #418), so "allergy" is
+// not a trigger word either. Only free text is checked, so the "Medical
+// personnel?" checkbox and the yes/no medical-need flag never match.
+const MEDICAL_FREE_TEXT_PATTERN =
+  /\b(?:medic\w*|meds?|health|accessib\w*|disabil\w*|special\s*needs?|insur\w*)\b/i;
+
+function looksLikeMedicalFreeText(field: RegistrationFormField) {
+  // Snake_case keys become words so `medical_info` matches as well as its label.
+  return MEDICAL_FREE_TEXT_PATTERN.test(`${field.key.replaceAll("_", " ")} ${field.label}`);
+}
+
+/**
+ * Free-text attendee fields that read as medical/health notes (#408).
+ * Registration answers are stored unencrypted, so club registration refuses
+ * to collect this kind of detail; only structured fields (checkbox, select,
+ * yes/no) are allowed to carry it.
+ */
+export function medicalFreeTextFields(definition: RegistrationFormDefinition): RegistrationFormField[] {
+  return attendeeFields(definition)
+    .filter((field) => FREE_TEXT_FIELD_TYPES.has(field.type) && looksLikeMedicalFreeText(field));
+}
+
 /** Why a published form can't be used for club registration, or null. */
 export function clubFormProblem(definition: RegistrationFormDefinition) {
   if (!definition.attendeeRoster?.enabled) return "The event's form doesn't collect a list of attendees.";
   if (!attendeeNameKeys(definition)) return "The event's form has no attendee name fields.";
   if (birthDateFields(definition).length > 0) {
     return "The event's form asks for birth dates. Club registration uses the roster's age instead, so remove that question.";
+  }
+  const medicalFields = medicalFreeTextFields(definition);
+  if (medicalFields.length > 0) {
+    const labels = medicalFields.map((field) => `"${field.label}"`).join(", ");
+    return `The event's form asks attendees a free-text medical, health, or accessibility question (${labels}). Registration answers aren't encrypted, so replace it with a checkbox or yes/no question and republish.`;
   }
   return null;
 }
