@@ -23,12 +23,13 @@ vi.mock("@/modules/club-rosters/repository", async () => {
 
 import { POST } from "@/app/api/attendee/clubs/[organizationId]/roster/import/route";
 import { RosterAccessError } from "@/modules/club-rosters/access";
-import { normalizeBirthDate, parseRosterCsv, planRosterImport, rosterCsvTemplate } from "@/modules/club-rosters/csv-import";
+import { missingRosterCsvFields, parseRosterCsv, planRosterImport, rosterCsvTemplate } from "@/modules/club-rosters/csv-import";
+import { parseRosterBirthDateInput } from "@/modules/club-rosters/domain";
 import { RosterOperationError } from "@/modules/club-rosters/repository";
 
 // Synthetic people only.
 const csv = [
-  "First name,Last name,Birth date,Type,Class,Role,Gender",
+  "First name,Last name,Birth date,Type,Current class,Role,Gender",
   "Alex,Sample,5/20/2014,Pathfinder,Friend,,F",
   "Jordan,Example,,Staff,,Counselor,",
   "Casey,Tester,,,,,",
@@ -52,17 +53,38 @@ beforeEach(() => {
   mocks.updateRosterMember.mockResolvedValue(undefined);
 });
 
-describe("roster CSV (#384)", () => {
+describe("roster CSV (#384, #424)", () => {
   it("offers a template with the roster's columns and nothing else", () => {
-    expect(rosterCsvTemplate().trim()).toBe('"First name","Last name","Birth date","Type","Class","Role","Gender"');
+    expect(rosterCsvTemplate().trim()).toBe('"First name","Last name","Birth date","Type","Current class","Role","Gender"');
   });
 
-  it("reads Excel-style dates, names, and labels", () => {
-    expect(normalizeBirthDate("4/7/2014")).toBe("2014-04-07");
-    expect(normalizeBirthDate("2014-4-7")).toBe("2014-04-07");
+  it("reads Excel-style and short-year dates, names, and labels", () => {
+    expect(parseRosterBirthDateInput("4/7/2014")).toBe("2014-04-07");
+    expect(parseRosterBirthDateInput("2014-4-7")).toBe("2014-04-07");
+    // Two-digit years follow the club roster's century rule (#424).
+    expect(parseRosterBirthDateInput("4/17/14", 2026)).toBe("2014-04-17");
+    expect(parseRosterBirthDateInput("3/2/68", 2026)).toBe("1968-03-02");
     const [alex] = parseRosterCsv(csv);
     expect(alex).toMatchObject({ firstName: "Alex", lastName: "Sample", birthDate: "2014-05-20", attendeeType: "YOUTH", classLevel: "FRIEND", gender: "FEMALE" });
     expect(() => parseRosterCsv("Name,Age\nAlex,12")).toThrow(/First name and Last name/);
+    // The old "Class" header still reads, alongside the renamed "Current class" (#424).
+    const [legacy] = parseRosterCsv("First name,Last name,Class\nAlex,Sample,Friend");
+    expect(legacy).toMatchObject({ classLevel: "FRIEND" });
+  });
+
+  it("parses a two-digit-year row with a short-year birth date", () => {
+    const [row] = parseRosterCsv("First name,Last name,Birth date\nSam,Short,4/17/14", 2026);
+    expect(row).toMatchObject({ birthDate: "2014-04-17" });
+  });
+
+  it("flags every empty field in a CSV row, naming what's missing (#424)", () => {
+    const [alex, jordan, casey] = parseRosterCsv(csv);
+    // Alex: birth date, type, class, and gender are filled in; only role is blank.
+    expect(missingRosterCsvFields(alex)).toEqual(["Role"]);
+    // Jordan: type and role are filled in; birth date, class, and gender are blank.
+    expect(missingRosterCsvFields(jordan)).toEqual(["Birth date", "Current class", "Gender"]);
+    // Casey: everything but the name is blank.
+    expect(missingRosterCsvFields(casey)).toEqual(["Birth date", "Type", "Current class", "Role", "Gender"]);
   });
 
   it("plans adds and updates by name, and skips what it can't do", () => {
@@ -74,12 +96,15 @@ describe("roster CSV (#384)", () => {
       ["Riley", "SKIP"],
       ["Sam Sample", "SKIP"],
     ]);
+    expect(plan[0].message).toMatch(/Missing: Role\./);
+    expect(plan[1].message).toMatch(/Missing: Birth date, Current class, Gender\./);
     expect(plan[2].message).toMatch(/birth date/);
+    expect(plan[2].message).toMatch(/Missing: Birth date, Type, Current class, Role, Gender\./);
     expect(plan[4].message).toMatch(/isn't a date/);
   });
 
   it("refuses to guess between two people with the same name", () => {
-    const plan = planRosterImport(parseRosterCsv("First name,Last name,Class\nAlex,Sample,Friend"), [
+    const plan = planRosterImport(parseRosterCsv("First name,Last name,Current class\nAlex,Sample,Friend"), [
       { id: "a", firstName: "Alex", lastName: "Sample" },
       { id: "b", firstName: "alex", lastName: "sample" },
     ]);

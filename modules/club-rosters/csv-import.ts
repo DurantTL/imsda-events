@@ -1,5 +1,6 @@
 import { classLevelFrom } from "@/modules/club-imports/domain";
 import type { ClubClassLevel } from "@/modules/club-rosters/domain";
+import { parseRosterBirthDateInput, rosterFieldLabels } from "@/modules/club-rosters/domain";
 import { parseCsvMatrix } from "@/modules/imports/csv-parser";
 import { toCsv } from "@/modules/reporting/csv";
 
@@ -13,7 +14,7 @@ import { toCsv } from "@/modules/reporting/csv";
  * file (no birth dates), only what the file says and what will happen.
  */
 
-export const ROSTER_CSV_HEADERS = ["First name", "Last name", "Birth date", "Type", "Class", "Role", "Gender"] as const;
+export const ROSTER_CSV_HEADERS = ["First name", "Last name", "Birth date", "Type", "Current class", "Role", "Gender"] as const;
 export const MAX_ROSTER_CSV_ROWS = 500;
 export const MAX_ROSTER_CSV_BYTES = 200_000;
 
@@ -47,6 +48,7 @@ const headerKeys: Record<string, keyof Omit<RosterCsvRow, "line" | "problems">> 
   type: "attendeeType",
   class: "classLevel",
   classlevel: "classLevel",
+  currentclass: "classLevel",
   role: "role",
   gender: "gender",
 };
@@ -60,21 +62,12 @@ const typeValues: Record<string, AttendeeType> = {
   underage: "UNDERAGE",
 };
 
-/** "2014-04-17", "4/17/2014", or "04/17/2014" → "2014-04-17". */
-export function normalizeBirthDate(value: string) {
-  const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(value);
-  const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value);
-  const parts = iso ? [iso[1], iso[2], iso[3]] : us ? [us[3], us[1], us[2]] : null;
-  if (!parts) return null;
-  const [year, month, day] = parts;
-  return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
-}
-
 const clean = (value: string | undefined) => (value ?? "").normalize("NFKC").replace(/\s+/g, " ").trim();
 
 export class RosterCsvError extends Error {}
 
-export function parseRosterCsv(text: string): RosterCsvRow[] {
+/** "2014-04-17", "4/17/2014", or "4/17/14" → "2014-04-17" (#424: the shared century rule). */
+export function parseRosterCsv(text: string, currentYear = new Date().getFullYear()): RosterCsvRow[] {
   if (text.length > MAX_ROSTER_CSV_BYTES) throw new RosterCsvError("That file is too large. Upload up to 500 people at a time.");
   const matrix = parseCsvMatrix(text.replace(/^﻿/, ""));
   if (matrix.length === 0) throw new RosterCsvError("That file is empty. Download the template and fill it in.");
@@ -96,9 +89,9 @@ export function parseRosterCsv(text: string): RosterCsvRow[] {
       }
       if (value === "") return;
       if (key === "birthDate") {
-        const date = normalizeBirthDate(value);
+        const date = parseRosterBirthDateInput(value, currentYear);
         if (date) row.birthDate = date;
-        else row.problems.push(`Birth date "${value}" isn't a date. Use 2014-04-17 or 4/17/2014.`);
+        else row.problems.push(`Birth date "${value}" isn't a date. Use 2014-04-17, 4/17/2014, or 4/17/14.`);
       } else if (key === "attendeeType") {
         const type = typeValues[value.toLowerCase()];
         if (type) row.attendeeType = type;
@@ -125,6 +118,13 @@ function nameKey(firstName: string, lastName: string) {
   return `${firstName} ${lastName}`.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
 }
 
+const csvFieldOrder = ["birthDate", "attendeeType", "classLevel", "role", "gender"] as const;
+
+/** The roster's fields (#424) an empty CSV cell left blank on this row. */
+export function missingRosterCsvFields(row: RosterCsvRow): string[] {
+  return csvFieldOrder.filter((field) => row[field] === undefined).map((field) => rosterFieldLabels[field]);
+}
+
 export type RosterImportStep = {
   line: number;
   name: string;
@@ -145,18 +145,21 @@ export function planRosterImport(rows: readonly RosterCsvRow[], existing: Readon
   return rows.map((row): RosterImportStep => {
     const name = `${row.firstName} ${row.lastName}`.trim();
     const key = nameKey(row.firstName, row.lastName);
-    const skip = (message: string): RosterImportStep => ({ line: row.line, name, action: "SKIP", memberId: null, message, row });
+    /** Every empty field is flagged, the same way a missing birth date is flagged today (#424). */
+    const missing = missingRosterCsvFields(row);
+    const withMissing = (message: string) => (missing.length > 0 ? `${message} Missing: ${missing.join(", ")}.` : message);
+    const skip = (message: string): RosterImportStep => ({ line: row.line, name, action: "SKIP", memberId: null, message: withMissing(message), row });
     if (row.problems.length > 0) return skip(row.problems.join(" "));
     if (seen.has(key)) return skip("This name is already earlier in the file.");
     seen.add(key);
     const matches = byName.get(key) ?? [];
     if (matches.length > 1) return skip("More than one person on the roster has this name. Edit them by hand.");
     if (matches.length === 1) {
-      const changes = ["birthDate", "attendeeType", "classLevel", "role", "gender"].filter((field) => row[field as keyof RosterCsvRow] !== undefined);
-      if (changes.length === 0) return { line: row.line, name, action: "SKIP", memberId: matches[0], message: "Already on the roster; nothing to change.", row };
-      return { line: row.line, name, action: "UPDATE", memberId: matches[0], message: "Will update what the file fills in.", row };
+      const changes = csvFieldOrder.filter((field) => row[field] !== undefined);
+      if (changes.length === 0) return { line: row.line, name, action: "SKIP", memberId: matches[0], message: withMissing("Already on the roster; nothing to change."), row };
+      return { line: row.line, name, action: "UPDATE", memberId: matches[0], message: withMissing("Will update what the file fills in."), row };
     }
     if (!row.birthDate) return skip("New people need a birth date.");
-    return { line: row.line, name, action: "ADD", memberId: null, message: "Will be added.", row };
+    return { line: row.line, name, action: "ADD", memberId: null, message: withMissing("Will be added."), row };
   });
 }

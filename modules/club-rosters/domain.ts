@@ -86,3 +86,77 @@ export function birthDateProblem(birthDate: string, today: string) {
   if (age === null || age > 120) return "Check the birth date year.";
   return null;
 }
+
+/**
+ * Two-digit years (#424): "26" or earlier — this year's own last two digits —
+ * is 20YY, otherwise 19YY. In 2026, `14` is 2014 and `68` is 1968.
+ */
+export function centuryForTwoDigitYear(twoDigit: number, currentYear: number) {
+  return twoDigit <= currentYear % 100 ? 2000 + twoDigit : 1900 + twoDigit;
+}
+
+/**
+ * A birth date typed as `M/D/YYYY` or `M/D/YY`, or already `YYYY-MM-DD`, into
+ * `YYYY-MM-DD` (#424). One shared, pure parser for the roster form and the
+ * CSV import, with the current year injectable for tests. Two-digit years
+ * follow the century rule above. Returns null for anything that isn't a real
+ * calendar date (`02/30/2014`) or a year before 1900; it doesn't check
+ * whether the date is in the future or implausibly old — use
+ * `birthDateProblem` for that.
+ */
+export function parseRosterBirthDateInput(value: string, currentYear = new Date().getFullYear()): string | null {
+  const trimmed = value.trim();
+  const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(trimmed);
+  const us = /^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/.exec(trimmed);
+  let year: number;
+  let month: number;
+  let day: number;
+  if (iso) {
+    year = Number(iso[1]);
+    month = Number(iso[2]);
+    day = Number(iso[3]);
+  } else if (us) {
+    month = Number(us[1]);
+    day = Number(us[2]);
+    year = us[3].length === 2 ? centuryForTwoDigitYear(Number(us[3]), currentYear) : Number(us[3]);
+  } else {
+    return null;
+  }
+  if (year < 1900) return null;
+  const isoDate = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  return parseCalendarDate(isoDate) ? isoDate : null;
+}
+
+/** The roster's own fields, for the "Missing info" flag (#424). */
+export const rosterFieldLabels = {
+  birthDate: "Birth date",
+  gender: "Gender",
+  classLevel: "Current class",
+  role: "Role",
+  attendeeType: "Type",
+} as const;
+
+type MissingFieldMember = {
+  attendeeType: string | null | undefined;
+  role: string | null | undefined;
+  classLevel: string | null | undefined;
+  gender: string | null | undefined;
+  /** Whether a sealed birth date exists, without opening it. */
+  birthDateNeeded: boolean;
+};
+
+/**
+ * What a roster member is missing among the fields the roster collects
+ * (#424): birth date, gender, current class, role, and type. Pure; worked
+ * out from the record alone, so it needs no schema change and never opens a
+ * sealed birth date.
+ */
+export function missingRosterFields(member: MissingFieldMember): string[] {
+  const missing: string[] = [];
+  if (member.birthDateNeeded) missing.push(rosterFieldLabels.birthDate);
+  if (!member.gender) missing.push(rosterFieldLabels.gender);
+  if (!member.classLevel) missing.push(rosterFieldLabels.classLevel);
+  if (!member.role) missing.push(rosterFieldLabels.role);
+  if (!member.attendeeType) missing.push(rosterFieldLabels.attendeeType);
+  return missing;
+}

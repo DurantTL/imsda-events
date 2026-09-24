@@ -1,4 +1,4 @@
-import { normalizeBirthDate } from "@/modules/club-rosters/csv-import";
+import { parseRosterBirthDateInput } from "@/modules/club-rosters/domain";
 import { CsvImportError, parseCsvMatrix } from "@/modules/imports/csv-parser";
 import { toCsv } from "@/modules/reporting/csv";
 
@@ -86,7 +86,7 @@ const clean = (value: string | undefined) => (value ?? "").normalize("NFKC").rep
 /** "2026-09-23", "9/23/2026", "09/23/2026", or "9/23/2026 10:15 AM" → "2026-09-23". */
 export function normalizeCheckDate(value: string) {
   const date = clean(value).split(/[ T]/)[0] ?? "";
-  const normalized = normalizeBirthDate(date);
+  const normalized = parseRosterBirthDateInput(date);
   if (!normalized) return null;
   const [year, month, day] = normalized.split("-").map(Number);
   const probe = new Date(Date.UTC(year!, month! - 1, day!));

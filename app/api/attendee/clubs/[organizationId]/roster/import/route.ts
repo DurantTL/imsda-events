@@ -55,7 +55,8 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
             lastName: row.lastName,
             birthDate: row.birthDate!,
             attendeeType: type,
-            role: row.role ?? (type === "YOUTH" ? "Pathfinder" : ""),
+            /** Empty role saves as "Pathfinder" (#424), same as the roster form. */
+            role: row.role || "Pathfinder",
             classLevel: row.classLevel ?? null,
             gender: row.gender ?? null,
           }, actor);

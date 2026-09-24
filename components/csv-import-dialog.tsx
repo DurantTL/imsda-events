@@ -39,12 +39,14 @@ export function CsvImportDialog({
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [dragging, setDragging] = useState(false);
   const close = useCallback(() => {
     setOpen(false);
     setCsv(null);
     setSteps(null);
     setDone(false);
     setError("");
+    setDragging(false);
   }, []);
   const dialogRef = useAccessibleDialog<HTMLElement>(open, close);
 
@@ -75,9 +77,42 @@ export function CsvImportDialog({
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
+    await openFile(file);
+  }
+
+  const isCsvFile = (file: File) => file.name.toLowerCase().endsWith(".csv") || file.type === "text/csv";
+
+  async function openFile(file: File) {
+    if (!isCsvFile(file)) {
+      setError("Drop a .csv file.");
+      return;
+    }
     const text = await file.text();
     setCsv(text);
     await send(text, false);
+  }
+
+  function onDrop(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    setDragging(false);
+    if (busy) return;
+    const files = event.dataTransfer.files;
+    if (!files || files.length === 0) return;
+    if (files.length > 1) {
+      setError("Drop one CSV file.");
+      return;
+    }
+    void openFile(files[0]);
+  }
+
+  function onDragOver(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    if (!busy) setDragging(true);
+  }
+
+  function onDragLeave(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    setDragging(false);
   }
 
   const counts = { ADD: 0, UPDATE: 0, SKIP: 0 };
@@ -102,9 +137,14 @@ export function CsvImportDialog({
             {!steps && (
               <>
                 <div className="field-help">{help}</div>
-                <label className="club-import-upload">
+                <label
+                  className={`club-import-upload${dragging ? " club-import-upload-dragging" : ""}`}
+                  onDragLeave={onDragLeave}
+                  onDragOver={onDragOver}
+                  onDrop={onDrop}
+                >
                   <FileUp aria-hidden="true" size={24} />
-                  <strong>{busy ? "Reading…" : "Choose the CSV file"}</strong>
+                  <strong>{busy ? "Reading…" : dragging ? "Drop the CSV file" : "Drag the CSV file here, or choose it"}</strong>
                   <input accept=".csv,text/csv" disabled={busy} onChange={readFile} type="file" />
                 </label>
               </>
