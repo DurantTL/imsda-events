@@ -95,6 +95,8 @@ function inviteEmail(input: {
   const context = input.source === "CLUB"
     ? "Once you accept, you'll see this club under My club when you sign in."
     : "Your club's roster from this year's registration is already there. Please add each person's birth date as you go; until then they're marked \"birth date needed\".";
+  // Only club-created invites (#425) expire; a staff import invite (reusing this flow, #376) never did.
+  const expiryLine = input.source === "CLUB" ? [`This invite expires in ${CLUB_INVITE_LIFETIME_DAYS} days.`, ""] : [];
   return {
     subject: `You're invited to help run ${input.clubName} on IMSDA Events`,
     bodyText: [
@@ -109,8 +111,7 @@ function inviteEmail(input: {
       "",
       context,
       "",
-      `This invite expires in ${CLUB_INVITE_LIFETIME_DAYS} days.`,
-      "",
+      ...expiryLine,
       "If you weren't expecting this, you can ignore it. Nothing happens unless you accept.",
       "",
       "IMSDA Events",
@@ -172,9 +173,12 @@ export async function sendClubInvites(
         },
         select: { id: true },
       });
+      // Staff import invites (#376) reuse this flow's model and email but keep their prior, unexpiring behavior;
+      // only club-created invites (#425) get the 14-day expiry.
+      const expiresAt = invite.source === "CLUB" ? clubInviteExpiry(now) : null;
       await tx.clubInvite.update({
         where: { id: invite.id },
-        data: { status: "SENT", sentAt: now, sentCount: { increment: 1 }, lastMessageId: message.id, expiresAt: clubInviteExpiry(now) },
+        data: { status: "SENT", sentAt: now, sentCount: { increment: 1 }, lastMessageId: message.id, expiresAt },
       });
       return message.id;
     });
@@ -281,8 +285,10 @@ export async function createClubTeamInvite(
     throw new ClubInviteError("INVITE_NOT_FOUND", "That club could not be found.");
   }
   const email = input.email.trim().toLowerCase();
+  // Scoped to club-assignable roles (#425): a pending staff import invite for the same
+  // email (always DIRECTOR/DEPUTY) is a different thing and shouldn't invisibly block this.
   const open = await prisma.clubInvite.findFirst({
-    where: { organizationId, email, status: { in: ["PENDING", "SENT"] } },
+    where: { organizationId, email, status: { in: ["PENDING", "SENT"] }, role: { in: [...clubAssignableRoles] } },
     select: { id: true },
   });
   if (open) throw new ClubInviteError("INVITE_ALREADY_OPEN", "There's already a pending invite for that email.");
@@ -339,38 +345,51 @@ export async function createClubTeamInvite(
   });
 }
 
+/** Statuses from which an invite can still be resent, cancelled, or accepted. */
+const OPEN_INVITE_STATUSES = ["PENDING", "SENT"] as const;
+
 /**
  * A club director or deputy resends a pending invite (#425): a fresh expiry
- * and send count, rate-limited so one club can't spam an inbox.
+ * and send count, rate-limited so one club can't spam an inbox. The read and
+ * the status write happen in one transaction, and the write is guarded on
+ * the invite still being open, so two concurrent resends (or a resend racing
+ * a cancel or accept) can't both succeed.
  */
 export async function resendClubTeamInvite(organizationId: string, inviteId: string, actorAccountId: string, now = new Date()) {
   if (!isAccountEmailConfigured()) {
     throw new ClubInviteError("EMAIL_NOT_CONFIGURED", "Account email isn't set up on this server, so invites can't be sent yet.");
   }
   const prisma = getPrisma();
-  const invite = await prisma.clubInvite.findFirst({
-    where: { id: inviteId, organizationId },
-    select: {
-      id: true, email: true, name: true, role: true, status: true, sentAt: true,
-      organization: { select: { name: true, isActive: true } },
-    },
-  });
-  if (!invite || !invite.organization.isActive) throw new ClubInviteError("INVITE_NOT_FOUND", "That invite could not be found.");
-  if (!clubRoleIsAssignableByClub(invite.role)) {
-    throw new ClubInviteError("INVITE_ROLE_NOT_ALLOWED", "Only conference staff can manage that invite.");
-  }
-  if (invite.status !== "SENT" && invite.status !== "PENDING") {
-    throw new ClubInviteError("INVITE_NOT_OPEN", "That invite was already accepted or cancelled.");
-  }
-  if (invite.sentAt && now.getTime() - invite.sentAt.getTime() < CLUB_INVITE_RESEND_COOLDOWN_MINUTES * 60 * 1000) {
-    throw new ClubInviteError("INVITE_RESEND_TOO_SOON", `Wait at least ${CLUB_INVITE_RESEND_COOLDOWN_MINUTES} minutes between resends.`);
-  }
-
   const sender = getAccountEmailSender();
-  const content = inviteEmail({ name: invite.name, email: invite.email, clubName: invite.organization.name, role: invite.role, source: "CLUB" });
   const correlationId = randomUUID();
 
   return prisma.$transaction(async (tx) => {
+    const invite = await tx.clubInvite.findFirst({
+      where: { id: inviteId, organizationId },
+      select: {
+        id: true, email: true, name: true, role: true, status: true, sentAt: true,
+        organization: { select: { name: true, isActive: true } },
+      },
+    });
+    if (!invite || !invite.organization.isActive) throw new ClubInviteError("INVITE_NOT_FOUND", "That invite could not be found.");
+    if (!clubRoleIsAssignableByClub(invite.role)) {
+      throw new ClubInviteError("INVITE_ROLE_NOT_ALLOWED", "Only conference staff can manage that invite.");
+    }
+    if (invite.status !== "SENT" && invite.status !== "PENDING") {
+      throw new ClubInviteError("INVITE_NOT_OPEN", "That invite was already accepted or cancelled.");
+    }
+    if (invite.sentAt && now.getTime() - invite.sentAt.getTime() < CLUB_INVITE_RESEND_COOLDOWN_MINUTES * 60 * 1000) {
+      throw new ClubInviteError("INVITE_RESEND_TOO_SOON", `Wait at least ${CLUB_INVITE_RESEND_COOLDOWN_MINUTES} minutes between resends.`);
+    }
+
+    const content = inviteEmail({ name: invite.name, email: invite.email, clubName: invite.organization.name, role: invite.role, source: "CLUB" });
+
+    const guarded = await tx.clubInvite.updateMany({
+      where: { id: invite.id, status: { in: [...OPEN_INVITE_STATUSES] } },
+      data: { status: "SENT", sentAt: now, sentCount: { increment: 1 }, expiresAt: clubInviteExpiry(now) },
+    });
+    if (guarded.count === 0) throw new ClubInviteError("INVITE_NOT_OPEN", "That invite was already accepted or cancelled.");
+
     const message = await tx.messageOutbox.create({
       data: {
         eventId: null,
@@ -390,10 +409,7 @@ export async function resendClubTeamInvite(organizationId: string, inviteId: str
       },
       select: { id: true },
     });
-    await tx.clubInvite.update({
-      where: { id: invite.id },
-      data: { status: "SENT", sentAt: now, sentCount: { increment: 1 }, lastMessageId: message.id, expiresAt: clubInviteExpiry(now) },
-    });
+    await tx.clubInvite.update({ where: { id: invite.id }, data: { lastMessageId: message.id } });
     await writeAuditLog({
       action: "CLUB_INVITE_RESENT",
       entityType: "ClubInvite",
@@ -405,40 +421,61 @@ export async function resendClubTeamInvite(organizationId: string, inviteId: str
   });
 }
 
-/** A club director or deputy cancels a pending invite (#425). */
+/**
+ * A club director or deputy cancels a pending invite (#425). The guarded
+ * status write and its audit log share one transaction, so a cancel racing
+ * a resend or accept can't leave a CANCELLED invite that was also acted on.
+ */
 export async function cancelClubTeamInvite(organizationId: string, inviteId: string, actorAccountId: string, now = new Date()) {
   const prisma = getPrisma();
-  const invite = await prisma.clubInvite.findFirst({
-    where: { id: inviteId, organizationId },
-    select: { id: true, status: true, role: true },
-  });
-  if (!invite) throw new ClubInviteError("INVITE_NOT_FOUND", "That invite could not be found.");
-  if (!clubRoleIsAssignableByClub(invite.role)) {
-    throw new ClubInviteError("INVITE_ROLE_NOT_ALLOWED", "Only conference staff can manage that invite.");
-  }
-  if (invite.status !== "PENDING" && invite.status !== "SENT") {
-    throw new ClubInviteError("INVITE_NOT_OPEN", "That invite was already accepted or cancelled.");
-  }
-  await prisma.clubInvite.update({ where: { id: invite.id }, data: { status: "CANCELLED", cancelledAt: now } });
-  await writeAuditLog({
-    action: "CLUB_INVITE_CANCELLED",
-    entityType: "ClubInvite",
-    entityId: invite.id,
-    summary: "Cancelled a club invite.",
-    metadata: { organizationId, role: invite.role, actorAttendeeAccountId: actorAccountId },
+  return prisma.$transaction(async (tx) => {
+    const invite = await tx.clubInvite.findFirst({
+      where: { id: inviteId, organizationId },
+      select: { id: true, status: true, role: true },
+    });
+    if (!invite) throw new ClubInviteError("INVITE_NOT_FOUND", "That invite could not be found.");
+    if (!clubRoleIsAssignableByClub(invite.role)) {
+      throw new ClubInviteError("INVITE_ROLE_NOT_ALLOWED", "Only conference staff can manage that invite.");
+    }
+    if (invite.status !== "PENDING" && invite.status !== "SENT") {
+      throw new ClubInviteError("INVITE_NOT_OPEN", "That invite was already accepted or cancelled.");
+    }
+    const guarded = await tx.clubInvite.updateMany({
+      where: { id: invite.id, status: { in: [...OPEN_INVITE_STATUSES] } },
+      data: { status: "CANCELLED", cancelledAt: now },
+    });
+    if (guarded.count === 0) throw new ClubInviteError("INVITE_NOT_OPEN", "That invite was already accepted or cancelled.");
+    await writeAuditLog({
+      action: "CLUB_INVITE_CANCELLED",
+      entityType: "ClubInvite",
+      entityId: invite.id,
+      summary: "Cancelled a club invite.",
+      metadata: { organizationId, role: invite.role, actorAttendeeAccountId: actorAccountId },
+    }, tx);
   });
 }
 
-/** Sent invites waiting for this account, matched on its verified email. */
-export async function listInvitesForAccount(verifiedEmail: string) {
+/** Sent invites waiting for this account, matched on its verified email. Excludes ones that have expired. */
+export async function listInvitesForAccount(verifiedEmail: string, now = new Date()) {
   const invites = await getPrisma().clubInvite.findMany({
-    where: { email: verifiedEmail.trim().toLowerCase(), status: "SENT", organization: { isActive: true, type: "CLUB" } },
+    where: {
+      email: verifiedEmail.trim().toLowerCase(),
+      status: "SENT",
+      organization: { isActive: true, type: "CLUB" },
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    },
     orderBy: { sentAt: "desc" },
     select: { id: true, role: true, organization: { select: { id: true, name: true } } },
   });
   return invites.map((invite) => ({ id: invite.id, role: invite.role, clubId: invite.organization.id, clubName: invite.organization.name }));
 }
 
+/**
+ * The invited person accepts (#376, #425). The guarded status write happens
+ * before the grant is created, in the same transaction as the overlap check
+ * and the grant, so two concurrent accepts serialize on the invite row and
+ * only one grant is ever created.
+ */
 export async function acceptClubInvite(inviteId: string, account: { id: string; verifiedEmail: string }, now = new Date()) {
   return getPrisma().$transaction(async (tx) => {
     const invite = await tx.clubInvite.findUnique({
@@ -455,12 +492,22 @@ export async function acceptClubInvite(inviteId: string, account: { id: string; 
     }
     if (invite.status !== "SENT") throw new ClubInviteError("INVITE_NOT_OPEN", "That invite is no longer open.");
     if (invite.expiresAt && invite.expiresAt <= now) {
-      throw new ClubInviteError("INVITE_EXPIRED", "That invite has expired. Ask a club leader to send a new one.");
+      const message = invite.source === "CLUB"
+        ? "That invite has expired. Ask your club director to send a new one."
+        : "That invite has expired. Ask your conference registrar to send a new one.";
+      throw new ClubInviteError("INVITE_EXPIRED", message);
     }
     // Defends the club-assignable rule even if a role or a person's standing changed after the invite was sent.
     if (invite.source === "CLUB" && !clubRoleIsAssignableByClub(invite.role)) {
       throw new ClubInviteError("INVITE_ROLE_NOT_ALLOWED", "That invite's role can no longer be accepted this way.");
     }
+
+    // Guarded before the grant is created: two concurrent accepts of the same invite can't both succeed.
+    const guarded = await tx.clubInvite.updateMany({
+      where: { id: invite.id, status: "SENT" },
+      data: { status: "ACCEPTED", acceptedAt: now, acceptedAccountId: account.id },
+    });
+    if (guarded.count === 0) throw new ClubInviteError("INVITE_NOT_OPEN", "That invite is no longer open.");
 
     const current = await tx.clubDirectorGrant.findFirst({
       where: { organizationId: invite.organizationId, attendeeAccountId: account.id, revokedAt: null, OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }] },
@@ -482,7 +529,6 @@ export async function acceptClubInvite(inviteId: string, account: { id: string; 
       });
       grantId = grant.id;
     }
-    await tx.clubInvite.update({ where: { id: invite.id }, data: { status: "ACCEPTED", acceptedAt: now, acceptedAccountId: account.id } });
     await writeAuditLog({
       action: "CLUB_INVITE_ACCEPTED",
       entityType: "ClubInvite",

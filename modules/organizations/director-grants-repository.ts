@@ -2,6 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
+import { getServerEnv } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { createClubTeamInvite } from "@/modules/club-imports/invites";
@@ -20,12 +21,13 @@ import { OrganizationOperationError } from "@/modules/organizations/repository";
 /** A short notice for someone who already has an account (#425): the invite email explains it, this doesn't need to. */
 function clubTeamRoleNotificationEmail(input: { role: ClubRole; clubName: string }) {
   const role = clubDirectorRoleLabels[input.role];
+  const accountUrl = new URL("/account", getServerEnv().APP_BASE_URL).toString();
   return {
     subject: `You've been given ${role} access to ${input.clubName}`,
     bodyText: [
       `You've been given ${role} access to ${input.clubName} on IMSDA Events.`,
       "",
-      "Sign in to your account to see it: /account",
+      `Sign in to your account to see it: ${accountUrl}`,
       "",
       "If you weren't expecting this, contact the club's director.",
       "",
@@ -279,7 +281,15 @@ export async function grantClubTeamRole(
     where: { email: input.email },
     select: { id: true, status: true, emailVerifiedAt: true, disabledAt: true },
   });
-  const hasVerifiedAccount = Boolean(account && account.status === "ACTIVE" && account.emailVerifiedAt && !account.disabledAt);
+  // A disabled or non-ACTIVE account is refused outright (#425), not silently invited: inviting it
+  // would let the invite's acceptance route around whatever put the account in that state.
+  if (account && (account.status !== "ACTIVE" || account.disabledAt)) {
+    throw new OrganizationOperationError(
+      "ATTENDEE_ACCOUNT_NOT_FOUND",
+      "No active, verified account uses that email. Ask them to create one at /account/sign-up and verify their email, then try again.",
+    );
+  }
+  const hasVerifiedAccount = Boolean(account?.emailVerifiedAt);
 
   if (!hasVerifiedAccount) {
     const { messageId } = await createClubTeamInvite(organizationId, { email: input.email, role: input.role }, actorAccountId, now);

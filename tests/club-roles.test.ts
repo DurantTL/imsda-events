@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   inviteFindFirst: vi.fn(),
   inviteCreate: vi.fn(),
   inviteUpdate: vi.fn(),
+  inviteUpdateMany: vi.fn(),
   outboxCreate: vi.fn(),
   processAccountEmailQueue: vi.fn(),
 }));
@@ -36,7 +37,7 @@ const client = {
   organization: { findUnique: mocks.findOrganization },
   attendeeAccount: { findUnique: mocks.findAccount },
   clubDirectorGrant: { findMany: mocks.findGrants, findFirst: mocks.findGrant, create: mocks.createGrant, update: mocks.updateGrant },
-  clubInvite: { findMany: mocks.inviteFindMany, findFirst: mocks.inviteFindFirst, create: mocks.inviteCreate, update: mocks.inviteUpdate },
+  clubInvite: { findMany: mocks.inviteFindMany, findFirst: mocks.inviteFindFirst, create: mocks.inviteCreate, update: mocks.inviteUpdate, updateMany: mocks.inviteUpdateMany },
   messageOutbox: { create: mocks.outboxCreate },
   $transaction: (work: (tx: unknown) => unknown) => work(client),
 };
@@ -112,6 +113,7 @@ beforeEach(() => {
   mocks.inviteFindFirst.mockResolvedValue(null);
   mocks.inviteCreate.mockResolvedValue({ id: "invite-1" });
   mocks.inviteUpdate.mockResolvedValue({ id: "invite-1" });
+  mocks.inviteUpdateMany.mockResolvedValue({ count: 1 });
   mocks.outboxCreate.mockResolvedValue({ id: "message-1" });
   mocks.processAccountEmailQueue.mockResolvedValue({ recoveredIds: [], sentIds: [], failedIds: [], rescheduledIds: [] });
 });
@@ -219,6 +221,7 @@ describe("the club team", () => {
     expect(body.invited).toBe(false);
     const message = mocks.outboxCreate.mock.calls[0][0].data;
     expect(message).toMatchObject({ templateKey: "CLUB_TEAM_ROLE_NOTIFICATION", recipientEmail: "helper@example.test", accountAttendeeId: "account-2" });
+    expect(message.bodyTextSnapshot).toContain("https://events.imsda.test/account");
     expect(mocks.after).toHaveBeenCalledOnce();
     const queued = mocks.after.mock.calls[0][0];
     await queued();
@@ -238,12 +241,30 @@ describe("the club team", () => {
     expect(mocks.after).toHaveBeenCalledOnce();
   });
 
-  it("invites rather than grants for a disabled or unverified account", async () => {
+  it("invites rather than grants for an unverified account", async () => {
     mocks.findAccount.mockResolvedValue({ id: "account-2", status: "ACTIVE", emailVerifiedAt: null, disabledAt: null });
     const response = await ADD_TEAM(request("POST", { email: "unverified@example.test", role: "REGISTRAR" }), ctx);
     expect(response.status).toBe(201);
     expect((await response.json()).invited).toBe(true);
     expect(mocks.createGrant).not.toHaveBeenCalled();
+  });
+
+  it("refuses, rather than invites, a disabled account (#425)", async () => {
+    mocks.findAccount.mockResolvedValue({ id: "account-2", status: "ACTIVE", emailVerifiedAt: now, disabledAt: now });
+    const response = await ADD_TEAM(request("POST", { email: "disabled@example.test", role: "REGISTRAR" }), ctx);
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: "ATTENDEE_ACCOUNT_NOT_FOUND" });
+    expect(mocks.createGrant).not.toHaveBeenCalled();
+    expect(mocks.inviteCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses, rather than invites, a non-ACTIVE account (#425)", async () => {
+    mocks.findAccount.mockResolvedValue({ id: "account-2", status: "PENDING_VERIFICATION", emailVerifiedAt: null, disabledAt: null });
+    const response = await ADD_TEAM(request("POST", { email: "pending@example.test", role: "REGISTRAR" }), ctx);
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: "ATTENDEE_ACCOUNT_NOT_FOUND" });
+    expect(mocks.createGrant).not.toHaveBeenCalled();
+    expect(mocks.inviteCreate).not.toHaveBeenCalled();
   });
 
   it("refuses a director or deputy role from the club", async () => {
@@ -292,7 +313,7 @@ describe("pending club team invites (#425)", () => {
     });
     const response = await RESEND_INVITE(request("POST"), { params: Promise.resolve({ organizationId: "club-1", inviteId: "invite-1" }) });
     expect(response.status).toBe(200);
-    expect(mocks.inviteUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "SENT" }) }));
+    expect(mocks.inviteUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "SENT" }) }));
     expect(mocks.after).toHaveBeenCalledOnce();
   });
 
@@ -300,14 +321,36 @@ describe("pending club team invites (#425)", () => {
     mocks.inviteFindFirst.mockResolvedValue({ id: "invite-1", status: "SENT", role: "REPORTER" });
     const response = await CANCEL_INVITE(request("DELETE"), { params: Promise.resolve({ organizationId: "club-1", inviteId: "invite-1" }) });
     expect(response.status).toBe(200);
-    expect(mocks.inviteUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "CANCELLED" }) }));
+    expect(mocks.inviteUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "CANCELLED" }) }));
   });
 
-  it("keeps invite management from a registrar", async () => {
+  it("an invite from another club 404s through the route, not the wrong club's invite", async () => {
+    mocks.inviteFindFirst.mockResolvedValue(null);
+    const response = await CANCEL_INVITE(request("DELETE"), { params: Promise.resolve({ organizationId: "club-1", inviteId: "invite-other-club" }) });
+    expect(response.status).toBe(404);
+    expect(mocks.inviteFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: "invite-other-club", organizationId: "club-1" }),
+    }));
+
+    const resendResponse = await RESEND_INVITE(request("POST"), { params: Promise.resolve({ organizationId: "club-1", inviteId: "invite-other-club" }) });
+    expect(resendResponse.status).toBe(404);
+  });
+
+  it("keeps invite management, the team list, and adding to the team from a registrar", async () => {
     mocks.listDirectedClubs.mockResolvedValue([clubAs("REGISTRAR")]);
     mocks.inviteFindFirst.mockResolvedValue({ id: "invite-1", status: "SENT", role: "REPORTER" });
-    const response = await CANCEL_INVITE(request("DELETE"), { params: Promise.resolve({ organizationId: "club-1", inviteId: "invite-1" }) });
-    expect(response.status).toBe(403);
-    expect(mocks.inviteUpdate).not.toHaveBeenCalled();
+
+    const cancelResponse = await CANCEL_INVITE(request("DELETE"), { params: Promise.resolve({ organizationId: "club-1", inviteId: "invite-1" }) });
+    expect(cancelResponse.status).toBe(403);
+    expect(mocks.inviteUpdateMany).not.toHaveBeenCalled();
+
+    const resendResponse = await RESEND_INVITE(request("POST"), { params: Promise.resolve({ organizationId: "club-1", inviteId: "invite-1" }) });
+    expect(resendResponse.status).toBe(403);
+
+    const listResponse = await TEAM(request("GET"), ctx);
+    expect(listResponse.status).toBe(403);
+
+    const addResponse = await ADD_TEAM(request("POST", { email: "helper@example.test", role: "REPORTER" }), ctx);
+    expect(addResponse.status).toBe(403);
   });
 });
