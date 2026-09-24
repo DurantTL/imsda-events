@@ -10,7 +10,7 @@ import {
   type RosterSession,
 } from "@/modules/honors/roster-domain";
 
-type Snapshot = { firstName?: string; lastName?: string; ageOnEventDate?: number | null; clubRosterMemberId?: string };
+type Snapshot = { firstName?: string; lastName?: string; ageOnEventDate?: number | null; clubRosterMemberId?: string; temporaryAttendeeType?: "ADULT" | "YOUTH" };
 
 /** The attendee fields on a form version that ask about food or allergies. */
 function dietaryFieldKeys(definition: unknown) {
@@ -99,7 +99,7 @@ export async function getHonorRosterData(
         clubId: club.organizationId,
         clubName: club.organization.name,
         ageOnEventDate: typeof snapshot.ageOnEventDate === "number" ? snapshot.ageOnEventDate : null,
-        attendeeType: snapshot.clubRosterMemberId ? typeByMember.get(snapshot.clubRosterMemberId) ?? null : null,
+        attendeeType: snapshot.clubRosterMemberId ? typeByMember.get(snapshot.clubRosterMemberId) ?? null : snapshot.temporaryAttendeeType ?? null,
         checkedIn: attendee.checkIns.length > 0,
         dietary: options.includeDietary ? dietaryAnswer((attendee as { formResponses?: unknown }).formResponses, keys) : null,
       };

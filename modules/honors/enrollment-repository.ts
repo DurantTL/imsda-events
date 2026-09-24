@@ -33,7 +33,7 @@ export class ClassSelectionError extends Error {
   }
 }
 
-type Snapshot = { firstName?: string; lastName?: string; ageOnEventDate?: number | null; clubRosterMemberId?: string };
+type Snapshot = { firstName?: string; lastName?: string; ageOnEventDate?: number | null; clubRosterMemberId?: string; temporaryAttendeeType?: "ADULT" | "YOUTH" };
 
 async function loadClubRegistration(client: Prisma.TransactionClient, organizationId: string, eventId: string) {
   const clubRegistration = await client.clubEventRegistration.findUnique({
@@ -65,7 +65,7 @@ async function loadClubRegistration(client: Prisma.TransactionClient, organizati
   const typeByMember = new Map(members.map((member) => [member.id, member.attendeeType]));
   const attendees = clubRegistration.registration.attendees.map((attendee) => {
     const snapshot = attendee.profileSnapshot as Snapshot;
-    const attendeeType = snapshot.clubRosterMemberId ? typeByMember.get(snapshot.clubRosterMemberId) ?? null : null;
+    const attendeeType = snapshot.clubRosterMemberId ? typeByMember.get(snapshot.clubRosterMemberId) ?? null : snapshot.temporaryAttendeeType ?? null;
     return {
       id: attendee.id,
       firstName: snapshot.firstName ?? "",

@@ -6768,6 +6768,10 @@ select:focus-visible {
 .club-going-list label { width: 100%; padding: 12px 14px; cursor: pointer; }
 .club-going-list li:has(input:checked) { border-color: var(--imsda-purple); background: var(--imsda-purple-soft); }
 .club-going-list input { width: 20px; height: 20px; flex: none; }
+.club-guest-section { display: grid; gap: 8px; margin: 4px 0 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.club-guest-section .club-roster-tools small { display: block; margin-top: 2px; }
+.club-guest-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; font-size: 0.78rem; }
+.club-guest-form { display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
 .club-sticky-bar {
   position: sticky; bottom: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center;
   justify-content: space-between; gap: 10px; margin: 16px -4px 0; padding: 12px 4px;

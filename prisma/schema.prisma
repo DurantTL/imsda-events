@@ -3039,6 +3039,10 @@ model ClubRegistrationDraft {
   eventId            String
   organizationId     String
   selectedMemberIds  String[]
+  /// People going who aren't on the roster (#388), e.g. a parent driver:
+  /// [{ id, firstName, lastName, age, email }]. For this event only; they're
+  /// never added to the roster. The server reads them from here at submit.
+  guests             Json     @default("[]")
   responses          Json     @default("{}")
   attendeeResponses  Json     @default("{}")
   updatedByAccountId String?

@@ -71,6 +71,7 @@ export default async function ClubEventRegistrationPage({
                 <span>
                   <strong translate="no">{attendee.lastName}, {attendee.firstName}</strong>
                   {attendee.ageOnEventDate !== null && <small>Age {attendee.ageOnEventDate} at the event</small>}
+                  {attendee.temporary && <small>Not on your roster · this event only</small>}
                 </span>
               </li>
             ))}

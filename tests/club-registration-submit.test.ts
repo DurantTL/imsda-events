@@ -84,7 +84,7 @@ function fixture({ billingMode = "DEFERRED_ORGANIZATION_INVOICE", form = definit
     }) },
     clubRosterMember: { findMany: vi.fn(async ({ where }: { where: { organizationId: string } }) => (where.organizationId === "club-1" ? members : [])) },
     clubEventRegistration: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: "cer-1" }) },
-    clubRegistrationDraft: { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    clubRegistrationDraft: { findUnique: vi.fn().mockResolvedValue(null), deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
     publicRegistrationSubmission: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: "submission-1" }) },
     registrationCapacityReservation: { findMany: vi.fn().mockResolvedValue([]), createMany: vi.fn() },
     registrationAttendee: { count: vi.fn().mockResolvedValue(0), create: vi.fn(async ({ data }: { data: { personId: string; profileSnapshot?: Record<string, unknown>; formResponses?: Record<string, unknown> } }) => ({ id: `attendee-${data.personId}` })) },
@@ -153,6 +153,40 @@ describe("club registration submit", () => {
       .rejects.toMatchObject({ code: "CLUB_ATTENDEES_INVALID" });
     await expect(submit(baseInput, club("club-2"))).rejects.toMatchObject({ code: "CLUB_ATTENDEES_INVALID" });
     await expect(submit({ ...baseInput, attendees: [{ clientId: "new-person", responses: { first_name: "Walk", last_name: "In" } }] }))
+      .rejects.toMatchObject({ code: "CLUB_ATTENDEES_INVALID" });
+    expect(tx.registration.create).not.toHaveBeenCalled();
+  });
+
+  it("registers an extra person for this event only, from the saved draft, never onto the roster (#388)", async () => {
+    const tx = fixture();
+    tx.clubRegistrationDraft.findUnique.mockResolvedValue({
+      guests: [{ id: "guestabc123", firstName: "Pat", lastName: "Driver", age: 42, email: "pat.driver@example.test" }],
+    });
+    tx.person.create.mockResolvedValue({ id: "person-guest" });
+    await submit({
+      ...baseInput,
+      attendees: [
+        { clientId: "member:m1", responses: {} },
+        { clientId: "guest:guestabc123", responses: { first_name: "Somebody", last_name: "Else", attendee_age: "9", dietary_needs: "None" } },
+      ],
+    });
+
+    const guestCall = tx.registrationAttendee.create.mock.calls[1]![0].data;
+    expect(guestCall.personId).toBe("person-guest");
+    expect(guestCall.profileSnapshot).toMatchObject({
+      firstName: "Pat", lastName: "Driver", email: "pat.driver@example.test", ageOnEventDate: 42,
+      temporary: true, temporaryAttendeeType: "ADULT", clubOrganizationId: "club-1",
+    });
+    expect(guestCall.profileSnapshot).not.toHaveProperty("clubRosterMemberId");
+    expect(guestCall.formResponses).toMatchObject({ first_name: "Pat", last_name: "Driver", attendee_age: "42", dietary_needs: "None" });
+    expect(tx.person.create).toHaveBeenCalledWith({ data: expect.objectContaining({ firstName: "Pat", lastName: "Driver" }) });
+    // The roster is only read, never written.
+    expect(Object.keys(tx.clubRosterMember)).toEqual(["findMany"]);
+  });
+
+  it("refuses an extra person who isn't in the saved draft", async () => {
+    const tx = fixture();
+    await expect(submit({ ...baseInput, attendees: [{ clientId: "guest:notsaved01", responses: { first_name: "Walk", last_name: "In", attendee_age: "30" } }] }))
       .rejects.toMatchObject({ code: "CLUB_ATTENDEES_INVALID" });
     expect(tx.registration.create).not.toHaveBeenCalled();
   });
