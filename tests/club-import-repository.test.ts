@@ -105,6 +105,35 @@ describe("club import (#376)", () => {
     expect(result.message).toMatch(/already has an imported registration/);
   });
 
+  it("refuses a club with no sponsoring church, creating nothing", async () => {
+    const [result] = await importClubs([item({ churchId: null, newChurchName: "" })], "admin-1", now);
+    expect(result).toMatchObject({ status: "FAILED" });
+    expect(result.message).toMatch(/sponsoring church/);
+    expect(mocks.orgCreate).not.toHaveBeenCalled();
+    expect(mocks.rosterCreate).not.toHaveBeenCalled();
+  });
+
+  it("keeps an existing club's church without asking for one, and creates no stray church", async () => {
+    mocks.orgFindFirst.mockImplementation(({ where }: { where: { type: string } }) => Promise.resolve(
+      where.type === "CLUB" ? { id: "club-1", isActive: true, parentOrganizationId: "church-1" } : null,
+    ));
+    const [withoutChurch] = await importClubs([item({ churchId: null, newChurchName: "" })], "admin-1", now);
+    expect(withoutChurch).toMatchObject({ status: "IMPORTED", organizationId: "club-1" });
+
+    const [withNewChurch] = await importClubs([item({ churchId: null, newChurchName: "Another SDA Church" })], "admin-1", now);
+    expect(withNewChurch).toMatchObject({ status: "IMPORTED", organizationId: "club-1" });
+    expect(mocks.orgCreate).not.toHaveBeenCalled();
+  });
+
+  it("requires a church for an existing club that doesn't have one yet", async () => {
+    mocks.orgFindFirst.mockImplementation(({ where }: { where: { type: string } }) => Promise.resolve(
+      where.type === "CLUB" ? { id: "club-1", isActive: true, parentOrganizationId: null } : null,
+    ));
+    const [result] = await importClubs([item({ churchId: null, newChurchName: "" })], "admin-1", now);
+    expect(result).toMatchObject({ status: "FAILED" });
+    expect(result.message).toMatch(/sponsoring church/);
+  });
+
   it("refuses an inactive club with the same name", async () => {
     mocks.orgFindFirst.mockImplementation(({ where }: { where: { type: string } }) => Promise.resolve(
       where.type === "CLUB" ? { id: "club-1", isActive: false, parentOrganizationId: null } : null,

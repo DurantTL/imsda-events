@@ -572,6 +572,21 @@ describe("church-billed (deferred-organization) lifecycle messages", () => {
     expectNoPaymentRequest(queuedMessage(upsert).create.bodyTextSnapshot);
   });
 
+  it("labels a church-billed club's portal link \"View or edit\", leaving attendee-pay wording alone", async () => {
+    const deferred = withBillingMode("DEFERRED_ORGANIZATION_INVOICE");
+    await enqueueWaitlistPromotedMessage(deferred.tx as never, input);
+    const deferredBody = queuedMessage(deferred.upsert).create.bodyTextSnapshot;
+    expect(deferredBody).toContain("View or edit your registration");
+    expect(deferredBody).not.toContain("View, pay, or edit your registration");
+    const deferredHtml = queuedMessage(deferred.upsert).create.bodyHtmlSnapshot;
+    expect(deferredHtml).toContain("View or edit your registration");
+    expect(deferredHtml).not.toContain("View, pay, or edit your registration");
+
+    const attendeePay = withBillingMode("ATTENDEE_PAY");
+    await enqueueWaitlistPromotedMessage(attendeePay.tx as never, input);
+    expect(queuedMessage(attendeePay.upsert).create.bodyTextSnapshot).toContain("View, pay, or edit your registration");
+  });
+
   it("tells a reactivated church-billed club the church is invoiced, not that a balance is due", async () => {
     const { tx, upsert } = withBillingMode("DEFERRED_ORGANIZATION_INVOICE");
     await enqueueRegistrationReactivatedMessage(tx as never, input);

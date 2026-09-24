@@ -42,6 +42,7 @@ export type OrganizationOperationErrorCode =
   | "ORGANIZATION_CONFLICT"
   | "ORGANIZATION_PARENT_NOT_ALLOWED"
   | "ORGANIZATION_PARENT_INVALID"
+  | "ORGANIZATION_PARENT_REQUIRED"
   | "ORGANIZATION_HAS_ACTIVE_CLUBS"
   | "ORGANIZATION_DELETE_BLOCKED"
   | "ORGANIZATION_DELETE_NAME_MISMATCH"
@@ -103,7 +104,13 @@ async function validateParentOrganization(
     return;
   }
 
-  if (parentOrganizationId === null) return;
+  if (parentOrganizationId === null) {
+    // Every club has a sponsoring church; church-billed events invoice it.
+    throw new OrganizationOperationError(
+      "ORGANIZATION_PARENT_REQUIRED",
+      "Choose the club's sponsoring church. Every club needs one.",
+    );
+  }
   if (parentOrganizationId === organizationId) {
     throw new OrganizationOperationError(
       "ORGANIZATION_PARENT_INVALID",

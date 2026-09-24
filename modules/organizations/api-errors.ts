@@ -26,6 +26,7 @@ export function organizationApiError(error: unknown, action: string) {
         ? 403
       : error.code === "DIRECTOR_GRANT_WINDOW_INVALID"
           || error.code === "CLUB_REQUIRED"
+          || error.code === "ORGANIZATION_PARENT_REQUIRED"
           || error.code === "ORGANIZATION_DELETE_NAME_MISMATCH"
         ? 400
         : 409;

@@ -79,8 +79,8 @@ export function ClubProfileForm({
         </label>
         <label>
           Sponsoring church
-          <select defaultValue={profile.sponsoringChurchId ?? ""} name="sponsoringChurchId">
-            <option value="">Not set</option>
+          <select defaultValue={profile.sponsoringChurchId ?? ""} name="sponsoringChurchId" required>
+            <option disabled value="">Choose a church</option>
             {churches.map((church) => <option key={church.id} value={church.id}>{church.name}</option>)}
           </select>
         </label>

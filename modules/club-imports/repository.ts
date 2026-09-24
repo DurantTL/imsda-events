@@ -23,7 +23,7 @@ export async function annotateImportDrafts(drafts: ClubImportDraft[]) {
   const prisma = getPrisma();
   const [churches, clubs, identities] = await Promise.all([
     prisma.organization.findMany({ where: { type: "CHURCH", isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
-    prisma.organization.findMany({ where: { type: "CLUB" }, select: { id: true, name: true, normalizedName: true, isActive: true } }),
+    prisma.organization.findMany({ where: { type: "CLUB" }, select: { id: true, name: true, normalizedName: true, isActive: true, parentOrganizationId: true } }),
     prisma.externalIdentity.findMany({
       where: { provider: "FLUENT_FORMS", externalId: { in: drafts.map((draft) => draft.entryId) } },
       select: { externalId: true, providerScope: true, organization: { select: { id: true, name: true } } },
@@ -47,7 +47,9 @@ export async function annotateImportDrafts(drafts: ClubImportDraft[]) {
         churchId: church?.id ?? null,
         newChurchName: church ? "" : draft.churchName,
         alreadyImported: imported?.organization ? { id: imported.organization.id, name: imported.organization.name } : null,
-        existingClub: club ? { id: club.id, name: club.name, isActive: club.isActive } : null,
+        existingClub: club
+          ? { id: club.id, name: club.name, isActive: club.isActive, hasSponsoringChurch: Boolean(club.parentOrganizationId) }
+          : null,
       };
     }),
   };
@@ -83,35 +85,42 @@ async function importOne(item: ClubImportItem, actorUserId: string, now: Date): 
 
   try {
     return await prisma.$transaction(async (tx) => {
-      let churchId: string | null = null;
-      let churchCreated = false;
-      if (item.churchId) {
-        const church = await tx.organization.findUnique({ where: { id: item.churchId }, select: { type: true, isActive: true } });
-        if (!church || church.type !== "CHURCH" || !church.isActive) throw new ImportRefused("The chosen church is no longer available.");
-        churchId = item.churchId;
-      } else if (item.newChurchName) {
-        const normalizedName = normalizeOrganizationName(item.newChurchName);
-        const existing = await tx.organization.findFirst({ where: { type: "CHURCH", normalizedName }, select: { id: true, isActive: true } });
-        if (existing && !existing.isActive) throw new ImportRefused("A church with that name is inactive. Reactivate it or choose another.");
-        if (existing) {
-          churchId = existing.id;
-        } else {
-          const church = await tx.organization.create({ data: { type: "CHURCH", name: item.newChurchName, normalizedName }, select: { id: true } });
-          churchId = church.id;
-          churchCreated = true;
-        }
-      }
-
       const normalizedName = normalizeOrganizationName(item.clubName);
       let club = await tx.organization.findFirst({ where: { type: "CLUB", normalizedName }, select: { id: true, isActive: true, parentOrganizationId: true } });
       if (club && !club.isActive) throw new ImportRefused("A club with that name is inactive. Reactivate it first, or give the import another name.");
+
+      // Every club has a sponsoring church; church-billed events invoice it.
+      // An existing club keeps the church it has, so a choice here is only
+      // used (or created) for a new club or one without a church yet.
+      let churchId: string | null = null;
+      let churchCreated = false;
+      if (!club?.parentOrganizationId) {
+        if (item.churchId) {
+          const church = await tx.organization.findUnique({ where: { id: item.churchId }, select: { type: true, isActive: true } });
+          if (!church || church.type !== "CHURCH" || !church.isActive) throw new ImportRefused("The chosen church is no longer available.");
+          churchId = item.churchId;
+        } else if (item.newChurchName) {
+          const churchName = normalizeOrganizationName(item.newChurchName);
+          const existing = await tx.organization.findFirst({ where: { type: "CHURCH", normalizedName: churchName }, select: { id: true, isActive: true } });
+          if (existing && !existing.isActive) throw new ImportRefused("A church with that name is inactive. Reactivate it or choose another.");
+          if (existing) {
+            churchId = existing.id;
+          } else {
+            const church = await tx.organization.create({ data: { type: "CHURCH", name: item.newChurchName, normalizedName: churchName }, select: { id: true } });
+            churchId = church.id;
+            churchCreated = true;
+          }
+        }
+        if (!churchId) throw new ImportRefused("Choose or create the club's sponsoring church before importing.");
+      }
+
       const clubCreated = !club;
       if (!club) {
         club = await tx.organization.create({
           data: { type: "CLUB", name: item.clubName, normalizedName, parentOrganizationId: churchId },
           select: { id: true, isActive: true, parentOrganizationId: true },
         });
-      } else if (!club.parentOrganizationId && churchId) {
+      } else if (!club.parentOrganizationId) {
         await tx.organization.update({ where: { id: club.id }, data: { parentOrganizationId: churchId } });
       }
 

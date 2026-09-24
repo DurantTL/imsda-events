@@ -590,11 +590,27 @@ export function OrganizationDirectoryWorkspace({
                         ? editor.organization.parentOrganizationId ?? ""
                         : ""}
                       name="parentOrganizationId"
+                      required
                     >
-                      <option value="">Not assigned yet</option>
+                      <option disabled value="">Choose a church</option>
                       {activeChurches.map((church) => (
                         <option key={church.id} value={church.id}>{church.name}</option>
                       ))}
+                      {/* Keep the club's current church selectable even when it
+                          is inactive, so saving never quietly moves the club
+                          (and its invoices) to another church. The server asks
+                          staff to choose an active one. */}
+                      {editor.kind === "edit"
+                        && editor.organization.parentOrganizationId
+                        && !activeChurches.some((church) => church.id === editor.organization.parentOrganizationId)
+                        && (() => {
+                          const current = organizations.find((organization) => organization.id === editor.organization.parentOrganizationId);
+                          return (
+                            <option value={editor.organization.parentOrganizationId}>
+                              {current?.name ?? "Current church"} (inactive)
+                            </option>
+                          );
+                        })()}
                     </select>
                   </label>
                 )}
