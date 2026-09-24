@@ -93,11 +93,15 @@ function RegistrationCard({
           </dd>
         </div>
         <div>
-          <dt><CircleDollarSign size={17} aria-hidden="true" /> Balance</dt>
+          <dt><CircleDollarSign size={17} aria-hidden="true" /> {registration.churchBilling ? "Estimated amount owed by your church" : "Balance"}</dt>
           <dd>
-            {registration.balanceCents > 0
-              ? `${money(registration.balanceCents)} due of ${money(registration.totalCents)}`
-              : `Paid in full · ${money(registration.totalCents)}`}
+            {registration.churchBilling
+              ? registration.churchBilling.billed
+                ? `${money(registration.churchBilling.amountOwedCents)} · ${registration.churchBilling.label}`
+                : registration.churchBilling.label
+              : registration.balanceCents > 0
+                ? `${money(registration.balanceCents)} due of ${money(registration.totalCents)}`
+                : `Paid in full · ${money(registration.totalCents)}`}
           </dd>
         </div>
       </dl>
@@ -111,7 +115,7 @@ function RegistrationCard({
       >
         Open attendee hub <ArrowRight size={16} aria-hidden="true" />
       </Link>
-      {editable && registration.balanceCents > 0 && (
+      {editable && !registration.event.isDeferredOrganizationBilling && registration.balanceCents > 0 && (
         <PublicSquarePayment
           manageEndpoint={`/api/attendee/registrations/${encodeURIComponent(registration.id)}`}
         />

@@ -1,4 +1,5 @@
 import type { RegistrationRecord } from "@/modules/registrations/repository";
+import { attendeeBalanceCents } from "@/modules/registrations/finance-view";
 
 /**
  * A flag is a condition the system derives from a registration's current
@@ -28,7 +29,9 @@ function centsToDisplay(cents: number) {
 export function computeRegistrationFlags(registration: RegistrationRecord): RegistrationFlag[] {
   const flags: RegistrationFlag[] = [];
 
-  if (registration.balanceCents > 0) {
+  // A church-billed registration (#409) owes nothing online: its total is
+  // billed to the church after the event, so it is never a balance due.
+  if (attendeeBalanceCents(registration) > 0) {
     flags.push({
       kind: "BALANCE_DUE",
       label: "Balance due",

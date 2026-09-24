@@ -29,6 +29,7 @@ import { SelectedAudienceDialog } from "@/components/selected-audience-dialog";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 import { registrationMatchesSearch } from "@/modules/registrations/search";
+import { attendeeBalanceCents } from "@/modules/registrations/finance-view";
 
 type LifecycleAction = "cancel" | "reactivate" | "waitlist" | "promote";
 type RegistrationOperationDraft = {
@@ -203,7 +204,7 @@ function pricingSnapshotSummary(snapshot: Record<string, unknown>) {
 
 function statusTone(record: RegistrationRecord) {
   if (record.status === "CANCELLED" || record.status === "WAITLISTED") return "purple";
-  if (record.balanceCents > 0) return "gold";
+  if (attendeeBalanceCents(record) > 0) return "gold";
   return "green";
 }
 
@@ -211,8 +212,9 @@ function statusLabel(record: RegistrationRecord) {
   if (record.status === "CANCELLED") return "Cancelled";
   if (record.status === "WAITLISTED") return "Waitlisted";
   if (record.status === "DRAFT") return "Draft";
+  if (record.isDeferredOrganizationBilling) return "Billed to church";
   if (record.totalAmountCents === 0) return "No charge";
-  if (record.balanceCents > 0) return "Balance due";
+  if (attendeeBalanceCents(record) > 0) return "Balance due";
   return "Paid";
 }
 
@@ -264,8 +266,8 @@ export function PeopleWorkspace({
     const matchesQuery = registrationMatchesSearch(registration, query);
     const isActive = registration.status === "SUBMITTED" || registration.status === "CONFIRMED";
     const matchesFilter = filter === "ALL"
-      || (filter === "BALANCE" && isActive && registration.balanceCents > 0)
-      || (filter === "PAID" && isActive && registration.balanceCents === 0 && registration.totalAmountCents > 0)
+      || (filter === "BALANCE" && isActive && attendeeBalanceCents(registration) > 0)
+      || (filter === "PAID" && isActive && !registration.isDeferredOrganizationBilling && registration.balanceCents === 0 && registration.totalAmountCents > 0)
       || registration.status === filter;
     return matchesQuery && matchesFilter;
   }), [registrations, query, filter]);

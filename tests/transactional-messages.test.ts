@@ -509,3 +509,101 @@ describe("transactional lifecycle messages", () => {
     expect(message.create.bodyTextSnapshot).toContain(REGISTRATION_MANAGE_LINK_SENTINEL);
   });
 });
+
+describe("church-billed (deferred-organization) lifecycle messages", () => {
+  function withBillingMode(
+    billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE",
+    publishedBody?: string,
+  ) {
+    const fixture = transactionFixture();
+    const base = fixture.tx.registration.findFirst.getMockImplementation();
+    fixture.tx.registration.findFirst.mockImplementation(async (...args: unknown[]) => {
+      const registration = await (base as (...a: unknown[]) => Promise<Record<string, unknown>>)(...args);
+      return {
+        ...registration,
+        event: {
+          ...(registration.event as Record<string, unknown>),
+          billingMode,
+          paymentInstructionVersions: [{ instructions: "Mail a check to the office." }],
+        },
+      };
+    });
+    if (publishedBody) {
+      fixture.tx.eventMessageTemplate.findUnique.mockResolvedValue({
+        isEnabled: true,
+        versions: [{
+          id: "version-1",
+          subjectTemplate: "Update for {{event_name}}",
+          bodyTemplate: publishedBody,
+        }],
+      });
+    }
+    return fixture;
+  }
+
+  const PAYMENT_BODY = [
+    "Hello {{recipient_name}},",
+    "",
+    "{{payment_status_block}}",
+    "",
+    "Balance token: {{balance_amount}}",
+    "",
+    "[Manage]({{portal_url}})",
+  ].join("\n");
+
+  function expectNoPaymentRequest(body: string) {
+    expect(body).not.toContain("Pay your balance");
+    expect(body).not.toContain("Balance due");
+    expect(body).not.toContain("Mail a check to the office.");
+    expect(body).not.toContain("$175.00");
+    expect(body).toContain("No payment is due online");
+  }
+
+  const input = {
+    eventId: "event-1",
+    registrationId: "registration-1",
+    correlationId: "correlation-deferred",
+    transitionKey: "deferred:1",
+  };
+
+  it("tells a promoted church-billed club the church is invoiced, with no pay link", async () => {
+    const { tx, upsert } = withBillingMode("DEFERRED_ORGANIZATION_INVOICE");
+    await enqueueWaitlistPromotedMessage(tx as never, input);
+    expectNoPaymentRequest(queuedMessage(upsert).create.bodyTextSnapshot);
+  });
+
+  it("tells a reactivated church-billed club the church is invoiced, not that a balance is due", async () => {
+    const { tx, upsert } = withBillingMode("DEFERRED_ORGANIZATION_INVOICE");
+    await enqueueRegistrationReactivatedMessage(tx as never, input);
+    expectNoPaymentRequest(queuedMessage(upsert).create.bodyTextSnapshot);
+  });
+
+  it("renders the payment block and balance token of an edited update template as invoiced, $0 balance", async () => {
+    const { tx, upsert } = withBillingMode("DEFERRED_ORGANIZATION_INVOICE", PAYMENT_BODY);
+    await enqueueRegistrationUpdatedMessage(tx as never, {
+      ...input,
+      changeCategory: "REGISTRATION_DETAILS",
+    });
+    const body = queuedMessage(upsert).create.bodyTextSnapshot;
+    expectNoPaymentRequest(body);
+    expect(body).toContain("Balance token: $0.00");
+  });
+
+  it("still shows the balance and pay link on an attendee-pay event", async () => {
+    const promoted = withBillingMode("ATTENDEE_PAY");
+    await enqueueWaitlistPromotedMessage(promoted.tx as never, input);
+    const promotedBody = queuedMessage(promoted.upsert).create.bodyTextSnapshot;
+    expect(promotedBody).toContain("Balance due: **$175.00**");
+    expect(promotedBody).toContain("Pay your balance");
+    expect(promotedBody).toContain("Mail a check to the office.");
+
+    const updated = withBillingMode("ATTENDEE_PAY", PAYMENT_BODY);
+    await enqueueRegistrationUpdatedMessage(updated.tx as never, {
+      ...input,
+      changeCategory: "REGISTRATION_DETAILS",
+    });
+    const updatedBody = queuedMessage(updated.upsert).create.bodyTextSnapshot;
+    expect(updatedBody).toContain("Balance token: $175.00");
+    expect(updatedBody).toContain("Pay your balance");
+  });
+});

@@ -10,6 +10,13 @@ export const availabilityModes = ["NONE", "CAPACITY", "RANKED_INTEREST"] as cons
 const attendeeNameKeys = ["full_name", "name", "attendee_name", "guest_name"] as const;
 
 const priceCentsSchema = z.number().int().min(0).max(10000000);
+// A credit is entered as a negative price per unit on a REGISTRATION-scope
+// NUMBER field (e.g. Camporee's per-person meal sponsorship, #409): each unit
+// in the answer subtracts this amount, optionally capped at the
+// registration's headcount so a club can never claim more meal credit than
+// it has people to feed. `finalizeCalculation` floors the whole total at $0,
+// so a credit can discount a registration to free but never below it.
+const creditCentsPerUnitSchema = z.number().int().min(-10000000).max(0);
 const calendarDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use a calendar date in YYYY-MM-DD format.").refine((value) => {
   const parsed = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
@@ -47,6 +54,8 @@ export const formFieldSchema = z.object({
   choiceLimits: z.record(z.string(), z.number().int().min(1).max(10000)).optional(),
   priceCents: priceCentsSchema.optional(),
   choicePricesCents: z.record(z.string(), priceCentsSchema).optional(),
+  creditCentsPerUnit: creditCentsPerUnitSchema.optional(),
+  capUnitsAtAttendeeCount: z.boolean().optional(),
   latePricing: z.object({
     startsOn: calendarDateSchema,
     label: z.string().trim().min(2).max(80).default("Late registration pricing"),
@@ -92,6 +101,17 @@ export const formFieldSchema = z.object({
   }
   if (field.latePricing && field.priceCents === undefined && !field.choicePricesCents) {
     context.addIssue({ code: "custom", path: ["latePricing"], message: "Late pricing requires a regular field or choice price." });
+  }
+  if (field.creditCentsPerUnit !== undefined) {
+    if (field.type !== "NUMBER" || field.scope !== "REGISTRATION") {
+      context.addIssue({ code: "custom", path: ["creditCentsPerUnit"], message: "A per-unit credit can only be set on a registration-level number field." });
+    }
+    if (field.priceCents !== undefined || field.choicePricesCents || field.latePricing) {
+      context.addIssue({ code: "custom", path: ["creditCentsPerUnit"], message: "A field can charge a price or apply a credit, not both." });
+    }
+  }
+  if (field.capUnitsAtAttendeeCount && field.creditCentsPerUnit === undefined) {
+    context.addIssue({ code: "custom", path: ["capUnitsAtAttendeeCount"], message: "Capping at the headcount requires a per-unit credit." });
   }
 });
 
@@ -174,6 +194,9 @@ export const registrationFormDefinitionSchema = z.object({
       : null;
     if (field.scope === "REGISTRATION" && controller?.scope === "ATTENDEE") {
       context.addIssue({ code: "custom", path: ["sections", sectionIndex, "fields", fieldIndex, "conditional"], message: "A registration-level field cannot depend on an attendee answer." });
+    }
+    if (field.capUnitsAtAttendeeCount && !definition.attendeeRoster?.enabled) {
+      context.addIssue({ code: "custom", path: ["sections", sectionIndex, "fields", fieldIndex, "capUnitsAtAttendeeCount"], message: "Capping at the headcount requires a repeatable attendee roster." });
     }
     if (field.optionalWhen) {
       const optionalController = definition.sections.flatMap((candidate) => candidate.fields).find((candidate) => candidate.key === field.optionalWhen?.fieldKey);
@@ -731,8 +754,8 @@ export const formTemplates: FormTemplate[] = [
           templateField("sc_game_support", "game_support", "Saturday night game help", "MULTISELECT", true, ["Bring a game", "Lead a game"], { minSelections: 1, maxSelections: 2, conditional: { fieldKey: "special_activities", operator: "INCLUDES", value: "Bring a game and/or lead a game Saturday night" } }),
           templateField("sc_game", "game_name", "Game name", "TEXT", true, [], { conditional: { fieldKey: "game_support", operator: "INCLUDES", value: "Bring a game" } }),
           templateField("sc_oregon", "oregon_trail_adult", "Adult assisting with Oregon Trail", "TEXT", true, [], { conditional: { fieldKey: "special_activities", operator: "INCLUDES", value: "Adult assist with Oregon Trail Friday afternoon" } }),
-          templateField("sc_sponsor", "sponsoring_meals", "Will the club sponsor meals?", "RADIO", true, ["No", "Yes"], { helpText: "A $5 per-person, per-meal credit is applied to the event invoice." }),
-          templateField("sc_sponsor_count", "meal_sponsorship_count", "People sponsored per meal", "NUMBER", true, [], { conditional: { fieldKey: "sponsoring_meals", operator: "EQUALS", value: "Yes" } }),
+          templateField("sc_sponsor", "sponsoring_meals", "Will the club sponsor meals?", "RADIO", true, ["No", "Yes"], { helpText: "Sponsoring meals earns a $5 credit per person sponsored, once, off the amount your church owes." }),
+          templateField("sc_sponsor_count", "meal_sponsorship_count", "People your club is sponsoring a meal for", "NUMBER", true, [], { helpText: "A $5 credit per person sponsored (once, however many meals) comes off the amount your church owes, up to the number of people registered.", conditional: { fieldKey: "sponsoring_meals", operator: "EQUALS", value: "Yes" }, creditCentsPerUnit: -500, capUnitsAtAttendeeCount: true }),
           templateField("sc_meal_times", "meal_times", "Sponsored meal times", "MULTISELECT", true, ["Friday lunch", "Friday lunch — delivered to office", "Friday supper", "Friday supper — delivered to office", "Sabbath lunch", "Sabbath supper"], { minSelections: 1, maxSelections: 6, conditional: { fieldKey: "sponsoring_meals", operator: "EQUALS", value: "Yes" } }),
           templateField("sc_partner", "partner_club", "Partner club for events", "TEXT"),
           templateField("sc_ribbons", "event_ribbons", "Would your club like event ribbons?", "RADIO", true, ["Yes", "No"]),
@@ -882,9 +905,23 @@ function pricedLineItem(
   responses: Record<string, unknown>,
   pricingDate: string,
   attendee?: { index: number; label: string },
+  registrationContext?: { attendeeCount: number },
 ): FormCalculation["lineItems"][number] | null {
   if (!isFieldVisible(field, responses)) return null;
   const value = responses[field.key];
+  if (field.creditCentsPerUnit !== undefined) {
+    // A credit (#409, e.g. Camporee's per-person meal sponsorship): units
+    // entered subtract from the total, capped at the registration's own
+    // headcount when configured so a club can never claim more credit than
+    // it has people to feed. `finalizeCalculation` floors the total at $0.
+    const rawUnits = Math.max(0, Math.trunc(Number(value) || 0));
+    const units = field.capUnitsAtAttendeeCount && registrationContext
+      ? Math.min(rawUnits, registrationContext.attendeeCount)
+      : rawUnits;
+    const creditCents = units * field.creditCentsPerUnit;
+    if (creditCents === 0) return null;
+    return { key: field.key, label: field.label, amountCents: Math.round(creditCents) };
+  }
   const latePricingActive = isLatePricingActive(field, pricingDate);
   const priceCents = latePricingActive ? field.latePricing?.priceCents ?? field.priceCents : field.priceCents;
   const hasChoicePrices = field.choicePricesCents !== undefined || (latePricingActive && field.latePricing?.choicePricesCents !== undefined);
@@ -909,8 +946,26 @@ function pricedLineItem(
 function finalizeCalculation(
   definition: RegistrationFormDefinition,
   registrationResponses: Record<string, unknown>,
-  lineItems: FormCalculation["lineItems"],
+  rawLineItems: FormCalculation["lineItems"],
 ) {
+  // A credit line item (a per-person meal sponsorship credit, #409) could
+  // carry the sum negative. Clamp each credit, generically rather than in any
+  // one form, to what the charges leave, so no registration is ever billed
+  // less than $0 and the stored line items always add up to the subtotal.
+  let remainingCents = rawLineItems.reduce(
+    (total, item) => total + Math.max(item.amountCents, 0),
+    0,
+  );
+  const lineItems: FormCalculation["lineItems"] = [];
+  for (const item of rawLineItems) {
+    if (item.amountCents >= 0) {
+      lineItems.push(item);
+      continue;
+    }
+    const appliedCents = Math.max(item.amountCents, -remainingCents);
+    remainingCents += appliedCents;
+    if (appliedCents !== 0) lineItems.push({ ...item, amountCents: appliedCents });
+  }
   const subtotalCents = lineItems.reduce((total, item) => total + item.amountCents, 0);
   const payment = definition.payment;
   const cardSelected = Boolean(payment?.enabled && registrationResponses[payment.paymentMethodFieldKey] === payment.cardOptionValue);
@@ -944,9 +999,11 @@ export function processingFeeForSubtotal(
 }
 
 export function calculateFormTotal(definition: RegistrationFormDefinition, responses: Record<string, unknown>, pricingDate = localCalendarDate()): FormCalculation {
+  // No repeatable roster: the registrant is the one person on it.
+  const registrationContext = { attendeeCount: 1 };
   const lineItems = definition.sections
     .flatMap((section) => section.fields)
-    .map((field) => pricedLineItem(field, responses, pricingDate))
+    .map((field) => pricedLineItem(field, responses, pricingDate, undefined, registrationContext))
     .filter((item): item is NonNullable<typeof item> => item !== null);
   return finalizeCalculation(definition, responses, lineItems);
 }
@@ -958,9 +1015,10 @@ export function calculateRosterTotal(
   pricingDate = localCalendarDate(),
 ): FormCalculation {
   const fields = definition.sections.flatMap((section) => section.fields);
+  const registrationContext = { attendeeCount: attendeeResponses.length };
   const lineItems: FormCalculation["lineItems"] = fields
     .filter((field) => field.scope === "REGISTRATION")
-    .map((field) => pricedLineItem(field, registrationResponses, pricingDate))
+    .map((field) => pricedLineItem(field, registrationResponses, pricingDate, undefined, registrationContext))
     .filter((item): item is NonNullable<typeof item> => item !== null);
   const roster = getAttendeeRosterConfig(definition);
   attendeeResponses.forEach((responses, index) => {

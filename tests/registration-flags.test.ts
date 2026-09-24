@@ -37,6 +37,14 @@ describe("computeRegistrationFlags — computed at read time, never stored", () 
     expect(flags[0]!.detail).toContain("$125.00");
   });
 
+  it("never flags a church-billed registration's total as a balance due (#409)", () => {
+    const flags = computeRegistrationFlags(registration({
+      balanceCents: 6300,
+      isDeferredOrganizationBilling: true,
+    }));
+    expect(flags.map((flag) => flag.kind)).not.toContain("BALANCE_DUE");
+  });
+
   it("flags a public-form registration with an attendee missing responses", () => {
     const flags = computeRegistrationFlags(registration({
       publicSubmission: { formName: "Retreat" } as never,

@@ -165,6 +165,17 @@ describe("operational health aggregation", () => {
     ]);
   });
 
+  it("never reports a church-billed registration's total as an attendee balance (#409)", () => {
+    const report = buildOperationalHealth(source({
+      registrations: [
+        registration({ id: "church", confirmationCode: "REG-CHURCH", totalAmountCents: 6_300, isDeferredOrganizationBilling: true }),
+        registration({ id: "attendee", confirmationCode: "REG-ATTENDEE", totalAmountCents: 5_000 }),
+      ],
+    }), fullAccess, now);
+
+    expect(report.balances.map((entry) => entry.confirmationCode)).toEqual(["REG-ATTENDEE"]);
+  });
+
   it("finds unretried delivery failures and overdue pending messages", () => {
     const common = {
       registrationId: "registration-one",

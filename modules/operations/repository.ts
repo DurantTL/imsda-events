@@ -45,6 +45,7 @@ async function loadFinanceSource(eventId: string) {
         totalAmount: true,
         submittedAt: true,
         createdAt: true,
+        event: { select: { billingMode: true } },
         payments: {
           where: { status: "SUCCEEDED" },
           select: {
@@ -74,6 +75,7 @@ async function loadFinanceSource(eventId: string) {
       confirmationCode: registration.confirmationCode,
       status: registration.status,
       totalAmountCents: moneyToCents(registration.totalAmount),
+      isDeferredOrganizationBilling: registration.event.billingMode === "DEFERRED_ORGANIZATION_INVOICE",
       submittedAt: registration.submittedAt,
       createdAt: registration.createdAt,
       payments: registration.payments.map((payment) => ({

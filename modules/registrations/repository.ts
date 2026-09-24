@@ -189,6 +189,10 @@ function serializeRegistration(registration: RegistrationWithRelations) {
     paidCents,
     balanceCents,
     onlinePaymentUnavailable,
+    // The recorded amount is what the church owes, billed directly, never
+    // an attendee balance to collect online (#409). Staff finance screens
+    // must say so wherever the amount is shown.
+    isDeferredOrganizationBilling: registration.event.billingMode === "DEFERRED_ORGANIZATION_INVOICE",
     submittedAt: registration.submittedAt?.toISOString() ?? null,
     createdAt: registration.createdAt.toISOString(),
     updatedAt: registration.updatedAt.toISOString(),
