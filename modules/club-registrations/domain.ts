@@ -38,6 +38,26 @@ export const clubGuestSchema = z.object({
 
 export const clubGuestsSchema = z.array(clubGuestSchema).max(MAX_CLUB_GUESTS, `Add up to ${MAX_CLUB_GUESTS} extra people.`);
 
+/**
+ * H3b (#366): a director reopens a submitted club registration to add or
+ * remove roster people and extra people, or change their answers, before the
+ * event's registration deadline. `keptGuestIds` names the extra people
+ * already on the registration to keep (their `clubGuestId`, see
+ * `ClubGuest.id`); `newGuests` are brand-new extra people this edit adds.
+ * `attendeeResponses` is keyed the same way the draft is: a roster person by
+ * `clubAttendeeClientId`, a guest (kept or new) by `clubGuestClientId`.
+ */
+export const clubRegistrationEditInputSchema = z.object({
+  clientRequestId: z.uuid(),
+  expectedUpdatedAt: z.iso.datetime(),
+  selectedMemberIds: z.array(z.string().trim().min(1)).max(500),
+  keptGuestIds: z.array(z.string().trim().min(1)).max(MAX_CLUB_GUESTS),
+  newGuests: clubGuestsSchema,
+  attendeeResponses: z.record(z.string(), z.record(z.string(), z.unknown())),
+}).strict();
+
+export type ClubRegistrationEditInput = z.infer<typeof clubRegistrationEditInputSchema>;
+
 /** Guests saved in a draft, dropping anything that no longer reads as one. */
 export function guestsFromJson(value: unknown): ClubGuest[] {
   const parsed = clubGuestsSchema.safeParse(value);

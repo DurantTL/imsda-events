@@ -94,7 +94,11 @@ export type ClubSubmissionContext = {
       personId: string | null;
       rosterMemberId: string | null;
       ageOnEventDate: number | null;
-      guest?: { email: string | null; attendeeType: "ADULT" | "YOUTH" };
+      // `guestId` is the club module's own guest identifier (#388), kept on
+      // the created attendee's profileSnapshot as `clubGuestId` so a later
+      // reopen-and-amend (H3b, #366) can match this attendee back to the
+      // same extra person instead of creating a duplicate.
+      guest?: { email: string | null; attendeeType: "ADULT" | "YOUTH"; guestId: string };
     }>;
   }>;
 };
@@ -871,7 +875,9 @@ async function createPublicRegistrationTransaction(
             ...(clubAttendee.rosterMemberId ? { clubRosterMemberId: clubAttendee.rosterMemberId } : {}),
             ageOnEventDate: clubAttendee.ageOnEventDate,
             // For this event only: never on the club roster (#388).
-            ...(clubAttendee.guest ? { temporary: true, temporaryAttendeeType: clubAttendee.guest.attendeeType } : {}),
+            ...(clubAttendee.guest
+              ? { temporary: true, temporaryAttendeeType: clubAttendee.guest.attendeeType, clubGuestId: clubAttendee.guest.guestId }
+              : {}),
           } : {}),
         },
         formResponses: attendee.responses as Prisma.InputJsonValue,

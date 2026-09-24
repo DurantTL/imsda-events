@@ -198,7 +198,7 @@ describe("registration amendment route", () => {
       "event-1",
       "registration-1",
       commitBody,
-      { id: "user-1", displayName: "Staff User" },
+      { kind: "STAFF", id: "user-1", displayName: "Staff User" },
     );
     expect(mocks.previewRegistrationAmendment).not.toHaveBeenCalled();
     expect(mocks.processQueuedMessageIdsAfterCommit).toHaveBeenCalledWith([

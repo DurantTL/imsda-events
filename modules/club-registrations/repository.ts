@@ -8,6 +8,7 @@ import {
   clubAttendeeClientId,
   clubFormProblem,
   clubGuestClientId,
+  type ClubRegistrationEditInput,
   guestIdFromClientId,
   guestIsAdult,
   guestsFromJson,
@@ -28,6 +29,12 @@ import {
   type ClubSubmissionContext,
 } from "@/modules/forms/public-repository";
 import { calendarDateInEventTimeZone, evaluateEventRegistrationPhase } from "@/modules/events/lifecycle";
+import {
+  amendRegistration,
+  currentRegistrationAnswers,
+  previewRegistrationAmendment,
+} from "@/modules/registrations/amendments-repository";
+import type { RegistrationAmendmentInput } from "@/modules/registrations/schemas";
 
 /**
  * Club registration (#358): a director picks who's going from the roster and
@@ -38,7 +45,15 @@ import { calendarDateInEventTimeZone, evaluateEventRegistrationPhase } from "@/m
 
 export class ClubRegistrationError extends Error {
   constructor(
-    public readonly code: "EVENT_NOT_FOUND" | "FORM_UNAVAILABLE" | "MEMBER_NOT_ON_ROSTER" | "DRAFT_TOO_LARGE" | "GUEST_INVALID",
+    public readonly code:
+      | "EVENT_NOT_FOUND"
+      | "FORM_UNAVAILABLE"
+      | "MEMBER_NOT_ON_ROSTER"
+      | "DRAFT_TOO_LARGE"
+      | "GUEST_INVALID"
+      | "REGISTRATION_NOT_FOUND"
+      | "REGISTRATION_CLOSED"
+      | "ATTENDEES_INVALID",
     message: string,
   ) {
     super(message);
@@ -186,7 +201,8 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
           select: {
             confirmationCode: true,
             status: true,
-            attendees: { orderBy: { position: "asc" }, select: { profileSnapshot: true } },
+            updatedAt: true,
+            attendees: { orderBy: { position: "asc" }, select: { profileSnapshot: true, formResponses: true } },
           },
         },
       },
@@ -235,13 +251,30 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
         confirmationCode: clubRegistration.registration.confirmationCode,
         status: clubRegistration.registration.status,
         submittedAt: clubRegistration.createdAt.toISOString(),
-        attendees: clubRegistration.registration.attendees.map(({ profileSnapshot }) => {
-          const snapshot = profileSnapshot as { firstName?: string; lastName?: string; ageOnEventDate?: number | null; temporary?: boolean };
+        updatedAt: clubRegistration.registration.updatedAt.toISOString(),
+        attendees: clubRegistration.registration.attendees.map(({ profileSnapshot, formResponses }) => {
+          const snapshot = profileSnapshot as {
+            firstName?: string;
+            lastName?: string;
+            ageOnEventDate?: number | null;
+            temporary?: boolean;
+            clubRosterMemberId?: string;
+            clubGuestId?: string;
+          };
           return {
             firstName: snapshot.firstName ?? "",
             lastName: snapshot.lastName ?? "",
             ageOnEventDate: snapshot.ageOnEventDate ?? null,
             temporary: snapshot.temporary === true,
+            // For seeding a reopened edit (H3b, #366): which roster person
+            // or extra person this attendee is, so the edit page can
+            // re-tick who's going and re-show extra people. Null for a
+            // registration submitted before this feature or otherwise
+            // untracked; such an attendee can still be removed in an edit,
+            // just not automatically re-selected.
+            clubRosterMemberId: snapshot.clubRosterMemberId ?? null,
+            guestId: snapshot.temporary === true ? (snapshot.clubGuestId ?? null) : null,
+            responses: (formResponses as Record<string, unknown> | null) ?? {},
           };
         }),
       }
@@ -344,7 +377,7 @@ export function clubAttendeePreparer(organizationId: string): ClubSubmissionCont
           personId: null,
           rosterMemberId: null,
           ageOnEventDate: guest.age,
-          guest: { email: guest.email, attendeeType: guestIsAdult(guest) ? "ADULT" : "YOUTH" },
+          guest: { email: guest.email, attendeeType: guestIsAdult(guest) ? "ADULT" : "YOUTH", guestId: guest.id },
         });
         const person = { firstName: guest.firstName, lastName: guest.lastName, ageOnEventDate: guest.age, gender: null };
         return { ...attendee, responses: { ...attendee.responses, ...rosterOwnedResponses(definition as RegistrationFormDefinition, person) } };
@@ -380,4 +413,182 @@ export async function submitClubRegistration(
     submittedByAccountId: accountId,
     prepareAttendees: clubAttendeePreparer(organizationId),
   });
+}
+
+function recordFromJson(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+type CurrentClubAttendee = { id: string; profileSnapshot: unknown };
+
+/**
+ * H3b (#366): a director reopens a submitted club registration and adds or
+ * removes roster people or extra people, or changes their answers, through
+ * the same staff amendment engine (`amendRegistration`) a staff member's
+ * edit goes through — a director actor instead, so capacity, audit, and
+ * notices stay the one path. Refused once the event's registration deadline
+ * (in the event's own time zone) has passed, or if the published form has
+ * since become unusable for club registration (`clubFormProblem`, reused
+ * here exactly as the submit path uses it).
+ */
+export async function amendClubRegistration(
+  organizationId: string,
+  eventId: string,
+  accountId: string,
+  input: ClubRegistrationEditInput,
+  now = new Date(),
+) {
+  const event = await requireClubEvent(eventId);
+  if (evaluateEventRegistrationPhase(event, now) === "CLOSED") {
+    const closing = event.registrationClosesOn ? ` Registration closed after ${event.registrationClosesOn}.` : "";
+    throw new ClubRegistrationError("REGISTRATION_CLOSED", `Registration for this event is closed.${closing}`);
+  }
+  const account = await getPrisma().attendeeAccount.findUnique({ where: { id: accountId }, select: { displayName: true } });
+  const form = await publishedClubForm(event.id);
+  if (!form) throw new ClubRegistrationError("FORM_UNAVAILABLE", "The event has no published registration form yet.");
+  const problem = clubFormProblem(form.definition);
+  if (problem) throw new ClubRegistrationError("FORM_UNAVAILABLE", problem);
+
+  const clubRegistration = await getPrisma().clubEventRegistration.findUnique({
+    where: { eventId_organizationId: { eventId, organizationId } },
+    select: { registrationId: true },
+  });
+  if (!clubRegistration) {
+    throw new ClubRegistrationError("REGISTRATION_NOT_FOUND", "Your club hasn't registered for this event yet.");
+  }
+  const registrationId = clubRegistration.registrationId;
+
+  const [answers, currentAttendees, members] = await Promise.all([
+    currentRegistrationAnswers(eventId, registrationId),
+    getPrisma().registrationAttendee.findMany({
+      where: { registrationId },
+      select: { id: true, profileSnapshot: true },
+    }) as Promise<CurrentClubAttendee[]>,
+    activeRosterFor(getPrisma(), organizationId, event),
+  ]);
+  if (!answers) {
+    throw new ClubRegistrationError("REGISTRATION_NOT_FOUND", "Your club's registration for this event could not be found.");
+  }
+
+  const allowedMemberIds = new Set(members.map((member) => member.id));
+  if (input.selectedMemberIds.some((memberId) => !allowedMemberIds.has(memberId))) {
+    throw new ClubRegistrationError("MEMBER_NOT_ON_ROSTER", "Everyone going must be active on your club roster. Refresh the page and try again.");
+  }
+
+  const currentByMemberId = new Map<string, CurrentClubAttendee>();
+  const currentByGuestId = new Map<string, CurrentClubAttendee>();
+  for (const attendee of currentAttendees) {
+    const snapshot = recordFromJson(attendee.profileSnapshot);
+    const memberId = typeof snapshot.clubRosterMemberId === "string" ? snapshot.clubRosterMemberId : null;
+    if (memberId) currentByMemberId.set(memberId, attendee);
+    if (snapshot.temporary === true) {
+      const guestId = typeof snapshot.clubGuestId === "string" ? snapshot.clubGuestId : attendee.id;
+      currentByGuestId.set(guestId, attendee);
+    }
+  }
+  const missingKeptGuest = input.keptGuestIds.find((guestId) => !currentByGuestId.has(guestId));
+  if (missingKeptGuest) {
+    throw new ClubRegistrationError(
+      "GUEST_INVALID",
+      "One of the extra people on this registration wasn't found. Refresh the page and try again.",
+    );
+  }
+  const newGuestIds = new Set(input.newGuests.map((guest) => guest.id));
+  if (newGuestIds.size !== input.newGuests.length || input.keptGuestIds.some((guestId) => newGuestIds.has(guestId))) {
+    throw new ClubRegistrationError("GUEST_INVALID", "Each extra person needs their own entry. Refresh the page and try again.");
+  }
+
+  const eventDate = calendarDateInEventTimeZone(event.startsAt, event.timezone);
+  const definition = form.definition;
+  const amendmentAttendees: RegistrationAmendmentInput["attendees"] = [];
+
+  for (const memberId of input.selectedMemberIds) {
+    const member = members.find((candidate) => candidate.id === memberId)!;
+    const person = rosterPerson(member, eventDate);
+    const clientId = clubAttendeeClientId(memberId);
+    const responses = {
+      ...(input.attendeeResponses[clientId] ?? {}),
+      ...rosterOwnedResponses(definition, person),
+    };
+    amendmentAttendees.push({
+      attendeeId: currentByMemberId.get(memberId)?.id ?? null,
+      clientId,
+      responses,
+      attendeeMetadata: {
+        clubOrganizationId: organizationId,
+        clubRosterMemberId: memberId,
+        ageOnEventDate: person.ageOnEventDate,
+      },
+    });
+  }
+
+  for (const guestId of input.keptGuestIds) {
+    const current = currentByGuestId.get(guestId)!;
+    const snapshot = recordFromJson(current.profileSnapshot);
+    const person: RosterPerson = {
+      firstName: typeof snapshot.firstName === "string" ? snapshot.firstName : "",
+      lastName: typeof snapshot.lastName === "string" ? snapshot.lastName : "",
+      ageOnEventDate: typeof snapshot.ageOnEventDate === "number" ? snapshot.ageOnEventDate : null,
+      gender: null,
+    };
+    const clientId = clubGuestClientId(guestId);
+    const responses = {
+      ...(input.attendeeResponses[clientId] ?? {}),
+      ...rosterOwnedResponses(definition, person),
+    };
+    amendmentAttendees.push({
+      attendeeId: current.id,
+      clientId,
+      responses,
+      attendeeMetadata: {
+        clubOrganizationId: organizationId,
+        ageOnEventDate: person.ageOnEventDate,
+        temporary: true,
+        temporaryAttendeeType: typeof snapshot.temporaryAttendeeType === "string" ? snapshot.temporaryAttendeeType : "ADULT",
+        clubGuestId: guestId,
+      },
+    });
+  }
+
+  for (const guest of input.newGuests) {
+    const person: RosterPerson = { firstName: guest.firstName, lastName: guest.lastName, ageOnEventDate: guest.age, gender: null };
+    const clientId = clubGuestClientId(guest.id);
+    const responses = {
+      ...(input.attendeeResponses[clientId] ?? {}),
+      ...rosterOwnedResponses(definition, person),
+    };
+    amendmentAttendees.push({
+      attendeeId: null,
+      clientId,
+      responses,
+      attendeeMetadata: {
+        clubOrganizationId: organizationId,
+        ageOnEventDate: guest.age,
+        temporary: true,
+        temporaryAttendeeType: guestIsAdult(guest) ? "ADULT" : "YOUTH",
+        clubGuestId: guest.id,
+      },
+    });
+  }
+
+  if (amendmentAttendees.length === 0) {
+    throw new ClubRegistrationError("ATTENDEES_INVALID", "Choose at least one person from your roster.");
+  }
+
+  const amendmentInput: RegistrationAmendmentInput = {
+    clientRequestId: input.clientRequestId,
+    expectedUpdatedAt: input.expectedUpdatedAt,
+    reason: "",
+    responses: answers.responses,
+    attendees: amendmentAttendees,
+    previewOnly: true,
+  };
+  const preview = await previewRegistrationAmendment(eventId, registrationId, amendmentInput);
+  return amendRegistration(
+    eventId,
+    registrationId,
+    { ...amendmentInput, previewOnly: false, quoteFingerprint: preview.quoteFingerprint },
+    { kind: "CLUB_DIRECTOR", attendeeAccountId: accountId, displayName: account?.displayName ?? "Club director" },
+    now,
+  );
 }

@@ -110,6 +110,7 @@ async function postHandler(
       registrationId,
       input,
       {
+        kind: "STAFF",
         id: access.user.id,
         displayName: access.user.displayName,
       },

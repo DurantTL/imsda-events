@@ -30,10 +30,18 @@ import { getRegistrationByIdWithClient } from "@/modules/registrations/repositor
 import { withAttendeeTypeOptions, attendeeTypeSelector } from "@/modules/attendee-types/form-options";
 import type { RegistrationAmendmentInput } from "@/modules/registrations/schemas";
 
-type AmendmentActor = {
-  id: string;
-  displayName: string;
-};
+/**
+ * Who is amending. A staff user amends any registration through the staff
+ * UI. A club director (H3b, #366) may only amend their own club's
+ * registration, through the club portal, and is recorded on the operation
+ * with their attendee account id instead of a staff user id — the two are
+ * different id spaces, so `RegistrationOperation.actorUserId` /
+ * `actorAttendeeAccountId` are mutually exclusive (enforced by a database
+ * check constraint), same shape as `AttendeeAccountPersonLink`'s actor.
+ */
+export type AmendmentActor =
+  | { kind: "STAFF"; id: string; displayName: string }
+  | { kind: "CLUB_DIRECTOR"; attendeeAccountId: string; displayName: string };
 
 type AmendmentInputAttendee = RegistrationAmendmentInput["attendees"][number];
 
@@ -920,6 +928,41 @@ function amendmentPreview(prepared: PreparedAmendment) {
   };
 }
 
+/**
+ * The registration-scope answers an amendment must echo back unchanged to
+ * pass `assertProtectedFieldsUnchanged`, and the `updatedAt` an amendment's
+ * `expectedUpdatedAt` must match. Same precedence `prepareAmendment` uses
+ * internally (the latest amendment's snapshot, falling back to the original
+ * submission): a caller that only ever amends attendees, never registration
+ * fields, can read this once and pass it straight through. Returns null when
+ * the registration can't be amended at all (not found, wrong event, or
+ * never submitted through a published form).
+ */
+export async function currentRegistrationAnswers(eventId: string, registrationId: string) {
+  const registration = await getPrisma().registration.findFirst({
+    where: { id: registrationId, eventId },
+    select: {
+      updatedAt: true,
+      publicFormSubmission: { select: { responses: true } },
+      operations: {
+        where: { type: "AMENDMENT" },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { afterSnapshot: true },
+      },
+    },
+  });
+  if (!registration || !registration.publicFormSubmission) return null;
+  const latest = recordFromJson(registration.operations[0]?.afterSnapshot);
+  const current = recordFromJson(latest.registrationResponses);
+  return {
+    updatedAt: registration.updatedAt.toISOString(),
+    responses: Object.keys(current).length > 0
+      ? current
+      : recordFromJson(registration.publicFormSubmission.responses),
+  };
+}
+
 export async function previewRegistrationAmendment(
   eventId: string,
   registrationId: string,
@@ -1062,6 +1105,7 @@ export async function amendRegistration(
                   lastName: attendee.identity.lastName,
                   email: attendee.identity.email,
                   phone: attendee.identity.phone || null,
+                  ...(inputAttendee.attendeeMetadata ?? {}),
                 },
                 formResponses: attendee.responses as Prisma.InputJsonValue,
               },
@@ -1096,6 +1140,7 @@ export async function amendRegistration(
                   phone: attendee.identity.phone || null,
                   source: "PUBLIC_REGISTRATION_AMENDMENT",
                   formVersionId: prepared.registration.publicFormSubmission!.formVersionId,
+                  ...(inputAttendee.attendeeMetadata ?? {}),
                 },
                 formResponses: attendee.responses as Prisma.InputJsonValue,
               },
@@ -1255,7 +1300,8 @@ export async function amendRegistration(
             type: "AMENDMENT",
             clientRequestId: input.clientRequestId,
             requestFingerprint,
-            actorUserId: actor.id,
+            actorUserId: actor.kind === "STAFF" ? actor.id : null,
+            actorAttendeeAccountId: actor.kind === "CLUB_DIRECTOR" ? actor.attendeeAccountId : null,
             actorNameSnapshot: actor.displayName,
             beforeSnapshot: beforeSnapshot as Prisma.InputJsonValue,
             afterSnapshot: afterSnapshot as Prisma.InputJsonValue,
@@ -1266,7 +1312,13 @@ export async function amendRegistration(
         await tx.auditLog.create({
           data: {
             eventId,
-            actorUserId: actor.id,
+            // A director actor has no staff `User` row for this FK, so it
+            // stays null here (same pattern as attendee self-service
+            // answer updates); the director's attendee account id is
+            // recorded structurally on the operation above and, redundantly
+            // for audit queries that only scan AuditLog, in metadata below.
+            // Never their name or birth date.
+            actorUserId: actor.kind === "STAFF" ? actor.id : null,
             action: "REGISTRATION_AMENDED",
             entityType: "RegistrationOperation",
             entityId: amendmentId,
@@ -1276,6 +1328,8 @@ export async function amendRegistration(
               operationId: amendmentId,
               clientRequestId: input.clientRequestId,
               reason: input.reason,
+              actorKind: actor.kind,
+              actorAttendeeAccountId: actor.kind === "CLUB_DIRECTOR" ? actor.attendeeAccountId : null,
               priorTotalCents: cents(prepared.registration.totalAmount),
               resultingTotalCents: prepared.finalTotalCents,
               priorAttendeeCount: prepared.registration.attendees.length,

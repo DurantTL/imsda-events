@@ -4,6 +4,7 @@ import { RosterAccessError } from "@/modules/club-rosters/access";
 import { ClubRegistrationError } from "@/modules/club-registrations/repository";
 import { PublicRegistrationError } from "@/modules/forms/public-repository";
 import { ClassSelectionError } from "@/modules/honors/enrollment-repository";
+import { RegistrationAmendmentError } from "@/modules/registrations/amendments-repository";
 
 const noStore = { "Cache-Control": "no-store" };
 
@@ -21,8 +22,27 @@ export function clubRegistrationApiError(error: unknown, action: string) {
     return Response.json({ error: error.code, message: error.message }, { status: error.status, headers: noStore });
   }
   if (error instanceof ClubRegistrationError) {
-    const status = error.code === "EVENT_NOT_FOUND" ? 404 : error.code === "DRAFT_TOO_LARGE" ? 413 : 409;
+    const status = error.code === "EVENT_NOT_FOUND" || error.code === "REGISTRATION_NOT_FOUND"
+      ? 404
+      : error.code === "DRAFT_TOO_LARGE"
+        ? 413
+        : error.code === "REGISTRATION_CLOSED"
+          ? 410
+          : error.code === "ATTENDEES_INVALID"
+            ? 422
+            : 409;
     return Response.json({ error: error.code, message: error.message }, { status, headers: noStore });
+  }
+  if (error instanceof RegistrationAmendmentError) {
+    const status = error.code === "REGISTRATION_NOT_FOUND"
+      ? 404
+      : error.code === "INVALID_AMENDMENT" || error.code === "PROTECTED_FIELD_CHANGED" || error.code === "ATTENDEE_IDENTITY_CHANGED"
+        ? 422
+        : 409;
+    return Response.json(
+      { error: error.code, message: error.message, issues: error.issues, details: error.details },
+      { status, headers: noStore },
+    );
   }
   if (error instanceof ClassSelectionError) {
     const status = error.code === "NOT_REGISTERED" || error.code === "ATTENDEE_NOT_FOUND"

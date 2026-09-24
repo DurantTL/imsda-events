@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   listDirectedClubs: vi.fn(),
   rejectCrossOriginRequest: vi.fn(),
   submitClubRegistration: vi.fn(),
+  amendClubRegistration: vi.fn(),
   eventFindFirst: vi.fn(),
   rosterFindMany: vi.fn(),
   draftUpsert: vi.fn(),
@@ -27,11 +28,12 @@ vi.mock("@/modules/organizations/director-access", () => ({ listDirectedClubs: m
 vi.mock("@/modules/access/request-security", () => ({ rejectCrossOriginRequest: mocks.rejectCrossOriginRequest }));
 vi.mock("@/modules/club-registrations/repository", async () => {
   const actual = await vi.importActual<typeof import("@/modules/club-registrations/repository")>("@/modules/club-registrations/repository");
-  return { ...actual, submitClubRegistration: mocks.submitClubRegistration };
+  return { ...actual, submitClubRegistration: mocks.submitClubRegistration, amendClubRegistration: mocks.amendClubRegistration };
 });
 
 import { PUT as PUT_DRAFT } from "@/app/api/attendee/clubs/[organizationId]/events/[eventId]/draft/route";
-import { POST as SUBMIT } from "@/app/api/attendee/clubs/[organizationId]/events/[eventId]/registration/route";
+import { PATCH as EDIT, POST as SUBMIT } from "@/app/api/attendee/clubs/[organizationId]/events/[eventId]/registration/route";
+import { ClubRegistrationError } from "@/modules/club-registrations/repository";
 
 const account = { id: "director-1", verifiedEmail: "director@example.test", displayName: "Test Director" };
 const clubA = { organizationId: "club-a", name: "Club A", role: "DIRECTOR", sponsoringChurch: null };
@@ -58,6 +60,11 @@ beforeEach(() => {
   mocks.listDirectedClubs.mockResolvedValue([clubA, clubB]);
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
   mocks.submitClubRegistration.mockResolvedValue({ confirmationCode: "REG-1" });
+  mocks.amendClubRegistration.mockResolvedValue({
+    registration: { id: "registration-1", confirmationCode: "REG-1" },
+    amendment: { id: "amendment-1" },
+    pendingMessageIds: [],
+  });
   mocks.eventFindFirst.mockResolvedValue({ id: "event-1", startsAt: new Date("2026-12-05T15:00:00Z") });
   mocks.rosterFindMany.mockResolvedValue([{ id: "m1" }, { id: "m2" }]);
   mocks.draftUpsert.mockResolvedValue({ updatedAt: new Date("2026-10-01T00:00:00Z") });
@@ -78,6 +85,42 @@ describe("club registration routes", () => {
     expect((await SUBMIT(request("POST", submission), ctx("club-a"))).status).toBe(404);
     expect(mocks.draftUpsert).toHaveBeenCalledTimes(1);
     expect(mocks.submitClubRegistration).not.toHaveBeenCalled();
+  });
+
+  const edit = {
+    clientRequestId: "2f0e3c1a-7a55-4c43-8e1c-2f6f6f4a9a10",
+    expectedUpdatedAt: "2026-10-15T12:00:00.000Z",
+    selectedMemberIds: ["m1"],
+    keptGuestIds: [],
+    newGuests: [],
+    attendeeResponses: {},
+  };
+
+  it("reopens and amends a submitted club registration for a current director", async () => {
+    const response = await EDIT(request("PATCH", edit), ctx("club-a"));
+    expect(response.status).toBe(200);
+    expect(mocks.amendClubRegistration).toHaveBeenCalledWith("club-a", "event-1", "director-1", edit);
+    await expect(response.json()).resolves.toMatchObject({ registration: { confirmationCode: "REG-1" } });
+  });
+
+  it("stops a director whose grant was revoked from reopening the registration (H3b, #366)", async () => {
+    mocks.listDirectedClubs.mockResolvedValue([clubB]);
+    expect((await EDIT(request("PATCH", edit), ctx("club-a"))).status).toBe(404);
+    expect(mocks.amendClubRegistration).not.toHaveBeenCalled();
+  });
+
+  it("maps a closed-registration edit to a clear refusal", async () => {
+    mocks.amendClubRegistration.mockRejectedValue(
+      new ClubRegistrationError("REGISTRATION_CLOSED", "Registration for this event is closed."),
+    );
+    const response = await EDIT(request("PATCH", edit), ctx("club-a"));
+    expect(response.status).toBe(410);
+    await expect(response.json()).resolves.toMatchObject({ error: "REGISTRATION_CLOSED" });
+  });
+
+  it("rejects a malformed edit request", async () => {
+    expect((await EDIT(request("PATCH", { ...edit, selectedMemberIds: "m1" }), ctx("club-a"))).status).toBe(400);
+    expect(mocks.amendClubRegistration).not.toHaveBeenCalled();
   });
 
   it("saves drafts only with people on this club's active roster", async () => {

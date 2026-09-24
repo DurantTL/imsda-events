@@ -100,6 +100,19 @@ const registrationAmendmentAttendeeSchema = z.strictObject({
   attendeeId: z.string().trim().min(1).max(100).nullable(),
   clientId: z.string().trim().min(1).max(100),
   responses: z.record(z.string(), z.unknown()),
+  /**
+   * Scalar profile-snapshot fields the caller wants merged onto this
+   * attendee's `profileSnapshot`, in front of the identity fields the
+   * amendment engine always sets. A club registration (#366) uses this to
+   * carry its own roster/guest markers (`clubRosterMemberId`,
+   * `ageOnEventDate`, `temporary`, ...) through amendments the same way the
+   * original submission set them; never used for names or birth dates.
+   * Optional and unused by the staff amendment UI.
+   */
+  attendeeMetadata: z.record(
+    z.string(),
+    z.union([z.string(), z.number(), z.boolean(), z.null()]),
+  ).optional(),
 });
 
 export const registrationAmendmentInputSchema = z.strictObject({
