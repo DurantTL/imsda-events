@@ -73,6 +73,7 @@ export function ClubPacketSheet({ packet, qrSrc }: { packet: ClubPacket; qrSrc: 
             <article><strong>{headcounts.staff}</strong><span>Staff</span></article>
             <article><strong>{headcounts.child}</strong><span>Children</span></article>
             <article className="club-packet-total"><strong>{headcounts.total}</strong><span>Total</span></article>
+            <article><strong>{packet.firstTimeCampers}</strong><span>★ First-time campers</span></article>
           </div>
         </section>
 
@@ -81,7 +82,7 @@ export function ClubPacketSheet({ packet, qrSrc }: { packet: ClubPacket; qrSrc: 
             <h3>Attendee roster · check-in list</h3>
             <p className="club-packet-key">
               <CheckSquare aria-hidden="true" size={12} /> Check in
-              &nbsp;·&nbsp;[M] Medical personnel &nbsp;·&nbsp;[MG] Master Guide investiture &nbsp;·&nbsp;⚠ Dietary restriction
+              &nbsp;·&nbsp;★ First-time camper &nbsp;·&nbsp;[M] Medical personnel &nbsp;·&nbsp;[MG] Master Guide investiture &nbsp;·&nbsp;⚠ Dietary restriction
             </p>
           </div>
           <ul className="club-packet-roster-columns">
@@ -90,6 +91,7 @@ export function ClubPacketSheet({ packet, qrSrc }: { packet: ClubPacket; qrSrc: 
                 <span className="club-packet-check" aria-hidden="true" />
                 <span className="club-packet-roster-name" translate="no">
                   {attendee.lastName}, {attendee.firstName}
+                  {attendee.firstTimeCamper && " ★"}
                   {attendee.medicalPersonnel && " [M]"}
                   {attendee.masterGuideInvestiture && " [MG]"}
                   {attendee.hasDietaryNeed && " ⚠"}

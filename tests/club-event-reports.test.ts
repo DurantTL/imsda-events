@@ -57,7 +57,7 @@ function clubInput(overrides: Partial<BuildClubEventRecordInput> = {}): BuildClu
     attendees: [
       attendee({
         id: "att-1", firstName: "Jamie", lastName: "Lee",
-        responses: { attendee_type: "Pathfinder", attendee_age: 12, gender: "Female", dietary_needs: "PRIVATE-PEANUT-ALLERGY" },
+        responses: { attendee_type: "Pathfinder", attendee_age: 12, gender: "Female", dietary_needs: "PRIVATE-PEANUT-ALLERGY", first_time_camper: true },
       }),
       attendee({
         id: "att-2", firstName: "Robin", lastName: "Diaz",
@@ -120,6 +120,11 @@ describe("buildClubEventRecord", () => {
     }));
     expect(record.attendees.map((person) => person.hasDietaryNeed))
       .toEqual([false, false, false, false, false, false, false, true]);
+  });
+
+  it("reads the first-time camper checkbox for each attendee", () => {
+    const record = buildClubEventRecord(clubInput());
+    expect(record.attendees.map((person) => person.firstTimeCamper)).toEqual([true, false, false, false, false]);
   });
 
   it("leaves lateRateApplied false when no line item carries the late-pricing label", () => {

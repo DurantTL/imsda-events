@@ -36,6 +36,7 @@ export type ClubRosterAttendee = {
   gender: string | null;
   medicalPersonnel: boolean;
   masterGuideInvestiture: boolean;
+  firstTimeCamper: boolean;
   /** True only when the club answered a non-blank dietary restriction — the text itself is never carried here. */
   hasDietaryNeed: boolean;
 };
@@ -195,6 +196,7 @@ export function buildClubEventRecord(input: BuildClubEventRecordInput): ClubEven
       gender: textValue(attendee.responses.gender) || null,
       medicalPersonnel: boolValue(attendee.responses.medical_personnel),
       masterGuideInvestiture: boolValue(attendee.responses.master_guide_investiture),
+      firstTimeCamper: boolValue(attendee.responses.first_time_camper),
       hasDietaryNeed: (() => {
         const answer = textValue(attendee.responses.dietary_needs);
         return answer.length > 0 && !NO_DIETARY_NEED.test(answer);

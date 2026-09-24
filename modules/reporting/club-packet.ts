@@ -27,6 +27,7 @@ export type ClubPacketAttendeeRow = {
   gender: string | null;
   medicalPersonnel: boolean;
   masterGuideInvestiture: boolean;
+  firstTimeCamper: boolean;
   hasDietaryNeed: boolean;
 };
 
@@ -55,6 +56,8 @@ export type ClubPacket = {
     confirmationCode: string;
   };
   headcounts: ClubHeadcounts;
+  /** Attendees marked "First time at Camporee?" on the form. */
+  firstTimeCampers: number;
   attendees: ClubPacketAttendeeRow[];
   camping: ClubEventRecord["camping"];
   assignment: ClubAssignmentSummary;
@@ -92,6 +95,7 @@ export function buildClubPacket(club: ClubEventRecord, event: ClubPacketEvent): 
       gender: attendee.gender,
       medicalPersonnel: attendee.medicalPersonnel,
       masterGuideInvestiture: attendee.masterGuideInvestiture,
+      firstTimeCamper: attendee.firstTimeCamper,
       hasDietaryNeed: attendee.hasDietaryNeed,
     }));
 
@@ -108,6 +112,7 @@ export function buildClubPacket(club: ClubEventRecord, event: ClubPacketEvent): 
       confirmationCode: club.confirmationCode,
     },
     headcounts: clubHeadcounts(club.attendees),
+    firstTimeCampers: club.attendees.filter((attendee) => attendee.firstTimeCamper).length,
     attendees,
     camping: club.camping,
     assignment: null,

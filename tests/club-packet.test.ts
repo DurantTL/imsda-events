@@ -34,7 +34,7 @@ function clubInput(): BuildClubEventRecordInput {
       bible_names: "Sam Ortiz",
     },
     attendees: [
-      { id: "att-1", firstName: "Jamie", lastName: "Lee", responses: { attendee_type: "Pathfinder", attendee_age: 12, gender: "Female", dietary_needs: "peanuts" } },
+      { id: "att-1", firstName: "Jamie", lastName: "Lee", responses: { attendee_type: "Pathfinder", attendee_age: 12, gender: "Female", dietary_needs: "peanuts", first_time_camper: true } },
       { id: "att-2", firstName: "Robin", lastName: "Diaz", responses: { attendee_type: "Staff", attendee_age: 34, medical_personnel: true } },
     ],
     amountOwedCents: 4500,
@@ -61,6 +61,10 @@ describe("buildClubPacket", () => {
     const packet = buildClubPacket(club, eventInfo());
     expect(packet.headcounts).toEqual({ pathfinder: 1, tlt: 0, staff: 1, child: 0, total: 2 });
     expect(packet.attendees).toHaveLength(2);
+    expect(packet.firstTimeCampers).toBe(1);
+    // Sorted by last name: Diaz, then Lee (the first-timer).
+    expect(packet.attendees.map((attendee) => [attendee.lastName, attendee.firstTimeCamper]))
+      .toEqual([["Diaz", false], ["Lee", true]]);
     expect(packet.camping.tents).toBe("3 large");
     expect(packet.amountOwedCents).toBe(4500);
     expect(packet.isBilled).toBe(true);

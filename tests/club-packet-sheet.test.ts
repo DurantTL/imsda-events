@@ -26,9 +26,10 @@ function packet(overrides: Partial<ClubPacket> = {}): ClubPacket {
       confirmationCode: "CAMP-001",
     },
     headcounts: { pathfinder: 1, tlt: 0, staff: 1, child: 0, total: 2 },
+    firstTimeCampers: 1,
     attendees: [
-      { id: "att-1", lastName: "Lee", firstName: "Jamie", roleAbbreviation: "PF", ageOnEventDate: 12, gender: "Female", medicalPersonnel: false, masterGuideInvestiture: false, hasDietaryNeed: true },
-      { id: "att-2", lastName: "Diaz", firstName: "Robin", roleAbbreviation: "Stf", ageOnEventDate: 34, gender: "Male", medicalPersonnel: true, masterGuideInvestiture: false, hasDietaryNeed: false },
+      { id: "att-1", lastName: "Lee", firstName: "Jamie", roleAbbreviation: "PF", ageOnEventDate: 12, gender: "Female", medicalPersonnel: false, masterGuideInvestiture: false, firstTimeCamper: true, hasDietaryNeed: true },
+      { id: "att-2", lastName: "Diaz", firstName: "Robin", roleAbbreviation: "Stf", ageOnEventDate: 34, gender: "Male", medicalPersonnel: true, masterGuideInvestiture: false, firstTimeCamper: false, hasDietaryNeed: false },
     ],
     camping: { tents: "3 large", trailers: "1", kitchenCanopy: "20x20", totalSqft: "900", campNextTo: "Eagles" },
     assignment: { campsiteLocation: "Field C", campsiteNotes: "", dutyLabel: "Flags", dutyDay: "Friday", dutyTime: "AM", activityLabel: "Skit", notes: "" },
@@ -57,6 +58,13 @@ describe("ClubPacketSheet", () => {
     expect(markup).toContain("Diaz, Robin");
     expect(markup).toContain("[M]");
     expect(markup).not.toContain("peanuts");
+  });
+
+  it("marks first-time campers with a star and counts them in the summary", () => {
+    const markup = renderToStaticMarkup(createElement(ClubPacketSheet, { packet: packet(), qrSrc: "/api/x/qr" }));
+    expect(markup).toContain("Lee, Jamie ★");
+    expect(markup).not.toContain("Diaz, Robin ★");
+    expect(markup).toContain("First-time campers");
   });
 
   it("shows the back's camping requirements, assignment, and estimated amount billed to the church", () => {
