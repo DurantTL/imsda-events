@@ -1034,6 +1034,10 @@ model Event {
   /// the event's name, which meant only one event could ever collect sizes and
   /// renaming it turned collection off without telling anyone.
   collectsShirtSizes   Boolean            @default(false)
+  /// A youth or children's event, where parents aren't normally present (#388).
+  /// Every adult registered is flagged until they have a current Sterling
+  /// Volunteers background check on file. Flags only: nothing is blocked.
+  checksAdultBackgrounds Boolean          @default(false)
   attendeeEditPolicy   AttendeeEditPolicy @default(VERIFY_EVERY_EDIT)
   billingMode          EventBillingMode   @default(ATTENDEE_PAY)
   seminarPreferenceClosesOn          String?
@@ -1314,6 +1318,7 @@ model Person {
   matchCandidatesAsA   PersonMatchCandidate[] @relation("PersonMatchCandidateAsA")
   matchCandidatesAsB   PersonMatchCandidate[] @relation("PersonMatchCandidateAsB")
   clubRosterMemberships ClubRosterMember[]
+  backgroundCheck       BackgroundCheck?
 
   @@index([lastName, firstName])
 }
@@ -2986,6 +2991,26 @@ model ClubRosterMember {
   @@unique([organizationId, clubYear, personId])
   @@index([organizationId, clubYear, status])
   @@index([personId])
+}
+
+/// A person's Sterling Volunteers background check (#388), recorded from the
+/// CSV a system administrator uploads. Only the dates are kept, never the file,
+/// the birth date used to match, or any result that wasn't a clear check. One
+/// row per person: a later upload with a later expiry replaces it.
+model BackgroundCheck {
+  id               String   @id @default(cuid())
+  personId         String   @unique
+  provider         String   @default("STERLING")
+  /// Calendar dates ("2026-09-23"). Current through `expiresOn`.
+  checkedOn        String?
+  expiresOn        String
+  recordedByUserId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@index([expiresOn])
 }
 
 /// A club's single registration for a club event (#358): an ordinary

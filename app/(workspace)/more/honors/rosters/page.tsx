@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Award, Download, ShieldCheck, UsersRound } from "lucide-react";
 import { AccessRestricted } from "@/components/access-restricted";
+import { BackgroundCheckBadge } from "@/components/background-check-flags";
 import { PrintReportButton } from "@/components/print-report-button";
 import { resolveEventContext } from "@/modules/events/selection";
 import {
@@ -12,6 +13,7 @@ import {
   rosterGroupOf,
 } from "@/modules/honors/roster-domain";
 import { getHonorRosterData } from "@/modules/honors/roster-repository";
+import { backgroundFlaggedAttendeeIds } from "@/modules/background-checks/repository";
 
 export const metadata: Metadata = {
   title: "Honors Weekend rosters",
@@ -35,7 +37,7 @@ export default async function HonorRostersPage({
     return <AccessRestricted title="Honors rosters are restricted" detail="Ask an event administrator for report access." />;
   }
   const includeDietary = permissions.includes("VIEW_SENSITIVE_DATA");
-  const data = await getHonorRosterData(event.id, { includeDietary });
+  const [data, flagged] = await Promise.all([getHonorRosterData(event.id, { includeDietary }), backgroundFlaggedAttendeeIds(event.id)]);
   if (!data) return <AccessRestricted title="Event unavailable" detail="The selected event could not be loaded." />;
 
   const view: View = query.view === "site" || query.view === "clubs" ? query.view : "classes";
@@ -111,7 +113,7 @@ export default async function HonorRostersPage({
                     <tbody>
                       {roster.people.map((person) => (
                         <tr key={person.id}>
-                          <th scope="row" translate="no">{person.lastName}, {person.firstName}</th>
+                          <th scope="row" translate="no">{person.lastName}, {person.firstName}{flagged.has(person.id) && <> <BackgroundCheckBadge /></>}</th>
                           <td translate="no">{person.clubName}</td>
                           <td>{ageText(person.ageOnEventDate)}</td>
                           <td>{rosterGroupLabels[rosterGroupOf(person.attendeeType)]}</td>
@@ -172,7 +174,7 @@ export default async function HonorRostersPage({
                   {site.people.map((person) => (
                     <tr key={person.id}>
                       <td className="honor-roster-box">{person.checkedIn ? "✓" : ""}</td>
-                      <th scope="row" translate="no">{person.lastName}, {person.firstName}</th>
+                      <th scope="row" translate="no">{person.lastName}, {person.firstName}{flagged.has(person.id) && <> <BackgroundCheckBadge /></>}</th>
                       <td translate="no">{person.clubName}</td>
                       <td>{ageText(person.ageOnEventDate)}</td>
                       <td>{rosterGroupLabels[rosterGroupOf(person.attendeeType)]}</td>
@@ -222,7 +224,7 @@ export default async function HonorRostersPage({
                     <tbody>
                       {schedule.people.map((row) => (
                         <tr key={row.person.id}>
-                          <th scope="row" translate="no">{row.person.lastName}, {row.person.firstName}</th>
+                          <th scope="row" translate="no">{row.person.lastName}, {row.person.firstName}{flagged.has(row.person.id) && <> <BackgroundCheckBadge /></>}</th>
                           <td>{ageText(row.person.ageOnEventDate)}</td>
                           {schedule.sessions.map((session) => {
                             const offering = row.bySession[session.id];

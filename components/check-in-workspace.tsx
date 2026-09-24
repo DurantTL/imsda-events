@@ -20,6 +20,7 @@ import {
   useState,
 } from "react";
 import { CheckInPaymentDue } from "@/components/check-in-payment-due";
+import { BackgroundCheckBadge } from "@/components/background-check-flags";
 import { CheckInScanner } from "@/components/check-in-scanner";
 import { useOfflineCheckInQueue } from "@/components/use-offline-check-in-queue";
 import { offlineCheckInErrorMessage } from "@/modules/checkin/domain";
@@ -38,6 +39,7 @@ export function CheckInWorkspace({
   initialRegistrations,
   canCheckIn,
   showBalances,
+  backgroundFlaggedAttendeeIds = [],
 }: {
   eventName: string;
   eventId: string;
@@ -45,6 +47,8 @@ export function CheckInWorkspace({
   canCheckIn: boolean;
   /** False for events billed to an organization: attendees owe nothing at the door. */
   showBalances: boolean;
+  /** Adults at a youth or children's event without a current check (#388). Shown, never blocking. */
+  backgroundFlaggedAttendeeIds?: string[];
 }) {
   const [arrivals, setArrivals] = useState<Arrival[]>(
     initialRegistrations.flatMap((registration) => (
@@ -393,6 +397,7 @@ export function CheckInWorkspace({
             .map((item) => item.attendeeId)}
           eventId={eventId}
           paymentDueByConfirmationCode={paymentDueByConfirmationCode}
+          backgroundFlaggedAttendeeIds={backgroundFlaggedAttendeeIds}
           onConfirmCheckIn={(attendee) => requestCheckIn(attendee.id)}
           queuedAttendeeIds={queue
             .filter((item) => item.state === "QUEUED")
@@ -449,6 +454,7 @@ export function CheckInWorkspace({
                   <span translate="no">{arrival.confirmationCode}</span> ·{" "}
                   {arrival.attendeeType.toLowerCase()}
                 </small>
+                {backgroundFlaggedAttendeeIds.includes(arrival.id) && <BackgroundCheckBadge />}
                 <CheckInPaymentDue
                   balanceCents={arrival.balanceCents}
                   confirmationCode={arrival.confirmationCode}

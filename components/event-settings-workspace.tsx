@@ -77,6 +77,7 @@ function draftFromEvent(event: EventSettingsRecord | null): EventSettingsInput {
     registrationOpensOn: event?.registrationOpensOn ?? null,
     registrationClosesOn: event?.registrationClosesOn ?? null,
     collectsShirtSizes: event?.collectsShirtSizes ?? false,
+    checksAdultBackgrounds: event?.checksAdultBackgrounds ?? false,
     attendeeEditPolicy: event?.attendeeEditPolicy ?? "VERIFY_EVERY_EDIT",
     billingMode: event?.billingMode ?? "ATTENDEE_PAY",
     approvedPaymentInstructions: event?.approvedPaymentInstructions ?? null,
@@ -404,6 +405,21 @@ export function EventSettingsWorkspace({
                   Registrants choose a size on their private page, and staff can send a reviewed
                   request to everyone still missing one. Turning this off hides the question and
                   stops the request being sent.
+                </small>
+              </span>
+            </label>
+            <label className="event-setting-toggle">
+              <input
+                type="checkbox"
+                checked={draft.checksAdultBackgrounds}
+                onChange={(event) => update("checksAdultBackgrounds", event.target.checked)}
+              />
+              <span>
+                <strong>Youth or children&apos;s event: check adults&apos; background checks</strong>
+                <small>
+                  For events where parents aren&apos;t normally there. Every adult registered, club
+                  staff or not, is flagged until a current Sterling Volunteers check is on file.
+                  Registration and check-in are never blocked.
                 </small>
               </span>
             </label>

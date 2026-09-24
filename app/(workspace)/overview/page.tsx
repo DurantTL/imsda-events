@@ -7,6 +7,7 @@ import {
   CircleDollarSign,
   Megaphone,
   Search,
+  ShieldAlert,
   UserRoundPlus,
   UsersRound,
   WalletCards,
@@ -15,6 +16,7 @@ import { evaluateEventRegistrationPhase } from "@/modules/events/lifecycle";
 import { getEventOverview } from "@/modules/events/repository";
 import { resolveEventContext } from "@/modules/events/selection";
 import { listRegistrations } from "@/modules/registrations/repository";
+import { listEventBackgroundFlags } from "@/modules/background-checks/repository";
 
 export const metadata: Metadata = { title: "Overview" };
 
@@ -44,9 +46,10 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
   const { event, permissions } = await resolveEventContext(requested);
   const canSeeSensitiveData = permissions.includes("VIEW_SENSITIVE_DATA");
   const canViewReports = permissions.includes("VIEW_REPORTS");
-  const [overview, registrations] = await Promise.all([
+  const [overview, registrations, backgroundFlags] = await Promise.all([
     getEventOverview(event.id),
     canSeeSensitiveData ? listRegistrations(event.id) : Promise.resolve([]),
+    canViewReports ? listEventBackgroundFlags(event.id) : Promise.resolve(null),
   ]);
   if (!overview) return null;
 
@@ -110,7 +113,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
         </div>
 
         <aside className="side-column">
-          {canSeeSensitiveData && <section className="panel attention-panel"><div className="section-heading"><div><p className="eyebrow">Needs attention</p><h2>Operations queue</h2></div></div>{permissions.includes("MANAGE_FINANCE") && <Link className="attention-row" href={`/finance${query}&filter=BALANCE`}><span className="attention-icon gold"><CircleDollarSign aria-hidden="true" size={18} /></span><span><strong>{metrics.pendingPaymentCount} {metrics.pendingPaymentCount === 1 ? "balance" : "balances"} to review</strong><small>{money(metrics.outstandingCents)} outstanding</small></span><ArrowRight aria-hidden="true" size={16} /></Link>}{permissions.includes("MANAGE_REGISTRATION") && <Link className="attention-row" href={`/people${query}&filter=DRAFT`}><span className="attention-icon purple"><UsersRound aria-hidden="true" size={18} /></span><span><strong>{incomplete} draft {incomplete === 1 ? "registration" : "registrations"}</strong><small>Complete attendee details</small></span><ArrowRight aria-hidden="true" size={16} /></Link>}</section>}
+          {canSeeSensitiveData && <section className="panel attention-panel"><div className="section-heading"><div><p className="eyebrow">Needs attention</p><h2>Operations queue</h2></div></div>{permissions.includes("MANAGE_FINANCE") && <Link className="attention-row" href={`/finance${query}&filter=BALANCE`}><span className="attention-icon gold"><CircleDollarSign aria-hidden="true" size={18} /></span><span><strong>{metrics.pendingPaymentCount} {metrics.pendingPaymentCount === 1 ? "balance" : "balances"} to review</strong><small>{money(metrics.outstandingCents)} outstanding</small></span><ArrowRight aria-hidden="true" size={16} /></Link>}{backgroundFlags && backgroundFlags.people.length > 0 && <Link className="attention-row" href={`/more/reports${query}#background-checks`}><span className="attention-icon coral"><ShieldAlert aria-hidden="true" size={18} /></span><span><strong>{backgroundFlags.people.length} {backgroundFlags.people.length === 1 ? "adult needs" : "adults need"} a background check</strong><small>No current Sterling Volunteers check. Nothing is blocked.</small></span><ArrowRight aria-hidden="true" size={16} /></Link>}{permissions.includes("MANAGE_REGISTRATION") && <Link className="attention-row" href={`/people${query}&filter=DRAFT`}><span className="attention-icon purple"><UsersRound aria-hidden="true" size={18} /></span><span><strong>{incomplete} draft {incomplete === 1 ? "registration" : "registrations"}</strong><small>Complete attendee details</small></span><ArrowRight aria-hidden="true" size={16} /></Link>}</section>}
           {process.env.NODE_ENV !== "production" && <section className="panel safe-boundary"><p className="eyebrow">Development environment</p><h2>Local database</h2><p>This preview writes only to the local IMSDA Events database. External delivery and card charging require their separate test credentials.</p><span><CheckCircle2 aria-hidden="true" size={16} /> Production services stay isolated</span></section>}
         </aside>
       </div>

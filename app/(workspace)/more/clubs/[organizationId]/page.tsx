@@ -3,6 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Eye } from "lucide-react";
 import { AccessRestricted } from "@/components/access-restricted";
+import { BackgroundCheckList } from "@/components/background-check-flags";
+import { listEventBackgroundFlags } from "@/modules/background-checks/repository";
 import { ClubOverview } from "@/components/club-overview";
 import { getPrisma } from "@/lib/prisma";
 import { isClubRegisteredForEvent, resolveClubOversight } from "@/modules/club-rosters/event-oversight";
@@ -26,6 +28,7 @@ export default async function EventClubPage({
   const club = await getPrisma().organization.findUnique({ where: { id: organizationId }, select: { name: true, parentOrganization: { select: { name: true } } } });
   if (!club) notFound();
   const query = `?event=${event.id}`;
+  const backgroundFlags = await listEventBackgroundFlags(event.id, { organizationId });
   return (
     <section className="page-stack">
       <Link className="secondary-button more-back-link" href={`/more/clubs${query}`}>Back to clubs</Link>
@@ -37,6 +40,18 @@ export default async function EventClubPage({
         </div>
       </div>
       <p className="inline-notice" role="status"><Eye aria-hidden="true" size={14} /> View only, with ages instead of birth dates. The club makes changes.</p>
+      {backgroundFlags && (
+        <section className="panel" id="background-checks">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Youth or children&apos;s event · the club doesn&apos;t see this</p>
+              <h2>Background check needed</h2>
+              <p>Adults from this club with no Sterling Volunteers check good through {backgroundFlags.lastDay}. Nothing is blocked.</p>
+            </div>
+          </div>
+          <BackgroundCheckList people={backgroundFlags.people} registrationHref={{ base: "/people", query: `event=${encodeURIComponent(event.id)}` }} showClub={false} />
+        </section>
+      )}
       <ClubOverview
         organizationId={organizationId}
         reportHref={(month) => `/more/clubs/reports/${organizationId}/${month}${query}`}

@@ -4,6 +4,7 @@ import { CheckInWorkspace } from "@/components/check-in-workspace";
 import { activeRegistrationStatuses } from "@/modules/events/lifecycle";
 import { resolveEventContext } from "@/modules/events/selection";
 import { listRegistrations } from "@/modules/registrations/repository";
+import { backgroundFlaggedAttendeeIds } from "@/modules/background-checks/repository";
 
 export const metadata: Metadata = {
   title: "Check-in",
@@ -20,8 +21,9 @@ export default async function CheckInPage({ searchParams }: { searchParams: Prom
   if (!permissions.includes("MANAGE_CHECK_IN")) {
     return <AccessRestricted title="Check-in is restricted" detail="Only event administrators and check-in staff can view the arrival roster and record attendance." />;
   }
-  const registrations = await listRegistrations(event.id, {
-    statuses: activeRegistrationStatuses,
-  });
-  return <CheckInWorkspace key={event.id} eventName={event.name} eventId={event.id} initialRegistrations={registrations} canCheckIn={permissions.includes("MANAGE_CHECK_IN")} showBalances={event.billingMode !== "DEFERRED_ORGANIZATION_INVOICE"} />;
+  const [registrations, flagged] = await Promise.all([
+    listRegistrations(event.id, { statuses: activeRegistrationStatuses }),
+    backgroundFlaggedAttendeeIds(event.id),
+  ]);
+  return <CheckInWorkspace key={event.id} eventName={event.name} eventId={event.id} initialRegistrations={registrations} canCheckIn={permissions.includes("MANAGE_CHECK_IN")} showBalances={event.billingMode !== "DEFERRED_ORGANIZATION_INVOICE"} backgroundFlaggedAttendeeIds={[...flagged]} />;
 }

@@ -1020,6 +1020,7 @@ select:focus-visible {
 .announcement-icon { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 10px; }
 .attention-icon.gold { background: var(--imsda-gold-soft); color: #8a5f08; }
 .attention-icon.purple { background: var(--imsda-purple-soft); color: var(--imsda-purple); }
+.attention-icon.coral { background: #fff1ef; color: var(--coral); }
 
 .safe-boundary { border-top: 4px solid var(--imsda-gold); background: linear-gradient(145deg, white, #fffdf7); }
 .safe-boundary > p:not(.eyebrow),
@@ -5561,6 +5562,8 @@ select:focus-visible {
 .report-icon.purple { background: var(--imsda-purple-soft); color: var(--imsda-purple); }
 .report-icon.green { background: var(--green-soft); color: var(--green); }
 .report-icon.gold { background: var(--imsda-gold-soft); color: #805807; }
+.report-icon.coral { background: #fff1ef; color: var(--coral); }
+.background-check-badge { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .report-download { flex: 0 0 auto; white-space: nowrap; }
 .report-empty { margin: 0; border-radius: 12px; background: var(--paper); color: var(--muted); padding: 18px; font-size: 0.72rem; text-align: center; }
 .report-field-list,
