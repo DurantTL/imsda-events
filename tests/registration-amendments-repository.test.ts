@@ -542,5 +542,126 @@ describe("registration amendments repository", () => {
     });
     expect(preview.quoteFingerprint).toMatch(/^[a-f0-9]{64}$/);
   });
+
+  it("edits an older registration without tripping on answers nobody changed (WR26)", async () => {
+    const { registration, tx } = repositoryFixture();
+    // Imported from the 2026 sheets: an answer this form doesn't configure, and a
+    // Teen with no seminar ranks even though the question is required.
+    const legacy = { ...attendeeResponses, attendee_email: "avery@example.test", seminar_preferences: [] as string[] };
+    registration.attendees[0].formResponses = { ...legacy };
+    const input = {
+      clientRequestId: "7c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+      expectedUpdatedAt: registration.updatedAt.toISOString(),
+      reason: "",
+      responses: { ...registrationResponses },
+      attendees: [{
+        attendeeId: "attendee-1",
+        clientId: "attendee-row-1",
+        responses: { ...legacy, meal: "Vegan" },
+      }],
+      previewOnly: true as const,
+    };
+    const preview = await previewRegistrationAmendment("event-1", "registration-1", input);
+    await amendRegistration("event-1", "registration-1", {
+      ...input,
+      previewOnly: false as const,
+      quoteFingerprint: preview.quoteFingerprint,
+    }, actor, new Date("2026-08-04T13:00:00.000Z"));
+    // The unconfigured answer is kept as it was.
+    expect(tx.registrationAttendee.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        formResponses: expect.objectContaining({ attendee_email: "avery@example.test", meal: "Vegan" }),
+      }),
+    }));
+  });
+
+  it("still checks an unconfigured answer that was added or changed", async () => {
+    const { registration } = repositoryFixture();
+    const legacy = { ...attendeeResponses, attendee_email: "avery@example.test" };
+    registration.attendees[0].formResponses = { ...legacy };
+    await expect(previewRegistrationAmendment("event-1", "registration-1", {
+      clientRequestId: "8d2e3f4a-5b6c-4d7e-8f9a-0b1c2d3e4f5a",
+      expectedUpdatedAt: registration.updatedAt.toISOString(),
+      reason: "",
+      responses: { ...registrationResponses },
+      attendees: [{
+        attendeeId: "attendee-1",
+        clientId: "attendee-row-1",
+        responses: { ...attendeeResponses, attendee_email: "someone-else@example.test" },
+      }],
+      previewOnly: true as const,
+    })).rejects.toMatchObject({ code: "INVALID_AMENDMENT" });
+  });
+
+  it("still reports an issue a changed answer newly causes, like a Teen changed to an Adult (WR26)", async () => {
+    const { registration } = repositoryFixture();
+    // Seminar ranks are optional for "Vegan" here, standing in for a Teen.
+    const conditional = structuredClone(definition);
+    const seminar = conditional.sections.flatMap((section) => section.fields).find((field) => field.key === "seminar_preferences")!;
+    Object.assign(seminar, { optionalWhen: { fieldKey: "meal", operator: "EQUALS", value: "Vegan" } });
+    registration.publicFormSubmission.formVersion.definition = conditional;
+    const teen = { ...attendeeResponses, meal: "Vegan", seminar_preferences: [] as string[] };
+    registration.attendees[0].formResponses = { ...teen };
+    const edit = (meal: string) => previewRegistrationAmendment("event-1", "registration-1", {
+      clientRequestId: "0f4a5b6c-7d8e-4f9a-8b1c-2d3e4f5a6b7c",
+      expectedUpdatedAt: registration.updatedAt.toISOString(),
+      reason: "",
+      responses: { ...registrationResponses },
+      attendees: [{ attendeeId: "attendee-1", clientId: "attendee-row-1", responses: { ...teen, meal, notes: "Updated" } }],
+      previewOnly: true as const,
+    });
+    await expect(edit("Vegan")).resolves.toBeTruthy();
+    await expect(edit("Vegetarian")).rejects.toMatchObject({ code: "INVALID_AMENDMENT" });
+  });
+
+  it("edits an attendee substituted before answers followed the substitution (WR26)", async () => {
+    const { registration, tx } = repositoryFixture();
+    // The person and snapshot are the replacement; the answers still hold the prior name.
+    Object.assign(registration.attendees[0].person, { firstName: "Riley", lastName: "Guest" });
+    Object.assign(registration.attendees[0].profileSnapshot, { firstName: "Riley", lastName: "Guest" });
+    const input = {
+      clientRequestId: "1a5b6c7d-8e9f-4a0b-9c2d-3e4f5a6b7c8d",
+      expectedUpdatedAt: registration.updatedAt.toISOString(),
+      reason: "",
+      responses: { ...registrationResponses },
+      attendees: [{
+        attendeeId: "attendee-1",
+        clientId: "attendee-row-1",
+        responses: { ...attendeeResponses, first_name: "riley", last_name: "Guest", meal: "Vegan" },
+      }],
+      previewOnly: true as const,
+    };
+    const preview = await previewRegistrationAmendment("event-1", "registration-1", input);
+    await amendRegistration("event-1", "registration-1", {
+      ...input,
+      previewOnly: false as const,
+      quoteFingerprint: preview.quoteFingerprint,
+    }, actor, new Date("2026-08-04T13:00:00.000Z"));
+    expect(tx.registrationAttendee.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ formResponses: expect.objectContaining({ first_name: "riley", last_name: "Guest" }) }),
+    }));
+    // Someone else's name is still a substitution, not an edit.
+    await expect(previewRegistrationAmendment("event-1", "registration-1", {
+      ...input,
+      clientRequestId: "2b6c7d8e-9f0a-4b1c-8d3e-4f5a6b7c8d9e",
+      expectedUpdatedAt: registration.updatedAt.toISOString(),
+      attendees: [{ ...input.attendees[0], responses: { ...input.attendees[0].responses, first_name: "Jordan" } }],
+    })).rejects.toMatchObject({ code: "ATTENDEE_IDENTITY_CHANGED" });
+  });
+
+  it("still requires seminar ranks for a newly added attendee", async () => {
+    const { registration } = repositoryFixture();
+    await expect(previewRegistrationAmendment("event-1", "registration-1", {
+      clientRequestId: "9e3f4a5b-6c7d-4e8f-9a0b-1c2d3e4f5a6b",
+      expectedUpdatedAt: registration.updatedAt.toISOString(),
+      reason: "",
+      responses: { ...registrationResponses },
+      attendees: [
+        { attendeeId: "attendee-1", clientId: "attendee-row-1", responses: { ...attendeeResponses } },
+        { attendeeId: null, clientId: "attendee-row-2", responses: { first_name: "Riley", last_name: "Guest", meal: "Vegan" } },
+      ],
+      previewOnly: true as const,
+    })).rejects.toMatchObject({ code: "INVALID_AMENDMENT" });
+  });
 });
 

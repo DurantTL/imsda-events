@@ -433,6 +433,21 @@ describe("attendee substitution repository", () => {
     expect(store.tx.registrationAttendee.update).not.toHaveBeenCalled();
   });
 
+  it("refuses a substitution that keeps the same name with no new email (WR26)", async () => {
+    const store = fixture();
+    const attendee = store.registration.attendees[0]!;
+    const snapshot = attendee.profileSnapshot as { firstName: string; lastName: string };
+    await expect(substituteRegistrationAttendee(
+      "event-1",
+      "registration-1",
+      "attendee-1",
+      { ...transferInput, firstName: snapshot.firstName.toUpperCase(), lastName: snapshot.lastName, email: "", phone: "" },
+      actor,
+      now,
+    )).rejects.toMatchObject({ code: "ATTENDEE_SAME_PERSON" });
+    expect(store.tx.registrationAttendee.update).not.toHaveBeenCalled();
+  });
+
   it("updates identity in place while preserving attendee fields, capacity, and pricing", async () => {
     const store = fixture();
     const attendeeBefore = {
@@ -473,6 +488,7 @@ describe("attendee substitution repository", () => {
           identityUpdatedBy: "STAFF_ATTENDEE_SUBSTITUTION",
           identityOperationId: expect.any(String),
         }),
+        formResponses: { meal: "VEGAN" },
       },
     });
     expect(store.registration.attendees[0]).toMatchObject(attendeeBefore);
