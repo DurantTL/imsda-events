@@ -11,9 +11,21 @@ const mocks = vi.hoisted(() => ({
   rejectCrossOriginRequest: vi.fn(),
 }));
 
+const mocksExtra = vi.hoisted(() => ({
+  orgFindMany: vi.fn(),
+  reportFindMany: vi.fn(),
+  standingFindMany: vi.fn(),
+}));
+
 const client = {
-  organization: { findUnique: mocks.orgFindUnique },
-  clubMonthlyReport: { findUnique: mocks.reportFindUnique, create: mocks.reportCreate, update: mocks.reportUpdate },
+  organization: { findUnique: mocks.orgFindUnique, findMany: mocksExtra.orgFindMany },
+  clubMonthlyReport: {
+    findUnique: mocks.reportFindUnique,
+    create: mocks.reportCreate,
+    update: mocks.reportUpdate,
+    findMany: mocksExtra.reportFindMany,
+  },
+  clubYearStanding: { findMany: mocksExtra.standingFindMany },
   $transaction: (work: (tx: unknown) => unknown) => work(client),
 };
 
@@ -37,7 +49,7 @@ import {
   reportableMonths,
   yearToDate,
 } from "@/modules/club-reports/domain";
-import { saveClubReport } from "@/modules/club-reports/repository";
+import { listClubReportsForYear, reopenClubReport, saveClubReport } from "@/modules/club-reports/repository";
 import { clubReportInputSchema } from "@/modules/club-reports/schemas";
 
 const input = (overrides: Record<string, unknown> = {}) => clubReportInputSchema.parse({
@@ -46,6 +58,7 @@ const input = (overrides: Record<string, unknown> = {}) => clubReportInputSchema
   classLevels: ["FRIEND", "COMPANION"],
   signatureName: "Pat Example",
   signedOn: "2026-11-05",
+  status: "SUBMITTED",
   ...overrides,
 });
 
@@ -69,6 +82,9 @@ beforeEach(() => {
   mocks.reportUpdate.mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve(stored(data)));
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
   mocks.getCurrentAttendee.mockResolvedValue({ account: { id: "account-1", verifiedEmail: "r@example.test", displayName: "R" }, via: "attendee", sessionId: "s-1" });
+  mocksExtra.orgFindMany.mockResolvedValue([]);
+  mocksExtra.reportFindMany.mockResolvedValue([]);
+  mocksExtra.standingFindMany.mockResolvedValue([]);
 });
 
 describe("monthly report rules (#377)", () => {
@@ -143,7 +159,7 @@ describe("who may file", () => {
   const request = () => new Request("https://events.imsda.test/api/attendee/clubs/club-1/reports/2026-09", {
     method: "PUT",
     headers: { origin: "https://events.imsda.test", "content-type": "application/json" },
-    body: JSON.stringify({ points: { staffMeeting: 25 }, signatureName: "Pat Example", signedOn: "2026-10-05" }),
+    body: JSON.stringify({ points: { staffMeeting: 25 }, signatureName: "Pat Example", signedOn: "2026-10-05", status: "SUBMITTED" }),
   });
   const ctx = { params: Promise.resolve({ organizationId: "club-1", month: "2026-09" }) };
 
@@ -163,6 +179,85 @@ describe("who may file", () => {
   it("hides other clubs", async () => {
     mocks.listDirectedClubs.mockResolvedValue([]);
     expect((await PUT(request(), ctx)).status).toBe(404);
+  });
+
+  it("refuses another club's own director", async () => {
+    mocks.listDirectedClubs.mockResolvedValue([{ organizationId: "club-2", name: "Other Club", role: "DIRECTOR", sponsoringChurch: null }]);
+    const response = await PUT(request(), ctx);
+    expect(response.status).toBe(404);
+    expect(mocks.reportCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("draft and submit", () => {
+  it("saves a draft with no on-time points and no first-submission time", async () => {
+    const report = await saveClubReport("club-1", "2026-10", input({ status: "DRAFT" }), { accountId: "account-1" }, new Date("2026-11-05T15:00:00Z"));
+    expect(report.status).toBe("DRAFT");
+    expect(report.onTimePoints).toBe(0);
+    expect(report.firstSubmittedAt).toBeNull();
+    expect(mocks.reportCreate.mock.calls[0][0].data).toMatchObject({ status: "DRAFT", submittedAt: null, firstSubmittedAt: null, onTimePoints: 0 });
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "CLUB_REPORT_DRAFT_SAVED" }), client);
+  });
+
+  it("only earns on-time points, and only sets the submitter, when it is actually submitted", async () => {
+    await saveClubReport("club-1", "2026-10", input({ status: "DRAFT" }), { accountId: "account-1" }, new Date("2026-11-05T15:00:00Z"));
+    expect(mocks.reportCreate.mock.calls[0][0].data.submittedByAccountId).toBeUndefined();
+
+    mocks.reportFindUnique.mockResolvedValue({ id: "report-1", status: "DRAFT", firstSubmittedAt: null });
+    await saveClubReport("club-1", "2026-10", input({ status: "SUBMITTED" }), { accountId: "account-1" }, new Date("2026-11-05T16:00:00Z"));
+    expect(mocks.reportUpdate.mock.calls[0][0].data).toMatchObject({ status: "SUBMITTED", onTimePoints: 25, submittedByAccountId: "account-1" });
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "CLUB_REPORT_SUBMITTED" }), client);
+  });
+
+  it("keeps firstSubmittedAt and on-time credit through a later edit that stays submitted", async () => {
+    mocks.reportFindUnique.mockResolvedValue({ id: "report-1", status: "SUBMITTED", firstSubmittedAt: new Date("2026-11-05T15:00:00Z") });
+    await saveClubReport("club-1", "2026-10", input({ status: "SUBMITTED", signatureName: "Pat Updated" }), { accountId: "account-1" }, new Date("2026-11-06T15:00:00Z"));
+    expect(mocks.reportUpdate.mock.calls[0][0].data).toMatchObject({ onTimePoints: 25 });
+    expect(mocks.reportUpdate.mock.calls[0][0].data).not.toHaveProperty("submittedByAccountId");
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "CLUB_REPORT_UPDATED" }), client);
+  });
+});
+
+describe("reopening a report", () => {
+  it("moves a submitted report back to draft, before the due date, without touching firstSubmittedAt", async () => {
+    mocks.reportFindUnique.mockResolvedValue({ id: "report-1", status: "SUBMITTED" });
+    mocks.reportUpdate.mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve(stored({ firstSubmittedAt: new Date("2026-11-05T15:00:00Z"), ...data })));
+    const report = await reopenClubReport("club-1", "2026-10", "account-1", new Date("2026-11-08T15:00:00Z"));
+    expect(report.status).toBe("DRAFT");
+    expect(report.submittedAt).toBeNull();
+    expect(mocks.reportUpdate.mock.calls[0][0].data).not.toHaveProperty("firstSubmittedAt");
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "CLUB_REPORT_REOPENED" }), client);
+  });
+
+  it("refuses to reopen after the report's due date", async () => {
+    mocks.reportFindUnique.mockResolvedValue({ id: "report-1", status: "SUBMITTED" });
+    await expect(reopenClubReport("club-1", "2026-10", "account-1", new Date("2026-11-12T15:00:00Z")))
+      .rejects.toMatchObject({ code: "CLUB_REPORT_LOCKED" });
+    expect(mocks.reportUpdate).not.toHaveBeenCalled();
+  });
+
+  it("refuses to reopen a report that is already a draft, or one that doesn't exist", async () => {
+    mocks.reportFindUnique.mockResolvedValue({ id: "report-1", status: "DRAFT" });
+    await expect(reopenClubReport("club-1", "2026-10", "account-1", new Date("2026-11-08T15:00:00Z")))
+      .rejects.toMatchObject({ code: "CLUB_REPORT_NOT_SUBMITTED" });
+
+    mocks.reportFindUnique.mockResolvedValue(null);
+    await expect(reopenClubReport("club-1", "2026-10", "account-1", new Date("2026-11-08T15:00:00Z")))
+      .rejects.toMatchObject({ code: "CLUB_REPORT_NOT_FOUND" });
+  });
+});
+
+describe("the conference list hides drafts", () => {
+  it("only counts SUBMITTED reports, filtering at the database query", async () => {
+    mocksExtra.orgFindMany.mockResolvedValue([{ id: "club-1", name: "Test Pathfinders", parentOrganization: null }]);
+    mocksExtra.reportFindMany.mockResolvedValue([
+      { organizationId: "club-1", reportMonth: "2026-09", totalPoints: 300, onTimePoints: 25, firstSubmittedAt: new Date("2026-10-05T15:00:00Z") },
+    ]);
+    const [club] = await listClubReportsForYear("2026-27");
+    expect(mocksExtra.reportFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ status: "SUBMITTED" }),
+    }));
+    expect(club.reports).toEqual({ "2026-09": { totalPoints: 300, onTime: true } });
   });
 });
 

@@ -58,7 +58,7 @@ export async function ClubOverview({
         </div>
         <div className="club-home-stat">
           <FileText size={20} aria-hidden="true" />
-          <strong>{yearToDate(reportYear.reports, reportYear.registrationOnTime)}</strong>
+          <strong>{yearToDate(submittedReports, reportYear.registrationOnTime)}</strong>
           <span>points this club year</span>
         </div>
       </div>
