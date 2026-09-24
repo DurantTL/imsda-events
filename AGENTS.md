@@ -9,16 +9,21 @@
 - `tests/`: Vitest permission, domain, route, and regression tests.
 - `docs/`: runbooks, decisions, and readiness evidence.
 - `.agents/skills/`: repository-scoped build and review workflows.
-- `.claude/`: Claude Code configuration (session hook, permissions, and thin
-  wrappers around the `.agents/skills/` workflows).
+- `.claude/`: Claude Code configuration (session hook, permissions, thin
+  wrappers around the `.agents/skills/` workflows, and subagents in
+  `.claude/agents/`; routing rules are in `CLAUDE.md`).
 
 ## Roadmap and issue conventions
 
-GitHub issue #98 is the canonical ordered roadmap; work issues in its phase
-order. `docs/BUILD-STATUS-AND-WR26-GAP-AUDIT.md` is historical status evidence,
-not the roadmap. Labels mirror the phases (`phase-0` … `phase-5`);
-`codex-ready` marks the currently claimable frontier for automated builds;
-`needs-decision` and `needs-human` mark issues blocked on a human.
+GitHub issue #98 is the canonical ordered roadmap. Its **build queue** section
+comes first: work `queue-1` issues in the listed order, then `queue-2`, then
+`queue-3`. The phase order below it is the long-term roadmap.
+`docs/BUILD-STATUS-AND-WR26-GAP-AUDIT.md` is historical status evidence, not the
+roadmap, and `docs/LEGACY-EVENT-SYSTEMS.md` records what the 2026 event systems
+did. Labels mirror the phases (`phase-0` … `phase-5`); `codex-ready` marks the
+currently claimable frontier for automated builds (only the current queue);
+`needs-decision` and `needs-human` mark issues blocked on a human and are never
+`codex-ready`.
 
 Use Node.js 20.9 or newer. Start locally with `npm install`, the PostgreSQL
 Compose service, `npm run db:deploy`, `npm run db:seed`, and `npm run dev`.
