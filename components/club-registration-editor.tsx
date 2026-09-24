@@ -1,13 +1,21 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Pencil, Trash2, UserPlus, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Pencil, Trash2, UserPlus, X } from "lucide-react";
+import {
+  PublicRegistrationForm,
+  type FormIssue,
+  type FormResponses,
+  type RosterAttendee,
+} from "@/components/public-registration-form";
 import {
   clubAttendeeClientId,
+  clubExistingAttendeeClientId,
   clubGuestClientId,
   guestIsAdult,
   MAX_CLUB_GUESTS,
+  rosterOwnedResponses,
   rosterRolePrefill,
   type ClubGuest,
 } from "@/modules/club-registrations/domain";
@@ -16,47 +24,41 @@ import type { ClubEventWorkspace } from "@/modules/club-registrations/repository
 type Workspace = ClubEventWorkspace & { registration: NonNullable<ClubEventWorkspace["registration"]>; experience: NonNullable<ClubEventWorkspace["experience"]> };
 
 /**
- * Reopens a submitted club registration (H3b, #366) so the director can
- * re-tick who's going and add or remove extra people, before the event's
- * registration deadline. Commits through the club edit endpoint, which runs
- * the change through the same amendment engine staff use. Editing an
- * attendee's other answers isn't in this editor yet — a kept person's prior
- * answers travel through unchanged.
+ * Reopens a submitted club registration (H3b, #366) before the event's
+ * registration deadline. Step one re-ticks who's going: roster people, the
+ * people registered who are no longer on the roster (kept unless unticked),
+ * and extra people. Step two is the event's own form for those people, the
+ * same one used to submit, pre-filled with their current answers; names and
+ * age stay locked to the roster. Saves through the club edit endpoint, which
+ * runs the change through the same amendment engine staff use.
  */
 export function ClubRegistrationEditor({ organizationId, workspace }: { organizationId: string; workspace: Workspace }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [step, setStep] = useState<"who" | "form">("who");
   const [addingGuest, setAddingGuest] = useState(false);
   const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
+  const definition = workspace.experience.form.definition;
 
-  const existingGuests = useMemo(() => workspace.registration.attendees
-    .map((attendee, index) => ({ ...attendee, index }))
-    .filter((attendee) => attendee.temporary && attendee.guestId), [workspace.registration.attendees]);
-  const existingMemberIds = useMemo(() => new Set(
-    workspace.registration.attendees.flatMap((attendee) => attendee.clubRosterMemberId ? [attendee.clubRosterMemberId] : []),
-  ), [workspace.registration.attendees]);
+  const registered = workspace.registration.attendees;
+  const offRoster = useMemo(() => registered.filter((attendee) => attendee.offRoster), [registered]);
+  const existingGuests = useMemo(() => registered.filter((attendee) => attendee.temporary && attendee.guestId), [registered]);
+  const registeredByMemberId = useMemo(() => new Map(
+    registered.flatMap((attendee) => attendee.clubRosterMemberId && !attendee.offRoster ? [[attendee.clubRosterMemberId, attendee] as const] : []),
+  ), [registered]);
 
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>(() => (
-    workspace.roster.map((person) => person.memberId).filter((memberId) => existingMemberIds.has(memberId))
+    workspace.roster.map((person) => person.memberId).filter((memberId) => registeredByMemberId.has(memberId))
   ));
-  const [keptGuestIds, setKeptGuestIds] = useState<string[]>(() => (
-    existingGuests.map((guest) => guest.guestId!)
-  ));
+  // No silent removal: everyone registered who left the roster stays ticked.
+  const [keptOffRosterIds, setKeptOffRosterIds] = useState<string[]>(() => offRoster.map((attendee) => attendee.attendeeId));
+  const [keptGuestIds, setKeptGuestIds] = useState<string[]>(() => existingGuests.map((guest) => guest.guestId!));
   const [newGuests, setNewGuests] = useState<ClubGuest[]>([]);
+  // Answers edited in step two, kept if the director goes back to step one.
+  const [answers, setAnswers] = useState<Record<string, FormResponses>>({});
 
-  function toggleMember(memberId: string) {
-    setSelectedMemberIds((current) => (
-      current.includes(memberId) ? current.filter((id) => id !== memberId) : [...current, memberId]
-    ));
-  }
-
-  function removeKeptGuest(guestId: string) {
-    setKeptGuestIds((current) => current.filter((id) => id !== guestId));
-  }
-
-  function removeNewGuest(guestId: string) {
-    setNewGuests((current) => current.filter((guest) => guest.id !== guestId));
+  function toggle(list: string[], id: string) {
+    return list.includes(id) ? list.filter((candidate) => candidate !== id) : [...list, id];
   }
 
   function addGuest(event: React.FormEvent<HTMLFormElement>) {
@@ -75,63 +77,101 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
     setNewGuests((current) => [...current, { id: id.slice(0, 24), firstName, lastName, age, email: email || null }]);
   }
 
-  const goingCount = selectedMemberIds.length + keptGuestIds.length + newGuests.length;
+  const goingCount = selectedMemberIds.length + keptOffRosterIds.length + keptGuestIds.length + newGuests.length;
 
-  async function save() {
-    if (goingCount === 0) return setError("Choose at least one person from your roster.");
-    setSaving(true);
-    setError("");
-    try {
-      const definition = workspace.experience.form.definition;
-      const attendeeResponses: Record<string, Record<string, unknown>> = {};
-      for (const attendee of workspace.registration.attendees) {
-        const clientId = attendee.clubRosterMemberId
-          ? clubAttendeeClientId(attendee.clubRosterMemberId)
-          : attendee.guestId
-            ? clubGuestClientId(attendee.guestId)
-            : null;
-        if (clientId) attendeeResponses[clientId] = attendee.responses;
-      }
-      for (const memberId of selectedMemberIds) {
-        const clientId = clubAttendeeClientId(memberId);
-        if (attendeeResponses[clientId]) continue;
-        const person = workspace.roster.find((candidate) => candidate.memberId === memberId);
-        if (person) attendeeResponses[clientId] = person.prefillResponses as Record<string, unknown>;
-      }
-      for (const guest of newGuests) {
-        attendeeResponses[clubGuestClientId(guest.id)] = rosterRolePrefill(definition, {
-          firstName: guest.firstName, lastName: guest.lastName, ageOnEventDate: guest.age, gender: null,
-          attendeeType: guestIsAdult(guest) ? "ADULT" : undefined,
-        }) as Record<string, unknown>;
-      }
-      const response = await fetch(
-        `/api/attendee/clubs/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(workspace.event.id)}/registration`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            clientRequestId: crypto.randomUUID(),
-            expectedUpdatedAt: workspace.registration.updatedAt,
-            selectedMemberIds,
-            keptGuestIds,
-            newGuests,
-            attendeeResponses,
-          }),
-        },
-      );
-      const result = await response.json().catch(() => ({})) as { message?: string };
-      if (!response.ok) {
-        setError(result.message ?? "That change couldn't be saved. Refresh and try again.");
-        return;
-      }
+  // The people going, in the same form the club submit uses, pre-filled
+  // with their current answers (or the roster's starting answers if new).
+  const initialAttendees: RosterAttendee[] = useMemo(() => {
+    const withEdits = (clientId: string, base: Record<string, unknown>, owned: Record<string, unknown> = {}) => ({
+      clientId,
+      responses: { ...(base as FormResponses), ...(answers[clientId] ?? {}), ...(owned as FormResponses) },
+    });
+    return [
+      ...workspace.roster.filter((person) => selectedMemberIds.includes(person.memberId)).map((person) => {
+        const current = registeredByMemberId.get(person.memberId);
+        return withEdits(clubAttendeeClientId(person.memberId), current ? current.responses : person.prefillResponses, person.ownedResponses);
+      }),
+      ...offRoster.filter((attendee) => keptOffRosterIds.includes(attendee.attendeeId))
+        .map((attendee) => withEdits(clubExistingAttendeeClientId(attendee.attendeeId), attendee.responses)),
+      ...existingGuests.filter((guest) => keptGuestIds.includes(guest.guestId!))
+        .map((guest) => withEdits(clubGuestClientId(guest.guestId!), guest.responses)),
+      ...newGuests.map((guest) => {
+        const person = { firstName: guest.firstName, lastName: guest.lastName, ageOnEventDate: guest.age, gender: null };
+        return withEdits(
+          clubGuestClientId(guest.id),
+          rosterRolePrefill(definition, { ...person, attendeeType: guestIsAdult(guest) ? "ADULT" : undefined }),
+          rosterOwnedResponses(definition, person),
+        );
+      }),
+    ];
+  // Built once per visit to the form step; later edits live in the form itself.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
+
+  // Only the people's questions: the registration's contact and payment
+  // answers aren't changed by this edit.
+  const attendeeForm = useMemo(() => ({
+    ...workspace.experience.form,
+    definition: {
+      ...definition,
+      sections: definition.sections
+        .map((section) => ({ ...section, fields: section.fields.filter((field) => field.scope === "ATTENDEE") }))
+        .filter((section) => section.fields.length > 0),
+    },
+  }), [workspace.experience.form, definition]);
+
+  const onDraftChange = useCallback((form: { attendees: RosterAttendee[] }) => {
+    setAnswers((current) => ({
+      ...current,
+      ...Object.fromEntries(form.attendees.map((attendee) => [attendee.clientId, attendee.responses])),
+    }));
+  }, []);
+
+  const submitEdit = useCallback(async (attendees: RosterAttendee[]) => {
+    const response = await fetch(
+      `/api/attendee/clubs/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(workspace.event.id)}/registration`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: crypto.randomUUID(),
+          expectedUpdatedAt: workspace.registration.updatedAt,
+          selectedMemberIds,
+          keptOffRosterAttendeeIds: keptOffRosterIds,
+          keptGuestIds,
+          newGuests,
+          attendeeResponses: Object.fromEntries(attendees.map((attendee) => [attendee.clientId, attendee.responses])),
+        }),
+      },
+    );
+    if (response.ok) return { ok: true as const };
+    const result = await response.json().catch(() => ({})) as {
+      message?: string;
+      issues?: Array<{ key?: unknown; message?: unknown; clientId?: unknown }>;
+    };
+    const issues: FormIssue[] = (Array.isArray(result.issues) ? result.issues : []).flatMap((issue) => {
+      if (typeof issue.key !== "string" || typeof issue.message !== "string") return [];
+      const index = typeof issue.clientId === "string" ? attendees.findIndex((attendee) => attendee.clientId === issue.clientId) : -1;
+      return [index >= 0
+        ? { key: issue.key, message: issue.message, path: `attendees.${index}.responses.${issue.key}`, attendeeIndex: index }
+        : { key: issue.key, message: issue.message, attendeeIndex: null }];
+    });
+    return { ok: false as const, message: result.message ?? "That change couldn't be saved. Refresh and try again.", issues };
+  }, [organizationId, workspace.event.id, workspace.registration.updatedAt, selectedMemberIds, keptOffRosterIds, keptGuestIds, newGuests]);
+
+  const club = useMemo(() => ({
+    initialAttendees,
+    lockedAttendeeFieldKeys: workspace.lockedAttendeeFieldKeys,
+    submitUrl: "",
+    onDraftChange,
+    submitEdit,
+    submitLabel: "Save changes",
+    onSubmitted: () => {
       setOpen(false);
+      setStep("who");
       router.refresh();
-    } catch {
-      setError("We could not reach the registration service. Try again.");
-    } finally {
-      setSaving(false);
-    }
-  }
+    },
+  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, onDraftChange, submitEdit, router]);
 
   if (!open) {
     return (
@@ -141,13 +181,37 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
     );
   }
 
+  if (step === "form") {
+    const { experience } = workspace;
+    return (
+      <div className="club-roster-stack">
+        <div className="club-registration-toolbar">
+          <button className="secondary-button" onClick={() => setStep("who")} type="button">
+            <ArrowLeft aria-hidden="true" size={15} /> Change who&apos;s going
+          </button>
+          <span className="public-registration-eyebrow">Step 2 of 2 · Their answers</span>
+        </div>
+        <PublicRegistrationForm
+          choiceUsage={experience.choiceUsage}
+          club={club}
+          event={experience.event}
+          form={attendeeForm}
+          initialResponses={workspace.registration.registrationResponses as FormResponses}
+          lifecycle={{ ...experience.lifecycle, capacityDecision: "REGISTER" }}
+          pricingDate={experience.pricingDate}
+        />
+      </div>
+    );
+  }
+
   return (
     <section aria-labelledby="club-edit-title" className="public-manage-card">
       <div className="public-manage-card-heading club-roster-heading">
         <div>
+          <p className="public-registration-eyebrow">Step 1 of 2 · Who&apos;s going</p>
           <h2 id="club-edit-title">Add or remove people</h2>
           <p className="field-help">
-            Re-tick who&apos;s going. Everyone already registered keeps their existing answers.
+            Re-tick who&apos;s going. Next you can check and change their answers.
           </p>
         </div>
         <span className="count-badge">{goingCount} chosen</span>
@@ -159,7 +223,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
             <label className="checkbox-label">
               <input
                 checked={selectedMemberIds.includes(person.memberId)}
-                onChange={() => toggleMember(person.memberId)}
+                onChange={() => setSelectedMemberIds((current) => toggle(current, person.memberId))}
                 type="checkbox"
               />
               <span>
@@ -170,6 +234,33 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
           </li>
         ))}
       </ul>
+      {offRoster.length > 0 && (
+        <section className="club-guest-section" aria-labelledby="club-edit-off-roster-title">
+          <div className="club-roster-tools">
+            <span>
+              <strong id="club-edit-off-roster-title">No longer on your club roster</strong>
+              <small className="field-help"> Registered, but since removed from your roster. Untick anyone who isn&apos;t going.</small>
+            </span>
+          </div>
+          <ul className="club-going-list">
+            {offRoster.map((attendee) => (
+              <li key={attendee.attendeeId}>
+                <label className="checkbox-label">
+                  <input
+                    checked={keptOffRosterIds.includes(attendee.attendeeId)}
+                    onChange={() => setKeptOffRosterIds((current) => toggle(current, attendee.attendeeId))}
+                    type="checkbox"
+                  />
+                  <span>
+                    <strong translate="no">{attendee.lastName}, {attendee.firstName}</strong>
+                    {attendee.ageOnEventDate !== null && <small>Age <span translate="no">{attendee.ageOnEventDate}</span></small>}
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <section className="club-guest-section" aria-labelledby="club-edit-guests-title">
         <div className="club-roster-tools">
           <span>
@@ -190,7 +281,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
                   <strong translate="no">{guest.lastName}, {guest.firstName}</strong>
                   <small>This event only{guest.ageOnEventDate !== null ? <> · Age <span translate="no">{guest.ageOnEventDate}</span></> : ""}</small>
                 </span>
-                <button aria-label={`Remove ${guest.firstName} ${guest.lastName}`} className="text-button" onClick={() => removeKeptGuest(guest.guestId!)} type="button">
+                <button aria-label={`Remove ${guest.firstName} ${guest.lastName}`} className="text-button" onClick={() => setKeptGuestIds((current) => current.filter((id) => id !== guest.guestId))} type="button">
                   <Trash2 aria-hidden="true" size={14} /> Remove
                 </button>
               </li>
@@ -201,7 +292,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
                   <strong translate="no">{guest.lastName}, {guest.firstName}</strong>
                   <small>This event only · Age <span translate="no">{guest.age}</span></small>
                 </span>
-                <button aria-label={`Remove ${guest.firstName} ${guest.lastName}`} className="text-button" onClick={() => removeNewGuest(guest.id)} type="button">
+                <button aria-label={`Remove ${guest.firstName} ${guest.lastName}`} className="text-button" onClick={() => setNewGuests((current) => current.filter((candidate) => candidate.id !== guest.id))} type="button">
                   <Trash2 aria-hidden="true" size={14} /> Remove
                 </button>
               </li>
@@ -224,11 +315,16 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
         )}
       </section>
       <div className="club-registration-toolbar">
-        <button className="secondary-button" disabled={saving} onClick={() => setOpen(false)} type="button">
+        <button className="secondary-button" onClick={() => setOpen(false)} type="button">
           <X aria-hidden="true" size={15} /> Cancel
         </button>
-        <button className="primary-button" disabled={saving || goingCount === 0} onClick={() => { void save(); }} type="button">
-          {saving ? "Saving…" : "Save changes"}
+        <button
+          className="primary-button"
+          disabled={goingCount === 0}
+          onClick={() => { setError(""); setStep("form"); }}
+          type="button"
+        >
+          Continue with {goingCount} {goingCount === 1 ? "person" : "people"} <ArrowRight aria-hidden="true" size={15} />
         </button>
       </div>
     </section>

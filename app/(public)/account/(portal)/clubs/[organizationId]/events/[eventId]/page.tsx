@@ -77,7 +77,7 @@ export default async function ClubEventRegistrationPage({
               </li>
             ))}
           </ul>
-          {workspace.event.phase === "OPEN" && workspace.experience
+          {workspace.event.edit.open && workspace.experience
             ? (
               <ClubRegistrationEditor
                 organizationId={organizationId}
@@ -86,9 +86,7 @@ export default async function ClubEventRegistrationPage({
             )
             : (
               <p className="public-manage-empty">
-                {workspace.event.phase === "CLOSED"
-                  ? `Registration closed${workspace.event.registrationClosesOn ? ` after ${workspace.event.registrationClosesOn}` : ""}. Contact the event team to add or remove someone.`
-                  : "Contact the event team to add or remove someone."}
+                {workspace.event.edit.open ? "Contact the event team to add or remove someone." : workspace.event.edit.message}
               </p>
             )}
         </section>

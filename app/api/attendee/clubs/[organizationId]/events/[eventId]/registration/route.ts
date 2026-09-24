@@ -47,7 +47,8 @@ async function patchHandler(request: Request, context: { params: Promise<{ organ
       return Response.json({ error: "REQUEST_TOO_LARGE", message: "This registration is too large." }, { status: 413 });
     }
     const input = clubRegistrationEditInputSchema.parse(JSON.parse(body));
-    const { pendingMessageIds, ...result } = await amendClubRegistration(organizationId, eventId, access.accountId, input);
+    // Only the club's own summary: never the staff view of the registration.
+    const { pendingMessageIds, result } = await amendClubRegistration(organizationId, eventId, access.accountId, input);
     try {
       await processQueuedMessageIdsAfterCommit(pendingMessageIds);
     } catch (error) {
