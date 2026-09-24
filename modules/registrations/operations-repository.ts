@@ -760,9 +760,15 @@ export async function substituteRegistrationAttendee(
           select: { id: true },
         })
       : null;
+    // The form starts from the current name, so the same name with no new
+    // email is someone clicking through, not a different person (WR26).
+    const sameNameNoEmail = !input.email
+      && prior.firstName.trim().toLowerCase() === input.firstName.trim().toLowerCase()
+      && prior.lastName.trim().toLowerCase() === input.lastName.trim().toLowerCase();
     if (
       replacementPerson?.id === attendee.personId
       || identitiesDescribeSamePerson(prior, replacement)
+      || sameNameNoEmail
     ) {
       throw new RegistrationOperationError(
         "ATTENDEE_SAME_PERSON",

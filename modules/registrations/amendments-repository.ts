@@ -337,8 +337,19 @@ function assertProtectedFieldsUnchanged(
     // A roster-linked rename is checked against the roster name once the
     // answers are parsed (see `prepareAmendment`), not refused here.
     if (serverOptions.attendees?.get(attendeeInput.clientId)?.rosterName) continue;
+    // The attendee's current name is accepted too: an earlier substitution may
+    // have left the prior name in the answers, and this edit corrects it (WR26).
+    const currentName: Record<string, string> = {
+      first_name: current.person.firstName,
+      last_name: current.person.lastName,
+    };
+    const fullName = `${current.person.firstName} ${current.person.lastName}`.trim();
     for (const key of protectedAttendeeIdentityKeys) {
-      if (stableJson(responses[key]) !== stableJson(attendeeInput.responses[key])) {
+      const submitted = attendeeInput.responses[key];
+      const matchesCurrentName = typeof submitted === "string"
+        && Object.hasOwn(responses, key)
+        && submitted.trim().toLowerCase() === (currentName[key] ?? fullName).trim().toLowerCase();
+      if (!matchesCurrentName && stableJson(responses[key]) !== stableJson(submitted)) {
         throw new RegistrationAmendmentError(
           "ATTENDEE_IDENTITY_CHANGED",
           `Use Substitute for a name change to ${current.person.firstName} ${current.person.lastName}. Choices and non-name details can be amended here.`,
@@ -888,18 +899,33 @@ async function prepareAmendment(
     })),
     website: "",
   };
-  const validated = preparePublicRegistration(definition, publicInput, {
+  const prepareOptions = {
     timeZone: registration.event.timezone,
     now: pricingInstant,
     usage: choiceUsageFromReservations(definition, otherReservations),
     // A staff seminar override (with its reason) may clear someone's picks,
     // e.g. a Teen in the Teen program (WR26), even though the question is required.
     optionalFieldKeys: seminarPreferencesChanged ? seminarKeys : [],
-  });
+  };
+  const validated = preparePublicRegistration(definition, publicInput, prepareOptions);
+  // The same check on the stored answers, so only issues the registration
+  // already had can be excused below.
+  const configuredOnly = (answers: Record<string, unknown>) => Object.fromEntries(
+    Object.entries(answers).filter(([key]) => configuredKeys.has(key)),
+  );
+  const baseline = preparePublicRegistration(definition, {
+    ...publicInput,
+    responses: configuredOnly(currentRegistrationResponses),
+    attendees: input.attendees.map((attendee, index) => ({
+      clientId: attendee.clientId,
+      responses: storedAttendeeAnswers[index] ? configuredOnly(storedAttendeeAnswers[index]) : attendeeAnswers[index].answers,
+    })),
+  }, prepareOptions);
   // Answers nobody changed aren't re-checked against today's rules, e.g. a
   // Teen with no seminar ranks when staff only fix a shirt size (WR26).
   const changedIssues = issuesOnChangedAnswers(
     validated.issues,
+    baseline.issues,
     input.responses,
     currentRegistrationResponses,
     input.attendees.map((attendee, index) => ({ submitted: attendee.responses, stored: storedAttendeeAnswers[index] })),

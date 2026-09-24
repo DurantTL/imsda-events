@@ -52,18 +52,26 @@ export function splitUnconfiguredAnswers(configuredKeys: ReadonlySet<string>, su
 }
 
 /**
- * Drops validation issues on answers that didn't change: an existing
- * attendee's untouched answer, or an untouched registration answer. New
+ * Drops validation issues the registration already had before this edit, on
+ * answers that didn't change: an existing attendee's untouched answer, or an
+ * untouched registration answer. `baselineIssues` come from validating the
+ * stored answers the same way, so an issue that a changed answer newly causes
+ * (a Teen changed to Adult now needing seminar ranks) is still reported. New
  * attendees and changed answers are checked in full.
  */
 export function issuesOnChangedAnswers(
   issues: readonly PublicRegistrationIssue[],
+  baselineIssues: readonly PublicRegistrationIssue[],
   submittedRegistration: Answers,
   storedRegistration: Answers,
   attendees: ReadonlyArray<{ submitted: Answers; stored: Answers | null }>,
 ) {
+  const issueId = (issue: PublicRegistrationIssue) => `${issue.attendeeIndex ?? "registration"}|${issue.key}|${issue.message}`;
+  const alreadyThere = new Set(
+    baselineIssues.filter((issue) => issue.code === "INVALID_RESPONSE").map(issueId),
+  );
   return issues.filter((issue) => {
-    if (issue.code !== "INVALID_RESPONSE") return true;
+    if (issue.code !== "INVALID_RESPONSE" || !alreadyThere.has(issueId(issue))) return true;
     if (issue.attendeeIndex === null) {
       return !sameAnswer(submittedRegistration[issue.key], storedRegistration[issue.key]);
     }

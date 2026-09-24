@@ -378,6 +378,7 @@ export function RegistrationAmendmentEditor({
     const name = `${firstName} ${lastName}`.trim() || `attendee ${index + 1}`;
     if (!window.confirm(`Remove ${name} from this registration amendment?`)) return;
     setAttendees((current) => current.filter((_, attendeeIndex) => attendeeIndex !== index));
+    setAddedNotice("");
     invalidatePreview();
   }
 
