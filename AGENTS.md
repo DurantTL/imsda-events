@@ -9,8 +9,9 @@
 - `tests/`: Vitest permission, domain, route, and regression tests.
 - `docs/`: runbooks, decisions, and readiness evidence.
 - `.agents/skills/`: repository-scoped build and review workflows.
-- `.claude/`: Claude Code configuration (session hook, permissions, and thin
-  wrappers around the `.agents/skills/` workflows).
+- `.claude/`: Claude Code configuration (session hook, permissions, thin
+  wrappers around the `.agents/skills/` workflows, and subagents in
+  `.claude/agents/`; routing rules are in `CLAUDE.md`).
 
 ## Roadmap and issue conventions
 
