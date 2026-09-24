@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  after: vi.fn(),
   getCurrentAttendee: vi.fn(),
   listDirectedClubs: vi.fn(),
   findEnrollment: vi.fn(),
@@ -18,6 +19,13 @@ const mocks = vi.hoisted(() => ({
   revealRosterBirthDates: vi.fn(),
   listRoster: vi.fn(),
   updateClubProfile: vi.fn(),
+  emailConfigured: vi.fn(),
+  inviteFindMany: vi.fn(),
+  inviteFindFirst: vi.fn(),
+  inviteCreate: vi.fn(),
+  inviteUpdate: vi.fn(),
+  outboxCreate: vi.fn(),
+  processAccountEmailQueue: vi.fn(),
 }));
 
 const client = {
@@ -28,11 +36,18 @@ const client = {
   organization: { findUnique: mocks.findOrganization },
   attendeeAccount: { findUnique: mocks.findAccount },
   clubDirectorGrant: { findMany: mocks.findGrants, findFirst: mocks.findGrant, create: mocks.createGrant, update: mocks.updateGrant },
+  clubInvite: { findMany: mocks.inviteFindMany, findFirst: mocks.inviteFindFirst, create: mocks.inviteCreate, update: mocks.inviteUpdate },
+  messageOutbox: { create: mocks.outboxCreate },
   $transaction: (work: (tx: unknown) => unknown) => work(client),
 };
 
 vi.mock("server-only", () => ({}));
+vi.mock("next/server", async (importOriginal) => ({
+  ...await importOriginal<typeof import("next/server")>(),
+  after: mocks.after,
+}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: () => client }));
+vi.mock("@/lib/env", () => ({ getServerEnv: () => ({ APP_BASE_URL: "https://events.imsda.test" }) }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: mocks.writeAuditLog }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.getCurrentAttendee }));
 vi.mock("@/modules/organizations/director-access", () => ({ listDirectedClubs: mocks.listDirectedClubs }));
@@ -42,11 +57,20 @@ vi.mock("@/modules/club-rosters/repository", async () => {
   return { ...actual, revealRosterBirthDates: mocks.revealRosterBirthDates, listRoster: mocks.listRoster };
 });
 vi.mock("@/modules/organizations/club-profile-repository", () => ({ updateClubProfile: mocks.updateClubProfile }));
+vi.mock("@/modules/communications/account-email", () => ({
+  isAccountEmailConfigured: mocks.emailConfigured,
+  getAccountEmailSender: () => ({ name: "IMSDA Events", address: "events@example.test", replyTo: null }),
+}));
+vi.mock("@/modules/communications/email-delivery", () => ({
+  processAccountEmailQueue: mocks.processAccountEmailQueue,
+}));
 
 import { GET as ROSTER } from "@/app/api/attendee/clubs/[organizationId]/roster/route";
 import { POST as BIRTH_DATES } from "@/app/api/attendee/clubs/[organizationId]/roster/birth-dates/route";
-import { POST as ADD_TEAM } from "@/app/api/attendee/clubs/[organizationId]/team/route";
+import { GET as TEAM, POST as ADD_TEAM } from "@/app/api/attendee/clubs/[organizationId]/team/route";
 import { DELETE as REMOVE_TEAM } from "@/app/api/attendee/clubs/[organizationId]/team/[grantId]/route";
+import { DELETE as CANCEL_INVITE } from "@/app/api/attendee/clubs/[organizationId]/team/invites/[inviteId]/route";
+import { POST as RESEND_INVITE } from "@/app/api/attendee/clubs/[organizationId]/team/invites/[inviteId]/resend/route";
 import { PATCH as PROFILE } from "@/app/api/attendee/clubs/[organizationId]/profile/route";
 import { getRosterAccessState } from "@/modules/club-rosters/access";
 import { rosterSectionOf } from "@/modules/club-rosters/domain";
@@ -83,6 +107,13 @@ beforeEach(() => {
   mocks.listRoster.mockResolvedValue([]);
   mocks.revealRosterBirthDates.mockResolvedValue({});
   mocks.updateClubProfile.mockResolvedValue({ id: "club-1" });
+  mocks.emailConfigured.mockReturnValue(true);
+  mocks.inviteFindMany.mockResolvedValue([]);
+  mocks.inviteFindFirst.mockResolvedValue(null);
+  mocks.inviteCreate.mockResolvedValue({ id: "invite-1" });
+  mocks.inviteUpdate.mockResolvedValue({ id: "invite-1" });
+  mocks.outboxCreate.mockResolvedValue({ id: "message-1" });
+  mocks.processAccountEmailQueue.mockResolvedValue({ recoveredIds: [], sentIds: [], failedIds: [], rescheduledIds: [] });
 });
 
 describe("club role capabilities (#375)", () => {
@@ -181,6 +212,40 @@ describe("the club team", () => {
       .rejects.toMatchObject({ code: "DIRECTOR_GRANT_CONFLICT" });
   });
 
+  it("notifies an existing account by email when the role is granted (#425)", async () => {
+    const response = await ADD_TEAM(request("POST", { email: "helper@example.test", role: "REGISTRAR" }), ctx);
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.invited).toBe(false);
+    const message = mocks.outboxCreate.mock.calls[0][0].data;
+    expect(message).toMatchObject({ templateKey: "CLUB_TEAM_ROLE_NOTIFICATION", recipientEmail: "helper@example.test", accountAttendeeId: "account-2" });
+    expect(mocks.after).toHaveBeenCalledOnce();
+    const queued = mocks.after.mock.calls[0][0];
+    await queued();
+    expect(mocks.processAccountEmailQueue).toHaveBeenCalledWith({ messageIds: ["message-1"], limit: 1 });
+  });
+
+  it("invites someone with no verified account yet instead of failing (#425)", async () => {
+    mocks.findAccount.mockResolvedValue(null);
+    const response = await ADD_TEAM(request("POST", { email: "new.helper@example.test", role: "REPORTER" }), ctx);
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.invited).toBe(true);
+    expect(mocks.inviteCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ email: "new.helper@example.test", role: "REPORTER", source: "CLUB", createdByAccountId: "account-1" }),
+    }));
+    expect(mocks.createGrant).not.toHaveBeenCalled();
+    expect(mocks.after).toHaveBeenCalledOnce();
+  });
+
+  it("invites rather than grants for a disabled or unverified account", async () => {
+    mocks.findAccount.mockResolvedValue({ id: "account-2", status: "ACTIVE", emailVerifiedAt: null, disabledAt: null });
+    const response = await ADD_TEAM(request("POST", { email: "unverified@example.test", role: "REGISTRAR" }), ctx);
+    expect(response.status).toBe(201);
+    expect((await response.json()).invited).toBe(true);
+    expect(mocks.createGrant).not.toHaveBeenCalled();
+  });
+
   it("refuses a director or deputy role from the club", async () => {
     await expect(grantClubTeamRole("club-1", { email: "x@example.test", role: "DEPUTY" as never }, "account-1", now))
       .rejects.toMatchObject({ code: "DIRECTOR_GRANT_ROLE_NOT_ALLOWED" });
@@ -202,5 +267,47 @@ describe("the club team", () => {
     mocks.findGrant.mockResolvedValueOnce(null);
     await expect(revokeClubTeamRole("club-1", "grant-other", "account-1", now)).rejects.toMatchObject({ code: "DIRECTOR_GRANT_NOT_FOUND" });
     expect(mocks.findGrant).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "grant-other", organizationId: "club-1" } }));
+  });
+});
+
+describe("pending club team invites (#425)", () => {
+  it("lists pending invites alongside the team", async () => {
+    mocks.inviteFindMany.mockResolvedValue([
+      { id: "invite-1", email: "a@example.test", name: "", role: "REGISTRAR", status: "SENT", sentAt: now, sentCount: 1, expiresAt: null },
+    ]);
+    const response = await TEAM(request("GET"), ctx);
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.invites).toEqual([{
+      id: "invite-1", email: "a@example.test", name: "", role: "REGISTRAR",
+      sentAt: now.toISOString(), sentCount: 1, expiresAt: null, expired: false,
+    }]);
+  });
+
+  it("resends an invite through the route", async () => {
+    mocks.inviteFindFirst.mockResolvedValue({
+      id: "invite-1", email: "a@example.test", name: "", role: "REGISTRAR", status: "SENT",
+      sentAt: new Date(Date.now() - 60 * 60_000),
+      organization: { name: "Test Pathfinders", isActive: true },
+    });
+    const response = await RESEND_INVITE(request("POST"), { params: Promise.resolve({ organizationId: "club-1", inviteId: "invite-1" }) });
+    expect(response.status).toBe(200);
+    expect(mocks.inviteUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "SENT" }) }));
+    expect(mocks.after).toHaveBeenCalledOnce();
+  });
+
+  it("cancels an invite through the route", async () => {
+    mocks.inviteFindFirst.mockResolvedValue({ id: "invite-1", status: "SENT", role: "REPORTER" });
+    const response = await CANCEL_INVITE(request("DELETE"), { params: Promise.resolve({ organizationId: "club-1", inviteId: "invite-1" }) });
+    expect(response.status).toBe(200);
+    expect(mocks.inviteUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "CANCELLED" }) }));
+  });
+
+  it("keeps invite management from a registrar", async () => {
+    mocks.listDirectedClubs.mockResolvedValue([clubAs("REGISTRAR")]);
+    mocks.inviteFindFirst.mockResolvedValue({ id: "invite-1", status: "SENT", role: "REPORTER" });
+    const response = await CANCEL_INVITE(request("DELETE"), { params: Promise.resolve({ organizationId: "club-1", inviteId: "invite-1" }) });
+    expect(response.status).toBe(403);
+    expect(mocks.inviteUpdate).not.toHaveBeenCalled();
   });
 });

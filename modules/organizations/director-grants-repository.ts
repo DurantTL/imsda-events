@@ -1,8 +1,11 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
+import { createClubTeamInvite } from "@/modules/club-imports/invites";
+import { getAccountEmailSender, isAccountEmailConfigured } from "@/modules/communications/account-email";
 import {
   clubDirectorRoleLabels,
   clubRoleIsAssignableByClub,
@@ -13,6 +16,23 @@ import {
 } from "@/modules/organizations/director-grants-domain";
 import type { CreateClubTeamGrantInput, CreateDirectorGrantInput } from "@/modules/organizations/director-grants-schemas";
 import { OrganizationOperationError } from "@/modules/organizations/repository";
+
+/** A short notice for someone who already has an account (#425): the invite email explains it, this doesn't need to. */
+function clubTeamRoleNotificationEmail(input: { role: ClubRole; clubName: string }) {
+  const role = clubDirectorRoleLabels[input.role];
+  return {
+    subject: `You've been given ${role} access to ${input.clubName}`,
+    bodyText: [
+      `You've been given ${role} access to ${input.clubName} on IMSDA Events.`,
+      "",
+      "Sign in to your account to see it: /account",
+      "",
+      "If you weren't expecting this, contact the club's director.",
+      "",
+      "IMSDA Events",
+    ].join("\n"),
+  };
+}
 
 const grantInclude = {
   attendeeAccount: { select: { id: true, displayName: true, email: true } },
@@ -240,7 +260,11 @@ export async function listClubTeam(organizationId: string, now = new Date()) {
 
 export type ClubTeamMember = Awaited<ReturnType<typeof listClubTeam>>[number];
 
-/** A club director or deputy gives someone the Registrar or Reporter role. Audited. */
+/**
+ * A club director or deputy gives someone the Registrar or Reporter role
+ * (#375). No verified account yet? An invite is created and emailed instead
+ * (#425); it becomes this same grant when they sign up and accept it.
+ */
 export async function grantClubTeamRole(
   organizationId: string,
   input: CreateClubTeamGrantInput,
@@ -250,20 +274,24 @@ export async function grantClubTeamRole(
   if (!clubRoleIsAssignableByClub(input.role)) {
     throw new OrganizationOperationError("DIRECTOR_GRANT_ROLE_NOT_ALLOWED", "Only conference staff can assign directors and deputies.");
   }
+  const prisma = getPrisma();
+  const account = await prisma.attendeeAccount.findUnique({
+    where: { email: input.email },
+    select: { id: true, status: true, emailVerifiedAt: true, disabledAt: true },
+  });
+  const hasVerifiedAccount = Boolean(account && account.status === "ACTIVE" && account.emailVerifiedAt && !account.disabledAt);
+
+  if (!hasVerifiedAccount) {
+    const { messageId } = await createClubTeamInvite(organizationId, { email: input.email, role: input.role }, actorAccountId, now);
+    return { team: await listClubTeam(organizationId, now), invited: true, messageId };
+  }
+  const accountId = account!.id;
+
+  let messageId: string | null = null;
   await serializable(async (tx) => {
     const club = await requireClub(tx, organizationId, { mustBeActive: true });
-    const account = await tx.attendeeAccount.findUnique({
-      where: { email: input.email },
-      select: { id: true, status: true, emailVerifiedAt: true, disabledAt: true },
-    });
-    if (!account || account.status !== "ACTIVE" || !account.emailVerifiedAt || account.disabledAt) {
-      throw new OrganizationOperationError(
-        "ATTENDEE_ACCOUNT_NOT_FOUND",
-        "No active, verified account uses that email. Ask them to create one at /account/sign-up and verify their email, then try again.",
-      );
-    }
     const existing = await tx.clubDirectorGrant.findMany({
-      where: { organizationId, attendeeAccountId: account.id, revokedAt: null },
+      where: { organizationId, attendeeAccountId: accountId, revokedAt: null },
       select: { effectiveFrom: true, effectiveTo: true },
     });
     if (existing.some((grant) => directorGrantWindowsOverlap(grant, { effectiveFrom: now, effectiveTo: null }))) {
@@ -275,7 +303,7 @@ export async function grantClubTeamRole(
     const grant = await tx.clubDirectorGrant.create({
       data: {
         organizationId,
-        attendeeAccountId: account.id,
+        attendeeAccountId: accountId,
         role: input.role,
         effectiveFrom: now,
         reason: "Given by the club's director or deputy.",
@@ -288,10 +316,37 @@ export async function grantClubTeamRole(
       entityType: "ClubDirectorGrant",
       entityId: grant.id,
       summary: `Club leader gave ${clubDirectorRoleLabels[input.role].toLocaleLowerCase("en-US")} access to ${club.name}.`,
-      metadata: { organizationId, attendeeAccountId: account.id, role: input.role, actorAttendeeAccountId: actorAccountId },
+      metadata: { organizationId, attendeeAccountId: accountId, role: input.role, actorAttendeeAccountId: actorAccountId },
     }, tx);
+
+    // Best-effort: the grant stands even where account email isn't configured (local dev).
+    if (isAccountEmailConfigured()) {
+      const sender = getAccountEmailSender();
+      const content = clubTeamRoleNotificationEmail({ role: input.role, clubName: club.name });
+      const message = await tx.messageOutbox.create({
+        data: {
+          eventId: null,
+          templateKey: "CLUB_TEAM_ROLE_NOTIFICATION",
+          recipientKind: "ACCOUNT",
+          recipientEmail: input.email,
+          recipientName: null,
+          accountAttendeeId: accountId,
+          senderNameSnapshot: sender.name,
+          senderEmailSnapshot: sender.address,
+          replyToEmailSnapshot: sender.replyTo,
+          subjectSnapshot: content.subject,
+          bodyTextSnapshot: content.bodyText,
+          metadata: { trigger: "CLUB_TEAM_ROLE_GRANTED", accountEmail: true, realDelivery: true, grantId: grant.id },
+          idempotencyKey: `club-role-notice:${grant.id}:${randomUUID()}`,
+          correlationId: randomUUID(),
+          status: "PENDING",
+        },
+        select: { id: true },
+      });
+      messageId = message.id;
+    }
   });
-  return listClubTeam(organizationId, now);
+  return { team: await listClubTeam(organizationId, now), invited: false, messageId };
 }
 
 /** A club director or deputy removes a Registrar or Reporter. Directors and deputies are removed by staff only. */

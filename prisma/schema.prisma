@@ -364,6 +364,7 @@ enum MessageTemplateKey {
   REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED
   CLUB_INVITE
   CLUB_ASSIGNMENTS
+  CLUB_TEAM_ROLE_NOTIFICATION
 }
 
 enum MessageTemplateStatus {
@@ -688,6 +689,7 @@ model AttendeeAccount {
   areaCoordinatorGrant              AreaCoordinatorGrant?
   grantedClubRoles                  ClubDirectorGrant[]              @relation("ClubDirectorGrantGrantedByAccount")
   acceptedClubInvites               ClubInvite[]                     @relation("ClubInviteAcceptedAccount")
+  createdClubInvites                ClubInvite[]                     @relation("ClubInviteCreatedByAccount")
   revokedClubRoles                  ClubDirectorGrant[]              @relation("ClubDirectorGrantRevokedByAccount")
   createdClubRosterMembers          ClubRosterMember[]          @relation("ClubRosterMemberCreatedBy")
   submittedClubRegistrations        ClubEventRegistration[]     @relation("ClubEventRegistrationSubmittedBy")
@@ -1558,20 +1560,28 @@ model ClubInvite {
   name              String           @default("")
   role              ClubDirectorRole
   status            ClubInviteStatus @default(PENDING)
+  /// "IMPORT" (the club import, held for staff to Send) or "CLUB" (a club
+  /// director or deputy adding a Registrar or Reporter, sent right away; #425).
   source            String           @default("IMPORT")
   createdByUserId   String?
+  /// Set when a club's own director or deputy created the invite (#425).
+  createdByAccountId String?
   sentAt            DateTime?
   sentCount         Int              @default(0)
   lastMessageId     String?
+  /// When a SENT invite stops being acceptable (#425). Null for invites
+  /// created before expiry existed.
+  expiresAt         DateTime?
   acceptedAt        DateTime?
   acceptedAccountId String?
   cancelledAt       DateTime?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 
-  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  createdBy       User?            @relation("ClubInviteCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  acceptedAccount AttendeeAccount? @relation("ClubInviteAcceptedAccount", fields: [acceptedAccountId], references: [id], onDelete: SetNull)
+  organization      Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy         User?            @relation("ClubInviteCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  createdByAccount  AttendeeAccount? @relation("ClubInviteCreatedByAccount", fields: [createdByAccountId], references: [id], onDelete: SetNull)
+  acceptedAccount   AttendeeAccount? @relation("ClubInviteAcceptedAccount", fields: [acceptedAccountId], references: [id], onDelete: SetNull)
 
   @@index([email, status])
   @@index([organizationId, status])

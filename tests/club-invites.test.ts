@@ -5,8 +5,11 @@ const mocks = vi.hoisted(() => ({
   configured: vi.fn(),
   inviteFindMany: vi.fn(),
   inviteFindUnique: vi.fn(),
+  inviteFindFirst: vi.fn(),
+  inviteCreate: vi.fn(),
   inviteUpdate: vi.fn(),
   outboxCreate: vi.fn(),
+  organizationFindUnique: vi.fn(),
   grantFindFirst: vi.fn(),
   grantCreate: vi.fn(),
   getCurrentAttendee: vi.fn(),
@@ -14,7 +17,14 @@ const mocks = vi.hoisted(() => ({
 }));
 
 const client = {
-  clubInvite: { findMany: mocks.inviteFindMany, findUnique: mocks.inviteFindUnique, update: mocks.inviteUpdate },
+  clubInvite: {
+    findMany: mocks.inviteFindMany,
+    findUnique: mocks.inviteFindUnique,
+    findFirst: mocks.inviteFindFirst,
+    create: mocks.inviteCreate,
+    update: mocks.inviteUpdate,
+  },
+  organization: { findUnique: mocks.organizationFindUnique },
   messageOutbox: { create: mocks.outboxCreate },
   clubDirectorGrant: { findFirst: mocks.grantFindFirst, create: mocks.grantCreate },
   $transaction: (work: (tx: unknown) => unknown) => work(client),
@@ -32,7 +42,15 @@ vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAtten
 vi.mock("@/modules/access/request-security", () => ({ rejectCrossOriginRequest: mocks.rejectCrossOriginRequest }));
 
 import { POST as ACCEPT } from "@/app/api/attendee/club-invites/[inviteId]/accept/route";
-import { acceptClubInvite, sendClubInvites } from "@/modules/club-imports/invites";
+import {
+  acceptClubInvite,
+  cancelClubTeamInvite,
+  clubInviteExpiry,
+  createClubTeamInvite,
+  listPendingClubTeamInvites,
+  resendClubTeamInvite,
+  sendClubInvites,
+} from "@/modules/club-imports/invites";
 
 const now = new Date("2026-09-23T15:00:00Z");
 const account = { id: "account-1", verifiedEmail: "Leader@Example.test" };
@@ -57,6 +75,9 @@ beforeEach(() => {
   mocks.grantFindFirst.mockResolvedValue(null);
   mocks.grantCreate.mockResolvedValue({ id: "grant-1" });
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
+  mocks.organizationFindUnique.mockResolvedValue({ id: "club-1", name: "Example Pathfinders", type: "CLUB", isActive: true });
+  mocks.inviteFindFirst.mockResolvedValue(null);
+  mocks.inviteCreate.mockResolvedValue({ id: "invite-2" });
 });
 
 describe("sending club invites (#376)", () => {
@@ -112,6 +133,23 @@ describe("accepting a club invite", () => {
     expect(mocks.inviteUpdate).toHaveBeenCalled();
   });
 
+  it("refuses an expired invite (#425)", async () => {
+    mocks.inviteFindUnique.mockResolvedValue({ ...sentInvite, expiresAt: new Date("2026-09-01T00:00:00Z") });
+    await expect(acceptClubInvite("invite-1", account, now)).rejects.toMatchObject({ code: "INVITE_EXPIRED" });
+    expect(mocks.grantCreate).not.toHaveBeenCalled();
+  });
+
+  it("accepts right up to its expiry", async () => {
+    mocks.inviteFindUnique.mockResolvedValue({ ...sentInvite, expiresAt: new Date("2026-09-30T00:00:00Z") });
+    await expect(acceptClubInvite("invite-1", account, now)).resolves.toEqual({ organizationId: "club-1" });
+  });
+
+  it("refuses a club-created invite whose role is no longer club-assignable (#425)", async () => {
+    mocks.inviteFindUnique.mockResolvedValue({ ...sentInvite, role: "DEPUTY", source: "CLUB" });
+    await expect(acceptClubInvite("invite-1", account, now)).rejects.toMatchObject({ code: "INVITE_ROLE_NOT_ALLOWED" });
+    expect(mocks.grantCreate).not.toHaveBeenCalled();
+  });
+
   it("needs the person's own sign-in", async () => {
     mocks.getCurrentAttendee.mockResolvedValue({ account: { ...account, displayName: "Pat" }, via: "staff", sessionId: null });
     const response = await ACCEPT(new Request("https://events.imsda.test/api/attendee/club-invites/invite-1/accept", {
@@ -119,5 +157,101 @@ describe("accepting a club invite", () => {
     }), { params: Promise.resolve({ inviteId: "invite-1" }) });
     expect(response.status).toBe(401);
     expect(mocks.grantCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("club team invites (#425)", () => {
+  it("creates and sends an invite for someone with no account yet", async () => {
+    const result = await createClubTeamInvite("club-1", { email: "New.Helper@Example.test", role: "REGISTRAR" }, "account-1", now);
+    expect(result).toEqual({ inviteId: "invite-2", messageId: "message-1" });
+    expect(mocks.inviteCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        organizationId: "club-1",
+        email: "new.helper@example.test",
+        role: "REGISTRAR",
+        source: "CLUB",
+        createdByAccountId: "account-1",
+        status: "SENT",
+      }),
+    }));
+    const message = mocks.outboxCreate.mock.calls[0][0].data;
+    expect(message).toMatchObject({ templateKey: "CLUB_INVITE", recipientEmail: "new.helper@example.test" });
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      action: "CLUB_INVITE_CREATED",
+      metadata: { organizationId: "club-1", role: "REGISTRAR", actorAttendeeAccountId: "account-1" },
+    }), client);
+  });
+
+  it("only lets a club invite a Registrar or Reporter", async () => {
+    await expect(createClubTeamInvite("club-1", { email: "x@example.test", role: "DEPUTY" as never }, "account-1", now))
+      .rejects.toMatchObject({ code: "INVITE_ROLE_NOT_ALLOWED" });
+    expect(mocks.inviteCreate).not.toHaveBeenCalled();
+  });
+
+  it("won't open a second invite for the same email", async () => {
+    mocks.inviteFindFirst.mockResolvedValue({ id: "invite-open" });
+    await expect(createClubTeamInvite("club-1", { email: "helper@example.test", role: "REGISTRAR" }, "account-1", now))
+      .rejects.toMatchObject({ code: "INVITE_ALREADY_OPEN" });
+  });
+
+  it("lists only sent, club-assignable invites", async () => {
+    mocks.inviteFindMany.mockResolvedValue([
+      { id: "invite-1", email: "a@example.test", name: "", role: "REGISTRAR", status: "SENT", sentAt: now, sentCount: 1, expiresAt: new Date("2026-10-07T15:00:00Z") },
+    ]);
+    const invites = await listPendingClubTeamInvites("club-1", now);
+    expect(invites).toEqual([{
+      id: "invite-1", email: "a@example.test", name: "", role: "REGISTRAR",
+      sentAt: now.toISOString(), sentCount: 1, expiresAt: "2026-10-07T15:00:00.000Z", expired: false,
+    }]);
+    expect(mocks.inviteFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organizationId: "club-1", status: "SENT", role: { in: ["REGISTRAR", "REPORTER"] } },
+    }));
+  });
+
+  it("resends with a fresh expiry, rate-limited", async () => {
+    mocks.inviteFindFirst.mockResolvedValue({
+      id: "invite-1", email: "a@example.test", name: "", role: "REGISTRAR", status: "SENT",
+      sentAt: new Date(now.getTime() - 10 * 60_000),
+      organization: { name: "Example Pathfinders", isActive: true },
+    });
+    const result = await resendClubTeamInvite("club-1", "invite-1", "account-1", now);
+    expect(result).toEqual({ messageId: "message-1" });
+    expect(mocks.inviteUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "SENT", sentCount: { increment: 1 }, expiresAt: clubInviteExpiry(now) }),
+    }));
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "CLUB_INVITE_RESENT" }), client);
+  });
+
+  it("refuses to resend too soon after the last send", async () => {
+    mocks.inviteFindFirst.mockResolvedValue({
+      id: "invite-1", email: "a@example.test", name: "", role: "REGISTRAR", status: "SENT",
+      sentAt: new Date(now.getTime() - 60_000),
+      organization: { name: "Example Pathfinders", isActive: true },
+    });
+    await expect(resendClubTeamInvite("club-1", "invite-1", "account-1", now)).rejects.toMatchObject({ code: "INVITE_RESEND_TOO_SOON" });
+    expect(mocks.outboxCreate).not.toHaveBeenCalled();
+  });
+
+  it("won't resend or cancel a director/deputy invite from the club side", async () => {
+    mocks.inviteFindFirst.mockResolvedValue({
+      id: "invite-1", email: "a@example.test", name: "", role: "DIRECTOR", status: "SENT", sentAt: null,
+      organization: { name: "Example Pathfinders", isActive: true },
+    });
+    await expect(resendClubTeamInvite("club-1", "invite-1", "account-1", now)).rejects.toMatchObject({ code: "INVITE_ROLE_NOT_ALLOWED" });
+    mocks.inviteFindFirst.mockResolvedValue({ id: "invite-1", status: "SENT", role: "DIRECTOR" });
+    await expect(cancelClubTeamInvite("club-1", "invite-1", "account-1", now)).rejects.toMatchObject({ code: "INVITE_ROLE_NOT_ALLOWED" });
+  });
+
+  it("cancels a pending invite", async () => {
+    mocks.inviteFindFirst.mockResolvedValue({ id: "invite-1", status: "SENT", role: "REPORTER" });
+    await cancelClubTeamInvite("club-1", "invite-1", "account-1", now);
+    expect(mocks.inviteUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "CANCELLED" }) }));
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "CLUB_INVITE_CANCELLED" }));
+  });
+
+  it("won't cancel an invite that's already accepted", async () => {
+    mocks.inviteFindFirst.mockResolvedValue({ id: "invite-1", status: "ACCEPTED", role: "REPORTER" });
+    await expect(cancelClubTeamInvite("club-1", "invite-1", "account-1", now)).rejects.toMatchObject({ code: "INVITE_NOT_OPEN" });
+    expect(mocks.inviteUpdate).not.toHaveBeenCalled();
   });
 });
