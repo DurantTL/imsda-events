@@ -1,6 +1,7 @@
 import { ZodError } from "zod";
 import { logError } from "@/lib/logger";
 import { AttendeeMfaError } from "@/modules/attendee-accounts/mfa-service";
+import { ClubInviteError } from "@/modules/club-imports/invites";
 import { RosterAccessError } from "@/modules/club-rosters/access";
 import { RosterOperationError } from "@/modules/club-rosters/repository";
 import { organizationApiError } from "@/modules/organizations/api-errors";
@@ -22,6 +23,14 @@ export function rosterApiError(error: unknown, action: string) {
   }
   // Club team and profile changes (#375) raise the directory's own errors.
   if (error instanceof OrganizationOperationError) return organizationApiError(error, action);
+  // Club-created invites (#425) reuse the import invite's errors.
+  if (error instanceof ClubInviteError) {
+    const status = error.code === "INVITE_NOT_FOUND" ? 404
+      : error.code === "EMAIL_NOT_CONFIGURED" ? 503
+      : error.code === "INVITE_ROLE_NOT_ALLOWED" ? 403
+      : 409;
+    return Response.json({ error: error.code, message: error.message }, { status });
+  }
   if (error instanceof AttendeeMfaError) {
     return Response.json(
       { error: error.code, message: error.message },

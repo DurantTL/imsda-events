@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { UserMinus, UserPlus } from "lucide-react";
+import { Mail, RefreshCw, UserMinus, UserPlus, XCircle } from "lucide-react";
+import type { ClubTeamInvite } from "@/modules/club-imports/invites";
 import {
   clubAssignableRoles,
   clubDirectorRoleLabels,
@@ -9,18 +10,32 @@ import {
 } from "@/modules/organizations/director-grants-domain";
 import type { ClubTeamMember } from "@/modules/organizations/director-grants-repository";
 
-type TeamResponse = { team?: ClubTeamMember[]; message?: string; issues?: Array<{ message?: string }> };
+type TeamResponse = {
+  team?: ClubTeamMember[];
+  invites?: ClubTeamInvite[];
+  invited?: boolean;
+  message?: string;
+  issues?: Array<{ message?: string }>;
+};
+
+function formatSentDate(iso: string | null) {
+  if (!iso) return "";
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
 
 export function ClubTeamWorkspace({
   initialTeam,
+  initialInvites,
   organizationId,
   viewerAccountId,
 }: {
   initialTeam: ClubTeamMember[];
+  initialInvites: ClubTeamInvite[];
   organizationId: string;
   viewerAccountId: string;
 }) {
   const [team, setTeam] = useState(initialTeam);
+  const [invites, setInvites] = useState(initialInvites);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -37,11 +52,12 @@ export function ClubTeamWorkspace({
         body: body === undefined ? undefined : JSON.stringify(body),
       });
       const result = await response.json().catch(() => ({})) as TeamResponse;
-      if (!response.ok || !result.team) {
+      if (!response.ok || (!result.team && !result.invites)) {
         throw new Error(result.message ?? result.issues?.[0]?.message ?? "The team could not be updated.");
       }
-      setTeam(result.team);
-      setNotice(success);
+      if (result.team) setTeam(result.team);
+      if (result.invites) setInvites(result.invites);
+      setNotice(result.invited ? "Invite sent. They'll get access once they sign up and accept it." : success);
       return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The team could not be updated.");
@@ -64,6 +80,15 @@ export function ClubTeamWorkspace({
   async function remove(member: ClubTeamMember) {
     if (!window.confirm(`Remove ${member.displayName} as ${clubDirectorRoleLabels[member.role]}? They lose access to this club right away.`)) return;
     await call(`${base}/${encodeURIComponent(member.id)}`, "DELETE", undefined, "Removed.");
+  }
+
+  async function resendInvite(invite: ClubTeamInvite) {
+    await call(`${base}/invites/${encodeURIComponent(invite.id)}/resend`, "POST", undefined, "Invite resent.");
+  }
+
+  async function cancelInvite(invite: ClubTeamInvite) {
+    if (!window.confirm(`Cancel the invite to ${invite.email}?`)) return;
+    await call(`${base}/invites/${encodeURIComponent(invite.id)}`, "DELETE", undefined, "Invite cancelled.");
   }
 
   return (
@@ -105,6 +130,52 @@ export function ClubTeamWorkspace({
         </ul>
       </section>
 
+      {invites.length > 0 && (
+        <section className="public-manage-card" aria-labelledby="club-team-invites-heading">
+          <div className="public-manage-card-heading club-roster-heading">
+            <div>
+              <p className="public-registration-eyebrow">Waiting to sign up</p>
+              <h2 id="club-team-invites-heading">Pending invites</h2>
+            </div>
+            <span className="count-badge">{invites.length}</span>
+          </div>
+          <ul className="public-manage-club-list club-team-list">
+            {invites.map((invite) => (
+              <li key={invite.id}>
+                <span>
+                  <strong translate="no">{invite.email}</strong>
+                  <small>
+                    Sent {formatSentDate(invite.sentAt)}
+                    {invite.expiresAt ? `${invite.expired ? " · expired " : " · expires "}${formatSentDate(invite.expiresAt)}` : ""}
+                  </small>
+                </span>
+                <span className="status-chip purple">{clubDirectorRoleLabels[invite.role]}</span>
+                <span className="club-team-invite-actions">
+                  <button
+                    aria-label={`Resend invite to ${invite.email}`}
+                    className="secondary-button club-event-action"
+                    disabled={saving}
+                    onClick={() => resendInvite(invite)}
+                    type="button"
+                  >
+                    <RefreshCw aria-hidden="true" size={14} /> Resend
+                  </button>
+                  <button
+                    aria-label={`Cancel invite to ${invite.email}`}
+                    className="secondary-button club-event-action"
+                    disabled={saving}
+                    onClick={() => cancelInvite(invite)}
+                    type="button"
+                  >
+                    <XCircle aria-hidden="true" size={14} /> Cancel
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <form className="public-manage-card form-stack" onSubmit={add}>
         <div className="public-manage-card-heading">
           <p className="public-registration-eyebrow">Add someone</p>
@@ -112,7 +183,7 @@ export function ClubTeamWorkspace({
         </div>
         <div className="form-grid two-column">
           <label>
-            Their account email
+            Their email
             <input autoComplete="off" maxLength={254} name="email" required type="email" />
           </label>
           <label>
@@ -130,8 +201,8 @@ export function ClubTeamWorkspace({
           ))}
         </ul>
         <p className="field-help">
-          They need their own verified account first. If they don&apos;t have one, ask them to create it at
-          /account/sign-up with this email. Registrars also set up two-step sign-in before they can open the roster.
+          <Mail aria-hidden="true" size={14} /> If they already have a verified account, they get the role right
+          away. Otherwise we&apos;ll email them an invite to sign up and accept it.
         </p>
         <div>
           <button className="primary-button" disabled={saving} type="submit">

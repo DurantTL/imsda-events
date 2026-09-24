@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
 import { ClubTeamWorkspace } from "@/components/club-team-workspace";
+import { listPendingClubTeamInvites } from "@/modules/club-imports/invites";
 import { getRosterAccessState } from "@/modules/club-rosters/access";
 import { listClubTeam } from "@/modules/organizations/director-grants-repository";
 
 export const metadata: Metadata = { title: "Club admins" };
 export const dynamic = "force-dynamic";
 
-/** Directors and deputies give and remove the Registrar and Reporter roles (#375). */
+/** Directors and deputies give and remove the Registrar and Reporter roles (#375), and manage pending invites (#425). */
 export default async function ClubTeamPage({ params }: { params: Promise<{ organizationId: string }> }) {
   const { organizationId } = await params;
   const access = await getRosterAccessState(organizationId);
@@ -14,6 +15,16 @@ export default async function ClubTeamPage({ params }: { params: Promise<{ organ
   if (!access.capabilities.manageTeam) {
     return <p className="public-manage-empty">Only the club&apos;s director or deputy can change the team.</p>;
   }
-  const team = await listClubTeam(organizationId);
-  return <ClubTeamWorkspace initialTeam={team} organizationId={organizationId} viewerAccountId={access.accountId} />;
+  const [team, invites] = await Promise.all([
+    listClubTeam(organizationId),
+    listPendingClubTeamInvites(organizationId),
+  ]);
+  return (
+    <ClubTeamWorkspace
+      initialTeam={team}
+      initialInvites={invites}
+      organizationId={organizationId}
+      viewerAccountId={access.accountId}
+    />
+  );
 }

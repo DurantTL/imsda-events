@@ -18,7 +18,10 @@ export function clubImportApiError(error: unknown, action: string) {
     return Response.json({ error: error.code, message: error.message }, { status: error.status });
   }
   if (error instanceof ClubInviteError) {
-    const status = error.code === "INVITE_NOT_FOUND" ? 404 : error.code === "EMAIL_NOT_CONFIGURED" ? 503 : 409;
+    const status = error.code === "INVITE_NOT_FOUND" ? 404
+      : error.code === "EMAIL_NOT_CONFIGURED" ? 503
+      : error.code === "INVITE_ROLE_NOT_ALLOWED" ? 403
+      : 409;
     return Response.json({ error: error.code, message: error.message }, { status });
   }
   // Never log the body: an export holds names, emails, and minors' ages.
