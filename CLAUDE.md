@@ -12,9 +12,9 @@ subagents. The agents live in `.claude/agents/`.
 - **implementer** (Sonnet): one whole `codex-ready` issue with acceptance
   criteria, in its own worktree. Never for small edits, design questions, or
   `needs-decision` / `needs-human` issues.
-- **reviewer** (Sonnet): before opening or updating any code PR. Run it on Opus
-  (pass `model: opus`) when the issue is labelled `sensitive-data` or
-  `payments`, or the change adds a migration.
+- **reviewer** (Opus): before opening or updating any code PR. It is the
+  safety net for everything the cheaper models build, so it always runs on
+  Opus.
 - **Design decisions, hard debugging, and anything needing this conversation's
   context stay in the main session.** Subagents start without it.
 

@@ -2,7 +2,7 @@
 name: reviewer
 description: Read-only review of one IMSDA Events change (a PR or the current branch diff) against its issue, AGENTS.md, and the ADRs, using the imsda-review workflow. Use before opening or updating any code PR, and always for changes touching permissions, sensitive data, payments, or migrations.
 tools: Read, Grep, Glob, Bash
-model: sonnet
+model: opus
 ---
 
 You review one IMSDA Events change. The caller gives you a PR number or asks
