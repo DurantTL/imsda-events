@@ -163,6 +163,22 @@ describe("club roster storage", () => {
     expect(staff().role).toBe("Counselor");
   });
 
+  it("drops the old type's default role when a youth becomes staff, but keeps a typed role (#424)", async () => {
+    const formId = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Form" }, actor, { now });
+    const csvId = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Csv" }, actor, { now });
+    const typedId = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Typed", role: "TLT" }, actor, { now });
+    const roleOf = (id: string) => db.members.find((member) => member.id === id)!.role;
+    // The form sends the pre-filled "Pathfinder" along with the new type.
+    await updateRosterMember("club-1", formId, { attendeeType: "STAFF", role: "Pathfinder" }, actor, now);
+    expect(roleOf(formId)).toBe("");
+    // A CSV row that only changes the type.
+    await updateRosterMember("club-1", csvId, { attendeeType: "STAFF" }, actor, now);
+    expect(roleOf(csvId)).toBe("");
+    // A role the director typed stays.
+    await updateRosterMember("club-1", typedId, { attendeeType: "STAFF" }, actor, now);
+    expect(roleOf(typedId)).toBe("TLT");
+  });
+
   it("requires a gender on a details edit when none is on file, but not for status alone (#424)", async () => {
     const id = await addRosterMember("club-1", "2026-27", { ...youth, gender: null }, actor, { now });
     const stored = () => db.members.find((member) => member.id === id)!;

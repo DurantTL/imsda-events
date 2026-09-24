@@ -216,9 +216,18 @@ export async function updateRosterMember(
     }
     // A blank role defaults by the type the person ends up with (#424): youth
     // become "Pathfinder", staff and adults stay blank. A typed role is kept.
-    const role = input.role === undefined
+    const finalType = input.attendeeType ?? member.attendeeType;
+    let role = input.role === undefined
       ? undefined
-      : input.role.trim() || defaultRosterRole(input.attendeeType ?? member.attendeeType);
+      : input.role.trim() || defaultRosterRole(finalType);
+    // Changing type carries the old type's default role along ("Pathfinder"
+    // for a youth moved to staff). Re-default it, but never a typed role.
+    const typeChanged = input.attendeeType !== undefined && input.attendeeType !== member.attendeeType;
+    const oldDefault = defaultRosterRole(member.attendeeType);
+    const effectiveRole = role ?? member.role ?? "";
+    if (typeChanged && oldDefault && effectiveRole === oldDefault) {
+      role = defaultRosterRole(finalType);
+    }
     const firstName = input.firstName ?? member.person?.firstName ?? "";
     const lastName = input.lastName ?? member.person?.lastName ?? "";
     const birthDate = input.birthDate ?? (member.sealedBirthDate ? openBirthDate(member.sealedBirthDate) : "");
