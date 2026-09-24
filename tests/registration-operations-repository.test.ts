@@ -473,6 +473,7 @@ describe("attendee substitution repository", () => {
           identityUpdatedBy: "STAFF_ATTENDEE_SUBSTITUTION",
           identityOperationId: expect.any(String),
         }),
+        formResponses: { meal: "VEGAN" },
       },
     });
     expect(store.registration.attendees[0]).toMatchObject(attendeeBefore);

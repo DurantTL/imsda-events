@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -295,7 +295,13 @@ export function RegistrationAmendmentEditor({
     registration.attendees.map((attendee) => ({
       attendeeId: attendee.id,
       clientId: attendee.id,
-      responses: { ...attendee.responses },
+      // An earlier substitution may have left the old name in the answers;
+      // the attendee's current name is the one the server checks (WR26).
+      responses: {
+        ...attendee.responses,
+        ...(Object.hasOwn(attendee.responses, "first_name") ? { first_name: attendee.firstName } : {}),
+        ...(Object.hasOwn(attendee.responses, "last_name") ? { last_name: attendee.lastName } : {}),
+      },
     })),
   );
   const [reason, setReason] = useState("");
@@ -304,6 +310,19 @@ export function RegistrationAmendmentEditor({
   const [issues, setIssues] = useState<Array<{ path?: string; message?: string }>>([]);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [addedNotice, setAddedNotice] = useState("");
+  // After "Add person", bring the new card into view and put the cursor in it (WR26).
+  const newAttendeeId = useRef<string | null>(null);
+  useEffect(() => {
+    const clientId = newAttendeeId.current;
+    if (!clientId) return;
+    newAttendeeId.current = null;
+    const card = document.querySelector<HTMLElement>(`[data-attendee-client-id="${CSS.escape(clientId)}"]`);
+    if (!card) return;
+    card.scrollIntoView({ behavior: "smooth", block: "start" });
+    card.querySelector<HTMLElement>("input:not([disabled]), select:not([disabled]), textarea:not([disabled])")
+      ?.focus({ preventScroll: true });
+  }, [attendees]);
 
   if (!definition || !registration.publicSubmission) {
     return (
@@ -340,11 +359,14 @@ export function RegistrationAmendmentEditor({
   }
 
   function addAttendee() {
+    const clientId = crypto.randomUUID();
     setAttendees((current) => [...current, {
       attendeeId: null,
-      clientId: crypto.randomUUID(),
+      clientId,
       responses: {},
     }]);
+    setAddedNotice(`Attendee ${attendees.length + 1} added at the end of the roster. Fill in their details below.`);
+    newAttendeeId.current = clientId;
     invalidatePreview();
   }
 
@@ -483,7 +505,9 @@ export function RegistrationAmendmentEditor({
   }
 
   return (
-    <form className="registration-amendment" onSubmit={reviewAmendment}>
+    // The server checks the answers; the browser's required check would block
+    // untouched answers on older registrations (e.g. a Teen with no seminar ranks).
+    <form className="registration-amendment" noValidate onSubmit={reviewAmendment}>
       <div className="operation-step-heading">
         <p className="eyebrow">Step 1 of 2 · Edit registration</p>
         <h3>Choices, details, and attendees</h3>
@@ -510,6 +534,7 @@ export function RegistrationAmendmentEditor({
             <Plus aria-hidden="true" size={15} /> Add person
           </button>
         </div>
+        {addedNotice && <div className="inline-notice success" role="status">{addedNotice}</div>}
         {attendees.map((attendee, attendeeIndex) => {
           const merged = { ...responses, ...attendee.responses };
           const attendeeDefinition = withAttendeeTypeOptionsForAttendee(
@@ -522,7 +547,7 @@ export function RegistrationAmendmentEditor({
           const firstName = valueString(attendee.responses.first_name);
           const lastName = valueString(attendee.responses.last_name);
           return (
-            <article className="amendment-attendee-card" key={attendee.clientId}>
+            <article className="amendment-attendee-card" data-attendee-client-id={attendee.clientId} key={attendee.clientId}>
               <header>
                 <div><small>Attendee {attendeeIndex + 1}</small><h4>{`${firstName} ${lastName}`.trim() || "New attendee"}</h4></div>
                 <div>

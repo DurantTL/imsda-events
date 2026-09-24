@@ -58,3 +58,27 @@ export function identitiesDescribeSamePerson(
   }
   return true;
 }
+
+/** Attendee answers that carry a whole name; contact-name keys belong to the registration. */
+const attendeeFullNameKeys = ["full_name", "name", "attendee_name", "guest_name", "member_name"] as const;
+
+/**
+ * An attendee's form answers after a substitution (WR26): the name, email,
+ * and phone answers the attendee already had now describe the replacement,
+ * so rosters, exports, and later edits don't keep showing the prior person.
+ * Answers the attendee never had are not added; everything else is kept.
+ */
+export function substitutedFormResponses(
+  responses: Record<string, unknown>,
+  replacement: { firstName: string; lastName: string; email?: string | null; phone?: string | null },
+) {
+  const next = { ...responses };
+  if (Object.hasOwn(next, "first_name")) next.first_name = replacement.firstName;
+  if (Object.hasOwn(next, "last_name")) next.last_name = replacement.lastName;
+  for (const key of attendeeFullNameKeys) {
+    if (Object.hasOwn(next, key)) next[key] = `${replacement.firstName} ${replacement.lastName}`.trim();
+  }
+  if (Object.hasOwn(next, "attendee_email")) next.attendee_email = replacement.email || "";
+  if (Object.hasOwn(next, "attendee_phone")) next.attendee_phone = replacement.phone || "";
+  return next;
+}

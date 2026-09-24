@@ -25,6 +25,7 @@ import {
   type PromoCodeEvaluation,
 } from "@/modules/promo-codes/domain";
 import { adjustmentTotalCents } from "@/modules/registrations/adjustments";
+import { issuesOnChangedAnswers, splitUnconfiguredAnswers } from "@/modules/registrations/amendment-answers";
 import { registrationOperationFingerprint } from "@/modules/registrations/operations-domain";
 import { getRegistrationByIdWithClient } from "@/modules/registrations/repository";
 import { withAttendeeTypeOptions, attendeeTypeSelector } from "@/modules/attendee-types/form-options";
@@ -865,17 +866,29 @@ async function prepareAmendment(
     ? pricingSnapshot.pricingDate
     : registration.publicFormSubmission.createdAt.toISOString().slice(0, 10);
   const pricingInstant = new Date(`${pricingDate}T18:00:00.000Z`);
+  // Older registrations (imported, or on an earlier form version) may hold
+  // answers this form doesn't configure; unchanged ones are carried through
+  // untouched instead of failing validation (WR26).
+  const configuredKeys = new Set(definition.sections.flatMap((section) => section.fields).map((field) => field.key));
+  const storedAttendeeAnswers = input.attendees.map((attendee) => {
+    const current = attendee.attendeeId ? currentById.get(attendee.attendeeId) : undefined;
+    return current ? recordFromJson(current.formResponses) : null;
+  });
+  const registrationAnswers = splitUnconfiguredAnswers(configuredKeys, input.responses, currentRegistrationResponses);
+  const attendeeAnswers = input.attendees.map((attendee, index) => (
+    splitUnconfiguredAnswers(configuredKeys, attendee.responses, storedAttendeeAnswers[index] ?? {})
+  ));
   const publicInput: PublicRegistrationInput = {
     versionId: registration.publicFormSubmission.formVersionId,
     idempotencyKey: input.clientRequestId,
-    responses: input.responses,
-    attendees: input.attendees.map((attendee) => ({
+    responses: registrationAnswers.answers,
+    attendees: input.attendees.map((attendee, index) => ({
       clientId: attendee.clientId,
-      responses: attendee.responses,
+      responses: attendeeAnswers[index].answers,
     })),
     website: "",
   };
-  const prepared = preparePublicRegistration(definition, publicInput, {
+  const validated = preparePublicRegistration(definition, publicInput, {
     timeZone: registration.event.timezone,
     now: pricingInstant,
     usage: choiceUsageFromReservations(definition, otherReservations),
@@ -883,13 +896,31 @@ async function prepareAmendment(
     // e.g. a Teen in the Teen program (WR26), even though the question is required.
     optionalFieldKeys: seminarPreferencesChanged ? seminarKeys : [],
   });
-  if (!prepared.isValid) {
+  // Answers nobody changed aren't re-checked against today's rules, e.g. a
+  // Teen with no seminar ranks when staff only fix a shirt size (WR26).
+  const changedIssues = issuesOnChangedAnswers(
+    validated.issues,
+    input.responses,
+    currentRegistrationResponses,
+    input.attendees.map((attendee, index) => ({ submitted: attendee.responses, stored: storedAttendeeAnswers[index] })),
+  );
+  if (changedIssues.length > 0) {
     throw new RegistrationAmendmentError(
       "INVALID_AMENDMENT",
       "Review the highlighted registration and attendee fields.",
-      prepared.issues,
+      changedIssues,
     );
   }
+  const prepared = {
+    ...validated,
+    issues: changedIssues,
+    isValid: true,
+    registrationResponses: { ...registrationAnswers.preserved, ...validated.registrationResponses },
+    attendees: validated.attendees.map((attendee, index) => ({
+      ...attendee,
+      responses: { ...attendeeAnswers[index]?.preserved, ...attendee.responses },
+    })),
+  };
 
   let rosterRenamedCount = 0;
   prepared.attendees.forEach((attendee, index) => {

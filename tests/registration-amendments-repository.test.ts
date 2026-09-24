@@ -542,5 +542,70 @@ describe("registration amendments repository", () => {
     });
     expect(preview.quoteFingerprint).toMatch(/^[a-f0-9]{64}$/);
   });
+
+  it("edits an older registration without tripping on answers nobody changed (WR26)", async () => {
+    const { registration, tx } = repositoryFixture();
+    // Imported from the 2026 sheets: an answer this form doesn't configure, and a
+    // Teen with no seminar ranks even though the question is required.
+    const legacy = { ...attendeeResponses, attendee_email: "avery@example.test", seminar_preferences: [] as string[] };
+    registration.attendees[0].formResponses = { ...legacy };
+    const input = {
+      clientRequestId: "7c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+      expectedUpdatedAt: registration.updatedAt.toISOString(),
+      reason: "",
+      responses: { ...registrationResponses },
+      attendees: [{
+        attendeeId: "attendee-1",
+        clientId: "attendee-row-1",
+        responses: { ...legacy, meal: "Vegan" },
+      }],
+      previewOnly: true as const,
+    };
+    const preview = await previewRegistrationAmendment("event-1", "registration-1", input);
+    await amendRegistration("event-1", "registration-1", {
+      ...input,
+      previewOnly: false as const,
+      quoteFingerprint: preview.quoteFingerprint,
+    }, actor, new Date("2026-08-04T13:00:00.000Z"));
+    // The unconfigured answer is kept as it was.
+    expect(tx.registrationAttendee.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        formResponses: expect.objectContaining({ attendee_email: "avery@example.test", meal: "Vegan" }),
+      }),
+    }));
+  });
+
+  it("still checks an unconfigured answer that was added or changed", async () => {
+    const { registration } = repositoryFixture();
+    const legacy = { ...attendeeResponses, attendee_email: "avery@example.test" };
+    registration.attendees[0].formResponses = { ...legacy };
+    await expect(previewRegistrationAmendment("event-1", "registration-1", {
+      clientRequestId: "8d2e3f4a-5b6c-4d7e-8f9a-0b1c2d3e4f5a",
+      expectedUpdatedAt: registration.updatedAt.toISOString(),
+      reason: "",
+      responses: { ...registrationResponses },
+      attendees: [{
+        attendeeId: "attendee-1",
+        clientId: "attendee-row-1",
+        responses: { ...attendeeResponses, attendee_email: "someone-else@example.test" },
+      }],
+      previewOnly: true as const,
+    })).rejects.toMatchObject({ code: "INVALID_AMENDMENT" });
+  });
+
+  it("still requires seminar ranks for a newly added attendee", async () => {
+    const { registration } = repositoryFixture();
+    await expect(previewRegistrationAmendment("event-1", "registration-1", {
+      clientRequestId: "9e3f4a5b-6c7d-4e8f-9a0b-1c2d3e4f5a6b",
+      expectedUpdatedAt: registration.updatedAt.toISOString(),
+      reason: "",
+      responses: { ...registrationResponses },
+      attendees: [
+        { attendeeId: "attendee-1", clientId: "attendee-row-1", responses: { ...attendeeResponses } },
+        { attendeeId: null, clientId: "attendee-row-2", responses: { first_name: "Riley", last_name: "Guest", meal: "Vegan" } },
+      ],
+      previewOnly: true as const,
+    })).rejects.toMatchObject({ code: "INVALID_AMENDMENT" });
+  });
 });
 

@@ -526,12 +526,14 @@ export function PeopleWorkspace({
     setAddingAttendee(false);
     setEditingAttendeeEmailId(null);
     setLifecycleAction(null);
+    // Start from the current name so a same-family swap only changes the first name (WR26).
+    const current = selected?.attendees.find((attendee) => attendee.id === attendeeId);
     setOperationDraft({
       kind: "substitution",
       step: "details",
       attendeeId,
-      firstName: "",
-      lastName: "",
+      firstName: current?.firstName ?? "",
+      lastName: current?.lastName ?? "",
       email: "",
       phone: "",
       reason: "",

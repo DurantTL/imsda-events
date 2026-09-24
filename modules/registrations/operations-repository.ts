@@ -12,6 +12,7 @@ import {
 import {
   identitiesDescribeSamePerson,
   registrationOperationFingerprint,
+  substitutedFormResponses,
 } from "@/modules/registrations/operations-domain";
 import { getRegistrationByIdWithClient } from "@/modules/registrations/repository";
 import type {
@@ -816,6 +817,8 @@ export async function substituteRegistrationAttendee(
           identityUpdatedBy: "STAFF_ATTENDEE_SUBSTITUTION",
           identityOperationId: operationId,
         },
+        // Rosters, exports, and the edit form read names from the answers too (WR26).
+        formResponses: substitutedFormResponses(jsonRecord(attendee.formResponses), input) as Prisma.InputJsonValue,
       },
     });
 
