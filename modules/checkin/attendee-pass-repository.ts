@@ -28,6 +28,12 @@ export type ResolvedAttendeePass = {
     checkedIn: boolean;
     checkedInAt: string | null;
   }>;
+  /**
+   * Q1 (#412): only for a club member's own QR pass, which returns the whole
+   * club roster. Names the person actually scanned, so staff check that
+   * person in by default instead of the whole club.
+   */
+  scannedAttendeeId?: string;
 };
 
 export class AttendeePassResolutionError extends Error {
@@ -153,10 +159,11 @@ async function resolveSignedPass(
           id: true,
           confirmationCode: true,
           status: true,
-          // Q1 (#412): a club registration's QR pass opens the whole club's
-          // view, not just the scanned person, the same as entering the
-          // confirmation code does. Only club membership is checked here;
-          // nothing about the club's billing or roster is in the token.
+          // Q1 (#412): a club registration's QR pass opens the club's view
+          // with the scanned person identified (scannedAttendeeId), so
+          // staff can check in that one person or, by explicit choice, the
+          // club. Only club membership is checked here; nothing about the
+          // club's billing or roster is in the token.
           clubRegistration: { select: { id: true } },
         },
       },
@@ -189,6 +196,7 @@ async function resolveSignedPass(
       source: "QR_PASS",
       confirmationCode: attendee.registration.confirmationCode,
       attendees: roster.map(serializeAttendee),
+      scannedAttendeeId: attendee.id,
     };
   }
   return {

@@ -74,5 +74,19 @@ through the same offline queue — never a bulk endpoint — so each person gets
 their own check-in record and undo, idempotent retries, and reports behave
 identically. Someone already checked in (by this device, another scan, or
 another staff member) is skipped rather than re-sent, so repeats never
-duplicate or error. Campsite and assignments don't exist yet (#410); the club
+duplicate or error. Both club views run the same loop,
+`checkInSequentially` in `modules/checkin/bulk-check-in.ts`: one attendee at
+a time, a failure for one person is recorded as needing review and the loop
+carries on, progress is announced ("Checking in 12 of 40…"), and the summary
+names who needs review. A saved check-in already held for review (queue state
+`CONFLICT`) is left out of **Check in all**; staff retry it on purpose by
+ticking it for **Check in selected** or with its own retry. Unreadable saved
+queue data disables the club view in both places.
+
+Scanning one member's own QR pass returns the club roster plus
+`scannedAttendeeId`. The scanner highlights that person and makes "Check in
+<name>" the primary action; the whole club sits behind an explicit "Open
+whole club" disclosure, so one late child's pass can't record the whole club
+as arrived. A confirmation-code lookup has no scanned person and opens the
+plain club view. Campsite and assignments don't exist yet (#410); the club
 view leaves that slot clearly empty instead of inventing that schema.

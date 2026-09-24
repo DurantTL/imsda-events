@@ -1530,6 +1530,31 @@ select:focus-visible {
   font-weight: 700;
   white-space: nowrap;
 }
+.club-check-in-list li.is-review { border-color: #f0b8b0; background: #fff6f5; }
+.club-check-in-list li.is-review .club-check-in-status { color: #b42318; }
+.club-check-in-list li.is-scanned { border-color: var(--imsda-purple); }
+.club-check-in-progress { margin: 8px 0 0; color: var(--ink); font-size: 0.7rem; font-weight: 700; }
+.club-check-in-progress:empty { display: none; }
+.club-check-in-review-note { margin: 0 0 10px; color: #b42318; font-size: 0.66rem; }
+.club-check-in-blocked { display: flex; align-items: center; gap: 7px; margin: 10px 0 0; }
+.club-check-in-scanned {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 13px 0;
+  border: 2px solid var(--imsda-purple);
+  border-radius: 12px;
+  background: var(--imsda-purple-soft, #f3effa);
+  padding: 12px;
+}
+.club-check-in-scanned strong,
+.club-check-in-scanned small { display: block; }
+.club-check-in-scanned strong { color: var(--ink); font-size: 0.85rem; }
+.club-check-in-scanned small { margin-top: 2px; color: var(--muted); font-size: 0.64rem; }
+.club-check-in-scanned .eyebrow { margin: 0 0 2px; }
+.club-check-in-whole > summary { cursor: pointer; color: var(--ink); font-size: 0.72rem; font-weight: 700; }
 
 .communications-grid { align-items: start; }
 .announcement-list { display: grid; gap: 12px; }

@@ -86,6 +86,8 @@ describe("attendee pass repository", () => {
       }],
     });
     expect(JSON.stringify(resolution)).not.toContain("never-return@example.test");
+    // Non-club scans are unchanged: no scanned-person marker.
+    expect(Object.keys(resolution)).not.toContain("scannedAttendeeId");
   });
 
   it("resolves a club member's QR pass to the whole club roster (#412), not just the scanned person", async () => {
@@ -139,6 +141,9 @@ describe("attendee pass repository", () => {
       "attendee_789",
     ]);
     expect(resolution.attendees[1]).toMatchObject({ checkedIn: true });
+    // The person actually scanned is named, so staff check them in by
+    // default instead of the whole club.
+    expect(resolution.scannedAttendeeId).toBe("attendee_456");
   });
 
   it("rejects a pass for another event before querying attendee data", async () => {
@@ -193,6 +198,8 @@ describe("attendee pass repository", () => {
       checkedIn: true,
       checkedInAt: "2026-10-10T13:15:00.000Z",
     });
+    // A confirmation-code lookup has no scanned person.
+    expect(Object.keys(resolution)).not.toContain("scannedAttendeeId");
   });
 
   it("blocks cancelled registrations even when their signed QR remains cryptographically valid", async () => {

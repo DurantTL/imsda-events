@@ -22,8 +22,16 @@ import {
 import { CheckInPaymentDue } from "@/components/check-in-payment-due";
 import { BackgroundCheckBadge } from "@/components/background-check-flags";
 import { CheckInScanner } from "@/components/check-in-scanner";
-import { ClubCheckInPanel } from "@/components/club-check-in-panel";
+import {
+  ClubCheckInPanel,
+  type ClubCheckInProgress,
+} from "@/components/club-check-in-panel";
 import { useOfflineCheckInQueue } from "@/components/use-offline-check-in-queue";
+import {
+  checkInSequentially,
+  sequentialCheckInSummary,
+  type SequentialCheckInStatus,
+} from "@/modules/checkin/bulk-check-in";
 import { offlineCheckInErrorMessage } from "@/modules/checkin/domain";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 import { attendeeBalanceCents } from "@/modules/registrations/finance-view";
@@ -117,7 +125,7 @@ export function CheckInWorkspace({
   const visible = useMemo(() => arrivals.filter((arrival) => (
     `${arrival.firstName} ${arrival.lastName} ${arrival.confirmationCode} ${arrival.email} ${clubByConfirmationCode.get(arrival.confirmationCode)?.organizationName ?? ""}`
       .toLowerCase()
-      .includes(query.toLowerCase())
+      .includes(query.trim().toLowerCase())
   )), [arrivals, query, clubByConfirmationCode]);
   const queueByAttendee = useMemo(() => new Map(
     queue.map((item) => [item.attendeeId, item]),
@@ -143,27 +151,35 @@ export function CheckInWorkspace({
     ));
   }, [clubs, query]);
   const [bulkBusyCode, setBulkBusyCode] = useState<string | null>(null);
+  const [bulkProgress, setBulkProgress] = useState<ClubCheckInProgress | null>(null);
+  // This device's latest result per attendee from a club run, so a row that
+  // failed reads "Needs review" even when nothing was saved to the queue.
+  const [bulkResultById, setBulkResultById] = useState<
+    Record<string, SequentialCheckInStatus>
+  >({});
 
   async function checkInMany(confirmationCode: string, clubLabel: string, attendeeIds: string[]) {
-    if (!canCheckIn || attendeeIds.length === 0) return;
+    if (!canCheckIn || attendeeIds.length === 0 || bulkBusyCode) return;
     setBulkBusyCode(confirmationCode);
+    setBulkProgress({ current: 0, total: attendeeIds.length });
     setMessage("");
-    let confirmed = 0;
-    let queuedCount = 0;
-    let needsReview = 0;
-    for (const attendeeId of attendeeIds) {
-      const result = await requestCheckIn(attendeeId);
-      if (result.status === "CONFIRMED") confirmed += 1;
-      else if (result.status === "QUEUED") queuedCount += 1;
-      else needsReview += 1;
+    try {
+      const outcome = await checkInSequentially(
+        attendeeIds,
+        requestCheckIn,
+        ({ current, total }) => setBulkProgress({ current, total }),
+      );
+      setBulkResultById((current) => ({
+        ...current,
+        ...Object.fromEntries(Object.entries(outcome.perAttendee).map(
+          ([attendeeId, result]) => [attendeeId, result.status],
+        )),
+      }));
+      setMessage(`${clubLabel}: ${sequentialCheckInSummary(attendeeIds, outcome, attendeeLabel)}`);
+    } finally {
+      setBulkBusyCode(null);
+      setBulkProgress(null);
     }
-    setBulkBusyCode(null);
-    setMessage(
-      `${clubLabel}: checked in ${confirmed} of ${attendeeIds.length}`
-      + (queuedCount > 0 ? `, ${queuedCount} queued offline` : "")
-      + (needsReview > 0 ? `, ${needsReview} need review` : "")
-      + ".",
-    );
   }
 
   async function toggleCheckIn(arrival: Arrival) {
@@ -444,6 +460,7 @@ export function CheckInWorkspace({
           backgroundFlaggedAttendeeIds={backgroundFlaggedAttendeeIds}
           clubsByConfirmationCode={Object.fromEntries(clubByConfirmationCode)}
           onConfirmCheckIn={(attendee) => requestCheckIn(attendee.id)}
+          savedQueueUnreadable={unreadableItemCount > 0}
           queuedAttendeeIds={queue
             .filter((item) => item.state === "QUEUED")
             .map((item) => item.attendeeId)}
@@ -478,12 +495,15 @@ export function CheckInWorkspace({
               checkedIn: arrival.checkedIn,
               backgroundFlagged: backgroundFlaggedAttendeeIds.includes(arrival.id),
               savedState: savedItem?.state,
+              lastResult: bulkResultById[arrival.id],
             };
           });
         return (
           <ClubCheckInPanel
             attendees={clubAttendees}
-            busy={bulkBusyCode === club.confirmationCode || unreadableItemCount > 0}
+            busy={bulkBusyCode !== null}
+            progress={bulkBusyCode === club.confirmationCode ? bulkProgress : null}
+            savedQueueUnreadable={unreadableItemCount > 0}
             canCheckIn={canCheckIn}
             amountOwedCents={club.amountOwedCents}
             confirmationCode={club.confirmationCode}
