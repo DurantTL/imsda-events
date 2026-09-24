@@ -121,6 +121,9 @@ export const eventSettingsInputSchema = z.object({
   // this governs what the form asks for. Grouping them would suggest turning
   // shirts off has something to do with closing registration.
   collectsShirtSizes: z.boolean(),
+  // Youth or children's event (#388): every adult registered is checked for a
+  // current Sterling Volunteers background check, and flagged when missing.
+  checksAdultBackgrounds: z.boolean().default(false),
   attendeeEditPolicy: z
     .enum(["TIERED", "VERIFY_EVERY_EDIT"])
     .default("VERIFY_EVERY_EDIT"),

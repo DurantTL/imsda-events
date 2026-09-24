@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight, FileText, UsersRound } from "lucide-react";
 import { AccessRestricted } from "@/components/access-restricted";
+import { BackgroundCheckBadge } from "@/components/background-check-flags";
+import { listEventBackgroundFlags } from "@/modules/background-checks/repository";
 import { listRegisteredClubs, resolveClubOversight } from "@/modules/club-rosters/event-oversight";
 
 export const metadata: Metadata = { title: "Clubs" };
@@ -21,7 +23,11 @@ export default async function EventClubsPage({ searchParams }: { searchParams: P
       />
     );
   }
-  const clubs = await listRegisteredClubs(event.id);
+  const [clubs, backgroundFlags] = await Promise.all([listRegisteredClubs(event.id), listEventBackgroundFlags(event.id)]);
+  const neededByClub = new Map<string, number>();
+  for (const person of backgroundFlags?.people ?? []) {
+    if (person.organizationId) neededByClub.set(person.organizationId, (neededByClub.get(person.organizationId) ?? 0) + 1);
+  }
   return (
     <section className="page-stack">
       <div className="intro-actions club-admin-links">
@@ -44,12 +50,19 @@ export default async function EventClubsPage({ searchParams }: { searchParams: P
           <div className="report-table-wrap">
             <table className="report-table">
               <caption className="sr-only">Registered clubs</caption>
-              <thead><tr><th scope="col">Club</th><th scope="col">Going</th><th scope="col">Registration</th><th scope="col"><span className="sr-only">Open</span></th></tr></thead>
+              <thead><tr><th scope="col">Club</th><th scope="col">Going</th>{backgroundFlags && <th scope="col">Background checks</th>}<th scope="col">Registration</th><th scope="col"><span className="sr-only">Open</span></th></tr></thead>
               <tbody>
                 {clubs.map((club) => (
                   <tr key={club.organizationId}>
                     <th scope="row" translate="no">{club.name}{club.sponsoringChurch && <small> · {club.sponsoringChurch}</small>}</th>
                     <td>{club.attendeeCount}</td>
+                    {backgroundFlags && (
+                      <td>
+                        {neededByClub.get(club.organizationId)
+                          ? <><BackgroundCheckBadge /> <small className="quiet-copy">{neededByClub.get(club.organizationId)}</small></>
+                          : <small className="quiet-copy">All current</small>}
+                      </td>
+                    )}
                     <td>{club.confirmationCode}</td>
                     <td><Link className="secondary-button" href={`/more/clubs/${club.organizationId}?event=${event.id}`}>Open <ArrowRight aria-hidden="true" size={13} /></Link></td>
                   </tr>

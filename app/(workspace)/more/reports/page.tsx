@@ -9,11 +9,13 @@ import {
   HandHeart,
   ListOrdered,
   PackageOpen,
+  ShieldAlert,
   ShieldCheck,
   UsersRound,
   Utensils,
 } from "lucide-react";
 import { AccessRestricted } from "@/components/access-restricted";
+import { BackgroundCheckList } from "@/components/background-check-flags";
 import { EmailRegistrationsButton } from "@/components/email-registrations-button";
 import { PrintReportButton } from "@/components/print-report-button";
 import { resolveEventContext } from "@/modules/events/selection";
@@ -23,6 +25,7 @@ import type {
   OperationalSeminarField,
 } from "@/modules/reporting/operational-reports";
 import { getOperationalReport } from "@/modules/reporting/repository";
+import { listEventBackgroundFlags } from "@/modules/background-checks/repository";
 
 export const metadata: Metadata = { title: "Operational reports" };
 
@@ -133,7 +136,7 @@ export default async function OperationalReportsPage({
     );
   }
 
-  const report = await getOperationalReport(event.id);
+  const [report, backgroundFlags] = await Promise.all([getOperationalReport(event.id), listEventBackgroundFlags(event.id)]);
   const peopleQuery = `?event=${encodeURIComponent(event.id)}`;
   const summaryCards = [
     {
@@ -214,6 +217,27 @@ export default async function OperationalReportsPage({
           </article>
         ))}
       </section>
+
+      {backgroundFlags && (
+        <section className="panel report-panel" id="background-checks">
+          <div className="section-heading report-section-heading">
+            <div className="report-title">
+              <span className="report-icon coral"><ShieldAlert aria-hidden="true" size={19} /></span>
+              <div>
+                <p className="eyebrow">Youth or children&apos;s event</p>
+                <h2>Background check needed</h2>
+                <p>
+                  Adults registered: {backgroundFlags.adults}. Without a Sterling Volunteers check good through
+                  {" "}{backgroundFlags.lastDay}: {backgroundFlags.people.length}. Registration and check-in aren&apos;t blocked;
+                  follow up before the event. Clubs never see this list.
+                </p>
+              </div>
+            </div>
+            <a className="secondary-button report-download" href={`/api/events/${encodeURIComponent(event.id)}/background-checks`}><Download aria-hidden="true" size={15} /> Download CSV</a>
+          </div>
+          <BackgroundCheckList people={backgroundFlags.people} registrationHref={{ base: "/people", query: `event=${encodeURIComponent(event.id)}` }} />
+        </section>
+      )}
 
       <section className="panel report-panel" id="attendee-roster">
         <div className="section-heading report-section-heading">

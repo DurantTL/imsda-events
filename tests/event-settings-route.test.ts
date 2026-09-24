@@ -66,6 +66,7 @@ const eventPayload = {
  */
 const normalizedEventPayload = {
   ...eventPayload,
+  checksAdultBackgrounds: false,
   hotelName: undefined,
   hotelBookingUrl: undefined,
   hotelPhone: undefined,

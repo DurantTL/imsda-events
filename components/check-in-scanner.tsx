@@ -19,6 +19,7 @@ import {
   type FormEvent,
 } from "react";
 import { CheckInPaymentDue } from "@/components/check-in-payment-due";
+import { BackgroundCheckBadge } from "@/components/background-check-flags";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { CheckInActionResult } from "@/components/use-offline-check-in-queue";
 
@@ -91,6 +92,7 @@ export function CheckInScanner({
   queuedAttendeeIds,
   conflictAttendeeIds,
   paymentDueByConfirmationCode = {},
+  backgroundFlaggedAttendeeIds = [],
 }: {
   eventId: string;
   onConfirmCheckIn: (
@@ -99,6 +101,8 @@ export function CheckInScanner({
   queuedAttendeeIds: string[];
   conflictAttendeeIds: string[];
   paymentDueByConfirmationCode?: Record<string, { balanceCents: number; partySize: number }>;
+  /** Adults at a youth or children's event without a current check (#388). Shown, never blocking. */
+  backgroundFlaggedAttendeeIds?: string[];
 }) {
   const [open, setOpen] = useState(false);
   const [cameraState, setCameraState] = useState<CameraState>("idle");
@@ -525,6 +529,7 @@ export function CheckInScanner({
                         <div>
                           <strong translate="no">{attendee.firstName} {attendee.lastName}</strong>
                           <small>{attendeeTypeLabel(attendee.attendeeType)}</small>
+                          {backgroundFlaggedAttendeeIds.includes(attendee.id) && <BackgroundCheckBadge />}
                         </div>
                         {attendee.checkedIn || savedState === "CONFIRMED" ? (
                           <span className="check-in-already">

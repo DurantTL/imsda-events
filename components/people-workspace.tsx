@@ -1,5 +1,6 @@
 "use client";
 
+import { BackgroundCheckBadge } from "@/components/background-check-flags";
 import { useMemo, useState } from "react";
 import {
   ArrowRightLeft,
@@ -225,6 +226,7 @@ export function PeopleWorkspace({
   canEmail,
   initialFilter = "ALL",
   initialRegistrationId,
+  backgroundFlaggedAttendeeIds = [],
 }: {
   eventId: string;
   eventSlug: string;
@@ -235,6 +237,8 @@ export function PeopleWorkspace({
   canEmail: boolean;
   initialFilter?: string;
   initialRegistrationId?: string;
+  /** Adults at a youth or children's event without a current check (#388). */
+  backgroundFlaggedAttendeeIds?: string[];
 }) {
   const initialSelected = initialRegistrations.find((registration) => registration.id === initialRegistrationId) ?? null;
   const [registrations, setRegistrations] = useState(initialRegistrations);
@@ -667,6 +671,7 @@ export function PeopleWorkspace({
           <button className="record-card interactive-record" type="button" onClick={() => openDetail(registration)}>
             <span className={`person-avatar large ${statusTone(registration)}`}>{initials(registration)}</span>
             <span className="record-copy"><strong>{registration.accountHolder.firstName} {registration.accountHolder.lastName}</strong><small>{registration.confirmationCode} · {registration.attendeeCount} {registration.attendeeCount === 1 ? "person" : "people"}</small><small>{registration.attendeeCount > 1 ? registration.attendees.slice(0, 2).map((attendee) => `${attendee.firstName} ${attendee.lastName}`).join(", ") + (registration.attendeeCount > 2 ? ` +${registration.attendeeCount - 2} more` : "") : registration.accountHolder.email || "No email on file"} · {submittedDateTime(registration.submittedAt, eventTimezone)}</small></span>
+            {registration.attendees.some((attendee) => backgroundFlaggedAttendeeIds.includes(attendee.id)) && <BackgroundCheckBadge />}
             <span className={`status-chip ${statusTone(registration)}`}>{statusLabel(registration)}</span>
           </button>
           </div>
@@ -827,6 +832,7 @@ export function PeopleWorkspace({
                     <div className="attendee-summary">
                       <span>{attendee.firstName} {attendee.lastName}<small>{attendee.attendeeType.toLowerCase()} · {attendee.source === "PUBLIC_REGISTRATION" ? "Submitted on public form" : "Added by staff"}</small></span>
                       <span className="attendee-operation-actions">
+                        {backgroundFlaggedAttendeeIds.includes(attendee.id) && <BackgroundCheckBadge />}
                         <span className={`status-chip ${attendee.checkedIn ? "green" : "purple"}`}>{attendee.checkedIn ? "Checked in" : "Expected"}</span>
                         {canEdit && !attendee.checkedIn && <button className="text-button" type="button" onClick={() => beginSubstitution(attendee.id)}><ArrowRightLeft aria-hidden="true" size={14} /> Substitute</button>}
                       </span>
