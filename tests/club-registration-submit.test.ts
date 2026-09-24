@@ -224,6 +224,12 @@ describe("club registration submit", () => {
     await expect(submit()).rejects.toMatchObject({ code: "CLUB_REGISTRATION_UNAVAILABLE" });
   });
 
+  it("refuses a form that asks attendees for free-text medical notes (#408)", async () => {
+    const tx = fixture({ form: definition([field("a_med", "medical_or_accessibility_notes", "Medical or accessibility notes", "LONG_TEXT", "ATTENDEE")]) });
+    await expect(submit()).rejects.toMatchObject({ code: "CLUB_REGISTRATION_UNAVAILABLE" });
+    expect(tx.registration.create).not.toHaveBeenCalled();
+  });
+
   it("refuses after the registration deadline", async () => {
     const tx = fixture({ registrationClosesOn: "2026-10-10" });
     await expect(submit()).rejects.toMatchObject({ code: "REGISTRATION_CLOSED" });

@@ -56,7 +56,7 @@ describe("club form mapping", () => {
     expect(clubFormProblem(form([field("first_name"), field("last_name")]))).toBeNull();
     expect(clubFormProblem(form([field("first_name"), field("last_name")], false))).toMatch(/list of attendees/);
     expect(clubFormProblem(form([field("first_name"), field("last_name"), field("birthday", "DATE", "ATTENDEE", [], "Birthday")]))).toMatch(/birth dates/);
-    expect(clubFormProblem(form([field("first_name"), field("last_name"), field("medical_notes", "LONG_TEXT", "ATTENDEE", [], "Medical or accessibility notes")]))).toMatch(/medical, health, or accessibility/);
+    expect(clubFormProblem(form([field("first_name"), field("last_name"), field("medical_notes", "LONG_TEXT", "ATTENDEE", [], "Medical or accessibility notes")]))).toMatch(/free-text medical, allergy, health, or accessibility question \("Medical or accessibility notes"\)/);
   });
 
   it("flags attendee free-text medical/health fields but not dietary, checkbox, or yes/no ones (#408)", () => {
@@ -66,15 +66,21 @@ describe("club form mapping", () => {
     const dietary = field("dietary_needs", "LONG_TEXT", "ATTENDEE", [], "Dietary restrictions");
     const medicalPersonnelCheckbox = field("medical_personnel", "CHECKBOX", "ATTENDEE", [], "Medical personnel?");
     const medicalNeedFlag = field("medical_or_accessibility_need", "RADIO", "ATTENDEE", ["No", "Yes"], "Has a medical or accessibility need the club director knows about");
+    const keyOnly = field("medical_info", "LONG_TEXT", "ATTENDEE", [], "Anything the camp nurse should know");
+    const medications = field("current_meds", "TEXT", "ATTENDEE", [], "Medications");
+    const accessibilityNeeds = field("access", "LONG_TEXT", "ATTENDEE", [], "Accessibility needs");
+    const dietaryAllergies = field("diet", "LONG_TEXT", "ATTENDEE", [], "Dietary needs / allergies");
     const registrationScopedMedical = field("registrant_medical_notes", "LONG_TEXT", "REGISTRATION", [], "Medical notes");
 
     const matches = medicalFreeTextFields(form([
       field("first_name"), field("last_name"),
-      medicalNote, healthNote, allergyNote,
+      medicalNote, healthNote, allergyNote, keyOnly, medications, accessibilityNeeds, dietaryAllergies,
       dietary, medicalPersonnelCheckbox, medicalNeedFlag, registrationScopedMedical,
     ])).map((f) => f.key);
 
-    expect(matches).toEqual(["medical_notes", "health_notes", "allergy_notes"]);
+    expect(matches).toEqual([
+      "medical_notes", "health_notes", "allergy_notes", "medical_info", "current_meds", "access", "diet",
+    ]);
   });
 
   it("has no free-text medical field on the seeded Spring Camporee template (#408)", () => {

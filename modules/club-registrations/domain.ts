@@ -89,17 +89,18 @@ export function birthDateFields(definition: RegistrationFormDefinition): Registr
 
 const FREE_TEXT_FIELD_TYPES = new Set<RegistrationFormField["type"]>(["TEXT", "LONG_TEXT"]);
 
-// Deliberately narrow: bare medical/medication/health/allergy words, or
-// "accessibility" paired with "notes" (the retired free-text field's own
-// wording). This must NOT match "Dietary restrictions" (a kept convenience
-// field, ADR 0005 §1), the "Medical personnel?" checkbox, or the new yes/no
-// flag — none of those are free text, and "dietary" alone never matches.
-const MEDICAL_FREE_TEXT_WORDS = /\b(?:medical|medication|health|allerg\w*)\b/i;
-const ACCESSIBILITY_NOTES_PATTERN = /\baccessib\w*\b[\s\S]*\bnotes?\b|\bnotes?\b[\s\S]*\baccessib\w*\b/i;
+// A narrower subset of `sensitiveFieldPattern` in
+// modules/attendee-accounts/registration-answer-policy.ts (ADR 0005 §5): it
+// leaves out "dietary", "age", "emergency" and the like, so the Camporee's
+// "Dietary restrictions" convenience field (ADR 0005 §1) stays allowed. Only
+// free text is checked, so the "Medical personnel?" checkbox and the yes/no
+// medical-need flag never match.
+const MEDICAL_FREE_TEXT_PATTERN =
+  /\b(?:medic\w*|meds?|health|allerg\w*|accessib\w*|disabil\w*|special\s*needs?|insur\w*)\b/i;
 
 function looksLikeMedicalFreeText(field: RegistrationFormField) {
-  return MEDICAL_FREE_TEXT_WORDS.test(field.key) || MEDICAL_FREE_TEXT_WORDS.test(field.label)
-    || ACCESSIBILITY_NOTES_PATTERN.test(field.key) || ACCESSIBILITY_NOTES_PATTERN.test(field.label);
+  // Snake_case keys become words so `medical_info` matches as well as its label.
+  return MEDICAL_FREE_TEXT_PATTERN.test(`${field.key.replaceAll("_", " ")} ${field.label}`);
 }
 
 /**
@@ -120,8 +121,10 @@ export function clubFormProblem(definition: RegistrationFormDefinition) {
   if (birthDateFields(definition).length > 0) {
     return "The event's form asks for birth dates. Club registration uses the roster's age instead, so remove that question.";
   }
-  if (medicalFreeTextFields(definition).length > 0) {
-    return "The event's form asks attendees a free-text medical, health, or accessibility question. Registration answers aren't encrypted, so replace it with a structured (checkbox or yes/no) flag and republish.";
+  const medicalFields = medicalFreeTextFields(definition);
+  if (medicalFields.length > 0) {
+    const labels = medicalFields.map((field) => `"${field.label}"`).join(", ");
+    return `The event's form asks attendees a free-text medical, allergy, health, or accessibility question (${labels}). Registration answers aren't encrypted, so replace it with a checkbox or yes/no question and republish.`;
   }
   return null;
 }
