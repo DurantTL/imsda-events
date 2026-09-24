@@ -7,6 +7,7 @@ import { BackgroundCheckList } from "@/components/background-check-flags";
 import { listEventBackgroundFlags } from "@/modules/background-checks/repository";
 import { ClubOverview } from "@/components/club-overview";
 import { getPrisma } from "@/lib/prisma";
+import { getClubAssignmentForClub } from "@/modules/club-registrations/assignments-repository";
 import { isClubRegisteredForEvent, resolveClubOversight } from "@/modules/club-rosters/event-oversight";
 
 export const metadata: Metadata = { title: "Club" };
@@ -29,6 +30,7 @@ export default async function EventClubPage({
   if (!club) notFound();
   const query = `?event=${event.id}`;
   const backgroundFlags = await listEventBackgroundFlags(event.id, { organizationId });
+  const assignment = await getClubAssignmentForClub(event.id, organizationId);
   return (
     <section className="page-stack">
       <Link className="secondary-button more-back-link" href={`/more/clubs${query}`}>Back to clubs</Link>
@@ -50,6 +52,16 @@ export default async function EventClubPage({
             </div>
           </div>
           <BackgroundCheckList people={backgroundFlags.people} registrationHref={{ base: "/people", query: `event=${encodeURIComponent(event.id)}` }} showClub={false} />
+        </section>
+      )}
+      {assignment && (
+        <section className="panel">
+          <h3>Assignments</h3>
+          <ul className="quiet-copy compact-list">
+            {assignment.fields.campsiteLocation && <li>Campsite: {assignment.fields.campsiteLocation}</li>}
+            {assignment.fields.dutyLabel && <li>Duty: {assignment.fields.dutyLabel}{assignment.fields.dutyDay ? ` — ${assignment.fields.dutyDay}` : ""}{assignment.fields.dutyTime ? ` ${assignment.fields.dutyTime}` : ""}</li>}
+            {assignment.fields.activityLabel && <li>Activity: {assignment.fields.activityLabel}</li>}
+          </ul>
         </section>
       )}
       <ClubOverview

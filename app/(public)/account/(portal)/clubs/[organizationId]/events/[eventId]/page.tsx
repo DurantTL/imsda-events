@@ -10,6 +10,7 @@ import { ClubRegistrationWorkspace } from "@/components/club-registration-worksp
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { attendeeProfilePrefill, getAttendeeProfile } from "@/modules/attendee-accounts/profile-service";
 import { getRosterAccessState } from "@/modules/club-rosters/access";
+import { loadDirectorClubAssignment } from "@/modules/club-registrations/director-assignment";
 import { isChurchBilledStatus, notBilledLabel } from "@/modules/club-registrations/church-owed";
 import { ClubRegistrationError, getClubEventWorkspace } from "@/modules/club-registrations/repository";
 import { activeRegistrationStatuses } from "@/modules/events/lifecycle";
@@ -42,6 +43,10 @@ export default async function ClubEventRegistrationPage({
   }
 
   const classes = workspace.registration ? await getClassSelectionWorkspace(organizationId, eventId) : null;
+  // #410: only shown once staff have set something — an empty section would
+  // tell a director less than nothing. The loader re-checks this club's
+  // roster access itself rather than trusting the check above.
+  const assignment = workspace.registration ? await loadDirectorClubAssignment(organizationId, eventId) : null;
 
   let contactPrefill: Record<string, string> = {};
   if (workspace.experience) {
@@ -109,6 +114,24 @@ export default async function ClubEventRegistrationPage({
               </li>
             ))}
           </ul>
+          {assignment && (
+            <div className="public-manage-card club-assignments-block">
+              <h3>Your assignments</h3>
+              <ul className="public-manage-club-list">
+                {assignment.fields.campsiteLocation && (
+                  <li>Campsite: <strong translate="no">{assignment.fields.campsiteLocation}</strong>{assignment.fields.campsiteNotes ? ` — ${assignment.fields.campsiteNotes}` : ""}</li>
+                )}
+                {assignment.fields.dutyLabel && (
+                  <li>
+                    Duty: <strong translate="no">{assignment.fields.dutyLabel}</strong>
+                    {(assignment.fields.dutyDay || assignment.fields.dutyTime) && ` — ${[assignment.fields.dutyDay, assignment.fields.dutyTime].filter(Boolean).join(" ")}`}
+                  </li>
+                )}
+                {assignment.fields.activityLabel && <li>Activity: <strong translate="no">{assignment.fields.activityLabel}</strong></li>}
+                {assignment.fields.notes && <li>Notes: {assignment.fields.notes}</li>}
+              </ul>
+            </div>
+          )}
           {workspace.event.edit.open && workspace.experience
             ? (
               <ClubRegistrationEditor

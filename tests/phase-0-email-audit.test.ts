@@ -226,6 +226,7 @@ function contextFor(fixture: EventFixture, registration: RegistrationFixture): M
     checkin_block: `### At check-in\n\nUse confirmation code **${registration.confirmationCode}**.`,
     checkin_qr_url: `https://events.example.test/manage/${registration.confirmationCode.toLowerCase()}`,
     checkin_qr_image: `https://events.example.test/manage/${registration.confirmationCode.toLowerCase()}/qr.png`,
+    club_assignments_block: "- **Campsite:** Field C, site 12\n- **Duty:** Flag raising / lowering — Friday morning\n- **Activity:** Campfire singing",
   };
 }
 
