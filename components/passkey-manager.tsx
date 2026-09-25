@@ -20,6 +20,7 @@ export function PasskeyManager({
   available,
   needsConfirmation,
   hasAuthenticator,
+  onAdded,
 }: {
   initialPasskeys: PasskeySummary[];
   /** Whether an administrator has switched passkeys on for this site. */
@@ -27,6 +28,8 @@ export function PasskeyManager({
   /** Whether this session must confirm with an existing second step before changes. */
   needsConfirmation: boolean;
   hasAuthenticator: boolean;
+  /** Called once a new passkey is added. */
+  onAdded?: () => void;
 }) {
   const [passkeys, setPasskeys] = useState(initialPasskeys);
   const [name, setName] = useState("");
@@ -45,6 +48,7 @@ export function PasskeyManager({
       setPasskeys(result.passkeys as PasskeySummary[]);
       setName("");
       setNotice("Passkey added. You can use it to open your club next time.");
+      onAdded?.();
     } catch (caught) {
       setError(passkeyPromptMessage(caught, "That passkey couldn't be added."));
     } finally {

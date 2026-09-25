@@ -35,7 +35,12 @@ export default async function AttendeeSecurityPage() {
       </section>
       <div className="account-page-body account-security-grid">
         <div className="account-security-main">
-          <MfaManager initialStatus={mfaStatus} endpoint="/api/attendee/mfa" attendee />
+          <MfaManager
+            initialStatus={mfaStatus}
+            endpoint="/api/attendee/mfa"
+            attendee
+            otherMethodAvailable={passkeySettings.available && passkeySettings.passkeys.length > 0}
+          />
           {/* Passkeys are a second step for opening club rosters, so only club directors manage them. */}
           {clubs.length > 0 && via === "attendee" && (
             <PasskeyManager

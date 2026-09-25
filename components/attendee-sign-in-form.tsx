@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Eye, EyeOff, LogIn } from "lucide-react";
+import { Eye, EyeOff, LogIn, UserPlus } from "lucide-react";
 import {
   attendeeAuthReturnPathFromHash,
   attendeeSignUpEmailPrefill,
@@ -89,9 +89,15 @@ export function AttendeeSignInForm() {
       <button className="primary-button full-button" type="submit" disabled={busy}>
         <LogIn aria-hidden="true" size={17} /> {busy ? "Signing in…" : "Sign in"}
       </button>
+      <div className="auth-alternate">
+        <strong>New to IMSDA Events?</strong>
+        <span>Invited to help run a club, or registering for the first time? Create your account with your email address.</span>
+        <Link className="secondary-button full-button" href="/account/sign-up">
+          <UserPlus aria-hidden="true" size={17} /> Create an account
+        </Link>
+      </div>
       <p className="field-help">
-        No account yet? <Link href="/account/sign-up">Create one</Link>.
-        {" "}<Link href="/recover-registration">Manage my registration without an account</Link>.
+        <Link href="/recover-registration">Manage my registration without an account</Link>.
       </p>
     </form>
   );

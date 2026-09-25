@@ -1,13 +1,11 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ShieldCheck } from "lucide-react";
 import { AttendeeSignOutButton } from "@/components/attendee-sign-out-button";
 import { BrandMark } from "@/components/brand-mark";
-import { MfaManager } from "@/components/mfa-manager";
-import { PasskeyManager } from "@/components/passkey-manager";
 import { PasskeyUnlockButton } from "@/components/passkey-unlock-button";
 import { RosterUnlockForm } from "@/components/roster-unlock-form";
+import { TwoStepSetup } from "@/components/two-step-setup";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { getAttendeeMfaStatus } from "@/modules/attendee-accounts/mfa-service";
 import { getPasskeySettings } from "@/modules/attendee-accounts/passkeys";
@@ -77,20 +75,7 @@ export default async function TwoStepPage() {
             )}
           </section>
         ) : (
-          <>
-            <MfaManager attendee endpoint="/api/attendee/mfa" initialStatus={mfaStatus} />
-            {passkeySettings.available && (
-              <PasskeyManager
-                available={passkeySettings.available}
-                hasAuthenticator={passkeySettings.hasAuthenticator}
-                initialPasskeys={passkeySettings.passkeys}
-                needsConfirmation={false}
-              />
-            )}
-            <p className="field-help">
-              When it&apos;s set up (and you&apos;ve saved your recovery codes), <Link href="/account">continue to your account</Link>.
-            </p>
-          </>
+          <TwoStepSetup mfaStatus={mfaStatus} passkeySettings={passkeySettings} />
         )}
       </div>
     </main>

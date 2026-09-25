@@ -3,8 +3,12 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Eye, EyeOff, MailCheck, UserPlus } from "lucide-react";
+import { Eye, EyeOff, LogIn, MailCheck, UserPlus } from "lucide-react";
 import { OneTimeCodeInput } from "@/components/one-time-code-input";
+import {
+  allPasswordRequirementsMet,
+  PasswordRequirementsChecklist,
+} from "@/components/password-requirements-checklist";
 import {
   attendeeAuthReturnPathFromHash,
   attendeeSignUpEmailPrefill,
@@ -34,6 +38,9 @@ export function AttendeeSignUpForm({
   const [busy, setBusy] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);
+  const [password, setPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [email, setEmail] = useState(initialEmail);
   const emailRef = useRef<HTMLInputElement>(null);
   /** Only ever set by a development server with no account email configured. */
   const [developmentCode, setDevelopmentCode] = useState<string | null>(null);
@@ -43,7 +50,10 @@ export function AttendeeSignUpForm({
     attendeeAuthReturnPathFromHash(window.location.hash);
     const fragment = new URLSearchParams(window.location.hash.slice(1));
     const prefill = attendeeSignUpEmailPrefill(fragment.get("email") ?? undefined);
-    if (!initialEmail && prefill && emailRef.current) emailRef.current.value = prefill;
+    if (!initialEmail && prefill && emailRef.current) {
+      emailRef.current.value = prefill;
+      setEmail(prefill);
+    }
     removeAttendeeAuthFragment();
   }, [initialEmail]);
 
@@ -132,7 +142,14 @@ export function AttendeeSignUpForm({
     <form className="auth-form" onSubmit={submitDetails}>
       <label>
         Your name
-        <input name="displayName" type="text" autoComplete="name" required maxLength={120} />
+        <input
+          name="displayName"
+          type="text"
+          autoComplete="name"
+          required
+          maxLength={120}
+          onChange={(event) => setDisplayName(event.target.value)}
+        />
       </label>
       <label>
         Email address
@@ -144,6 +161,7 @@ export function AttendeeSignUpForm({
           maxLength={254}
           defaultValue={initialEmail}
           ref={emailRef}
+          onChange={(event) => setEmail(event.target.value)}
         />
       </label>
       <p className="field-help">
@@ -159,6 +177,8 @@ export function AttendeeSignUpForm({
             autoComplete="new-password"
             required
             maxLength={128}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
           />
           <button
             type="button"
@@ -169,13 +189,21 @@ export function AttendeeSignUpForm({
           </button>
         </span>
       </label>
+      <PasswordRequirementsChecklist password={password} owner={{ email, displayName }} />
       {error && <p className="form-error" role="alert">{error}</p>}
-      <button className="primary-button full-button" type="submit" disabled={busy}>
+      <button
+        className="primary-button full-button"
+        type="submit"
+        disabled={busy || !allPasswordRequirementsMet(password, { email, displayName })}
+      >
         <UserPlus aria-hidden="true" size={17} /> {busy ? "Creating…" : "Create account"}
       </button>
-      <p className="field-help">
-        Already have one? <Link href="/account/sign-in">Sign in</Link>.
-      </p>
+      <div className="auth-alternate">
+        <strong>Already have an account?</strong>
+        <Link className="secondary-button full-button" href="/account/sign-in">
+          <LogIn aria-hidden="true" size={17} /> Sign in instead
+        </Link>
+      </div>
     </form>
   );
 }

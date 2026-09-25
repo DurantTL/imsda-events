@@ -43,7 +43,7 @@ export function ClubInviteAccept({ invites }: { invites: Invite[] }) {
               <strong translate="no">{invite.clubName}</strong>
               <small>As {clubDirectorRoleLabels[invite.role].toLocaleLowerCase("en-US")}, from the Iowa-Missouri Conference</small>
             </span>
-            <button className="primary-button club-event-action" disabled={busy !== null} onClick={() => accept(invite)} type="button">
+            <button className="primary-button" disabled={busy !== null} onClick={() => accept(invite)} type="button">
               <Check aria-hidden="true" size={14} /> {busy === invite.id ? "Accepting…" : "Accept"}
             </button>
           </li>
