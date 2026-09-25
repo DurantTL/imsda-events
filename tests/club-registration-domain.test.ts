@@ -136,8 +136,8 @@ describe("club form mapping", () => {
     expect(rosterRolePrefill(roleForm, { ...person, role: " pathfinder ", attendeeType: "YOUTH" })).toEqual({ attendee_type: "Pathfinder" });
     expect(rosterRolePrefill(roleForm, { ...person, role: "Counselor", attendeeType: "STAFF" })).toEqual({ attendee_type: "Staff" });
     expect(rosterRolePrefill(roleForm, { ...person, role: "", attendeeType: "UNDERAGE" })).toEqual({ attendee_type: "Child" });
-    // A youth whose roster role doesn't match an option still starts as a Pathfinder.
-    expect(rosterRolePrefill(roleForm, { ...person, role: "Explorer", attendeeType: "YOUTH" })).toEqual({ attendee_type: "Pathfinder" });
+    // A youth with no roster role starts as a Pathfinder; an unrecognized role is left for the director.
+    expect(rosterRolePrefill(roleForm, { ...person, role: "Explorer", attendeeType: "YOUTH" })).toEqual({});
     expect(rosterRolePrefill(roleForm, { ...person, role: "", attendeeType: "YOUTH" })).toEqual({ attendee_type: "Pathfinder" });
     expect(rosterRolePrefill(roleForm, { ...person, role: "Explorer" })).toEqual({});
     expect(rosterRolePrefill(form([field("first_name"), field("last_name")]), { ...person, role: "Pathfinder" })).toEqual({});

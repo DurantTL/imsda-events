@@ -209,10 +209,14 @@ export function rosterGenderPrefill(definition: RegistrationFormDefinition, pers
 }
 
 const TYPE_OPTION_NAMES: Record<string, string[]> = {
-  YOUTH: ["pathfinder", "youth"],
   STAFF: ["staff"],
   ADULT: ["adult", "staff"],
   UNDERAGE: ["child", "underage"],
+};
+
+/** Youth are only guessed from their type when the roster gives no role; an unrecognized role (e.g. "Teen Leader") is left for the director. */
+const BLANK_ROLE_TYPE_OPTION_NAMES: Record<string, string[]> = {
+  YOUTH: ["pathfinder", "youth"],
 };
 
 /**
@@ -229,9 +233,10 @@ export function rosterRolePrefill(definition: RegistrationFormDefinition, person
   const byName = new Map(field.options.map((option) => [option.trim().toLowerCase(), option]));
   const role = person.role?.trim().toLowerCase();
   const fromRole = role ? byName.get(role) : undefined;
-  const fromType = person.attendeeType
-    ? (TYPE_OPTION_NAMES[person.attendeeType] ?? []).map((name) => byName.get(name)).find(Boolean)
-    : undefined;
+  const typeNames = person.attendeeType
+    ? TYPE_OPTION_NAMES[person.attendeeType] ?? (role ? [] : BLANK_ROLE_TYPE_OPTION_NAMES[person.attendeeType] ?? [])
+    : [];
+  const fromType = typeNames.map((name) => byName.get(name)).find(Boolean);
   const option = fromRole ?? fromType;
   return option ? { [field.key]: option } : {};
 }
