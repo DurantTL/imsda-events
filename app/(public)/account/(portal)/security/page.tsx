@@ -39,7 +39,7 @@ export default async function AttendeeSecurityPage() {
             initialStatus={mfaStatus}
             endpoint="/api/attendee/mfa"
             attendee
-            otherMethodAvailable={passkeySettings.passkeys.length > 0}
+            otherMethodAvailable={passkeySettings.available && passkeySettings.passkeys.length > 0}
           />
           {/* Passkeys are a second step for opening club rosters, so only club directors manage them. */}
           {clubs.length > 0 && via === "attendee" && (

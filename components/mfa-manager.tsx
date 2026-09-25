@@ -76,8 +76,8 @@ export function MfaManager({
     if (result) {
       setOffer(null);
       setStatus(result.status);
+      // The finish step waits for "I've saved these" below: the codes are shown only once.
       setRecoveryCodes(result.recoveryCodes);
-      onEnrolled?.();
     }
   }
 
@@ -128,6 +128,11 @@ export function MfaManager({
           <ul className="recovery-code-list">
             {recoveryCodes.map((code) => <li key={code}><code>{code}</code></li>)}
           </ul>
+          {onEnrolled && (
+            <button className="primary-button" type="button" onClick={onEnrolled}>
+              I&apos;ve saved these codes
+            </button>
+          )}
         </div>
       )}
 

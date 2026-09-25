@@ -9,9 +9,9 @@ import type { PasskeySummary } from "@/modules/attendee-accounts/passkeys";
 
 /**
  * The setup half of the two-step page: pick either an authenticator app or a
- * passkey (a second method stays optional). The moment either one is
- * confirmed, this swaps to an explicit finish step instead of leaving the
- * person to guess that they are done.
+ * passkey (a second method stays optional). Once either one is confirmed —
+ * for an authenticator, once the one-time recovery codes are saved — this
+ * swaps to an explicit finish step instead of leaving the person to guess.
  */
 export function TwoStepSetup({
   mfaStatus,
@@ -46,7 +46,7 @@ export function TwoStepSetup({
         attendee
         endpoint="/api/attendee/mfa"
         initialStatus={mfaStatus}
-        otherMethodAvailable={passkeySettings.passkeys.length > 0}
+        otherMethodAvailable={passkeySettings.available && passkeySettings.passkeys.length > 0}
         onEnrolled={() => setDone(true)}
       />
       {passkeySettings.available && (

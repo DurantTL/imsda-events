@@ -56,7 +56,7 @@ export default function AuthenticatorHelpPage() {
             required.
           </p>
           <p className="field-help">
-            <Link href="/account/sign-in">Back to sign in</Link>
+            <Link href="/account">Back to your account</Link>
           </p>
         </div>
       </section>

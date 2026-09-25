@@ -83,9 +83,8 @@ export type ClubInviteRecord = Awaited<ReturnType<typeof listClubInvites>>[numbe
 /**
  * Where a club invite's email sends someone to act on it: the sign-up page,
  * with the invited address prefilled the same way a Google sign-up return
- * prefills it (`sign-up-prefill.ts`). Landing there works either way — an
- * address that already has an account gets the same sign-up response
- * everyone does (see `account-service.ts`), which quietly becomes a sign-in.
+ * prefills it (`sign-up-prefill.ts`). Someone who already has an account
+ * should sign in instead; the email says so and gives that link too.
  * There is no token in this link: acceptance is decided by the signed-in
  * account's own verified email matching the invite, not by anything the link
  * carries, so nothing here is a secret to protect.
@@ -121,8 +120,9 @@ function inviteEmail(input: {
       invitedBy,
       "",
       "To accept:",
-      `1. Go to ${signUpUrl}`,
-      `2. Sign in, or create an account, using this email address: ${input.email}`,
+      `1. New to IMSDA Events? Create your account at ${signUpUrl}`,
+      `   Already have one? Sign in at ${new URL("/account/sign-in", getServerEnv().APP_BASE_URL).toString()}`,
+      `2. Use this email address: ${input.email}`,
       "3. On your account page, choose Accept next to the club invite.",
       "",
       context,
