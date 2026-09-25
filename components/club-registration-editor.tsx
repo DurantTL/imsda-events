@@ -99,7 +99,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
         const person = { firstName: guest.firstName, lastName: guest.lastName, ageOnEventDate: guest.age, gender: null };
         return withEdits(
           clubGuestClientId(guest.id),
-          rosterRolePrefill(definition, { ...person, attendeeType: guestIsAdult(guest) ? "ADULT" : undefined }),
+          rosterRolePrefill(definition, { ...person, attendeeType: guestIsAdult(guest) ? "ADULT" : "YOUTH" }),
           rosterOwnedResponses(definition, person),
         );
       }),

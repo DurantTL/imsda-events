@@ -3,7 +3,7 @@ import { calculateRosterTotal, formTemplates, registrationFormDefinitionSchema, 
 
 describe("registration form definitions", () => {
   it("ships valid starter templates", () => {
-    expect(formTemplates).toHaveLength(7);
+    expect(formTemplates).toHaveLength(8);
     for (const template of formTemplates) expect(registrationFormDefinitionSchema.safeParse(template.definition).success).toBe(true);
   });
 
@@ -354,6 +354,33 @@ describe("registration form definitions", () => {
       director_name: "Jane Doe",
     })).toBe("Explicit Contact");
     expect(resolveBillingContactName({})).toBeNull();
+  });
+
+  it("ships an Honors Weekend club template with no prices, so a fresh event owes $0 until staff price it (#436)", () => {
+    const definition = formTemplates.find((template) => template.key === "honors_weekend")!.definition;
+    expect(definition.attendeeRoster).toMatchObject({ enabled: true, attendeeLabel: "Club member" });
+    const roster = [
+      { first_name: "Pat", last_name: "Finder", attendee_age: "11", attendee_type: "Pathfinder" },
+      { first_name: "Sam", last_name: "Staffer", attendee_age: "34", attendee_type: "Staff" },
+    ];
+    const calculation = calculateRosterTotal(
+      definition,
+      { club_name: "Ankeny Son-Seekers", director_name: "Jamie Director", email: "director@example.test", phone: "555-0100" },
+      roster,
+      "2026-12-01",
+    );
+    expect(calculation).toMatchObject({ subtotalCents: 0, totalCents: 0 });
+
+    const registrationResult = validateTestResponses(definition, {
+      club_name: "Ankeny Son-Seekers", director_name: "Jamie Director", email: "director@example.test", phone: "555-0100",
+    }, {}, "REGISTRATION");
+    expect(registrationResult.isValid).toBe(true);
+
+    const attendeeResult = validateTestResponses(definition, roster[0], {}, "ATTENDEE");
+    expect(attendeeResult.isValid).toBe(true);
+
+    expect(resolveResponsibleOrganization({ club_name: "Ankeny Son-Seekers" })).toBe("Ankeny Son-Seekers");
+    expect(resolveBillingContactName({ director_name: "Jamie Director" })).toBe("Jamie Director");
   });
 
   it("calculates Camp Meeting housing nights and separate adult and child meal tickets", () => {

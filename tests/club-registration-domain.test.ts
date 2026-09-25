@@ -99,12 +99,47 @@ describe("club form mapping", () => {
     expect(rosterKeys).not.toContain("medical_or_accessibility_notes");
   });
 
+  it("ships a club-registration-ready, unpriced Honors Weekend template (#436)", () => {
+    const honorsWeekend = formTemplates.find((template) => template.key === "honors_weekend");
+    expect(honorsWeekend).toBeDefined();
+    const definition = registrationFormDefinitionSchema.parse(honorsWeekend!.definition);
+    expect(medicalFreeTextFields(definition)).toEqual([]);
+    expect(clubFormProblem(definition)).toBeNull();
+
+    const allFields = definition.sections.flatMap((section) => section.fields);
+    expect(allFields.some((f) => f.type === "DATE")).toBe(false);
+
+    const rosterSection = definition.sections.find((section) => section.id === "hw_roster");
+    const rosterKeys = rosterSection?.fields.map((f) => f.key) ?? [];
+    expect(rosterKeys).toContain("first_name");
+    expect(rosterKeys).toContain("last_name");
+    expect(rosterKeys).toContain("attendee_age");
+    expect(rosterKeys).toContain("dietary_needs");
+    expect(rosterKeys).toContain("medical_or_accessibility_need");
+    // Same roster roles as Spring Camporee, so role prefill, club reports,
+    // and attendee types line up across club events.
+    const role = rosterSection?.fields.find((f) => f.key === "attendee_type");
+    expect(role?.options).toEqual(["Pathfinder", "TLT", "Staff", "Child"]);
+    expect(role?.helpText).toBe("Class seats follow each person’s type on the club roster, not this answer.");
+
+    // Pricing is left for staff to set per event (#436): no field on the
+    // template carries a price.
+    for (const field of allFields) {
+      expect(field.priceCents).toBeUndefined();
+      expect(field.choicePricesCents).toBeUndefined();
+      expect(field.latePricing).toBeUndefined();
+    }
+  });
+
   it("prefills the roster role so directors don't re-pick it for everyone", () => {
     const roleForm = form([field("first_name"), field("last_name"), field("attendee_type", "RADIO", "ATTENDEE", ["Pathfinder", "TLT", "Staff", "Child"])]);
     expect(rosterRolePrefill(roleForm, { ...person, role: " pathfinder ", attendeeType: "YOUTH" })).toEqual({ attendee_type: "Pathfinder" });
     expect(rosterRolePrefill(roleForm, { ...person, role: "Counselor", attendeeType: "STAFF" })).toEqual({ attendee_type: "Staff" });
     expect(rosterRolePrefill(roleForm, { ...person, role: "", attendeeType: "UNDERAGE" })).toEqual({ attendee_type: "Child" });
+    // A youth with no roster role starts as a Pathfinder; an unrecognized role is left for the director.
     expect(rosterRolePrefill(roleForm, { ...person, role: "Explorer", attendeeType: "YOUTH" })).toEqual({});
+    expect(rosterRolePrefill(roleForm, { ...person, role: "", attendeeType: "YOUTH" })).toEqual({ attendee_type: "Pathfinder" });
+    expect(rosterRolePrefill(roleForm, { ...person, role: "Explorer" })).toEqual({});
     expect(rosterRolePrefill(form([field("first_name"), field("last_name")]), { ...person, role: "Pathfinder" })).toEqual({});
   });
 });

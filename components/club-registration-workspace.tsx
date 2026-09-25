@@ -153,7 +153,7 @@ export function ClubRegistrationWorkspace({
         responses: {
           ...(rosterRolePrefill(definition, {
             firstName: guest.firstName, lastName: guest.lastName, ageOnEventDate: guest.age, gender: null,
-            attendeeType: guestIsAdult(guest) ? "ADULT" : undefined,
+            attendeeType: guestIsAdult(guest) ? "ADULT" : "YOUTH",
           }) as FormResponses),
           ...(draft.attendeeResponses[clientId] ?? {}),
           ...(rosterOwnedResponses(definition, {
