@@ -327,8 +327,9 @@ async function rosterBackgroundNameIndex(now: Date): Promise<NameIndex> {
  * - Otherwise the row is matched by normalized name. When `sites` is filled
  *   in, it must be the person's club or sponsoring church, and it narrows a
  *   name shared by more than one person.
- * - A `user_id` used in the file for different people, or a person already
- *   remembered under another `user_id`, needs review.
+ * - A `user_id` used in the file for different people, one person matched
+ *   by rows with different `user_id`s, or a person already remembered under
+ *   another `user_id`, needs review.
  */
 export async function planRosterBackgroundImport(rows: RosterBackgroundCsvRow[], now = new Date()): Promise<RosterImportStep[]> {
   const prisma = getPrisma();
@@ -410,6 +411,13 @@ export async function planRosterBackgroundImport(rows: RosterBackgroundCsvRow[],
     })
     : []).map((identity) => [identity.personId as string, identity.externalId]));
 
+  const userIdsByPerson = new Map<string, Set<string>>();
+  for (const step of resolved) {
+    const ids = userIdsByPerson.get(step.personId) ?? new Set<string>();
+    ids.add(step.userId);
+    userIdsByPerson.set(step.personId, ids);
+  }
+
   const bestByPerson = new Map<string, RosterImportStep>();
   for (const step of resolved) {
     const sharedBy = peopleByUserId.get(step.userId)!;
@@ -440,7 +448,21 @@ export async function planRosterBackgroundImport(rows: RosterBackgroundCsvRow[],
       });
       continue;
     }
-    // 4. The same person twice: the later row is used.
+    // 4. The same person under different user_ids is never guessed either.
+    const otherIds = [...userIdsByPerson.get(step.personId)!].filter((id) => id !== step.userId);
+    if (otherIds.length > 0) {
+      const candidate = index.byPerson.get(step.personId);
+      steps.push({
+        line: step.line,
+        name: step.name,
+        action: "REVIEW",
+        message: `Also matched by user_id ${otherIds.join(", ")} in this file. Review and match by hand.`,
+        candidates: [candidate ? candidateView(candidate) : { personId: step.personId, name: step.name, sites: [] }],
+        issuesNote: step.issuesNote,
+      });
+      continue;
+    }
+    // 5. The same person and user_id twice: the later row is used.
     const earlier = bestByPerson.get(step.personId);
     if (earlier) {
       earlier.action = "SKIP";

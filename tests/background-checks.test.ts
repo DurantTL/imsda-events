@@ -439,6 +439,21 @@ describe("matching a roster import to people (#427)", () => {
     expect(steps.every((step) => step.personId === undefined)).toBe(true);
   });
 
+  it("sends every row to review when different user_ids in the file match the same person", async () => {
+    mocks.rosterFindMany.mockResolvedValue([rosterMember("p-ana", "Ana", "Rivera", "Test Pathfinders", "Test Church")]);
+    const steps = await planRosterBackgroundImport(rosterImportCsv(
+      "11,Rivera,Ana,,,y,n,",
+      "12,Rivera,Ana,,Test Church,y,y,",
+      "13,Rivera,Ana,,Test Pathfinders,y,!,",
+    ));
+    expect(steps.map((step) => step.action)).toEqual(["REVIEW", "REVIEW", "REVIEW"]);
+    expect(steps[0]!.message).toMatch(/Also matched by user_id 12, 13/);
+    expect(steps[1]!.message).toMatch(/Also matched by user_id 11, 13/);
+    expect(steps[2]!.candidates).toEqual([{ personId: "p-ana", name: "Ana Rivera", sites: ["Test Pathfinders", "Test Church"] }]);
+    expect(steps.every((step) => step.personId === undefined)).toBe(true);
+    expect(mocks.checkFindMany).not.toHaveBeenCalled();
+  });
+
   it("sends a person already remembered under a different user_id to review", async () => {
     mocks.rosterFindMany.mockResolvedValue([rosterMember("p-ana", "Ana", "Rivera", "Test Pathfinders")]);
     identities([{ id: "ei-1", externalId: "1", personId: "p-ana", person: { firstName: "Ana", lastName: "Rivera" } }]);
