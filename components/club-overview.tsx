@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { CalendarDays, CheckCircle2, FileText, UserCog, UsersRound } from "lucide-react";
 import { ClubRosterWorkspace } from "@/components/club-roster-workspace";
+import { clubRosterComplianceStatuses } from "@/modules/background-checks/repository";
 import { formatCalendarDate } from "@/modules/club-registrations/domain";
 import { listClubEvents } from "@/modules/club-registrations/repository";
 import { reportMonthLabel, reportableMonths, yearToDate } from "@/modules/club-reports/domain";
@@ -21,20 +22,28 @@ export async function ClubOverview({
   birthDatesEndpoint,
   reportHref,
   reportsEditable,
+  backgroundChecks,
 }: {
   organizationId: string;
   birthDatesEndpoint?: string;
   reportHref: (month: string) => string;
   /** Staff can open and file a month with no report yet; others only view. */
   reportsEditable: boolean;
+  /**
+   * Show each adult's background check status (#427). Omitted for callers who
+   * aren't allowed to see it at all (Area Coordinators, event managers).
+   * `includeNotes` is true only for staff who may also see the staff-only note.
+   */
+  backgroundChecks?: { includeNotes: boolean };
 }) {
   const now = new Date();
   const clubYear = clubYearFor(now);
-  const [team, members, events, reportYear] = await Promise.all([
+  const [team, members, events, reportYear, compliance] = await Promise.all([
     listClubTeam(organizationId, now),
     listRoster(organizationId, clubYear, now),
     listClubEvents(organizationId, now),
     getClubReportYear(organizationId, clubYear),
+    backgroundChecks ? clubRosterComplianceStatuses(organizationId, clubYear, backgroundChecks) : null,
   ]);
   const active = members.filter((member) => member.status === "ACTIVE");
   const registered = events.filter((event) => event.registration);
@@ -89,6 +98,7 @@ export async function ClubOverview({
         birthDatesEndpoint={birthDatesEndpoint}
         canSeeBirthDates={Boolean(birthDatesEndpoint)}
         clubYear={clubYear}
+        complianceStatuses={compliance?.statuses}
         initialMembers={members}
         organizationId={organizationId}
         readOnly

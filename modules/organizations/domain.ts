@@ -10,6 +10,7 @@ export const externalSystemLabels = {
   CMMS: "CMMS",
   WR26: "WR26",
   FLUENT_FORMS: "Old website form",
+  ROSTER_IMPORT: "Background check roster import",
 } as const;
 
 export function normalizeOrganizationName(value: string) {

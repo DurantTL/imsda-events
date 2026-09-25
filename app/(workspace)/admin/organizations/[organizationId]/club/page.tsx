@@ -63,6 +63,7 @@ export default async function StaffOpenClubPage({ params }: { params: Promise<{ 
       </p>
 
       <ClubOverview
+        backgroundChecks={{ includeNotes: true }}
         birthDatesEndpoint={`/api/admin/organizations/${encodeURIComponent(organizationId)}/roster/birth-dates`}
         organizationId={organizationId}
         reportHref={(month) => `/admin/clubs/reports/${organizationId}/${month}`}

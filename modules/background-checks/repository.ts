@@ -3,16 +3,20 @@ import "server-only";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { openBirthDate } from "@/modules/club-rosters/birth-dates";
-import { ageOn } from "@/modules/club-rosters/domain";
+import { ageOn, clubYearFor } from "@/modules/club-rosters/domain";
 import { activeRegistrationStatuses, calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import {
   ageFromAnswer,
   attendeeIsAdult,
   backgroundCheckState,
+  clubComplianceState,
   isClearStatus,
   matchableName,
+  matchesSite,
   normalizeCheckDate,
   type BackgroundCheckState,
+  type ClubComplianceState,
+  type RosterBackgroundCsvRow,
   type SterlingCsvRow,
 } from "@/modules/background-checks/domain";
 
@@ -180,6 +184,254 @@ export async function applySterlingImport(steps: SterlingImportStep[], actorUser
   };
 }
 
+// --- Roster import (#427) ---
+
+const ROSTER_IMPORT_PROVIDER = "ROSTER_IMPORT";
+/** Upserts run this many rows per transaction, so a 5,000-row confirm doesn't hold one giant transaction open. */
+const ROSTER_IMPORT_BATCH_SIZE = 250;
+
+export type RosterImportCandidate = { personId: string; site: string | null };
+
+export type RosterImportStep = {
+  line: number;
+  name: string;
+  action: "ADD" | "UPDATE" | "SKIP" | "REVIEW";
+  message: string;
+  personId?: string;
+  userId?: string | null;
+  compliant?: boolean;
+  active?: boolean;
+  issuesNote?: string | null;
+  /** Only on a REVIEW row: who it might be, so staff can pick by hand. Never picked automatically. */
+  candidates?: RosterImportCandidate[];
+};
+
+type NameCandidate = { personId: string; siteNames: Set<string> };
+
+/**
+ * Every adult on a current club roster or with an active registration,
+ * indexed by normalized name, built once so matching 5,000 rows is a map
+ * lookup each instead of a query each (#427).
+ */
+async function rosterBackgroundNameIndex(): Promise<Map<string, NameCandidate[]>> {
+  const prisma = getPrisma();
+  const clubYear = clubYearFor(new Date());
+  const [rosterMembers, attendees] = await Promise.all([
+    prisma.clubRosterMember.findMany({
+      where: { clubYear, status: "ACTIVE", attendeeType: { in: ["ADULT", "STAFF"] }, personId: { not: null } },
+      select: {
+        personId: true,
+        person: { select: { firstName: true, lastName: true } },
+        organization: { select: { name: true, parentOrganization: { select: { name: true } } } },
+      },
+    }),
+    prisma.registrationAttendee.findMany({
+      where: { registration: { status: { in: [...activeRegistrationStatuses] } } },
+      select: {
+        personId: true,
+        attendeeType: true,
+        profileSnapshot: true,
+        formResponses: true,
+        person: { select: { firstName: true, lastName: true } },
+        registration: {
+          select: { clubRegistration: { select: { organization: { select: { name: true, parentOrganization: { select: { name: true } } } } } } },
+        },
+      },
+    }),
+  ]);
+
+  const byPerson = new Map<string, { firstName: string; lastName: string; siteNames: Set<string> }>();
+  const remember = (personId: string, firstName: string, lastName: string, sites: Array<string | null | undefined>) => {
+    let entry = byPerson.get(personId);
+    if (!entry) {
+      entry = { firstName, lastName, siteNames: new Set() };
+      byPerson.set(personId, entry);
+    }
+    for (const site of sites) if (site) entry.siteNames.add(site);
+  };
+
+  for (const member of rosterMembers) {
+    if (!member.personId || !member.person) continue;
+    remember(member.personId, member.person.firstName, member.person.lastName, [
+      member.organization.name,
+      member.organization.parentOrganization?.name,
+    ]);
+  }
+  for (const attendee of attendees) {
+    const snapshot = (attendee.profileSnapshot ?? {}) as { ageOnEventDate?: unknown };
+    const responses = (attendee.formResponses ?? {}) as Record<string, unknown>;
+    let age = typeof snapshot.ageOnEventDate === "number" ? snapshot.ageOnEventDate : null;
+    if (age === null) {
+      const ageKey = AGE_ANSWER_KEYS.find((key) => responses[key] !== undefined && responses[key] !== "");
+      age = ageKey ? ageFromAnswer(responses[ageKey]) : null;
+    }
+    if (age === null) {
+      const birthKey = BIRTH_ANSWER_KEYS.find((key) => typeof responses[key] === "string" && responses[key]);
+      const birthDate = birthKey ? normalizeCheckDate(String(responses[birthKey])) : null;
+      if (birthDate) age = ageOn(birthDate, calendarDateInEventTimeZone(new Date(), "America/Chicago"));
+    }
+    if (!attendeeIsAdult({ ageOnEventDate: age, attendeeType: attendee.attendeeType })) continue;
+    if (!attendee.person) continue;
+    const club = attendee.registration.clubRegistration?.organization;
+    remember(attendee.personId, attendee.person.firstName, attendee.person.lastName, [club?.name, club?.parentOrganization?.name]);
+  }
+
+  const index = new Map<string, NameCandidate[]>();
+  for (const [personId, entry] of byPerson) {
+    const key = matchableName(`${entry.firstName} ${entry.lastName}`);
+    const list = index.get(key) ?? [];
+    list.push({ personId, siteNames: entry.siteNames });
+    index.set(key, list);
+  }
+  return index;
+}
+
+/**
+ * What a roster-import upload would do, row by row (#427). A remembered
+ * `user_id` matches first; otherwise a row is matched by normalized name,
+ * narrowed by `sites` against a candidate's club or sponsoring church when
+ * more than one person shares the name. Still ambiguous, or no match at all,
+ * is listed as "needs review" with its candidates — never guessed.
+ */
+export async function planRosterBackgroundImport(rows: RosterBackgroundCsvRow[]): Promise<RosterImportStep[]> {
+  const prisma = getPrisma();
+  const steps: RosterImportStep[] = [];
+  const bestByPerson = new Map<string, RosterImportStep>();
+
+  const userIds = [...new Set(rows.map((row) => row.userId).filter((id): id is string => Boolean(id)))];
+  const identities = userIds.length > 0
+    ? await prisma.externalIdentity.findMany({
+      where: { provider: ROSTER_IMPORT_PROVIDER, providerScope: "", externalId: { in: userIds }, personId: { not: null } },
+      select: { externalId: true, personId: true },
+    })
+    : [];
+  const personByUserId = new Map(identities.map((identity) => [identity.externalId, identity.personId as string]));
+  const nameIndex = await rosterBackgroundNameIndex();
+
+  for (const row of rows) {
+    const name = `${row.firstName} ${row.lastName}`.trim() || "(no name)";
+    const skip = (message: string) => steps.push({ line: row.line, name, action: "SKIP", message });
+    if (row.problems.length > 0) {
+      skip(row.problems.join(" "));
+      continue;
+    }
+
+    let personId = row.userId ? personByUserId.get(row.userId) ?? null : null;
+    let matchMessage = "Matched by the remembered user_id.";
+    if (!personId) {
+      const candidates = nameIndex.get(matchableName(name)) ?? [];
+      if (candidates.length === 0) {
+        skip("No one by this name is on a club roster or has an active registration.");
+        continue;
+      }
+      if (candidates.length === 1) {
+        personId = candidates[0]!.personId;
+        matchMessage = "Matched by name.";
+      } else {
+        const bySite = row.site ? candidates.filter((candidate) => matchesSite(row.site!, candidate.siteNames)) : [];
+        if (bySite.length === 1) {
+          personId = bySite[0]!.personId;
+          matchMessage = "Matched by name and location.";
+        } else {
+          steps.push({
+            line: row.line,
+            name,
+            action: "REVIEW",
+            message: row.site
+              ? "More than one person has this name, and sites didn't narrow it to one. Review and match by hand."
+              : "More than one person has this name. Add a site, or review and match by hand.",
+            candidates: candidates.map((candidate) => ({ personId: candidate.personId, site: [...candidate.siteNames][0] ?? null })),
+          });
+          continue;
+        }
+      }
+    }
+
+    const step: RosterImportStep = {
+      line: row.line,
+      name,
+      action: "ADD",
+      message: matchMessage,
+      personId,
+      userId: row.userId,
+      compliant: row.compliant!,
+      active: row.active,
+      issuesNote: row.issuesNote,
+    };
+    const earlier = bestByPerson.get(personId);
+    if (earlier) {
+      earlier.action = "SKIP";
+      earlier.message = `Same person as row ${step.line}, which is used instead.`;
+      delete earlier.personId;
+    }
+    bestByPerson.set(personId, step);
+    steps.push(step);
+  }
+
+  const personIds = [...bestByPerson.keys()];
+  const existing = new Set((personIds.length > 0
+    ? await prisma.backgroundCheck.findMany({ where: { personId: { in: personIds } }, select: { personId: true } })
+    : []).map((check) => check.personId));
+  for (const step of bestByPerson.values()) {
+    step.action = existing.has(step.personId!) ? "UPDATE" : "ADD";
+    step.message = `${step.message} ${step.compliant ? "Clear" : "Needs attention"}${step.active ? "" : " · inactive"}.`;
+  }
+  return steps.sort((a, b) => a.line - b.line);
+}
+
+/**
+ * Records the matched rows in batches, and remembers each row's `user_id`
+ * against the person it matched so the next upload matches on it first.
+ */
+export async function applyRosterBackgroundImport(steps: RosterImportStep[], actorUserId: string) {
+  const toSave = steps.filter((step): step is RosterImportStep & { personId: string; compliant: boolean; active: boolean } => (
+    (step.action === "ADD" || step.action === "UPDATE") && Boolean(step.personId) && step.compliant !== undefined && step.active !== undefined
+  ));
+  const prisma = getPrisma();
+  for (let start = 0; start < toSave.length; start += ROSTER_IMPORT_BATCH_SIZE) {
+    const batch = toSave.slice(start, start + ROSTER_IMPORT_BATCH_SIZE);
+    await prisma.$transaction(async (tx) => {
+      for (const step of batch) {
+        const data = {
+          complianceStatus: step.compliant ? ("CLEAR" as const) : ("NEEDS_ATTENTION" as const),
+          issuesNote: step.issuesNote ?? null,
+          active: step.active,
+          recordedByUserId: actorUserId,
+        };
+        await tx.backgroundCheck.upsert({
+          where: { personId: step.personId },
+          create: { personId: step.personId, provider: ROSTER_IMPORT_PROVIDER, ...data },
+          update: data,
+        });
+        if (step.userId) {
+          await tx.externalIdentity.upsert({
+            where: { personId_provider_providerScope: { personId: step.personId, provider: ROSTER_IMPORT_PROVIDER, providerScope: "" } },
+            create: { personId: step.personId, provider: ROSTER_IMPORT_PROVIDER, providerScope: "", externalId: step.userId, lastVerifiedAt: new Date() },
+            update: { externalId: step.userId, lastVerifiedAt: new Date() },
+          });
+        }
+      }
+    });
+  }
+  await writeAuditLog({
+    actorUserId,
+    action: "BACKGROUND_CHECKS_IMPORTED",
+    entityType: "BackgroundCheck",
+    entityId: "roster-import",
+    summary: `Recorded ${toSave.length} background check compliance mark${toSave.length === 1 ? "" : "s"} from a roster upload.`,
+    metadata: {
+      added: steps.filter((step) => step.action === "ADD").length,
+      updated: steps.filter((step) => step.action === "UPDATE").length,
+      review: steps.filter((step) => step.action === "REVIEW").length,
+      skipped: steps.filter((step) => step.action === "SKIP").length,
+    },
+  });
+  return {
+    added: steps.filter((step) => step.action === "ADD").length,
+    updated: steps.filter((step) => step.action === "UPDATE").length,
+  };
+}
+
 /** Counts for the system administrator's page. */
 export async function backgroundCheckSummary(today = calendarDateInEventTimeZone(new Date(), "America/Chicago")) {
   const soon = new Date(`${today}T12:00:00Z`);
@@ -316,4 +568,34 @@ export async function listEventBackgroundFlags(eventId: string, options: { organ
 export async function backgroundFlaggedAttendeeIds(eventId: string) {
   const flags = await listEventBackgroundFlags(eventId);
   return new Set(flags?.people.map((person) => person.attendeeId) ?? []);
+}
+
+/**
+ * A club page's compliance status per adult roster member (#427): Clear,
+ * Needs attention, or No record, keyed by roster member id. `includeNotes`
+ * must be decided by the caller from who is asking — the note is staff only,
+ * and a club director never receives it, not even a blank one to hide.
+ */
+export async function clubRosterComplianceStatuses(
+  organizationId: string,
+  clubYear: string,
+  options: { includeNotes: boolean },
+) {
+  const today = calendarDateInEventTimeZone(new Date(), "America/Chicago");
+  const members = await getPrisma().clubRosterMember.findMany({
+    where: { organizationId, clubYear, status: "ACTIVE", attendeeType: { in: ["ADULT", "STAFF"] } },
+    select: {
+      id: true,
+      person: { select: { backgroundCheck: { select: { complianceStatus: true, active: true, expiresOn: true, issuesNote: true } } } },
+    },
+  });
+  const statuses: Record<string, { state: ClubComplianceState; note: string | null }> = {};
+  let notInCompliance = 0;
+  for (const member of members) {
+    const check = member.person?.backgroundCheck ?? null;
+    const state = clubComplianceState(check, today);
+    if (state === "NEEDS_ATTENTION") notInCompliance += 1;
+    statuses[member.id] = { state, note: options.includeNotes ? check?.issuesNote ?? null : null };
+  }
+  return { statuses, notInCompliance };
 }

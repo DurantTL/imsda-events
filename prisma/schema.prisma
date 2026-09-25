@@ -88,6 +88,9 @@ enum ExternalSystem {
   WR26
   /// The old website's Fluent Forms entries (#376). Scope is `form-<id>:<club year>`.
   FLUENT_FORMS
+  /// A background check roster import's `user_id` (#427), so a later upload
+  /// matches the same person by id first instead of by name again.
+  ROSTER_IMPORT
 }
 
 /// How an account-to-person link was established. Recorded on the link
@@ -3060,20 +3063,44 @@ model ClubRosterMember {
 /// CSV a system administrator uploads. Only the dates are kept, never the file,
 /// the birth date used to match, or any result that wasn't a clear check. One
 /// row per person: a later upload with a later expiry replaces it.
+///
+/// A church roster import (#427) uses the same row instead: no dates, just
+/// `complianceStatus` (from the CSV's `compliance` column), `issuesNote`
+/// (staff only, never shown to a club), and `active` (from `user_active`).
+/// A person matched by that import's provider `user_id` gets an
+/// `ExternalIdentity` (`ROSTER_IMPORT`) so the next upload matches on it
+/// first, without guessing by name again.
 model BackgroundCheck {
-  id               String   @id @default(cuid())
-  personId         String   @unique
-  provider         String   @default("STERLING")
-  /// Calendar dates ("2026-09-23"). Current through `expiresOn`.
+  id               String                        @id @default(cuid())
+  personId         String                        @unique
+  provider         String                        @default("STERLING")
+  /// Calendar dates ("2026-09-23"). Current through `expiresOn`. Null for a
+  /// roster import row, which has no expiration date at all.
   checkedOn        String?
-  expiresOn        String
+  expiresOn        String?
+  /// Set by a roster import's `compliance` column (y/n). Null for a Sterling
+  /// row, which is current/expired by date instead.
+  complianceStatus BackgroundCheckComplianceStatus?
+  /// The roster import's `issues` column. Shown to staff only, never to a
+  /// club director or on a club's own portal roster.
+  issuesNote       String?
+  /// The roster import's `user_active` column (y/n). An inactive check reads
+  /// as "No record" on a club page; the row is kept, not deleted.
+  active           Boolean                       @default(true)
   recordedByUserId String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt        DateTime                      @default(now())
+  updatedAt        DateTime                      @updatedAt
 
   person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
 
   @@index([expiresOn])
+}
+
+/// A background check's compliance mark from a roster import (#427): the
+/// CSV's `compliance` column, y → `CLEAR`, n → `NEEDS_ATTENTION`.
+enum BackgroundCheckComplianceStatus {
+  CLEAR
+  NEEDS_ATTENTION
 }
 
 /// A club's single registration for a club event (#358): an ordinary
