@@ -6838,6 +6838,7 @@ select:focus-visible {
 .roster-compliance-notice { margin: 12px 0 0; }
 .background-check-note { display: block; margin-top: 2px; }
 .background-check-import-filters { margin: 12px 0; }
+.background-check-candidates { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .background-check-import-pager { align-items: center; justify-content: space-between; margin: 8px 0; }
 .club-import-upload { display: grid; justify-items: center; gap: 6px; padding: 36px 16px; border-style: dashed; cursor: pointer; text-align: center; transition: background-color 0.1s, border-color 0.1s; }
 .club-import-upload input { max-width: 100%; }

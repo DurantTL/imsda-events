@@ -3065,8 +3065,10 @@ model ClubRosterMember {
 /// row per person: a later upload with a later expiry replaces it.
 ///
 /// A church roster import (#427) uses the same row instead: no dates, just
-/// `complianceStatus` (from the CSV's `compliance` column), `issuesNote`
-/// (staff only, never shown to a club), and `active` (from `user_active`).
+/// `complianceStatus` (from the CSV's `compliance` column) and `issuesNote`
+/// (staff only, never shown to a club). The newest upload wins: a Sterling
+/// upload clears `complianceStatus` and `issuesNote`, a roster import clears
+/// the dates, and `provider` says which one the row holds now.
 /// A person matched by that import's provider `user_id` gets an
 /// `ExternalIdentity` (`ROSTER_IMPORT`) so the next upload matches on it
 /// first, without guessing by name again.
@@ -3081,14 +3083,10 @@ model BackgroundCheck {
   /// Set by a roster import's `compliance` column (y/!/n). Null for a
   /// Sterling row, which is current/expired by date instead.
   complianceStatus BackgroundCheckComplianceStatus?
-  /// The roster import's `issues` column: why a `!` was flagged, or any other
-  /// note. Shown to staff only, never to a club director or on a club's own
-  /// portal roster.
+  /// The roster import's `issues` column: the check and training dates
+  /// (e.g. which one is expiring soon). Shown to staff only, never to a club
+  /// director or on a club's own portal roster.
   issuesNote       String?
-  /// The roster import's `user_active` column (y/n). Inactive wins over
-  /// `complianceStatus` on a club page (shown as "Inactive"); the row is kept,
-  /// not deleted.
-  active           Boolean                       @default(true)
   recordedByUserId String?
   createdAt        DateTime                      @default(now())
   updatedAt        DateTime                      @updatedAt
@@ -3099,9 +3097,10 @@ model BackgroundCheck {
 }
 
 /// A background check's compliance mark from a roster import (#427): the
-/// CSV's `compliance` column, y → `CLEAR`, "!" → `FLAGGED` (expiring soon or
-/// a problem; `issuesNote` says which), n → `NOT_COMPLIANT`. Any other value
-/// is a row-level parse problem, never guessed into one of these.
+/// CSV's `compliance` column, y/yes → `CLEAR`, "!" → `FLAGGED` (expiring soon;
+/// still current at events, and `issuesNote` gives the dates), n/no →
+/// `NOT_COMPLIANT`. Any other value is a row-level parse problem, never
+/// guessed into one of these.
 enum BackgroundCheckComplianceStatus {
   CLEAR
   FLAGGED

@@ -167,16 +167,29 @@ export function checkIsCurrent(check: { expiresOn: string | null } | null | unde
   return Boolean(check?.expiresOn && check.expiresOn >= onDate);
 }
 
-export type BackgroundCheckState = "CURRENT" | "EXPIRED" | "MISSING";
+export type BackgroundCheckState = "CURRENT" | "EXPIRED" | "MISSING" | "NOT_COMPLIANT";
+
+export type BackgroundComplianceStatus = "CLEAR" | "FLAGGED" | "NOT_COMPLIANT";
 
 /**
- * Current/expired/missing at a youth or children's event, by date. A roster
- * import's check (no `expiresOn`, just a compliance mark) has no date to
- * compare, so it reads as missing here even when it's on file — see
- * `clubComplianceState` for how a club page shows that same check instead.
+ * The one row kept per person carries whichever upload was newest (#427):
+ * a Sterling upload clears the roster import's compliance mark, and a roster
+ * import clears Sterling's dates. So a row with a compliance mark is a roster
+ * import's check, and a row without one is a Sterling check.
  */
-export function backgroundCheckState(check: { expiresOn: string | null } | null | undefined, onDate: string): BackgroundCheckState {
-  if (!check?.expiresOn) return "MISSING";
+type StoredCheck = { expiresOn: string | null; complianceStatus?: BackgroundComplianceStatus | null };
+
+/**
+ * A person's check at a youth or children's event, through `onDate` (the
+ * event's last day). A roster import's mark decides when there is one:
+ * Clear and "!" (expiring soon — still on file and in compliance today) are
+ * current, Not in compliance is flagged. A Sterling check is current through
+ * its expiration date. Nothing on file is missing.
+ */
+export function backgroundCheckState(check: StoredCheck | null | undefined, onDate: string): BackgroundCheckState {
+  if (!check) return "MISSING";
+  if (check.complianceStatus) return check.complianceStatus === "NOT_COMPLIANT" ? "NOT_COMPLIANT" : "CURRENT";
+  if (!check.expiresOn) return "MISSING";
   return checkIsCurrent(check, onDate) ? "CURRENT" : "EXPIRED";
 }
 
@@ -227,17 +240,16 @@ export type RosterBackgroundCsvRow = {
   firstName: string;
   lastName: string;
   roles: string | null;
-  /** A church or club name, compared against a candidate's club or sponsoring church to break a name tie. */
+  /** A church or club name, compared against a candidate's club or sponsoring church. */
   site: string | null;
-  active: boolean;
   /** Null only when the row's `compliance` value is none of y, "!", or n; `problems` explains why. Never guessed. */
-  compliance: "CLEAR" | "FLAGGED" | "NOT_COMPLIANT" | null;
-  /** Staff-only note; never shown to a club. Says why a `FLAGGED` row was flagged. */
+  compliance: BackgroundComplianceStatus | null;
+  /** Staff-only note; never shown to a club. Gives the check and training dates (e.g. which one is expiring soon). */
   issuesNote: string | null;
   problems: string[];
 };
 
-type RosterColumn = "userId" | "firstName" | "lastName" | "roles" | "site" | "active" | "compliance" | "issuesNote";
+type RosterColumn = "userId" | "firstName" | "lastName" | "roles" | "site" | "ignored" | "compliance" | "issuesNote";
 
 /** Header spellings, lower-case with everything but letters removed (so `user_id` and `User Id` both match). */
 const rosterHeaderKeys: Record<string, RosterColumn> = {
@@ -258,9 +270,10 @@ const rosterHeaderKeys: Record<string, RosterColumn> = {
   location: "site",
   church: "site",
   club: "site",
-  useractive: "active",
-  active: "active",
-  status: "active",
+  // Accepted so the real export reads as-is, but not used (#427: whether the
+  // account is active doesn't matter, only compliance does).
+  useractive: "ignored",
+  active: "ignored",
   compliance: "compliance",
   compliant: "compliance",
   issues: "issuesNote",
@@ -269,13 +282,22 @@ const rosterHeaderKeys: Record<string, RosterColumn> = {
   note: "issuesNote",
 };
 
-const YES_WORDS = new Set(["y", "yes", "true", "1", "active"]);
-const NO_WORDS = new Set(["n", "no", "false", "0", "inactive"]);
+/** The `compliance` column, case-insensitive. Anything else, blank included, is a row problem. */
+const complianceValues: Record<string, BackgroundComplianceStatus> = {
+  y: "CLEAR",
+  yes: "CLEAR",
+  "!": "FLAGGED",
+  n: "NOT_COMPLIANT",
+  no: "NOT_COMPLIANT",
+};
 
-/** Whether a header row is the roster import's template rather than Sterling's. */
+/**
+ * Whether a header row is the roster import's template rather than Sterling's.
+ * `user_id` alone decides, so a roster file missing another column gets the
+ * roster import's own message naming that column.
+ */
 export function isRosterBackgroundCsvHeader(header: string[]) {
-  const columns = header.map((cell) => clean(cell).toLowerCase().replace(/[^a-z]/g, ""));
-  return columns.includes("userid") && columns.includes("compliance");
+  return header.some((cell) => clean(cell).toLowerCase().replace(/[^a-z]/g, "") === "userid");
 }
 
 /**
@@ -284,7 +306,7 @@ export function isRosterBackgroundCsvHeader(header: string[]) {
  * format) when nothing marks it as a roster import.
  */
 export function detectBackgroundCsvFormat(text: string): "ROSTER" | "STERLING" {
-  const firstLine = text.replace(/^﻿/, "").split(/\r\n|\r|\n/, 1)[0] ?? "";
+  const firstLine = text.replace(/^\uFEFF/, "").split(/\r\n|\r|\n/, 1)[0] ?? "";
   let header: string[][];
   try {
     header = parseCsvMatrix(firstLine);
@@ -299,14 +321,14 @@ export class RosterBackgroundCsvError extends Error {}
 /**
  * The real church/club export (#427): `user_id,user_last,user_first,roles,
  * sites,user_active,compliance,issues`. No email or birth date; people are
- * matched by name (and, if that's ambiguous, `sites` against their club or
- * sponsoring church) in `planRosterBackgroundImport`.
+ * matched by name and `sites` (their club or sponsoring church) in
+ * `planRosterBackgroundImport`. `user_active` is accepted and ignored.
  */
 export function parseRosterBackgroundCsv(text: string): RosterBackgroundCsvRow[] {
   if (text.length > MAX_ROSTER_CSV_BYTES) throw new RosterBackgroundCsvError("That file is too large. Upload up to 5,000 people at a time.");
   let matrix: string[][];
   try {
-    matrix = parseCsvMatrix(text.replace(/^﻿/, ""));
+    matrix = parseCsvMatrix(text.replace(/^\uFEFF/, ""));
   } catch (error) {
     if (error instanceof CsvImportError) throw new RosterBackgroundCsvError("That file couldn't be read as a CSV.");
     throw error;
@@ -332,22 +354,14 @@ export function parseRosterBackgroundCsv(text: string): RosterBackgroundCsvRow[]
     if (!firstName || !lastName) problems.push("user_first and user_last are needed.");
     const roles = value("roles") || null;
     const site = value("site") || null;
-    const activeRaw = value("active").toLowerCase();
-    let active = true;
-    if (NO_WORDS.has(activeRaw)) active = false;
-    else if (activeRaw && !YES_WORDS.has(activeRaw)) problems.push('user_active must be "y" or "n".');
-    const complianceRaw = value("compliance").toLowerCase();
-    let compliance: "CLEAR" | "FLAGGED" | "NOT_COMPLIANT" | null = null;
-    if (YES_WORDS.has(complianceRaw)) compliance = "CLEAR";
-    else if (complianceRaw === "!" || complianceRaw === "flagged" || complianceRaw === "flag") compliance = "FLAGGED";
-    else if (NO_WORDS.has(complianceRaw)) compliance = "NOT_COMPLIANT";
-    else problems.push('compliance must be "y", "n", or "!".');
+    const compliance = complianceValues[value("compliance").toLowerCase()] ?? null;
+    if (!compliance) problems.push('compliance must be "y", "n", or "!".');
     const issuesNote = value("issuesNote") || null;
-    return { line: index + 2, userId, firstName, lastName, roles, site, active, compliance, issuesNote, problems };
+    return { line: index + 2, userId, firstName, lastName, roles, site, compliance, issuesNote, problems };
   });
 }
 
-/** A club's own name or its sponsoring church's name, for the `sites` location tie-break. */
+/** A club's own name or its sponsoring church's name, for the `sites` location check. */
 export function matchesSite(site: string, candidateSites: Iterable<string>) {
   const target = matchableName(site);
   if (!target) return false;
@@ -357,27 +371,28 @@ export function matchesSite(site: string, candidateSites: Iterable<string>) {
   return false;
 }
 
-export type ClubComplianceState = "CLEAR" | "FLAGGED" | "NOT_COMPLIANT" | "INACTIVE" | "NO_RECORD";
+export type ClubComplianceState = "CLEAR" | "FLAGGED" | "NOT_COMPLIANT" | "NO_RECORD";
 
 /**
- * How a club page shows one person (#427). `active: false` (the roster
- * import's `user_active` column) wins over everything else — someone can be
- * disabled, or not in compliance for a while, and either way that's shown as
- * "Inactive", never quietly folded into "No record". Otherwise a roster
- * import's `compliance` mark (Clear/Flagged/Not in compliance) is used when
- * there is one; without one, a Sterling check is current/expired by date. No
- * check on file at all is "No record".
+ * How a club page shows one person (#427). A roster import's mark is used
+ * when there is one: Clear, Expiring soon ("!", `FLAGGED`), or Not in
+ * compliance. Without one, a Sterling check is Clear through its expiration
+ * date and Not in compliance after it. Nothing on file is "No record", which
+ * is not counted as not in compliance.
  */
-export function clubComplianceState(
-  check: { complianceStatus: "CLEAR" | "FLAGGED" | "NOT_COMPLIANT" | null; active: boolean; expiresOn: string | null } | null | undefined,
-  today: string,
-): ClubComplianceState {
+export function clubComplianceState(check: StoredCheck | null | undefined, today: string): ClubComplianceState {
   if (!check) return "NO_RECORD";
-  if (!check.active) return "INACTIVE";
   if (check.complianceStatus) return check.complianceStatus;
   if (check.expiresOn) return check.expiresOn >= today ? "CLEAR" : "NOT_COMPLIANT";
   return "NO_RECORD";
 }
+
+/** How a flag reads on the list and in its CSV. */
+export const backgroundFlagLabels = {
+  MISSING: "None on file",
+  EXPIRED: "Expired",
+  NOT_COMPLIANT: "Not in compliance",
+} as const satisfies Record<Exclude<BackgroundCheckState, "CURRENT">, string>;
 
 /** The "Background check needed" list as CSV, for staff and event managers. */
 export function backgroundFlagsCsv(people: Array<{
@@ -386,7 +401,7 @@ export function backgroundFlagsCsv(people: Array<{
   attendeeType: string;
   clubName: string | null;
   confirmationCode: string;
-  state: "MISSING" | "EXPIRED";
+  state: Exclude<BackgroundCheckState, "CURRENT">;
   expiresOn: string | null;
 }>) {
   return toCsv([
@@ -397,7 +412,7 @@ export function backgroundFlagsCsv(people: Array<{
       person.attendeeType,
       person.clubName ?? "",
       person.confirmationCode,
-      person.state === "EXPIRED" ? "Expired" : "None on file",
+      backgroundFlagLabels[person.state],
       person.state === "EXPIRED" ? person.expiresOn ?? "" : "",
     ]),
   ]);

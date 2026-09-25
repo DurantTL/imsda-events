@@ -16,7 +16,9 @@ import {
   applySterlingImport,
   planRosterBackgroundImport,
   planSterlingImport,
+  RosterImportSaveError,
 } from "@/modules/background-checks/repository";
+import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
 
 const importSchema = z.object({
@@ -27,7 +29,8 @@ const importSchema = z.object({
 /**
  * Background check CSV upload (#388, #427): preview, then record on confirm.
  * Accepts the real roster export (`user_id,user_last,user_first,roles,sites,
- * user_active,compliance,issues`, matched by name and location) and the older
+ * user_active,compliance,issues`, matched by name and location; `user_active`
+ * is ignored) and the older
  * Sterling Volunteers export (matched by email or birth date), detected from
  * the header row. The file is read in memory and never stored.
  */
@@ -52,7 +55,19 @@ async function postHandler(request: Request) {
       // so every row's note is sent for the preview and the saved confirmation, matched rows included.
       const steps = plan.map(({ line, name, action, message, candidates, issuesNote }) => ({ line, name, action, message, candidates, note: issuesNote }));
       if (!confirm) return Response.json({ format, steps });
-      const result = await applyRosterBackgroundImport(plan, actor.id);
+      let result;
+      try {
+        result = await applyRosterBackgroundImport(plan, actor.id);
+      } catch (error) {
+        if (!(error instanceof RosterImportSaveError)) throw error;
+        logError("Roster background check import stopped part-way", error.cause);
+        return Response.json({
+          error: "ROSTER_IMPORT_INCOMPLETE",
+          message: `Saved ${error.saved} of ${error.total} rows before an error. Upload the same file again to finish; rows already saved are updated, not duplicated.`,
+          saved: error.saved,
+          total: error.total,
+        }, { status: 500 });
+      }
       return Response.json({
         format,
         steps: steps.map((step) => ({ ...step, message: step.action === "ADD" || step.action === "UPDATE" ? `Recorded. ${step.message}` : step.message })),

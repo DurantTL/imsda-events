@@ -11,7 +11,7 @@ type ImportStep = {
   name: string;
   action: ImportAction;
   message: string;
-  candidates?: Array<{ personId: string; site: string | null }>;
+  candidates?: Array<{ personId: string; name: string; sites: string[] }>;
   /** Roster import only, staff-only, and shown for every row (#427). */
   note?: string | null;
 };
@@ -20,6 +20,7 @@ type ImportResponse = {
   steps?: ImportStep[];
   added?: number;
   updated?: number;
+  idsNotRemembered?: number;
   message?: string;
   issues?: Array<{ message?: string }>;
 };
@@ -53,6 +54,7 @@ export function BackgroundCheckImport({ onImported }: { onImported: (result: Imp
   const [dragging, setDragging] = useState(false);
   const [filter, setFilter] = useState<Filter>("ALL");
   const [page, setPage] = useState(0);
+  const [idsNotRemembered, setIdsNotRemembered] = useState(0);
   const dragDepth = useRef(0);
 
   const close = useCallback(() => {
@@ -65,6 +67,7 @@ export function BackgroundCheckImport({ onImported }: { onImported: (result: Imp
     setDragging(false);
     setFilter("ALL");
     setPage(0);
+    setIdsNotRemembered(0);
     dragDepth.current = 0;
   }, []);
   const dialogRef = useAccessibleDialog<HTMLElement>(open, close);
@@ -85,6 +88,7 @@ export function BackgroundCheckImport({ onImported }: { onImported: (result: Imp
       setFilter("ALL");
       setPage(0);
       if (confirm) {
+        setIdsNotRemembered(result.idsNotRemembered ?? 0);
         setDone(true);
         onImported(result);
       }
@@ -174,12 +178,15 @@ export function BackgroundCheckImport({ onImported }: { onImported: (result: Imp
                   <p>
                     Upload the roster export (<code>user_id, user_last, user_first, roles, sites, user_active,
                     compliance, issues</code>) or the older Sterling Volunteers CSV; either is read automatically.
+                    In <code>compliance</code>, <code>y</code> is clear, <code>!</code> is expiring soon, and{" "}
+                    <code>n</code> is not in compliance. <code>user_active</code> is ignored.
                   </p>
                   <p>
-                    Roster rows are matched by name, narrowed by <code>sites</code> (a church or club name) when more
-                    than one person shares a name. A row that stays ambiguous, or matches no one, is listed to review
-                    by hand &mdash; nothing is guessed. Once matched, a row&apos;s <code>user_id</code> is remembered, so
-                    the next upload matches on it first.
+                    Roster rows are matched by name. When <code>sites</code> is filled in, it must be the
+                    person&apos;s club or sponsoring church, and it tells apart people who share a name. A row that
+                    stays uncertain, or matches no one, is listed to review by hand &mdash; nothing is guessed. Once
+                    matched, a row&apos;s <code>user_id</code> is remembered, so the next upload matches on it first.
+                    The newest upload replaces whatever was on file for a person.
                   </p>
                   <p>Up to 5,000 rows at a time. The file itself is never stored.</p>
                 </div>
@@ -201,6 +208,7 @@ export function BackgroundCheckImport({ onImported }: { onImported: (result: Imp
                 <p className="field-help">
                   {done ? "Done." : "Nothing is saved yet."} {format === "ROSTER" ? "Roster" : "Sterling Volunteers"} format detected.{" "}
                   {changes} matched, {counts.REVIEW} to review, {counts.SKIP} not found.
+                  {done && idsNotRemembered > 0 && ` ${idsNotRemembered} user_id${idsNotRemembered === 1 ? " was" : "s were"} not remembered because another person already has ${idsNotRemembered === 1 ? "it" : "them"}.`}
                 </p>
                 <div className="intro-actions background-check-import-filters" role="tablist">
                   {([
@@ -231,9 +239,16 @@ export function BackgroundCheckImport({ onImported }: { onImported: (result: Imp
                           <td translate="no">{step.name || "—"}</td>
                           <td><span className={`status-chip ${actionTone[step.action]}`}>{actionLabels[step.action]}</span> {step.message}</td>
                           <td>
-                            {step.candidates && step.candidates.length > 0
-                              ? step.candidates.map((candidate) => candidate.site ?? "no location on file").join("; ")
-                              : "—"}
+                            {step.candidates && step.candidates.length > 0 ? (
+                              <ul className="background-check-candidates">
+                                {step.candidates.map((candidate) => (
+                                  <li key={candidate.personId}>
+                                    <span translate="no">{candidate.name}</span>
+                                    <small className="quiet-copy"> {candidate.sites.length > 0 ? candidate.sites.join(", ") : "no club or church on file"}</small>
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : "—"}
                           </td>
                           <td>{step.note || "—"}</td>
                         </tr>

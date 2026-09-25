@@ -8,5 +8,4 @@ ALTER TYPE "ExternalSystem" ADD VALUE 'ROSTER_IMPORT';
 ALTER TABLE "BackgroundCheck"
   ALTER COLUMN "expiresOn" DROP NOT NULL,
   ADD COLUMN "complianceStatus" "BackgroundCheckComplianceStatus",
-  ADD COLUMN "issuesNote" TEXT,
-  ADD COLUMN "active" BOOLEAN NOT NULL DEFAULT true;
+  ADD COLUMN "issuesNote" TEXT;

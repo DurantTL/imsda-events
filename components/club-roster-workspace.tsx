@@ -24,16 +24,14 @@ type RosterResponse = {
 };
 
 /** A background check's mark on a club page (#427): status only, or status and note for staff. */
-export type RosterComplianceInfo = { state: "CLEAR" | "FLAGGED" | "NOT_COMPLIANT" | "INACTIVE" | "NO_RECORD"; note: string | null };
+export type RosterComplianceInfo = { state: "CLEAR" | "FLAGGED" | "NOT_COMPLIANT" | "NO_RECORD"; note: string | null };
 
-const complianceLabels = {
-  CLEAR: "Clear",
-  FLAGGED: "Attention (see note)",
-  NOT_COMPLIANT: "Not in compliance",
-  INACTIVE: "Inactive",
-  NO_RECORD: "No record",
-} as const;
-const complianceTone = { CLEAR: "green", FLAGGED: "gold", NOT_COMPLIANT: "coral", INACTIVE: "purple", NO_RECORD: "gold" } as const;
+/** "!" on the roster import is `FLAGGED`: expiring soon. Staff, who get the note, are pointed to it. */
+function complianceLabel({ state, note }: RosterComplianceInfo) {
+  if (state === "FLAGGED") return note ? "Expiring soon (see note)" : "Expiring soon";
+  return { CLEAR: "Clear", NOT_COMPLIANT: "Not in compliance", NO_RECORD: "No record" }[state];
+}
+const complianceTone = { CLEAR: "green", FLAGGED: "gold", NOT_COMPLIANT: "coral", NO_RECORD: "gold" } as const;
 
 export function ClubRosterWorkspace({
   canSeeBirthDates,
@@ -89,12 +87,9 @@ export function ClubRosterWorkspace({
   const active = members.filter((member) => member.status === "ACTIVE");
   const needBirthDates = active.filter((member) => member.birthDateNeeded).length;
   const notInCompliance = complianceStatuses
-    ? active.filter((member) => {
-      const state = complianceStatuses[member.id]?.state;
-      return state === "NOT_COMPLIANT" || state === "INACTIVE";
-    }).length
+    ? active.filter((member) => complianceStatuses[member.id]?.state === "NOT_COMPLIANT").length
     : 0;
-  const flaggedCount = complianceStatuses
+  const expiringSoon = complianceStatuses
     ? active.filter((member) => complianceStatuses[member.id]?.state === "FLAGGED").length
     : 0;
   const visible = showInactive ? members : active;
@@ -208,10 +203,10 @@ export function ClubRosterWorkspace({
             registration form is shown until {readOnly ? "the club adds one." : "you add one; edit each person to add it."}
           </p>
         )}
-        {complianceStatuses && (notInCompliance > 0 || flaggedCount > 0) && (
+        {complianceStatuses && (notInCompliance > 0 || expiringSoon > 0) && (
           <p className="inline-notice roster-compliance-notice" role="status">
             {notInCompliance} adult{notInCompliance === 1 ? "" : "s"} not in compliance
-            {flaggedCount > 0 && ` · ${flaggedCount} flagged`}
+            {expiringSoon > 0 && ` · ${expiringSoon} expiring soon`}
           </p>
         )}
         <div className="club-roster-tools">
@@ -302,7 +297,7 @@ export function ClubRosterWorkspace({
                               {complianceStatuses[member.id] ? (
                                 <>
                                   <span className={`status-chip ${complianceTone[complianceStatuses[member.id]!.state]}`}>
-                                    {complianceLabels[complianceStatuses[member.id]!.state]}
+                                    {complianceLabel(complianceStatuses[member.id]!)}
                                   </span>
                                   {complianceStatuses[member.id]!.note && (
                                     <small className="quiet-copy background-check-note"> {complianceStatuses[member.id]!.note}</small>

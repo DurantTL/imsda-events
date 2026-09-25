@@ -20,9 +20,9 @@ export default async function BackgroundChecksPage() {
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
   const summary = await backgroundCheckSummary();
   const cards = [
-    { label: "Current checks", value: summary.current, detail: "Good through today or later", tone: "green" },
-    { label: "Expiring in 60 days", value: summary.expiringSoon, detail: "Ask them to renew in Sterling", tone: "gold" },
-    { label: "Expired", value: summary.expired, detail: "Flagged at youth events", tone: "purple" },
+    { label: "Current checks", value: summary.current, detail: "Clear or expiring soon, or a Sterling check good through today", tone: "green" },
+    { label: "Expiring soon", value: summary.expiringSoon, detail: "Marked \"!\" on the roster, or a Sterling check ending within 60 days", tone: "gold" },
+    { label: "Not current", value: summary.notCurrent, detail: "Not in compliance or expired; flagged at youth events", tone: "purple" },
   ];
   return (
     <section className="page-stack">
@@ -32,11 +32,16 @@ export default async function BackgroundChecksPage() {
           <p className="eyebrow">Churches and clubs</p>
           <h2>Background checks</h2>
           <p>
-            Upload the roster export from a church or club (name and location matched, no email or birth date needed)
-            or the older Sterling Volunteers list. At events marked as youth or children&apos;s events (in Event
-            settings), every adult without a current check is flagged in red on the dashboard, People, rosters, and
-            check-in. Nothing is blocked. On a club&apos;s own page, each adult shows Clear, Needs attention, or No
-            record; the note is shown to staff only.
+            Upload the roster export (matched by name and club or church; no email or birth date needed) or the
+            older Sterling Volunteers list. The newest upload replaces whatever was on file for a person. At events
+            marked as youth or children&apos;s events (in Event settings), every adult with no check on file, an
+            expired check, or a roster mark of not in compliance is flagged in red on the dashboard, People, rosters,
+            and check-in. Expiring soon is not flagged there, and nothing is blocked.
+          </p>
+          <p>
+            Each adult on a club&apos;s roster shows Clear, Expiring soon, Not in compliance, or No record. Club
+            directors and deputies see the status only; the roster note, with the check and training dates, is shown
+            to staff only.
           </p>
           {summary.lastRecordedAt && (
             <p className="quiet-copy">Last recorded {new Date(summary.lastRecordedAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: "America/Chicago" })}.</p>
