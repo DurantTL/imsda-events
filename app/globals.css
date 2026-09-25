@@ -6874,7 +6874,6 @@ select:focus-visible {
 .club-roster-stack { display: grid; gap: 16px; }
 .club-roster-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .club-roster-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0; }
-.roster-needs-birth-date { display: inline-block; margin-left: 8px; vertical-align: 1px; }
 .roster-dialog-status-action { margin-right: auto; }
 .roster-birth-date-notice { margin: 12px 0 0; }
 .roster-compliance-notice { margin: 12px 0 0; }
@@ -6950,8 +6949,11 @@ select:focus-visible {
 .roster-csv-actions { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; }
 .roster-csv-dialog { width: min(760px, 100%); }
 .roster-csv-preview { max-height: 50vh; overflow: auto; }
-.club-roster-section { display: grid; gap: 8px; margin-top: 14px; }
-.club-roster-section-title { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--ink); font-size: 0.95rem; }
+.roster-section-row th.roster-section-heading {
+  background: #f6f9fa; padding: 8px 13px; color: var(--ink); font-size: 0.8rem; font-weight: 700; text-align: left;
+}
+.roster-section-empty-row td { color: var(--muted); font-style: italic; }
+.roster-card-flags { display: flex; flex-wrap: wrap; gap: 4px; align-items: flex-start; }
 .club-team-list li { flex-wrap: wrap; align-items: center; }
 .club-team-list li > span:first-child { min-width: 180px; }
 .club-team-list li > .status-chip { flex: 0 0 auto; }
@@ -7001,18 +7003,32 @@ select:focus-visible {
 .club-class-person legend + * { clear: both; }
 @media (max-width: 640px) {
   .club-roster-layout { width: calc(100% - 24px); }
-  .roster-card-table, .roster-card-table tbody, .roster-card-table tr, .roster-card-table td { display: block; width: 100%; box-sizing: border-box; }
-  .roster-card-table { min-width: 0; }
   .club-roster-heading .secondary-button { width: auto; }
+  .club-sticky-bar .primary-button { flex: 1; justify-content: center; }
+}
+
+/*
+ * Roster: cards below ~720px (#435). Each person becomes a labelled card
+ * instead of a squashed table row; the section-title row becomes a plain
+ * heading above its cards instead of a table-style row.
+ */
+@media (max-width: 720px) {
+  .roster-card-table, .roster-card-table tbody, .roster-card-table tr, .roster-card-table td, .roster-card-table th { display: block; width: 100%; box-sizing: border-box; }
+  .roster-card-table { min-width: 0; }
   .roster-card-table thead { display: none; }
-  .roster-card-table tr { position: relative; margin-bottom: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .roster-card-table tr:not(.roster-section-row):not(.roster-section-empty-row) {
+    position: relative; margin-bottom: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+  }
   .roster-card-table td { border: 0; padding: 2px 0; }
   .roster-card-table td[data-label] { display: flex; justify-content: space-between; gap: 12px; font-size: 0.8rem; }
   .roster-card-table td[data-label]::before { content: attr(data-label); color: var(--muted); font-weight: 600; }
-  .roster-card-table .roster-card-name { margin-bottom: 6px; font-size: 0.9rem; }
+  .roster-card-table td.roster-card-name[data-label] { display: block; margin-bottom: 6px; font-size: 0.9rem; }
+  .roster-card-table .roster-card-name[data-label]::before { content: none; }
+  .roster-card-table td.roster-card-flags[data-label]::before { padding-top: 2px; }
   .roster-card-table td.roster-card-actions { display: flex; width: 100%; justify-content: flex-end; gap: 8px; margin-top: 8px; }
   .roster-card-table .roster-card-actions .secondary-button { min-width: 44px; min-height: 44px; }
-  .club-sticky-bar .primary-button { flex: 1; justify-content: center; }
+  .roster-card-table .roster-section-heading { margin: 14px 0 4px; padding: 0; background: transparent; border: 0; font-size: 0.95rem; }
+  .roster-card-table .roster-section-empty-row td { padding: 0 0 8px; }
 }
 
 /* Account and club pages (split into separate screens) */
