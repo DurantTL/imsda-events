@@ -519,6 +519,7 @@ model User {
   grantedClubDirectorships       ClubDirectorGrant[]              @relation("ClubDirectorGrantGrantedBy")
   revokedClubDirectorships       ClubDirectorGrant[]              @relation("ClubDirectorGrantRevokedBy")
   createdClubInvites             ClubInvite[]                     @relation("ClubInviteCreatedBy")
+  passkeys                       UserPasskey[]
   /// The person this staff account is explicitly linked to, if any. Grants
   /// nothing by itself — see `UserPersonLink`.
   personLink                        UserPersonLink?              @relation("UserPersonLinkUser")
@@ -553,6 +554,7 @@ model UserSession {
   createdAt     DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  passkeyChallenges UserPasskeyChallenge[]
 
   @@index([userId, expiresAt])
   @@index([expiresAt, revokedAt])
@@ -3288,6 +3290,53 @@ model AttendeePasskeyChallenge {
   createdAt DateTime                @default(now())
 
   session AttendeeSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, purpose])
+  @@index([purpose, expiresAt])
+}
+
+/// A passkey a staff account (`User`) registered, either as a second factor
+/// alongside a password or, for a UV (user-verified) assertion, as a
+/// phishing-resistant way to complete sign-in on its own (#429). Kept in a
+/// table separate from `AttendeePasskey`: the two principals' sign-in and
+/// session models never share state. Only the public key is stored; nothing
+/// biometric ever reaches the server. Removing one sets `revokedAt` and it
+/// never verifies again.
+model UserPasskey {
+  id           String    @id @default(cuid())
+  userId       String
+  credentialId String    @unique
+  publicKey    Bytes
+  counter      BigInt    @default(0)
+  transports   String[]  @default([])
+  deviceType   String
+  backedUp     Boolean   @default(false)
+  name         String
+  lastUsedAt   DateTime?
+  revokedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+}
+
+/// A one-time WebAuthn challenge for a staff passkey ceremony, consumed on
+/// first use so a response can't be replayed. Mirrors
+/// `AttendeePasskeyChallenge`: REGISTER and VERIFY belong to a signed-in
+/// session; SIGN_IN has none yet and is tied to the browser by a short-lived
+/// cookie holding its id, with the account found only from the verified
+/// credential.
+model UserPasskeyChallenge {
+  id        String                  @id @default(cuid())
+  sessionId String?
+  purpose   PasskeyChallengePurpose
+  challenge String                  @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime                @default(now())
+
+  session UserSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([sessionId, purpose])
   @@index([purpose, expiresAt])

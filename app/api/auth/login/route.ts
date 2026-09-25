@@ -84,6 +84,13 @@ async function postHandler(request: Request) {
       return applyRateLimitHeaders(Response.json({ error: "INVALID_CREDENTIALS", message: "The email or password is incorrect, or the account is temporarily unavailable." }, { status: 401 }), rateLimit);
     }
 
+    if (authentication.outcome === "passkey_required") {
+      return applyRateLimitHeaders(Response.json({
+        error: "PASSKEY_REQUIRED",
+        message: "This account signs in with a passkey. Choose “Sign in with a passkey”, or ask a system administrator to reset your two-step sign-in.",
+      }, { status: 403 }), rateLimit);
+    }
+
     // A correct password for an account that carries a second factor produces a
     // challenge, not a session. No cookie is set here, so there is no state in
     // which a privileged account is signed in on a password alone.

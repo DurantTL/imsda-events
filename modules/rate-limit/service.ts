@@ -406,6 +406,49 @@ export async function checkAttendeePasskeySignInRateLimit(request: Request, stag
   }], configuration);
 }
 
+/**
+ * Staff passkey sign-in (#429) names no account until the credential is
+ * checked, so — like the attendee version above — it is limited per client:
+ * loosely for asking for a prompt, and as tightly as password sign-in for
+ * answering one.
+ */
+export async function checkStaffPasskeySignInRateLimit(request: Request, stage: "options" | "verify") {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  return evaluate([{
+    policy: stage === "options" ? "staff.passkey-sign-in.options.client" : "staff.passkey-sign-in.verify.client",
+    limit: stage === "options" ? 30 : 20,
+    windowSeconds: fifteenMinutes,
+    identifierHashes: [client],
+  }], configuration);
+}
+
+/**
+ * Staff passkey management (#429): starting or finishing an add, renaming,
+ * and removing. Each add or remove carries a fresh code, passkey answer, or
+ * password, so this is a cheap per-account ceiling on how fast those proofs
+ * can be tried from a signed-in session, on top of their own lockouts.
+ */
+export async function checkStaffPasskeyManagementRateLimit(request: Request, userId: string) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  const account = hashRateLimitIdentifier("staff-passkey-management", userId, configuration);
+  return evaluate([
+    {
+      policy: "staff.passkey-management.client",
+      limit: 60,
+      windowSeconds: fifteenMinutes,
+      identifierHashes: [client],
+    },
+    {
+      policy: "staff.passkey-management.account",
+      limit: 20,
+      windowSeconds: fifteenMinutes,
+      identifierHashes: [account],
+    },
+  ], configuration);
+}
+
 export async function checkAttendeeSignInRateLimit(
   request: Request,
   email: string,

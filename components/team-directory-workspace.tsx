@@ -107,7 +107,7 @@ export function TeamDirectoryWorkspace({
   }
 
   function resetTwoStep(member: TeamDirectory["members"][number]) {
-    if (!window.confirm(`Reset two-step sign-in for ${member.displayName}? Their authenticator is removed and they're signed out; they set it up again at their next sign-in.`)) return;
+    if (!window.confirm(`Reset two-step sign-in for ${member.displayName}? Their authenticator and passkeys are removed and they're signed out; they set it up again at their next sign-in.`)) return;
     void accountAction(member, { action: "reset-two-step" });
   }
 

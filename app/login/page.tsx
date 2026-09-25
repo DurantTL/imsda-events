@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { BrandMark } from "@/components/brand-mark";
 import { LOCAL_DEMO_EMAIL, LOCAL_DEMO_PASSWORD, LoginForm } from "@/components/login-form";
+import { StaffPasskeySignInButton } from "@/components/staff-passkey-sign-in-button";
 import { getCurrentSession } from "@/modules/access/current-session";
+import { passkeysConfigured } from "@/modules/access/passkeys";
 import { resolvePostLoginDestination } from "@/modules/access/post-login-destination";
 
 export const metadata: Metadata = { title: "Sign in" };
@@ -24,6 +26,8 @@ export default async function LoginPage({
   // refuses to run anywhere else). A production sign-in page shows no
   // credential at all.
   const showLocalCredentials = process.env.NODE_ENV !== "production";
+  // Hidden until the passkey domain is set in Platform settings.
+  const passkeysAvailable = await passkeysConfigured();
 
   return (
     <main className="auth-page">
@@ -37,6 +41,12 @@ export default async function LoginPage({
           <h1>Welcome back</h1>
           <p>Sign in to manage the events assigned to your account.</p>
         </div>
+        {passkeysAvailable && (
+          <>
+            <StaffPasskeySignInButton next={next} />
+            <p className="auth-divider"><span>or</span></p>
+          </>
+        )}
         <LoginForm demoCredentials={showLocalCredentials} next={next} />
         {showLocalCredentials && (
           <div className="local-credentials">

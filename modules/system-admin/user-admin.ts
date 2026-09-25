@@ -11,7 +11,8 @@ import { sendAccountRecoveryEmail } from "@/modules/communications/account-email
  * System administrator account tools (#386). Two-step sign-in can't be turned
  * off by anyone (decision 2026-09-23); resetting it here is the one audited
  * way back in after a lost device. The person sets it up again at their next
- * sign-in. Every action signs the person out everywhere.
+ * sign-in. Resetting it also revokes every passkey on the account. Every
+ * action signs the person out everywhere.
  */
 
 export class UserAdminError extends Error {
@@ -33,19 +34,29 @@ async function requireStaffUser(userId: string) {
   return user;
 }
 
-export async function resetStaffTwoStep(userId: string, actorUserId: string) {
+/**
+ * Removes a team member's authenticator and revokes every passkey they have,
+ * in one transaction, then signs them out everywhere — the same shape as
+ * {@link resetAttendeeTwoStep}. A passkey is a second step on its own
+ * (#429), so leaving one working would leave the reset only half done.
+ */
+export async function resetStaffTwoStep(userId: string, actorUserId: string, now = new Date()) {
   if (userId === actorUserId) {
     throw new UserAdminError("NOT_ON_YOURSELF", "Ask another system administrator to reset your own two-step sign-in.");
   }
   await requireStaffUser(userId);
-  await getPrisma().userMfaEnrollment.deleteMany({ where: { userId } });
+  const [, revoked] = await getPrisma().$transaction([
+    getPrisma().userMfaEnrollment.deleteMany({ where: { userId } }),
+    getPrisma().userPasskey.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: now } }),
+  ]);
   await revokeAllUserSessions(userId);
   await writeAuditLog({
     actorUserId,
     action: "STAFF_MFA_RESET",
     entityType: "User",
     entityId: userId,
-    summary: "A system administrator reset a team member's two-step sign-in.",
+    summary: "A system administrator reset a team member's two-step sign-in and removed their passkeys.",
+    metadata: { passkeysRevoked: revoked.count },
   });
 }
 

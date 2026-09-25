@@ -4,7 +4,9 @@ import Link from "next/link";
 import { Activity, Award, ChartNoAxesCombined, FileText, FileUp, HeartPulse, ListChecks, MessagesSquare, PanelsTopLeft, Settings2, Tent, TicketPercent, UserCog, UsersRound, type LucideIcon } from "lucide-react";
 import { MfaManager, type MfaStatus } from "@/components/mfa-manager";
 import { SessionManager } from "@/components/session-manager";
+import { StaffPasskeyManager } from "@/components/staff-passkey-manager";
 import { getMfaStatus } from "@/modules/access/mfa-service";
+import { getPasskeySettings } from "@/modules/access/passkeys";
 import { listUserSessions, SESSION_COOKIE_NAME, SESSION_IDLE_TIMEOUT_SECONDS } from "@/modules/access/session-store";
 import { listRecentAuditActivity } from "@/modules/audit/audit-service";
 import { resolveEventContext } from "@/modules/events/selection";
@@ -45,6 +47,7 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
   const sessionToken = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
   const sessions = await listUserSessions(user.id, sessionToken);
   const mfaStatus = await getMfaStatus(user.id) as MfaStatus;
+  const passkeySettings = await getPasskeySettings(user);
   const { allowed: clubOversight, clubEvent } = await resolveClubOversight(event.id);
   const q = `?event=${event.id}`;
 
@@ -87,6 +90,7 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
       ))}
       {permissions.includes("VIEW_REPORTS") && <section className="panel"><div className="section-heading"><div><p className="eyebrow">Audit trail</p><h2>Recent activity</h2></div><span className="count-badge"><Activity aria-hidden="true" size={16} /> {activity.length} {activity.length === 1 ? "entry" : "entries"}</span></div><div className="activity-list">{activity.map((entry) => <article className="activity-row" key={entry.id}><span className="activity-icon"><Activity aria-hidden="true" size={16} /></span><span><strong>{entry.summary}</strong><small>{entry.actorName} · {new Date(entry.createdAt).toLocaleString()}</small></span><code>{entry.action}</code></article>)}{activity.length === 0 && <p className="quiet-copy">No activity has been recorded for this event.</p>}</div></section>}
       <MfaManager initialStatus={mfaStatus} />
+      <StaffPasskeyManager available={passkeySettings.available} initialPasskeys={passkeySettings.passkeys} verification={passkeySettings.verification} />
       <SessionManager initialSessions={sessions} idleTimeoutSeconds={SESSION_IDLE_TIMEOUT_SECONDS} />
       {process.env.NODE_ENV !== "production" && <section className="panel review-gate"><div><p className="eyebrow">Testing status</p><h2>This local workspace uses test data</h2><p>Changes stay in the local IMSDA Events database. Live card charging and external delivery remain off until their configured test connections are ready.</p></div><span className="review-badge">Local testing</span></section>}
     </section>

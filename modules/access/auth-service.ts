@@ -36,7 +36,13 @@ export type PasswordAuthentication =
       globalRole: GlobalRole | null;
       session: { token: string; expiresAt: Date };
     }
-  | { outcome: "mfa"; userId: string; gate: "challenge" | "enrol" };
+  | { outcome: "mfa"; userId: string; gate: "challenge" | "enrol" }
+  /**
+   * A privileged account whose only second factor is a passkey (#429). The
+   * password alone can't finish sign-in, and it can't enrol an authenticator
+   * either — that would let a phished password stand in for the passkey.
+   */
+  | { outcome: "passkey_required"; userId: string };
 
 export async function authenticateWithPassword(
   email: string,
@@ -52,6 +58,7 @@ export async function authenticateWithPassword(
       globalRole: true,
       memberships: { where: { status: "ACTIVE" }, select: { role: true } },
       mfaEnrollment: { select: { status: true } },
+      passkeys: { where: { revokedAt: null }, select: { id: true }, take: 1 },
       credential: {
         select: { id: true, passwordHash: true, failedAttempts: true, lockedUntil: true, disabledAt: true },
       },
@@ -70,10 +77,47 @@ export async function authenticateWithPassword(
     return null;
   }
 
-  const credential = user.credential;
+  if (!(await checkPasswordWithLockout(user.credential, password))) return null;
+
+  const subject = {
+    globalRole: user.globalRole,
+    activeEventRoles: user.memberships.map((membership) => membership.role),
+  };
+  const gate = mfaGateFor(subject, user.mfaEnrollment);
+  // A passkey is this account's second factor: sign in with it, not by
+  // enrolling a new authenticator on the strength of the password (#429).
+  if (gate.kind === "enrol" && user.passkeys.length > 0) {
+    return { outcome: "passkey_required", userId: user.id };
+  }
+  if (gate.kind !== "not_required") {
+    return { outcome: "mfa", userId: user.id, gate: gate.kind };
+  }
+
+  return {
+    outcome: "session",
+    userId: user.id,
+    globalRole: user.globalRole,
+    session: await createDatabaseSession(user.id, userAgent),
+  };
+}
+
+type LockableCredential = {
+  id: string;
+  passwordHash: string;
+  failedAttempts: number;
+  lockedUntil: Date | null;
+  disabledAt: Date | null;
+};
+
+/**
+ * The one password check, shared by sign-in and by the confirm-it's-you step
+ * on sign-in changes (#429): a disabled or locked credential never verifies,
+ * a wrong password counts toward the lockout, and a right one clears it.
+ */
+async function checkPasswordWithLockout(credential: LockableCredential, password: string) {
   if (credential.disabledAt || (credential.lockedUntil && credential.lockedUntil > new Date())) {
     await spendPasswordCheck(password);
-    return null;
+    return false;
   }
 
   const valid = await verifyPassword(password, credential.passwordHash);
@@ -88,31 +132,37 @@ export async function authenticateWithPassword(
           : null,
       },
     });
-    return null;
+    return false;
   }
 
   await getPrisma().authCredential.update({
     where: { id: credential.id },
     data: { failedAttempts: 0, lockedUntil: null },
   });
+  return true;
+}
 
-  const gate = mfaGateFor(
-    {
-      globalRole: user.globalRole,
-      activeEventRoles: user.memberships.map((membership) => membership.role),
+/**
+ * Re-checks a signed-in staff member's current password, for a change to how
+ * the account signs in (#429). Runs through exactly the same verification and
+ * lockout counter as {@link authenticateWithPassword}; it never issues a
+ * session and never reveals why it failed.
+ */
+export async function verifyCurrentPassword(userId: string, password: string): Promise<boolean> {
+  const user = await getPrisma().user.findUnique({
+    where: { id: userId },
+    select: {
+      accountStatus: true,
+      credential: {
+        select: { id: true, passwordHash: true, failedAttempts: true, lockedUntil: true, disabledAt: true },
+      },
     },
-    user.mfaEnrollment,
-  );
-  if (gate.kind !== "not_required") {
-    return { outcome: "mfa", userId: user.id, gate: gate.kind };
+  });
+  if (!user?.credential || user.accountStatus !== "ACTIVE") {
+    await spendPasswordCheck(password);
+    return false;
   }
-
-  return {
-    outcome: "session",
-    userId: user.id,
-    globalRole: user.globalRole,
-    session: await createDatabaseSession(user.id, userAgent),
-  };
+  return checkPasswordWithLockout(user.credential, password);
 }
 
 /**

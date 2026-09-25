@@ -203,6 +203,17 @@ describe("POST /api/auth/login destination", () => {
     expect(mocks.cookieSet).toHaveBeenCalledOnce();
     expect(mocks.logError).toHaveBeenCalledWith(expect.any(String), expect.any(Error));
   });
+
+  it("points an admin whose second factor is a passkey to passkey sign-in, with no session or enrolment (#429)", async () => {
+    mocks.authenticateWithPassword.mockResolvedValue({ outcome: "passkey_required", userId: "usr_synthetic_staff" });
+
+    const response = await login(post("/api/auth/login", credentials));
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: "PASSKEY_REQUIRED" });
+    expect(mocks.cookieSet).not.toHaveBeenCalled();
+    expect(mocks.issueMfaChallenge).not.toHaveBeenCalled();
+  });
 });
 
 describe("POST /api/auth/mfa/challenge destination", () => {
