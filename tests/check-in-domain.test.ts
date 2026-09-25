@@ -132,6 +132,21 @@ describe("check-in search (#441)", () => {
     expect(arrivalMatchesSearch({ ...code, firstName: "Mary-Jane", lastName: "O'Brien" }, "o'bri")).toBe(true);
     expect(arrivalMatchesSearch({ ...code, firstName: "Søren", lastName: "Ødegaard" }, "ødeg")).toBe(true);
     expect(arrivalMatchesSearch({ ...code, firstName: "Мария", lastName: "Иванова" }, "иван")).toBe(true);
+    expect(arrivalMatchesSearch({ ...code, firstName: "Mary-Jane", lastName: "O'Brien" }, "obrien")).toBe(true);
+    expect(arrivalMatchesSearch({ ...code, firstName: "Mary-Jane", lastName: "O’Brien" }, "maryjane")).toBe(true);
+    expect(arrivalMatchesSearch({ ...code, firstName: "Łukasz", lastName: "Søndergård" }, "lukasz sonder")).toBe(true);
+  });
+
+  it("doesn't list everyone while the start of a name matches the code's letters", () => {
+    expect(arrivalMatchesSearch(samantha, "w")).toBe(false);
+    expect(arrivalMatchesSearch(samantha, "wr")).toBe(false);
+    expect(arrivalMatchesSearch(samantha, "wr26")).toBe(true);
+    expect(arrivalMatchesSearch(samantha, "WR26-AB")).toBe(true);
+  });
+
+  it("matches a name and club together", () => {
+    expect(arrivalMatchesSearch(samantha, "sam trail", "Trailblazers Pathfinders")).toBe(true);
+    expect(arrivalMatchesSearch(samantha, "sam eagles", "Trailblazers Pathfinders")).toBe(false);
   });
 
   it("does not match the registration's email, so a shared email doesn't list everyone", () => {
@@ -142,6 +157,7 @@ describe("check-in search (#441)", () => {
 
   it("still matches the confirmation code and club name", () => {
     expect(arrivalMatchesSearch(samantha, "ab12")).toBe(true);
+    expect(arrivalMatchesSearch(samantha, "blazers", "Trailblazers Pathfinders")).toBe(false);
     expect(arrivalMatchesSearch(samantha, "trail", "Trailblazers Pathfinders")).toBe(true);
     expect(arrivalMatchesSearch(samantha, "")).toBe(true);
   });

@@ -133,20 +133,26 @@ export function offlineCheckInErrorMessage(code: OfflineCheckInErrorCode) {
   }
 }
 
-function searchWords(value: string) {
+/** Letters NFD doesn't split into a base letter and an accent. */
+const letterFolds: Record<string, string> = { ł: "l", ø: "o", æ: "ae", œ: "oe", ß: "ss", đ: "d", ð: "d", þ: "th", ı: "i" };
+
+function foldForSearch(value: string) {
   return value
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
+    .replace(/\p{M}/gu, "")
     .toLowerCase()
-    // Any letter or digit in any script counts; hyphens and apostrophes split words.
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter(Boolean);
+    .replace(/[łøæœßđðþı]/g, (letter) => letterFolds[letter] ?? letter);
+}
+
+function searchWords(value: string) {
+  // Any letter or digit in any script counts; hyphens and apostrophes split words.
+  return foldForSearch(value).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 }
 
 /**
  * The check-in search (#441): an attendee's first or last name, matched by
  * word prefix ("sam" finds Samantha; "sam riv" finds Samantha Rivera), plus
- * the confirmation code and club name. Email is deliberately left out: when
+ * the club name and confirmation code. Email is deliberately left out: when
  * one email registered several people, it would match them all.
  */
 export function arrivalMatchesSearch(
@@ -154,12 +160,17 @@ export function arrivalMatchesSearch(
   query: string,
   clubName = "",
 ) {
-  const trimmed = query.trim().toLowerCase();
+  const trimmed = query.trim();
   if (!trimmed) return true;
-  if (arrival.confirmationCode.toLowerCase().includes(trimmed)) return true;
-  if (clubName && clubName.toLowerCase().includes(trimmed)) return true;
+  // The code only matches a query that looks like one (a digit or hyphen), so
+  // typing the start of a name ("w", "wr") doesn't list every "WR26-…" arrival.
+  if (/[\d-]/.test(trimmed) && arrival.confirmationCode.toLowerCase().includes(trimmed.toLowerCase())) return true;
   const queryWords = searchWords(trimmed);
   if (queryWords.length === 0) return false;
   const nameWords = searchWords(`${arrival.firstName} ${arrival.lastName}`);
-  return queryWords.every((word) => nameWords.some((nameWord) => nameWord.startsWith(word)));
+  // "obrien" finds O'Brien and "maryjane" finds Mary-Jane.
+  const joinedNames = [`${arrival.firstName}`, `${arrival.lastName}`].map((part) => searchWords(part).join(""));
+  const clubWords = searchWords(clubName);
+  const words = [...nameWords, ...joinedNames, ...clubWords];
+  return queryWords.every((word) => words.some((candidate) => candidate.startsWith(word)));
 }
