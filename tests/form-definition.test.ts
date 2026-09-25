@@ -360,7 +360,7 @@ describe("registration form definitions", () => {
     const definition = formTemplates.find((template) => template.key === "honors_weekend")!.definition;
     expect(definition.attendeeRoster).toMatchObject({ enabled: true, attendeeLabel: "Club member" });
     const roster = [
-      { first_name: "Pat", last_name: "Finder", attendee_age: "11", attendee_type: "Youth" },
+      { first_name: "Pat", last_name: "Finder", attendee_age: "11", attendee_type: "Pathfinder" },
       { first_name: "Sam", last_name: "Staffer", attendee_age: "34", attendee_type: "Staff" },
     ];
     const calculation = calculateRosterTotal(

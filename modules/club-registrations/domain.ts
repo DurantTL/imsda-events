@@ -209,6 +209,7 @@ export function rosterGenderPrefill(definition: RegistrationFormDefinition, pers
 }
 
 const TYPE_OPTION_NAMES: Record<string, string[]> = {
+  YOUTH: ["pathfinder", "youth"],
   STAFF: ["staff"],
   ADULT: ["adult", "staff"],
   UNDERAGE: ["child", "underage"],

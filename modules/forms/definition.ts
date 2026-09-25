@@ -847,12 +847,12 @@ export const formTemplates: FormTemplate[] = [
           templateField("hw_email", "email", "Email", "EMAIL", true),
           templateField("hw_phone", "phone", "Mobile phone", "PHONE", true),
         ] },
-        { id: "hw_roster", title: "Club roster", description: "Add every Pathfinder, TLT, staff member, and adult attending this site, using full first and last names. Honor classes are selected after the roster is saved.", fields: [
+        { id: "hw_roster", title: "Club roster", description: "Add Pathfinders, TLTs, staff, and children attending this site, using full first and last names. Honor classes are selected after the roster is saved.", fields: [
           templateField("hw_member_first", "first_name", "First name", "TEXT", true, [], { scope: "ATTENDEE" }),
           templateField("hw_member_last", "last_name", "Last name", "TEXT", true, [], { scope: "ATTENDEE" }),
           templateField("hw_member_age", "attendee_age", "Age", "NUMBER", true, [], { scope: "ATTENDEE" }),
           templateField("hw_member_gender", "gender", "Gender", "SELECT", false, ["Female", "Male", "Prefer not to answer"], { scope: "ATTENDEE" }),
-          templateField("hw_member_role", "attendee_type", "Roster role", "RADIO", true, ["Youth", "Staff", "Adult", "Underage"], { scope: "ATTENDEE", helpText: "Underage means younger than the youth attendance age. Staff and adults don’t take a class seat." }),
+          templateField("hw_member_role", "attendee_type", "Roster role", "RADIO", true, ["Pathfinder", "TLT", "Staff", "Child"], { scope: "ATTENDEE", helpText: "Class seats follow each person’s type on the club roster, not this answer." }),
           templateField("hw_member_dietary", "dietary_needs", "Dietary restrictions", "LONG_TEXT", false, [], { scope: "ATTENDEE" }),
           templateField("hw_member_medical_flag", "medical_or_accessibility_need", "Has a medical or accessibility need the club director knows about", "RADIO", false, ["No", "Yes"], { scope: "ATTENDEE", helpText: "No details here — talk with your club director about any support the attendee needs." }),
           templateField("hw_member_fee", "registration_fee", "Registration fee", "CALCULATED", false, [], { scope: "ATTENDEE" }),
