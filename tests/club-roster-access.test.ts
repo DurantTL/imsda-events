@@ -169,6 +169,16 @@ describe("unlocking with an authenticator code", () => {
     expect((await UNLOCK(request({ code: "123456" }))).status).toBe(429);
   });
 
+  it("answers 429 while the second factor is locked (#456)", async () => {
+    mocks.verifyAttendeeSecondFactor.mockRejectedValue(
+      new AttendeeMfaError("MFA_LOCKED", "Too many incorrect codes. Wait a few minutes and try again."),
+    );
+    const response = await UNLOCK(request({ code: "123456" }));
+    expect(response.status).toBe(429);
+    expect((await response.json()).error).toBe("MFA_LOCKED");
+    expect(mocks.updateSession).not.toHaveBeenCalled();
+  });
+
   it("is only for directors signed in with their own session", async () => {
     mocks.listDirectedClubs.mockResolvedValue([]);
     expect((await UNLOCK(request({ code: "123456" }))).status).toBe(404);

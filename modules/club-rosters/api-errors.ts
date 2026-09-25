@@ -34,7 +34,11 @@ export function rosterApiError(error: unknown, action: string) {
   if (error instanceof AttendeeMfaError) {
     return Response.json(
       { error: error.code, message: error.message },
-      { status: error.code === "MFA_NOT_ENROLLED" ? 403 : 400 },
+      {
+        status: error.code === "MFA_NOT_ENROLLED" ? 403
+          : error.code === "MFA_LOCKED" ? 429
+          : 400,
+      },
     );
   }
   // Never log the request body here: it can hold a birth date.

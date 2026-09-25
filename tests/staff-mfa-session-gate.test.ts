@@ -12,7 +12,7 @@ const dependencies = vi.hoisted(() => ({
   verifyPassword: vi.fn(),
   spendPasswordCheck: vi.fn(),
   createDatabaseSession: vi.fn(),
-  dispatchLockoutEmails: vi.fn(),
+  scheduleLockoutEmails: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -26,7 +26,7 @@ vi.mock("@/modules/access/session-store", () => ({
   createDatabaseSession: dependencies.createDatabaseSession,
 }));
 vi.mock("@/modules/communications/lockout-email", () => ({
-  dispatchLockoutEmails: dependencies.dispatchLockoutEmails,
+  scheduleLockoutEmails: dependencies.scheduleLockoutEmails,
 }));
 
 import { authenticateWithPassword } from "@/modules/access/auth-service";

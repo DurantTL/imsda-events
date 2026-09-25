@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * Staff sign-in security policy (#456): the lockout email is dispatched only
- * on the attempt that crosses into locked — never on the attempts before it,
- * and never again while the account stays locked. `dispatchLockoutEmails`
+ * Staff sign-in security policy (#456): the lockout email is scheduled only
+ * by the attempt that wins the claim on the not-locked -> locked transition —
+ * never on the attempts before it, never again while the account stays
+ * locked, and once when two wrong attempts race. `scheduleLockoutEmails`
  * itself is covered separately (tests/lockout-email.test.ts); this asserts
  * the call sites trigger it correctly and only then.
  */
@@ -15,7 +16,7 @@ const dependencies = vi.hoisted(() => ({
   spendPasswordCheck: vi.fn(),
   hashPassword: vi.fn(),
   createDatabaseSession: vi.fn(),
-  dispatchLockoutEmails: vi.fn(),
+  scheduleLockoutEmails: vi.fn(),
   writeAuditLog: vi.fn(),
 }));
 
@@ -32,13 +33,14 @@ vi.mock("@/modules/access/session-store", () => ({
 }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: dependencies.writeAuditLog }));
 vi.mock("@/modules/communications/lockout-email", () => ({
-  dispatchLockoutEmails: dependencies.dispatchLockoutEmails,
+  scheduleLockoutEmails: dependencies.scheduleLockoutEmails,
 }));
 
 import { authenticateWithPassword } from "@/modules/access/auth-service";
 import { completeMfaChallenge } from "@/modules/access/mfa-service";
 import { sealSecret } from "@/lib/secret-box";
 import { totpCode } from "@/modules/access/totp";
+import { lockableRowStub, type LockableRow } from "./lockable-row-stub";
 
 const now = new Date("2026-09-25T18:00:00.000Z");
 
@@ -52,7 +54,7 @@ beforeEach(() => {
 });
 
 describe("wrong password (#456)", () => {
-  function userFixture(failedAttempts: number, lockedUntil: Date | null = null) {
+  function userFixture(row: LockableRow) {
     return {
       id: "user-1",
       accountStatus: "ACTIVE",
@@ -63,65 +65,116 @@ describe("wrong password (#456)", () => {
       credential: {
         id: "cred-1",
         passwordHash: "hash",
-        failedAttempts,
-        lockedUntil,
+        failedAttempts: row.failedAttempts,
+        lockedUntil: row.lockedUntil,
         disabledAt: null,
       },
     };
   }
 
-  function prismaFixture() {
+  /** Each sign-in reads the credential as it stands at that moment. */
+  function prismaFixture(initial: Partial<LockableRow> = {}) {
+    const credential = lockableRowStub(initial);
     const stub = {
-      user: { findUnique: vi.fn() },
-      authCredential: { update: vi.fn().mockResolvedValue({}) },
+      user: { findUnique: vi.fn(async () => userFixture({ ...credential.row })) },
+      authCredential: { update: credential.update, updateMany: credential.updateMany },
     };
     dependencies.getPrisma.mockReturnValue(stub);
-    return stub;
+    return { stub, credential };
   }
 
   it("sends no email on the first four wrong passwords", async () => {
-    const prisma = prismaFixture();
+    const { credential } = prismaFixture();
     dependencies.verifyPassword.mockResolvedValue(false);
-    for (let failedAttempts = 0; failedAttempts < 4; failedAttempts += 1) {
-      prisma.user.findUnique.mockResolvedValueOnce(userFixture(failedAttempts));
+    for (let attempt = 0; attempt < 4; attempt += 1) {
       await authenticateWithPassword("staff@imsda.org", "wrong", null);
     }
-    expect(dependencies.dispatchLockoutEmails).not.toHaveBeenCalled();
+    expect(credential.row.failedAttempts).toBe(4);
+    expect(credential.row.lockedUntil).toBeNull();
+    expect(dependencies.scheduleLockoutEmails).not.toHaveBeenCalled();
   });
 
-  it("sends exactly one email on the fifth wrong password", async () => {
-    const prisma = prismaFixture();
+  it("locks, resets the counter, and schedules exactly one email on the fifth wrong password", async () => {
+    const { credential } = prismaFixture({ failedAttempts: 4 });
     dependencies.verifyPassword.mockResolvedValue(false);
-    prisma.user.findUnique.mockResolvedValueOnce(userFixture(4));
 
     await authenticateWithPassword("staff@imsda.org", "wrong", null);
 
-    expect(dependencies.dispatchLockoutEmails).toHaveBeenCalledTimes(1);
-    expect(dependencies.dispatchLockoutEmails).toHaveBeenCalledWith({
+    expect(credential.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: { failedAttempts: { increment: 1 } },
+    }));
+    expect(credential.row.lockedUntil).toBeInstanceOf(Date);
+    expect(credential.row.failedAttempts).toBe(0);
+    expect(dependencies.scheduleLockoutEmails).toHaveBeenCalledTimes(1);
+    expect(dependencies.scheduleLockoutEmails).toHaveBeenCalledWith({
       audience: "STAFF",
       kind: "PASSWORD",
       accountUserId: "user-1",
-      lockedUntil: expect.any(Date),
+      lockedUntil: credential.row.lockedUntil,
       now: expect.any(Date),
     });
   });
 
+  it("claims the lock once when two wrong passwords race, and schedules one email", async () => {
+    const { stub, credential } = prismaFixture({ failedAttempts: 4 });
+    // Both requests read the credential before either writes.
+    stub.user.findUnique.mockImplementation(async () => userFixture({ failedAttempts: 4, lockedUntil: null }));
+    dependencies.verifyPassword.mockResolvedValue(false);
+
+    await Promise.all([
+      authenticateWithPassword("staff@imsda.org", "wrong-1", null),
+      authenticateWithPassword("staff@imsda.org", "wrong-2", null),
+    ]);
+
+    expect(credential.updateMany).toHaveBeenCalledTimes(2);
+    const claims = await Promise.all(credential.updateMany.mock.results.map((result) => result.value));
+    expect(claims.map((claim) => claim.count).sort()).toEqual([0, 1]);
+    expect(dependencies.scheduleLockoutEmails).toHaveBeenCalledTimes(1);
+  });
+
+  it("needs five new wrong passwords to lock again once the lock expires", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(now);
+      const { credential } = prismaFixture({ failedAttempts: 4 });
+      dependencies.verifyPassword.mockResolvedValue(false);
+      await authenticateWithPassword("staff@imsda.org", "wrong", null);
+      expect(dependencies.scheduleLockoutEmails).toHaveBeenCalledTimes(1);
+
+      vi.setSystemTime(new Date(now.getTime() + 16 * 60 * 1000));
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        await authenticateWithPassword("staff@imsda.org", "wrong", null);
+      }
+      expect(credential.row.lockedUntil!.getTime()).toBeLessThan(Date.now());
+      expect(dependencies.scheduleLockoutEmails).toHaveBeenCalledTimes(1);
+
+      await authenticateWithPassword("staff@imsda.org", "wrong", null);
+      expect(credential.row.lockedUntil!.getTime()).toBeGreaterThan(Date.now());
+      expect(dependencies.scheduleLockoutEmails).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("sends no further email for an attempt made while already locked", async () => {
-    const prisma = prismaFixture();
-    prisma.user.findUnique.mockResolvedValueOnce(userFixture(0, new Date(now.getTime() + 60_000)));
+    const { credential } = prismaFixture({ lockedUntil: new Date(Date.now() + 60_000) });
 
     await authenticateWithPassword("staff@imsda.org", "wrong-again", null);
 
-    expect(dependencies.dispatchLockoutEmails).not.toHaveBeenCalled();
-    expect(prisma.authCredential.update).not.toHaveBeenCalled();
+    expect(dependencies.scheduleLockoutEmails).not.toHaveBeenCalled();
+    expect(credential.update).not.toHaveBeenCalled();
   });
 });
 
 describe("wrong two-step code (#456)", () => {
   const SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
 
-  function prismaFixture(enrollmentOverrides: { lockedUntil?: Date | null } = {}) {
-    let failedAttempts = 0;
+  function prismaFixture(enrollmentOverrides: {
+    lockedUntil?: Date | null;
+    failedAttempts?: number;
+    status?: "ACTIVE" | "PENDING";
+  } = {}) {
+    const enrollment = lockableRowStub(enrollmentOverrides);
     const stub = {
       mfaChallenge: {
         findUnique: vi.fn().mockResolvedValue({
@@ -137,23 +190,13 @@ describe("wrong two-step code (#456)", () => {
       userMfaEnrollment: {
         findUnique: vi.fn().mockResolvedValue({
           id: "enrol-1",
-          status: "ACTIVE",
+          status: enrollmentOverrides.status ?? "ACTIVE",
           sealedSecret: sealSecret(SECRET, "mfa-totp-secret"),
           lastUsedStep: null,
           lockedUntil: enrollmentOverrides.lockedUntil ?? null,
         }),
-        // The real service makes two calls once the threshold is crossed: one
-        // that increments, one that sets lockedUntil and resets the counter.
-        // A relational `increment` op is what distinguishes the first from the
-        // second, exactly as Prisma's own update input does.
-        update: vi.fn(async (query: { data: Record<string, unknown> }) => {
-          const increment = query.data.failedAttempts as { increment?: number } | undefined;
-          if (increment && typeof increment === "object" && "increment" in increment) {
-            failedAttempts += 1;
-            return { failedAttempts };
-          }
-          return {};
-        }),
+        update: enrollment.update,
+        updateMany: enrollment.updateMany,
       },
       mfaRecoveryCode: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
       authCredential: {
@@ -164,7 +207,7 @@ describe("wrong two-step code (#456)", () => {
       )),
     };
     dependencies.getPrisma.mockReturnValue(stub);
-    return stub;
+    return { stub, enrollment };
   }
 
   it("sends no email on the first two wrong codes, and exactly one on the third", async () => {
@@ -172,11 +215,11 @@ describe("wrong two-step code (#456)", () => {
 
     await expect(completeMfaChallenge("token", "000001", { now })).rejects.toMatchObject({ code: "MFA_CODE_INVALID" });
     await expect(completeMfaChallenge("token", "000002", { now })).rejects.toMatchObject({ code: "MFA_CODE_INVALID" });
-    expect(dependencies.dispatchLockoutEmails).not.toHaveBeenCalled();
+    expect(dependencies.scheduleLockoutEmails).not.toHaveBeenCalled();
 
     await expect(completeMfaChallenge("token", "000003", { now })).rejects.toMatchObject({ code: "MFA_CODE_INVALID" });
-    expect(dependencies.dispatchLockoutEmails).toHaveBeenCalledTimes(1);
-    expect(dependencies.dispatchLockoutEmails).toHaveBeenCalledWith({
+    expect(dependencies.scheduleLockoutEmails).toHaveBeenCalledTimes(1);
+    expect(dependencies.scheduleLockoutEmails).toHaveBeenCalledWith({
       audience: "STAFF",
       kind: "CODE",
       accountUserId: "user-1",
@@ -191,6 +234,33 @@ describe("wrong two-step code (#456)", () => {
     await expect(completeMfaChallenge("token", totpCode(SECRET, now), { now }))
       .rejects.toMatchObject({ code: "MFA_LOCKED" });
 
-    expect(dependencies.dispatchLockoutEmails).not.toHaveBeenCalled();
+    expect(dependencies.scheduleLockoutEmails).not.toHaveBeenCalled();
+  });
+
+  it("claims the lock once when two wrong codes race, and schedules one email", async () => {
+    const { enrollment } = prismaFixture({ failedAttempts: 2 });
+
+    await Promise.allSettled([
+      completeMfaChallenge("token", "000001", { now }),
+      completeMfaChallenge("token", "000002", { now }),
+    ]);
+
+    const claims = enrollment.updateMany.mock.calls.filter(([query]) => query.where.failedAttempts);
+    expect(claims).toHaveLength(2);
+    expect(enrollment.row.lockedUntil).toBeInstanceOf(Date);
+    expect(dependencies.scheduleLockoutEmails).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts wrong confirmation codes during enrolment toward the lock, without a lockout email", async () => {
+    const { enrollment } = prismaFixture({ status: "PENDING" });
+
+    for (const code of ["000001", "000002", "000003"]) {
+      await expect(completeMfaChallenge("token", code, { now })).rejects.toMatchObject({ code: "MFA_CODE_INVALID" });
+    }
+
+    // The lock still applies — it is only the "someone tried to sign in" email
+    // that a typo while setting up an authenticator does not warrant.
+    expect(enrollment.row.lockedUntil).toBeInstanceOf(Date);
+    expect(dependencies.scheduleLockoutEmails).not.toHaveBeenCalled();
   });
 });

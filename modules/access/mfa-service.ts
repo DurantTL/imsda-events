@@ -6,7 +6,7 @@ import { getPrisma } from "@/lib/prisma";
 import { getServerEnv } from "@/lib/env";
 import { openSecret, sealSecret } from "@/lib/secret-box";
 import { writeAuditLog } from "@/modules/audit/audit-service";
-import { dispatchLockoutEmails } from "@/modules/communications/lockout-email";
+import { scheduleLockoutEmails } from "@/modules/communications/lockout-email";
 import { createDatabaseSession } from "@/modules/access/session-store";
 import { createOpaqueToken, hashOpaqueToken } from "@/modules/access/tokens";
 import { mfaGateFor, requiresMfa, type MfaGate } from "@/modules/access/mfa-rules";
@@ -308,23 +308,40 @@ async function consumeSecondFactor(
 }
 
 /**
- * Counts a wrong code toward the authenticator's lockout, and — on the exact
- * attempt that crosses into locked, never on the ones before it or the ones
- * made while already locked — sends the lockout email (#456).
+ * Counts a wrong code toward the authenticator's lockout. The counter is
+ * incremented atomically and the lock is claimed with a conditional
+ * `updateMany`, so of several racing wrong codes exactly one wins the
+ * not-locked -> locked transition; only that one schedules the lockout email
+ * (#456), and it runs after the response.
+ *
+ * `notify: false` is for a PENDING enrolment's confirmation code: a typo while
+ * setting up an authenticator still counts toward the lock, but is not
+ * "someone tried to sign in to your account".
  */
-async function recordFailedCode(userId: string, enrollmentId: string, now: Date) {
-  const failedAttempts = await getPrisma().userMfaEnrollment.update({
+async function recordFailedCode(
+  userId: string,
+  enrollmentId: string,
+  now: Date,
+  options: { notify?: boolean } = {},
+) {
+  const counted = await getPrisma().userMfaEnrollment.update({
     where: { id: enrollmentId },
     data: { failedAttempts: { increment: 1 } },
     select: { failedAttempts: true },
   });
-  if (failedAttempts.failedAttempts >= MAX_VERIFY_FAILURES) {
-    const lockedUntil = new Date(now.getTime() + VERIFY_LOCK_MINUTES * 60 * 1000);
-    await getPrisma().userMfaEnrollment.update({
-      where: { id: enrollmentId },
-      data: { lockedUntil, failedAttempts: 0 },
-    });
-    await dispatchLockoutEmails({
+  if (counted.failedAttempts < MAX_VERIFY_FAILURES) return;
+
+  const lockedUntil = new Date(now.getTime() + VERIFY_LOCK_MINUTES * 60 * 1000);
+  const claimed = await getPrisma().userMfaEnrollment.updateMany({
+    where: {
+      id: enrollmentId,
+      failedAttempts: { gte: MAX_VERIFY_FAILURES },
+      OR: [{ lockedUntil: null }, { lockedUntil: { lte: now } }],
+    },
+    data: { lockedUntil, failedAttempts: 0 },
+  });
+  if (claimed.count === 1 && options.notify !== false) {
+    scheduleLockoutEmails({
       audience: "STAFF",
       kind: "CODE",
       accountUserId: userId,
@@ -529,7 +546,9 @@ export async function completeMfaChallenge(
   }
 
   if (!accepted.valid) {
-    await recordFailedCode(challenge.userId, enrollment.id, now);
+    await recordFailedCode(challenge.userId, enrollment.id, now, {
+      notify: enrollment.status !== "PENDING",
+    });
     throw new MfaError("MFA_CODE_INVALID", "That code is not right. Try the next one.");
   }
 

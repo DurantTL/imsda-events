@@ -2,6 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
+import { after } from "next/server";
 import { getPrisma } from "@/lib/prisma";
 import { getServerEnv } from "@/lib/env";
 import { logError } from "@/lib/logger";
@@ -10,9 +11,10 @@ import { processAccountEmailQueue } from "@/modules/communications/email-deliver
 import { getPlatformSettings } from "@/modules/system-admin/platform-settings";
 
 /**
- * Lockout email (#456): sent once, on the transition from not-locked to
+ * Lockout email (#456): considered once, on the transition from not-locked to
  * locked, for a wrong password or a wrong two-step code — never on every
- * attempt made while the lock stands.
+ * attempt made while the lock stands. Callers claim that transition with a
+ * conditional update, so concurrent wrong attempts cannot each announce it.
  *
  * Two messages, both queued through the account slice of the outbox (no
  * `eventId`, sender from `ACCOUNT_EMAIL_*`), exactly like activation and
@@ -24,9 +26,17 @@ import { getPlatformSettings } from "@/modules/system-admin/platform-settings";
  * - **To the configured security alert address**, if one is set. A short
  *   alert naming the account and the kind of lockout — nothing else.
  *
- * Both calls are best-effort: a failure here must not change, delay, or leak
- * anything into the sign-in response that triggered it. Callers await
- * {@link dispatchLockoutEmails} but never let it throw past them.
+ * The lock applies every time; the emails are capped per account so that a
+ * stream of wrong attempts cannot be turned into a stream of email (#456
+ * review): at most one to the person per rolling hour, and at most one office
+ * alert per rolling 24 hours.
+ *
+ * Nothing email-related may run before the sign-in response is sent: an
+ * unauthenticated request that took longer only when the address belongs to a
+ * real account would be an account-enumeration oracle (the rule in
+ * modules/attendee-accounts/attendee-email-dispatch.ts). Callers therefore use
+ * {@link scheduleLockoutEmails}, which hands both the enqueue and the delivery
+ * to Next.js `after()`; they never await email work themselves.
  */
 
 export type LockoutAudience = "STAFF" | "ATTENDEE";
@@ -117,12 +127,17 @@ export type LockoutEmailInput = {
   kind: LockoutKind;
   accountUserId?: string;
   accountAttendeeId?: string;
-  /** Identifies this specific lockout instant, so retrying is a no-op. */
+  /** When the lock claimed by the caller ends. */
   lockedUntil: Date;
   now: Date;
 };
 
-type DbClient = Prisma.TransactionClient | ReturnType<typeof getPrisma>;
+type DbClient = ReturnType<typeof getPrisma>;
+
+/** At most one lockout email to the account holder per account per hour. */
+export const PERSON_EMAIL_WINDOW_MS = 60 * 60 * 1000;
+/** At most one office alert per account per 24 hours. */
+export const OFFICE_ALERT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Resolved only here, and only once {@link dispatchLockoutEmails} has already
@@ -146,67 +161,104 @@ async function lockedOutPerson(client: DbClient, input: LockoutEmailInput) {
   return null;
 }
 
+/**
+ * The cap. Keys are per account (not per kind of lockout), so alternating
+ * password and code lockouts share one allowance. The key carries a time
+ * bucket of the window's length, which makes two racing dispatches in the
+ * same bucket collapse onto one row through the unique `idempotencyKey`; the
+ * rolling look-back in {@link sentWithin} closes the gap at a bucket boundary.
+ */
+function capKeyPrefix(channel: "person" | "office", input: LockoutEmailInput, accountId: string) {
+  return `lockout-${channel}:${input.audience}:${accountId}:`;
+}
+
+function capKey(prefix: string, now: Date, windowMs: number) {
+  return `${prefix}${Math.floor(now.getTime() / windowMs)}`;
+}
+
+async function sentWithin(client: DbClient, keyPrefix: string, now: Date, windowMs: number) {
+  const recent = await client.messageOutbox.findFirst({
+    where: {
+      idempotencyKey: { startsWith: keyPrefix },
+      createdAt: { gt: new Date(now.getTime() - windowMs) },
+    },
+    select: { id: true },
+  });
+  return recent !== null;
+}
+
 async function enqueueLockoutEmails(client: DbClient, input: LockoutEmailInput) {
+  const accountId = input.accountUserId ?? input.accountAttendeeId;
+  if (!accountId) return [];
+
+  const personPrefix = capKeyPrefix("person", input, accountId);
+  const officePrefix = capKeyPrefix("office", input, accountId);
+  const settings = await getPlatformSettings();
+  const personDue = !await sentWithin(client, personPrefix, input.now, PERSON_EMAIL_WINDOW_MS);
+  const officeDue = Boolean(settings.securityAlertEmail)
+    && !await sentWithin(client, officePrefix, input.now, OFFICE_ALERT_WINDOW_MS);
+  if (!personDue && !officeDue) return [];
+
   const person = await lockedOutPerson(client, input);
   // The account was removed between the failed attempt and this call — rare,
   // and nothing to notify.
   if (!person) return [];
 
   const sender = getAccountEmailSender();
-  const settings = await getPlatformSettings();
   const templateKey = input.audience === "STAFF" ? "ACCOUNT_LOCKOUT" : "ATTENDEE_LOCKOUT";
   const when = formatLockoutTime(input.now, settings.defaultTimezone);
-  const lockoutInstant = input.lockedUntil.getTime();
   const correlationId = randomUUID();
-  const accountId = input.accountUserId ?? input.accountAttendeeId;
-
-  const personEmail = personBody({
-    audience: input.audience,
-    kind: input.kind,
-    displayName: person.displayName,
-    when,
-  });
   const messageIds: string[] = [];
 
-  const personMessage = await client.messageOutbox.upsert({
-    where: { idempotencyKey: `lockout:${input.kind}:${accountId}:${lockoutInstant}` },
-    update: {},
-    create: {
-      eventId: null,
-      accountUserId: input.accountUserId ?? null,
-      accountAttendeeId: input.accountAttendeeId ?? null,
-      templateKey,
-      recipientKind: "ACCOUNT",
-      recipientEmail: person.email,
-      recipientName: person.displayName.trim() || null,
-      senderNameSnapshot: sender.name,
-      senderEmailSnapshot: sender.address,
-      replyToEmailSnapshot: sender.replyTo,
-      subjectSnapshot: personEmail.subject,
-      bodyTextSnapshot: personEmail.bodyText,
-      metadata: {
-        trigger: "SIGN_IN_LOCKOUT",
-        lockoutKind: input.kind,
-        accountEmail: true,
-        realDelivery: true,
-      } satisfies Prisma.InputJsonValue,
-      idempotencyKey: `lockout:${input.kind}:${accountId}:${lockoutInstant}`,
-      correlationId,
-      status: "PENDING",
-    },
-    select: { id: true },
-  });
-  messageIds.push(personMessage.id);
+  if (personDue) {
+    const personEmail = personBody({
+      audience: input.audience,
+      kind: input.kind,
+      displayName: person.displayName,
+      when,
+    });
+    const idempotencyKey = capKey(personPrefix, input.now, PERSON_EMAIL_WINDOW_MS);
+    const personMessage = await client.messageOutbox.upsert({
+      where: { idempotencyKey },
+      update: {},
+      create: {
+        eventId: null,
+        accountUserId: input.accountUserId ?? null,
+        accountAttendeeId: input.accountAttendeeId ?? null,
+        templateKey,
+        recipientKind: "ACCOUNT",
+        recipientEmail: person.email,
+        recipientName: person.displayName.trim() || null,
+        senderNameSnapshot: sender.name,
+        senderEmailSnapshot: sender.address,
+        replyToEmailSnapshot: sender.replyTo,
+        subjectSnapshot: personEmail.subject,
+        bodyTextSnapshot: personEmail.bodyText,
+        metadata: {
+          trigger: "SIGN_IN_LOCKOUT",
+          lockoutKind: input.kind,
+          accountEmail: true,
+          realDelivery: true,
+        } satisfies Prisma.InputJsonValue,
+        idempotencyKey,
+        correlationId,
+        status: "PENDING",
+      },
+      select: { id: true },
+    });
+    messageIds.push(personMessage.id);
+  }
 
-  if (settings.securityAlertEmail) {
+  if (officeDue && settings.securityAlertEmail) {
     const office = officeBody({
       kind: input.kind,
       audience: input.audience,
       accountEmail: person.email,
       when,
     });
+    const idempotencyKey = capKey(officePrefix, input.now, OFFICE_ALERT_WINDOW_MS);
     const officeMessage = await client.messageOutbox.upsert({
-      where: { idempotencyKey: `lockout-alert:${input.kind}:${accountId}:${lockoutInstant}` },
+      where: { idempotencyKey },
       update: {},
       create: {
         eventId: null,
@@ -228,7 +280,7 @@ async function enqueueLockoutEmails(client: DbClient, input: LockoutEmailInput) 
           accountEmail: false,
           realDelivery: true,
         } satisfies Prisma.InputJsonValue,
-        idempotencyKey: `lockout-alert:${input.kind}:${accountId}:${lockoutInstant}`,
+        idempotencyKey,
         correlationId,
         status: "PENDING",
       },
@@ -241,30 +293,45 @@ async function enqueueLockoutEmails(client: DbClient, input: LockoutEmailInput) 
 }
 
 /**
- * Queues the lockout email(s) and makes a best-effort attempt to deliver them
- * immediately, exactly like an account password-reset email. Never throws:
- * the caller is in the middle of an unauthenticated sign-in path, and a
- * delivery problem here must not change what that path returns, nor leak
- * through a slower or faster response (timing is the whole reason
- * `isAccountEmailConfigured` and the outbox exist). Nothing here touches the
- * database at all on a deployment that cannot send this email.
+ * Queues the lockout email(s), within the per-account cap, and makes a
+ * best-effort attempt to deliver them immediately, exactly like an account
+ * password-reset email. Never throws. Runs only after the response — call it
+ * through {@link scheduleLockoutEmails}, never from a request path directly.
+ * Nothing here touches the database on a deployment that cannot send email.
  */
-export async function dispatchLockoutEmails(
-  input: LockoutEmailInput,
-  client?: Prisma.TransactionClient,
-): Promise<void> {
+export async function dispatchLockoutEmails(input: LockoutEmailInput): Promise<void> {
   if (!isAccountEmailConfigured()) return;
   try {
-    const messageIds = await enqueueLockoutEmails(client ?? getPrisma(), input);
-    // Inside an ambient transaction, sending has to wait until it commits —
-    // there is nothing durable to send yet. The scheduled sweep is the
-    // durable path for that case; outside one, try now, exactly as account
-    // password-reset email does.
-    if (!client && messageIds.length > 0) {
+    const messageIds = await enqueueLockoutEmails(getPrisma(), input);
+    if (messageIds.length > 0) {
       await processAccountEmailQueue({ messageIds });
     }
   } catch (error) {
     logError("A lockout email could not be queued or sent.", error, {
+      audience: input.audience,
+      kind: input.kind,
+    });
+  }
+}
+
+/** Runs a task once the response has been sent. Defaults to Next.js `after`. */
+export type LockoutEmailScheduler = (task: () => Promise<void>) => void;
+
+/**
+ * The only entry point for sign-in code paths. Schedules both the enqueue and
+ * the delivery to run after the response, so the locking attempt answers in
+ * the same time and the same words as any other failure. Synchronous and
+ * never throws: if there is no request scope to schedule into, the lock still
+ * stands and only the email is lost (logged).
+ */
+export function scheduleLockoutEmails(
+  input: LockoutEmailInput,
+  schedule: LockoutEmailScheduler = after,
+): void {
+  try {
+    schedule(() => dispatchLockoutEmails(input));
+  } catch (error) {
+    logError("A lockout email could not be scheduled.", error, {
       audience: input.audience,
       kind: input.kind,
     });

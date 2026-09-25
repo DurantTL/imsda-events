@@ -40,6 +40,9 @@ export function MfaManager({
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Set when the server wants a current code before issuing new recovery
+  // codes (attendee accounts whose session hasn't passed a second step lately).
+  const [needsCodeToRegenerate, setNeedsCodeToRegenerate] = useState(false);
 
   async function call(body: Record<string, unknown>) {
     setBusy(true);
@@ -51,7 +54,10 @@ export function MfaManager({
         body: JSON.stringify(body),
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.message ?? "That could not be completed.");
+      if (!response.ok) {
+        if (result.error === "RECENT_VERIFICATION_REQUIRED") setNeedsCodeToRegenerate(true);
+        throw new Error(result.message ?? "That could not be completed.");
+      }
       return result;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "That could not be completed.");
@@ -81,9 +87,12 @@ export function MfaManager({
     }
   }
 
-  async function regenerate() {
-    const result = await call({ action: "regenerate-recovery-codes" });
+  async function regenerate(code?: string) {
+    const result = await call(code
+      ? { action: "regenerate-recovery-codes", code }
+      : { action: "regenerate-recovery-codes" });
     if (result) {
+      setNeedsCodeToRegenerate(false);
       setRecoveryCodes(result.recoveryCodes);
       setStatus({ ...status, unusedRecoveryCodes: result.recoveryCodes.length });
     }
@@ -176,10 +185,29 @@ export function MfaManager({
 
       {!offer && status.status === "ACTIVE" && (
         <>
-          {error && <p className="form-error" role="alert">{error}</p>}
-          <button className="secondary-button" type="button" disabled={busy} onClick={regenerate}>
-            <KeyRound size={16} /> Issue new recovery codes
-          </button>
+          {needsCodeToRegenerate ? (
+            <form
+              className="form-stack"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const code = new FormData(event.currentTarget).get("code");
+                void regenerate(typeof code === "string" ? code : undefined);
+              }}
+            >
+              <OneTimeCodeInput label="Code from your authenticator" />
+              {error && <p className="form-error" role="alert">{error}</p>}
+              <button className="secondary-button" type="submit" disabled={busy}>
+                <KeyRound size={16} /> Issue new recovery codes
+              </button>
+            </form>
+          ) : (
+            <>
+              {error && <p className="form-error" role="alert">{error}</p>}
+              <button className="secondary-button" type="button" disabled={busy} onClick={() => void regenerate()}>
+                <KeyRound size={16} /> Issue new recovery codes
+              </button>
+            </>
+          )}
           <p className="field-help">
             Two-step sign-in stays on. If you lose your device, use a recovery code, or ask a system administrator to reset it.
           </p>

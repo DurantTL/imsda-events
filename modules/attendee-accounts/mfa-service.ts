@@ -5,7 +5,8 @@ import { getPrisma } from "@/lib/prisma";
 import { getServerEnv } from "@/lib/env";
 import { openSecret, sealSecret } from "@/lib/secret-box";
 import { hashOpaqueToken } from "@/modules/access/tokens";
-import { dispatchLockoutEmails } from "@/modules/communications/lockout-email";
+import { scheduleLockoutEmails } from "@/modules/communications/lockout-email";
+import { hasRecentSecondFactor } from "@/modules/attendee-accounts/passkey-domain";
 import {
   generateTotpSecret,
   otpauthUri,
@@ -27,6 +28,7 @@ export class AttendeeMfaError extends Error {
       | "MFA_ALREADY_ACTIVE"
       | "MFA_CODE_INVALID"
       | "MFA_LOCKED"
+      | "RECENT_VERIFICATION_REQUIRED"
       | "MFA_REMOVAL_NOT_ALLOWED",
     message: string,
   ) {
@@ -157,13 +159,46 @@ export async function confirmAttendeeMfaEnrollment(
   return { recoveryCodes: await replaceRecoveryCodes(enrollment.id) };
 }
 
-export async function regenerateAttendeeRecoveryCodes(accountId: string) {
+/**
+ * Recovery codes pass the second step on their own, so minting new ones needs
+ * more than the password: either this session passed a second step within the
+ * same window passkey changes use ({@link hasRecentSecondFactor}), or the
+ * request carries a current authenticator (or recovery) code, checked through
+ * the same single-use path and lockout as every other code. A phished
+ * password alone must not be enough to mint codes and open club rosters.
+ */
+export async function regenerateAttendeeRecoveryCodes(
+  accountId: string,
+  proof: { sessionId: string | null; code?: string | null },
+  now = new Date(),
+) {
   const enrollment = await getPrisma().attendeeMfaEnrollment.findUnique({
     where: { accountId },
     select: { id: true, status: true },
   });
   if (enrollment?.status !== "ACTIVE") {
     throw new AttendeeMfaError("MFA_NOT_ENROLLED", "This account has no authenticator.");
+  }
+  if (!proof.sessionId) {
+    throw new AttendeeMfaError(
+      "RECENT_VERIFICATION_REQUIRED",
+      "Sign in with your own attendee account to issue new recovery codes.",
+    );
+  }
+  if (proof.code) {
+    // Throws MFA_CODE_INVALID or MFA_LOCKED, and counts toward the lock.
+    await verifyAttendeeSecondFactor(accountId, proof.code, now);
+  } else {
+    const session = await getPrisma().attendeeSession.findUnique({
+      where: { id: proof.sessionId },
+      select: { accountId: true, secondFactorVerifiedAt: true },
+    });
+    if (session?.accountId !== accountId || !hasRecentSecondFactor(session.secondFactorVerifiedAt, now)) {
+      throw new AttendeeMfaError(
+        "RECENT_VERIFICATION_REQUIRED",
+        "Enter a code from your authenticator to issue new recovery codes.",
+      );
+    }
   }
   return { recoveryCodes: await replaceRecoveryCodes(enrollment.id) };
 }
@@ -211,24 +246,32 @@ async function consumeSecondFactor(enrollment: Enrollment, presented: string, no
 }
 
 /**
- * Counts a wrong code toward the second factor's lockout, and — on the exact
- * attempt that crosses into locked, never before it and never while already
- * locked — sends the lockout email (#456). Mirrors `recordFailedCode` in
+ * Counts a wrong code toward the second factor's lockout. The counter is
+ * incremented atomically and the lock is claimed with a conditional
+ * `updateMany`, so of several racing wrong codes exactly one wins the
+ * not-locked -> locked transition; only that one schedules the lockout email
+ * (#456), after the response. Mirrors `recordFailedCode` in
  * modules/access/mfa-service.ts for staff.
  */
 async function recordFailedCode(accountId: string, enrollmentId: string, now: Date) {
-  const failedAttempts = await getPrisma().attendeeMfaEnrollment.update({
+  const counted = await getPrisma().attendeeMfaEnrollment.update({
     where: { id: enrollmentId },
     data: { failedAttempts: { increment: 1 } },
     select: { failedAttempts: true },
   });
-  if (failedAttempts.failedAttempts >= MAX_VERIFY_FAILURES) {
-    const lockedUntil = new Date(now.getTime() + VERIFY_LOCK_MINUTES * 60 * 1000);
-    await getPrisma().attendeeMfaEnrollment.update({
-      where: { id: enrollmentId },
-      data: { lockedUntil, failedAttempts: 0 },
-    });
-    await dispatchLockoutEmails({
+  if (counted.failedAttempts < MAX_VERIFY_FAILURES) return;
+
+  const lockedUntil = new Date(now.getTime() + VERIFY_LOCK_MINUTES * 60 * 1000);
+  const claimed = await getPrisma().attendeeMfaEnrollment.updateMany({
+    where: {
+      id: enrollmentId,
+      failedAttempts: { gte: MAX_VERIFY_FAILURES },
+      OR: [{ lockedUntil: null }, { lockedUntil: { lte: now } }],
+    },
+    data: { lockedUntil, failedAttempts: 0 },
+  });
+  if (claimed.count === 1) {
+    scheduleLockoutEmails({
       audience: "ATTENDEE",
       kind: "CODE",
       accountAttendeeId: accountId,

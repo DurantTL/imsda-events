@@ -151,6 +151,30 @@ describe("passkey sign-in (#374)", () => {
     expect(webauthn.verifyAuthenticationResponse).not.toHaveBeenCalled();
   });
 
+  it("refuses sign-in while a password lockout stands, in the same neutral words (#456)", async () => {
+    mocks.passkeyFindFirst.mockResolvedValueOnce(null);
+    const unknown = await refused();
+    mocks.passkeyFindFirst.mockResolvedValueOnce({
+      ...passkey,
+      account: { ...activeAccount, credential: { lockedUntil: new Date(Date.now() + 10 * 60_000) } },
+    });
+    const locked = await refused();
+    expect(locked).toEqual(unknown);
+    expect(mocks.passkeyFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      include: { account: { select: expect.objectContaining({ credential: { select: { lockedUntil: true } } }) } },
+    }));
+  });
+
+  it("signs in once a password lockout has expired", async () => {
+    mocks.passkeyFindFirst.mockResolvedValueOnce({
+      ...passkey,
+      account: { ...activeAccount, credential: { lockedUntil: new Date(Date.now() - 60_000) } },
+    });
+    const response = await SIGN_IN(post("/api/attendee/passkeys/sign-in", answer()));
+    expect(response.status).toBe(200);
+    expect(mocks.createAttendeeSession).toHaveBeenCalled();
+  });
+
   it("refuses a passkey that names a different account", async () => {
     const response = await SIGN_IN(post("/api/attendee/passkeys/sign-in", answer(Buffer.from("account-2").toString("base64url"))));
     expect(response.status).toBe(400);
