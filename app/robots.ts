@@ -23,6 +23,7 @@ export default function robots(): MetadataRoute.Robots {
         "/register/",
         "/registration-builder",
         "/reset-password",
+        "/select-event",
         "/staff",
       ],
     },

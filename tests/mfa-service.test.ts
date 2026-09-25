@@ -114,7 +114,12 @@ function prismaFixture(fixture: Fixture = {}) {
     },
     // Re-read immediately before a session is minted, so a disable landing
     // mid-sign-in cannot produce a session that works once re-enabled.
-    authCredential: { findUnique: vi.fn().mockResolvedValue({ disabledAt: null }) },
+    authCredential: {
+      findUnique: vi.fn().mockResolvedValue({
+        disabledAt: null,
+        user: { globalRole: fixture.user?.globalRole ?? null },
+      }),
+    },
     mfaChallenge: {
       create: vi.fn(async (query: Record<string, unknown>) => {
         state.createdChallenges.push(query);

@@ -2,6 +2,8 @@ import { cookies } from "next/headers";
 import { z } from "zod";
 import { authenticateWithPassword } from "@/modules/access/auth-service";
 import { issueMfaChallenge } from "@/modules/access/mfa-service";
+import { DEFAULT_POST_LOGIN_DESTINATION } from "@/modules/access/login-routing";
+import { resolvePostLoginDestination } from "@/modules/access/post-login-destination";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { SESSION_COOKIE_NAME, SESSION_LIFETIME_SECONDS } from "@/modules/access/session-store";
 import { logError } from "@/lib/logger";
@@ -19,7 +21,30 @@ import { withRequestContext } from "@/lib/request-context";
 const loginSchema = z.object({
   email: z.string().trim().email().max(254),
   password: z.string().min(1).max(128),
+  // Where a deep link bounced from before landing on /login (#108 queue 1).
+  // Validated against `lib/return-to.ts` before it can steer navigation.
+  // `.catch(undefined)`: a repeated, oversized, or non-string `next` is
+  // dropped instead of failing an otherwise valid sign-in.
+  next: z.string().max(2048).optional().catch(undefined),
 });
+
+/**
+ * The session cookie is already set when this runs, so a routing failure (for
+ * example the membership lookup) must not turn a successful sign-in into an
+ * error — and on the MFA enrolment path the one-time recovery codes must
+ * still reach the person. Falls back to the pre-#108 default instead.
+ */
+async function postLoginDestinationOrDefault(
+  user: Parameters<typeof resolvePostLoginDestination>[0],
+  returnTo: string | undefined,
+): Promise<string> {
+  try {
+    return await resolvePostLoginDestination(user, { returnTo });
+  } catch (error) {
+    logError("Login destination could not be resolved; using the default", error);
+    return DEFAULT_POST_LOGIN_DESTINATION;
+  }
+}
 
 async function postHandler(request: Request) {
   const originError = rejectCrossOriginRequest(request);
@@ -87,7 +112,11 @@ async function postHandler(request: Request) {
       maxAge: SESSION_LIFETIME_SECONDS,
       priority: "high",
     });
-    return applyRateLimitHeaders(Response.json({ ok: true }), rateLimit);
+    const redirectTo = await postLoginDestinationOrDefault(
+      { id: authentication.userId, globalRole: authentication.globalRole },
+      input.next,
+    );
+    return applyRateLimitHeaders(Response.json({ ok: true, redirectTo }), rateLimit);
   } catch (error) {
     if (error instanceof z.ZodError) {
       const response = Response.json({ error: "INVALID_LOGIN", message: "Enter a valid email address and password." }, { status: 400 });

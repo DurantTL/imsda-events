@@ -3,11 +3,22 @@ import { redirect } from "next/navigation";
 import { BrandMark } from "@/components/brand-mark";
 import { LOCAL_DEMO_EMAIL, LOCAL_DEMO_PASSWORD, LoginForm } from "@/components/login-form";
 import { getCurrentSession } from "@/modules/access/current-session";
+import { resolvePostLoginDestination } from "@/modules/access/post-login-destination";
 
 export const metadata: Metadata = { title: "Sign in" };
 
-export default async function LoginPage() {
-  if ((await getCurrentSession()).user) redirect("/overview");
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ next?: string | string[] }>;
+}) {
+  const params = await searchParams;
+  // A repeated `?next=` arrives as an array; only a single value is passed on.
+  const next = typeof params.next === "string" ? params.next : undefined;
+  const session = await getCurrentSession();
+  // Already signed in: send them where sign-in itself would have sent them
+  // (#108 queue 1), honoring a deep link's `next` target first.
+  if (session.user) redirect(await resolvePostLoginDestination(session.user, { returnTo: next }));
 
   // The seeded account exists only in a local database (`prisma/seed.ts`
   // refuses to run anywhere else). A production sign-in page shows no
@@ -26,7 +37,7 @@ export default async function LoginPage() {
           <h1>Welcome back</h1>
           <p>Sign in to manage the events assigned to your account.</p>
         </div>
-        <LoginForm demoCredentials={showLocalCredentials} />
+        <LoginForm demoCredentials={showLocalCredentials} next={next} />
         {showLocalCredentials && (
           <div className="local-credentials">
             <strong>Local test account</strong>

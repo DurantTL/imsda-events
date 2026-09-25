@@ -56,17 +56,25 @@ type MfaStep = {
   offer?: { secret: string; otpauthUri: string };
 };
 
+const DEFAULT_DESTINATION = "/overview";
+
 /**
  * `demoCredentials` is passed only by a non-production render. A production
  * sign-in page must never prefill or display a shared credential.
+ *
+ * `next` is an unvalidated deep-link target carried in from `/login`'s own
+ * query string (#108 queue 1); it is resent with every sign-in request and
+ * the server decides — via `resolvePostLoginDestination` — whether it, or
+ * role-based routing, decides where sign-in lands.
  */
-export function LoginForm({ demoCredentials = false }: { demoCredentials?: boolean }) {
+export function LoginForm({ demoCredentials = false, next }: { demoCredentials?: boolean; next?: string }) {
   const router = useRouter();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [mfa, setMfa] = useState<MfaStep | null>(null);
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [destination, setDestination] = useState(DEFAULT_DESTINATION);
   /**
    * Rendered in the browser rather than fetched. The client already holds the
    * secret at this point, so drawing it here adds no exposure, while an
@@ -94,7 +102,7 @@ export function LoginForm({ demoCredentials = false }: { demoCredentials?: boole
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: form.get("email"), password: form.get("password") }),
+        body: JSON.stringify({ email: form.get("email"), password: form.get("password"), next }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message ?? "Unable to sign in.");
@@ -123,7 +131,7 @@ export function LoginForm({ demoCredentials = false }: { demoCredentials?: boole
         return;
       }
 
-      router.replace("/overview");
+      router.replace(result.redirectTo ?? DEFAULT_DESTINATION);
       router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to sign in.");
@@ -142,14 +150,16 @@ export function LoginForm({ demoCredentials = false }: { demoCredentials?: boole
         challengeToken: mfa.challengeToken,
         action: "verify",
         code: form.get("code"),
+        next,
       });
       if (result.recoveryCodes?.length) {
         // Shown once. Signing straight through would lose them.
+        setDestination(result.redirectTo ?? DEFAULT_DESTINATION);
         setRecoveryCodes(result.recoveryCodes);
         setBusy(false);
         return;
       }
-      router.replace("/overview");
+      router.replace(result.redirectTo ?? DEFAULT_DESTINATION);
       router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "That code could not be checked.");
@@ -171,7 +181,7 @@ export function LoginForm({ demoCredentials = false }: { demoCredentials?: boole
         <button
           className="primary-button full-button"
           type="button"
-          onClick={() => { router.replace("/overview"); router.refresh(); }}
+          onClick={() => { router.replace(destination); router.refresh(); }}
         >
           I have saved them — continue
         </button>
