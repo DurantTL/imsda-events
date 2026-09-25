@@ -23,6 +23,16 @@ type RosterResponse = {
   issues?: Array<{ message?: string }>;
 };
 
+/** A background check's mark on a club page (#427): status only, or status and note for staff. */
+export type RosterComplianceInfo = { state: "CLEAR" | "FLAGGED" | "NOT_COMPLIANT" | "NO_RECORD"; note: string | null };
+
+/** "!" on the roster import is `FLAGGED`: expiring soon. Staff, who get the note, are pointed to it. */
+function complianceLabel({ state, note }: RosterComplianceInfo) {
+  if (state === "FLAGGED") return note ? "Expiring soon (see note)" : "Expiring soon";
+  return { CLEAR: "Clear", NOT_COMPLIANT: "Not in compliance", NO_RECORD: "No record" }[state];
+}
+const complianceTone = { CLEAR: "green", FLAGGED: "gold", NOT_COMPLIANT: "coral", NO_RECORD: "gold" } as const;
+
 export function ClubRosterWorkspace({
   canSeeBirthDates,
   clubYear,
@@ -30,6 +40,7 @@ export function ClubRosterWorkspace({
   organizationId,
   readOnly = false,
   birthDatesEndpoint,
+  complianceStatuses,
 }: {
   /** Directors and deputies only; a registrar enters birth dates but sees ages (#375). */
   canSeeBirthDates: boolean;
@@ -40,6 +51,12 @@ export function ClubRosterWorkspace({
   readOnly?: boolean;
   /** Where "Show birth dates" asks; staff use their own audited route. */
   birthDatesEndpoint?: string;
+  /**
+   * Background check status per roster member id (#427). Omitted entirely
+   * where no one is allowed to see it; `note` is already blank unless the
+   * caller is allowed to see it (club directors never get a note).
+   */
+  complianceStatuses?: Record<string, RosterComplianceInfo>;
 }) {
   const [members, setMembers] = useState(initialMembers);
   const [editing, setEditing] = useState<RosterMemberRecord | null>(null);
@@ -69,6 +86,12 @@ export function ClubRosterWorkspace({
 
   const active = members.filter((member) => member.status === "ACTIVE");
   const needBirthDates = active.filter((member) => member.birthDateNeeded).length;
+  const notInCompliance = complianceStatuses
+    ? active.filter((member) => complianceStatuses[member.id]?.state === "NOT_COMPLIANT").length
+    : 0;
+  const expiringSoon = complianceStatuses
+    ? active.filter((member) => complianceStatuses[member.id]?.state === "FLAGGED").length
+    : 0;
   const visible = showInactive ? members : active;
   const sections = [
     { key: "STAFF", title: "Staff", empty: "No staff on the roster yet.", people: visible.filter((member) => rosterSectionOf(member.attendeeType) === "STAFF") },
@@ -180,6 +203,12 @@ export function ClubRosterWorkspace({
             registration form is shown until {readOnly ? "the club adds one." : "you add one; edit each person to add it."}
           </p>
         )}
+        {complianceStatuses && (notInCompliance > 0 || expiringSoon > 0) && (
+          <p className="inline-notice roster-compliance-notice" role="status">
+            {notInCompliance} adult{notInCompliance === 1 ? "" : "s"} not in compliance
+            {expiringSoon > 0 && ` · ${expiringSoon} expiring soon`}
+          </p>
+        )}
         <div className="club-roster-tools">
           <label className="checkbox-label">
             <input checked={showInactive} onChange={(event) => setShowInactive(event.target.checked)} type="checkbox" />
@@ -234,6 +263,7 @@ export function ClubRosterWorkspace({
                         <th>Age</th>
                         {birthDates && <th>Birth date</th>}
                         <th>Status</th>
+                        {complianceStatuses && <th>Background check</th>}
                         {!readOnly && <th><span className="sr-only">Actions</span></th>}
                       </tr>
                     </thead>
@@ -262,6 +292,20 @@ export function ClubRosterWorkspace({
                               {clubRosterStatusLabels[member.status]}
                             </span>
                           </td>
+                          {complianceStatuses && (
+                            <td data-label="Background check">
+                              {complianceStatuses[member.id] ? (
+                                <>
+                                  <span className={`status-chip ${complianceTone[complianceStatuses[member.id]!.state]}`}>
+                                    {complianceLabel(complianceStatuses[member.id]!)}
+                                  </span>
+                                  {complianceStatuses[member.id]!.note && (
+                                    <small className="quiet-copy background-check-note"> {complianceStatuses[member.id]!.note}</small>
+                                  )}
+                                </>
+                              ) : "—"}
+                            </td>
+                          )}
                           {!readOnly && <td className="honor-row-actions roster-card-actions">
                             <button aria-label={`Edit ${member.firstName} ${member.lastName}`} className="secondary-button" disabled={saving} onClick={() => openDialog(member)} type="button">
                               <Pencil aria-hidden="true" size={13} />
