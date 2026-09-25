@@ -141,3 +141,13 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Another club at the same church as the selected one: they share a pin. */
+.clubButton.samePin {
+  border-color: #c9b8e6;
+  background: #fbf9fe;
+}
+
+.samePinNote {
+  color: var(--imsda-purple, #4a2e83) !important;
+}

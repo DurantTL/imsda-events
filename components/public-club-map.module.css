@@ -1,3 +1,8 @@
+.frame {
+  position: relative;
+  min-width: 0;
+}
+
 .map {
   width: 100%;
   height: 360px;
@@ -13,21 +18,71 @@
   font-family: inherit;
 }
 
-/* A pin drawn in CSS, not fetched as an image, so nothing but the tiles
-   themselves reaches an external host. */
-.markerIcon span {
-  display: block;
-  width: 14px;
-  height: 14px;
+/* A pin drawn in CSS on the (empty) divIcon itself, not fetched as an
+   image, so nothing but the tiles reaches an external host. */
+.markerIcon {
+  box-sizing: border-box;
   border-radius: 50%;
   background: var(--imsda-purple, #4a2e83);
   border: 2px solid #fff;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
 }
 
-.markerIcon.selected span,
-.map :global(.leaflet-marker-icon.selected) span {
+.markerIcon:focus-visible {
+  outline: 3px solid #f9a13a;
+  outline-offset: 2px;
+}
+
+.markerIcon.selected {
   background: #f9a13a;
+  box-shadow: 0 0 0 3px rgba(249, 161, 58, 0.35), 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
+.map :global(.club-map-tooltip) strong {
+  display: block;
+  font-size: 0.8rem;
+}
+
+.map :global(.club-map-tooltip) ul {
+  margin: 2px 0 0;
+  padding-left: 16px;
+  font-size: 0.78rem;
+}
+
+/* The OpenStreetMap attribution, in the map's corner as the tile usage
+   policy asks, rendered by React instead of Leaflet's innerHTML control. */
+.attribution {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  z-index: 1000;
+  margin: 0;
+  padding: 1px 6px;
+  border-top-left-radius: 6px;
+  border-bottom-right-radius: 15px;
+  background: rgba(255, 255, 255, 0.85);
+  color: #333;
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+
+.attribution a {
+  color: inherit;
+}
+
+.overlayNote {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
 }
 
 @media (max-width: 700px) {

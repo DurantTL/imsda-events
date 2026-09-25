@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { BackLink } from "@/components/back-link";
 import { BrandMark } from "@/components/brand-mark";
 import { PublicClubDirectory } from "@/components/public-club-directory";
 import { listPublicClubs } from "@/modules/organizations/public-club-directory";
@@ -29,6 +30,7 @@ export default async function PublicClubsPage() {
             <BrandMark />
             <span><strong>IMSDA</strong><small>Events</small></span>
           </a>
+          <BackLink href="/">All events</BackLink>
         </div>
       </header>
 
