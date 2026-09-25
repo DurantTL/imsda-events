@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { BackLink } from "@/components/back-link";
 import { ClubRosterWorkspace } from "@/components/club-roster-workspace";
 import { clubPortalComplianceStatuses } from "@/modules/background-checks/repository";
 import { getRosterAccessState } from "@/modules/club-rosters/access";
@@ -19,12 +20,15 @@ export default async function ClubRosterPage({ params }: { params: Promise<{ org
     clubPortalComplianceStatuses(organizationId, clubYear, access.capabilities),
   ]);
   return (
-    <ClubRosterWorkspace
-      canSeeBirthDates={access.capabilities.seeBirthDates}
-      clubYear={clubYear}
-      complianceStatuses={complianceStatuses}
-      initialMembers={members}
-      organizationId={organizationId}
-    />
+    <>
+      <BackLink href={`/account/clubs/${organizationId}`}>Back to {access.club.name}</BackLink>
+      <ClubRosterWorkspace
+        canSeeBirthDates={access.capabilities.seeBirthDates}
+        clubYear={clubYear}
+        complianceStatuses={complianceStatuses}
+        initialMembers={members}
+        organizationId={organizationId}
+      />
+    </>
   );
 }

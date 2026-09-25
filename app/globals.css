@@ -6059,6 +6059,8 @@ select:focus-visible {
 }
 
 .more-back-link { width: fit-content; margin-bottom: -4px; }
+/* Shared BackLink component (#428): a quiet text link to a page's parent. */
+.back-link { display: inline-flex; align-items: center; gap: 4px; width: fit-content; justify-self: start; }
 .promo-code-workspace { margin-top: 0; }
 .promo-code-list { display: grid; gap: 18px; }
 .promo-code-grid {
