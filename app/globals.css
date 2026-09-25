@@ -7218,6 +7218,9 @@ select:focus-visible {
 .passkey-add label { display: grid; flex: 1 1 200px; gap: 6px; color: var(--ink); font-size: 0.72rem; font-weight: 700; }
 .passkey-add input { border: 1px solid #cbdbe2; border-radius: 10px; padding: 10px 11px; font-size: 0.85rem; }
 .passkey-manager .public-manage-security-note { margin-top: 12px; }
+.passkey-actions { display: flex; gap: 6px; }
+.passkey-rename { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.passkey-rename input { border: 1px solid #cbdbe2; border-radius: 10px; padding: 8px 10px; font-size: 0.85rem; }
 @media (max-width: 580px) {
   .passkey-add .primary-button { width: 100%; justify-content: center; }
 }
