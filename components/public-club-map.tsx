@@ -189,7 +189,7 @@ function applySelection(pins: Map<string, PinEntry>, selectedId: string | null) 
       entry.marker.setZIndexOffset(1000);
       selected = entry;
     } else {
-      element?.removeAttribute("aria-pressed");
+      element?.setAttribute("aria-pressed", "false");
       entry.marker.setZIndexOffset(0);
     }
   }

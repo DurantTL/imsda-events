@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   buildTooltipContent,
@@ -102,6 +104,26 @@ describe("club map tooltip content (#437)", () => {
     expect(source).not.toMatch(/innerHTML|dangerouslySetInnerHTML/);
     expect(source).toMatch(/html:\s*false/);
     expect(source).toMatch(/attributionControl:\s*false/);
+  });
+});
+
+describe("/clubs is only reached by a full page load (#437)", () => {
+  // The map's tile origin is allowed only in the /clubs CSP header. A
+  // client-side navigation keeps the previous page's policy, so an in-app
+  // <Link> or router.push to /clubs would leave the map grey.
+  it("has no client-side navigation to /clubs", () => {
+    const root = fileURLToPath(new URL("..", import.meta.url));
+    const files = ["app", "components", "modules", "lib"].flatMap((dir) => (
+      readdirSync(path.join(root, dir), { recursive: true, withFileTypes: true })
+        .filter((entry) => entry.isFile() && /\.(tsx?|jsx?)$/.test(entry.name))
+        .map((entry) => path.relative(root, path.join(entry.parentPath ?? (entry as { path?: string }).path ?? "", entry.name)))
+    ));
+    const offenders = files.filter((file) => {
+      const source = readFileSync(path.join(root, file), "utf8");
+      return /<Link[^>]*href=\{?["'`]\/clubs(?:[?#"'`/])/.test(source)
+        || /router\.(push|replace)\(\s*["'`]\/clubs(?:[?#"'`/])/.test(source);
+    });
+    expect(offenders).toEqual([]);
   });
 });
 
