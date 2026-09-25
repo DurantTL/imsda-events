@@ -3078,14 +3078,16 @@ model BackgroundCheck {
   /// roster import row, which has no expiration date at all.
   checkedOn        String?
   expiresOn        String?
-  /// Set by a roster import's `compliance` column (y/n). Null for a Sterling
-  /// row, which is current/expired by date instead.
+  /// Set by a roster import's `compliance` column (y/!/n). Null for a
+  /// Sterling row, which is current/expired by date instead.
   complianceStatus BackgroundCheckComplianceStatus?
-  /// The roster import's `issues` column. Shown to staff only, never to a
-  /// club director or on a club's own portal roster.
+  /// The roster import's `issues` column: why a `!` was flagged, or any other
+  /// note. Shown to staff only, never to a club director or on a club's own
+  /// portal roster.
   issuesNote       String?
-  /// The roster import's `user_active` column (y/n). An inactive check reads
-  /// as "No record" on a club page; the row is kept, not deleted.
+  /// The roster import's `user_active` column (y/n). Inactive wins over
+  /// `complianceStatus` on a club page (shown as "Inactive"); the row is kept,
+  /// not deleted.
   active           Boolean                       @default(true)
   recordedByUserId String?
   createdAt        DateTime                      @default(now())
@@ -3097,10 +3099,13 @@ model BackgroundCheck {
 }
 
 /// A background check's compliance mark from a roster import (#427): the
-/// CSV's `compliance` column, y → `CLEAR`, n → `NEEDS_ATTENTION`.
+/// CSV's `compliance` column, y → `CLEAR`, "!" → `FLAGGED` (expiring soon or
+/// a problem; `issuesNote` says which), n → `NOT_COMPLIANT`. Any other value
+/// is a row-level parse problem, never guessed into one of these.
 enum BackgroundCheckComplianceStatus {
   CLEAR
-  NEEDS_ATTENTION
+  FLAGGED
+  NOT_COMPLIANT
 }
 
 /// A club's single registration for a club event (#358): an ordinary

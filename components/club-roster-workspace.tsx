@@ -24,10 +24,16 @@ type RosterResponse = {
 };
 
 /** A background check's mark on a club page (#427): status only, or status and note for staff. */
-export type RosterComplianceInfo = { state: "CLEAR" | "NEEDS_ATTENTION" | "NO_RECORD"; note: string | null };
+export type RosterComplianceInfo = { state: "CLEAR" | "FLAGGED" | "NOT_COMPLIANT" | "INACTIVE" | "NO_RECORD"; note: string | null };
 
-const complianceLabels = { CLEAR: "Clear", NEEDS_ATTENTION: "Needs attention", NO_RECORD: "No record" } as const;
-const complianceTone = { CLEAR: "green", NEEDS_ATTENTION: "coral", NO_RECORD: "gold" } as const;
+const complianceLabels = {
+  CLEAR: "Clear",
+  FLAGGED: "Attention (see note)",
+  NOT_COMPLIANT: "Not in compliance",
+  INACTIVE: "Inactive",
+  NO_RECORD: "No record",
+} as const;
+const complianceTone = { CLEAR: "green", FLAGGED: "gold", NOT_COMPLIANT: "coral", INACTIVE: "purple", NO_RECORD: "gold" } as const;
 
 export function ClubRosterWorkspace({
   canSeeBirthDates,
@@ -83,7 +89,13 @@ export function ClubRosterWorkspace({
   const active = members.filter((member) => member.status === "ACTIVE");
   const needBirthDates = active.filter((member) => member.birthDateNeeded).length;
   const notInCompliance = complianceStatuses
-    ? active.filter((member) => complianceStatuses[member.id]?.state === "NEEDS_ATTENTION").length
+    ? active.filter((member) => {
+      const state = complianceStatuses[member.id]?.state;
+      return state === "NOT_COMPLIANT" || state === "INACTIVE";
+    }).length
+    : 0;
+  const flaggedCount = complianceStatuses
+    ? active.filter((member) => complianceStatuses[member.id]?.state === "FLAGGED").length
     : 0;
   const visible = showInactive ? members : active;
   const sections = [
@@ -196,9 +208,10 @@ export function ClubRosterWorkspace({
             registration form is shown until {readOnly ? "the club adds one." : "you add one; edit each person to add it."}
           </p>
         )}
-        {complianceStatuses && notInCompliance > 0 && (
+        {complianceStatuses && (notInCompliance > 0 || flaggedCount > 0) && (
           <p className="inline-notice roster-compliance-notice" role="status">
-            {notInCompliance} adult{notInCompliance === 1 ? "" : "s"} not in compliance with a background check.
+            {notInCompliance} adult{notInCompliance === 1 ? "" : "s"} not in compliance
+            {flaggedCount > 0 && ` · ${flaggedCount} flagged`}
           </p>
         )}
         <div className="club-roster-tools">

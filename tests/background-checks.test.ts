@@ -260,18 +260,26 @@ describe("roster import CSV (#427)", () => {
     ["user_id,user_last,user_first,roles,sites,user_active,compliance,issues", ...rows].join("\n"),
   );
 
-  it("reads the real template and reports blank or invalid rows", () => {
+  it("reads the real template and maps y/!/n compliance", () => {
     const rows = rosterCsv(
       "111111,Swanson,Joe,something,Church,y,y,notes",
       "222222,Lee,Sam,,,n,n,under review",
+      "333333,Cho,Kim,,,y,!,Expires next month",
       ",Nobody,Pat,,,,,",
     );
     expect(rows[0]).toMatchObject({
       line: 2, userId: "111111", firstName: "Joe", lastName: "Swanson", roles: "something", site: "Church",
-      active: true, compliant: true, issuesNote: "notes", problems: [],
+      active: true, compliance: "CLEAR", issuesNote: "notes", problems: [],
     });
-    expect(rows[1]).toMatchObject({ userId: "222222", active: false, compliant: false, site: null, problems: [] });
-    expect(rows[2]!.problems).toEqual(["A user_id is needed so this person is remembered next time.", "compliance must be \"y\" or \"n\"."]);
+    expect(rows[1]).toMatchObject({ userId: "222222", active: false, compliance: "NOT_COMPLIANT", site: null, problems: [] });
+    expect(rows[2]).toMatchObject({ userId: "333333", active: true, compliance: "FLAGGED", issuesNote: "Expires next month", problems: [] });
+    expect(rows[3]!.problems).toEqual(["A user_id is needed so this person is remembered next time.", 'compliance must be "y", "n", or "!".']);
+  });
+
+  it("treats any other compliance value as a row-level parse problem, never a guess", () => {
+    const rows = rosterCsv("444444,Doe,Jo,,,y,maybe,");
+    expect(rows[0]!.compliance).toBeNull();
+    expect(rows[0]!.problems).toEqual(['compliance must be "y", "n", or "!".']);
   });
 
   it("explains a file it can't use", () => {
@@ -379,58 +387,103 @@ describe("matching a roster import to people (#427)", () => {
     expect(update[0]).toMatchObject({ action: "UPDATE", personId: "p-ana" });
   });
 
-  it("records compliance and remembers the user_id, without touching skipped or review rows", async () => {
+  it("carries the note through on every row, matched, review, and not-found alike", async () => {
+    mocks.rosterFindMany.mockResolvedValue([
+      rosterMember("p-ana", "Ana", "Rivera", "Test Pathfinders"),
+      rosterMember("p-north", "Lu", "Moss", "North Pathfinders"),
+      rosterMember("p-south", "Lu", "Moss", "South Pathfinders"),
+    ]);
+    const steps = await planRosterBackgroundImport(rosterCsv(
+      "1,Rivera,Ana,,,y,y,All clear",
+      "2,Nobody,Pat,,,y,y,Left the church",
+      "3,Moss,Lu,,,y,y,Ambiguous name",
+    ));
+    const matched = steps.find((step) => step.name === "Ana Rivera");
+    const notFound = steps.find((step) => step.name === "Pat Nobody");
+    const review = steps.find((step) => step.name === "Lu Moss");
+    expect(matched).toMatchObject({ action: "ADD", issuesNote: "All clear" });
+    expect(notFound).toMatchObject({ action: "SKIP", issuesNote: "Left the church" });
+    expect(review).toMatchObject({ action: "REVIEW", issuesNote: "Ambiguous name" });
+  });
+
+  it("records compliance (including flagged) and remembers the user_id, without touching skipped or review rows", async () => {
     await applyRosterBackgroundImport([
-      { line: 2, name: "Ana Rivera", action: "ADD", message: "", personId: "p-ana", userId: "1", compliant: true, active: true, issuesNote: null },
-      { line: 3, name: "Sam Lee", action: "UPDATE", message: "", personId: "p-sam", userId: "2", compliant: false, active: false, issuesNote: "Under review" },
-      { line: 4, name: "Pat Nobody", action: "SKIP", message: "No one by this name." },
-      { line: 5, name: "Lu Moss", action: "REVIEW", message: "More than one person has this name.", candidates: [{ personId: "p-a", site: null }] },
+      { line: 2, name: "Ana Rivera", action: "ADD", message: "", personId: "p-ana", userId: "1", compliance: "CLEAR", active: true, issuesNote: null },
+      { line: 3, name: "Sam Lee", action: "UPDATE", message: "", personId: "p-sam", userId: "2", compliance: "NOT_COMPLIANT", active: false, issuesNote: "Under review" },
+      { line: 4, name: "Kim Cho", action: "ADD", message: "", personId: "p-kim", userId: "3", compliance: "FLAGGED", active: true, issuesNote: "Expires next month" },
+      { line: 5, name: "Pat Nobody", action: "SKIP", message: "No one by this name." },
+      { line: 6, name: "Lu Moss", action: "REVIEW", message: "More than one person has this name.", candidates: [{ personId: "p-a", site: null }] },
     ], "admin-1");
 
-    expect(mocks.checkUpsert).toHaveBeenCalledTimes(2);
+    expect(mocks.checkUpsert).toHaveBeenCalledTimes(3);
     expect(mocks.checkUpsert.mock.calls[0]![0]).toMatchObject({
       where: { personId: "p-ana" },
       create: { personId: "p-ana", provider: "ROSTER_IMPORT", complianceStatus: "CLEAR", issuesNote: null, active: true, recordedByUserId: "admin-1" },
     });
     expect(mocks.checkUpsert.mock.calls[1]![0]).toMatchObject({
-      update: { complianceStatus: "NEEDS_ATTENTION", issuesNote: "Under review", active: false, recordedByUserId: "admin-1" },
+      update: { complianceStatus: "NOT_COMPLIANT", issuesNote: "Under review", active: false, recordedByUserId: "admin-1" },
     });
-    expect(mocks.externalIdentityUpsert).toHaveBeenCalledTimes(2);
+    expect(mocks.checkUpsert.mock.calls[2]![0]).toMatchObject({
+      create: { personId: "p-kim", provider: "ROSTER_IMPORT", complianceStatus: "FLAGGED", issuesNote: "Expires next month", active: true },
+    });
+    expect(mocks.externalIdentityUpsert).toHaveBeenCalledTimes(3);
     expect(mocks.externalIdentityUpsert.mock.calls[0]![0]).toMatchObject({
       where: { personId_provider_providerScope: { personId: "p-ana", provider: "ROSTER_IMPORT", providerScope: "" } },
       create: { personId: "p-ana", provider: "ROSTER_IMPORT", providerScope: "", externalId: "1" },
       update: { externalId: "1" },
     });
     const audit = mocks.writeAuditLog.mock.calls[0]![0];
-    expect(audit).toMatchObject({ action: "BACKGROUND_CHECKS_IMPORTED", metadata: { added: 1, updated: 1, review: 1, skipped: 1 } });
+    expect(audit).toMatchObject({ action: "BACKGROUND_CHECKS_IMPORTED", metadata: { added: 2, updated: 1, review: 1, skipped: 1 } });
   });
 });
 
 describe("club page compliance (#427)", () => {
-  it("goes Clear/Needs attention/No record, and only staff get the note", () => {
+  it("goes Clear/Flagged/Not in compliance/Inactive/No record, and an inactive check wins over the compliance mark", () => {
     expect(clubComplianceState(null, "2026-10-04")).toBe("NO_RECORD");
     expect(clubComplianceState({ complianceStatus: "CLEAR", active: true, expiresOn: null }, "2026-10-04")).toBe("CLEAR");
-    expect(clubComplianceState({ complianceStatus: "NEEDS_ATTENTION", active: true, expiresOn: null }, "2026-10-04")).toBe("NEEDS_ATTENTION");
-    // An inactive check reads as no record, even if it was once clear.
-    expect(clubComplianceState({ complianceStatus: "CLEAR", active: false, expiresOn: null }, "2026-10-04")).toBe("NO_RECORD");
+    expect(clubComplianceState({ complianceStatus: "FLAGGED", active: true, expiresOn: null }, "2026-10-04")).toBe("FLAGGED");
+    expect(clubComplianceState({ complianceStatus: "NOT_COMPLIANT", active: true, expiresOn: null }, "2026-10-04")).toBe("NOT_COMPLIANT");
+    // Inactive (user_active: n) wins over the compliance column, even a Clear one.
+    expect(clubComplianceState({ complianceStatus: "CLEAR", active: false, expiresOn: null }, "2026-10-04")).toBe("INACTIVE");
+    expect(clubComplianceState({ complianceStatus: "NOT_COMPLIANT", active: false, expiresOn: null }, "2026-10-04")).toBe("INACTIVE");
     // No compliance mark: falls back to a Sterling check's expiration date.
     expect(clubComplianceState({ complianceStatus: null, active: true, expiresOn: "2026-10-04" }, "2026-10-04")).toBe("CLEAR");
-    expect(clubComplianceState({ complianceStatus: null, active: true, expiresOn: "2026-01-01" }, "2026-10-04")).toBe("NEEDS_ATTENTION");
+    expect(clubComplianceState({ complianceStatus: null, active: true, expiresOn: "2026-01-01" }, "2026-10-04")).toBe("NOT_COMPLIANT");
+  });
+
+  it("counts not-in-compliance (not compliant + inactive) and flagged separately", async () => {
+    mocks.rosterFindMany.mockResolvedValue([
+      { id: "member-clear", person: { backgroundCheck: { complianceStatus: "CLEAR", active: true, expiresOn: null, issuesNote: null } } },
+      { id: "member-flagged", person: { backgroundCheck: { complianceStatus: "FLAGGED", active: true, expiresOn: null, issuesNote: "Renewal due" } } },
+      { id: "member-not-compliant", person: { backgroundCheck: { complianceStatus: "NOT_COMPLIANT", active: true, expiresOn: null, issuesNote: null } } },
+      { id: "member-inactive", person: { backgroundCheck: { complianceStatus: "CLEAR", active: false, expiresOn: null, issuesNote: null } } },
+      { id: "member-none", person: { backgroundCheck: null } },
+    ]);
+
+    const result = await clubRosterComplianceStatuses("org-1", "2026", { includeNotes: false });
+    expect(result.statuses["member-clear"]!.state).toBe("CLEAR");
+    expect(result.statuses["member-flagged"]!.state).toBe("FLAGGED");
+    expect(result.statuses["member-not-compliant"]!.state).toBe("NOT_COMPLIANT");
+    expect(result.statuses["member-inactive"]!.state).toBe("INACTIVE");
+    expect(result.statuses["member-none"]!.state).toBe("NO_RECORD");
+    // "2 adults not in compliance · 1 flagged": NOT_COMPLIANT + INACTIVE, FLAGGED counted separately.
+    expect(result.notInCompliance).toBe(2);
+    expect(result.flagged).toBe(1);
   });
 
   it("never includes the note unless the caller is allowed to see it", async () => {
     mocks.rosterFindMany.mockResolvedValue([
-      { id: "member-1", person: { backgroundCheck: { complianceStatus: "NEEDS_ATTENTION", active: true, expiresOn: null, issuesNote: "Pending paperwork" } } },
+      { id: "member-1", person: { backgroundCheck: { complianceStatus: "NOT_COMPLIANT", active: true, expiresOn: null, issuesNote: "Pending paperwork" } } },
       { id: "member-2", person: { backgroundCheck: null } },
     ]);
 
     const forClub = await clubRosterComplianceStatuses("org-1", "2026", { includeNotes: false });
-    expect(forClub.statuses["member-1"]).toEqual({ state: "NEEDS_ATTENTION", note: null });
+    expect(forClub.statuses["member-1"]).toEqual({ state: "NOT_COMPLIANT", note: null });
     expect(forClub.notInCompliance).toBe(1);
     expect(JSON.stringify(forClub)).not.toContain("Pending paperwork");
 
     const forStaff = await clubRosterComplianceStatuses("org-1", "2026", { includeNotes: true });
-    expect(forStaff.statuses["member-1"]).toEqual({ state: "NEEDS_ATTENTION", note: "Pending paperwork" });
+    expect(forStaff.statuses["member-1"]).toEqual({ state: "NOT_COMPLIANT", note: "Pending paperwork" });
     expect(forStaff.statuses["member-2"]).toEqual({ state: "NO_RECORD", note: null });
   });
 });

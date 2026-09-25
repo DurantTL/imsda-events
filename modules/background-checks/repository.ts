@@ -199,12 +199,15 @@ export type RosterImportStep = {
   message: string;
   personId?: string;
   userId?: string | null;
-  compliant?: boolean;
+  compliance?: "CLEAR" | "FLAGGED" | "NOT_COMPLIANT";
   active?: boolean;
+  /** Staff-only; shown for every row in the preview and on save, not just matched ones. */
   issuesNote?: string | null;
   /** Only on a REVIEW row: who it might be, so staff can pick by hand. Never picked automatically. */
   candidates?: RosterImportCandidate[];
 };
+
+const complianceLabels = { CLEAR: "Clear", FLAGGED: "Flagged", NOT_COMPLIANT: "Not in compliance" } as const;
 
 type NameCandidate = { personId: string; siteNames: Set<string> };
 
@@ -310,7 +313,7 @@ export async function planRosterBackgroundImport(rows: RosterBackgroundCsvRow[])
 
   for (const row of rows) {
     const name = `${row.firstName} ${row.lastName}`.trim() || "(no name)";
-    const skip = (message: string) => steps.push({ line: row.line, name, action: "SKIP", message });
+    const skip = (message: string) => steps.push({ line: row.line, name, action: "SKIP", message, issuesNote: row.issuesNote });
     if (row.problems.length > 0) {
       skip(row.problems.join(" "));
       continue;
@@ -341,6 +344,7 @@ export async function planRosterBackgroundImport(rows: RosterBackgroundCsvRow[])
               ? "More than one person has this name, and sites didn't narrow it to one. Review and match by hand."
               : "More than one person has this name. Add a site, or review and match by hand.",
             candidates: candidates.map((candidate) => ({ personId: candidate.personId, site: [...candidate.siteNames][0] ?? null })),
+            issuesNote: row.issuesNote,
           });
           continue;
         }
@@ -354,7 +358,7 @@ export async function planRosterBackgroundImport(rows: RosterBackgroundCsvRow[])
       message: matchMessage,
       personId,
       userId: row.userId,
-      compliant: row.compliant!,
+      compliance: row.compliance!,
       active: row.active,
       issuesNote: row.issuesNote,
     };
@@ -374,7 +378,7 @@ export async function planRosterBackgroundImport(rows: RosterBackgroundCsvRow[])
     : []).map((check) => check.personId));
   for (const step of bestByPerson.values()) {
     step.action = existing.has(step.personId!) ? "UPDATE" : "ADD";
-    step.message = `${step.message} ${step.compliant ? "Clear" : "Needs attention"}${step.active ? "" : " · inactive"}.`;
+    step.message = `${step.message} ${complianceLabels[step.compliance!]}${step.active ? "" : " · inactive"}.`;
   }
   return steps.sort((a, b) => a.line - b.line);
 }
@@ -384,8 +388,8 @@ export async function planRosterBackgroundImport(rows: RosterBackgroundCsvRow[])
  * against the person it matched so the next upload matches on it first.
  */
 export async function applyRosterBackgroundImport(steps: RosterImportStep[], actorUserId: string) {
-  const toSave = steps.filter((step): step is RosterImportStep & { personId: string; compliant: boolean; active: boolean } => (
-    (step.action === "ADD" || step.action === "UPDATE") && Boolean(step.personId) && step.compliant !== undefined && step.active !== undefined
+  const toSave = steps.filter((step): step is RosterImportStep & { personId: string; compliance: "CLEAR" | "FLAGGED" | "NOT_COMPLIANT"; active: boolean } => (
+    (step.action === "ADD" || step.action === "UPDATE") && Boolean(step.personId) && step.compliance !== undefined && step.active !== undefined
   ));
   const prisma = getPrisma();
   for (let start = 0; start < toSave.length; start += ROSTER_IMPORT_BATCH_SIZE) {
@@ -393,7 +397,7 @@ export async function applyRosterBackgroundImport(steps: RosterImportStep[], act
     await prisma.$transaction(async (tx) => {
       for (const step of batch) {
         const data = {
-          complianceStatus: step.compliant ? ("CLEAR" as const) : ("NEEDS_ATTENTION" as const),
+          complianceStatus: step.compliance,
           issuesNote: step.issuesNote ?? null,
           active: step.active,
           recordedByUserId: actorUserId,
@@ -591,11 +595,13 @@ export async function clubRosterComplianceStatuses(
   });
   const statuses: Record<string, { state: ClubComplianceState; note: string | null }> = {};
   let notInCompliance = 0;
+  let flagged = 0;
   for (const member of members) {
     const check = member.person?.backgroundCheck ?? null;
     const state = clubComplianceState(check, today);
-    if (state === "NEEDS_ATTENTION") notInCompliance += 1;
+    if (state === "NOT_COMPLIANT" || state === "INACTIVE") notInCompliance += 1;
+    if (state === "FLAGGED") flagged += 1;
     statuses[member.id] = { state, note: options.includeNotes ? check?.issuesNote ?? null : null };
   }
-  return { statuses, notInCompliance };
+  return { statuses, notInCompliance, flagged };
 }

@@ -12,6 +12,8 @@ type ImportStep = {
   action: ImportAction;
   message: string;
   candidates?: Array<{ personId: string; site: string | null }>;
+  /** Roster import only, staff-only, and shown for every row (#427). */
+  note?: string | null;
 };
 type ImportResponse = {
   format?: "ROSTER" | "STERLING";
@@ -221,7 +223,7 @@ export function BackgroundCheckImport({ onImported }: { onImported: (result: Imp
                 </div>
                 <div className="report-table-wrap roster-csv-preview">
                   <table className="report-table">
-                    <thead><tr><th>Row</th><th>Name</th><th>What happens</th><th>Candidates</th></tr></thead>
+                    <thead><tr><th>Row</th><th>Name</th><th>What happens</th><th>Candidates</th><th>Note (staff only)</th></tr></thead>
                     <tbody>
                       {pageRows.map((step) => (
                         <tr key={step.line}>
@@ -233,6 +235,7 @@ export function BackgroundCheckImport({ onImported }: { onImported: (result: Imp
                               ? step.candidates.map((candidate) => candidate.site ?? "no location on file").join("; ")
                               : "—"}
                           </td>
+                          <td>{step.note || "—"}</td>
                         </tr>
                       ))}
                     </tbody>

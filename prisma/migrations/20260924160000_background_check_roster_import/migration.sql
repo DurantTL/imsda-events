@@ -1,5 +1,5 @@
 -- CreateEnum
-CREATE TYPE "BackgroundCheckComplianceStatus" AS ENUM ('CLEAR', 'NEEDS_ATTENTION');
+CREATE TYPE "BackgroundCheckComplianceStatus" AS ENUM ('CLEAR', 'FLAGGED', 'NOT_COMPLIANT');
 
 -- AlterEnum
 ALTER TYPE "ExternalSystem" ADD VALUE 'ROSTER_IMPORT';

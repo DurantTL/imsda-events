@@ -48,7 +48,9 @@ async function postHandler(request: Request) {
         throw error;
       }
       const plan = await planRosterBackgroundImport(rows);
-      const steps = plan.map(({ line, name, action, message, candidates }) => ({ line, name, action, message, candidates }));
+      // The note is staff-only, but this endpoint is staff-only too (requireSystemAdministrator above),
+      // so every row's note is sent for the preview and the saved confirmation, matched rows included.
+      const steps = plan.map(({ line, name, action, message, candidates, issuesNote }) => ({ line, name, action, message, candidates, note: issuesNote }));
       if (!confirm) return Response.json({ format, steps });
       const result = await applyRosterBackgroundImport(plan, actor.id);
       return Response.json({
