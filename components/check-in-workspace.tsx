@@ -32,7 +32,7 @@ import {
   sequentialCheckInSummary,
   type SequentialCheckInStatus,
 } from "@/modules/checkin/bulk-check-in";
-import { offlineCheckInErrorMessage } from "@/modules/checkin/domain";
+import { arrivalMatchesSearch, offlineCheckInErrorMessage } from "@/modules/checkin/domain";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 import { attendeeBalanceCents } from "@/modules/registrations/finance-view";
 import type { ClubCheckInInfo } from "@/modules/club-registrations/repository";
@@ -142,10 +142,10 @@ export function CheckInWorkspace({
   const clubByConfirmationCode = useMemo(() => new Map(
     clubs.map((club) => [club.confirmationCode, club]),
   ), [clubs]);
-  const visible = useMemo(() => arrivals.filter((arrival) => (
-    `${arrival.firstName} ${arrival.lastName} ${arrival.confirmationCode} ${arrival.email} ${clubByConfirmationCode.get(arrival.confirmationCode)?.organizationName ?? ""}`
-      .toLowerCase()
-      .includes(query.trim().toLowerCase())
+  const visible = useMemo(() => arrivals.filter((arrival) => arrivalMatchesSearch(
+    arrival,
+    query,
+    clubByConfirmationCode.get(arrival.confirmationCode)?.organizationName,
   )), [arrivals, query, clubByConfirmationCode]);
   const queueByAttendee = useMemo(() => new Map(
     queue.map((item) => [item.attendeeId, item]),
@@ -288,7 +288,7 @@ export function CheckInWorkspace({
           <p className="hero-eyebrow">On-site operations</p>
           <h2>Ready for arrivals</h2>
           <p>
-            Search by attendee name, email, or confirmation code and record
+            Search by first or last name, club, or confirmation code and record
             arrivals for {eventName}. Offline check-ins stay clearly queued
             until the server confirms them.
           </p>

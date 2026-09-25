@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  arrivalMatchesSearch,
   checkInQueueItemAfterOfflineRetry,
   checkInRequestSchema,
   inspectOfflineCheckInQueue,
@@ -109,5 +110,55 @@ describe("check-in request and offline queue domain", () => {
       lastErrorCode: "ATTENDEE_NOT_FOUND",
       attempts: 1,
     });
+  });
+});
+
+describe("check-in search (#441)", () => {
+  const samantha = { firstName: "Samantha", lastName: "Rivera", confirmationCode: "WR26-AB12" };
+  const jose = { firstName: "José", lastName: "Núñez", confirmationCode: "WR26-AB12" };
+
+  it("matches first or last name by prefix, ignoring case and accents", () => {
+    expect(arrivalMatchesSearch(samantha, "sam")).toBe(true);
+    expect(arrivalMatchesSearch(samantha, "RIV")).toBe(true);
+    expect(arrivalMatchesSearch(samantha, "sam riv")).toBe(true);
+    expect(arrivalMatchesSearch(jose, "jose nunez")).toBe(true);
+    expect(arrivalMatchesSearch(samantha, "antha")).toBe(false);
+    expect(arrivalMatchesSearch(samantha, "sam nunez")).toBe(false);
+  });
+
+  it("finds hyphenated, apostrophe, and non-Latin names", () => {
+    const code = { confirmationCode: "WR26-CD34" };
+    expect(arrivalMatchesSearch({ ...code, firstName: "Mary-Jane", lastName: "O'Brien" }, "jane")).toBe(true);
+    expect(arrivalMatchesSearch({ ...code, firstName: "Mary-Jane", lastName: "O'Brien" }, "o'bri")).toBe(true);
+    expect(arrivalMatchesSearch({ ...code, firstName: "Søren", lastName: "Ødegaard" }, "ødeg")).toBe(true);
+    expect(arrivalMatchesSearch({ ...code, firstName: "Мария", lastName: "Иванова" }, "иван")).toBe(true);
+    expect(arrivalMatchesSearch({ ...code, firstName: "Mary-Jane", lastName: "O'Brien" }, "obrien")).toBe(true);
+    expect(arrivalMatchesSearch({ ...code, firstName: "Mary-Jane", lastName: "O’Brien" }, "maryjane")).toBe(true);
+    expect(arrivalMatchesSearch({ ...code, firstName: "Łukasz", lastName: "Søndergård" }, "lukasz sonder")).toBe(true);
+  });
+
+  it("doesn't list everyone while the start of a name matches the code's letters", () => {
+    expect(arrivalMatchesSearch(samantha, "w")).toBe(false);
+    expect(arrivalMatchesSearch(samantha, "wr")).toBe(false);
+    expect(arrivalMatchesSearch(samantha, "wr26")).toBe(true);
+    expect(arrivalMatchesSearch(samantha, "WR26-AB")).toBe(true);
+  });
+
+  it("matches a name and club together", () => {
+    expect(arrivalMatchesSearch(samantha, "sam trail", "Trailblazers Pathfinders")).toBe(true);
+    expect(arrivalMatchesSearch(samantha, "sam eagles", "Trailblazers Pathfinders")).toBe(false);
+  });
+
+  it("does not match the registration's email, so a shared email doesn't list everyone", () => {
+    // The search never receives the email; typing one matches no name.
+    expect(arrivalMatchesSearch(samantha, "family@example.test")).toBe(false);
+    expect(arrivalMatchesSearch(jose, "family@example.test")).toBe(false);
+  });
+
+  it("still matches the confirmation code and club name", () => {
+    expect(arrivalMatchesSearch(samantha, "ab12")).toBe(true);
+    expect(arrivalMatchesSearch(samantha, "blazers", "Trailblazers Pathfinders")).toBe(false);
+    expect(arrivalMatchesSearch(samantha, "trail", "Trailblazers Pathfinders")).toBe(true);
+    expect(arrivalMatchesSearch(samantha, "")).toBe(true);
   });
 });
