@@ -20,6 +20,11 @@ const rateLimitMocks = vi.hoisted(() => ({
   checkPasswordResetClientRateLimit: vi.fn(),
 }));
 
+// Login's happy path resolves the post-login destination (#108 queue 1) via
+// a chain of "server-only" modules that plain Node/Vitest cannot resolve on
+// their own; every route test here exercises rejection paths that never
+// reach it, so a stub is enough to let the route module load at all.
+vi.mock("server-only", () => ({}));
 vi.mock("@/modules/access/auth-service", () => authMocks);
 vi.mock("@/modules/access/session-store", () => ({
   SESSION_COOKIE_NAME: "imsda_session",

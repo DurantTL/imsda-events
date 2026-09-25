@@ -6,6 +6,7 @@ import {
   completeMfaChallenge,
   describeMfaChallenge,
 } from "@/modules/access/mfa-service";
+import { resolvePostLoginDestination } from "@/modules/access/post-login-destination";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { SESSION_COOKIE_NAME, SESSION_LIFETIME_SECONDS } from "@/modules/access/session-store";
 import { cookies } from "next/headers";
@@ -34,6 +35,10 @@ const challengeSchema = z.object({
   code: z.string().transform((value) => value.replace(/\s+/g, ""))
     .pipe(z.string().min(1).max(32))
     .optional(),
+  // Where a deep link bounced from before landing on /login (#108 queue 1).
+  // Only meaningful for a "verify" action; validated with `lib/return-to.ts`
+  // before it can steer navigation.
+  next: z.string().max(2048).optional(),
 });
 
 function mfaErrorResponse(error: MfaError) {
@@ -87,10 +92,15 @@ async function postHandler(request: Request) {
       maxAge: SESSION_LIFETIME_SECONDS,
       priority: "high",
     });
+    const redirectTo = await resolvePostLoginDestination(
+      { id: result.userId, globalRole: result.globalRole },
+      { returnTo: input.next },
+    );
     return applyRateLimitHeaders(Response.json({
       ok: true,
       usedRecoveryCode: result.usedRecoveryCode,
       recoveryCodes: result.recoveryCodes,
+      redirectTo,
     }), rateLimit);
   } catch (error) {
     if (error instanceof MfaError) {

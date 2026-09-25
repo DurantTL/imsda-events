@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { AccountTokenPurpose } from "@prisma/client";
+import type { AccountTokenPurpose, GlobalRole } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { hashPassword, spendPasswordCheck, verifyPassword } from "@/modules/access/passwords";
 import { createDatabaseSession } from "@/modules/access/session-store";
@@ -30,7 +30,12 @@ export type AccountTokenIssue = {
  * challenge. Nothing downstream ever sees a session that skipped the gate.
  */
 export type PasswordAuthentication =
-  | { outcome: "session"; userId: string; session: { token: string; expiresAt: Date } }
+  | {
+      outcome: "session";
+      userId: string;
+      globalRole: GlobalRole | null;
+      session: { token: string; expiresAt: Date };
+    }
   | { outcome: "mfa"; userId: string; gate: "challenge" | "enrol" };
 
 export async function authenticateWithPassword(
@@ -105,6 +110,7 @@ export async function authenticateWithPassword(
   return {
     outcome: "session",
     userId: user.id,
+    globalRole: user.globalRole,
     session: await createDatabaseSession(user.id, userAgent),
   };
 }

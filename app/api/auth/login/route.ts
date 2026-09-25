@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { z } from "zod";
 import { authenticateWithPassword } from "@/modules/access/auth-service";
 import { issueMfaChallenge } from "@/modules/access/mfa-service";
+import { resolvePostLoginDestination } from "@/modules/access/post-login-destination";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { SESSION_COOKIE_NAME, SESSION_LIFETIME_SECONDS } from "@/modules/access/session-store";
 import { logError } from "@/lib/logger";
@@ -19,6 +20,9 @@ import { withRequestContext } from "@/lib/request-context";
 const loginSchema = z.object({
   email: z.string().trim().email().max(254),
   password: z.string().min(1).max(128),
+  // Where a deep link bounced from before landing on /login (#108 queue 1).
+  // Validated against `lib/return-to.ts` before it can steer navigation.
+  next: z.string().max(2048).optional(),
 });
 
 async function postHandler(request: Request) {
@@ -87,7 +91,11 @@ async function postHandler(request: Request) {
       maxAge: SESSION_LIFETIME_SECONDS,
       priority: "high",
     });
-    return applyRateLimitHeaders(Response.json({ ok: true }), rateLimit);
+    const redirectTo = await resolvePostLoginDestination(
+      { id: authentication.userId, globalRole: authentication.globalRole },
+      { returnTo: input.next },
+    );
+    return applyRateLimitHeaders(Response.json({ ok: true, redirectTo }), rateLimit);
   } catch (error) {
     if (error instanceof z.ZodError) {
       const response = Response.json({ error: "INVALID_LOGIN", message: "Enter a valid email address and password." }, { status: 400 });

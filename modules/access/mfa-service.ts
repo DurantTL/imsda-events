@@ -1,6 +1,7 @@
 import "server-only";
 
 import { randomInt, randomUUID } from "node:crypto";
+import type { GlobalRole } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { getServerEnv } from "@/lib/env";
 import { openSecret, sealSecret } from "@/lib/secret-box";
@@ -391,6 +392,8 @@ export async function beginEnrollmentFromChallenge(
 }
 
 export type MfaSignInResult = {
+  userId: string;
+  globalRole: GlobalRole | null;
   session: { token: string; expiresAt: Date };
   usedRecoveryCode: boolean;
   recoveryCodes?: string[];
@@ -489,7 +492,7 @@ export async function completeMfaChallenge(
   // password or code entered again.
   const credential = await getPrisma().authCredential.findUnique({
     where: { userId: challenge.userId },
-    select: { disabledAt: true },
+    select: { disabledAt: true, user: { select: { globalRole: true } } },
   });
   if (!credential || credential.disabledAt) {
     throw new MfaError(
@@ -515,6 +518,8 @@ export async function completeMfaChallenge(
   }
 
   return {
+    userId: challenge.userId,
+    globalRole: credential.user.globalRole,
     session,
     usedRecoveryCode: Boolean(accepted.usedRecoveryCode),
     recoveryCodes,
