@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Download, FileUp, Upload, X } from "lucide-react";
 import { isCsvFile } from "@/components/csv-import-dialog";
@@ -44,6 +45,7 @@ function filterMatches(filter: Filter, step: ImportStep) {
  * the older Sterling Volunteers export; the server tells them apart.
  */
 export function BackgroundCheckImport({ onImported }: { onImported: (result: ImportResponse) => void }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [csv, setCsv] = useState<string | null>(null);
   const [format, setFormat] = useState<"ROSTER" | "STERLING" | null>(null);
@@ -82,6 +84,8 @@ export function BackgroundCheckImport({ onImported }: { onImported: (result: Imp
         body: JSON.stringify({ csv: text, confirm }),
       });
       const result = await response.json().catch(() => ({})) as ImportResponse;
+      // A save that stopped part way still saved some batches; show the new counts.
+      if (confirm && !response.ok) router.refresh();
       if (!response.ok || !result.steps) throw new Error(result.message ?? result.issues?.[0]?.message ?? "That file couldn't be read.");
       setSteps(result.steps);
       setFormat(result.format ?? null);

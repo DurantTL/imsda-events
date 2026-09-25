@@ -75,7 +75,7 @@ beforeEach(() => {
   mocks.attendeeFindMany.mockResolvedValue([]);
   mocks.externalIdentityFindMany.mockResolvedValue([]);
   mocks.externalIdentityUpdateMany.mockResolvedValue({ count: 1 });
-  mocks.externalIdentityCreateMany.mockResolvedValue({ count: 0 });
+  mocks.externalIdentityCreateMany.mockImplementation(({ data }: { data: unknown[] }) => Promise.resolve({ count: data.length }));
   mocks.checkFindFirst.mockResolvedValue(null);
 });
 
@@ -617,6 +617,20 @@ describe("the newest upload wins across Sterling and roster imports (#427)", () 
     expect(steps[0]).toMatchObject({ action: "UPDATE", personId: "p-ana" });
   });
 
+  it("says when a Sterling upload replaces a roster import's mark", async () => {
+    mocks.checkFindMany.mockResolvedValue([{ personId: "p-ana", expiresOn: null, complianceStatus: "NOT_COMPLIANT" }]);
+    const steps = await planSterlingImport(parseSterlingCsv("First name,Last name,Email,Expiration date\nAna,Rivera,ana@example.test,2029-01-01"));
+    expect(steps[0]).toMatchObject({ action: "UPDATE", message: expect.stringContaining("Replaces the roster mark: Not in compliance.") });
+  });
+
+  it("counts a user_id another import saved first as not remembered", async () => {
+    mocks.externalIdentityCreateMany.mockResolvedValue({ count: 0 });
+    const result = await applyRosterBackgroundImport([
+      { line: 2, name: "Ana Rivera", action: "ADD", message: "", personId: "p-ana", userId: "1", compliance: "CLEAR", issuesNote: null },
+    ], "admin-1");
+    expect(result).toMatchObject({ idsNotRemembered: 1 });
+  });
+
   it("a roster import after Sterling clears the dates", async () => {
     await applyRosterBackgroundImport([
       { line: 2, name: "Ana Rivera", action: "UPDATE", message: "", personId: "p-ana", userId: "1", compliance: "NOT_COMPLIANT", issuesNote: null },
@@ -629,12 +643,15 @@ describe("the newest upload wins across Sterling and roster imports (#427)", () 
     const rosterClear = { complianceStatus: "CLEAR" as const, expiresOn: null };
     const rosterSoon = { complianceStatus: "FLAGGED" as const, expiresOn: null };
     const rosterNo = { complianceStatus: "NOT_COMPLIANT" as const, expiresOn: null };
-    const sterlingCurrent = { complianceStatus: null, expiresOn: "2026-10-04" };
+    const sterlingCurrent = { complianceStatus: null, expiresOn: "2027-06-01" };
+    const sterlingSoon = { complianceStatus: null, expiresOn: "2026-10-04" };
     const sterlingExpired = { complianceStatus: null, expiresOn: "2026-10-03" };
-    expect([rosterClear, rosterSoon, rosterNo, sterlingCurrent, sterlingExpired, null].map((check) => backgroundCheckState(check, today)))
-      .toEqual(["CURRENT", "CURRENT", "NOT_COMPLIANT", "CURRENT", "EXPIRED", "MISSING"]);
-    expect([rosterClear, rosterSoon, rosterNo, sterlingCurrent, sterlingExpired, null].map((check) => clubComplianceState(check, today)))
-      .toEqual(["CLEAR", "FLAGGED", "NOT_COMPLIANT", "CLEAR", "NOT_COMPLIANT", "NO_RECORD"]);
+    const checks = [rosterClear, rosterSoon, rosterNo, sterlingCurrent, sterlingSoon, sterlingExpired, null];
+    expect(checks.map((check) => backgroundCheckState(check, today)))
+      .toEqual(["CURRENT", "CURRENT", "NOT_COMPLIANT", "CURRENT", "CURRENT", "EXPIRED", "MISSING"]);
+    // A Sterling check ending within 60 days reads as expiring soon on club pages, as on the summary.
+    expect(checks.map((check) => clubComplianceState(check, today)))
+      .toEqual(["CLEAR", "FLAGGED", "NOT_COMPLIANT", "CLEAR", "FLAGGED", "NOT_COMPLIANT", "NO_RECORD"]);
   });
 
   it("flags a roster-only Not in compliance adult at a youth event, but not a Clear or expiring-soon one", async () => {

@@ -383,7 +383,13 @@ export type ClubComplianceState = "CLEAR" | "FLAGGED" | "NOT_COMPLIANT" | "NO_RE
 export function clubComplianceState(check: StoredCheck | null | undefined, today: string): ClubComplianceState {
   if (!check) return "NO_RECORD";
   if (check.complianceStatus) return check.complianceStatus;
-  if (check.expiresOn) return check.expiresOn >= today ? "CLEAR" : "NOT_COMPLIANT";
+  if (check.expiresOn) {
+    if (check.expiresOn < today) return "NOT_COMPLIANT";
+    // A Sterling check ending within 60 days reads as expiring soon, as on the admin summary.
+    const soon = new Date(`${today}T12:00:00Z`);
+    soon.setUTCDate(soon.getUTCDate() + 60);
+    return check.expiresOn <= soon.toISOString().slice(0, 10) ? "FLAGGED" : "CLEAR";
+  }
   return "NO_RECORD";
 }
 

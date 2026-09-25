@@ -138,11 +138,12 @@ export async function planSterlingImport(rows: SterlingCsvRow[]): Promise<Sterli
   const personIds = [...bestByPerson.keys()];
   const existing = new Map((await getPrisma().backgroundCheck.findMany({
     where: { personId: { in: personIds } },
-    select: { personId: true, expiresOn: true },
-  })).map((check) => [check.personId, check.expiresOn]));
+    select: { personId: true, expiresOn: true, complianceStatus: true },
+  })).map((check) => [check.personId, check]));
   for (const step of bestByPerson.values()) {
     if (step.action === "SKIP") continue;
-    const onFile = existing.get(step.personId!);
+    const record = existing.get(step.personId!);
+    const onFile = record?.expiresOn ?? null;
     if (onFile && onFile >= step.expiresOn!) {
       step.action = "SKIP";
       step.message = "A check lasting at least as long is already on file.";
@@ -150,7 +151,9 @@ export async function planSterlingImport(rows: SterlingCsvRow[]): Promise<Sterli
     } else {
       // A roster import's row (no expiration date) is still a row on file: this replaces it.
       step.action = existing.has(step.personId!) ? "UPDATE" : "ADD";
-      step.message = `Check good through ${step.expiresOn}.`;
+      // The newest upload wins; say so when it replaces a roster import's mark.
+      const replaces = record?.complianceStatus ? ` Replaces the roster mark: ${complianceLabels[record.complianceStatus]}.` : "";
+      step.message = `Check good through ${step.expiresOn}.${replaces}`;
     }
   }
   return steps.sort((a, b) => a.line - b.line);
@@ -389,8 +392,8 @@ export async function planRosterBackgroundImport(rows: RosterBackgroundCsvRow[],
       continue;
     }
     let message: string;
-    if (candidates.length === 1) message = `One person has this name, but "${row.site}" isn't their club or church. Review and match by hand.`;
-    else if (row.site) message = "More than one person has this name, and sites didn't narrow it to one. Review and match by hand.";
+    if (candidates.length === 1) message = `One person has this name, but "${row.site}" isn't their club or church. Nothing was saved for this row; check it against the provider's records.`;
+    else if (row.site) message = "More than one person has this name, and sites didn't narrow it to one. Nothing was saved for this row; check it against the provider's records.";
     else message = "More than one person has this name. Add a site, or review and match by hand.";
     steps.push(review(row, name, message, candidates.map(candidateView)));
   }
@@ -426,7 +429,7 @@ export async function planRosterBackgroundImport(rows: RosterBackgroundCsvRow[],
         line: step.line,
         name: step.name,
         action: "REVIEW",
-        message: `user_id ${step.userId} is on more than one row in this file, for different people. Review and match by hand.`,
+        message: `user_id ${step.userId} is on more than one row in this file, for different people. Nothing was saved for this row; check it against the provider's records.`,
         candidates: [...sharedBy].map((personId) => {
           const candidate = index.byPerson.get(personId);
           return candidate ? candidateView(candidate) : { personId, name: step.name, sites: [] };
@@ -442,7 +445,7 @@ export async function planRosterBackgroundImport(rows: RosterBackgroundCsvRow[],
         line: step.line,
         name: step.name,
         action: "REVIEW",
-        message: `This person is already remembered under user_id ${remembered}, not ${step.userId}. Review and match by hand.`,
+        message: `This person is already remembered under user_id ${remembered}, not ${step.userId}. Nothing was saved for this row; check it against the provider's records.`,
         candidates: [candidate ? candidateView(candidate) : { personId: step.personId, name: step.name, sites: [] }],
         issuesNote: step.issuesNote,
       });
@@ -456,7 +459,7 @@ export async function planRosterBackgroundImport(rows: RosterBackgroundCsvRow[],
         line: step.line,
         name: step.name,
         action: "REVIEW",
-        message: `Also matched by user_id ${otherIds.join(", ")} in this file. Review and match by hand.`,
+        message: `Also matched by user_id ${otherIds.join(", ")} in this file. Nothing was saved for this row; check it against the provider's records.`,
         candidates: [candidate ? candidateView(candidate) : { personId: step.personId, name: step.name, sites: [] }],
         issuesNote: step.issuesNote,
       });
@@ -586,7 +589,8 @@ export async function applyRosterBackgroundImport(steps: RosterImportStep[], act
         }
         if (toCreate.length > 0) {
           // ON CONFLICT DO NOTHING: an id or person that gained an identity since the fresh look is left as it is.
-          await tx.externalIdentity.createMany({ data: toCreate, skipDuplicates: true });
+          const created = await tx.externalIdentity.createMany({ data: toCreate, skipDuplicates: true });
+          notRemembered += toCreate.length - created.count;
         }
         await writeAuditLog({
           actorUserId,
