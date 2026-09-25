@@ -36,7 +36,13 @@ export type PasswordAuthentication =
       globalRole: GlobalRole | null;
       session: { token: string; expiresAt: Date };
     }
-  | { outcome: "mfa"; userId: string; gate: "challenge" | "enrol" };
+  | { outcome: "mfa"; userId: string; gate: "challenge" | "enrol" }
+  /**
+   * A privileged account whose only second factor is a passkey (#429). The
+   * password alone can't finish sign-in, and it can't enrol an authenticator
+   * either — that would let a phished password stand in for the passkey.
+   */
+  | { outcome: "passkey_required"; userId: string };
 
 export async function authenticateWithPassword(
   email: string,
@@ -52,6 +58,7 @@ export async function authenticateWithPassword(
       globalRole: true,
       memberships: { where: { status: "ACTIVE" }, select: { role: true } },
       mfaEnrollment: { select: { status: true } },
+      passkeys: { where: { revokedAt: null }, select: { id: true }, take: 1 },
       credential: {
         select: { id: true, passwordHash: true, failedAttempts: true, lockedUntil: true, disabledAt: true },
       },
@@ -72,13 +79,16 @@ export async function authenticateWithPassword(
 
   if (!(await checkPasswordWithLockout(user.credential, password))) return null;
 
-  const gate = mfaGateFor(
-    {
-      globalRole: user.globalRole,
-      activeEventRoles: user.memberships.map((membership) => membership.role),
-    },
-    user.mfaEnrollment,
-  );
+  const subject = {
+    globalRole: user.globalRole,
+    activeEventRoles: user.memberships.map((membership) => membership.role),
+  };
+  const gate = mfaGateFor(subject, user.mfaEnrollment);
+  // A passkey is this account's second factor: sign in with it, not by
+  // enrolling a new authenticator on the strength of the password (#429).
+  if (gate.kind === "enrol" && user.passkeys.length > 0) {
+    return { outcome: "passkey_required", userId: user.id };
+  }
   if (gate.kind !== "not_required") {
     return { outcome: "mfa", userId: user.id, gate: gate.kind };
   }

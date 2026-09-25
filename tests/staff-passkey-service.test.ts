@@ -312,6 +312,13 @@ describe("re-authentication before adding or removing a staff passkey (#429)", (
     });
 
     it("is refused with a wrong password, which counts toward the sign-in lockout", async () => {
+      if (change === "remove") {
+        // With a passkey on file, the password is no proof at all (#429 review):
+        // it's refused without touching the password counter.
+        await expect(attempt(change, passwordProof)).rejects.toMatchObject(refused);
+        expect(state.credential).toMatchObject({ failedAttempts: 0 });
+        return;
+      }
       for (let tries = 0; tries < 5; tries += 1) {
         await expect(attempt(change, { password: "not the password" })).rejects.toMatchObject(refused);
       }
@@ -348,7 +355,12 @@ describe("re-authentication before adding or removing a staff passkey (#429)", (
       await expect(attempt(change, proof)).rejects.toMatchObject(refused);
     });
 
-    it("accepts the current password when the account has no authenticator", async () => {
+    it("accepts the current password only when the account has no second factor", async () => {
+      if (change === "remove") {
+        // A passkey is a second factor, so the password alone won't do.
+        await expect(attempt(change, passwordProof)).rejects.toMatchObject(refused);
+        return;
+      }
       await expect(attempt(change, passwordProof)).resolves.toBeDefined();
       expect(state.credential).toMatchObject({ failedAttempts: 0 });
     });
@@ -382,7 +394,7 @@ describe("re-authentication before adding or removing a staff passkey (#429)", (
   it("offers the proofs the account can give", async () => {
     expect(await changeVerificationMethods("user-1")).toEqual({ code: false, passkey: false, password: true });
     seedPasskey();
-    expect(await changeVerificationMethods("user-1")).toEqual({ code: false, passkey: true, password: true });
+    expect(await changeVerificationMethods("user-1")).toEqual({ code: false, passkey: true, password: false });
     enrolAuthenticator();
     expect(await changeVerificationMethods("user-1")).toEqual({ code: true, passkey: true, password: false });
   });
@@ -415,8 +427,9 @@ describe("renaming and removing staff passkeys", () => {
 
   it("removes a passkey and audits it", async () => {
     await addPasskey();
-    await addPasskey();
-    const remaining = await removePasskey(account, "session-1", origin, "pk-1", passwordProof, now);
+    seedPasskey("pk-2", "cred-2");
+    enrolAuthenticator();
+    const remaining = await removePasskey(account, "session-1", origin, "pk-1", { code: RECOVERY_CODE }, now);
     expect(remaining).toEqual([expect.objectContaining({ id: "pk-2" })]);
     expect(state.audit).toEqual(expect.arrayContaining([expect.objectContaining({ action: "USER_PASSKEY_REMOVED", entityId: "pk-1" })]));
   });
@@ -429,8 +442,16 @@ describe("renaming and removing staff passkeys", () => {
 
   it("removes the only passkey; the password stays the fallback", async () => {
     await addPasskey();
-    await expect(removePasskey(account, "session-1", origin, "pk-1", passwordProof, now)).resolves.toEqual([]);
-    await expect(removePasskey(account, "session-1", origin, "pk-1", passwordProof, now)).rejects.toMatchObject({ code: "PASSKEY_NOT_FOUND" });
+    enrolAuthenticator();
+    await expect(removePasskey(account, "session-1", origin, "pk-1", { code: totpCode(SECRET, now) }, now)).resolves.toEqual([]);
+    await expect(removePasskey(account, "session-1", origin, "pk-1", { code: RECOVERY_CODE }, now)).rejects.toMatchObject({ code: "PASSKEY_NOT_FOUND" });
+  });
+
+  it("checks the passkey exists before spending a one-time code", async () => {
+    await addPasskey();
+    enrolAuthenticator();
+    await expect(removePasskey(account, "session-1", origin, "pk-missing", { code: RECOVERY_CODE }, now)).rejects.toMatchObject({ code: "PASSKEY_NOT_FOUND" });
+    expect(state.recoveryCodes[0]).toMatchObject({ usedAt: null });
   });
 });
 

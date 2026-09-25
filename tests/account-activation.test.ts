@@ -55,6 +55,45 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe("password sign-in for an admin whose second factor is a passkey (#429)", () => {
+  it("won't finish sign-in or offer authenticator enrolment on the password alone", async () => {
+    const passwordHash = await hashPassword(knownPassword);
+    const { prisma } = prismaFixture({
+      user: {
+        id: "user-1",
+        accountStatus: "ACTIVE",
+        globalRole: "SYSTEM_ADMIN",
+        memberships: [],
+        mfaEnrollment: null,
+        passkeys: [{ id: "pk-1" }],
+        credential: { id: "cred-1", passwordHash, failedAttempts: 0, lockedUntil: null, disabledAt: null },
+      },
+    });
+
+    expect(await authenticateWithPassword("admin@imsda.org", knownPassword, null))
+      .toEqual({ outcome: "passkey_required", userId: "user-1" });
+    expect(prisma.userSession.create).not.toHaveBeenCalled();
+  });
+
+  it("still asks an admin with no second factor at all to enrol one", async () => {
+    const passwordHash = await hashPassword(knownPassword);
+    prismaFixture({
+      user: {
+        id: "user-1",
+        accountStatus: "ACTIVE",
+        globalRole: "SYSTEM_ADMIN",
+        memberships: [],
+        mfaEnrollment: null,
+        passkeys: [],
+        credential: { id: "cred-1", passwordHash, failedAttempts: 0, lockedUntil: null, disabledAt: null },
+      },
+    });
+
+    expect(await authenticateWithPassword("admin@imsda.org", knownPassword, null))
+      .toEqual({ outcome: "mfa", userId: "user-1", gate: "enrol" });
+  });
+});
+
 describe("invited accounts stay pending until activated", () => {
   it("refuses sign-in for a pending account even with the right password", async () => {
     const passwordHash = await hashPassword(knownPassword);

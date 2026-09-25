@@ -159,10 +159,11 @@ export async function changeVerificationMethods(userId: string): Promise<ChangeV
     prisma.userPasskey.count({ where: { userId, revokedAt: null } }),
   ]);
   const code = enrollment?.status === "ACTIVE";
-  // The password counts only without an active authenticator: for such an
-  // account it is exactly what sign-in asks for, so the gate is never weaker
-  // than signing in. With an authenticator, sign-in needs the code too.
-  return { code, passkey: passkeyCount > 0, password: !code };
+  // The password counts only for an account with no second factor at all, where
+  // it is exactly what sign-in asks for. With an authenticator or a passkey,
+  // that factor must be shown instead, so a known password plus a hijacked
+  // session can't add or remove a passkey.
+  return { code, passkey: passkeyCount > 0, password: !code && passkeyCount === 0 };
 }
 
 const VERIFICATION_REFUSED = "Confirm it's you first with your authenticator code, a recovery code, an existing passkey, or your password.";
@@ -372,6 +373,12 @@ export async function removePasskey(
   proof: ChangeProof | undefined,
   now = new Date(),
 ) {
+  // Check the target first, so a stale id doesn't spend a one-time code.
+  const target = await getPrisma().userPasskey.findFirst({
+    where: { id: passkeyId, userId: account.id, revokedAt: null },
+    select: { id: true },
+  });
+  if (!target) throw new PasskeyError("PASSKEY_NOT_FOUND", "That passkey could not be found.");
   await requireRecentVerification(account, sessionId, requestOrigin, proof, now);
   // No "last sign-in method" refusal: passkey management needs a session from
   // an account with a usable password (`currentStaffPasskeySession`), so the
