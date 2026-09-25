@@ -1542,10 +1542,32 @@ model Organization {
   monthlyReports     ClubMonthlyReport[]
   meetingNotes       ClubMeetingNote[]
   yearStandings      ClubYearStanding[]
+  churchLocation     ChurchLocation?
 
   @@index([type, isActive, name])
   @@index([parentOrganizationId, isActive])
   @@index([normalizedName])
+}
+
+/**
+ * A church's town and, when staff have entered them, hand-plotted map
+ * coordinates (#437). Coordinates are typed in by staff, never geocoded from
+ * an address or looked up on a page view — there is no street address in
+ * this system (see #149). Used only to place a church's listed clubs on the
+ * public club map; a church without one still lists its clubs, just without
+ * a pin.
+ */
+model ChurchLocation {
+  organizationId String   @id
+  city           String   @default("")
+  state          String   @default("")
+  zip            String   @default("")
+  latitude       Float?
+  longitude      Float?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }
 
 /// An Area Coordinator (#387): sees every club, view only, from their own

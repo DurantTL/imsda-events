@@ -18,12 +18,15 @@ const squareFontOrigins = [
 ].join(" ");
 const buildTsconfigPath = process.env.NEXT_BUILD_TSCONFIG?.trim() || "tsconfig.json";
 
-function contentSecurityPolicy(frameAncestors: string) {
+// OpenStreetMap's tile server, for the public club map (#437) only.
+const mapTileOrigin = "https://tile.openstreetmap.org";
+
+function contentSecurityPolicy(frameAncestors: string, extraImageOrigins = "") {
   return [
     "default-src 'self'",
     `script-src 'self' 'unsafe-inline' ${squareWebOrigins}${isDevelopment ? " 'unsafe-eval'" : ""}`,
     `style-src 'self' 'unsafe-inline' ${squareWebOrigins}`,
-    "img-src 'self' blob: data:",
+    `img-src 'self' blob: data:${extraImageOrigins ? ` ${extraImageOrigins}` : ""}`,
     `font-src 'self' data: ${squareFontOrigins}`,
     `connect-src 'self' ${squareWebOrigins} ${squarePciOrigins} ${squareTelemetryOrigin}`,
     `frame-src 'self' ${squareWebOrigins}`,
@@ -76,6 +79,20 @@ const nextConfig: NextConfig = {
                 value: "max-age=31536000; includeSubDomains",
               }]
             : []),
+        ],
+      },
+      {
+        // The club map is the one page that loads third-party images. Its
+        // policy is the site policy plus the tile origin; listed after the
+        // site-wide rule so this Content-Security-Policy replaces that one
+        // (for a header key set by two matching rules, Next.js sends the
+        // last), leaving /clubs with a single policy.
+        source: "/clubs",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: contentSecurityPolicy("'none'", mapTileOrigin),
+          },
         ],
       },
       {

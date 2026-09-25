@@ -87,7 +87,7 @@ describe("compiled Content Security Policy", () => {
 
     const policies = await compiledContentSecurityPolicies();
 
-    expect(policies).toHaveLength(2);
+    expect(policies).toHaveLength(3);
     for (const policy of policies) {
       for (const directive of [
         "script-src",
@@ -113,5 +113,36 @@ describe("compiled Content Security Policy", () => {
       expect(policy).toContain("base-uri 'self'");
       expect(policy).toContain("form-action 'self'");
     }
+  });
+
+  it("admits OpenStreetMap tiles on /clubs only, as that page's single policy (#437)", async () => {
+    vi.resetModules();
+    const nextConfig = (await import("../next.config")).default;
+    const rules = (await nextConfig.headers?.()) ?? [];
+    const cspRules = rules
+      .map((rule, index) => ({
+        index,
+        source: rule.source,
+        policy: rule.headers.find((header) => header.key === "Content-Security-Policy")?.value,
+      }))
+      .filter((rule): rule is { index: number; source: string; policy: string } => rule.policy !== undefined);
+
+    const tileOrigin = "https://tile.openstreetmap.org";
+    const siteWide = cspRules.find((rule) => rule.source === "/:path*");
+    const clubs = cspRules.find((rule) => rule.source === "/clubs");
+    if (!siteWide || !clubs) throw new Error("Missing site-wide or /clubs policy");
+
+    for (const rule of cspRules.filter((candidate) => candidate.source !== "/clubs")) {
+      expect(rule.policy).not.toContain(tileOrigin);
+    }
+    expect(directiveSources(clubs.policy, "img-src")).toContain(tileOrigin);
+
+    // Same policy otherwise: only img-src differs.
+    expect(clubs.policy.replace(` ${tileOrigin}`, "")).toBe(siteWide.policy);
+
+    // Both rules match /clubs and set the same key; Next.js sends the last
+    // one, so the /clubs rule must come after the site-wide rule.
+    expect(clubs.index).toBeGreaterThan(siteWide.index);
+    expect(cspRules.filter((rule) => rule.source === "/clubs")).toHaveLength(1);
   });
 });

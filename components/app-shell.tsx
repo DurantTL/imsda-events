@@ -200,7 +200,7 @@ export function AppShell({
     <div className="app-shell">
       <a className="skip-link" href="#workspace-content">Skip to main content</a>
       <aside className="sidebar" aria-label="Application navigation">
-        <Link className="brand" href={`/overview${eventQuery}`} aria-label="IMSDA Events home">
+        <Link className="brand" href="/" aria-label="IMSDA Events home">
           <BrandMark />
           <span><strong>IMSDA</strong><small>Events</small></span>
         </Link>

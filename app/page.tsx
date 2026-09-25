@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { CalendarDays, ChevronRight, LayoutDashboard, UserRound, UsersRound } from "lucide-react";
+import { CalendarDays, ChevronRight, LayoutDashboard, MapPin, UserRound, UsersRound } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 import { AgendaItem } from "@/components/calendar-agenda-item";
 import { getCurrentSession } from "@/modules/access/current-session";
@@ -84,6 +84,17 @@ export default async function Home() {
             </span>
             <ChevronRight size={18} aria-hidden="true" />
           </Link>
+          {/* A full page load, not a client-side <Link>: /clubs is the only
+              page whose Content-Security-Policy admits the map tiles, and a
+              soft navigation would keep this page's policy. */}
+          <a className="home-action" href="/clubs">
+            <MapPin size={22} aria-hidden="true" />
+            <span>
+              <strong>Find a club</strong>
+              <small>Pathfinder and Adventurer clubs near you</small>
+            </span>
+            <ChevronRight size={18} aria-hidden="true" />
+          </a>
         </nav>
 
         <section aria-labelledby="home-upcoming-heading" className="calendar-agenda">
