@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Eye, EyeOff, MailCheck, UserPlus } from "lucide-react";
+import { Eye, EyeOff, LogIn, MailCheck, UserPlus } from "lucide-react";
 import { OneTimeCodeInput } from "@/components/one-time-code-input";
 import {
   allPasswordRequirementsMet,
@@ -198,9 +198,12 @@ export function AttendeeSignUpForm({
       >
         <UserPlus aria-hidden="true" size={17} /> {busy ? "Creating…" : "Create account"}
       </button>
-      <p className="field-help">
-        Already have one? <Link href="/account/sign-in">Sign in</Link>.
-      </p>
+      <div className="auth-alternate">
+        <strong>Already have an account?</strong>
+        <Link className="secondary-button full-button" href="/account/sign-in">
+          <LogIn aria-hidden="true" size={17} /> Sign in instead
+        </Link>
+      </div>
     </form>
   );
 }

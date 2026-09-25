@@ -4364,6 +4364,17 @@ select:focus-visible {
   border-top: 1px solid var(--line);
 }
 
+/* The other way in (#434): creating an account from sign-in, or signing in from sign-up, is a real button, not a footnote. */
+.auth-alternate {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.auth-alternate strong { font-size: 0.86rem; }
+.auth-alternate span { color: var(--muted); font-size: 0.72rem; line-height: 1.5; }
+
 /*
  * The account page lists many registrations at once, so each status has to read
  * at a glance without the full-width status card the single-registration page
