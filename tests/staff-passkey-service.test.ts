@@ -594,7 +594,9 @@ describe("staff passkey sign-in", () => {
     expect(webauthn.verifyAuthenticationResponse).not.toHaveBeenCalled();
   });
 
-  it("refuses a locked account", async () => {
+  it("refuses passkey sign-in while the password lockout is active (#453: a lockout blocks passkeys too)", async () => {
+    // Deliberate policy (Caleb, Sept 25, 2026): five wrong passwords lock the
+    // account for 15 minutes, and a passkey doesn't get around that.
     await addPasskey();
     const { challengeId } = await beginPasskeySignIn(origin, now);
     state.credential = { ...state.credential, lockedUntil: new Date(now.getTime() + 60_000) };
