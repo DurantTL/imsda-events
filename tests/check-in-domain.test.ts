@@ -126,6 +126,14 @@ describe("check-in search (#441)", () => {
     expect(arrivalMatchesSearch(samantha, "sam nunez")).toBe(false);
   });
 
+  it("finds hyphenated, apostrophe, and non-Latin names", () => {
+    const code = { confirmationCode: "WR26-CD34" };
+    expect(arrivalMatchesSearch({ ...code, firstName: "Mary-Jane", lastName: "O'Brien" }, "jane")).toBe(true);
+    expect(arrivalMatchesSearch({ ...code, firstName: "Mary-Jane", lastName: "O'Brien" }, "o'bri")).toBe(true);
+    expect(arrivalMatchesSearch({ ...code, firstName: "Søren", lastName: "Ødegaard" }, "ødeg")).toBe(true);
+    expect(arrivalMatchesSearch({ ...code, firstName: "Мария", lastName: "Иванова" }, "иван")).toBe(true);
+  });
+
   it("does not match the registration's email, so a shared email doesn't list everyone", () => {
     // The search never receives the email; typing one matches no name.
     expect(arrivalMatchesSearch(samantha, "family@example.test")).toBe(false);

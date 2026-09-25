@@ -138,7 +138,8 @@ function searchWords(value: string) {
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
-    .split(/[^a-z0-9]+/)
+    // Any letter or digit in any script counts; hyphens and apostrophes split words.
+    .split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean);
 }
 
