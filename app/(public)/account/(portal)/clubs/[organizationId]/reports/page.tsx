@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight, CheckCircle2, CircleAlert, Clock3 } from "lucide-react";
+import { BackLink } from "@/components/back-link";
 import { getClubRoleAccess } from "@/modules/club-rosters/access";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import {
@@ -35,6 +36,7 @@ export default async function ClubReportsPage({ params }: { params: Promise<{ or
 
   return (
     <>
+      <BackLink href={`/account/clubs/${organizationId}`}>Back to {access.club.name}</BackLink>
       <div className="club-home-stats">
         <div className="club-home-stat">
           <CheckCircle2 size={20} aria-hidden="true" />

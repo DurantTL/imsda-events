@@ -80,6 +80,50 @@ describe("application shell navigation", () => {
     expect(markup).toContain("Attendee experience");
   });
 
+  it("groups sidebar destinations under labeled headings, in group order", () => {
+    const groupedEvents = [{
+      id: "event_1",
+      slug: "womens-retreat-2026",
+      name: "Women’s Retreat 2026",
+      permissions: [
+        "VIEW_SENSITIVE_DATA",
+        "MANAGE_FINANCE",
+        "MANAGE_CHECK_IN",
+        "MANAGE_COMMUNICATIONS",
+        "MANAGE_STAFF",
+      ] as const,
+    }];
+    const markup = renderToStaticMarkup(
+      createElement(
+        AppShellElement,
+        {
+          events: groupedEvents,
+          user: {
+            displayName: "Riley Registration",
+            email: "registration@imsda-events.test",
+          },
+        },
+        createElement("p", null, "Workspace content"),
+      ),
+    );
+
+    expect(markup).toContain("Events");
+    expect(markup).toContain("People");
+    expect(markup).toContain("Finance");
+    expect(markup).toContain("Communications");
+    // Group order: Events, then People, then Finance, then Communications.
+    expect(markup.indexOf("Events")).toBeLessThan(markup.indexOf("People"));
+    expect(markup.indexOf("People")).toBeLessThan(markup.indexOf("Finance"));
+    expect(markup.indexOf("Finance")).toBeLessThan(markup.indexOf("Communications"));
+    // Every existing destination stays reachable.
+    expect(markup).toContain("Check-in");
+    expect(markup).toContain("Registrations");
+    expect(markup).toContain("Team");
+    expect(markup).toContain("Payments");
+    expect(markup).toContain("Emails");
+    expect(markup).toContain("More");
+  });
+
   it("offers a real attendee-session switch when the staff email has an account", () => {
     const markup = renderToStaticMarkup(
       createElement(

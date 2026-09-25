@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { BackLink } from "@/components/back-link";
 import { ClubReportsConference } from "@/components/club-reports-conference";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { calendarDateIn } from "@/modules/calendar/domain";
@@ -23,7 +24,7 @@ export default async function ClubReportsAdminPage({ searchParams }: { searchPar
   return (
     <>
       <div className="intro-actions club-admin-links">
-        <Link className="secondary-button more-back-link" href="/admin/organizations">Back to churches and clubs</Link>
+        <BackLink href="/admin/organizations" variant="staff">Back to churches and clubs</BackLink>
         <Link className="secondary-button" href={`/admin/clubs/reports?year=${label(start - 1)}`}>← {label(start - 1)}</Link>
         {clubYear !== current && <Link className="secondary-button" href={`/admin/clubs/reports?year=${label(start + 1)}`}>{label(start + 1)} →</Link>}
       </div>

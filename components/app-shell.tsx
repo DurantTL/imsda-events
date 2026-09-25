@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import {
   ArrowRightLeft,
   CheckCircle2,
@@ -29,6 +29,22 @@ import { SignOutButton } from "@/components/sign-out-button";
 import type { EventPermission } from "@/modules/access/permissions";
 import { operationalHealthEntryPermissions } from "@/modules/operations/access";
 
+/**
+ * Groups for the sidebar (#428): items with no group render above any
+ * heading (Dashboard) or after every group (More, a catch-all that spans
+ * several of them). "Clubs and churches" has no direct sidebar destination
+ * today — that area is reached through More — so it never renders here; see
+ * docs/NAVIGATION.md.
+ */
+type NavigationGroup = "events" | "people" | "finance" | "communications";
+
+const navigationGroupLabels: Record<NavigationGroup, string> = {
+  events: "Events",
+  people: "People",
+  finance: "Finance",
+  communications: "Communications",
+};
+
 type NavigationItem = {
   href: string;
   label: string;
@@ -37,6 +53,7 @@ type NavigationItem = {
   desktopOnly?: boolean;
   requiredPermission?: EventPermission;
   requiredAnyPermissions?: readonly EventPermission[];
+  group?: NavigationGroup;
 };
 
 const systemNavigation: NavigationItem = {
@@ -48,17 +65,17 @@ const systemNavigation: NavigationItem = {
 
 const navigation: readonly NavigationItem[] = [
   { href: "/overview", label: "Dashboard", mobileLabel: "Home", icon: LayoutDashboard },
-  { href: "/people", label: "Registrations", mobileLabel: "People", icon: UsersRound, requiredPermission: "VIEW_SENSITIVE_DATA" },
-  { href: "/finance", label: "Payments", mobileLabel: "Payments", icon: WalletCards, requiredPermission: "MANAGE_FINANCE" },
-  { href: "/more/promo-codes", label: "Promo codes", mobileLabel: "Promos", icon: TicketPercent, requiredPermission: "MANAGE_FINANCE" },
-  { href: "/check-in", label: "Check-in", mobileLabel: "Check-in", icon: CheckCircle2, requiredPermission: "MANAGE_CHECK_IN" },
-  { href: "/communications", label: "Emails", mobileLabel: "Emails", icon: Megaphone, requiredPermission: "MANAGE_COMMUNICATIONS" },
-  { href: "/registration-builder", label: "Registration form", mobileLabel: "Form", icon: PanelsTopLeft, desktopOnly: true, requiredPermission: "MANAGE_FORMS" },
-  { href: "/more/attendee-configuration", label: "Attendee setup", mobileLabel: "Types", icon: Tags, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT" },
-  { href: "/more/tags", label: "Tags", mobileLabel: "Tags", icon: Tag, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT" },
-  { href: "/more/event-settings", label: "Event settings", mobileLabel: "Settings", icon: Settings2, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT" },
-  { href: "/imports", label: "Imports", mobileLabel: "Imports", icon: FileUp, desktopOnly: true, requiredPermission: "MANAGE_IMPORTS" },
-  { href: "/staff", label: "Team", mobileLabel: "Team", icon: UserCog, desktopOnly: true, requiredPermission: "MANAGE_STAFF" },
+  { href: "/check-in", label: "Check-in", mobileLabel: "Check-in", icon: CheckCircle2, requiredPermission: "MANAGE_CHECK_IN", group: "events" },
+  { href: "/registration-builder", label: "Registration form", mobileLabel: "Form", icon: PanelsTopLeft, desktopOnly: true, requiredPermission: "MANAGE_FORMS", group: "events" },
+  { href: "/more/attendee-configuration", label: "Attendee setup", mobileLabel: "Types", icon: Tags, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT", group: "events" },
+  { href: "/more/tags", label: "Tags", mobileLabel: "Tags", icon: Tag, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT", group: "events" },
+  { href: "/more/event-settings", label: "Event settings", mobileLabel: "Settings", icon: Settings2, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT", group: "events" },
+  { href: "/people", label: "Registrations", mobileLabel: "People", icon: UsersRound, requiredPermission: "VIEW_SENSITIVE_DATA", group: "people" },
+  { href: "/imports", label: "Imports", mobileLabel: "Imports", icon: FileUp, desktopOnly: true, requiredPermission: "MANAGE_IMPORTS", group: "people" },
+  { href: "/staff", label: "Team", mobileLabel: "Team", icon: UserCog, desktopOnly: true, requiredPermission: "MANAGE_STAFF", group: "people" },
+  { href: "/finance", label: "Payments", mobileLabel: "Payments", icon: WalletCards, requiredPermission: "MANAGE_FINANCE", group: "finance" },
+  { href: "/more/promo-codes", label: "Promo codes", mobileLabel: "Promos", icon: TicketPercent, requiredPermission: "MANAGE_FINANCE", group: "finance" },
+  { href: "/communications", label: "Emails", mobileLabel: "Emails", icon: Megaphone, requiredPermission: "MANAGE_COMMUNICATIONS", group: "communications" },
   {
     href: "/more",
     label: "More",
@@ -174,13 +191,18 @@ export function AppShell({
         </div>
 
         <nav className="primary-nav" aria-label="Primary navigation">
-          {visibleNavigation.map(({ href, icon: Icon, label }) => {
+          {visibleNavigation.map(({ href, icon: Icon, label, group }, index) => {
             const isActive = current.href === href;
+            const previousGroup = index > 0 ? visibleNavigation[index - 1].group : undefined;
+            const startsGroup = group && group !== previousGroup;
             return (
-              <Link className={isActive ? "nav-item active" : "nav-item"} href={`${href}${eventQuery}`} key={href} aria-current={isActive ? "page" : undefined}>
-                <Icon aria-hidden="true" size={19} strokeWidth={1.9} />
-                <span>{label}</span>
-              </Link>
+              <Fragment key={href}>
+                {startsGroup && <span className="nav-group-label">{navigationGroupLabels[group]}</span>}
+                <Link className={isActive ? "nav-item active" : "nav-item"} href={`${href}${eventQuery}`} aria-current={isActive ? "page" : undefined}>
+                  <Icon aria-hidden="true" size={19} strokeWidth={1.9} />
+                  <span>{label}</span>
+                </Link>
+              </Fragment>
             );
           })}
         </nav>

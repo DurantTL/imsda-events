@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { redirect } from "next/navigation";
+import { BackLink } from "@/components/back-link";
 import { ClubInvitesWorkspace } from "@/components/club-invites-workspace";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { listClubInvites } from "@/modules/club-imports/invites";
@@ -15,7 +15,7 @@ export default async function ClubInvitesPage() {
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
   return (
     <>
-      <Link className="secondary-button more-back-link" href="/admin/organizations">Back to churches and clubs</Link>
+      <BackLink href="/admin/organizations" variant="staff">Back to churches and clubs</BackLink>
       <ClubInvitesWorkspace emailConfigured={isAccountEmailConfigured()} initialInvites={await listClubInvites()} />
     </>
   );

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight, FileText, UsersRound } from "lucide-react";
 import { AccessRestricted } from "@/components/access-restricted";
+import { BackLink } from "@/components/back-link";
 import { BackgroundCheckBadge } from "@/components/background-check-flags";
 import { listEventBackgroundFlags } from "@/modules/background-checks/repository";
 import { listRegisteredClubs, resolveClubOversight } from "@/modules/club-rosters/event-oversight";
@@ -31,7 +32,7 @@ export default async function EventClubsPage({ searchParams }: { searchParams: P
   return (
     <section className="page-stack">
       <div className="intro-actions club-admin-links">
-        <Link className="secondary-button more-back-link" href={`/more?event=${event.id}`}>Back to More</Link>
+        <BackLink href={`/more?event=${event.id}`} variant="staff">Back to More</BackLink>
         <Link className="secondary-button" href={`/more/clubs/reports?event=${event.id}`}>
           <FileText aria-hidden="true" size={14} /> All clubs&apos; monthly reports
         </Link>

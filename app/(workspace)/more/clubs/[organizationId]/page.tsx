@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Eye } from "lucide-react";
 import { AccessRestricted } from "@/components/access-restricted";
+import { BackLink } from "@/components/back-link";
 import { BackgroundCheckList } from "@/components/background-check-flags";
 import { listEventBackgroundFlags } from "@/modules/background-checks/repository";
 import { ClubOverview } from "@/components/club-overview";
@@ -29,11 +29,13 @@ export default async function EventClubPage({
   const club = await getPrisma().organization.findUnique({ where: { id: organizationId }, select: { name: true, parentOrganization: { select: { name: true } } } });
   if (!club) notFound();
   const query = `?event=${event.id}`;
+  const selfHref = `/more/clubs/${organizationId}${query}`;
+  const fromHere = `${query}&from=${encodeURIComponent(selfHref)}`;
   const backgroundFlags = await listEventBackgroundFlags(event.id, { organizationId });
   const assignment = await getClubAssignmentForClub(event.id, organizationId);
   return (
     <section className="page-stack">
-      <Link className="secondary-button more-back-link" href={`/more/clubs${query}`}>Back to clubs</Link>
+      <BackLink href={`/more/clubs${query}`} variant="staff">Back to clubs</BackLink>
       <div className="page-intro">
         <div>
           <p className="eyebrow">{event.name} · view only</p>
@@ -66,7 +68,7 @@ export default async function EventClubPage({
       )}
       <ClubOverview
         organizationId={organizationId}
-        reportHref={(month) => `/more/clubs/reports/${organizationId}/${month}${query}`}
+        reportHref={(month) => `/more/clubs/reports/${organizationId}/${month}${fromHere}`}
         reportsEditable={false}
       />
     </section>

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import Link from "next/link";
-import { Activity, Award, ChartNoAxesCombined, FileText, FileUp, HeartPulse, ListChecks, MessagesSquare, PanelsTopLeft, Settings2, Tent, TicketPercent, UserCog, UsersRound } from "lucide-react";
+import { Activity, Award, ChartNoAxesCombined, FileText, FileUp, HeartPulse, ListChecks, MessagesSquare, PanelsTopLeft, Settings2, Tent, TicketPercent, UserCog, UsersRound, type LucideIcon } from "lucide-react";
 import { MfaManager, type MfaStatus } from "@/components/mfa-manager";
 import { SessionManager } from "@/components/session-manager";
 import { getMfaStatus } from "@/modules/access/mfa-service";
@@ -15,6 +15,29 @@ import { canManageClubAssignments } from "@/modules/club-registrations/assignmen
 
 export const metadata: Metadata = { title: "More" };
 
+/** Related destinations sit together (#428): Events, Clubs and churches, People, Finance, Communications, System. */
+const foundationGroupOrder = ["events", "clubs", "people", "finance", "communications", "system"] as const;
+type FoundationGroup = (typeof foundationGroupOrder)[number];
+const foundationGroupLabels: Record<FoundationGroup, string> = {
+  events: "Events",
+  clubs: "Clubs and churches",
+  people: "People",
+  finance: "Finance",
+  communications: "Communications",
+  system: "System",
+};
+
+type FoundationCard = {
+  key: string;
+  group: FoundationGroup;
+  allowed: boolean;
+  href: string;
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  cta: string;
+};
+
 export default async function MorePage({ searchParams }: { searchParams: Promise<{ event?: string }> }) {
   const { event: requested } = await searchParams;
   const { event, permissions, user } = await resolveEventContext(requested);
@@ -23,25 +46,45 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
   const sessions = await listUserSessions(user.id, sessionToken);
   const mfaStatus = await getMfaStatus(user.id) as MfaStatus;
   const { allowed: clubOversight, clubEvent } = await resolveClubOversight(event.id);
+  const q = `?event=${event.id}`;
+
+  const cards: FoundationCard[] = [
+    { key: "event-settings", group: "events", allowed: permissions.includes("CONFIGURE_EVENT"), href: `/more/event-settings${q}`, icon: Settings2, title: "Event settings", description: "Edit dates, location, capacity, registration availability, and publishing.", cta: "Open settings" },
+    { key: "honors", group: "events", allowed: permissions.includes("CONFIGURE_EVENT"), href: `/more/honors${q}`, icon: Award, title: "Honors Weekend classes", description: "Name this site's sessions and set the honor classes, seats, and age limits it offers.", cta: "Set up classes" },
+    { key: "event-content", group: "events", allowed: permissions.includes("CONFIGURE_EVENT"), href: `/more/event-content${q}`, icon: FileText, title: "Event page", description: "Speaker bios, seminar descriptions, lodging, schedules, and downloads shown publicly.", cta: "Edit page" },
+    { key: "registration-builder", group: "events", allowed: permissions.includes("MANAGE_FORMS"), href: `/registration-builder${q}`, icon: PanelsTopLeft, title: "Registration form", description: "Build, test, and publish the form people use to register.", cta: "Open form builder" },
+    { key: "program-assignments", group: "events", allowed: canManageProgramAssignments(permissions), href: `/more/program-assignments${q}`, icon: ListChecks, title: "Seminar assignments", description: "Turn attendee rankings and room limits into reviewed, printable session rosters.", cta: "Preview assignments" },
+    { key: "clubs", group: "clubs", allowed: clubOversight, href: `/more/clubs${q}`, icon: UsersRound, title: "Clubs", description: "Every registered club's roster (ages only) and all clubs' monthly reports, view only.", cta: "Open clubs" },
+    { key: "club-assignments", group: "clubs", allowed: clubEvent && canManageClubAssignments(permissions), href: `/more/club-assignments${q}`, icon: Tent, title: "Club assignments", description: "Set each registered club's campsite, duty, and activity, then email directors after review.", cta: "Assign clubs" },
+    { key: "imports", group: "people", allowed: permissions.includes("MANAGE_IMPORTS"), href: `/imports${q}`, icon: FileUp, title: "Import registrations", description: "Preview a CSV, review every change, then import approved records.", cta: "Open imports" },
+    { key: "staff", group: "people", allowed: permissions.includes("MANAGE_STAFF"), href: `/staff${q}`, icon: UserCog, title: "Team access", description: "Add staff and choose what each person can do for this event.", cta: "Manage team" },
+    { key: "promo-codes", group: "finance", allowed: permissions.includes("MANAGE_FINANCE"), href: `/more/promo-codes${q}`, icon: TicketPercent, title: "Promo codes", description: "Create bounded registration discounts, schedule dates, and review use limits.", cta: "Manage discounts" },
+    { key: "community", group: "communications", allowed: permissions.includes("MANAGE_COMMUNICATIONS"), href: `/community${q}`, icon: MessagesSquare, title: "Attendee community", description: "Open or pause discussion, review attendee reports, and moderate posts and replies.", cta: "Moderate community" },
+    { key: "health", group: "system", allowed: canAccessOperationalHealth(permissions), href: `/more/health${q}`, icon: HeartPulse, title: "Operational health", description: "Review failed or delayed work, open balances, import exceptions, and capacity warnings.", cta: "Review exceptions" },
+    { key: "reports", group: "system", allowed: permissions.includes("VIEW_REPORTS"), href: `/more/reports${q}`, icon: ChartNoAxesCombined, title: "Operational reports", description: "Print active attendee rosters and review meal, housing, and ranked seminar totals.", cta: "Open reports" },
+  ];
+  const visibleGroups = foundationGroupOrder
+    .map((group) => ({ group, cards: cards.filter((card) => card.group === group && card.allowed) }))
+    .filter(({ cards: groupCards }) => groupCards.length > 0);
 
   return (
     <section className="page-stack">
       <div className="page-intro"><div><p className="eyebrow">Event administration</p><h2>Settings & activity</h2><p>Choose a task or review recent changes for {event.name}.</p></div></div>
-      <div className="foundation-grid">
-        {canAccessOperationalHealth(permissions) && <Link className="panel foundation-card" href={`/more/health?event=${event.id}`}><span><HeartPulse aria-hidden="true" size={21} /></span><h3>Operational health</h3><p>Review failed or delayed work, open balances, import exceptions, and capacity warnings.</p><small>Review exceptions</small></Link>}
-        {clubOversight && <Link className="panel foundation-card" href={`/more/clubs?event=${event.id}`}><span><UsersRound aria-hidden="true" size={21} /></span><h3>Clubs</h3><p>Every registered club&apos;s roster (ages only) and all clubs&apos; monthly reports, view only.</p><small>Open clubs</small></Link>}
-        {permissions.includes("VIEW_REPORTS") && <Link className="panel foundation-card" href={`/more/reports?event=${event.id}`}><span><ChartNoAxesCombined aria-hidden="true" size={21} /></span><h3>Operational reports</h3><p>Print active attendee rosters and review meal, housing, and ranked seminar totals.</p><small>Open reports</small></Link>}
-        {canManageProgramAssignments(permissions) && <Link className="panel foundation-card" href={`/more/program-assignments?event=${event.id}`}><span><ListChecks aria-hidden="true" size={21} /></span><h3>Seminar assignments</h3><p>Turn attendee rankings and room limits into reviewed, printable session rosters.</p><small>Preview assignments</small></Link>}
-        {clubEvent && canManageClubAssignments(permissions) && <Link className="panel foundation-card" href={`/more/club-assignments?event=${event.id}`}><span><Tent aria-hidden="true" size={21} /></span><h3>Club assignments</h3><p>Set each registered club&apos;s campsite, duty, and activity, then email directors after review.</p><small>Assign clubs</small></Link>}
-        {permissions.includes("MANAGE_COMMUNICATIONS") && <Link className="panel foundation-card" href={`/community?event=${event.id}`}><span><MessagesSquare aria-hidden="true" size={21} /></span><h3>Attendee community</h3><p>Open or pause discussion, review attendee reports, and moderate posts and replies.</p><small>Moderate community</small></Link>}
-        {permissions.includes("MANAGE_FINANCE") && <Link className="panel foundation-card" href={`/more/promo-codes?event=${event.id}`}><span><TicketPercent aria-hidden="true" size={21} /></span><h3>Promo codes</h3><p>Create bounded registration discounts, schedule dates, and review use limits.</p><small>Manage discounts</small></Link>}
-        {permissions.includes("CONFIGURE_EVENT") && <Link className="panel foundation-card" href={`/more/event-settings?event=${event.id}`}><span><Settings2 aria-hidden="true" size={21} /></span><h3>Event settings</h3><p>Edit dates, location, capacity, registration availability, and publishing.</p><small>Open settings</small></Link>}
-        {permissions.includes("CONFIGURE_EVENT") && <Link className="panel foundation-card" href={`/more/honors?event=${event.id}`}><span><Award aria-hidden="true" size={21} /></span><h3>Honors Weekend classes</h3><p>Name this site&apos;s sessions and set the honor classes, seats, and age limits it offers.</p><small>Set up classes</small></Link>}
-        {permissions.includes("CONFIGURE_EVENT") && <Link className="panel foundation-card" href={`/more/event-content?event=${event.id}`}><span><FileText aria-hidden="true" size={21} /></span><h3>Event page</h3><p>Speaker bios, seminar descriptions, lodging, schedules, and downloads shown publicly.</p><small>Edit page</small></Link>}
-        {permissions.includes("MANAGE_FORMS") && <Link className="panel foundation-card" href={`/registration-builder?event=${event.id}`}><span><PanelsTopLeft aria-hidden="true" size={21} /></span><h3>Registration form</h3><p>Build, test, and publish the form people use to register.</p><small>Open form builder</small></Link>}
-        {permissions.includes("MANAGE_IMPORTS") && <Link className="panel foundation-card" href={`/imports?event=${event.id}`}><span><FileUp aria-hidden="true" size={21} /></span><h3>Import registrations</h3><p>Preview a CSV, review every change, then import approved records.</p><small>Open imports</small></Link>}
-        {permissions.includes("MANAGE_STAFF") && <Link className="panel foundation-card" href={`/staff?event=${event.id}`}><span><UserCog aria-hidden="true" size={21} /></span><h3>Team access</h3><p>Add staff and choose what each person can do for this event.</p><small>Manage team</small></Link>}
-      </div>
+      {visibleGroups.map(({ group, cards: groupCards }) => (
+        <section aria-label={foundationGroupLabels[group]} className="foundation-group" key={group}>
+          <h3 className="foundation-group-label">{foundationGroupLabels[group]}</h3>
+          <div className="foundation-grid">
+            {groupCards.map((card) => (
+              <Link className="panel foundation-card" href={card.href} key={card.key}>
+                <span><card.icon aria-hidden="true" size={21} /></span>
+                <h3>{card.title}</h3>
+                <p>{card.description}</p>
+                <small>{card.cta}</small>
+              </Link>
+            ))}
+          </div>
+        </section>
+      ))}
       {permissions.includes("VIEW_REPORTS") && <section className="panel"><div className="section-heading"><div><p className="eyebrow">Audit trail</p><h2>Recent activity</h2></div><span className="count-badge"><Activity aria-hidden="true" size={16} /> {activity.length} {activity.length === 1 ? "entry" : "entries"}</span></div><div className="activity-list">{activity.map((entry) => <article className="activity-row" key={entry.id}><span className="activity-icon"><Activity aria-hidden="true" size={16} /></span><span><strong>{entry.summary}</strong><small>{entry.actorName} · {new Date(entry.createdAt).toLocaleString()}</small></span><code>{entry.action}</code></article>)}{activity.length === 0 && <p className="quiet-copy">No activity has been recorded for this event.</p>}</div></section>}
       <MfaManager initialStatus={mfaStatus} />
       <SessionManager initialSessions={sessions} idleTimeoutSeconds={SESSION_IDLE_TIMEOUT_SECONDS} />

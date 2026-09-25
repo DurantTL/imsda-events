@@ -541,6 +541,18 @@ select:focus-visible {
 
 .primary-nav { display: grid; gap: 6px; }
 
+/* Groups the sidebar's destinations (#428): Events, People, Finance, Communications. */
+.nav-group-label {
+  margin: 10px 0 -2px;
+  padding: 0 13px;
+  color: #7d97a2;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.nav-group-label:first-child { margin-top: 2px; }
+
 .nav-item {
   display: flex;
   align-items: center;
@@ -1569,6 +1581,9 @@ select:focus-visible {
 .audience-panel .announcement-icon { margin-bottom: 18px; }
 .audience-panel ul { margin: 15px 0 0; padding-left: 18px; color: var(--muted); font-size: 0.7rem; line-height: 1.9; }
 
+/* Groups the More page's destinations (#428): Events, Clubs and churches, People, Finance, Communications, System. */
+.foundation-group + .foundation-group { margin-top: 22px; }
+.foundation-group-label { margin: 0 0 10px; color: var(--muted); font-size: 0.68rem; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase; }
 .foundation-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .foundation-card > span:first-child { display: grid; width: 39px; height: 39px; place-items: center; border-radius: 12px; background: var(--imsda-navy-soft); color: var(--imsda-navy); }
 .foundation-card h3 { margin: 17px 0 6px; font-size: 0.82rem; }

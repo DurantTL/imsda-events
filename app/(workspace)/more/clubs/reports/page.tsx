@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { AccessRestricted } from "@/components/access-restricted";
+import { BackLink } from "@/components/back-link";
 import { ClubReportsConference } from "@/components/club-reports-conference";
 import { calendarDateIn } from "@/modules/calendar/domain";
 import { resolveClubOversight } from "@/modules/club-rosters/event-oversight";
@@ -19,7 +19,7 @@ export default async function EventClubReportsPage({ searchParams }: { searchPar
   const clubYear = clubYearFor(now);
   return (
     <>
-      <Link className="secondary-button more-back-link" href={`/more/clubs?event=${event.id}`}>Back to clubs</Link>
+      <BackLink href={`/more/clubs?event=${event.id}`} variant="staff">Back to clubs</BackLink>
       <ClubReportsConference
         clubYear={clubYear}
         initialClubs={await listClubReportsForYear(clubYear)}

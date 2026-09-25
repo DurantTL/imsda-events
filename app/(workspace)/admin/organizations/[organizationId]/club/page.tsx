@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { Eye, IdCard, UserCog } from "lucide-react";
 import { ActAsButton } from "@/components/act-as-button";
+import { BackLink } from "@/components/back-link";
 import { ClubOverview } from "@/components/club-overview";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { getPrisma } from "@/lib/prisma";
@@ -25,17 +26,17 @@ export default async function StaffOpenClubPage({ params }: { params: Promise<{ 
     select: { type: true, name: true, isActive: true, parentOrganization: { select: { name: true } } },
   });
   if (!club || club.type !== "CLUB") notFound();
+  const selfHref = `/admin/organizations/${organizationId}/club`;
+  const fromHere = `?from=${encodeURIComponent(selfHref)}`;
 
   return (
     <section className="page-stack">
       <div className="intro-actions club-admin-links">
-        <Link className="secondary-button more-back-link" href="/admin/organizations">
-          Back to churches and clubs
-        </Link>
-        <Link className="secondary-button" href={`/admin/organizations/${organizationId}/directors`}>
+        <BackLink href="/admin/organizations" variant="staff">Back to churches and clubs</BackLink>
+        <Link className="secondary-button" href={`/admin/organizations/${organizationId}/directors${fromHere}`}>
           <UserCog aria-hidden="true" size={14} /> Club admins
         </Link>
-        <Link className="secondary-button" href={`/admin/organizations/${organizationId}/profile`}>
+        <Link className="secondary-button" href={`/admin/organizations/${organizationId}/profile${fromHere}`}>
           <IdCard aria-hidden="true" size={14} /> Profile
         </Link>
         <ActAsButton
@@ -66,7 +67,7 @@ export default async function StaffOpenClubPage({ params }: { params: Promise<{ 
         backgroundChecks={{ includeNotes: true }}
         birthDatesEndpoint={`/api/admin/organizations/${encodeURIComponent(organizationId)}/roster/birth-dates`}
         organizationId={organizationId}
-        reportHref={(month) => `/admin/clubs/reports/${organizationId}/${month}`}
+        reportHref={(month) => `/admin/clubs/reports/${organizationId}/${month}${fromHere}`}
         reportsEditable
       />
     </section>
