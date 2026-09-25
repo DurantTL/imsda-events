@@ -1,0 +1,143 @@
+.layout {
+  display: grid;
+  gap: 16px;
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px 14px;
+  color: var(--muted);
+  max-width: 420px;
+}
+
+.search input {
+  border: none;
+  outline: none;
+  flex: 1;
+  font-size: 0.95rem;
+  color: var(--ink);
+  background: transparent;
+}
+
+.content {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.mapLoading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 360px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: #eef2f4;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.clubButton {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.clubButton.selected {
+  border-color: var(--imsda-purple, #4a2e83);
+  background: #f6f1fb;
+}
+
+.clubIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #f1eefb;
+  color: var(--imsda-purple, #4a2e83);
+  flex-shrink: 0;
+}
+
+.clubText {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.clubText strong {
+  font-size: 0.94rem;
+}
+
+.clubText small {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.details {
+  display: grid;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #fafafa;
+  border: 1px solid var(--line);
+}
+
+.details > div {
+  display: flex;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+
+.details dt {
+  color: var(--muted);
+  min-width: 60px;
+}
+
+.details dd {
+  margin: 0;
+  color: var(--ink);
+}
+
+.empty {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.selectionNote {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin: 0;
+}
+
+@media (max-width: 800px) {
+  .content {
+    grid-template-columns: 1fr;
+  }
+}

@@ -114,4 +114,13 @@ describe("compiled Content Security Policy", () => {
       expect(policy).toContain("form-action 'self'");
     }
   });
+
+  it("permits OpenStreetMap tiles for the club map (#437)", async () => {
+    const policies = await compiledContentSecurityPolicies();
+    for (const policy of policies) {
+      expect(directiveSources(policy, "img-src")).toEqual(
+        expect.arrayContaining(["https://tile.openstreetmap.org"]),
+      );
+    }
+  });
 });

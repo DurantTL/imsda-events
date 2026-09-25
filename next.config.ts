@@ -23,7 +23,7 @@ function contentSecurityPolicy(frameAncestors: string) {
     "default-src 'self'",
     `script-src 'self' 'unsafe-inline' ${squareWebOrigins}${isDevelopment ? " 'unsafe-eval'" : ""}`,
     `style-src 'self' 'unsafe-inline' ${squareWebOrigins}`,
-    "img-src 'self' blob: data:",
+    "img-src 'self' blob: data: https://tile.openstreetmap.org",
     `font-src 'self' data: ${squareFontOrigins}`,
     `connect-src 'self' ${squareWebOrigins} ${squarePciOrigins} ${squareTelemetryOrigin}`,
     `frame-src 'self' ${squareWebOrigins}`,

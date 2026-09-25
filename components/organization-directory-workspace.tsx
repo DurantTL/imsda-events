@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { BadgeCheck, Building2, Church, Eye, IdCard, Link2, Pencil, Plus, Save, ShieldCheck, Trash2, UserCog, UsersRound, X } from "lucide-react";
+import { BadgeCheck, Building2, Church, Eye, IdCard, Link2, MapPin, Pencil, Plus, Save, ShieldCheck, Trash2, UserCog, UsersRound, X } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import {
   externalSystemLabels,
@@ -364,6 +364,15 @@ export function OrganizationDirectoryWorkspace({
                   >
                     <Pencil aria-hidden="true" size={14} /> Edit
                   </button>
+                  {organization.type === "CHURCH" && (
+                    <Link
+                      aria-label={`Location for ${organization.name}`}
+                      className="secondary-button"
+                      href={`/admin/organizations/${organization.id}/location`}
+                    >
+                      <MapPin aria-hidden="true" size={14} /> Location
+                    </Link>
+                  )}
                   {organization.type === "CLUB" && (
                     <>
                       <Link
