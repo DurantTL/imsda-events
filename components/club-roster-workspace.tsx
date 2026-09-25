@@ -299,6 +299,8 @@ export function ClubRosterWorkspace({
                             <td data-label="Role">{member.role || "—"}</td>
                             <td data-label="Gender">{member.gender ? clubRosterGenderLabels[member.gender] : "—"}</td>
                             <td className="roster-card-flags" data-label="Flags">
+                              {/* The flex layout lives on this wrapper: a td that is itself flex stops being a table cell and drifts out of line (#435). */}
+                              <div className="roster-flag-list">
                               {member.status === "INACTIVE" && (
                                 <span className="status-chip gold">{clubRosterStatusLabels.INACTIVE}</span>
                               )}
@@ -308,6 +310,7 @@ export function ClubRosterWorkspace({
                                 </span>
                               )}
                               {member.status === "ACTIVE" && missing.length === 0 && "—"}
+                              </div>
                             </td>
                             {complianceStatuses && (
                               <td data-label="Background check">
@@ -323,13 +326,15 @@ export function ClubRosterWorkspace({
                                 ) : "—"}
                               </td>
                             )}
-                            {!readOnly && <td className="honor-row-actions roster-card-actions" data-label="Actions">
+                            {!readOnly && <td className="roster-card-actions" data-label="Actions">
+                              <div className="honor-row-actions">
                               <button aria-label={`Edit ${member.firstName} ${member.lastName}`} className="secondary-button" disabled={saving} onClick={() => openDialog(member)} type="button">
                                 <Pencil aria-hidden="true" size={13} />
                               </button>
                               <button aria-label={`Remove ${member.firstName} ${member.lastName}`} className="secondary-button" disabled={saving} onClick={() => remove(member)} type="button">
                                 <Trash2 aria-hidden="true" size={13} />
                               </button>
+                              </div>
                             </td>}
                           </tr>
                         );

@@ -6953,7 +6953,9 @@ select:focus-visible {
   background: #f6f9fa; padding: 8px 13px; color: var(--ink); font-size: 0.8rem; font-weight: 700; text-align: left;
 }
 .roster-section-empty-row td { color: var(--muted); font-style: italic; }
-.roster-card-flags { display: flex; flex-wrap: wrap; gap: 4px; align-items: flex-start; }
+.roster-flag-list { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+/* Every roster cell stays a real table cell and centres on the row, so borders and baselines line up (#435). */
+.roster-card-table td { vertical-align: middle; }
 .club-team-list li { flex-wrap: wrap; align-items: center; }
 .club-team-list li > span:first-child { min-width: 180px; }
 .club-team-list li > .status-chip { flex: 0 0 auto; }
@@ -7026,6 +7028,7 @@ select:focus-visible {
   .roster-card-table .roster-card-name[data-label]::before { content: none; }
   .roster-card-table td.roster-card-flags[data-label]::before { padding-top: 2px; }
   .roster-card-table td.roster-card-actions { display: flex; width: 100%; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+  .roster-card-table td.roster-card-actions .honor-row-actions { gap: 8px; }
   .roster-card-table .roster-card-actions .secondary-button { min-width: 44px; min-height: 44px; }
   .roster-card-table .roster-section-heading { margin: 14px 0 4px; padding: 0; background: transparent; border: 0; font-size: 0.95rem; }
   .roster-card-table .roster-section-empty-row td { padding: 0 0 8px; }
