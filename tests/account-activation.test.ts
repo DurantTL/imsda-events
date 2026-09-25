@@ -21,6 +21,7 @@ const knownPassword = "correct-horse-battery-staple";
 function prismaFixture(overrides: {
   user?: Record<string, unknown> | null;
   resetToken?: Record<string, unknown> | null;
+  activePasskeys?: number;
 } = {}) {
   const tx = {
     passwordResetToken: {
@@ -30,6 +31,8 @@ function prismaFixture(overrides: {
     authCredential: { update: vi.fn().mockResolvedValue({}) },
     user: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     userSession: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    userPasskey: { updateMany: vi.fn().mockResolvedValue({ count: overrides.activePasskeys ?? 0 }) },
+    auditLog: { create: vi.fn().mockResolvedValue({}) },
   };
   const prisma = {
     user: {
@@ -227,6 +230,47 @@ describe("completing a token activates the account", () => {
       data: { accountStatus: "ACTIVE", activatedAt: expect.any(Date) },
     });
     expect(tx.userSession.updateMany).toHaveBeenCalledOnce();
+  });
+
+  it("revokes every staff passkey on a password reset, and audits the count (#453)", async () => {
+    const { tx } = prismaFixture({
+      resetToken: {
+        id: "tok-1",
+        userId: "user-1",
+        purpose: "PASSWORD_RESET",
+        expiresAt: new Date(Date.now() + 60_000),
+        usedAt: null,
+      },
+      activePasskeys: 2,
+    });
+
+    expect(await resetPassword("raw-token", knownPassword)).toBe(true);
+    expect(tx.userPasskey.updateMany).toHaveBeenCalledWith({
+      where: { userId: "user-1", revokedAt: null },
+      data: { revokedAt: expect.any(Date) },
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "USER_PASSKEYS_REVOKED_ON_PASSWORD_RESET",
+        metadata: { passkeysRevoked: 2 },
+      }),
+    });
+  });
+
+  it("writes no passkey audit entry when there were none to revoke", async () => {
+    const { tx } = prismaFixture({
+      resetToken: {
+        id: "tok-1",
+        userId: "user-1",
+        purpose: "PASSWORD_RESET",
+        expiresAt: new Date(Date.now() + 60_000),
+        usedAt: null,
+      },
+    });
+
+    expect(await resetPassword("raw-token", knownPassword)).toBe(true);
+    expect(tx.userPasskey.updateMany).toHaveBeenCalledOnce();
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
   });
 
   it("rejects an expired or already-used token", async () => {

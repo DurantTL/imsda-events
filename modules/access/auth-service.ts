@@ -6,6 +6,7 @@ import { hashPassword, spendPasswordCheck, verifyPassword } from "@/modules/acce
 import { createDatabaseSession } from "@/modules/access/session-store";
 import { mfaGateFor } from "@/modules/access/mfa-rules";
 import { createOpaqueToken, hashOpaqueToken } from "@/modules/access/tokens";
+import { writeAuditLog } from "@/modules/audit/audit-service";
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_MINUTES = 15;
@@ -298,6 +299,23 @@ export async function resetPassword(token: string, password: string) {
       where: { userId: reset.userId, revokedAt: null },
       data: { revokedAt: now },
     });
+    // A reset (often after a suspected compromise) removes every way in, not
+    // only the password: staff passkeys are revoked too, and added again after
+    // signing in (#453). A password lockout still blocks passkey sign-in.
+    const passkeys = await tx.userPasskey.updateMany({
+      where: { userId: reset.userId, revokedAt: null },
+      data: { revokedAt: now },
+    });
+    if (passkeys.count > 0) {
+      await writeAuditLog({
+        actorUserId: reset.userId,
+        action: "USER_PASSKEYS_REVOKED_ON_PASSWORD_RESET",
+        entityType: "User",
+        entityId: reset.userId,
+        summary: `Password reset revoked ${passkeys.count} staff passkey${passkeys.count === 1 ? "" : "s"}.`,
+        metadata: { passkeysRevoked: passkeys.count },
+      }, tx);
+    }
     return true;
   });
 }
