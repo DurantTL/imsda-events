@@ -6,6 +6,7 @@ import { getPrisma } from "@/lib/prisma";
 import { getServerEnv } from "@/lib/env";
 import { openSecret, sealSecret } from "@/lib/secret-box";
 import { writeAuditLog } from "@/modules/audit/audit-service";
+import { dispatchLockoutEmails } from "@/modules/communications/lockout-email";
 import { createDatabaseSession } from "@/modules/access/session-store";
 import { createOpaqueToken, hashOpaqueToken } from "@/modules/access/tokens";
 import { mfaGateFor, requiresMfa, type MfaGate } from "@/modules/access/mfa-rules";
@@ -29,7 +30,10 @@ import {
 const SECRET_PURPOSE = "mfa-totp-secret";
 const CHALLENGE_LIFETIME_MINUTES = 10;
 const MAX_CHALLENGE_ATTEMPTS = 5;
-const MAX_VERIFY_FAILURES = 5;
+// Decision 2026-09-25 (#456): three wrong codes, not five, lock the second
+// factor for fifteen minutes — covers both an authenticator code and a
+// recovery code, at sign-in and in the passkey-change proof.
+const MAX_VERIFY_FAILURES = 3;
 const VERIFY_LOCK_MINUTES = 15;
 const RECOVERY_CODE_COUNT = 10;
 
@@ -303,20 +307,29 @@ async function consumeSecondFactor(
   return { valid: false };
 }
 
-/** Counts a wrong code toward the authenticator's lockout. */
-async function recordFailedCode(enrollmentId: string, now: Date) {
+/**
+ * Counts a wrong code toward the authenticator's lockout, and — on the exact
+ * attempt that crosses into locked, never on the ones before it or the ones
+ * made while already locked — sends the lockout email (#456).
+ */
+async function recordFailedCode(userId: string, enrollmentId: string, now: Date) {
   const failedAttempts = await getPrisma().userMfaEnrollment.update({
     where: { id: enrollmentId },
     data: { failedAttempts: { increment: 1 } },
     select: { failedAttempts: true },
   });
   if (failedAttempts.failedAttempts >= MAX_VERIFY_FAILURES) {
+    const lockedUntil = new Date(now.getTime() + VERIFY_LOCK_MINUTES * 60 * 1000);
     await getPrisma().userMfaEnrollment.update({
       where: { id: enrollmentId },
-      data: {
-        lockedUntil: new Date(now.getTime() + VERIFY_LOCK_MINUTES * 60 * 1000),
-        failedAttempts: 0,
-      },
+      data: { lockedUntil, failedAttempts: 0 },
+    });
+    await dispatchLockoutEmails({
+      audience: "STAFF",
+      kind: "CODE",
+      accountUserId: userId,
+      lockedUntil,
+      now,
     });
   }
 }
@@ -338,7 +351,7 @@ export async function verifySecondFactorForChange(userId: string, code: string, 
 
   const accepted = await consumeSecondFactor(enrollment, code, now);
   if (!accepted.valid) {
-    await recordFailedCode(enrollment.id, now);
+    await recordFailedCode(userId, enrollment.id, now);
     return false;
   }
   if (accepted.usedRecoveryCode) {
@@ -516,7 +529,7 @@ export async function completeMfaChallenge(
   }
 
   if (!accepted.valid) {
-    await recordFailedCode(enrollment.id, now);
+    await recordFailedCode(challenge.userId, enrollment.id, now);
     throw new MfaError("MFA_CODE_INVALID", "That code is not right. Try the next one.");
   }
 

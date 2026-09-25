@@ -7,6 +7,7 @@ import { createDatabaseSession } from "@/modules/access/session-store";
 import { mfaGateFor } from "@/modules/access/mfa-rules";
 import { createOpaqueToken, hashOpaqueToken } from "@/modules/access/tokens";
 import { writeAuditLog } from "@/modules/audit/audit-service";
+import { dispatchLockoutEmails } from "@/modules/communications/lockout-email";
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_MINUTES = 15;
@@ -78,7 +79,7 @@ export async function authenticateWithPassword(
     return null;
   }
 
-  if (!(await checkPasswordWithLockout(user.credential, password))) return null;
+  if (!(await checkPasswordWithLockout(user.credential, user.id, password))) return null;
 
   const subject = {
     globalRole: user.globalRole,
@@ -114,8 +115,15 @@ type LockableCredential = {
  * The one password check, shared by sign-in and by the confirm-it's-you step
  * on sign-in changes (#429): a disabled or locked credential never verifies,
  * a wrong password counts toward the lockout, and a right one clears it.
+ *
+ * The lockout email (#456) is sent from here, the one place both callers
+ * cross through, exactly on the attempt that sets `lockedUntil` — never on an
+ * attempt that finds the account already locked (that path returns above,
+ * before this function is reached) and never on an attempt that merely
+ * increments the counter without crossing it. That is what keeps it to one
+ * email per lockout.
  */
-async function checkPasswordWithLockout(credential: LockableCredential, password: string) {
+async function checkPasswordWithLockout(credential: LockableCredential, userId: string, password: string) {
   if (credential.disabledAt || (credential.lockedUntil && credential.lockedUntil > new Date())) {
     await spendPasswordCheck(password);
     return false;
@@ -124,15 +132,23 @@ async function checkPasswordWithLockout(credential: LockableCredential, password
   const valid = await verifyPassword(password, credential.passwordHash);
   if (!valid) {
     const failedAttempts = credential.failedAttempts + 1;
+    const now = new Date();
+    const lockedUntil = failedAttempts >= MAX_FAILED_ATTEMPTS
+      ? new Date(now.getTime() + LOCK_MINUTES * 60 * 1000)
+      : null;
     await getPrisma().authCredential.update({
       where: { id: credential.id },
-      data: {
-        failedAttempts,
-        lockedUntil: failedAttempts >= MAX_FAILED_ATTEMPTS
-          ? new Date(Date.now() + LOCK_MINUTES * 60 * 1000)
-          : null,
-      },
+      data: { failedAttempts, lockedUntil },
     });
+    if (lockedUntil) {
+      await dispatchLockoutEmails({
+        audience: "STAFF",
+        kind: "PASSWORD",
+        accountUserId: userId,
+        lockedUntil,
+        now,
+      });
+    }
     return false;
   }
 
@@ -163,7 +179,7 @@ export async function verifyCurrentPassword(userId: string, password: string): P
     await spendPasswordCheck(password);
     return false;
   }
-  return checkPasswordWithLockout(user.credential, password);
+  return checkPasswordWithLockout(user.credential, userId, password);
 }
 
 /**

@@ -5,6 +5,7 @@ const dependencies = vi.hoisted(() => ({
   getServerEnv: vi.fn(),
   sealSecret: vi.fn(),
   openSecret: vi.fn(),
+  dispatchLockoutEmails: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -13,6 +14,9 @@ vi.mock("@/lib/env", () => ({ getServerEnv: dependencies.getServerEnv }));
 vi.mock("@/lib/secret-box", () => ({
   sealSecret: dependencies.sealSecret,
   openSecret: dependencies.openSecret,
+}));
+vi.mock("@/modules/communications/lockout-email", () => ({
+  dispatchLockoutEmails: dependencies.dispatchLockoutEmails,
 }));
 
 import {
@@ -122,5 +126,70 @@ describe("attendee authenticator enrollment", () => {
       lastVerifiedAt: null,
       unusedRecoveryCodes: 0,
     });
+  });
+});
+
+describe("the second-factor lockout (#456)", () => {
+  function enrollmentFixture(overrides: { failedAttempts?: number; lockedUntil?: Date | null } = {}) {
+    let failedAttempts = overrides.failedAttempts ?? 0;
+    prisma.attendeeMfaEnrollment.findUnique.mockResolvedValue({
+      id: "mfa-1",
+      status: "ACTIVE",
+      sealedSecret: "sealed-secret",
+      lastUsedStep: null,
+      lockedUntil: overrides.lockedUntil ?? null,
+    });
+    prisma.attendeeMfaEnrollment.update.mockImplementation(async (query: { data: Record<string, unknown> }) => {
+      const increment = query.data.failedAttempts as { increment?: number } | undefined;
+      if (increment && typeof increment === "object" && "increment" in increment) {
+        failedAttempts += 1;
+        return { failedAttempts };
+      }
+      return {};
+    });
+  }
+
+  it("locks after three wrong codes, not five", async () => {
+    enrollmentFixture();
+
+    await expect(verifyAttendeeSecondFactor("acct-1", "000001", NOW))
+      .rejects.toMatchObject({ code: "MFA_CODE_INVALID" });
+    await expect(verifyAttendeeSecondFactor("acct-1", "000002", NOW))
+      .rejects.toMatchObject({ code: "MFA_CODE_INVALID" });
+    expect(dependencies.dispatchLockoutEmails).not.toHaveBeenCalled();
+
+    await expect(verifyAttendeeSecondFactor("acct-1", "000003", NOW))
+      .rejects.toMatchObject({ code: "MFA_CODE_INVALID" });
+    expect(dependencies.dispatchLockoutEmails).toHaveBeenCalledTimes(1);
+    expect(dependencies.dispatchLockoutEmails).toHaveBeenCalledWith({
+      audience: "ATTENDEE",
+      kind: "CODE",
+      accountAttendeeId: "acct-1",
+      lockedUntil: expect.any(Date),
+      now: NOW,
+    });
+  });
+
+  it("refuses while locked, without counting the attempt or emailing again", async () => {
+    enrollmentFixture({ lockedUntil: new Date(NOW.getTime() + 60_000) });
+
+    await expect(verifyAttendeeSecondFactor("acct-1", "000000", NOW))
+      .rejects.toMatchObject({ code: "MFA_LOCKED" });
+
+    expect(prisma.attendeeMfaEnrollment.update).not.toHaveBeenCalled();
+    expect(dependencies.dispatchLockoutEmails).not.toHaveBeenCalled();
+  });
+
+  it("clears the counter on a correct code", async () => {
+    enrollmentFixture();
+
+    await expect(verifyAttendeeSecondFactor("acct-1", totpCode(SECRET, NOW), NOW))
+      .resolves.toBeUndefined();
+
+    expect(prisma.attendeeMfaEnrollment.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ failedAttempts: 0, lockedUntil: null }),
+      }),
+    );
   });
 });

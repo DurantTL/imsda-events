@@ -4,6 +4,7 @@ import { getPrisma } from "@/lib/prisma";
 import { openSecret, sealSecret } from "@/lib/secret-box";
 import { hashPassword, spendPasswordCheck, verifyPassword } from "@/modules/access/passwords";
 import { createOpaqueToken, hashOpaqueToken } from "@/modules/access/tokens";
+import { dispatchLockoutEmails } from "@/modules/communications/lockout-email";
 import {
   ATTENDEE_PENDING_REQUEST_LIFETIME_HOURS,
   EMAIL_VERIFICATION_LIFETIME_MINUTES,
@@ -383,15 +384,26 @@ export async function authenticateAttendee(
 
   if (!await verifyPassword(password, credential.passwordHash)) {
     const failedAttempts = credential.failedAttempts + 1;
+    const now = new Date();
+    const lockedUntil = failedAttempts >= MAX_FAILED_ATTEMPTS
+      ? new Date(now.getTime() + LOCK_MINUTES * 60 * 1000)
+      : null;
     await getPrisma().attendeeCredential.update({
       where: { id: credential.id },
-      data: {
-        failedAttempts,
-        lockedUntil: failedAttempts >= MAX_FAILED_ATTEMPTS
-          ? new Date(Date.now() + LOCK_MINUTES * 60 * 1000)
-          : null,
-      },
+      data: { failedAttempts, lockedUntil },
     });
+    // Sent once, exactly on the attempt that crosses into locked — never on an
+    // attempt that finds the account already locked (returned above) or on one
+    // that only increments the counter (#456).
+    if (lockedUntil) {
+      await dispatchLockoutEmails({
+        audience: "ATTENDEE",
+        kind: "PASSWORD",
+        accountAttendeeId: account.id,
+        lockedUntil,
+        now,
+      });
+    }
     return null;
   }
 

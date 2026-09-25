@@ -9,6 +9,7 @@ const dependencies = vi.hoisted(() => ({
   revokeAllAttendeeSessions: vi.fn(),
   sealSecret: vi.fn(),
   openSecret: vi.fn(),
+  dispatchLockoutEmails: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -21,6 +22,9 @@ vi.mock("@/modules/access/passwords", () => ({
 vi.mock("@/lib/secret-box", () => ({
   sealSecret: dependencies.sealSecret,
   openSecret: dependencies.openSecret,
+}));
+vi.mock("@/modules/communications/lockout-email", () => ({
+  dispatchLockoutEmails: dependencies.dispatchLockoutEmails,
 }));
 vi.mock("@/modules/attendee-accounts/session-store", async () => {
   const actual = await vi.importActual<typeof import("@/modules/attendee-accounts/session-store")>(
@@ -606,7 +610,7 @@ describe("password sign-in", () => {
     expect(dependencies.verifyPassword).not.toHaveBeenCalled();
   });
 
-  it("locks the credential after repeated failures", async () => {
+  it("locks the credential after repeated failures, and emails once (#456)", async () => {
     prisma.attendeeAccount.findUnique.mockResolvedValue({
       id: "acct_1",
       status: "ACTIVE",
@@ -624,6 +628,50 @@ describe("password sign-in", () => {
     const update = prisma.attendeeCredential.update.mock.calls[0][0];
     expect(update.data.failedAttempts).toBe(5);
     expect(update.data.lockedUntil).toBeInstanceOf(Date);
+    expect(dependencies.dispatchLockoutEmails).toHaveBeenCalledTimes(1);
+    expect(dependencies.dispatchLockoutEmails).toHaveBeenCalledWith({
+      audience: "ATTENDEE",
+      kind: "PASSWORD",
+      accountAttendeeId: "acct_1",
+      lockedUntil: update.data.lockedUntil,
+      now: expect.any(Date),
+    });
+  });
+
+  it("sends no email on wrong passwords before the fifth (#456)", async () => {
+    prisma.attendeeAccount.findUnique.mockResolvedValue({
+      id: "acct_1",
+      status: "ACTIVE",
+      credential: {
+        id: "cred_1",
+        passwordHash: "scrypt$hash",
+        failedAttempts: 2,
+        lockedUntil: null,
+        disabledAt: null,
+      },
+    });
+    dependencies.verifyPassword.mockResolvedValue(false);
+
+    expect(await authenticateAttendee("someone@example.com", "wrong", null)).toBeNull();
+    expect(dependencies.dispatchLockoutEmails).not.toHaveBeenCalled();
+  });
+
+  it("sends no further email for an attempt made while already locked (#456)", async () => {
+    prisma.attendeeAccount.findUnique.mockResolvedValue({
+      id: "acct_1",
+      status: "ACTIVE",
+      credential: {
+        id: "cred_1",
+        passwordHash: "scrypt$hash",
+        failedAttempts: 0,
+        lockedUntil: new Date(Date.now() + 60_000),
+        disabledAt: null,
+      },
+    });
+
+    expect(await authenticateAttendee("someone@example.com", "wrong-again", null)).toBeNull();
+    expect(dependencies.dispatchLockoutEmails).not.toHaveBeenCalled();
+    expect(prisma.attendeeCredential.update).not.toHaveBeenCalled();
   });
 
   it("issues a session for a verified account and a correct password", async () => {

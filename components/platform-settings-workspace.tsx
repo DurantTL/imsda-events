@@ -15,6 +15,7 @@ type Draft = {
   defaultReplyToEmail: string;
   defaultAttendeeEditPolicy: "TIERED" | "VERIFY_EVERY_EDIT";
   passkeyRpId: string;
+  securityAlertEmail: string;
 };
 
 function draftFrom(settings: PlatformSettingsRecord): Draft {
@@ -29,6 +30,7 @@ function draftFrom(settings: PlatformSettingsRecord): Draft {
     defaultReplyToEmail: settings.defaultReplyToEmail ?? "",
     defaultAttendeeEditPolicy: settings.defaultAttendeeEditPolicy,
     passkeyRpId: settings.passkeyRpId ?? "",
+    securityAlertEmail: settings.securityAlertEmail ?? "",
   };
 }
 
@@ -125,6 +127,23 @@ export function PlatformSettingsWorkspace({
             <small>
               The site&apos;s own domain, with no https:// or path. Club directors can then use a passkey instead of an authenticator
               code. Leave blank to keep passkeys off. Changing it later makes every existing passkey stop working.
+            </small>
+          </label>
+        </section>
+
+        <section className="panel">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow"><KeyRound aria-hidden="true" size={14} /> Sign-in security</p>
+              <h2>Lockout alerts</h2>
+            </div>
+          </div>
+          <label>
+            Security alert email
+            <input type="email" placeholder="security@imsda.org" {...field("securityAlertEmail")} />
+            <small>
+              Gets a short alert whenever a staff, club leader, or attendee sign-in locks after too many wrong passwords
+              or wrong two-step codes, in addition to the account holder. Leave blank to notify only the account holder.
             </small>
           </label>
         </section>

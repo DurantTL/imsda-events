@@ -47,6 +47,11 @@ export const platformSettingsInputSchema = z.object({
     z.string().max(253).transform((value) => value.toLowerCase())
       .refine(isValidRelyingPartyId, "Enter just the domain, like events.imsda.org."),
   ),
+  /**
+   * Where the short lockout alert goes, in addition to the account holder
+   * (#456). Blank means only the account holder is emailed.
+   */
+  securityAlertEmail: optionalEmail,
 }).strict();
 
 export type PlatformSettingsInput = z.infer<typeof platformSettingsInputSchema>;
@@ -82,6 +87,7 @@ export async function getPlatformSettings(): Promise<PlatformSettingsRecord> {
     defaultReplyToEmail: row.defaultReplyToEmail,
     defaultAttendeeEditPolicy: row.defaultAttendeeEditPolicy,
     passkeyRpId: row.passkeyRpId,
+    securityAlertEmail: row.securityAlertEmail,
     updatedAt: row.updatedAt.toISOString(),
     updatedByName: row.updatedBy?.displayName ?? null,
   };
@@ -120,6 +126,7 @@ export async function updatePlatformSettings(
               defaultTimezone: before.defaultTimezone,
               defaultAttendeeEditPolicy: before.defaultAttendeeEditPolicy,
               passkeyRpId: before.passkeyRpId,
+              securityAlertEmail: before.securityAlertEmail,
             }
             : null,
           after: {
@@ -129,6 +136,7 @@ export async function updatePlatformSettings(
             defaultTimezone: input.defaultTimezone,
             defaultAttendeeEditPolicy: input.defaultAttendeeEditPolicy,
             passkeyRpId: input.passkeyRpId ?? null,
+            securityAlertEmail: input.securityAlertEmail ?? null,
           },
         },
       },

@@ -5,6 +5,7 @@ import { getPrisma } from "@/lib/prisma";
 import { getServerEnv } from "@/lib/env";
 import { openSecret, sealSecret } from "@/lib/secret-box";
 import { hashOpaqueToken } from "@/modules/access/tokens";
+import { dispatchLockoutEmails } from "@/modules/communications/lockout-email";
 import {
   generateTotpSecret,
   otpauthUri,
@@ -13,6 +14,11 @@ import {
 
 const SECRET_PURPOSE = "attendee-mfa-totp-secret";
 const RECOVERY_CODE_COUNT = 10;
+// Decision 2026-09-25 (#456): three wrong codes, not zero enforcement, lock
+// the second factor for fifteen minutes — the attendee/club-leader equivalent
+// of the staff threshold in modules/access/mfa-service.ts.
+const MAX_VERIFY_FAILURES = 3;
+const VERIFY_LOCK_MINUTES = 15;
 
 export class AttendeeMfaError extends Error {
   constructor(
@@ -20,6 +26,7 @@ export class AttendeeMfaError extends Error {
       | "MFA_NOT_ENROLLED"
       | "MFA_ALREADY_ACTIVE"
       | "MFA_CODE_INVALID"
+      | "MFA_LOCKED"
       | "MFA_REMOVAL_NOT_ALLOWED",
     message: string,
   ) {
@@ -178,7 +185,12 @@ async function consumeSecondFactor(enrollment: Enrollment, presented: string, no
         id: enrollment.id,
         OR: [{ lastUsedStep: null }, { lastUsedStep: { lt: BigInt(verified.step) } }],
       },
-      data: { lastUsedStep: BigInt(verified.step), lastVerifiedAt: now },
+      data: {
+        lastUsedStep: BigInt(verified.step),
+        lastVerifiedAt: now,
+        failedAttempts: 0,
+        lockedUntil: null,
+      },
     });
     return claimed.count === 1;
   }
@@ -193,9 +205,37 @@ async function consumeSecondFactor(enrollment: Enrollment, presented: string, no
   if (recovery.count !== 1) return false;
   await getPrisma().attendeeMfaEnrollment.update({
     where: { id: enrollment.id },
-    data: { lastVerifiedAt: now },
+    data: { lastVerifiedAt: now, failedAttempts: 0, lockedUntil: null },
   });
   return true;
+}
+
+/**
+ * Counts a wrong code toward the second factor's lockout, and — on the exact
+ * attempt that crosses into locked, never before it and never while already
+ * locked — sends the lockout email (#456). Mirrors `recordFailedCode` in
+ * modules/access/mfa-service.ts for staff.
+ */
+async function recordFailedCode(accountId: string, enrollmentId: string, now: Date) {
+  const failedAttempts = await getPrisma().attendeeMfaEnrollment.update({
+    where: { id: enrollmentId },
+    data: { failedAttempts: { increment: 1 } },
+    select: { failedAttempts: true },
+  });
+  if (failedAttempts.failedAttempts >= MAX_VERIFY_FAILURES) {
+    const lockedUntil = new Date(now.getTime() + VERIFY_LOCK_MINUTES * 60 * 1000);
+    await getPrisma().attendeeMfaEnrollment.update({
+      where: { id: enrollmentId },
+      data: { lockedUntil, failedAttempts: 0 },
+    });
+    await dispatchLockoutEmails({
+      audience: "ATTENDEE",
+      kind: "CODE",
+      accountAttendeeId: accountId,
+      lockedUntil,
+      now,
+    });
+  }
 }
 
 export async function verifyAttendeeSecondFactor(
@@ -205,7 +245,7 @@ export async function verifyAttendeeSecondFactor(
 ) {
   const enrollment = await getPrisma().attendeeMfaEnrollment.findUnique({
     where: { accountId },
-    select: { id: true, status: true, sealedSecret: true, lastUsedStep: true },
+    select: { id: true, status: true, sealedSecret: true, lastUsedStep: true, lockedUntil: true },
   });
   if (enrollment?.status !== "ACTIVE") {
     throw new AttendeeMfaError(
@@ -213,7 +253,14 @@ export async function verifyAttendeeSecondFactor(
       "Set up an authenticator before opening sensitive information.",
     );
   }
+  if (enrollment.lockedUntil && enrollment.lockedUntil > now) {
+    throw new AttendeeMfaError(
+      "MFA_LOCKED",
+      "Too many incorrect codes. Wait a few minutes and try again.",
+    );
+  }
   if (!await consumeSecondFactor(enrollment, code, now)) {
+    await recordFailedCode(accountId, enrollment.id, now);
     throw new AttendeeMfaError("MFA_CODE_INVALID", "That code is not right.");
   }
 }

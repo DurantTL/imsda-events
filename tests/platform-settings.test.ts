@@ -61,4 +61,18 @@ describe("platform settings input", () => {
       validInput({ deliveryMode: "EXTERNAL_EMAIL" }),
     ).success).toBe(false);
   });
+
+  it("validates the security alert email address and allows leaving it blank (#456)", () => {
+    const blank = platformSettingsInputSchema.parse(validInput({ securityAlertEmail: "" }));
+    expect(blank.securityAlertEmail).toBeNull();
+
+    const normalized = platformSettingsInputSchema.parse(
+      validInput({ securityAlertEmail: "  Security@IMSDA.org " }),
+    );
+    expect(normalized.securityAlertEmail).toBe("security@imsda.org");
+
+    expect(platformSettingsInputSchema.safeParse(
+      validInput({ securityAlertEmail: "not-an-address" }),
+    ).success).toBe(false);
+  });
 });
