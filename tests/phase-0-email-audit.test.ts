@@ -159,6 +159,22 @@ const eventFixtures: EventFixture[] = [
       { confirmationCode: "CM-DEMO-WAIT", state: "waitlisted", registrationType: "individual", attendeeSummary: "Leslie Kim — Dorm room", templateKey: "WAITLIST_JOINED" },
     ],
   },
+  {
+    formKey: "honors_weekend",
+    formName: "Honors Weekend",
+    eventName: "Honors Weekend — Camp Heritage Weekend 1",
+    eventDates: "Dates to be announced",
+    eventLocation: "Camp Heritage, Missouri",
+    contactEmail: "honors-support@example.test",
+    senderName: "Honors Weekend Team",
+    senderEmail: "honors@example.test",
+    replyToEmail: "honors-replies@example.test",
+    lodging: "",
+    registrations: [
+      { confirmationCode: "HW-DEMO-DEFERRED", state: "deferred-organization", registrationType: "group", attendeeSummary: "Cedar Valley Pathfinders — 14 club members", templateKey: null },
+      { confirmationCode: "HW-DEMO-WAIT", state: "waitlisted", registrationType: "group", attendeeSummary: "River City Pathfinders — 20 club members", templateKey: "WAITLIST_JOINED" },
+    ],
+  },
 ];
 
 const matrixMessageIds = [
@@ -231,7 +247,7 @@ function contextFor(fixture: EventFixture, registration: RegistrationFixture): M
 }
 
 describe("Phase 0 email audit fixtures", () => {
-  it("covers the seven supported form templates with synthetic registrations", () => {
+  it("covers the eight supported form templates with synthetic registrations", () => {
     expect(eventFixtures.map((fixture) => fixture.formKey)).toEqual(formTemplates.map((template) => template.key));
     expect(eventFixtures.map((fixture) => fixture.formName)).toEqual(formTemplates.map((template) => template.name));
     expect(eventFixtures.every((fixture) => fixture.registrations.length > 0)).toBe(true);
@@ -255,6 +271,7 @@ describe("Phase 0 email audit fixtures", () => {
     expect(states.household_interest).toEqual(["complimentary", "waitlisted"]);
     expect(states.spring_camporee_export).toEqual(["deferred-organization", "waitlisted"]);
     expect(states.camp_meeting_export).toEqual(["paid", "unpaid", "complimentary", "waitlisted"]);
+    expect(states.honors_weekend).toEqual(["deferred-organization", "waitlisted"]);
     expect(registrationTypes.simple_rsvp).toEqual(["individual", "individual"]);
     expect(registrationTypes.retreat_registration).toEqual(["group", "individual", "group"]);
     expect(registrationTypes.household_interest).toEqual(["group", "group"]);
@@ -262,6 +279,7 @@ describe("Phase 0 email audit fixtures", () => {
     expect(registrationTypes.man_camp_export).toEqual(["individual", "group", "individual", "individual"]);
     expect(registrationTypes.spring_camporee_export).toEqual(["group", "group"]);
     expect(registrationTypes.camp_meeting_export).toEqual(["individual", "group", "individual", "individual"]);
+    expect(registrationTypes.honors_weekend).toEqual(["group", "group"]);
   });
 
   it("renders every available default through the production HTML and text pipeline for every applicable registration state", () => {
