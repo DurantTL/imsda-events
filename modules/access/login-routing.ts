@@ -26,6 +26,12 @@ export type LoginRoutingInput = {
 export const SYSTEM_ADMIN_PATH = "/admin";
 export const NO_EVENTS_PATH = "/no-access";
 export const EVENT_PICKER_PATH = "/select-event";
+/**
+ * Where sign-in lands when role routing itself fails after the session is
+ * already issued — the pre-#108 destination, whose workspace layout picks an
+ * event on its own.
+ */
+export const DEFAULT_POST_LOGIN_DESTINATION = "/overview";
 
 /**
  * Decides where a signed-in staff account lands after `/login` (#108 queue

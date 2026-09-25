@@ -25,6 +25,7 @@ import {
   WalletCards,
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
+import { rememberLastUsedEvent } from "@/components/remember-last-event";
 import { SignOutButton } from "@/components/sign-out-button";
 import type { EventPermission } from "@/modules/access/permissions";
 import { operationalHealthEntryPermissions } from "@/modules/operations/access";
@@ -190,6 +191,8 @@ export function AppShell({
     for (const resourceParam of ["q", "status", "template", "version", "message", "new"]) {
       params.delete(resourceParam);
     }
+    // Remembered for the next sign-in (#108 queue 1); never blocks the switch.
+    rememberLastUsedEvent(eventId);
     router.push(`${pathname}?${params.toString()}`);
   }
 

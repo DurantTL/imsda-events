@@ -125,4 +125,18 @@ describe("resolveLoginDestination", () => {
       returnTo: "/api/admin/organizations/org_1",
     })).toBe(SYSTEM_ADMIN_PATH);
   });
+
+  it.each([
+    ["an encoded protocol-relative target", "/%2F%2Fevil.com"],
+    ["a double-encoded protocol-relative target", "/%252F%252Fevil.com"],
+    ["a backslash target", "/\\evil.com"],
+    ["an encoded backslash target", "/%5Cevil.com"],
+    ["an encoded API route", "/%61pi/admin/organizations"],
+  ])("rejects %s and falls back to role routing", (_label, returnTo) => {
+    expect(resolveLoginDestination({
+      isSystemAdmin: false,
+      events: [{ id: "event_1" }],
+      returnTo,
+    })).toBe("/overview?event=event_1");
+  });
 });

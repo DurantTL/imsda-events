@@ -1,13 +1,13 @@
 /**
- * Name and lifetime of the cookie that remembers which event a multi-event
- * staff account looked at most recently (#108 queue 1 — role-aware
- * post-login routing).
+ * Name, lifetime, and value format of the cookie that remembers which event a
+ * multi-event staff account last picked (#108 queue 1 — role-aware post-login
+ * routing).
  *
- * `proxy.ts` writes this cookie whenever a workspace request carries a
- * known `?event=` id; `readLastUsedEventId` (in `last-used-event.ts`) reads
- * it back at login time. Kept in its own dependency-free module so `proxy.ts`
- * — which cannot import `next/headers` or `server-only` code — and ordinary
- * server code can both use the same name and lifetime.
+ * The cookie is written only by `POST /api/staff/last-event`, after that route
+ * has confirmed the signed-in account can open the event, and read back at
+ * sign-in by `readLastUsedEventId` (in `last-used-event.ts`). Kept in its own
+ * dependency-free module so the route, the reader, and tests share one
+ * definition.
  *
  * The cookie is only ever a hint: it never grants access on its own.
  * `resolveLoginDestination` uses it only when it matches one of the signed-in
@@ -16,5 +16,17 @@
  */
 export const LAST_USED_EVENT_COOKIE_NAME = "imsda-last-event";
 
-/** Roughly six months. */
-export const LAST_USED_EVENT_COOKIE_MAX_AGE_SECONDS = 180 * 24 * 60 * 60;
+/** Sixty days. */
+export const LAST_USED_EVENT_COOKIE_MAX_AGE_SECONDS = 60 * 24 * 60 * 60;
+
+/**
+ * Event ids are Prisma cuids in production. The synthetic seed uses short
+ * readable ids such as `evt_wr26`, so the check is the same conservative
+ * identifier shape the event overview route accepts rather than a strict cuid
+ * pattern: letters, digits, `_` and `-`, 3–64 characters.
+ */
+const EVENT_ID_PATTERN = /^[A-Za-z0-9_-]{3,64}$/;
+
+export function isEventIdFormat(value: unknown): value is string {
+  return typeof value === "string" && EVENT_ID_PATTERN.test(value);
+}

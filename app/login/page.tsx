@@ -10,9 +10,11 @@ export const metadata: Metadata = { title: "Sign in" };
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string }>;
+  searchParams: Promise<{ next?: string | string[] }>;
 }) {
-  const { next } = await searchParams;
+  const params = await searchParams;
+  // A repeated `?next=` arrives as an array; only a single value is passed on.
+  const next = typeof params.next === "string" ? params.next : undefined;
   const session = await getCurrentSession();
   // Already signed in: send them where sign-in itself would have sent them
   // (#108 queue 1), honoring a deep link's `next` target first.

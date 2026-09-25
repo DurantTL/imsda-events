@@ -6,6 +6,7 @@ import {
   completeMfaChallenge,
   describeMfaChallenge,
 } from "@/modules/access/mfa-service";
+import { DEFAULT_POST_LOGIN_DESTINATION } from "@/modules/access/login-routing";
 import { resolvePostLoginDestination } from "@/modules/access/post-login-destination";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { SESSION_COOKIE_NAME, SESSION_LIFETIME_SECONDS } from "@/modules/access/session-store";
@@ -38,12 +39,32 @@ const challengeSchema = z.object({
   // Where a deep link bounced from before landing on /login (#108 queue 1).
   // Only meaningful for a "verify" action; validated with `lib/return-to.ts`
   // before it can steer navigation.
-  next: z.string().max(2048).optional(),
+  // `.catch(undefined)`: a repeated, oversized, or non-string `next` is
+  // dropped instead of failing an otherwise valid sign-in.
+  next: z.string().max(2048).optional().catch(undefined),
 });
 
 function mfaErrorResponse(error: MfaError) {
   const status = error.code === "MFA_CHALLENGE_INVALID" ? 401 : 400;
   return Response.json({ error: error.code, message: error.message }, { status });
+}
+
+/**
+ * The session cookie is already set when this runs, so a routing failure (for
+ * example the membership lookup) must not turn a successful sign-in into an
+ * error — and on the MFA enrolment path the one-time recovery codes must
+ * still reach the person. Falls back to the pre-#108 default instead.
+ */
+async function postLoginDestinationOrDefault(
+  user: Parameters<typeof resolvePostLoginDestination>[0],
+  returnTo: string | undefined,
+): Promise<string> {
+  try {
+    return await resolvePostLoginDestination(user, { returnTo });
+  } catch (error) {
+    logError("MFA sign-in destination could not be resolved; using the default", error);
+    return DEFAULT_POST_LOGIN_DESTINATION;
+  }
 }
 
 async function postHandler(request: Request) {
@@ -92,9 +113,9 @@ async function postHandler(request: Request) {
       maxAge: SESSION_LIFETIME_SECONDS,
       priority: "high",
     });
-    const redirectTo = await resolvePostLoginDestination(
+    const redirectTo = await postLoginDestinationOrDefault(
       { id: result.userId, globalRole: result.globalRole },
-      { returnTo: input.next },
+      input.next,
     );
     return applyRateLimitHeaders(Response.json({
       ok: true,
