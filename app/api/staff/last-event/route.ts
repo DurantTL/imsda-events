@@ -51,6 +51,8 @@ async function postHandler(request: Request) {
     }
 
     await requireEventMembership(session, parsed.data.eventId, findActiveMembership);
+    // Sign-in routing ignores the hint for system administrators, so there's nothing to record.
+    if (session.user.globalRole === "SYSTEM_ADMIN") return Response.json({ ok: true });
 
     (await cookies()).set(LAST_USED_EVENT_COOKIE_NAME, parsed.data.eventId, {
       httpOnly: true,

@@ -20,6 +20,7 @@ export function SelectEventList({ events }: { events: readonly SelectEventOption
             className="select-event-option"
             href={`/overview?event=${encodeURIComponent(event.id)}`}
             onClick={() => rememberLastUsedEvent(event.id)}
+            onAuxClick={() => rememberLastUsedEvent(event.id)}
           >
             <span>
               <strong>{event.name}</strong>
