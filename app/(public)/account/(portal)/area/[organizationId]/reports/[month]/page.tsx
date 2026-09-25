@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
+import { BackLink } from "@/components/back-link";
 import { ClubReportForm } from "@/components/club-report-form";
 import { getPrisma } from "@/lib/prisma";
 import { formatDueDate, isReportMonth, reportDueDate, reportMonthLabel } from "@/modules/club-reports/domain";
@@ -32,7 +32,7 @@ export default async function AreaClubReportPage({ params }: { params: Promise<{
         </div>
       </section>
       <div className="account-page-body">
-        <Link className="text-button club-report-back" href={`/account/area/${organizationId}`}>← Back to the club</Link>
+        <BackLink href={`/account/area/${organizationId}`}>Back to {club.name}</BackLink>
         <ClubReportForm
           dueLabel={formatDueDate(reportDueDate(month))}
           endpoint="/api/attendee/area-report-read-only"

@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { BackLink } from "@/components/back-link";
 import { ClubProfileForm } from "@/components/club-profile-form";
 import { getCurrentSession } from "@/modules/access/current-session";
-import { safeReturnTo } from "@/lib/return-to";
+import { allowedReturnTo } from "@/lib/return-to";
 import { getClubProfile, listChurchOptions } from "@/modules/organizations/club-profile-repository";
 
 export const metadata: Metadata = { title: "Club profile" };
@@ -28,8 +28,9 @@ export default async function StaffClubProfilePage({
   const profile = await getClubProfile(organizationId);
   if (!profile) notFound();
   const churches = await listChurchOptions(profile.sponsoringChurchId);
-  const backHref = safeReturnTo(from, "/admin/organizations");
-  const backLabel = backHref === `/admin/organizations/${organizationId}/club` ? `Back to ${profile.name}` : "Back to churches and clubs";
+  const clubHref = `/admin/organizations/${organizationId}/club`;
+  const backHref = allowedReturnTo(from, [clubHref], "/admin/organizations");
+  const backLabel = backHref === clubHref ? `Back to ${profile.name}` : "Back to churches and clubs";
   return (
     <section className="page-stack">
       <BackLink href={backHref} variant="staff">{backLabel}</BackLink>

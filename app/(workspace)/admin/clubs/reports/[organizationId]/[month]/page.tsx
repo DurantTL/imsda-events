@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { BackLink } from "@/components/back-link";
 import { ClubReportForm } from "@/components/club-report-form";
 import { getCurrentSession } from "@/modules/access/current-session";
-import { safeReturnTo } from "@/lib/return-to";
+import { allowedReturnTo } from "@/lib/return-to";
 import { getPrisma } from "@/lib/prisma";
 import { calendarDateIn } from "@/modules/calendar/domain";
 import { ON_TIME_POINTS, formatDueDate, isLockedForClub, isReportMonth, reportDueDate, reportMonthLabel } from "@/modules/club-reports/domain";
@@ -38,8 +38,9 @@ export default async function StaffClubReportPage({
   const [report, rosterPrefill] = await Promise.all([getClubReport(organizationId, month), reportPrefill(organizationId, now)]);
   const prefill = { ...rosterPrefill, averageAttendance: null, honors: [] };
   const clubYear = clubYearFor(new Date(`${month}-15T12:00:00Z`));
-  const backHref = safeReturnTo(from, `/admin/clubs/reports?year=${clubYear}`);
-  const backLabel = backHref === `/admin/organizations/${organizationId}/club` ? `Back to ${club.name}` : "Back to monthly reports";
+  const clubHref = `/admin/organizations/${organizationId}/club`;
+  const backHref = allowedReturnTo(from, [clubHref], `/admin/clubs/reports?year=${clubYear}`);
+  const backLabel = backHref === clubHref ? `Back to ${club.name}` : "Back to monthly reports";
   return (
     <section className="page-stack">
       <BackLink href={backHref} variant="staff">{backLabel}</BackLink>

@@ -72,7 +72,7 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
       <div className="page-intro"><div><p className="eyebrow">Event administration</p><h2>Settings & activity</h2><p>Choose a task or review recent changes for {event.name}.</p></div></div>
       {visibleGroups.map(({ group, cards: groupCards }) => (
         <section aria-label={foundationGroupLabels[group]} className="foundation-group" key={group}>
-          <h3 className="foundation-group-label">{foundationGroupLabels[group]}</h3>
+          <h2 className="foundation-group-label">{foundationGroupLabels[group]}</h2>
           <div className="foundation-grid">
             {groupCards.map((card) => (
               <Link className="panel foundation-card" href={card.href} key={card.key}>

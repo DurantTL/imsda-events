@@ -37,7 +37,7 @@ export default async function StaffOpenClubPage({ params }: { params: Promise<{ 
           <UserCog aria-hidden="true" size={14} /> Club admins
         </Link>
         <Link className="secondary-button" href={`/admin/organizations/${organizationId}/profile${fromHere}`}>
-          <IdCard aria-hidden="true" size={14} /> Profile
+          <IdCard aria-hidden="true" size={14} /> Club profile
         </Link>
         <ActAsButton
           confirmText={`Act as ${club.name}'s Director for the next 2 hours? Your own account gets a real Director role (recorded, shown in Club admins, and ending by itself), so you can see and fix things exactly as the director would.`}

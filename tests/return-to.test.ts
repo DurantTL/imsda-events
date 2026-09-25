@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { safeReturnTo } from "@/lib/return-to";
+import { allowedReturnTo, safeReturnTo } from "@/lib/return-to";
 
 const FALLBACK = "/account/clubs/org_1";
 
@@ -90,5 +90,54 @@ describe("safeReturnTo", () => {
 
   it("rejects a double slash later in the path", () => {
     expect(safeReturnTo("/account//clubs", FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("rejects a four-times-encoded protocol-relative URL", () => {
+    expect(safeReturnTo("/%2525252F%2525252Fevil.com", FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("rejects an API route", () => {
+    expect(safeReturnTo("/api/admin/organizations/org_1", FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("rejects the bare /api route", () => {
+    expect(safeReturnTo("/api", FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("rejects an API route with a query string", () => {
+    expect(safeReturnTo("/api?x=1", FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("rejects a percent-encoded API route", () => {
+    expect(safeReturnTo("/%61pi/admin", FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("accepts a path that merely contains \"api\" as a segment name, not a leading /api", () => {
+    expect(safeReturnTo("/more/rapid-response", FALLBACK)).toBe("/more/rapid-response");
+  });
+});
+
+describe("allowedReturnTo", () => {
+  const CLUB_HREF = "/admin/organizations/org_1/club";
+  const ALLOWED = [CLUB_HREF] as const;
+
+  it("accepts a value that is exactly one of the allowed parents", () => {
+    expect(allowedReturnTo(CLUB_HREF, ALLOWED, FALLBACK)).toBe(CLUB_HREF);
+  });
+
+  it("falls back for a safe relative path that isn't in the allowlist", () => {
+    expect(allowedReturnTo("/admin/organizations/org_2/club", ALLOWED, FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("falls back for an unsafe value even if it happens to prefix-match an allowed entry", () => {
+    expect(allowedReturnTo(`${CLUB_HREF}//evil.com`, ALLOWED, FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("falls back for null", () => {
+    expect(allowedReturnTo(null, ALLOWED, FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("falls back for an API route even if it were somehow allowlisted", () => {
+    expect(allowedReturnTo("/api/admin/organizations/org_1", ["/api/admin/organizations/org_1"], FALLBACK)).toBe(FALLBACK);
   });
 });

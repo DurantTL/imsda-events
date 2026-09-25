@@ -65,7 +65,7 @@ export default async function ClubEventRegistrationPage({
   return (
     <>
       <section className="public-manage-card club-event-heading">
-        <BackLink href={`/account/clubs/${organizationId}/events`}>All club events</BackLink>
+        <BackLink href={`/account/clubs/${organizationId}/events`}>Back to club events</BackLink>
         <h2>{workspace.event.name}</h2>
         <p className="field-help">Billed to your church. No payment is taken online.</p>
       </section>

@@ -27,7 +27,7 @@ export default async function ClubSchedulePage({
   if (!data || !registered) {
     return (
       <section className="public-manage-card">
-        <BackLink href={back}>Back to the event</BackLink>
+        <BackLink href={back}>Back to {data ? data.event.name : "the event"}</BackLink>
         <p className="public-manage-empty">Your club isn&apos;t registered for this event, so there&apos;s no schedule yet.</p>
       </section>
     );
@@ -37,7 +37,7 @@ export default async function ClubSchedulePage({
   return (
     <section className="public-manage-card club-schedule">
       <div className="club-schedule-actions">
-        <BackLink href={back}>Back to the event</BackLink>
+        <BackLink href={back}>Back to {data.event.name}</BackLink>
         <div>
           <a className="secondary-button" href={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(eventId)}/schedule`}>
             <Download aria-hidden="true" size={15} /> CSV

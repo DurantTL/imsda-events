@@ -4,7 +4,7 @@ import { AccessRestricted } from "@/components/access-restricted";
 import { BackLink } from "@/components/back-link";
 import { ClubReportForm } from "@/components/club-report-form";
 import { getPrisma } from "@/lib/prisma";
-import { safeReturnTo } from "@/lib/return-to";
+import { allowedReturnTo } from "@/lib/return-to";
 import { resolveClubOversight } from "@/modules/club-rosters/event-oversight";
 import { formatDueDate, isReportMonth, reportDueDate, reportMonthLabel } from "@/modules/club-reports/domain";
 import { getClubReport, reportPrefill } from "@/modules/club-reports/repository";
@@ -34,8 +34,9 @@ export default async function EventClubReportPage({
   const report = await getClubReport(organizationId, month);
   if (!report || report.status !== "SUBMITTED") notFound();
   const rosterPrefill = await reportPrefill(organizationId, new Date());
-  const backHref = safeReturnTo(from, `/more/clubs/reports?event=${event.id}`);
-  const backLabel = backHref.startsWith(`/more/clubs/${organizationId}?`) ? `Back to ${club.name}` : "Back to monthly reports";
+  const clubHref = `/more/clubs/${organizationId}?event=${event.id}`;
+  const backHref = allowedReturnTo(from, [clubHref], `/more/clubs/reports?event=${event.id}`);
+  const backLabel = backHref === clubHref ? `Back to ${club.name}` : "Back to monthly reports";
   return (
     <section className="page-stack">
       <BackLink href={backHref} variant="staff">{backLabel}</BackLink>

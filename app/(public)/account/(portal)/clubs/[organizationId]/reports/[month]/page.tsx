@@ -26,7 +26,7 @@ export default async function ClubReportPage({ params }: { params: Promise<{ org
   if (!access.capabilities.submitReports) {
     return (
       <>
-        <BackLink href={`/account/clubs/${organizationId}/reports`}>All monthly reports</BackLink>
+        <BackLink href={`/account/clubs/${organizationId}/reports`}>Back to monthly reports</BackLink>
         <p className="public-manage-empty">Monthly reports are filed by the club&apos;s director, deputy, or reporter.</p>
       </>
     );
@@ -53,7 +53,7 @@ export default async function ClubReportPage({ params }: { params: Promise<{ org
 
   return (
     <>
-      <BackLink href={`/account/clubs/${organizationId}/reports`}>All monthly reports</BackLink>
+      <BackLink href={`/account/clubs/${organizationId}/reports`}>Back to monthly reports</BackLink>
       <ClubReportForm
         allowDraft
         dueLabel={formatDueDate(due)}

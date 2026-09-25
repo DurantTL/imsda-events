@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { BackLink } from "@/components/back-link";
 import { ClubDirectorsWorkspace } from "@/components/club-directors-workspace";
 import { getCurrentSession } from "@/modules/access/current-session";
-import { safeReturnTo } from "@/lib/return-to";
+import { allowedReturnTo } from "@/lib/return-to";
 import { listDirectorGrants } from "@/modules/organizations/director-grants-repository";
 import { OrganizationOperationError } from "@/modules/organizations/repository";
 
@@ -34,8 +34,9 @@ export default async function ClubDirectorsPage({
     if (error instanceof OrganizationOperationError) notFound();
     throw error;
   }
-  const backHref = safeReturnTo(from, "/admin/organizations");
-  const backLabel = backHref === `/admin/organizations/${organizationId}/club` ? `Back to ${initial.club.name}` : "Back to churches and clubs";
+  const clubHref = `/admin/organizations/${organizationId}/club`;
+  const backHref = allowedReturnTo(from, [clubHref], "/admin/organizations");
+  const backLabel = backHref === clubHref ? `Back to ${initial.club.name}` : "Back to churches and clubs";
 
   return (
     <>

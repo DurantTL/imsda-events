@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight, CalendarDays, CheckCircle2, CircleAlert, FileText, UsersRound } from "lucide-react";
+import { BackLink } from "@/components/back-link";
+import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { getRosterAccessState } from "@/modules/club-rosters/access";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import { listRoster } from "@/modules/club-rosters/repository";
@@ -9,10 +11,19 @@ import { listClubEvents } from "@/modules/club-registrations/repository";
 import { calendarDateIn } from "@/modules/calendar/domain";
 import { formatDueDate, isLockedForClub, reportDueDate, reportMonthLabel, reportableMonths } from "@/modules/club-reports/domain";
 import { getClubReportYear } from "@/modules/club-reports/repository";
+import { listDirectedClubs } from "@/modules/organizations/director-access";
 import { clubDirectorRoleLabels, clubRoleDescriptions } from "@/modules/organizations/director-grants-domain";
 
 export const metadata: Metadata = { title: "Club home" };
 export const dynamic = "force-dynamic";
+
+/** Only when there's somewhere else to go (#428): a single-club director has nowhere "all clubs" would take them. */
+async function allMyClubsLink() {
+  const { account } = await getCurrentAttendee();
+  if (!account) return null;
+  const clubs = await listDirectedClubs(account.id);
+  return clubs.length > 1 ? <BackLink href="/account/clubs">All my clubs</BackLink> : null;
+}
 
 /** Where the club stands at a glance, and the next thing to do. */
 export default async function ClubHomePage({ params }: { params: Promise<{ organizationId: string }> }) {
@@ -21,18 +32,21 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
   if (access.state === "NO_ROSTER") {
     // A reporter (#375): no roster, no registrations, just monthly reports (#377).
     return (
-      <section className="public-manage-card" aria-labelledby="club-role-heading">
-        <div className="public-manage-card-heading">
-          <p className="public-registration-eyebrow">Your role: {clubDirectorRoleLabels[access.club.role]}</p>
-          <h2 id="club-role-heading">Monthly reports</h2>
-        </div>
-        <p className="public-manage-empty">
-          <FileText size={17} aria-hidden="true" /> {clubRoleDescriptions[access.club.role]}
-        </p>
-        <Link className="primary-button club-event-action" href={`/account/clubs/${organizationId}/reports`}>
-          Open monthly reports <ArrowRight size={14} aria-hidden="true" />
-        </Link>
-      </section>
+      <>
+        {await allMyClubsLink()}
+        <section className="public-manage-card" aria-labelledby="club-role-heading">
+          <div className="public-manage-card-heading">
+            <p className="public-registration-eyebrow">Your role: {clubDirectorRoleLabels[access.club.role]}</p>
+            <h2 id="club-role-heading">Monthly reports</h2>
+          </div>
+          <p className="public-manage-empty">
+            <FileText size={17} aria-hidden="true" /> {clubRoleDescriptions[access.club.role]}
+          </p>
+          <Link className="primary-button club-event-action" href={`/account/clubs/${organizationId}/reports`}>
+            Open monthly reports <ArrowRight size={14} aria-hidden="true" />
+          </Link>
+        </section>
+      </>
     );
   }
   if (access.state !== "OPEN") return null;
@@ -40,10 +54,11 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
   const base = `/account/clubs/${organizationId}`;
   const now = new Date();
   const clubYear = clubYearFor(now);
-  const [members, events, reportYear] = await Promise.all([
+  const [members, events, reportYear, clubsLink] = await Promise.all([
     listRoster(organizationId, clubYear),
     listClubEvents(organizationId),
     access.capabilities.submitReports ? getClubReportYear(organizationId, clubYear) : Promise.resolve(null),
+    allMyClubsLink(),
   ]);
   const active = members.filter((member) => member.status === "ACTIVE");
   const youth = active.filter((member) => member.attendeeType !== "STAFF" && member.attendeeType !== "ADULT");
@@ -78,6 +93,7 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
 
   return (
     <>
+      {clubsLink}
       <div className="club-home-stats">
         <Link className="club-home-stat" href={`${base}/roster`}>
           <UsersRound size={20} aria-hidden="true" />

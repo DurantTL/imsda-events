@@ -31,7 +31,7 @@ export default async function DirectorClubPacketPage({
     <section className="page-stack retreat-packet-workspace">
       <div className="page-intro retreat-packet-intro">
         <div>
-          <BackLink href={`/account/clubs/${organizationId}/events/${eventId}`}>Back to your event</BackLink>
+          <BackLink href={`/account/clubs/${organizationId}/events/${eventId}`}>Back to {packet.event.name}</BackLink>
           <h2>Your club packet</h2>
           <p>Print this for check-in: one letter sheet, printed double-sided.</p>
         </div>
