@@ -188,6 +188,16 @@ async function main() {
         where: { userId: record.id, usedAt: null },
         data: { usedAt: now },
       });
+      // A new credential removes every other way in, as a password reset does
+      // (#453): signed-in sessions and staff passkeys are revoked.
+      await tx.userSession.updateMany({
+        where: { userId: record.id, revokedAt: null },
+        data: { revokedAt: now },
+      });
+      await tx.userPasskey.updateMany({
+        where: { userId: record.id, revokedAt: null },
+        data: { revokedAt: now },
+      });
       if (!options.password) {
         await tx.passwordResetToken.create({
           data: {

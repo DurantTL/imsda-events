@@ -251,10 +251,31 @@ describe("completing a token activates the account", () => {
     });
     expect(tx.auditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
+        actorUserId: "user-1",
         action: "USER_PASSKEYS_REVOKED_ON_PASSWORD_RESET",
+        entityType: "User",
+        entityId: "user-1",
+        summary: "Password reset revoked 2 staff passkeys.",
         metadata: { passkeysRevoked: 2 },
       }),
     });
+  });
+
+  it("revokes nothing when the token was already claimed", async () => {
+    const { tx } = prismaFixture({
+      resetToken: {
+        id: "tok-1",
+        userId: "user-1",
+        purpose: "PASSWORD_RESET",
+        expiresAt: new Date(Date.now() + 60_000),
+        usedAt: null,
+      },
+      activePasskeys: 1,
+    });
+    tx.passwordResetToken.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    expect(await resetPassword("raw-token", knownPassword)).toBe(false);
+    expect(tx.userPasskey.updateMany).not.toHaveBeenCalled();
   });
 
   it("writes no passkey audit entry when there were none to revoke", async () => {
