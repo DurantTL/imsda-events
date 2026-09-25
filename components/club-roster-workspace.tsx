@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useState } from "react";
+import { useCallback, useState } from "react";
 import { Eye, Pencil, Plus, Power, Save, Trash2, UsersRound, X } from "lucide-react";
 import { BirthDateField } from "@/components/birth-date-field";
 import { RosterCsvImport } from "@/components/roster-csv-import";
@@ -188,7 +188,7 @@ export function ClubRosterWorkspace({
         <div className="public-manage-card-heading club-roster-heading">
           <div>
             <p className="public-registration-eyebrow">Club year {clubYear}</p>
-            <h2>Roster</h2>
+            <h2 id="club-roster-heading">Roster</h2>
           </div>
           <div className="club-roster-heading-actions">
             <span className="count-badge">{active.length} active</span>
@@ -255,7 +255,7 @@ export function ClubRosterWorkspace({
               down, and the "Missing info" flag moves out of the Name cell
               (which was stretching that column unevenly) into its own column.
             */}
-            <table className="report-table roster-card-table">
+            <table aria-labelledby="club-roster-heading" className="report-table roster-card-table">
               <thead>
                 <tr>
                   <th>Name</th>
@@ -270,9 +270,9 @@ export function ClubRosterWorkspace({
                   {!readOnly && <th><span className="sr-only">Actions</span></th>}
                 </tr>
               </thead>
-              <tbody>
+              {/* One row group per section, so each section heading covers only its own rows. */}
                 {sections.map((section) => (
-                  <Fragment key={section.key}>
+                  <tbody key={section.key}>
                     <tr className="roster-section-row">
                       <th className="roster-section-heading" colSpan={rosterColumnCount} scope="rowgroup">
                         {section.title} <span className="count-badge">{section.people.length}</span>
@@ -340,9 +340,8 @@ export function ClubRosterWorkspace({
                         );
                       })
                     )}
-                  </Fragment>
+                  </tbody>
                 ))}
-              </tbody>
             </table>
           </div>
         )}

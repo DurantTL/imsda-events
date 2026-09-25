@@ -108,7 +108,8 @@ export function ClubTeamWorkspace({
   return (
     <div className="club-roster-stack">
       {notice && <div className="inline-notice success" role="status">{notice}</div>}
-      {error && <div className="inline-notice error" role="alert">{error}</div>}
+      {/* While the popup is open, its own alert shows the error; one announcement, not two. */}
+      {error && !dialogOpen && <div className="inline-notice error" role="alert">{error}</div>}
 
       <section className="public-manage-card" aria-labelledby="club-team-heading">
         <div className="public-manage-card-heading club-roster-heading">
