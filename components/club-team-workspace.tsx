@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { Mail, RefreshCw, UserMinus, UserPlus, XCircle } from "lucide-react";
+import { useCallback, useState } from "react";
+import { Mail, RefreshCw, UserMinus, UserPlus, X, XCircle } from "lucide-react";
+import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { ClubTeamInvite } from "@/modules/club-imports/invites";
 import {
   clubAssignableRoles,
@@ -39,7 +40,17 @@ export function ClubTeamWorkspace({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [dialogOpen, setDialogOpen] = useState(false);
   const base = `/api/attendee/clubs/${encodeURIComponent(organizationId)}/team`;
+  const closeDialog = useCallback(() => setDialogOpen(false), []);
+  const dialogRef = useAccessibleDialog<HTMLElement>(dialogOpen, closeDialog);
+
+  /** Adding a club admin happens in a pop-up (#435), like the roster and honor catalog. */
+  function openDialog() {
+    setNotice("");
+    setError("");
+    setDialogOpen(true);
+  }
 
   async function call(url: string, method: string, body: unknown, success: string) {
     setSaving(true);
@@ -74,7 +85,10 @@ export function ClubTeamWorkspace({
     const role = String(form.get("role") ?? "REGISTRAR");
     const ok = await call(base, "POST", { email: String(form.get("email") ?? ""), role },
       `Added. They'll see this club under My club when they sign in.`);
-    if (ok) formElement.reset();
+    if (ok) {
+      formElement.reset();
+      closeDialog();
+    }
   }
 
   async function remove(member: ClubTeamMember) {
@@ -94,7 +108,8 @@ export function ClubTeamWorkspace({
   return (
     <div className="club-roster-stack">
       {notice && <div className="inline-notice success" role="status">{notice}</div>}
-      {error && <div className="inline-notice error" role="alert">{error}</div>}
+      {/* While the popup is open, its own alert shows the error; one announcement, not two. */}
+      {error && !dialogOpen && <div className="inline-notice error" role="alert">{error}</div>}
 
       <section className="public-manage-card" aria-labelledby="club-team-heading">
         <div className="public-manage-card-heading club-roster-heading">
@@ -102,7 +117,12 @@ export function ClubTeamWorkspace({
             <p className="public-registration-eyebrow">Who can help run the club</p>
             <h2 id="club-team-heading">Club admins</h2>
           </div>
-          <span className="count-badge">{team.length}</span>
+          <div className="club-roster-heading-actions">
+            <span className="count-badge">{team.length}</span>
+            <button className="primary-button" disabled={saving} onClick={openDialog} type="button">
+              <UserPlus aria-hidden="true" size={16} /> Add club admin
+            </button>
+          </div>
         </div>
         <ul className="public-manage-club-list club-team-list">
           {team.map((member) => (
@@ -176,40 +196,53 @@ export function ClubTeamWorkspace({
         </section>
       )}
 
-      <form className="public-manage-card form-stack" onSubmit={add}>
-        <div className="public-manage-card-heading">
-          <p className="public-registration-eyebrow">Add someone</p>
-          <h2>Give a role</h2>
+      {dialogOpen && (
+        <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) closeDialog(); }} role="presentation">
+          <section aria-labelledby="club-team-dialog-title" aria-modal="true" className="modal-card" ref={dialogRef} role="dialog" tabIndex={-1}>
+            <form className="form-stack" onSubmit={add}>
+              <div className="modal-head">
+                <div>
+                  <p className="public-registration-eyebrow">Add someone</p>
+                  <h2 id="club-team-dialog-title">Give a role</h2>
+                </div>
+                <button aria-label="Close" className="icon-button modal-close-button" onClick={closeDialog} type="button">
+                  <X aria-hidden="true" size={18} />
+                </button>
+              </div>
+              {error && <div className="inline-notice error" role="alert">{error}</div>}
+              <div className="form-grid two-column">
+                <label>
+                  Their email
+                  <input autoComplete="off" maxLength={254} name="email" required type="email" />
+                </label>
+                <label>
+                  Role
+                  <select defaultValue="REGISTRAR" name="role">
+                    {clubAssignableRoles.map((role) => (
+                      <option key={role} value={role}>{clubDirectorRoleLabels[role]}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <ul className="field-help club-role-help">
+                {clubAssignableRoles.map((role) => (
+                  <li key={role}><strong>{clubDirectorRoleLabels[role]}:</strong> {clubRoleDescriptions[role]}</li>
+                ))}
+              </ul>
+              <p className="field-help">
+                <Mail aria-hidden="true" size={14} /> If they already have a verified account, they get the role right
+                away. Otherwise we&apos;ll email them an invite to sign up and accept it.
+              </p>
+              <div className="form-actions">
+                <button className="secondary-button" disabled={saving} onClick={closeDialog} type="button">Cancel</button>
+                <button className="primary-button" disabled={saving} type="submit">
+                  <UserPlus aria-hidden="true" size={16} /> Add club admin
+                </button>
+              </div>
+            </form>
+          </section>
         </div>
-        <div className="form-grid two-column">
-          <label>
-            Their email
-            <input autoComplete="off" maxLength={254} name="email" required type="email" />
-          </label>
-          <label>
-            Role
-            <select defaultValue="REGISTRAR" name="role">
-              {clubAssignableRoles.map((role) => (
-                <option key={role} value={role}>{clubDirectorRoleLabels[role]}</option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <ul className="field-help club-role-help">
-          {clubAssignableRoles.map((role) => (
-            <li key={role}><strong>{clubDirectorRoleLabels[role]}:</strong> {clubRoleDescriptions[role]}</li>
-          ))}
-        </ul>
-        <p className="field-help">
-          <Mail aria-hidden="true" size={14} /> If they already have a verified account, they get the role right
-          away. Otherwise we&apos;ll email them an invite to sign up and accept it.
-        </p>
-        <div>
-          <button className="primary-button" disabled={saving} type="submit">
-            <UserPlus aria-hidden="true" size={16} /> Add club admin
-          </button>
-        </div>
-      </form>
+      )}
     </div>
   );
 }

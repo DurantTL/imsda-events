@@ -97,6 +97,8 @@ export function ClubRosterWorkspace({
     { key: "STAFF", title: "Staff", empty: "No staff on the roster yet.", people: visible.filter((member) => rosterSectionOf(member.attendeeType) === "STAFF") },
     { key: "MEMBERS", title: "Members", empty: "No Pathfinders on the roster yet.", people: visible.filter((member) => rosterSectionOf(member.attendeeType) === "MEMBERS") },
   ] as const;
+  /** Name, Age, Type, Current class, Role, Gender, Flags — plus every optional column, for the section-title row's colSpan. */
+  const rosterColumnCount = 7 + (birthDates ? 1 : 0) + (complianceStatuses ? 1 : 0) + (readOnly ? 0 : 1);
 
   async function call(url: string, method: string, body: unknown, success: string) {
     setSaving(true);
@@ -186,7 +188,7 @@ export function ClubRosterWorkspace({
         <div className="public-manage-card-heading club-roster-heading">
           <div>
             <p className="public-registration-eyebrow">Club year {clubYear}</p>
-            <h2>Roster</h2>
+            <h2 id="club-roster-heading">Roster</h2>
           </div>
           <div className="club-roster-heading-actions">
             <span className="count-badge">{active.length} active</span>
@@ -243,86 +245,105 @@ export function ClubRosterWorkspace({
               : "No one is on the roster yet. Add people below, or they'll be added when you register your club for an event."}
           </p>
         ) : (
-          sections.map((section) => (
-            <div className="club-roster-section" key={section.key}>
-              <h3 className="club-roster-section-title">
-                {section.title} <span className="count-badge">{section.people.length}</span>
-              </h3>
-              {section.people.length === 0 ? (
-                <p className="field-help">{section.empty}</p>
-              ) : (
-                <div className="report-table-wrap">
-                  <table className="report-table roster-card-table">
-                    <caption className="sr-only">{section.title}</caption>
-                    <thead>
-                      <tr>
-                        <th>Name</th>
-                        <th>Type</th>
-                        <th>Current class</th>
-                        <th>Role</th>
-                        <th>Age</th>
-                        {birthDates && <th>Birth date</th>}
-                        <th>Status</th>
-                        {complianceStatuses && <th>Background check</th>}
-                        {!readOnly && <th><span className="sr-only">Actions</span></th>}
+          <div className="report-table-wrap">
+            {/*
+              One table for both sections (#435), not one per section: two
+              separate tables size their columns independently, so the Staff
+              table's columns drift out of step with the Members table's even
+              though the headings match. A single table with a full-width
+              section-title row keeps every column the same width all the way
+              down, and the "Missing info" flag moves out of the Name cell
+              (which was stretching that column unevenly) into its own column.
+            */}
+            <table aria-labelledby="club-roster-heading" className="report-table roster-card-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Age</th>
+                  {birthDates && <th>Birth date</th>}
+                  <th>Type</th>
+                  <th>Current class</th>
+                  <th>Role</th>
+                  <th>Gender</th>
+                  <th>Flags</th>
+                  {complianceStatuses && <th>Background check</th>}
+                  {!readOnly && <th><span className="sr-only">Actions</span></th>}
+                </tr>
+              </thead>
+              {/* One row group per section, so each section heading covers only its own rows. */}
+                {sections.map((section) => (
+                  <tbody key={section.key}>
+                    <tr className="roster-section-row">
+                      <th className="roster-section-heading" colSpan={rosterColumnCount} scope="rowgroup">
+                        {section.title} <span className="count-badge">{section.people.length}</span>
+                      </th>
+                    </tr>
+                    {section.people.length === 0 ? (
+                      <tr className="roster-section-empty-row">
+                        <td colSpan={rosterColumnCount}>{section.empty}</td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {section.people.map((member) => {
+                    ) : (
+                      section.people.map((member) => {
                         const missing = missingRosterFields(member);
                         return (
-                        <tr key={member.id}>
-                          <td className="roster-card-name">
-                            <strong translate="no">{member.lastName}, {member.firstName}</strong>
-                            {missing.length > 0 && (
-                              <span className="status-chip gold roster-needs-birth-date roster-missing-info" title={`Missing: ${missing.join(", ")}`}>
-                                Missing info: {missing.join(", ")}
-                              </span>
-                            )}
-                          </td>
-                          <td data-label="Type">{clubRosterAttendeeTypeLabels[member.attendeeType]}</td>
-                          <td data-label="Current class">{member.classLevel ? clubClassLevelLabels[member.classLevel] : "—"}</td>
-                          <td data-label="Role">{member.role || "—"}</td>
-                          <td data-label="Age" translate="no">
-                            {member.age ?? (member.reportedAge !== null ? `${member.reportedAge} (reported)` : "—")}
-                          </td>
-                          {birthDates && <td data-label="Birth date" translate="no">{birthDates[member.id] ?? "—"}</td>}
-                          <td data-label="Status">
-                            <span className={`status-chip ${member.status === "ACTIVE" ? "green" : "gold"}`}>
-                              {clubRosterStatusLabels[member.status]}
-                            </span>
-                          </td>
-                          {complianceStatuses && (
-                            <td data-label="Background check">
-                              {complianceStatuses[member.id] ? (
-                                <>
-                                  <span className={`status-chip ${complianceTone[complianceStatuses[member.id]!.state]}`}>
-                                    {complianceLabel(complianceStatuses[member.id]!)}
-                                  </span>
-                                  {complianceStatuses[member.id]!.note && (
-                                    <small className="quiet-copy background-check-note"> {complianceStatuses[member.id]!.note}</small>
-                                  )}
-                                </>
-                              ) : "—"}
+                          <tr key={member.id}>
+                            <td className="roster-card-name" data-label="Name">
+                              <strong translate="no">{member.lastName}, {member.firstName}</strong>
                             </td>
-                          )}
-                          {!readOnly && <td className="honor-row-actions roster-card-actions">
-                            <button aria-label={`Edit ${member.firstName} ${member.lastName}`} className="secondary-button" disabled={saving} onClick={() => openDialog(member)} type="button">
-                              <Pencil aria-hidden="true" size={13} />
-                            </button>
-                            <button aria-label={`Remove ${member.firstName} ${member.lastName}`} className="secondary-button" disabled={saving} onClick={() => remove(member)} type="button">
-                              <Trash2 aria-hidden="true" size={13} />
-                            </button>
-                          </td>}
-                        </tr>
+                            <td data-label="Age" translate="no">
+                              {member.age ?? (member.reportedAge !== null ? `${member.reportedAge} (reported)` : "—")}
+                            </td>
+                            {birthDates && <td data-label="Birth date" translate="no">{birthDates[member.id] ?? "—"}</td>}
+                            <td data-label="Type">{clubRosterAttendeeTypeLabels[member.attendeeType]}</td>
+                            <td data-label="Current class">{member.classLevel ? clubClassLevelLabels[member.classLevel] : "—"}</td>
+                            <td data-label="Role">{member.role || "—"}</td>
+                            <td data-label="Gender">{member.gender ? clubRosterGenderLabels[member.gender] : "—"}</td>
+                            <td className="roster-card-flags" data-label="Flags">
+                              {/* The flex layout lives on this wrapper: a td that is itself flex stops being a table cell and drifts out of line (#435). */}
+                              <div className="roster-flag-list">
+                              {member.status === "INACTIVE" && (
+                                <span className="status-chip gold">{clubRosterStatusLabels.INACTIVE}</span>
+                              )}
+                              {missing.length > 0 && (
+                                <span className="status-chip gold roster-missing-info" title={`Missing: ${missing.join(", ")}`}>
+                                  Missing info: {missing.join(", ")}
+                                </span>
+                              )}
+                              {member.status === "ACTIVE" && missing.length === 0 && "—"}
+                              </div>
+                            </td>
+                            {complianceStatuses && (
+                              <td data-label="Background check">
+                                {complianceStatuses[member.id] ? (
+                                  <>
+                                    <span className={`status-chip ${complianceTone[complianceStatuses[member.id]!.state]}`}>
+                                      {complianceLabel(complianceStatuses[member.id]!)}
+                                    </span>
+                                    {complianceStatuses[member.id]!.note && (
+                                      <small className="quiet-copy background-check-note"> {complianceStatuses[member.id]!.note}</small>
+                                    )}
+                                  </>
+                                ) : "—"}
+                              </td>
+                            )}
+                            {!readOnly && <td className="roster-card-actions" data-label="Actions">
+                              <div className="honor-row-actions">
+                              <button aria-label={`Edit ${member.firstName} ${member.lastName}`} className="secondary-button" disabled={saving} onClick={() => openDialog(member)} type="button">
+                                <Pencil aria-hidden="true" size={13} />
+                              </button>
+                              <button aria-label={`Remove ${member.firstName} ${member.lastName}`} className="secondary-button" disabled={saving} onClick={() => remove(member)} type="button">
+                                <Trash2 aria-hidden="true" size={13} />
+                              </button>
+                              </div>
+                            </td>}
+                          </tr>
                         );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          ))
+                      })
+                    )}
+                  </tbody>
+                ))}
+            </table>
+          </div>
         )}
       </section>
 
