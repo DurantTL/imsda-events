@@ -132,3 +132,33 @@ export function offlineCheckInErrorMessage(code: OfflineCheckInErrorCode) {
       return "The server rejected this saved action. Verify the attendee and retry, or discard it.";
   }
 }
+
+function searchWords(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+/**
+ * The check-in search (#441): an attendee's first or last name, matched by
+ * word prefix ("sam" finds Samantha; "sam riv" finds Samantha Rivera), plus
+ * the confirmation code and club name. Email is deliberately left out: when
+ * one email registered several people, it would match them all.
+ */
+export function arrivalMatchesSearch(
+  arrival: { firstName: string; lastName: string; confirmationCode: string },
+  query: string,
+  clubName = "",
+) {
+  const trimmed = query.trim().toLowerCase();
+  if (!trimmed) return true;
+  if (arrival.confirmationCode.toLowerCase().includes(trimmed)) return true;
+  if (clubName && clubName.toLowerCase().includes(trimmed)) return true;
+  const queryWords = searchWords(trimmed);
+  if (queryWords.length === 0) return false;
+  const nameWords = searchWords(`${arrival.firstName} ${arrival.lastName}`);
+  return queryWords.every((word) => nameWords.some((nameWord) => nameWord.startsWith(word)));
+}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  arrivalMatchesSearch,
   checkInQueueItemAfterOfflineRetry,
   checkInRequestSchema,
   inspectOfflineCheckInQueue,
@@ -109,5 +110,31 @@ describe("check-in request and offline queue domain", () => {
       lastErrorCode: "ATTENDEE_NOT_FOUND",
       attempts: 1,
     });
+  });
+});
+
+describe("check-in search (#441)", () => {
+  const samantha = { firstName: "Samantha", lastName: "Rivera", confirmationCode: "WR26-AB12" };
+  const jose = { firstName: "José", lastName: "Núñez", confirmationCode: "WR26-AB12" };
+
+  it("matches first or last name by prefix, ignoring case and accents", () => {
+    expect(arrivalMatchesSearch(samantha, "sam")).toBe(true);
+    expect(arrivalMatchesSearch(samantha, "RIV")).toBe(true);
+    expect(arrivalMatchesSearch(samantha, "sam riv")).toBe(true);
+    expect(arrivalMatchesSearch(jose, "jose nunez")).toBe(true);
+    expect(arrivalMatchesSearch(samantha, "antha")).toBe(false);
+    expect(arrivalMatchesSearch(samantha, "sam nunez")).toBe(false);
+  });
+
+  it("does not match the registration's email, so a shared email doesn't list everyone", () => {
+    // The search never receives the email; typing one matches no name.
+    expect(arrivalMatchesSearch(samantha, "family@example.test")).toBe(false);
+    expect(arrivalMatchesSearch(jose, "family@example.test")).toBe(false);
+  });
+
+  it("still matches the confirmation code and club name", () => {
+    expect(arrivalMatchesSearch(samantha, "ab12")).toBe(true);
+    expect(arrivalMatchesSearch(samantha, "trail", "Trailblazers Pathfinders")).toBe(true);
+    expect(arrivalMatchesSearch(samantha, "")).toBe(true);
   });
 });
