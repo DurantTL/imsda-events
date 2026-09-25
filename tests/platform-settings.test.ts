@@ -125,12 +125,18 @@ describe("clearing the passkey domain", () => {
     await expect(attempt).rejects.toBeInstanceOf(PlatformSettingsError);
     await expect(attempt).rejects.toThrow("2 staff sign in only with a passkey; they'd be locked out.");
 
-    // Counted as: active accounts with a live passkey and no active authenticator.
+    // Counted as: active accounts that must pass a second step (system admins
+    // and anyone with an active event membership), with a live passkey and no
+    // active authenticator.
     expect(tx.user.count).toHaveBeenCalledWith({
       where: {
         accountStatus: "ACTIVE",
         passkeys: { some: { revokedAt: null } },
         NOT: { mfaEnrollment: { is: { status: "ACTIVE" } } },
+        OR: [
+          { globalRole: "SYSTEM_ADMIN" },
+          { memberships: { some: { status: "ACTIVE" } } },
+        ],
       },
     });
     expect(tx.platformSettings.upsert).not.toHaveBeenCalled();
@@ -145,7 +151,29 @@ describe("clearing the passkey domain", () => {
     expect(tx.platformSettings.upsert).toHaveBeenCalled();
   });
 
-  it("does not check when the domain is not being cleared", async () => {
+  it("is refused for a change to a different domain too, which strands passkeys the same way", async () => {
+    const tx = settingsDatabase({ currentRpId: "events.imsda.org", passkeyOnlyStaff: 1 });
+
+    await expect(updatePlatformSettings(
+      platformSettingsInputSchema.parse(validInput({ passkeyRpId: "portal.imsda.org" })),
+      "admin-1",
+    )).rejects.toThrow("1 staff sign in only with a passkey; they'd be locked out.");
+    expect(tx.platformSettings.upsert).not.toHaveBeenCalled();
+  });
+
+  it("allows setting a domain for the first time without checking", async () => {
+    const tx = settingsDatabase({ currentRpId: null, passkeyOnlyStaff: 3 });
+
+    await updatePlatformSettings(
+      platformSettingsInputSchema.parse(validInput({ passkeyRpId: "events.imsda.org" })),
+      "admin-1",
+    );
+
+    expect(tx.user.count).not.toHaveBeenCalled();
+    expect(tx.platformSettings.upsert).toHaveBeenCalled();
+  });
+
+  it("does not check when the domain is unchanged", async () => {
     const tx = settingsDatabase({ currentRpId: "events.imsda.org", passkeyOnlyStaff: 3 });
 
     await updatePlatformSettings(

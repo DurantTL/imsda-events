@@ -384,12 +384,14 @@ export async function authenticateAttendee(
 
   if (!await verifyPassword(password, credential.passwordHash)) {
     const now = new Date();
-    const counted = await getPrisma().attendeeCredential.update({
-      where: { id: credential.id },
+    // Counted only while no live lock stands, so wrong passwords that raced
+    // past the check above while another request set the lock cannot re-arm
+    // the counter for the next lock (#456 re-review).
+    const counted = await getPrisma().attendeeCredential.updateMany({
+      where: { id: credential.id, OR: [{ lockedUntil: null }, { lockedUntil: { lte: now } }] },
       data: { failedAttempts: { increment: 1 } },
-      select: { failedAttempts: true },
     });
-    if (counted.failedAttempts >= MAX_FAILED_ATTEMPTS) {
+    if (counted.count === 1) {
       // Only the request that wins this conditional claim on the
       // not-locked -> locked transition announces it; setting the lock resets
       // the counter, so a re-lock after expiry needs five new wrong passwords.

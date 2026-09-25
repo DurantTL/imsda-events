@@ -100,9 +100,10 @@ describe("wrong password (#456)", () => {
 
     await authenticateWithPassword("staff@imsda.org", "wrong", null);
 
-    expect(credential.update).toHaveBeenCalledWith(expect.objectContaining({
+    expect(credential.updateMany).toHaveBeenCalledWith({
+      where: { id: "cred-1", OR: [{ lockedUntil: null }, { lockedUntil: { lte: expect.any(Date) } }] },
       data: { failedAttempts: { increment: 1 } },
-    }));
+    });
     expect(credential.row.lockedUntil).toBeInstanceOf(Date);
     expect(credential.row.failedAttempts).toBe(0);
     expect(dependencies.scheduleLockoutEmails).toHaveBeenCalledTimes(1);
@@ -126,10 +127,26 @@ describe("wrong password (#456)", () => {
       authenticateWithPassword("staff@imsda.org", "wrong-2", null),
     ]);
 
-    expect(credential.updateMany).toHaveBeenCalledTimes(2);
-    const claims = await Promise.all(credential.updateMany.mock.results.map((result) => result.value));
+    const claims = await Promise.all(credential.updateMany.mock.calls
+      .map(([query], index) => ({ query, result: credential.updateMany.mock.results[index].value }))
+      .filter(({ query }) => query.where.failedAttempts)
+      .map(({ result }) => result));
     expect(claims.map((claim) => claim.count).sort()).toEqual([0, 1]);
     expect(dependencies.scheduleLockoutEmails).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not count wrong passwords that race in while a lock is live", async () => {
+    const lockedUntil = new Date(Date.now() + 10 * 60_000);
+    const { stub, credential } = prismaFixture({ failedAttempts: 0, lockedUntil });
+    // Read before the lock landed: they get past the "already locked" check.
+    stub.user.findUnique.mockImplementation(async () => userFixture({ failedAttempts: 4, lockedUntil: null }));
+    dependencies.verifyPassword.mockResolvedValue(false);
+
+    await Promise.all(Array.from({ length: 6 }, () => authenticateWithPassword("staff@imsda.org", "wrong", null)));
+
+    // The counter is not re-armed for the next lock, and nothing is announced.
+    expect(credential.row).toEqual({ failedAttempts: 0, lockedUntil });
+    expect(dependencies.scheduleLockoutEmails).not.toHaveBeenCalled();
   });
 
   it("needs five new wrong passwords to lock again once the lock expires", async () => {
@@ -245,8 +262,25 @@ describe("wrong two-step code (#456)", () => {
       completeMfaChallenge("token", "000002", { now }),
     ]);
 
-    const claims = enrollment.updateMany.mock.calls.filter(([query]) => query.where.failedAttempts);
+    const claims = enrollment.updateMany.mock.calls.filter(([query]) => query.where.failedAttempts?.gte);
     expect(claims).toHaveLength(2);
+    expect(enrollment.row.lockedUntil).toBeInstanceOf(Date);
+    expect(dependencies.scheduleLockoutEmails).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets a burst of parallel wrong codes verify at most three times, then locks", async () => {
+    const { stub, enrollment } = prismaFixture();
+
+    const results = await Promise.allSettled(Array.from({ length: 10 }, (_, index) => (
+      completeMfaChallenge("token", String(100000 + index), { now })
+    )));
+
+    // Every wrong authenticator code falls through to the recovery-code check,
+    // so that call counts the verifications that actually ran.
+    expect(stub.mfaRecoveryCode.updateMany).toHaveBeenCalledTimes(3);
+    const codes = results.map((result) => (result as PromiseRejectedResult).reason.code);
+    expect(codes.filter((code) => code === "MFA_CODE_INVALID")).toHaveLength(3);
+    expect(codes.filter((code) => code === "MFA_LOCKED")).toHaveLength(7);
     expect(enrollment.row.lockedUntil).toBeInstanceOf(Date);
     expect(dependencies.scheduleLockoutEmails).toHaveBeenCalledTimes(1);
   });

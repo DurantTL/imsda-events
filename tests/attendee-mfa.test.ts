@@ -187,11 +187,44 @@ describe("the second-factor lockout (#456)", () => {
     ]);
 
     // Both saw the counter at or past three; only one claim could match.
-    const claims = row.updateMany.mock.calls.filter(([query]) => query.where.failedAttempts);
+    const claims = row.updateMany.mock.calls.filter(([query]) => query.where.failedAttempts?.gte);
     expect(claims).toHaveLength(2);
     expect(row.row.lockedUntil).toBeInstanceOf(Date);
     expect(row.row.failedAttempts).toBe(0);
     expect(dependencies.scheduleLockoutEmails).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets a burst of parallel wrong codes verify at most three times, then locks", async () => {
+    const row = enrollmentFixture();
+
+    const results = await Promise.allSettled(Array.from({ length: 10 }, (_, index) => (
+      verifyAttendeeSecondFactor("acct-1", String(100000 + index), NOW)
+    )));
+
+    // Each wrong authenticator code falls through to the recovery-code check,
+    // so that call counts the verifications that actually ran.
+    expect(prisma.attendeeMfaRecoveryCode.updateMany).toHaveBeenCalledTimes(3);
+    const codes = results.map((result) => (result as PromiseRejectedResult).reason.code);
+    expect(codes.filter((code) => code === "MFA_CODE_INVALID")).toHaveLength(3);
+    expect(codes.filter((code) => code === "MFA_LOCKED")).toHaveLength(7);
+    expect(row.row.lockedUntil).toBeInstanceOf(Date);
+    expect(dependencies.scheduleLockoutEmails).toHaveBeenCalledTimes(1);
+  });
+
+  it("turns a counter stranded at the maximum into a temporary lock, not a permanent one", async () => {
+    // A request that reserved the last guess and then died never claimed the lock.
+    const row = enrollmentFixture({ failedAttempts: 3 });
+
+    await expect(verifyAttendeeSecondFactor("acct-1", totpCode(SECRET, NOW), NOW))
+      .rejects.toMatchObject({ code: "MFA_LOCKED" });
+    expect(row.row).toEqual({ failedAttempts: 0, lockedUntil: new Date(NOW.getTime() + 15 * 60_000) });
+
+    // Once that lock expires, the right code works again.
+    const later = new Date(NOW.getTime() + 16 * 60_000);
+    prisma.attendeeMfaEnrollment.findUnique.mockResolvedValue({
+      id: "mfa-1", status: "ACTIVE", sealedSecret: "sealed-secret", lastUsedStep: null, lockedUntil: row.row.lockedUntil,
+    });
+    await expect(verifyAttendeeSecondFactor("acct-1", totpCode(SECRET, later), later)).resolves.toBeUndefined();
   });
 
   it("clears the counter on a correct code", async () => {
@@ -247,7 +280,9 @@ describe("issuing new recovery codes", () => {
   it("refuses a wrong code, and counts it toward the lock", async () => {
     await expect(regenerateAttendeeRecoveryCodes("acct-1", { sessionId: "sess-1", code: "000000" }, NOW))
       .rejects.toMatchObject({ code: "MFA_CODE_INVALID" });
-    expect(prisma.attendeeMfaEnrollment.update).toHaveBeenCalledWith(expect.objectContaining({
+    // The guess was reserved before the code was checked.
+    expect(prisma.attendeeMfaEnrollment.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ failedAttempts: { lt: 3 } }),
       data: { failedAttempts: { increment: 1 } },
     }));
     expect(prisma.attendeeMfaRecoveryCode.createMany).not.toHaveBeenCalled();

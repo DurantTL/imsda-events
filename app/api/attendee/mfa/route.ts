@@ -4,6 +4,8 @@ import { withRequestContext } from "@/lib/request-context";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { markRosterUnlocked } from "@/modules/club-rosters/access";
+import { applyRateLimitHeaders } from "@/modules/rate-limit/domain";
+import { checkAttendeeRosterUnlockRateLimit } from "@/modules/rate-limit/service";
 import {
   AttendeeMfaError,
   beginAttendeeMfaEnrollment,
@@ -84,10 +86,22 @@ async function postHandler(request: Request) {
       // Only the person's own attendee session can mint codes; a staff member
       // viewing their linked attendee account has no attendee session here.
       const { via, sessionId } = await getCurrentAttendee();
-      return Response.json(await regenerateAttendeeRecoveryCodes(id, {
-        sessionId: via === "attendee" ? sessionId : null,
-        code: input.code ?? null,
-      }));
+      const proof = { sessionId: via === "attendee" ? sessionId : null, code: input.code ?? null };
+      if (!proof.code) return Response.json(await regenerateAttendeeRecoveryCodes(id, proof));
+      // A code here is a second-factor guess like the roster unlock, so it
+      // spends from the same budget (5 per account, 20 per client, per 15
+      // minutes) — checked before anything is verified.
+      const rateLimit = await checkAttendeeRosterUnlockRateLimit(request, id);
+      if (!rateLimit.allowed) {
+        return applyRateLimitHeaders(Response.json({
+          error: "RATE_LIMITED",
+          message: "Too many attempts. Wait a few minutes and try again.",
+        }, { status: 429 }), rateLimit);
+      }
+      return applyRateLimitHeaders(
+        Response.json(await regenerateAttendeeRecoveryCodes(id, proof)),
+        rateLimit,
+      );
     }
     await disableAttendeeMfa(id, input.code);
     return Response.json({ ok: true, status: await getAttendeeMfaStatus(id) });

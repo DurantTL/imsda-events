@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   rejectCrossOriginRequest: vi.fn(),
   openSecret: vi.fn(),
   scheduleLockoutEmails: vi.fn(),
+  checkAttendeeRosterUnlockRateLimit: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -24,6 +25,9 @@ vi.mock("@/modules/attendee-accounts/current-attendee", () => ({
 vi.mock("@/modules/access/request-security", () => ({
   rejectCrossOriginRequest: mocks.rejectCrossOriginRequest,
 }));
+vi.mock("@/modules/rate-limit/service", () => ({
+  checkAttendeeRosterUnlockRateLimit: mocks.checkAttendeeRosterUnlockRateLimit,
+}));
 vi.mock("@/modules/communications/lockout-email", () => ({
   scheduleLockoutEmails: mocks.scheduleLockoutEmails,
 }));
@@ -32,6 +36,21 @@ import { POST } from "@/app/api/attendee/mfa/route";
 import { totpCode } from "@/modules/access/totp";
 
 const SECRET = "JBSWY3DPEHPK3PXP";
+
+function rateLimit(allowed: boolean) {
+  return {
+    allowed,
+    decisions: [{
+      policy: "attendee.roster-unlock.account",
+      allowed,
+      limit: 5,
+      remaining: allowed ? 4 : 0,
+      count: allowed ? 1 : 6,
+      windowSeconds: 900,
+      resetAfterSeconds: 600,
+    }],
+  };
+}
 
 function request(body: Record<string, unknown>) {
   return new Request("https://events.imsda.test/api/attendee/mfa", {
@@ -73,6 +92,7 @@ beforeEach(() => {
   mocks.getPrisma.mockReturnValue(prisma);
   mocks.openSecret.mockReturnValue(SECRET);
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
+  mocks.checkAttendeeRosterUnlockRateLimit.mockResolvedValue(rateLimit(true));
   mocks.getCurrentAttendee.mockResolvedValue({
     account: { id: "acct-1" },
     via: "attendee",
@@ -138,5 +158,33 @@ describe("POST /api/attendee/mfa regenerate-recovery-codes", () => {
 
     expect(response.status).toBe(200);
     expect((await response.json()).recoveryCodes).toHaveLength(10);
+  });
+
+  it("rate-limits a presented code, with the roster-unlock budget, before verifying it", async () => {
+    mocks.checkAttendeeRosterUnlockRateLimit.mockResolvedValue(rateLimit(false));
+
+    const response = await POST(request({ action: "regenerate-recovery-codes", code: "000000" }));
+
+    expect(response.status).toBe(429);
+    expect(await response.json()).toEqual({
+      error: "RATE_LIMITED",
+      message: "Too many attempts. Wait a few minutes and try again.",
+    });
+    expect(mocks.checkAttendeeRosterUnlockRateLimit).toHaveBeenCalledWith(expect.any(Request), "acct-1");
+    // Nothing was reserved or verified.
+    expect(prisma.attendeeMfaEnrollment.updateMany).not.toHaveBeenCalled();
+    expect(prisma.attendeeMfaRecoveryCode.updateMany).not.toHaveBeenCalled();
+    expect(prisma.attendeeMfaRecoveryCode.createMany).not.toHaveBeenCalled();
+  });
+
+  it("does not spend the budget when no code is presented", async () => {
+    prisma.attendeeSession.findUnique.mockResolvedValue({
+      accountId: "acct-1",
+      secondFactorVerifiedAt: new Date(Date.now() - 60_000),
+    });
+
+    await POST(request({ action: "regenerate-recovery-codes" }));
+
+    expect(mocks.checkAttendeeRosterUnlockRateLimit).not.toHaveBeenCalled();
   });
 });

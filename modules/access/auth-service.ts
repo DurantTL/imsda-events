@@ -134,12 +134,14 @@ async function checkPasswordWithLockout(credential: LockableCredential, userId: 
   const valid = await verifyPassword(password, credential.passwordHash);
   if (!valid) {
     const now = new Date();
-    const counted = await getPrisma().authCredential.update({
-      where: { id: credential.id },
+    // Counted only while no live lock stands, so wrong passwords that raced
+    // past the check above while another request set the lock cannot re-arm
+    // the counter for the next lock (#456 re-review).
+    const counted = await getPrisma().authCredential.updateMany({
+      where: { id: credential.id, OR: [{ lockedUntil: null }, { lockedUntil: { lte: now } }] },
       data: { failedAttempts: { increment: 1 } },
-      select: { failedAttempts: true },
     });
-    if (counted.failedAttempts >= MAX_FAILED_ATTEMPTS) {
+    if (counted.count === 1) {
       const lockedUntil = new Date(now.getTime() + LOCK_MINUTES * 60 * 1000);
       const claimed = await getPrisma().authCredential.updateMany({
         where: {

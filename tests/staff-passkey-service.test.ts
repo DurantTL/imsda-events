@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 type Row = Record<string, unknown>;
 type LockClaimWhere = {
-  failedAttempts?: { gte: number };
+  failedAttempts?: { gte?: number; lt?: number };
   OR?: Array<{ lockedUntil?: null | { lte: Date } }>;
 };
 
@@ -58,14 +58,22 @@ vi.mock("@/lib/prisma", () => {
     }
     return row;
   };
-  /** The conditional lock claim: at the threshold, and no live lock. */
+  /**
+   * The lockout's conditional updates: a counter bound (`gte` to claim the
+   * lock, `lt` to reserve a guess) and "no live lock". Applies increments.
+   */
   const claimLock = (row: Row | null, where: LockClaimWhere, data: Row) => {
-    const expiredBefore = where.OR?.map((clause) => clause.lockedUntil)
-      .find((value): value is { lte: Date } => value !== null && value !== undefined)?.lte;
-    const locked = row?.lockedUntil as Date | null | undefined;
-    const unlocked = !locked || (expiredBefore !== undefined && locked <= expiredBefore);
-    if (!row || (row.failedAttempts as number) < where.failedAttempts!.gte || !unlocked) return { count: 0 };
-    Object.assign(row, data);
+    if (!row) return { count: 0 };
+    const count = row.failedAttempts as number;
+    if (where.failedAttempts?.gte !== undefined && count < where.failedAttempts.gte) return { count: 0 };
+    if (where.failedAttempts?.lt !== undefined && count >= where.failedAttempts.lt) return { count: 0 };
+    const clauses = (where.OR ?? []).filter((clause) => "lockedUntil" in clause);
+    const locked = row.lockedUntil as Date | null | undefined;
+    const unlocked = clauses.length === 0 || clauses.some((clause) => (clause.lockedUntil === null
+      ? !locked
+      : !!locked && locked <= clause.lockedUntil!.lte));
+    if (!unlocked) return { count: 0 };
+    applyIncrement(row, data);
     return { count: 1 };
   };
   const client = {

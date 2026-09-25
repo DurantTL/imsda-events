@@ -245,29 +245,40 @@ async function consumeSecondFactor(enrollment: Enrollment, presented: string, no
   return true;
 }
 
-/**
- * Counts a wrong code toward the second factor's lockout. The counter is
- * incremented atomically and the lock is claimed with a conditional
- * `updateMany`, so of several racing wrong codes exactly one wins the
- * not-locked -> locked transition; only that one schedules the lockout email
- * (#456), after the response. Mirrors `recordFailedCode` in
- * modules/access/mfa-service.ts for staff.
- */
-async function recordFailedCode(accountId: string, enrollmentId: string, now: Date) {
-  const counted = await getPrisma().attendeeMfaEnrollment.update({
-    where: { id: enrollmentId },
-    data: { failedAttempts: { increment: 1 } },
-    select: { failedAttempts: true },
-  });
-  if (counted.failedAttempts < MAX_VERIFY_FAILURES) return;
+/** No lock, or one that has already expired: the "no live lock" predicate. */
+function noLiveLock(now: Date) {
+  return [{ lockedUntil: null }, { lockedUntil: { lte: now } }];
+}
 
+/**
+ * Reserves one guess before any code is checked (#456 re-review). The counter
+ * is incremented only while there is no live lock and fewer than
+ * {@link MAX_VERIFY_FAILURES} guesses are outstanding, in one conditional
+ * statement — so a parallel burst gets at most that many verifications, not
+ * as many as can read "unlocked" before the first lock lands. A right code
+ * resets the counter (in `consumeSecondFactor`); a wrong one keeps its
+ * reservation. `false` means no guess is available: the caller refuses.
+ */
+async function reserveCodeAttempt(enrollmentId: string, now: Date) {
+  const reserved = await getPrisma().attendeeMfaEnrollment.updateMany({
+    where: { id: enrollmentId, failedAttempts: { lt: MAX_VERIFY_FAILURES }, OR: noLiveLock(now) },
+    data: { failedAttempts: { increment: 1 } },
+  });
+  return reserved.count === 1;
+}
+
+/**
+ * Claims the not-locked -> locked transition once the reserved guesses are
+ * spent. The conditional `updateMany` matches for exactly one request, and
+ * only that one schedules the lockout email (#456), after the response. Also
+ * run when a reservation is refused, so a counter left at the maximum by an
+ * interrupted request still turns into a (temporary) lock rather than a
+ * permanent one. Mirrors modules/access/mfa-service.ts for staff.
+ */
+async function claimCodeLock(accountId: string, enrollmentId: string, now: Date) {
   const lockedUntil = new Date(now.getTime() + VERIFY_LOCK_MINUTES * 60 * 1000);
   const claimed = await getPrisma().attendeeMfaEnrollment.updateMany({
-    where: {
-      id: enrollmentId,
-      failedAttempts: { gte: MAX_VERIFY_FAILURES },
-      OR: [{ lockedUntil: null }, { lockedUntil: { lte: now } }],
-    },
+    where: { id: enrollmentId, failedAttempts: { gte: MAX_VERIFY_FAILURES }, OR: noLiveLock(now) },
     data: { lockedUntil, failedAttempts: 0 },
   });
   if (claimed.count === 1) {
@@ -279,6 +290,13 @@ async function recordFailedCode(accountId: string, enrollmentId: string, now: Da
       now,
     });
   }
+}
+
+function lockedError() {
+  return new AttendeeMfaError(
+    "MFA_LOCKED",
+    "Too many incorrect codes. Wait a few minutes and try again.",
+  );
 }
 
 export async function verifyAttendeeSecondFactor(
@@ -296,14 +314,13 @@ export async function verifyAttendeeSecondFactor(
       "Set up an authenticator before opening sensitive information.",
     );
   }
-  if (enrollment.lockedUntil && enrollment.lockedUntil > now) {
-    throw new AttendeeMfaError(
-      "MFA_LOCKED",
-      "Too many incorrect codes. Wait a few minutes and try again.",
-    );
+  if (enrollment.lockedUntil && enrollment.lockedUntil > now) throw lockedError();
+  if (!await reserveCodeAttempt(enrollment.id, now)) {
+    await claimCodeLock(accountId, enrollment.id, now);
+    throw lockedError();
   }
   if (!await consumeSecondFactor(enrollment, code, now)) {
-    await recordFailedCode(accountId, enrollment.id, now);
+    await claimCodeLock(accountId, enrollment.id, now);
     throw new AttendeeMfaError("MFA_CODE_INVALID", "That code is not right.");
   }
 }

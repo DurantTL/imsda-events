@@ -642,10 +642,11 @@ describe("password sign-in", () => {
     dependencies.verifyPassword.mockResolvedValue(false);
 
     expect(await authenticateAttendee("someone@example.com", "wrong", null)).toBeNull();
-    // Counted atomically, never as a read-modify-write of a stale value.
-    expect(credential.update).toHaveBeenCalledWith(expect.objectContaining({
+    // Counted atomically, and only while no live lock stands.
+    expect(credential.updateMany).toHaveBeenCalledWith({
+      where: { id: "cred_1", OR: [{ lockedUntil: null }, { lockedUntil: { lte: expect.any(Date) } }] },
       data: { failedAttempts: { increment: 1 } },
-    }));
+    });
     expect(credential.row.lockedUntil).toBeInstanceOf(Date);
     expect(credential.row.failedAttempts).toBe(0);
     expect(dependencies.scheduleLockoutEmails).toHaveBeenCalledTimes(1);
@@ -671,10 +672,12 @@ describe("password sign-in", () => {
       authenticateAttendee("someone@example.com", "wrong-2", null),
     ]);
 
-    // Both crossed the threshold and both tried to claim; only one could.
-    expect(credential.updateMany).toHaveBeenCalledTimes(2);
-    const claims = await Promise.all(credential.updateMany.mock.results.map((result) => result.value));
-    expect(claims.map((claim) => claim.count).sort()).toEqual([0, 1]);
+    // Both counted and both tried to claim the lock; only one claim matched.
+    const claimResults = await Promise.all(credential.updateMany.mock.calls
+      .map(([query], index) => ({ query, result: credential.updateMany.mock.results[index].value }))
+      .filter(({ query }) => query.where.failedAttempts)
+      .map(({ result }) => result));
+    expect(claimResults.map((claim) => claim.count).sort()).toEqual([0, 1]);
     expect(dependencies.scheduleLockoutEmails).toHaveBeenCalledTimes(1);
   });
 
@@ -711,7 +714,24 @@ describe("password sign-in", () => {
     dependencies.verifyPassword.mockResolvedValue(false);
 
     expect(await authenticateAttendee("someone@example.com", "wrong", null)).toBeNull();
-    expect(credential.updateMany).not.toHaveBeenCalled();
+    expect(credential.row).toEqual({ failedAttempts: 3, lockedUntil: null });
+    expect(dependencies.scheduleLockoutEmails).not.toHaveBeenCalled();
+  });
+
+  it("does not count wrong passwords that race in while a lock is live (#456)", async () => {
+    // These requests read the credential before the lock landed, so they got
+    // past the "already locked" check; the lock is live by the time they count.
+    const lockedUntil = new Date(Date.now() + 10 * 60_000);
+    const credential = lockableRowStub({ failedAttempts: 0, lockedUntil });
+    prisma.attendeeCredential.update = credential.update;
+    prisma.attendeeCredential.updateMany = credential.updateMany;
+    prisma.attendeeAccount.findUnique.mockResolvedValue(lockableAccount({ failedAttempts: 4, lockedUntil: null }));
+    dependencies.verifyPassword.mockResolvedValue(false);
+
+    await Promise.all(Array.from({ length: 6 }, () => authenticateAttendee("someone@example.com", "wrong", null)));
+
+    // Not re-armed: after expiry, locking again still takes five new wrong passwords.
+    expect(credential.row).toEqual({ failedAttempts: 0, lockedUntil });
     expect(dependencies.scheduleLockoutEmails).not.toHaveBeenCalled();
   });
 

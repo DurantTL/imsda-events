@@ -104,9 +104,13 @@ export class PlatformSettingsError extends Error {
 }
 
 /**
- * Staff who could sign in only with a passkey: an active account, at least one
- * live passkey, and no active authenticator to fall back on. Clearing the
- * passkey domain turns passkeys off, which would strand exactly these people.
+ * Staff who could sign in only with a passkey: an active account that has to
+ * pass a second step (a system administrator, or anyone with an ACTIVE event
+ * membership — the rule in modules/access/mfa-rules.ts), at least one live
+ * passkey, and no active authenticator to fall back on. Changing or clearing
+ * the passkey domain invalidates every existing passkey, which would strand
+ * exactly these people. Staff with no second-step requirement still sign in
+ * with a password alone, so they are not counted.
  */
 async function countPasskeyOnlyStaff(tx: Pick<ReturnType<typeof getPrisma>, "user">) {
   return tx.user.count({
@@ -114,6 +118,10 @@ async function countPasskeyOnlyStaff(tx: Pick<ReturnType<typeof getPrisma>, "use
       accountStatus: "ACTIVE",
       passkeys: { some: { revokedAt: null } },
       NOT: { mfaEnrollment: { is: { status: "ACTIVE" } } },
+      OR: [
+        { globalRole: "SYSTEM_ADMIN" },
+        { memberships: { some: { status: "ACTIVE" } } },
+      ],
     },
   });
 }
@@ -127,13 +135,15 @@ export async function updatePlatformSettings(
     const before = await tx.platformSettings.findUnique({
       where: { id: PLATFORM_SETTINGS_ID },
     });
-    if (before?.passkeyRpId && !input.passkeyRpId) {
+    // Any change, not only clearing: a passkey is bound to the domain it was
+    // made for, so a new domain strands existing passkeys just the same.
+    if (before?.passkeyRpId && before.passkeyRpId !== (input.passkeyRpId ?? null)) {
       const stranded = await countPasskeyOnlyStaff(tx);
       if (stranded > 0) {
         throw new PlatformSettingsError(
           "PASSKEY_ONLY_STAFF_WOULD_BE_LOCKED_OUT",
           `${stranded} staff sign in only with a passkey; they'd be locked out. `
-            + "Ask them to add an authenticator app first, then clear the passkey domain.",
+            + "Ask them to add an authenticator app first, then change the passkey domain.",
         );
       }
     }
