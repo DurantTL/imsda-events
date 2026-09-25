@@ -4,6 +4,8 @@ import { withRequestContext } from "@/lib/request-context";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { markRosterUnlocked } from "@/modules/club-rosters/access";
+import { applyRateLimitHeaders } from "@/modules/rate-limit/domain";
+import { checkAttendeeRosterUnlockRateLimit } from "@/modules/rate-limit/service";
 import {
   AttendeeMfaError,
   beginAttendeeMfaEnrollment,
@@ -20,13 +22,18 @@ const code = z.string()
 const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("begin") }),
   z.object({ action: z.literal("confirm"), code }),
-  z.object({ action: z.literal("regenerate-recovery-codes") }),
+  // A current code is optional: a session that passed its second step
+  // recently needs none, any other session must present one.
+  z.object({ action: z.literal("regenerate-recovery-codes"), code: code.optional() }),
   z.object({ action: z.literal("disable"), code }),
 ]);
 
 function failure(error: unknown) {
   if (error instanceof AttendeeMfaError) {
-    return Response.json({ error: error.code, message: error.message }, { status: 400 });
+    const status = error.code === "MFA_LOCKED" ? 429
+      : error.code === "RECENT_VERIFICATION_REQUIRED" ? 403
+      : 400;
+    return Response.json({ error: error.code, message: error.message }, { status });
   }
   if (error instanceof z.ZodError) {
     return Response.json(
@@ -76,7 +83,25 @@ async function postHandler(request: Request) {
       return Response.json({ ...confirmed, status: await getAttendeeMfaStatus(id) });
     }
     if (input.action === "regenerate-recovery-codes") {
-      return Response.json(await regenerateAttendeeRecoveryCodes(id));
+      // Only the person's own attendee session can mint codes; a staff member
+      // viewing their linked attendee account has no attendee session here.
+      const { via, sessionId } = await getCurrentAttendee();
+      const proof = { sessionId: via === "attendee" ? sessionId : null, code: input.code ?? null };
+      if (!proof.code) return Response.json(await regenerateAttendeeRecoveryCodes(id, proof));
+      // A code here is a second-factor guess like the roster unlock, so it
+      // spends from the same budget (5 per account, 20 per client, per 15
+      // minutes) — checked before anything is verified.
+      const rateLimit = await checkAttendeeRosterUnlockRateLimit(request, id);
+      if (!rateLimit.allowed) {
+        return applyRateLimitHeaders(Response.json({
+          error: "RATE_LIMITED",
+          message: "Too many attempts. Wait a few minutes and try again.",
+        }, { status: 429 }), rateLimit);
+      }
+      return applyRateLimitHeaders(
+        Response.json(await regenerateAttendeeRecoveryCodes(id, proof)),
+        rateLimit,
+      );
     }
     await disableAttendeeMfa(id, input.code);
     return Response.json({ ok: true, status: await getAttendeeMfaStatus(id) });

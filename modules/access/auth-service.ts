@@ -7,6 +7,7 @@ import { createDatabaseSession } from "@/modules/access/session-store";
 import { mfaGateFor } from "@/modules/access/mfa-rules";
 import { createOpaqueToken, hashOpaqueToken } from "@/modules/access/tokens";
 import { writeAuditLog } from "@/modules/audit/audit-service";
+import { scheduleLockoutEmails } from "@/modules/communications/lockout-email";
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_MINUTES = 15;
@@ -78,7 +79,7 @@ export async function authenticateWithPassword(
     return null;
   }
 
-  if (!(await checkPasswordWithLockout(user.credential, password))) return null;
+  if (!(await checkPasswordWithLockout(user.credential, user.id, password))) return null;
 
   const subject = {
     globalRole: user.globalRole,
@@ -114,8 +115,17 @@ type LockableCredential = {
  * The one password check, shared by sign-in and by the confirm-it's-you step
  * on sign-in changes (#429): a disabled or locked credential never verifies,
  * a wrong password counts toward the lockout, and a right one clears it.
+ *
+ * The lockout email (#456) is scheduled from here, the one place both
+ * callers cross through, and only by the request that wins the conditional
+ * claim on the not-locked -> locked transition: the counter is incremented
+ * atomically, and the lock is set by an `updateMany` that only matches while
+ * the counter is at the threshold and no live lock stands. Setting the lock
+ * resets the counter, so a re-lock after expiry needs five new wrong
+ * passwords. The email itself runs after the response (`after()`), so the
+ * locking attempt is indistinguishable from any other failure.
  */
-async function checkPasswordWithLockout(credential: LockableCredential, password: string) {
+async function checkPasswordWithLockout(credential: LockableCredential, userId: string, password: string) {
   if (credential.disabledAt || (credential.lockedUntil && credential.lockedUntil > new Date())) {
     await spendPasswordCheck(password);
     return false;
@@ -123,16 +133,34 @@ async function checkPasswordWithLockout(credential: LockableCredential, password
 
   const valid = await verifyPassword(password, credential.passwordHash);
   if (!valid) {
-    const failedAttempts = credential.failedAttempts + 1;
-    await getPrisma().authCredential.update({
-      where: { id: credential.id },
-      data: {
-        failedAttempts,
-        lockedUntil: failedAttempts >= MAX_FAILED_ATTEMPTS
-          ? new Date(Date.now() + LOCK_MINUTES * 60 * 1000)
-          : null,
-      },
+    const now = new Date();
+    // Counted only while no live lock stands, so wrong passwords that raced
+    // past the check above while another request set the lock cannot re-arm
+    // the counter for the next lock (#456 re-review).
+    const counted = await getPrisma().authCredential.updateMany({
+      where: { id: credential.id, OR: [{ lockedUntil: null }, { lockedUntil: { lte: now } }] },
+      data: { failedAttempts: { increment: 1 } },
     });
+    if (counted.count === 1) {
+      const lockedUntil = new Date(now.getTime() + LOCK_MINUTES * 60 * 1000);
+      const claimed = await getPrisma().authCredential.updateMany({
+        where: {
+          id: credential.id,
+          failedAttempts: { gte: MAX_FAILED_ATTEMPTS },
+          OR: [{ lockedUntil: null }, { lockedUntil: { lte: now } }],
+        },
+        data: { lockedUntil, failedAttempts: 0 },
+      });
+      if (claimed.count === 1) {
+        scheduleLockoutEmails({
+          audience: "STAFF",
+          kind: "PASSWORD",
+          accountUserId: userId,
+          lockedUntil,
+          now,
+        });
+      }
+    }
     return false;
   }
 
@@ -163,7 +191,7 @@ export async function verifyCurrentPassword(userId: string, password: string): P
     await spendPasswordCheck(password);
     return false;
   }
-  return checkPasswordWithLockout(user.credential, password);
+  return checkPasswordWithLockout(user.credential, userId, password);
 }
 
 /**

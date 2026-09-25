@@ -4,6 +4,7 @@ import { getPrisma } from "@/lib/prisma";
 import { openSecret, sealSecret } from "@/lib/secret-box";
 import { hashPassword, spendPasswordCheck, verifyPassword } from "@/modules/access/passwords";
 import { createOpaqueToken, hashOpaqueToken } from "@/modules/access/tokens";
+import { scheduleLockoutEmails } from "@/modules/communications/lockout-email";
 import {
   ATTENDEE_PENDING_REQUEST_LIFETIME_HOURS,
   EMAIL_VERIFICATION_LIFETIME_MINUTES,
@@ -382,16 +383,39 @@ export async function authenticateAttendee(
   }
 
   if (!await verifyPassword(password, credential.passwordHash)) {
-    const failedAttempts = credential.failedAttempts + 1;
-    await getPrisma().attendeeCredential.update({
-      where: { id: credential.id },
-      data: {
-        failedAttempts,
-        lockedUntil: failedAttempts >= MAX_FAILED_ATTEMPTS
-          ? new Date(Date.now() + LOCK_MINUTES * 60 * 1000)
-          : null,
-      },
+    const now = new Date();
+    // Counted only while no live lock stands, so wrong passwords that raced
+    // past the check above while another request set the lock cannot re-arm
+    // the counter for the next lock (#456 re-review).
+    const counted = await getPrisma().attendeeCredential.updateMany({
+      where: { id: credential.id, OR: [{ lockedUntil: null }, { lockedUntil: { lte: now } }] },
+      data: { failedAttempts: { increment: 1 } },
     });
+    if (counted.count === 1) {
+      // Only the request that wins this conditional claim on the
+      // not-locked -> locked transition announces it; setting the lock resets
+      // the counter, so a re-lock after expiry needs five new wrong passwords.
+      // The email runs after the response, so this attempt answers exactly
+      // like any other failure (#456).
+      const lockedUntil = new Date(now.getTime() + LOCK_MINUTES * 60 * 1000);
+      const claimed = await getPrisma().attendeeCredential.updateMany({
+        where: {
+          id: credential.id,
+          failedAttempts: { gte: MAX_FAILED_ATTEMPTS },
+          OR: [{ lockedUntil: null }, { lockedUntil: { lte: now } }],
+        },
+        data: { lockedUntil, failedAttempts: 0 },
+      });
+      if (claimed.count === 1) {
+        scheduleLockoutEmails({
+          audience: "ATTENDEE",
+          kind: "PASSWORD",
+          accountAttendeeId: account.id,
+          lockedUntil,
+          now,
+        });
+      }
+    }
     return null;
   }
 

@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 type Row = Record<string, unknown>;
+type LockClaimWhere = {
+  failedAttempts?: { gte?: number; lt?: number };
+  OR?: Array<{ lockedUntil?: null | { lte: Date } }>;
+};
 
 const state = vi.hoisted(() => ({
   settings: { passkeyRpId: "events.imsda.test" as string | null },
@@ -54,6 +58,24 @@ vi.mock("@/lib/prisma", () => {
     }
     return row;
   };
+  /**
+   * The lockout's conditional updates: a counter bound (`gte` to claim the
+   * lock, `lt` to reserve a guess) and "no live lock". Applies increments.
+   */
+  const claimLock = (row: Row | null, where: LockClaimWhere, data: Row) => {
+    if (!row) return { count: 0 };
+    const count = row.failedAttempts as number;
+    if (where.failedAttempts?.gte !== undefined && count < where.failedAttempts.gte) return { count: 0 };
+    if (where.failedAttempts?.lt !== undefined && count >= where.failedAttempts.lt) return { count: 0 };
+    const clauses = (where.OR ?? []).filter((clause) => "lockedUntil" in clause);
+    const locked = row.lockedUntil as Date | null | undefined;
+    const unlocked = clauses.length === 0 || clauses.some((clause) => (clause.lockedUntil === null
+      ? !locked
+      : !!locked && locked <= clause.lockedUntil!.lte));
+    if (!unlocked) return { count: 0 };
+    applyIncrement(row, data);
+    return { count: 1 };
+  };
   const client = {
     platformSettings: { findUnique: async () => state.settings },
     user: {
@@ -63,7 +85,8 @@ vi.mock("@/lib/prisma", () => {
     },
     authCredential: {
       findUnique: async () => state.credential,
-      update: async ({ data }: { data: Row }) => Object.assign(state.credential!, data),
+      update: async ({ data }: { data: Row }) => applyIncrement(state.credential!, data),
+      updateMany: async ({ where, data }: { where: LockClaimWhere; data: Row }) => claimLock(state.credential, where, data),
     },
     userSession: {
       updateMany: async ({ where, data }: { where: Row; data: Row }) => {
@@ -81,6 +104,7 @@ vi.mock("@/lib/prisma", () => {
       },
       update: async ({ data }: { data: Row }) => applyIncrement(state.enrollment!, data),
       updateMany: async ({ where, data }: { where: { OR?: Array<{ lastUsedStep: null | { lt: bigint } }> }; data: Row }) => {
+        if ("failedAttempts" in where) return claimLock(state.enrollment, where as LockClaimWhere, data);
         const row = state.enrollment;
         const stepOk = !where.OR || where.OR.some((condition) => (condition.lastUsedStep === null
           ? row?.lastUsedStep === null
@@ -331,7 +355,8 @@ describe("re-authentication before adding or removing a staff passkey (#429)", (
       for (let tries = 0; tries < 5; tries += 1) {
         await expect(attempt(change, { password: "not the password" })).rejects.toMatchObject(refused);
       }
-      expect(state.credential).toMatchObject({ failedAttempts: 5, lockedUntil: expect.any(Date) });
+      // Setting the lock resets the counter (#456), so a re-lock needs five more.
+      expect(state.credential).toMatchObject({ failedAttempts: 0, lockedUntil: expect.any(Date) });
       // Once locked, even the right password is refused.
       await expect(attempt(change, passwordProof)).rejects.toMatchObject(refused);
     });

@@ -368,12 +368,26 @@ export async function finishPasskeySignIn(
 
   const passkey = await prisma.attendeePasskey.findFirst({
     where: { credentialId: response.id, revokedAt: null },
-    include: { account: { select: { id: true, status: true, emailVerifiedAt: true, disabledAt: true } } },
+    include: {
+      account: {
+        select: {
+          id: true,
+          status: true,
+          emailVerifiedAt: true,
+          disabledAt: true,
+          credential: { select: { lockedUntil: true } },
+        },
+      },
+    },
   });
   const account = passkey?.account;
   if (!passkey || !account || account.status !== "ACTIVE" || !account.emailVerifiedAt || account.disabledAt) {
     throw new PasskeyError("PASSKEY_NOT_VERIFIED", SIGN_IN_REFUSED);
   }
+  // A password lockout also blocks passkey sign-in (#456), as it does for
+  // staff. Refused in the same neutral words, so it reveals nothing more.
+  const lockedUntil = account.credential?.lockedUntil;
+  if (lockedUntil && lockedUntil > now) throw new PasskeyError("PASSKEY_NOT_VERIFIED", SIGN_IN_REFUSED);
   // The authenticator names the account it was made for; it must be this passkey's.
   const userHandle = decodeUserHandle(response.response.userHandle);
   if (userHandle !== null && userHandle !== account.id) throw new PasskeyError("PASSKEY_NOT_VERIFIED", SIGN_IN_REFUSED);

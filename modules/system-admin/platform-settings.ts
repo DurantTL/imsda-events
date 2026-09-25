@@ -47,6 +47,11 @@ export const platformSettingsInputSchema = z.object({
     z.string().max(253).transform((value) => value.toLowerCase())
       .refine(isValidRelyingPartyId, "Enter just the domain, like events.imsda.org."),
   ),
+  /**
+   * Where the short lockout alert goes, in addition to the account holder
+   * (#456). Blank means only the account holder is emailed.
+   */
+  securityAlertEmail: optionalEmail,
 }).strict();
 
 export type PlatformSettingsInput = z.infer<typeof platformSettingsInputSchema>;
@@ -82,9 +87,43 @@ export async function getPlatformSettings(): Promise<PlatformSettingsRecord> {
     defaultReplyToEmail: row.defaultReplyToEmail,
     defaultAttendeeEditPolicy: row.defaultAttendeeEditPolicy,
     passkeyRpId: row.passkeyRpId,
+    securityAlertEmail: row.securityAlertEmail,
     updatedAt: row.updatedAt.toISOString(),
     updatedByName: row.updatedBy?.displayName ?? null,
   };
+}
+
+export class PlatformSettingsError extends Error {
+  constructor(
+    public readonly code: "PASSKEY_ONLY_STAFF_WOULD_BE_LOCKED_OUT",
+    message: string,
+  ) {
+    super(message);
+    this.name = "PlatformSettingsError";
+  }
+}
+
+/**
+ * Staff who could sign in only with a passkey: an active account that has to
+ * pass a second step (a system administrator, or anyone with an ACTIVE event
+ * membership — the rule in modules/access/mfa-rules.ts), at least one live
+ * passkey, and no active authenticator to fall back on. Changing or clearing
+ * the passkey domain invalidates every existing passkey, which would strand
+ * exactly these people. Staff with no second-step requirement still sign in
+ * with a password alone, so they are not counted.
+ */
+async function countPasskeyOnlyStaff(tx: Pick<ReturnType<typeof getPrisma>, "user">) {
+  return tx.user.count({
+    where: {
+      accountStatus: "ACTIVE",
+      passkeys: { some: { revokedAt: null } },
+      NOT: { mfaEnrollment: { is: { status: "ACTIVE" } } },
+      OR: [
+        { globalRole: "SYSTEM_ADMIN" },
+        { memberships: { some: { status: "ACTIVE" } } },
+      ],
+    },
+  });
 }
 
 export async function updatePlatformSettings(
@@ -96,6 +135,18 @@ export async function updatePlatformSettings(
     const before = await tx.platformSettings.findUnique({
       where: { id: PLATFORM_SETTINGS_ID },
     });
+    // Any change, not only clearing: a passkey is bound to the domain it was
+    // made for, so a new domain strands existing passkeys just the same.
+    if (before?.passkeyRpId && before.passkeyRpId !== (input.passkeyRpId ?? null)) {
+      const stranded = await countPasskeyOnlyStaff(tx);
+      if (stranded > 0) {
+        throw new PlatformSettingsError(
+          "PASSKEY_ONLY_STAFF_WOULD_BE_LOCKED_OUT",
+          `${stranded} staff sign in only with a passkey; they'd be locked out. `
+            + "Ask them to add an authenticator app first, then change the passkey domain.",
+        );
+      }
+    }
     await tx.platformSettings.upsert({
       where: { id: PLATFORM_SETTINGS_ID },
       update: { ...input, updatedByUserId: actorUserId },
@@ -120,6 +171,7 @@ export async function updatePlatformSettings(
               defaultTimezone: before.defaultTimezone,
               defaultAttendeeEditPolicy: before.defaultAttendeeEditPolicy,
               passkeyRpId: before.passkeyRpId,
+              securityAlertEmail: before.securityAlertEmail,
             }
             : null,
           after: {
@@ -129,6 +181,7 @@ export async function updatePlatformSettings(
             defaultTimezone: input.defaultTimezone,
             defaultAttendeeEditPolicy: input.defaultAttendeeEditPolicy,
             passkeyRpId: input.passkeyRpId ?? null,
+            securityAlertEmail: input.securityAlertEmail ?? null,
           },
         },
       },

@@ -307,7 +307,10 @@ describe("the sign-in challenge", () => {
 
     expect(result.recoveryCodes).toHaveLength(10);
     expect(result.session.token).toBe("session-token");
-    expect(state.enrollmentUpdates[0]).toMatchObject({ status: "ACTIVE" });
+    // A guess is reserved before the code is checked (#456), then the
+    // confirmation turns the enrolment on and resets the counter.
+    expect(state.enrollmentUpdates[0]).toEqual({ failedAttempts: { increment: 1 } });
+    expect(state.enrollmentUpdates[1]).toMatchObject({ status: "ACTIVE", failedAttempts: 0 });
   });
 });
 

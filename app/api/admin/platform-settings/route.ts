@@ -3,6 +3,7 @@ import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import {
   getPlatformSettings,
+  PlatformSettingsError,
   platformSettingsInputSchema,
   updatePlatformSettings,
 } from "@/modules/system-admin/platform-settings";
@@ -55,6 +56,9 @@ async function patchHandler(request: Request) {
         },
         { status: 400 },
       );
+    }
+    if (error instanceof PlatformSettingsError) {
+      return Response.json({ error: error.code, message: error.message }, { status: 409 });
     }
     if (error instanceof SyntaxError) {
       return Response.json(

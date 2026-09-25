@@ -368,6 +368,12 @@ enum MessageTemplateKey {
   CLUB_INVITE
   CLUB_ASSIGNMENTS
   CLUB_TEAM_ROLE_NOTIFICATION
+  /// A staff sign-in was locked by repeated wrong passwords or wrong two-step
+  /// codes (#456). Covers both the email to the account holder and the short
+  /// alert to the configured security alert address.
+  ACCOUNT_LOCKOUT
+  /// The attendee/club-leader equivalent of ACCOUNT_LOCKOUT.
+  ATTENDEE_LOCKOUT
 }
 
 enum MessageTemplateStatus {
@@ -1020,6 +1026,9 @@ model PlatformSettings {
   /// Passkeys stay hidden until it is set and matches the page's origin, so an
   /// unconfigured or misconfigured deployment falls back to authenticator codes.
   passkeyRpId               String?
+  /// Where the short lockout alert goes (#456), in addition to the account
+  /// holder. Blank means only the account holder is emailed.
+  securityAlertEmail        String?
   updatedAt                 DateTime           @updatedAt
   updatedByUserId           String?
 

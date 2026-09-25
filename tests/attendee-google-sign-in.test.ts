@@ -8,7 +8,8 @@ const dependencies = vi.hoisted(() => ({
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: dependencies.getPrisma }));
-vi.mock("@/lib/logger", () => ({
+vi.mock("@/lib/logger", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/logger")>()),
   logInfo: dependencies.logInfo,
   logError: vi.fn(),
 }));

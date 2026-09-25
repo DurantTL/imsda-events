@@ -1,8 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("server-only", () => ({}));
+const database = vi.hoisted(() => ({ getPrisma: vi.fn() }));
 
-import { platformSettingsInputSchema } from "@/modules/system-admin/platform-settings";
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/prisma", () => ({ getPrisma: database.getPrisma }));
+
+import {
+  PlatformSettingsError,
+  platformSettingsInputSchema,
+  updatePlatformSettings,
+} from "@/modules/system-admin/platform-settings";
 
 function validInput(overrides: Record<string, unknown> = {}) {
   return {
@@ -60,5 +67,121 @@ describe("platform settings input", () => {
     expect(platformSettingsInputSchema.safeParse(
       validInput({ deliveryMode: "EXTERNAL_EMAIL" }),
     ).success).toBe(false);
+  });
+
+  it("validates the security alert email address and allows leaving it blank (#456)", () => {
+    const blank = platformSettingsInputSchema.parse(validInput({ securityAlertEmail: "" }));
+    expect(blank.securityAlertEmail).toBeNull();
+
+    const normalized = platformSettingsInputSchema.parse(
+      validInput({ securityAlertEmail: "  Security@IMSDA.org " }),
+    );
+    expect(normalized.securityAlertEmail).toBe("security@imsda.org");
+
+    expect(platformSettingsInputSchema.safeParse(
+      validInput({ securityAlertEmail: "not-an-address" }),
+    ).success).toBe(false);
+  });
+});
+
+describe("clearing the passkey domain", () => {
+  function settingsDatabase(options: { currentRpId: string | null; passkeyOnlyStaff: number }) {
+    const tx = {
+      platformSettings: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "platform",
+          organizationName: "IMSDA",
+          passkeyRpId: options.currentRpId,
+        }),
+        upsert: vi.fn().mockResolvedValue({}),
+      },
+      user: { count: vi.fn().mockResolvedValue(options.passkeyOnlyStaff) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      ...tx,
+      $transaction: vi.fn(async (run: (client: typeof tx) => Promise<unknown>) => run(tx)),
+    };
+    prisma.platformSettings = {
+      ...tx.platformSettings,
+      // The read-back after saving.
+      upsert: vi.fn().mockResolvedValue({
+        organizationName: "IMSDA",
+        updatedAt: new Date("2026-09-25T00:00:00Z"),
+        updatedBy: null,
+        passkeyRpId: null,
+      }),
+    };
+    database.getPrisma.mockReturnValue(prisma);
+    return tx;
+  }
+
+  const cleared = () => platformSettingsInputSchema.parse(validInput({ passkeyRpId: "" }));
+
+  it("is refused while staff can sign in only with a passkey (#456)", async () => {
+    const tx = settingsDatabase({ currentRpId: "events.imsda.org", passkeyOnlyStaff: 2 });
+
+    const attempt = updatePlatformSettings(cleared(), "admin-1");
+    await expect(attempt).rejects.toBeInstanceOf(PlatformSettingsError);
+    await expect(attempt).rejects.toThrow("2 staff sign in only with a passkey; they'd be locked out.");
+
+    // Counted as: active accounts that must pass a second step (system admins
+    // and anyone with an active event membership), with a live passkey and no
+    // active authenticator.
+    expect(tx.user.count).toHaveBeenCalledWith({
+      where: {
+        accountStatus: "ACTIVE",
+        passkeys: { some: { revokedAt: null } },
+        NOT: { mfaEnrollment: { is: { status: "ACTIVE" } } },
+        OR: [
+          { globalRole: "SYSTEM_ADMIN" },
+          { memberships: { some: { status: "ACTIVE" } } },
+        ],
+      },
+    });
+    expect(tx.platformSettings.upsert).not.toHaveBeenCalled();
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("is allowed once every passkey user also has an authenticator", async () => {
+    const tx = settingsDatabase({ currentRpId: "events.imsda.org", passkeyOnlyStaff: 0 });
+
+    await updatePlatformSettings(cleared(), "admin-1");
+
+    expect(tx.platformSettings.upsert).toHaveBeenCalled();
+  });
+
+  it("is refused for a change to a different domain too, which strands passkeys the same way", async () => {
+    const tx = settingsDatabase({ currentRpId: "events.imsda.org", passkeyOnlyStaff: 1 });
+
+    await expect(updatePlatformSettings(
+      platformSettingsInputSchema.parse(validInput({ passkeyRpId: "portal.imsda.org" })),
+      "admin-1",
+    )).rejects.toThrow("1 staff sign in only with a passkey; they'd be locked out.");
+    expect(tx.platformSettings.upsert).not.toHaveBeenCalled();
+  });
+
+  it("allows setting a domain for the first time without checking", async () => {
+    const tx = settingsDatabase({ currentRpId: null, passkeyOnlyStaff: 3 });
+
+    await updatePlatformSettings(
+      platformSettingsInputSchema.parse(validInput({ passkeyRpId: "events.imsda.org" })),
+      "admin-1",
+    );
+
+    expect(tx.user.count).not.toHaveBeenCalled();
+    expect(tx.platformSettings.upsert).toHaveBeenCalled();
+  });
+
+  it("does not check when the domain is unchanged", async () => {
+    const tx = settingsDatabase({ currentRpId: "events.imsda.org", passkeyOnlyStaff: 3 });
+
+    await updatePlatformSettings(
+      platformSettingsInputSchema.parse(validInput({ passkeyRpId: "events.imsda.org" })),
+      "admin-1",
+    );
+
+    expect(tx.user.count).not.toHaveBeenCalled();
+    expect(tx.platformSettings.upsert).toHaveBeenCalled();
   });
 });

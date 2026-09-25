@@ -6,6 +6,7 @@ import { getPrisma } from "@/lib/prisma";
 import { getServerEnv } from "@/lib/env";
 import { openSecret, sealSecret } from "@/lib/secret-box";
 import { writeAuditLog } from "@/modules/audit/audit-service";
+import { scheduleLockoutEmails } from "@/modules/communications/lockout-email";
 import { createDatabaseSession } from "@/modules/access/session-store";
 import { createOpaqueToken, hashOpaqueToken } from "@/modules/access/tokens";
 import { mfaGateFor, requiresMfa, type MfaGate } from "@/modules/access/mfa-rules";
@@ -29,7 +30,10 @@ import {
 const SECRET_PURPOSE = "mfa-totp-secret";
 const CHALLENGE_LIFETIME_MINUTES = 10;
 const MAX_CHALLENGE_ATTEMPTS = 5;
-const MAX_VERIFY_FAILURES = 5;
+// Decision 2026-09-25 (#456): three wrong codes, not five, lock the second
+// factor for fifteen minutes — covers both an authenticator code and a
+// recovery code, at sign-in and in the passkey-change proof.
+const MAX_VERIFY_FAILURES = 3;
 const VERIFY_LOCK_MINUTES = 15;
 const RECOVERY_CODE_COUNT = 10;
 
@@ -303,20 +307,67 @@ async function consumeSecondFactor(
   return { valid: false };
 }
 
-/** Counts a wrong code toward the authenticator's lockout. */
-async function recordFailedCode(enrollmentId: string, now: Date) {
-  const failedAttempts = await getPrisma().userMfaEnrollment.update({
-    where: { id: enrollmentId },
+/** No lock, or one that has already expired: the "no live lock" predicate. */
+function noLiveLock(now: Date) {
+  return [{ lockedUntil: null }, { lockedUntil: { lte: now } }];
+}
+
+/**
+ * Reserves one guess before any code is checked (#456 re-review). The counter
+ * is incremented only while there is no live lock and fewer than
+ * {@link MAX_VERIFY_FAILURES} guesses are outstanding, in one conditional
+ * statement — so a parallel burst gets at most that many verifications. A
+ * right code resets the counter (in `consumeSecondFactor` or
+ * `confirmMfaEnrollment`); a wrong one keeps its reservation. `false` means no
+ * guess is available and the caller refuses as locked.
+ */
+async function reserveCodeAttempt(enrollmentId: string, now: Date) {
+  const reserved = await getPrisma().userMfaEnrollment.updateMany({
+    where: { id: enrollmentId, failedAttempts: { lt: MAX_VERIFY_FAILURES }, OR: noLiveLock(now) },
     data: { failedAttempts: { increment: 1 } },
-    select: { failedAttempts: true },
   });
-  if (failedAttempts.failedAttempts >= MAX_VERIFY_FAILURES) {
-    await getPrisma().userMfaEnrollment.update({
-      where: { id: enrollmentId },
-      data: {
-        lockedUntil: new Date(now.getTime() + VERIFY_LOCK_MINUTES * 60 * 1000),
-        failedAttempts: 0,
-      },
+  return reserved.count === 1;
+}
+
+/**
+ * Claims the not-locked -> locked transition once the reserved guesses are
+ * spent. The conditional `updateMany` matches for exactly one request, and
+ * only that one schedules the lockout email (#456), after the response. Also
+ * run when a reservation is refused, so a counter left at the maximum by an
+ * interrupted request becomes a temporary lock rather than a permanent one.
+ *
+ * `notify: false` is for a PENDING enrolment's confirmation code: a typo while
+ * setting up an authenticator still counts toward the lock, but is not
+ * "someone tried to sign in to your account".
+ */
+/** How long a full counter must sit untouched before a refused attempt may turn it into a lock. */
+const STALE_COUNTER_MS = 60_000;
+
+async function claimCodeLock(
+  userId: string,
+  enrollmentId: string,
+  now: Date,
+  options: { notify?: boolean; staleOnly?: boolean } = {},
+) {
+  const lockedUntil = new Date(now.getTime() + VERIFY_LOCK_MINUTES * 60 * 1000);
+  const claimed = await getPrisma().userMfaEnrollment.updateMany({
+    where: {
+      id: enrollmentId,
+      failedAttempts: { gte: MAX_VERIFY_FAILURES },
+      OR: noLiveLock(now),
+      // From a refused reservation, only a counter nobody has touched lately:
+      // a double-submitted right code is still verifying, not an attack.
+      ...(options.staleOnly ? { updatedAt: { lt: new Date(now.getTime() - STALE_COUNTER_MS) } } : {}),
+    },
+    data: { lockedUntil, failedAttempts: 0 },
+  });
+  if (claimed.count === 1 && options.notify !== false) {
+    scheduleLockoutEmails({
+      audience: "STAFF",
+      kind: "CODE",
+      accountUserId: userId,
+      lockedUntil,
+      now,
     });
   }
 }
@@ -335,10 +386,14 @@ export async function verifySecondFactorForChange(userId: string, code: string, 
   });
   if (!enrollment || enrollment.status !== "ACTIVE") return false;
   if (enrollment.lockedUntil && enrollment.lockedUntil > now) return false;
+  if (!await reserveCodeAttempt(enrollment.id, now)) {
+    await claimCodeLock(userId, enrollment.id, now, { staleOnly: true });
+    return false;
+  }
 
   const accepted = await consumeSecondFactor(enrollment, code, now);
   if (!accepted.valid) {
-    await recordFailedCode(enrollment.id, now);
+    await claimCodeLock(userId, enrollment.id, now);
     return false;
   }
   if (accepted.usedRecoveryCode) {
@@ -493,6 +548,16 @@ export async function completeMfaChallenge(
     );
   }
 
+  // A typo while confirming a new authenticator counts, but is not announced.
+  const notify = enrollment.status !== "PENDING";
+  if (!await reserveCodeAttempt(enrollment.id, now)) {
+    await claimCodeLock(challenge.userId, enrollment.id, now, { notify, staleOnly: true });
+    throw new MfaError(
+      "MFA_LOCKED",
+      "Too many incorrect codes. Wait a few minutes and try again.",
+    );
+  }
+
   let recoveryCodes: string[] | undefined;
   let accepted: { valid: boolean; usedRecoveryCode?: boolean };
 
@@ -516,7 +581,7 @@ export async function completeMfaChallenge(
   }
 
   if (!accepted.valid) {
-    await recordFailedCode(enrollment.id, now);
+    await claimCodeLock(challenge.userId, enrollment.id, now, { notify });
     throw new MfaError("MFA_CODE_INVALID", "That code is not right. Try the next one.");
   }
 
