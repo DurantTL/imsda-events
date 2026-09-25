@@ -332,6 +332,13 @@ export async function finishPasskeyRegistration(
         name,
       },
     });
+    // The passkey is now this account's second factor: retire any open
+    // password-then-enrol sign-in step, so a token issued before it existed
+    // can't still enrol an authenticator on the password alone.
+    await tx.mfaChallenge.updateMany({
+      where: { userId: account.id, consumedAt: null },
+      data: { consumedAt: now },
+    });
     await writeAuditLog({
       actorUserId: account.id,
       action: "USER_PASSKEY_ADDED",

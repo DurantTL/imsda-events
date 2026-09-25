@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   passkeys: [] as Row[],
   attendeePasskeys: [] as Row[],
   challenges: [] as Row[],
+  mfaChallenges: [] as Row[],
   sessions: [] as Row[],
   audit: [] as Row[],
 }));
@@ -123,6 +124,13 @@ vi.mock("@/lib/prisma", () => {
         return { count: rows.length };
       },
     },
+    mfaChallenge: {
+      updateMany: async ({ where, data }: { where: Row; data: Row }) => {
+        const rows = state.mfaChallenges.filter((row) => row.userId === where.userId && row.consumedAt === null);
+        rows.forEach((row) => Object.assign(row, data));
+        return { count: rows.length };
+      },
+    },
     userPasskeyChallenge: {
       deleteMany: async ({ where }: { where: Row & { expiresAt?: { lt: Date } } }) => {
         state.challenges = state.challenges.filter((row) => !(
@@ -216,6 +224,7 @@ async function existingPasskeyProof(credentialId = "cred-seeded"): Promise<Chang
 
 beforeEach(() => {
   vi.clearAllMocks();
+  state.mfaChallenges = [];
   state.settings = { passkeyRpId: "events.imsda.test" };
   state.accountStatus = "ACTIVE";
   state.credential = { id: "auth-1", passwordHash: `hash:${PASSWORD}`, failedAttempts: 0, lockedUntil: null, disabledAt: null };
@@ -408,6 +417,19 @@ describe("re-authentication before adding or removing a staff passkey (#429)", (
 
   it("has nothing to prompt for when the account has no passkey", async () => {
     await expect(beginPasskeyVerification(account, "session-1", origin, now)).rejects.toMatchObject({ code: "NO_PASSKEYS" });
+  });
+});
+
+describe("adding a staff passkey retires open sign-in steps (#429)", () => {
+  it("consumes an outstanding password-then-enrol challenge, so it can't enrol an authenticator later", async () => {
+    state.mfaChallenges.push({ id: "mfa-1", userId: "user-1", consumedAt: null });
+    await addPasskey();
+    expect(state.mfaChallenges[0]).toMatchObject({ consumedAt: now });
+  });
+
+  it("refuses to add a second passkey on the password alone", async () => {
+    await addPasskey();
+    await expect(addPasskey()).rejects.toMatchObject({ code: "RECENT_VERIFICATION_REQUIRED" });
   });
 });
 

@@ -87,7 +87,7 @@ async function postHandler(request: Request) {
     if (authentication.outcome === "passkey_required") {
       return applyRateLimitHeaders(Response.json({
         error: "PASSKEY_REQUIRED",
-        message: "This account signs in with a passkey. Choose “Sign in with a passkey”.",
+        message: "This account signs in with a passkey. Choose “Sign in with a passkey”, or ask a system administrator to reset your two-step sign-in.",
       }, { status: 403 }), rateLimit);
     }
 
