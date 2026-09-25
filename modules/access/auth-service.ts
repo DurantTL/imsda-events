@@ -70,31 +70,7 @@ export async function authenticateWithPassword(
     return null;
   }
 
-  const credential = user.credential;
-  if (credential.disabledAt || (credential.lockedUntil && credential.lockedUntil > new Date())) {
-    await spendPasswordCheck(password);
-    return null;
-  }
-
-  const valid = await verifyPassword(password, credential.passwordHash);
-  if (!valid) {
-    const failedAttempts = credential.failedAttempts + 1;
-    await getPrisma().authCredential.update({
-      where: { id: credential.id },
-      data: {
-        failedAttempts,
-        lockedUntil: failedAttempts >= MAX_FAILED_ATTEMPTS
-          ? new Date(Date.now() + LOCK_MINUTES * 60 * 1000)
-          : null,
-      },
-    });
-    return null;
-  }
-
-  await getPrisma().authCredential.update({
-    where: { id: credential.id },
-    data: { failedAttempts: 0, lockedUntil: null },
-  });
+  if (!(await checkPasswordWithLockout(user.credential, password))) return null;
 
   const gate = mfaGateFor(
     {
@@ -113,6 +89,70 @@ export async function authenticateWithPassword(
     globalRole: user.globalRole,
     session: await createDatabaseSession(user.id, userAgent),
   };
+}
+
+type LockableCredential = {
+  id: string;
+  passwordHash: string;
+  failedAttempts: number;
+  lockedUntil: Date | null;
+  disabledAt: Date | null;
+};
+
+/**
+ * The one password check, shared by sign-in and by the confirm-it's-you step
+ * on sign-in changes (#429): a disabled or locked credential never verifies,
+ * a wrong password counts toward the lockout, and a right one clears it.
+ */
+async function checkPasswordWithLockout(credential: LockableCredential, password: string) {
+  if (credential.disabledAt || (credential.lockedUntil && credential.lockedUntil > new Date())) {
+    await spendPasswordCheck(password);
+    return false;
+  }
+
+  const valid = await verifyPassword(password, credential.passwordHash);
+  if (!valid) {
+    const failedAttempts = credential.failedAttempts + 1;
+    await getPrisma().authCredential.update({
+      where: { id: credential.id },
+      data: {
+        failedAttempts,
+        lockedUntil: failedAttempts >= MAX_FAILED_ATTEMPTS
+          ? new Date(Date.now() + LOCK_MINUTES * 60 * 1000)
+          : null,
+      },
+    });
+    return false;
+  }
+
+  await getPrisma().authCredential.update({
+    where: { id: credential.id },
+    data: { failedAttempts: 0, lockedUntil: null },
+  });
+  return true;
+}
+
+/**
+ * Re-checks a signed-in staff member's current password, for a change to how
+ * the account signs in (#429). Runs through exactly the same verification and
+ * lockout counter as {@link authenticateWithPassword}; it never issues a
+ * session and never reveals why it failed.
+ */
+export async function verifyCurrentPassword(userId: string, password: string): Promise<boolean> {
+  const user = await getPrisma().user.findUnique({
+    where: { id: userId },
+    select: {
+      accountStatus: true,
+      credential: {
+        select: { id: true, passwordHash: true, failedAttempts: true, lockedUntil: true, disabledAt: true },
+      },
+    },
+  });
+  if (!user?.credential || user.accountStatus !== "ACTIVE") {
+    await spendPasswordCheck(password);
+    return false;
+  }
+  return checkPasswordWithLockout(user.credential, password);
 }
 
 /**

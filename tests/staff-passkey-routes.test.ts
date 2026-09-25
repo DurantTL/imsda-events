@@ -6,9 +6,11 @@ const mocks = vi.hoisted(() => ({
   finishPasskeyRegistration: vi.fn(),
   renamePasskey: vi.fn(),
   removePasskey: vi.fn(),
+  beginPasskeyVerification: vi.fn(),
   beginPasskeySignIn: vi.fn(),
   finishPasskeySignIn: vi.fn(),
   checkRateLimit: vi.fn(),
+  checkManagementRateLimit: vi.fn(),
   rejectCrossOriginRequest: vi.fn(),
   resolvePostLoginDestination: vi.fn(),
   cookieGet: vi.fn(),
@@ -18,7 +20,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/modules/access/request-security", () => ({ rejectCrossOriginRequest: mocks.rejectCrossOriginRequest }));
-vi.mock("@/modules/rate-limit/service", () => ({ checkStaffPasskeySignInRateLimit: mocks.checkRateLimit }));
+vi.mock("@/modules/rate-limit/service", () => ({
+  checkStaffPasskeySignInRateLimit: mocks.checkRateLimit,
+  checkStaffPasskeyManagementRateLimit: mocks.checkManagementRateLimit,
+}));
 vi.mock("@/modules/access/post-login-destination", () => ({ resolvePostLoginDestination: mocks.resolvePostLoginDestination }));
 vi.mock("next/headers", () => ({ cookies: async () => ({ get: mocks.cookieGet, set: mocks.cookieSet, delete: mocks.cookieDelete }) }));
 vi.mock("@/modules/access/passkey-api", async () => {
@@ -30,6 +35,7 @@ vi.mock("@/modules/access/passkeys", () => ({
   finishPasskeyRegistration: mocks.finishPasskeyRegistration,
   renamePasskey: mocks.renamePasskey,
   removePasskey: mocks.removePasskey,
+  beginPasskeyVerification: mocks.beginPasskeyVerification,
   beginPasskeySignIn: mocks.beginPasskeySignIn,
   finishPasskeySignIn: mocks.finishPasskeySignIn,
   PasskeyError: class PasskeyError extends Error {
@@ -44,6 +50,7 @@ vi.mock("@/modules/access/passkeys", () => ({
 import { POST as REGISTRATION_OPTIONS } from "@/app/api/auth/passkeys/registration/options/route";
 import { POST as REGISTRATION } from "@/app/api/auth/passkeys/registration/route";
 import { PATCH as RENAME, DELETE as REMOVE } from "@/app/api/auth/passkeys/[passkeyId]/route";
+import { POST as VERIFICATION_OPTIONS } from "@/app/api/auth/passkeys/verification/options/route";
 import { POST as SIGN_IN_OPTIONS } from "@/app/api/auth/passkeys/sign-in/options/route";
 import { POST as SIGN_IN } from "@/app/api/auth/passkeys/sign-in/route";
 import { STAFF_PASSKEY_SIGN_IN_COOKIE } from "@/modules/access/passkey-sign-in";
@@ -63,13 +70,18 @@ const patch = (url: string, body: unknown = {}) => new Request(`${origin}${url}`
   headers: { origin, "content-type": "application/json" },
   body: JSON.stringify(body),
 });
-const del = (url: string) => new Request(`${origin}${url}`, { method: "DELETE", headers: { origin } });
+const del = (url: string, body?: unknown) => new Request(`${origin}${url}`, {
+  method: "DELETE",
+  headers: { origin, "content-type": "application/json" },
+  body: body === undefined ? undefined : JSON.stringify(body),
+});
 const params = (passkeyId: string) => ({ params: Promise.resolve({ passkeyId }) });
 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
   mocks.checkRateLimit.mockResolvedValue({ allowed: true, decisions: [] });
+  mocks.checkManagementRateLimit.mockResolvedValue({ allowed: true, decisions: [] });
   mocks.requireOwnStaffSession.mockResolvedValue({ account, sessionId: "session-1" });
   mocks.cookieGet.mockReturnValue({ value: "challenge-1" });
   mocks.beginPasskeySignIn.mockResolvedValue({ options: { challenge: "auth-challenge" }, challengeId: "challenge-1" });
@@ -78,11 +90,32 @@ beforeEach(() => {
 });
 
 describe("staff passkey management routes", () => {
-  it("requires the caller's own session to start registration", async () => {
+  it("requires the caller's own session to start registration and passes the proof to the service", async () => {
     mocks.beginPasskeyRegistration.mockResolvedValue({ challenge: "reg-challenge" });
-    const response = await REGISTRATION_OPTIONS(post("/api/auth/passkeys/registration/options"));
+    const response = await REGISTRATION_OPTIONS(post("/api/auth/passkeys/registration/options", { proof: { code: "123456" } }));
     expect(response.status).toBe(200);
-    expect(mocks.beginPasskeyRegistration).toHaveBeenCalledWith(account, "session-1", origin);
+    expect(mocks.beginPasskeyRegistration).toHaveBeenCalledWith(account, "session-1", origin, expect.objectContaining({ code: "123456" }));
+  });
+
+  it("passes no proof when none is sent, and reports the service's refusal as 403", async () => {
+    mocks.beginPasskeyRegistration.mockRejectedValue(new PasskeyError("RECENT_VERIFICATION_REQUIRED", "Confirm it's you first."));
+    const response = await REGISTRATION_OPTIONS(post("/api/auth/passkeys/registration/options"));
+    expect(response.status).toBe(403);
+    expect((await response.json()).error).toBe("RECENT_VERIFICATION_REQUIRED");
+    expect(mocks.beginPasskeyRegistration).toHaveBeenCalledWith(account, "session-1", origin, undefined);
+  });
+
+  it("refuses more than one proof at once, or an unknown field", async () => {
+    expect((await REGISTRATION_OPTIONS(post("/api/auth/passkeys/registration/options", { proof: { code: "123456", password: "x" } }))).status).toBe(400);
+    expect((await REGISTRATION_OPTIONS(post("/api/auth/passkeys/registration/options", { proof: { token: "x" } }))).status).toBe(400);
+    expect(mocks.beginPasskeyRegistration).not.toHaveBeenCalled();
+  });
+
+  it("offers a prompt for the account's existing passkeys as a proof", async () => {
+    mocks.beginPasskeyVerification.mockResolvedValue({ challenge: "verify-challenge" });
+    const response = await VERIFICATION_OPTIONS(post("/api/auth/passkeys/verification/options"));
+    expect(response.status).toBe(200);
+    expect(mocks.beginPasskeyVerification).toHaveBeenCalledWith(account, "session-1", origin);
   });
 
   it("refuses registration options without a signed-in session", async () => {
@@ -111,23 +144,39 @@ describe("staff passkey management routes", () => {
     expect(mocks.renamePasskey).toHaveBeenCalledWith(account, "pk-1", "Renamed");
   });
 
-  it("removes a passkey", async () => {
+  it("removes a passkey with the proof sent in the body", async () => {
     mocks.removePasskey.mockResolvedValue([]);
-    const response = await REMOVE(del("/api/auth/passkeys/pk-1"), params("pk-1"));
+    const response = await REMOVE(del("/api/auth/passkeys/pk-1", { proof: { password: "synthetic password" } }), params("pk-1"));
     expect(response.status).toBe(200);
-    expect(mocks.removePasskey).toHaveBeenCalledWith(account, "pk-1");
+    expect(mocks.removePasskey).toHaveBeenCalledWith(account, "session-1", origin, "pk-1", expect.objectContaining({ password: "synthetic password" }));
   });
 
-  it("reports the last-sign-in-method refusal", async () => {
-    mocks.removePasskey.mockRejectedValue(new PasskeyError("LAST_SIGN_IN_METHOD", "No."));
+  it("reports a refused removal without a proof as 403", async () => {
+    mocks.removePasskey.mockRejectedValue(new PasskeyError("RECENT_VERIFICATION_REQUIRED", "Confirm it's you first."));
     const response = await REMOVE(del("/api/auth/passkeys/pk-1"), params("pk-1"));
-    expect(response.status).toBe(409);
-    expect((await response.json()).error).toBe("LAST_SIGN_IN_METHOD");
+    expect(response.status).toBe(403);
+    expect(mocks.removePasskey).toHaveBeenCalledWith(account, "session-1", origin, "pk-1", undefined);
+  });
+
+  it("rate limits every management route per account", async () => {
+    mocks.checkManagementRateLimit.mockResolvedValue({ allowed: false, decisions: [] });
+    expect((await REGISTRATION_OPTIONS(post("/api/auth/passkeys/registration/options"))).status).toBe(429);
+    expect((await VERIFICATION_OPTIONS(post("/api/auth/passkeys/verification/options"))).status).toBe(429);
+    expect((await REGISTRATION(post("/api/auth/passkeys/registration", registrationBody))).status).toBe(429);
+    expect((await RENAME(patch("/api/auth/passkeys/pk-1", { name: "x" }), params("pk-1"))).status).toBe(429);
+    expect((await REMOVE(del("/api/auth/passkeys/pk-1"), params("pk-1"))).status).toBe(429);
+    expect(mocks.checkManagementRateLimit).toHaveBeenCalledWith(expect.any(Request), "user-1");
+    expect(mocks.beginPasskeyRegistration).not.toHaveBeenCalled();
+    expect(mocks.beginPasskeyVerification).not.toHaveBeenCalled();
+    expect(mocks.finishPasskeyRegistration).not.toHaveBeenCalled();
+    expect(mocks.renamePasskey).not.toHaveBeenCalled();
+    expect(mocks.removePasskey).not.toHaveBeenCalled();
   });
 
   it("refuses cross-origin management requests", async () => {
     mocks.rejectCrossOriginRequest.mockReturnValue(Response.json({}, { status: 403 }));
     expect((await REGISTRATION_OPTIONS(post("/api/auth/passkeys/registration/options"))).status).toBe(403);
+    expect((await VERIFICATION_OPTIONS(post("/api/auth/passkeys/verification/options"))).status).toBe(403);
     expect((await REGISTRATION(post("/api/auth/passkeys/registration", registrationBody))).status).toBe(403);
     expect((await RENAME(patch("/api/auth/passkeys/pk-1", { name: "x" }), params("pk-1"))).status).toBe(403);
     expect((await REMOVE(del("/api/auth/passkeys/pk-1"), params("pk-1"))).status).toBe(403);

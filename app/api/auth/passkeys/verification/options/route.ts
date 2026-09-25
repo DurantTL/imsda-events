@@ -1,10 +1,13 @@
-import type { RegistrationResponseJSON } from "@simplewebauthn/server";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { managementRateLimited, passkeyApiError, requireOwnStaffSession } from "@/modules/access/passkey-api";
-import { finishPasskeyRegistration } from "@/modules/access/passkeys";
-import { passkeyRegistrationSchema } from "@/modules/passkeys/schemas";
+import { beginPasskeyVerification } from "@/modules/access/passkeys";
 import { withRequestContext } from "@/lib/request-context";
 
+/**
+ * A prompt for one of the signed-in staff member's own passkeys (#429), used
+ * as the "use an existing passkey" proof when adding or removing one. The
+ * answer is sent with that add or remove request, not here.
+ */
 async function postHandler(request: Request) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
@@ -12,14 +15,10 @@ async function postHandler(request: Request) {
     const { account, sessionId } = await requireOwnStaffSession();
     const limited = await managementRateLimited(request, account.id);
     if (limited) return limited;
-    const input = passkeyRegistrationSchema.parse(await request.json());
-    const passkeys = await finishPasskeyRegistration(account, sessionId, request.headers.get("origin"), {
-      response: input.response as unknown as RegistrationResponseJSON,
-      name: input.name,
-    });
-    return Response.json({ passkeys }, { status: 201 });
+    const options = await beginPasskeyVerification(account, sessionId, request.headers.get("origin"));
+    return Response.json({ options }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    return passkeyApiError(error, "Adding a passkey");
+    return passkeyApiError(error, "Starting to confirm with a passkey");
   }
 }
 

@@ -303,6 +303,60 @@ async function consumeSecondFactor(
   return { valid: false };
 }
 
+/** Counts a wrong code toward the authenticator's lockout. */
+async function recordFailedCode(enrollmentId: string, now: Date) {
+  const failedAttempts = await getPrisma().userMfaEnrollment.update({
+    where: { id: enrollmentId },
+    data: { failedAttempts: { increment: 1 } },
+    select: { failedAttempts: true },
+  });
+  if (failedAttempts.failedAttempts >= MAX_VERIFY_FAILURES) {
+    await getPrisma().userMfaEnrollment.update({
+      where: { id: enrollmentId },
+      data: {
+        lockedUntil: new Date(now.getTime() + VERIFY_LOCK_MINUTES * 60 * 1000),
+        failedAttempts: 0,
+      },
+    });
+  }
+}
+
+/**
+ * Re-checks a signed-in staff member's second factor, for a change to how the
+ * account signs in (#429). Takes an authenticator code or an unused recovery
+ * code through the same single-use path as sign-in ({@link consumeSecondFactor}),
+ * and a wrong code counts toward the same lockout. Only an ACTIVE enrolment
+ * can answer; the result is a plain yes or no.
+ */
+export async function verifySecondFactorForChange(userId: string, code: string, now = new Date()): Promise<boolean> {
+  const enrollment = await getPrisma().userMfaEnrollment.findUnique({
+    where: { userId },
+    select: { id: true, status: true, sealedSecret: true, lastUsedStep: true, lockedUntil: true },
+  });
+  if (!enrollment || enrollment.status !== "ACTIVE") return false;
+  if (enrollment.lockedUntil && enrollment.lockedUntil > now) return false;
+
+  const accepted = await consumeSecondFactor(enrollment, code, now);
+  if (!accepted.valid) {
+    await recordFailedCode(enrollment.id, now);
+    return false;
+  }
+  if (accepted.usedRecoveryCode) {
+    await writeAuditLog({
+      actorUserId: userId,
+      action: "MFA_RECOVERY_CODE_USED",
+      entityType: "User",
+      entityId: userId,
+      correlationId: randomUUID(),
+      summary: "A recovery code was used to confirm a sign-in change; it can no longer be reused.",
+      metadata: { remaining: await getPrisma().mfaRecoveryCode.count({
+        where: { enrollmentId: enrollment.id, usedAt: null },
+      }) },
+    });
+  }
+  return true;
+}
+
 export type MfaChallengeIssue = {
   challengeToken: string;
   gate: Exclude<MfaGate["kind"], "not_required">;
@@ -462,20 +516,7 @@ export async function completeMfaChallenge(
   }
 
   if (!accepted.valid) {
-    const failedAttempts = await getPrisma().userMfaEnrollment.update({
-      where: { id: enrollment.id },
-      data: { failedAttempts: { increment: 1 } },
-      select: { failedAttempts: true },
-    });
-    if (failedAttempts.failedAttempts >= MAX_VERIFY_FAILURES) {
-      await getPrisma().userMfaEnrollment.update({
-        where: { id: enrollment.id },
-        data: {
-          lockedUntil: new Date(now.getTime() + VERIFY_LOCK_MINUTES * 60 * 1000),
-          failedAttempts: 0,
-        },
-      });
-    }
+    await recordFailedCode(enrollment.id, now);
     throw new MfaError("MFA_CODE_INVALID", "That code is not right. Try the next one.");
   }
 

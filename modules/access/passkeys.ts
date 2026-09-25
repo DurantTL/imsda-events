@@ -14,6 +14,8 @@ import { cookies } from "next/headers";
 import { createDatabaseSession, isSessionIdle, SESSION_COOKIE_NAME, shouldTouchSession, touchDatabaseSession } from "@/modules/access/session-store";
 import { hashOpaqueToken } from "@/modules/access/tokens";
 import { logWarn } from "@/lib/logger";
+import { verifyCurrentPassword } from "@/modules/access/auth-service";
+import { verifySecondFactorForChange } from "@/modules/access/mfa-service";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { PASSKEY_CHALLENGE_MINUTES, matchRelyingParty, passkeyNameFrom } from "@/modules/passkeys/domain";
 import { PLATFORM_SETTINGS_ID } from "@/modules/system-admin/platform-settings";
@@ -32,6 +34,10 @@ import { PLATFORM_SETTINGS_ID } from "@/modules/system-admin/platform-settings";
  * separate credential table (`UserPasskey`) and a separate session model
  * (`UserSession`, not `AttendeeSession`). The relying-party rules and the
  * request schemas are shared from `modules/passkeys/` instead of copied.
+ *
+ * Adding or removing a passkey changes how the account proves itself, so both
+ * need a fresh proof in the same request (see {@link requireRecentVerification}):
+ * a hijacked session alone must not be able to plant its own passkey.
  */
 
 export class PasskeyError extends Error {
@@ -41,7 +47,8 @@ export class PasskeyError extends Error {
       | "CHALLENGE_EXPIRED"
       | "PASSKEY_NOT_VERIFIED"
       | "PASSKEY_NOT_FOUND"
-      | "LAST_SIGN_IN_METHOD",
+      | "NO_PASSKEYS"
+      | "RECENT_VERIFICATION_REQUIRED",
     message: string,
   ) {
     super(message);
@@ -116,8 +123,154 @@ async function consumeChallenge(sessionId: string, purpose: "REGISTER" | "VERIFY
   return challenge.challenge;
 }
 
-export async function beginPasskeyRegistration(account: StaffAccount, sessionId: string, requestOrigin: string | null, now = new Date()) {
+/**
+ * Stores a new counter only if it moves forward, so two concurrent answers
+ * can't both be accepted with the same counter (a sign of a cloned key). An
+ * authenticator that reports 0 doesn't keep a counter at all, so nothing is
+ * written. Returns false when the counter lost that race.
+ */
+async function advanceCounter(passkeyId: string, newCounter: number, now: Date) {
+  const prisma = getPrisma();
+  if (newCounter > 0) {
+    const advanced = await prisma.userPasskey.updateMany({
+      where: { id: passkeyId, counter: { lt: BigInt(newCounter) } },
+      data: { counter: BigInt(newCounter) },
+    });
+    if (advanced.count !== 1) return false;
+  }
+  await prisma.userPasskey.update({ where: { id: passkeyId }, data: { lastUsedAt: now } });
+  return true;
+}
+
+/** A fresh proof, sent with the add or remove request itself. At most one is given. */
+export type ChangeProof = {
+  code?: string;
+  password?: string;
+  passkey?: AuthenticationResponseJSON;
+};
+
+/** Which proofs this account can give before adding or removing a passkey. */
+export type ChangeVerificationMethods = { code: boolean; passkey: boolean; password: boolean };
+
+export async function changeVerificationMethods(userId: string): Promise<ChangeVerificationMethods> {
+  const prisma = getPrisma();
+  const [enrollment, passkeyCount] = await Promise.all([
+    prisma.userMfaEnrollment.findUnique({ where: { userId }, select: { status: true } }),
+    prisma.userPasskey.count({ where: { userId, revokedAt: null } }),
+  ]);
+  const code = enrollment?.status === "ACTIVE";
+  // The password counts only without an active authenticator: for such an
+  // account it is exactly what sign-in asks for, so the gate is never weaker
+  // than signing in. With an authenticator, sign-in needs the code too.
+  return { code, passkey: passkeyCount > 0, password: !code };
+}
+
+const VERIFICATION_REFUSED = "Confirm it's you first with your authenticator code, a recovery code, an existing passkey, or your password.";
+
+/**
+ * Starts the "use an existing passkey" proof: a prompt for this account's own
+ * passkeys, tied to this session and answered once (`VERIFY`).
+ */
+export async function beginPasskeyVerification(account: StaffAccount, sessionId: string, requestOrigin: string | null, now = new Date()) {
   const { rpId } = await requireRelyingParty(requestOrigin);
+  const passkeys = await getPrisma().userPasskey.findMany({
+    where: { userId: account.id, revokedAt: null },
+    select: { credentialId: true, transports: true },
+  });
+  if (passkeys.length === 0) throw new PasskeyError("NO_PASSKEYS", "This account has no passkey to confirm with.");
+  const options = await generateAuthenticationOptions({
+    rpID: rpId,
+    allowCredentials: passkeys.map((passkey) => ({ id: passkey.credentialId, transports: transportsOf(passkey.transports) })),
+    userVerification: "required",
+  });
+  await storeChallenge(sessionId, "VERIFY", options.challenge, now);
+  return options;
+}
+
+/** Checks an existing-passkey answer to this session's `VERIFY` prompt. Never throws for a bad answer. */
+async function verifyExistingPasskey(
+  account: StaffAccount,
+  sessionId: string,
+  requestOrigin: string | null,
+  response: AuthenticationResponseJSON,
+  now: Date,
+) {
+  const relyingParty = matchRelyingParty(await configuredRpId(), requestOrigin);
+  if (!relyingParty) return false;
+  let expectedChallenge: string;
+  try {
+    expectedChallenge = await consumeChallenge(sessionId, "VERIFY", now);
+  } catch {
+    return false;
+  }
+  const passkey = await getPrisma().userPasskey.findFirst({
+    where: { credentialId: response.id, userId: account.id, revokedAt: null },
+  });
+  if (!passkey) return false;
+  try {
+    const verification = await verifyAuthenticationResponse({
+      response,
+      expectedChallenge,
+      expectedOrigin: relyingParty.origin,
+      expectedRPID: relyingParty.rpId,
+      credential: {
+        id: passkey.credentialId,
+        publicKey: new Uint8Array(passkey.publicKey),
+        counter: Number(passkey.counter),
+        transports: transportsOf(passkey.transports),
+      },
+      requireUserVerification: true,
+    });
+    if (!verification.verified) return false;
+    return advanceCounter(passkey.id, verification.authenticationInfo.newCounter, now);
+  } catch {
+    logWarn("Staff passkey confirmation was not verified", { reason: "ASSERTION_REJECTED" });
+    return false;
+  }
+}
+
+/**
+ * The re-authentication gate on adding or removing a passkey (#429). The
+ * request must carry one fresh proof the account supports:
+ *
+ * - with an ACTIVE authenticator: an authenticator code or a recovery code,
+ *   spent through the same single-use path and lockout as sign-in;
+ * - with an active passkey: an answer from that passkey to this session's
+ *   `VERIFY` prompt;
+ * - without an active authenticator: the current password, through the same
+ *   check and lockout counter as password sign-in.
+ *
+ * Every failure — nothing sent, a wrong or reused code, a wrong password, a
+ * proof this account can't give — is the same answer.
+ */
+async function requireRecentVerification(
+  account: StaffAccount,
+  sessionId: string,
+  requestOrigin: string | null,
+  proof: ChangeProof | undefined,
+  now: Date,
+) {
+  const methods = await changeVerificationMethods(account.id);
+  let verified = false;
+  if (proof?.code !== undefined) {
+    verified = methods.code && await verifySecondFactorForChange(account.id, proof.code, now);
+  } else if (proof?.passkey !== undefined) {
+    verified = methods.passkey && await verifyExistingPasskey(account, sessionId, requestOrigin, proof.passkey, now);
+  } else if (proof?.password !== undefined) {
+    verified = methods.password && await verifyCurrentPassword(account.id, proof.password);
+  }
+  if (!verified) throw new PasskeyError("RECENT_VERIFICATION_REQUIRED", VERIFICATION_REFUSED);
+}
+
+export async function beginPasskeyRegistration(
+  account: StaffAccount,
+  sessionId: string,
+  requestOrigin: string | null,
+  proof: ChangeProof | undefined,
+  now = new Date(),
+) {
+  const { rpId } = await requireRelyingParty(requestOrigin);
+  await requireRecentVerification(account, sessionId, requestOrigin, proof, now);
   const existing = await getPrisma().userPasskey.findMany({
     where: { userId: account.id, revokedAt: null },
     select: { credentialId: true, transports: true },
@@ -154,8 +307,9 @@ export async function finishPasskeyRegistration(
       expectedRPID: relyingParty.rpId,
       requireUserVerification: true,
     });
-  } catch (error) {
-    logWarn("Staff passkey registration was not verified", { reason: error instanceof Error ? error.message : "unknown" });
+  } catch {
+    // A fixed reason code: the library's own message can echo request contents.
+    logWarn("Staff passkey registration was not verified", { reason: "REGISTRATION_REJECTED" });
     throw new PasskeyError("PASSKEY_NOT_VERIFIED", "That passkey couldn't be added. Please try again.");
   }
   if (!verification.verified || !verification.registrationInfo) {
@@ -210,19 +364,19 @@ export async function renamePasskey(account: StaffAccount, passkeyId: string, na
   return listPasskeys(account.id);
 }
 
-export async function removePasskey(account: StaffAccount, passkeyId: string, now = new Date()) {
+export async function removePasskey(
+  account: StaffAccount,
+  sessionId: string,
+  requestOrigin: string | null,
+  passkeyId: string,
+  proof: ChangeProof | undefined,
+  now = new Date(),
+) {
+  await requireRecentVerification(account, sessionId, requestOrigin, proof, now);
+  // No "last sign-in method" refusal: passkey management needs a session from
+  // an account with a usable password (`currentStaffPasskeySession`), so the
+  // password is always the fallback once a passkey is gone.
   await getPrisma().$transaction(async (tx) => {
-    // Staff normally sign in with a password; a passkey is refused only when
-    // it is the last way into the account at all — there is no credential
-    // row, or the credential has been disabled (see `AuthCredential`).
-    const [credential, remaining] = await Promise.all([
-      tx.authCredential.findUnique({ where: { userId: account.id }, select: { disabledAt: true } }),
-      tx.userPasskey.count({ where: { userId: account.id, revokedAt: null, id: { not: passkeyId } } }),
-    ]);
-    const hasUsablePassword = Boolean(credential) && !credential!.disabledAt;
-    if (!hasUsablePassword && remaining === 0) {
-      throw new PasskeyError("LAST_SIGN_IN_METHOD", "Add another passkey, or ask a system administrator to restore your password, before removing your only one.");
-    }
     const removed = await tx.userPasskey.updateMany({
       where: { id: passkeyId, userId: account.id, revokedAt: null },
       data: { revokedAt: now },
@@ -242,8 +396,12 @@ export async function removePasskey(account: StaffAccount, passkeyId: string, no
 
 /** What the account settings panel needs to show the passkey controls. */
 export async function getPasskeySettings(account: StaffAccount) {
-  const [passkeys, available] = await Promise.all([listPasskeys(account.id), passkeysConfigured()]);
-  return { passkeys, available };
+  const [passkeys, available, verification] = await Promise.all([
+    listPasskeys(account.id),
+    passkeysConfigured(),
+    changeVerificationMethods(account.id),
+  ]);
+  return { passkeys, available, verification };
 }
 
 /**
@@ -412,16 +570,39 @@ export async function finishPasskeySignIn(
       },
       requireUserVerification: true,
     });
-  } catch (error) {
-    logWarn("Staff passkey sign-in failed", { reason: error instanceof Error ? error.message : "unknown" });
+  } catch {
+    // A fixed reason code: the library's own message can echo request contents.
+    logWarn("Staff passkey sign-in failed", { reason: "ASSERTION_REJECTED" });
     throw new PasskeyError("PASSKEY_NOT_VERIFIED", SIGN_IN_REFUSED);
   }
   if (!verification.verified) throw new PasskeyError("PASSKEY_NOT_VERIFIED", SIGN_IN_REFUSED);
 
-  await prisma.userPasskey.update({
-    where: { id: passkey.id },
-    data: { counter: BigInt(verification.authenticationInfo.newCounter), lastUsedAt: now },
-  });
+  if (!(await advanceCounter(passkey.id, verification.authenticationInfo.newCounter, now))) {
+    logWarn("Staff passkey sign-in failed", { reason: "COUNTER_NOT_ADVANCED" });
+    throw new PasskeyError("PASSKEY_NOT_VERIFIED", SIGN_IN_REFUSED);
+  }
+
+  // Re-read immediately before minting, as `completeMfaChallenge` does: the
+  // passkey could have been revoked (a two-step reset) or the account
+  // disabled, deactivated, or locked while the assertion was being checked.
+  const [stillActive, current] = await Promise.all([
+    prisma.userPasskey.findFirst({ where: { id: passkey.id, revokedAt: null }, select: { id: true } }),
+    prisma.user.findUnique({
+      where: { id: user.id },
+      select: { accountStatus: true, credential: { select: { disabledAt: true, lockedUntil: true } } },
+    }),
+  ]);
+  if (
+    !stillActive
+    || !current
+    || current.accountStatus !== "ACTIVE"
+    || !current.credential
+    || current.credential.disabledAt
+    || (current.credential.lockedUntil && current.credential.lockedUntil > now)
+  ) {
+    throw new PasskeyError("PASSKEY_NOT_VERIFIED", SIGN_IN_REFUSED);
+  }
+
   const session = await createDatabaseSession(user.id, userAgent);
   await writeAuditLog({
     actorUserId: user.id,

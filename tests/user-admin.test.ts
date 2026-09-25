@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   accountUpdate: vi.fn(),
   attendeeMfaDeleteMany: vi.fn(),
   passkeyUpdateMany: vi.fn(),
+  userPasskeyUpdateMany: vi.fn(),
   revokeAllUserSessions: vi.fn(),
   revokeAllAttendeeSessions: vi.fn(),
   sendAccountRecoveryEmail: vi.fn(),
@@ -21,6 +22,7 @@ const mocks = vi.hoisted(() => ({
 const client = {
   user: { findUnique: mocks.userFindUnique, findFirst: mocks.userFindFirst, update: mocks.userUpdate },
   userMfaEnrollment: { deleteMany: mocks.mfaDeleteMany },
+  userPasskey: { updateMany: mocks.userPasskeyUpdateMany },
   attendeeAccount: { findUnique: mocks.accountFindUnique, findFirst: mocks.accountFindFirst, update: mocks.accountUpdate },
   attendeeMfaEnrollment: { deleteMany: mocks.attendeeMfaDeleteMany },
   attendeePasskey: { updateMany: mocks.passkeyUpdateMany },
@@ -55,12 +57,14 @@ beforeEach(() => {
   mocks.sendAccountRecoveryEmail.mockResolvedValue({ configured: true, queued: true });
   mocks.requireSystemAdministrator.mockResolvedValue({ id: "admin-1" });
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
+  mocks.userPasskeyUpdateMany.mockResolvedValue({ count: 2 });
 });
 
 describe("system administrator account tools (#386)", () => {
   it("resets a team member's two-step sign-in, signs them out, and audits it", async () => {
     await resetStaffTwoStep("user-2", "admin-1");
     expect(mocks.mfaDeleteMany).toHaveBeenCalledWith({ where: { userId: "user-2" } });
+    expect(mocks.userPasskeyUpdateMany).toHaveBeenCalledWith({ where: { userId: "user-2", revokedAt: null }, data: { revokedAt: expect.any(Date) } });
     expect(mocks.revokeAllUserSessions).toHaveBeenCalledWith("user-2");
     expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "STAFF_MFA_RESET", actorUserId: "admin-1", entityId: "user-2" }));
   });
@@ -83,6 +87,18 @@ describe("system administrator account tools (#386)", () => {
     expect(mocks.sendAccountRecoveryEmail).toHaveBeenCalledWith("staff@example.test");
     mocks.sendAccountRecoveryEmail.mockResolvedValueOnce({ configured: false, queued: false });
     await expect(sendStaffPasswordReset("user-2", "admin-1")).rejects.toMatchObject({ code: "EMAIL_NOT_CONFIGURED" });
+  });
+
+  it("revokes every staff passkey in the same reset (#429), so passkey sign-in stops working", async () => {
+    const at = new Date("2026-09-25T12:00:00Z");
+    await resetStaffTwoStep("user-2", "admin-1", at);
+    expect(mocks.userPasskeyUpdateMany).toHaveBeenCalledWith({ where: { userId: "user-2", revokedAt: null }, data: { revokedAt: at } });
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      action: "STAFF_MFA_RESET",
+      summary: expect.stringContaining("passkeys"),
+      metadata: { passkeysRevoked: 2 },
+    }));
+    // The end-to-end refusal is in tests/staff-passkey-service.test.ts.
   });
 
   it("resets an attendee's authenticator and passkeys and signs them out", async () => {

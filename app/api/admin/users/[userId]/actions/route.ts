@@ -23,7 +23,7 @@ async function postHandler(request: Request, context: { params: Promise<{ userId
     let message: string;
     if (input.action === "reset-two-step") {
       await resetStaffTwoStep(userId, actor.id);
-      message = "Two-step sign-in reset. They'll set it up again at their next sign-in.";
+      message = "Two-step sign-in reset and passkeys removed. They'll set it up again at their next sign-in.";
     } else if (input.action === "send-password-reset") {
       const { queued } = await sendStaffPasswordReset(userId, actor.id);
       message = queued ? "Password reset link sent." : "That account can't receive a reset link (its sign-in is switched off).";
