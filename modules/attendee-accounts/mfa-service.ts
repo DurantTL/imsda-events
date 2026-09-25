@@ -275,10 +275,20 @@ async function reserveCodeAttempt(enrollmentId: string, now: Date) {
  * interrupted request still turns into a (temporary) lock rather than a
  * permanent one. Mirrors modules/access/mfa-service.ts for staff.
  */
-async function claimCodeLock(accountId: string, enrollmentId: string, now: Date) {
+/** How long a full counter must sit untouched before a refused attempt may turn it into a lock. */
+const STALE_COUNTER_MS = 60_000;
+
+async function claimCodeLock(accountId: string, enrollmentId: string, now: Date, options: { staleOnly?: boolean } = {}) {
   const lockedUntil = new Date(now.getTime() + VERIFY_LOCK_MINUTES * 60 * 1000);
   const claimed = await getPrisma().attendeeMfaEnrollment.updateMany({
-    where: { id: enrollmentId, failedAttempts: { gte: MAX_VERIFY_FAILURES }, OR: noLiveLock(now) },
+    where: {
+      id: enrollmentId,
+      failedAttempts: { gte: MAX_VERIFY_FAILURES },
+      OR: noLiveLock(now),
+      // From a refused reservation, only a counter nobody has touched lately:
+      // a double-submitted right code is still verifying, not an attack.
+      ...(options.staleOnly ? { updatedAt: { lt: new Date(now.getTime() - STALE_COUNTER_MS) } } : {}),
+    },
     data: { lockedUntil, failedAttempts: 0 },
   });
   if (claimed.count === 1) {
@@ -316,7 +326,7 @@ export async function verifyAttendeeSecondFactor(
   }
   if (enrollment.lockedUntil && enrollment.lockedUntil > now) throw lockedError();
   if (!await reserveCodeAttempt(enrollment.id, now)) {
-    await claimCodeLock(accountId, enrollment.id, now);
+    await claimCodeLock(accountId, enrollment.id, now, { staleOnly: true });
     throw lockedError();
   }
   if (!await consumeSecondFactor(enrollment, code, now)) {

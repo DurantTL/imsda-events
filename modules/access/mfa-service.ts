@@ -340,15 +340,25 @@ async function reserveCodeAttempt(enrollmentId: string, now: Date) {
  * setting up an authenticator still counts toward the lock, but is not
  * "someone tried to sign in to your account".
  */
+/** How long a full counter must sit untouched before a refused attempt may turn it into a lock. */
+const STALE_COUNTER_MS = 60_000;
+
 async function claimCodeLock(
   userId: string,
   enrollmentId: string,
   now: Date,
-  options: { notify?: boolean } = {},
+  options: { notify?: boolean; staleOnly?: boolean } = {},
 ) {
   const lockedUntil = new Date(now.getTime() + VERIFY_LOCK_MINUTES * 60 * 1000);
   const claimed = await getPrisma().userMfaEnrollment.updateMany({
-    where: { id: enrollmentId, failedAttempts: { gte: MAX_VERIFY_FAILURES }, OR: noLiveLock(now) },
+    where: {
+      id: enrollmentId,
+      failedAttempts: { gte: MAX_VERIFY_FAILURES },
+      OR: noLiveLock(now),
+      // From a refused reservation, only a counter nobody has touched lately:
+      // a double-submitted right code is still verifying, not an attack.
+      ...(options.staleOnly ? { updatedAt: { lt: new Date(now.getTime() - STALE_COUNTER_MS) } } : {}),
+    },
     data: { lockedUntil, failedAttempts: 0 },
   });
   if (claimed.count === 1 && options.notify !== false) {
@@ -377,7 +387,7 @@ export async function verifySecondFactorForChange(userId: string, code: string, 
   if (!enrollment || enrollment.status !== "ACTIVE") return false;
   if (enrollment.lockedUntil && enrollment.lockedUntil > now) return false;
   if (!await reserveCodeAttempt(enrollment.id, now)) {
-    await claimCodeLock(userId, enrollment.id, now);
+    await claimCodeLock(userId, enrollment.id, now, { staleOnly: true });
     return false;
   }
 
@@ -541,7 +551,7 @@ export async function completeMfaChallenge(
   // A typo while confirming a new authenticator counts, but is not announced.
   const notify = enrollment.status !== "PENDING";
   if (!await reserveCodeAttempt(enrollment.id, now)) {
-    await claimCodeLock(challenge.userId, enrollment.id, now, { notify });
+    await claimCodeLock(challenge.userId, enrollment.id, now, { notify, staleOnly: true });
     throw new MfaError(
       "MFA_LOCKED",
       "Too many incorrect codes. Wait a few minutes and try again.",

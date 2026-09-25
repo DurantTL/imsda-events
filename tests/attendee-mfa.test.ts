@@ -133,7 +133,7 @@ describe("attendee authenticator enrollment", () => {
 });
 
 describe("the second-factor lockout (#456)", () => {
-  function enrollmentFixture(overrides: { failedAttempts?: number; lockedUntil?: Date | null } = {}) {
+  function enrollmentFixture(overrides: { failedAttempts?: number; lockedUntil?: Date | null; updatedAt?: Date } = {}) {
     const row = lockableRowStub(overrides);
     prisma.attendeeMfaEnrollment.findUnique.mockResolvedValue({
       id: "mfa-1",
@@ -217,7 +217,7 @@ describe("the second-factor lockout (#456)", () => {
 
     await expect(verifyAttendeeSecondFactor("acct-1", totpCode(SECRET, NOW), NOW))
       .rejects.toMatchObject({ code: "MFA_LOCKED" });
-    expect(row.row).toEqual({ failedAttempts: 0, lockedUntil: new Date(NOW.getTime() + 15 * 60_000) });
+    expect(row.row).toMatchObject({ failedAttempts: 0, lockedUntil: new Date(NOW.getTime() + 15 * 60_000) });
 
     // Once that lock expires, the right code works again.
     const later = new Date(NOW.getTime() + 16 * 60_000);
@@ -225,6 +225,17 @@ describe("the second-factor lockout (#456)", () => {
       id: "mfa-1", status: "ACTIVE", sealedSecret: "sealed-secret", lastUsedStep: null, lockedUntil: row.row.lockedUntil,
     });
     await expect(verifyAttendeeSecondFactor("acct-1", totpCode(SECRET, later), later)).resolves.toBeUndefined();
+  });
+
+  it("doesn't lock or alert when a full counter was just touched (a double-submitted right code still verifying)", async () => {
+    // Two typos, then the right code sent twice: the first copy holds the last
+    // reservation while the second is refused. That refusal isn't an attack.
+    const row = enrollmentFixture({ failedAttempts: 3, updatedAt: NOW });
+
+    await expect(verifyAttendeeSecondFactor("acct-1", totpCode(SECRET, NOW), NOW))
+      .rejects.toMatchObject({ code: "MFA_LOCKED" });
+    expect(row.row).toMatchObject({ failedAttempts: 3, lockedUntil: null });
+    expect(dependencies.scheduleLockoutEmails).not.toHaveBeenCalled();
   });
 
   it("clears the counter on a correct code", async () => {

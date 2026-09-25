@@ -10,16 +10,18 @@ import { vi } from "vitest";
  * - `update` with `failedAttempts: { increment: n }` adds to the counter and
  *   returns the new row; any other `update` merges its data.
  * - `updateMany` honours the guards the lockout code uses — a
- *   `failedAttempts: { gte }` or `{ lt }` bound and an `OR` of `lockedUntil`
+ *   `failedAttempts: { gte }` or `{ lt }` bound, an `updatedAt: { lt }` bound,
+ *   and an `OR` of `lockedUntil`
  *   clauses ("no live lock") — and applies `increment` or plain values. Other
  *   `OR` clauses (for example `lastUsedStep`) are ignored and match.
  *
  * Not a test file (no `.test.ts`), so Vitest does not collect it.
  */
-export type LockableRow = { failedAttempts: number; lockedUntil: Date | null };
+export type LockableRow = { failedAttempts: number; lockedUntil: Date | null; updatedAt?: Date };
 
 type Where = {
   failedAttempts?: { gte?: number; lt?: number };
+  updatedAt?: { lt: Date };
   OR?: Array<{ lockedUntil?: null | { lte: Date } }>;
 };
 
@@ -34,6 +36,8 @@ function apply(row: LockableRow, data: Record<string, unknown>) {
 }
 
 function matches(row: LockableRow, where: Where) {
+  // A row with no recorded write time counts as last written long ago.
+  if (where.updatedAt && !((row.updatedAt ?? new Date(0)) < where.updatedAt.lt)) return false;
   const bound = where.failedAttempts;
   if (bound?.gte !== undefined && row.failedAttempts < bound.gte) return false;
   if (bound?.lt !== undefined && row.failedAttempts >= bound.lt) return false;
@@ -48,6 +52,8 @@ export function lockableRowStub(initial: Partial<LockableRow> = {}) {
   const row: LockableRow = {
     failedAttempts: initial.failedAttempts ?? 0,
     lockedUntil: initial.lockedUntil ?? null,
+    // Unset means last written long ago (a stale counter); a test sets it to model a fresh write.
+    ...(initial.updatedAt ? { updatedAt: initial.updatedAt } : {}),
   };
 
   const update = vi.fn(async (query: { data: Record<string, unknown> }) => {
