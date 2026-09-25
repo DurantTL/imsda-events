@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import {
   ArrowRightLeft,
   CheckCircle2,
@@ -29,6 +29,25 @@ import { SignOutButton } from "@/components/sign-out-button";
 import type { EventPermission } from "@/modules/access/permissions";
 import { operationalHealthEntryPermissions } from "@/modules/operations/access";
 
+/**
+ * Groups for the sidebar (#428): items with no group render above any
+ * heading (Dashboard) or after every group (More, a catch-all that spans
+ * several of them). "Clubs and churches" and "System" are computed per
+ * render, not statically, since their destination and visibility depend on
+ * the signed-in user's role and (for Clubs and churches) the selected
+ * event's club oversight — see docs/NAVIGATION.md.
+ */
+type NavigationGroup = "events" | "clubs" | "people" | "finance" | "communications" | "system";
+
+const navigationGroupLabels: Record<NavigationGroup, string> = {
+  events: "Events",
+  clubs: "Clubs and churches",
+  people: "People",
+  finance: "Finance",
+  communications: "Communications",
+  system: "System",
+};
+
 type NavigationItem = {
   href: string;
   label: string;
@@ -37,6 +56,7 @@ type NavigationItem = {
   desktopOnly?: boolean;
   requiredPermission?: EventPermission;
   requiredAnyPermissions?: readonly EventPermission[];
+  group?: NavigationGroup;
 };
 
 const systemNavigation: NavigationItem = {
@@ -48,17 +68,17 @@ const systemNavigation: NavigationItem = {
 
 const navigation: readonly NavigationItem[] = [
   { href: "/overview", label: "Dashboard", mobileLabel: "Home", icon: LayoutDashboard },
-  { href: "/people", label: "Registrations", mobileLabel: "People", icon: UsersRound, requiredPermission: "VIEW_SENSITIVE_DATA" },
-  { href: "/finance", label: "Payments", mobileLabel: "Payments", icon: WalletCards, requiredPermission: "MANAGE_FINANCE" },
-  { href: "/more/promo-codes", label: "Promo codes", mobileLabel: "Promos", icon: TicketPercent, requiredPermission: "MANAGE_FINANCE" },
-  { href: "/check-in", label: "Check-in", mobileLabel: "Check-in", icon: CheckCircle2, requiredPermission: "MANAGE_CHECK_IN" },
-  { href: "/communications", label: "Emails", mobileLabel: "Emails", icon: Megaphone, requiredPermission: "MANAGE_COMMUNICATIONS" },
-  { href: "/registration-builder", label: "Registration form", mobileLabel: "Form", icon: PanelsTopLeft, desktopOnly: true, requiredPermission: "MANAGE_FORMS" },
-  { href: "/more/attendee-configuration", label: "Attendee setup", mobileLabel: "Types", icon: Tags, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT" },
-  { href: "/more/tags", label: "Tags", mobileLabel: "Tags", icon: Tag, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT" },
-  { href: "/more/event-settings", label: "Event settings", mobileLabel: "Settings", icon: Settings2, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT" },
-  { href: "/imports", label: "Imports", mobileLabel: "Imports", icon: FileUp, desktopOnly: true, requiredPermission: "MANAGE_IMPORTS" },
-  { href: "/staff", label: "Team", mobileLabel: "Team", icon: UserCog, desktopOnly: true, requiredPermission: "MANAGE_STAFF" },
+  { href: "/check-in", label: "Check-in", mobileLabel: "Check-in", icon: CheckCircle2, requiredPermission: "MANAGE_CHECK_IN", group: "events" },
+  { href: "/registration-builder", label: "Registration form", mobileLabel: "Form", icon: PanelsTopLeft, desktopOnly: true, requiredPermission: "MANAGE_FORMS", group: "events" },
+  { href: "/more/attendee-configuration", label: "Attendee setup", mobileLabel: "Types", icon: Tags, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT", group: "events" },
+  { href: "/more/tags", label: "Tags", mobileLabel: "Tags", icon: Tag, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT", group: "events" },
+  { href: "/more/event-settings", label: "Event settings", mobileLabel: "Settings", icon: Settings2, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT", group: "events" },
+  { href: "/people", label: "Registrations", mobileLabel: "People", icon: UsersRound, requiredPermission: "VIEW_SENSITIVE_DATA", group: "people" },
+  { href: "/imports", label: "Imports", mobileLabel: "Imports", icon: FileUp, desktopOnly: true, requiredPermission: "MANAGE_IMPORTS", group: "people" },
+  { href: "/staff", label: "Team", mobileLabel: "Team", icon: UserCog, desktopOnly: true, requiredPermission: "MANAGE_STAFF", group: "people" },
+  { href: "/finance", label: "Payments", mobileLabel: "Payments", icon: WalletCards, requiredPermission: "MANAGE_FINANCE", group: "finance" },
+  { href: "/more/promo-codes", label: "Promo codes", mobileLabel: "Promos", icon: TicketPercent, requiredPermission: "MANAGE_FINANCE", group: "finance" },
+  { href: "/communications", label: "Emails", mobileLabel: "Emails", icon: Megaphone, requiredPermission: "MANAGE_COMMUNICATIONS", group: "communications" },
   {
     href: "/more",
     label: "More",
@@ -78,6 +98,8 @@ type ShellEvent = {
   slug: string;
   name: string;
   permissions: readonly EventPermission[];
+  /** Whether this event's club oversight (#387) is open to the signed-in user, computed server-side. */
+  clubOversight?: boolean;
 };
 type ShellUser = { displayName: string; email: string; globalRole?: "SYSTEM_ADMIN" | null };
 
@@ -107,15 +129,57 @@ export function AppShell({
   const selectedPermissions = new Set(
     events.find((event) => event.id === selectedEventId)?.permissions ?? [],
   );
-  const visibleNavigation = navigation.filter((item) => {
+  const isSystemAdmin = user.globalRole === "SYSTEM_ADMIN";
+  const matchesVisibility = (item: NavigationItem) => {
     if (item.requiredPermission && !selectedPermissions.has(item.requiredPermission)) return false;
     if (
       item.requiredAnyPermissions
       && !item.requiredAnyPermissions.some((permission) => selectedPermissions.has(permission))
     ) return false;
     return true;
-  });
+  };
   const eventQuery = selectedEventId ? `?event=${encodeURIComponent(selectedEventId)}` : "";
+  const visibleStatic = navigation.filter(matchesVisibility);
+  const dashboardItem = visibleStatic.find((item) => !item.group && item.href !== "/more");
+  const moreItem = visibleStatic.find((item) => item.href === "/more");
+  // Nobody sees a link here they couldn't already reach before this group
+  // existed (#428 review): system admins reach every club through the
+  // churches-and-clubs directory; an EVENT_ADMIN on a club-billed event
+  // reaches theirs through club oversight, exactly as `more/page.tsx` gates it.
+  const clubsVisible = isSystemAdmin || Boolean(selectedEvent?.clubOversight);
+  const clubsEntry: NavigationItem | null = clubsVisible ? {
+    href: isSystemAdmin ? "/admin/organizations" : "/more/clubs",
+    label: "Clubs and churches",
+    mobileLabel: "Clubs",
+    icon: UsersRound,
+    desktopOnly: true,
+    group: "clubs",
+  } : null;
+  const systemEntry: NavigationItem | null = isSystemAdmin ? {
+    href: systemNavigation.href,
+    label: "System management",
+    mobileLabel: "System",
+    icon: ShieldCheck,
+    desktopOnly: true,
+    group: "system",
+  } : null;
+  const visibleNavigation: NavigationItem[] = [
+    ...(dashboardItem ? [dashboardItem] : []),
+    ...visibleStatic.filter((item) => item.group === "events"),
+    ...(clubsEntry ? [clubsEntry] : []),
+    ...visibleStatic.filter((item) => item.group === "people"),
+    ...visibleStatic.filter((item) => item.group === "finance"),
+    ...visibleStatic.filter((item) => item.group === "communications"),
+    ...(systemEntry ? [systemEntry] : []),
+    ...(moreItem ? [moreItem] : []),
+  ];
+  // The mobile tab bar keeps its own, unrelated order (#428 review) rather
+  // than deriving from the sidebar's grouping: Home, People, Payments,
+  // Promos, Check-in, Emails, More.
+  const mobileNavigationOrder = ["/overview", "/people", "/finance", "/more/promo-codes", "/check-in", "/communications", "/more"];
+  const mobileNavigation = mobileNavigationOrder
+    .map((href) => visibleNavigation.find((item) => item.href === href))
+    .filter((item): item is NavigationItem => Boolean(item));
   const attendeePreviewHref = selectedEvent
     ? `/account/events/${encodeURIComponent(selectedEvent.slug)}?preview=staff`
     : "/account";
@@ -174,13 +238,19 @@ export function AppShell({
         </div>
 
         <nav className="primary-nav" aria-label="Primary navigation">
-          {visibleNavigation.map(({ href, icon: Icon, label }) => {
-            const isActive = current.href === href;
+          {visibleNavigation.map(({ href, icon: Icon, label, group }, index) => {
+            // /admin routes aren't event-scoped, so they never carry the event query.
+            const isActive = href.startsWith("/admin") ? pathname.startsWith(href) : current.href === href;
+            const previousGroup = index > 0 ? visibleNavigation[index - 1].group : undefined;
+            const startsGroup = group && group !== previousGroup;
             return (
-              <Link className={isActive ? "nav-item active" : "nav-item"} href={`${href}${eventQuery}`} key={href} aria-current={isActive ? "page" : undefined}>
-                <Icon aria-hidden="true" size={19} strokeWidth={1.9} />
-                <span>{label}</span>
-              </Link>
+              <Fragment key={href}>
+                {startsGroup && <span className="nav-group-label">{navigationGroupLabels[group]}</span>}
+                <Link className={isActive ? "nav-item active" : "nav-item"} href={href.startsWith("/admin") ? href : `${href}${eventQuery}`} aria-current={isActive ? "page" : undefined}>
+                  <Icon aria-hidden="true" size={19} strokeWidth={1.9} />
+                  <span>{label}</span>
+                </Link>
+              </Fragment>
             );
           })}
         </nav>
@@ -274,7 +344,7 @@ export function AppShell({
       </main>
 
       <nav className="mobile-nav" aria-label="Mobile navigation">
-        {visibleNavigation.filter((item) => !item.desktopOnly).map(({ href, icon: Icon, mobileLabel }) => {
+        {mobileNavigation.map(({ href, icon: Icon, mobileLabel }) => {
           const isActive = current.href === href;
           return (
             <Link className={isActive ? "active" : undefined} href={`${href}${eventQuery}`} key={href} aria-current={isActive ? "page" : undefined}>

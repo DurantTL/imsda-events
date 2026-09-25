@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { BackLink } from "@/components/back-link";
 import { ClubPacketSheet } from "@/components/club-packet-sheet";
 import { PrintReportButton } from "@/components/print-report-button";
 import { getRosterAccessState } from "@/modules/club-rosters/access";
@@ -32,9 +31,7 @@ export default async function DirectorClubPacketPage({
     <section className="page-stack retreat-packet-workspace">
       <div className="page-intro retreat-packet-intro">
         <div>
-          <Link className="text-button" href={`/account/clubs/${organizationId}/events/${eventId}`}>
-            <ArrowLeft aria-hidden="true" size={14} /> Back to your event
-          </Link>
+          <BackLink href={`/account/clubs/${organizationId}/events/${eventId}`}>Back to {packet.event.name}</BackLink>
           <h2>Your club packet</h2>
           <p>Print this for check-in: one letter sheet, printed double-sided.</p>
         </div>

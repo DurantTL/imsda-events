@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { BackLink } from "@/components/back-link";
 import { OrganizationDirectoryWorkspace } from "@/components/organization-directory-workspace";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { listOrganizations } from "@/modules/organizations/repository";
@@ -15,9 +16,7 @@ export default async function OrganizationsPage() {
   return (
     <>
       <div className="intro-actions club-admin-links">
-        <Link className="secondary-button more-back-link" href="/admin">
-          Back to system administration
-        </Link>
+        <BackLink href="/admin" variant="staff">Back to system administration</BackLink>
         <Link className="secondary-button" href="/admin/clubs/import">Import clubs</Link>
         <Link className="secondary-button" href="/admin/clubs/invites">Club invites</Link>
         <Link className="secondary-button" href="/admin/clubs/reports">Monthly reports</Link>

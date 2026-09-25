@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, Printer, QrCode } from "lucide-react";
+import { ArrowRight, CalendarDays, CheckCircle2, Printer, QrCode } from "lucide-react";
+import { BackLink } from "@/components/back-link";
 import { ClubClassPicker } from "@/components/club-class-picker";
 import { ClubPassQr } from "@/components/club-pass-qr";
 import { clubPassIsAvailable } from "@/modules/checkin/club-pass-token";
@@ -64,9 +65,7 @@ export default async function ClubEventRegistrationPage({
   return (
     <>
       <section className="public-manage-card club-event-heading">
-        <Link className="text-button" href={`/account/clubs/${organizationId}/events`}>
-          <ArrowLeft aria-hidden="true" size={14} /> All club events
-        </Link>
+        <BackLink href={`/account/clubs/${organizationId}/events`}>Back to club events</BackLink>
         <h2>{workspace.event.name}</h2>
         <p className="field-help">Billed to your church. No payment is taken online.</p>
       </section>

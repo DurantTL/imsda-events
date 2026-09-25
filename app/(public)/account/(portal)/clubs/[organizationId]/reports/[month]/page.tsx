@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
+import { BackLink } from "@/components/back-link";
 import { ClubReportForm } from "@/components/club-report-form";
 import { monthlyNotesSummary } from "@/modules/club-meeting-notes/repository";
 import { getClubRoleAccess } from "@/modules/club-rosters/access";
@@ -24,7 +24,12 @@ export default async function ClubReportPage({ params }: { params: Promise<{ org
   const access = await getClubRoleAccess(organizationId);
   if (access.state !== "OK") return null;
   if (!access.capabilities.submitReports) {
-    return <p className="public-manage-empty">Monthly reports are filed by the club&apos;s director, deputy, or reporter.</p>;
+    return (
+      <>
+        <BackLink href={`/account/clubs/${organizationId}/reports`}>Back to monthly reports</BackLink>
+        <p className="public-manage-empty">Monthly reports are filed by the club&apos;s director, deputy, or reporter.</p>
+      </>
+    );
   }
   const now = new Date();
   if (!isReportMonth(month) || month > calendarDateIn(now).slice(0, 7)) notFound();
@@ -48,7 +53,7 @@ export default async function ClubReportPage({ params }: { params: Promise<{ org
 
   return (
     <>
-      <Link className="text-button club-report-back" href={`/account/clubs/${organizationId}/reports`}>← All monthly reports</Link>
+      <BackLink href={`/account/clubs/${organizationId}/reports`}>Back to monthly reports</BackLink>
       <ClubReportForm
         allowDraft
         dueLabel={formatDueDate(due)}

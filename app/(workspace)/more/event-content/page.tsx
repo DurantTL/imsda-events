@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { AccessRestricted } from "@/components/access-restricted";
+import { BackLink } from "@/components/back-link";
 import { EventContentWorkspace } from "@/components/event-content-workspace";
 import { listEventAssets } from "@/modules/events/asset-repository";
 import { listEventContentSections } from "@/modules/events/content-repository";
@@ -14,21 +15,28 @@ export default async function EventContentPage({
 }) {
   const { event: requested } = await searchParams;
   const { event, permissions } = await resolveEventContext(requested);
+  const back = <BackLink href={`/more?event=${event.id}`} variant="staff">Back to More</BackLink>;
   if (!permissions.includes("CONFIGURE_EVENT")) {
     return (
-      <AccessRestricted
-        title="The event page is restricted"
-        detail="Only event administrators can change what the public event page says."
-      />
+      <>
+        {back}
+        <AccessRestricted
+          title="The event page is restricted"
+          detail="Only event administrators can change what the public event page says."
+        />
+      </>
     );
   }
   return (
-    <EventContentWorkspace
-      key={event.id}
-      eventId={event.id}
-      eventName={event.name}
-      initialSections={await listEventContentSections(event.id)}
-      initialAssets={await listEventAssets(event.id)}
-    />
+    <>
+      {back}
+      <EventContentWorkspace
+        key={event.id}
+        eventId={event.id}
+        eventName={event.name}
+        initialSections={await listEventContentSections(event.id)}
+        initialAssets={await listEventAssets(event.id)}
+      />
+    </>
   );
 }

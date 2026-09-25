@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ShieldAlert, ShieldCheck } from "lucide-react";
+import { BackLink } from "@/components/back-link";
 import { BackgroundCheckImportPanel } from "@/components/background-check-import-panel";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { backgroundCheckSummary } from "@/modules/background-checks/repository";
@@ -26,7 +27,7 @@ export default async function BackgroundChecksPage() {
   ];
   return (
     <section className="page-stack">
-      <Link className="secondary-button more-back-link" href="/admin/organizations">Back to churches and clubs</Link>
+      <BackLink href="/admin/organizations" variant="staff">Back to churches and clubs</BackLink>
       <div className="page-intro">
         <div>
           <p className="eyebrow">Churches and clubs</p>

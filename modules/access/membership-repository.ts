@@ -51,6 +51,23 @@ export async function listActiveEventPermissionsForUser(
   ]));
 }
 
+/** Each event's role for this user, where they have one (#428: club oversight is EVENT_ADMIN only). */
+export async function listActiveEventRolesForUser(
+  userId: string,
+  eventIds: readonly string[],
+) {
+  if (eventIds.length === 0) return new Map<string, EventRole>();
+  const memberships = await getPrisma().eventMembership.findMany({
+    where: {
+      userId,
+      eventId: { in: [...eventIds] },
+      status: "ACTIVE",
+    },
+    select: { eventId: true, role: true },
+  });
+  return new Map(memberships.map((membership) => [membership.eventId, membership.role]));
+}
+
 export async function listStaffMemberships(eventId: string) {
   const rows = await getPrisma().eventMembership.findMany({
     where: { eventId },

@@ -4,6 +4,7 @@
 
 .hero {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
   gap: 24px;
@@ -58,8 +59,10 @@
 
 .heroActions {
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
   gap: 9px;
+  max-width: 100%;
 }
 
 .heroActions :global(.primary-button) {

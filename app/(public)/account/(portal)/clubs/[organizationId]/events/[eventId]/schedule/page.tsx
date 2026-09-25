@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import { ArrowLeft, Download } from "lucide-react";
+import { Download } from "lucide-react";
+import { BackLink } from "@/components/back-link";
 import { PrintReportButton } from "@/components/print-report-button";
 import { getRosterAccessState } from "@/modules/club-rosters/access";
 import { buildClubSchedule, rosterGroupLabels, rosterGroupOf } from "@/modules/honors/roster-domain";
@@ -27,7 +27,7 @@ export default async function ClubSchedulePage({
   if (!data || !registered) {
     return (
       <section className="public-manage-card">
-        <Link className="text-button" href={back}><ArrowLeft aria-hidden="true" size={14} /> Back to the event</Link>
+        <BackLink href={back}>Back to {data ? data.event.name : "the event"}</BackLink>
         <p className="public-manage-empty">Your club isn&apos;t registered for this event, so there&apos;s no schedule yet.</p>
       </section>
     );
@@ -37,7 +37,7 @@ export default async function ClubSchedulePage({
   return (
     <section className="public-manage-card club-schedule">
       <div className="club-schedule-actions">
-        <Link className="text-button" href={back}><ArrowLeft aria-hidden="true" size={14} /> Back to the event</Link>
+        <BackLink href={back}>Back to {data.event.name}</BackLink>
         <div>
           <a className="secondary-button" href={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(eventId)}/schedule`}>
             <Download aria-hidden="true" size={15} /> CSV

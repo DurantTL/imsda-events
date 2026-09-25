@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { redirect } from "next/navigation";
+import { BackLink } from "@/components/back-link";
 import { ClubImportWorkspace } from "@/components/club-import-workspace";
 import { getCurrentSession } from "@/modules/access/current-session";
 
@@ -12,7 +12,7 @@ export default async function ClubImportPage() {
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
   return (
     <>
-      <Link className="secondary-button more-back-link" href="/admin/organizations">Back to churches and clubs</Link>
+      <BackLink href="/admin/organizations" variant="staff">Back to churches and clubs</BackLink>
       <ClubImportWorkspace />
     </>
   );
