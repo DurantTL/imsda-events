@@ -847,7 +847,7 @@ export const formTemplates: FormTemplate[] = [
           templateField("hw_email", "email", "Email", "EMAIL", true),
           templateField("hw_phone", "phone", "Mobile phone", "PHONE", true),
         ] },
-        { id: "hw_roster", title: "Club roster", description: "Add Pathfinders, TLTs, staff, and children attending this site, using full first and last names. Honor classes are selected after the roster is saved.", fields: [
+        { id: "hw_roster", title: "Club roster", description: "Add Pathfinders, TLTs, staff, other adults, and children attending this site, using full first and last names. Honor classes are selected after the roster is saved.", fields: [
           templateField("hw_member_first", "first_name", "First name", "TEXT", true, [], { scope: "ATTENDEE" }),
           templateField("hw_member_last", "last_name", "Last name", "TEXT", true, [], { scope: "ATTENDEE" }),
           templateField("hw_member_age", "attendee_age", "Age", "NUMBER", true, [], { scope: "ATTENDEE" }),
