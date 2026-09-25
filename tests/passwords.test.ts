@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { hashPassword, validatePassword, verifyPassword } from "@/modules/access/passwords";
 import {
+  checkPasswordRequirements,
   MIN_PASSWORD_LENGTH,
   passwordCandidates,
   repeatingUnit,
@@ -79,5 +80,46 @@ describe("password policy", () => {
     expect(passwordCandidates("letmeinletmeinletmein")).toContain("letmein");
     expect(repeatingUnit("abcabcabc")).toBe("abc");
     expect(repeatingUnit("abcdef")).toBe("abcdef");
+  });
+});
+
+describe("the shared password requirements checklist (#434)", () => {
+  // The list a client ticks off live, and the server's accept/reject
+  // decision, are driven off the exact same PASSWORD_REQUIREMENTS array —
+  // so an input the checklist shows as fully met is exactly one
+  // validatePasswordShape accepts, and one it rejects always leaves at least
+  // one requirement unmet.
+  const owner = { email: "alex.morgan@imsda.org", displayName: "Alex Morgan" };
+  const samples = [
+    "a good long phrase with plenty of words",
+    "Sh0rt!Passw0r",
+    "q".repeat(129),
+    "P@ssw0rd1234!!",
+    "abababababababab",
+    "klmnopqrstuvwxyz",
+    "alex.morgan rides again",
+    "mornings with MORGAN!",
+    "a good phrase\there",
+    "",
+    "correct horse battery staple, said nobody at imsda",
+  ];
+
+  it.each(samples)("agrees with validatePasswordShape for %j", (password) => {
+    const serverAccepted = validatePasswordShape(password, owner) === null;
+    const requirements = checkPasswordRequirements(password, owner);
+    const clientAccepted = requirements.every((requirement) => requirement.met);
+    expect(clientAccepted).toBe(serverAccepted);
+  });
+
+  it("ticks off every requirement for a password that clears the bar", () => {
+    const requirements = checkPasswordRequirements("a good long phrase with plenty of words", owner);
+    expect(requirements.length).toBeGreaterThan(0);
+    expect(requirements.every((requirement) => requirement.met)).toBe(true);
+  });
+
+  it("leaves the length requirement unmet, and nothing else required to be met, for an empty password", () => {
+    const requirements = checkPasswordRequirements("", owner);
+    const length = requirements.find((requirement) => requirement.id === "length");
+    expect(length?.met).toBe(false);
   });
 });

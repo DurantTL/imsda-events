@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { KeyRound, ShieldCheck, ShieldAlert } from "lucide-react";
 import { OneTimeCodeInput } from "@/components/one-time-code-input";
@@ -23,10 +24,16 @@ export function MfaManager({
   initialStatus,
   endpoint = "/api/auth/mfa",
   attendee = false,
+  otherMethodAvailable = false,
+  onEnrolled,
 }: {
   initialStatus: MfaStatus;
   endpoint?: string;
   attendee?: boolean;
+  /** Whether a passkey already covers this account's second-step requirement. */
+  otherMethodAvailable?: boolean;
+  /** Called once an authenticator is confirmed and turned on. */
+  onEnrolled?: () => void;
 }) {
   const [status, setStatus] = useState(initialStatus);
   const [offer, setOffer] = useState<{ secret: string; otpauthUri: string } | null>(null);
@@ -70,6 +77,7 @@ export function MfaManager({
       setOffer(null);
       setStatus(result.status);
       setRecoveryCodes(result.recoveryCodes);
+      onEnrolled?.();
     }
   }
 
@@ -106,7 +114,9 @@ export function MfaManager({
           {status.required
             ? "This account administers events, so a second factor is required. You will be asked to set one up the next time you sign in."
             : attendee
-              ? "Add an authenticator now. It is required before this account may reach medical information or club rosters."
+              ? otherMethodAvailable
+                ? "A passkey is already set up for this account, so an authenticator is optional. Add one too if you'd like a backup."
+                : "Add an authenticator app, or set up a passkey instead — either one satisfies the requirement before this account may reach medical information or club rosters."
               : "Add a second factor so a leaked password is not enough to sign in as you. Accounts that administer events are required to have one."}
         </p>
       )}
@@ -146,6 +156,12 @@ export function MfaManager({
 
       {!offer && status.status !== "ACTIVE" && (
         <>
+          {attendee && (
+            <p className="field-help">
+              Works with Google Authenticator, Microsoft Authenticator, Apple Passwords, 1Password, and
+              similar apps. <Link href="/account/help/authenticator">Which app should I use?</Link>
+            </p>
+          )}
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="primary-button" type="button" disabled={busy} onClick={begin}>
             <ShieldCheck size={16} /> {busy ? "Preparing…" : "Set up an authenticator"}

@@ -80,6 +80,22 @@ export async function listClubInvites() {
 
 export type ClubInviteRecord = Awaited<ReturnType<typeof listClubInvites>>[number];
 
+/**
+ * Where a club invite's email sends someone to act on it: the sign-up page,
+ * with the invited address prefilled the same way a Google sign-up return
+ * prefills it (`sign-up-prefill.ts`). Landing there works either way — an
+ * address that already has an account gets the same sign-up response
+ * everyone does (see `account-service.ts`), which quietly becomes a sign-in.
+ * There is no token in this link: acceptance is decided by the signed-in
+ * account's own verified email matching the invite, not by anything the link
+ * carries, so nothing here is a secret to protect.
+ */
+export function clubInviteSignUpUrl(email: string) {
+  const url = new URL("/account/sign-up", getServerEnv().APP_BASE_URL);
+  url.hash = `email=${encodeURIComponent(email.trim().toLowerCase())}`;
+  return url.toString();
+}
+
 function inviteEmail(input: {
   name: string;
   email: string;
@@ -87,7 +103,7 @@ function inviteEmail(input: {
   role: "DIRECTOR" | "DEPUTY" | "REGISTRAR" | "REPORTER";
   source: "IMPORT" | "CLUB";
 }) {
-  const accountUrl = new URL("/account", getServerEnv().APP_BASE_URL).toString();
+  const signUpUrl = clubInviteSignUpUrl(input.email);
   const role = clubDirectorRoleLabels[input.role].toLocaleLowerCase("en-US");
   const invitedBy = input.source === "CLUB"
     ? `${input.clubName}'s director or deputy has invited you as the club's ${role} on IMSDA Events.`
@@ -105,7 +121,7 @@ function inviteEmail(input: {
       invitedBy,
       "",
       "To accept:",
-      `1. Go to ${accountUrl}`,
+      `1. Go to ${signUpUrl}`,
       `2. Sign in, or create an account, using this email address: ${input.email}`,
       "3. On your account page, choose Accept next to the club invite.",
       "",

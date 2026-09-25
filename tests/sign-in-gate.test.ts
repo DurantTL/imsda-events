@@ -70,4 +70,24 @@ describe("second step after the password (decision 2026-09-23)", () => {
   it("never lets anyone turn two-step sign-in off", async () => {
     await expect(disableAttendeeMfa("account-1", "123456")).rejects.toMatchObject({ code: "MFA_REMOVAL_NOT_ALLOWED" });
   });
+
+  describe("the one-method requirement (#434): either an authenticator or a passkey is enough", () => {
+    it("is satisfied by an authenticator alone, with no passkey", async () => {
+      mocks.enrollment.mockResolvedValue({ status: "ACTIVE" });
+      mocks.passkeyCount.mockResolvedValue(0);
+      await expect(accountNeedsSecondStep("account-1", "session-1")).resolves.toBe("VERIFY");
+    });
+
+    it("is satisfied by a passkey alone, with no authenticator", async () => {
+      mocks.enrollment.mockResolvedValue(null);
+      mocks.passkeyCount.mockResolvedValue(1);
+      await expect(accountNeedsSecondStep("account-1", "session-1")).resolves.toBe("VERIFY");
+    });
+
+    it("is not satisfied by neither method", async () => {
+      mocks.enrollment.mockResolvedValue(null);
+      mocks.passkeyCount.mockResolvedValue(0);
+      await expect(accountNeedsSecondStep("account-1", "session-1")).resolves.toBe("SETUP");
+    });
+  });
 });

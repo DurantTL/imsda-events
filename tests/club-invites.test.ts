@@ -48,6 +48,7 @@ import {
   acceptClubInvite,
   cancelClubTeamInvite,
   clubInviteExpiry,
+  clubInviteSignUpUrl,
   createClubTeamInvite,
   listInvitesForAccount,
   listPendingClubTeamInvites,
@@ -98,7 +99,8 @@ describe("sending club invites (#376)", () => {
     expect(mocks.inviteFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ status: "PENDING" }) }));
     const message = mocks.outboxCreate.mock.calls[0][0].data;
     expect(message).toMatchObject({ templateKey: "CLUB_INVITE", recipientEmail: "leader@example.test", eventId: null });
-    expect(message.bodyTextSnapshot).toContain("https://events.imsda.test/account");
+    // Import invites (#376) point at the working sign-up page, email prefilled, not the bare account page.
+    expect(message.bodyTextSnapshot).toContain("https://events.imsda.test/account/sign-up#email=leader%40example.test");
     expect(message.bodyTextSnapshot).not.toMatch(/token=/);
     expect(mocks.inviteUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "SENT", lastMessageId: "message-1" }) }));
     expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "CLUB_INVITES_SENT", metadata: { count: 1, organizationIds: ["club-1"] } }));
@@ -197,6 +199,19 @@ describe("accepting a club invite", () => {
   });
 });
 
+describe("the sign-up link a club invite's email carries (#434)", () => {
+  it("is built from APP_BASE_URL and the sign-up route, with the invited address prefilled and no token", () => {
+    const url = clubInviteSignUpUrl("New.Helper@Example.test");
+    expect(url).toBe("https://events.imsda.test/account/sign-up#email=new.helper%40example.test");
+    expect(url).not.toMatch(/[?&]token=/);
+  });
+
+  it("normalizes the address the same way an invite matches one", () => {
+    // Leading/trailing space and case shouldn't produce a different link for the same address.
+    expect(clubInviteSignUpUrl("  Leader@Example.test  ")).toBe(clubInviteSignUpUrl("leader@example.test"));
+  });
+});
+
 describe("club team invites (#425)", () => {
   it("creates and sends an invite for someone with no account yet", async () => {
     const result = await createClubTeamInvite("club-1", { email: "New.Helper@Example.test", role: "REGISTRAR" }, "account-1", now);
@@ -213,6 +228,8 @@ describe("club team invites (#425)", () => {
     }));
     const message = mocks.outboxCreate.mock.calls[0][0].data;
     expect(message).toMatchObject({ templateKey: "CLUB_INVITE", recipientEmail: "new.helper@example.test" });
+    // Club-created invites (#425) get the same working sign-up link as import invites.
+    expect(message.bodyTextSnapshot).toContain("https://events.imsda.test/account/sign-up#email=new.helper%40example.test");
     expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({
       action: "CLUB_INVITE_CREATED",
       metadata: { organizationId: "club-1", role: "REGISTRAR", actorAttendeeAccountId: "account-1" },
