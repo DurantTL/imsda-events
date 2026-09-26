@@ -121,7 +121,7 @@ export function ClubClassPicker({
       </div>
       <p>
         Pick one class per session, or one class that fills every session. Seats go to the first
-        clubs to save, and only youth use a seat.
+        clubs to save. Only youth use a seat; staff, adults, and underage children join without one.
         {workspace.registrationClosesOn ? ` You can change classes until ${formatCalendarDate(workspace.registrationClosesOn)}.` : ""}
       </p>
       {notice && <div className="inline-notice success" role="status">{notice}</div>}

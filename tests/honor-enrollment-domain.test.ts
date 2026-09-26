@@ -39,7 +39,7 @@ describe("class selection rules", () => {
 
   it("counts only youth against seats", () => {
     expect(consumesClassSeat("YOUTH")).toBe(true);
-    expect(consumesClassSeat("UNDERAGE")).toBe(true);
+    expect(consumesClassSeat("UNDERAGE")).toBe(false);
     expect(consumesClassSeat(null)).toBe(true);
     expect(consumesClassSeat("STAFF")).toBe(false);
     expect(consumesClassSeat("ADULT")).toBe(false);
