@@ -26,6 +26,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.getCurrentAttendee }));
 vi.mock("@/modules/organizations/director-access", () => ({ listDirectedClubs: mocks.listDirectedClubs }));
+vi.mock("@/modules/organizations/staff-act-as", () => ({ currentStaffActingContext: async () => null }));
 vi.mock("@/modules/access/request-security", () => ({ rejectCrossOriginRequest: mocks.rejectCrossOriginRequest }));
 vi.mock("@/modules/attendee-accounts/mfa-service", async () => {
   const actual = await vi.importActual<typeof import("@/modules/attendee-accounts/mfa-service")>("@/modules/attendee-accounts/mfa-service");
@@ -72,7 +73,7 @@ beforeEach(() => {
 describe("who may open a roster", () => {
   it("opens only for a current director with an unlocked session", async () => {
     mocks.findSession.mockResolvedValue({ secondFactorVerifiedAt: new Date(now.getTime() - 60_000) });
-    await expect(getRosterAccessState("club-1", now)).resolves.toMatchObject({ state: "OPEN", accountId: "director-1" });
+    await expect(getRosterAccessState("club-1", now)).resolves.toMatchObject({ state: "OPEN", actor: { kind: "ATTENDEE", accountId: "director-1" } });
   });
 
   it("hides clubs the person doesn't direct", async () => {

@@ -38,7 +38,8 @@ export class ClubReportError extends Error {
   }
 }
 
-export type ClubReportActor = { accountId: string } | { userId: string };
+/** `actAsId` is set for a staff "act as" director (#442). */
+export type ClubReportActor = { accountId: string } | { userId: string; actAsId?: string };
 
 const reportSelect = {
   id: true,
@@ -209,7 +210,7 @@ export async function saveClubReport(
         ...(isClub && pastDue && input.status === "SUBMITTED" && existing?.firstSubmittedAt && existing.status === "DRAFT"
           ? { resubmittedAfterDueDate: true }
           : {}),
-        ...(isClub ? { actorAttendeeAccountId: actor.accountId } : {}),
+        ...(isClub ? { actorAttendeeAccountId: actor.accountId } : actor.actAsId ? { actAsId: actor.actAsId } : {}),
       },
     }, tx);
     return serializeReport(saved);
@@ -222,7 +223,7 @@ export async function saveClubReport(
  * club out of editing (`isLockedForClub`); after that only staff can act.
  * `firstSubmittedAt` and any on-time credit already earned stay untouched.
  */
-export async function reopenClubReport(organizationId: string, reportMonth: string, accountId: string, now = new Date()) {
+export async function reopenClubReport(organizationId: string, reportMonth: string, actor: ClubReportActor, now = new Date()) {
   if (isLockedForClub(reportMonth, now)) {
     throw new ClubReportError(
       "CLUB_REPORT_LOCKED",
@@ -241,10 +242,13 @@ export async function reopenClubReport(organizationId: string, reportMonth: stri
     if (existing.status !== "SUBMITTED") throw new ClubReportError("CLUB_REPORT_NOT_SUBMITTED", "This report is already a draft.");
     const saved = await tx.clubMonthlyReport.update({
       where: { id: existing.id },
-      data: { status: "DRAFT", submittedAt: null, updatedByAccountId: accountId, updatedByUserId: null },
+      data: "accountId" in actor
+        ? { status: "DRAFT", submittedAt: null, updatedByAccountId: actor.accountId, updatedByUserId: null }
+        : { status: "DRAFT", submittedAt: null, updatedByUserId: actor.userId, updatedByAccountId: null },
       select: reportSelect,
     });
     await writeAuditLog({
+      ...("userId" in actor ? { actorUserId: actor.userId } : {}),
       action: "CLUB_REPORT_REOPENED",
       entityType: "ClubMonthlyReport",
       entityId: saved.id,
@@ -255,7 +259,7 @@ export async function reopenClubReport(organizationId: string, reportMonth: stri
         reportId: saved.id,
         totalPoints: saved.totalPoints,
         onTimePoints: saved.onTimePoints,
-        actorAttendeeAccountId: accountId,
+        ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : actor.actAsId ? { actAsId: actor.actAsId } : {}),
       },
     }, tx);
     return serializeReport(saved);

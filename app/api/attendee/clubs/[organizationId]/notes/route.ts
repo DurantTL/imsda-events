@@ -2,7 +2,7 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { clubMeetingNoteApiError } from "@/modules/club-meeting-notes/api-errors";
 import { createClubMeetingNote, listClubMeetingNotes } from "@/modules/club-meeting-notes/repository";
 import { meetingNoteInputSchema } from "@/modules/club-meeting-notes/schemas";
-import { requireClubCapability } from "@/modules/club-rosters/access";
+import { actorAttribution, requireClubCapability } from "@/modules/club-rosters/access";
 import { withRequestContext } from "@/lib/request-context";
 
 type RouteContext = { params: Promise<{ organizationId: string }> };
@@ -25,7 +25,7 @@ async function postHandler(request: Request, context: RouteContext) {
     const { organizationId } = await context.params;
     const access = await requireClubCapability(organizationId, "submitReports");
     const input = meetingNoteInputSchema.parse(await request.json());
-    const note = await createClubMeetingNote(organizationId, input, access.accountId);
+    const note = await createClubMeetingNote(organizationId, input, actorAttribution(access.actor));
     return Response.json({ note }, { status: 201 });
   } catch (error) {
     return clubMeetingNoteApiError(error, "Adding a meeting note");

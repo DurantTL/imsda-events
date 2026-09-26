@@ -1,9 +1,11 @@
 import { Suspense } from "react";
+import { ActAsBanner } from "@/components/act-as-banner";
 import { AppShell } from "@/components/app-shell";
 import { listActiveEventPermissionsForUser, listActiveEventRolesForUser } from "@/modules/access/membership-repository";
 import { eventPermissions } from "@/modules/access/permissions";
 import { findSwitchableAttendeeAccountForStaff } from "@/modules/attendee-accounts/current-attendee";
 import { resolveEventContext } from "@/modules/events/selection";
+import { currentStaffActingContext } from "@/modules/organizations/staff-act-as";
 
 export const dynamic = "force-dynamic";
 
@@ -27,9 +29,11 @@ export default async function WorkspaceLayout({ children }: { children: React.Re
   const attendeeAccountAvailable = Boolean(
     await findSwitchableAttendeeAccountForStaff(user.email),
   );
+  const acting = await currentStaffActingContext();
 
   return (
     <Suspense fallback={<div className="shell-loading">Loading IMSDA Events…</div>}>
+      <ActAsBanner acting={acting} />
       <AppShell
         attendeeAccountAvailable={attendeeAccountAvailable}
         events={shellEvents}

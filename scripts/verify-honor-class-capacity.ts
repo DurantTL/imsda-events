@@ -87,8 +87,8 @@ async function main() {
 
   // 1. Two clubs race for the last seat: exactly one wins.
   const results = await Promise.allSettled([
-    setClassSelections(clubs[0], eventId, "director-a", { [a]: [offeringId] }, now),
-    setClassSelections(clubs[1], eventId, "director-b", { [b]: [offeringId] }, now),
+    setClassSelections(clubs[0], eventId, { accountId: "director-a" }, { [a]: [offeringId] }, now),
+    setClassSelections(clubs[1], eventId, { accountId: "director-b" }, { [b]: [offeringId] }, now),
   ]);
   const won = results.filter((result) => result.status === "fulfilled").length;
   const lost = results.filter((result) => result.status === "rejected");
@@ -100,17 +100,17 @@ async function main() {
   console.log("ok  last seat: one club won, the other was told the class is full");
 
   // 2. Staff join a full class without using a seat.
-  await setClassSelections(clubs[1], eventId, "director-b", { [bStaff]: [offeringId] }, now);
+  await setClassSelections(clubs[1], eventId, { accountId: "director-b" }, { [bStaff]: [offeringId] }, now);
   const staff = await prisma.honorEnrollment.findFirst({ where: { registrationAttendeeId: bStaff } });
   assert(staff && !staff.consumesSeat, "staff should join without a seat");
   console.log("ok  staff joined a full class without taking a seat");
 
   // 3. Freeing the seat lets the other club in; the per-club limit still holds.
   const winner = results[0].status === "fulfilled" ? { club: clubs[0], attendee: a } : { club: clubs[1], attendee: b };
-  await setClassSelections(winner.club, eventId, "director", { [winner.attendee]: [] }, now);
+  await setClassSelections(winner.club, eventId, { accountId: "director" }, { [winner.attendee]: [] }, now);
   await prisma.honorOffering.update({ where: { id: offeringId }, data: { capacity: 5 } });
-  await setClassSelections(clubs[1], eventId, "director-b", { [b]: [offeringId] }, now);
-  const limited = await setClassSelections(clubs[1], eventId, "director-b", { [bSecondYouth]: [offeringId] }, now)
+  await setClassSelections(clubs[1], eventId, { accountId: "director-b" }, { [b]: [offeringId] }, now);
+  const limited = await setClassSelections(clubs[1], eventId, { accountId: "director-b" }, { [bSecondYouth]: [offeringId] }, now)
     .then(() => null, (error: unknown) => error);
   assert(limited instanceof ClassSelectionError && limited.code === "CLUB_LIMIT_REACHED", "second youth from one club should hit the per-club limit");
   console.log("ok  freed seat reused; per-club limit refused a second youth");

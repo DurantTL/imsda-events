@@ -20,6 +20,7 @@ export const getCurrentSession = cache(async (): Promise<Session> => {
   const session = await getPrisma().userSession.findUnique({
     where: { tokenHash },
     select: {
+      id: true,
       expiresAt: true,
       revokedAt: true,
       lastSeenAt: true,
@@ -63,5 +64,6 @@ export const getCurrentSession = cache(async (): Promise<Session> => {
       displayName: session.user.displayName,
       globalRole: session.user.globalRole,
     },
+    sessionId: session.id,
   };
 });

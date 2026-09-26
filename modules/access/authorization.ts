@@ -8,7 +8,7 @@ export type AuthenticatedUser = {
   globalRole?: "SYSTEM_ADMIN" | null;
 };
 
-export type Session = { user: AuthenticatedUser | null };
+export type Session = { user: AuthenticatedUser | null; sessionId?: string | null };
 
 export type MembershipRecord = {
   eventId: string;

@@ -32,7 +32,7 @@ const request = (method: string, body: unknown) => new Request("https://events.i
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
-  mocks.requireRosterAccess.mockResolvedValue({ state: "OPEN", accountId: "director-1" });
+  mocks.requireRosterAccess.mockResolvedValue({ state: "OPEN", actor: { kind: "ATTENDEE", accountId: "director-1", sessionId: "session-1" } });
   mocks.listRoster.mockResolvedValue([]);
   mocks.updateRosterMember.mockResolvedValue(undefined);
   mocks.removeRosterMember.mockResolvedValue(undefined);

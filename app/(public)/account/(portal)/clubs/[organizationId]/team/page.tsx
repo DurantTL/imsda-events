@@ -33,7 +33,7 @@ export default async function ClubTeamPage({ params }: { params: Promise<{ organ
         initialTeam={team}
         initialInvites={invites}
         organizationId={organizationId}
-        viewerAccountId={access.accountId}
+        viewerAccountId={access.actor.kind === "ATTENDEE" ? access.actor.accountId : null}
       />
     </>
   );

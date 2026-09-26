@@ -6,6 +6,7 @@ import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee
 import { isAreaCoordinator, listClubsForArea } from "@/modules/organizations/area-coordinators";
 import { listDirectedClubs } from "@/modules/organizations/director-access";
 import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
+import { currentStaffActingContext } from "@/modules/organizations/staff-act-as";
 
 export const dynamic = "force-dynamic";
 
@@ -16,9 +17,19 @@ export const metadata: Metadata = {
 
 export default async function MyClubsPage() {
   const { account } = await getCurrentAttendee();
-  if (!account) redirect("/account/sign-in");
-  const [clubs, areaCoordinator] = await Promise.all([listDirectedClubs(account.id), isAreaCoordinator(account.id)]);
-  if (areaCoordinator) {
+  const acting = await currentStaffActingContext();
+  if (!account && !acting) redirect("/account/sign-in");
+
+  // A staff "act as" director (#442) has nowhere else to go but their one
+  // club: no attendee account, so no clubs list to show.
+  if (acting?.role === "CLUB_DIRECTOR" && acting.organizationId) {
+    redirect(`/account/clubs/${acting.organizationId}`);
+  }
+
+  const [clubs, areaCoordinator] = account
+    ? await Promise.all([listDirectedClubs(account.id), isAreaCoordinator(account.id)])
+    : [[], false];
+  if (areaCoordinator || acting?.role === "AREA_COORDINATOR") {
     // An Area Coordinator sees every club (#387): their own open as usual;
     // the rest open view only.
     const own = new Map(clubs.map((club) => [club.organizationId, club]));

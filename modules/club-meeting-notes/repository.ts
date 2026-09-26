@@ -14,6 +14,9 @@ import type { ReportHonor } from "@/modules/club-reports/domain";
 
 export type ClubMeetingNoteErrorCode = "CLUB_NOT_FOUND" | "NOTE_NOT_FOUND";
 
+/** Never an attendee account credited for a staff action (#442): `userId` (with `actAsId`) for a staff "act as" director. */
+export type ClubMeetingNoteActor = { accountId: string } | { userId: string; actAsId: string };
+
 export class ClubMeetingNoteError extends Error {
   constructor(public readonly code: ClubMeetingNoteErrorCode, message: string) {
     super(message);
@@ -56,7 +59,7 @@ export async function listClubMeetingNotes(organizationId: string) {
   return notes.map(serializeNote);
 }
 
-export async function createClubMeetingNote(organizationId: string, input: MeetingNoteInput, accountId: string) {
+export async function createClubMeetingNote(organizationId: string, input: MeetingNoteInput, actor: ClubMeetingNoteActor) {
   const prisma = getPrisma();
   const club = await prisma.organization.findUnique({ where: { id: organizationId }, select: { type: true } });
   if (!club || club.type !== "CLUB") throw new ClubMeetingNoteError("CLUB_NOT_FOUND", "That club could not be found.");
@@ -70,17 +73,23 @@ export async function createClubMeetingNote(organizationId: string, input: Meeti
       staffCount: input.staffCount,
       honors,
       notes: input.notes,
-      createdByAccountId: accountId,
-      updatedByAccountId: accountId,
+      ...("accountId" in actor
+        ? { createdByAccountId: actor.accountId, updatedByAccountId: actor.accountId }
+        : { createdByUserId: actor.userId, updatedByUserId: actor.userId }),
     },
     select: noteSelect,
   });
   await writeAuditLog({
+    ...("userId" in actor ? { actorUserId: actor.userId } : {}),
     action: "CLUB_MEETING_NOTE_CREATED",
     entityType: "ClubMeetingNote",
     entityId: note.id,
     summary: "Added a club meeting note.",
-    metadata: { organizationId, noteId: note.id, actorAttendeeAccountId: accountId },
+    metadata: {
+      organizationId,
+      noteId: note.id,
+      ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId }),
+    },
   });
   return serializeNote(note);
 }
@@ -92,7 +101,7 @@ async function findOwnNote(organizationId: string, noteId: string) {
   return prisma;
 }
 
-export async function updateClubMeetingNote(organizationId: string, noteId: string, input: MeetingNoteInput, accountId: string) {
+export async function updateClubMeetingNote(organizationId: string, noteId: string, input: MeetingNoteInput, actor: ClubMeetingNoteActor) {
   const prisma = await findOwnNote(organizationId, noteId);
   const honors = input.honors.filter((honor) => honor.name.trim() || honor.participants !== null);
   const note = await prisma.clubMeetingNote.update({
@@ -104,29 +113,39 @@ export async function updateClubMeetingNote(organizationId: string, noteId: stri
       staffCount: input.staffCount,
       honors,
       notes: input.notes,
-      updatedByAccountId: accountId,
+      ...("accountId" in actor ? { updatedByAccountId: actor.accountId } : { updatedByUserId: actor.userId }),
     },
     select: noteSelect,
   });
   await writeAuditLog({
+    ...("userId" in actor ? { actorUserId: actor.userId } : {}),
     action: "CLUB_MEETING_NOTE_UPDATED",
     entityType: "ClubMeetingNote",
     entityId: note.id,
     summary: "Edited a club meeting note.",
-    metadata: { organizationId, noteId: note.id, actorAttendeeAccountId: accountId },
+    metadata: {
+      organizationId,
+      noteId: note.id,
+      ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId }),
+    },
   });
   return serializeNote(note);
 }
 
-export async function deleteClubMeetingNote(organizationId: string, noteId: string, accountId: string) {
+export async function deleteClubMeetingNote(organizationId: string, noteId: string, actor: ClubMeetingNoteActor) {
   const prisma = await findOwnNote(organizationId, noteId);
   await prisma.clubMeetingNote.delete({ where: { id: noteId } });
   await writeAuditLog({
+    ...("userId" in actor ? { actorUserId: actor.userId } : {}),
     action: "CLUB_MEETING_NOTE_DELETED",
     entityType: "ClubMeetingNote",
     entityId: noteId,
     summary: "Deleted a club meeting note.",
-    metadata: { organizationId, noteId, actorAttendeeAccountId: accountId },
+    metadata: {
+      organizationId,
+      noteId,
+      ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId }),
+    },
   });
 }
 

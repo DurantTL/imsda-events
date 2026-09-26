@@ -141,7 +141,7 @@ describe("club registration submit", () => {
     expect(everything).not.toMatch(/2014-12-06|1988-03-02/);
     expect(everything).not.toContain("Somebody");
 
-    expect(tx.clubEventRegistration.create).toHaveBeenCalledWith({ data: { eventId: "event-1", organizationId: "club-1", registrationId: "registration-1", submittedByAccountId: "director-1" } });
+    expect(tx.clubEventRegistration.create).toHaveBeenCalledWith({ data: { eventId: "event-1", organizationId: "club-1", registrationId: "registration-1", submittedByAccountId: "director-1", submittedByUserId: null } });
     expect(tx.clubRegistrationDraft.deleteMany).toHaveBeenCalledWith({ where: { eventId: "event-1", organizationId: "club-1" } });
     expect(tx.auditLog.create.mock.calls.map(([call]) => call.data.action)).toContain("CLUB_REGISTRATION_SUBMITTED");
     expect(tx.registration.create.mock.calls[0][0].data).toMatchObject({ totalAmount: 0 });

@@ -51,6 +51,7 @@ vi.mock("@/lib/prisma", () => ({ getPrisma: () => client }));
 vi.mock("@/lib/env", () => ({ getServerEnv: () => ({ APP_BASE_URL: "https://events.imsda.test" }) }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: mocks.writeAuditLog }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.getCurrentAttendee }));
+vi.mock("@/modules/organizations/staff-act-as", () => ({ currentStaffActingContext: async () => null }));
 vi.mock("@/modules/organizations/director-access", () => ({ listDirectedClubs: mocks.listDirectedClubs }));
 vi.mock("@/modules/access/request-security", () => ({ rejectCrossOriginRequest: mocks.rejectCrossOriginRequest }));
 vi.mock("@/modules/club-rosters/repository", async () => {
@@ -210,7 +211,7 @@ describe("the club team", () => {
 
   it("won't give a second role to someone already on the team", async () => {
     mocks.findGrants.mockResolvedValueOnce([{ effectiveFrom: new Date("2026-01-01"), effectiveTo: null }]);
-    await expect(grantClubTeamRole("club-1", { email: "helper@example.test", role: "REPORTER" }, "account-1", now))
+    await expect(grantClubTeamRole("club-1", { email: "helper@example.test", role: "REPORTER" }, { accountId: "account-1" }, now))
       .rejects.toMatchObject({ code: "DIRECTOR_GRANT_CONFLICT" });
   });
 
@@ -268,7 +269,7 @@ describe("the club team", () => {
   });
 
   it("refuses a director or deputy role from the club", async () => {
-    await expect(grantClubTeamRole("club-1", { email: "x@example.test", role: "DEPUTY" as never }, "account-1", now))
+    await expect(grantClubTeamRole("club-1", { email: "x@example.test", role: "DEPUTY" as never }, { accountId: "account-1" }, now))
       .rejects.toMatchObject({ code: "DIRECTOR_GRANT_ROLE_NOT_ALLOWED" });
   });
 
@@ -281,12 +282,12 @@ describe("the club team", () => {
     }));
 
     mocks.findGrant.mockResolvedValueOnce({ id: "grant-1", role: "DIRECTOR", revokedAt: null, attendeeAccountId: "account-3" });
-    await expect(revokeClubTeamRole("club-1", "grant-1", "account-1", now)).rejects.toMatchObject({ code: "DIRECTOR_GRANT_ROLE_NOT_ALLOWED" });
+    await expect(revokeClubTeamRole("club-1", "grant-1", { accountId: "account-1" }, now)).rejects.toMatchObject({ code: "DIRECTOR_GRANT_ROLE_NOT_ALLOWED" });
   });
 
   it("finds no grant from another club", async () => {
     mocks.findGrant.mockResolvedValueOnce(null);
-    await expect(revokeClubTeamRole("club-1", "grant-other", "account-1", now)).rejects.toMatchObject({ code: "DIRECTOR_GRANT_NOT_FOUND" });
+    await expect(revokeClubTeamRole("club-1", "grant-other", { accountId: "account-1" }, now)).rejects.toMatchObject({ code: "DIRECTOR_GRANT_NOT_FOUND" });
     expect(mocks.findGrant).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "grant-other", organizationId: "club-1" } }));
   });
 });

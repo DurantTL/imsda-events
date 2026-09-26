@@ -31,7 +31,7 @@ const request = (body: unknown) => new Request("https://events.imsda.test/api/x"
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
-  mocks.requireRosterAccess.mockResolvedValue({ accountId: "director-1" });
+  mocks.requireRosterAccess.mockResolvedValue({ actor: { kind: "ATTENDEE", accountId: "director-1", sessionId: "session-1" } });
   mocks.setClassSelections.mockResolvedValue({ selections: {} });
 });
 
@@ -39,7 +39,7 @@ describe("class selection route", () => {
   it("saves for the director's own club", async () => {
     const response = await PUT(request({ selections: { "attendee-1": ["knots"] } }), ctx);
     expect(response.status).toBe(200);
-    expect(mocks.setClassSelections).toHaveBeenCalledWith("club-a", "event-1", "director-1", { "attendee-1": ["knots"] });
+    expect(mocks.setClassSelections).toHaveBeenCalledWith("club-a", "event-1", { accountId: "director-1" }, { "attendee-1": ["knots"] });
   });
 
   it("maps full classes, club limits, bad picks, and the deadline to clear statuses", async () => {

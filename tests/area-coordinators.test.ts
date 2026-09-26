@@ -28,7 +28,7 @@ vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: mocks.writeAudi
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.getCurrentAttendee, findSwitchableAttendeeAccountForStaff: mocks.findSwitchable }));
 vi.mock("@/modules/attendee-accounts/sign-in-gate", () => ({ accountNeedsSecondStep: mocks.accountNeedsSecondStep }));
 
-import { actAsAreaCoordinator, actAsClubDirector, currentAreaCoordinator, setAreaCoordinator } from "@/modules/organizations/area-coordinators";
+import { currentAreaCoordinator, setAreaCoordinator } from "@/modules/organizations/area-coordinators";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -82,32 +82,7 @@ describe("Area Coordinators (#387)", () => {
     await expect(currentAreaCoordinator()).resolves.toBeNull();
   });
 
-  it("lets a system administrator act as an Area Coordinator on their own account for two hours", async () => {
-    const now = new Date("2026-09-23T12:00:00Z");
-    mocks.grantFindUnique.mockResolvedValue(null);
-    await expect(actAsAreaCoordinator({ id: "admin-1", email: "admin@example.test" }, now))
-      .resolves.toEqual({ expiresAt: new Date("2026-09-23T14:00:00Z") });
-    expect(mocks.grantUpsert).toHaveBeenCalledWith(expect.objectContaining({ where: { attendeeAccountId: "admin-account" } }));
-    expect(mocks.writeAuditLog.mock.calls[0]![0]).toMatchObject({ action: "ACT_AS_AREA_COORDINATOR", actorUserId: "admin-1" });
-
-    mocks.findSwitchable.mockResolvedValueOnce(null);
-    await expect(actAsAreaCoordinator({ id: "admin-1", email: "admin@example.test" }, now)).rejects.toMatchObject({ code: "NO_OWN_ACCOUNT" });
-  });
-
-  it("gives a temporary Director role on the admin's own account, once", async () => {
-    const now = new Date("2026-09-23T12:00:00Z");
-    const result = await actAsClubDirector({ id: "admin-1", email: "admin@example.test" }, "club-1", now);
-    expect(result).toMatchObject({ alreadyHadRole: false, expiresAt: new Date("2026-09-23T14:00:00Z") });
-    expect(mocks.grantCreate).toHaveBeenCalledWith({ data: expect.objectContaining({
-      organizationId: "club-1", attendeeAccountId: "admin-account", role: "DIRECTOR", effectiveTo: new Date("2026-09-23T14:00:00Z"), grantedByUserId: "admin-1",
-    }) });
-    expect(mocks.writeAuditLog.mock.calls[0]![0]).toMatchObject({ action: "ACT_AS_CLUB_DIRECTOR" });
-
-    mocks.grantFindFirst.mockResolvedValueOnce({ role: "DIRECTOR", effectiveTo: null });
-    await expect(actAsClubDirector({ id: "admin-1", email: "admin@example.test" }, "club-1", now)).resolves.toMatchObject({ alreadyHadRole: true });
-    expect(mocks.grantCreate).toHaveBeenCalledTimes(1);
-
-    mocks.orgFindUnique.mockResolvedValueOnce({ type: "CLUB", isActive: false, name: "Old" });
-    await expect(actAsClubDirector({ id: "admin-1", email: "admin@example.test" }, "club-1", now)).rejects.toMatchObject({ code: "CLUB_NOT_FOUND" });
-  });
+  // Staff "act as" (#442) moved to modules/organizations/staff-act-as.ts,
+  // tied to the staff session instead of the staff member's own attendee
+  // account — see tests/staff-act-as.test.ts.
 });

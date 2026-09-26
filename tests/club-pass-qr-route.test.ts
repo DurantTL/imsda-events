@@ -21,6 +21,7 @@ vi.mock("@/lib/prisma", () => ({
   }),
 }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.getCurrentAttendee }));
+vi.mock("@/modules/organizations/staff-act-as", () => ({ currentStaffActingContext: async () => null }));
 vi.mock("@/modules/organizations/director-access", () => ({ listDirectedClubs: mocks.listDirectedClubs }));
 vi.mock("@/modules/checkin/club-pass-repository", () => ({
   createDirectorClubPass: mocks.createDirectorClubPass,

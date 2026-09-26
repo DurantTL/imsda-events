@@ -280,10 +280,13 @@ export async function listPendingClubTeamInvites(organizationId: string, now = n
  * single, deliberate add rather than a bulk send. Reuses the import
  * invite's model, email, and single-use rules, with its own expiry.
  */
+/** Never an attendee account credited for a staff action (#442): `userId` (with `actAsId`) for a staff "act as" director. */
+export type ClubTeamInviteActor = { accountId: string } | { userId: string; actAsId: string };
+
 export async function createClubTeamInvite(
   organizationId: string,
   input: { email: string; role: ClubRole; name?: string },
-  actorAccountId: string,
+  actor: ClubTeamInviteActor,
   now = new Date(),
 ) {
   if (!clubRoleIsAssignableByClub(input.role)) {
@@ -322,7 +325,7 @@ export async function createClubTeamInvite(
         name,
         role: input.role,
         source: "CLUB",
-        createdByAccountId: actorAccountId,
+        ...("accountId" in actor ? { createdByAccountId: actor.accountId } : { createdByUserId: actor.userId }),
         status: "SENT",
         sentAt: now,
         sentCount: 1,
@@ -351,11 +354,12 @@ export async function createClubTeamInvite(
     });
     await tx.clubInvite.update({ where: { id: invite.id }, data: { lastMessageId: message.id } });
     await writeAuditLog({
+      ...("userId" in actor ? { actorUserId: actor.userId } : {}),
       action: "CLUB_INVITE_CREATED",
       entityType: "ClubInvite",
       entityId: invite.id,
       summary: `Club leader invited someone as ${clubDirectorRoleLabels[input.role].toLocaleLowerCase("en-US")}.`,
-      metadata: { organizationId, role: input.role, actorAttendeeAccountId: actorAccountId },
+      metadata: { organizationId, role: input.role, ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId }) },
     }, tx);
     return { inviteId: invite.id, messageId: message.id };
   });
@@ -371,7 +375,7 @@ const OPEN_INVITE_STATUSES = ["PENDING", "SENT"] as const;
  * the invite still being open, so two concurrent resends (or a resend racing
  * a cancel or accept) can't both succeed.
  */
-export async function resendClubTeamInvite(organizationId: string, inviteId: string, actorAccountId: string, now = new Date()) {
+export async function resendClubTeamInvite(organizationId: string, inviteId: string, actor: ClubTeamInviteActor, now = new Date()) {
   if (!isAccountEmailConfigured()) {
     throw new ClubInviteError("EMAIL_NOT_CONFIGURED", "Account email isn't set up on this server, so invites can't be sent yet.");
   }
@@ -427,11 +431,12 @@ export async function resendClubTeamInvite(organizationId: string, inviteId: str
     });
     await tx.clubInvite.update({ where: { id: invite.id }, data: { lastMessageId: message.id } });
     await writeAuditLog({
+      ...("userId" in actor ? { actorUserId: actor.userId } : {}),
       action: "CLUB_INVITE_RESENT",
       entityType: "ClubInvite",
       entityId: invite.id,
       summary: "Resent a club invite.",
-      metadata: { organizationId, role: invite.role, actorAttendeeAccountId: actorAccountId },
+      metadata: { organizationId, role: invite.role, ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId }) },
     }, tx);
     return { messageId: message.id };
   });
@@ -442,7 +447,7 @@ export async function resendClubTeamInvite(organizationId: string, inviteId: str
  * status write and its audit log share one transaction, so a cancel racing
  * a resend or accept can't leave a CANCELLED invite that was also acted on.
  */
-export async function cancelClubTeamInvite(organizationId: string, inviteId: string, actorAccountId: string, now = new Date()) {
+export async function cancelClubTeamInvite(organizationId: string, inviteId: string, actor: ClubTeamInviteActor, now = new Date()) {
   const prisma = getPrisma();
   return prisma.$transaction(async (tx) => {
     const invite = await tx.clubInvite.findFirst({
@@ -462,11 +467,12 @@ export async function cancelClubTeamInvite(organizationId: string, inviteId: str
     });
     if (guarded.count === 0) throw new ClubInviteError("INVITE_NOT_OPEN", "That invite was already accepted or cancelled.");
     await writeAuditLog({
+      ...("userId" in actor ? { actorUserId: actor.userId } : {}),
       action: "CLUB_INVITE_CANCELLED",
       entityType: "ClubInvite",
       entityId: invite.id,
       summary: "Cancelled a club invite.",
-      metadata: { organizationId, role: invite.role, actorAttendeeAccountId: actorAccountId },
+      metadata: { organizationId, role: invite.role, ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId }) },
     }, tx);
   });
 }

@@ -18,7 +18,7 @@ export default async function AttendeeAccountsPage() {
       <div className="intro-actions club-admin-links">
         <Link className="secondary-button more-back-link" href="/admin">Back to system administration</Link>
         <ActAsButton
-          confirmText="Act as an Area Coordinator for the next 2 hours? Your own account gets the role (recorded, and ending by itself), so you see every club exactly as an Area Coordinator does."
+          confirmText="Act as an Area Coordinator for the next 2 hours? This is recorded and ends by itself (or with Stop acting), and never touches your own attendee account. Acting as an Area Coordinator is view only."
           endpoint="/api/admin/act-as/area-coordinator"
           label="Act as Area Coordinator (2 hours)"
         />

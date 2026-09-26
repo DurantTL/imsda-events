@@ -427,11 +427,14 @@ export type ClubRegistrationDraftInput = {
   attendeeResponses: Record<string, Record<string, unknown>>;
 };
 
+/** Never an attendee account credited for a staff action (#442): `userId` for a staff "act as" director. */
+export type ClubRegistrationActor = { accountId: string } | { userId: string; actAsId: string };
+
 /** Saves the director's work in progress. People are roster IDs from this club only. */
 export async function saveClubRegistrationDraft(
   organizationId: string,
   eventId: string,
-  accountId: string,
+  actor: ClubRegistrationActor,
   input: ClubRegistrationDraftInput,
 ) {
   if (Buffer.byteLength(JSON.stringify(input)) > MAX_DRAFT_BYTES) {
@@ -455,7 +458,7 @@ export async function saveClubRegistrationDraft(
     guests: input.guests as Prisma.InputJsonValue,
     responses: input.responses as Prisma.InputJsonValue,
     attendeeResponses: attendeeResponses as Prisma.InputJsonValue,
-    updatedByAccountId: accountId,
+    ...("accountId" in actor ? { updatedByAccountId: actor.accountId, updatedByUserId: null } : { updatedByUserId: actor.userId, updatedByAccountId: null }),
   };
   const draft = await getPrisma().clubRegistrationDraft.upsert({
     where: { eventId_organizationId: { eventId, organizationId } },
@@ -528,7 +531,7 @@ export function clubAttendeePreparer(organizationId: string): ClubSubmissionCont
 export async function submitClubRegistration(
   organizationId: string,
   eventId: string,
-  accountId: string,
+  actor: ClubRegistrationActor,
   input: PublicRegistrationInput,
   now = new Date(),
 ) {
@@ -537,7 +540,7 @@ export async function submitClubRegistration(
   if (!form) throw new ClubRegistrationError("FORM_UNAVAILABLE", "The event has no published registration form yet.");
   return submitPublicRegistration(event.slug, form.slug, input, now, {
     organizationId,
-    submittedByAccountId: accountId,
+    ...("accountId" in actor ? { submittedByAccountId: actor.accountId } : { submittedByUserId: actor.userId }),
     prepareAttendees: clubAttendeePreparer(organizationId),
   });
 }
@@ -614,7 +617,7 @@ export type ClubRegistrationEditResult = ReturnType<typeof clubEditResult>["resu
 export async function amendClubRegistration(
   organizationId: string,
   eventId: string,
-  accountId: string,
+  actor: ClubRegistrationActor,
   input: ClubRegistrationEditInput,
   now = new Date(),
 ) {
@@ -660,7 +663,9 @@ export async function amendClubRegistration(
   }
 
   const [account, answers, currentAttendees, members] = await Promise.all([
-    getPrisma().attendeeAccount.findUnique({ where: { id: accountId }, select: { displayName: true } }),
+    "accountId" in actor
+      ? getPrisma().attendeeAccount.findUnique({ where: { id: actor.accountId }, select: { displayName: true } })
+      : Promise.resolve(null),
     currentRegistrationAnswers(eventId, registrationId),
     getPrisma().registrationAttendee.findMany({
       where: { registrationId },
@@ -859,7 +864,9 @@ export async function amendClubRegistration(
       eventId,
       registrationId,
       { ...amendmentInput, previewOnly: false, quoteFingerprint: preview.quoteFingerprint },
-      { kind: "CLUB_DIRECTOR", attendeeAccountId: accountId, displayName: account?.displayName ?? "Club director" },
+      "accountId" in actor
+        ? { kind: "CLUB_DIRECTOR", attendeeAccountId: actor.accountId, displayName: account?.displayName ?? "Club director" }
+        : { kind: "STAFF", id: actor.userId, displayName: "A system administrator acting as director" },
       now,
       { attendees: serverOptions, requestFingerprint },
     );

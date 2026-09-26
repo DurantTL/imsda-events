@@ -33,6 +33,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: () => client }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: mocks.writeAuditLog }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.getCurrentAttendee }));
+vi.mock("@/modules/organizations/staff-act-as", () => ({ currentStaffActingContext: async () => null }));
 vi.mock("@/modules/organizations/director-access", () => ({ listDirectedClubs: mocks.listDirectedClubs }));
 vi.mock("@/modules/access/request-security", () => ({ rejectCrossOriginRequest: mocks.rejectCrossOriginRequest }));
 
@@ -263,7 +264,7 @@ describe("reopening a report", () => {
   it("moves a submitted report back to draft, before the due date, without touching firstSubmittedAt", async () => {
     mocks.reportFindUnique.mockResolvedValue({ id: "report-1", status: "SUBMITTED" });
     mocks.reportUpdate.mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve(stored({ firstSubmittedAt: new Date("2026-11-05T15:00:00Z"), ...data })));
-    const report = await reopenClubReport("club-1", "2026-10", "account-1", new Date("2026-11-08T15:00:00Z"));
+    const report = await reopenClubReport("club-1", "2026-10", { accountId: "account-1" }, new Date("2026-11-08T15:00:00Z"));
     expect(report.status).toBe("DRAFT");
     expect(report.submittedAt).toBeNull();
     expect(mocks.reportUpdate.mock.calls[0][0].data).not.toHaveProperty("firstSubmittedAt");
@@ -272,18 +273,18 @@ describe("reopening a report", () => {
 
   it("refuses to reopen after the report's due date", async () => {
     mocks.reportFindUnique.mockResolvedValue({ id: "report-1", status: "SUBMITTED" });
-    await expect(reopenClubReport("club-1", "2026-10", "account-1", new Date("2026-11-12T15:00:00Z")))
+    await expect(reopenClubReport("club-1", "2026-10", { accountId: "account-1" }, new Date("2026-11-12T15:00:00Z")))
       .rejects.toMatchObject({ code: "CLUB_REPORT_LOCKED" });
     expect(mocks.reportUpdate).not.toHaveBeenCalled();
   });
 
   it("refuses to reopen a report that is already a draft, or one that doesn't exist", async () => {
     mocks.reportFindUnique.mockResolvedValue({ id: "report-1", status: "DRAFT" });
-    await expect(reopenClubReport("club-1", "2026-10", "account-1", new Date("2026-11-08T15:00:00Z")))
+    await expect(reopenClubReport("club-1", "2026-10", { accountId: "account-1" }, new Date("2026-11-08T15:00:00Z")))
       .rejects.toMatchObject({ code: "CLUB_REPORT_NOT_SUBMITTED" });
 
     mocks.reportFindUnique.mockResolvedValue(null);
-    await expect(reopenClubReport("club-1", "2026-10", "account-1", new Date("2026-11-08T15:00:00Z")))
+    await expect(reopenClubReport("club-1", "2026-10", { accountId: "account-1" }, new Date("2026-11-08T15:00:00Z")))
       .rejects.toMatchObject({ code: "CLUB_REPORT_NOT_FOUND" });
   });
 });

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
-import { requireRosterAccess } from "@/modules/club-rosters/access";
+import { actorAttribution, requireRosterAccess } from "@/modules/club-rosters/access";
 import { rosterApiError } from "@/modules/club-rosters/api-errors";
 import { MAX_ROSTER_CSV_BYTES, parseRosterCsv, planRosterImport, rosterCsvAddDefaults, RosterCsvError } from "@/modules/club-rosters/csv-import";
 import { clubYearFor } from "@/modules/club-rosters/domain";
@@ -41,7 +41,7 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
     const plan = planRosterImport(rows, existing);
     if (!confirm) return Response.json({ steps: plan.map(publicStep) }, { headers: { "Cache-Control": "no-store" } });
 
-    const actor = { accountId: access.accountId };
+    const actor = actorAttribution(access.actor);
     const results = [];
     let added = 0;
     let updated = 0;
@@ -81,11 +81,20 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
       }
     }
     await writeAuditLog({
+      ...("userId" in actor ? { actorUserId: actor.userId } : {}),
       action: "CLUB_ROSTER_CSV_IMPORTED",
       entityType: "Organization",
       entityId: organizationId,
       summary: "Imported a roster CSV.",
-      metadata: { organizationId, clubYear, rows: plan.length, added, updated, skipped: plan.length - added - updated, actorAttendeeAccountId: access.accountId },
+      metadata: {
+        organizationId,
+        clubYear,
+        rows: plan.length,
+        added,
+        updated,
+        skipped: plan.length - added - updated,
+        ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId }),
+      },
     });
     return Response.json({ steps: results, added, updated, members: await listRoster(organizationId, clubYear) });
   } catch (error) {

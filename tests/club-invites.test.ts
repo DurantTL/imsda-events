@@ -214,7 +214,7 @@ describe("the sign-up link a club invite's email carries (#434)", () => {
 
 describe("club team invites (#425)", () => {
   it("creates and sends an invite for someone with no account yet", async () => {
-    const result = await createClubTeamInvite("club-1", { email: "New.Helper@Example.test", role: "REGISTRAR" }, "account-1", now);
+    const result = await createClubTeamInvite("club-1", { email: "New.Helper@Example.test", role: "REGISTRAR" }, { accountId: "account-1" }, now);
     expect(result).toEqual({ inviteId: "invite-2", messageId: "message-1" });
     expect(mocks.inviteCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
@@ -237,14 +237,14 @@ describe("club team invites (#425)", () => {
   });
 
   it("only lets a club invite a Registrar or Reporter", async () => {
-    await expect(createClubTeamInvite("club-1", { email: "x@example.test", role: "DEPUTY" as never }, "account-1", now))
+    await expect(createClubTeamInvite("club-1", { email: "x@example.test", role: "DEPUTY" as never }, { accountId: "account-1" }, now))
       .rejects.toMatchObject({ code: "INVITE_ROLE_NOT_ALLOWED" });
     expect(mocks.inviteCreate).not.toHaveBeenCalled();
   });
 
   it("won't open a second invite for the same email", async () => {
     mocks.inviteFindFirst.mockResolvedValue({ id: "invite-open" });
-    await expect(createClubTeamInvite("club-1", { email: "helper@example.test", role: "REGISTRAR" }, "account-1", now))
+    await expect(createClubTeamInvite("club-1", { email: "helper@example.test", role: "REGISTRAR" }, { accountId: "account-1" }, now))
       .rejects.toMatchObject({ code: "INVITE_ALREADY_OPEN" });
     expect(mocks.inviteFindFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ role: { in: ["REGISTRAR", "REPORTER"] } }),
@@ -255,7 +255,7 @@ describe("club team invites (#425)", () => {
     // The duplicate check is scoped to club-assignable roles, so an IMPORT invite for
     // this email (always DIRECTOR/DEPUTY) never matches it.
     mocks.inviteFindFirst.mockResolvedValue(null);
-    await expect(createClubTeamInvite("club-1", { email: "helper@example.test", role: "REGISTRAR" }, "account-1", now))
+    await expect(createClubTeamInvite("club-1", { email: "helper@example.test", role: "REGISTRAR" }, { accountId: "account-1" }, now))
       .resolves.toMatchObject({ inviteId: "invite-2" });
   });
 
@@ -279,7 +279,7 @@ describe("club team invites (#425)", () => {
       sentAt: new Date(now.getTime() - 10 * 60_000),
       organization: { name: "Example Pathfinders", isActive: true },
     });
-    const result = await resendClubTeamInvite("club-1", "invite-1", "account-1", now);
+    const result = await resendClubTeamInvite("club-1", "invite-1", { accountId: "account-1" }, now);
     expect(result).toEqual({ messageId: "message-1" });
     expect(mocks.inviteUpdateMany).toHaveBeenCalledWith({
       where: { id: "invite-1", status: { in: ["PENDING", "SENT"] } },
@@ -295,7 +295,7 @@ describe("club team invites (#425)", () => {
       sentAt: new Date(now.getTime() - 60_000),
       organization: { name: "Example Pathfinders", isActive: true },
     });
-    await expect(resendClubTeamInvite("club-1", "invite-1", "account-1", now)).rejects.toMatchObject({ code: "INVITE_RESEND_TOO_SOON" });
+    await expect(resendClubTeamInvite("club-1", "invite-1", { accountId: "account-1" }, now)).rejects.toMatchObject({ code: "INVITE_RESEND_TOO_SOON" });
     expect(mocks.outboxCreate).not.toHaveBeenCalled();
     expect(mocks.inviteUpdateMany).not.toHaveBeenCalled();
   });
@@ -305,14 +305,14 @@ describe("club team invites (#425)", () => {
       id: "invite-1", email: "a@example.test", name: "", role: "DIRECTOR", status: "SENT", sentAt: null,
       organization: { name: "Example Pathfinders", isActive: true },
     });
-    await expect(resendClubTeamInvite("club-1", "invite-1", "account-1", now)).rejects.toMatchObject({ code: "INVITE_ROLE_NOT_ALLOWED" });
+    await expect(resendClubTeamInvite("club-1", "invite-1", { accountId: "account-1" }, now)).rejects.toMatchObject({ code: "INVITE_ROLE_NOT_ALLOWED" });
     mocks.inviteFindFirst.mockResolvedValue({ id: "invite-1", status: "SENT", role: "DIRECTOR" });
-    await expect(cancelClubTeamInvite("club-1", "invite-1", "account-1", now)).rejects.toMatchObject({ code: "INVITE_ROLE_NOT_ALLOWED" });
+    await expect(cancelClubTeamInvite("club-1", "invite-1", { accountId: "account-1" }, now)).rejects.toMatchObject({ code: "INVITE_ROLE_NOT_ALLOWED" });
   });
 
   it("an invite id from another club isn't found (404) on resend", async () => {
     mocks.inviteFindFirst.mockResolvedValue(null);
-    await expect(resendClubTeamInvite("club-1", "invite-other-club", "account-1", now)).rejects.toMatchObject({ code: "INVITE_NOT_FOUND" });
+    await expect(resendClubTeamInvite("club-1", "invite-other-club", { accountId: "account-1" }, now)).rejects.toMatchObject({ code: "INVITE_NOT_FOUND" });
     expect(mocks.inviteFindFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: "invite-other-club", organizationId: "club-1" }),
     }));
@@ -326,14 +326,14 @@ describe("club team invites (#425)", () => {
       organization: { name: "Example Pathfinders", isActive: true },
     });
     mocks.inviteUpdateMany.mockResolvedValue({ count: 0 });
-    await expect(resendClubTeamInvite("club-1", "invite-1", "account-1", now)).rejects.toMatchObject({ code: "INVITE_NOT_OPEN" });
+    await expect(resendClubTeamInvite("club-1", "invite-1", { accountId: "account-1" }, now)).rejects.toMatchObject({ code: "INVITE_NOT_OPEN" });
     expect(mocks.outboxCreate).not.toHaveBeenCalled();
     expect(mocks.writeAuditLog).not.toHaveBeenCalled();
   });
 
   it("cancels a pending invite", async () => {
     mocks.inviteFindFirst.mockResolvedValue({ id: "invite-1", status: "SENT", role: "REPORTER" });
-    await cancelClubTeamInvite("club-1", "invite-1", "account-1", now);
+    await cancelClubTeamInvite("club-1", "invite-1", { accountId: "account-1" }, now);
     expect(mocks.inviteUpdateMany).toHaveBeenCalledWith({
       where: { id: "invite-1", status: { in: ["PENDING", "SENT"] } },
       data: expect.objectContaining({ status: "CANCELLED" }),
@@ -343,13 +343,13 @@ describe("club team invites (#425)", () => {
 
   it("won't cancel an invite that's already accepted", async () => {
     mocks.inviteFindFirst.mockResolvedValue({ id: "invite-1", status: "ACCEPTED", role: "REPORTER" });
-    await expect(cancelClubTeamInvite("club-1", "invite-1", "account-1", now)).rejects.toMatchObject({ code: "INVITE_NOT_OPEN" });
+    await expect(cancelClubTeamInvite("club-1", "invite-1", { accountId: "account-1" }, now)).rejects.toMatchObject({ code: "INVITE_NOT_OPEN" });
     expect(mocks.inviteUpdateMany).not.toHaveBeenCalled();
   });
 
   it("an invite id from another club isn't found (404) on cancel", async () => {
     mocks.inviteFindFirst.mockResolvedValue(null);
-    await expect(cancelClubTeamInvite("club-1", "invite-other-club", "account-1", now)).rejects.toMatchObject({ code: "INVITE_NOT_FOUND" });
+    await expect(cancelClubTeamInvite("club-1", "invite-other-club", { accountId: "account-1" }, now)).rejects.toMatchObject({ code: "INVITE_NOT_FOUND" });
     expect(mocks.inviteFindFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: "invite-other-club", organizationId: "club-1" }),
     }));
@@ -359,7 +359,7 @@ describe("club team invites (#425)", () => {
   it("serializes a race between a cancel and a resend: the guarded update losing means no audit (#425)", async () => {
     mocks.inviteFindFirst.mockResolvedValue({ id: "invite-1", status: "SENT", role: "REPORTER" });
     mocks.inviteUpdateMany.mockResolvedValue({ count: 0 });
-    await expect(cancelClubTeamInvite("club-1", "invite-1", "account-1", now)).rejects.toMatchObject({ code: "INVITE_NOT_OPEN" });
+    await expect(cancelClubTeamInvite("club-1", "invite-1", { accountId: "account-1" }, now)).rejects.toMatchObject({ code: "INVITE_NOT_OPEN" });
     expect(mocks.writeAuditLog).not.toHaveBeenCalled();
   });
 });

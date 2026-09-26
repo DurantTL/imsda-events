@@ -75,7 +75,9 @@ export type PublicRegistrationErrorCode =
  */
 export type ClubSubmissionContext = {
   organizationId: string;
-  submittedByAccountId: string;
+  /** Never both: a staff "act as" director (#442) sets `submittedByUserId`, never an attendee account. */
+  submittedByAccountId?: string;
+  submittedByUserId?: string;
   prepareAttendees: (
     tx: Prisma.TransactionClient,
     args: {
@@ -992,7 +994,8 @@ async function createPublicRegistrationTransaction(
         eventId: form.eventId,
         organizationId: club.organizationId,
         registrationId: registration.id,
-        submittedByAccountId: club.submittedByAccountId,
+        submittedByAccountId: club.submittedByAccountId ?? null,
+        submittedByUserId: club.submittedByUserId ?? null,
       },
     });
     await tx.clubRegistrationDraft.deleteMany({
@@ -1063,7 +1066,13 @@ async function createPublicRegistrationTransaction(
         emailSent: false,
         messageCount: queuedMessages.messageIds.length,
         messageDeliveryMode: queuedMessages.deliveryMode,
-        ...(club ? { clubOrganizationId: club.organizationId, submittedByAttendeeAccountId: club.submittedByAccountId } : {}),
+        ...(club
+          ? {
+              clubOrganizationId: club.organizationId,
+              ...(club.submittedByAccountId ? { submittedByAttendeeAccountId: club.submittedByAccountId } : {}),
+              ...(club.submittedByUserId ? { submittedByStaffUserId: club.submittedByUserId } : {}),
+            }
+          : {}),
       },
     },
   });

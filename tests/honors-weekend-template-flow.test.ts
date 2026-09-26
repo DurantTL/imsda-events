@@ -206,11 +206,11 @@ describe("Honors Weekend template, from club registration to class seats (#436)"
     // "Child" maps to the same attendee type as Spring Camporee.
     expect(created.map((data) => data.attendeeType)).toEqual(["ATTENDEE", "ATTENDEE", "ATTENDEE", "ATTENDEE", "CHILD"]);
     expect(db.registration.create.mock.calls[0]![0].data).toMatchObject({ totalAmount: 0 });
-    expect(db.clubEventRegistration.create).toHaveBeenCalledWith({ data: { eventId: "event-1", organizationId: "club-1", registrationId: "registration-1", submittedByAccountId: "director-1" } });
+    expect(db.clubEventRegistration.create).toHaveBeenCalledWith({ data: { eventId: "event-1", organizationId: "club-1", registrationId: "registration-1", submittedByAccountId: "director-1", submittedByUserId: null } });
     expect(JSON.stringify(db.registrationAttendee.create.mock.calls)).not.toMatch(/Somebody|2014-12-06|1988-03-02/);
 
     // Class choices after the roster is saved: one-seat class, one youth and one staff member.
-    const workspace = await setClassSelections("club-1", "event-1", "director-1", {
+    const workspace = await setClassSelections("club-1", "event-1", { accountId: "director-1" }, {
       "attendee-person-m1": ["knots"],
       "attendee-person-m4": ["knots"],
     }, now);

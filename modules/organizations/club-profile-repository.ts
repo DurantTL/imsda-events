@@ -12,7 +12,8 @@ import { OrganizationOperationError } from "@/modules/organizations/repository";
  * conference staff. Every save is audited with the fields that changed.
  */
 
-export type ClubProfileActor = { userId: string } | { accountId: string };
+/** `actAsId` is set for a staff "act as" director (#442); never both `userId` and `accountId`. */
+export type ClubProfileActor = { userId: string; actAsId?: string } | { accountId: string };
 
 const profileFields = ["meetingPlace", "meetingSchedule", "contactEmail", "contactPhone", "publicDescription", "listPublicly"] as const;
 
@@ -119,7 +120,7 @@ export async function updateClubProfile(organizationId: string, input: ClubProfi
       metadata: {
         organizationId,
         fields: changed,
-        ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : {}),
+        ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : actor.actAsId ? { actAsId: actor.actAsId } : {}),
       },
     }, tx);
   });

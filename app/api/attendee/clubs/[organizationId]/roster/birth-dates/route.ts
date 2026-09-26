@@ -1,5 +1,5 @@
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
-import { requireRosterAccess } from "@/modules/club-rosters/access";
+import { actorAttribution, requireRosterAccess } from "@/modules/club-rosters/access";
 import { rosterApiError } from "@/modules/club-rosters/api-errors";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import { revealRosterBirthDates } from "@/modules/club-rosters/repository";
@@ -12,7 +12,7 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
   try {
     const { organizationId } = await context.params;
     const access = await requireRosterAccess(organizationId, new Date(), "seeBirthDates");
-    const birthDates = await revealRosterBirthDates(organizationId, clubYearFor(new Date()), { accountId: access.accountId });
+    const birthDates = await revealRosterBirthDates(organizationId, clubYearFor(new Date()), actorAttribution(access.actor));
     return Response.json({ birthDates }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return rosterApiError(error, "Showing birth dates");

@@ -2,7 +2,7 @@ import { after } from "next/server";
 import { logError } from "@/lib/logger";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { listPendingClubTeamInvites } from "@/modules/club-imports/invites";
-import { requireRosterAccess } from "@/modules/club-rosters/access";
+import { actorAttribution, requireRosterAccess } from "@/modules/club-rosters/access";
 import { rosterApiError } from "@/modules/club-rosters/api-errors";
 import { processAccountEmailQueue } from "@/modules/communications/email-delivery";
 import { grantClubTeamRole, listClubTeam } from "@/modules/organizations/director-grants-repository";
@@ -37,7 +37,7 @@ async function postHandler(request: Request, context: RouteContext) {
     const { organizationId } = await context.params;
     const access = await requireRosterAccess(organizationId, new Date(), "manageTeam");
     const input = createClubTeamGrantInputSchema.parse(await request.json());
-    const { team, invited, messageId } = await grantClubTeamRole(organizationId, input, access.accountId);
+    const { team, invited, messageId } = await grantClubTeamRole(organizationId, input, actorAttribution(access.actor));
     if (messageId) {
       after(async () => {
         try {
