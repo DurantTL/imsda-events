@@ -8,8 +8,16 @@ import type { ClassSelectionWorkspace } from "@/modules/honors/enrollment-reposi
 type Offering = ClassSelectionWorkspace["offerings"][number];
 type Attendee = ClassSelectionWorkspace["attendees"][number];
 
+/** What the roster calls this person; underage children are youth but take no seat (#462). */
+function typeLabel(attendee: Attendee) {
+  if (attendee.attendeeType === "STAFF") return "Staff";
+  if (attendee.attendeeType === "ADULT") return "Adult";
+  if (attendee.attendeeType === "UNDERAGE") return "Underage";
+  return "Youth";
+}
+
 function seatsNote(offering: Offering, heldHere: boolean, attendee: Attendee) {
-  if (!attendee.consumesSeat) return "staff, no seat";
+  if (!attendee.consumesSeat) return "no seat needed";
   if (heldHere) return "seat held";
   const left = offering.capacity - offering.seatsTaken;
   const clubLeft = offering.perClubLimit === null ? null : offering.perClubLimit - offering.clubSeatsTaken;
@@ -121,7 +129,7 @@ export function ClubClassPicker({
       </div>
       <p>
         Pick one class per session, or one class that fills every session. Seats go to the first
-        clubs to save, and only youth use a seat.
+        clubs to save. Only youth use a seat; staff, adults, and underage children join without one.
         {workspace.registrationClosesOn ? ` You can change classes until ${formatCalendarDate(workspace.registrationClosesOn)}.` : ""}
       </p>
       {notice && <div className="inline-notice success" role="status">{notice}</div>}
@@ -137,7 +145,7 @@ export function ClubClassPicker({
                 <strong translate="no">{attendee.lastName}, {attendee.firstName}</strong>
                 <small>
                   {attendee.ageOnEventDate !== null ? <>Age <span translate="no">{attendee.ageOnEventDate}</span> · </> : null}
-                  {attendee.consumesSeat ? "Youth" : "Staff or adult"}
+                  {typeLabel(attendee)}{attendee.consumesSeat ? "" : " · no seat needed"}
                 </small>
               </legend>
               {allSessionOfferings.length > 0 && (

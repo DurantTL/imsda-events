@@ -1,4 +1,3 @@
-import { consumesClassSeat } from "@/modules/honors/enrollment-domain";
 import { toCsv } from "@/modules/reporting/csv";
 
 /**
@@ -11,9 +10,13 @@ export type RosterGroup = "YOUTH" | "STAFF" | "ADULT";
 
 export const rosterGroupLabels: Record<RosterGroup, string> = { YOUTH: "Youth", STAFF: "Staff", ADULT: "Adult" };
 
-/** The same youth rule H5 uses for seats: anyone not staff or adult is youth. */
+/**
+ * Anyone not staff or adult is listed with the youth, underage included. This
+ * is independent of who takes a class seat (underage attendees don't, #462).
+ */
 export function rosterGroupOf(attendeeType: string | null | undefined): RosterGroup {
-  if (!consumesClassSeat(attendeeType)) return attendeeType === "STAFF" ? "STAFF" : "ADULT";
+  if (attendeeType === "STAFF") return "STAFF";
+  if (attendeeType === "ADULT") return "ADULT";
   return "YOUTH";
 }
 

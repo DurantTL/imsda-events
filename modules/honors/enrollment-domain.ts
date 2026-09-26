@@ -16,9 +16,13 @@ export type SelectingAttendee = {
   ageOnEventDate: number | null;
 };
 
-/** Only youth use a class seat or count toward a club's limit. Staff and adults join freely. */
+/**
+ * Only youth use a class seat or count toward a club's limit. Staff, adults,
+ * and underage attendees join freely (underage: decision 2026-09-26, #462,
+ * matching 2026 practice). Saved on each enrollment when it's made.
+ */
 export function consumesClassSeat(attendeeType: string | null | undefined) {
-  return attendeeType !== "STAFF" && attendeeType !== "ADULT";
+  return attendeeType !== "STAFF" && attendeeType !== "ADULT" && attendeeType !== "UNDERAGE";
 }
 
 /**

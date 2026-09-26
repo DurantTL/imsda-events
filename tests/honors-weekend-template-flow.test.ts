@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * Honors Weekend template, end to end (#436, acceptance criterion 2): a club
  * registers on a church-billed event using the shipped template, roster-owned
  * answers are locked and the role is prefilled, and class choices afterwards
- * use a seat for youth but not for staff. Synthetic data only.
+ * use a seat for youth but not for staff or underage children. Synthetic data only.
  */
 
 const dependencies = vi.hoisted(() => ({
@@ -178,7 +178,7 @@ describe("Honors Weekend template, from club registration to class seats (#436)"
     ]);
   });
 
-  it("registers the club on a church-billed event, then gives youth a class seat and staff none", async () => {
+  it("registers the club on a church-billed event, then gives youth a class seat and staff and underage none", async () => {
     const { db, enrollments } = fixture();
 
     // The director's answers: the prefilled role, plus a name that isn't the
@@ -209,21 +209,25 @@ describe("Honors Weekend template, from club registration to class seats (#436)"
     expect(db.clubEventRegistration.create).toHaveBeenCalledWith({ data: { eventId: "event-1", organizationId: "club-1", registrationId: "registration-1", submittedByAccountId: "director-1", submittedByUserId: null } });
     expect(JSON.stringify(db.registrationAttendee.create.mock.calls)).not.toMatch(/Somebody|2014-12-06|1988-03-02/);
 
-    // Class choices after the roster is saved: one-seat class, one youth and one staff member.
+    // Class choices after the roster is saved: one-seat class, one youth, one
+    // staff member, and one underage child (no seat either, #462).
     const workspace = await setClassSelections("club-1", "event-1", { accountId: "director-1" }, {
       "attendee-person-m1": ["knots"],
       "attendee-person-m4": ["knots"],
+      "attendee-person-m5": ["knots"],
     }, now);
 
     expect(enrollments.map(({ registrationAttendeeId, consumesSeat }) => ({ registrationAttendeeId, consumesSeat }))).toEqual([
       { registrationAttendeeId: "attendee-person-m1", consumesSeat: true },
       { registrationAttendeeId: "attendee-person-m4", consumesSeat: false },
+      { registrationAttendeeId: "attendee-person-m5", consumesSeat: false },
     ]);
     expect(workspace.offerings.find((offering) => offering.id === "knots")).toMatchObject({ capacity: 1, seatsTaken: 1 });
     expect(Object.fromEntries(workspace.attendees.map((attendee) => [attendee.id, attendee.consumesSeat]))).toMatchObject({
       "attendee-person-m1": true,
       "attendee-person-m4": false,
+      "attendee-person-m5": false,
     });
-    expect(workspace.selections).toEqual({ "attendee-person-m1": ["knots"], "attendee-person-m4": ["knots"] });
+    expect(workspace.selections).toEqual({ "attendee-person-m1": ["knots"], "attendee-person-m4": ["knots"], "attendee-person-m5": ["knots"] });
   });
 });

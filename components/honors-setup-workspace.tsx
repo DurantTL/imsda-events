@@ -332,7 +332,7 @@ export function HonorsSetupWorkspace({
                     <td><strong>{offering.honorName}</strong><br /><small><code>{offering.honorCode}</code></small></td>
                     <td>
                       {offering.seatsTaken} / {offering.capacity}
-                      {offering.enrolled > offering.seatsTaken && <><br /><small>+{offering.enrolled - offering.seatsTaken} staff</small></>}
+                      {offering.enrolled > offering.seatsTaken && <><br /><small>+{offering.enrolled - offering.seatsTaken} without a seat</small></>}
                     </td>
                     <td>{offering.minimumAge ?? "—"}</td>
                     <td>{offering.perClubLimit ?? "—"}</td>

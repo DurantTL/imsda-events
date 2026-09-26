@@ -36,7 +36,7 @@ async function cleanup() {
   await prisma.person.deleteMany({ where: { id: { startsWith: `${P}_` } } });
 }
 
-async function registerClub(clubId: string, people: Array<{ key: string; type: "YOUTH" | "STAFF" }>) {
+async function registerClub(clubId: string, people: Array<{ key: string; type: "YOUTH" | "STAFF" | "UNDERAGE" }>) {
   const holder = await prisma.person.create({ data: { id: `${P}_${clubId}_holder`, firstName: "Test", lastName: "Director" } });
   const registration = await prisma.registration.create({
     data: { eventId, accountHolderPersonId: holder.id, confirmationCode: `REG-${clubId}`, status: "SUBMITTED", totalAmount: 0, submittedAt: now },
@@ -81,8 +81,9 @@ async function main() {
     data: { id: offeringId, eventId, honorId: `${P}_honor`, sessionId: session.id, span: "SINGLE_SESSION", capacity: 1, perClubLimit: 1 },
   });
   const [a] = await registerClub(clubs[0], [{ key: "youth", type: "YOUTH" }]);
-  const [b, bSecondYouth, bStaff] = await registerClub(clubs[1], [
+  const [b, bSecondYouth, bStaff, bUnderage] = await registerClub(clubs[1], [
     { key: "youth", type: "YOUTH" }, { key: "youth2", type: "YOUTH" }, { key: "staff", type: "STAFF" },
+    { key: "underage", type: "UNDERAGE" },
   ]);
 
   // 1. Two clubs race for the last seat: exactly one wins.
@@ -99,11 +100,13 @@ async function main() {
   assert(seats === 1, `expected 1 seat taken, found ${seats}`);
   console.log("ok  last seat: one club won, the other was told the class is full");
 
-  // 2. Staff join a full class without using a seat.
-  await setClassSelections(clubs[1], eventId, { accountId: "director-b" }, { [bStaff]: [offeringId] }, now);
+  // 2. Staff and underage children (#462) join a full class without using a seat.
+  await setClassSelections(clubs[1], eventId, { accountId: "director-b" }, { [bStaff]: [offeringId], [bUnderage]: [offeringId] }, now);
   const staff = await prisma.honorEnrollment.findFirst({ where: { registrationAttendeeId: bStaff } });
   assert(staff && !staff.consumesSeat, "staff should join without a seat");
-  console.log("ok  staff joined a full class without taking a seat");
+  const underage = await prisma.honorEnrollment.findFirst({ where: { registrationAttendeeId: bUnderage } });
+  assert(underage && !underage.consumesSeat, "an underage child should join without a seat");
+  console.log("ok  staff and an underage child joined a full class without taking a seat");
 
   // 3. Freeing the seat lets the other club in; the per-club limit still holds.
   const winner = results[0].status === "fulfilled" ? { club: clubs[0], attendee: a } : { club: clubs[1], attendee: b };
@@ -113,7 +116,8 @@ async function main() {
   const limited = await setClassSelections(clubs[1], eventId, { accountId: "director-b" }, { [bSecondYouth]: [offeringId] }, now)
     .then(() => null, (error: unknown) => error);
   assert(limited instanceof ClassSelectionError && limited.code === "CLUB_LIMIT_REACHED", "second youth from one club should hit the per-club limit");
-  console.log("ok  freed seat reused; per-club limit refused a second youth");
+  // Club B's enrolled underage child didn't count toward its limit of 1, or the first youth would have been refused.
+  console.log("ok  freed seat reused; underage didn't count toward the per-club limit, which refused a second youth");
 
   // 4. The printed class roster counts exactly the seats H5 counts.
   const rosterSeats = async () => {
@@ -126,7 +130,7 @@ async function main() {
     .offerings.find((offering) => offering.id === offeringId)!.seatsTaken;
   const before = await rosterSeats();
   assert(before.youthSeats === (await liveSeats()) && before.youthSeats === 1, `roster ${before.youthSeats} vs live seats`);
-  assert(before.people.length === 2, `class roster should list the youth and the staff member, found ${before.people.length}`);
+  assert(before.people.length === 3, `class roster should list the youth, the staff member, and the underage child, found ${before.people.length}`);
   console.log("ok  class roster seats match live seat counts");
 
   // 5. Cancelling a club's registration gives its seats back, in both places.
