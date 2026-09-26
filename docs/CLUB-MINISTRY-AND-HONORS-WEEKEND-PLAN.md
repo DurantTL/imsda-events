@@ -505,8 +505,9 @@ Each slice is one issue and one PR.
   **one class per session** for each person: a Sabbath class and a Sunday class,
   or one Full class. Only classes the person is old enough for, that still have
   seats, are shown.
-- **Seats count youth only.** Staff and adults may join a class without using a
-  seat, as in 2026. Per-club limits count youth only too.
+- **Seats count youth only.** Staff, adults, and underage children may join a
+  class without using a seat, as in 2026 (underage: decision 2026-09-26, #462).
+  Per-club limits count youth only too.
 - Seats are checked and taken in the **same serializable transaction that saves
   the registration**, the way event capacity already works, so a class can never
   be overfilled. A full class is refused with a clear message.

@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * Honors Weekend template, end to end (#436, acceptance criterion 2): a club
  * registers on a church-billed event using the shipped template, roster-owned
  * answers are locked and the role is prefilled, and class choices afterwards
- * use a seat for youth but not for staff. Synthetic data only.
+ * use a seat for youth but not for staff or underage children. Synthetic data only.
  */
 
 const dependencies = vi.hoisted(() => ({

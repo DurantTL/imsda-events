@@ -46,7 +46,7 @@ const enrollments: RosterEnrollment[] = [
 ];
 
 describe("roster groups", () => {
-  it("uses H5's youth rule: anyone not staff or adult is youth", () => {
+  it("lists anyone not staff or adult with the youth, underage included", () => {
     expect(rosterGroupOf("YOUTH")).toBe("YOUTH");
     expect(rosterGroupOf("UNDERAGE")).toBe("YOUTH");
     expect(rosterGroupOf(null)).toBe("YOUTH");
