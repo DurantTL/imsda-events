@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   grantFindFirst: vi.fn(),
   grantCreate: vi.fn(),
   accountNeedsSecondStep: vi.fn(),
+  getCurrentSession: vi.fn(),
 }));
 
 const client = {
@@ -27,7 +28,10 @@ vi.mock("@/lib/prisma", () => ({ getPrisma: () => client }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: mocks.writeAuditLog }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.getCurrentAttendee, findSwitchableAttendeeAccountForStaff: mocks.findSwitchable }));
 vi.mock("@/modules/attendee-accounts/sign-in-gate", () => ({ accountNeedsSecondStep: mocks.accountNeedsSecondStep }));
+vi.mock("@/modules/access/current-session", () => ({ getCurrentSession: mocks.getCurrentSession }));
+vi.mock("@/modules/access/request-security", () => ({ rejectCrossOriginRequest: () => null }));
 
+import { POST as ACCOUNT_ACTION } from "@/app/api/admin/accounts/[accountId]/route";
 import { currentAreaCoordinator, setAreaCoordinator } from "@/modules/organizations/area-coordinators";
 
 beforeEach(() => {
@@ -75,6 +79,18 @@ describe("Area Coordinators (#387)", () => {
   it("refuses an unknown account", async () => {
     mocks.accountFindUnique.mockResolvedValue(null);
     await expect(setAreaCoordinator("nobody", true, "admin-1")).rejects.toMatchObject({ code: "ACCOUNT_NOT_FOUND" });
+  });
+
+  it("answers 404, not 500, when the account to make an Area Coordinator doesn't exist", async () => {
+    mocks.getCurrentSession.mockResolvedValue({ user: { id: "admin-1", email: "admin@example.test", displayName: "Admin", globalRole: "SYSTEM_ADMIN" }, sessionId: "staff-session-1" });
+    mocks.accountFindUnique.mockResolvedValue(null);
+    const response = await ACCOUNT_ACTION(new Request("https://events.imsda.test/api/admin/accounts/nobody", {
+      method: "POST",
+      headers: { origin: "https://events.imsda.test", "content-type": "application/json" },
+      body: JSON.stringify({ action: "area-coordinator", on: true }),
+    }), { params: Promise.resolve({ accountId: "nobody" }) });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: "ACCOUNT_NOT_FOUND" });
   });
 
   it("stops counting a temporary role once it ends", async () => {

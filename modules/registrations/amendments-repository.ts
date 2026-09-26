@@ -42,7 +42,17 @@ import type { RegistrationAmendmentInput } from "@/modules/registrations/schemas
  */
 export type AmendmentActor =
   | { kind: "STAFF"; id: string; displayName: string }
-  | { kind: "CLUB_DIRECTOR"; attendeeAccountId: string; displayName: string };
+  | { kind: "CLUB_DIRECTOR"; attendeeAccountId: string; displayName: string }
+  /**
+   * A system administrator "acting as" a club's director (#442): attributed
+   * to their staff user id plus the act-as record, never to an attendee
+   * account. The club path gives them exactly a director's rules.
+   */
+  | { kind: "STAFF_ACTING_DIRECTOR"; id: string; actAsId: string; displayName: string };
+
+function amendmentActorUserId(actor: AmendmentActor) {
+  return actor.kind === "CLUB_DIRECTOR" ? null : actor.id;
+}
 
 type AmendmentInputAttendee = RegistrationAmendmentInput["attendees"][number];
 
@@ -1485,7 +1495,7 @@ export async function amendRegistration(
             type: "AMENDMENT",
             clientRequestId: input.clientRequestId,
             requestFingerprint,
-            actorUserId: actor.kind === "STAFF" ? actor.id : null,
+            actorUserId: amendmentActorUserId(actor),
             actorAttendeeAccountId: actor.kind === "CLUB_DIRECTOR" ? actor.attendeeAccountId : null,
             actorNameSnapshot: actor.displayName,
             beforeSnapshot: beforeSnapshot as Prisma.InputJsonValue,
@@ -1503,7 +1513,7 @@ export async function amendRegistration(
             // recorded structurally on the operation above and, redundantly
             // for audit queries that only scan AuditLog, in metadata below.
             // Never their name or birth date.
-            actorUserId: actor.kind === "STAFF" ? actor.id : null,
+            actorUserId: amendmentActorUserId(actor),
             action: "REGISTRATION_AMENDED",
             entityType: "RegistrationOperation",
             entityId: amendmentId,
@@ -1515,6 +1525,7 @@ export async function amendRegistration(
               reason: input.reason,
               actorKind: actor.kind,
               actorAttendeeAccountId: actor.kind === "CLUB_DIRECTOR" ? actor.attendeeAccountId : null,
+              ...(actor.kind === "STAFF_ACTING_DIRECTOR" ? { actAsId: actor.actAsId } : {}),
               priorTotalCents: cents(prepared.registration.totalAmount),
               resultingTotalCents: prepared.finalTotalCents,
               priorAttendeeCount: prepared.registration.attendees.length,

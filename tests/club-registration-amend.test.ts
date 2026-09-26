@@ -323,6 +323,27 @@ describe("club registration edit (H3b, #366)", () => {
     expect(JSON.stringify(auditCall.metadata)).not.toMatch(/Alex|Sample|Jordan|Example|Casey|2014-12-06|2013-05-02/);
   });
 
+  it("attributes a staff \"act as\" director's edit to the staff user and the act-as, never an attendee account (#442)", async () => {
+    const { prisma } = fixture();
+    await amendClubRegistration("club-1", "event-1", { userId: "admin-1", actAsId: "act-1" }, {
+      ...baseEdit(),
+      selectedMemberIds: ["m1", "m3"],
+    }, beforeDeadline);
+    const operationCall = prisma.registrationOperation.create.mock.calls[0]![0].data;
+    expect(operationCall.actorUserId).toBe("admin-1");
+    expect(operationCall.actorAttendeeAccountId).toBeNull();
+    const auditCall = prisma.auditLog.create.mock.calls[0]![0].data;
+    expect(auditCall.actorUserId).toBe("admin-1");
+    expect(auditCall.metadata).toMatchObject({ actorKind: "STAFF_ACTING_DIRECTOR", actorAttendeeAccountId: null, actAsId: "act-1" });
+  });
+
+  it("holds a staff \"act as\" director to the club's own deadline, like a real director (#442)", async () => {
+    const { prisma } = fixture({ registrationClosesOn: "2026-11-30" });
+    await expect(amendClubRegistration("club-1", "event-1", { userId: "admin-1", actAsId: "act-1" }, baseEdit(), new Date("2026-12-01T06:30:00Z")))
+      .rejects.toMatchObject({ code: "REGISTRATION_CLOSED" });
+    expect(prisma.registrationOperation.create).not.toHaveBeenCalled();
+  });
+
   it("keeps someone moved off the roster between submit and edit, exactly as registered, unless unticked", async () => {
     const { prisma } = fixture();
     await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, {

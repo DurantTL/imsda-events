@@ -33,23 +33,30 @@ export default async function AccountPortalLayout({ children }: { children: Reac
   ]);
   if (!account && !acting) redirect("/account/sign-in");
   // Club roles pass a second step before any account page (staff viewing an account use their own).
-  if (account && via === "attendee" && (await accountNeedsSecondStep(account.id, sessionId)) !== "OK") redirect("/account/two-step");
-  const [clubs, areaCoordinator] = account
-    ? await Promise.all([listDirectedClubs(account.id), isAreaCoordinator(account.id)])
+  const secondStepPending = Boolean(account && via === "attendee" && (await accountNeedsSecondStep(account.id, sessionId)) !== "OK");
+  // While a staff "act as" is active (#442), act-as pages resolve purely from
+  // the staff session: an unrelated attendee cookie on this browser that
+  // hasn't passed its second step doesn't send them to /account/two-step.
+  // Its account chrome is left out instead, and each page that shows the
+  // attendee account checks the second step itself.
+  if (secondStepPending && !acting) redirect("/account/two-step");
+  const chromeAccount = secondStepPending ? null : account;
+  const [clubs, areaCoordinator] = chromeAccount
+    ? await Promise.all([listDirectedClubs(chromeAccount.id), isAreaCoordinator(chromeAccount.id)])
     : [[], false];
 
   const actingAsAreaCoordinator = acting?.role === "AREA_COORDINATOR";
   const actingAsDirector = acting?.role === "CLUB_DIRECTOR";
 
   const items: AccountNavItem[] = [
-    ...(account ? [{ href: "/account", label: "Overview" }, { href: "/account/registrations", label: "Registrations" }] : []),
+    ...(chromeAccount ? [{ href: "/account", label: "Overview" }, { href: "/account/registrations", label: "Registrations" }] : []),
     // Area Coordinators see every club (#387), so the tab is just "Clubs".
     ...(areaCoordinator || actingAsAreaCoordinator
       ? [{ href: "/account/clubs", label: "Clubs", matchChildren: true, alsoMatchPrefix: "/account/area/" }]
       : clubs.length > 0 || actingAsDirector
         ? [{ href: "/account/clubs", label: clubs.length === 1 || actingAsDirector ? "My club" : "My clubs", matchChildren: true }]
         : []),
-    ...(account ? [{ href: "/account/profile", label: "Profile" }, { href: "/account/security", label: "Security" }] : []),
+    ...(chromeAccount ? [{ href: "/account/profile", label: "Profile" }, { href: "/account/security", label: "Security" }] : []),
   ];
 
   return (

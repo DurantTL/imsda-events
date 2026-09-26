@@ -50,7 +50,10 @@ export default async function ClubEventRegistrationPage({
   const assignment = workspace.registration ? await loadDirectorClubAssignment(organizationId, eventId) : null;
 
   let contactPrefill: Record<string, string> = {};
-  if (workspace.experience) {
+  // Never prefill from an attendee account while staff act as director
+  // (#442): the accounts stay separate, and any attendee cookie on this
+  // browser isn't the club's contact.
+  if (workspace.experience && access.actor.kind === "ATTENDEE") {
     const { account } = await getCurrentAttendee();
     const prefill = account ? attendeeProfilePrefill(await getAttendeeProfile(account.id), account.verifiedEmail) : {};
     const registrationKeys = new Set(workspace.experience.form.definition.sections

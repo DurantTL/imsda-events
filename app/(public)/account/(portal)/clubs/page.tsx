@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowRight, UsersRound } from "lucide-react";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { attendeeSecondStepPending } from "@/modules/attendee-accounts/portal-second-step";
 import { isAreaCoordinator, listClubsForArea } from "@/modules/organizations/area-coordinators";
 import { listDirectedClubs } from "@/modules/organizations/director-access";
 import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
@@ -26,8 +27,15 @@ export default async function MyClubsPage() {
     redirect(`/account/clubs/${acting.organizationId}`);
   }
 
-  const [clubs, areaCoordinator] = account
-    ? await Promise.all([listDirectedClubs(account.id), isAreaCoordinator(account.id)])
+  // Acting as an Area Coordinator resolves from the staff session alone: an
+  // attendee account on this browser that hasn't passed its second step is
+  // left out rather than sending the page to /account/two-step. Without an
+  // act-as, the attendee's own clubs need that step as always.
+  const secondStepPending = account ? await attendeeSecondStepPending() : false;
+  if (secondStepPending && !acting) redirect("/account/two-step");
+  const ownAccount = secondStepPending ? null : account;
+  const [clubs, areaCoordinator] = ownAccount
+    ? await Promise.all([listDirectedClubs(ownAccount.id), isAreaCoordinator(ownAccount.id)])
     : [[], false];
   if (areaCoordinator || acting?.role === "AREA_COORDINATOR") {
     // An Area Coordinator sees every club (#387): their own open as usual;

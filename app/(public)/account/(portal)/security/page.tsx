@@ -4,6 +4,7 @@ import { ShieldCheck } from "lucide-react";
 import { MfaManager } from "@/components/mfa-manager";
 import { PasskeyManager } from "@/components/passkey-manager";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { requireAttendeeSecondStep } from "@/modules/attendee-accounts/portal-second-step";
 import { getAttendeeMfaStatus } from "@/modules/attendee-accounts/mfa-service";
 import { getPasskeySettings } from "@/modules/attendee-accounts/passkeys";
 import { listDirectedClubs } from "@/modules/organizations/director-access";
@@ -16,6 +17,7 @@ export const metadata: Metadata = {
 };
 
 export default async function AttendeeSecurityPage() {
+  await requireAttendeeSecondStep();
   const { account, via, sessionId } = await getCurrentAttendee();
   if (!account) redirect("/account/sign-in");
   const [mfaStatus, clubs, passkeySettings] = await Promise.all([

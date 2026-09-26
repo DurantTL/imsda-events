@@ -14,6 +14,7 @@
     "test:public-messaging": "tsx scripts/verify-public-registration-messaging.ts",
     "test:public-roster": "tsx scripts/verify-public-registration-roster.ts",
     "test:honor-capacity": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-honor-class-capacity.ts",
+    "test:staff-act-as": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-staff-act-as.ts",
     "test:watch": "vitest",
     "verify": "npm run lint && npm run typecheck && npm run test && npm run build",
     "db:generate": "prisma generate",

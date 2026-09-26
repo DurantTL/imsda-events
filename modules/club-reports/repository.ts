@@ -148,7 +148,9 @@ export async function saveClubReport(
       where: { organizationId_reportMonth: { organizationId, reportMonth } },
       select: { id: true, status: true, firstSubmittedAt: true, submittedAt: true, totalPoints: true, onTimePoints: true },
     });
-    const isClub = "accountId" in actor;
+    // A staff "act as" director (#442) gets exactly the club's rules — never
+    // the conference office's power to change a report after its due date.
+    const isClub = "accountId" in actor || Boolean(actor.actAsId);
     const pastDue = isLockedForClub(reportMonth, now);
     // Only a submitted report locks for the club after the due date. A draft can
     // still go in late: a first submission earns no on-time points, and a reopened
@@ -184,15 +186,17 @@ export async function saveClubReport(
       status: input.status,
       submittedAt: input.status === "SUBMITTED" ? (existing?.status === "SUBMITTED" ? existing.submittedAt : now) : null,
       firstSubmittedAt,
-      ...(isClub && becomingSubmittedNow ? { submittedByAccountId: actor.accountId } : {}),
-      ...(isClub ? { updatedByAccountId: actor.accountId, updatedByUserId: null } : { updatedByUserId: actor.userId }),
+      ...("accountId" in actor && becomingSubmittedNow ? { submittedByAccountId: actor.accountId } : {}),
+      ...("accountId" in actor
+        ? { updatedByAccountId: actor.accountId, updatedByUserId: null }
+        : { updatedByUserId: actor.userId, updatedByAccountId: null }),
     };
     const saved = existing
       ? await tx.clubMonthlyReport.update({ where: { id: existing.id }, data, select: reportSelect })
       : await tx.clubMonthlyReport.create({ data: { ...data, organizationId, reportMonth }, select: reportSelect });
     const action = input.status === "DRAFT" ? "CLUB_REPORT_DRAFT_SAVED" : becomingSubmittedNow ? "CLUB_REPORT_SUBMITTED" : "CLUB_REPORT_UPDATED";
     await writeAuditLog({
-      ...(isClub ? {} : { actorUserId: actor.userId }),
+      ...("userId" in actor ? { actorUserId: actor.userId } : {}),
       action,
       entityType: "ClubMonthlyReport",
       entityId: saved.id,
@@ -210,7 +214,7 @@ export async function saveClubReport(
         ...(isClub && pastDue && input.status === "SUBMITTED" && existing?.firstSubmittedAt && existing.status === "DRAFT"
           ? { resubmittedAfterDueDate: true }
           : {}),
-        ...(isClub ? { actorAttendeeAccountId: actor.accountId } : actor.actAsId ? { actAsId: actor.actAsId } : {}),
+        ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : actor.actAsId ? { actAsId: actor.actAsId } : {}),
       },
     }, tx);
     return serializeReport(saved);

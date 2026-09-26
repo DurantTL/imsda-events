@@ -55,7 +55,8 @@ export type OrganizationOperationErrorCode =
   | "DIRECTOR_GRANT_CONFLICT"
   | "DIRECTOR_GRANT_NOT_FOUND"
   | "DIRECTOR_GRANT_ALREADY_REVOKED"
-  | "DIRECTOR_GRANT_ROLE_NOT_ALLOWED";
+  | "DIRECTOR_GRANT_ROLE_NOT_ALLOWED"
+  | "ACT_AS_OWN_ACCOUNT_NOT_ALLOWED";
 
 export class OrganizationOperationError extends Error {
   constructor(

@@ -528,6 +528,13 @@ export function clubAttendeePreparer(organizationId: string): ClubSubmissionCont
   };
 }
 
+/** Who submitted, for the club submission: the attendee director, or the staff user plus their act-as record (#442). */
+export function clubSubmissionAttribution(actor: ClubRegistrationActor): Pick<ClubSubmissionContext, "submittedByAccountId" | "submittedByUserId" | "actAsId"> {
+  return "accountId" in actor
+    ? { submittedByAccountId: actor.accountId }
+    : { submittedByUserId: actor.userId, actAsId: actor.actAsId };
+}
+
 export async function submitClubRegistration(
   organizationId: string,
   eventId: string,
@@ -540,7 +547,7 @@ export async function submitClubRegistration(
   if (!form) throw new ClubRegistrationError("FORM_UNAVAILABLE", "The event has no published registration form yet.");
   return submitPublicRegistration(event.slug, form.slug, input, now, {
     organizationId,
-    ...("accountId" in actor ? { submittedByAccountId: actor.accountId } : { submittedByUserId: actor.userId }),
+    ...clubSubmissionAttribution(actor),
     prepareAttendees: clubAttendeePreparer(organizationId),
   });
 }
@@ -866,7 +873,7 @@ export async function amendClubRegistration(
       { ...amendmentInput, previewOnly: false, quoteFingerprint: preview.quoteFingerprint },
       "accountId" in actor
         ? { kind: "CLUB_DIRECTOR", attendeeAccountId: actor.accountId, displayName: account?.displayName ?? "Club director" }
-        : { kind: "STAFF", id: actor.userId, displayName: "A system administrator acting as director" },
+        : { kind: "STAFF_ACTING_DIRECTOR", id: actor.userId, actAsId: actor.actAsId, displayName: "A system administrator acting as director" },
       now,
       { attendees: serverOptions, requestFingerprint },
     );

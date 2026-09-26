@@ -22,7 +22,7 @@ export function organizationApiError(error: unknown, action: string) {
   if (error instanceof OrganizationOperationError) {
     const status = error.code.endsWith("_NOT_FOUND")
       ? 404
-      : error.code === "DIRECTOR_GRANT_ROLE_NOT_ALLOWED"
+      : error.code === "DIRECTOR_GRANT_ROLE_NOT_ALLOWED" || error.code === "ACT_AS_OWN_ACCOUNT_NOT_ALLOWED"
         ? 403
       : error.code === "DIRECTOR_GRANT_WINDOW_INVALID"
           || error.code === "CLUB_REQUIRED"

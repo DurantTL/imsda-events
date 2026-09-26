@@ -78,6 +78,8 @@ export type ClubSubmissionContext = {
   /** Never both: a staff "act as" director (#442) sets `submittedByUserId`, never an attendee account. */
   submittedByAccountId?: string;
   submittedByUserId?: string;
+  /** The staff act-as record (#442) behind `submittedByUserId`; audited with the submission. */
+  actAsId?: string;
   prepareAttendees: (
     tx: Prisma.TransactionClient,
     args: {
@@ -1039,7 +1041,7 @@ async function createPublicRegistrationTransaction(
   await tx.auditLog.create({
     data: {
       eventId: form.eventId,
-      actorUserId: null,
+      actorUserId: club?.submittedByUserId ?? null,
       action: club
         ? "CLUB_REGISTRATION_SUBMITTED"
         : isWaitlisted ? "PUBLIC_REGISTRATION_WAITLISTED" : "PUBLIC_REGISTRATION_SUBMITTED",
@@ -1071,6 +1073,7 @@ async function createPublicRegistrationTransaction(
               clubOrganizationId: club.organizationId,
               ...(club.submittedByAccountId ? { submittedByAttendeeAccountId: club.submittedByAccountId } : {}),
               ...(club.submittedByUserId ? { submittedByStaffUserId: club.submittedByUserId } : {}),
+              ...(club.actAsId ? { actAsId: club.actAsId } : {}),
             }
           : {}),
       },

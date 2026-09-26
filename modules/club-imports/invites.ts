@@ -5,6 +5,7 @@ import type { Prisma } from "@prisma/client";
 import { getServerEnv } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
+import { ACT_AS_OWN_ACCOUNT_MESSAGE, isActingAdminsOwnEmail } from "@/modules/organizations/act-as-own-account";
 import { getAccountEmailSender, isAccountEmailConfigured } from "@/modules/communications/account-email";
 import {
   clubAssignableRoles,
@@ -40,7 +41,8 @@ export type ClubInviteErrorCode =
   | "INVITE_ROLE_NOT_ALLOWED"
   | "INVITE_RESEND_TOO_SOON"
   | "EMAIL_NOT_CONFIGURED"
-  | "NOTHING_TO_SEND";
+  | "NOTHING_TO_SEND"
+  | "INVITE_OWN_ACCOUNT";
 
 export class ClubInviteError extends Error {
   constructor(public readonly code: ClubInviteErrorCode, message: string) {
@@ -291,6 +293,9 @@ export async function createClubTeamInvite(
 ) {
   if (!clubRoleIsAssignableByClub(input.role)) {
     throw new ClubInviteError("INVITE_ROLE_NOT_ALLOWED", "Only conference staff can invite directors and deputies.");
+  }
+  if (await isActingAdminsOwnEmail(actor, input.email)) {
+    throw new ClubInviteError("INVITE_OWN_ACCOUNT", ACT_AS_OWN_ACCOUNT_MESSAGE);
   }
   if (!isAccountEmailConfigured()) {
     throw new ClubInviteError("EMAIL_NOT_CONFIGURED", "Account email isn't set up on this server, so invites can't be sent yet.");

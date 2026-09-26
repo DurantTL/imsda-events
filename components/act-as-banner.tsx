@@ -1,7 +1,13 @@
 import { UserRoundCog } from "lucide-react";
 import { StopActingButton } from "@/components/stop-acting-button";
 import { getPrisma } from "@/lib/prisma";
+import { CONFERENCE_TIME_ZONE } from "@/modules/calendar/domain";
 import type { StaffActingContext } from "@/modules/organizations/staff-act-as";
+
+/** The act-as end time, in the conference's time zone (never the server's). */
+export function actAsEndTime(expiresAt: Date) {
+  return expiresAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: CONFERENCE_TIME_ZONE, timeZoneName: "short" });
+}
 
 /**
  * Shown on every page while a system administrator is "acting as" a club
@@ -10,7 +16,7 @@ import type { StaffActingContext } from "@/modules/organizations/staff-act-as";
  */
 export async function ActAsBanner({ acting }: { acting: StaffActingContext | null }) {
   if (!acting) return null;
-  const until = acting.expiresAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  const until = actAsEndTime(acting.expiresAt);
 
   let label: string;
   if (acting.role === "CLUB_DIRECTOR" && acting.organizationId) {

@@ -17,7 +17,7 @@ vi.mock("@/modules/communications/messaging-repository", () => ({
 vi.mock("@/modules/communications/transactional-messages", () => ({ enqueueWaitlistJoinedMessage: vi.fn() }));
 
 import { sealSecret } from "@/lib/secret-box";
-import { clubAttendeePreparer } from "@/modules/club-registrations/repository";
+import { clubAttendeePreparer, clubSubmissionAttribution } from "@/modules/club-registrations/repository";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import { publicRegistrationInputSchema } from "@/modules/forms/public-domain";
 import { submitPublicRegistration, type ClubSubmissionContext } from "@/modules/forms/public-repository";
@@ -145,6 +145,22 @@ describe("club registration submit", () => {
     expect(tx.clubRegistrationDraft.deleteMany).toHaveBeenCalledWith({ where: { eventId: "event-1", organizationId: "club-1" } });
     expect(tx.auditLog.create.mock.calls.map(([call]) => call.data.action)).toContain("CLUB_REGISTRATION_SUBMITTED");
     expect(tx.registration.create.mock.calls[0][0].data).toMatchObject({ totalAmount: 0 });
+  });
+
+  it("attributes a staff \"act as\" director's submission to the staff user and the act-as, never an attendee account (#442)", async () => {
+    const tx = fixture();
+    const acting: ClubSubmissionContext = {
+      organizationId: "club-1",
+      ...clubSubmissionAttribution({ userId: "admin-1", actAsId: "act-1" }),
+      prepareAttendees: clubAttendeePreparer("club-1"),
+    };
+    await submit(baseInput, acting);
+    expect(tx.clubEventRegistration.create).toHaveBeenCalledWith({ data: { eventId: "event-1", organizationId: "club-1", registrationId: "registration-1", submittedByAccountId: null, submittedByUserId: "admin-1" } });
+    const audit = tx.auditLog.create.mock.calls.map(([call]) => call.data).find((data) => data.action === "CLUB_REGISTRATION_SUBMITTED");
+    expect(audit).toMatchObject({ actorUserId: "admin-1", metadata: { clubOrganizationId: "club-1", submittedByStaffUserId: "admin-1", actAsId: "act-1" } });
+    expect(audit.metadata).not.toHaveProperty("submittedByAttendeeAccountId");
+
+    expect(clubSubmissionAttribution({ accountId: "director-1" })).toEqual({ submittedByAccountId: "director-1" });
   });
 
   it("refuses someone who isn't active on this club's roster, including another club's member", async () => {

@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { getCurrentSession } from "@/modules/access/current-session";
@@ -22,7 +22,7 @@ import { isSessionIdle } from "@/modules/access/session-store";
 export const ACT_AS_MINUTES = 120;
 
 export class StaffActAsError extends Error {
-  constructor(public readonly code: "CLUB_NOT_FOUND", message: string) {
+  constructor(public readonly code: "CLUB_NOT_FOUND" | "ACT_AS_CONFLICT", message: string) {
     super(message);
     this.name = "StaffActAsError";
   }
@@ -40,22 +40,25 @@ export type ActiveStaffActAs = {
 };
 
 /**
- * The staff session's own validity, independent of whether it is expired,
+ * The staff session's own validity (and that its user is the act-as's user
+ * and still a system administrator), independent of whether it is expired,
  * revoked, or idle right now — the same rules `getCurrentSession` checks.
  * An act-as is never active once its staff session itself is dead, even
  * before anything writes `endedAt`.
  */
-async function staffSessionIsValid(staffSessionId: string, now: Date) {
+async function staffSessionIsValid(staffSessionId: string, actingUserId: string, now: Date) {
   const session = await getPrisma().userSession.findUnique({
     where: { id: staffSessionId },
     select: {
       expiresAt: true,
       revokedAt: true,
       lastSeenAt: true,
-      user: { select: { accountStatus: true, credential: { select: { disabledAt: true } } } },
+      user: { select: { id: true, globalRole: true, accountStatus: true, credential: { select: { disabledAt: true } } } },
     },
   });
   if (!session || session.revokedAt || session.expiresAt <= now) return false;
+  // The act-as belongs to this session's own user, who is still a system administrator.
+  if (session.user.id !== actingUserId || session.user.globalRole !== "SYSTEM_ADMIN") return false;
   if (!session.user.credential || session.user.credential.disabledAt) return false;
   if (session.user.accountStatus !== "ACTIVE") return false;
   if (isSessionIdle(session.lastSeenAt, now)) return false;
@@ -82,7 +85,7 @@ export async function resolveActiveActAs(staffSessionId: string, now = new Date(
     }).catch(() => {});
     return null;
   }
-  if (!(await staffSessionIsValid(staffSessionId, now))) return null;
+  if (!(await staffSessionIsValid(staffSessionId, row.userId, now))) return null;
   return row;
 }
 
@@ -95,12 +98,16 @@ export type StaffActingContext = {
   expiresAt: Date;
 };
 
-/** The signed-in staff member's active act-as, from the staff session alone. */
+/**
+ * The signed-in staff member's active act-as, from the staff session alone.
+ * Only a still-active system administrator's own act-as on this very session
+ * counts: a row for another user or another session is never used.
+ */
 export async function currentStaffActingContext(): Promise<StaffActingContext | null> {
   const { user, sessionId } = await getCurrentSession();
-  if (!user || !sessionId) return null;
+  if (!user || !sessionId || user.globalRole !== "SYSTEM_ADMIN") return null;
   const active = await resolveActiveActAs(sessionId);
-  if (!active) return null;
+  if (!active || active.userId !== user.id || active.staffSessionId !== sessionId) return null;
   return {
     userId: active.userId,
     staffSessionId: active.staffSessionId,
@@ -123,10 +130,33 @@ async function endActiveActAs(
   });
 }
 
+function isActiveActAsConflict(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+}
+
+/**
+ * Two starts racing on one staff session: both end "the active act-as" (none
+ * yet), then both insert, and the partial unique index (one active row per
+ * session) refuses the second. Retry once — the retry ends the winner's row
+ * as REPLACED, like any restart — and report a conflict (409) if it races again.
+ */
+async function startWithRetry<T>(start: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await start();
+    } catch (error) {
+      if (!isActiveActAsConflict(error)) throw error;
+      if (attempt >= 1) {
+        throw new StaffActAsError("ACT_AS_CONFLICT", "Another act-as was starting at the same moment. Try again.");
+      }
+    }
+  }
+}
+
 /** Starts (or restarts) acting as an Area Coordinator for the staff session (#442). Ends any active act-as first. */
 export async function actAsAreaCoordinator(staff: { id: string }, staffSessionId: string, now = new Date()) {
   const expiresAt = new Date(now.getTime() + ACT_AS_MINUTES * 60_000);
-  return getPrisma().$transaction(async (tx) => {
+  return startWithRetry(() => getPrisma().$transaction(async (tx) => {
     await endActiveActAs(tx, staffSessionId, "REPLACED", now);
     const row = await tx.staffActAs.create({
       data: { userId: staff.id, staffSessionId, role: "AREA_COORDINATOR", organizationId: null, startedAt: now, expiresAt },
@@ -141,13 +171,13 @@ export async function actAsAreaCoordinator(staff: { id: string }, staffSessionId
       metadata: { actAsId: row.id, expiresAt: expiresAt.toISOString() },
     }, tx);
     return { expiresAt, actAsId: row.id };
-  });
+  }));
 }
 
 /** Starts (or restarts) acting as a club's Director for the staff session (#442). Ends any active act-as first. */
 export async function actAsClubDirector(staff: { id: string }, staffSessionId: string, organizationId: string, now = new Date()) {
   const expiresAt = new Date(now.getTime() + ACT_AS_MINUTES * 60_000);
-  return getPrisma().$transaction(async (tx) => {
+  return startWithRetry(() => getPrisma().$transaction(async (tx) => {
     const club = await tx.organization.findUnique({ where: { id: organizationId }, select: { type: true, isActive: true, name: true } });
     if (!club || club.type !== "CLUB" || !club.isActive) {
       throw new StaffActAsError("CLUB_NOT_FOUND", "That club could not be found, or it's inactive.");
@@ -166,7 +196,7 @@ export async function actAsClubDirector(staff: { id: string }, staffSessionId: s
       metadata: { actAsId: row.id, organizationId, expiresAt: expiresAt.toISOString() },
     }, tx);
     return { expiresAt, actAsId: row.id, clubName: club.name };
-  });
+  }));
 }
 
 /** Ends the staff session's active act-as right away ("Stop acting"). Returns null when nothing was active. */
@@ -177,7 +207,8 @@ export async function stopActingAs(staff: { id: string }, staffSessionId: string
       select: { id: true, role: true, organizationId: true },
     });
     if (!active) return null;
-    await tx.staffActAs.update({ where: { id: active.id }, data: { endedAt: now, endedReason: "STOPPED" } });
+    const ended = await tx.staffActAs.updateMany({ where: { id: active.id, endedAt: null }, data: { endedAt: now, endedReason: "STOPPED" } });
+    if (ended.count === 0) return null;
     await writeAuditLog({
       actorUserId: staff.id,
       action: "ACT_AS_STOPPED",
@@ -199,7 +230,10 @@ export async function endActiveActAsOnSignOut(staffSessionId: string, now = new 
   });
   if (!active) return;
   await prisma.$transaction(async (tx) => {
-    await tx.staffActAs.update({ where: { id: active.id }, data: { endedAt: now, endedReason: "SIGNED_OUT" } });
+    // Guarded on `endedAt: null`: a concurrent Stop acting (or restart) that
+    // already ended this row keeps its own reason.
+    const ended = await tx.staffActAs.updateMany({ where: { id: active.id, endedAt: null }, data: { endedAt: now, endedReason: "SIGNED_OUT" } });
+    if (ended.count === 0) return;
     await writeAuditLog({
       actorUserId: active.userId,
       action: "ACT_AS_STOPPED",

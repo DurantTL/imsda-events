@@ -6,6 +6,7 @@ import { getServerEnv } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { createClubTeamInvite } from "@/modules/club-imports/invites";
+import { ACT_AS_OWN_ACCOUNT_MESSAGE, isActingAdminsOwnEmail } from "@/modules/organizations/act-as-own-account";
 import { getAccountEmailSender, isAccountEmailConfigured } from "@/modules/communications/account-email";
 import {
   clubDirectorRoleLabels,
@@ -278,6 +279,9 @@ export async function grantClubTeamRole(
 ) {
   if (!clubRoleIsAssignableByClub(input.role)) {
     throw new OrganizationOperationError("DIRECTOR_GRANT_ROLE_NOT_ALLOWED", "Only conference staff can assign directors and deputies.");
+  }
+  if (await isActingAdminsOwnEmail(actor, input.email)) {
+    throw new OrganizationOperationError("ACT_AS_OWN_ACCOUNT_NOT_ALLOWED", ACT_AS_OWN_ACCOUNT_MESSAGE);
   }
   const prisma = getPrisma();
   const account = await prisma.attendeeAccount.findUnique({

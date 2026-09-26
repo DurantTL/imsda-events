@@ -15,6 +15,7 @@ import { AttendeeRegistrationContactForm } from "@/components/attendee-registrat
 import { AttendeeRegistrationAnswersForm } from "@/components/attendee-registration-answers-form";
 import { PublicSquarePayment } from "@/components/public-square-payment";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { requireAttendeeSecondStep } from "@/modules/attendee-accounts/portal-second-step";
 import {
   listRegistrationsForVerifiedEmail,
   type AttendeeRegistrationSummary,
@@ -141,6 +142,7 @@ function RegistrationCard({
 }
 
 export default async function AttendeeRegistrationsPage() {
+  await requireAttendeeSecondStep();
   const { account, via } = await getCurrentAttendee();
   if (!account) redirect("/account/sign-in");
 
