@@ -1,7 +1,9 @@
 import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
+import { redirect } from "next/navigation";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { accountNeedsSecondStep } from "@/modules/attendee-accounts/sign-in-gate";
 import { passkeysConfigured } from "@/modules/attendee-accounts/passkeys";
 import { currentStaffActingContext } from "@/modules/organizations/staff-act-as";
 import { listDirectedClubs, type DirectedClub } from "@/modules/organizations/director-access";
@@ -39,11 +41,24 @@ export function actorAttribution(actor: ClubActor): { accountId: string } | { us
 export type RosterAccessState =
   | { state: "SIGN_IN" }
   | { state: "NOT_FOUND" }
+  | { state: "SECOND_STEP_REQUIRED"; club: DirectedClub }
   | { state: "NO_ROSTER"; club: DirectedClub; capabilities: ClubCapabilities }
   | { state: "OWN_SESSION_REQUIRED"; club: DirectedClub }
   | { state: "MFA_SETUP"; club: DirectedClub }
   | { state: "MFA_UNLOCK"; club: DirectedClub; methods: { code: boolean; passkey: boolean } }
   | { state: "OPEN"; club: DirectedClub; capabilities: ClubCapabilities; actor: ClubActor };
+
+/**
+ * The attendee's own sign-in second step (decision 2026-09-23), checked here
+ * at the choke point rather than only in the portal layout: layouts can be
+ * skipped on client navigation, and API routes never run them. A second step
+ * already passed in this session (`secondFactorVerifiedAt`) satisfies it —
+ * the same field the roster unlock sets. Never applies to a staff act-as.
+ */
+async function attendeeSecondStepPending(accountId: string, via: string | null, sessionId: string | null, now: Date) {
+  if (via !== "attendee" || !sessionId) return false;
+  return (await accountNeedsSecondStep(accountId, sessionId, now)) !== "OK";
+}
 
 export async function getRosterAccessState(organizationId: string, now = new Date()): Promise<RosterAccessState> {
   const acting = await currentStaffActingContext();
@@ -68,6 +83,8 @@ export async function getRosterAccessState(organizationId: string, now = new Dat
   const club = (await listDirectedClubs(account.id, now))
     .find((candidate) => candidate.organizationId === organizationId);
   if (!club) return { state: "NOT_FOUND" };
+  // Before anything else, reporters included (they never reach the roster check).
+  if (await attendeeSecondStepPending(account.id, via, sessionId, now)) return { state: "SECOND_STEP_REQUIRED", club };
   const capabilities = clubCapabilities(club.role);
   if (!capabilities.roster) return { state: "NO_ROSTER", club, capabilities };
   if (via !== "attendee" || !sessionId) return { state: "OWN_SESSION_REQUIRED", club };
@@ -92,6 +109,7 @@ export class RosterAccessError extends Error {
   constructor(
     public readonly code:
       | "SIGN_IN_REQUIRED"
+      | "SECOND_STEP_REQUIRED"
       | "NOT_FOUND"
       | "ROLE_NOT_ALLOWED"
       | "OWN_SESSION_REQUIRED"
@@ -103,6 +121,10 @@ export class RosterAccessError extends Error {
     super(message);
     this.name = "RosterAccessError";
   }
+}
+
+function secondStepError() {
+  return new RosterAccessError("SECOND_STEP_REQUIRED", 403, "Finish two-step sign-in to open your club.");
 }
 
 /**
@@ -128,6 +150,8 @@ export async function requireRosterAccess(
       throw new RosterAccessError("SIGN_IN_REQUIRED", 401, "Sign in to open your club roster.");
     case "NOT_FOUND":
       throw new RosterAccessError("NOT_FOUND", 404, "That club could not be found.");
+    case "SECOND_STEP_REQUIRED":
+      throw secondStepError();
     case "OWN_SESSION_REQUIRED":
       throw new RosterAccessError("OWN_SESSION_REQUIRED", 403, "Sign in with your own attendee account to open the roster.");
     case "MFA_SETUP":
@@ -148,6 +172,7 @@ export async function markRosterUnlocked(sessionId: string, now = new Date()) {
 export type ClubRoleAccess =
   | { state: "SIGN_IN" }
   | { state: "NOT_FOUND" }
+  | { state: "SECOND_STEP_REQUIRED"; club: DirectedClub }
   | { state: "OWN_SESSION_REQUIRED"; club: DirectedClub; capabilities: ClubCapabilities }
   | { state: "OK"; club: DirectedClub; capabilities: ClubCapabilities; actor: ClubActor };
 
@@ -180,6 +205,7 @@ export async function getClubRoleAccess(organizationId: string, now = new Date()
   if (!account) return { state: "SIGN_IN" };
   const club = (await listDirectedClubs(account.id, now)).find((candidate) => candidate.organizationId === organizationId);
   if (!club) return { state: "NOT_FOUND" };
+  if (await attendeeSecondStepPending(account.id, via, sessionId, now)) return { state: "SECOND_STEP_REQUIRED", club };
   const capabilities = clubCapabilities(club.role);
   if (via !== "attendee" || !sessionId) return { state: "OWN_SESSION_REQUIRED", club, capabilities };
   return { state: "OK", club, capabilities, actor: { kind: "ATTENDEE", accountId: account.id, sessionId } };
@@ -190,11 +216,26 @@ export async function requireClubCapability(organizationId: string, need: keyof 
   const access = await getClubRoleAccess(organizationId, now);
   if (access.state === "SIGN_IN") throw new RosterAccessError("SIGN_IN_REQUIRED", 401, "Sign in to open your club.");
   if (access.state === "NOT_FOUND") throw new RosterAccessError("NOT_FOUND", 404, "That club could not be found.");
+  if (access.state === "SECOND_STEP_REQUIRED") throw secondStepError();
   if (access.state === "OWN_SESSION_REQUIRED") {
     throw new RosterAccessError("OWN_SESSION_REQUIRED", 403, "Sign in with your own attendee account to change club information.");
   }
   if (!access.capabilities[need]) {
     throw new RosterAccessError("ROLE_NOT_ALLOWED", 403, "Your club role doesn't include this. Ask your club director.");
   }
+  return access;
+}
+
+/** For club pages: `getRosterAccessState`, sending a pending second step to /account/two-step. */
+export async function getRosterAccessStateForPage(organizationId: string, now = new Date()) {
+  const access = await getRosterAccessState(organizationId, now);
+  if (access.state === "SECOND_STEP_REQUIRED") redirect("/account/two-step");
+  return access;
+}
+
+/** For club pages: `getClubRoleAccess`, sending a pending second step to /account/two-step. */
+export async function getClubRoleAccessForPage(organizationId: string, now = new Date()) {
+  const access = await getClubRoleAccess(organizationId, now);
+  if (access.state === "SECOND_STEP_REQUIRED") redirect("/account/two-step");
   return access;
 }

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { ArrowRight, CalendarDays, CheckCircle2, CircleAlert, FileText, UsersRound } from "lucide-react";
 import { BackLink } from "@/components/back-link";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
-import { getRosterAccessState, type ClubActor } from "@/modules/club-rosters/access";
+import { getRosterAccessStateForPage, type ClubActor } from "@/modules/club-rosters/access";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import { listRoster } from "@/modules/club-rosters/repository";
 import { formatCalendarDate } from "@/modules/club-registrations/domain";
@@ -31,7 +31,7 @@ async function allMyClubsLink(actor: ClubActor | null) {
 /** Where the club stands at a glance, and the next thing to do. */
 export default async function ClubHomePage({ params }: { params: Promise<{ organizationId: string }> }) {
   const { organizationId } = await params;
-  const access = await getRosterAccessState(organizationId);
+  const access = await getRosterAccessStateForPage(organizationId);
   if (access.state === "NO_ROSTER") {
     // A reporter (#375): no roster, no registrations, just monthly reports (#377).
     return (

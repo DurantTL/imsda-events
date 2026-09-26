@@ -30,7 +30,9 @@ const client = {
   $transaction: (work: (tx: unknown) => unknown) => work(client),
 };
 
+const secondStep = vi.hoisted(() => ({ accountNeedsSecondStep: vi.fn(async () => "OK") }));
 vi.mock("server-only", () => ({}));
+vi.mock("@/modules/attendee-accounts/sign-in-gate", () => ({ accountNeedsSecondStep: secondStep.accountNeedsSecondStep }));
 vi.mock("@/lib/prisma", () => ({ getPrisma: () => client }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: mocks.writeAuditLog }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.getCurrentAttendee }));

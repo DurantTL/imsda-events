@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("server-only", () => ({}));
+// The attendee second step is covered in tests/club-second-step.test.ts; here it has been passed.
+vi.mock("@/modules/attendee-accounts/sign-in-gate", () => ({ accountNeedsSecondStep: async () => "OK" }));
 vi.mock("@/lib/prisma", () => ({
   getPrisma: () => ({
     attendeeMfaEnrollment: { findUnique: mocks.findEnrollment },

@@ -10,7 +10,7 @@ import { ClubRegistrationEditor } from "@/components/club-registration-editor";
 import { ClubRegistrationWorkspace } from "@/components/club-registration-workspace";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { attendeeProfilePrefill, getAttendeeProfile } from "@/modules/attendee-accounts/profile-service";
-import { getRosterAccessState } from "@/modules/club-rosters/access";
+import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { loadDirectorClubAssignment } from "@/modules/club-registrations/director-assignment";
 import { isChurchBilledStatus, notBilledLabel } from "@/modules/club-registrations/church-owed";
 import { ClubRegistrationError, getClubEventWorkspace } from "@/modules/club-registrations/repository";
@@ -31,7 +31,7 @@ export default async function ClubEventRegistrationPage({
   params: Promise<{ organizationId: string; eventId: string }>;
 }) {
   const { organizationId, eventId } = await params;
-  const access = await getRosterAccessState(organizationId);
+  const access = await getRosterAccessStateForPage(organizationId);
   // The club layout shows the sign-in and authenticator steps.
   if (access.state !== "OPEN") return null;
 

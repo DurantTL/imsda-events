@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { BackLink } from "@/components/back-link";
 import { ClubReportForm } from "@/components/club-report-form";
 import { monthlyNotesSummary } from "@/modules/club-meeting-notes/repository";
-import { getClubRoleAccess } from "@/modules/club-rosters/access";
+import { getClubRoleAccessForPage } from "@/modules/club-rosters/access";
 import { calendarDateIn } from "@/modules/calendar/domain";
 import {
   ON_TIME_POINTS,
@@ -21,7 +21,7 @@ export const dynamic = "force-dynamic";
 
 export default async function ClubReportPage({ params }: { params: Promise<{ organizationId: string; month: string }> }) {
   const { organizationId, month } = await params;
-  const access = await getClubRoleAccess(organizationId);
+  const access = await getClubRoleAccessForPage(organizationId);
   if (access.state !== "OK") return null;
   if (!access.capabilities.submitReports) {
     return (

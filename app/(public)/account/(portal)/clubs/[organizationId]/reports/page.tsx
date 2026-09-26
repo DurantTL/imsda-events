@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight, CheckCircle2, CircleAlert, Clock3 } from "lucide-react";
 import { BackLink } from "@/components/back-link";
-import { getClubRoleAccess } from "@/modules/club-rosters/access";
+import { getClubRoleAccessForPage } from "@/modules/club-rosters/access";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import {
   YEARLY_REGISTRATION_POINTS,
@@ -21,7 +21,7 @@ export const dynamic = "force-dynamic";
 /** The club's monthly reports for this club year, newest first (#377). */
 export default async function ClubReportsPage({ params }: { params: Promise<{ organizationId: string }> }) {
   const { organizationId } = await params;
-  const access = await getClubRoleAccess(organizationId);
+  const access = await getClubRoleAccessForPage(organizationId);
   if (access.state !== "OK") return null;
   if (!access.capabilities.submitReports) {
     return <p className="public-manage-empty">Monthly reports are filed by the club&apos;s director, deputy, or reporter.</p>;
