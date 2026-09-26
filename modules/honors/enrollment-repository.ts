@@ -169,10 +169,13 @@ function isSerializationFailure(error: unknown) {
  * they are). Validates every rule, then takes seats and re-counts inside the
  * transaction; if anything is over, nothing is saved.
  */
+/** Never an attendee account credited for a staff action (#442): `userId` (with `actAsId`) for a staff "act as" director. */
+export type ClassSelectionActor = { accountId: string } | { userId: string; actAsId: string };
+
 export async function setClassSelections(
   organizationId: string,
   eventId: string,
-  accountId: string,
+  actor: ClassSelectionActor,
   selections: Record<string, string[]>,
   now = new Date(),
 ) {
@@ -249,13 +252,14 @@ export async function setClassSelections(
 
         await writeAuditLog({
           eventId,
+          ...("userId" in actor ? { actorUserId: actor.userId } : {}),
           action: "HONOR_CLASSES_UPDATED",
           entityType: "Registration",
           entityId: registration.registrationId,
           summary: "A club director updated class choices.",
           metadata: {
             organizationId,
-            actorAttendeeAccountId: accountId,
+            ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId }),
             added: toCreate.length,
             removed: toDelete.length,
             people: Object.keys(selections).length,

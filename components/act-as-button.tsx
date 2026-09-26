@@ -4,9 +4,10 @@ import { useState } from "react";
 import { ArrowRight, UserRoundCog } from "lucide-react";
 
 /**
- * "Act as" for system administrators (#387): gives their own account a real
- * club role for a couple of hours, then links to it. The role shows in the
- * audit log (and a club's admin list), and ends by itself.
+ * "Act as" for system administrators (#442): acts inside the current staff
+ * session for a couple of hours, never touching the staff member's own
+ * attendee account. Audited, ends by itself, and "Stop acting" (shown while
+ * it's active) ends it early.
  */
 export function ActAsButton({ endpoint, label, confirmText }: { endpoint: string; label: string; confirmText: string }) {
   const [busy, setBusy] = useState(false);
@@ -33,8 +34,8 @@ export function ActAsButton({ endpoint, label, confirmText }: { endpoint: string
     <div className="act-as">
       {result ? (
         <p className="inline-notice success" role="status">
-          {result.message} Sign in to your account (with its second step) if you aren&apos;t already, then{" "}
-          <a href={result.href}>open it <ArrowRight aria-hidden="true" size={13} /></a>.
+          {result.message}{" "}
+          <a href={result.href}>Open it <ArrowRight aria-hidden="true" size={13} /></a>.
         </p>
       ) : (
         <button className="secondary-button" disabled={busy} onClick={() => void act()} type="button">

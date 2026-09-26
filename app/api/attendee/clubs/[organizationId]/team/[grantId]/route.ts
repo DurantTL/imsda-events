@@ -1,5 +1,5 @@
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
-import { requireRosterAccess } from "@/modules/club-rosters/access";
+import { actorAttribution, requireRosterAccess } from "@/modules/club-rosters/access";
 import { rosterApiError } from "@/modules/club-rosters/api-errors";
 import { revokeClubTeamRole } from "@/modules/organizations/director-grants-repository";
 import { withRequestContext } from "@/lib/request-context";
@@ -11,7 +11,7 @@ async function deleteHandler(request: Request, context: { params: Promise<{ orga
   try {
     const { organizationId, grantId } = await context.params;
     const access = await requireRosterAccess(organizationId, new Date(), "manageTeam");
-    return Response.json({ team: await revokeClubTeamRole(organizationId, grantId, access.accountId) });
+    return Response.json({ team: await revokeClubTeamRole(organizationId, grantId, actorAttribution(access.actor)) });
   } catch (error) {
     return rosterApiError(error, "Removing someone from the club team");
   }

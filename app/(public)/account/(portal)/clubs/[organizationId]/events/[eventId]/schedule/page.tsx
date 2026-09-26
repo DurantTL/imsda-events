@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Download } from "lucide-react";
 import { BackLink } from "@/components/back-link";
 import { PrintReportButton } from "@/components/print-report-button";
-import { getRosterAccessState } from "@/modules/club-rosters/access";
+import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { buildClubSchedule, rosterGroupLabels, rosterGroupOf } from "@/modules/honors/roster-domain";
 import { getHonorRosterData } from "@/modules/honors/roster-repository";
 
@@ -16,7 +16,7 @@ export default async function ClubSchedulePage({
   params: Promise<{ organizationId: string; eventId: string }>;
 }) {
   const { organizationId, eventId } = await params;
-  const access = await getRosterAccessState(organizationId);
+  const access = await getRosterAccessStateForPage(organizationId);
   // The club layout shows the sign-in and authenticator steps.
   if (access.state !== "OPEN") return null;
 

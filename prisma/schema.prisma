@@ -531,6 +531,12 @@ model User {
   personLink                        UserPersonLink?              @relation("UserPersonLinkUser")
   actorOnUserPersonLinks             UserPersonLink[]             @relation("UserPersonLinkActor")
   actorOnAttendeeAccountPersonLinks  AttendeeAccountPersonLink[]  @relation("AttendeeAccountPersonLinkActorUser")
+  staffActAs                         StaffActAs[]                 @relation("StaffActAsUser")
+  createdClubRosterMembers           ClubRosterMember[]           @relation("ClubRosterMemberCreatedByUser")
+  createdClubMeetingNotes            ClubMeetingNote[]             @relation("ClubMeetingNoteCreatedByUser")
+  updatedClubMeetingNotes            ClubMeetingNote[]             @relation("ClubMeetingNoteUpdatedByUser")
+  submittedClubEventRegistrations    ClubEventRegistration[]      @relation("ClubEventRegistrationSubmittedByUser")
+  updatedClubRegistrationDrafts      ClubRegistrationDraft[]      @relation("ClubRegistrationDraftUpdatedByUser")
 
   @@index([accountStatus])
 }
@@ -561,9 +567,54 @@ model UserSession {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   passkeyChallenges UserPasskeyChallenge[]
+  staffActAs StaffActAs[]
 
   @@index([userId, expiresAt])
   @@index([expiresAt, revokedAt])
+}
+
+/**
+ * Staff "act as" Area Coordinator or club director (#442), tied to the staff
+ * session that started it, never to the staff member's own attendee account
+ * (the accounts stay separate, decision 2026-09-25/27). Active only while
+ * `endedAt` is null, `expiresAt` is in the future, AND the `staffSessionId`
+ * session is itself still valid — a revoked or expired session makes this
+ * inactive even before `endedAt` is written. A partial unique index keeps at
+ * most one active row per staff session at the database level; starting a
+ * new act-as ends the old one first (`REPLACED`) in the same transaction.
+ */
+model StaffActAs {
+  id             String              @id @default(cuid())
+  userId         String
+  staffSessionId String
+  role           StaffActAsRole
+  /// Required for CLUB_DIRECTOR; null for AREA_COORDINATOR.
+  organizationId String?
+  startedAt      DateTime            @default(now())
+  expiresAt      DateTime
+  endedAt        DateTime?
+  endedReason    StaffActAsEndReason?
+  createdAt      DateTime            @default(now())
+
+  user         User          @relation("StaffActAsUser", fields: [userId], references: [id], onDelete: Cascade)
+  staffSession UserSession   @relation(fields: [staffSessionId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([staffSessionId, endedAt])
+  @@index([organizationId])
+}
+
+enum StaffActAsRole {
+  AREA_COORDINATOR
+  CLUB_DIRECTOR
+}
+
+enum StaffActAsEndReason {
+  STOPPED
+  REPLACED
+  SIGNED_OUT
+  EXPIRED
 }
 
 /**
@@ -1543,6 +1594,7 @@ model Organization {
   meetingNotes       ClubMeetingNote[]
   yearStandings      ClubYearStanding[]
   churchLocation     ChurchLocation?
+  staffActAs         StaffActAs[]
 
   @@index([type, isActive, name])
   @@index([parentOrganizationId, isActive])
@@ -1687,11 +1739,17 @@ model ClubMeetingNote {
   honors             Json     @default("[]")
   notes              String   @default("")
   createdByAccountId String?
+  /// Set instead of `createdByAccountId` for a staff "act as" director (#442).
+  createdByUserId    String?
   updatedByAccountId String?
+  /// Set instead of `updatedByAccountId` for a staff "act as" director (#442).
+  updatedByUserId    String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdByUser   User?        @relation("ClubMeetingNoteCreatedByUser", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedByUser   User?        @relation("ClubMeetingNoteUpdatedByUser", fields: [updatedByUserId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, meetingDate])
 }
@@ -3079,13 +3137,16 @@ model ClubRosterMember {
   source               ClubRosterSource
   sourceRegistrationId String?
   createdByAccountId   String?
+  /// Set instead of `createdByAccountId` for a staff "act as" director (#442).
+  createdByUserId      String?
   removedAt            DateTime?
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
 
-  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  person       Person?          @relation(fields: [personId], references: [id], onDelete: SetNull)
-  createdBy    AttendeeAccount? @relation("ClubRosterMemberCreatedBy", fields: [createdByAccountId], references: [id], onDelete: SetNull)
+  organization  Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  person        Person?          @relation(fields: [personId], references: [id], onDelete: SetNull)
+  createdBy     AttendeeAccount? @relation("ClubRosterMemberCreatedBy", fields: [createdByAccountId], references: [id], onDelete: SetNull)
+  createdByUser User?            @relation("ClubRosterMemberCreatedByUser", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
   @@unique([organizationId, clubYear, personId])
   @@index([organizationId, clubYear, status])
@@ -3148,13 +3209,16 @@ model ClubEventRegistration {
   organizationId       String
   registrationId       String   @unique
   submittedByAccountId String?
+  /// Set instead of `submittedByAccountId` for a staff "act as" director (#442).
+  submittedByUserId    String?
   createdAt            DateTime @default(now())
 
-  event        Event            @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  registration Registration     @relation(fields: [registrationId], references: [id], onDelete: Cascade)
-  submittedBy  AttendeeAccount? @relation("ClubEventRegistrationSubmittedBy", fields: [submittedByAccountId], references: [id], onDelete: SetNull)
-  assignment   ClubEventAssignment?
+  event           Event            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  registration    Registration     @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  submittedBy     AttendeeAccount? @relation("ClubEventRegistrationSubmittedBy", fields: [submittedByAccountId], references: [id], onDelete: SetNull)
+  submittedByUser User?            @relation("ClubEventRegistrationSubmittedByUser", fields: [submittedByUserId], references: [id], onDelete: SetNull)
+  assignment      ClubEventAssignment?
 
   @@unique([eventId, organizationId])
   @@index([organizationId])
@@ -3212,12 +3276,15 @@ model ClubRegistrationDraft {
   responses          Json     @default("{}")
   attendeeResponses  Json     @default("{}")
   updatedByAccountId String?
+  /// Set instead of `updatedByAccountId` for a staff "act as" director (#442).
+  updatedByUserId    String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  event     Event            @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  updatedBy AttendeeAccount? @relation("ClubRegistrationDraftUpdatedBy", fields: [updatedByAccountId], references: [id], onDelete: SetNull)
+  event         Event            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  organization  Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  updatedBy     AttendeeAccount? @relation("ClubRegistrationDraftUpdatedBy", fields: [updatedByAccountId], references: [id], onDelete: SetNull)
+  updatedByUser User?            @relation("ClubRegistrationDraftUpdatedByUser", fields: [updatedByUserId], references: [id], onDelete: SetNull)
 
   @@unique([eventId, organizationId])
 }

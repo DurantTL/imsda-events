@@ -1,5 +1,5 @@
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
-import { requireClubCapability } from "@/modules/club-rosters/access";
+import { actorAttribution, requireClubCapability } from "@/modules/club-rosters/access";
 import { clubReportApiError } from "@/modules/club-reports/api-errors";
 import { isReportMonth } from "@/modules/club-reports/domain";
 import { reopenClubReport } from "@/modules/club-reports/repository";
@@ -13,7 +13,7 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
     const { organizationId, month } = await context.params;
     const access = await requireClubCapability(organizationId, "submitReports");
     if (!isReportMonth(month)) return Response.json({ error: "CLUB_REPORT_MONTH_INVALID", message: "That month isn't valid." }, { status: 400 });
-    return Response.json({ report: await reopenClubReport(organizationId, month, access.accountId) });
+    return Response.json({ report: await reopenClubReport(organizationId, month, actorAttribution(access.actor)) });
   } catch (error) {
     return clubReportApiError(error, "Reopening the monthly report");
   }

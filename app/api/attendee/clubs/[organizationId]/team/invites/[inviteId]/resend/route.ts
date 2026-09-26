@@ -2,7 +2,7 @@ import { after } from "next/server";
 import { logError } from "@/lib/logger";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { listPendingClubTeamInvites, resendClubTeamInvite } from "@/modules/club-imports/invites";
-import { requireRosterAccess } from "@/modules/club-rosters/access";
+import { actorAttribution, requireRosterAccess } from "@/modules/club-rosters/access";
 import { rosterApiError } from "@/modules/club-rosters/api-errors";
 import { processAccountEmailQueue } from "@/modules/communications/email-delivery";
 import { withRequestContext } from "@/lib/request-context";
@@ -16,7 +16,7 @@ async function postHandler(request: Request, context: RouteContext) {
   try {
     const { organizationId, inviteId } = await context.params;
     const access = await requireRosterAccess(organizationId, new Date(), "manageTeam");
-    const { messageId } = await resendClubTeamInvite(organizationId, inviteId, access.accountId);
+    const { messageId } = await resendClubTeamInvite(organizationId, inviteId, actorAttribution(access.actor));
     after(async () => {
       try {
         await processAccountEmailQueue({ messageIds: [messageId], limit: 1 });

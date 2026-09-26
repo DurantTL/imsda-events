@@ -1,5 +1,5 @@
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
-import { requireRosterAccess } from "@/modules/club-rosters/access";
+import { actorAttribution, requireRosterAccess } from "@/modules/club-rosters/access";
 import { clubRegistrationApiError } from "@/modules/club-registrations/api-errors";
 import { clubRegistrationEditInputSchema } from "@/modules/club-registrations/domain";
 import { amendClubRegistration, submitClubRegistration } from "@/modules/club-registrations/repository";
@@ -22,7 +22,7 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
       return Response.json({ error: "REQUEST_TOO_LARGE", message: "This registration is too large." }, { status: 413 });
     }
     const input = publicRegistrationInputSchema.parse(JSON.parse(body));
-    const confirmation = await submitClubRegistration(organizationId, eventId, access.accountId, input);
+    const confirmation = await submitClubRegistration(organizationId, eventId, actorAttribution(access.actor), input);
     return Response.json({ confirmation }, { status: 201, headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return clubRegistrationApiError(error, "Submitting the club registration");
@@ -48,7 +48,7 @@ async function patchHandler(request: Request, context: { params: Promise<{ organ
     }
     const input = clubRegistrationEditInputSchema.parse(JSON.parse(body));
     // Only the club's own summary: never the staff view of the registration.
-    const { pendingMessageIds, result } = await amendClubRegistration(organizationId, eventId, access.accountId, input);
+    const { pendingMessageIds, result } = await amendClubRegistration(organizationId, eventId, actorAttribution(access.actor), input);
     try {
       await processQueuedMessageIdsAfterCommit(pendingMessageIds);
     } catch (error) {

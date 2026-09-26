@@ -24,10 +24,13 @@ const client = {
   },
 };
 
+const secondStep = vi.hoisted(() => ({ accountNeedsSecondStep: vi.fn(async () => "OK") }));
 vi.mock("server-only", () => ({}));
+vi.mock("@/modules/attendee-accounts/sign-in-gate", () => ({ accountNeedsSecondStep: secondStep.accountNeedsSecondStep }));
 vi.mock("@/lib/prisma", () => ({ getPrisma: () => client }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: mocks.writeAuditLog }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.getCurrentAttendee }));
+vi.mock("@/modules/organizations/staff-act-as", () => ({ currentStaffActingContext: async () => null }));
 vi.mock("@/modules/organizations/director-access", () => ({ listDirectedClubs: mocks.listDirectedClubs }));
 vi.mock("@/modules/access/request-security", () => ({ rejectCrossOriginRequest: mocks.rejectCrossOriginRequest }));
 
@@ -144,7 +147,7 @@ describe("what a new report may pull from meeting notes", () => {
 
 describe("saving a meeting note", () => {
   it("creates a note and audits it with ids only", async () => {
-    const note = await createClubMeetingNote("club-1", noteInput(), "account-1");
+    const note = await createClubMeetingNote("club-1", noteInput(), { accountId: "account-1" });
     expect(note.pathfinderCount).toBe(12);
     expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({
       action: "CLUB_MEETING_NOTE_CREATED",
@@ -153,19 +156,19 @@ describe("saving a meeting note", () => {
   });
 
   it("edits and deletes only a note that belongs to this club", async () => {
-    await updateClubMeetingNote("club-1", "note-1", noteInput({ notes: "Updated" }), "account-1");
+    await updateClubMeetingNote("club-1", "note-1", noteInput({ notes: "Updated" }), { accountId: "account-1" });
     expect(mocks.noteUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "note-1" } }));
     expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "CLUB_MEETING_NOTE_UPDATED" }));
 
-    await deleteClubMeetingNote("club-1", "note-1", "account-1");
+    await deleteClubMeetingNote("club-1", "note-1", { accountId: "account-1" });
     expect(mocks.noteDelete).toHaveBeenCalledWith({ where: { id: "note-1" } });
     expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "CLUB_MEETING_NOTE_DELETED" }));
   });
 
   it("refuses a note id that belongs to another club", async () => {
     mocks.noteFindUnique.mockResolvedValue({ id: "note-1", organizationId: "club-2" });
-    await expect(updateClubMeetingNote("club-1", "note-1", noteInput(), "account-1")).rejects.toMatchObject({ code: "NOTE_NOT_FOUND" });
-    await expect(deleteClubMeetingNote("club-1", "note-1", "account-1")).rejects.toMatchObject({ code: "NOTE_NOT_FOUND" });
+    await expect(updateClubMeetingNote("club-1", "note-1", noteInput(), { accountId: "account-1" })).rejects.toMatchObject({ code: "NOTE_NOT_FOUND" });
+    await expect(deleteClubMeetingNote("club-1", "note-1", { accountId: "account-1" })).rejects.toMatchObject({ code: "NOTE_NOT_FOUND" });
     expect(mocks.noteUpdate).not.toHaveBeenCalled();
     expect(mocks.noteDelete).not.toHaveBeenCalled();
   });

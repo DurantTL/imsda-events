@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
-import { requireRosterAccess } from "@/modules/club-rosters/access";
+import { actorAttribution, requireRosterAccess } from "@/modules/club-rosters/access";
 import { clubRegistrationApiError } from "@/modules/club-registrations/api-errors";
 import { saveClubRegistrationDraft } from "@/modules/club-registrations/repository";
 import { clubGuestsSchema } from "@/modules/club-registrations/domain";
@@ -22,7 +22,7 @@ async function putHandler(request: Request, context: RouteContext) {
     const { organizationId, eventId } = await context.params;
     const access = await requireRosterAccess(organizationId, new Date(), "registerForEvents");
     const input = draftSchema.parse(await request.json());
-    return Response.json(await saveClubRegistrationDraft(organizationId, eventId, access.accountId, input));
+    return Response.json(await saveClubRegistrationDraft(organizationId, eventId, actorAttribution(access.actor), input));
   } catch (error) {
     return clubRegistrationApiError(error, "Saving the draft");
   }

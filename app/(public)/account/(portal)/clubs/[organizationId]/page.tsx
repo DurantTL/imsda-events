@@ -3,7 +3,7 @@ import Link from "next/link";
 import { ArrowRight, CalendarDays, CheckCircle2, CircleAlert, FileText, UsersRound } from "lucide-react";
 import { BackLink } from "@/components/back-link";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
-import { getRosterAccessState } from "@/modules/club-rosters/access";
+import { getRosterAccessStateForPage, type ClubActor } from "@/modules/club-rosters/access";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import { listRoster } from "@/modules/club-rosters/repository";
 import { formatCalendarDate } from "@/modules/club-registrations/domain";
@@ -18,22 +18,25 @@ export const metadata: Metadata = { title: "Club home" };
 export const dynamic = "force-dynamic";
 
 /** Only when there's somewhere else to go (#428): a single-club director has nowhere "all clubs" would take them. */
-async function allMyClubsLink() {
-  const { account } = await getCurrentAttendee();
-  if (!account) return null;
-  const clubs = await listDirectedClubs(account.id);
+async function allMyClubsLink(actor: ClubActor | null) {
+  // A staff "act as" director (#442) has one club and no attendee account to
+  // list clubs for; an attendee cookie on the same browser isn't theirs to use.
+  if (actor?.kind === "STAFF_ACTING") return null;
+  const accountId = actor?.accountId ?? (await getCurrentAttendee()).account?.id;
+  if (!accountId) return null;
+  const clubs = await listDirectedClubs(accountId);
   return clubs.length > 1 ? <BackLink href="/account/clubs">All my clubs</BackLink> : null;
 }
 
 /** Where the club stands at a glance, and the next thing to do. */
 export default async function ClubHomePage({ params }: { params: Promise<{ organizationId: string }> }) {
   const { organizationId } = await params;
-  const access = await getRosterAccessState(organizationId);
+  const access = await getRosterAccessStateForPage(organizationId);
   if (access.state === "NO_ROSTER") {
     // A reporter (#375): no roster, no registrations, just monthly reports (#377).
     return (
       <>
-        {await allMyClubsLink()}
+        {await allMyClubsLink(null)}
         <section className="public-manage-card" aria-labelledby="club-role-heading">
           <div className="public-manage-card-heading">
             <p className="public-registration-eyebrow">Your role: {clubDirectorRoleLabels[access.club.role]}</p>
@@ -58,7 +61,7 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
     listRoster(organizationId, clubYear),
     listClubEvents(organizationId),
     access.capabilities.submitReports ? getClubReportYear(organizationId, clubYear) : Promise.resolve(null),
-    allMyClubsLink(),
+    allMyClubsLink(access.actor),
   ]);
   const active = members.filter((member) => member.status === "ACTIVE");
   const youth = active.filter((member) => member.attendeeType !== "STAFF" && member.attendeeType !== "ADULT");

@@ -290,7 +290,7 @@ beforeEach(() => {
 describe("club registration edit (H3b, #366)", () => {
   it("adds a roster person as that roster person and removes someone the director unticked, before the deadline", async () => {
     const { prisma } = fixture();
-    const { result, pendingMessageIds } = await amendClubRegistration("club-1", "event-1", "director-1", {
+    const { result, pendingMessageIds } = await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, {
       ...baseEdit(),
       selectedMemberIds: ["m1", "m3"],
     }, beforeDeadline);
@@ -323,9 +323,30 @@ describe("club registration edit (H3b, #366)", () => {
     expect(JSON.stringify(auditCall.metadata)).not.toMatch(/Alex|Sample|Jordan|Example|Casey|2014-12-06|2013-05-02/);
   });
 
+  it("attributes a staff \"act as\" director's edit to the staff user and the act-as, never an attendee account (#442)", async () => {
+    const { prisma } = fixture();
+    await amendClubRegistration("club-1", "event-1", { userId: "admin-1", actAsId: "act-1" }, {
+      ...baseEdit(),
+      selectedMemberIds: ["m1", "m3"],
+    }, beforeDeadline);
+    const operationCall = prisma.registrationOperation.create.mock.calls[0]![0].data;
+    expect(operationCall.actorUserId).toBe("admin-1");
+    expect(operationCall.actorAttendeeAccountId).toBeNull();
+    const auditCall = prisma.auditLog.create.mock.calls[0]![0].data;
+    expect(auditCall.actorUserId).toBe("admin-1");
+    expect(auditCall.metadata).toMatchObject({ actorKind: "STAFF_ACTING_DIRECTOR", actorAttendeeAccountId: null, actAsId: "act-1" });
+  });
+
+  it("holds a staff \"act as\" director to the club's own deadline, like a real director (#442)", async () => {
+    const { prisma } = fixture({ registrationClosesOn: "2026-11-30" });
+    await expect(amendClubRegistration("club-1", "event-1", { userId: "admin-1", actAsId: "act-1" }, baseEdit(), new Date("2026-12-01T06:30:00Z")))
+      .rejects.toMatchObject({ code: "REGISTRATION_CLOSED" });
+    expect(prisma.registrationOperation.create).not.toHaveBeenCalled();
+  });
+
   it("keeps someone moved off the roster between submit and edit, exactly as registered, unless unticked", async () => {
     const { prisma } = fixture();
-    await amendClubRegistration("club-1", "event-1", "director-1", {
+    await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, {
       ...baseEdit(),
       keptOffRosterAttendeeIds: ["attendee-m2"],
     }, beforeDeadline);
@@ -340,7 +361,7 @@ describe("club registration edit (H3b, #366)", () => {
 
   it("refuses a kept off-roster person the client can't name correctly", async () => {
     fixture();
-    await expect(amendClubRegistration("club-1", "event-1", "director-1", {
+    await expect(amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, {
       ...baseEdit(),
       keptOffRosterAttendeeIds: ["attendee-m1"],
     }, beforeDeadline)).rejects.toMatchObject({ code: "ATTENDEES_INVALID" });
@@ -353,7 +374,7 @@ describe("club registration edit (H3b, #366)", () => {
         attendee("attendee-m2", "m2", "Jordan", "Example", 38, { checkIns: [{ id: "checkin-1" }] }),
       ],
     });
-    const refusal = amendClubRegistration("club-1", "event-1", "director-1", baseEdit(), beforeDeadline);
+    const refusal = amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, baseEdit(), beforeDeadline);
     await expect(refusal).rejects.toBeInstanceOf(RegistrationAmendmentError);
     await expect(refusal).rejects.toMatchObject({ code: "ATTENDEE_HAS_HISTORY", details: { attendeeName: "Jordan Example" } });
   });
@@ -362,7 +383,7 @@ describe("club registration edit (H3b, #366)", () => {
     const { prisma } = fixture({
       attendees: [attendee("attendee-m1", "m1", "Alex", "Sample", 11), legacyGuest("attendee-g1")],
     });
-    await amendClubRegistration("club-1", "event-1", "director-1", {
+    await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, {
       ...baseEdit(),
       keptGuestIds: ["attendee-g1"],
       attendeeResponses: { "member:m1": { first_name: "Alex", last_name: "Sample", attendee_age: "11", dietary_needs: "Vegetarian" } },
@@ -378,7 +399,7 @@ describe("club registration edit (H3b, #366)", () => {
 
   it("carries a new extra person's email into person matching and the snapshot", async () => {
     const { prisma } = fixture();
-    await amendClubRegistration("club-1", "event-1", "director-1", {
+    await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, {
       ...baseEdit(),
       keptOffRosterAttendeeIds: ["attendee-m2"],
       newGuests: [{ id: "guestabc123", firstName: "Sam", lastName: "Parent", age: 45, email: "sam.parent@example.test" }],
@@ -394,13 +415,13 @@ describe("club registration edit (H3b, #366)", () => {
   describe("deadline, in the event's time zone", () => {
     it("allows an edit at 23:30 local on the closing day", async () => {
       fixture({ registrationClosesOn: "2026-11-30" });
-      await expect(amendClubRegistration("club-1", "event-1", "director-1", { ...baseEdit(), keptOffRosterAttendeeIds: ["attendee-m2"] }, new Date("2026-12-01T05:30:00Z")))
+      await expect(amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, { ...baseEdit(), keptOffRosterAttendeeIds: ["attendee-m2"] }, new Date("2026-12-01T05:30:00Z")))
         .resolves.toMatchObject({ result: { confirmationCode: "REG-CLUB" } });
     });
 
     it("refuses the next day with a clear message, changing nothing", async () => {
       const { prisma } = fixture({ registrationClosesOn: "2026-11-30" });
-      const refusal = amendClubRegistration("club-1", "event-1", "director-1", baseEdit(), new Date("2026-12-01T06:30:00Z"));
+      const refusal = amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, baseEdit(), new Date("2026-12-01T06:30:00Z"));
       await expect(refusal).rejects.toBeInstanceOf(ClubRegistrationError);
       await expect(refusal).rejects.toMatchObject({
         code: "REGISTRATION_CLOSED",
@@ -412,16 +433,16 @@ describe("club registration edit (H3b, #366)", () => {
 
     it("with no closing date, allows edits before the event and refuses once its start date has passed", async () => {
       fixture({ registrationClosesOn: null });
-      await expect(amendClubRegistration("club-1", "event-1", "director-1", { ...baseEdit(), keptOffRosterAttendeeIds: ["attendee-m2"] }, new Date("2026-12-04T18:00:00Z")))
+      await expect(amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, { ...baseEdit(), keptOffRosterAttendeeIds: ["attendee-m2"] }, new Date("2026-12-04T18:00:00Z")))
         .resolves.toBeDefined();
       fixture({ registrationClosesOn: null });
-      await expect(amendClubRegistration("club-1", "event-1", "director-1", baseEdit(), new Date("2026-12-06T18:00:00Z")))
+      await expect(amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, baseEdit(), new Date("2026-12-06T18:00:00Z")))
         .rejects.toMatchObject({ code: "REGISTRATION_CLOSED" });
     });
 
     it("refuses while registration isn't open yet", async () => {
       fixture({ registrationOpensOn: "2026-11-01" });
-      await expect(amendClubRegistration("club-1", "event-1", "director-1", baseEdit(), beforeDeadline))
+      await expect(amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, baseEdit(), beforeDeadline))
         .rejects.toMatchObject({ code: "REGISTRATION_CLOSED" });
     });
   });
@@ -434,7 +455,7 @@ describe("club registration edit (H3b, #366)", () => {
 
     it("refuses adding someone without a required answer, naming the person and question", async () => {
       fixture({ definition: shirtDefinition, attendees: withShirts() });
-      const refusal = amendClubRegistration("club-1", "event-1", "director-1", {
+      const refusal = amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, {
         ...baseEdit(),
         selectedMemberIds: ["m1", "m3"],
         keptOffRosterAttendeeIds: ["attendee-m2"],
@@ -448,7 +469,7 @@ describe("club registration edit (H3b, #366)", () => {
 
     it("accepts the added person once the answer is given, and a changed answer on a kept person", async () => {
       const { prisma } = fixture({ definition: shirtDefinition, attendees: withShirts() });
-      await amendClubRegistration("club-1", "event-1", "director-1", {
+      await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, {
         ...baseEdit(),
         selectedMemberIds: ["m1", "m3"],
         keptOffRosterAttendeeIds: ["attendee-m2"],
@@ -471,7 +492,7 @@ describe("club registration edit (H3b, #366)", () => {
       definition: seminarDefinition,
       attendees: [attendee("attendee-m1", "m1", "Alex", "Sample", 11, {}, { seminar_choices: ["Knots"] })],
     });
-    await expect(amendClubRegistration("club-1", "event-1", "director-1", {
+    await expect(amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, {
       ...baseEdit(),
       attendeeResponses: { "member:m1": { first_name: "Alex", last_name: "Sample", attendee_age: "11", seminar_choices: ["Stars"] } },
     }, beforeDeadline)).rejects.toMatchObject({ code: "CLASS_CHOICES_NOT_EDITABLE", message: expect.stringContaining("ask the event team") });
@@ -480,7 +501,7 @@ describe("club registration edit (H3b, #366)", () => {
       definition: seminarDefinition,
       attendees: [attendee("attendee-m1", "m1", "Alex", "Sample", 11, {}, { seminar_choices: ["Knots"] })],
     });
-    await amendClubRegistration("club-1", "event-1", "director-1", {
+    await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, {
       ...baseEdit(),
       attendeeResponses: { "member:m1": { first_name: "Alex", last_name: "Sample", attendee_age: "11", seminar_choices: ["Knots"], dietary_needs: "Vegan" } },
     }, beforeDeadline);
@@ -489,7 +510,7 @@ describe("club registration edit (H3b, #366)", () => {
 
   it("takes a name corrected on the roster since submitting, audited without names (N4)", async () => {
     const { prisma } = fixture({ rosterNames: { m1: { firstName: "Alexandra", lastName: "Sample" } } });
-    await amendClubRegistration("club-1", "event-1", "director-1", {
+    await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, {
       ...baseEdit(),
       keptOffRosterAttendeeIds: ["attendee-m2"],
     }, beforeDeadline);
@@ -519,8 +540,8 @@ describe("club registration edit (H3b, #366)", () => {
   it("returns only the club summary on an idempotent replay too", async () => {
     fixture();
     const edit = { ...baseEdit(), keptOffRosterAttendeeIds: ["attendee-m2"] };
-    const first = await amendClubRegistration("club-1", "event-1", "director-1", edit, beforeDeadline);
-    const replay = await amendClubRegistration("club-1", "event-1", "director-1", edit, beforeDeadline);
+    const first = await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, edit, beforeDeadline);
+    const replay = await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, edit, beforeDeadline);
     expect(replay.result).toEqual(first.result);
     expect(Object.keys(replay.result).sort()).toEqual(["attendeeCount", "confirmationCode", "updatedAt"]);
     expect(JSON.stringify(replay)).not.toMatch(/Staff-only|Staff Person|adjustments|lineItems/);
@@ -529,9 +550,9 @@ describe("club registration edit (H3b, #366)", () => {
   it("refuses a reused request ID with different content instead of replaying the first save", async () => {
     const { prisma } = fixture();
     const edit = { ...baseEdit(), keptOffRosterAttendeeIds: ["attendee-m2"] };
-    await amendClubRegistration("club-1", "event-1", "director-1", edit, beforeDeadline);
+    await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, edit, beforeDeadline);
     const changed = { ...edit, keptOffRosterAttendeeIds: [] as string[] };
-    await expect(amendClubRegistration("club-1", "event-1", "director-1", changed, beforeDeadline))
+    await expect(amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, changed, beforeDeadline))
       .rejects.toMatchObject({ code: "IDEMPOTENCY_KEY_REUSED" });
     expect(prisma.registrationOperation.create).toHaveBeenCalledTimes(1);
   });
@@ -540,7 +561,7 @@ describe("club registration edit (H3b, #366)", () => {
     const { prisma } = fixture({
       attendees: [attendee("attendee-m1", "m1", "Alex", "Sample", 11), { ...legacyGuest("attendee-g1"), personId: "person-m3" }],
     });
-    await expect(amendClubRegistration("club-1", "event-1", "director-1", {
+    await expect(amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, {
       ...baseEdit(),
       selectedMemberIds: ["m1", "m3"],
       keptGuestIds: ["attendee-g1"],
@@ -553,7 +574,7 @@ describe("club registration edit (H3b, #366)", () => {
 
   it("refuses selecting someone who isn't active on the roster", async () => {
     fixture();
-    await expect(amendClubRegistration("club-1", "event-1", "director-1", {
+    await expect(amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, {
       ...baseEdit(),
       selectedMemberIds: ["m1", "someone-else"],
     }, beforeDeadline)).rejects.toMatchObject({ code: "MEMBER_NOT_ON_ROSTER" });
@@ -561,7 +582,7 @@ describe("club registration edit (H3b, #366)", () => {
 
   it("refuses removing every attendee", async () => {
     fixture();
-    await expect(amendClubRegistration("club-1", "event-1", "director-1", {
+    await expect(amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, {
       ...baseEdit(),
       selectedMemberIds: [],
     }, beforeDeadline)).rejects.toMatchObject({ code: "ATTENDEES_INVALID" });
@@ -570,7 +591,7 @@ describe("club registration edit (H3b, #366)", () => {
   it("refuses editing a registration that was never submitted for this club", async () => {
     const { prisma } = fixture();
     prisma.clubEventRegistration.findUnique.mockResolvedValue(null);
-    await expect(amendClubRegistration("club-1", "event-1", "director-1", baseEdit(), beforeDeadline))
+    await expect(amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, baseEdit(), beforeDeadline))
       .rejects.toMatchObject({ code: "REGISTRATION_NOT_FOUND" });
   });
 
@@ -581,7 +602,7 @@ describe("club registration edit (H3b, #366)", () => {
     // pricing on the original submit date, so the $9 (not $14) fee applies.
     registration.publicFormSubmission.responses = { ...registration.publicFormSubmission.responses, meal_sponsorship_count: 5 };
 
-    await amendClubRegistration("club-1", "event-1", "director-1", {
+    await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, {
       ...baseEdit(),
       selectedMemberIds: ["m1", "m3"],
     }, beforeDeadline);
@@ -600,7 +621,7 @@ describe("club registration edit (H3b, #366)", () => {
     });
     registration.publicFormSubmission.responses = { ...registration.publicFormSubmission.responses, meal_sponsorship_count: 1 };
 
-    await amendClubRegistration("club-1", "event-1", "director-1", {
+    await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, {
       ...baseEdit(),
       selectedMemberIds: ["m1"],
     }, beforeDeadline);

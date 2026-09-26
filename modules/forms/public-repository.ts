@@ -75,7 +75,11 @@ export type PublicRegistrationErrorCode =
  */
 export type ClubSubmissionContext = {
   organizationId: string;
-  submittedByAccountId: string;
+  /** Never both: a staff "act as" director (#442) sets `submittedByUserId`, never an attendee account. */
+  submittedByAccountId?: string;
+  submittedByUserId?: string;
+  /** The staff act-as record (#442) behind `submittedByUserId`; audited with the submission. */
+  actAsId?: string;
   prepareAttendees: (
     tx: Prisma.TransactionClient,
     args: {
@@ -992,7 +996,8 @@ async function createPublicRegistrationTransaction(
         eventId: form.eventId,
         organizationId: club.organizationId,
         registrationId: registration.id,
-        submittedByAccountId: club.submittedByAccountId,
+        submittedByAccountId: club.submittedByAccountId ?? null,
+        submittedByUserId: club.submittedByUserId ?? null,
       },
     });
     await tx.clubRegistrationDraft.deleteMany({
@@ -1036,7 +1041,7 @@ async function createPublicRegistrationTransaction(
   await tx.auditLog.create({
     data: {
       eventId: form.eventId,
-      actorUserId: null,
+      actorUserId: club?.submittedByUserId ?? null,
       action: club
         ? "CLUB_REGISTRATION_SUBMITTED"
         : isWaitlisted ? "PUBLIC_REGISTRATION_WAITLISTED" : "PUBLIC_REGISTRATION_SUBMITTED",
@@ -1063,7 +1068,14 @@ async function createPublicRegistrationTransaction(
         emailSent: false,
         messageCount: queuedMessages.messageIds.length,
         messageDeliveryMode: queuedMessages.deliveryMode,
-        ...(club ? { clubOrganizationId: club.organizationId, submittedByAttendeeAccountId: club.submittedByAccountId } : {}),
+        ...(club
+          ? {
+              clubOrganizationId: club.organizationId,
+              ...(club.submittedByAccountId ? { submittedByAttendeeAccountId: club.submittedByAccountId } : {}),
+              ...(club.submittedByUserId ? { submittedByStaffUserId: club.submittedByUserId } : {}),
+              ...(club.actAsId ? { actAsId: club.actAsId } : {}),
+            }
+          : {}),
       },
     },
   });

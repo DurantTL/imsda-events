@@ -2,10 +2,13 @@ import { after } from "next/server";
 import { logError } from "@/lib/logger";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { listPendingClubTeamInvites } from "@/modules/club-imports/invites";
-import { requireRosterAccess } from "@/modules/club-rosters/access";
+import { actorAttribution, requireRosterAccess } from "@/modules/club-rosters/access";
 import { rosterApiError } from "@/modules/club-rosters/api-errors";
 import { processAccountEmailQueue } from "@/modules/communications/email-delivery";
+import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { ACT_AS_OWN_ACCOUNT_MESSAGE } from "@/modules/organizations/act-as-own-account";
 import { grantClubTeamRole, listClubTeam } from "@/modules/organizations/director-grants-repository";
+import { OrganizationOperationError } from "@/modules/organizations/repository";
 import { createClubTeamGrantInputSchema } from "@/modules/organizations/director-grants-schemas";
 import { withRequestContext } from "@/lib/request-context";
 
@@ -37,7 +40,15 @@ async function postHandler(request: Request, context: RouteContext) {
     const { organizationId } = await context.params;
     const access = await requireRosterAccess(organizationId, new Date(), "manageTeam");
     const input = createClubTeamGrantInputSchema.parse(await request.json());
-    const { team, invited, messageId } = await grantClubTeamRole(organizationId, input, access.accountId);
+    if (access.actor.kind === "STAFF_ACTING") {
+      // Accounts stay separate (#442): an attendee account signed in on this
+      // same browser is the acting administrator's own, whatever its email.
+      const { account } = await getCurrentAttendee();
+      if (account && account.verifiedEmail.trim().toLowerCase() === input.email) {
+        throw new OrganizationOperationError("ACT_AS_OWN_ACCOUNT_NOT_ALLOWED", ACT_AS_OWN_ACCOUNT_MESSAGE);
+      }
+    }
+    const { team, invited, messageId } = await grantClubTeamRole(organizationId, input, actorAttribution(access.actor));
     if (messageId) {
       after(async () => {
         try {

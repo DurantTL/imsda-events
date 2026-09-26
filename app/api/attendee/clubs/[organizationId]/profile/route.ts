@@ -1,5 +1,5 @@
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
-import { requireRosterAccess } from "@/modules/club-rosters/access";
+import { actorAttribution, requireRosterAccess } from "@/modules/club-rosters/access";
 import { rosterApiError } from "@/modules/club-rosters/api-errors";
 import { updateClubProfile } from "@/modules/organizations/club-profile-repository";
 import { clubProfileInputSchema } from "@/modules/organizations/club-profile-schemas";
@@ -13,7 +13,7 @@ async function patchHandler(request: Request, context: { params: Promise<{ organ
     const { organizationId } = await context.params;
     const access = await requireRosterAccess(organizationId, new Date(), "editProfile");
     const input = clubProfileInputSchema.parse(await request.json());
-    return Response.json({ profile: await updateClubProfile(organizationId, input, { accountId: access.accountId }) });
+    return Response.json({ profile: await updateClubProfile(organizationId, input, actorAttribution(access.actor)) });
   } catch (error) {
     return rosterApiError(error, "Saving the club profile");
   }

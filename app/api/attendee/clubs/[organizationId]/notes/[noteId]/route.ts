@@ -2,7 +2,7 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { clubMeetingNoteApiError } from "@/modules/club-meeting-notes/api-errors";
 import { deleteClubMeetingNote, updateClubMeetingNote } from "@/modules/club-meeting-notes/repository";
 import { meetingNoteInputSchema } from "@/modules/club-meeting-notes/schemas";
-import { requireClubCapability } from "@/modules/club-rosters/access";
+import { actorAttribution, requireClubCapability } from "@/modules/club-rosters/access";
 import { withRequestContext } from "@/lib/request-context";
 
 type RouteContext = { params: Promise<{ organizationId: string; noteId: string }> };
@@ -15,7 +15,7 @@ async function putHandler(request: Request, context: RouteContext) {
     const { organizationId, noteId } = await context.params;
     const access = await requireClubCapability(organizationId, "submitReports");
     const input = meetingNoteInputSchema.parse(await request.json());
-    const note = await updateClubMeetingNote(organizationId, noteId, input, access.accountId);
+    const note = await updateClubMeetingNote(organizationId, noteId, input, actorAttribution(access.actor));
     return Response.json({ note });
   } catch (error) {
     return clubMeetingNoteApiError(error, "Saving the meeting note");
@@ -28,7 +28,7 @@ async function deleteHandler(request: Request, context: RouteContext) {
   try {
     const { organizationId, noteId } = await context.params;
     const access = await requireClubCapability(organizationId, "submitReports");
-    await deleteClubMeetingNote(organizationId, noteId, access.accountId);
+    await deleteClubMeetingNote(organizationId, noteId, actorAttribution(access.actor));
     return Response.json({ deleted: true });
   } catch (error) {
     return clubMeetingNoteApiError(error, "Deleting the meeting note");

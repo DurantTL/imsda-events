@@ -4,15 +4,14 @@ import { Eye } from "lucide-react";
 import { BackLink } from "@/components/back-link";
 import { ClubOverview } from "@/components/club-overview";
 import { getPrisma } from "@/lib/prisma";
-import { currentAreaCoordinator } from "@/modules/organizations/area-coordinators";
+import { currentAreaCoordinatorViewerActive } from "@/modules/organizations/area-coordinators";
 
 export const metadata: Metadata = { title: "Club", robots: { index: false, follow: false, nocache: true } };
 export const dynamic = "force-dynamic";
 
 /** Any club, view only, for an Area Coordinator (#387). Ages only, no birth dates. */
 export default async function AreaClubPage({ params }: { params: Promise<{ organizationId: string }> }) {
-  const coordinator = await currentAreaCoordinator();
-  if (!coordinator) notFound();
+  if (!(await currentAreaCoordinatorViewerActive())) notFound();
   const { organizationId } = await params;
   const club = await getPrisma().organization.findUnique({
     where: { id: organizationId },

@@ -1,5 +1,5 @@
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
-import { requireRosterAccess } from "@/modules/club-rosters/access";
+import { actorAttribution, requireRosterAccess } from "@/modules/club-rosters/access";
 import { rosterApiError } from "@/modules/club-rosters/api-errors";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import { listRoster, removeRosterMember, updateRosterMember } from "@/modules/club-rosters/repository";
@@ -21,7 +21,7 @@ async function patchHandler(request: Request, context: RouteContext) {
     const access = await requireRosterAccess(organizationId);
     const input = rosterMemberUpdateSchema.parse(await request.json());
     // A details edit must leave the person with a gender (#424); status-only edits are exempt.
-    await updateRosterMember(organizationId, memberId, input, { accountId: access.accountId }, undefined, { requireGender: true });
+    await updateRosterMember(organizationId, memberId, input, actorAttribution(access.actor), undefined, { requireGender: true });
     return Response.json(await roster(organizationId));
   } catch (error) {
     return rosterApiError(error, "Updating a roster entry");
@@ -35,7 +35,7 @@ async function deleteHandler(request: Request, context: RouteContext) {
     const { organizationId, memberId } = await context.params;
     const access = await requireRosterAccess(organizationId);
     rosterRemoveSchema.parse(await request.json());
-    await removeRosterMember(organizationId, memberId, { accountId: access.accountId });
+    await removeRosterMember(organizationId, memberId, actorAttribution(access.actor));
     return Response.json(await roster(organizationId));
   } catch (error) {
     return rosterApiError(error, "Removing a person from the roster");

@@ -6,6 +6,7 @@ import { getServerEnv } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { createClubTeamInvite } from "@/modules/club-imports/invites";
+import { ACT_AS_OWN_ACCOUNT_MESSAGE, isActingAdminsOwnEmail } from "@/modules/organizations/act-as-own-account";
 import { getAccountEmailSender, isAccountEmailConfigured } from "@/modules/communications/account-email";
 import {
   clubDirectorRoleLabels,
@@ -267,14 +268,20 @@ export type ClubTeamMember = Awaited<ReturnType<typeof listClubTeam>>[number];
  * (#375). No verified account yet? An invite is created and emailed instead
  * (#425); it becomes this same grant when they sign up and accept it.
  */
+/** Never an attendee account credited for a staff action (#442): `userId` (with `actAsId`) for a staff "act as" director. */
+export type ClubTeamActor = { accountId: string } | { userId: string; actAsId: string };
+
 export async function grantClubTeamRole(
   organizationId: string,
   input: CreateClubTeamGrantInput,
-  actorAccountId: string,
+  actor: ClubTeamActor,
   now = new Date(),
 ) {
   if (!clubRoleIsAssignableByClub(input.role)) {
     throw new OrganizationOperationError("DIRECTOR_GRANT_ROLE_NOT_ALLOWED", "Only conference staff can assign directors and deputies.");
+  }
+  if (await isActingAdminsOwnEmail(actor, input.email)) {
+    throw new OrganizationOperationError("ACT_AS_OWN_ACCOUNT_NOT_ALLOWED", ACT_AS_OWN_ACCOUNT_MESSAGE);
   }
   const prisma = getPrisma();
   const account = await prisma.attendeeAccount.findUnique({
@@ -292,7 +299,7 @@ export async function grantClubTeamRole(
   const hasVerifiedAccount = Boolean(account?.emailVerifiedAt);
 
   if (!hasVerifiedAccount) {
-    const { messageId } = await createClubTeamInvite(organizationId, { email: input.email, role: input.role }, actorAccountId, now);
+    const { messageId } = await createClubTeamInvite(organizationId, { email: input.email, role: input.role }, actor, now);
     return { team: await listClubTeam(organizationId, now), invited: true, messageId };
   }
   const accountId = account!.id;
@@ -317,16 +324,22 @@ export async function grantClubTeamRole(
         role: input.role,
         effectiveFrom: now,
         reason: "Given by the club's director or deputy.",
-        grantedByAccountId: actorAccountId,
+        ...("accountId" in actor ? { grantedByAccountId: actor.accountId } : { grantedByUserId: actor.userId }),
       },
       select: { id: true },
     });
     await writeAuditLog({
+      ...("userId" in actor ? { actorUserId: actor.userId } : {}),
       action: "CLUB_ROLE_GRANTED",
       entityType: "ClubDirectorGrant",
       entityId: grant.id,
       summary: `Club leader gave ${clubDirectorRoleLabels[input.role].toLocaleLowerCase("en-US")} access to ${club.name}.`,
-      metadata: { organizationId, attendeeAccountId: accountId, role: input.role, actorAttendeeAccountId: actorAccountId },
+      metadata: {
+        organizationId,
+        attendeeAccountId: accountId,
+        role: input.role,
+        ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId }),
+      },
     }, tx);
 
     // Best-effort: the grant stands even where account email isn't configured (local dev).
@@ -363,7 +376,7 @@ export async function grantClubTeamRole(
 export async function revokeClubTeamRole(
   organizationId: string,
   grantId: string,
-  actorAccountId: string,
+  actor: ClubTeamActor,
   now = new Date(),
 ) {
   await serializable(async (tx) => {
@@ -379,14 +392,24 @@ export async function revokeClubTeamRole(
     if (grant.revokedAt) throw new OrganizationOperationError("DIRECTOR_GRANT_ALREADY_REVOKED", "That role was already removed.");
     await tx.clubDirectorGrant.update({
       where: { id: grantId },
-      data: { revokedAt: now, revokedByAccountId: actorAccountId, revokeReason: "Removed by the club's director or deputy." },
+      data: {
+        revokedAt: now,
+        revokeReason: "Removed by the club's director or deputy.",
+        ...("accountId" in actor ? { revokedByAccountId: actor.accountId } : { revokedByUserId: actor.userId }),
+      },
     });
     await writeAuditLog({
+      ...("userId" in actor ? { actorUserId: actor.userId } : {}),
       action: "CLUB_ROLE_REVOKED",
       entityType: "ClubDirectorGrant",
       entityId: grantId,
       summary: `Club leader removed a ${clubDirectorRoleLabels[grant.role].toLocaleLowerCase("en-US")} from ${club.name}.`,
-      metadata: { organizationId, attendeeAccountId: grant.attendeeAccountId, role: grant.role, actorAttendeeAccountId: actorAccountId },
+      metadata: {
+        organizationId,
+        attendeeAccountId: grant.attendeeAccountId,
+        role: grant.role,
+        ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId }),
+      },
     }, tx);
   });
   return listClubTeam(organizationId, now);

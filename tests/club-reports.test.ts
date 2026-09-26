@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   writeAuditLog: vi.fn(),
@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   getCurrentAttendee: vi.fn(),
   listDirectedClubs: vi.fn(),
   rejectCrossOriginRequest: vi.fn(),
+  currentStaffActingContext: vi.fn(),
 }));
 
 const mocksExtra = vi.hoisted(() => ({
@@ -29,10 +30,13 @@ const client = {
   $transaction: (work: (tx: unknown) => unknown) => work(client),
 };
 
+const secondStep = vi.hoisted(() => ({ accountNeedsSecondStep: vi.fn(async () => "OK") }));
 vi.mock("server-only", () => ({}));
+vi.mock("@/modules/attendee-accounts/sign-in-gate", () => ({ accountNeedsSecondStep: secondStep.accountNeedsSecondStep }));
 vi.mock("@/lib/prisma", () => ({ getPrisma: () => client }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: mocks.writeAuditLog }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.getCurrentAttendee }));
+vi.mock("@/modules/organizations/staff-act-as", () => ({ currentStaffActingContext: mocks.currentStaffActingContext }));
 vi.mock("@/modules/organizations/director-access", () => ({ listDirectedClubs: mocks.listDirectedClubs }));
 vi.mock("@/modules/access/request-security", () => ({ rejectCrossOriginRequest: mocks.rejectCrossOriginRequest }));
 
@@ -81,6 +85,7 @@ beforeEach(() => {
   mocks.reportCreate.mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve(stored(data)));
   mocks.reportUpdate.mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve(stored(data)));
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
+  mocks.currentStaffActingContext.mockResolvedValue(null);
   mocks.getCurrentAttendee.mockResolvedValue({ account: { id: "account-1", verifiedEmail: "r@example.test", displayName: "R" }, via: "attendee", sessionId: "s-1" });
   mocksExtra.orgFindMany.mockResolvedValue([]);
   mocksExtra.reportFindMany.mockResolvedValue([]);
@@ -263,7 +268,7 @@ describe("reopening a report", () => {
   it("moves a submitted report back to draft, before the due date, without touching firstSubmittedAt", async () => {
     mocks.reportFindUnique.mockResolvedValue({ id: "report-1", status: "SUBMITTED" });
     mocks.reportUpdate.mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve(stored({ firstSubmittedAt: new Date("2026-11-05T15:00:00Z"), ...data })));
-    const report = await reopenClubReport("club-1", "2026-10", "account-1", new Date("2026-11-08T15:00:00Z"));
+    const report = await reopenClubReport("club-1", "2026-10", { accountId: "account-1" }, new Date("2026-11-08T15:00:00Z"));
     expect(report.status).toBe("DRAFT");
     expect(report.submittedAt).toBeNull();
     expect(mocks.reportUpdate.mock.calls[0][0].data).not.toHaveProperty("firstSubmittedAt");
@@ -272,18 +277,18 @@ describe("reopening a report", () => {
 
   it("refuses to reopen after the report's due date", async () => {
     mocks.reportFindUnique.mockResolvedValue({ id: "report-1", status: "SUBMITTED" });
-    await expect(reopenClubReport("club-1", "2026-10", "account-1", new Date("2026-11-12T15:00:00Z")))
+    await expect(reopenClubReport("club-1", "2026-10", { accountId: "account-1" }, new Date("2026-11-12T15:00:00Z")))
       .rejects.toMatchObject({ code: "CLUB_REPORT_LOCKED" });
     expect(mocks.reportUpdate).not.toHaveBeenCalled();
   });
 
   it("refuses to reopen a report that is already a draft, or one that doesn't exist", async () => {
     mocks.reportFindUnique.mockResolvedValue({ id: "report-1", status: "DRAFT" });
-    await expect(reopenClubReport("club-1", "2026-10", "account-1", new Date("2026-11-08T15:00:00Z")))
+    await expect(reopenClubReport("club-1", "2026-10", { accountId: "account-1" }, new Date("2026-11-08T15:00:00Z")))
       .rejects.toMatchObject({ code: "CLUB_REPORT_NOT_SUBMITTED" });
 
     mocks.reportFindUnique.mockResolvedValue(null);
-    await expect(reopenClubReport("club-1", "2026-10", "account-1", new Date("2026-11-08T15:00:00Z")))
+    await expect(reopenClubReport("club-1", "2026-10", { accountId: "account-1" }, new Date("2026-11-08T15:00:00Z")))
       .rejects.toMatchObject({ code: "CLUB_REPORT_NOT_FOUND" });
   });
 });
@@ -313,5 +318,64 @@ describe("conference CSV", () => {
     const cells = row.split(",").map((cell) => cell.replace(/^"|"$/g, ""));
     expect(cells.slice(2, 5)).toEqual(["300", "missing", ""]);
     expect(cells.slice(-3)).toEqual(["1500", "1", "1800"]);
+  });
+});
+
+describe("a staff \"act as\" director gets exactly the club's rules (#442)", () => {
+  const pastDue = new Date("2026-11-12T15:00:00Z");
+  const acting = { userId: "admin-1", actAsId: "act-1" };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("is locked out of a submitted report after the due date, like a real director", async () => {
+    mocks.reportFindUnique.mockResolvedValue({ id: "report-1", status: "SUBMITTED", firstSubmittedAt: new Date("2026-11-02T15:00:00Z") });
+    await expect(saveClubReport("club-1", "2026-10", input(), acting, pastDue)).rejects.toMatchObject({ code: "CLUB_REPORT_LOCKED" });
+    expect(mocks.reportUpdate).not.toHaveBeenCalled();
+  });
+
+  it("records a late resubmission, attributed to the staff user and the act-as, never an attendee account", async () => {
+    mocks.reportFindUnique.mockResolvedValue({
+      id: "report-1",
+      status: "DRAFT",
+      firstSubmittedAt: new Date("2026-11-05T15:00:00Z"),
+      submittedAt: null,
+      totalPoints: 0,
+      onTimePoints: 0,
+    });
+    await saveClubReport("club-1", "2026-10", input(), acting, pastDue);
+    const data = mocks.reportUpdate.mock.calls[0][0].data;
+    expect(data).toMatchObject({ updatedByUserId: "admin-1", updatedByAccountId: null });
+    expect(data).not.toHaveProperty("submittedByAccountId");
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      actorUserId: "admin-1",
+      metadata: expect.objectContaining({ resubmittedAfterDueDate: true, actAsId: "act-1" }),
+    }), client);
+    expect(mocks.writeAuditLog.mock.calls[0][0].metadata).not.toHaveProperty("actorAttendeeAccountId");
+  });
+
+  it("is refused through the club route after the due date, with no attendee account involved", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-12T15:00:00Z"));
+    mocks.currentStaffActingContext.mockResolvedValue({
+      userId: "admin-1", staffSessionId: "staff-session-1", actAsId: "act-1",
+      role: "CLUB_DIRECTOR", organizationId: "club-1", expiresAt: new Date("2026-10-12T17:00:00Z"),
+    });
+    mocks.orgFindUnique.mockImplementation(({ select }: { select: Record<string, unknown> }) => Promise.resolve(
+      "isActive" in select
+        ? { type: "CLUB", isActive: true, name: "Test Pathfinders", parentOrganization: null }
+        : { type: "CLUB", name: "Test Pathfinders" },
+    ));
+    mocks.reportFindUnique.mockResolvedValue({ id: "report-1", status: "SUBMITTED", firstSubmittedAt: new Date("2026-10-02T15:00:00Z") });
+    const response = await PUT(new Request("https://events.imsda.test/api/attendee/clubs/club-1/reports/2026-09", {
+      method: "PUT",
+      headers: { origin: "https://events.imsda.test", "content-type": "application/json" },
+      body: JSON.stringify({ points: { staffMeeting: 25 }, signatureName: "Pat Example", signedOn: "2026-10-05", status: "SUBMITTED" }),
+    }), { params: Promise.resolve({ organizationId: "club-1", month: "2026-09" }) });
+    expect(response.status).not.toBe(200);
+    expect(await response.json()).toMatchObject({ error: "CLUB_REPORT_LOCKED" });
+    expect(mocks.reportUpdate).not.toHaveBeenCalled();
+    expect(mocks.getCurrentAttendee).not.toHaveBeenCalled();
   });
 });

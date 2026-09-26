@@ -33,7 +33,8 @@ export function ClubTeamWorkspace({
   initialTeam: ClubTeamMember[];
   initialInvites: ClubTeamInvite[];
   organizationId: string;
-  viewerAccountId: string;
+  /** Null for a staff "act as" director (#442): no attendee account to mark "(you)". */
+  viewerAccountId: string | null;
 }) {
   const [team, setTeam] = useState(initialTeam);
   const [invites, setInvites] = useState(initialInvites);

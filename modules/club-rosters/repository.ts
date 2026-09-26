@@ -22,7 +22,13 @@ export class RosterOperationError extends Error {
   }
 }
 
-type Actor = { accountId: string };
+/**
+ * Who did it, for attribution and audit. `userId` covers both the direct
+ * staff "Open club" view (#386, no `actAsId`) and a staff "act as" director
+ * (#442, with `actAsId` from the act-as record) — never an attendee account
+ * credited for a staff action.
+ */
+type Actor = { accountId: string } | { userId: string; actAsId?: string };
 
 const memberSelect = {
   id: true,
@@ -79,11 +85,16 @@ function audit(
   metadata: Record<string, Prisma.InputJsonValue> = {},
 ) {
   return writeAuditLog({
+    ...("userId" in actor ? { actorUserId: actor.userId } : {}),
     action,
     entityType: "ClubRosterMember",
     entityId,
     summary,
-    metadata: { organizationId, actorAttendeeAccountId: actor.accountId, ...metadata },
+    metadata: {
+      organizationId,
+      ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId }),
+      ...metadata,
+    },
   }, tx);
 }
 
@@ -182,7 +193,7 @@ export async function addRosterMember(
         sealedBirthDate: sealBirthDate(input.birthDate),
         source: options.source ?? "DIRECTOR",
         sourceRegistrationId: options.sourceRegistrationId ?? null,
-        createdByAccountId: actor.accountId,
+        ...("accountId" in actor ? { createdByAccountId: actor.accountId } : { createdByUserId: actor.userId }),
       },
       select: { id: true },
     });
@@ -311,8 +322,8 @@ export async function removeRosterMember(organizationId: string, memberId: strin
 }
 
 /** Full birth dates for the roster, for an authorized director. Audited without the dates. */
-/** Staff reveal from the "Open club" view (#386) is audited as the staff user. */
-export async function revealRosterBirthDates(organizationId: string, clubYear: string, actor: Actor | { userId: string }) {
+/** Staff reveal from the "Open club" view (#386), or a staff "act as" director (#442), is audited as the staff user. */
+export async function revealRosterBirthDates(organizationId: string, clubYear: string, actor: Actor) {
   const members = await getPrisma().clubRosterMember.findMany({
     where: { organizationId, clubYear, status: { not: "REMOVED" }, sealedBirthDate: { not: null } },
     select: { id: true, sealedBirthDate: true },
@@ -328,7 +339,9 @@ export async function revealRosterBirthDates(organizationId: string, clubYear: s
       organizationId,
       clubYear,
       count: members.length,
-      ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { viewedAsStaff: true }),
+      ...("accountId" in actor
+        ? { actorAttendeeAccountId: actor.accountId }
+        : actor.actAsId ? { actAsId: actor.actAsId } : { viewedAsStaff: true }),
     },
   });
   return birthDates;

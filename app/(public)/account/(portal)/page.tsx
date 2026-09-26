@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { ArrowRight, CalendarDays, CircleDollarSign, ShieldAlert, ShieldCheck, UserRound, UsersRound } from "lucide-react";
 import { ClubInviteAccept } from "@/components/club-invite-accept";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { requireAttendeeSecondStep } from "@/modules/attendee-accounts/portal-second-step";
 import { getAttendeeMfaStatus } from "@/modules/attendee-accounts/mfa-service";
 import { listRegistrationsForVerifiedEmail, type AttendeeRegistrationSummary } from "@/modules/attendee-accounts/registrations-repository";
 import { listInvitesForAccount } from "@/modules/club-imports/invites";
@@ -33,6 +34,7 @@ function upcomingOnly(registrations: AttendeeRegistrationSummary[], now = new Da
 
 /** The account's front page: where things stand, and a way into each area. */
 export default async function AttendeeAccountOverviewPage() {
+  await requireAttendeeSecondStep();
   const { account, via } = await getCurrentAttendee();
   if (!account) redirect("/account/sign-in");
 

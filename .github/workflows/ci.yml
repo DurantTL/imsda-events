@@ -40,3 +40,5 @@ jobs:
       - run: npm run verify
       # Real-database check that Honors Weekend class seats hold under concurrent saves (#359).
       - run: npm run test:honor-capacity
+      # Real-database check of the one-active-act-as-per-session index and racing starts (#442).
+      - run: npm run test:staff-act-as

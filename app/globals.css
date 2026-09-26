@@ -1304,6 +1304,9 @@ select:focus-visible {
 .arrival-row button.undo-button { border-color: #dfc9e8; background: var(--imsda-purple-soft); color: var(--imsda-purple); }
 .arrival-row button:disabled { cursor: not-allowed; opacity: 0.55; }
 .inline-notice { border: 1px solid #b8d7ca; border-radius: 12px; background: var(--green-soft); color: var(--green); padding: 10px 13px; font-size: 0.7rem; font-weight: 600; }
+.act-as-banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
+.act-as-banner span:not(.act-as-banner-actions) { flex: 1 1 auto; }
+.act-as-banner-actions { display: flex; align-items: center; gap: 8px; }
 .inline-notice.error { border-color: #e9c7c2; background: #fff1ef; color: var(--coral); }
 .check-in-scanner-modal { width: min(760px, 100%); }
 .check-in-scanner-description {

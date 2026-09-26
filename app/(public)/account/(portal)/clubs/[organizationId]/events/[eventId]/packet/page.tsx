@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { BackLink } from "@/components/back-link";
 import { ClubPacketSheet } from "@/components/club-packet-sheet";
 import { PrintReportButton } from "@/components/print-report-button";
-import { getRosterAccessState } from "@/modules/club-rosters/access";
+import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { loadDirectorClubPacket } from "@/modules/reporting/director-club-packet";
 
 export const metadata: Metadata = { title: "Club packet" };
@@ -23,7 +23,7 @@ export default async function DirectorClubPacketPage({
   if (!packet) {
     // The club layout shows the sign-in / unlock prompts; an open club with
     // no active registration for this event is simply not found.
-    if ((await getRosterAccessState(organizationId)).state === "OPEN") notFound();
+    if ((await getRosterAccessStateForPage(organizationId)).state === "OPEN") notFound();
     return null;
   }
 
