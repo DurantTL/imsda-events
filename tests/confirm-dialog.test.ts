@@ -1,7 +1,7 @@
 import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
-import { ConfirmDialog } from "@/components/confirm-dialog";
+import { describe, expect, it, vi } from "vitest";
+import { cancelUnlessBusy, ConfirmDialog } from "@/components/confirm-dialog";
 
 // `createElement`'s props parameter still requires `children` per
 // `ConfirmDialog`'s own prop types even when it's passed as a trailing
@@ -68,5 +68,19 @@ describe("ConfirmDialog (#466)", () => {
     ));
     expect(html).toContain('role="alert"');
     expect(html).toContain("That didn&#x27;t work. Try again.");
+  });
+});
+
+describe("cancelUnlessBusy (#466 review)", () => {
+  it("cancels when nothing is running", () => {
+    const onCancel = vi.fn();
+    cancelUnlessBusy(false, onCancel);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores Escape while the confirmed request is running, so its error is still shown", () => {
+    const onCancel = vi.fn();
+    cancelUnlessBusy(true, onCancel);
+    expect(onCancel).not.toHaveBeenCalled();
   });
 });

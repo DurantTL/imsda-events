@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowRight, UserRoundCog } from "lucide-react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 
@@ -40,8 +40,16 @@ export function ActAsButton({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<{ message: string; href: string } | null>(null);
+  const resultLinkRef = useRef<HTMLAnchorElement>(null);
+
+  // The button that opened the dialog is gone once acting starts, so move
+  // focus to the link that replaced it rather than leaving it on <body>.
+  useEffect(() => {
+    if (result) resultLinkRef.current?.focus();
+  }, [result]);
 
   async function act() {
+    if (busy) return;
     setBusy(true);
     setError("");
     try {
@@ -67,7 +75,7 @@ export function ActAsButton({
       {result ? (
         <p className="inline-notice success" role="status">
           {result.message}{" "}
-          <a href={result.href}>{resultAction} <ArrowRight aria-hidden="true" size={13} /></a>.
+          <a href={result.href} ref={resultLinkRef}>{resultAction} <ArrowRight aria-hidden="true" size={13} /></a>.
         </p>
       ) : (
         <button className="secondary-button" onClick={() => setOpen(true)} type="button">

@@ -9,8 +9,9 @@ import { useAccessibleDialog } from "@/components/use-accessible-dialog";
  * consequential enough to need a deliberate confirm step: what's about to
  * happen, an inline error if the confirmed action fails, and a busy state
  * while it runs. Used in place of `window.confirm()`, which iOS Safari can
- * silently fail to show at all — no popup, no error. Escape and the
- * backdrop cancel (never mid-request); focus returns to whatever opened it
+ * silently fail to show at all — no popup, no error. Escape, the backdrop,
+ * the X and Cancel all cancel, but never mid-request, so a failure that
+ * arrives after the request is always shown in the open dialog; focus returns to whatever opened it
  * when it's cancelled, via `useAccessibleDialog`.
  *
  * Generic so #471 and #472 can reuse it for their own high-consequence
@@ -18,6 +19,11 @@ import { useAccessibleDialog } from "@/components/use-accessible-dialog";
  * about to happen), `destructive` swaps the confirm button's styling for a
  * dangerous action, and `onConfirm` runs the caller's own async work.
  */
+/** Escape runs through here too, so a request in flight can't be dismissed and its error lost. */
+export function cancelUnlessBusy(busy: boolean, onCancel: () => void) {
+  if (!busy) onCancel();
+}
+
 export function ConfirmDialog({
   busy = false,
   busyLabel,
@@ -44,7 +50,7 @@ export function ConfirmDialog({
   title: string;
 }) {
   const titleId = useId();
-  const dialogRef = useAccessibleDialog<HTMLElement>(open, onCancel);
+  const dialogRef = useAccessibleDialog<HTMLElement>(open, () => cancelUnlessBusy(busy, onCancel));
   if (!open) return null;
 
   return (

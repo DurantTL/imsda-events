@@ -208,7 +208,7 @@ export async function actAsClubDirector(staff: { id: string }, staffSessionId: s
  */
 export function stopActingHref(stopped: { role: StaffActAsRole; organizationId: string | null } | null) {
   if (stopped?.role === "CLUB_DIRECTOR" && stopped.organizationId) {
-    return `/admin/organizations/${stopped.organizationId}/club`;
+    return `/admin/organizations/${encodeURIComponent(stopped.organizationId)}/club`;
   }
   return "/admin/organizations";
 }
