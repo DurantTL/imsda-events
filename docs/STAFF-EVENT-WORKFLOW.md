@@ -24,7 +24,7 @@ Keep this rule in mind when adding or reviewing any staff-facing page.
 
 ### 1. Create the draft
 
-Create the event from **Events → New event**. It starts as a private draft —
+From **Admin**, choose **Create event**. It starts as a private draft —
 nothing is public and no attendee can register yet. Creating it hands you
 straight to its settings with a one-time "Draft created" banner naming the
 next three steps.
