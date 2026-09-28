@@ -4093,6 +4093,8 @@ select:focus-visible {
   text-decoration: none;
 }
 .public-event-not-found-link:hover { text-decoration: underline; }
+.public-not-found-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; }
+.public-not-found-links .public-event-not-found-link { margin-top: 0; }
 
 /* Private registration confirmation and contact management */
 .public-manage-hero {

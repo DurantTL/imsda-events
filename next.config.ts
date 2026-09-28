@@ -67,6 +67,18 @@ const nextConfig: NextConfig = {
   typescript: {
     tsconfigPath: buildTsconfigPath,
   },
+  async redirects() {
+    return [
+      // The public events home lives at "/" (#437). "/events" is a
+      // predictable address people guess; keep it permanent so it survives
+      // #106 later building a separate directory at that path.
+      {
+        source: "/events",
+        destination: "/",
+        permanent: true,
+      },
+    ];
+  },
   async headers() {
     return [
       {
