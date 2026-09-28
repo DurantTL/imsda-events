@@ -1,3 +1,4 @@
+import { staffLoginRedirectPath } from "@/modules/access/login-redirect";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -10,7 +11,7 @@ export const metadata: Metadata = { title: "Master Award rules" };
 /** Master Award rules (#532): system administrators import, review, edit and activate them. */
 export default async function MasterAwardRulesPage() {
   const { user } = await getCurrentSession();
-  if (!user) redirect("/login");
+  if (!user) redirect(await staffLoginRedirectPath());
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
 
   const [rules, choices] = await Promise.all([listMasterAwardRules(), listRuleChoices()]);

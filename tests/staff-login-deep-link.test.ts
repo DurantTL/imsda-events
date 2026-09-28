@@ -32,7 +32,11 @@ vi.mock("@/modules/events/repository", () => ({
 }));
 vi.mock("@/modules/events/last-used-event", () => ({ readLastUsedEventId: mocks.readLastUsedEventId }));
 
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
 import { NextRequest } from "next/server";
+// This Next version exports the matcher helper under its pre-rename name; the docs' unstable_doesProxyMatch is not exported yet.
+import { unstable_doesMiddlewareMatch } from "next/experimental/testing/server";
 import { config, proxy } from "@/proxy";
 import { staffLoginPathFor } from "@/modules/access/login-routing";
 import { resolvePostLoginDestination } from "@/modules/access/post-login-destination";
@@ -97,6 +101,17 @@ describe("staffLoginPathFor", () => {
   it("does not loop back into the sign-in page", () => {
     expect(staffLoginPathFor("/login?next=/overview")).toBe("/login");
   });
+
+  it.each(["/no-access", "/no-access?x=1", "/no-access/", "/select-event", "/select-event?unavailable=1", "/select-event#top"])(
+    "never carries the role-routing destination %s",
+    (value) => {
+      expect(staffLoginPathFor(value)).toBe("/login");
+    },
+  );
+
+  it("still carries paths that merely start like a refused one", () => {
+    expect(staffLoginPathFor("/no-access-notes")).toBe(`/login?next=${encodeURIComponent("/no-access-notes")}`);
+  });
 });
 
 describe("post-login return", () => {
@@ -134,14 +149,45 @@ describe("proxy", () => {
   });
 
   it("matches workspace pages but not assets, API routes or public pages", () => {
-    const matchers = config.matcher.map((source) => new RegExp(`^${source.replace(/\/:path\*$/, "(?:/.*)?")}$`));
-    const matches = (path: string) => matchers.some((matcher) => matcher.test(path));
+    const matches = (url: string) => unstable_doesMiddlewareMatch({ config, url });
 
     expect(matches("/admin/team")).toBe(true);
-    expect(matches("/more/documents")).toBe(true);
+    expect(matches("/more/documents?event=evt_1")).toBe(true);
     expect(matches("/select-event")).toBe(true);
     for (const path of ["/_next/static/app.js", "/_next/image", "/favicon.ico", "/api/auth/login", "/events/x", "/login", "/robots.txt"]) {
       expect(matches(path)).toBe(false);
     }
+  });
+});
+
+describe("page coverage guards", () => {
+  function pageFiles(dir: string): string[] {
+    return readdirSync(dir).flatMap((entry) => {
+      const full = path.join(dir, entry);
+      if (statSync(full).isDirectory()) return pageFiles(full);
+      return entry === "page.tsx" ? [full] : [];
+    });
+  }
+  const appDir = path.join(process.cwd(), "app");
+  /** URL path of a page file: route groups are dropped. */
+  function urlOf(file: string): string {
+    const segments = path.relative(appDir, path.dirname(file)).split(path.sep).filter((s) => s && !/^\(.*\)$/.test(s));
+    return `/${segments.join("/")}`;
+  }
+  const pages = pageFiles(appDir).map((file) => ({ file, url: urlOf(file), source: readFileSync(file, "utf8") }));
+  const covered = (url: string) => unstable_doesMiddlewareMatch({ config, url });
+
+  it("finds pages to check", () => {
+    expect(pages.length).toBeGreaterThan(50);
+  });
+
+  it("no page under the proxy matcher still redirects to a bare /login", () => {
+    const offenders = pages.filter((p) => covered(p.url) && /redirect\(\s*["'`]\/login["'`]\s*\)/.test(p.source)).map((p) => p.file);
+    expect(offenders).toEqual([]);
+  });
+
+  it("every page that calls staffLoginRedirectPath sits under the proxy matcher", () => {
+    const offenders = pages.filter((p) => p.source.includes("staffLoginRedirectPath") && !covered(p.url)).map((p) => p.url);
+    expect(offenders).toEqual([]);
   });
 });

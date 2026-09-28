@@ -71,6 +71,8 @@ export function resolveLoginDestination(input: LoginRoutingInput): string {
 }
 
 export const STAFF_LOGIN_PATH = "/login";
+/** Role-routing destinations that are never a sign-in return target. */
+const NON_RETURNABLE_PATHS = [NO_EVENTS_PATH, EVENT_PICKER_PATH] as const;
 /**
  * Request header `proxy.ts` sets to the visited path plus query, so server
  * components (which cannot see the request URL) can build a `?next=` deep
@@ -87,8 +89,15 @@ export const REQUEST_TARGET_HEADER = "x-imsda-request-target";
 export function staffLoginPathFor(target: string | null | undefined): string {
   const safe = safeReturnTo(target, "");
   if (!safe) return STAFF_LOGIN_PATH;
-  // Never bounce back into the sign-in flow itself.
-  if (safe === STAFF_LOGIN_PATH || safe.startsWith(`${STAFF_LOGIN_PATH}?`) || safe.startsWith(`${STAFF_LOGIN_PATH}/`)) {
+  // Never bounce back into the sign-in flow itself, and never carry a
+  // role-routing destination: on a shared device the next person to sign in
+  // would land on the previous person's "no access" or picker page.
+  const pathname = safe.split(/[?#]/, 1)[0].replace(/\/+$/, "");
+  if (
+    pathname === STAFF_LOGIN_PATH ||
+    pathname.startsWith(`${STAFF_LOGIN_PATH}/`) ||
+    (NON_RETURNABLE_PATHS as readonly string[]).includes(pathname)
+  ) {
     return STAFF_LOGIN_PATH;
   }
   return `${STAFF_LOGIN_PATH}?next=${encodeURIComponent(safe)}`;

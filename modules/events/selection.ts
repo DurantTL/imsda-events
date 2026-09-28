@@ -1,6 +1,6 @@
-import { staffLoginRedirectPath } from "@/modules/access/login-redirect";
 import "server-only";
 
+import { staffLoginRedirectPath } from "@/modules/access/login-redirect";
 import { redirect } from "next/navigation";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { eventPermissions, rolePermissions } from "@/modules/access/permissions";
