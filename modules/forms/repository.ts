@@ -11,13 +11,14 @@ import {
   type RegistrationFormDefinition,
 } from "@/modules/forms/definition";
 import { preparePublicRegistration } from "@/modules/forms/public-domain";
+import { slugify } from "@/modules/forms/slug";
 import { listActiveAttendeeTypes } from "@/modules/attendee-types/repository";
 import { stripAttendeeTypeOptions, withAttendeeTypeOptions } from "@/modules/attendee-types/form-options";
 import type { AttendeeTypeOption } from "@/modules/attendee-types/domain";
 
 export class FormOperationError extends Error {
   constructor(
-    public readonly code: "FORM_NOT_FOUND" | "TEMPLATE_NOT_FOUND" | "EDIT_CONFLICT" | "NO_DRAFT" | "TEST_REQUIRED" | "VERSION_NOT_FOUND" | "NOT_PUBLISHED",
+    public readonly code: "FORM_NOT_FOUND" | "TEMPLATE_NOT_FOUND" | "EDIT_CONFLICT" | "NO_DRAFT" | "TEST_REQUIRED" | "VERSION_NOT_FOUND" | "NOT_PUBLISHED" | "SLUG_LOCKED" | "FORM_SLUG_TAKEN",
     message: string,
   ) {
     super(message);
@@ -148,10 +149,6 @@ export function listFormTemplates() {
   }));
 }
 
-function slugify(value: string) {
-  return value.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "registration-form";
-}
-
 export async function createRegistrationForm(eventId: string, actorUserId: string, templateKey: string) {
   const template = getFormTemplate(templateKey);
   if (!template) throw new FormOperationError("TEMPLATE_NOT_FOUND", "That form template is not available.");
@@ -215,6 +212,39 @@ export async function updateRegistrationForm(
       correlationId: randomUUID(), summary: `Saved a draft of ${definition.title}.`, metadata: { sectionCount: definition.sections.length, invalidatedTestCount, productionWrite: false },
     } });
   });
+  return (await getRegistrationForm(eventId, formId))!;
+}
+
+/**
+ * Updates a form's web address (slug) before its first publish.
+ *
+ * A form copied from a template keeps the template's slug even after its
+ * title changes, so the builder prompts staff to sync the two before the
+ * first publish (#476). Once a version of this form has ever been published,
+ * the slug is locked: shared links depend on it, so nothing may change it
+ * automatically or silently — only this explicit, pre-first-publish choice
+ * is allowed to move it.
+ */
+export async function updateRegistrationFormSlug(eventId: string, formId: string, actorUserId: string, slug: string) {
+  const form = await getPrisma().registrationForm.findFirst({
+    where: { id: formId, eventId },
+    select: { id: true, name: true, slug: true, versions: { select: { publishedAt: true } } },
+  });
+  if (!form) throw new FormOperationError("FORM_NOT_FOUND", "That registration form was not found.");
+  if (form.versions.some((version) => version.publishedAt)) {
+    throw new FormOperationError("SLUG_LOCKED", "This form has already been published, so its web address can no longer change automatically.");
+  }
+  if (slug !== form.slug) {
+    await getPrisma().$transaction(async (tx) => {
+      const existing = await tx.registrationForm.findUnique({ where: { eventId_slug: { eventId, slug } }, select: { id: true } });
+      if (existing) throw new FormOperationError("FORM_SLUG_TAKEN", "That web address is already used by another form for this event. Choose another address.");
+      await tx.registrationForm.update({ where: { id: formId }, data: { slug } });
+      await tx.auditLog.create({ data: {
+        eventId, actorUserId, action: "REGISTRATION_FORM_SLUG_UPDATED", entityType: "RegistrationForm", entityId: formId,
+        correlationId: randomUUID(), summary: `Updated the web address for ${form.name} to /${slug}.`, metadata: { previousSlug: form.slug, slug, productionWrite: false },
+      } });
+    });
+  }
   return (await getRegistrationForm(eventId, formId))!;
 }
 
