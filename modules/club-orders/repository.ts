@@ -13,6 +13,7 @@ import {
   type PickListEntry,
 } from "@/modules/club-orders/domain";
 import type { ClubSupplyStockActor } from "@/modules/club-supplies/repository";
+import { clubYearFor } from "@/modules/club-rosters/domain";
 import { itemAndSize } from "@/modules/uniforms/domain";
 
 /**
@@ -74,6 +75,46 @@ export function auditActorFields(actor: ClubOrderActor) {
     actorFields: "userId" in actor ? { actorUserId: actor.userId } : {},
     metadata: "accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId },
   };
+}
+
+/**
+ * Uniform needs of people who left (#497): a NEEDED uniform need whose member
+ * is no longer ACTIVE on this club's roster this club year is removed, audited
+ * by count, so it is never ordered. Uniform needs are NOT moved to a new club
+ * on a transfer (unlike honors): sizes and needs are club-specific, and the new
+ * club records its own. ORDERED, RECEIVED and AWARDED needs stay where they are.
+ * Runs under the club's lock, in the caller's transaction.
+ */
+export async function removeDepartedMemberNeedsInTx(tx: Prisma.TransactionClient, organizationId: string, now = new Date()) {
+  const needed = await tx.clubOrderNeed.findMany({
+    where: { organizationId, sourceType: "UNIFORM", status: "NEEDED" },
+    select: { id: true, personId: true },
+  });
+  if (needed.length === 0) return { removed: 0 };
+  const active = await tx.clubRosterMember.findMany({
+    where: { organizationId, clubYear: clubYearFor(now), status: "ACTIVE", personId: { in: [...new Set(needed.map((need) => need.personId))] } },
+    select: { personId: true },
+  });
+  const activeIds = new Set(active.map((member) => member.personId));
+  const departed = needed.filter((need) => !activeIds.has(need.personId)).map((need) => need.id);
+  if (departed.length === 0) return { removed: 0 };
+  const removed = await tx.clubOrderNeed.deleteMany({ where: { id: { in: departed }, organizationId, sourceType: "UNIFORM", status: "NEEDED" } });
+  if (removed.count > 0) {
+    await writeAuditLog({
+      action: "CLUB_UNIFORM_NEEDS_DEPARTED_REMOVED",
+      entityType: "ClubOrderNeed",
+      summary: `Removed ${removed.count} not-yet-ordered uniform need${removed.count === 1 ? "" : "s"} for members no longer on the roster.`,
+      metadata: { organizationId, needCount: removed.count },
+    }, tx);
+  }
+  return { removed: removed.count };
+}
+
+export async function removeDepartedMemberNeeds(organizationId: string, now = new Date()) {
+  return getPrisma().$transaction(async (tx) => {
+    await lockClubOrders(tx, organizationId);
+    return removeDepartedMemberNeedsInTx(tx, organizationId, now);
+  });
 }
 
 export type NeedCandidate = { sourceId: string; personId: string; itemId: string | null; sourceLabel?: string; sourceDate?: string };
@@ -272,6 +313,9 @@ export async function listOrderList(
  * need would move, no batch is created: NOTHING_TO_ORDER.
  */
 export async function createOrderBatch(organizationId: string, extras: Record<string, number>, actor: ClubOrderActor) {
+  // Never order a departed member's uniform (#497). Its own transaction, so the
+  // removal stays even when this order turns out to have nothing left to order.
+  await removeDepartedMemberNeeds(organizationId);
   return getPrisma().$transaction(async (tx) => {
     await lockClubOrders(tx, organizationId);
     const needs = await tx.clubOrderNeed.findMany({

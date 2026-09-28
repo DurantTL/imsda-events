@@ -100,10 +100,9 @@ export function ClubOrderWorkspace({
   const showPrompt = !readOnly && !promptDismissed && earlier.length > 0;
 
   async function refresh() {
-    const [response, uniformResponse] = await Promise.all([
-      fetch(base, { cache: "no-store" }),
-      fetch(uniformsBase, { cache: "no-store" }),
-    ]);
+    // Uniforms first: an editor's load drops departed members' needs before the order list is read.
+    const uniformResponse = await fetch(uniformsBase, { cache: "no-store" });
+    const response = await fetch(base, { cache: "no-store" });
     const result = await response.json().catch(() => ({})) as ApiResult;
     if (response.ok && result.lines && result.batches && result.awardable && result.unmatched && result.waiting) {
       setData({
@@ -181,7 +180,10 @@ export function ClubOrderWorkspace({
       const result = await post(uniformsBase, input);
       const created = result.created ?? 0;
       const skipped = result.skipped ?? 0;
-      const what = input.alreadyHasOne ? `Recorded ${created} as already issued. Stock wasn't changed.` : `Recorded ${created} uniform ${created === 1 ? "need" : "needs"}.`;
+      const marked = result.marked ?? 0;
+      const what = input.alreadyHasOne
+        ? `Recorded ${created} as already issued${marked > 0 ? ` and marked ${marked} existing ${marked === 1 ? "need" : "needs"} as issued` : ""}. Stock wasn't changed.`
+        : `Recorded ${created} uniform ${created === 1 ? "need" : "needs"}.`;
       return skipped > 0 ? `${what} ${skipped} already on file, so ${skipped === 1 ? "it was" : "they were"} skipped.` : what;
     });
   }

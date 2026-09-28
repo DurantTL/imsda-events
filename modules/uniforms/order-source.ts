@@ -8,6 +8,7 @@ import {
   ClubOrderError,
   type ClubOrderActor,
   lockClubOrders,
+  removeDepartedMemberNeeds,
 } from "@/modules/club-orders/repository";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import {
@@ -87,12 +88,27 @@ export async function recordUniformNeeds(
       where: {
         organizationId,
         sourceType: "UNIFORM",
-        status: { in: [...OPEN_STATUSES] },
+        // "Already has one" also skips a member already recorded as issued, so a double tap never records it twice.
+        status: { in: input.alreadyHasOne ? [...OPEN_STATUSES, "AWARDED" as const] : [...OPEN_STATUSES] },
         personId: { in: personIds },
         itemId: { in: itemIds },
       },
-      select: { personId: true, itemId: true },
+      select: { id: true, personId: true, itemId: true, status: true },
     });
+    // "They already have one" also settles a member's existing NEEDED need for
+    // the same item: it moves to issued (guarded, no stock change), audited by
+    // count like the "already handed out" action. Ordered or received needs
+    // are left alone: that unit is already on its way to them.
+    let marked = 0;
+    if (input.alreadyHasOne) {
+      const neededIds = open.filter((need) => need.status === "NEEDED").map((need) => need.id);
+      if (neededIds.length > 0) {
+        marked = (await tx.clubOrderNeed.updateMany({
+          where: { id: { in: neededIds }, organizationId, sourceType: "UNIFORM", status: "NEEDED" },
+          data: { status: "AWARDED" },
+        })).count;
+      }
+    }
     const alreadyOpen = new Set(open.map((need) => `${need.personId}\u0000${need.itemId}`));
     const data = items.flatMap((item) => personIds
       .filter((personId) => !alreadyOpen.has(`${personId}\u0000${item.id}`))
@@ -106,8 +122,18 @@ export async function recordUniformNeeds(
         sourceDate: calendarDate(now),
         status: input.alreadyHasOne ? ("AWARDED" as const) : ("NEEDED" as const),
       })));
-    const skipped = personIds.length * itemIds.length - data.length;
+    const skipped = personIds.length * itemIds.length - data.length - marked;
     if (data.length > 0) await tx.clubOrderNeed.createMany({ data });
+    if (marked > 0) {
+      const who = auditActorFields(actor);
+      await writeAuditLog({
+        ...who.actorFields,
+        action: "CLUB_ORDER_MARKED_ALREADY_AWARDED",
+        entityType: "ClubOrderNeed",
+        summary: `Marked ${marked} club supply need${marked === 1 ? "" : "s"} as already handed out.`,
+        metadata: { organizationId, needCount: marked, ...who.metadata },
+      }, tx);
+    }
     if (data.length > 0) {
       const who = auditActorFields(actor);
       await writeAuditLog({
@@ -128,7 +154,7 @@ export async function recordUniformNeeds(
         },
       }, tx);
     }
-    return { created: data.length, skipped, alreadyHadOne: input.alreadyHasOne ? data.length : 0 };
+    return { created: data.length, skipped, marked, alreadyHadOne: input.alreadyHasOne ? data.length + marked : 0 };
   });
 }
 
@@ -190,6 +216,8 @@ export async function loadUniformWorkspace(
   { forEditing }: { forEditing: boolean },
   now = new Date(),
 ): Promise<UniformWorkspaceData> {
+  // An editor's load drops NEEDED needs of members who left the roster (#497).
+  if (forEditing) await removeDepartedMemberNeeds(organizationId, now);
   const prisma = getPrisma();
   const [needs, issuedCount, catalogRows, roster] = await Promise.all([
     prisma.clubOrderNeed.findMany({

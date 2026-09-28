@@ -115,3 +115,8 @@ export const uniformStatusLabels = {
   RECEIVED: "Received",
   AWARDED: "Issued",
 } as const;
+
+/** Whether members x items is more than one bulk entry may record (the picker disables saving and says so). */
+export function entryTooLarge(memberCount: number, itemCount: number) {
+  return memberCount * itemCount > MAX_UNIFORM_NEEDS_PER_ENTRY;
+}

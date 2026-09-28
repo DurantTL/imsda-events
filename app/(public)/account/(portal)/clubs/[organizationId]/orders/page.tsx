@@ -21,12 +21,14 @@ export default async function ClubOrdersPage({ params }: { params: Promise<{ org
   // An editor's visit records new completions as needs (ones on file are
   // skipped); a registrar's view-only visit reads what's on file and never writes.
   if (access.capabilities.manageTeam) await syncHonorOrderNeeds(organizationId);
+  // Uniforms load first: an editor's load drops departed members' NEEDED uniform needs (#497).
+  const uniforms = await loadUniformWorkspace(organizationId, { forEditing: access.capabilities.manageTeam });
   return (
     <>
       <BackLink href={`/account/clubs/${organizationId}`}>Back to {access.club.name}</BackLink>
       <ClubOrderWorkspace
         initial={await loadOrderWorkspace(organizationId)}
-        initialUniforms={await loadUniformWorkspace(organizationId, { forEditing: access.capabilities.manageTeam })}
+        initialUniforms={uniforms}
         organizationId={organizationId}
         readOnly={!access.capabilities.manageTeam}
       />

@@ -38,3 +38,4 @@
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .chips li { display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 4px 2px 12px; font-size: .72rem; }
 .chipRemove { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border: 0; background: none; color: var(--muted); cursor: pointer; }
+.rowStatic { display: flex; align-items: center; min-height: 44px; padding-left: 32px; font-size: .74rem; }

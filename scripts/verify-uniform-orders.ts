@@ -31,6 +31,9 @@ const clubs = {
   stock: `${P}_club_stock`,
   view: `${P}_club_view`,
   other: `${P}_club_other`,
+  mark: `${P}_club_mark`,
+  depart: `${P}_club_depart`,
+  moved: `${P}_club_moved`,
 };
 const items = {
   scarf: `${P}_item_scarf`,
@@ -344,6 +347,49 @@ async function main() {
   const otherClubWorkspace = await loadUniformWorkspace(clubs.other, { forEditing: true });
   assert(otherClubWorkspace.needs.length === 0 && otherClubWorkspace.members.length === 1, "another club sees only its own needs and members");
   console.log("ok  view-only: writes nothing, sees names/item/size/status only, no picker; another club's data stays separate");
+
+  // ---------------------------------------------------------------- 11. "already has one" settles existing needs
+  const [m0, m1] = await addMembers(clubs.mark, 2);
+  await recordUniformNeeds(clubs.mark, { personIds: [m0], itemIds: [items.shirtM], alreadyHasOne: false }, actor);
+  await createOrderBatch(clubs.mark, {}, actor);
+  await recordUniformNeeds(clubs.mark, { personIds: [m0, m1], itemIds: [items.slide], alreadyHasOne: false }, actor);
+  const markStock = await prisma.clubSupplyStock.count({ where: { organizationId: clubs.mark } });
+  const settle = { personIds: [m0, m1], itemIds: [items.shirtM, items.slide], alreadyHasOne: true };
+  const settled = await Promise.all([recordUniformNeeds(clubs.mark, settle, actor), recordUniformNeeds(clubs.mark, settle, actor)]);
+  assert(settled[0].marked + settled[1].marked === 2, `the 2 existing NEEDED slide needs move to issued exactly once, got ${JSON.stringify(settled)}`);
+  assert(settled[0].created + settled[1].created === 1, `one new issued shirt for the member with no need, got ${JSON.stringify(settled)}`);
+  assert(await countNeeds(clubs.mark, { itemId: items.slide, status: "AWARDED" }) === 2 && await countNeeds(clubs.mark, { itemId: items.slide, status: "NEEDED" }) === 0, "both slide needs are issued");
+  assert(await countNeeds(clubs.mark, { itemId: items.shirtM, personId: m0, status: "ORDERED" }) === 1, "an already-ordered need is left alone");
+  assert(await countNeeds(clubs.mark, { itemId: items.shirtM }) === 2, "no duplicate issued records from the double tap");
+  assert(await prisma.clubSupplyStock.count({ where: { organizationId: clubs.mark } }) === markStock && await stockOf(clubs.mark, items.slide) === 0, "settling needs never touches stock");
+  const markAudits = await prisma.auditLog.findMany({ where: { action: "CLUB_ORDER_MARKED_ALREADY_AWARDED", metadata: { path: ["organizationId"], equals: clubs.mark } }, select: { metadata: true } });
+  assert(markAudits.length === 1 && (markAudits[0].metadata as { needCount: number }).needCount === 2, "the marked needs are audited by count");
+  console.log("ok  'already has one' moves existing NEEDED needs to issued (guarded, once, no stock change, audited by count)");
+
+  // ---------------------------------------------------------------- 12. departed members' needs
+  const stays = await addMember(clubs.depart);
+  const leaves = await addMember(clubs.depart);
+  const leavesOrdered = await addMember(clubs.depart);
+  await recordUniformNeeds(clubs.depart, { personIds: [leavesOrdered], itemIds: [items.shirtL], alreadyHasOne: false }, actor);
+  await createOrderBatch(clubs.depart, {}, actor);
+  await recordUniformNeeds(clubs.depart, { personIds: [stays, leaves, leavesOrdered], itemIds: [items.shirtM], alreadyHasOne: false }, actor);
+  // "leaves" transfers to another club; "leavesOrdered" is deactivated.
+  await prisma.clubRosterMember.updateMany({ where: { personId: leaves }, data: { status: "INACTIVE" } });
+  await prisma.clubRosterMember.updateMany({ where: { personId: leavesOrdered }, data: { status: "INACTIVE" } });
+  await prisma.clubRosterMember.create({ data: { id: `${leaves}_at_moved`, organizationId: clubs.moved, clubYear: thisClubYear, personId: leaves, attendeeType: "YOUTH", role: "Pathfinder", classLevel: "FRIEND", status: "ACTIVE", source: "DIRECTOR" } });
+  await loadUniformWorkspace(clubs.depart, { forEditing: false });
+  assert(await countNeeds(clubs.depart, { itemId: items.shirtM }) === 3, "a view-only load removes nothing");
+  await loadUniformWorkspace(clubs.depart, { forEditing: true });
+  assert(await countNeeds(clubs.depart, { itemId: items.shirtM }) === 1 && await countNeeds(clubs.depart, { itemId: items.shirtM, personId: stays }) === 1, "an editor's load removes the NEEDED needs of members no longer active");
+  assert(await countNeeds(clubs.depart, { itemId: items.shirtL, personId: leavesOrdered, status: "ORDERED" }) === 1, "an ORDERED need of a departed member stays");
+  assert(await countNeeds(clubs.moved) === 0, "needs are not moved to the new club");
+  const departAudits = await prisma.auditLog.findMany({ where: { action: "CLUB_UNIFORM_NEEDS_DEPARTED_REMOVED", metadata: { path: ["organizationId"], equals: clubs.depart } }, select: { metadata: true } });
+  assert(departAudits.length === 1 && (departAudits[0].metadata as { needCount: number }).needCount === 2, "the removal is audited by count");
+  // Placing an order also never orders a departed member's need.
+  await prisma.clubRosterMember.updateMany({ where: { personId: stays }, data: { status: "INACTIVE" } });
+  await expectCode(createOrderBatch(clubs.depart, {}, actor), "NOTHING_TO_ORDER", "ordering with only a departed member's need");
+  assert(await countNeeds(clubs.depart, { itemId: items.shirtM }) === 0, "Place order dropped the departed member's need instead of ordering it");
+  console.log("ok  departed members: NEEDED uniform needs removed on an editor's load or order (audited by count), ORDERED stay, none moved");
 }
 
 main()

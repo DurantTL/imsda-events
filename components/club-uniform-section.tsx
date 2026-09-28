@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { CheckCircle2, Plus, Shirt, Trash2, X } from "lucide-react";
 import styles from "@/components/club-orders.module.css";
-import { uniformStatusLabels, variantLabel, type UniformItemGroup } from "@/modules/uniforms/domain";
+import { entryTooLarge, MAX_UNIFORM_NEEDS_PER_ENTRY, uniformStatusLabels, variantLabel, type UniformItemGroup } from "@/modules/uniforms/domain";
 import type { UniformWorkspaceData } from "@/modules/uniforms/order-source";
 
 export type ClubUniformData = UniformWorkspaceData;
@@ -92,7 +92,9 @@ export function ClubUniformSection({
     }
   }
 
-  const canRecord = !busy && chosen.length > 0 && memberIds.size > 0;
+  const entryCount = chosen.length * memberIds.size;
+  const tooMany = entryTooLarge(memberIds.size, chosen.length);
+  const canRecord = !busy && chosen.length > 0 && memberIds.size > 0 && !tooMany;
   const openCount = data.needs.length;
 
   return (
@@ -171,10 +173,15 @@ export function ClubUniformSection({
                 <input checked={alreadyHasOne} onChange={(event) => setAlreadyHasOne(event.target.checked)} type="checkbox" />
                 <span>They already have one <small className={styles.muted}>· recorded as issued; nothing is ordered and stock isn&apos;t changed</small></span>
               </label>
+              {tooMany && (
+                <p className={styles.flag} role="status">
+                  That is {entryCount} needs, and {MAX_UNIFORM_NEEDS_PER_ENTRY} is the most to record at once. Choose fewer members or items.
+                </p>
+              )}
               <div className={styles.actions}>
                 <button className="primary-button" disabled={!canRecord} onClick={record} type="button">
                   <CheckCircle2 aria-hidden="true" size={16} /> {alreadyHasOne ? "Record as already issued" : "Record needs"}
-                  {chosen.length > 0 && memberIds.size > 0 ? ` (${chosen.length * memberIds.size})` : ""}
+                  {chosen.length > 0 && memberIds.size > 0 ? ` (${entryCount})` : ""}
                 </button>
               </div>
             </>
@@ -201,7 +208,7 @@ export function ClubUniformSection({
               );
               return (
                 <li key={need.needId}>
-                  {readOnly || need.status !== "NEEDED" ? label : (
+                  {readOnly || need.status !== "NEEDED" ? <span className={styles.rowStatic}>{label}</span> : (
                     <label className={styles.check}>
                       <input checked={picked.has(need.needId)} onChange={(event) => toggle(setPicked, need.needId, event.target.checked)} type="checkbox" />
                       {label}

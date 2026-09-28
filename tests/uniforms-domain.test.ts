@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { pickListCsv } from "@/modules/club-orders/domain";
 import { parseCsvMatrix } from "@/modules/imports/csv-parser";
-import { groupUniformCatalog, isUniformSection, itemAndSize, splitSizedItemName, variantLabel } from "@/modules/uniforms/domain";
+import { entryTooLarge, groupUniformCatalog, isUniformSection, itemAndSize, splitSizedItemName, variantLabel } from "@/modules/uniforms/domain";
 import { recordUniformNeedsSchema } from "@/modules/uniforms/schemas";
 
 /** Uniform ordering (#497): sized catalog rows grouped for the picker, and the bulk entry schema. Synthetic data only. */
@@ -76,6 +76,14 @@ describe("the pick list for a uniform (#497)", () => {
     const rows = parseCsvMatrix(pickListCsv([{ lastName: "Sample", firstName: "Alex", itemName, size, status: "Ordered" }]));
     expect(rows[0]).toEqual(["Last name", "First name", "Item", "Size", "Status"]);
     expect(rows[1]).toEqual(["Sample", "Alex", "Club Field Uniform", "M", "Ordered"]);
+  });
+});
+
+describe("entryTooLarge (#497)", () => {
+  it("allows exactly the cap and no more", () => {
+    expect(entryTooLarge(50, 20)).toBe(false);
+    expect(entryTooLarge(51, 20)).toBe(true);
+    expect(entryTooLarge(12, 2)).toBe(false);
   });
 });
 
