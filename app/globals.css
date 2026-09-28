@@ -7358,3 +7358,6 @@ select:focus-visible {
 .club-assignments-block { margin-top: 16px; }
 .club-assignments-block h3 { margin: 0; font-size: 0.9rem; }
 .club-assignments-block .public-manage-club-list { margin-top: 10px; }
+
+/* #469: the overview hero never grows wider than its container on phones. */
+.event-hero { max-width: 100%; min-width: 0; }
