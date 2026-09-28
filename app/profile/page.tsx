@@ -84,7 +84,7 @@ export default async function ProfilePage() {
           {systemAdmin && <Link className="text-button" href={systemAdmin.href}>{systemAdmin.label}</Link>}
           {attendeeAccount && <Link className="text-button" href="/account">My registrations</Link>}
           {clubs.length === 1 && (
-            <Link className="text-button" href={`/account/clubs/${encodeURIComponent(clubs[0].id)}`}>
+            <Link className="text-button" href={`/account/clubs/${encodeURIComponent(clubs[0].organizationId)}`}>
               {clubs[0].name}
             </Link>
           )}

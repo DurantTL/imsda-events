@@ -115,7 +115,7 @@ describe("/profile", () => {
 
   it("links a club director to their club", async () => {
     signedIn({ attendee: true });
-    mocks.listDirectedClubs.mockResolvedValue([{ id: "club-1", name: "Pathfinder Test Club", role: "DIRECTOR" }]);
+    mocks.listDirectedClubs.mockResolvedValue([{ organizationId: "club-1", name: "Pathfinder Test Club", role: "DIRECTOR" }]);
     const markup = await render();
     expect(markup).toContain('href="/account/clubs/club-1"');
     expect(markup).toContain("Pathfinder Test Club");
