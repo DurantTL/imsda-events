@@ -39,7 +39,7 @@ beforeEach(() => {
 describe("church location route (#437) — same gate as editing an organization", () => {
   it("requires system administrator access; a non-admin is refused", async () => {
     mocks.requireSystemAdministrator.mockRejectedValueOnce(
-      new AccessDeniedError("System administrator access is required to manage Clubs and churches.", 403, "PERMISSION_DENIED"),
+      new AccessDeniedError("System administrator access is required to manage clubs and churches.", 403, "PERMISSION_DENIED"),
     );
     const response = await PATCH(request(validBody), params);
     expect(response.status).toBe(403);

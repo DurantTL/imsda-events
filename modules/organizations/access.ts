@@ -10,7 +10,7 @@ export async function requireSystemAdministrator() {
   const user = requireAuthenticatedUser(await getCurrentSession());
   if (user.globalRole !== "SYSTEM_ADMIN") {
     throw new AccessDeniedError(
-      "System administrator access is required to manage Clubs and churches.",
+      "System administrator access is required to manage clubs and churches.",
       403,
       "PERMISSION_DENIED",
     );

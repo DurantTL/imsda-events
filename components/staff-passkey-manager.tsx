@@ -170,7 +170,7 @@ export function StaffPasskeyManager({
   );
 
   return (
-    <section className="panel passkey-manager" id="passkeys" aria-labelledby="staff-passkeys-heading">
+    <section className="panel passkey-manager" aria-labelledby="staff-passkeys-heading">
       <div className="section-heading">
         <div>
           <p className="eyebrow">Sign-in</p>

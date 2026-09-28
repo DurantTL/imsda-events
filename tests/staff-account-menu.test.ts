@@ -29,40 +29,45 @@ function renderMenu(input: { isSystemAdmin: boolean; attendeeAccountAvailable?: 
     defaultOpen: input.defaultOpen ?? true,
     displayName: "Riley Staff",
     email: "riley@imsda-events.test",
-    settingsHref: "/more?event=event_1",
     systemAdminContext: contexts.find((context) => context.kind === "system_admin"),
   }));
 }
 
 describe("staff account menu (#543)", () => {
-  it("shows name, email, Passkeys, Two-step verification and Sign out to event staff, without System management", () => {
+  it("shows name, email, Edit profile and Sign out to event staff, without System management or separate security links", () => {
     const markup = renderMenu({ isSystemAdmin: false });
     expect(markup).toContain("Riley Staff");
     expect(markup).toContain("riley@imsda-events.test");
-    expect(markup).toContain('href="/more?event=event_1#passkeys"');
-    expect(markup).toContain("Passkeys");
-    expect(markup).toContain('href="/more?event=event_1#two-step-verification"');
-    expect(markup).toContain("Two-step verification");
+    expect(markup).toContain('href="/profile"');
+    expect(markup).toContain("Edit profile");
     expect(markup).toContain("Sign out");
     expect(markup).not.toContain("System management");
     expect(markup).not.toContain("Switch to my attendee account");
+    expect(markup).not.toContain("Passkeys");
+    expect(markup).not.toContain("Two-step");
   });
 
   it("adds System management for administrators and the attendee switch only when available", () => {
     const admin = renderMenu({ isSystemAdmin: true });
     expect(admin).toContain('href="/admin"');
     expect(admin).toContain("System management");
-    expect(admin).toContain("#passkeys");
+    expect(admin).toContain('href="/profile"');
+    expect(admin).toContain("Edit profile");
     expect(admin).toContain("Sign out");
     expect(renderMenu({ isSystemAdmin: false, attendeeAccountAvailable: true })).toContain("Switch to my attendee account");
   });
 
-  it("is a closed, labelled disclosure until opened", () => {
+  it("is a closed disclosure until opened, without a menu role or aria-haspopup", () => {
     const closed = renderMenu({ isSystemAdmin: true, defaultOpen: false });
     expect(closed).toContain('aria-label="Staff account"');
     expect(closed).toContain('aria-expanded="false"');
-    expect(closed).not.toContain("Passkeys");
-    expect(renderMenu({ isSystemAdmin: true })).toContain('aria-expanded="true"');
+    expect(closed).toContain('aria-controls="staff-account-menu"');
+    expect(closed).not.toContain("aria-haspopup");
+    expect(closed).not.toContain("Edit profile");
+    const open = renderMenu({ isSystemAdmin: true });
+    expect(open).toContain('aria-expanded="true"');
+    expect(open).not.toContain("aria-haspopup");
+    expect(open).not.toContain('role="menu"');
   });
 
   it("wires the shell to the account menu and keeps the menu closed on first render", () => {
@@ -71,7 +76,15 @@ describe("staff account menu (#543)", () => {
       user: { displayName: "Casey Admin", email: "casey@imsda-events.test", globalRole: "SYSTEM_ADMIN" },
     }, createElement("p", null, "content")));
     expect(markup).toContain('aria-label="Staff account"');
-    expect(markup).not.toContain("Two-step verification");
+    expect(markup).not.toContain("Edit profile");
+  });
+
+  it("has the same menu with no event selected", () => {
+    const markup = renderToStaticMarkup(createElement(AppShell as never, {
+      events: [],
+      user: { displayName: "Casey Admin", email: "casey@imsda-events.test", globalRole: "SYSTEM_ADMIN" },
+    }, createElement("p", null, "content")));
+    expect(markup).toContain('aria-label="Staff account"');
   });
 });
 
@@ -86,13 +99,17 @@ describe("Clubs and churches naming (#543)", () => {
     return out;
   }
 
-  it("uses only the label 'Clubs and churches' in app, components and modules", () => {
+  it("has no reversed or title-cased variants of 'Clubs and churches' in app, components and modules", () => {
     const offenders: string[] = [];
     for (const dir of ["app", "components", "modules"]) {
       for (const file of walk(join(process.cwd(), dir))) {
         const text = readFileSync(file, "utf8");
-        for (const match of text.matchAll(/churches\s+and\s+clubs|clubs\s+and\s+churches/gi)) {
-          if (match[0] !== "Clubs and churches") offenders.push(`${file}: ${match[0]}`);
+        // Reversed order in any case, or title-cased "Churches"; lowercase
+        // "clubs and churches" in running text is fine.
+        for (const match of text.matchAll(/churches(?:\s+and\s+|\s*&(?:amp;)?\s*)clubs|clubs(?:\s+and\s+|\s*&(?:amp;)?\s*)churches/gi)) {
+          if (/^churches/i.test(match[0]) || match[0] !== match[0].replace(/Churches/, "churches")) {
+            offenders.push(`${file}: ${match[0]}`);
+          }
         }
       }
     }

@@ -1,6 +1,6 @@
 # Organizations module
 
-Owns the permanent IMSDA directory of Clubs and churches plus stable external
+Owns the permanent IMSDA directory of clubs and churches plus stable external
 provider identities.
 
 Current foundation:

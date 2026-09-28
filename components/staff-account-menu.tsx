@@ -2,16 +2,19 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { ArrowRightLeft, CircleUserRound, Eye, Fingerprint, ShieldCheck, ShieldQuestion } from "lucide-react";
+import { ArrowRightLeft, CircleUserRound, Eye, ShieldCheck, UserRound } from "lucide-react";
 import { SignOutButton } from "@/components/sign-out-button";
 import type { WorkspaceContext } from "@/modules/access/workspace-contexts";
 
+/** The one profile page for every account (#543): profile, two-step and passkeys. */
+export const PROFILE_HREF = "/profile";
+
 /**
- * The staff account popover (#543): name and email, entry points to the
- * existing passkey and two-step settings on /more (no new security behavior),
- * the workspace switches decided by `otherWorkspaceContextsForStaff` (#108),
- * and Sign out. Escape and outside clicks close it; Escape returns focus to
- * the trigger.
+ * The staff account popover (#543): name and email, Edit profile (the
+ * event-independent `/profile` page, where two-step and passkeys live), the
+ * workspace switches decided by `otherWorkspaceContextsForStaff` (#108), and
+ * Sign out. It is a disclosure, not an ARIA menu: Escape and outside clicks
+ * close it, and Escape returns focus to the trigger.
  */
 export function StaffAccountMenu({
   attendeePreviewHref,
@@ -19,7 +22,6 @@ export function StaffAccountMenu({
   defaultOpen = false,
   displayName,
   email,
-  settingsHref,
   systemAdminContext,
 }: {
   attendeePreviewHref: string;
@@ -28,8 +30,6 @@ export function StaffAccountMenu({
   defaultOpen?: boolean;
   displayName: string;
   email: string;
-  /** The Settings & activity page, carrying the event query. */
-  settingsHref: string;
   systemAdminContext?: WorkspaceContext;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -63,7 +63,6 @@ export function StaffAccountMenu({
       <button
         aria-controls="staff-account-menu"
         aria-expanded={open}
-        aria-haspopup="true"
         aria-label="Staff account"
         className="avatar"
         onClick={() => setOpen(!open)}
@@ -75,13 +74,9 @@ export function StaffAccountMenu({
       {open && (
         <div aria-label="Staff account menu" className="header-popover account-popover" id="staff-account-menu" role="group">
           <strong>{displayName}</strong><p>{email}</p><small>Database-backed staff session</small>
-          <Link className="account-system-link" href={`${settingsHref}#passkeys`} onClick={close}>
-            <Fingerprint aria-hidden="true" size={17} />
-            Passkeys
-          </Link>
-          <Link className="account-system-link" href={`${settingsHref}#two-step-verification`} onClick={close}>
-            <ShieldQuestion aria-hidden="true" size={17} />
-            Two-step verification
+          <Link className="account-system-link" href={PROFILE_HREF} onClick={close}>
+            <UserRound aria-hidden="true" size={17} />
+            Edit profile
           </Link>
           {systemAdminContext && (
             <Link className="account-system-link" href={systemAdminContext.href} onClick={close}>

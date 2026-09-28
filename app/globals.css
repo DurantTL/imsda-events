@@ -7635,3 +7635,13 @@ select:focus-visible {
   font-size: 0.68rem;
   font-weight: 700;
 }
+
+/* One Edit profile page for every account (#543). */
+.profile-back-links { display: flex; flex-wrap: wrap; gap: 0 20px; }
+.profile-identity { display: grid; gap: 4px; margin-top: 8px; }
+.profile-identity strong { color: var(--imsda-navy); font-size: 1.05rem; }
+.profile-identity small { color: var(--muted); }
+.profile-back-links .text-button { min-height: 44px; }
+.profile-account-section { display: grid; gap: 16px; }
+.profile-account-heading { margin: 8px 0 0; color: var(--imsda-navy); font-size: 1.25rem; }
+.profile-back-links .text-button { display: inline-flex; align-items: center; gap: 6px; }

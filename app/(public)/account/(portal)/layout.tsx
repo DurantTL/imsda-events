@@ -61,7 +61,7 @@ export default async function AccountPortalLayout({ children }: { children: Reac
       : clubs.length > 0 || actingAsDirector
         ? [{ href: "/account/clubs", label: clubs.length === 1 || actingAsDirector ? "My club" : "My clubs", matchChildren: true }]
         : []),
-    ...(chromeAccount ? [{ href: "/account/profile", label: "Profile" }, { href: "/account/security", label: "Security" }] : []),
+    ...(chromeAccount ? [{ href: "/profile", label: "Profile" }] : []),
   ];
 
   return (

@@ -260,7 +260,6 @@ export function AppShell({
               canSwitchToAttendee={canSwitchToAttendee}
               displayName={user.displayName}
               email={user.email}
-              settingsHref={`/more${eventQuery}`}
               systemAdminContext={systemAdminContext}
             />
           </div>

@@ -93,7 +93,7 @@ follows the same pattern: `area/[organizationId]` → "All clubs";
 
 ## Staff club and organization pages
 
-- `admin/organizations` (the Clubs and churches directory) → "Back to system
+- `admin/organizations` (the clubs and churches directory) → "Back to system
   administration"
 - `admin/organizations/[organizationId]/club` (a club as its director sees
   it) → "Back to Clubs and churches"; its own links to Club admins, Club
