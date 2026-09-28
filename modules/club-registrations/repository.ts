@@ -124,10 +124,15 @@ const clubEventSelect = {
 
 type ClubEvent = Prisma.EventGetPayload<{ select: typeof clubEventSelect }>;
 
-/** Events a club can register for: published, billed to the church, with a usable published form. */
+/**
+ * Events a club can register for: published, a CLUB audience (#481), billed to
+ * the church, with a usable published form. Bulk club registration needs both:
+ * a GENERAL event billed to an organization is not a club event, and a CLUB
+ * event that is attendee-paid has no church bill for this workflow to build.
+ */
 export async function listClubEvents(organizationId: string, now = new Date()) {
   const events = await getPrisma().event.findMany({
-    where: { isPublished: true, billingMode: "DEFERRED_ORGANIZATION_INVOICE", endsAt: { gte: now } },
+    where: { isPublished: true, audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE", endsAt: { gte: now } },
     orderBy: { startsAt: "asc" },
     select: {
       ...clubEventSelect,
@@ -267,7 +272,8 @@ export async function listClubCheckInInfo(eventId: string): Promise<ClubCheckInI
 
 async function requireClubEvent(eventId: string): Promise<ClubEvent> {
   const event = await getPrisma().event.findFirst({
-    where: { id: eventId, isPublished: true, billingMode: "DEFERRED_ORGANIZATION_INVOICE" },
+    // Same gate as `listClubEvents`: CLUB audience and church billing (#481).
+    where: { id: eventId, isPublished: true, audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE" },
     select: clubEventSelect,
   });
   if (!event) throw new ClubRegistrationError("EVENT_NOT_FOUND", "That club event could not be found.");

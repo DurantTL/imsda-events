@@ -5,17 +5,18 @@ import { resolveEventContext } from "@/modules/events/selection";
 
 /**
  * Pathfinder event managers (#387): staff who are event administrators on a
- * club event (one billed to clubs) oversee the clubs registered for it — each
- * club's roster with ages only, and every club's monthly reports — view
- * only, and for that event only (decision).
+ * club event (explicit CLUB audience, #481 — independent of billing mode, so
+ * an attendee-paid club event still qualifies) oversee the clubs registered
+ * for it — each club's roster with ages only, and every club's monthly
+ * reports — view only, and for that event only (decision).
  */
 export async function resolveClubOversight(requestedEventId?: string) {
   const context = await resolveEventContext(requestedEventId);
   const event = await getPrisma().event.findUnique({
     where: { id: context.event.id },
-    select: { id: true, name: true, billingMode: true },
+    select: { id: true, name: true, audience: true },
   });
-  const clubEvent = event?.billingMode === "DEFERRED_ORGANIZATION_INVOICE";
+  const clubEvent = event?.audience === "CLUB";
   const manager = context.user.globalRole === "SYSTEM_ADMIN" || context.membership?.role === "EVENT_ADMIN";
   return { ...context, allowed: Boolean(event && clubEvent && manager), clubEvent };
 }

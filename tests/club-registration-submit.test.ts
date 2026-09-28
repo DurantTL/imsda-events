@@ -66,7 +66,7 @@ const baseInput: {
   website: "",
 };
 
-function fixture({ billingMode = "DEFERRED_ORGANIZATION_INVOICE", form = definition(), registrationClosesOn = "2026-11-30" } = {}) {
+function fixture({ billingMode = "DEFERRED_ORGANIZATION_INVOICE", audience = "CLUB", form = definition(), registrationClosesOn = "2026-11-30" } = {}) {
   const members = [
     { id: "m1", personId: "person-m1", attendeeType: "YOUTH", role: "Pathfinder", gender: "FEMALE", sealedBirthDate: sealSecret("2014-12-06", "club-roster:birth-date"), person: { firstName: "Alex", lastName: "Sample" } },
     { id: "m2", personId: "person-m2", attendeeType: "STAFF", role: "Counselor", gender: null, sealedBirthDate: sealSecret("1988-03-02", "club-roster:birth-date"), person: { firstName: "Jordan", lastName: "Example" } },
@@ -78,7 +78,7 @@ function fixture({ billingMode = "DEFERRED_ORGANIZATION_INVOICE", form = definit
         id: "event-1", name: "Honors Weekend", slug: "honors-weekend",
         startsAt: new Date("2026-12-05T15:00:00.000Z"), endsAt: new Date("2026-12-06T20:00:00.000Z"),
         timezone: "America/Chicago", location: "Camp", capacity: null, isPublished: true,
-        registrationOpensOn: "2026-10-01", registrationClosesOn, waitlistEnabled: false, billingMode, attendeeTypes: [],
+        registrationOpensOn: "2026-10-01", registrationClosesOn, waitlistEnabled: false, billingMode, audience, attendeeTypes: [],
       },
       versions: [{ id: "version-1", versionNumber: 1, definition: form, publishedAt: new Date("2026-09-01T00:00:00Z") }],
     }) },
@@ -302,6 +302,13 @@ describe("club registration submit", () => {
     const tx = fixture({ billingMode: "ATTENDEE_PAY" });
     await expect(submit()).rejects.toMatchObject({ code: "CLUB_REGISTRATION_UNAVAILABLE" });
     expect(tx.clubRosterMember.findMany).not.toHaveBeenCalled();
+  });
+
+  it("only runs for CLUB-audience events, even when billed to the church (#481)", async () => {
+    const tx = fixture({ audience: "GENERAL" });
+    await expect(submit()).rejects.toMatchObject({ code: "CLUB_REGISTRATION_UNAVAILABLE" });
+    expect(tx.clubRosterMember.findMany).not.toHaveBeenCalled();
+    expect(tx.registration.create).not.toHaveBeenCalled();
   });
 
   it("refuses a form that would copy birth dates into answers", async () => {

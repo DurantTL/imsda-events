@@ -31,6 +31,7 @@
     "event:shirt-sizes": "tsx scripts/shirt-size-audience.ts",
     "attendee-types:backfill": "tsx scripts/backfill-attendee-types.ts",
     "household-membership:backfill": "tsx scripts/backfill-household-membership-effective-dates.ts",
+    "event-audience:backfill": "tsx --require ./scripts/support/allow-server-only.cjs scripts/backfill-event-audience.ts",
     "issue:from-spec": "tsx scripts/spec-to-issue.ts",
     "background-checks:migration-dry-run": "tsx scripts/background-check-migration-dry-run.ts",
     "db:studio": "prisma studio",

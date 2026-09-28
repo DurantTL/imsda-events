@@ -35,8 +35,9 @@ export function canViewClubReports(permissions: readonly string[]) {
  * Session-level equivalent of `resolveClubReportsAccess`, for API routes
  * (CSV downloads, the staff club-pass QR image) that must not redirect on a
  * missing session. Grants access to `VIEW_REPORTS` holders, or to a
- * Pathfinder event manager (#387: an event administrator on this exact club,
- * church-billed event) — the same two audiences the reports page allows.
+ * Pathfinder event manager (#387: an event administrator on this exact
+ * CLUB-audience event, #481 — independent of billing mode) — the same two
+ * audiences the reports page allows.
  */
 export async function requireClubReportsAccess(
   session: Session,
@@ -49,8 +50,8 @@ export async function requireClubReportsAccess(
 
   const isEventAdmin = access.user.globalRole === "SYSTEM_ADMIN" || access.membership?.role === "EVENT_ADMIN";
   if (isEventAdmin) {
-    const event = await getPrisma().event.findUnique({ where: { id: eventId }, select: { billingMode: true } });
-    if (event?.billingMode === "DEFERRED_ORGANIZATION_INVOICE") return { ...access, permissions };
+    const event = await getPrisma().event.findUnique({ where: { id: eventId }, select: { audience: true } });
+    if (event?.audience === "CLUB") return { ...access, permissions };
   }
   throw new AccessDeniedError(
     "Report access, or Pathfinder event-manager oversight of this club event, is required.",

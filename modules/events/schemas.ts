@@ -130,6 +130,14 @@ export const eventSettingsInputSchema = z.object({
   billingMode: z
     .enum(["ATTENDEE_PAY", "DEFERRED_ORGANIZATION_INVOICE"])
     .default("ATTENDEE_PAY"),
+  // Explicit audience (#481), independent of billingMode: a CLUB event may
+  // still be attendee-paid (e.g. Man Camp). Club and church navigation, club
+  // oversight, and club reports key off this field, not billingMode.
+  // Optional, with no schema default: a new event without one is GENERAL
+  // (`createEvent`), and an update without one keeps the stored value
+  // (`updateEventSettings`), so a stale settings tab that predates this
+  // field can never reset a CLUB event to GENERAL.
+  audience: z.enum(["GENERAL", "CLUB"]).optional(),
   seminarPreferenceClosesOn: calendarDateSchema.nullable().default(null),
   seminarPreferenceSelfServiceLocked: z.boolean().default(false),
   ...lifecycleFields,

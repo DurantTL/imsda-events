@@ -210,6 +210,7 @@ const publicEventSelect = {
   registrationClosesOn: true,
   waitlistEnabled: true,
   billingMode: true,
+  audience: true,
   attendeeTypes: {
     where: { isActive: true },
     orderBy: [{ sortOrder: "asc" as const }, { label: "asc" as const }],
@@ -573,7 +574,9 @@ async function createPublicRegistrationTransaction(
   }
   let clubAttendees: Awaited<ReturnType<ClubSubmissionContext["prepareAttendees"]>>["attendees"] | null = null;
   if (club) {
-    if (form.event.billingMode !== "DEFERRED_ORGANIZATION_INVOICE") {
+    // Bulk club registration needs a CLUB audience (#481) and church billing,
+    // the same gate as the club portal's `listClubEvents`/`requireClubEvent`.
+    if (form.event.audience !== "CLUB" || form.event.billingMode !== "DEFERRED_ORGANIZATION_INVOICE") {
       throw new PublicRegistrationError(
         "CLUB_REGISTRATION_UNAVAILABLE",
         "This event isn't set up for club registration billed to the church.",

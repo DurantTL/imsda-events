@@ -81,6 +81,7 @@ function draftFromEvent(event: EventSettingsRecord | null): EventSettingsInput {
     checksAdultBackgrounds: event?.checksAdultBackgrounds ?? false,
     attendeeEditPolicy: event?.attendeeEditPolicy ?? "VERIFY_EVERY_EDIT",
     billingMode: event?.billingMode ?? "ATTENDEE_PAY",
+    audience: event?.audience ?? "GENERAL",
     approvedPaymentInstructions: event?.approvedPaymentInstructions ?? null,
     seminarPreferenceClosesOn: event?.seminarPreferenceClosesOn ?? null,
     seminarPreferenceSelfServiceLocked:
@@ -385,6 +386,25 @@ export function EventSettingsWorkspace({
               <small>
                 Contact changes, cancellations, and transfers always require a fresh emailed
                 code. Medical and club data always require an authenticator.
+              </small>
+            </label>
+            <label>
+              Audience
+              <select
+                value={draft.audience}
+                onChange={(event) => update(
+                  "audience",
+                  event.target.value as EventSettingsInput["audience"],
+                )}
+              >
+                <option value="GENERAL">General event</option>
+                <option value="CLUB">Club or church event</option>
+              </select>
+              <small>
+                Controls Clubs and churches navigation, club oversight, and club reports —
+                independent of billing mode. A club event can still charge attendees directly
+                (for example Man Camp): mark it Club or church here even when billing mode below
+                is Attendees pay online.
               </small>
             </label>
             <label>

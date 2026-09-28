@@ -58,6 +58,7 @@ export async function listEventsForUser(userId: string, isSystemAdmin: boolean) 
       checksAdultBackgrounds: true,
       attendeeEditPolicy: true,
       billingMode: true,
+      audience: true,
       seminarPreferenceClosesOn: true,
       seminarPreferenceSelfServiceLocked: true,
       autoPromoteWaitlist: true,
@@ -142,6 +143,7 @@ export async function getEventSettings(eventId: string) {
         checksAdultBackgrounds: true,
         attendeeEditPolicy: true,
         billingMode: true,
+        audience: true,
         seminarPreferenceClosesOn: true,
         seminarPreferenceSelfServiceLocked: true,
         autoPromoteWaitlist: true,
@@ -195,6 +197,7 @@ export async function getEventSettings(eventId: string) {
     checksAdultBackgrounds: event.checksAdultBackgrounds,
     attendeeEditPolicy: event.attendeeEditPolicy,
     billingMode: event.billingMode,
+    audience: event.audience,
     seminarPreferenceClosesOn: event.seminarPreferenceClosesOn,
     seminarPreferenceSelfServiceLocked:
       event.seminarPreferenceSelfServiceLocked,
@@ -216,6 +219,7 @@ export async function createEvent(
   input: EventSettingsInput,
   actorUserId: string,
 ) {
+  const audience = input.audience ?? "GENERAL";
   const eventId = await getPrisma().$transaction(async (tx) => {
     const platform = await tx.platformSettings.upsert({
       where: { id: "platform" },
@@ -244,6 +248,7 @@ export async function createEvent(
         checksAdultBackgrounds: input.checksAdultBackgrounds,
         attendeeEditPolicy: platform.defaultAttendeeEditPolicy,
         billingMode: input.billingMode,
+        audience,
         seminarPreferenceClosesOn: input.seminarPreferenceClosesOn,
         seminarPreferenceSelfServiceLocked:
           input.seminarPreferenceSelfServiceLocked,
@@ -277,7 +282,9 @@ export async function createEvent(
         entityId: event.id,
         correlationId: crypto.randomUUID(),
         summary: `Created event draft: ${event.name}.`,
-        metadata: { slug: event.slug },
+        // The initial audience (#481) is recorded, since it decides whether
+        // the event gets club features at all.
+        metadata: { slug: event.slug, audience: event.audience },
       },
     });
     return event.id;
@@ -327,6 +334,7 @@ export async function updateEventSettings(
           checksAdultBackgrounds: true,
           attendeeEditPolicy: true,
           billingMode: true,
+          audience: true,
           seminarPreferenceClosesOn: true,
           seminarPreferenceSelfServiceLocked: true,
           autoPromoteWaitlist: true,
@@ -341,6 +349,9 @@ export async function updateEventSettings(
     if (!current) {
       throw new EventOperationError("EVENT_NOT_FOUND", "That event no longer exists.");
     }
+    // An update without an audience keeps the stored one (#481 review), so a
+    // stale client can't silently reset a CLUB event to GENERAL.
+    const audience = input.audience ?? current.audience;
     await tx.event.update({
       where: { id: eventId },
       data: {
@@ -362,6 +373,7 @@ export async function updateEventSettings(
         checksAdultBackgrounds: input.checksAdultBackgrounds,
         attendeeEditPolicy: input.attendeeEditPolicy,
         billingMode: input.billingMode,
+        audience,
         seminarPreferenceClosesOn: input.seminarPreferenceClosesOn,
         seminarPreferenceSelfServiceLocked:
           input.seminarPreferenceSelfServiceLocked,
@@ -389,7 +401,7 @@ export async function updateEventSettings(
         entityId: eventId,
         correlationId: crypto.randomUUID(),
         summary: `Updated event settings: ${input.name}.`,
-        metadata: { before: current, after: input },
+        metadata: { before: current, after: { ...input, audience } },
       },
     });
   });
