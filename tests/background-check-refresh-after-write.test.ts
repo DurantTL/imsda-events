@@ -7,12 +7,14 @@ const mocks = vi.hoisted(() => ({
   refreshBackgroundCheckMatches: vi.fn(),
   registrationFindMany: vi.fn(),
   logError: vi.fn(),
+  after: vi.fn<(work: () => Promise<void>) => void>(() => { throw new Error("`after` was called outside a request scope."); }),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: () => ({ registration: { findMany: mocks.registrationFindMany } }) }));
 vi.mock("@/lib/logger", () => ({ logError: mocks.logError }));
 vi.mock("@/modules/background-checks/repository", () => ({ refreshBackgroundCheckMatches: mocks.refreshBackgroundCheckMatches }));
+vi.mock("next/server", () => ({ after: mocks.after }));
 
 import {
   refreshBackgroundCheckMatchesForRegistrations,
@@ -22,6 +24,7 @@ import {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.refreshBackgroundCheckMatches.mockResolvedValue(undefined);
+  mocks.after.mockImplementation(() => { throw new Error("`after` was called outside a request scope."); });
 });
 
 describe("refreshing background-check matches after a save (#527)", () => {
@@ -52,5 +55,20 @@ describe("refreshing background-check matches after a save (#527)", () => {
     await expect(refreshBackgroundCheckMatchesForRegistrations(["reg-1"])).resolves.toBeUndefined();
     expect(mocks.refreshBackgroundCheckMatches).not.toHaveBeenCalled();
     expect(mocks.logError).toHaveBeenCalled();
+  });
+
+  it("inside a request, schedules the refresh after the response instead of making the save wait", async () => {
+    let scheduled: (() => Promise<void>) | null = null;
+    mocks.after.mockImplementation((work: () => Promise<void>) => { scheduled = work; });
+    let finish!: () => void;
+    mocks.refreshBackgroundCheckMatches.mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+    // Resolves at once even though the refresh itself would never finish.
+    await expect(refreshBackgroundCheckMatchesSafely(["p-1"])).resolves.toBeUndefined();
+    expect(mocks.refreshBackgroundCheckMatches).not.toHaveBeenCalled();
+    expect(scheduled).not.toBeNull();
+    const running = scheduled!();
+    await vi.waitFor(() => expect(mocks.refreshBackgroundCheckMatches).toHaveBeenCalledWith(["p-1"]));
+    finish();
+    await running;
   });
 });

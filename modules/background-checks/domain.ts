@@ -158,6 +158,9 @@ export function parseSterlingCsv(text: string): SterlingCsvRow[] {
     if (!expiresRaw) problems.push("The expiration date is blank.");
     else if (!expiresOn) problems.push("The expiration date isn't a date.");
     const status = value("status") || null;
+    // As before #527: only a clear check is ever recorded. A non-clear result
+    // is reported to the administrator and stored nowhere (#527 decision).
+    if (!isClearStatus(status)) problems.push(`Status is "${status}", not a clear check, so nothing was recorded. Review this person in Sterling.`);
     return { line: index + 2, firstName, lastName, email, birthDate, checkedOn, expiresOn, status, problems };
   });
 }
@@ -553,13 +556,13 @@ export function backgroundCheckIdentityKey(input: {
 }
 
 /**
- * A Sterling row (#388) as a list entry. A non-clear status is now kept, not
- * dropped (#527: "every valid row is stored"), marked not in compliance so
- * staff still see it and why, instead of the row being silently discarded.
+ * A Sterling row (#388) as a list entry. Only a row with no problems — so a
+ * clear check (`parseSterlingCsv` reports any other status as a problem) —
+ * is ever mapped: dated, with no compliance mark and no note, exactly the
+ * fields the Sterling import stored before #527.
  */
 export function sterlingRowToListRow(row: SterlingCsvRow): BackgroundCheckListRow {
   const normalizedName = matchableName(`${row.firstName} ${row.lastName}`);
-  const clear = isClearStatus(row.status);
   return {
     line: row.line,
     firstName: row.firstName,
@@ -570,10 +573,10 @@ export function sterlingRowToListRow(row: SterlingCsvRow): BackgroundCheckListRo
     site: null,
     sourceUserId: null,
     identityKey: backgroundCheckIdentityKey({ sourceUserId: null, normalizedName, email: row.email, birthDate: row.birthDate, site: null }),
-    complianceStatus: clear ? null : "NOT_COMPLIANT",
+    complianceStatus: null,
     checkedOn: row.checkedOn,
-    expiresOn: clear ? row.expiresOn : null,
-    issuesNote: clear ? null : `Sterling status: ${row.status ?? "unknown"}.`,
+    expiresOn: row.expiresOn,
+    issuesNote: null,
   };
 }
 

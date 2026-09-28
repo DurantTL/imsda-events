@@ -59,7 +59,7 @@ export function BackgroundCheckReviewPanel() {
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message ?? "That decision couldn't be saved.");
       setReviews(result.reviews ?? []);
-      if (decision.type === "match") await load();
+      await load();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "That decision couldn't be saved.");
     } finally {

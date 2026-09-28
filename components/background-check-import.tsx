@@ -15,6 +15,7 @@ type ImportResponse = {
   total?: number;
   /** What the preview was computed against; echoed back on confirm (#527). */
   fingerprint?: string;
+  replacesMigratedList?: boolean;
   error?: string;
   message?: string;
   issues?: Array<{ message?: string }>;
@@ -177,6 +178,13 @@ export function BackgroundCheckImport({ onImported }: { onImported: (result: Imp
                   {done ? "Saved." : "Nothing is saved yet."} {preview.format === "ROSTER" ? "Roster" : "Sterling Volunteers"} format detected,{" "}
                   {preview.total ?? 0} valid row{(preview.total ?? 0) === 1 ? "" : "s"}.
                 </p>
+                {!done && preview.replacesMigratedList && preview.format === "STERLING" && (
+                  <p className="inline-notice" role="note">
+                    This is the first Sterling upload since the list moved to its new format. The checks carried over
+                    from before have no email on file, so they show as dropped and this file&apos;s rows as added. That&apos;s
+                    expected: after saving, people are matched from this file as usual.
+                  </p>
+                )}
                 <section className="report-summary-grid" aria-label="What this upload changes">
                   <article className="metric-card report-summary-card accent-green">
                     <strong>{preview.added ?? 0}</strong><p>Added</p>

@@ -3303,7 +3303,7 @@ model BackgroundCheckEntry {
 
   upload  BackgroundCheckUpload   @relation(fields: [uploadId], references: [id], onDelete: Cascade)
   match   BackgroundCheckMatch?
-  reviews BackgroundCheckReview[]
+  review  BackgroundCheckReview?
 
   @@index([normalizedName])
   @@index([uploadId])
@@ -3343,17 +3343,19 @@ enum BackgroundCheckMatchSource {
 /// A list entry that could match more than one person, or whose only
 /// candidate people also match another entry — never guessed (#527). Staff
 /// resolve it by hand from `candidatePersonIds`; picking one becomes a
-/// `MANUAL` match that holds on the next upload.
+/// `MANUAL` match that holds on the next upload. At most one per entry.
+/// "None of these is right" keeps the row with `dismissedAt` set: a
+/// dismissed entry is matched to no one — not by a refresh, not at read
+/// time — until the next upload replaces the list.
 model BackgroundCheckReview {
-  id                 String   @id @default(cuid())
-  entryId            String
+  id                 String    @id @default(cuid())
+  entryId            String    @unique
   reason             String
   candidatePersonIds Json
-  createdAt          DateTime @default(now())
+  dismissedAt        DateTime?
+  createdAt          DateTime  @default(now())
 
   entry BackgroundCheckEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
-
-  @@index([entryId])
 }
 
 /// A background check's compliance mark from a roster import (#427): the

@@ -20,7 +20,10 @@
  *     and still match (by the remembered id). Racing confirms of one preview
  *     leave exactly one upload.
  *  7. Registers a new adult on the list through the registration write path;
- *     they are checked at read time, then after the cache fills.
+ *     they are checked at read time, and a write path's own refresh fills
+ *     the cache (AUTO). While an upload holds the list, a save isn't delayed.
+ *  8. An entry two people in two clubs could be is matched to neither — at
+ *     read time, and after staff dismiss its review.
  */
 import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -185,7 +188,7 @@ async function main() {
   process.env.DATABASE_URL = scratchUrl;
   process.env.SECRET_ENCRYPTION_KEY ??= "bgverify-synthetic-secret-encryption-key-0000";
   const repository = await import("../modules/background-checks/repository");
-  const { createRegistration } = await import("../modules/registrations/repository");
+  const { createRegistration, updateRegistrationAttendeeEmail } = await import("../modules/registrations/repository");
   const { getPrisma } = await import("../lib/prisma");
   appClient = getPrisma();
 
@@ -263,22 +266,86 @@ async function main() {
       endsAt: new Date(eventStart.getTime() + 2 * 86_400_000), isPublished: true, checksAdultBackgrounds: true,
     },
   });
+  // The staff form's attendee types (ATTENDEE, WORKER, CHILD) never say
+  // "adult" on their own, and it records no age: the registrant's age comes
+  // from a form answer, which is set here the way a registration form would.
   const registration = await createRegistration(ids.event, {
     firstName: "Zoe", lastName: "O'Brien-Hale", email: `zoe.${P}@example.test`, phone: "", attendeeType: "WORKER", status: "SUBMITTED", totalAmountCents: 0,
   }, ids.user);
   assert(registration, "the registration was created");
-  // The staff form records no age; give the attendee the age a registration form would.
-  await db.registrationAttendee.updateMany({ where: { registrationId: registration.id }, data: { profileSnapshot: { firstName: "Zoe", lastName: "O'Brien-Hale", email: `zoe.${P}@example.test`, ageOnEventDate: 41 } } });
   const zoe = await db.registrationAttendee.findFirstOrThrow({ where: { registrationId: registration.id }, select: { id: true, personId: true } });
+  await db.registrationAttendee.update({ where: { id: zoe.id }, data: { profileSnapshot: { firstName: "Zoe", lastName: "O'Brien-Hale", email: `zoe.${P}@example.test`, ageOnEventDate: 41 } } });
   assert(!(await db.backgroundCheckMatch.findUnique({ where: { personId: zoe.personId } })), "no cached match yet (so the next check is read-time only)");
   let flags = await repository.listEventBackgroundFlags(ids.event);
   assert(flags?.adults === 1, "the new registrant counts as an adult");
   assert(!flags.people.some((flag) => flag.attendeeId === zoe.id), "the new adult on the list is checked at read time, with no re-upload");
-  await repository.refreshBackgroundCheckMatchForPerson(zoe.personId);
-  assert((await db.backgroundCheckMatch.findUnique({ where: { personId: zoe.personId } }))?.matchedBy === "AUTO", "a refresh fills the cache for them");
+  // A write path (the staff attendee-email edit) fills the cache by itself.
+  await updateRegistrationAttendeeEmail(ids.event, registration.id, zoe.id, `zoe.${P}@example.test`, ids.user);
+  assert((await db.backgroundCheckMatch.findUnique({ where: { personId: zoe.personId } }))?.matchedBy === "AUTO", "the write path's refresh fills the cache (AUTO)");
   flags = await repository.listEventBackgroundFlags(ids.event);
   assert(flags?.people.length === 0, "still checked once the cache is filled");
-  console.log("ok  a new adult registered after the upload is checked at read time, then from the cache");
+  console.log("ok  a new adult registered after the upload is checked at read time, then from the cache the write path filled");
+
+  // 7b. An upload holding the list never holds up a user's save: the refresh is skipped, not waited on.
+  let releaseLock!: () => void;
+  let lockTaken!: () => void;
+  const taken = new Promise<void>((resolve) => { lockTaken = resolve; });
+  const holder = db.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${repository.BACKGROUND_CHECK_LOCK_KEY}::bigint)`;
+    lockTaken();
+    await new Promise<void>((resolve) => { releaseLock = resolve; });
+  }, { timeout: 60_000, maxWait: 10_000 });
+  await taken;
+  try {
+    const started = Date.now();
+    const held = await createRegistration(ids.event, {
+      firstName: "Held", lastName: "Lock", email: `held.${P}@example.test`, phone: "", attendeeType: "WORKER", status: "SUBMITTED", totalAmountCents: 0,
+    }, ids.user);
+    const elapsed = Date.now() - started;
+    assert(held, "the save went through while an upload held the list");
+    assert(elapsed < 5_000, `the save wasn't held up behind the upload (took ${elapsed}ms)`);
+    const reviewAttempt = await repository.undoManualBackgroundCheckMatch("none", ids.user).then(() => null, (error: unknown) => error);
+    assert((reviewAttempt as { code?: string } | null)?.code === "UPLOAD_IN_PROGRESS", "a staff decision during an upload is refused, not held up");
+  } finally {
+    releaseLock();
+    await holder;
+  }
+  console.log("ok  a save during an upload isn't delayed; the refresh is skipped and staff decisions are refused with a clear error");
+
+  // 8. One entry, two people with that name in two clubs of one church.
+  const churchTwoClub = `${P}_club_two`;
+  await db.organization.create({ data: { id: churchTwoClub, type: "CLUB", name: "Verify Adventurers", normalizedName: "verify adventurers", parentOrganizationId: ids.church } });
+  const dana = [
+    { key: "dana1", club: ids.club },
+    { key: "dana2", club: churchTwoClub },
+  ];
+  const danaCsv = "user_id,user_last,user_first,sites,compliance\n80001,Lee,Dana,Verify Church,y";
+  const danaRows = parseRosterBackgroundCsv(danaCsv).map(rosterRowToListRow);
+  // a. Added after the upload with no refresh: each club page alone sees one
+  //    Dana, but another exists, so neither is matched at read time.
+  const danaPreview = await repository.planBackgroundCheckUpload(danaRows);
+  await repository.applyBackgroundCheckUpload(danaRows, "ROSTER", ids.user, new Date(), { expectedFingerprint: danaPreview.fingerprint });
+  for (const person of dana) {
+    await db.person.create({ data: { id: ids.person(person.key), firstName: "Dana", lastName: "Lee" } });
+    await db.clubRosterMember.create({ data: { id: ids.member(person.key), organizationId: person.club, clubYear, personId: ids.person(person.key), attendeeType: "ADULT", source: "DIRECTOR" } });
+  }
+  const danaStates = async () => [
+    (await repository.clubRosterComplianceStatuses(ids.club, clubYear, { includeNotes: false })).statuses[ids.member("dana1")]?.state,
+    (await repository.clubRosterComplianceStatuses(churchTwoClub, clubYear, { includeNotes: false })).statuses[ids.member("dana2")]?.state,
+  ];
+  assertEqual(await danaStates(), ["NO_RECORD", "NO_RECORD"], "an entry two people could be is matched to neither at read time");
+  // b. The full pass sends it to review; staff dismiss it; still neither.
+  const danaPreview2 = await repository.planBackgroundCheckUpload(danaRows);
+  await repository.applyBackgroundCheckUpload(danaRows, "ROSTER", ids.user, new Date(), { expectedFingerprint: danaPreview2.fingerprint });
+  const [danaReview] = await repository.listBackgroundCheckReviews();
+  assert(danaReview && danaReview.candidates.length === 2, "the full pass sends the ambiguous entry to review");
+  await repository.resolveBackgroundCheckReview(danaReview.id, { type: "dismiss" }, ids.user);
+  assertEqual(await danaStates(), ["NO_RECORD", "NO_RECORD"], "a dismissed entry is matched to no one at read time");
+  for (const person of dana) await repository.refreshBackgroundCheckMatchForPerson(ids.person(person.key));
+  assertEqual(await danaStates(), ["NO_RECORD", "NO_RECORD"], "a dismissed entry is matched to no one by a refresh");
+  assert((await db.backgroundCheckReview.count()) === 1, "the dismissal is kept, and no second review is created");
+  assert((await repository.listBackgroundCheckReviews()).length === 0, "a dismissed review is off the staff review list");
+  console.log("ok  one entry two people could be is never matched to either, before or after staff dismiss it");
 }
 
 main()

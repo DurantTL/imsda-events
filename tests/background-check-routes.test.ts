@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   resolveBackgroundCheckReview: vi.fn(),
   listManualBackgroundCheckMatches: vi.fn(),
   undoManualBackgroundCheckMatch: vi.fn(),
+  listUnmatchedBackgroundCheckEntries: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -25,11 +26,16 @@ vi.mock("@/modules/background-checks/repository", () => ({
   resolveBackgroundCheckReview: mocks.resolveBackgroundCheckReview,
   listManualBackgroundCheckMatches: mocks.listManualBackgroundCheckMatches,
   undoManualBackgroundCheckMatch: mocks.undoManualBackgroundCheckMatch,
+  listUnmatchedBackgroundCheckEntries: mocks.listUnmatchedBackgroundCheckEntries,
 }));
 
 import { POST as importPost } from "@/app/api/admin/background-checks/import/route";
 import { POST as reviewPost } from "@/app/api/admin/background-checks/reviews/[reviewId]/route";
 import { DELETE as undoDelete } from "@/app/api/admin/background-checks/manual-matches/[matchId]/route";
+import { GET as manualGet } from "@/app/api/admin/background-checks/manual-matches/route";
+import { GET as reviewsGet } from "@/app/api/admin/background-checks/reviews/route";
+import { GET as unmatchedGet } from "@/app/api/admin/background-checks/unmatched/route";
+import { AccessDeniedError } from "@/modules/access/authorization";
 import { BackgroundCheckOperationError } from "@/modules/background-checks/errors";
 
 const post = (url: string, body: unknown, method = "POST") => new Request(`https://events.imsda.test${url}`, {
@@ -53,6 +59,7 @@ beforeEach(() => {
   mocks.applyBackgroundCheckUpload.mockResolvedValue({ added: 2, changed: 0, dropped: 0, total: 2 });
   mocks.listBackgroundCheckReviews.mockResolvedValue([]);
   mocks.listManualBackgroundCheckMatches.mockResolvedValue([]);
+  mocks.listUnmatchedBackgroundCheckEntries.mockResolvedValue([]);
 });
 
 describe("background-check upload route (#527)", () => {
@@ -64,6 +71,19 @@ describe("background-check upload route (#527)", () => {
     expect(body.problems).toEqual([{ line: 2, name: "Ana Rivera", problems: ["Row 4 is the same person, so only row 4 is kept."] }]);
     const [rows] = mocks.planBackgroundCheckUpload.mock.calls[0]!;
     expect((rows as Array<{ firstName: string; line: number }>).map((row) => [row.line, row.firstName])).toEqual([[3, "Luis"], [4, "Ana"]]);
+  });
+
+  it("reports a non-clear Sterling status as a problem and never passes that row on to be stored", async () => {
+    const csv = [
+      "First name,Last name,Email,Expiration date,Status",
+      "Ana,Rivera,ana@example.test,2029-01-01,Clear",
+      "Bo,Lee,bo@example.test,2029-01-01,Pending adjudication",
+    ].join("\n");
+    const response = await importPost(post("/api/admin/background-checks/import", { csv }));
+    const body = await response.json();
+    expect(body.problems).toEqual([{ line: 3, name: "Bo Lee", problems: ['Status is "Pending adjudication", not a clear check, so nothing was recorded. Review this person in Sterling.'] }]);
+    const [rows] = mocks.planBackgroundCheckUpload.mock.calls[0]!;
+    expect((rows as Array<{ firstName: string; complianceStatus: unknown; issuesNote: unknown }>).map((row) => [row.firstName, row.complianceStatus, row.issuesNote])).toEqual([["Ana", null, null]]);
   });
 
   it("passes the echoed fingerprint to the confirm", async () => {
@@ -112,5 +132,33 @@ describe("background-check review and undo routes (#527 N2, N5)", () => {
     expect((await undoDelete(post("/api/admin/background-checks/manual-matches/m-1", undefined, "DELETE"), matchCtx)).status).toBe(404);
     mocks.undoManualBackgroundCheckMatch.mockRejectedValueOnce(new BackgroundCheckOperationError("NOT_A_MANUAL_MATCH", "Only a match made by hand can be undone here."));
     expect((await undoDelete(post("/api/admin/background-checks/manual-matches/m-1", undefined, "DELETE"), matchCtx)).status).toBe(400);
+  });
+});
+
+describe("background-check staff routes are system administrators only (#527)", () => {
+  it("refuses the review list, the unmatched list, manual matches, a review decision, and an undo to anyone else", async () => {
+    mocks.requireSystemAdministrator.mockRejectedValue(new AccessDeniedError("System administrator access is required.", 403, "PERMISSION_DENIED"));
+    const responses = [
+      await reviewsGet(new Request("https://events.imsda.test/api/admin/background-checks/reviews")),
+      await unmatchedGet(new Request("https://events.imsda.test/api/admin/background-checks/unmatched")),
+      await manualGet(new Request("https://events.imsda.test/api/admin/background-checks/manual-matches")),
+      await reviewPost(post("/api/admin/background-checks/reviews/r-1", { type: "dismiss" }), { params: Promise.resolve({ reviewId: "r-1" }) }),
+      await undoDelete(post("/api/admin/background-checks/manual-matches/m-1", undefined, "DELETE"), { params: Promise.resolve({ matchId: "m-1" }) }),
+      await importPost(post("/api/admin/background-checks/import", { csv: coupleCsv })),
+    ];
+    expect(responses.map((response) => response.status)).toEqual([403, 403, 403, 403, 403, 403]);
+    expect(mocks.listBackgroundCheckReviews).not.toHaveBeenCalled();
+    expect(mocks.listUnmatchedBackgroundCheckEntries).not.toHaveBeenCalled();
+    expect(mocks.listManualBackgroundCheckMatches).not.toHaveBeenCalled();
+    expect(mocks.resolveBackgroundCheckReview).not.toHaveBeenCalled();
+    expect(mocks.undoManualBackgroundCheckMatch).not.toHaveBeenCalled();
+    expect(mocks.planBackgroundCheckUpload).not.toHaveBeenCalled();
+  });
+
+  it("is a 409 to decide a review while an upload is in progress", async () => {
+    mocks.resolveBackgroundCheckReview.mockRejectedValueOnce(new BackgroundCheckOperationError("UPLOAD_IN_PROGRESS", "A background-check list upload is in progress. Try again in a moment."));
+    const response = await reviewPost(post("/api/admin/background-checks/reviews/r-1", { type: "dismiss" }), { params: Promise.resolve({ reviewId: "r-1" }) });
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: "UPLOAD_IN_PROGRESS" });
   });
 });

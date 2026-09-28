@@ -3,7 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
-import { logError } from "@/lib/logger";
+import { logError, logInfo } from "@/lib/logger";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { openBirthDate, sealBirthDate } from "@/modules/club-rosters/birth-dates";
 import { ageOn, clubYearFor } from "@/modules/club-rosters/domain";
@@ -98,7 +98,15 @@ async function backfillNormalizedNames(tx: PrismaLike) {
 // --- Upload: preview (counts) and apply (replace the list) ---
 
 export type BackgroundCheckUploadCounts = { added: number; changed: number; dropped: number; total: number };
-export type BackgroundCheckUploadPreview = BackgroundCheckUploadCounts & { fingerprint: string };
+export type BackgroundCheckUploadPreview = BackgroundCheckUploadCounts & {
+  fingerprint: string;
+  /**
+   * The list on file is still the one the #527 migration carried over. Those
+   * entries have no email or site, so a Sterling file can't recognize them:
+   * its first upload shows them as dropped and its rows as added (#527 N6).
+   */
+  replacesMigratedList: boolean;
+};
 
 type StoredEntryFields = {
   identityKey: string;
@@ -182,15 +190,19 @@ export function backgroundCheckUploadFingerprint(latestUploadId: string | null, 
 export async function planBackgroundCheckUpload(rows: BackgroundCheckListRow[]): Promise<BackgroundCheckUploadPreview> {
   const { rows: deduped } = dedupeListRows(rows);
   const prisma = getPrisma();
-  const latest = await latestUpload(prisma);
+  const latest = await prisma.backgroundCheckUpload.findFirst({ orderBy: [{ createdAt: "desc" }, { id: "desc" }], select: { id: true, format: true } });
   const existing = await entriesOfUpload(prisma, latest?.id ?? null);
-  return { ...countUploadChanges(existing, deduped), fingerprint: backgroundCheckUploadFingerprint(latest?.id ?? null, deduped) };
+  return {
+    ...countUploadChanges(existing, deduped),
+    fingerprint: backgroundCheckUploadFingerprint(latest?.id ?? null, deduped),
+    replacesMigratedList: latest?.format === "MIGRATION",
+  };
 }
 
 // --- Matching engine: candidates, ambiguity, and the derived cache ---
 
 type NameCandidate = { personId: string; name: string; emails: Set<string>; birthDates: Set<string>; siteNames: Set<string> };
-type NameIndex = { byName: Map<string, NameCandidate[]> };
+type NameIndex = { byName: Map<string, NameCandidate[]>; byPerson: Map<string, NameCandidate> };
 
 /** Registered adults are matched only for events upcoming or ended within this many months. */
 const REGISTRATION_LOOKBACK_MONTHS = 12;
@@ -265,7 +277,7 @@ function formBirthDate(responses: Record<string, unknown>) {
  * group for a targeted refresh, so neither path scans more than it needs.
  */
 async function buildCandidateIndex(tx: PrismaLike, now: Date, scope?: { personIds: string[] }): Promise<NameIndex> {
-  if (scope && scope.personIds.length === 0) return { byName: new Map() };
+  if (scope && scope.personIds.length === 0) return { byName: new Map(), byPerson: new Map() };
   const clubYear = clubYearFor(now);
   const cutoff = new Date(now);
   cutoff.setUTCMonth(cutoff.getUTCMonth() - REGISTRATION_LOOKBACK_MONTHS);
@@ -324,7 +336,7 @@ async function buildCandidateIndex(tx: PrismaLike, now: Date, scope?: { personId
       sites: [club?.name, club?.parentOrganization?.name],
     });
   }
-  return { byName: groupByName(byPerson) };
+  return { byName: groupByName(byPerson), byPerson };
 }
 
 /**
@@ -508,11 +520,15 @@ async function saveMatchResults(tx: PrismaLike, matches: MatchResult[], reviews:
   if (matches.length > 0) {
     await tx.backgroundCheckMatch.createMany({
       data: matches.map((match) => ({ personId: match.personId, entryId: match.entryId, matchedBy: match.matchedBy })),
+      // A concurrent refresh may have just written the same pair: never a duplicate, never an error.
+      skipDuplicates: true,
     });
   }
   if (reviews.length > 0) {
     await tx.backgroundCheckReview.createMany({
       data: reviews.map((review) => ({ entryId: review.entryId, reason: review.reason, candidatePersonIds: review.candidatePersonIds })),
+      // One review per entry (#527 N2): a concurrent refresh's review wins, never a second row.
+      skipDuplicates: true,
     });
   }
   await rememberUserIdIdentities(tx, matches, now);
@@ -548,18 +564,20 @@ async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: stri
   const [entries, personIds] = await Promise.all([
     tx.backgroundCheckEntry.findMany({
       where: { uploadId, normalizedName: { in: groupNames } },
-      select: { ...entryForMatchSelect, match: { select: { personId: true, matchedBy: true } } },
+      select: { ...entryForMatchSelect, match: { select: { personId: true, matchedBy: true } }, review: { select: { dismissedAt: true } } },
     }),
     personIdsNamed(tx, groupNames),
   ]);
+  // Staff said none of the candidates is right: that entry matches no one until the next upload.
+  const dismissed = (entry: (typeof entries)[number]) => Boolean(entry.review?.dismissedAt);
   const derivedEntryIds = entries.filter((entry) => entry.match && !LOCKED_SOURCES.has(entry.match.matchedBy)).map((entry) => entry.id);
   const entryIds = entries.map((entry) => entry.id);
   if (derivedEntryIds.length > 0) {
     await tx.backgroundCheckMatch.deleteMany({ where: { entryId: { in: derivedEntryIds }, matchedBy: { in: [...DERIVED_SOURCES] } } });
   }
-  if (entryIds.length > 0) await tx.backgroundCheckReview.deleteMany({ where: { entryId: { in: entryIds } } });
+  if (entryIds.length > 0) await tx.backgroundCheckReview.deleteMany({ where: { entryId: { in: entryIds }, dismissedAt: null } });
 
-  const toMatch = entries.filter((entry) => !(entry.match && LOCKED_SOURCES.has(entry.match.matchedBy)));
+  const toMatch = entries.filter((entry) => !(entry.match && LOCKED_SOURCES.has(entry.match.matchedBy)) && !dismissed(entry));
   if (toMatch.length === 0) return;
   const [index, identityByKey, stillMatched] = await Promise.all([
     buildCandidateIndex(tx, now, { personIds }),
@@ -592,10 +610,12 @@ export async function refreshBackgroundCheckMatches(personIds: Iterable<string>,
   if (!(await latestUpload(prisma))) return;
   for (let start = 0; start < ids.length; start += REFRESH_CHUNK) {
     const chunk = ids.slice(start, start + REFRESH_CHUNK);
-    await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(${BACKGROUND_CHECK_LOCK_KEY}::bigint)`;
+    const refreshed = await prisma.$transaction(async (tx) => {
+      // Never waits on an upload (#527): skipped instead, and covered by the
+      // read path and the upload's own full pass.
+      if (!(await tryListLock(tx))) return false;
       const current = await latestUpload(tx);
-      if (!current) return;
+      if (!current) return true;
       await backfillNormalizedNames(tx);
       const people = await tx.person.findMany({
         where: { id: { in: chunk } },
@@ -608,7 +628,28 @@ export async function refreshBackgroundCheckMatches(personIds: Iterable<string>,
         if (priorName && !LOCKED_SOURCES.has(person.backgroundCheckMatch!.matchedBy)) names.add(priorName);
       }
       await recomputeNameGroups(tx, current.id, [...names], now);
+      return true;
     }, { timeout: 30_000, maxWait: 10_000 });
+    if (!refreshed) {
+      logInfo("Background check match refresh skipped while a list upload is in progress", { people: ids.length });
+      return;
+    }
+  }
+}
+
+/**
+ * The list lock, shared, without waiting (#527): false while an upload holds
+ * it. Writers that aren't the upload use this, so a user's save is never held
+ * up behind a long upload.
+ */
+async function tryListLock(tx: PrismaLike) {
+  const [row] = await tx.$queryRaw<Array<{ locked: boolean }>>`SELECT pg_try_advisory_xact_lock_shared(${BACKGROUND_CHECK_LOCK_KEY}::bigint) AS locked`;
+  return Boolean(row?.locked);
+}
+
+async function requireListLock(tx: PrismaLike) {
+  if (!(await tryListLock(tx))) {
+    throw new BackgroundCheckOperationError("UPLOAD_IN_PROGRESS", "A background-check list upload is in progress. Try again in a moment.");
   }
 }
 
@@ -718,6 +759,7 @@ export type BackgroundCheckReviewItem = {
 export async function listBackgroundCheckReviews(): Promise<BackgroundCheckReviewItem[]> {
   const prisma = getPrisma();
   const reviews = await prisma.backgroundCheckReview.findMany({
+    where: { dismissedAt: null },
     orderBy: { createdAt: "asc" },
     select: {
       id: true,
@@ -754,8 +796,10 @@ export async function listBackgroundCheckReviews(): Promise<BackgroundCheckRevie
  * (#527). A pick is a `MANUAL` match: a staff decision that holds across
  * refreshes and uploads, even if the names differ, until staff undo it (N2).
  * A `user_id` entry's pick is also remembered as that id's identity. A
- * dismissal is not remembered and may resurface if the same ambiguity
- * recomputes later — nothing is guessed either way.
+ * dismissal is kept (`dismissedAt`): that entry is matched to no one — by a
+ * refresh or at read time — until the next upload replaces the list. Takes
+ * the list lock shared, without waiting: during an upload it is refused
+ * (`UPLOAD_IN_PROGRESS`, 409) rather than held up.
  */
 export async function resolveBackgroundCheckReview(
   reviewId: string,
@@ -763,16 +807,21 @@ export async function resolveBackgroundCheckReview(
   actorUserId: string,
 ) {
   const prisma = getPrisma();
+  const notFound = () => new BackgroundCheckOperationError("REVIEW_NOT_FOUND", "That review was already resolved or no longer exists. Refresh the list.");
   await prisma.$transaction(async (tx) => {
+    await requireListLock(tx);
     const review = await tx.backgroundCheckReview.findUnique({
       where: { id: reviewId },
-      select: { id: true, entryId: true, candidatePersonIds: true, entry: { select: { identityKey: true } } },
+      select: { id: true, entryId: true, candidatePersonIds: true, dismissedAt: true, entry: { select: { identityKey: true } } },
     });
-    if (!review) throw new BackgroundCheckOperationError("REVIEW_NOT_FOUND", "That review was already resolved or no longer exists. Refresh the list.");
+    if (!review || review.dismissedAt || !review.entry) throw notFound();
     if (decision.type === "match") {
       const candidateIds = Array.isArray(review.candidatePersonIds) ? review.candidatePersonIds as string[] : [];
       if (!candidateIds.includes(decision.personId)) {
         throw new BackgroundCheckOperationError("NOT_A_CANDIDATE", "That person isn't one of this row's candidates.");
+      }
+      if (!(await tx.person.findUnique({ where: { id: decision.personId }, select: { id: true } }))) {
+        throw new BackgroundCheckOperationError("NOT_A_CANDIDATE", "That person is no longer on file.");
       }
       if (isRememberedIdentityKey(review.entry.identityKey)) {
         const now = new Date();
@@ -787,8 +836,10 @@ export async function resolveBackgroundCheckReview(
       }
       await tx.backgroundCheckMatch.deleteMany({ where: { OR: [{ personId: decision.personId }, { entryId: review.entryId }] } });
       await tx.backgroundCheckMatch.create({ data: { personId: decision.personId, entryId: review.entryId, matchedBy: "MANUAL" } });
+      await tx.backgroundCheckReview.deleteMany({ where: { entryId: review.entryId } });
+    } else {
+      await tx.backgroundCheckReview.update({ where: { id: review.id }, data: { dismissedAt: new Date() } });
     }
-    await tx.backgroundCheckReview.deleteMany({ where: { entryId: review.entryId } });
     await writeAuditLog({
       actorUserId,
       action: decision.type === "match" ? "BACKGROUND_CHECK_REVIEW_MATCHED" : "BACKGROUND_CHECK_REVIEW_DISMISSED",
@@ -797,6 +848,11 @@ export async function resolveBackgroundCheckReview(
       summary: decision.type === "match" ? "Staff matched a background-check row to a person by hand." : "Staff dismissed a background-check review; none of the candidates was right.",
       metadata: { entryId: review.entryId },
     }, tx);
+  }).catch((error: unknown) => {
+    // The entry or person vanished mid-way (a foreign key or missing row): a 404, not a 500.
+    const code = (error as { code?: unknown } | null)?.code;
+    if (code === "P2003" || code === "P2025") throw notFound();
+    throw error;
   });
 }
 
@@ -830,6 +886,7 @@ export async function listManualBackgroundCheckMatches(): Promise<ManualBackgrou
  */
 export async function undoManualBackgroundCheckMatch(matchId: string, actorUserId: string) {
   const personId = await getPrisma().$transaction(async (tx) => {
+    await requireListLock(tx);
     const match = await tx.backgroundCheckMatch.findUnique({
       where: { id: matchId },
       select: { id: true, personId: true, entryId: true, matchedBy: true, entry: { select: { identityKey: true } } },
@@ -859,13 +916,16 @@ export async function undoManualBackgroundCheckMatch(matchId: string, actorUserI
   }
 }
 
-/** List entries under the current upload that match no one yet — visible to staff, not guessed. */
+/** No review waiting on staff: none at all, or one staff dismissed ("none of these"). */
+const NO_OPEN_REVIEW = { OR: [{ review: null }, { review: { dismissedAt: { not: null } } }] } satisfies Prisma.BackgroundCheckEntryWhereInput;
+
+/** List entries under the current upload that match no one yet (dismissed ones included) — visible to staff, not guessed. */
 export async function listUnmatchedBackgroundCheckEntries() {
   const prisma = getPrisma();
   const latest = await latestUpload(prisma);
   if (!latest) return [];
   return prisma.backgroundCheckEntry.findMany({
-    where: { uploadId: latest.id, match: null, reviews: { none: {} } },
+    where: { uploadId: latest.id, match: null, ...NO_OPEN_REVIEW },
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
     select: { id: true, firstName: true, lastName: true, site: true, complianceStatus: true, checkedOn: true, expiresOn: true },
   });
@@ -887,41 +947,70 @@ type LookupSubject = {
 /**
  * Read-time matching for people the cache has no match for yet (#527 B5):
  * someone added by any write path is matched at lookup even before a
- * refresh has run. One indexed query per page (`normalizedName IN (...)` on
- * the latest upload's unmatched, unreviewed entries), then the same
- * candidate rules as the full pass, with the evidence this page already
- * has: emails, a form or roster birth date, and the club or church. Anything
- * ambiguous — an entry more than one of these people could be, or a person
- * more than one entry could be — is left unmatched, never guessed.
+ * refresh has run. A fixed number of queries per page, however many people
+ * it shows:
+ *
+ * 1. the latest upload's entries in the page's name groups that have no
+ *    match and no review at all — not an open one, and not one staff
+ *    dismissed ("none of these is right" is never overridden here);
+ * 2. only if there are any: everyone on file in those name groups
+ *    (`personIdsNamed`) and their evidence (the scoped candidate index),
+ *    so an entry is accepted only when no *other* person anywhere could
+ *    also be it — not just no one else on this page.
+ *
+ * The page's own evidence (emails, a form or roster birth date, the club or
+ * church) is added to its people's. An entry more than one person could be,
+ * or a person more than one entry could be, is left unmatched — never
+ * guessed; the next refresh turns it into a review.
  */
-async function lookupUncachedChecks(prisma: PrismaLike, subjects: LookupSubject[]): Promise<Map<string, StoredCheck>> {
+async function lookupUncachedChecks(prisma: PrismaLike, subjects: LookupSubject[], now = new Date()): Promise<Map<string, StoredCheck>> {
   const found = new Map<string, StoredCheck>();
-  const byPerson = new Map<string, NameCandidate>();
+  const pagePeople = new Map<string, NameCandidate>();
   for (const subject of subjects) {
     if (!subject.firstName && !subject.lastName) continue;
-    rememberCandidate(byPerson, subject.personId, subject.firstName, subject.lastName, {
+    rememberCandidate(pagePeople, subject.personId, subject.firstName, subject.lastName, {
       emails: subject.emails, birthDates: subject.birthDates, sites: subject.sites,
     });
   }
-  const byName = groupByName(byPerson);
-  if (byName.size === 0) return found;
-  const entries = await prisma.backgroundCheckEntry.findMany({
-    where: { normalizedName: { in: [...byName.keys()] }, match: null, reviews: { none: {} } },
+  const pageNames = [...groupByName(pagePeople).keys()];
+  if (pageNames.length === 0) return found;
+  const fetched = await prisma.backgroundCheckEntry.findMany({
+    where: { normalizedName: { in: pageNames }, match: null, review: null },
     select: {
       id: true, uploadId: true, normalizedName: true, email: true, sealedBirthDate: true, site: true,
       complianceStatus: true, expiresOn: true, issuesNote: true, upload: { select: { createdAt: true } },
     },
   });
-  if (entries.length === 0) return found;
+  if (fetched.length === 0) return found;
   // Only the latest upload's entries are "the list" (an upload deletes the rest).
-  const latest = entries.reduce((best, entry) => (
+  const latest = fetched.reduce((best, entry) => (
     entry.upload.createdAt > best.upload.createdAt || (entry.upload.createdAt.getTime() === best.upload.createdAt.getTime() && entry.uploadId > best.uploadId) ? entry : best
   ));
+  const entries = fetched.filter((entry) => entry.uploadId === latest.uploadId && entry.normalizedName);
+
+  // Everyone on file who shares these names, not just this page's people.
+  const groupNames = [...new Set(entries.map((entry) => entry.normalizedName!))];
+  const namedIds = await personIdsNamed(prisma, groupNames);
+  const index = await buildCandidateIndex(prisma, now, { personIds: namedIds });
+  const everyone = new Map(index.byPerson);
+  for (const person of pagePeople.values()) {
+    const known = everyone.get(person.personId);
+    if (!known) {
+      everyone.set(person.personId, person);
+      continue;
+    }
+    for (const email of person.emails) known.emails.add(email);
+    for (const birthDate of person.birthDates) known.birthDates.add(birthDate);
+    for (const site of person.siteNames) known.siteNames.add(site);
+  }
+  // A person on file in the name group with no roster or registration
+  // evidence can't be a candidate by the rules, so isn't one here either.
+  const byName = groupByName(everyone);
+
   const entriesByPerson = new Map<string, Array<(typeof entries)[number]>>();
   for (const entry of entries) {
-    if (entry.uploadId !== latest.uploadId || !entry.normalizedName) continue;
-    const candidates = candidatesForEntry(entry, byName.get(entry.normalizedName) ?? []);
-    if (candidates.length !== 1) continue;
+    const candidates = candidatesForEntry(entry, byName.get(entry.normalizedName!) ?? []);
+    if (candidates.length !== 1 || !pagePeople.has(candidates[0]!.personId)) continue;
     const list = entriesByPerson.get(candidates[0]!.personId) ?? [];
     list.push(entry);
     entriesByPerson.set(candidates[0]!.personId, list);
@@ -949,8 +1038,8 @@ export async function backgroundCheckSummary(today = calendarDateInEventTimeZone
     prisma.backgroundCheckMatch.count({ where: { entry: { complianceStatus: null, expiresOn: { lt: today } } } }),
     prisma.backgroundCheckMatch.count({ where: { entry: { complianceStatus: "NOT_COMPLIANT" } } }),
     prisma.backgroundCheckMatch.findFirst({ orderBy: { updatedAt: "desc" }, select: { updatedAt: true } }),
-    prisma.backgroundCheckReview.count(),
-    latestUploadForCounts ? prisma.backgroundCheckEntry.count({ where: { uploadId: latestUploadForCounts.id, match: null, reviews: { none: {} } } }) : Promise.resolve(0),
+    prisma.backgroundCheckReview.count({ where: { dismissedAt: null } }),
+    latestUploadForCounts ? prisma.backgroundCheckEntry.count({ where: { uploadId: latestUploadForCounts.id, match: null, ...NO_OPEN_REVIEW } }) : Promise.resolve(0),
     prisma.event.findMany({
       where: { checksAdultBackgrounds: true, endsAt: { gte: new Date() } },
       orderBy: { startsAt: "asc" },
@@ -1102,6 +1191,47 @@ export async function backgroundFlaggedAttendeeIds(eventId: string) {
   return new Set(flags?.people.map((person) => person.attendeeId) ?? []);
 }
 
+export type RosterMemberForCheck = {
+  personId: string | null;
+  sealedBirthDate?: string | null;
+  organization?: { name: string; parentOrganization?: { name: string } | null } | null;
+  person: {
+    firstName: string;
+    lastName: string;
+    normalizedEmail?: string | null;
+    attendeeAccountLinks?: Array<{ account: { email: string } }> | null;
+    backgroundCheckMatch?: unknown;
+  } | null;
+};
+
+/** The roster `select` a caller needs for `uncachedChecksForRosterMembers`. */
+export const rosterMemberCheckEvidenceSelect = {
+  sealedBirthDate: true,
+  organization: clubSelect,
+} as const;
+export const personCheckEvidenceSelect = personEmailSelect;
+
+/**
+ * Read-time checks for roster members the cache has no match for yet
+ * (#527): the same lookup the club roster uses, for any roster-shaped page
+ * (the driver verification queue, say). Keyed by person id.
+ */
+export async function uncachedChecksForRosterMembers(members: RosterMemberForCheck[], prisma: PrismaLike = getPrisma()) {
+  return lookupUncachedChecks(prisma, members
+    .filter((member) => member.personId && member.person && !member.person.backgroundCheckMatch)
+    .map((member) => {
+      const birthDate = openEntryBirthDate(member.sealedBirthDate ?? null);
+      return {
+        personId: member.personId!,
+        firstName: member.person!.firstName,
+        lastName: member.person!.lastName,
+        emails: personEmails(member.person!),
+        birthDates: birthDate ? [birthDate] : [],
+        sites: [member.organization?.name, member.organization?.parentOrganization?.name],
+      };
+    }));
+}
+
 /**
  * A club page's compliance status per adult roster member (#427): Clear,
  * Expiring soon, Not in compliance, or No record, keyed by roster member id.
@@ -1133,19 +1263,7 @@ export async function clubRosterComplianceStatuses(
       },
     },
   });
-  const uncached = await lookupUncachedChecks(prisma, members
-    .filter((member) => member.personId && member.person && !member.person.backgroundCheckMatch)
-    .map((member) => {
-      const birthDate = openEntryBirthDate(member.sealedBirthDate ?? null);
-      return {
-        personId: member.personId!,
-        firstName: member.person!.firstName,
-        lastName: member.person!.lastName,
-        emails: personEmails(member.person!),
-        birthDates: birthDate ? [birthDate] : [],
-        sites: [member.organization?.name, member.organization?.parentOrganization?.name],
-      };
-    }));
+  const uncached = await uncachedChecksForRosterMembers(members, prisma);
   const statuses: Record<string, { state: ClubComplianceState; note: string | null }> = {};
   let notInCompliance = 0;
   let expiringSoon = 0;

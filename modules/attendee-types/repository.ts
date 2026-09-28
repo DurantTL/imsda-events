@@ -3,6 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { refreshBackgroundCheckMatchesSafely } from "@/modules/background-checks/refresh-after-write";
 import {
   attendeeClassificationInputSchema,
   attendeeClassificationUpdateSchema,
@@ -146,11 +147,12 @@ export async function backfillAttendeeTypes(eventId: string, apply = false) {
   ]);
   const rows = planAttendeeTypeBackfill(types, grouped.map((row) => ({ attendeeType: row.attendeeType, count: row._count._all })));
   let updatedCount = 0;
+  const touchedPersonIds = new Set<string>();
   if (apply) {
     await prisma.$transaction(async (tx) => {
       const legacyAttendees = await tx.registrationAttendee.findMany({
         where: { eventId, attendeeTypeDefinitionId: null },
-        select: { id: true, attendeeType: true },
+        select: { id: true, attendeeType: true, personId: true },
       });
       for (const row of rows) {
         if (!row.attendeeTypeId) continue;
@@ -163,8 +165,11 @@ export async function backfillAttendeeTypes(eventId: string, apply = false) {
           data: { attendeeTypeDefinitionId: row.attendeeTypeId },
         });
         updatedCount += result.count;
+        for (const attendee of legacyAttendees) if (matchingIds.includes(attendee.id)) touchedPersonIds.add(attendee.personId);
       }
     });
+    // #527: an attendee type is background-check evidence (who is an adult); refresh after commit, best effort.
+    await refreshBackgroundCheckMatchesSafely(touchedPersonIds);
   }
   return { eventId, dryRun: !apply, updatedCount, rows };
 }

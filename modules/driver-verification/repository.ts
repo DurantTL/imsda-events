@@ -4,6 +4,11 @@ import type { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { clubComplianceState, type ClubComplianceState } from "@/modules/background-checks/domain";
+import {
+  personCheckEvidenceSelect,
+  rosterMemberCheckEvidenceSelect,
+  uncachedChecksForRosterMembers,
+} from "@/modules/background-checks/repository";
 import type { ClubActor } from "@/modules/club-rosters/access";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
@@ -38,11 +43,12 @@ const willingDriverSelect = {
   personId: true,
   organizationId: true,
   attendeeType: true,
-  organization: { select: { name: true } },
+  ...rosterMemberCheckEvidenceSelect,
   person: {
     select: {
       firstName: true,
       lastName: true,
+      ...personCheckEvidenceSelect,
       backgroundCheckMatch: { select: { entry: { select: { complianceStatus: true, expiresOn: true, issuesNote: true } } } },
       driverVerification: {
         select: {
@@ -82,9 +88,15 @@ export type DriverQueueEntry = {
  * it, not even a blank to hide — `note` is always null there. Whether a club
  * reviewer should see it is a human decision still open on #491.
  */
-function serializeQueueEntry(member: WillingDriverRow, today: string, includeNotes: boolean): DriverQueueEntry | null {
+function serializeQueueEntry(
+  member: WillingDriverRow,
+  today: string,
+  includeNotes: boolean,
+  uncached: Awaited<ReturnType<typeof uncachedChecksForRosterMembers>>,
+): DriverQueueEntry | null {
   if (!member.personId || !member.person) return null;
-  const check = member.person.backgroundCheckMatch?.entry ?? null;
+  // The cached match, or the same read-time lookup the club roster uses (#527).
+  const check = member.person.backgroundCheckMatch?.entry ?? uncached.get(member.personId) ?? null;
   const verification = member.person.driverVerification;
   return {
     personId: member.personId,
@@ -124,8 +136,9 @@ export async function listWillingDrivers(scope: DriverQueueScope, now = new Date
     select: willingDriverSelect,
     orderBy: [{ person: { lastName: "asc" } }, { person: { firstName: "asc" } }],
   });
+  const uncached = await uncachedChecksForRosterMembers(members);
   return members
-    .map((member) => serializeQueueEntry(member, today, scope.kind === "GLOBAL"))
+    .map((member) => serializeQueueEntry(member, today, scope.kind === "GLOBAL", uncached))
     .filter((entry): entry is DriverQueueEntry => entry !== null);
 }
 

@@ -45,18 +45,28 @@ function makeFakeDb() {
   const rosterMembers: Row[] = [];
   const attendees: Row[] = [];
   const events = new Map<string, Row>();
+  const lock = { held: false };
 
   const matchForEntry = (entryId: unknown) => [...matches.values()].find((match) => match.entryId === entryId) ?? null;
   const matchForPerson = (personId: unknown) => [...matches.values()].find((match) => match.personId === personId) ?? null;
 
+  const reviewForEntry = (entryId: unknown) => [...reviews.values()].find((review) => review.entryId === entryId) ?? null;
+
   function entryWhere(entry: Row, where: Row = {}): boolean {
     for (const [key, condition] of Object.entries(where)) {
+      if (key === "OR") {
+        if (!(condition as Row[]).some((option) => entryWhere(entry, option))) return false;
+        continue;
+      }
       if (key === "match") {
         if (condition === null && matchForEntry(entry.id)) return false;
         continue;
       }
-      if (key === "reviews") {
-        if ([...reviews.values()].some((review) => review.entryId === entry.id)) return false;
+      if (key === "review") {
+        const review = reviewForEntry(entry.id);
+        if (condition === null) { if (review) return false; continue; }
+        if (!review) return false;
+        for (const [field, fieldCondition] of Object.entries(condition as Row)) if (!valueMatches(review[field], fieldCondition)) return false;
         continue;
       }
       if (!valueMatches(entry[key], condition)) return false;
@@ -69,6 +79,7 @@ function makeFakeDb() {
     return {
       ...entry,
       match: match ? { personId: match.personId, matchedBy: match.matchedBy } : null,
+      review: reviewForEntry(entry.id) ? { ...reviewForEntry(entry.id) } : null,
       upload: uploads.get(entry.uploadId as string) ?? { createdAt: new Date(0) },
     };
   }
@@ -195,9 +206,12 @@ function makeFakeDb() {
       },
       findUnique: async ({ where }: { where: { id: string } }) => (matches.get(where.id) ? withMatchRelations(matches.get(where.id)!) : null),
       findMany: async ({ where }: { where?: Row } = {}) => [...matches.values()].filter((match) => matchWhere(match, where)).map(withMatchRelations),
-      createMany: async ({ data }: { data: Row[] }) => {
+      createMany: async ({ data, skipDuplicates }: { data: Row[]; skipDuplicates?: boolean }) => {
         for (const row of data) {
-          if (matchForPerson(row.personId) || matchForEntry(row.entryId)) throw new Error("Unique constraint failed on BackgroundCheckMatch");
+          if (matchForPerson(row.personId) || matchForEntry(row.entryId)) {
+            if (skipDuplicates) continue;
+            throw new Error("Unique constraint failed on BackgroundCheckMatch");
+          }
           const id = nextId("match");
           matches.set(id, { id, createdAt: new Date(), updatedAt: new Date(), ...row });
         }
@@ -220,8 +234,16 @@ function makeFakeDb() {
       count: async ({ where }: { where?: Row } = {}) => [...matches.values()].filter((match) => matchWhere(match, where)).length,
     },
     backgroundCheckReview: {
-      findMany: async () => [...reviews.values()].sort((a, b) => (a.createdAt as Date).getTime() - (b.createdAt as Date).getTime())
+      findMany: async ({ where }: { where?: Row } = {}) => [...reviews.values()]
+        .filter((review) => Object.entries(where ?? {}).every(([field, condition]) => valueMatches(review[field], condition)))
+        .sort((a, b) => (a.createdAt as Date).getTime() - (b.createdAt as Date).getTime())
         .map((review) => ({ ...review, entry: { ...entries.get(review.entryId as string) } })),
+      update: async ({ where, data }: { where: { id: string }; data: Row }) => {
+        const review = reviews.get(where.id);
+        if (!review) throw Object.assign(new Error("Record to update not found."), { code: "P2025" });
+        Object.assign(review, data);
+        return { ...review };
+      },
       findUnique: async ({ where }: { where: { id: string } }) => {
         const review = reviews.get(where.id);
         if (!review) return null;
@@ -229,6 +251,7 @@ function makeFakeDb() {
       },
       createMany: async ({ data }: { data: Row[] }) => {
         for (const row of data) {
+          if (reviewForEntry(row.entryId)) continue; // One per entry; always skipDuplicates in the repository.
           const id = nextId("review");
           reviews.set(id, { id, createdAt: new Date(), ...row });
         }
@@ -237,13 +260,14 @@ function makeFakeDb() {
       deleteMany: async ({ where }: { where: Row }) => {
         let removed = 0;
         for (const [id, review] of [...reviews.entries()]) {
-          if (!valueMatches(review.entryId, where.entryId)) continue;
+          if (!Object.entries(where).every(([field, condition]) => valueMatches(review[field], condition))) continue;
           reviews.delete(id);
           removed += 1;
         }
         return { count: removed };
       },
-      count: async () => reviews.size,
+      count: async ({ where }: { where?: Row } = {}) => [...reviews.values()]
+        .filter((review) => Object.entries(where ?? {}).every(([field, condition]) => valueMatches(review[field], condition))).length,
     },
     externalIdentity: {
       findMany: async ({ where }: { where: Row }) => [...identities.values()]
@@ -319,8 +343,10 @@ function makeFakeDb() {
       }
       return 0;
     },
-    // The refresh's coarse name filter: people whose compacted name is one asked for.
-    $queryRaw: async (_strings: TemplateStringsArray, ...values: unknown[]) => {
+    // The list lock's try-lock (held by a pretend upload when `lock.held`),
+    // and the refresh's coarse name filter: people whose compacted name is one asked for.
+    $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      if (strings.join("?").includes("pg_try_advisory_xact_lock_shared")) return [{ locked: !lock.held }];
       const [compacts] = values as [string[]];
       return [...persons.values()]
         .filter((person) => compacts.includes(compactName(person.firstName as string, person.lastName as string)))
@@ -329,7 +355,7 @@ function makeFakeDb() {
   };
   (client as { $transaction?: unknown }).$transaction = async (work: (tx: typeof client) => Promise<unknown>) => work(client);
 
-  return { client, seed: { persons, uploads, entries, matches, reviews, identities, rosterMembers, attendees, events } };
+  return { client, lock, seed: { persons, uploads, entries, matches, reviews, identities, rosterMembers, attendees, events } };
 }
 
 // --- Wiring: getPrisma() returns whichever fake is current for the test. ---
@@ -387,6 +413,7 @@ import {
 } from "@/modules/background-checks/repository";
 import { BackgroundCheckOperationError } from "@/modules/background-checks/errors";
 import { clubCapabilities } from "@/modules/organizations/director-grants-domain";
+import { clubYearFor } from "@/modules/club-rosters/domain";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -499,14 +526,14 @@ describe("matchableName (#527)", () => {
 });
 
 describe("the unified list row mapping (#527)", () => {
-  it("keeps a clear Sterling row dated, and marks a non-clear one not in compliance instead of dropping it", () => {
+  it("keeps a clear Sterling row dated, and reports a non-clear one as a problem instead of storing it (as before #527)", () => {
     const [clearRow] = parseSterlingCsv("First name,Last name,Email,Expiration date,Status\nAna,Rivera,ana@example.test,2029-01-01,Clear");
+    expect(clearRow!.problems).toEqual([]);
     const clear = sterlingRowToListRow(clearRow!);
     expect(clear).toMatchObject({ complianceStatus: null, expiresOn: "2029-01-01", issuesNote: null });
 
-    const [flaggedRow] = parseSterlingCsv("First name,Last name,Email,Expiration date,Status\nBo,Lee,bo@example.test,2029-01-01,Needs review");
-    const flagged = sterlingRowToListRow(flaggedRow!);
-    expect(flagged).toMatchObject({ complianceStatus: "NOT_COMPLIANT", expiresOn: null, issuesNote: "Sterling status: Needs review." });
+    const [pendingRow] = parseSterlingCsv("First name,Last name,Email,Expiration date,Status\nBo,Lee,bo@example.test,2029-01-01,Pending adjudication");
+    expect(pendingRow!.problems).toEqual(['Status is "Pending adjudication", not a clear check, so nothing was recorded. Review this person in Sterling.']);
   });
 
   it("builds a stable identity key: user_id first, then email, then birth date, then site, then name", () => {
@@ -806,6 +833,20 @@ describe("refreshBackgroundCheckMatchForPerson: matched without a re-upload (#52
     expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-jose", matchedBy: "AUTO" })]);
   });
 
+  it("is skipped, not waited on, while an upload holds the list", async () => {
+    const { client, seed, lock } = makeFakeDb();
+    currentClient = client;
+    const rows = [sterlingRowToListRow(parseSterlingCsv("First name,Last name,Email,Expiration date\nAna,Rivera,ana@example.test,2029-01-01")[0]!)];
+    await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", new Date("2026-09-28T12:00:00Z"));
+    rosterAdult(seed, "p-ana", "Ana", "Rivera", { email: "ana@example.test" });
+    lock.held = true;
+    await expect(refreshBackgroundCheckMatchForPerson("p-ana", new Date("2026-09-29T12:00:00Z"))).resolves.toBeUndefined();
+    expect(seed.matches.size).toBe(0);
+    lock.held = false;
+    await refreshBackgroundCheckMatchForPerson("p-ana", new Date("2026-09-29T12:00:00Z"));
+    expect(seed.matches.size).toBe(1);
+  });
+
   it("does nothing, and fails nothing, before any list has been uploaded", async () => {
     const { client, seed } = makeFakeDb();
     currentClient = client;
@@ -920,16 +961,51 @@ describe("staff review resolution (#527)", () => {
     expect(seed.matches.size).toBe(1);
   });
 
-  it("a dismissal clears the review without remembering anything", async () => {
+  it("keeps a dismissal: the entry matches no one on a refresh, isn't reviewed again, and shows as unmatched", async () => {
     const { client, seed } = makeFakeDb();
     currentClient = client;
+    seed.uploads.set("u-1", { id: "u-1", createdAt: new Date("2026-09-01") });
+    rosterAdult(seed, "p-kim-1", "Kim", "Cho", { email: "kim@example.test" });
+    rosterAdult(seed, "p-kim-2", "Kim", "Cho", { email: "kim@example.test" });
     seedEntry(seed, "e-1", { identityKey: "email:kim@example.test|kim cho", firstName: "Kim", lastName: "Cho", normalizedName: matchableName("Kim Cho"), email: "kim@example.test" });
-    seed.reviews.set("r-1", { id: "r-1", entryId: "e-1", reason: "Ambiguous.", candidatePersonIds: ["p-a", "p-b"], createdAt: new Date() });
+    seed.reviews.set("r-1", { id: "r-1", entryId: "e-1", reason: "Ambiguous.", candidatePersonIds: ["p-kim-1", "p-kim-2"], dismissedAt: null, createdAt: new Date() });
     await resolveBackgroundCheckReview("r-1", { type: "dismiss" }, "admin-1");
-    expect(seed.reviews.size).toBe(0);
+    expect(seed.reviews.get("r-1")!.dismissedAt).toBeInstanceOf(Date);
     expect(seed.matches.size).toBe(0);
     expect(seed.identities.size).toBe(0);
     expect(auditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "BACKGROUND_CHECK_REVIEW_DISMISSED" }), client);
+    await expect(listBackgroundCheckReviews()).resolves.toEqual([]);
+
+    // One of them leaves the other club: a refresh would now find a single candidate, but staff said no.
+    seed.rosterMembers.splice(seed.rosterMembers.findIndex((member) => member.personId === "p-kim-2"), 1);
+    await refreshBackgroundCheckMatchForPerson("p-kim-1", new Date("2026-09-29T12:00:00Z"));
+    expect(seed.matches.size).toBe(0);
+    expect([...seed.reviews.values()]).toEqual([expect.objectContaining({ id: "r-1", dismissedAt: expect.any(Date) })]);
+    expect((await listUnmatchedBackgroundCheckEntries()).map((entry) => entry.id)).toEqual(["e-1"]);
+    await expect(resolveBackgroundCheckReview("r-1", { type: "match", personId: "p-kim-1" }, "admin-1")).rejects.toMatchObject({ code: "REVIEW_NOT_FOUND" });
+  });
+
+  it("never creates a second review for the same entry (N2)", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    rosterAdult(seed, "p-kim-1", "Kim", "Cho", { email: "kim@example.test" });
+    rosterAdult(seed, "p-kim-2", "Kim", "Cho", { email: "kim@example.test" });
+    const rows = [sterlingRowToListRow(parseSterlingCsv("First name,Last name,Email,Expiration date\nKim,Cho,kim@example.test,2029-01-01")[0]!)];
+    await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", new Date("2026-09-28T12:00:00Z"));
+    await refreshBackgroundCheckMatchForPerson("p-kim-1", new Date("2026-09-29T12:00:00Z"));
+    await refreshBackgroundCheckMatchForPerson("p-kim-2", new Date("2026-09-29T12:00:00Z"));
+    expect(seed.reviews.size).toBe(1);
+  });
+
+  it("refuses a review decision or an undo while an upload holds the list, with a 409 (N1)", async () => {
+    const { client, seed, lock } = makeFakeDb();
+    currentClient = client;
+    ambiguousKimCho(seed);
+    lock.held = true;
+    await expect(resolveBackgroundCheckReview("r-1", { type: "match", personId: "p-kim-1" }, "admin-1")).rejects.toMatchObject({ code: "UPLOAD_IN_PROGRESS", status: 409 });
+    await expect(undoManualBackgroundCheckMatch("m-any", "admin-1")).rejects.toMatchObject({ code: "UPLOAD_IN_PROGRESS", status: 409 });
+    expect(seed.matches.size).toBe(0);
+    expect(seed.reviews.size).toBe(1);
   });
 
   it("is a 400 to pick someone who isn't a candidate, and a 404 for an unknown review (N5)", async () => {
@@ -1153,6 +1229,43 @@ describe("read-time matching for people the cache hasn't matched yet (#527 B5)",
     seed.attendees.push(registeredAdult("p-kim-1", "Kim", "Cho", { email: "kim@example.test" }), registeredAdult("p-kim-2", "Kim", "Cho", { email: "kim@example.test" }));
     const flags = await listEventBackgroundFlags("event-1");
     expect(flags?.people.map((flag) => [flag.attendeeId, flag.state])).toEqual([["att-p-kim-1", "MISSING"], ["att-p-kim-2", "MISSING"]]);
+  });
+
+  it("never matches one entry to two people on different club pages (another person anywhere counts)", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    // The list says Dana Lee at the church that sponsors both clubs.
+    const [row] = parseRosterBackgroundCsv("user_id,user_last,user_first,sites,compliance\n5001,Lee,Dana,Verify Church,y");
+    await applyBackgroundCheckUpload([rosterRowToListRow(row!)], "ROSTER", "admin-1", new Date("2026-09-28T12:00:00Z"));
+    // Two different Dana Lees join two clubs afterward, with no refresh.
+    for (const [personId, organizationId, clubName] of [["p-dana-1", "org-1", "Club One"], ["p-dana-2", "org-2", "Club Two"]] as const) {
+      seed.persons.set(personId, { id: personId, firstName: "Dana", lastName: "Lee" });
+      seed.rosterMembers.push({
+        id: `member-${personId}`, personId, organizationId, clubYear: clubYearFor(new Date()), status: "ACTIVE", attendeeType: "ADULT", sealedBirthDate: null,
+        organization: { name: clubName, parentOrganization: { name: "Verify Church" } },
+        person: { firstName: "Dana", lastName: "Lee", normalizedEmail: null, attendeeAccountLinks: [], backgroundCheckMatch: null },
+      });
+    }
+    const clubOne = await clubRosterComplianceStatuses("org-1", clubYearFor(new Date()), { includeNotes: false });
+    const clubTwo = await clubRosterComplianceStatuses("org-2", clubYearFor(new Date()), { includeNotes: false });
+    expect(clubOne.statuses["member-p-dana-1"]?.state).toBe("NO_RECORD");
+    expect(clubTwo.statuses["member-p-dana-2"]?.state).toBe("NO_RECORD");
+  });
+
+  it("never overrides a staff dismissal at read time", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    const [row] = parseRosterBackgroundCsv("user_id,user_last,user_first,sites,compliance\n5001,Lee,Dana,Club One,y");
+    await applyBackgroundCheckUpload([rosterRowToListRow(row!)], "ROSTER", "admin-1", new Date("2026-09-28T12:00:00Z"));
+    const [entry] = [...seed.entries.values()];
+    seed.reviews.set("r-1", { id: "r-1", entryId: entry!.id, reason: "Ambiguous.", candidatePersonIds: ["p-dana-1", "p-x"], dismissedAt: new Date(), createdAt: new Date() });
+    seed.rosterMembers.push({
+      id: "member-dana", personId: "p-dana-1", organizationId: "org-1", clubYear: "2026", status: "ACTIVE", attendeeType: "ADULT", sealedBirthDate: null,
+      organization: { name: "Club One", parentOrganization: null },
+      person: { firstName: "Dana", lastName: "Lee", normalizedEmail: null, attendeeAccountLinks: [], backgroundCheckMatch: null },
+    });
+    const statuses = await clubRosterComplianceStatuses("org-1", "2026", { includeNotes: false });
+    expect(statuses.statuses["member-dana"]?.state).toBe("NO_RECORD");
   });
 
   it("never matches at read time an entry that's waiting on a staff review", async () => {

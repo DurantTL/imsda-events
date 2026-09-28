@@ -62,6 +62,7 @@ CREATE TABLE "BackgroundCheckReview" (
     "entryId" TEXT NOT NULL,
     "reason" TEXT NOT NULL,
     "candidatePersonIds" JSONB NOT NULL,
+    "dismissedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "BackgroundCheckReview_pkey" PRIMARY KEY ("id")
@@ -86,7 +87,7 @@ CREATE UNIQUE INDEX "BackgroundCheckMatch_personId_key" ON "BackgroundCheckMatch
 CREATE UNIQUE INDEX "BackgroundCheckMatch_entryId_key" ON "BackgroundCheckMatch"("entryId");
 
 -- CreateIndex
-CREATE INDEX "BackgroundCheckReview_entryId_idx" ON "BackgroundCheckReview"("entryId");
+CREATE UNIQUE INDEX "BackgroundCheckReview_entryId_key" ON "BackgroundCheckReview"("entryId");
 
 -- AddForeignKey
 ALTER TABLE "BackgroundCheckEntry" ADD CONSTRAINT "BackgroundCheckEntry_uploadId_fkey" FOREIGN KEY ("uploadId") REFERENCES "BackgroundCheckUpload"("id") ON DELETE CASCADE ON UPDATE CASCADE;

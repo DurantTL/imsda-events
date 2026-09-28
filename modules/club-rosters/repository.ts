@@ -319,8 +319,8 @@ export async function updateRosterMember(
  * roster, registered, linked to an account), their honor history is kept
  * with them.
  */
-export async function removeRosterMember(organizationId: string, memberId: string, actor: Actor, now = new Date()) {
-  await getPrisma().$transaction(async (tx) => {
+export async function removeRosterMember(organizationId: string, memberId: string, actor: Actor, now = new Date()): Promise<{ personId: string | null }> {
+  return getPrisma().$transaction(async (tx) => {
     const member = await findMember(tx, organizationId, memberId);
     await tx.clubRosterMember.update({
       where: { id: memberId },
@@ -368,6 +368,8 @@ export async function removeRosterMember(organizationId: string, memberId: strin
       personDeleted,
       honorEntriesErased,
     });
+    // The person kept (still registered, on another roster…) is refreshed by the caller (#527).
+    return { personId: personDeleted ? null : member.personId };
   });
 }
 
