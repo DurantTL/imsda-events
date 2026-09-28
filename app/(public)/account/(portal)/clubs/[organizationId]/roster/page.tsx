@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { BackLink } from "@/components/back-link";
 import { ClubRosterWorkspace } from "@/components/club-roster-workspace";
 import { clubPortalComplianceStatuses } from "@/modules/background-checks/repository";
+import { COMPLIANCE_FILTER_VALUES, type ComplianceFilterValue } from "@/modules/background-checks/domain";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import { listRoster } from "@/modules/club-rosters/repository";
@@ -9,8 +10,18 @@ import { listRoster } from "@/modules/club-rosters/repository";
 export const metadata: Metadata = { title: "Club roster" };
 export const dynamic = "force-dynamic";
 
-export default async function ClubRosterPage({ params }: { params: Promise<{ organizationId: string }> }) {
-  const { organizationId } = await params;
+function complianceFilterFrom(value: string | undefined): ComplianceFilterValue | null {
+  return COMPLIANCE_FILTER_VALUES.find((allowed) => allowed === value) ?? null;
+}
+
+export default async function ClubRosterPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ organizationId: string }>;
+  searchParams: Promise<{ compliance?: string }>;
+}) {
+  const [{ organizationId }, { compliance: complianceParam }] = await Promise.all([params, searchParams]);
   const access = await getRosterAccessStateForPage(organizationId);
   if (access.state !== "OPEN") return null;
   const clubYear = clubYearFor(new Date());
@@ -25,6 +36,7 @@ export default async function ClubRosterPage({ params }: { params: Promise<{ org
       <ClubRosterWorkspace
         canSeeBirthDates={access.capabilities.seeBirthDates}
         clubYear={clubYear}
+        complianceFilter={complianceFilterFrom(complianceParam)}
         complianceStatuses={complianceStatuses}
         initialMembers={members}
         organizationId={organizationId}

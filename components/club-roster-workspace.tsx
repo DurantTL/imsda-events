@@ -5,6 +5,7 @@ import { Eye, Pencil, Plus, Power, Save, Trash2, UsersRound, X } from "lucide-re
 import { BirthDateField } from "@/components/birth-date-field";
 import { RosterCsvImport } from "@/components/roster-csv-import";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
+import { complianceFilterLabels, complianceFilterState, type ComplianceFilterValue } from "@/modules/background-checks/domain";
 import {
   clubClassLevelLabels,
   clubRosterAttendeeTypeLabels,
@@ -41,6 +42,7 @@ export function ClubRosterWorkspace({
   readOnly = false,
   birthDatesEndpoint,
   complianceStatuses,
+  complianceFilter: initialComplianceFilter = null,
 }: {
   /** Directors and deputies only; a registrar enters birth dates but sees ages (#375). */
   canSeeBirthDates: boolean;
@@ -57,6 +59,8 @@ export function ClubRosterWorkspace({
    * caller is allowed to see it (club directors never get a note).
    */
   complianceStatuses?: Record<string, RosterComplianceInfo>;
+  /** `?compliance=` from the What's next reminder link (#479): narrows the list to that one flag. */
+  complianceFilter?: ComplianceFilterValue | null;
 }) {
   const [members, setMembers] = useState(initialMembers);
   const [editing, setEditing] = useState<RosterMemberRecord | null>(null);
@@ -65,6 +69,7 @@ export function ClubRosterWorkspace({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [birthDates, setBirthDates] = useState<Record<string, string> | null>(null);
   const [showInactive, setShowInactive] = useState(false);
+  const [complianceFilter, setComplianceFilter] = useState(initialComplianceFilter);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -92,7 +97,10 @@ export function ClubRosterWorkspace({
   const expiringSoon = complianceStatuses
     ? active.filter((member) => complianceStatuses[member.id]?.state === "FLAGGED").length
     : 0;
-  const visible = showInactive ? members : active;
+  const beforeComplianceFilter = showInactive ? members : active;
+  const visible = complianceFilter && complianceStatuses
+    ? beforeComplianceFilter.filter((member) => complianceStatuses[member.id]?.state === complianceFilterState[complianceFilter])
+    : beforeComplianceFilter;
   const sections = [
     { key: "STAFF", title: "Staff", empty: "No staff on the roster yet.", people: visible.filter((member) => rosterSectionOf(member.attendeeType) === "STAFF") },
     { key: "MEMBERS", title: "Members", empty: "No Pathfinders on the roster yet.", people: visible.filter((member) => rosterSectionOf(member.attendeeType) === "MEMBERS") },
@@ -211,6 +219,12 @@ export function ClubRosterWorkspace({
             {expiringSoon > 0 && ` · ${expiringSoon} expiring soon`}
           </p>
         )}
+        {complianceFilter && complianceStatuses && (
+          <p className="inline-notice roster-compliance-notice" role="status">
+            Showing only people {complianceFilterLabels[complianceFilter]}.{" "}
+            <button className="text-button" onClick={() => setComplianceFilter(null)} type="button">Clear filter</button>
+          </p>
+        )}
         <div className="club-roster-tools">
           <label className="checkbox-label">
             <input checked={showInactive} onChange={(event) => setShowInactive(event.target.checked)} type="checkbox" />
@@ -240,9 +254,11 @@ export function ClubRosterWorkspace({
         </div>
         {visible.length === 0 ? (
           <p className="public-manage-empty">
-            <UsersRound size={17} aria-hidden="true" /> {readOnly
-              ? "No one is on this club's roster yet."
-              : "No one is on the roster yet. Add people below, or they'll be added when you register your club for an event."}
+            <UsersRound size={17} aria-hidden="true" /> {complianceFilter && complianceStatuses
+              ? "No one matches this filter."
+              : readOnly
+                ? "No one is on this club's roster yet."
+                : "No one is on the roster yet. Add people below, or they'll be added when you register your club for an event."}
           </p>
         ) : (
           <div className="report-table-wrap">
