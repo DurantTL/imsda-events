@@ -32,6 +32,7 @@ import {
   resolveActiveActAs,
   StaffActAsError,
   stopActingAs,
+  stopActingHref,
 } from "@/modules/organizations/staff-act-as";
 
 const now = new Date("2026-09-26T12:00:00Z");
@@ -226,5 +227,23 @@ describe("currentStaffActingContext (#442)", () => {
     mocks.getCurrentSession.mockResolvedValueOnce({ user: null });
     await expect(currentStaffActingContext()).resolves.toBeNull();
     expect(mocks.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe("where Stop acting lands (#466)", () => {
+  it("goes to the club's own staff record for a stopped club director", () => {
+    expect(stopActingHref({ role: "CLUB_DIRECTOR", organizationId: "club-1" })).toBe("/admin/organizations/club-1/club");
+  });
+
+  it("goes to the clubs list for a stopped Area Coordinator", () => {
+    expect(stopActingHref({ role: "AREA_COORDINATOR", organizationId: null })).toBe("/admin/organizations");
+  });
+
+  it("goes to the clubs list for a club director row missing its organization id (never a bare staff page crash)", () => {
+    expect(stopActingHref({ role: "CLUB_DIRECTOR", organizationId: null })).toBe("/admin/organizations");
+  });
+
+  it("goes to the clubs list when nothing was active to stop", () => {
+    expect(stopActingHref(null)).toBe("/admin/organizations");
   });
 });

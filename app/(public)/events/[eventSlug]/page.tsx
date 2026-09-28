@@ -78,13 +78,15 @@ export default async function PublicEventPage({
     <main className="public-registration-page public-event-page">
       <header className="public-registration-header">
         <div className="public-registration-header-inner">
-          <a className="public-registration-brand public-event-brand-link" href="https://imsda.org/">
+          <Link className="public-registration-brand public-event-brand-link" href="/">
             <BrandMark />
             <span><strong>IMSDA</strong><small>Events</small></span>
-          </a>
-          <a className="public-event-details-link" href={landing.links.detailsUrl}>
-            Back to full event details <ExternalLink size={15} aria-hidden="true" />
-          </a>
+          </Link>
+          {landing.links.detailsUrl && (
+            <a className="public-event-details-link" href={landing.links.detailsUrl}>
+              Back to full event details <ExternalLink size={15} aria-hidden="true" />
+            </a>
+          )}
         </div>
       </header>
       <TranslateHint />
@@ -307,13 +309,15 @@ export default async function PublicEventPage({
             </a>
           </section>
 
-          <a className="public-event-full-details-card" href={landing.links.detailsUrl}>
-            <span>
-              <small>Schedule, speakers, and full details</small>
-              <strong>View on imsda.org</strong>
-            </span>
-            <ExternalLink size={18} aria-hidden="true" />
-          </a>
+          {landing.links.detailsUrl && (
+            <a className="public-event-full-details-card" href={landing.links.detailsUrl}>
+              <span>
+                <small>Schedule, speakers, and full details</small>
+                <strong>View on imsda.org</strong>
+              </span>
+              <ExternalLink size={18} aria-hidden="true" />
+            </a>
+          )}
         </aside>
       </div>
     </main>

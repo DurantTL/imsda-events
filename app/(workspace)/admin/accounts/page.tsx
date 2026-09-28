@@ -18,9 +18,11 @@ export default async function AttendeeAccountsPage() {
       <div className="intro-actions club-admin-links">
         <Link className="secondary-button more-back-link" href="/admin">Back to system administration</Link>
         <ActAsButton
-          confirmText="Act as an Area Coordinator for the next 2 hours? This is recorded and ends by itself (or with Stop acting), and never touches your own attendee account. Acting as an Area Coordinator is view only."
+          access="View only"
           endpoint="/api/admin/act-as/area-coordinator"
           label="Act as Area Coordinator (2 hours)"
+          resultAction="Open the coordinator view"
+          role="Area Coordinator"
         />
       </div>
       <AttendeeAccountsWorkspace initialAccounts={await listAttendeeAccounts("")} />

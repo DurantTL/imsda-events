@@ -199,6 +199,20 @@ export async function actAsClubDirector(staff: { id: string }, staffSessionId: s
   }));
 }
 
+/**
+ * Where "Stop acting" should send the staff member (#466): the club's own
+ * staff record when they were acting as its Director (so they land back on
+ * a page their still-signed-in staff session can see), otherwise the clubs
+ * list. Never the page they were just acting from — with the act-as gone,
+ * that page can belong to the attendee portal and redirect to sign-in.
+ */
+export function stopActingHref(stopped: { role: StaffActAsRole; organizationId: string | null } | null) {
+  if (stopped?.role === "CLUB_DIRECTOR" && stopped.organizationId) {
+    return `/admin/organizations/${encodeURIComponent(stopped.organizationId)}/club`;
+  }
+  return "/admin/organizations";
+}
+
 /** Ends the staff session's active act-as right away ("Stop acting"). Returns null when nothing was active. */
 export async function stopActingAs(staff: { id: string }, staffSessionId: string, now = new Date()) {
   return getPrisma().$transaction(async (tx) => {

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   findSession: vi.fn(),
   countPasskeys: vi.fn(),
   findSettings: vi.fn(),
+  findAreaGrant: vi.fn(),
   rejectCrossOriginRequest: vi.fn(),
   verifyAttendeeSecondFactor: vi.fn(),
   updateSession: vi.fn(),
@@ -16,14 +17,22 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("server-only", () => ({}));
-// The attendee second step is covered in tests/club-second-step.test.ts; here it has been passed.
-vi.mock("@/modules/attendee-accounts/sign-in-gate", () => ({ accountNeedsSecondStep: async () => "OK" }));
+// The attendee second step's own VERIFY/SETUP/OK decision is covered in
+// tests/club-second-step.test.ts; here it has already been passed. But
+// `accountHasSecondStepAccess` (whether the gate applies at all, #464) stays
+// real so the roster-unlock tests below exercise it against the mocked
+// directed clubs and Area Coordinator grant.
+vi.mock("@/modules/attendee-accounts/sign-in-gate", async () => {
+  const actual = await vi.importActual<typeof import("@/modules/attendee-accounts/sign-in-gate")>("@/modules/attendee-accounts/sign-in-gate");
+  return { ...actual, accountNeedsSecondStep: async () => "OK" };
+});
 vi.mock("@/lib/prisma", () => ({
   getPrisma: () => ({
     attendeeMfaEnrollment: { findUnique: mocks.findEnrollment },
     attendeeSession: { findUnique: mocks.findSession, update: mocks.updateSession },
     attendeePasskey: { count: mocks.countPasskeys },
     platformSettings: { findUnique: mocks.findSettings },
+    areaCoordinatorGrant: { findUnique: mocks.findAreaGrant },
   }),
 }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.getCurrentAttendee }));
@@ -66,6 +75,7 @@ beforeEach(() => {
   mocks.findSession.mockResolvedValue({ secondFactorVerifiedAt: new Date(Date.now() - 60_000) });
   mocks.countPasskeys.mockResolvedValue(0);
   mocks.findSettings.mockResolvedValue({ passkeyRpId: null });
+  mocks.findAreaGrant.mockResolvedValue(null);
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
   mocks.checkRateLimit.mockResolvedValue({ allowed: true, decisions: [] });
   mocks.listRoster.mockResolvedValue([]);
@@ -156,11 +166,36 @@ describe("roster routes", () => {
 });
 
 describe("unlocking with an authenticator code", () => {
-  it("marks the session unlocked after a correct code", async () => {
+  it("marks the session unlocked for a director after a correct code (unchanged)", async () => {
     mocks.verifyAttendeeSecondFactor.mockResolvedValue(undefined);
     const response = await UNLOCK(request({ code: "123456" }));
     expect(response.status).toBe(200);
     expect(mocks.updateSession).toHaveBeenCalledWith({ where: { id: "session-1" }, data: { secondFactorVerifiedAt: expect.any(Date) } });
+  });
+
+  it("marks the session unlocked for an Area Coordinator with TOTP, who directs no club (#464)", async () => {
+    mocks.listDirectedClubs.mockResolvedValue([]);
+    mocks.findAreaGrant.mockResolvedValue({ revokedAt: null, expiresAt: null });
+    mocks.verifyAttendeeSecondFactor.mockResolvedValue(undefined);
+    const response = await UNLOCK(request({ code: "123456" }));
+    expect(response.status).toBe(200);
+    expect(mocks.verifyAttendeeSecondFactor).toHaveBeenCalledWith("director-1", "123456");
+    expect(mocks.updateSession).toHaveBeenCalledWith({ where: { id: "session-1" }, data: { secondFactorVerifiedAt: expect.any(Date) } });
+  });
+
+  it("refuses an account with no club role and no Area Coordinator grant, without revealing why (#464)", async () => {
+    mocks.listDirectedClubs.mockResolvedValue([]);
+    mocks.findAreaGrant.mockResolvedValue(null);
+    const response = await UNLOCK(request({ code: "123456" }));
+    expect(response.status).toBe(404);
+    expect((await response.json()).error).toBe("NOT_FOUND");
+    expect(mocks.verifyAttendeeSecondFactor).not.toHaveBeenCalled();
+  });
+
+  it("refuses an account whose Area Coordinator grant has been revoked", async () => {
+    mocks.listDirectedClubs.mockResolvedValue([]);
+    mocks.findAreaGrant.mockResolvedValue({ revokedAt: new Date("2026-01-01T00:00:00Z"), expiresAt: null });
+    expect((await UNLOCK(request({ code: "123456" }))).status).toBe(404);
   });
 
   it("does not unlock on a wrong code, and is rate limited", async () => {
@@ -182,8 +217,9 @@ describe("unlocking with an authenticator code", () => {
     expect(mocks.updateSession).not.toHaveBeenCalled();
   });
 
-  it("is only for directors signed in with their own session", async () => {
+  it("is refused for an account with no club role and no Area Coordinator grant", async () => {
     mocks.listDirectedClubs.mockResolvedValue([]);
+    mocks.findAreaGrant.mockResolvedValue(null);
     expect((await UNLOCK(request({ code: "123456" }))).status).toBe(404);
     mocks.getCurrentAttendee.mockResolvedValue({ account, via: "staff", sessionId: null });
     expect((await UNLOCK(request({ code: "123456" }))).status).toBe(401);
