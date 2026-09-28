@@ -7317,6 +7317,43 @@ select:focus-visible {
   .club-schedule-actions .secondary-button { width: auto; min-height: 44px; }
   .club-schedule-table td small { display: block; }
 }
+
+/* Attendee setup & tags: readable table headers and "where this shows up" (#474) */
+.table-wrap { overflow-x: auto; }
+.usage-note {
+  display: flex; align-items: flex-start; gap: 8px; margin: 10px 0 0; padding: 10px 14px;
+  border-radius: 10px; background: var(--imsda-navy-soft); color: var(--imsda-navy);
+  font-size: 0.78rem; line-height: 1.5;
+}
+.usage-note svg { flex: none; margin-top: 2px; }
+.usage-note a { color: var(--imsda-purple); font-weight: 700; text-decoration: none; }
+.usage-note a:hover { text-decoration: underline; }
+.editable-settings-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.editable-settings-table th,
+.editable-settings-table td { border-bottom: 1px solid #eaf0f2; padding: 10px 13px; text-align: left; vertical-align: middle; }
+.editable-settings-table thead th {
+  background: #f6f9fa; color: var(--muted); font-size: 0.62rem; font-weight: 800;
+  letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap;
+}
+.editable-settings-table tbody tr:last-child > * { border-bottom: 0; }
+@media (max-width: 640px) {
+  .editable-settings-table, .editable-settings-table tbody, .editable-settings-table tr,
+  .editable-settings-table td, .editable-settings-table th { display: block; width: 100%; box-sizing: border-box; }
+  .editable-settings-table thead { display: none; }
+  .editable-settings-table tbody tr {
+    margin-bottom: 12px; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+  }
+  .editable-settings-table td { border: 0; padding: 6px 0; }
+  .editable-settings-table td[data-label] {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
+  }
+  .editable-settings-table td[data-label]::before {
+    content: attr(data-label); flex: 0 0 auto; color: var(--muted); font-weight: 700;
+    font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .editable-settings-table td[data-label] input:not([type="color"]),
+  .editable-settings-table td[data-label] .form-grid { flex: 1 1 auto; min-width: 0; }
+}
 @media print {
   .account-nav, .account-portal .public-registration-header, .account-portal .account-page-hero,
   .club-schedule-actions, .honor-roster-downloads, .retreat-packet-selector { display: none !important; }
@@ -7355,3 +7392,6 @@ select:focus-visible {
 .club-assignments-block { margin-top: 16px; }
 .club-assignments-block h3 { margin: 0; font-size: 0.9rem; }
 .club-assignments-block .public-manage-club-list { margin-top: 10px; }
+
+/* #474: rows keep their Save/Deactivate buttons without the form-actions rule line. */
+.editable-settings-table .form-actions { border-top: 0; padding-top: 0; }
