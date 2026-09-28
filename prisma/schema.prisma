@@ -3340,10 +3340,12 @@ model ClubSupplyStock {
 }
 
 /// Where a `ClubOrderNeed` came from (#487). Honors is the first source;
-/// uniform ordering (#497) and earned awards/insignia (#532) add their own
-/// values later without changing this table's shape.
+/// uniform ordering (#497) is the second (a director records the need by hand,
+/// so its `sourceId` is a generated key). Earned awards/insignia (#532) add
+/// their own value later without changing this table's shape.
 enum ClubOrderSourceType {
   HONOR
+  UNIFORM
 }
 
 /// How one need for a catalog item has moved along (#487): completed/needed

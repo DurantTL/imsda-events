@@ -4,13 +4,15 @@ import { ClubOrderWorkspace } from "@/components/club-order-workspace";
 import { loadOrderWorkspace } from "@/modules/club-orders/repository";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { syncHonorOrderNeeds } from "@/modules/honors/order-source";
+import { loadUniformWorkspace } from "@/modules/uniforms/order-source";
 
-export const metadata: Metadata = { title: "Honor orders" };
+export const metadata: Metadata = { title: "Club orders" };
 export const dynamic = "force-dynamic";
 
 /**
- * A club's honor order screen (#487). Opens on the roster's own gate, like
- * Supplies: a director or deputy orders and hands out, a registrar views.
+ * A club's order screen (#487, #497): honors and uniforms in one order list.
+ * Opens on the roster's own gate, like Supplies: a director or deputy orders,
+ * records uniform needs and hands out, a registrar views.
  */
 export default async function ClubOrdersPage({ params }: { params: Promise<{ organizationId: string }> }) {
   const { organizationId } = await params;
@@ -24,6 +26,7 @@ export default async function ClubOrdersPage({ params }: { params: Promise<{ org
       <BackLink href={`/account/clubs/${organizationId}`}>Back to {access.club.name}</BackLink>
       <ClubOrderWorkspace
         initial={await loadOrderWorkspace(organizationId)}
+        initialUniforms={await loadUniformWorkspace(organizationId, { forEditing: access.capabilities.manageTeam })}
         organizationId={organizationId}
         readOnly={!access.capabilities.manageTeam}
       />

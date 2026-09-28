@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Download, Eye, History, PackageCheck, ShoppingCart } from "lucide-react";
 import styles from "@/components/club-orders.module.css";
 import { applyExtras, type OrderLine } from "@/modules/club-orders/domain";
+import { ClubUniformSection, emptyUniformData, type ClubUniformData } from "@/components/club-uniform-section";
 import type { AwardableNeed, OrderBatchSummary, UnmatchedNeed, WaitingNeed } from "@/modules/club-orders/repository";
 
 export type ClubOrderWorkspaceData = {
@@ -22,6 +23,9 @@ type ApiResult = Partial<ClubOrderWorkspaceData> & {
   awarded?: number;
   fromStock?: number;
   marked?: number;
+  created?: number;
+  skipped?: number;
+  removed?: number;
 };
 
 const ordersBase = (organizationId: string) => `/api/attendee/clubs/${encodeURIComponent(organizationId)}/orders`;
@@ -47,7 +51,7 @@ function formatDate(value: string) {
 }
 
 /**
- * A club's honor order screen (#487), one page: what's needed (with editable
+ * A club's order screen (#487, #497), one page for honors and uniforms: what's needed (with editable
  * extras, available stock, and what to order), placing the order, past
  * orders with "Mark received", handing out what's arrived or already in
  * stock, and — for honors completed before the club ordered here — marking
@@ -58,13 +62,16 @@ function formatDate(value: string) {
 export function ClubOrderWorkspace({
   organizationId,
   initial,
+  initialUniforms = emptyUniformData,
   readOnly = false,
 }: {
   organizationId: string;
   initial: ClubOrderWorkspaceData;
+  initialUniforms?: ClubUniformData;
   readOnly?: boolean;
 }) {
   const [data, setData] = useState(initial);
+  const [uniforms, setUniforms] = useState(initialUniforms);
   const [extras, setExtras] = useState<Record<string, string>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [handedOut, setHandedOut] = useState<Set<string>>(new Set());
@@ -74,6 +81,7 @@ export function ClubOrderWorkspace({
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const base = ordersBase(organizationId);
+  const uniformsBase = `/api/attendee/clubs/${encodeURIComponent(organizationId)}/uniforms`;
 
   const lines = useMemo(() => applyExtras(data.lines, extras), [data.lines, extras]);
   const totalToOrder = lines.reduce((sum, line) => sum + line.toOrder, 0);
@@ -86,17 +94,26 @@ export function ClubOrderWorkspace({
     }
     return [...groups.entries()];
   }, [data.awardable]);
-  const earlier = useMemo(() => data.waiting.filter((need) => need.beforeFirstOrder), [data.waiting]);
+  // Only honors get the "completed before you started ordering" prompt: a uniform's
+  // "already has one" is chosen when it's recorded (#497).
+  const earlier = useMemo(() => data.waiting.filter((need) => need.sourceType === "HONOR" && need.beforeFirstOrder), [data.waiting]);
   const showPrompt = !readOnly && !promptDismissed && earlier.length > 0;
 
   async function refresh() {
-    const response = await fetch(base, { cache: "no-store" });
+    const [response, uniformResponse] = await Promise.all([
+      fetch(base, { cache: "no-store" }),
+      fetch(uniformsBase, { cache: "no-store" }),
+    ]);
     const result = await response.json().catch(() => ({})) as ApiResult;
     if (response.ok && result.lines && result.batches && result.awardable && result.unmatched && result.waiting) {
       setData({
         lines: result.lines, unmatched: result.unmatched, batches: result.batches, awardable: result.awardable,
         waiting: result.waiting, firstOrderAt: result.firstOrderAt ?? null,
       });
+    }
+    const uniformResult = await uniformResponse.json().catch(() => ({})) as Partial<ClubUniformData>;
+    if (uniformResponse.ok && uniformResult.needs && uniformResult.catalog && uniformResult.members) {
+      setUniforms({ catalog: uniformResult.catalog, members: uniformResult.members, needs: uniformResult.needs, issuedCount: uniformResult.issuedCount ?? 0 });
     }
   }
 
@@ -140,7 +157,7 @@ export function ClubOrderWorkspace({
     const ok = await act(async () => {
       const result = await post(`${base}/award`, { needIds });
       const fromStock = result.fromStock ?? 0;
-      return `Marked ${result.awarded ?? 0} awarded${fromStock > 0 ? ` (${fromStock} from stock)` : ""}.`;
+      return `Marked ${result.awarded ?? 0} handed out${fromStock > 0 ? ` (${fromStock} from stock)` : ""}.`;
     });
     if (ok) setSelected(new Set());
   }
@@ -157,6 +174,36 @@ export function ClubOrderWorkspace({
       return `Marked ${marked} as already handed out. Stock wasn't changed.`;
     });
     if (ok) setHandedOut(new Set());
+  }
+
+  async function recordUniforms(input: { personIds: string[]; itemIds: string[]; alreadyHasOne: boolean }) {
+    return act(async () => {
+      const result = await post(uniformsBase, input);
+      const created = result.created ?? 0;
+      const skipped = result.skipped ?? 0;
+      const what = input.alreadyHasOne ? `Recorded ${created} as already issued. Stock wasn't changed.` : `Recorded ${created} uniform ${created === 1 ? "need" : "needs"}.`;
+      return skipped > 0 ? `${what} ${skipped} already on file, so ${skipped === 1 ? "it was" : "they were"} skipped.` : what;
+    });
+  }
+
+  async function removeUniforms(needIds: string[]) {
+    return act(async () => {
+      let removed = 0;
+      for (let start = 0; start < needIds.length; start += BULK_LIMIT) {
+        removed += (await post(`${uniformsBase}/remove`, { needIds: needIds.slice(start, start + BULK_LIMIT) })).removed ?? 0;
+      }
+      return `Removed ${removed} uniform ${removed === 1 ? "need" : "needs"}.`;
+    });
+  }
+
+  async function uniformsAlreadyHaveOne(needIds: string[]) {
+    return act(async () => {
+      let marked = 0;
+      for (let start = 0; start < needIds.length; start += BULK_LIMIT) {
+        marked += (await post(`${base}/already-awarded`, { needIds: needIds.slice(start, start + BULK_LIMIT) })).marked ?? 0;
+      }
+      return `Marked ${marked} as already issued. Stock wasn't changed.`;
+    });
   }
 
   function toggleIn(setter: typeof setSelected, ids: string[], on: boolean) {
@@ -180,14 +227,14 @@ export function ClubOrderWorkspace({
       <div className="section-heading">
         <div>
           <p className="public-registration-eyebrow">Club supplies</p>
-          <h2>Honor orders</h2>
+          <h2>Club orders</h2>
         </div>
         <span className="count-badge">{lines.length} to review</span>
       </div>
       {readOnly ? (
         <p className="inline-notice" role="status"><Eye aria-hidden="true" size={14} /> View only. Shows what&apos;s on file. The club director or deputy places orders.</p>
       ) : (
-        <p className="field-help">Completed honors that haven&apos;t been ordered yet. Add extras for spares, then place the order.</p>
+        <p className="field-help">Completed honors and uniform needs that haven&apos;t been ordered yet. Add extras for spares, then place one order for everything.</p>
       )}
       {notice && <p className="inline-notice success" role="status">{notice}</p>}
       {error && <p className="inline-notice error" role="alert">{error}</p>}
@@ -237,7 +284,7 @@ export function ClubOrderWorkspace({
           </p>
         )}
         {lines.length === 0 ? (
-          <p className="quiet-copy">Nothing to order. New completed honors appear here on their own.</p>
+          <p className="quiet-copy">Nothing to order. New completed honors appear here on their own; record uniform needs below.</p>
         ) : (
           <ul className={styles.list}>
             {lines.map((line) => {
@@ -378,13 +425,21 @@ export function ClubOrderWorkspace({
             {!readOnly && (
               <div className={styles.actions}>
                 <button className="primary-button" disabled={busy || selected.size === 0} onClick={markAwarded} type="button">
-                  <CheckCircle2 aria-hidden="true" size={16} /> Mark awarded{selected.size > 0 ? ` (${selected.size})` : ""}
+                  <CheckCircle2 aria-hidden="true" size={16} /> Mark handed out{selected.size > 0 ? ` (${selected.size})` : ""}
                 </button>
               </div>
             )}
           </>
         )}
       </section>
+      <ClubUniformSection
+        busy={busy}
+        data={uniforms}
+        onAlreadyHasOne={uniformsAlreadyHaveOne}
+        onRecord={recordUniforms}
+        onRemove={removeUniforms}
+        readOnly={readOnly}
+      />
     </section>
   );
 }

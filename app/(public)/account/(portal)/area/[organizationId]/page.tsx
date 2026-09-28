@@ -35,7 +35,7 @@ export default async function AreaClubPage({ params }: { params: Promise<{ organ
           <Package aria-hidden="true" size={14} /> Club supplies
         </Link>
         <Link className="secondary-button" href={`/account/area/${organizationId}/orders`}>
-          <Package aria-hidden="true" size={14} /> Honor orders
+          <Package aria-hidden="true" size={14} /> Club orders
         </Link>
         <p className="inline-notice" role="status">
           <Eye aria-hidden="true" size={14} /> View only. You see what the club&apos;s director sees, with ages instead of

@@ -13,6 +13,7 @@ import {
   type PickListEntry,
 } from "@/modules/club-orders/domain";
 import type { ClubSupplyStockActor } from "@/modules/club-supplies/repository";
+import { itemAndSize } from "@/modules/uniforms/domain";
 
 /**
  * Club order fulfillment storage (#487): a reusable order and stock layer
@@ -40,7 +41,7 @@ import type { ClubSupplyStockActor } from "@/modules/club-supplies/repository";
 
 export type ClubOrderActor = ClubSupplyStockActor;
 
-export type ClubOrderErrorCode = "NOTHING_TO_ORDER" | "BATCH_NOT_FOUND" | "ALREADY_RECEIVED" | "ORDER_CHANGED" | "NOT_ENOUGH_STOCK";
+export type ClubOrderErrorCode = "NOTHING_TO_ORDER" | "BATCH_NOT_FOUND" | "ALREADY_RECEIVED" | "ORDER_CHANGED" | "NOT_ENOUGH_STOCK" | "ITEM_NOT_ORDERABLE" | "MEMBER_NOT_ON_ROSTER";
 
 export class ClubOrderError extends Error {
   constructor(public readonly code: ClubOrderErrorCode, message: string) {
@@ -49,10 +50,10 @@ export class ClubOrderError extends Error {
   }
 }
 
-type Db = Prisma.TransactionClient | ReturnType<typeof getPrisma>;
+export type Db = Prisma.TransactionClient | ReturnType<typeof getPrisma>;
 
 /** Serializes every order/stock write for one club (#487), released when the transaction ends. */
-async function lockClubOrders(tx: Prisma.TransactionClient, organizationId: string) {
+export async function lockClubOrders(tx: Prisma.TransactionClient, organizationId: string) {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`club-orders:${organizationId}`}))`;
 }
 
@@ -68,7 +69,7 @@ function receivedByFields(actor: ClubOrderActor) {
     : { receivedByAccountId: null, receivedByUserId: actor.userId };
 }
 
-function auditActorFields(actor: ClubOrderActor) {
+export function auditActorFields(actor: ClubOrderActor) {
   return {
     actorFields: "userId" in actor ? { actorUserId: actor.userId } : {},
     metadata: "accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId },
@@ -212,8 +213,8 @@ function groupByItem<T extends { itemId: string | null }>(needs: readonly T[]) {
 }
 
 const neededSelect = {
-  id: true, sourceId: true, personId: true, itemId: true, sourceLabel: true, sourceDate: true, createdAt: true,
-  item: { select: itemSelect },
+  id: true, sourceType: true, sourceId: true, personId: true, itemId: true, sourceLabel: true, sourceDate: true, createdAt: true,
+  item: { select: { ...itemSelect, section: true } },
 } satisfies Prisma.ClubOrderNeedSelect;
 
 type NeededRow = Prisma.ClubOrderNeedGetPayload<{ select: typeof neededSelect }>;
@@ -602,6 +603,8 @@ export async function listAwardableNeeds(organizationId: string): Promise<Awarda
 
 export type WaitingNeed = {
   needId: string;
+  /** Where the need came from: only honors get the "completed before you started ordering" prompt (#497). */
+  sourceType: "HONOR" | "UNIFORM";
   itemName: string | null;
   sourceLabel: string;
   sourceDate: string;
@@ -616,6 +619,7 @@ async function waitingFrom(picture: NeededPicture, firstOrderAt: Date | null): P
   return picture.needs
     .map((need) => ({
       needId: need.id,
+      sourceType: need.sourceType,
       itemName: need.item?.name ?? null,
       sourceLabel: need.sourceLabel,
       sourceDate: need.sourceDate,
@@ -645,8 +649,14 @@ export async function loadOrderWorkspace(organizationId: string) {
   return { lines, unmatched, batches, awardable, waiting, firstOrderAt: firstOrder };
 }
 
+/** The pick list's item and size columns for a catalog row: a uniform's size is split off its name (#497). */
+function pickItem(item: { name: string; section: string }) {
+  const { itemName, size } = itemAndSize(item);
+  return { itemName, size };
+}
+
 /**
- * The per-member pick list (#487): names, the item, and where it stands.
+ * The per-member pick list (#487, #497): names, the item, its size, and where it stands.
  * For one batch: that order's needs still to hand out (Ordered, or Ready to
  * hand out). Without a batch: who is currently to order (NEEDED, labelled
  * "To order", or "Ready to hand out (from stock)" when stock covers it) and
@@ -656,31 +666,31 @@ export async function listPickList(organizationId: string, batchId?: string): Pr
   if (batchId) {
     const needs = await getPrisma().clubOrderNeed.findMany({
       where: { organizationId, batchId, status: { in: ["ORDERED", "RECEIVED"] }, itemId: { not: null } },
-      select: { personId: true, status: true, item: { select: { name: true } } },
+      select: { personId: true, status: true, item: { select: { name: true, section: true } } },
     });
     const names = await namesFor(needs.map((need) => need.personId));
     return needs.map((need) => ({
       lastName: names.get(need.personId)?.lastName ?? "",
       firstName: names.get(need.personId)?.firstName ?? "",
-      itemName: need.item!.name,
+      ...pickItem(need.item!),
       status: need.status === "RECEIVED" ? "Ready to hand out" : "Ordered",
     }));
   }
   const picture = await neededPicture(organizationId);
   const received = await getPrisma().clubOrderNeed.findMany({
     where: { organizationId, status: "RECEIVED", itemId: { not: null } },
-    select: { personId: true, item: { select: { name: true } } },
+    select: { personId: true, item: { select: { name: true, section: true } } },
   });
   const matchedNeeded = picture.needs.filter((need) => need.itemId !== null);
   const names = await namesFor([...matchedNeeded, ...received].map((need) => need.personId));
-  const entry = (personId: string, itemName: string, status: PickListEntry["status"]): PickListEntry => ({
+  const entry = (personId: string, item: { name: string; section: string }, status: PickListEntry["status"]): PickListEntry => ({
     lastName: names.get(personId)?.lastName ?? "",
     firstName: names.get(personId)?.firstName ?? "",
-    itemName,
+    ...pickItem(item),
     status,
   });
   return [
-    ...matchedNeeded.map((need) => entry(need.personId, need.item!.name, picture.fromStock.has(need.id) ? "Ready to hand out (from stock)" : "To order")),
-    ...received.map((need) => entry(need.personId, need.item!.name, "Ready to hand out")),
+    ...matchedNeeded.map((need) => entry(need.personId, need.item!, picture.fromStock.has(need.id) ? "Ready to hand out (from stock)" : "To order")),
+    ...received.map((need) => entry(need.personId, need.item!, "Ready to hand out")),
   ];
 }
