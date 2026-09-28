@@ -228,6 +228,16 @@ enum PromoDiscountType {
   PERCENT_BPS
 }
 
+/// An `EventTemplate`'s lifecycle (#152), independent of its versions' own
+/// `EventTemplateVersion.status`: a template stays DRAFT or PUBLISHED until a
+/// staff member archives it, which hides it from "Start from template"
+/// without touching events already applied from it.
+enum EventTemplateStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
 enum AnnouncementStatus {
   DRAFT
   SCHEDULED
@@ -567,6 +577,10 @@ model User {
   updatedClubSupplyStock             ClubSupplyStock[]            @relation("ClubSupplyStockUpdatedByUser")
   createdClubOrderBatches            ClubSupplyOrderBatch[]       @relation("ClubSupplyOrderBatchCreatedByUser")
   receivedClubOrderBatches           ClubSupplyOrderBatch[]       @relation("ClubSupplyOrderBatchReceivedByUser")
+
+  createdEventTemplates              EventTemplate[]              @relation("EventTemplateCreatedBy")
+  createdEventTemplateVersions       EventTemplateVersion[]       @relation("EventTemplateVersionCreatedBy")
+  eventTemplateApplications          EventTemplateApplication[]   @relation("EventTemplateApplicationActor")
 
   @@index([accountStatus])
 }
@@ -1233,6 +1247,7 @@ model Event {
   notes                               StaffNote[]
   registrationTagAssignments          RegistrationTagAssignment[]
   attendeeTagAssignments              AttendeeTagAssignment[]
+  templateApplication                 EventTemplateApplication?
 
   @@index([badgeBackgroundAssetId])
 }
@@ -2815,6 +2830,94 @@ model RegistrationFormVersion {
 
   @@unique([formId, versionNumber])
   @@index([formId, status, versionNumber])
+}
+
+/// A reusable, versioned event blueprint (#152). `status` is the template's
+/// own lifecycle: DRAFT until its first publish, PUBLISHED once a version has
+/// been published, and ARCHIVED — sticky — once a staff member archives it
+/// (saving and publishing are then refused). Each `EventTemplateVersion`
+/// carries its own status so a published version's payload is immutable and
+/// a later draft never touches it. The audience (#481) a template creates
+/// lives only in its version payload, so the picker and apply always agree;
+/// `createdBy` is its owner.
+model EventTemplate {
+  id              String              @id @default(cuid())
+  name            String
+  description     String              @default("")
+  status          EventTemplateStatus @default(DRAFT)
+  createdByUserId String
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  createdBy    User                       @relation("EventTemplateCreatedBy", fields: [createdByUserId], references: [id])
+  versions     EventTemplateVersion[]
+  applications EventTemplateApplication[]
+
+  @@index([status, updatedAt])
+}
+
+/// One immutable-once-published revision of an `EventTemplate`'s payload
+/// (#152). `payload` is validated against `eventTemplatePayloadSchema` before
+/// it is ever stored, and again — against current form templates, message
+/// template keys, and other module references — the moment it is applied, so
+/// a reference that has since become unavailable is caught before any event
+/// is created. The migration also carries two partial unique indexes Prisma
+/// cannot express: at most one PUBLISHED and at most one DRAFT version per
+/// template (`EventTemplateVersion_one_published_per_template`,
+/// `EventTemplateVersion_one_draft_per_template`), matching
+/// `RegistrationFormVersion`.
+model EventTemplateVersion {
+  id              String              @id @default(cuid())
+  templateId      String
+  createdByUserId String
+  versionNumber   Int
+  status          EventTemplateStatus @default(DRAFT)
+  payload         Json
+  publishedAt     DateTime?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  template     EventTemplate              @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  createdBy    User                       @relation("EventTemplateVersionCreatedBy", fields: [createdByUserId], references: [id])
+  applications EventTemplateApplication[]
+
+  @@unique([templateId, versionNumber])
+  @@index([templateId, status, versionNumber])
+}
+
+/// Records the one-time, non-live copy an "apply" makes (#152): the new event
+/// gets its own editable rows (forms, attendee types, etc.), never a link
+/// back to the template, and this row is the permanent provenance record of
+/// exactly which template/version produced it. `requestKey` is the caller's
+/// idempotency key, unique per actor — a retried apply with the same key and
+/// the same `requestInput` returns the event already created instead of
+/// creating a second one, and the same key with different input is refused —
+/// and `eventId` is unique because a given draft event can only ever come
+/// from one apply.
+model EventTemplateApplication {
+  id                String   @id @default(cuid())
+  templateId        String
+  templateVersionId String
+  eventId           String   @unique
+  actorUserId       String
+  requestKey        String
+  /// The new event's details as requested (name, slug, startsOn, endsOn):
+  /// what a retry with the same `requestKey` is compared against.
+  requestInput      Json
+  /// A full copy of the version's payload at the moment it was applied
+  /// (#152) — the permanent record of what was requested, including the
+  /// report selections, which have no owning domain to apply themselves to
+  /// yet and are snapshot-only in this slice.
+  payloadSnapshot   Json
+  createdAt         DateTime @default(now())
+
+  template        EventTemplate        @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  templateVersion EventTemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  event           Event                @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  actor           User                 @relation("EventTemplateApplicationActor", fields: [actorUserId], references: [id])
+
+  @@unique([actorUserId, requestKey])
+  @@index([templateId, createdAt])
 }
 
 model FormTestSubmission {

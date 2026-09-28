@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { BrandMark } from "@/components/brand-mark";
 import { EventSettingsWorkspace } from "@/components/event-settings-workspace";
@@ -20,6 +21,7 @@ export default async function EventSetupPage() {
         <div className="brand"><BrandMark /><span><strong>IMSDA</strong><small>Events</small></span></div>
         <div><p className="eyebrow">System administration</p><h1>Set up a new event</h1></div>
       </header>
+      <p><Link className="secondary-button" href="/event-setup/from-template">Start from template</Link></p>
       <EventSettingsWorkspace mode="create" initialEvent={null} />
     </main>
   );

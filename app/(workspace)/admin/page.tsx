@@ -13,6 +13,7 @@ import {
   Church,
   CircleAlert,
   CloudCog,
+  LayoutTemplate,
   Map as MapIcon,
   MailCheck,
   Package,
@@ -183,6 +184,7 @@ export default async function SystemAdminPage({
         </div>
         <div className={styles.heroActions}>
           <Link className="primary-button" href="/event-setup"><CalendarPlus aria-hidden="true" size={16} /> Create event</Link>
+          <Link className="secondary-button" href="/admin/event-templates"><LayoutTemplate aria-hidden="true" size={15} /> Event templates</Link>
           <Link className="secondary-button" href="/admin/team"><UsersRound aria-hidden="true" size={15} /> Team</Link>
           <Link className="secondary-button" href="/admin/accounts"><UsersRound aria-hidden="true" size={15} /> Accounts</Link>
           <Link className="secondary-button" href="/admin/settings"><CloudCog aria-hidden="true" size={15} /> Platform settings</Link>

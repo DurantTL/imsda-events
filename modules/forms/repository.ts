@@ -161,34 +161,50 @@ export function listFormTemplates() {
   }));
 }
 
-export async function createRegistrationForm(eventId: string, actorUserId: string, templateKey: string) {
+/**
+ * Creates one draft registration form from a code-defined form template
+ * inside the caller's transaction: the stored definition has its attendee
+ * type and directory options stripped (they are hydrated live on read), the
+ * slug is made unique within the event, and `REGISTRATION_FORM_CREATED` is
+ * audited. Shared by `createRegistrationForm` and by applying an event
+ * template (#152), so both paths store and audit forms identically.
+ */
+export async function createRegistrationFormFromTemplateInTransaction(
+  tx: Prisma.TransactionClient,
+  eventId: string,
+  actorUserId: string,
+  templateKey: string,
+) {
   const template = getFormTemplate(templateKey);
   if (!template) throw new FormOperationError("TEMPLATE_NOT_FOUND", "That form template is not available.");
   const definition = registrationFormDefinitionSchema.parse(structuredClone(template.definition));
   const storedDefinition = stripDirectoryOptions(stripAttendeeTypeOptions(definition));
-  const created = await getPrisma().$transaction(async (tx) => {
-    const baseSlug = slugify(definition.title);
-    let slug = baseSlug;
-    let suffix = 2;
-    while (await tx.registrationForm.findUnique({ where: { eventId_slug: { eventId, slug } }, select: { id: true } })) {
-      slug = slugCandidate(baseSlug, suffix);
-      suffix += 1;
-    }
-    const form = await tx.registrationForm.create({
-      data: {
-        eventId,
-        createdByUserId: actorUserId,
-        name: definition.title,
-        slug,
-        versions: { create: { createdByUserId: actorUserId, versionNumber: 1, definition: storedDefinition as Prisma.InputJsonValue } },
-      },
-    });
-    await tx.auditLog.create({ data: {
-      eventId, actorUserId, action: "REGISTRATION_FORM_CREATED", entityType: "RegistrationForm", entityId: form.id,
-      correlationId: randomUUID(), summary: `Created ${form.name} from the ${template.name} template.`, metadata: { templateKey, productionWrite: false },
-    } });
-    return form;
+  const baseSlug = slugify(definition.title);
+  let slug = baseSlug;
+  let suffix = 2;
+  while (await tx.registrationForm.findUnique({ where: { eventId_slug: { eventId, slug } }, select: { id: true } })) {
+    slug = slugCandidate(baseSlug, suffix);
+    suffix += 1;
+  }
+  const form = await tx.registrationForm.create({
+    data: {
+      eventId,
+      createdByUserId: actorUserId,
+      name: definition.title,
+      slug,
+      versions: { create: { createdByUserId: actorUserId, versionNumber: 1, definition: storedDefinition as Prisma.InputJsonValue } },
+    },
   });
+  await tx.auditLog.create({ data: {
+    eventId, actorUserId, action: "REGISTRATION_FORM_CREATED", entityType: "RegistrationForm", entityId: form.id,
+    correlationId: randomUUID(), summary: `Created ${form.name} from the ${template.name} template.`, metadata: { templateKey, productionWrite: false },
+  } });
+  return form;
+}
+
+export async function createRegistrationForm(eventId: string, actorUserId: string, templateKey: string) {
+  if (!getFormTemplate(templateKey)) throw new FormOperationError("TEMPLATE_NOT_FOUND", "That form template is not available.");
+  const created = await getPrisma().$transaction((tx) => createRegistrationFormFromTemplateInTransaction(tx, eventId, actorUserId, templateKey));
   return (await getRegistrationForm(eventId, created.id))!;
 }
 
