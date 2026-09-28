@@ -30,7 +30,7 @@ function event(overrides: Partial<ClubEventSummary> & { id: string }): ClubEvent
 describe("ClubEventList (#478)", () => {
   it("explains that no club events are open, instead of an empty tab", () => {
     const markup = renderToStaticMarkup(createElement(ClubEventList, { events: [], organizationId: "org-1" }));
-    expect(markup).toContain("No club events are open yet");
+    expect(markup).toContain("appear here once the conference publishes registration");
   });
 
   it("shows an open club event with a working 'Register your club' link", () => {

@@ -7013,8 +7013,9 @@ select:focus-visible {
 .club-guest-form label { display: grid; gap: 6px; color: var(--ink); font-size: 0.7rem; font-weight: 700; }
 .club-guest-form input {
   width: 100%; border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd;
-  color: var(--ink); padding: 10px 11px; font-size: 1rem; font-family: inherit; outline: 0;
+  color: var(--ink); padding: 10px 11px; font-size: 0.78rem; font-family: inherit; outline: 0;
 }
+@media (pointer: coarse) { .club-guest-form input { font-size: 1rem; } }
 .club-guest-form input:focus { border-color: var(--imsda-purple); box-shadow: 0 0 0 3px rgba(88, 44, 131, 0.1); }
 .club-sticky-bar {
   position: sticky; bottom: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center;
