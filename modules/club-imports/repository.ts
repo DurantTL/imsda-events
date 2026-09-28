@@ -153,10 +153,10 @@ async function importOne(item: ClubImportItem, actorUserId: string, now: Date): 
         select: { id: true },
       });
       // One import per club per club year. A corrected second registration is
-      // not merged: staff add the missing people by hand or move/undo the
-      // earlier import (#541).
+      // not merged: staff add the missing people by hand or move the earlier import to
+      // another year (#541).
       if (yearImport) {
-        throw new ImportRefused(`This club already has a ${item.clubYear} import. Add the missing people on the roster, or move/undo the earlier import.`);
+        throw new ImportRefused(`This club already has a ${item.clubYear} import. Add the missing people on the roster, or move the earlier import to another year.`);
       }
       await tx.externalIdentity.create({
         data: {

@@ -108,7 +108,7 @@ describe("club import (#376)", () => {
     mocks.identityFindUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: "identity-1" });
     const [result] = await importClubs([item()], "admin-1", now);
     expect(result).toMatchObject({ status: "FAILED" });
-    expect(result.message).toBe("This club already has a 2026-27 import. Add the missing people on the roster, or move/undo the earlier import.");
+    expect(result.message).toBe("This club already has a 2026-27 import. Add the missing people on the roster, or move the earlier import to another year.");
   });
 
   it("refuses a club with no sponsoring church, creating nothing", async () => {

@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   identityFindUnique: vi.fn(),
   identityFindMany: vi.fn(),
   identityUpdate: vi.fn(),
+  identityUpdateMany: vi.fn(),
+  queryRaw: vi.fn(),
+  refreshMatches: vi.fn(),
   rosterFindMany: vi.fn(),
   rosterUpdateMany: vi.fn(),
   rosterCount: vi.fn(),
@@ -23,14 +26,16 @@ const mocks = vi.hoisted(() => ({
 }));
 
 const client = {
-  externalIdentity: { findUnique: mocks.identityFindUnique, findMany: mocks.identityFindMany, update: mocks.identityUpdate },
+  externalIdentity: { findUnique: mocks.identityFindUnique, findMany: mocks.identityFindMany, update: mocks.identityUpdate, updateMany: mocks.identityUpdateMany },
   clubRosterMember: { findMany: mocks.rosterFindMany, updateMany: mocks.rosterUpdateMany, count: mocks.rosterCount },
   person: { create: mocks.personCreate, delete: mocks.personDelete, deleteMany: mocks.personDelete },
+  $queryRaw: mocks.queryRaw,
   $transaction: (work: (tx: unknown) => unknown) => work(client),
 };
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: () => client }));
+vi.mock("@/modules/background-checks/refresh-after-write", () => ({ refreshBackgroundCheckMatchesSafely: mocks.refreshMatches }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: mocks.writeAuditLog }));
 vi.mock("@/modules/access/request-security", () => ({ rejectCrossOriginRequest: mocks.rejectCrossOriginRequest }));
 vi.mock("@/modules/organizations/access", () => ({ requireSystemAdministrator: mocks.requireSystemAdministrator }));
@@ -45,6 +50,7 @@ const now = new Date("2026-09-28T15:00:00Z");
 const row = (id: string, overrides: Record<string, unknown> = {}) => ({
   id,
   personId: `person-${id}`,
+  attendeeType: "YOUTH",
   status: "ACTIVE",
   person: { firstName: "Robin", lastName: `Fixture${id}` },
   transferAsSender: [],
@@ -61,7 +67,8 @@ function identities(targetImport = false) {
   });
 }
 
-function roster(fromRows: ReturnType<typeof row>[], onTarget: Array<{ personId: string }> = []) {
+type TargetRow = { personId: string | null; attendeeType?: string; person?: { firstName: string; lastName: string } | null };
+function roster(fromRows: ReturnType<typeof row>[], onTarget: TargetRow[] = []) {
   mocks.rosterFindMany.mockImplementation(({ where }: { where: { clubYear: string } }) =>
     Promise.resolve(where.clubYear === "2025-26" ? fromRows : onTarget));
 }
@@ -80,6 +87,8 @@ beforeEach(() => {
   identities();
   roster([row("1"), row("2"), row("3", { status: "REMOVED", personId: null, person: null })]);
   mocks.rosterUpdateMany.mockResolvedValue({ count: 3 });
+  mocks.queryRaw.mockResolvedValue([{ providerScope: "form-89:2025-26" }]);
+  mocks.identityUpdateMany.mockResolvedValue({ count: 1 });
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
   mocks.requireSystemAdministrator.mockResolvedValue({ id: "admin-1" });
 });
@@ -104,7 +113,7 @@ describe("previewing a move (#541)", () => {
       { kind: "IN_TRANSFER", rosterMemberId: "2", name: "Robin Fixture2" },
     ]);
     expect(preview.conflicts.map((conflict) => conflictLabel(conflict, "2026-27"))).toEqual([
-      "This club already has a 2026-27 import. Nothing can be moved into 2026-27 until that one is moved or undone.",
+      "This club already has a 2026-27 import. Nothing can be moved into 2026-27 until that one is moved to another year.",
       "Robin Fixture1 is already on the 2026-27 roster.",
       "Robin Fixture2 is part of a member transfer, which is recorded for this club year.",
     ]);
@@ -126,8 +135,8 @@ describe("moving an import (#541)", () => {
       where: { organizationId: "club-1", clubYear: "2025-26", source: "IMPORT" },
       data: { clubYear: "2026-27" },
     });
-    expect(mocks.identityUpdate).toHaveBeenCalledWith({
-      where: { id: "identity-1" },
+    expect(mocks.identityUpdateMany).toHaveBeenCalledWith({
+      where: { id: "identity-1", providerScope: "form-89:2025-26" },
       data: { providerScope: "form-89:2026-27", displayLabel: "Yearly club registration, 2026-27" },
     });
     expect(mocks.personCreate).not.toHaveBeenCalled();
@@ -141,6 +150,41 @@ describe("moving an import (#541)", () => {
       metadata: { organizationId: "club-1", externalIdentityId: "identity-1", fromYear: "2025-26", toYear: "2026-27", rowsMoved: 3, peopleOnRoster: 2 },
     });
     expect(JSON.stringify(audit)).not.toMatch(/Robin|Fixture/);
+    // #527: the moved people are matched after commit.
+    expect(mocks.refreshMatches).toHaveBeenCalledWith(["person-1", "person-2"]);
+  });
+
+  it("refuses a move of an import that was already moved (lost the race), with no audit row", async () => {
+    mocks.queryRaw.mockResolvedValue([{ providerScope: "form-89:2027-28" }]);
+    await expect(moveImportYear("club-1", "2025-26", "2026-27", "admin-1", now)).rejects.toMatchObject({ code: "IMPORT_MOVE_CONFLICT", message: expect.stringMatching(/already moved/) });
+    expect(mocks.rosterUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.identityUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+    expect(mocks.refreshMatches).not.toHaveBeenCalled();
+  });
+
+  it("refuses, rolling back, when the record moved under it or fewer rows moved than were previewed", async () => {
+    mocks.identityUpdateMany.mockResolvedValue({ count: 0 });
+    await expect(moveImportYear("club-1", "2025-26", "2026-27", "admin-1", now)).rejects.toMatchObject({ code: "IMPORT_MOVE_CONFLICT" });
+    expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+    mocks.identityUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.rosterUpdateMany.mockResolvedValue({ count: 1 });
+    await expect(moveImportYear("club-1", "2025-26", "2026-27", "admin-1", now)).rejects.toMatchObject({ code: "IMPORT_MOVE_CONFLICT" });
+    expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+    expect(mocks.refreshMatches).not.toHaveBeenCalled();
+  });
+
+  it("treats a same-named person added by hand to the target year as a conflict", async () => {
+    // A separately created Person: not the same id, but the same name and section.
+    roster([row("1"), row("2")], [{ personId: "hand-added", attendeeType: "YOUTH", person: { firstName: "Robin", lastName: "Fixture1" } }]);
+    const preview = await previewImportYearMove("club-1", "2025-26", "2026-27", now);
+    expect(preview.conflicts).toEqual([{ kind: "ALREADY_ON_TARGET_ROSTER", rosterMemberId: "1", name: "Robin Fixture1", sameName: true }]);
+    expect(conflictLabel(preview.conflicts[0], "2026-27")).toMatch(/Someone named Robin Fixture1 in the same role is already on the 2026-27 roster/);
+    // A parent on staff with the same name is a different person.
+    roster([row("1")], [{ personId: "parent", attendeeType: "STAFF", person: { firstName: "Robin", lastName: "Fixture1" } }]);
+    expect((await previewImportYearMove("club-1", "2025-26", "2026-27", now)).conflicts).toEqual([]);
+    mocks.rosterUpdateMany.mockResolvedValue({ count: 1 });
+    await expect(moveImportYear("club-1", "2025-26", "2026-27", "admin-1", now)).resolves.toMatchObject({ rowsMoved: 1 });
   });
 
   it("refuses the whole move on any conflict, listing it and changing nothing", async () => {
@@ -149,7 +193,7 @@ describe("moving an import (#541)", () => {
     expect(error).toBeInstanceOf(ImportYearMoveError);
     expect(error).toMatchObject({ code: "IMPORT_MOVE_CONFLICT", preview: { conflicts: [{ kind: "ALREADY_ON_TARGET_ROSTER", rosterMemberId: "2" }] } });
     expect(mocks.rosterUpdateMany).not.toHaveBeenCalled();
-    expect(mocks.identityUpdate).not.toHaveBeenCalled();
+    expect(mocks.identityUpdateMany).not.toHaveBeenCalled();
     expect(mocks.writeAuditLog).not.toHaveBeenCalled();
   });
 

@@ -165,6 +165,22 @@ describe("splitting a full name (#541)", () => {
     expect(splitName("Ana La Rosa")).toEqual({ firstName: "Ana La", lastName: "Rosa" });
   });
 
+  it("handles a comma before a suffix, a middle Van, and a surname that looks like a suffix (#541 N3)", () => {
+    expect(splitName("Chris Faux, Jr.")).toEqual({ firstName: "Chris", lastName: "Faux Jr." });
+    expect(splitName("Chris Faux , Sr")).toEqual({ firstName: "Chris", lastName: "Faux Sr" });
+    expect(splitName("Tran Van Minh")).toEqual({ firstName: "Tran Van", lastName: "Minh" });
+    expect(splitName("Kim Iv")).toEqual({ firstName: "Kim", lastName: "Iv" });
+    expect(splitName("Kim II")).toEqual({ firstName: "Kim", lastName: "II" });
+    expect(splitName("Pat Kim IV")).toEqual({ firstName: "Pat", lastName: "Kim IV" });
+  });
+
+  it("treats a suffix with or without its dot or comma as the same name", () => {
+    const key = (firstName: string, lastName: string) => importPersonKey({ attendeeType: "STAFF", firstName, lastName });
+    expect(key("Chris", "Faux Jr.")).toBe(key("Chris", "Faux Jr"));
+    expect(key("Chris", "Faux, Jr.")).toBe(key("chris", "FAUX JR"));
+    expect(key("Chris", "Faux Jr.")).not.toBe(key("Chris", "Faux"));
+  });
+
   it("uses the split for imported people", () => {
     const [draft] = parseClubRegistrationExport([syntheticExportEntry({}, { leader_name: "Chris Faux Jr." })], september).drafts;
     expect(draft.people[0]).toMatchObject({ firstName: "Chris", lastName: "Faux Jr.", keepBoth: false });

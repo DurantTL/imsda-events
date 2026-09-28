@@ -5,7 +5,8 @@
 
 export type ImportYearConflict =
   | { kind: "TARGET_HAS_IMPORT"; toYear: string }
-  | { kind: "ALREADY_ON_TARGET_ROSTER"; rosterMemberId: string; name: string }
+  /** `sameName`: matched by name and roster section, not by person (for example a child a director added by hand). */
+  | { kind: "ALREADY_ON_TARGET_ROSTER"; rosterMemberId: string; name: string; sameName?: boolean }
   | { kind: "IN_TRANSFER"; rosterMemberId: string; name: string };
 
 export type ImportYearMovePreview = {
@@ -35,7 +36,11 @@ export class ImportYearMoveError extends Error {
 
 /** One conflict in plain words. Staff resolve it by hand; nothing is ever merged. */
 export function conflictLabel(conflict: ImportYearConflict, toYear: string) {
-  if (conflict.kind === "TARGET_HAS_IMPORT") return `This club already has a ${toYear} import. Nothing can be moved into ${toYear} until that one is moved or undone.`;
-  if (conflict.kind === "ALREADY_ON_TARGET_ROSTER") return `${conflict.name} is already on the ${toYear} roster.`;
+  if (conflict.kind === "TARGET_HAS_IMPORT") return `This club already has a ${toYear} import. Nothing can be moved into ${toYear} until that one is moved to another year.`;
+  if (conflict.kind === "ALREADY_ON_TARGET_ROSTER") {
+    return conflict.sameName
+      ? `Someone named ${conflict.name} in the same role is already on the ${toYear} roster. Remove that person from the ${toYear} roster (or this one from the old year), then try again.`
+      : `${conflict.name} is already on the ${toYear} roster.`;
+  }
   return `${conflict.name} is part of a member transfer, which is recorded for this club year.`;
 }

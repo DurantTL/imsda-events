@@ -76,6 +76,7 @@ function rows(value: unknown): string[][] {
 const NAME_SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv"]);
 const NAME_PARTICLES = new Set(["de", "van", "von", "da", "del"]);
 
+const AMBIGUOUS_SUFFIXES = new Set(["ii", "iv"]);
 const isSuffix = (word: string) => NAME_SUFFIXES.has(word.toLowerCase().replace(/\./g, ""));
 const isParticle = (word: string) => NAME_PARTICLES.has(word.toLowerCase());
 
@@ -88,14 +89,18 @@ const isParticle = (word: string) => NAME_PARTICLES.has(word.toLowerCase());
  * Example" stays first "Van". The preview shows the split and staff can edit it.
  */
 export function splitName(fullName: string) {
-  const words = text(fullName, 160).split(" ").filter(Boolean);
+  // "Chris Faux, Jr." → "Chris Faux Jr."
+  const words = text(fullName, 160).replace(/,\s*(?=(?:jr|sr|ii|iii|iv)\.?(?:\s|$))/gi, " ").split(" ").filter(Boolean);
   if (words.length <= 1) return { firstName: words[0] ?? "", lastName: "" };
   let end = words.length;
   // A trailing suffix belongs to the word before it; with nothing before it but a first name, there is no last name to attach to.
-  while (end > 1 && isSuffix(words[end - 1])) end -= 1;
+  // "II" and "IV" are also surnames: "Kim Iv" keeps last name "Iv" rather than losing it.
+  while (end > 1 && isSuffix(words[end - 1]) && !(end === 2 && AMBIGUOUS_SUFFIXES.has(words[end - 1].toLowerCase().replace(/\./g, "")))) end -= 1;
   if (end <= 1) return { firstName: words.join(" ").slice(0, 80), lastName: "" };
   let start = end - 1;
-  if (start > 1 && isParticle(words[start - 1])) start -= 1;
+  // A capitalised "Van" in the middle of exactly three words is a middle name ("Tran Van Minh"), not a particle.
+  const vietnameseVan = end === 3 && words[1] === "Van";
+  if (start > 1 && isParticle(words[start - 1]) && !vietnameseVan) start -= 1;
   // "de la" is the one two-word particle.
   else if (start > 2 && words[start - 1].toLowerCase() === "la" && words[start - 2].toLowerCase() === "de") start -= 2;
   return { firstName: words.slice(0, start).join(" ").slice(0, 80), lastName: words.slice(start).join(" ").slice(0, 80) };
@@ -281,11 +286,15 @@ export type ImportSkipReason = "ALREADY_ON_ROSTER" | "DUPLICATE_IN_REGISTRATION"
 export function skipReasonLabel(reason: ImportSkipReason, clubYear: string) {
   return reason === "ALREADY_ON_ROSTER"
     ? `already on the roster for ${clubYear}`
-    : "listed twice in this registration with the same name in the same section (use Keep both to add both)";
+    : "listed twice in this registration with the same name in the same section (if they are different people, add the second one on the roster)";
 }
 
 function nameKey(firstName: string, lastName: string) {
-  return `${firstName} ${lastName}`.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
+  // "Faux Jr." and "Faux Jr" (and "Faux, Jr.") are the same name.
+  return `${firstName} ${lastName}`.trim().toLocaleLowerCase("en-US")
+    .replace(/,/g, " ")
+    .replace(/\b(jr|sr)\./g, "$1")
+    .replace(/\s+/g, " ");
 }
 
 /**

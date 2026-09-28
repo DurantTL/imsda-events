@@ -85,6 +85,17 @@ async function main() {
     throw new Error(`FAILED: ${message}: the move was not refused`);
   };
 
+  const expectRefusedAlreadyMoved = async (work: () => Promise<unknown>, message: string) => {
+    try {
+      await work();
+    } catch (error) {
+      // The import record is no longer in the year that was asked about.
+      assert(error instanceof ImportYearMoveError && (error.code === "IMPORT_NOT_FOUND" || error.code === "IMPORT_MOVE_CONFLICT"), `${message}: refused (${String(error)})`);
+      return;
+    }
+    throw new Error(`FAILED: ${message}: was not refused`);
+  };
+
   try {
     const entry = syntheticExportEntry({ id: `${stamp}1` });
     const [draft] = parseClubRegistrationExport([entry], now).drafts;
@@ -148,7 +159,7 @@ async function main() {
     // A different registration for the same club and year is refused, and says what to do.
     const second = syntheticExportEntry({ id: `${stamp}2` });
     const [refused] = await importClubs(itemsFor(second), admin.id, now);
-    assert(refused.status === "FAILED" && /already has a 2026-27 import\. Add the missing people on the roster, or move\/undo the earlier import\./.test(refused.message), `a second registration is refused with next steps (${refused.message})`);
+    assert(refused.status === "FAILED" && /already has a 2026-27 import\. Add the missing people on the roster, or move the earlier import to another year\./.test(refused.message), `a second registration is refused with next steps (${refused.message})`);
 
     // Two people with the same name and section, and a suffix.
     assert(splitName("Chris Faux Jr.").lastName === "Faux Jr.", "Jr. stays with the last name");
@@ -165,6 +176,51 @@ async function main() {
     const bothTwins = syntheticExportEntry({ id: `${stamp}4` }, (twins.response as Record<string, unknown>));
     const [keptTwin] = await importClubs(itemsFor(bothTwins, { name: `${stamp} Keep Pathfinders`, keepBoth: true }), admin.id, now);
     assert(keptTwin.membersAdded === 3 && keptTwin.skipped.length === 0, "Keep both adds both same-named youths");
+
+    // B1: two concurrent Moves of one import to different years. Exactly one
+    // wins; the rows and the import record always end up in the same year, and
+    // only one audit row is written. Repeated, since it is a race.
+    for (let trial = 0; trial < 6; trial += 1) {
+      const raced = syntheticExportEntry({ id: `${stamp}r${trial}` });
+      const [imported] = await importClubs(itemsFor(raced, { clubYear: "2025-26", name: `${stamp} Race ${trial} Pathfinders` }), admin.id, now);
+      const raceClub = imported.organizationId!;
+      const settled = await Promise.allSettled([
+        moveImportYear(raceClub, "2025-26", "2026-27", admin.id, now),
+        moveImportYear(raceClub, "2025-26", "2027-28", admin.id, now),
+      ]);
+      const won = settled.filter((result) => result.status === "fulfilled");
+      const lost = settled.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+      assert(won.length === 1 && lost.length === 1, `trial ${trial}: exactly one concurrent move wins (${won.length} won)`);
+      assert(lost[0].reason instanceof ImportYearMoveError && lost[0].reason.code === "IMPORT_MOVE_CONFLICT", `trial ${trial}: the loser is refused with a conflict (${String(lost[0].reason)})`);
+      const winnerYear = (won[0] as PromiseFulfilledResult<{ toYear: string }>).value.toYear;
+      const scope = await prisma.externalIdentity.findFirst({ where: { organizationId: raceClub, provider: "FLUENT_FORMS" }, select: { providerScope: true } });
+      assert(scope?.providerScope === `form-89:${winnerYear}`, `trial ${trial}: the import record is in ${winnerYear}`);
+      assert((await listRoster(raceClub, winnerYear, now)).length === 48, `trial ${trial}: all 48 rows are in ${winnerYear}`);
+      for (const year of ["2025-26", "2026-27", "2027-28"].filter((candidate) => candidate !== winnerYear)) {
+        assert((await listRoster(raceClub, year, now)).length === 0, `trial ${trial}: no rows left in ${year}`);
+      }
+      assert(await prisma.auditLog.count({ where: { entityId: raceClub, action: "CLUB_IMPORT_YEAR_MOVED" } }) === 1, `trial ${trial}: one audit row`);
+      // A repeat Move of the already-moved import is refused, with no second audit row.
+      await expectRefusedAlreadyMoved(() => moveImportYear(raceClub, "2025-26", "2027-28", admin.id, now), `trial ${trial}: a repeat move`);
+      assert(await prisma.auditLog.count({ where: { entityId: raceClub, action: "CLUB_IMPORT_YEAR_MOVED" } }) === 1, `trial ${trial}: a repeat move writes no audit row`);
+    }
+
+    // B2: a director hand-added the same child to the target year. Imports
+    // create new Person rows, so only the name and section give it away.
+    const handAdded = syntheticExportEntry({ id: `${stamp}h1` });
+    const [handImport] = await importClubs(itemsFor(handAdded, { clubYear: "2025-26", name: `${stamp} Hand Pathfinders` }), admin.id, now);
+    const handClub = handImport.organizationId!;
+    const separatePerson = await prisma.person.create({ data: { firstName: "Bo", lastName: "Placeholder" }, select: { id: true } });
+    await prisma.clubRosterMember.create({ data: { organizationId: handClub, clubYear: "2026-27", personId: separatePerson.id, attendeeType: "YOUTH", source: "DIRECTOR" } });
+    const handPreview = await previewImportYearMove(handClub, "2025-26", "2026-27", now);
+    assert(handPreview.conflicts.length === 1 && handPreview.conflicts[0].kind === "ALREADY_ON_TARGET_ROSTER" && handPreview.conflicts[0].sameName === true, `the preview lists the hand-added duplicate (${JSON.stringify(handPreview.conflicts)})`);
+    await expectRefused(() => moveImportYear(handClub, "2025-26", "2026-27", admin.id, now), /ALREADY_ON_TARGET_ROSTER/, "moving over a hand-added same-name person");
+    assert((await listRoster(handClub, "2025-26", now)).length === 48 && (await listRoster(handClub, "2026-27", now)).length === 1, "the refused move changes no roster");
+    // Staff remove the hand-added row, which clears the conflict.
+    await prisma.clubRosterMember.deleteMany({ where: { personId: separatePerson.id } });
+    const cleared = await moveImportYear(handClub, "2025-26", "2026-27", admin.id, now);
+    assert(cleared.rowsMoved === 48, "the move goes through once the duplicate is removed");
+    await prisma.person.delete({ where: { id: separatePerson.id } });
 
     console.log("club imports verified: wrong-year import moved to 2026-27 (48 rows, Person count unchanged, 0 left in 2025-26), re-upload reports 2026-27, conflicting moves refused, second registration refused with next steps, Keep both and Jr. handled");
   } finally {
