@@ -264,7 +264,7 @@ export function ClubTransfersPanel({ organizationId }: { organizationId: string 
       {data === null ? <p className="report-empty">Loading…</p> : (
         <>
           <div className="transfer-section">
-            <h3>Waiting on your club</h3>
+            <h3>Open requests for your members</h3>
             {waitingOnUs.length === 0
               ? <p className="quiet-copy">No other club is asking for one of your members.</p>
               : <ul className="transfer-list">{waitingOnUs.map((transfer) => <ClubTransferCard key={transfer.id} onAction={setPending} transfer={transfer} />)}</ul>}

@@ -1,9 +1,10 @@
 import { after } from "next/server";
 import { logError } from "@/lib/logger";
+import { processAccountEmailQueue } from "@/modules/communications/email-delivery";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { requireClubTransferAccess, transferRateLimitKey } from "@/modules/club-transfers/access";
 import { memberTransferApiError } from "@/modules/club-transfers/api-errors";
-import { listClubTransfers, queueTransferRequestNotice, requestTransfer } from "@/modules/club-transfers/repository";
+import { listClubTransfers, requestTransfer } from "@/modules/club-transfers/repository";
 import { requestTransferSchema } from "@/modules/club-transfers/schemas";
 import { applyRateLimitHeaders } from "@/modules/rate-limit/domain";
 import { checkClubTransferRequestRateLimit } from "@/modules/rate-limit/service";
@@ -44,14 +45,17 @@ async function postHandler(request: Request, context: RouteContext) {
       }, { status: 429 }), rateLimit);
     }
     const input = requestTransferSchema.parse(await request.json().catch(() => ({})));
-    const { transferId } = await requestTransfer(organizationId, input, access.actor);
-    // Every request, matched or not, schedules the same after-response work,
-    // so the answer's timing never tells a matched name from an unmatched one.
+    // A matched request's notice is already in the outbox, committed with the
+    // request; only delivery runs after the response, and a failure there
+    // leaves the row for the outbox worker to retry. Every request schedules
+    // the same after-response work, matched or not.
+    const { messageIds } = await requestTransfer(organizationId, input, access.actor);
     after(async () => {
+      if (messageIds.length === 0) return;
       try {
-        await queueTransferRequestNotice(transferId);
+        await processAccountEmailQueue({ messageIds, limit: messageIds.length });
       } catch (error) {
-        logError("Queueing a member transfer request notice failed", error);
+        logError("A member transfer notice was queued but not delivered after the response.", error, { messageIds: messageIds.join(",") });
       }
     });
     return applyRateLimitHeaders(Response.json({

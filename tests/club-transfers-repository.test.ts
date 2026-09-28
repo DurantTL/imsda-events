@@ -29,7 +29,6 @@ import {
   acceptTransfer,
   approveRegistrationMove,
   listClubTransfers,
-  queueTransferRequestNotice,
   requestTransfer,
   skipRegistrationMove,
   staffFinishTransfer,
@@ -94,7 +93,7 @@ beforeEach(() => {
   db.memberTransfer.findUnique.mockResolvedValue(null);
   db.clubDirectorGrant.findMany.mockResolvedValue([]);
   db.person.findUniqueOrThrow.mockResolvedValue({ firstName: "Ada", lastName: "Testperson", normalizedEmail: null });
-  db.messageOutbox.createMany.mockImplementation(async ({ data }: { data: unknown[] }) => ({ count: data.length }));
+  db.messageOutbox.createManyAndReturn.mockImplementation(async ({ data }: { data: unknown[] }) => data.map((_, index) => ({ id: `message-${index + 1}` })));
 });
 
 const request = { fromOrganizationId: "club-a", firstName: "Ada", lastName: "Testperson", reason: "Family moved closer to Club B." };
@@ -121,7 +120,7 @@ describe("requesting a transfer", () => {
     expect(db.memberTransfer.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: "UNMATCHED", staffReason: "AMBIGUOUS_MATCH", personId: null, pendingPersonId: null, sendingClubVisible: false }),
     }));
-    expect(db.messageOutbox.createMany).not.toHaveBeenCalled();
+    expect(db.messageOutbox.createManyAndReturn).not.toHaveBeenCalled();
   });
 
   it("matches only the named club's active rows for this club year", async () => {
@@ -131,23 +130,35 @@ describe("requesting a transfer", () => {
     }));
   });
 
-  it("queues no notice inside the request itself, so matched and unmatched requests do the same work", async () => {
+  it("runs the same lookups whether or not the name matched, using a placeholder id when it didn't", async () => {
     await requestTransfer("club-b", request, directorB, now);
-    expect(db.messageOutbox.createMany).not.toHaveBeenCalled();
+    await requestTransfer("club-b", { ...request, firstName: "Nobody" }, directorB, now);
+    const pendingLookups = db.memberTransfer.findUnique.mock.calls
+      .map(([args]) => (args as { where: { pendingPersonId?: string } }).where.pendingPersonId)
+      .filter(Boolean);
+    expect(pendingLookups).toEqual(["person-ada", "no-match-placeholder"]);
+    expect(db.person.findUnique.mock.calls.map(([args]) => (args as { where: { id: string } }).where.id)).toEqual(["person-ada", "no-match-placeholder"]);
+    expect(db.clubDirectorGrant.findMany).toHaveBeenCalledTimes(2);
   });
 
-  const queuedTransfer = (staffReason: string | null) => ({
-    status: "PENDING", staffReason, fromOrganizationId: "club-a",
-    fromOrganization: { name: "Club A" }, toOrganization: { name: "Club B" }, person: { firstName: "Ada", lastName: "Testperson" },
+  it("writes the matched request's notice inside the request transaction, and none for an unmatched one", async () => {
+    db.person.findUnique.mockResolvedValue({ firstName: "Ada", lastName: "Testperson" });
+    db.clubDirectorGrant.findMany.mockResolvedValue([leaderGrant("account-a", "a@example.test")]);
+    const matched = await requestTransfer("club-b", request, directorB, now);
+    expect(matched.messageIds).toEqual(["message-1"]);
+    db.person.findUnique.mockResolvedValue(null);
+    const unmatched = await requestTransfer("club-b", { ...request, firstName: "Nobody" }, directorB, now);
+    expect(unmatched.messageIds).toEqual([]);
+    expect(db.messageOutbox.createManyAndReturn).toHaveBeenCalledTimes(1);
   });
 
   it("notifies the sending club without the reason, deduped, keyed without emails, never failing on a repeat", async () => {
     db.clubDirectorGrant.findMany.mockImplementation(async ({ where }: { where: { organizationId: string } }) => (
       where.organizationId === "club-a" ? [leaderGrant("account-a", "A@Example.test"), leaderGrant("account-a2", "a@example.test")] : []
     ));
-    db.memberTransfer.findUnique.mockResolvedValue(queuedTransfer(null));
-    await queueTransferRequestNotice("transfer-1", now);
-    const { data, skipDuplicates } = db.messageOutbox.createMany.mock.calls[0]![0] as { data: Array<Record<string, string>>; skipDuplicates: boolean };
+    db.person.findUnique.mockResolvedValue({ firstName: "Ada", lastName: "Testperson" });
+    await requestTransfer("club-b", request, directorB, now);
+    const { data, skipDuplicates } = db.messageOutbox.createManyAndReturn.mock.calls[0]![0] as { data: Array<Record<string, string>>; skipDuplicates: boolean };
     expect(skipDuplicates).toBe(true);
     expect(data).toHaveLength(1);
     expect(data[0]!.recipientEmail).toBe("a@example.test");
@@ -158,18 +169,13 @@ describe("requesting a transfer", () => {
   });
 
   it("tells a director of both clubs that conference staff will complete it, not to accept or decline", async () => {
-    db.clubDirectorGrant.findMany.mockResolvedValue([leaderGrant("account-a", "a@example.test")]);
-    db.memberTransfer.findUnique.mockResolvedValue(queuedTransfer("SAME_DIRECTOR"));
-    await queueTransferRequestNotice("transfer-1", now);
-    const body = (db.messageOutbox.createMany.mock.calls[0]![0] as { data: Array<{ bodyTextSnapshot: string }> }).data[0]!.bodyTextSnapshot;
+    // Director B leads Club A too.
+    db.clubDirectorGrant.findMany.mockResolvedValue([leaderGrant("account-b", "b@example.test")]);
+    db.person.findUnique.mockResolvedValue({ firstName: "Ada", lastName: "Testperson" });
+    await requestTransfer("club-b", request, directorB, now);
+    const body = (db.messageOutbox.createManyAndReturn.mock.calls[0]![0] as { data: Array<{ bodyTextSnapshot: string }> }).data[0]!.bodyTextSnapshot;
     expect(body).toContain("conference staff will complete this transfer");
     expect(body).not.toContain("accept or decline it");
-  });
-
-  it("sends nothing for an unmatched request", async () => {
-    db.memberTransfer.findUnique.mockResolvedValue({ ...queuedTransfer("NO_MATCH"), status: "UNMATCHED", person: null });
-    await queueTransferRequestNotice("transfer-1", now);
-    expect(db.messageOutbox.createMany).not.toHaveBeenCalled();
   });
 
   it("audits every request with its actor and outcome", async () => {
@@ -271,7 +277,7 @@ describe("registration moves (staff approve each one)", () => {
     },
     attendee: {
       id: "att-1", personId: "person-ada", registrationId: "reg-a", profileSnapshot: { firstName: "Ada", clubRosterMemberId: "row-a" },
-      person: { firstName: "Ada", lastName: "Testperson" }, adjustments: [{ amountCents: -2500 }],
+      person: { firstName: "Ada", lastName: "Testperson" }, adjustments: [{ amountCents: -2500, registrationId: "reg-a" }, { amountCents: -9900, registrationId: "reg-elsewhere" }],
       honorEnrollments: [{ offeringId: "class-1", consumesSeat: true, offering: { perClubLimit: 2 } }],
     },
     fromRegistration: { id: "reg-a", confirmationCode: "A-1", status: "SUBMITTED", totalAmount: 75, payments: [] },
@@ -329,7 +335,7 @@ describe("registration moves (staff approve each one)", () => {
       ["TOTAL_CLAMPED", () => db.clubEventRegistration.findUnique.mockResolvedValue(destination({ totalAmount: 0 }))],
       // Moving a +$200 correction off a $75 registration would leave it at -$125.
       ["TOTAL_BELOW_ZERO", () => db.memberTransferRegistrationMove.findUniqueOrThrow.mockResolvedValue({
-        ...storedMove, attendee: { ...storedMove.attendee, adjustments: [{ amountCents: 20000 }] },
+        ...storedMove, attendee: { ...storedMove.attendee, adjustments: [{ amountCents: 20000, registrationId: "reg-a" }] },
       })],
       // Moving a -$25 scholarship onto a $150 registration already paid $140 leaves $125 < $140.
       ["TOTAL_BELOW_PAID", () => db.clubEventRegistration.findUnique.mockResolvedValue(destination({ payments: [{ amount: 140, refunds: [] }] }))],

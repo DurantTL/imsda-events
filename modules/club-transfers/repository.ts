@@ -250,6 +250,9 @@ export function transferNotificationEmail(input: {
   };
 }
 
+/** Stands in for a person id when a request matched no one, so both paths run the same lookups. Never a real cuid. */
+const NO_MATCH_PLACEHOLDER_ID = "no-match-placeholder";
+
 type NotificationRecipient = { accountId?: string; email: string; name?: string | null };
 
 /**
@@ -268,11 +271,12 @@ async function queueTransferNotification(
   // Best-effort, same as the club team role notice: the transfer stands even
   // where account email isn't configured (local dev). Never a bulk send:
   // one message per person party to this one transfer.
-  if (!isAccountEmailConfigured()) return;
+  if (!isAccountEmailConfigured()) return [];
   const unique = dedupeNotificationRecipients(recipients.filter((recipient) => Boolean(recipient.email)));
-  if (unique.length === 0) return;
+  if (unique.length === 0) return [];
   const sender = getAccountEmailSender();
-  const created = await tx.messageOutbox.createMany({
+  const created = await tx.messageOutbox.createManyAndReturn({
+    select: { id: true },
     skipDuplicates: true,
     data: unique.map((recipient) => ({
       eventId: null,
@@ -292,7 +296,8 @@ async function queueTransferNotification(
       status: "PENDING" as const,
     })),
   });
-  await transferEvent(tx, transferId, "NOTIFIED", null, `${templateKey} queued to ${created.count} recipient(s).`, { templateKey, count: created.count });
+  await transferEvent(tx, transferId, "NOTIFIED", null, `${templateKey} queued to ${created.length} recipient(s).`, { templateKey, count: created.length });
+  return created.map((row) => row.id);
 }
 
 function leaderRecipients(leaders: Array<{ id: string; email: string; displayName: string | null }>): NotificationRecipient[] {
@@ -374,27 +379,36 @@ async function requestTransferOnce(toOrganizationId: string, input: RequestTrans
     });
     const matches = candidates.filter((row) => row.person && sameTransferName(row.person, input));
 
+    // Matched or not, the same lookups run in the same order (a placeholder
+    // id stands in when there's no single match), so the time a request
+    // takes doesn't tell a matched name from an unmatched one.
+    const match = matches.length === 1 ? matches[0]! : null;
+    const lookupPersonId = match?.personId ?? NO_MATCH_PLACEHOLDER_ID;
+    const [otherOpen, person, sendingLeaders] = await Promise.all([
+      tx.memberTransfer.findUnique({ where: { pendingPersonId: lookupPersonId }, select: { id: true } }),
+      tx.person.findUnique({ where: { id: lookupPersonId }, select: { firstName: true, lastName: true } }),
+      activeClubLeaders(tx, fromClub.id, now),
+    ]);
+    // N6: a director of both clubs never acknowledges their own request; staff complete it.
+    const actorLeadsSendingClub = "kind" in actor && actor.kind === "ATTENDEE"
+      && sendingLeaders.some((leader) => leader.id === actor.accountId);
+
     let status: MemberTransferStatus = "UNMATCHED";
     let staffReason: MemberTransferStaffReason | null = null;
     let personId: string | null = null;
     let fromRosterMemberId: string | null = null;
     if (matches.length === 0) {
       staffReason = "NO_MATCH";
-    } else if (matches.length > 1) {
+    } else if (!match) {
       staffReason = "AMBIGUOUS_MATCH";
     } else {
-      const match = matches[0]!;
       personId = match.personId;
       fromRosterMemberId = match.id;
-      const otherOpen = await tx.memberTransfer.findUnique({ where: { pendingPersonId: match.personId! }, select: { id: true } });
       if (otherOpen) {
         staffReason = "ALREADY_PENDING";
       } else {
         status = "PENDING";
-        // N6: a director of both clubs never acknowledges their own request; staff complete it.
-        if (actor && "kind" in actor && actor.kind === "ATTENDEE" && await leadsClub(tx, actor.accountId, fromClub.id, now)) {
-          staffReason = "SAME_DIRECTOR";
-        }
+        if (actorLeadsSendingClub) staffReason = "SAME_DIRECTOR";
       }
     }
 
@@ -430,44 +444,26 @@ async function requestTransferOnce(toOrganizationId: string, input: RequestTrans
       { fromOrganizationId: fromClub.id, toOrganizationId, outcome: status, staffReason },
     );
 
-    // The sending club's notice is queued separately, after this commits and
-    // after the response is sent (`queueTransferRequestNotice`), so a matched
-    // request takes no longer to answer than an unmatched one.
-    return { transferId: transfer.id };
-  });
-}
-
-/**
- * Queues the sending club's "a transfer was requested" notice (#489), for a
- * matched request only; an unmatched one sends nothing. Called for every
- * request after the response is sent, so the answer's timing never depends
- * on whether the name matched. Idempotent: the outbox keys dedupe a repeat.
- */
-export async function queueTransferRequestNotice(transferId: string, now = new Date()) {
-  await getPrisma().$transaction(async (tx) => {
-    const transfer = await tx.memberTransfer.findUnique({
-      where: { id: transferId },
-      select: {
-        status: true, staffReason: true, fromOrganizationId: true,
-        fromOrganization: { select: { name: true } }, toOrganization: { select: { name: true } },
-        person: { select: { firstName: true, lastName: true } },
-      },
-    });
-    if (!transfer || transfer.status !== "PENDING" || !transfer.person) return;
-    const sendingLeaders = await activeClubLeaders(tx, transfer.fromOrganizationId, now);
-    await queueTransferNotification(
-      tx,
-      transferId,
-      "MEMBER_TRANSFER_STARTED",
-      leaderRecipients(sendingLeaders),
-      transferNotificationEmail({
-        templateKey: "MEMBER_TRANSFER_STARTED",
-        memberName: `${transfer.person.firstName} ${transfer.person.lastName}`,
-        fromClubName: transfer.fromOrganization.name,
-        toClubName: transfer.toOrganization.name,
-        staffCompletes: transfer.staffReason === "SAME_DIRECTOR",
-      }),
-    );
+    // The sending club's notice is written to the outbox inside this
+    // transaction, so it commits with the request and is never lost; only
+    // delivery runs after the response (see the route). Unmatched requests
+    // email no one.
+    const messageIds = status === "PENDING" && person
+      ? await queueTransferNotification(
+        tx,
+        transfer.id,
+        "MEMBER_TRANSFER_STARTED",
+        leaderRecipients(sendingLeaders),
+        transferNotificationEmail({
+          templateKey: "MEMBER_TRANSFER_STARTED",
+          memberName: `${person.firstName} ${person.lastName}`,
+          fromClubName: fromClub.name,
+          toClubName: toClub.name,
+          staffCompletes: staffReason === "SAME_DIRECTOR",
+        }),
+      )
+      : [];
+    return { transferId: transfer.id, messageIds };
   });
 }
 
@@ -1162,7 +1158,8 @@ const moveSelect = {
       registrationId: true,
       profileSnapshot: true,
       person: { select: { firstName: true, lastName: true } },
-      adjustments: { select: { amountCents: true } },
+      // Filtered to the old registration in `describeMove`: exactly the lines the move carries.
+      adjustments: { select: { amountCents: true, registrationId: true } },
       honorEnrollments: { select: { offeringId: true, consumesSeat: true, offering: { select: { perClubLimit: true } } } },
     },
   },
@@ -1212,7 +1209,10 @@ async function describeMove(client: Client, move: StoredMove) {
     where: { registrationId_personId: { registrationId: destination.id, personId: move.attendee.personId } },
     select: { id: true },
   }));
-  const adjustmentCents = move.attendee?.adjustments.reduce((total, line) => total + line.amountCents, 0) ?? 0;
+  // Exactly the lines the move carries: this person's, on the old registration.
+  const adjustmentCents = move.attendee?.adjustments
+    .filter((line) => line.registrationId === move.fromRegistrationId)
+    .reduce((total, line) => total + line.amountCents, 0) ?? 0;
   const fromPaidCents = move.fromRegistration ? paidCentsOf(move.fromRegistration) : 0;
   const toPaidCents = destination ? paidCentsOf(destination) : 0;
   // A stale move (#489): the member has since left the receiving club, or moved on again.

@@ -160,12 +160,13 @@ async function main() {
   // 1. A matched request (typed with odd spacing and case) goes to club A; an unmatched one answers the same way.
   const matched = await repo.requestTransfer(clubs.b, { fromOrganizationId: clubs.a, firstName: "  ada ", lastName: "TESTPERSON", reason: "Family moved closer to Club B." }, directorB, now);
   const unmatched = await repo.requestTransfer(clubs.b, { fromOrganizationId: clubs.a, firstName: "Nobody", lastName: "Here", reason: "Probe" }, directorB, now);
-  assert(Object.keys(matched).join() === Object.keys(unmatched).join(), "matched and unmatched requests answer with the same shape");
+  assert(Object.keys(matched).join() === Object.keys(unmatched).join(), "matched and unmatched requests return the same shape");
   const matchedRow = await prisma.memberTransfer.findUniqueOrThrow({ where: { id: matched.transferId } });
   const unmatchedRow = await prisma.memberTransfer.findUniqueOrThrow({ where: { id: unmatched.transferId } });
-  // The route queues each request's notice after the response; here it runs by hand, for both.
-  await repo.queueTransferRequestNotice(matched.transferId, now);
-  await repo.queueTransferRequestNotice(unmatched.transferId, now);
+  // The notice is written with the request itself; no delivery has run here
+  // (as if the after-response delivery failed), and the row is still there.
+  assert(matched.messageIds.length === 1 && unmatched.messageIds.length === 0, "only the matched request queued a notice");
+  assert(await prisma.messageOutbox.count({ where: { id: { in: matched.messageIds }, status: "PENDING" } }) === 1, "the matched notice is in the outbox, pending, without any delivery");
   assert(await prisma.messageOutbox.count({ where: { correlationId: matched.transferId, templateKey: "MEMBER_TRANSFER_STARTED" } }) === 1, "the sending club is told about a matched request");
   assert(await prisma.messageOutbox.count({ where: { correlationId: unmatched.transferId } }) === 0, "an unmatched request emails no one");
   assert(matchedRow.status === "PENDING" && matchedRow.pendingPersonId === ada.personId, "exact normalized name matched");

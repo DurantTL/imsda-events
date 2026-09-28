@@ -6,7 +6,8 @@ const mocks = vi.hoisted(() => ({
   rejectCrossOriginRequest: vi.fn(),
   checkClubTransferRequestRateLimit: vi.fn(),
   requestTransfer: vi.fn(),
-  queueTransferRequestNotice: vi.fn(),
+  processAccountEmailQueue: vi.fn(),
+  logError: vi.fn(),
   after: vi.fn(),
   listClubTransfers: vi.fn(),
   acceptTransfer: vi.fn(),
@@ -28,6 +29,11 @@ vi.mock("next/server", async () => {
   return { ...actual, after: (work: () => unknown) => mocks.after(work) };
 });
 vi.mock("@/modules/access/request-security", () => ({ rejectCrossOriginRequest: mocks.rejectCrossOriginRequest }));
+vi.mock("@/modules/communications/email-delivery", () => ({ processAccountEmailQueue: mocks.processAccountEmailQueue }));
+vi.mock("@/lib/logger", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/logger")>("@/lib/logger");
+  return { ...actual, logError: mocks.logError };
+});
 vi.mock("@/modules/rate-limit/service", () => ({ checkClubTransferRequestRateLimit: mocks.checkClubTransferRequestRateLimit }));
 vi.mock("@/modules/club-transfers/access", async () => {
   const actual = await vi.importActual<typeof import("@/modules/club-transfers/access")>("@/modules/club-transfers/access");
@@ -38,7 +44,6 @@ vi.mock("@/modules/club-transfers/repository", async () => {
   return {
     ...actual,
     requestTransfer: mocks.requestTransfer,
-    queueTransferRequestNotice: mocks.queueTransferRequestNotice,
     listClubTransfers: mocks.listClubTransfers,
     acceptTransfer: mocks.acceptTransfer,
     declineTransfer: mocks.declineTransfer,
@@ -139,7 +144,10 @@ describe("requesting a transfer", () => {
   beforeEach(() => mocks.requireClubTransferAccess.mockResolvedValue(openAccess));
 
   it("answers 'request sent' the same way whether or not the name matched, with no transfer details", async () => {
-    mocks.requestTransfer.mockResolvedValueOnce({ transferId: "matched" }).mockResolvedValueOnce({ transferId: "unmatched" });
+    mocks.requestTransfer
+      .mockResolvedValueOnce({ transferId: "matched", messageIds: ["message-1"] })
+      .mockResolvedValueOnce({ transferId: "unmatched", messageIds: [] });
+    mocks.processAccountEmailQueue.mockResolvedValue({});
     const first = await clubRequest(jsonRequest("/api/attendee/clubs/club-b/transfers", requestBody), clubCtx);
     const second = await clubRequest(jsonRequest("/api/attendee/clubs/club-b/transfers", { ...requestBody, firstName: "Nobody" }), clubCtx);
     expect(first.status).toBe(202);
@@ -148,10 +156,22 @@ describe("requesting a transfer", () => {
     expect(a).toEqual(b);
     expect(JSON.stringify(a)).not.toMatch(/matched|transferId|personId/);
     expect(mocks.requestTransfer).toHaveBeenCalledWith("club-b", requestBody, clubActor);
-    // Both schedule the same after-response work; the notice itself decides whether there's anything to send.
+    // Both schedule the same after-response work; only the matched one has a queued notice to deliver.
     expect(mocks.after).toHaveBeenCalledTimes(2);
     for (const [work] of mocks.after.mock.calls) await (work as () => Promise<void>)();
-    expect(mocks.queueTransferRequestNotice.mock.calls).toEqual([["matched"], ["unmatched"]]);
+    expect(mocks.processAccountEmailQueue.mock.calls).toEqual([[{ messageIds: ["message-1"], limit: 1 }]]);
+  });
+
+  it("still answers 202 when delivery after the response fails; the queued outbox row stays for the worker", async () => {
+    mocks.requestTransfer.mockResolvedValue({ transferId: "matched", messageIds: ["message-1"] });
+    mocks.processAccountEmailQueue.mockRejectedValue(new Error("provider down"));
+    const response = await clubRequest(jsonRequest("/api/attendee/clubs/club-b/transfers", requestBody), clubCtx);
+    expect(response.status).toBe(202);
+    const [work] = mocks.after.mock.calls[0]!;
+    await expect((work as () => Promise<void>)()).resolves.toBeUndefined();
+    expect(mocks.logError).toHaveBeenCalledWith(expect.stringContaining("queued but not delivered"), expect.any(Error), { messageIds: "message-1" });
+    // The row was written by requestTransfer, inside its transaction, before any delivery was tried
+    // (proven against PostgreSQL in scripts/verify-club-member-transfers.ts); delivery never deletes it.
   });
 
   it("is rate-limited per director and club, and says so without doing anything", async () => {
