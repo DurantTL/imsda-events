@@ -1,28 +1,50 @@
-import { imsdaChurchOptions, localCalendarDate, type RegistrationFormField } from "@/modules/forms/definition";
+import { imsdaChurchOptions, localCalendarDate, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
+import { fullNameKeys, splitNameKeyPairs } from "@/modules/forms/public-domain";
 import { shirtSizeOptions } from "@/modules/registrations/shirt-sizes";
 
 export type BuilderModuleCategory = "Common" | "People" | "Housing" | "Group event";
+
+/**
+ * A module's own field. `coveredBy` lists key sets that, when every key in
+ * one set is already on the form (on fields of the same scope), make this
+ * field redundant for a `singleton` insert: it is skipped and the existing
+ * fields are reported as reused. The first matching set wins.
+ */
+export type BuilderModuleField = Omit<RegistrationFormField, "id"> & { coveredBy?: string[][] };
+
+/**
+ * Key sets that already capture a person's name, in the same precedence the
+ * roster name prefill uses (`attendeeNameKeys` in
+ * `modules/club-registrations/domain.ts`): a first/last pair, then any
+ * single full-name key.
+ */
+export const attendeeNameCoverage: string[][] = [
+  ...splitNameKeyPairs.map((pair) => [pair.first, pair.last]),
+  ...fullNameKeys.map((key) => [key]),
+];
 
 export type BuilderModuleDefinition = {
   key: string;
   category: BuilderModuleCategory;
   name: string;
   description: string;
-  fields: Array<Omit<RegistrationFormField, "id">>;
+  fields: BuilderModuleField[];
   /**
    * True when a module's field keys should never be key-suffixed (as
    * `promo_code` already did). Some modules are recognized elsewhere by
    * their exact field keys — the roster bundle's `attendee_type`/`gender`
    * are the #483 roster prefill/summary hooks — so a suffixed duplicate
    * would silently lose that wiring. A singleton is refused as "already on
-   * the form" when any of its `presenceKeys` exist; otherwise only the
-   * fields whose keys the form is missing are inserted, and the existing
-   * fields are reused in place of the rest (see `planModuleInsert`).
+   * the form" only when every one of its `presenceKeys` exists; otherwise
+   * only the fields the form is missing (by key, or by `coveredBy`) are
+   * inserted, and the existing fields are reused in place of the rest (see
+   * `planModuleInsert`).
    */
   singleton?: boolean;
   /**
-   * For a `singleton`: the field keys that mark this module as already on
-   * the form. Defaults to every one of its field keys. The roster bundle
+   * For a `singleton`: the field keys that, all present together, mark
+   * this module as already on the form. Defaults to every one of its field
+   * keys. The roster bundle
    * narrows this to its own distinctive keys, since the others
    * (`attendee_type`, `attendee_age`, `gender`, `attendee_name`) are common
    * on starter templates and other modules.
@@ -30,7 +52,8 @@ export type BuilderModuleDefinition = {
   presenceKeys?: string[];
   /** True when inserting this module should also turn on the repeatable
    * attendee roster (as `guest_roster` already did), when it isn't already
-   * on. */
+   * on — including a roster that exists but is switched off
+   * (`moduleAttendeeRoster`). */
   enablesAttendeeRoster?: boolean;
   /** The roster settings to turn on with `enablesAttendeeRoster`. Defaults
    * to the builder's own "Household or group" defaults (Attendee / Add
@@ -119,6 +142,10 @@ export const rosterFieldBundleModule = {
       scope: "ATTENDEE" as const,
       required: true,
       options: [],
+      // A roster that already has first/last name (Spring Camporee, Honors
+      // Weekend) or a full-name field is prefilled from those; a second,
+      // required Name field would stay blank and force retyping.
+      coveredBy: attendeeNameCoverage,
     },
     {
       key: "attendee_age",
@@ -181,16 +208,18 @@ export const rosterFieldBundleModule = {
 } satisfies BuilderModuleDefinition;
 
 /**
- * The keys that show a `singleton` module is already on the form: those of
- * its `presenceKeys` (by default, all of its field keys) the form already
- * uses. A singleton insert is refused when this is non-empty.
+ * The keys that show a `singleton` module is already on the form: its
+ * `presenceKeys` (by default, all of its field keys), returned only when
+ * every one of them is in use — otherwise an empty list. A singleton insert
+ * is refused when this is non-empty. Promo code has one key, so this is the
+ * same as "any" for it.
  */
 export function moduleKeyCollisions(
   module: Pick<BuilderModuleDefinition, "fields" | "presenceKeys">,
   usedKeys: ReadonlySet<string>,
 ): string[] {
   const presenceKeys = module.presenceKeys ?? module.fields.map((field) => field.key);
-  return presenceKeys.filter((key) => usedKeys.has(key));
+  return presenceKeys.length > 0 && presenceKeys.every((key) => usedKeys.has(key)) ? [...presenceKeys] : [];
 }
 
 /** Maps each of a module's own field keys to the key it will actually use
@@ -220,7 +249,7 @@ export function resolveModuleFieldKeyMap(
  * reference to another field in the *same* module is remapped to that
  * field's final key too, so an internal reference such as the roster
  * bundle's skills/induction fields pointing at its own role field survives a
- * key suffix.
+ * key suffix. Module-only metadata (`coveredBy`) is dropped.
  *
  * Every field keeps the type its module declares. Choice-control size
  * defaults (#484) live in the module data itself and in the builder's
@@ -234,7 +263,8 @@ export function instantiateModuleFields(
 ): RegistrationFormField[] {
   const moduleKeys = resolveModuleFieldKeyMap(module, usedKeys);
   return module.fields.map((source) => {
-    const cloned = structuredClone(source);
+    const { coveredBy: _coveredBy, ...cloned } = structuredClone(source);
+    void _coveredBy;
     const conditional = cloned.conditional
       ? { ...cloned.conditional, fieldKey: moduleKeys.get(cloned.conditional.fieldKey) ?? cloned.conditional.fieldKey }
       : undefined;
@@ -245,11 +275,22 @@ export function instantiateModuleFields(
   });
 }
 
+type ExistingFormField = Pick<RegistrationFormField, "key" | "label"> & Partial<Pick<RegistrationFormField, "scope" | "type" | "options" | "optionSource">>;
+
+/** A reused field that a newly inserted field's condition can never match. */
+export type ModuleConditionWarning = {
+  controllerLabel: string;
+  value: string;
+  dependentLabels: string[];
+};
+
 export type ModuleInsertPlan =
   | {
     kind: "already-present";
     /** Existing form fields that mark the module as already there. */
     existingKeys: string[];
+    /** Labels of those existing fields, for the notice. */
+    existingLabels: string[];
   }
   | {
     kind: "insert";
@@ -257,9 +298,42 @@ export type ModuleInsertPlan =
     /** Labels of the module fields being added. */
     addedLabels: string[];
     /** Labels of the form's existing fields reused instead of a module
-     * field with the same key (singleton modules only). */
+     * field — by the same key, or by `coveredBy` ("First name and Last
+     * name") — for singleton modules only. */
     reusedLabels: string[];
+    /** Conditions on added fields that point at a reused field which can't
+     * satisfy them (no such option, or options sourced from attendee
+     * types). */
+    conditionWarnings: ModuleConditionWarning[];
   };
+
+function joinLabels(labels: readonly string[]): string {
+  if (labels.length <= 1) return labels.join("");
+  return `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`;
+}
+
+function labelFor(existingFields: readonly ExistingFormField[], key: string): string {
+  return existingFields.find((field) => field.key === key)?.label ?? key;
+}
+
+function conditionWarnings(
+  fields: readonly RegistrationFormField[],
+  existingFields: readonly ExistingFormField[],
+): ModuleConditionWarning[] {
+  const warnings: ModuleConditionWarning[] = [];
+  for (const field of fields) {
+    const condition = field.conditional;
+    if (!condition || (condition.operator !== "EQUALS" && condition.operator !== "INCLUDES")) continue;
+    const controller = existingFields.find((candidate) => candidate.key === condition.fieldKey);
+    if (!controller) continue;
+    const satisfiable = !controller.optionSource && (controller.options ?? []).includes(condition.value);
+    if (satisfiable) continue;
+    const existing = warnings.find((warning) => warning.controllerLabel === controller.label && warning.value === condition.value);
+    if (existing) existing.dependentLabels.push(field.label);
+    else warnings.push({ controllerLabel: controller.label, value: condition.value, dependentLabels: [field.label] });
+  }
+  return warnings;
+}
 
 /**
  * Decides what inserting `module` into a form whose fields are
@@ -267,48 +341,101 @@ export type ModuleInsertPlan =
  *
  * - An ordinary module is always inserted whole, with any colliding key
  *   suffixed (`instantiateModuleFields`).
- * - A `singleton` whose `presenceKeys` are already on the form is refused as
+ * - A `singleton` whose `presenceKeys` are all on the form is refused as
  *   already present.
- * - Otherwise a singleton inserts only the fields whose keys the form is
- *   missing. The form's existing fields stand in for the rest, so a
+ * - Otherwise a singleton inserts only the fields the form is missing: a
+ *   field is skipped when its key is already used, or when one of its
+ *   `coveredBy` key sets is on the form in the same scope. The form's
+ *   existing fields stand in for the skipped ones, so a
  *   `conditional`/`optionalWhen` that pointed at a skipped module field
- *   points at the existing field with that same key.
+ *   points at the existing field with that same key — and a condition that
+ *   field can't satisfy is reported in `conditionWarnings`.
  */
 export function planModuleInsert(
   module: Pick<BuilderModuleDefinition, "fields" | "singleton" | "presenceKeys">,
-  existingFields: ReadonlyArray<Pick<RegistrationFormField, "key" | "label">>,
+  existingFields: readonly ExistingFormField[],
   makeFieldId: () => string,
 ): ModuleInsertPlan {
   const usedKeys = new Set(existingFields.map((field) => field.key));
   if (!module.singleton) {
     const fields = instantiateModuleFields(module, usedKeys, makeFieldId);
-    return { kind: "insert", fields, addedLabels: fields.map((field) => field.label), reusedLabels: [] };
+    return { kind: "insert", fields, addedLabels: fields.map((field) => field.label), reusedLabels: [], conditionWarnings: [] };
   }
   const existingKeys = moduleKeyCollisions(module, usedKeys);
-  if (existingKeys.length > 0) return { kind: "already-present", existingKeys };
-  const missing = module.fields.filter((field) => !usedKeys.has(field.key));
-  const reusedLabels = module.fields
-    .filter((field) => usedKeys.has(field.key))
-    .map((field) => existingFields.find((existing) => existing.key === field.key)?.label ?? field.label);
+  if (existingKeys.length > 0) {
+    return { kind: "already-present", existingKeys, existingLabels: existingKeys.map((key) => labelFor(existingFields, key)) };
+  }
+  const missing: BuilderModuleField[] = [];
+  const reusedLabels: string[] = [];
+  for (const field of module.fields) {
+    if (usedKeys.has(field.key)) {
+      reusedLabels.push(labelFor(existingFields, field.key));
+      continue;
+    }
+    const scopedKeys = new Set(existingFields
+      .filter((existing) => (existing.scope ?? "REGISTRATION") === field.scope)
+      .map((existing) => existing.key));
+    const cover = field.coveredBy?.find((keys) => keys.length > 0 && keys.every((key) => scopedKeys.has(key)));
+    if (cover) {
+      reusedLabels.push(joinLabels(cover.map((key) => labelFor(existingFields, key))));
+      continue;
+    }
+    missing.push(field);
+  }
   // Missing keys are, by definition, unused, so none of them is suffixed and
   // references to skipped keys stay on the existing field's key.
   const fields = instantiateModuleFields({ fields: missing }, usedKeys, makeFieldId);
-  return { kind: "insert", fields, addedLabels: fields.map((field) => field.label), reusedLabels };
-}
-
-function joinLabels(labels: readonly string[]): string {
-  if (labels.length <= 1) return labels.join("");
-  return `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`;
+  return {
+    kind: "insert",
+    fields,
+    addedLabels: fields.map((field) => field.label),
+    reusedLabels,
+    conditionWarnings: conditionWarnings(fields, existingFields),
+  };
 }
 
 /**
  * The notice to show after an insert that reused existing fields, naming
- * both what was added and what was skipped — or null when the whole module
+ * both what was added and what was skipped, plus a warning for any added
+ * condition a reused field can't satisfy — or null when the whole module
  * was added and there's nothing to explain.
  */
 export function moduleInsertNotice(plan: Extract<ModuleInsertPlan, { kind: "insert" }>): string | null {
-  if (plan.reusedLabels.length === 0) return null;
-  return `Added ${joinLabels(plan.addedLabels)}; this form already had ${joinLabels(plan.reusedLabels)}.`;
+  const parts: string[] = [];
+  if (plan.reusedLabels.length > 0) {
+    parts.push(plan.addedLabels.length > 0
+      ? `Added ${joinLabels(plan.addedLabels)}; this form already had ${joinLabels(plan.reusedLabels)}.`
+      : `This form already had ${joinLabels(plan.reusedLabels)}.`);
+  }
+  for (const warning of plan.conditionWarnings) {
+    parts.push(`"${warning.controllerLabel}" has no "${warning.value}" option, so ${joinLabels(warning.dependentLabels)} won't show until you add one or change their condition.`);
+  }
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
+/** The notice for a singleton that's already on the form, naming the
+ * existing fields that show it. */
+export function moduleAlreadyPresentNotice(
+  module: Pick<BuilderModuleDefinition, "name">,
+  plan: Extract<ModuleInsertPlan, { kind: "already-present" }>,
+): string {
+  return `This form already has its ${module.name} module (found ${joinLabels(plan.existingLabels)}).`;
+}
+
+/**
+ * The attendee roster to use after inserting `module`: a module with
+ * `enablesAttendeeRoster` turns the roster on — creating it from its
+ * defaults when the form has none, or switching an existing but disabled
+ * roster on while keeping its own min/max and labels. Any other module
+ * leaves the roster as it is.
+ */
+export function moduleAttendeeRoster(
+  current: RegistrationFormDefinition["attendeeRoster"],
+  module: Pick<BuilderModuleDefinition, "key" | "enablesAttendeeRoster" | "attendeeRosterDefaults">,
+): RegistrationFormDefinition["attendeeRoster"] {
+  if (!module.enablesAttendeeRoster) return current;
+  if (current) return current.enabled ? current : { ...current, enabled: true };
+  return { enabled: true, ...(module.attendeeRosterDefaults ?? defaultModuleAttendeeRoster) };
 }
 
 /**

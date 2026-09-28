@@ -22,9 +22,7 @@ import type { RegistrationFormDefinition } from "@/modules/forms/definition";
  *   device doesn't dismiss it on another.
  * - The "created" record also snapshots the section and field ids the
  *   template brought in, so only those are listed as inherited — a field
- *   the builder adds afterward never shows up here. A record written before
- *   that snapshot existed (a bare form id) lists every current item, as it
- *   always did.
+ *   the builder adds afterward never shows up here.
  * - The per-item checkmarks (`confirmedIds` in
  *   `template-cleanup-checklist-panel.tsx`) aren't persisted at all — they
  *   reset on reload, since they're a personal review aid, not the record of
@@ -117,16 +115,14 @@ function withRemembered(ids: readonly string[], formId: string): string[] {
  * template — what the checklist treats as "inherited". */
 export type TemplateCleanupSnapshot = { sectionIds: string[]; fieldIds: string[] };
 
-/** One remembered "created from a template" form. `snapshot` is absent only
- * for a record stored before snapshots existed (a bare form id). */
-export type TemplateCleanupCreatedRecord = { formId: string; snapshot?: TemplateCleanupSnapshot };
+/** One remembered "created from a template" form. */
+export type TemplateCleanupCreatedRecord = { formId: string; snapshot: TemplateCleanupSnapshot };
 
 function stringList(value: unknown): string[] | null {
   return Array.isArray(value) && value.every((item) => typeof item === "string") ? [...value] : null;
 }
 
 function parseCreatedRecord(value: unknown): TemplateCleanupCreatedRecord | null {
-  if (typeof value === "string") return { formId: value };
   if (!value || typeof value !== "object") return null;
   const candidate = value as Record<string, unknown>;
   if (typeof candidate.formId !== "string") return null;
@@ -134,11 +130,10 @@ function parseCreatedRecord(value: unknown): TemplateCleanupCreatedRecord | null
   const fieldIds = stringList(candidate.fieldIds);
   return sectionIds && fieldIds
     ? { formId: candidate.formId, snapshot: { sectionIds, fieldIds } }
-    : { formId: candidate.formId };
+    : null;
 }
 
-/** Parses the raw stored "created" value. Accepts both the current record
- * shape and a legacy bare form id. */
+/** Parses the raw stored "created" value, dropping any malformed entry. */
 export function parseTemplateCleanupCreatedRecords(raw: string | null): TemplateCleanupCreatedRecord[] {
   if (!raw) return [];
   try {
@@ -161,7 +156,7 @@ export function writeTemplateCleanupCreatedRecords(storage: TemplateCleanupStora
   if (!storage) return;
   try {
     storage.setItem(templateCleanupCreatedStorageKey, JSON.stringify(records.map((record) => (
-      record.snapshot ? { formId: record.formId, ...record.snapshot } : record.formId
+      ({ formId: record.formId, ...record.snapshot })
     ))));
     notifyTemplateCleanupChecklistChanged();
   } catch {
@@ -243,21 +238,20 @@ export type TemplateCleanupChecklistItem = {
  * "Inherited" means present in `snapshot` (the ids the form had when it was
  * created from its template): a section or field added afterward isn't
  * listed. An inherited field moved into a new section is still listed,
- * under that section's id. With no snapshot (a legacy record), every current
- * section and field is listed.
+ * under that section's id.
  */
 export function buildTemplateCleanupChecklistItems(
   definition: RegistrationFormDefinition,
-  snapshot?: TemplateCleanupSnapshot,
+  snapshot: TemplateCleanupSnapshot,
 ): TemplateCleanupChecklistItem[] {
-  const sectionIds = snapshot ? new Set(snapshot.sectionIds) : null;
-  const fieldIds = snapshot ? new Set(snapshot.fieldIds) : null;
+  const sectionIds = new Set(snapshot.sectionIds);
+  const fieldIds = new Set(snapshot.fieldIds);
   return definition.sections.flatMap((section) => [
-    ...(!sectionIds || sectionIds.has(section.id)
+    ...(sectionIds.has(section.id)
       ? [{ id: `section:${section.id}`, kind: "section" as const, label: section.title, sectionId: section.id }]
       : []),
     ...section.fields
-      .filter((field) => !fieldIds || fieldIds.has(field.id))
+      .filter((field) => fieldIds.has(field.id))
       .map((field) => ({
         id: `field:${field.id}`,
         kind: "field" as const,

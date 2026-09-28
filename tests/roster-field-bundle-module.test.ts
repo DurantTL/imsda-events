@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   builderFieldModules,
   instantiateModuleFields,
+  moduleAlreadyPresentNotice,
+  moduleAttendeeRoster,
   moduleInsertNotice,
   moduleKeyCollisions,
   planModuleInsert,
@@ -157,14 +159,15 @@ describe("module insertion and collision remapping (#484 B1)", () => {
     expect(keys.get("attendee_type")).toBe("attendee_type_2");
   });
 
-  it("treats the bundle as already present only when its own distinctive keys exist (N1)", () => {
+  it("treats the bundle as already present only when all of its distinctive keys exist", () => {
     expect(moduleKeyCollisions(rosterFieldBundleModule, new Set())).toEqual([]);
     expect(moduleKeyCollisions(rosterFieldBundleModule, new Set(["attendee_type", "gender", "attendee_age", "attendee_name"]))).toEqual([]);
-    expect(moduleKeyCollisions(rosterFieldBundleModule, new Set(["attendee_class"]))).toEqual(["attendee_class"]);
-    expect(moduleKeyCollisions(rosterFieldBundleModule, new Set(["skills_in_progress"]))).toEqual(["skills_in_progress"]);
+    expect(moduleKeyCollisions(rosterFieldBundleModule, new Set(["attendee_class"]))).toEqual([]);
+    expect(moduleKeyCollisions(rosterFieldBundleModule, new Set(["skills_in_progress"]))).toEqual([]);
+    expect(moduleKeyCollisions(rosterFieldBundleModule, new Set(["attendee_class", "skills_in_progress"]))).toEqual(["attendee_class", "skills_in_progress"]);
   });
 
-  it("a singleton without presenceKeys (promo code) is present whenever any of its keys is", () => {
+  it("a singleton without presenceKeys (promo code) is present when its only key is", () => {
     expect(moduleKeyCollisions(promoCodeBuilderModule, new Set(["promo_code"]))).toEqual(["promo_code"]);
     expect(moduleKeyCollisions(promoCodeBuilderModule, new Set(["other"]))).toEqual([]);
   });
@@ -285,7 +288,7 @@ describe("inserting the roster bundle into a form that already has some of its f
     return planModuleInsert(rosterFieldBundleModule, allFields(definition), idFactory("new"));
   }
 
-  it("adds only the missing fields to the Spring Camporee starter template and reuses its role field", () => {
+  it("adds only the missing fields to the Spring Camporee starter template, reusing its first/last name and role fields", () => {
     const template = getFormTemplate("spring_camporee_export")!;
     expect(template).toBeDefined();
     const existingKeys = new Set(allFields(template.definition).map((field) => field.key));
@@ -295,14 +298,16 @@ describe("inserting the roster bundle into a form that already has some of its f
 
     const plan = insertInto(template.definition);
     if (plan.kind !== "insert") throw new Error("expected an insert");
-    expect(plan.fields.map((field) => field.key)).toEqual(["attendee_name", "attendee_class", "skills_in_progress", "induction_ready"]);
-    expect(plan.reusedLabels).toEqual(["Age", "Gender", "Roster role"]);
+    expect(plan.fields.map((field) => field.key)).toEqual(["attendee_class", "skills_in_progress", "induction_ready"]);
+    expect(plan.fields.some((field) => field.key === "attendee_name")).toBe(false);
+    expect(plan.reusedLabels).toEqual(["First name and Last name", "Age", "Gender", "Roster role"]);
+    expect(plan.conditionWarnings).toEqual([]);
     const skills = plan.fields.find((field) => field.key === "skills_in_progress")!;
     const induction = plan.fields.find((field) => field.key === "induction_ready")!;
     expect(skills.conditional?.fieldKey).toBe("attendee_type");
     expect(induction.conditional?.fieldKey).toBe("attendee_type");
     expect(moduleInsertNotice(plan)).toBe(
-      "Added Name, Current class, Skills / honors in progress and Ready for induction / investiture; this form already had Age, Gender and Roster role.",
+      "Added Current class, Skills / honors in progress and Ready for induction / investiture; this form already had First name and Last name, Age, Gender and Roster role.",
     );
 
     // The result is still a valid definition, with no suffixed duplicate keys.
@@ -328,6 +333,66 @@ describe("inserting the roster bundle into a form that already has some of its f
     expect(plan.reusedLabels).toEqual(["Attendee name", "Attendee type"]);
   });
 
+  it("warns when the reused role field has no Pathfinder option (Attendee preferences: Adult/Teen)", () => {
+    const attendeeModule = builderFieldModules.find((module) => module.key === "attendee")!;
+    const existing = instantiateModuleFields(attendeeModule, new Set(), idFactory("att"));
+    expect(existing.find((field) => field.key === "attendee_type")?.options).toEqual(["Adult", "Teen"]);
+    const plan = planModuleInsert(rosterFieldBundleModule, existing, idFactory("new"));
+    if (plan.kind !== "insert") throw new Error("expected an insert");
+    expect(plan.conditionWarnings).toEqual([{
+      controllerLabel: "Attendee type",
+      value: "Pathfinder",
+      dependentLabels: ["Skills / honors in progress", "Ready for induction / investiture"],
+    }]);
+    expect(moduleInsertNotice(plan)).toBe(
+      "Added Age, Gender, Current class, Skills / honors in progress and Ready for induction / investiture; this form already had Attendee name and Attendee type."
+      + " \"Attendee type\" has no \"Pathfinder\" option, so Skills / honors in progress and Ready for induction / investiture won't show until you add one or change their condition.",
+    );
+  });
+
+  it("warns when the reused role field takes its options from the event's attendee types", () => {
+    const existing = [
+      { key: "attendee_type", label: "Roster role", scope: "ATTENDEE" as const, type: "RADIO" as const, options: ["Pathfinder", "Staff"], optionSource: "ATTENDEE_TYPES" as const },
+    ];
+    const plan = planModuleInsert(rosterFieldBundleModule, existing, idFactory("new"));
+    if (plan.kind !== "insert") throw new Error("expected an insert");
+    expect(plan.conditionWarnings.map((warning) => warning.controllerLabel)).toEqual(["Roster role"]);
+    expect(moduleInsertNotice(plan)).toContain("\"Roster role\" has no \"Pathfinder\" option");
+  });
+
+  it("treats an attendee full-name field as covering Name", () => {
+    const existing = [{ key: "full_name", label: "Full name", scope: "ATTENDEE" as const }];
+    const plan = planModuleInsert(rosterFieldBundleModule, existing, idFactory("new"));
+    if (plan.kind !== "insert") throw new Error("expected an insert");
+    expect(plan.fields.some((field) => field.key === "attendee_name")).toBe(false);
+    expect(plan.reusedLabels).toEqual(["Full name"]);
+    expect(moduleInsertNotice(plan)).toMatch(/; this form already had Full name\.$/);
+  });
+
+  it("only counts name fields in the same scope as covering Name", () => {
+    const existing = [
+      { key: "first_name", label: "First name", scope: "REGISTRATION" as const },
+      { key: "last_name", label: "Last name", scope: "REGISTRATION" as const },
+    ];
+    const plan = planModuleInsert(rosterFieldBundleModule, existing, idFactory("new"));
+    if (plan.kind !== "insert") throw new Error("expected an insert");
+    expect(plan.fields[0].key).toBe("attendee_name");
+    expect(plan.reusedLabels).toEqual([]);
+  });
+
+  it("needs both halves of a first/last pair to cover Name", () => {
+    const existing = [{ key: "first_name", label: "First name", scope: "ATTENDEE" as const }];
+    const plan = planModuleInsert(rosterFieldBundleModule, existing, idFactory("new"));
+    if (plan.kind !== "insert") throw new Error("expected an insert");
+    expect(plan.fields[0].key).toBe("attendee_name");
+  });
+
+  it("never carries the module-only coveredBy metadata into an inserted field", () => {
+    const [name] = instantiateModuleFields(rosterFieldBundleModule, new Set(), idFactory());
+    expect(name.key).toBe("attendee_name");
+    expect("coveredBy" in name).toBe(false);
+  });
+
   it("inserts the whole bundle, with no notice, on a form that has none of its keys", () => {
     const plan = planModuleInsert(rosterFieldBundleModule, [], idFactory());
     if (plan.kind !== "insert") throw new Error("expected an insert");
@@ -340,7 +405,22 @@ describe("inserting the roster bundle into a form that already has some of its f
     const first = planModuleInsert(rosterFieldBundleModule, [], idFactory("f1"));
     if (first.kind !== "insert") throw new Error("expected an insert");
     const second = planModuleInsert(rosterFieldBundleModule, first.fields, idFactory("f2"));
-    expect(second).toEqual({ kind: "already-present", existingKeys: ["attendee_class", "skills_in_progress"] });
+    expect(second).toEqual({
+      kind: "already-present",
+      existingKeys: ["attendee_class", "skills_in_progress"],
+      existingLabels: ["Current class", "Skills / honors in progress"],
+    });
+    if (second.kind !== "already-present") throw new Error("expected already-present");
+    expect(moduleAlreadyPresentNotice(rosterFieldBundleModule, second)).toBe(
+      "This form already has its Roster field bundle module (found Current class and Skills / honors in progress).",
+    );
+  });
+
+  it("with only one of its distinctive fields present, adds the rest and reuses that one", () => {
+    const plan = planModuleInsert(rosterFieldBundleModule, [{ key: "attendee_class", label: "Class", scope: "ATTENDEE" }], idFactory());
+    if (plan.kind !== "insert") throw new Error("expected an insert");
+    expect(plan.fields.map((field) => field.key)).not.toContain("attendee_class");
+    expect(plan.reusedLabels).toEqual(["Class"]);
   });
 
   it("still key-suffixes an ordinary (non-singleton) module on a repeat insert", () => {
@@ -356,5 +436,27 @@ describe("inserting the roster bundle into a form that already has some of its f
   it("refuses the promo code module when the form already has it", () => {
     const plan = planModuleInsert(promoCodeBuilderModule, [{ key: "promo_code", label: "Promo code" }], idFactory());
     expect(plan.kind).toBe("already-present");
+  });
+});
+
+describe("modules that enable the attendee roster (N4)", () => {
+  const disabled = { enabled: false, minAttendees: 2, maxAttendees: 12, attendeeLabel: "Member", addButtonLabel: "Add member" };
+
+  it("switches on an existing but disabled roster, keeping its own settings", () => {
+    expect(moduleAttendeeRoster(disabled, rosterFieldBundleModule)).toEqual({ ...disabled, enabled: true });
+  });
+
+  it("creates the roster from the module's defaults when the form has none", () => {
+    expect(moduleAttendeeRoster(undefined, rosterFieldBundleModule)).toEqual({ enabled: true, ...rosterFieldBundleModule.attendeeRosterDefaults });
+  });
+
+  it("leaves an enabled roster unchanged", () => {
+    const enabled = { ...disabled, enabled: true };
+    expect(moduleAttendeeRoster(enabled, rosterFieldBundleModule)).toBe(enabled);
+  });
+
+  it("never touches the roster for a module that doesn't enable it", () => {
+    expect(moduleAttendeeRoster(disabled, promoCodeBuilderModule)).toBe(disabled);
+    expect(moduleAttendeeRoster(undefined, promoCodeBuilderModule)).toBeUndefined();
   });
 });

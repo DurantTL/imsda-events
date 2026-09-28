@@ -86,7 +86,7 @@ export function TemplateCleanupChecklistPanel({ formId, definition }: TemplateCl
   const [confirmedIds, setConfirmedIds] = useState<ReadonlySet<string>>(() => new Set());
 
   const visible = shouldShowTemplateCleanupChecklist(createdFormIds, dismissedFormIds, formId);
-  const items = useMemo(() => (visible ? buildTemplateCleanupChecklistItems(definition, snapshot) : []), [visible, definition, snapshot]);
+  const items = useMemo(() => (visible && snapshot ? buildTemplateCleanupChecklistItems(definition, snapshot) : []), [visible, definition, snapshot]);
 
   if (!visible || items.length === 0) return null;
 

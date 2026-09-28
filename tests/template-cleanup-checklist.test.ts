@@ -16,6 +16,7 @@ import {
   withTemplateCleanupDismissed,
   writeTemplateCleanupCreatedRecords,
   writeTemplateCleanupDismissedFormIds,
+  type TemplateCleanupSnapshot,
 } from "@/components/template-cleanup-checklist";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 
@@ -44,6 +45,8 @@ const definition = registrationFormDefinitionSchema.parse({
   ],
 });
 
+const snap: TemplateCleanupSnapshot = { sectionIds: [], fieldIds: [] };
+
 describe("template cleanup checklist: visibility (#484)", () => {
   it("shows only for a form this browser recorded as created from a template, until dismissed", () => {
     expect(shouldShowTemplateCleanupChecklist(["form_1"], [], "form_1")).toBe(true);
@@ -62,8 +65,8 @@ describe("template cleanup checklist: visibility (#484)", () => {
 
 describe("template cleanup checklist: created/dismissed bookkeeping", () => {
   it("adds a form once and is idempotent, replacing an earlier record for the same form", () => {
-    const once = withTemplateCleanupCreated([], { formId: "form_1" });
-    expect(once).toEqual([{ formId: "form_1" }]);
+    const once = withTemplateCleanupCreated([], { formId: "form_1", snapshot: snap });
+    expect(once).toEqual([{ formId: "form_1", snapshot: snap }]);
     const snapshot = templateCleanupSnapshot(definition);
     expect(withTemplateCleanupCreated(once, { formId: "form_1", snapshot })).toEqual([{ formId: "form_1", snapshot }]);
   });
@@ -77,8 +80,8 @@ describe("template cleanup checklist: created/dismissed bookkeeping", () => {
   });
 
   it("bounds the remembered lists instead of growing without limit", () => {
-    const many = Array.from({ length: 200 }, (_, index) => ({ formId: `form_${index}` }));
-    const next = templateCleanupCreatedFormIds(withTemplateCleanupCreated(many, { formId: "form_new" }));
+    const many = Array.from({ length: 200 }, (_, index) => ({ formId: `form_${index}`, snapshot: snap }));
+    const next = templateCleanupCreatedFormIds(withTemplateCleanupCreated(many, { formId: "form_new", snapshot: snap }));
     expect(next).toHaveLength(200);
     expect(next.at(-1)).toBe("form_new");
     expect(next).not.toContain("form_0");
@@ -91,8 +94,8 @@ describe("template cleanup checklist: created/dismissed bookkeeping", () => {
       setItem: (key: string, value: string) => { store.set(key, value); },
     };
     const snapshot = templateCleanupSnapshot(definition);
-    writeTemplateCleanupCreatedRecords(storage, [{ formId: "form_1", snapshot }, { formId: "form_2" }]);
-    expect(readTemplateCleanupCreatedRecords(storage)).toEqual([{ formId: "form_1", snapshot }, { formId: "form_2" }]);
+    writeTemplateCleanupCreatedRecords(storage, [{ formId: "form_1", snapshot }, { formId: "form_2", snapshot: snap }]);
+    expect(readTemplateCleanupCreatedRecords(storage)).toEqual([{ formId: "form_1", snapshot }, { formId: "form_2", snapshot: snap }]);
 
     writeTemplateCleanupDismissedFormIds(storage, ["form_1"]);
     expect(readTemplateCleanupDismissedFormIds(storage)).toEqual(["form_1"]);
@@ -107,7 +110,7 @@ describe("template cleanup checklist: created/dismissed bookkeeping", () => {
       setItem: () => { throw new Error("blocked"); },
     };
     expect(readTemplateCleanupCreatedRecords(throwing)).toEqual([]);
-    expect(() => writeTemplateCleanupCreatedRecords(throwing, [{ formId: "form_1" }])).not.toThrow();
+    expect(() => writeTemplateCleanupCreatedRecords(throwing, [{ formId: "form_1", snapshot: snap }])).not.toThrow();
   });
 });
 
@@ -133,14 +136,14 @@ describe("template cleanup checklist: raw reads and change notifications (#484 N
     let notifications = 0;
     const unsubscribe = subscribeTemplateCleanupChecklistChanges(() => { notifications += 1; });
     try {
-      writeTemplateCleanupCreatedRecords(storage, [{ formId: "form_1" }]);
+      writeTemplateCleanupCreatedRecords(storage, [{ formId: "form_1", snapshot: snap }]);
       writeTemplateCleanupDismissedFormIds(storage, ["form_1"]);
       expect(notifications).toBe(2);
     } finally {
       unsubscribe();
     }
     // No notification once unsubscribed.
-    writeTemplateCleanupCreatedRecords(storage, [{ formId: "form_1" }, { formId: "form_2" }]);
+    writeTemplateCleanupCreatedRecords(storage, [{ formId: "form_1", snapshot: snap }, { formId: "form_2", snapshot: snap }]);
     expect(notifications).toBe(2);
   });
 
@@ -148,7 +151,7 @@ describe("template cleanup checklist: raw reads and change notifications (#484 N
     let notifications = 0;
     const unsubscribe = subscribeTemplateCleanupChecklistChanges(() => { notifications += 1; });
     try {
-      writeTemplateCleanupCreatedRecords(undefined, [{ formId: "form_1" }]);
+      writeTemplateCleanupCreatedRecords(undefined, [{ formId: "form_1", snapshot: snap }]);
       expect(notifications).toBe(0);
     } finally {
       unsubscribe();
@@ -158,7 +161,7 @@ describe("template cleanup checklist: raw reads and change notifications (#484 N
 
 describe("template cleanup checklist: inherited items", () => {
   it("lists one item per section and one item per field", () => {
-    const items = buildTemplateCleanupChecklistItems(definition);
+    const items = buildTemplateCleanupChecklistItems(definition, templateCleanupSnapshot(definition));
     expect(items).toEqual([
       { id: "section:s_contact", kind: "section", label: "Club & contact", sectionId: "s_contact" },
       { id: "field:f_club", kind: "field", label: "Pathfinder club", sectionId: "s_contact" },
@@ -170,7 +173,7 @@ describe("template cleanup checklist: inherited items", () => {
 
   it("reflects the current definition, so a removed field simply drops off the list", () => {
     const trimmed = { ...definition, sections: [definition.sections[0]] };
-    const items = buildTemplateCleanupChecklistItems(trimmed);
+    const items = buildTemplateCleanupChecklistItems(trimmed, templateCleanupSnapshot(definition));
     expect(items.some((item) => item.id === "section:s_roster")).toBe(false);
     expect(items.some((item) => item.id === "field:f_name")).toBe(false);
   });
@@ -210,14 +213,9 @@ describe("template cleanup checklist: only the template's own sections and field
     expect(items.some((item) => item.id === "section:s_new")).toBe(false);
   });
 
-  it("lists everything for a legacy record stored without a snapshot", () => {
-    expect(buildTemplateCleanupChecklistItems(added).map((item) => item.id)).toContain("field:f_added");
-  });
-
-  it("reads a legacy bare-id record alongside a current one", () => {
-    const raw = JSON.stringify(["form_old", { formId: "form_new", sectionIds: ["s_contact"], fieldIds: ["f_club"] }, 42, { formId: 7 }]);
+  it("drops a malformed created entry instead of guessing at it", () => {
+    const raw = JSON.stringify([{ formId: "form_new", sectionIds: ["s_contact"], fieldIds: ["f_club"] }, 42, { formId: 7 }, { formId: "form_no_ids" }]);
     expect(parseTemplateCleanupCreatedRecords(raw)).toEqual([
-      { formId: "form_old" },
       { formId: "form_new", snapshot: { sectionIds: ["s_contact"], fieldIds: ["f_club"] } },
     ]);
   });

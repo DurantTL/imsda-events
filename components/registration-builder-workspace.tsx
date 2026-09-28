@@ -34,7 +34,8 @@ import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import { calculateFormTotal, calculateRosterTotal, conditionOperators, formFieldScopes, formFieldTypes, getAttendeeRosterConfig, getAvailabilityMode, isChoiceFieldType, isFieldVisible, isLatePricingActive, localCalendarDate, type ChoiceUsage, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
 import {
   builderFieldModules,
-  defaultModuleAttendeeRoster,
+  moduleAlreadyPresentNotice,
+  moduleAttendeeRoster,
   moduleInsertNotice,
   planModuleInsert,
   type BuilderModuleDefinition,
@@ -630,7 +631,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
       const existing = existingFields.find((field) => plan.existingKeys.includes(field.key));
       setExpandedFieldId(existing?.id ?? null);
       closeModuleLibrary();
-      setNotice(`This form already has its ${module.name} module.`);
+      setNotice(moduleAlreadyPresentNotice(module, plan));
       return;
     }
     const { fields } = plan;
@@ -644,9 +645,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
     const sections = definition.sections.map((candidate, index) => index === sectionIndex
       ? { ...candidate, fields: [...section.fields, ...fields] }
       : candidate);
-    const attendeeRoster = module.enablesAttendeeRoster
-      ? definition.attendeeRoster ?? { enabled: true, ...(module.attendeeRosterDefaults ?? defaultModuleAttendeeRoster) }
-      : definition.attendeeRoster;
+    const attendeeRoster = moduleAttendeeRoster(definition.attendeeRoster, module);
     const nextDefinition = { ...definition, sections, attendeeRoster };
     replaceDefinition(nextDefinition);
     if (module.enablesAttendeeRoster && !definition.attendeeRoster?.enabled) {
