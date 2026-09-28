@@ -15,15 +15,19 @@ subagents. The agents live in `.claude/agents/`.
   questions, or `needs-decision` / `needs-human` issues.
 - **reviewer** (Opus): before opening or updating any code PR. It is the
   safety net for everything the cheaper models build, so it always runs on
-  Opus.
+  Opus. It reports findings; it never fixes them.
 - **Design decisions, hard debugging, and anything needing this conversation's
   context stay in the main session.** Subagents start without it.
 
-**Escalation.** Move up one model tier only on objective failure: checks still
-fail after the agent's attempts, CI is red, or the reviewer reports a blocking
-finding. Escalate once, passing along the failure output, not a fresh start.
-Unclear requirements don't escalate; they get the `needs-decision` label and a
-question to a human.
+**Fixes stay on Sonnet.** Opus reviews and coordinates; it does not write
+fixes. When checks fail, CI is red, or the reviewer reports a blocking
+finding, send the failure output and the reviewer's findings back to an
+**implementer** (resume the original builder when it is still available, so
+it keeps its context), not to an Opus implementer. If the same finding
+survives two Sonnet fix rounds, the main session takes the hard part itself
+(a small, targeted change or a precise plan for the implementer) rather than
+spawning an Opus builder. Unclear requirements don't escalate; they get the
+`needs-decision` label and a question to a human.
 
 **Always verify.** Treat a subagent's "done" as a claim. Run the checks
 yourself (`npx eslint . --max-warnings=0`, `npx tsc --noEmit -p .`, the focused

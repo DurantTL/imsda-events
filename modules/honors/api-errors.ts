@@ -1,6 +1,7 @@
 import { ZodError } from "zod";
 import { AccessDeniedError } from "@/modules/access/authorization";
 import { HonorConfigurationError } from "@/modules/honors/repository";
+import { HonorsWeekendWriteBackError } from "@/modules/honors/weekend-completion-repository";
 import { logError } from "@/lib/logger";
 
 export function honorApiError(error: unknown, action: string) {
@@ -18,6 +19,9 @@ export function honorApiError(error: unknown, action: string) {
       { error: error.code, message: error.message },
       { status: error.code.endsWith("_NOT_FOUND") ? 404 : 409 },
     );
+  }
+  if (error instanceof HonorsWeekendWriteBackError) {
+    return Response.json({ error: error.code, message: error.message }, { status: 404 });
   }
   logError(`${action} failed`, error);
   return Response.json(
