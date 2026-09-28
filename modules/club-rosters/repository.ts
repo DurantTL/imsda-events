@@ -304,6 +304,33 @@ export async function updateRosterMember(
 }
 
 /**
+ * Erases one roster row the way ADR 0005 Addendum A section 6 requires:
+ * birth date, gender, role, class, reported age, the person link, and
+ * willing-to-drive all go, and the row is marked removed. Shared by a club
+ * removing someone (`removeRosterMember`) and a completed transfer (#489)
+ * leaving its sending row behind, so the two can never drift apart. Clearing
+ * `personId` also frees the `[organizationId, clubYear, personId]` unique
+ * key, which is what lets the same person transfer back later in the year.
+ */
+export async function eraseRosterRow(tx: Prisma.TransactionClient, memberId: string, now: Date) {
+  await tx.clubRosterMember.update({
+    where: { id: memberId },
+    data: {
+      status: "REMOVED",
+      removedAt: now,
+      sealedBirthDate: null,
+      gender: null,
+      role: "",
+      classLevel: null,
+      reportedAge: null,
+      personId: null,
+      // A removed row is never a willing driver (#491): it leaves the queue.
+      willingToDrive: false,
+    },
+  });
+}
+
+/**
  * The club takes someone off its roster: birth date, role, gender, and the
  * person link are erased. The Person record itself is deleted when nothing
  * else (a registration, another roster, an account) still refers to it
@@ -321,21 +348,7 @@ export async function updateRosterMember(
 export async function removeRosterMember(organizationId: string, memberId: string, actor: Actor, now = new Date()) {
   await getPrisma().$transaction(async (tx) => {
     const member = await findMember(tx, organizationId, memberId);
-    await tx.clubRosterMember.update({
-      where: { id: memberId },
-      data: {
-        status: "REMOVED",
-        removedAt: now,
-        sealedBirthDate: null,
-        gender: null,
-        role: "",
-        classLevel: null,
-        reportedAge: null,
-        personId: null,
-        // A removed row is never a willing driver (#491): it leaves the queue.
-        willingToDrive: false,
-      },
-    });
+    await eraseRosterRow(tx, memberId, now);
     let personDeleted = false;
     let honorEntriesErased = 0;
     if (member.personId) {
@@ -357,6 +370,24 @@ export async function removeRosterMember(organizationId: string, memberId: strin
         },
       });
       if (person && Object.values(person._count).every((count) => count === 0)) {
+        // A transfer record (#489) never keeps a person alive, and keeps no
+        // free text about them once they're erased: the typed names, the
+        // reason, staff's note, and every note on its history and its
+        // registration moves are blanked here, and the person links fall to
+        // null with the delete (onDelete: SetNull).
+        const transfers = await tx.memberTransfer.findMany({
+          where: { OR: [{ personId: member.personId }, { pendingPersonId: member.personId }] },
+          select: { id: true },
+        });
+        if (transfers.length > 0) {
+          const transferIds = transfers.map((transfer) => transfer.id);
+          await tx.memberTransfer.updateMany({
+            where: { id: { in: transferIds } },
+            data: { requestedFirstName: "", requestedLastName: "", reason: "", staffNote: "" },
+          });
+          await tx.memberTransferEvent.updateMany({ where: { transferId: { in: transferIds } }, data: { note: "" } });
+          await tx.memberTransferRegistrationMove.updateMany({ where: { transferId: { in: transferIds } }, data: { note: "" } });
+        }
         const erased = await tx.memberHonorEntry.deleteMany({ where: { personId: member.personId } });
         honorEntriesErased = erased.count;
         await tx.person.delete({ where: { id: member.personId } });
