@@ -51,7 +51,7 @@ const items = {
 };
 const honorIds = Array.from({ length: 10 }, (_, index) => `${P}_honor_${index + 1}`);
 const honorNames = honorIds.map((_, index) => `Earn Check Honor ${index + 1}`);
-const events = { camporee: `${P}_event_camporee`, noCheckIns: `${P}_event_nocheckin`, upcoming: `${P}_event_upcoming`, general: `${P}_event_general` };
+const events = { mixed: `${P}_event_mixed`, camporee: `${P}_event_camporee`, noCheckIns: `${P}_event_nocheckin`, upcoming: `${P}_event_upcoming`, general: `${P}_event_general` };
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`FAILED: ${message}`);
@@ -217,6 +217,7 @@ async function main() {
   await mkEvent(events.camporee, "CLUB", new Date(now.getTime() - 30 * day), new Date(now.getTime() - 28 * day));
   await mkEvent(events.noCheckIns, "CLUB", new Date(now.getTime() - 20 * day), new Date(now.getTime() - 18 * day));
   await mkEvent(events.upcoming, "CLUB", new Date(now.getTime() - day), new Date(now.getTime() + day));
+  await mkEvent(events.mixed, "CLUB", new Date(now.getTime() - 12 * day), new Date(now.getTime() - 10 * day));
   await mkEvent(events.general, "GENERAL", new Date(now.getTime() - 5 * day), new Date(now.getTime() - 4 * day));
   let attendeeCounter = 0;
   async function register(eventId: string, organizationId: string, attendees: Array<{ personId: string; rosterId?: string; checkedIn?: "yes" | "undone" | "no" }>) {
@@ -240,6 +241,9 @@ async function main() {
   await register(events.camporee, clubs.other, [{ ...otherClubMember, checkedIn: "yes" }]);
   await register(events.noCheckIns, clubs.patch, [{ ...attendedA, checkedIn: "no" }, { ...noShow, checkedIn: "no" }]);
   await register(events.upcoming, clubs.patch, [{ ...attendedA, checkedIn: "no" }]);
+  // Club B checked in at this ended event; club A (this suite's patch club) never used check-in.
+  await register(events.mixed, clubs.patch, [{ ...attendedA, checkedIn: "no" }, { ...noShow, checkedIn: "no" }]);
+  await register(events.mixed, clubs.other, [{ ...otherClubMember, checkedIn: "yes" }]);
 
   // Linking: staff, club events, catalog items in event sections only, audited once.
   await eventItems.linkEventAwardItem(events.camporee, items.camporee, staffUserId);
@@ -253,6 +257,7 @@ async function main() {
   await eventItems.linkEventAwardItem(events.camporee, items.camporeeNumbered, staffUserId);
   await eventItems.linkEventAwardItem(events.noCheckIns, items.camporee, staffUserId);
   await eventItems.linkEventAwardItem(events.upcoming, items.camporee, staffUserId);
+  await eventItems.linkEventAwardItem(events.mixed, items.camporee, staffUserId);
   console.log("ok  linking a catalog item to a club event: club events and event-section items only, idempotent, audited");
 
   const patchNeedsBefore = await countNeeds(clubs.patch);
@@ -265,6 +270,11 @@ async function main() {
   assert(await countNeeds(clubs.patch) === patchNeedsBefore, "suggesting patches adds nothing");
   const noCheckInSuggestion = patchSuggestions.find((entry) => entry.eventId === events.noCheckIns && entry.itemId === items.camporee)!;
   assert(noCheckInSuggestion.basis === "REGISTRATION" && noCheckInSuggestion.people.length === 2, "an ended event with no check-ins falls back to who was registered");
+  // Attendance is decided per club: another club's check-ins at the same ended event don't switch this club's off.
+  const mixedSuggestion = patchSuggestions.find((entry) => entry.eventId === events.mixed)!;
+  assert(mixedSuggestion.basis === "REGISTRATION" && mixedSuggestion.people.length === 2, `club A never checked in, so after the event ends it falls back to its own registered members even though club B checked in, got ${JSON.stringify(mixedSuggestion)}`);
+  const otherMixed = (await awards.listPatchSuggestions(clubs.other)).find((entry) => entry.eventId === events.mixed)!;
+  assert(otherMixed.basis === "CHECK_IN" && otherMixed.people.map((person) => person.personId).join() === otherClubMember.personId, "club B, which did check in, uses its own check-ins");
   assert(!patchSuggestions.some((entry) => entry.eventId === events.upcoming), "an event still under way with no check-ins suggests nothing yet");
   assert(!patchSuggestions.some((entry) => entry.people.some((person) => person.personId === otherClubMember.personId)), "another club's attendee is never suggested here");
   // Non-attendees can't be confirmed, and nothing is added.
@@ -362,6 +372,13 @@ async function main() {
   const actions = ruleAudits.map((row) => row.action).sort().join();
   assert(actions === "MASTER_AWARD_RULE_ACTIVATED,MASTER_AWARD_RULE_ACTIVATED,MASTER_AWARD_RULE_DEACTIVATED", `every rule change is audited, got ${actions}`);
   assert(!/Earn Check Honor|Master Award/.test(JSON.stringify(ruleAudits.map((row) => row.metadata))), "the rule audit records fields and ids, never the honor lists");
+  const healthAudit = ruleAudits.find((row) => row.entityId === health.id)!.metadata as { groupsBefore?: unknown; groupsAfter?: unknown };
+  assert(JSON.stringify(healthAudit.groupsBefore) === JSON.stringify([{ minimum: 3, honorCount: 4 }, { minimum: 2, honorCount: 3 }, { minimum: 2, honorCount: 2 }])
+    && JSON.stringify(healthAudit.groupsAfter) === JSON.stringify([{ minimum: 3, honorCount: 4 }, { minimum: 2, honorCount: 3 }, { minimum: 2, honorCount: 2 }]),
+  `a group edit records each group's minimum and honor count before and after, got ${JSON.stringify(healthAudit)}`);
+  // One honor in two groups would count twice: an active rule can't be saved that way.
+  await expectCode(rules.updateMasterAwardRule(aquatic.id, { groups: [{ minimum: 1, honorIds: [honorIds[0]] }, { minimum: 1, honorIds: [honorIds[0], honorIds[1]] }] }, staffUserId), "RULE_NOT_READY", "an honor in two groups");
+  assert((await prisma.masterAwardRuleGroup.count({ where: { ruleId: aquatic.id } })) === 1, "the refused overlapping edit changed nothing");
   assert((await prisma.masterAwardRuleGroup.findMany({ where: { ruleId: health.id }, select: { unmatchedHonorNames: true } })).every((group) => group.unmatchedHonorNames.length === 0), "editing the groups clears the reviewed unmatched names");
 
   const progress = await awards.loadMasterAwardProgress(clubs.master);
@@ -393,6 +410,18 @@ async function main() {
   const afterAwarded = (await awards.loadMasterAwardProgress(clubs.master)).find((row) => row.name === "Earn Check Health Master Award")!;
   assert(afterAwarded.awardedCount === 1 && afterAwarded.onOrder.length === 0 && afterAwarded.eligible.length === 0, "an awarded Master Award is counted awarded and no longer eligible");
   console.log("ok  Master Awards: rules stored as data, imported as drafts, staff edits audited, multi-group eligibility and 'N of M' from latest COMPLETED honors, added only on confirmation");
+
+  // A transferred member: the need key is unique across clubs, so an award a previous club recorded isn't "eligible" here.
+  const moved = (await addMember(clubs.master, "Moved")).personId;
+  await completeHonors(moved, clubs.master, [honorIds[0], honorIds[1], honorIds[2], honorIds[4], honorIds[5], honorIds[7], honorIds[8]]);
+  const beforeMove = (await awards.loadMasterAwardProgress(clubs.master)).find((row) => row.name === "Earn Check Health Master Award")!;
+  assert(beforeMove.eligible.some((person) => person.personId === moved), "before any record, the member is eligible");
+  await prisma.clubOrderNeed.create({ data: { organizationId: clubs.other, sourceType: "AWARD", sourceId: `master:${moved}:${health.id}`, personId: moved, itemId: items.masterHealth, sourceLabel: "Earn Check Health Master Award", status: "ORDERED" } });
+  const afterMove = (await awards.loadMasterAwardProgress(clubs.master)).find((row) => row.name === "Earn Check Health Master Award")!;
+  assert(!afterMove.eligible.some((person) => person.personId === moved) && afterMove.givenElsewhere.map((person) => person.personId).join() === moved, "a member whose award another club already recorded shows as already given, not eligible");
+  const needsBeforeMove = await countNeeds(clubs.master);
+  const movedAdd = await awards.addMasterAwardNeeds(clubs.master, { ruleId: health.id, personIds: [moved] }, actor);
+  assert(movedAdd.created === 0 && movedAdd.skipped === 1 && await countNeeds(clubs.master) === needsBeforeMove, "adding it here skips the member and records nothing");
 
   // ---------------------------------------------------------------- 4. hand-picked items, "already has it"
   const gcMembers = await addMembers(clubs.main, 4);

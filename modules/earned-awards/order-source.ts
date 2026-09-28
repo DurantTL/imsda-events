@@ -419,9 +419,11 @@ type PatchCandidate = {
  * this club's own registration counts (`ClubEventRegistration`, submitted or
  * confirmed). Attendance follows the repo's own rule (the Honors Weekend
  * write-back, #487): a person *checked in* to the event (an active check-in,
- * not undone). An event that has recorded no check-ins at all falls back to
- * who was registered, but only once the event is over, so a patch is never
- * suggested for people who might not show up. Either way only members active
+ * not undone). It is decided per club: if this club has any check-ins at the
+ * event, its check-ins are used; if it has none (it never used check-in, even
+ * though another club did), it falls back to its own registered members, but
+ * only once the event is over, so a patch is never suggested for people who
+ * might not show up. Either way only members active
  * on this club's roster this year are suggested.
  */
 async function eventPatchCandidates(db: Db, organizationId: string, now: Date, only?: { eventId: string }): Promise<PatchCandidate[]> {
@@ -447,9 +449,6 @@ async function eventPatchCandidates(db: Db, organizationId: string, now: Date, o
     },
   });
   if (registrations.length === 0) return [];
-  const eventIds = registrations.map((registration) => registration.eventId);
-  const checkedIn = await db.checkIn.groupBy({ by: ["eventId"], where: { eventId: { in: eventIds }, undoneAt: null }, _count: { _all: true } });
-  const eventsWithCheckIns = new Set(checkedIn.map((row) => row.eventId));
   const active = new Set(await activeMemberIds(db, organizationId, now));
   // An attendee is a member through the roster row the registration snapshot names (as the Honors Weekend
   // write-back does); a temporary attendee with no roster row has no record to give a patch to.
@@ -465,7 +464,10 @@ async function eventPatchCandidates(db: Db, organizationId: string, now: Date, o
   const personByMember = new Map(members.map((member) => [member.id, member.personId!]));
   const candidates: PatchCandidate[] = [];
   for (const registration of registrations) {
-    const basis: AttendanceBasis | null = eventsWithCheckIns.has(registration.eventId)
+    // Decided per club, not per event: another club checking in at the same event says nothing about whether
+    // *this* club's check-in was used, so one club's check-ins must never switch this club's attendance off.
+    const clubCheckedIn = registration.registration.attendees.some((attendee) => attendee.checkIns.length > 0);
+    const basis: AttendanceBasis | null = clubCheckedIn
       ? "CHECK_IN"
       : registration.event.endsAt <= now ? "REGISTRATION" : null;
     if (!basis) continue;
@@ -648,6 +650,12 @@ export type MasterAwardProgressRow = {
   eligible: MasterAwardPerson[];
   /** Reached the minimums and is already needed, ordered, or received. */
   onOrder: MasterAwardPerson[];
+  /**
+   * Reached the minimums, but this award's need already exists under another
+   * club (a transferred member): keyed on member and rule across all clubs, so
+   * it can't be added again here. Shown as "Already given (another club)".
+   */
+  givenElsewhere: MasterAwardPerson[];
   awardedCount: number;
   /** The members closest to it, not yet eligible: "5 of 7". */
   closest: Array<MasterAwardPerson & { counted: number; required: number; label: string }>;
@@ -667,14 +675,21 @@ export async function loadMasterAwardProgress(organizationId: string, now = new 
   const personIds = await activeMemberIds(db, organizationId, now);
   if (personIds.length === 0) return rules.map((rule) => emptyRow(rule));
   const honorIds = [...new Set(rules.flatMap((rule) => rule.groups.flatMap((group) => group.honorIds)))];
-  const [completed, names, needs] = await Promise.all([
+  const [completed, names, needs, keyed] = await Promise.all([
     completedHonorsByPerson(db, personIds, honorIds),
     nameMap(db, personIds),
     db.clubOrderNeed.findMany({
       where: { organizationId, sourceType: "AWARD", personId: { in: personIds }, itemId: { in: rules.flatMap((rule) => (rule.itemId ? [rule.itemId] : [])) } },
       select: { personId: true, itemId: true, status: true },
     }),
+    // The need key is unique across every club, so a member's Master Award recorded by a
+    // previous club counts too (the club-scoped query above can't see it).
+    db.clubOrderNeed.findMany({
+      where: { sourceType: "AWARD", sourceId: { in: rules.flatMap((rule) => personIds.map((personId) => masterAwardSourceId(personId, rule.id))) } },
+      select: { sourceId: true },
+    }),
   ]);
+  const keyedIds = new Set(keyed.map((need) => need.sourceId));
   const standing = new Map<string, "AWARDED" | "OPEN">();
   for (const need of needs) {
     const key = `${need.personId}\u0000${need.itemId}`;
@@ -690,13 +705,16 @@ export async function loadMasterAwardProgress(organizationId: string, now = new 
       if (state === "AWARDED") {
         row.awardedCount += 1;
       } else if (progress.earned) {
-        (state === "OPEN" ? row.onOrder : row.eligible).push(person(personId));
+        if (state === "OPEN") row.onOrder.push(person(personId));
+        else if (keyedIds.has(masterAwardSourceId(personId, rule.id))) row.givenElsewhere.push(person(personId));
+        else row.eligible.push(person(personId));
       } else if (progress.counted > 0) {
         row.closest.push({ ...person(personId), counted: progress.counted, required: progress.required, label: progressLabel(progress) });
       }
     }
     row.eligible.sort(byName);
     row.onOrder.sort(byName);
+    row.givenElsewhere.sort(byName);
     row.closest.sort((a, b) => b.counted / b.required - a.counted / a.required || byName(a, b));
     row.closest = row.closest.slice(0, CLOSEST_LIMIT);
     return row;
@@ -711,6 +729,7 @@ function emptyRow(rule: LoadedRule): MasterAwardProgressRow {
     missingItem: rule.itemId === null,
     eligible: [],
     onOrder: [],
+    givenElsewhere: [],
     awardedCount: 0,
     closest: [],
   };
@@ -744,11 +763,18 @@ export async function addMasterAwardNeeds(
     if (personIds.some((personId) => !evaluateMasterAward(rule, completed.get(personId) ?? new Set()).earned)) {
       throw new ClubOrderError("NOT_ELIGIBLE", "Everyone must have reached all of the award's requirements.");
     }
-    const have = await tx.clubOrderNeed.findMany({
-      where: { organizationId, sourceType: "AWARD", personId: { in: personIds }, itemId: item.id, status: { in: [...OPEN_STATUSES, "AWARDED"] } },
-      select: { personId: true },
-    });
-    const skipIds = new Set(have.map((need) => need.personId));
+    const [have, keyed] = await Promise.all([
+      tx.clubOrderNeed.findMany({
+        where: { organizationId, sourceType: "AWARD", personId: { in: personIds }, itemId: item.id, status: { in: [...OPEN_STATUSES, "AWARDED"] } },
+        select: { personId: true },
+      }),
+      // The key is unique across all clubs: a Master Award already recorded by another club (a transfer) is skipped, not re-added.
+      tx.clubOrderNeed.findMany({
+        where: { sourceType: "AWARD", sourceId: { in: personIds.map((personId) => masterAwardSourceId(personId, rule.id)) } },
+        select: { personId: true },
+      }),
+    ]);
+    const skipIds = new Set([...have, ...keyed].map((need) => need.personId));
     const data = personIds.filter((personId) => !skipIds.has(personId)).map((personId) => ({
       organizationId,
       sourceType: "AWARD" as const,

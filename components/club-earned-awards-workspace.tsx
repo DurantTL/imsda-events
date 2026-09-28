@@ -541,6 +541,9 @@ export function ClubEarnedAwardsWorkspace({
                 {rule.onOrder.length > 0 && (
                   <small className={styles.muted}>On the order list: {rule.onOrder.map((person) => `${person.firstName} ${person.lastName}`).join(", ")}</small>
                 )}
+                {rule.givenElsewhere.length > 0 && (
+                  <small className={styles.muted}>Already given (another club): {rule.givenElsewhere.map((person) => `${person.firstName} ${person.lastName}`).join(", ")}</small>
+                )}
                 {rule.awardedCount > 0 && <small className={styles.muted}>{rule.awardedCount} awarded</small>}
                 {rule.closest.length > 0 && (
                   <>

@@ -90,8 +90,9 @@ Examples: Aquatic is one group (any 7 of 16); Health is three (3 of 7, 2 of
   groups and only one (5 of 12) could be read. The import flags it for a manual
   check, and the administrator adds the missing group from the official
   requirements before activating it.
-- Each group counts its own honors independently, exactly as the sheet does. An
-  honor that appears in two groups counts in both.
+- Each group counts its own honors independently, exactly as the sheet does.
+  No honor appears in two groups in this file, and a rule that lists one honor
+  in two groups can't be saved or activated (it would count twice).
 - Honor names are the sheet's. They match the honor list by normalized name
   ("X - Advanced" reads as "X, Advanced"); the preview lists every name that
   matches nothing, and the rule keeps it on its group for review. A rule with

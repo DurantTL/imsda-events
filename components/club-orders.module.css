@@ -15,7 +15,7 @@
 .flag svg { flex: 0 0 auto; margin-top: 3px; }
 .flagInline { display: inline-flex; align-items: center; gap: 4px; color: var(--coral); }
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.actions :global(.secondary-button), .actions :global(.primary-button), .groupHead :global(.text-button) { min-height: 44px; }
+.actions :global(.secondary-button), .actions :global(.primary-button), .groupHead :global(.text-button) { min-height: 44px; min-width: 44px; }
 .group { display: grid; gap: 6px; border: 1px solid var(--line); border-radius: 12px; padding: 9px 11px; }
 .groupHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .people { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
@@ -28,7 +28,7 @@
 .dateSelect { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: .68rem; }
 .dateSelect :global(.secondary-button) { min-height: 44px; }
 .date { min-height: 44px; min-width: 0; max-width: 100%; border: 1px solid #cbdbe2; border-radius: 8px; background: #fff; padding: 6px 8px; font-size: 16px; }
-.actions :global(.text-button) { min-height: 44px; }
+.actions :global(.text-button) { min-height: 44px; min-width: 44px; padding-inline: 10px; }
 
 /* Uniforms (#497): item and size pickers, chosen-item chips. */
 .pickerRow { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 10px; }

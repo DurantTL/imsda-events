@@ -38,6 +38,7 @@ const data: ClubEarnedAwardsData = {
     ruleId: "r1", name: "Health Master Award", requirement: "3 of 7 + 2 of 5 + 2 of 5", missingItem: false,
     eligible: [{ personId: "p1", firstName: "Alex", lastName: "Sample" }],
     onOrder: [{ personId: "p2", firstName: "Casey", lastName: "Demo" }],
+    givenElsewhere: [{ personId: "p4", firstName: "Sky", lastName: "Placeholder" }],
     awardedCount: 2,
     closest: [{ personId: "p3", firstName: "Riley", lastName: "Test", counted: 5, required: 7, label: "5 of 7" }],
   }],
@@ -95,6 +96,7 @@ describe("the Earned awards screen (#532)", () => {
     expect(html).toContain("Needs 3 of 7 + 2 of 5 + 2 of 5");
     expect(html).toContain("Eligible, not yet awarded (1)");
     expect(html).toContain("On the order list: Casey Demo");
+    expect(html).toContain("Already given (another club): Sky Placeholder");
     expect(html).toContain("2 awarded");
     expect(html).toContain("Riley Test");
     expect(html).toContain("5 of 7");

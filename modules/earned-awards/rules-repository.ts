@@ -244,7 +244,14 @@ export async function updateMasterAwardRule(ruleId: string, patch: MasterAwardRu
       summary: statusMoved && status === "ACTIVE" ? "Activated a Master Award rule."
         : statusMoved && status === "INACTIVE" ? "Deactivated a Master Award rule."
           : "Edited a Master Award rule.",
-      metadata: { ruleId, changed, previousStatus: rule.status, status, groupCount: groups.length },
+      metadata: {
+        ruleId, changed, previousStatus: rule.status, status, groupCount: groups.length,
+        // Counts only, never honor names: each group's minimum and how many honors it lists, before and after.
+        ...(patch.groups ? {
+          groupsBefore: current.groups.map((group) => ({ minimum: group.minimum, honorCount: group.honors.length })),
+          groupsAfter: groups.map((group) => ({ minimum: group.minimum, honorCount: group.honorIds.length })),
+        } : {}),
+      },
     }, tx);
   });
   return listMasterAwardRules();

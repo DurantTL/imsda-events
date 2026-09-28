@@ -11,6 +11,7 @@ import {
   masterAwardSourceId,
   matchInsigniaSet,
   originOf,
+  overlappingHonorIds,
   progressLabel,
   ruleReadinessProblems,
 } from "@/modules/earned-awards/domain";
@@ -20,6 +21,7 @@ import {
   parseMasterAwardRulesFile,
   planMasterAwardImport,
 } from "@/modules/earned-awards/master-award-import";
+import { masterAwardRuleUpdateSchema } from "@/modules/earned-awards/schemas";
 import { parseClubSupplyCsv } from "@/modules/club-supplies/catalog-csv";
 
 /** Earned awards pure rules (#532). Synthetic data, plus the two committed reference files. */
@@ -124,9 +126,13 @@ describe("Master Award eligibility", () => {
     expect(evaluateMasterAward({ groups: [] }, new Set(["h0"])).earned).toBe(false);
   });
 
-  it("counts an honor in each group it appears in, as the club's sheet does", () => {
-    const overlap = { groups: [{ minimum: 1, honorIds: ["s"] }, { minimum: 1, honorIds: ["s", "t"] }] };
-    expect(evaluateMasterAward(overlap, new Set(["s"])).earned).toBe(true);
+  it("can't be activated with one honor in two groups, so an honor never counts twice", () => {
+    const overlap = { needsManualCheck: false, groups: [{ minimum: 1, honorIds: ["s"] }, { minimum: 1, honorIds: ["s", "t"] }] };
+    expect(overlappingHonorIds(overlap.groups)).toEqual(["s"]);
+    expect(ruleReadinessProblems(overlap)[0]).toMatch(/more than one group/);
+    expect(overlappingHonorIds([{ honorIds: ["a", "a"] }, { honorIds: ["b"] }])).toEqual([]);
+    expect(masterAwardRuleUpdateSchema.safeParse({ groups: [{ minimum: 1, honorIds: ["s"] }, { minimum: 1, honorIds: ["s", "t"] }] }).success).toBe(false);
+    expect(masterAwardRuleUpdateSchema.safeParse({ groups: [{ minimum: 1, honorIds: ["s"] }, { minimum: 1, honorIds: ["t"] }] }).success).toBe(true);
   });
 
   it("only lets a ready rule be activated", () => {

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { type ClubClassLevel, clubClassLevels, parseCalendarDate } from "@/modules/club-rosters/domain";
-import { MAX_AWARD_ITEMS, MAX_AWARD_MEMBERS, MAX_AWARD_NEEDS_PER_ENTRY } from "@/modules/earned-awards/domain";
+import { MAX_AWARD_ITEMS, MAX_AWARD_MEMBERS, MAX_AWARD_NEEDS_PER_ENTRY, overlappingHonorIds } from "@/modules/earned-awards/domain";
 import { MAX_MASTER_AWARD_RULES_FILE_BYTES } from "@/modules/earned-awards/master-award-import";
 
 const id = z.string().min(1).max(64);
@@ -94,6 +94,7 @@ export const masterAwardRuleUpdateSchema = z
       }).strict())
       .min(1, "Add at least one honor group.")
       .max(10)
+      .refine((groups) => overlappingHonorIds(groups).length === 0, "An honor can be in only one group, or it would count twice.")
       .optional(),
     itemId: id.nullable().optional(),
     reviewNote: z.string().max(1000).optional(),

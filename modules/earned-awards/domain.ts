@@ -151,7 +151,9 @@ export type MasterAwardProgress = {
 /**
  * Where a member stands against one rule. `completedHonorIds` is the honors
  * whose latest record (#486) is COMPLETED. Each group counts its own honors
- * independently, exactly as the club's spreadsheet does, and the award is
+ * independently, exactly as the club's spreadsheet does (a rule can't list one
+ * honor in two groups: `ruleReadinessProblems` and the edit schema refuse it,
+ * so an honor never counts twice), and the award is
  * earned when every group reaches its minimum. "N of M" is `counted` of
  * `required`: Health (3 of 7, 2 of 5, 2 of 5) with 3 + 1 + 2 honors done reads
  * "5 of 7".
@@ -173,6 +175,19 @@ export function progressLabel(progress: Pick<MasterAwardProgress, "counted" | "r
   return `${progress.counted} of ${progress.required}`;
 }
 
+/** Honor ids listed in more than one group of a rule: one honor would count toward two minimums. */
+export function overlappingHonorIds(groups: ReadonlyArray<{ honorIds: readonly string[] }>) {
+  const seen = new Set<string>();
+  const overlapping = new Set<string>();
+  for (const group of groups) {
+    for (const honorId of new Set(group.honorIds)) {
+      if (seen.has(honorId)) overlapping.add(honorId);
+      seen.add(honorId);
+    }
+  }
+  return [...overlapping];
+}
+
 /** What a rule needs before a system administrator may activate it. Empty when it is ready. */
 export function ruleReadinessProblems(rule: {
   needsManualCheck: boolean;
@@ -186,6 +201,8 @@ export function ruleReadinessProblems(rule: {
     if (!Number.isInteger(group.minimum) || group.minimum < 1) problems.push(`Group ${index + 1} needs a minimum of at least 1.`);
     else if (group.minimum > total) problems.push(`Group ${index + 1} needs ${group.minimum} but lists only ${total} honor${total === 1 ? "" : "s"}.`);
   });
+  const overlap = overlappingHonorIds(rule.groups).length;
+  if (overlap > 0) problems.push(`${overlap} honor${overlap === 1 ? " is" : "s are"} in more than one group, so ${overlap === 1 ? "it" : "they"} would count twice. Keep each honor in one group.`);
   return problems;
 }
 
