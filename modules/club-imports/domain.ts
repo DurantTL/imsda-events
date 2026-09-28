@@ -37,7 +37,10 @@ export type ImportInvite = {
 export type ClubImportDraft = {
   sourceKey: string;
   entryId: string;
+  /** The club year the roster is imported into. Defaults to the current one at import time, not the submission date (#541). */
   clubYear: string;
+  /** The club year the entry was submitted in, from `created_at`. Informational only. */
+  submittedClubYear: string;
   submittedOn: string;
   churchName: string;
   clubName: string;
@@ -134,13 +137,18 @@ function person(key: string, name: string, fields: Partial<ImportPerson>): Impor
   };
 }
 
-function draftFrom(entry: z.infer<typeof entrySchema>): ClubImportDraft {
+function draftFrom(entry: z.infer<typeof entrySchema>, now: Date): ClubImportDraft {
   const response = entry.response;
   const churches = Array.isArray(response.multi_select) ? response.multi_select.map((value) => text(value, 160)) : [text(response.multi_select, 160)];
   const churchName = churches.find(Boolean) ?? "";
   const submitted = entry.created_at ? new Date(entry.created_at.replace(" ", "T") + "Z") : new Date();
   const submittedOn = Number.isNaN(submitted.getTime()) ? "" : submitted.toISOString().slice(0, 10);
-  const clubYear = clubYearFor(Number.isNaN(submitted.getTime()) ? new Date() : submitted);
+  // A registration for the coming year is often sent in August, before the
+  // club year turns over in September. The roster it belongs to is the one
+  // being worked on now, so the default is the current club year and the
+  // submission's own year is only shown as a note (#541).
+  const submittedClubYear = clubYearFor(Number.isNaN(submitted.getTime()) ? now : submitted);
+  const clubYear = clubYearFor(now);
   const entryId = String(entry.id);
 
   const invites: ImportInvite[] = [];
@@ -173,6 +181,7 @@ function draftFrom(entry: z.infer<typeof entrySchema>): ClubImportDraft {
     sourceKey: `form-${CLUB_IMPORT_FORM_ID}:${entryId}`,
     entryId,
     clubYear,
+    submittedClubYear,
     submittedOn,
     churchName,
     clubName: defaultClubName(churchName),
@@ -190,7 +199,7 @@ export class ClubImportParseError extends Error {
 }
 
 /** The export's entries as drafts. Trashed entries and other forms are skipped. */
-export function parseClubRegistrationExport(input: unknown) {
+export function parseClubRegistrationExport(input: unknown, now = new Date()) {
   if (!Array.isArray(input)) {
     throw new ClubImportParseError("That file isn't a Fluent Forms entries export. Export the form's entries as JSON and try again.");
   }
@@ -211,7 +220,7 @@ export function parseClubRegistrationExport(input: unknown) {
       skipped += 1;
       continue;
     }
-    drafts.push(draftFrom(entry));
+    drafts.push(draftFrom(entry, now));
   }
   if (drafts.length === 0) {
     throw new ClubImportParseError("No club registrations were found in that file. Check that it is the entries export of form 89.");
@@ -222,4 +231,25 @@ export function parseClubRegistrationExport(input: unknown) {
 /** The ExternalIdentity scope: one import per club per club year. */
 export function importScope(clubYear: string) {
   return `form-${CLUB_IMPORT_FORM_ID}:${clubYear}`;
+}
+
+/** The club years an import may target: the previous, the current, and the next. */
+export function clubYearChoices(now = new Date()) {
+  const year = Number(clubYearFor(now).slice(0, 4));
+  return [year - 1, year, year + 1].map((start) => `${start}-${String((start + 1) % 100).padStart(2, "0")}`);
+}
+
+/** Shown when the submission date falls in a different club year than the one chosen. */
+export function submissionYearNote(draft: Pick<ClubImportDraft, "clubYear" | "submittedClubYear" | "submittedOn">) {
+  if (!draft.submittedOn || draft.submittedClubYear === draft.clubYear) return "";
+  return `Submitted ${draft.submittedOn}, which falls in the ${draft.submittedClubYear} club year. Importing into ${draft.clubYear}.`;
+}
+
+/** Why a person was not added; carried to the result screen so no skip is silent. */
+export type ImportSkipReason = "ALREADY_ON_ROSTER" | "DUPLICATE_IN_REGISTRATION";
+
+export function skipReasonLabel(reason: ImportSkipReason, clubYear: string) {
+  return reason === "ALREADY_ON_ROSTER"
+    ? `already on the roster for ${clubYear}`
+    : "listed twice in this registration with the same name and role";
 }

@@ -31,7 +31,9 @@ vi.mock("@/lib/prisma", () => ({ getPrisma: () => client }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: mocks.writeAuditLog }));
 
 import { importClubs } from "@/modules/club-imports/repository";
+import { parseClubRegistrationExport } from "@/modules/club-imports/domain";
 import { clubImportItemSchema } from "@/modules/club-imports/schemas";
+import { syntheticExportEntry } from "./support/club-import-fixture";
 
 const now = new Date("2026-09-23T15:00:00Z");
 const item = (overrides: Record<string, unknown> = {}) => clubImportItemSchema.parse({
@@ -79,7 +81,8 @@ describe("club import (#376)", () => {
   it("refuses an entry that was already imported, changing nothing", async () => {
     mocks.identityFindUnique.mockResolvedValueOnce({ organizationId: "club-1" });
     const [result] = await importClubs([item()], "admin-1", now);
-    expect(result).toMatchObject({ status: "ALREADY_IMPORTED", organizationId: "club-1" });
+    expect(result).toMatchObject({ status: "ALREADY_IMPORTED", organizationId: "club-1", clubYear: "2026-27" });
+    expect(result.message).toMatch(/already imported for 2026-27/);
     expect(mocks.orgCreate).not.toHaveBeenCalled();
     expect(mocks.rosterCreate).not.toHaveBeenCalled();
   });
@@ -88,10 +91,11 @@ describe("club import (#376)", () => {
     mocks.orgFindFirst.mockImplementation(({ where }: { where: { type: string } }) => Promise.resolve(
       where.type === "CLUB" ? { id: "club-1", isActive: true, parentOrganizationId: "church-1" } : { id: "church-1", isActive: true },
     ));
-    mocks.rosterFindMany.mockResolvedValue([{ person: { firstName: "alex", lastName: "SAMPLE" } }]);
+    mocks.rosterFindMany.mockResolvedValue([{ attendeeType: "YOUTH", person: { firstName: "alex", lastName: "SAMPLE" } }]);
     mocks.inviteFindFirst.mockResolvedValue({ id: "invite-open" });
     const [result] = await importClubs([item()], "admin-1", now);
     expect(result).toMatchObject({ status: "IMPORTED", organizationId: "club-1", membersAdded: 1, membersSkipped: 1, invitesCreated: 0 });
+    expect(result.skipped).toEqual([{ name: "Alex Sample", reason: "ALREADY_ON_ROSTER" }]);
     expect(mocks.orgCreate).not.toHaveBeenCalled();
   });
 
@@ -145,5 +149,64 @@ describe("club import (#376)", () => {
 
   it("requires a last name for everyone imported", () => {
     expect(() => item({ people: [{ firstName: "Casey", lastName: "", attendeeType: "YOUTH", classLevel: null, reportedAge: null }] })).toThrow(/last name/);
+  });
+
+  it("imports the whole synthetic August entry, siblings and a parent and child included, into the current year", async () => {
+    const [draft] = parseClubRegistrationExport([syntheticExportEntry()], now).drafts;
+    const [result] = await importClubs([item({
+      sourceKey: draft.sourceKey,
+      entryId: draft.entryId,
+      clubYear: draft.clubYear,
+      people: draft.people.filter((person) => person.include).map((person) => ({
+        firstName: person.firstName,
+        lastName: person.lastName,
+        attendeeType: person.attendeeType,
+        role: person.role,
+        classLevel: person.classLevel,
+        reportedAge: person.reportedAge,
+      })),
+    })], "admin-1", now);
+    expect(draft.clubYear).toBe("2026-27");
+    expect(result).toMatchObject({ status: "IMPORTED", clubYear: "2026-27", membersAdded: 48, membersSkipped: 0, skipped: [] });
+    expect(mocks.rosterCreate).toHaveBeenCalledTimes(48);
+    expect(mocks.rosterCreate.mock.calls.every(([call]) => call.data.clubYear === "2026-27")).toBe(true);
+    const created = mocks.personCreate.mock.calls.map(([call]) => `${call.data.firstName} ${call.data.lastName}`);
+    for (const name of ["Cy Faux", "Dee Faux", "Kim Faux", "Lou Faux", "Max Faux", "Ada Testerson", "Ben Testerson", "Ned Testerson", "Ola Testerson", "Bo Placeholder", "Gus Placeholder"]) {
+      expect(created).toContain(name);
+    }
+  });
+
+  it("imports into the year chosen, and refuses a year too far away", async () => {
+    const [previous] = await importClubs([item({ clubYear: "2025-26" })], "admin-1", now);
+    expect(previous).toMatchObject({ status: "IMPORTED", clubYear: "2025-26" });
+    expect(mocks.rosterCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ clubYear: "2025-26" }) });
+    expect(mocks.identityCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ providerScope: "form-89:2025-26" }) });
+    vi.clearAllMocks();
+    const [far] = await importClubs([item({ clubYear: "2023-24" })], "admin-1", now);
+    expect(far).toMatchObject({ status: "FAILED" });
+    expect(mocks.rosterCreate).not.toHaveBeenCalled();
+  });
+
+  it("imports a parent and child who share a full name, and reports a true duplicate", async () => {
+    const [result] = await importClubs([item({
+      people: [
+        { firstName: "Chris", lastName: "Faux", attendeeType: "STAFF", role: "Staff", classLevel: null, reportedAge: null },
+        { firstName: "Chris", lastName: "Faux", attendeeType: "YOUTH", role: "Pathfinder", classLevel: "FRIEND", reportedAge: 9 },
+        { firstName: "Bo", lastName: "Faux", attendeeType: "YOUTH", role: "Pathfinder", classLevel: null, reportedAge: 8 },
+        { firstName: "bo", lastName: "FAUX", attendeeType: "YOUTH", role: "Pathfinder", classLevel: null, reportedAge: 8 },
+      ],
+    })], "admin-1", now);
+    expect(result).toMatchObject({ membersAdded: 3, membersSkipped: 1 });
+    expect(result.skipped).toEqual([{ name: "bo FAUX", reason: "DUPLICATE_IN_REGISTRATION" }]);
+    expect(JSON.stringify(mocks.writeAuditLog.mock.calls[0][0])).not.toMatch(/Chris|Faux/);
+  });
+
+  it("re-importing the same entry reports it as already imported and adds no one", async () => {
+    await importClubs([item()], "admin-1", now);
+    vi.clearAllMocks();
+    mocks.identityFindUnique.mockResolvedValueOnce({ organizationId: "club-new" });
+    const [again] = await importClubs([item()], "admin-1", now);
+    expect(again).toMatchObject({ status: "ALREADY_IMPORTED", organizationId: "club-new", membersAdded: 0 });
+    expect(mocks.personCreate).not.toHaveBeenCalled();
   });
 });

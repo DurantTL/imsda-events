@@ -6,6 +6,7 @@ import { DriverVerificationQueue } from "@/components/driver-verification-queue"
 import { clubPortalComplianceStatuses } from "@/modules/background-checks/repository";
 import { COMPLIANCE_FILTER_VALUES, type ComplianceFilterValue } from "@/modules/background-checks/domain";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
+import { clubYearChoices } from "@/modules/club-imports/domain";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import { listRoster } from "@/modules/club-rosters/repository";
 import { listTransferClubOptions } from "@/modules/club-transfers/repository";
@@ -24,12 +25,14 @@ export default async function ClubRosterPage({
   searchParams,
 }: {
   params: Promise<{ organizationId: string }>;
-  searchParams: Promise<{ compliance?: string }>;
+  searchParams: Promise<{ compliance?: string; year?: string }>;
 }) {
-  const [{ organizationId }, { compliance: complianceParam }] = await Promise.all([params, searchParams]);
+  const [{ organizationId }, { compliance: complianceParam, year: yearParam }] = await Promise.all([params, searchParams]);
   const access = await getRosterAccessStateForPage(organizationId);
   if (access.state !== "OPEN") return null;
-  const clubYear = clubYearFor(new Date());
+  const currentClubYear = clubYearFor(new Date());
+  // The previous or next club year can be opened with ?year= (the club import links here, #541).
+  const clubYear = clubYearChoices().find((year) => year === yearParam) ?? currentClubYear;
   // Status only, never the note, and only for a director or deputy: this is the club's own page (#427).
   // Transfers (#489) are the same leader-only capability that manages the club's team.
   const canTransfer = access.capabilities.manageTeam;
@@ -45,6 +48,11 @@ export default async function ClubRosterPage({
       <p className="quiet-copy">
         <a href={`/account/clubs/${organizationId}/roster/export`}>Build a roster export</a> for an outside camporee.
       </p>
+      {clubYear !== currentClubYear && (
+        <p className="inline-notice" role="status">
+          Showing the {clubYear} roster. <a href={`/account/clubs/${organizationId}/roster`}>Back to {currentClubYear}</a>. New people are added to {currentClubYear}.
+        </p>
+      )}
       <ClubRosterWorkspace
         canSeeBirthDates={access.capabilities.seeBirthDates}
         clubYear={clubYear}

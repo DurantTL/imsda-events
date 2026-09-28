@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { CheckCircle2, CircleAlert, FileUp, Upload } from "lucide-react";
+import { confirmPayload } from "@/modules/club-imports/confirm-payload";
+import { skipReasonLabel, submissionYearNote } from "@/modules/club-imports/domain";
 import type { AnnotatedImportDraft, ClubImportResult } from "@/modules/club-imports/repository";
 import { clubClassLevelLabels } from "@/modules/club-rosters/domain";
 import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
@@ -12,9 +14,15 @@ type ApiError = { message?: string; issues?: Array<{ message?: string; path?: Ar
 
 const NEW_CHURCH = "__new__";
 
+/** Already imported for the club year chosen in the preview (#541). */
+function importedFor(draft: Pick<AnnotatedImportDraft, "importedYears" | "clubYear">) {
+  return draft.importedYears[draft.clubYear] ?? null;
+}
+
 function draftProblems(draft: Draft) {
   const problems: string[] = [];
-  if (draft.alreadyImported) problems.push(`Already imported into ${draft.alreadyImported.name}.`);
+  const imported = importedFor(draft);
+  if (imported) problems.push(`Already imported into ${imported.name} for ${draft.clubYear}. Choose another club year to import it again.`);
   if (draft.existingClub && !draft.existingClub.isActive) problems.push("A club with this name is inactive. Rename it or reactivate that club first.");
   if (draft.clubName.trim().length < 2) problems.push("Give the club a name.");
   if (!draft.churchId && !draft.newChurchName && !(draft.existingClub?.isActive && draft.existingClub.hasSponsoringChurch)) {
@@ -33,6 +41,7 @@ function draftProblems(draft: Draft) {
 export function ClubImportWorkspace() {
   const [drafts, setDrafts] = useState<Draft[] | null>(null);
   const [churches, setChurches] = useState<Church[]>([]);
+  const [yearChoices, setYearChoices] = useState<string[]>([]);
   const [skipped, setSkipped] = useState(0);
   const [results, setResults] = useState<ClubImportResult[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -51,12 +60,13 @@ export function ClubImportWorkspace() {
         headers: { "Content-Type": "application/json" },
         body: await file.text(),
       });
-      const result = await response.json().catch(() => ({})) as ApiError & { drafts?: AnnotatedImportDraft[]; churches?: Church[]; skipped?: number };
+      const result = await response.json().catch(() => ({})) as ApiError & { drafts?: AnnotatedImportDraft[]; churches?: Church[]; clubYearChoices?: string[]; skipped?: number };
       if (!response.ok || !result.drafts) throw new Error(result.message ?? "That file could not be read.");
       setChurches(result.churches ?? []);
+      setYearChoices(result.clubYearChoices ?? []);
       setSkipped(result.skipped ?? 0);
       setDrafts(result.drafts.map((draft) => {
-        const loaded = { ...draft, include: !draft.alreadyImported, expanded: false };
+        const loaded = { ...draft, include: !importedFor(draft), expanded: false };
         // Open the cards that need attention; the rest stay folded until clicked.
         return { ...loaded, expanded: loaded.include && draftProblems(loaded).length > 0 };
       }));
@@ -71,6 +81,9 @@ export function ClubImportWorkspace() {
     setDrafts((current) => current && current.map((draft, i) => (i === index ? change(draft) : draft)));
   }
 
+  const changeYear = (index: number, clubYear: string) =>
+    update(index, (d) => ({ ...d, clubYear, include: !importedFor({ importedYears: d.importedYears, clubYear }) }));
+
   const chosen = drafts?.filter((draft) => draft.include) ?? [];
   const blocked = chosen.filter((draft) => draftProblems(draft).length > 0);
 
@@ -82,25 +95,7 @@ export function ClubImportWorkspace() {
       const response = await fetch("/api/admin/club-import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          clubs: chosen.map((draft) => ({
-            sourceKey: draft.sourceKey,
-            entryId: draft.entryId,
-            clubYear: draft.clubYear,
-            clubName: draft.clubName,
-            churchId: draft.churchId,
-            newChurchName: draft.churchId ? "" : draft.newChurchName,
-            invites: draft.invites.filter((invite) => invite.include && invite.email).map(({ role, name, email }) => ({ role, name, email })),
-            people: draft.people.filter((person) => person.include).map((person) => ({
-              firstName: person.firstName,
-              lastName: person.lastName,
-              attendeeType: person.attendeeType,
-              role: person.role,
-              classLevel: person.classLevel,
-              reportedAge: person.reportedAge,
-            })),
-          })),
-        }),
+        body: JSON.stringify(confirmPayload(drafts)),
       });
       const result = await response.json().catch(() => ({})) as ApiError & { results?: ClubImportResult[] };
       if (!response.ok || !result.results) throw new Error(result.message ?? "The import could not be completed.");
@@ -137,8 +132,18 @@ export function ClubImportWorkspace() {
               <li key={result.sourceKey}>
                 {result.status === "IMPORTED" ? <CheckCircle2 aria-hidden="true" size={16} /> : <CircleAlert aria-hidden="true" size={16} />}
                 <span>
-                  <strong translate="no">{result.clubName}</strong>: {result.message}
-                  {result.status === "IMPORTED" && ` ${result.membersAdded} added to the roster${result.membersSkipped ? `, ${result.membersSkipped} already there` : ""}; ${result.invitesCreated} invite${result.invitesCreated === 1 ? "" : "s"} waiting.`}
+                  <strong translate="no">{result.clubName}</strong> ({result.clubYear}): {result.message}
+                  {result.status === "IMPORTED" && ` ${result.membersAdded} added to the roster, ${result.membersSkipped} skipped; ${result.invitesCreated} invite${result.invitesCreated === 1 ? "" : "s"} waiting.`}
+                  {result.organizationId && result.status !== "FAILED" && (
+                    <> <a href={`/account/clubs/${encodeURIComponent(result.organizationId)}/roster?year=${encodeURIComponent(result.clubYear)}`}>View the {result.clubYear} roster</a>.</>
+                  )}
+                  {result.skipped.length > 0 && (
+                    <ul className="club-import-skipped" aria-label={`Skipped from ${result.clubName}`}>
+                      {result.skipped.map((skip, skipIndex) => (
+                        <li key={`${skip.name}-${skipIndex}`}><span translate="no">{skip.name}</span>: {skipReasonLabel(skip.reason, result.clubYear)}</li>
+                      ))}
+                    </ul>
+                  )}
                 </span>
               </li>
             ))}
@@ -200,9 +205,10 @@ export function ClubImportWorkspace() {
                       {draft.people.filter((person) => person.include).length} people
                       {draft.existingClub?.isActive ? " · adds to the existing club" : ""}
                     </small>
+                    {submissionYearNote(draft) && <small className="club-import-year-note">{submissionYearNote(draft)}</small>}
                   </span>
                   {problems.length > 0 && draft.include && <span className="status-chip coral">Needs a fix</span>}
-                  {draft.alreadyImported && <span className="status-chip gold">Imported</span>}
+                  {importedFor(draft) && <span className="status-chip gold">Imported</span>}
                 </summary>
 
                 {problems.length > 0 && (
@@ -238,6 +244,16 @@ export function ClubImportWorkspace() {
                         <option value={NEW_CHURCH}>Create church: {draft.newChurchName || draft.churchName}</option>
                       )}
                       {churches.map((church) => <option key={church.id} value={church.id}>{church.name}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    Club year to import into
+                    <select
+                      aria-label={`Club year for ${draft.clubName || "this club"}`}
+                      onChange={(event) => changeYear(index, event.target.value)}
+                      value={draft.clubYear}
+                    >
+                      {(yearChoices.length ? yearChoices : [draft.clubYear]).map((year) => <option key={year} value={year}>{year}</option>)}
                     </select>
                   </label>
                 </div>

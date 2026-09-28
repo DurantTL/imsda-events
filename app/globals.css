@@ -7036,6 +7036,9 @@ select:focus-visible {
 .club-import-table .club-import-age { width: 70px; min-width: 60px; }
 .club-import-results { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .club-import-results li { display: flex; gap: 8px; align-items: flex-start; font-size: 0.82rem; }
+.club-import-results .club-import-skipped { display: grid; gap: 2px; margin: 6px 0 0; padding-left: 16px; list-style: disc; }
+.club-import-results .club-import-skipped li { display: list-item; }
+.club-import-year-note { display: block; color: var(--muted, inherit); }
 .club-invite-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .club-invite-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
 .club-invite-list li > span:first-child { display: grid; flex: 1; gap: 2px; min-width: 180px; }

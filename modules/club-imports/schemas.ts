@@ -6,7 +6,7 @@ const name = z.string().trim().max(80);
 export const clubImportItemSchema = z.object({
   sourceKey: z.string().trim().regex(/^form-\d+:[A-Za-z0-9_-]{1,40}$/),
   entryId: z.string().trim().min(1).max(40),
-  clubYear: z.string().regex(/^\d{4}-\d{2}$/),
+  clubYear: z.string().regex(/^\d{4}-\d{2}$/).refine((value) => (Number(value.slice(0, 4)) + 1) % 100 === Number(value.slice(5)), "Choose a valid club year."),
   clubName: z.string().trim().min(2, "Every imported club needs a name.").max(120),
   /** An existing church, or null with `newChurchName` to create one, or neither for none. */
   churchId: z.string().trim().max(40).nullable(),
