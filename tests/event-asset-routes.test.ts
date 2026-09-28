@@ -165,7 +165,7 @@ describe("DELETE /api/events/[eventId]/assets/[assetId]", () => {
     const { EventAssetError } = await import("@/modules/events/asset-repository");
     dependencies.removeEventAsset.mockRejectedValue(new EventAssetError(
       "ASSET_IN_USE",
-      'Remove it from the draft section "Retreat resources" first, or add another link there. It is the only link, and a resource-links section needs at least one.',
+      'Remove it from the draft section "Retreat resources" and save first, or add another link there. It is the only link, and a resource-links section needs at least one.',
     ));
 
     const response = await deleteAsset(request(`/api/events/${eventId}/assets/${assetId}`, "DELETE"), assetParams);

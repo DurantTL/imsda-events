@@ -191,7 +191,7 @@ function nameEmptiedDrafts(titles: string[]) {
     ? `the draft section "${titles[0]}"`
     : `the draft sections ${titles.map((title) => `"${title}"`).join(", ")}`;
   const there = titles.length === 1 ? "there" : "to each";
-  return `Remove it from ${label} first, or add another link ${there}. It is the only link, and a resource-links section needs at least one.`;
+  return `Remove it from ${label} and save first, or add another link ${there}. It is the only link, and a resource-links section needs at least one.`;
 }
 
 export type RemovedEventAsset = {

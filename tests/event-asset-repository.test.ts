@@ -217,7 +217,7 @@ describe("removeEventAsset", () => {
 
     await expect(attempt).rejects.toMatchObject({
       code: "ASSET_IN_USE",
-      message: expect.stringContaining('Remove it from the draft section "Retreat resources" first, or add another link there'),
+      message: expect.stringContaining('Remove it from the draft section "Retreat resources" and save first, or add another link there'),
     });
     expect(tx.eventContentLink.deleteMany).not.toHaveBeenCalled();
     expect(tx.eventAsset.delete).not.toHaveBeenCalled();

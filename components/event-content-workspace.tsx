@@ -288,6 +288,12 @@ export function EventContentWorkspace({
       setSections(next);
       setSaved(next);
       allowNextNavigation();
+      // Where each file is used just changed; refresh it for the file list and
+      // delete dialog. Best effort: the server re-checks on delete anyway.
+      void fetch(`/api/events/${eventId}/assets`)
+        .then((assetsResponse) => (assetsResponse.ok ? assetsResponse.json() : null))
+        .then((assetsResult) => { if (assetsResult?.assets) setAssets(assetsResult.assets); })
+        .catch(() => undefined);
       const published = next.filter((section) => section.isPublished).length;
       setNotice(`Saved. ${published} section${published === 1 ? "" : "s"} visible on the public event page.`);
     } catch (caught) {
