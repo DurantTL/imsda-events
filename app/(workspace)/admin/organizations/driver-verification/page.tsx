@@ -24,17 +24,15 @@ export default async function DriverVerificationPage() {
           <p className="eyebrow">Clubs and churches</p>
           <h2>Driver verification</h2>
           <p>
-            Background checks already cover driver clearance status (y, n, or expiring soon, with an issue note for
-            limits like &quot;can&apos;t drive&quot;). This is the extra step: confirming a willing driver&apos;s
-            license and insurance were checked, and recording whether they&apos;re cleared to transport youth.
-            Nothing here stores a license or insurance number or file.
+            A willing driver is cleared automatically from the background-check list: a current check (y) and no
+            Non-Driver in the issues column. Only the exceptions are listed here. You can override one person with a
+            note, and the override is audited. Nothing here stores a license or insurance number or file.
           </p>
         </div>
       </div>
       <DriverVerificationQueue
         clearEndpointBase="/api/admin/driver-verification"
         listEndpoint="/api/admin/driver-verification"
-        showClub
       />
     </section>
   );

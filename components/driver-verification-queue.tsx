@@ -3,42 +3,44 @@
 import { useCallback, useEffect, useState } from "react";
 import { Car, ShieldCheck, ShieldX } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
-import type { DriverQueueEntry } from "@/modules/driver-verification/repository";
+import { formatIssueDate } from "@/modules/background-checks/issues";
+import {
+  DRIVER_EXPIRY_WARNING_DAYS,
+  driverReasonLabels,
+  type DriverClearanceStatus,
+} from "@/modules/driver-verification/clearance";
+import type { StaffDriverEntry } from "@/modules/driver-verification/repository";
 
 /**
- * The driver verification queue (#491): every willing driver, their
- * background-check status and note, and a reviewer's decision. Used both by
- * a system administrator (every club) and by a club director or deputy
- * (their own club only) — the two pass different endpoints, never data.
+ * The staff driver exceptions queue (#544). Driver clearance comes from the
+ * background-check list, so this lists only the willing drivers who need a
+ * look: needs review, not cleared, or expiring within
+ * `DRIVER_EXPIRY_WARNING_DAYS`. Cleared drivers are not here. Staff see the
+ * issues text exactly as written, and can override one person with a note.
+ * Clubs never render this: they get labels only.
  *
- * Every prop is a plain string or boolean: this is a Client Component
- * rendered from Server Component pages, and a function prop can't cross
- * that boundary (it throws at render). The per-person endpoint is built here
- * from `clearEndpointBase`.
+ * Every prop is a plain string: this is a Client Component rendered from a
+ * Server Component page, and a function prop can't cross that boundary (it
+ * throws at render). The per-person endpoint is built here from
+ * `clearEndpointBase`.
  */
 
-const complianceLabel = { CLEAR: "Clear", FLAGGED: "Expiring soon", NOT_COMPLIANT: "Not in compliance", NO_RECORD: "No record" } as const;
-const complianceTone = { CLEAR: "green", FLAGGED: "gold", NOT_COMPLIANT: "coral", NO_RECORD: "gold" } as const;
+const statusLabel: Record<DriverClearanceStatus, string> = {
+  CLEARED: "Cleared to drive",
+  EXPIRING: "Expiring soon",
+  NOT_CLEARED: "Not cleared",
+  NEEDS_REVIEW: "Needs review",
+};
+const statusTone: Record<DriverClearanceStatus, string> = { CLEARED: "green", EXPIRING: "gold", NOT_CLEARED: "coral", NEEDS_REVIEW: "gold" };
 
 export type DriverVerificationQueueProps = {
   listEndpoint: string;
-  /** The decision endpoint without the person: `${clearEndpointBase}/${personId}` is posted to. */
+  /** The override endpoint without the person: `${clearEndpointBase}/${personId}` is posted to. */
   clearEndpointBase: string;
-  /** The admin queue spans every club, so it shows which one each row is on. */
-  showClub?: boolean;
 };
 
 export function clearEndpointFor(clearEndpointBase: string, personId: string) {
   return `${clearEndpointBase}/${encodeURIComponent(personId)}`;
-}
-
-/**
- * Previously cleared, but the background check on file today isn't Clear
- * (expiring, not in compliance, or gone): the old decision no longer stands
- * on its own, so the queue asks for a fresh look.
- */
-export function needsReReview(entry: Pick<DriverQueueEntry, "backgroundCheck" | "verification">) {
-  return Boolean(entry.verification?.clearedToTransport) && entry.backgroundCheck.state !== "CLEAR";
 }
 
 function formatReviewedAt(iso: string) {
@@ -51,67 +53,64 @@ function formatReviewedAt(iso: string) {
 /** One queue row. Kept hook-free so it renders on its own (tests render it statically). */
 export function DriverQueueRow({
   entry,
-  showClub,
   onReview,
 }: {
-  entry: DriverQueueEntry;
-  showClub: boolean;
-  onReview: (entry: DriverQueueEntry) => void;
+  entry: StaffDriverEntry;
+  onReview: (entry: StaffDriverEntry) => void;
 }) {
-  const reReview = needsReReview(entry);
+  const { clearance, override } = entry;
   return (
     <tr>
       <th scope="row" translate="no">{entry.lastName}, {entry.firstName}</th>
-      {showClub && <td translate="no">{entry.organizationName}</td>}
+      <td translate="no">{entry.organizationName}</td>
       <td>
-        <span className={`status-chip ${complianceTone[entry.backgroundCheck.state]}`}>
-          {complianceLabel[entry.backgroundCheck.state]}
-        </span>
-        {entry.backgroundCheck.note && <><br /><small className="quiet-copy">{entry.backgroundCheck.note}</small></>}
+        <span className={`status-chip ${statusTone[clearance.status]}`}>{statusLabel[clearance.status]}</span>
+        {clearance.expiresOn && (
+          <small className="quiet-copy">
+            {" "}Expiring ({formatIssueDate(clearance.expiresOn)})
+            {clearance.status === "EXPIRING" && clearance.warnStaff && `, within ${DRIVER_EXPIRY_WARNING_DAYS} days`}
+          </small>
+        )}
+        {clearance.reasons.length > 0 && (
+          <><br /><small className="quiet-copy">{clearance.reasons.map((reason) => driverReasonLabels[reason]).join("; ")}</small></>
+        )}
       </td>
+      <td>{entry.issuesText ? <span translate="no">{entry.issuesText}</span> : <span className="quiet-copy">None</span>}</td>
       <td>
-        {entry.verification ? (
+        {override ? (
           <>
-            {reReview ? (
-              <span className="status-chip gold">Needs re-review</span>
-            ) : (
-              <span className={`status-chip ${entry.verification.clearedToTransport ? "green" : "coral"}`}>
-                {entry.verification.clearedToTransport
-                  ? <><ShieldCheck aria-hidden="true" size={12} /> Cleared</>
-                  : <><ShieldX aria-hidden="true" size={12} /> Not cleared</>}
-              </span>
-            )}
+            <span className={`status-chip ${override.clearedToTransport ? "green" : "coral"}`}>
+              {override.clearedToTransport
+                ? <><ShieldCheck aria-hidden="true" size={12} /> Override: cleared</>
+                : <><ShieldX aria-hidden="true" size={12} /> Override: not cleared</>}
+            </span>
             <br />
             <small className="quiet-copy">
-              {reReview ? "Cleared" : "Reviewed"} {formatReviewedAt(entry.verification.reviewedAt)} by{" "}
-              <span translate="no">{entry.verification.reviewerName}</span>
+              {formatReviewedAt(override.reviewedAt)} by <span translate="no">{override.reviewerName}</span>
+              {override.note && <>: <span translate="no">{override.note}</span></>}
             </small>
           </>
-        ) : <span className="status-chip gold">Needs review</span>}
+        ) : <span className="quiet-copy">None</span>}
       </td>
       <td>
         <button
-          aria-label={`Review ${entry.firstName} ${entry.lastName}`}
+          aria-label={`Override ${entry.firstName} ${entry.lastName}`}
           className="secondary-button"
           onClick={() => onReview(entry)}
           type="button"
         >
-          Review
+          Override
         </button>
       </td>
     </tr>
   );
 }
 
-export function DriverVerificationQueue({
-  listEndpoint,
-  clearEndpointBase,
-  showClub = false,
-}: DriverVerificationQueueProps) {
-  const [entries, setEntries] = useState<DriverQueueEntry[] | null>(null);
+export function DriverVerificationQueue({ listEndpoint, clearEndpointBase }: DriverVerificationQueueProps) {
+  const [entries, setEntries] = useState<StaffDriverEntry[] | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [reviewing, setReviewing] = useState<DriverQueueEntry | null>(null);
+  const [reviewing, setReviewing] = useState<StaffDriverEntry | null>(null);
   const [saving, setSaving] = useState(false);
   const dialogOpen = reviewing !== null;
   const closeDialog = useCallback(() => setReviewing(null), []);
@@ -121,11 +120,11 @@ export function DriverVerificationQueue({
     setError("");
     try {
       const response = await fetch(listEndpoint);
-      const result = await response.json().catch(() => ({})) as { entries?: DriverQueueEntry[]; message?: string };
-      if (!response.ok) throw new Error(result.message ?? "The driver verification queue could not be loaded.");
+      const result = await response.json().catch(() => ({})) as { entries?: StaffDriverEntry[]; message?: string };
+      if (!response.ok) throw new Error(result.message ?? "The driver exceptions could not be loaded.");
       setEntries(result.entries ?? []);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The driver verification queue could not be loaded.");
+      setError(caught instanceof Error ? caught.message : "The driver exceptions could not be loaded.");
       setEntries([]);
     }
   }, [listEndpoint]);
@@ -135,7 +134,7 @@ export function DriverVerificationQueue({
     return () => window.clearTimeout(timer);
   }, [load]);
 
-  async function submitReview(event: React.FormEvent<HTMLFormElement>) {
+  async function submitOverride(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!reviewing) return;
     const form = new FormData(event.currentTarget);
@@ -147,15 +146,15 @@ export function DriverVerificationQueue({
       const response = await fetch(clearEndpointFor(clearEndpointBase, reviewing.personId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clearedToTransport, note, confirmedChecksReviewed: true }),
+        body: JSON.stringify({ clearedToTransport, note }),
       });
       const result = await response.json().catch(() => ({})) as { message?: string };
-      if (!response.ok) throw new Error(result.message ?? "The decision could not be recorded.");
-      setNotice(`Recorded: ${reviewing.firstName} ${reviewing.lastName} ${clearedToTransport ? "cleared" : "not cleared"} to transport youth.`);
+      if (!response.ok) throw new Error(result.message ?? "The override could not be recorded.");
+      setNotice(`Recorded: ${reviewing.firstName} ${reviewing.lastName} ${clearedToTransport ? "cleared" : "not cleared"} to drive.`);
       setReviewing(null);
       await load();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The decision could not be recorded.");
+      setError(caught instanceof Error ? caught.message : "The override could not be recorded.");
     } finally {
       setSaving(false);
     }
@@ -166,10 +165,11 @@ export function DriverVerificationQueue({
       <div className="section-heading">
         <div>
           <p className="eyebrow">Q1</p>
-          <h2><Car aria-hidden="true" size={18} /> Driver verification queue</h2>
+          <h2><Car aria-hidden="true" size={18} /> Driver exceptions</h2>
           <p>
-            Everyone who checked &quot;Willing to drive&quot; on their roster profile. Checking the box never clears
-            anyone — confirm their license, insurance, and background-check status yourself, then record the outcome.
+            Driver clearance comes from the background-check list, so cleared drivers need no action and aren&apos;t
+            listed. Here are the willing drivers who need review, aren&apos;t cleared, or expire within{" "}
+            {DRIVER_EXPIRY_WARNING_DAYS} days. You can override one person, with a note; the override is audited.
           </p>
         </div>
       </div>
@@ -178,23 +178,24 @@ export function DriverVerificationQueue({
       {entries === null ? (
         <p className="report-empty">Loading…</p>
       ) : entries.length === 0 ? (
-        <p className="report-empty">No one has checked &quot;Willing to drive&quot; yet.</p>
+        <p className="report-empty">No willing drivers need attention.</p>
       ) : (
         <div className="report-table-wrap">
           <table className="report-table">
-            <caption className="sr-only">Willing drivers</caption>
+            <caption className="sr-only">Willing drivers needing attention</caption>
             <thead>
               <tr>
                 <th scope="col">Name</th>
-                {showClub && <th scope="col">Club</th>}
-                <th scope="col">Background check</th>
-                <th scope="col">Review</th>
+                <th scope="col">Club</th>
+                <th scope="col">Clearance</th>
+                <th scope="col">Issues column</th>
+                <th scope="col">Override</th>
                 <th scope="col"><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
               {entries.map((entry) => (
-                <DriverQueueRow entry={entry} key={entry.personId} onReview={setReviewing} showClub={showClub} />
+                <DriverQueueRow entry={entry} key={entry.personId} onReview={setReviewing} />
               ))}
             </tbody>
           </table>
@@ -204,33 +205,29 @@ export function DriverVerificationQueue({
       {reviewing && (
         <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) closeDialog(); }} role="presentation">
           <section aria-labelledby="driver-review-title" aria-modal="true" className="modal-card" ref={dialogRef} role="dialog" tabIndex={-1}>
-            <form className="form-stack" onSubmit={submitReview}>
+            <form className="form-stack" onSubmit={submitOverride}>
               <h2 id="driver-review-title" translate="no">{reviewing.firstName} {reviewing.lastName}</h2>
               <p>
-                Background check: <strong>{complianceLabel[reviewing.backgroundCheck.state]}</strong>
-                {reviewing.backgroundCheck.note && ` — ${reviewing.backgroundCheck.note}`}
+                From the background-check list: <strong>{statusLabel[reviewing.clearance.status]}</strong>
+                {reviewing.issuesText && <> — <span translate="no">{reviewing.issuesText}</span></>}
               </p>
-              <label className="checkbox-label">
-                <input name="confirm" required type="checkbox" />
-                I checked this person&apos;s license, insurance, and background-check status.
-              </label>
               <fieldset className="form-grid">
-                <legend>Cleared to transport youth?</legend>
+                <legend>Override: cleared to drive?</legend>
                 <label className="radio-label">
-                  <input defaultChecked={reviewing.verification?.clearedToTransport} name="outcome" required type="radio" value="cleared" /> Yes
+                  <input defaultChecked={reviewing.override?.clearedToTransport} name="outcome" required type="radio" value="cleared" /> Yes
                 </label>
                 <label className="radio-label">
-                  <input defaultChecked={reviewing.verification ? !reviewing.verification.clearedToTransport : undefined} name="outcome" required type="radio" value="not-cleared" /> No
+                  <input defaultChecked={reviewing.override ? !reviewing.override.clearedToTransport : undefined} name="outcome" required type="radio" value="not-cleared" /> No
                 </label>
               </fieldset>
               <label>
-                Note
-                <textarea aria-describedby="driver-review-note-help" defaultValue={reviewing.verification?.note ?? ""} maxLength={2000} name="note" rows={3} />
-                <small className="field-help" id="driver-review-note-help">The club&apos;s director and deputies can see this note. Don&apos;t copy background-check details into it.</small>
+                Why (required)
+                <textarea aria-describedby="driver-review-note-help" defaultValue={reviewing.override?.note ?? ""} maxLength={2000} name="note" required rows={3} />
+                <small className="field-help" id="driver-review-note-help">Staff only. A club sees just the resulting status. Don&apos;t copy background-check details into it.</small>
               </label>
               <div className="form-actions">
                 <button className="secondary-button" disabled={saving} onClick={closeDialog} type="button">Cancel</button>
-                <button className="primary-button" disabled={saving} type="submit">Save decision</button>
+                <button className="primary-button" disabled={saving} type="submit">Save override</button>
               </div>
             </form>
           </section>

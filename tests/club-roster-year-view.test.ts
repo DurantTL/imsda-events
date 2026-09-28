@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   listRoster: vi.fn(),
   listClubHonorsPage: vi.fn(),
   listTransferClubOptions: vi.fn(),
+  clubDriverEntries: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -23,6 +24,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/modules/club-rosters/access", () => ({ getRosterAccessStateForPage: mocks.getRosterAccessStateForPage }));
 vi.mock("@/modules/background-checks/repository", () => ({ clubPortalComplianceStatuses: mocks.clubPortalComplianceStatuses }));
 vi.mock("@/modules/club-rosters/repository", () => ({ listRoster: mocks.listRoster }));
+vi.mock("@/modules/driver-verification/repository", () => ({ clubDriverEntries: mocks.clubDriverEntries }));
 vi.mock("@/modules/honors/member-honor-repository", () => ({ listClubHonorsPage: mocks.listClubHonorsPage }));
 vi.mock("@/modules/club-transfers/repository", () => ({ listTransferClubOptions: mocks.listTransferClubOptions }));
 
@@ -88,6 +90,7 @@ beforeEach(() => {
   mocks.clubPortalComplianceStatuses.mockResolvedValue(null);
   mocks.listRoster.mockResolvedValue([member]);
   mocks.listClubHonorsPage.mockResolvedValue([]);
+  mocks.clubDriverEntries.mockResolvedValue([]);
   mocks.listTransferClubOptions.mockResolvedValue([]);
 });
 

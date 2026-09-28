@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import { BackLink } from "@/components/back-link";
 import { ClubRosterWorkspace } from "@/components/club-roster-workspace";
 import { ClubTransfersPanel, RequestTransferButton } from "@/components/club-transfers-panel";
-import { DriverVerificationQueue } from "@/components/driver-verification-queue";
+import { ClubDriverList } from "@/components/club-driver-list";
 import { clubPortalComplianceStatuses } from "@/modules/background-checks/repository";
+import { clubDriverEntries } from "@/modules/driver-verification/repository";
 import { COMPLIANCE_FILTER_VALUES, type ComplianceFilterValue } from "@/modules/background-checks/domain";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { rosterYearView } from "@/modules/club-rosters/domain";
@@ -36,11 +37,13 @@ export default async function ClubRosterPage({
   // Status only, never the note, and only for a director or deputy: this is the club's own page (#427).
   // Transfers (#489) are the same leader-only capability that manages the club's team.
   const canTransfer = access.capabilities.manageTeam && !readOnly;
-  const [members, complianceStatuses, honorRows, clubOptions] = await Promise.all([
+  const [members, complianceStatuses, honorRows, clubOptions, driverEntries] = await Promise.all([
     listRoster(organizationId, clubYear),
     clubPortalComplianceStatuses(organizationId, clubYear, access.capabilities),
     listClubHonorsPage(organizationId, clubYear),
     canTransfer ? listTransferClubOptions(organizationId) : Promise.resolve([]),
+    // Labels only, and only for the director or deputy who manages the team (#544).
+    access.capabilities.manageTeam ? clubDriverEntries(organizationId, clubYear) : Promise.resolve(null),
   ]);
   return (
     <>
@@ -61,6 +64,9 @@ export default async function ClubRosterPage({
         clubYear={clubYear}
         complianceFilter={complianceFilterFrom(complianceParam)}
         complianceStatuses={complianceStatuses}
+        driverClearances={driverEntries
+          ? Object.fromEntries(driverEntries.map((driver) => [driver.rosterMemberId, { status: driver.status, label: driver.label }]))
+          : undefined}
         headingActions={canTransfer ? <RequestTransferButton clubOptions={clubOptions} organizationId={organizationId} /> : undefined}
         honorSummaries={honorSummaryByMemberId(honorRows)}
         honorsHref={readOnly ? undefined : `/account/clubs/${organizationId}/honors`}
@@ -69,13 +75,8 @@ export default async function ClubRosterPage({
         readOnly={readOnly}
       />
       {canTransfer && <ClubTransfersPanel organizationId={organizationId} />}
-      {/* Willing drivers, for review (#491): the same leader-only capability that manages the club's team. */}
-      {access.capabilities.manageTeam && !readOnly && (
-        <DriverVerificationQueue
-          clearEndpointBase={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/driver-verification`}
-          listEndpoint={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/driver-verification`}
-        />
-      )}
+      {/* Willing drivers and their clearance label (#544): the same leader-only capability that manages the club's team. */}
+      {driverEntries && <ClubDriverList entries={driverEntries} />}
     </>
   );
 }

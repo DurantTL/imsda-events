@@ -1,18 +1,14 @@
 import { z } from "zod";
 
 /**
- * A reviewer's decision (#491). `confirmedChecksReviewed` is required and
- * discarded rather than stored: it forces the reviewer to affirmatively say
- * they checked the license, insurance, and background-check status
- * elsewhere before the outcome is recorded, without persisting anything
- * about those documents themselves.
+ * A staff override of the automatic driver clearance (#544). It always
+ * carries a note saying why (a phone call, say), so the override is never
+ * silent. Nothing about a license or insurance is accepted: `.strict()`
+ * refuses any field this route was never meant to carry.
  */
 export const driverClearanceSchema = z.object({
   clearedToTransport: z.boolean(),
-  note: z.string().trim().max(2000).default(""),
-  confirmedChecksReviewed: z.literal(true, {
-    message: "Confirm that the license, insurance, and background-check status were checked.",
-  }),
+  note: z.string().trim().min(1, "Add a note saying why you are overriding.").max(2000),
 }).strict();
 
 export type DriverClearanceInput = z.infer<typeof driverClearanceSchema>;

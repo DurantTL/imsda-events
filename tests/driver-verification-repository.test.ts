@@ -20,9 +20,11 @@ vi.mock("@/modules/driver-verification/access", async () => {
 });
 
 import {
-  DriverVerificationError,
-  listWillingDrivers,
+  clubDriverEntries,
+  clubDriverLabels,
+  listDriverExceptions,
   recordDriverClearance,
+  type DriverVerificationError,
 } from "@/modules/driver-verification/repository";
 
 const now = new Date("2026-10-01T15:00:00Z");
@@ -35,7 +37,6 @@ function fakeDatabase() {
   const client = {
     clubRosterMember: {
       findMany: async ({ where }: { where: Row }) => members.filter((member) => matches(member, where)),
-      findFirst: async ({ where }: { where: Row }) => members.find((member) => matches(member, where)) ?? null,
     },
     driverVerification: {
       upsert: vi.fn(async ({ where, create, update }: { where: Row; create: Row; update: Row }) => {
@@ -58,7 +59,9 @@ function matches(row: Row, where: Row) {
   });
 }
 
-function member(overrides: Row = {}): Row {
+type Entry = { complianceStatus: string | null; expiresOn: string | null; issuesNote: string | null };
+
+function member(overrides: Row = {}, entry: Entry | null = { complianceStatus: "CLEAR", expiresOn: null, issuesNote: null }, verification: Row | null = null): Row {
   return {
     id: "member-1",
     personId: "person-1",
@@ -71,12 +74,15 @@ function member(overrides: Row = {}): Row {
     person: {
       firstName: "Dana",
       lastName: "Driver",
-      backgroundCheckMatch: { entry: { complianceStatus: "CLEAR", expiresOn: null, issuesNote: null } },
-      driverVerification: null,
+      backgroundCheckMatch: entry ? { entry } : null,
+      driverVerification: verification,
     },
     ...overrides,
   };
 }
+
+const withCheck = (id: string, entry: Entry, extra: Row = {}) =>
+  member({ id: `member-${id}`, personId: `person-${id}`, ...extra }, entry);
 
 let db: ReturnType<typeof fakeDatabase>;
 
@@ -88,110 +94,161 @@ beforeEach(() => {
   db = fakeDatabase();
 });
 
-describe("driver verification queue (#491)", () => {
-  it("lists every willing driver with their background-check status and note", async () => {
+describe("the staff driver exceptions (#544)", () => {
+  it("clears a willing driver with a current y and no issues, with no staff action", async () => {
     db.members.push(member());
-    const entries = await listWillingDrivers({ kind: "GLOBAL" }, now);
-    expect(entries).toEqual([
-      expect.objectContaining({
-        personId: "person-1",
-        firstName: "Dana",
-        lastName: "Driver",
-        organizationName: "Club One",
-        backgroundCheck: { state: "CLEAR", note: null },
-        verification: null,
-      }),
-    ]);
+    expect(await listDriverExceptions(now)).toEqual([]);
   });
 
-  it("gives conference staff the background-check issue note, and a club's own queue never (#427)", async () => {
-    const withNote = { firstName: "Dana", lastName: "Driver", driverVerification: null,
-      backgroundCheckMatch: { entry: { complianceStatus: "CLEAR", expiresOn: null, issuesNote: "Synthetic note: can't drive." } } };
-    db.members.push(member({ person: withNote }));
-    const [global] = await listWillingDrivers({ kind: "GLOBAL" }, now);
-    expect(global.backgroundCheck).toEqual({ state: "CLEAR", note: "Synthetic note: can't drive." });
-    const [club] = await listWillingDrivers({ kind: "CLUB", organizationId: "club-1" }, now);
-    expect(club.backgroundCheck).toEqual({ state: "CLEAR", note: null });
-    expect(JSON.stringify(club)).not.toContain("Synthetic note");
+  it("lists only exceptions: needs review, not cleared, and expiring within 30 days", async () => {
+    db.members.push(
+      withCheck("1", { complianceStatus: "CLEAR", expiresOn: null, issuesNote: null }),
+      withCheck("2", { complianceStatus: "NOT_COMPLIANT", expiresOn: null, issuesNote: "BGC" }),
+      withCheck("3", { complianceStatus: "FLAGGED", expiresOn: null, issuesNote: "Training (10/04/26)" }),
+      withCheck("4", { complianceStatus: "CLEAR", expiresOn: null, issuesNote: "Non-Driver" }),
+      withCheck("5", { complianceStatus: "CLEAR", expiresOn: null, issuesNote: "BGC (10/20/26)" }),
+      withCheck("6", { complianceStatus: "CLEAR", expiresOn: null, issuesNote: "BGC (12/20/26)" }),
+      member({ id: "member-7", personId: "person-7" }, null),
+    );
+    const entries = await listDriverExceptions(now);
+    expect(entries.map((entry) => [entry.personId, entry.clearance.status])).toEqual([
+      ["person-2", "NOT_CLEARED"],
+      ["person-3", "NEEDS_REVIEW"],
+      ["person-4", "NOT_CLEARED"],
+      ["person-5", "EXPIRING"],
+      ["person-7", "NEEDS_REVIEW"],
+    ]);
+    expect(entries.find((entry) => entry.personId === "person-5")!.clearance).toMatchObject({ expiresOn: "2026-10-20", warnStaff: true });
+  });
+
+  it("gives staff the issues text exactly as written", async () => {
+    db.members.push(withCheck("1", { complianceStatus: "NOT_COMPLIANT", expiresOn: null, issuesNote: "Training (10/04/26),  bgc" }));
+    const [entry] = await listDriverExceptions(now);
+    expect(entry!.issuesText).toBe("Training (10/04/26),  bgc");
+    expect(entry).toMatchObject({ organizationName: "Club One", firstName: "Dana", override: null });
   });
 
   it("uses the same read-time lookup as the club roster for a driver the cache hasn't matched yet (#527)", async () => {
-    db.members.push(member({ person: { firstName: "Dana", lastName: "Driver", driverVerification: null, backgroundCheckMatch: null } }));
-    mocks.uncachedChecksForRosterMembers.mockResolvedValue(new Map([["person-1", { complianceStatus: "FLAGGED", expiresOn: null, issuesNote: "Synthetic note" }]]));
-    const [global] = await listWillingDrivers({ kind: "GLOBAL" }, now);
-    expect(global.backgroundCheck).toEqual({ state: "FLAGGED", note: "Synthetic note" });
+    db.members.push(member({}, null));
+    mocks.uncachedChecksForRosterMembers.mockResolvedValue(new Map([["person-1", { complianceStatus: "CLEAR", expiresOn: null, issuesNote: "Non-Driver" }]]));
+    const [entry] = await listDriverExceptions(now);
+    expect(entry).toMatchObject({ personId: "person-1", issuesText: "Non-Driver" });
+    expect(entry!.clearance.status).toBe("NOT_CLEARED");
     expect(mocks.uncachedChecksForRosterMembers).toHaveBeenCalledWith([expect.objectContaining({ personId: "person-1" })]);
-    const [club] = await listWillingDrivers({ kind: "CLUB", organizationId: "club-1" }, now);
-    expect(club.backgroundCheck).toEqual({ state: "FLAGGED", note: null });
   });
 
-  it("scopes a club's queue to its own organization", async () => {
-    db.members.push(member(), member({ id: "member-2", personId: "person-2", organizationId: "club-2" }));
-    const entries = await listWillingDrivers({ kind: "CLUB", organizationId: "club-1" }, now);
-    expect(entries.map((entry) => entry.personId)).toEqual(["person-1"]);
+  it("re-derives on every read: a newer list changes the result with no staff action", async () => {
+    const row = member({}, { complianceStatus: "NOT_COMPLIANT", expiresOn: null, issuesNote: "BGC" });
+    db.members.push(row);
+    expect(await listDriverExceptions(now)).toHaveLength(1);
+    (row.person as Row).backgroundCheckMatch = { entry: { complianceStatus: "CLEAR", expiresOn: null, issuesNote: null } };
+    expect(await listDriverExceptions(now)).toEqual([]);
   });
 
-  it("never lists a youth or an inactive row, willing or not", async () => {
+  it("shows a staff override on the row, and the override doesn't hide the derived result", async () => {
+    db.members.push(member({}, { complianceStatus: "NOT_COMPLIANT", expiresOn: null, issuesNote: "BGC" }, {
+      clearedToTransport: true,
+      note: "Confirmed by phone.",
+      reviewedAt: new Date("2026-09-30T12:00:00Z"),
+      reviewedBy: null,
+      reviewedByUser: { displayName: "Test Admin" },
+    }));
+    const [entry] = await listDriverExceptions(now);
+    expect(entry!.clearance.status).toBe("NOT_CLEARED");
+    expect(entry!.override).toEqual({
+      clearedToTransport: true,
+      note: "Confirmed by phone.",
+      reviewedAt: "2026-09-30T12:00:00.000Z",
+      reviewerName: "Test Admin",
+    });
+  });
+
+  it("never lists a youth, an inactive row, or someone not willing", async () => {
+    const bad = { complianceStatus: "NOT_COMPLIANT", expiresOn: null, issuesNote: "BGC" };
     db.members.push(
-      member({ id: "member-2", personId: "person-2", attendeeType: "YOUTH" }),
-      member({ id: "member-3", personId: "person-3", status: "INACTIVE" }),
-      member({ id: "member-4", personId: "person-4", willingToDrive: false }),
+      withCheck("2", bad, { attendeeType: "YOUTH" }),
+      withCheck("3", bad, { status: "INACTIVE" }),
+      withCheck("4", bad, { willingToDrive: false }),
     );
-    const entries = await listWillingDrivers({ kind: "GLOBAL" }, now);
-    expect(entries).toHaveLength(0);
+    expect(await listDriverExceptions(now)).toEqual([]);
+  });
+});
+
+describe("what a club sees of its drivers (#427, #544)", () => {
+  const noted = { complianceStatus: "NOT_COMPLIANT", expiresOn: null, issuesNote: "Synthetic note: Non-Driver, BGC (10/04/26)" };
+
+  it("is a label per driver, never the issues text, a reason, or an override note", async () => {
+    db.members.push(
+      withCheck("1", noted),
+      withCheck("2", { complianceStatus: "CLEAR", expiresOn: null, issuesNote: null }),
+      withCheck("3", { complianceStatus: "CLEAR", expiresOn: null, issuesNote: "BGC (10/20/26)" }),
+      withCheck("4", { complianceStatus: "FLAGGED", expiresOn: null, issuesNote: "Synthetic pending note" }),
+    );
+    const entries = await clubDriverEntries("club-1", "2026-27", now);
+    expect(entries.map((entry) => entry.label)).toEqual(["Not cleared", "Cleared to drive", "Expiring (10/20/2026)", "Pending"]);
+    const json = JSON.stringify(entries);
+    for (const leaked of ["Synthetic", "Non-Driver", "BGC", "issuesText", "reasons", "note"]) {
+      expect(json).not.toContain(leaked);
+    }
   });
 
-  it("refuses self-nomination before touching the database, whatever the actor's role", async () => {
+  it("scopes to the club and the year asked for", async () => {
+    db.members.push(
+      member(),
+      member({ id: "member-2", personId: "person-2", organizationId: "club-2" }),
+      member({ id: "member-3", personId: "person-3", clubYear: "2025-26" }),
+    );
+    const entries = await clubDriverEntries("club-1", "2026-27", now);
+    expect(entries.map((entry) => entry.rosterMemberId)).toEqual(["member-1"]);
+  });
+
+  it("lets a staff override decide the label, and keeps the override's note off it", async () => {
+    db.members.push(member({}, noted, {
+      clearedToTransport: true,
+      note: "Synthetic override reason.",
+      reviewedAt: new Date("2026-09-30T12:00:00Z"),
+      reviewedBy: null,
+      reviewedByUser: { displayName: "Test Admin" },
+    }));
+    const [entry] = await clubDriverEntries("club-1", "2026-27", now);
+    expect(entry!.label).toBe("Cleared to drive");
+    expect(JSON.stringify(entry)).not.toContain("Synthetic");
+  });
+
+  it("keys the roster chip labels by roster member id", async () => {
+    db.members.push(member());
+    await expect(clubDriverLabels("club-1", "2026-27", now)).resolves.toEqual({
+      "member-1": { status: "CLEARED", label: "Cleared to drive" },
+    });
+  });
+});
+
+describe("a staff override (#544)", () => {
+  it("refuses self-nomination before touching the database", async () => {
     db.members.push(member());
     mocks.personIdForActor.mockResolvedValue("person-1");
-    await expect(recordDriverClearance(
-      "person-1",
-      { kind: "GLOBAL" },
-      { clearedToTransport: true, note: "" },
-      { userId: "user-1" },
-      now,
-    )).rejects.toMatchObject({ code: "SELF_REVIEW" satisfies DriverVerificationError["code"] });
+    await expect(recordDriverClearance("person-1", { clearedToTransport: true, note: "Test." }, { userId: "user-1" }, now))
+      .rejects.toMatchObject({ code: "SELF_REVIEW" satisfies DriverVerificationError["code"] });
     expect(db.client.driverVerification.upsert).not.toHaveBeenCalled();
     expect(mocks.writeAuditLog).not.toHaveBeenCalled();
   });
 
-  it("refuses a person outside the reviewer's club scope", async () => {
-    db.members.push(member({ organizationId: "club-2" }));
-    await expect(recordDriverClearance(
-      "person-1",
-      { kind: "CLUB", organizationId: "club-1" },
-      { clearedToTransport: true, note: "" },
-      { kind: "ATTENDEE", accountId: "director-1", sessionId: "session-1" },
-      now,
-    )).rejects.toMatchObject({ code: "PERSON_NOT_FOUND" });
-  });
-
-  it("refuses someone who never checked the willing-to-drive box", async () => {
+  it("refuses someone who isn't a willing driver on a current roster", async () => {
     db.members.push(member({ willingToDrive: false }));
-    await expect(recordDriverClearance(
-      "person-1",
-      { kind: "GLOBAL" },
-      { clearedToTransport: true, note: "" },
-      { userId: "user-1" },
-      now,
-    )).rejects.toMatchObject({ code: "PERSON_NOT_FOUND" });
+    await expect(recordDriverClearance("person-1", { clearedToTransport: true, note: "Test." }, { userId: "user-1" }, now))
+      .rejects.toMatchObject({ code: "PERSON_NOT_FOUND" });
+    expect(db.client.driverVerification.upsert).not.toHaveBeenCalled();
   });
 
-  it("records a system administrator's decision, and audits it", async () => {
-    db.members.push(member());
-    await recordDriverClearance(
-      "person-1",
-      { kind: "GLOBAL" },
-      { clearedToTransport: true, note: "Reviewed in person." },
-      { userId: "admin-1" },
-      now,
-    );
+  it("records the override with its note and audits it, including what the list said", async () => {
+    db.members.push(member({}, { complianceStatus: "NOT_COMPLIANT", expiresOn: null, issuesNote: "Synthetic BGC issue" }));
+    await recordDriverClearance("person-1", { clearedToTransport: true, note: "Confirmed by phone." }, { userId: "admin-1" }, now);
     expect(db.client.driverVerification.upsert).toHaveBeenCalledWith(expect.objectContaining({
       where: { personId: "person-1" },
       create: expect.objectContaining({
         personId: "person-1",
         clearedToTransport: true,
-        note: "Reviewed in person.",
+        note: "Confirmed by phone.",
         reviewedAt: now,
         reviewedByUserId: "admin-1",
       }),
@@ -202,37 +259,24 @@ describe("driver verification queue (#491)", () => {
         action: "DRIVER_VERIFICATION_REVIEWED",
         entityType: "DriverVerification",
         entityId: "person-1",
-        metadata: expect.objectContaining({ clearedToTransport: true }),
+        metadata: { personId: "person-1", clearedToTransport: true, derivedStatus: "NOT_CLEARED", hasNote: true },
       }),
       expect.anything(),
     );
-    // Only the reviewer, the date, and the outcome are ever stored or audited
-    // (#491) — never a field for a license or insurance number or file.
-    const storedKeys = new Set(Object.keys(db.client.driverVerification.upsert.mock.calls[0]![0].create));
+    // No issues text, and nothing about a license or insurance, in what is stored or audited.
+    expect(JSON.stringify(mocks.writeAuditLog.mock.calls[0]![0])).not.toContain("Synthetic");
     for (const forbidden of ["licenseNumber", "insuranceNumber", "license", "insurance"]) {
-      expect(storedKeys.has(forbidden)).toBe(false);
-    }
-    const auditedKeys = new Set(Object.keys(mocks.writeAuditLog.mock.calls[0]![0].metadata));
-    for (const forbidden of ["licenseNumber", "insuranceNumber", "license", "insurance"]) {
-      expect(auditedKeys.has(forbidden)).toBe(false);
+      expect(Object.keys(db.client.driverVerification.upsert.mock.calls[0]![0].create)).not.toContain(forbidden);
+      expect(Object.keys(mocks.writeAuditLog.mock.calls[0]![0].metadata)).not.toContain(forbidden);
     }
   });
 
-  it("records a club director's decision by their attendee account, not a staff user id", async () => {
+  it("replaces an earlier override rather than stacking", async () => {
     db.members.push(member());
-    await recordDriverClearance(
-      "person-1",
-      { kind: "CLUB", organizationId: "club-1" },
-      { clearedToTransport: false, note: "License expired." },
-      { kind: "ATTENDEE", accountId: "director-1", sessionId: "session-1" },
-      now,
-    );
-    expect(db.client.driverVerification.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      create: expect.objectContaining({ reviewedByAccountId: "director-1", clearedToTransport: false }),
-    }));
-    expect(mocks.writeAuditLog).toHaveBeenCalledWith(
-      expect.objectContaining({ metadata: expect.objectContaining({ actorAttendeeAccountId: "director-1", scope: "CLUB", organizationId: "club-1" }) }),
-      expect.anything(),
-    );
+    await recordDriverClearance("person-1", { clearedToTransport: true, note: "First." }, { userId: "admin-1" }, now);
+    await recordDriverClearance("person-1", { clearedToTransport: false, note: "Second." }, { userId: "admin-2" }, now);
+    expect(db.verifications.size).toBe(1);
+    expect(db.verifications.get("person-1")).toMatchObject({ clearedToTransport: false, note: "Second.", reviewedByUserId: "admin-2" });
+    expect(mocks.writeAuditLog).toHaveBeenCalledTimes(2);
   });
 });

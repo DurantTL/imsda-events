@@ -1124,6 +1124,8 @@ export type BackgroundFlag = {
   registrationId: string;
   state: Exclude<BackgroundCheckState, "CURRENT">;
   expiresOn: string | null;
+  /** The list's issues column exactly as written (#544). Staff and event managers only, like the whole flag list. */
+  issuesNote: string | null;
 };
 
 /**
@@ -1160,7 +1162,7 @@ export async function listEventBackgroundFlags(eventId: string, options: { organ
           firstName: true,
           lastName: true,
           ...personEmailSelect,
-          backgroundCheckMatch: { select: { entry: { select: { expiresOn: true, complianceStatus: true } } } },
+          backgroundCheckMatch: { select: { entry: { select: { expiresOn: true, complianceStatus: true, issuesNote: true } } } },
         },
       },
       registration: {
@@ -1224,6 +1226,7 @@ export async function listEventBackgroundFlags(eventId: string, options: { organ
       registrationId: attendee.registration.id,
       state,
       expiresOn: check?.expiresOn ?? null,
+      issuesNote: check?.issuesNote?.trim() || null,
     });
   }
   return { adults: adultAttendees.length, people, lastDay };

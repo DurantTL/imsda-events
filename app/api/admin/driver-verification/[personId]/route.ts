@@ -19,7 +19,7 @@ async function postHandler(request: Request, context: RouteContext) {
     const { personId } = await context.params;
     const actor = await requireGlobalDriverReviewAccess();
     const { clearedToTransport, note } = driverClearanceSchema.parse(await request.json());
-    await recordDriverClearance(personId, { kind: "GLOBAL" }, { clearedToTransport, note }, actor);
+    await recordDriverClearance(personId, { clearedToTransport, note }, actor);
     return Response.json({ ok: true });
   } catch (error) {
     return driverVerificationApiError(error, "Recording a driver clearance decision");

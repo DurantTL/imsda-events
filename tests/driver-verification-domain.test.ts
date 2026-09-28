@@ -30,11 +30,11 @@ describe("driver verification rules (#491)", () => {
     expect(isSelfNomination(null, "person-1")).toBe(false);
   });
 
-  it("requires the reviewer to confirm the checks, and never accepts a license or insurance field (#491)", () => {
-    const base = { clearedToTransport: true, note: "Checked in person.", confirmedChecksReviewed: true as const };
+  it("requires a note on an override, and never accepts a license or insurance field (#544)", () => {
+    const base = { clearedToTransport: true, note: "Confirmed by phone." };
     expect(driverClearanceSchema.safeParse(base).success).toBe(true);
-    expect(driverClearanceSchema.safeParse({ ...base, confirmedChecksReviewed: false }).success).toBe(false);
-    expect(driverClearanceSchema.safeParse({ clearedToTransport: true, note: "" }).success).toBe(false);
+    expect(driverClearanceSchema.safeParse({ ...base, note: "   " }).success).toBe(false);
+    expect(driverClearanceSchema.safeParse({ clearedToTransport: true }).success).toBe(false);
     // .strict() refuses any field this route was never meant to carry, including a license or insurance number.
     expect(driverClearanceSchema.safeParse({ ...base, licenseNumber: "D1234567" }).success).toBe(false);
     expect(driverClearanceSchema.safeParse({ ...base, insuranceNumber: "INS-1" }).success).toBe(false);

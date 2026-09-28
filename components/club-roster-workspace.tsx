@@ -36,6 +36,7 @@ function complianceLabel({ state, note }: RosterComplianceInfo) {
   if (state === "FLAGGED") return note ? "Expiring soon (see note)" : "Expiring soon";
   return { CLEAR: "Clear", NOT_COMPLIANT: "Not in compliance", NO_RECORD: "No record" }[state];
 }
+const driverTone = { CLEARED: "green", EXPIRING: "gold", NOT_CLEARED: "coral", NEEDS_REVIEW: "gold" } as const;
 const complianceTone = { CLEAR: "green", FLAGGED: "gold", NOT_COMPLIANT: "coral", NO_RECORD: "gold" } as const;
 
 export function ClubRosterWorkspace({
@@ -46,6 +47,7 @@ export function ClubRosterWorkspace({
   readOnly = false,
   birthDatesEndpoint,
   complianceStatuses,
+  driverClearances,
   honorSummaries,
   honorsHref,
   complianceFilter: initialComplianceFilter = null,
@@ -66,6 +68,8 @@ export function ClubRosterWorkspace({
    * caller is allowed to see it (club directors never get a note).
    */
   complianceStatuses?: Record<string, RosterComplianceInfo>;
+  /** Willing drivers' clearance label by roster member id (#544): the label only, never the issues text. */
+  driverClearances?: Record<string, { status: "CLEARED" | "EXPIRING" | "NOT_CLEARED" | "NEEDS_REVIEW"; label: string }>;
   /** Each active member's current honors (#486), keyed by roster member id. Omitted where honors aren't shown here. */
   honorSummaries?: Record<string, CurrentMemberHonor[]>;
   /** The club's Honors page, linked from each honor cell. */
@@ -347,6 +351,11 @@ export function ClubRosterWorkspace({
                               {member.willingToDrive && (
                                 <span className="status-chip neutral">Willing to drive</span>
                               )}
+                              {member.willingToDrive && driverClearances?.[member.id] && (
+                                <span className={`status-chip ${driverTone[driverClearances[member.id]!.status]}`}>
+                                  {driverClearances[member.id]!.label}
+                                </span>
+                              )}
                               {member.status === "ACTIVE" && missing.length === 0 && !member.willingToDrive && "—"}
                               </div>
                             </td>
@@ -472,8 +481,8 @@ export function ClubRosterWorkspace({
               Willing to drive
             </label>
             <p className="field-help">
-              This doesn&apos;t clear them to transport youth by itself — it adds them to the driver verification
-              queue, where a reviewer confirms their license, insurance, and background-check status were checked.
+              Whether they&apos;re cleared to drive comes from the conference&apos;s background-check list, not from
+              this box. You&apos;ll see their status here once the list has been checked.
             </p>
           </>
         )}
