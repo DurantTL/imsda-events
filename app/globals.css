@@ -539,7 +539,24 @@ select:focus-visible {
   transform: translateY(-50%);
 }
 
-.primary-nav { display: grid; gap: 6px; }
+/* #468: let the nav scroll inside the fixed sidebar so every link stays
+   reachable at short window heights; the brand and account areas above/below
+   stay fixed since they aren't part of this flex child. */
+.primary-nav {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* Room for the 3px + 3px-offset focus ring and the hover nudge, which the
+     scroll box would otherwise clip; the negative margin keeps the layout. */
+  margin-inline: -6px;
+  padding: 6px;
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+  scrollbar-width: thin;
+}
 
 /* Groups the sidebar's destinations (#428): Events, People, Finance, Communications. */
 .nav-group-label {
@@ -1773,6 +1790,7 @@ select:focus-visible {
 .forbidden-state > span { display: grid; width: 58px; height: 58px; margin-bottom: 16px; place-items: center; border-radius: 17px; background: var(--imsda-purple-soft); color: var(--imsda-purple); }
 .forbidden-state h2 { margin: 3px 0 7px; }
 .forbidden-state > p:not(.eyebrow) { max-width: 500px; margin: 0; color: var(--muted); font-size: 0.72rem; }
+.forbidden-state .forbidden-state-action { margin-top: 16px; }
 
 .import-top-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(360px, 0.9fr); gap: 12px; }
 .import-upload-panel > .quiet-copy { margin: -4px 0 16px; }
@@ -4093,6 +4111,8 @@ select:focus-visible {
   text-decoration: none;
 }
 .public-event-not-found-link:hover { text-decoration: underline; }
+.public-not-found-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; }
+.public-not-found-links .public-event-not-found-link { margin-top: 0; }
 
 /* Private registration confirmation and contact management */
 .public-manage-hero {
@@ -5574,6 +5594,7 @@ select:focus-visible {
 .event-readiness-list strong { font-size: 0.64rem; }
 .event-readiness-list small { color: var(--muted); font-size: 0.54rem; line-height: 1.4; }
 .event-readiness-list li.complete { background: var(--green-soft); }
+.event-readiness-optional-heading { margin: 10px 0 4px; color: var(--muted); font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
 
 .event-publish-toggle {
   cursor: pointer;
@@ -7296,6 +7317,43 @@ select:focus-visible {
   .club-schedule-actions .secondary-button { width: auto; min-height: 44px; }
   .club-schedule-table td small { display: block; }
 }
+
+/* Attendee setup & tags: readable table headers and "where this shows up" (#474) */
+.table-wrap { overflow-x: auto; }
+.usage-note {
+  display: flex; align-items: flex-start; gap: 8px; margin: 10px 0 0; padding: 10px 14px;
+  border-radius: 10px; background: var(--imsda-navy-soft); color: var(--imsda-navy);
+  font-size: 0.78rem; line-height: 1.5;
+}
+.usage-note svg { flex: none; margin-top: 2px; }
+.usage-note a { color: var(--imsda-purple); font-weight: 700; text-decoration: none; }
+.usage-note a:hover { text-decoration: underline; }
+.editable-settings-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.editable-settings-table th,
+.editable-settings-table td { border-bottom: 1px solid #eaf0f2; padding: 10px 13px; text-align: left; vertical-align: middle; }
+.editable-settings-table thead th {
+  background: #f6f9fa; color: var(--muted); font-size: 0.62rem; font-weight: 800;
+  letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap;
+}
+.editable-settings-table tbody tr:last-child > * { border-bottom: 0; }
+@media (max-width: 640px) {
+  .editable-settings-table, .editable-settings-table tbody, .editable-settings-table tr,
+  .editable-settings-table td, .editable-settings-table th { display: block; width: 100%; box-sizing: border-box; }
+  .editable-settings-table thead { display: none; }
+  .editable-settings-table tbody tr {
+    margin-bottom: 12px; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+  }
+  .editable-settings-table td { border: 0; padding: 6px 0; }
+  .editable-settings-table td[data-label] {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
+  }
+  .editable-settings-table td[data-label]::before {
+    content: attr(data-label); flex: 0 0 auto; color: var(--muted); font-weight: 700;
+    font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .editable-settings-table td[data-label] input:not([type="color"]),
+  .editable-settings-table td[data-label] .form-grid { flex: 1 1 auto; min-width: 0; }
+}
 @media print {
   .account-nav, .account-portal .public-registration-header, .account-portal .account-page-hero,
   .club-schedule-actions, .honor-roster-downloads, .retreat-packet-selector { display: none !important; }
@@ -7308,6 +7366,13 @@ select:focus-visible {
 
 .act-as { display: grid; gap: 6px; }
 .act-as .inline-notice a { font-weight: 800; }
+
+.confirm-dialog { width: min(440px, 100%); }
+.confirm-dialog-body { display: grid; gap: 12px; margin-bottom: 4px; }
+.confirm-dialog-facts { display: grid; gap: 9px; margin: 0; }
+.confirm-dialog-facts > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; border-radius: 9px; background: var(--paper); padding: 8px 11px; }
+.confirm-dialog-facts dt { color: var(--muted); font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; }
+.confirm-dialog-facts dd { margin: 0; color: var(--ink); font-size: 0.72rem; font-weight: 700; text-align: right; }
 
 /* Club assignments (#410): staff screen, send preview, and the director's read-only block. */
 .compact-list { display: grid; gap: 3px; margin: 0; padding: 0 0 0 16px; font-size: 0.66rem; line-height: 1.45; }
@@ -7327,6 +7392,9 @@ select:focus-visible {
 .club-assignments-block { margin-top: 16px; }
 .club-assignments-block h3 { margin: 0; font-size: 0.9rem; }
 .club-assignments-block .public-manage-club-list { margin-top: 10px; }
+
+/* #474: rows keep their Save/Deactivate buttons without the form-actions rule line. */
+.editable-settings-table .form-actions { border-top: 0; padding-top: 0; }
 
 /* Roster export builder (#490) */
 .roster-export-format-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 0; padding: 0; list-style: none; }

@@ -562,6 +562,28 @@ describe("private registration access repository", () => {
     });
   });
 
+  it("renders no event details link when no IMSDA.org information page is set (#467)", async () => {
+    const token = createOpaqueToken();
+    const record = accessRecord();
+    const event = record.registration.event as unknown as {
+      publicInfoUrl: string | null;
+      slug: string;
+    };
+    event.publicInfoUrl = null;
+    event.slug = "unknown-event-slug";
+    const client = {
+      registrationAccessToken: { findUnique: vi.fn().mockResolvedValue(record) },
+    };
+
+    const view = await resolveRegistrationAccessToken(token, {
+      client: client as never,
+      now: new Date("2026-08-01T12:00:00.000Z"),
+    });
+
+    expect(view?.event.detailsUrl).toBeNull();
+    expect(view?.event.supportUrl).toBe("https://imsda.org/contact/");
+  });
+
   it("rejects malformed, expired, and revoked links with the same null result", async () => {
     const token = createOpaqueToken();
     const findUnique = vi.fn();

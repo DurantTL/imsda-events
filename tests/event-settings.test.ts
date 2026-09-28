@@ -131,6 +131,39 @@ describe("event settings", () => {
     expect(ready.completedCount).toBe(ready.items.length);
   });
 
+  it("publishes without an IMSDA.org information page (#467)", () => {
+    // Every other item complete, publicInfoUrl unset entirely.
+    const readyWithoutUrl = getEventPublishReadiness({
+      ...validEvent,
+      publicInfoUrl: null,
+    }, 1);
+    expect(readyWithoutUrl.ready).toBe(true);
+    expect(readyWithoutUrl.items.map((item) => item.id)).not.toContain("public-info");
+    expect(readyWithoutUrl.optionalItems).toEqual([
+      expect.objectContaining({ id: "public-info", complete: true }),
+    ]);
+
+    // An invalid configured value is flagged for attention, but never blocks
+    // "ready" and never appears among the blocking items.
+    const readyWithInvalidUrl = getEventPublishReadiness({
+      ...validEvent,
+      publicInfoUrl: "not-a-url",
+    }, 1);
+    expect(readyWithInvalidUrl.ready).toBe(true);
+    expect(readyWithInvalidUrl.optionalItems).toEqual([
+      expect.objectContaining({ id: "public-info", complete: false }),
+    ]);
+
+    // A valid configured value still validates and reports complete.
+    const readyWithValidUrl = getEventPublishReadiness({
+      ...validEvent,
+      publicInfoUrl: "https://imsda.org/event/womens-retreat/",
+    }, 1);
+    expect(readyWithValidUrl.optionalItems).toEqual([
+      expect.objectContaining({ id: "public-info", complete: true }),
+    ]);
+  });
+
   it("allows only a system administrator to create events", () => {
     expect(() => requireEventCreationPermission({
       user: {

@@ -25,6 +25,7 @@ import {
   WalletCards,
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
+import { EventAutoSelectNotice } from "@/components/event-auto-select-notice";
 import { rememberLastUsedEvent } from "@/components/remember-last-event";
 import { SignOutButton } from "@/components/sign-out-button";
 import type { EventPermission } from "@/modules/access/permissions";
@@ -106,12 +107,22 @@ type ShellUser = { displayName: string; email: string; globalRole?: "SYSTEM_ADMI
 
 export function AppShell({
   attendeeAccountAvailable = false,
+  autoSelected = false,
   children,
+  defaultEventId = null,
   events,
   user,
 }: {
   attendeeAccountAvailable?: boolean;
+  /** The default event was chosen automatically (#465): show the notice on pages without `?event=`. */
+  autoSelected?: boolean;
   children: React.ReactNode;
+  /**
+   * The event a page with no `?event=` shows, from the same
+   * `selectEventContext` decision the page makes (#465); `null` when nothing
+   * can be chosen automatically. Never `events[0]` by position.
+   */
+  defaultEventId?: string | null;
   events: ShellEvent[];
   user: ShellUser;
 }) {
@@ -123,10 +134,21 @@ export function AppShell({
   const current = isSystemRoute
     ? systemNavigation
     : navigation.find((item) => pathname.startsWith(item.href)) ?? navigation[0];
-  const selectedEventId = events.some((event) => event.id === searchParams.get("event"))
-    ? searchParams.get("event")!
-    : events[0]?.id ?? "";
-  const selectedEvent = events.find((event) => event.id === selectedEventId) ?? events[0];
+  const requestedEventId = searchParams.get("event");
+  const requestedEvent = requestedEventId
+    ? events.find((event) => event.id === requestedEventId)
+    : undefined;
+  const defaultEvent = defaultEventId
+    ? events.find((event) => event.id === defaultEventId)
+    : undefined;
+  // A `?event=` that matches nothing selects nothing, rather than quietly
+  // showing the default on pages that don't validate the id themselves.
+  const selectedEvent = requestedEventId ? requestedEvent : defaultEvent;
+  const selectedEventId = selectedEvent?.id ?? "";
+  // Same rule as the page (#465): no `?event=` and an automatic choice. Not on
+  // pages that aren't event-scoped (/admin, the global duplicate review).
+  const showAutoSelectNotice = !requestedEventId && autoSelected && Boolean(defaultEvent)
+    && !pathname.startsWith(systemNavigation.href) && !pathname.startsWith("/people/matches");
   const selectedPermissions = new Set(
     events.find((event) => event.id === selectedEventId)?.permissions ?? [],
   );
@@ -234,6 +256,7 @@ export function AppShell({
               onChange={(event) => selectEvent(event.target.value)}
               aria-label="Current event"
             >
+              {!selectedEventId && <option value="" disabled>Choose an event</option>}
               {events.map((event) => <option value={event.id} key={event.id}>{event.name}</option>)}
             </select>
             <ChevronDown aria-hidden="true" size={16} />
@@ -271,6 +294,7 @@ export function AppShell({
             <label className="mobile-event-picker">
               <span className="sr-only">Current event</span>
               <select value={selectedEventId} onChange={(event) => selectEvent(event.target.value)}>
+                {!selectedEventId && <option value="" disabled>Choose an event</option>}
                 {events.map((event) => <option value={event.id} key={event.id}>{event.name}</option>)}
               </select>
               <ChevronDown aria-hidden="true" size={15} />
@@ -343,7 +367,15 @@ export function AppShell({
             </div>
           </div>
         </header>
-        <div className="workspace-content" id="workspace-content">{children}</div>
+        <div className="workspace-content" id="workspace-content">
+          {showAutoSelectNotice && defaultEvent && (
+            <EventAutoSelectNotice
+              eventName={defaultEvent.name}
+              switchHref={isSystemAdmin ? "/admin" : "/select-event"}
+            />
+          )}
+          {children}
+        </div>
       </main>
 
       <nav className="mobile-nav" aria-label="Mobile navigation">

@@ -1,4 +1,5 @@
 import { ArrowLeft, CircleAlert } from "lucide-react";
+import Link from "next/link";
 import { BrandMark } from "@/components/brand-mark";
 
 export default function PublicEventNotFound() {
@@ -6,10 +7,10 @@ export default function PublicEventNotFound() {
     <main className="public-registration-page public-event-page">
       <header className="public-registration-header">
         <div className="public-registration-header-inner">
-          <a className="public-registration-brand public-event-brand-link" href="https://imsda.org/">
+          <Link className="public-registration-brand public-event-brand-link" href="/">
             <BrandMark />
             <span><strong>IMSDA</strong><small>Events</small></span>
-          </a>
+          </Link>
         </div>
       </header>
       <section className="public-registration-not-found">

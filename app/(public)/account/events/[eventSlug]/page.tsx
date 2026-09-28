@@ -126,10 +126,10 @@ export default async function AttendeeEventHubPage({
     <main className="public-registration-page attendee-retreat-hub">
       <header className="public-registration-header">
         <div className="public-registration-header-inner">
-          <a className="public-registration-brand public-event-brand-link" href="https://imsda.org/">
+          <Link className="public-registration-brand public-event-brand-link" href="/">
             <BrandMark />
             <span><strong>IMSDA</strong><small>Events</small></span>
-          </a>
+          </Link>
           <Link
             className="text-button"
             href={staffPreviewEventId

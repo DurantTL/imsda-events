@@ -101,7 +101,15 @@ const healthClass = {
   unknown: styles.healthUnknown,
 };
 
-export default async function SystemAdminPage() {
+export default async function SystemAdminPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ unavailable?: string }>;
+}) {
+  // `resolveEventContext` sends a system administrator here with
+  // `?unavailable=1` for an event id that isn't available (#465) — the same
+  // wording as the staff picker, so nothing reveals whether it exists.
+  const unavailable = (await searchParams).unavailable === "1";
   const { user } = await getCurrentSession();
   if (!user) redirect("/login");
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
@@ -160,6 +168,11 @@ export default async function SystemAdminPage() {
 
   return (
     <section className={`page-stack ${styles.workspace}`}>
+      {unavailable && (
+        <div className="inline-notice error" role="status">
+          <span>That event isn&rsquo;t available. It may not exist, or this account may not have access to it. Choose an event below to continue.</span>
+        </div>
+      )}
       <section className={styles.hero}>
         <div>
           <span className={styles.adminBadge}><ShieldCheck aria-hidden="true" size={16} /> System administrator</span>
