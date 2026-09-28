@@ -144,7 +144,7 @@ describe("running a roster export (#490)", () => {
       action: "CLUB_ROSTER_EXPORT_PREVIEWED",
       entityType: "Organization",
       entityId: "club-1",
-      metadata: { organizationId: "club-1", clubYear: "2026-27", columns: ["firstName", "birthDate"], count: 1, actorAttendeeAccountId: "director-1" },
+      metadata: { organizationId: "club-1", clubYear: "2026-27", columns: ["firstName", "birthDate"], rowsShown: 1, birthDatesOpened: 1, actorAttendeeAccountId: "director-1" },
     });
     const serialized = JSON.stringify(entry);
     expect(serialized).not.toContain("Ana");
@@ -181,7 +181,7 @@ describe("running a roster export (#490)", () => {
       expect((revealCall?.id as { in: string[] }).in).toEqual(["member-1", "member-2", "member-3", "member-4", "member-5"]);
       expect(mocks.writeAuditLog.mock.calls[0]![0]).toMatchObject({
         action: "CLUB_ROSTER_EXPORT_PREVIEWED",
-        metadata: { count: ROSTER_EXPORT_PREVIEW_ROW_LIMIT, columns: ["birthDate"] },
+        metadata: { rowsShown: ROSTER_EXPORT_PREVIEW_ROW_LIMIT, columns: ["birthDate"] },
       });
     });
 

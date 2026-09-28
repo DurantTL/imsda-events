@@ -199,7 +199,8 @@ export async function runRosterExport(
         organizationId,
         clubYear,
         columns: columnKeys,
-        count: shown.length,
+        rowsShown: shown.length,
+        birthDatesOpened: birthDates ? Object.keys(birthDates).length : 0,
       }),
     });
   }
