@@ -794,8 +794,10 @@ export async function backgroundFlaggedAttendeeIds(eventId: string) {
  * Expiring soon, Not in compliance, or No record, keyed by roster member id.
  * `includeNotes` must be decided by the caller from who is asking — the note
  * is staff only, and a club director never receives it, not even a blank one
- * to hide. "No record" is not counted as not in compliance; expiring soon is
- * counted on its own.
+ * to hide. The roster's own inline notice never counts "No record" as not in
+ * compliance; `missing` is still returned here for the home-page reminder
+ * (#479), which asks a different question ("has anyone not started a check
+ * at all") than the roster's own warning about checks already on file.
  */
 export async function clubRosterComplianceStatuses(
   organizationId: string,
@@ -813,14 +815,40 @@ export async function clubRosterComplianceStatuses(
   const statuses: Record<string, { state: ClubComplianceState; note: string | null }> = {};
   let notInCompliance = 0;
   let expiringSoon = 0;
+  let missing = 0;
   for (const member of members) {
     const check = member.person?.backgroundCheck ?? null;
     const state = clubComplianceState(check, today);
     if (state === "NOT_COMPLIANT") notInCompliance += 1;
     if (state === "FLAGGED") expiringSoon += 1;
+    if (state === "NO_RECORD") missing += 1;
     statuses[member.id] = { state, note: options.includeNotes ? check?.issuesNote ?? null : null };
   }
-  return { statuses, notInCompliance, expiringSoon };
+  return { statuses, notInCompliance, expiringSoon, missing };
+}
+
+/**
+ * Just the reminder counts behind club home "What's next" and the club
+ * overview (#479) — never the per-member statuses, so a caller that isn't
+ * allowed to see the roster's background-check column (an Area Coordinator)
+ * can still show the same counts without any name or note attached.
+ */
+export async function clubComplianceReminderCounts(organizationId: string, clubYear: string) {
+  const { notInCompliance, expiringSoon, missing } = await clubRosterComplianceStatuses(organizationId, clubYear, { includeNotes: false });
+  return { notInCompliance, expiringSoon, missing };
+}
+
+/**
+ * Club home's reminder counts (#479): the same gate as the roster's own
+ * compliance column below (directors and deputies only), so the two can't drift.
+ */
+export async function clubPortalComplianceReminderCounts(
+  organizationId: string,
+  clubYear: string,
+  capabilities: Pick<ClubCapabilities, "seeBirthDates">,
+) {
+  if (!capabilities.seeBirthDates) return null;
+  return clubComplianceReminderCounts(organizationId, clubYear);
 }
 
 /**
