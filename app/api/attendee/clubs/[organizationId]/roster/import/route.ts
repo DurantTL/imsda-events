@@ -6,7 +6,7 @@ import { rosterApiError } from "@/modules/club-rosters/api-errors";
 import { MAX_ROSTER_CSV_BYTES, parseRosterCsv, planRosterImport, rosterCsvAddDefaults, RosterCsvError } from "@/modules/club-rosters/csv-import";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import { addRosterMember, listRoster, RosterOperationError, updateRosterMember } from "@/modules/club-rosters/repository";
-import { refreshBackgroundCheckMatchForPerson } from "@/modules/background-checks/repository";
+import { refreshBackgroundCheckMatchesSafely } from "@/modules/background-checks/refresh-after-write";
 import { withRequestContext } from "@/lib/request-context";
 
 const importSchema = z.object({
@@ -88,7 +88,7 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
     }
     // #527: everyone touched by this import is matched against the
     // background check list right away, without waiting on the next upload.
-    for (const personId of touchedPersonIds) await refreshBackgroundCheckMatchForPerson(personId);
+    await refreshBackgroundCheckMatchesSafely(touchedPersonIds);
     await writeAuditLog({
       ...("userId" in actor ? { actorUserId: actor.userId } : {}),
       action: "CLUB_ROSTER_CSV_IMPORTED",

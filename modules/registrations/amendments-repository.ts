@@ -3,6 +3,7 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
 import { isSeminarPreferenceField } from "@/modules/attendee-accounts/registration-answer-policy";
 import { enqueueRegistrationUpdatedMessage } from "@/modules/communications/transactional-messages";
 import {
@@ -1182,7 +1183,7 @@ export async function amendRegistration(
   const prisma = getPrisma();
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
-      return await prisma.$transaction(async (tx) => {
+      const amended = await prisma.$transaction(async (tx) => {
         const existing = await tx.registrationOperation.findUnique({
           where: {
             eventId_clientRequestId: {
@@ -1543,6 +1544,10 @@ export async function amendRegistration(
         });
         return response;
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      // #527: a new or renamed attendee on the background-check list is
+      // matched after commit; best effort, never fails the amendment.
+      await refreshBackgroundCheckMatchesForRegistrations([registrationId]);
+      return amended;
     } catch (error) {
       if (!retryable(error)) throw error;
     }

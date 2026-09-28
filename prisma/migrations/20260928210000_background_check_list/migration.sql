@@ -28,7 +28,7 @@ CREATE TABLE "BackgroundCheckEntry" (
     "line" INTEGER NOT NULL,
     "firstName" TEXT NOT NULL,
     "lastName" TEXT NOT NULL,
-    "normalizedName" TEXT NOT NULL,
+    "normalizedName" TEXT,
     "email" TEXT,
     "sealedBirthDate" TEXT,
     "site" TEXT,
@@ -100,20 +100,36 @@ ALTER TABLE "BackgroundCheckMatch" ADD CONSTRAINT "BackgroundCheckMatch_entryId_
 -- AddForeignKey
 ALTER TABLE "BackgroundCheckReview" ADD CONSTRAINT "BackgroundCheckReview_entryId_fkey" FOREIGN KEY ("entryId") REFERENCES "BackgroundCheckEntry"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
+-- Remembered roster user_ids (#527 B2): one key format everywhere. Every
+-- ROSTER_IMPORT identity recorded before this migration holds the raw
+-- provider user_id; the list keys a user_id as "userId:<id>", so rewrite
+-- them to that format here, in the same transaction, so none is orphaned.
+UPDATE "ExternalIdentity"
+SET "externalId" = 'userId:' || "externalId", "updatedAt" = CURRENT_TIMESTAMP
+WHERE "provider" = 'ROSTER_IMPORT'
+  AND "providerScope" = ''
+  AND "externalId" NOT LIKE 'userId:%';
+
 -- Data migration: carry every existing "BackgroundCheck" row over as a
 -- migrated entry + match, so nobody's current status changes today. Names
 -- come from "Person" (the old table never stored them); email, birth date,
 -- and site were never captured by the old table either, so they are left
 -- unset here — the next real upload fills them in and re-matches normally.
--- "normalizedName" is a best-effort approximation (lower-cased, single-
--- spaced) for the derived-match refresh path; it is not relied on for this
--- migrated match itself, which is preserved verbatim below.
+--
+-- "normalizedName" is deliberately left NULL (#527 B3): names are only ever
+-- normalized in TypeScript (`matchableName`), never approximated in SQL, so
+-- accents and punctuation can't normalize differently here than at lookup.
+-- The first background-check refresh or upload after deploy fills it in
+-- (`backfillNormalizedNames`); nothing about the migrated match itself
+-- depends on it. A remembered user_id keys the entry the same way an upload
+-- will ("userId:<id>"), so the first roster upload counts that person as
+-- "changed", not dropped and re-added.
 DO $$
 DECLARE
   migration_upload_id TEXT := 'mig20260928210000';
   row_count INTEGER;
 BEGIN
-  SELECT COUNT(*) INTO row_count FROM "BackgroundCheck";
+  SELECT COUNT(*) INTO row_count FROM "BackgroundCheck" bc JOIN "Person" p ON p."id" = bc."personId";
   IF row_count > 0 THEN
     INSERT INTO "BackgroundCheckUpload" ("id", "format", "rowCount", "added", "changed", "dropped", "uploadedByUserId", "createdAt")
     VALUES (migration_upload_id, 'MIGRATION', row_count, row_count, 0, 0, 'MIGRATION', CURRENT_TIMESTAMP);
@@ -129,11 +145,11 @@ BEGIN
       ROW_NUMBER() OVER (ORDER BY bc."id"),
       p."firstName",
       p."lastName",
-      lower(regexp_replace(trim(both ' ' from regexp_replace(p."firstName" || ' ' || p."lastName", '\s+', ' ', 'g')), '[^a-zA-Z0-9 ]', '', 'g')),
       NULL,
       NULL,
       NULL,
-      ei."externalId",
+      NULL,
+      substring(ei."externalId" FROM 8),
       COALESCE(ei."externalId", 'migrated:' || bc."id"),
       bc."complianceStatus",
       bc."checkedOn",
@@ -153,12 +169,13 @@ BEGIN
       'MIGRATED',
       bc."createdAt",
       bc."updatedAt"
-    FROM "BackgroundCheck" bc;
+    FROM "BackgroundCheck" bc
+    JOIN "Person" p ON p."id" = bc."personId";
   END IF;
 END $$;
 
--- DropForeignKey
-ALTER TABLE "BackgroundCheck" DROP CONSTRAINT IF EXISTS "BackgroundCheck_personId_fkey";
-
--- DropTable
-DROP TABLE "BackgroundCheck";
+-- Keep the old table for one release (#527 N4): renamed, never written to
+-- again, and ignored by Prisma Client. A later migration drops it; see
+-- docs/BACKGROUND-CHECK-LIST-MIGRATION.md. Its constraint and index names
+-- are left as they were (the schema maps them explicitly).
+ALTER TABLE "BackgroundCheck" RENAME TO "BackgroundCheck_pre527";

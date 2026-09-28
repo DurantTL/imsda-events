@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   updateRosterMember: vi.fn(),
   writeAuditLog: vi.fn(),
   rejectCrossOriginRequest: vi.fn(),
-  refreshBackgroundCheckMatchForPerson: vi.fn(),
+  refreshBackgroundCheckMatchesSafely: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -21,7 +21,7 @@ vi.mock("@/modules/club-rosters/repository", async () => {
   const actual = await vi.importActual<typeof import("@/modules/club-rosters/repository")>("@/modules/club-rosters/repository");
   return { ...actual, listRoster: mocks.listRoster, addRosterMember: mocks.addRosterMember, updateRosterMember: mocks.updateRosterMember };
 });
-vi.mock("@/modules/background-checks/repository", () => ({ refreshBackgroundCheckMatchForPerson: mocks.refreshBackgroundCheckMatchForPerson }));
+vi.mock("@/modules/background-checks/refresh-after-write", () => ({ refreshBackgroundCheckMatchesSafely: mocks.refreshBackgroundCheckMatchesSafely }));
 
 import { POST } from "@/app/api/attendee/clubs/[organizationId]/roster/import/route";
 import { RosterAccessError } from "@/modules/club-rosters/access";
@@ -53,7 +53,7 @@ beforeEach(() => {
   mocks.listRoster.mockResolvedValue([{ id: "member-1", firstName: "Jordan", lastName: "Example" }]);
   mocks.addRosterMember.mockResolvedValue({ memberId: "member-new", personId: "person-new" });
   mocks.updateRosterMember.mockResolvedValue({ personId: "person-existing" });
-  mocks.refreshBackgroundCheckMatchForPerson.mockResolvedValue(undefined);
+  mocks.refreshBackgroundCheckMatchesSafely.mockResolvedValue(undefined);
 });
 
 describe("roster CSV (#384, #424)", () => {

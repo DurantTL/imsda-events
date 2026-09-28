@@ -1,14 +1,37 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // --- A small in-memory fake Prisma, just enough for the background-checks
-// repository's own queries (#527). Swapped out per describe block for the
-// simpler per-call mocks the read-path tests already used. ---
+// repository's own queries (#527). The real-database behaviour (the
+// migration, raw SQL, locks) is proven by `npm run test:background-check-list`
+// (scripts/verify-background-check-list.ts); this fake covers the rules. ---
 
 type Row = Record<string, unknown>;
 
 function nextIdFactory() {
   let counter = 0;
   return (prefix: string) => `${prefix}-${(counter += 1)}`;
+}
+
+/** The fake's stand-in for the refresh's coarse SQL name filter. */
+function compactName(first: string, last: string) {
+  return `${first} ${last}`.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function valueMatches(value: unknown, condition: unknown): boolean {
+  if (condition === null) return value === null || value === undefined;
+  if (condition && typeof condition === "object" && !(condition instanceof Date)) {
+    const c = condition as Row;
+    if ("in" in c && !(c.in as unknown[]).includes(value)) return false;
+    if ("not" in c) {
+      if (c.not === null) { if (value === null || value === undefined) return false; }
+      else if (value === c.not) return false;
+    }
+    if ("gte" in c && !((value as string) >= (c.gte as string))) return false;
+    if ("lte" in c && !((value as string) <= (c.lte as string))) return false;
+    if ("lt" in c && !((value as string) < (c.lt as string))) return false;
+    return true;
+  }
+  return value === condition;
 }
 
 function makeFakeDb() {
@@ -23,22 +46,58 @@ function makeFakeDb() {
   const attendees: Row[] = [];
   const events = new Map<string, Row>();
 
-  function entryFilter(entry: Row, where: Row): boolean {
+  const matchForEntry = (entryId: unknown) => [...matches.values()].find((match) => match.entryId === entryId) ?? null;
+  const matchForPerson = (personId: unknown) => [...matches.values()].find((match) => match.personId === personId) ?? null;
+
+  function entryWhere(entry: Row, where: Row = {}): boolean {
     for (const [key, condition] of Object.entries(where)) {
-      const value = entry[key];
-      if (condition === null) {
-        if (value !== null && value !== undefined) return false;
+      if (key === "match") {
+        if (condition === null && matchForEntry(entry.id)) return false;
         continue;
       }
-      if (condition && typeof condition === "object") {
-        const c = condition as Row;
-        if ("in" in c) { if (!(c.in as unknown[]).includes(value)) return false; continue; }
-        if ("gte" in c && !((value as string) >= (c.gte as string))) return false;
-        if ("lte" in c && !((value as string) <= (c.lte as string))) return false;
-        if ("lt" in c && !((value as string) < (c.lt as string))) return false;
+      if (key === "reviews") {
+        if ([...reviews.values()].some((review) => review.entryId === entry.id)) return false;
         continue;
       }
-      if (value !== condition) return false;
+      if (!valueMatches(entry[key], condition)) return false;
+    }
+    return true;
+  }
+
+  function withEntryRelations(entry: Row) {
+    const match = matchForEntry(entry.id);
+    return {
+      ...entry,
+      match: match ? { personId: match.personId, matchedBy: match.matchedBy } : null,
+      upload: uploads.get(entry.uploadId as string) ?? { createdAt: new Date(0) },
+    };
+  }
+
+  function matchWhere(match: Row, where: Row = {}): boolean {
+    if (where.OR) return (where.OR as Row[]).some((condition) => matchWhere(match, condition));
+    for (const [key, condition] of Object.entries(where)) {
+      if (key === "entry") {
+        const entry = entries.get(match.entryId as string);
+        if (!entry || !entryWhere(entry, condition as Row)) return false;
+        continue;
+      }
+      if (!valueMatches(match[key], condition)) return false;
+    }
+    return true;
+  }
+
+  function withMatchRelations(match: Row) {
+    const person = persons.get(match.personId as string) ?? { firstName: "", lastName: "" };
+    return { ...match, entry: { ...entries.get(match.entryId as string) }, person: { ...person } };
+  }
+
+  function identityWhere(identity: Row, where: Row = {}): boolean {
+    for (const [key, condition] of Object.entries(where)) {
+      if (key === "NOT") {
+        if (identityWhere(identity, condition as Row)) return false;
+        continue;
+      }
+      if (!valueMatches(identity[key], condition)) return false;
     }
     return true;
   }
@@ -47,24 +106,19 @@ function makeFakeDb() {
     if (where.organizationId && member.organizationId !== where.organizationId) return false;
     if (where.clubYear && member.clubYear !== where.clubYear) return false;
     if (where.status && member.status !== where.status) return false;
+    if (where.id && !valueMatches(member.id, where.id)) return false;
+    if (where.personId !== undefined && !valueMatches(member.personId, where.personId)) return false;
     const attendeeType = where.attendeeType as { in?: string[] } | undefined;
     if (attendeeType?.in && !attendeeType.in.includes(member.attendeeType as string)) return false;
-    if (where.person) {
-      const person = member.person as Row;
-      const filter = where.person as Row;
-      const first = filter.firstName as { equals: string } | undefined;
-      const last = filter.lastName as { equals: string } | undefined;
-      if (first && (person.firstName as string).toLowerCase() !== first.equals.toLowerCase()) return false;
-      if (last && (person.lastName as string).toLowerCase() !== last.equals.toLowerCase()) return false;
-    }
     return true;
   }
 
   function attendeeWhere(attendee: Row, where: Row): boolean {
-    const event = attendee.event as Row;
+    const event = attendee.event as Row | undefined;
     const endsAt = where.event as { endsAt?: { gte: Date } } | undefined;
-    if (endsAt?.endsAt && !((event.endsAt as Date) >= endsAt.endsAt.gte)) return false;
+    if (endsAt?.endsAt && !(event && (event.endsAt as Date) >= endsAt.endsAt.gte)) return false;
     if (where.eventId && attendee.eventId !== where.eventId) return false;
+    if (where.personId !== undefined && !valueMatches(attendee.personId, where.personId)) return false;
     const registration = attendee.registration as Row;
     const regWhere = where.registration as Row | undefined;
     if (regWhere?.status) {
@@ -76,26 +130,12 @@ function makeFakeDb() {
       const wantOrg = (regWhere.clubRegistration as Row).organizationId;
       if (clubReg?.organizationId !== wantOrg) return false;
     }
-    if (where.person) {
-      const person = attendee.person as Row;
-      const filter = where.person as Row;
-      const first = filter.firstName as { equals: string } | undefined;
-      const last = filter.lastName as { equals: string } | undefined;
-      if (first && (person.firstName as string).toLowerCase() !== first.equals.toLowerCase()) return false;
-      if (last && (person.lastName as string).toLowerCase() !== last.equals.toLowerCase()) return false;
-    }
     return true;
   }
 
-  const entryFindMany = async ({ where }: { where?: Row } = {}) => {
-    let list = [...entries.values()];
-    if (where?.uploadId) list = list.filter((entry) => entry.uploadId === where.uploadId);
-    if (where?.normalizedName) list = list.filter((entry) => entry.normalizedName === where.normalizedName);
-    if (where?.id && (where.id as Row).in) list = list.filter((entry) => (((where!.id as Row).in) as string[]).includes(entry.id as string));
-    if (where?.match === null) list = list.filter((entry) => ![...matches.values()].some((match) => match.entryId === entry.id));
-    if (where?.reviews) list = list.filter((entry) => ![...reviews.values()].some((review) => review.entryId === entry.id));
-    return list.map((entry) => ({ ...entry }));
-  };
+  const entryFindMany = async ({ where }: { where?: Row } = {}) => [...entries.values()]
+    .filter((entry) => entryWhere(entry, where))
+    .map(withEntryRelations);
 
   const client = {
     person: {
@@ -103,21 +143,25 @@ function makeFakeDb() {
       findMany: async ({ where }: { where?: { id?: { in: string[] } } } = {}) => {
         let list = [...persons.values()];
         if (where?.id?.in) list = list.filter((person) => where.id!.in.includes(person.id as string));
-        return list.map((person) => ({
-          ...person,
-          clubRosterMemberships: rosterMembers
-            .filter((member) => member.personId === person.id && member.status === "ACTIVE")
-            .map((member) => ({ organization: { name: (member.organization as Row).name } })),
-        }));
+        return list.map((person) => {
+          const match = matchForPerson(person.id);
+          return {
+            ...person,
+            backgroundCheckMatch: match ? { matchedBy: match.matchedBy, entry: { ...entries.get(match.entryId as string) } } : null,
+            clubRosterMemberships: rosterMembers
+              .filter((member) => member.personId === person.id && member.status === "ACTIVE")
+              .map((member) => ({ organization: { name: (member.organization as Row).name } })),
+          };
+        });
       },
     },
     backgroundCheckUpload: {
       findFirst: async () => {
-        const list = [...uploads.values()].sort((a, b) => (b.createdAt as Date).getTime() - (a.createdAt as Date).getTime());
+        const list = [...uploads.values()].sort((a, b) => (b.createdAt as Date).getTime() - (a.createdAt as Date).getTime() || String(b.id).localeCompare(String(a.id)));
         return list[0] ? { ...list[0] } : null;
       },
       create: async ({ data }: { data: Row }) => {
-        const row = { id: nextId("upload"), createdAt: new Date(), ...data };
+        const row = { id: nextId("upload"), createdAt: new Date(Date.now() + uploads.size), ...data };
         uploads.set(row.id, row);
         return { ...row };
       },
@@ -134,7 +178,7 @@ function makeFakeDb() {
       deleteMany: async ({ where }: { where: Row }) => {
         let removed = 0;
         for (const [id, entry] of [...entries.entries()]) {
-          if (where.uploadId && entry.uploadId !== where.uploadId) continue;
+          if (!entryWhere(entry, where)) continue;
           entries.delete(id);
           for (const [matchId, match] of [...matches.entries()]) if (match.entryId === id) matches.delete(matchId);
           for (const [reviewId, review] of [...reviews.entries()]) if (review.entryId === id) reviews.delete(reviewId);
@@ -149,39 +193,31 @@ function makeFakeDb() {
         const list = [...matches.values()].sort((a, b) => (b.updatedAt as Date).getTime() - (a.updatedAt as Date).getTime());
         return list[0] ? { ...list[0] } : null;
       },
+      findUnique: async ({ where }: { where: { id: string } }) => (matches.get(where.id) ? withMatchRelations(matches.get(where.id)!) : null),
+      findMany: async ({ where }: { where?: Row } = {}) => [...matches.values()].filter((match) => matchWhere(match, where)).map(withMatchRelations),
       createMany: async ({ data }: { data: Row[] }) => {
         for (const row of data) {
+          if (matchForPerson(row.personId) || matchForEntry(row.entryId)) throw new Error("Unique constraint failed on BackgroundCheckMatch");
           const id = nextId("match");
           matches.set(id, { id, createdAt: new Date(), updatedAt: new Date(), ...row });
         }
         return { count: data.length };
       },
       create: async ({ data }: { data: Row }) => {
+        if (matchForPerson(data.personId) || matchForEntry(data.entryId)) throw new Error("Unique constraint failed on BackgroundCheckMatch");
         const id = nextId("match");
         const row = { id, createdAt: new Date(), updatedAt: new Date(), ...data };
         matches.set(id, row);
         return { ...row };
       },
       deleteMany: async ({ where }: { where: Row }) => {
-        const conditions = (where.OR as Row[] | undefined) ?? [where];
-        const matchesCond = (row: Row, cond: Row) => {
-          if (cond.entryId && (cond.entryId as Row).in) return (((cond.entryId as Row).in) as string[]).includes(row.entryId as string);
-          if (cond.entryId) return row.entryId === cond.entryId;
-          if (cond.personId && (cond.personId as Row).in) return (((cond.personId as Row).in) as string[]).includes(row.personId as string);
-          if (cond.personId) return row.personId === cond.personId;
-          return false;
-        };
         let removed = 0;
         for (const [id, row] of [...matches.entries()]) {
-          if (conditions.some((cond) => matchesCond(row, cond))) { matches.delete(id); removed += 1; }
+          if (matchWhere(row, where)) { matches.delete(id); removed += 1; }
         }
         return { count: removed };
       },
-      count: async ({ where }: { where?: { entry?: Row } } = {}) => {
-        let list = [...matches.values()];
-        if (where?.entry) list = list.filter((match) => { const entry = entries.get(match.entryId as string); return entry ? entryFilter(entry, where.entry!) : false; });
-        return list.length;
-      },
+      count: async ({ where }: { where?: Row } = {}) => [...matches.values()].filter((match) => matchWhere(match, where)).length,
     },
     backgroundCheckReview: {
       findMany: async () => [...reviews.values()].sort((a, b) => (a.createdAt as Date).getTime() - (b.createdAt as Date).getTime())
@@ -201,8 +237,7 @@ function makeFakeDb() {
       deleteMany: async ({ where }: { where: Row }) => {
         let removed = 0;
         for (const [id, review] of [...reviews.entries()]) {
-          if (where.entryId && (where.entryId as Row).in && !(((where.entryId as Row).in) as string[]).includes(review.entryId as string)) continue;
-          if (where.entryId && typeof where.entryId === "string" && review.entryId !== where.entryId) continue;
+          if (!valueMatches(review.entryId, where.entryId)) continue;
           reviews.delete(id);
           removed += 1;
         }
@@ -211,25 +246,40 @@ function makeFakeDb() {
       count: async () => reviews.size,
     },
     externalIdentity: {
-      findMany: async ({ where }: { where: Row }) => {
-        let list = [...identities.values()];
-        const externalId = where.externalId as { in: string[] } | undefined;
-        if (externalId) list = list.filter((identity) => externalId.in.includes(identity.externalId as string));
-        if (where.provider) list = list.filter((identity) => identity.provider === where.provider);
-        if (where.providerScope !== undefined) list = list.filter((identity) => identity.providerScope === where.providerScope);
-        return list.map((identity) => ({ ...identity, person: identity.personId ? persons.get(identity.personId as string) ?? null : null }));
-      },
+      findMany: async ({ where }: { where: Row }) => [...identities.values()]
+        .filter((identity) => identityWhere(identity, where))
+        .map((identity) => ({ ...identity, person: identity.personId ? persons.get(identity.personId as string) ?? null : null })),
       deleteMany: async ({ where }: { where: Row }) => {
         let removed = 0;
         for (const [id, identity] of [...identities.entries()]) {
-          if (where.provider && identity.provider !== where.provider) continue;
-          if (where.personId && identity.personId !== where.personId) continue;
-          const not = where.NOT as { externalId?: string } | undefined;
-          if (not?.externalId && identity.externalId === not.externalId) continue;
+          if (!identityWhere(identity, where)) continue;
           identities.delete(id);
           removed += 1;
         }
         return { count: removed };
+      },
+      updateMany: async ({ where, data }: { where: Row; data: Row }) => {
+        let updated = 0;
+        for (const identity of identities.values()) {
+          if (!identityWhere(identity, where)) continue;
+          Object.assign(identity, data);
+          updated += 1;
+        }
+        return { count: updated };
+      },
+      createMany: async ({ data }: { data: Row[] }) => {
+        let created = 0;
+        for (const row of data) {
+          const clash = [...identities.values()].some((identity) => (
+            identity.provider === row.provider && identity.providerScope === row.providerScope
+            && (identity.externalId === row.externalId || identity.personId === row.personId)
+          ));
+          if (clash) continue;
+          const id = nextId("identity");
+          identities.set(id, { id, ...row });
+          created += 1;
+        }
+        return { count: created };
       },
       upsert: async ({ where, create, update }: { where: Row; create: Row; update: Row }) => {
         const key = where.provider_providerScope_externalId as Row;
@@ -259,6 +309,23 @@ function makeFakeDb() {
         return list.map((event) => ({ ...event }));
       },
     },
+    // Advisory locks are a no-op here; the normalizedName backfill is applied
+    // by hand, from the ids and TypeScript-computed names it passes.
+    $executeRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      if (strings.join("?").includes('SET "normalizedName"')) {
+        const [ids, names] = values as [string[], string[]];
+        ids.forEach((id, index) => { const entry = entries.get(id); if (entry && entry.normalizedName == null) entry.normalizedName = names[index]; });
+        return ids.length;
+      }
+      return 0;
+    },
+    // The refresh's coarse name filter: people whose compacted name is one asked for.
+    $queryRaw: async (_strings: TemplateStringsArray, ...values: unknown[]) => {
+      const [compacts] = values as [string[]];
+      return [...persons.values()]
+        .filter((person) => compacts.includes(compactName(person.firstName as string, person.lastName as string)))
+        .map((person) => ({ id: person.id, firstName: person.firstName, lastName: person.lastName }));
+    },
   };
   (client as { $transaction?: unknown }).$transaction = async (work: (tx: typeof client) => Promise<unknown>) => work(client);
 
@@ -285,6 +352,8 @@ import {
   attendeeIsAdult,
   backgroundCheckIdentityKey,
   backgroundCheckState,
+  dedupeListRows,
+  isRememberedIdentityKey,
   backgroundFlagsCsv,
   clubComplianceState,
   complianceReminders,
@@ -302,17 +371,21 @@ import {
 import {
   applyBackgroundCheckUpload,
   backgroundCheckSummary,
+  backgroundCheckUploadFingerprint,
   clubComplianceReminderCounts,
   clubPortalComplianceReminderCounts,
   clubPortalComplianceStatuses,
   clubRosterComplianceStatuses,
   listBackgroundCheckReviews,
   listEventBackgroundFlags,
+  listManualBackgroundCheckMatches,
   listUnmatchedBackgroundCheckEntries,
   planBackgroundCheckUpload,
   refreshBackgroundCheckMatchForPerson,
   resolveBackgroundCheckReview,
+  undoManualBackgroundCheckMatch,
 } from "@/modules/background-checks/repository";
+import { BackgroundCheckOperationError } from "@/modules/background-checks/errors";
 import { clubCapabilities } from "@/modules/organizations/director-grants-domain";
 
 beforeEach(() => {
@@ -441,7 +514,7 @@ describe("the unified list row mapping (#527)", () => {
     expect(backgroundCheckIdentityKey({ sourceUserId: "9001", normalizedName, email: "ana@example.test", birthDate: "1985-01-01", site: "Test Church" }))
       .toBe("userId:9001");
     expect(backgroundCheckIdentityKey({ sourceUserId: null, normalizedName, email: "ana@example.test", birthDate: "1985-01-01", site: "Test Church" }))
-      .toBe("email:ana@example.test");
+      .toBe(`email:ana@example.test|${normalizedName}`);
     expect(backgroundCheckIdentityKey({ sourceUserId: null, normalizedName, email: null, birthDate: "1985-01-01", site: "Test Church" }))
       .toBe(`name-birth:${normalizedName}|1985-01-01`);
     expect(backgroundCheckIdentityKey({ sourceUserId: null, normalizedName, email: null, birthDate: null, site: "Test Church" }))
@@ -459,7 +532,7 @@ describe("planBackgroundCheckUpload: the confirm counts (#527)", () => {
 
   it("counts everything as added when the list is empty", async () => {
     const rows = [sterlingRowToListRow(parseSterlingCsv("First name,Last name,Email,Expiration date\nAna,Rivera,ana@example.test,2029-01-01")[0]!)];
-    await expect(planBackgroundCheckUpload(rows)).resolves.toEqual({ added: 1, changed: 0, dropped: 0, total: 1 });
+    await expect(planBackgroundCheckUpload(rows)).resolves.toMatchObject({ added: 1, changed: 0, dropped: 0, total: 1 });
   });
 
   it("counts added, changed, and dropped against what's already on file", async () => {
@@ -467,24 +540,51 @@ describe("planBackgroundCheckUpload: the confirm counts (#527)", () => {
     currentClient = client;
     const uploadId = "upload-1";
     seed.uploads.set(uploadId, { id: uploadId, createdAt: new Date("2026-09-01") });
-    seed.entries.set("e-kept", { id: "e-kept", uploadId, identityKey: "email:ana@example.test", firstName: "Ana", lastName: "Rivera", email: "ana@example.test", sealedBirthDate: null, site: null, sourceUserId: null, complianceStatus: null, checkedOn: null, expiresOn: "2029-01-01", issuesNote: null });
-    seed.entries.set("e-dropped", { id: "e-dropped", uploadId, identityKey: "email:bo@example.test", firstName: "Bo", lastName: "Lee", email: "bo@example.test", sealedBirthDate: null, site: null, sourceUserId: null, complianceStatus: null, checkedOn: null, expiresOn: "2029-01-01", issuesNote: null });
+    seed.entries.set("e-kept", { id: "e-kept", uploadId, identityKey: "email:ana@example.test|ana rivera", firstName: "Ana", lastName: "Rivera", email: "ana@example.test", sealedBirthDate: null, site: null, sourceUserId: null, complianceStatus: null, checkedOn: null, expiresOn: "2029-01-01", issuesNote: null });
+    seed.entries.set("e-dropped", { id: "e-dropped", uploadId, identityKey: "email:bo@example.test|bo lee", firstName: "Bo", lastName: "Lee", email: "bo@example.test", sealedBirthDate: null, site: null, sourceUserId: null, complianceStatus: null, checkedOn: null, expiresOn: "2029-01-01", issuesNote: null });
 
     const rows = [
       sterlingRowToListRow(parseSterlingCsv("First name,Last name,Email,Expiration date\nAna,Rivera,ana@example.test,2030-01-01")[0]!), // same identity, new date -> changed
       sterlingRowToListRow(parseSterlingCsv("First name,Last name,Email,Expiration date\nKim,Cho,kim@example.test,2029-01-01")[0]!), // new -> added
     ];
     const counts = await planBackgroundCheckUpload(rows);
-    expect(counts).toEqual({ added: 1, changed: 1, dropped: 1, total: 2 });
+    expect(counts).toMatchObject({ added: 1, changed: 1, dropped: 1, total: 2 });
+    expect(counts.fingerprint).toBe(backgroundCheckUploadFingerprint(uploadId, rows));
   });
 
-  it("the later row wins when an upload's own rows share an identity key", async () => {
-    const rows = [
-      sterlingRowToListRow(parseSterlingCsv("First name,Last name,Email,Expiration date\nAna,Rivera,ana@example.test,2028-01-01")[0]!),
-      sterlingRowToListRow(parseSterlingCsv("First name,Last name,Email,Expiration date\nAna,Rivera,ana@example.test,2029-01-01")[0]!),
-    ];
+  it("keeps the later row when an upload's own rows are the same person, and reports the earlier one instead of dropping it silently (B4)", async () => {
+    const rows = parseSterlingCsv([
+      "First name,Last name,Email,Expiration date",
+      "Ana,Rivera,ana@example.test,2028-01-01",
+      "Ana,Rivera,ana@example.test,2029-01-01",
+    ].join("\n")).map(sterlingRowToListRow);
+    const { rows: kept, duplicates } = dedupeListRows(rows);
+    expect(kept.map((row) => [row.line, row.expiresOn])).toEqual([[3, "2029-01-01"]]);
+    expect(duplicates).toEqual([{ line: 2, name: "Ana Rivera", problems: ["Row 3 is the same person, so only row 3 is kept."] }]);
     const counts = await planBackgroundCheckUpload(rows);
     expect(counts.total).toBe(1);
+  });
+
+  it("keeps a couple who share one email as two entries (B4)", async () => {
+    const rows = parseSterlingCsv([
+      "First name,Last name,Email,Expiration date",
+      "Ana,Rivera,family@example.test,2029-01-01",
+      "Luis,Rivera,family@example.test,2029-01-01",
+    ].join("\n")).map(sterlingRowToListRow);
+    expect(new Set(rows.map((row) => row.identityKey)).size).toBe(2);
+    const { rows: kept, duplicates } = dedupeListRows(rows);
+    expect(kept).toHaveLength(2);
+    expect(duplicates).toEqual([]);
+    await expect(planBackgroundCheckUpload(rows)).resolves.toMatchObject({ added: 2, total: 2 });
+  });
+
+  it("fingerprints the list a preview compared against and the rows it read (N1)", () => {
+    const rows = [sterlingRowToListRow(parseSterlingCsv("First name,Last name,Email,Expiration date\nAna,Rivera,ana@example.test,2029-01-01")[0]!)];
+    const changedRows = [sterlingRowToListRow(parseSterlingCsv("First name,Last name,Email,Expiration date\nAna,Rivera,ana@example.test,2030-01-01")[0]!)];
+    expect(backgroundCheckUploadFingerprint("u-1", rows)).toBe(backgroundCheckUploadFingerprint("u-1", rows));
+    expect(backgroundCheckUploadFingerprint("u-1", rows)).not.toBe(backgroundCheckUploadFingerprint("u-2", rows));
+    expect(backgroundCheckUploadFingerprint("u-1", rows)).not.toBe(backgroundCheckUploadFingerprint("u-1", changedRows));
+    expect(backgroundCheckUploadFingerprint("u-1", rows)).not.toContain("Rivera");
   });
 });
 
@@ -612,6 +712,22 @@ describe("applyBackgroundCheckUpload: replace and match (#527)", () => {
   });
 });
 
+function rosterAdult(seed: ReturnType<typeof makeFakeDb>["seed"], personId: string, firstName: string, lastName: string, extra: { email?: string; clubName?: string; sealedBirthDate?: string | null } = {}) {
+  seed.persons.set(personId, { id: personId, firstName, lastName, normalizedEmail: extra.email ?? null });
+  seed.rosterMembers.push({
+    id: `rm-${personId}`, personId, organizationId: "org-1", clubYear: "2026-27", status: "ACTIVE", attendeeType: "ADULT", sealedBirthDate: extra.sealedBirthDate ?? null,
+    person: { firstName, lastName, normalizedEmail: extra.email ?? null, attendeeAccountLinks: [] },
+    organization: { name: extra.clubName ?? "Test Pathfinders", parentOrganization: null },
+  });
+}
+
+function seedEntry(seed: ReturnType<typeof makeFakeDb>["seed"], id: string, fields: Row) {
+  seed.entries.set(id, {
+    id, uploadId: "u-1", identityKey: `migrated:${id}`, firstName: "", lastName: "", normalizedName: null, email: null, sealedBirthDate: null,
+    site: null, sourceUserId: null, complianceStatus: null, checkedOn: null, expiresOn: null, issuesNote: null, ...fields,
+  });
+}
+
 describe("refreshBackgroundCheckMatchForPerson: matched without a re-upload (#527)", () => {
   it("a person added to a roster after an upload is matched right away", async () => {
     const { client, seed } = makeFakeDb();
@@ -622,13 +738,7 @@ describe("refreshBackgroundCheckMatchForPerson: matched without a re-upload (#52
     expect(seed.matches.size).toBe(0);
 
     // Ana is added to a club roster afterward.
-    seed.persons.set("p-ana", { id: "p-ana", firstName: "Ana", lastName: "Rivera" });
-    seed.rosterMembers.push({
-      id: "rm-1", personId: "p-ana", organizationId: "org-1", clubYear: "2026-27", status: "ACTIVE", attendeeType: "ADULT", sealedBirthDate: null,
-      person: { firstName: "Ana", lastName: "Rivera", normalizedEmail: "ana@example.test", attendeeAccountLinks: [] },
-      organization: { name: "Test Pathfinders", parentOrganization: null },
-    });
-
+    rosterAdult(seed, "p-ana", "Ana", "Rivera", { email: "ana@example.test" });
     await refreshBackgroundCheckMatchForPerson("p-ana", new Date("2026-09-29T12:00:00Z"));
 
     const matches = [...seed.matches.values()];
@@ -638,12 +748,9 @@ describe("refreshBackgroundCheckMatchForPerson: matched without a re-upload (#52
   it("clears a stale match when a person's name change no longer matches their old entry", async () => {
     const { client, seed } = makeFakeDb();
     currentClient = client;
+    seed.uploads.set("u-1", { id: "u-1", createdAt: new Date("2026-09-01") });
     seed.persons.set("p-ana", { id: "p-ana", firstName: "Ana", lastName: "Rivera" });
-    seed.entries.set("e-1", {
-      id: "e-1", uploadId: "u-1", identityKey: "email:ana@example.test", firstName: "Ana", lastName: "Rivera",
-      normalizedName: matchableName("Ana Rivera"), email: "ana@example.test", sealedBirthDate: null, site: null, sourceUserId: null,
-      complianceStatus: null, checkedOn: null, expiresOn: "2029-01-01", issuesNote: null,
-    });
+    seedEntry(seed, "e-1", { identityKey: "email:ana@example.test|ana rivera", firstName: "Ana", lastName: "Rivera", normalizedName: matchableName("Ana Rivera"), email: "ana@example.test", expiresOn: "2029-01-01" });
     seed.matches.set("m-1", { id: "m-1", personId: "p-ana", entryId: "e-1", matchedBy: "AUTO", createdAt: new Date(), updatedAt: new Date() });
 
     // Renamed — no roster/registration candidate any more under the new name, and no entry shares it either.
@@ -651,47 +758,216 @@ describe("refreshBackgroundCheckMatchForPerson: matched without a re-upload (#52
     await refreshBackgroundCheckMatchForPerson("p-ana", new Date("2026-09-29T12:00:00Z"));
     expect(seed.matches.size).toBe(0);
   });
+
+  it("never deletes a MIGRATED or MANUAL match it can't recreate (B1)", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    seed.uploads.set("u-1", { id: "u-1", createdAt: new Date("2026-09-01") });
+    // Two people sharing a name: one carried over by the migration (no
+    // evidence at all on the entry), one matched by hand.
+    rosterAdult(seed, "p-kim-1", "Kim", "Cho");
+    rosterAdult(seed, "p-kim-2", "Kim", "Cho");
+    seedEntry(seed, "e-migrated", { firstName: "Kim", lastName: "Cho", normalizedName: matchableName("Kim Cho"), complianceStatus: "CLEAR" });
+    seedEntry(seed, "e-manual", { identityKey: "name:kim cho", firstName: "Kim", lastName: "Cho", normalizedName: matchableName("Kim Cho"), complianceStatus: "FLAGGED" });
+    seed.matches.set("m-1", { id: "m-1", personId: "p-kim-1", entryId: "e-migrated", matchedBy: "MIGRATED", createdAt: new Date(), updatedAt: new Date() });
+    seed.matches.set("m-2", { id: "m-2", personId: "p-kim-2", entryId: "e-manual", matchedBy: "MANUAL", createdAt: new Date(), updatedAt: new Date() });
+
+    await refreshBackgroundCheckMatchForPerson("p-kim-1", new Date("2026-09-29T12:00:00Z"));
+    await refreshBackgroundCheckMatchForPerson("p-kim-2", new Date("2026-09-29T12:00:00Z"));
+
+    expect([...seed.matches.values()].map((match) => [match.personId, match.entryId, match.matchedBy]).sort()).toEqual([
+      ["p-kim-1", "e-migrated", "MIGRATED"],
+      ["p-kim-2", "e-manual", "MANUAL"],
+    ]);
+    expect(seed.reviews.size).toBe(0);
+  });
+
+  it("fills in a migrated entry's normalizedName in TypeScript, accents and hyphens included (B3)", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    seed.uploads.set("u-1", { id: "u-1", createdAt: new Date("2026-09-01") });
+    seed.persons.set("p-jose", { id: "p-jose", firstName: "José", lastName: "Núñez" });
+    seedEntry(seed, "e-jose", { firstName: "José", lastName: "Núñez" });
+    seedEntry(seed, "e-mary", { firstName: "Mary-Ann", lastName: "Smith - Jones" });
+    await refreshBackgroundCheckMatchForPerson("p-jose", new Date("2026-09-29T12:00:00Z"));
+    expect(seed.entries.get("e-jose")!.normalizedName).toBe("jose nunez");
+    expect(seed.entries.get("e-jose")!.normalizedName).toBe(matchableName("Jose Nunez"));
+    expect(seed.entries.get("e-mary")!.normalizedName).toBe(matchableName("Mary-Ann Smith - Jones"));
+  });
+
+  it("groups the refresh by matchableName, the same as the full pass, not exact first and last names (N6)", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    // The list says "Jose Nunez" (no accents); the roster says "José Núñez".
+    const rows = [sterlingRowToListRow(parseSterlingCsv("First name,Last name,Email,Expiration date\nJose,Nunez,jose@example.test,2029-01-01")[0]!)];
+    await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", new Date("2026-09-28T12:00:00Z"));
+    rosterAdult(seed, "p-jose", "José", "Núñez", { email: "jose@example.test" });
+    await refreshBackgroundCheckMatchForPerson("p-jose", new Date("2026-09-29T12:00:00Z"));
+    expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-jose", matchedBy: "AUTO" })]);
+  });
+
+  it("does nothing, and fails nothing, before any list has been uploaded", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    rosterAdult(seed, "p-ana", "Ana", "Rivera");
+    await expect(refreshBackgroundCheckMatchForPerson("p-ana")).resolves.toBeUndefined();
+    expect(seed.matches.size).toBe(0);
+  });
+});
+
+describe("remembered user_ids (#527 B2, N3)", () => {
+  it("records the user_id identity on a confident name-and-site match, as the roster import did", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    rosterAdult(seed, "p-lu", "Lu", "Moss", { clubName: "Test Pathfinders" });
+    const [row] = parseRosterBackgroundCsv("user_id,user_last,user_first,sites,compliance\n9001,Moss,Lu,Test Pathfinders,y");
+    await applyBackgroundCheckUpload([rosterRowToListRow(row!)], "ROSTER", "admin-1", new Date("2026-09-28T12:00:00Z"));
+    expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-lu", matchedBy: "AUTO" })]);
+    expect([...seed.identities.values()]).toEqual([expect.objectContaining({ provider: "ROSTER_IMPORT", providerScope: "", externalId: "userId:9001", personId: "p-lu" })]);
+
+    // The next upload matches by that identity, even with the site gone.
+    const [again] = parseRosterBackgroundCsv("user_id,user_last,user_first,compliance\n9001,Moss,Lu,n");
+    await applyBackgroundCheckUpload([rosterRowToListRow(again!)], "ROSTER", "admin-1", new Date("2026-10-01T12:00:00Z"));
+    expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-lu", matchedBy: "IDENTITY" })]);
+  });
+
+  it("never overwrites a user_id that belongs to someone else, or a person's other remembered id", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    rosterAdult(seed, "p-lu", "Lu", "Moss", { clubName: "Test Pathfinders" });
+    seed.identities.set("id-1", { id: "id-1", provider: "ROSTER_IMPORT", providerScope: "", externalId: "userId:7777", personId: "p-lu" });
+    const [row] = parseRosterBackgroundCsv("user_id,user_last,user_first,sites,compliance\n9001,Moss,Lu,Test Pathfinders,y");
+    await applyBackgroundCheckUpload([rosterRowToListRow(row!)], "ROSTER", "admin-1", new Date("2026-09-28T12:00:00Z"));
+    expect([...seed.identities.values()]).toEqual([expect.objectContaining({ externalId: "userId:7777", personId: "p-lu" })]);
+  });
+
+  it("only a provider user_id is ever remembered as an identity (N3)", () => {
+    expect(isRememberedIdentityKey("userId:9001")).toBe(true);
+    for (const key of ["name:ana rivera", "name-site:ana rivera|test church", "email:ana@example.test|ana rivera", "name-birth:ana rivera|1985-01-01", "migrated:x", "userId:"]) {
+      expect(isRememberedIdentityKey(key)).toBe(false);
+    }
+  });
 });
 
 describe("staff review resolution (#527)", () => {
-  it("remembers a manual match so it holds on the next upload", async () => {
-    const { client, seed } = makeFakeDb();
-    currentClient = client;
+  function ambiguousKimCho(seed: ReturnType<typeof makeFakeDb>["seed"], identityKey = "email:kim@example.test|kim cho") {
     seed.persons.set("p-kim-1", { id: "p-kim-1", firstName: "Kim", lastName: "Cho" });
     seed.persons.set("p-kim-2", { id: "p-kim-2", firstName: "Kim", lastName: "Cho" });
     seed.uploads.set("u-1", { id: "u-1", createdAt: new Date("2026-09-01") });
-    seed.entries.set("e-1", {
-      id: "e-1", uploadId: "u-1", identityKey: "email:kim@example.test", firstName: "Kim", lastName: "Cho",
-      normalizedName: matchableName("Kim Cho"), email: "kim@example.test", sealedBirthDate: null, site: null, sourceUserId: null,
-      complianceStatus: null, checkedOn: null, expiresOn: "2029-01-01", issuesNote: null,
-    });
+    seedEntry(seed, "e-1", { identityKey, firstName: "Kim", lastName: "Cho", normalizedName: matchableName("Kim Cho"), email: "kim@example.test", expiresOn: "2029-01-01" });
     seed.reviews.set("r-1", { id: "r-1", entryId: "e-1", reason: "More than one person matches.", candidatePersonIds: ["p-kim-1", "p-kim-2"], createdAt: new Date() });
+  }
+
+  it("keeps a manual match across refreshes and the next upload, without an identity for a non-user_id key (N2, N3)", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    ambiguousKimCho(seed);
 
     await resolveBackgroundCheckReview("r-1", { type: "match", personId: "p-kim-1" }, "admin-1");
 
     expect(seed.reviews.size).toBe(0);
     expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-kim-1", entryId: "e-1", matchedBy: "MANUAL" })]);
-    const identity = [...seed.identities.values()].find((row) => row.externalId === "email:kim@example.test");
-    expect(identity).toMatchObject({ personId: "p-kim-1", provider: "ROSTER_IMPORT" });
+    expect(seed.identities.size).toBe(0);
 
-    // The next upload's row for the same entry now matches by the remembered identity.
-    seed.persons.set("p-kim-1", { id: "p-kim-1", firstName: "Kim", lastName: "Cho" });
+    await refreshBackgroundCheckMatchForPerson("p-kim-1", new Date("2026-09-29T12:00:00Z"));
+    expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-kim-1", matchedBy: "MANUAL" })]);
+
+    // The next upload's row with the same identity key keeps the staff decision.
     const rows = [sterlingRowToListRow(parseSterlingCsv("First name,Last name,Email,Expiration date\nKim,Cho,kim@example.test,2030-01-01")[0]!)];
     await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", new Date("2026-10-01T12:00:00Z"));
     const finalMatches = [...seed.matches.values()];
-    expect(finalMatches).toEqual([expect.objectContaining({ personId: "p-kim-1", matchedBy: "IDENTITY" })]);
+    expect(finalMatches).toEqual([expect.objectContaining({ personId: "p-kim-1", matchedBy: "MANUAL" })]);
+    expect(seed.entries.get(finalMatches[0]!.entryId as string)).toMatchObject({ expiresOn: "2030-01-01" });
+  });
+
+  it("holds a manual match on a user_id row even when the next upload's name differs (N2)", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    ambiguousKimCho(seed, "userId:42");
+    await resolveBackgroundCheckReview("r-1", { type: "match", personId: "p-kim-2" }, "admin-1");
+    expect([...seed.identities.values()]).toEqual([expect.objectContaining({ externalId: "userId:42", personId: "p-kim-2" })]);
+
+    const [row] = parseRosterBackgroundCsv("user_id,user_last,user_first,compliance\n42,Cho-Park,Kimberly,y");
+    await applyBackgroundCheckUpload([rosterRowToListRow(row!)], "ROSTER", "admin-1", new Date("2026-10-01T12:00:00Z"));
+    expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-kim-2", matchedBy: "MANUAL" })]);
+    expect(seed.reviews.size).toBe(0);
+  });
+
+  it("undoes a manual match: the match and its user_id identity go, and the automatic rules apply again", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    ambiguousKimCho(seed, "userId:42");
+    await resolveBackgroundCheckReview("r-1", { type: "match", personId: "p-kim-1" }, "admin-1");
+    const [manual] = await listManualBackgroundCheckMatches();
+    expect(manual).toMatchObject({ personId: "p-kim-1", personName: "Kim Cho", entryName: "Kim Cho" });
+
+    await undoManualBackgroundCheckMatch(manual!.id, "admin-1");
+    expect(seed.matches.size).toBe(0);
+    expect(seed.identities.size).toBe(0);
+    expect(auditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "BACKGROUND_CHECK_MANUAL_MATCH_UNDONE" }), client);
+    await expect(listManualBackgroundCheckMatches()).resolves.toEqual([]);
+  });
+
+  it("refuses to undo a match that wasn't made by hand, or one that's gone", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    seed.uploads.set("u-1", { id: "u-1", createdAt: new Date("2026-09-01") });
+    seed.persons.set("p-ana", { id: "p-ana", firstName: "Ana", lastName: "Rivera" });
+    seedEntry(seed, "e-1", { firstName: "Ana", lastName: "Rivera", normalizedName: "ana rivera" });
+    seed.matches.set("m-1", { id: "m-1", personId: "p-ana", entryId: "e-1", matchedBy: "AUTO", createdAt: new Date(), updatedAt: new Date() });
+    await expect(undoManualBackgroundCheckMatch("m-1", "admin-1")).rejects.toMatchObject({ code: "NOT_A_MANUAL_MATCH", status: 400 });
+    await expect(undoManualBackgroundCheckMatch("m-missing", "admin-1")).rejects.toMatchObject({ code: "MATCH_NOT_FOUND", status: 404 });
+    expect(seed.matches.size).toBe(1);
   });
 
   it("a dismissal clears the review without remembering anything", async () => {
     const { client, seed } = makeFakeDb();
     currentClient = client;
-    seed.entries.set("e-1", { id: "e-1", uploadId: "u-1", identityKey: "email:kim@example.test", firstName: "Kim", lastName: "Cho", normalizedName: matchableName("Kim Cho"), email: "kim@example.test", sealedBirthDate: null, site: null, sourceUserId: null, complianceStatus: null, checkedOn: null, expiresOn: null, issuesNote: null });
+    seedEntry(seed, "e-1", { identityKey: "email:kim@example.test|kim cho", firstName: "Kim", lastName: "Cho", normalizedName: matchableName("Kim Cho"), email: "kim@example.test" });
     seed.reviews.set("r-1", { id: "r-1", entryId: "e-1", reason: "Ambiguous.", candidatePersonIds: ["p-a", "p-b"], createdAt: new Date() });
     await resolveBackgroundCheckReview("r-1", { type: "dismiss" }, "admin-1");
     expect(seed.reviews.size).toBe(0);
     expect(seed.matches.size).toBe(0);
     expect(seed.identities.size).toBe(0);
     expect(auditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "BACKGROUND_CHECK_REVIEW_DISMISSED" }), client);
+  });
+
+  it("is a 400 to pick someone who isn't a candidate, and a 404 for an unknown review (N5)", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    ambiguousKimCho(seed);
+    const notCandidate = await resolveBackgroundCheckReview("r-1", { type: "match", personId: "p-someone-else" }, "admin-1").catch((error: unknown) => error);
+    expect(notCandidate).toBeInstanceOf(BackgroundCheckOperationError);
+    expect(notCandidate).toMatchObject({ code: "NOT_A_CANDIDATE", status: 400 });
+    await expect(resolveBackgroundCheckReview("r-missing", { type: "dismiss" }, "admin-1")).rejects.toMatchObject({ code: "REVIEW_NOT_FOUND", status: 404 });
+    expect(seed.reviews.size).toBe(1);
+    expect(seed.matches.size).toBe(0);
+  });
+});
+
+describe("applyBackgroundCheckUpload: concurrent confirms (#527 N1)", () => {
+  it("refuses a confirm whose preview was computed against a different list", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    const rows = [sterlingRowToListRow(parseSterlingCsv("First name,Last name,Email,Expiration date\nAna,Rivera,ana@example.test,2029-01-01")[0]!)];
+    const preview = await planBackgroundCheckUpload(rows);
+    // Someone else's upload lands between this preview and its confirm.
+    await applyBackgroundCheckUpload(rows, "STERLING", "admin-2", new Date("2026-09-28T12:00:00Z"), { expectedFingerprint: preview.fingerprint });
+    await expect(applyBackgroundCheckUpload(rows, "STERLING", "admin-1", new Date("2026-09-28T12:00:00Z"), { expectedFingerprint: preview.fingerprint }))
+      .rejects.toMatchObject({ code: "PREVIEW_CHANGED", status: 409 });
+    expect(seed.uploads.size).toBe(1);
+  });
+
+  it("deletes every entry that isn't the new upload's", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    seed.uploads.set("u-old-1", { id: "u-old-1", createdAt: new Date("2026-09-01") });
+    seed.uploads.set("u-old-2", { id: "u-old-2", createdAt: new Date("2026-09-02") });
+    seedEntry(seed, "e-a", { uploadId: "u-old-1", firstName: "A", lastName: "One", normalizedName: "a one" });
+    seedEntry(seed, "e-b", { uploadId: "u-old-2", firstName: "B", lastName: "Two", normalizedName: "b two" });
+    const rows = [sterlingRowToListRow(parseSterlingCsv("First name,Last name,Email,Expiration date\nAna,Rivera,ana@example.test,2029-01-01")[0]!)];
+    await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", new Date("2026-09-28T12:00:00Z"));
+    expect([...seed.entries.values()].map((entry) => entry.firstName)).toEqual(["Ana"]);
   });
 });
 
@@ -826,6 +1102,89 @@ describe("club page compliance (#427, #527)", () => {
     expect(flags?.adults).toBe(4);
     expect(flags?.people.map((flag) => [flag.attendeeId, flag.state])).toEqual([["roster-no", "NOT_COMPLIANT"], ["none", "MISSING"]]);
     expect(backgroundFlagsCsv(flags!.people)).toContain("Not in compliance");
+  });
+});
+
+describe("read-time matching for people the cache hasn't matched yet (#527 B5)", () => {
+  function youthEvent(seed: ReturnType<typeof makeFakeDb>["seed"]) {
+    seed.events.set("event-1", { id: "event-1", checksAdultBackgrounds: true, startsAt: new Date("2026-10-02T17:00:00Z"), endsAt: new Date("2026-10-04T17:00:00Z"), timezone: "America/Chicago" });
+  }
+  function registeredAdult(id: string, firstName: string, lastName: string, extra: { email?: string; responses?: Row } = {}) {
+    return {
+      id: `att-${id}`, personId: id, eventId: "event-1", attendeeType: "Adult",
+      profileSnapshot: extra.email ? { email: extra.email } : {}, formResponses: extra.responses ?? {},
+      person: { firstName, lastName, normalizedEmail: null, attendeeAccountLinks: [], backgroundCheckMatch: null },
+      registration: { id: `reg-${id}`, confirmationCode: `C-${id}`, status: "CONFIRMED", clubRegistration: null },
+    };
+  }
+
+  it("flags a newly registered adult who is on the list as checked, with no refresh and no re-upload", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    youthEvent(seed);
+    const rows = [sterlingRowToListRow(parseSterlingCsv("First name,Last name,Email,Expiration date\nJosé,Núñez,jose@example.test,2029-01-01")[0]!)];
+    await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", new Date("2026-09-28T12:00:00Z"));
+    // Registered afterward (a write path that never refreshed the cache), under an unaccented spelling.
+    seed.attendees.push(registeredAdult("p-jose", "Jose", "Nunez", { email: "JOSE@example.test" }), registeredAdult("p-none", "Pat", "Nobody"));
+    expect(seed.matches.size).toBe(0);
+    const flags = await listEventBackgroundFlags("event-1");
+    expect(flags?.adults).toBe(2);
+    expect(flags?.people.map((flag) => flag.attendeeId)).toEqual(["att-p-none"]);
+  });
+
+  it("matches on a form birth date too", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    youthEvent(seed);
+    const rows = [sterlingRowToListRow(parseSterlingCsv("First name,Last name,Birth date,Expiration date\nAna,Rivera,1985-04-17,2026-10-01")[0]!)];
+    await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", new Date("2026-09-28T12:00:00Z"));
+    seed.attendees.push(registeredAdult("p-ana", "Ana", "Rivera", { responses: { date_of_birth: "4/17/1985" } }));
+    const flags = await listEventBackgroundFlags("event-1");
+    // On the list, but that check expires before the event ends: flagged as expired, not missing.
+    expect(flags?.people.map((flag) => [flag.attendeeId, flag.state, flag.expiresOn])).toEqual([["att-p-ana", "EXPIRED", "2026-10-01"]]);
+  });
+
+  it("leaves an ambiguous read-time match unmatched, never guessed", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    youthEvent(seed);
+    const rows = [sterlingRowToListRow(parseSterlingCsv("First name,Last name,Email,Expiration date\nKim,Cho,kim@example.test,2029-01-01")[0]!)];
+    await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", new Date("2026-09-28T12:00:00Z"));
+    seed.attendees.push(registeredAdult("p-kim-1", "Kim", "Cho", { email: "kim@example.test" }), registeredAdult("p-kim-2", "Kim", "Cho", { email: "kim@example.test" }));
+    const flags = await listEventBackgroundFlags("event-1");
+    expect(flags?.people.map((flag) => [flag.attendeeId, flag.state])).toEqual([["att-p-kim-1", "MISSING"], ["att-p-kim-2", "MISSING"]]);
+  });
+
+  it("never matches at read time an entry that's waiting on a staff review", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    youthEvent(seed);
+    const rows = [sterlingRowToListRow(parseSterlingCsv("First name,Last name,Email,Expiration date\nKim,Cho,kim@example.test,2029-01-01")[0]!)];
+    await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", new Date("2026-09-28T12:00:00Z"));
+    const [entry] = [...seed.entries.values()];
+    seed.reviews.set("r-1", { id: "r-1", entryId: entry!.id, reason: "Ambiguous.", candidatePersonIds: ["p-kim-1", "p-other"], createdAt: new Date() });
+    seed.attendees.push(registeredAdult("p-kim-1", "Kim", "Cho", { email: "kim@example.test" }));
+    const flags = await listEventBackgroundFlags("event-1");
+    expect(flags?.people.map((flag) => flag.state)).toEqual(["MISSING"]);
+  });
+
+  it("shows a club roster adult on the list by name plus club, with the note for staff only", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    const [row] = parseRosterBackgroundCsv("user_id,user_last,user_first,sites,compliance,issues\n9001,Rivera-Lopez,María,Test Pathfinders,!,Training expires 2026-11-01");
+    await applyBackgroundCheckUpload([rosterRowToListRow(row!)], "ROSTER", "admin-1", new Date("2026-09-28T12:00:00Z"));
+    // Added to the roster after the upload, by a path that didn't refresh.
+    seed.rosterMembers.push({
+      id: "member-maria", personId: "p-maria", organizationId: "org-1", clubYear: "2026", status: "ACTIVE", attendeeType: "ADULT", sealedBirthDate: null,
+      organization: { name: "Test Pathfinders", parentOrganization: null },
+      person: { firstName: "Maria", lastName: "Rivera-Lopez", normalizedEmail: null, attendeeAccountLinks: [], backgroundCheckMatch: null },
+    });
+    const forClub = await clubRosterComplianceStatuses("org-1", "2026", { includeNotes: false });
+    expect(forClub.statuses["member-maria"]).toEqual({ state: "FLAGGED", note: null });
+    expect(forClub.missing).toBe(0);
+    const forStaff = await clubRosterComplianceStatuses("org-1", "2026", { includeNotes: true });
+    expect(forStaff.statuses["member-maria"]).toEqual({ state: "FLAGGED", note: "Training expires 2026-11-01" });
+    await expect(clubComplianceReminderCounts("org-1", "2026")).resolves.toEqual({ notInCompliance: 0, expiringSoon: 1, missing: 0 });
   });
 });
 

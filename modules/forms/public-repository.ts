@@ -3,6 +3,7 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma, RegistrationFormStatus } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
 import {
   enqueuePublicRegistrationMessages,
   processQueuedMessageIdsAfterCommit,
@@ -543,6 +544,7 @@ async function findExistingConfirmation(
     ),
     pendingMessageIds: messages.filter((message) => message.status === "PENDING").map((message) => message.id),
     registrantMessageIds: messages.map((message) => message.id),
+    registrationId: existing.registrationId,
   };
 }
 
@@ -1099,6 +1101,7 @@ async function createPublicRegistrationTransaction(
     },
     pendingMessageIds: queuedMessages.pendingMessageIds,
     registrantMessageIds: queuedMessages.registrantMessageIds,
+    registrationId: registration.id,
   };
 }
 
@@ -1126,6 +1129,9 @@ export async function submitPublicRegistration(
         (tx) => createPublicRegistrationTransaction(tx, eventSlug, formSlug, input, now, club),
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
       );
+      // #527: a registrant already on the background-check list is matched
+      // now, after commit; best effort, never fails the submission.
+      await refreshBackgroundCheckMatchesForRegistrations([result.registrationId]);
       let processed = {
         capturedIds: [] as string[],
         sentIds: [] as string[],

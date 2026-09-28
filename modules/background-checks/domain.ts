@@ -480,12 +480,61 @@ export type BackgroundCheckListRow = {
 };
 
 /**
- * What a manual match, or a remembered `user_id`, is remembered against
- * (`ExternalIdentity.externalId`, provider `ROSTER_IMPORT`): the roster CSV's
- * `user_id` when the row has one, otherwise a key built from the row's own
- * identifying fields (in the same priority matching uses them), so the same
- * person's row — from either format — is still recognized as "the same
- * entry" on the next upload even without a `user_id`.
+ * The one format a roster `user_id` is kept in, both as a list entry's
+ * `identityKey` and as `ExternalIdentity.externalId` (provider
+ * `ROSTER_IMPORT`). The #527 migration rewrites identities remembered before
+ * it (the raw id) into this format, so nothing remembered is orphaned.
+ */
+export const USER_ID_IDENTITY_PREFIX = "userId:";
+
+export function userIdIdentityKey(userId: string) {
+  return `${USER_ID_IDENTITY_PREFIX}${userId}`;
+}
+
+/**
+ * Only a provider `user_id` is ever remembered as an `ExternalIdentity`
+ * (#527 N3). A key built from a name, email, birth date, or site is not an
+ * identity the provider issued — and a person holds only one `ROSTER_IMPORT`
+ * identity, so remembering one of those would evict their real `user_id`. A
+ * staff match on such an entry is kept by the match itself instead, and
+ * carried forward to the next upload's entry with the same key.
+ */
+export function isRememberedIdentityKey(identityKey: string) {
+  return identityKey.startsWith(USER_ID_IDENTITY_PREFIX) && identityKey.length > USER_ID_IDENTITY_PREFIX.length;
+}
+
+/**
+ * One row per identity key in an upload (#527 B4). The later row is kept, as
+ * before, but every earlier row it replaces is reported back as a problem so
+ * staff see it — never dropped silently.
+ */
+export function dedupeListRows<T extends { line: number; identityKey: string; firstName: string; lastName: string }>(rows: T[]): {
+  rows: T[];
+  duplicates: Array<{ line: number; name: string; problems: string[] }>;
+} {
+  const byKey = new Map<string, T>();
+  const duplicates: Array<{ line: number; name: string; problems: string[] }> = [];
+  for (const row of [...rows].sort((a, b) => a.line - b.line)) {
+    const earlier = byKey.get(row.identityKey);
+    if (earlier) {
+      duplicates.push({
+        line: earlier.line,
+        name: `${earlier.firstName} ${earlier.lastName}`.trim(),
+        problems: [`Row ${row.line} is the same person, so only row ${row.line} is kept.`],
+      });
+    }
+    byKey.set(row.identityKey, row);
+  }
+  return { rows: [...byKey.values()].sort((a, b) => a.line - b.line), duplicates: duplicates.sort((a, b) => a.line - b.line) };
+}
+
+/**
+ * What recognizes "the same entry" from one upload to the next: the roster
+ * CSV's `user_id` when the row has one (also what is remembered as an
+ * `ExternalIdentity`, see `isRememberedIdentityKey`), otherwise a key built
+ * from the row's own identifying fields in the same priority matching uses
+ * them. Upload counts (added/changed/dropped) and carrying a staff match
+ * forward both compare by this key.
  */
 export function backgroundCheckIdentityKey(input: {
   sourceUserId: string | null;
@@ -494,8 +543,10 @@ export function backgroundCheckIdentityKey(input: {
   birthDate: string | null;
   site: string | null;
 }): string {
-  if (input.sourceUserId) return `userId:${input.sourceUserId}`;
-  if (input.email) return `email:${input.email}`;
+  if (input.sourceUserId) return userIdIdentityKey(input.sourceUserId);
+  // Name as well as email: IMSDA households routinely share one adult's
+  // email, so a spouse on the same address is a different entry (#527 B4).
+  if (input.email) return `email:${input.email}|${input.normalizedName}`;
   if (input.birthDate) return `name-birth:${input.normalizedName}|${input.birthDate}`;
   if (input.site) return `name-site:${input.normalizedName}|${matchableName(input.site)}`;
   return `name:${input.normalizedName}`;

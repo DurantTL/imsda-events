@@ -3,6 +3,7 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { requireSystemAdministrator } from "@/modules/organizations/access";
 import { backgroundCheckApiError } from "@/modules/background-checks/api-errors";
 import {
+  dedupeListRows,
   detectBackgroundCsvFormat,
   MAX_ROSTER_CSV_BYTES,
   MAX_STERLING_CSV_BYTES,
@@ -19,7 +20,38 @@ import { withRequestContext } from "@/lib/request-context";
 const importSchema = z.object({
   csv: z.string().max(Math.max(MAX_ROSTER_CSV_BYTES, MAX_STERLING_CSV_BYTES), "That file is too large."),
   confirm: z.boolean().default(false),
+  /** The preview's fingerprint, echoed back on confirm (#527 N1). */
+  fingerprint: z.string().max(200).optional(),
 }).strict();
+
+type ListRows = Parameters<typeof applyBackgroundCheckUpload>[0];
+type RowProblem = { line: number; name: string; problems: string[] };
+
+/**
+ * Preview or confirm one parsed file. A row repeating another row's person
+ * is reported as a problem, never silently dropped (#527 B4). A confirm
+ * must echo the preview's fingerprint; a missing or stale one is a 409, so
+ * staff always confirm the counts they were shown.
+ */
+async function previewOrApply(
+  format: "ROSTER" | "STERLING",
+  parsedRows: ListRows,
+  parseProblems: RowProblem[],
+  request: { confirm: boolean; fingerprint?: string },
+  actorUserId: string,
+) {
+  const { rows, duplicates } = dedupeListRows(parsedRows);
+  const problems = [...parseProblems, ...duplicates].sort((a, b) => a.line - b.line);
+  if (!request.confirm) {
+    const preview = await planBackgroundCheckUpload(rows);
+    return Response.json({ format, problems, ...preview });
+  }
+  if (!request.fingerprint) {
+    return Response.json({ error: "PREVIEW_CHANGED", message: "Preview this file before saving it." }, { status: 409 });
+  }
+  const counts = await applyBackgroundCheckUpload(rows, format, actorUserId, new Date(), { expectedFingerprint: request.fingerprint });
+  return Response.json({ format, problems, ...counts });
+}
 
 /**
  * Background check CSV upload (#388, #427, #527): preview the counts an
@@ -35,7 +67,7 @@ async function postHandler(request: Request) {
   if (originError) return originError;
   try {
     const actor = await requireSystemAdministrator();
-    const { csv, confirm } = importSchema.parse(await request.json());
+    const { csv, confirm, fingerprint } = importSchema.parse(await request.json());
     const format = detectBackgroundCsvFormat(csv);
 
     if (format === "ROSTER") {
@@ -48,12 +80,7 @@ async function postHandler(request: Request) {
       }
       const problems = rows.filter((row) => row.problems.length > 0).map((row) => ({ line: row.line, name: `${row.firstName} ${row.lastName}`.trim(), problems: row.problems }));
       const listRows = rows.filter((row) => row.problems.length === 0).map(rosterRowToListRow);
-      if (!confirm) {
-        const counts = await planBackgroundCheckUpload(listRows);
-        return Response.json({ format, problems, ...counts });
-      }
-      const counts = await applyBackgroundCheckUpload(listRows, format, actor.id);
-      return Response.json({ format, problems, ...counts });
+      return await previewOrApply(format, listRows, problems, { confirm, fingerprint }, actor.id);
     }
 
     let rows;
@@ -65,12 +92,7 @@ async function postHandler(request: Request) {
     }
     const problems = rows.filter((row) => row.problems.length > 0).map((row) => ({ line: row.line, name: `${row.firstName} ${row.lastName}`.trim(), problems: row.problems }));
     const listRows = rows.filter((row) => row.problems.length === 0).map(sterlingRowToListRow);
-    if (!confirm) {
-      const counts = await planBackgroundCheckUpload(listRows);
-      return Response.json({ format, problems, ...counts });
-    }
-    const counts = await applyBackgroundCheckUpload(listRows, format, actor.id);
-    return Response.json({ format, problems, ...counts });
+    return await previewOrApply(format, listRows, problems, { confirm, fingerprint }, actor.id);
   } catch (error) {
     return backgroundCheckApiError(error, "Uploading background checks");
   }

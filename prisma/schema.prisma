@@ -1415,6 +1415,7 @@ model Person {
   matchCandidatesAsB   PersonMatchCandidate[] @relation("PersonMatchCandidateAsB")
   clubRosterMemberships ClubRosterMember[]
   backgroundCheckMatch  BackgroundCheckMatch?
+  backgroundChecksPre527 BackgroundCheckPre527[] @ignore
   driverVerification    DriverVerification?
 
   memberHonorEntries    MemberHonorEntry[]
@@ -3211,19 +3212,32 @@ model ClubRosterExportFormat {
   @@unique([organizationId, name])
 }
 
-/// A person's Sterling Volunteers background check (#388), recorded from the
-/// CSV a system administrator uploads. Only the dates are kept, never the file,
-/// the birth date used to match, or any result that wasn't a clear check. One
-/// row per person: a later upload with a later expiry replaces it.
-///
-/// A church roster import (#427) uses the same row instead: no dates, just
-/// `complianceStatus` (from the CSV's `compliance` column) and `issuesNote`
-/// (staff only, never shown to a club). The newest upload wins: a Sterling
-/// upload clears `complianceStatus` and `issuesNote`, a roster import clears
-/// the dates, and `provider` says which one the row holds now.
-/// A person matched by that import's provider `user_id` gets an
-/// `ExternalIdentity` (`ROSTER_IMPORT`) so the next upload matches on it
-/// first, without guessing by name again.
+/// The pre-#527 one-row-per-person background-check table, kept read-only
+/// for one release after the #527 migration carried every row over to the
+/// list below (renamed from "BackgroundCheck"; nothing writes to it any
+/// more). A later migration drops it — see
+/// docs/BACKGROUND-CHECK-LIST-MIGRATION.md. Ignored by Prisma Client so no
+/// code can read or write it; modelled here only so the migration history
+/// and this schema agree.
+model BackgroundCheckPre527 {
+  id               String                           @id(map: "BackgroundCheck_pkey") @default(cuid())
+  personId         String                           @unique(map: "BackgroundCheck_personId_key")
+  provider         String                           @default("STERLING")
+  checkedOn        String?
+  expiresOn        String?
+  complianceStatus BackgroundCheckComplianceStatus?
+  issuesNote       String?
+  recordedByUserId String?
+  createdAt        DateTime                         @default(now())
+  updatedAt        DateTime                         @updatedAt
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade, map: "BackgroundCheck_personId_fkey")
+
+  @@index([expiresOn], map: "BackgroundCheck_expiresOn_idx")
+  @@map("BackgroundCheck_pre527")
+  @@ignore
+}
+
 /// The single stored background-check list (#527). Both the Sterling
 /// Volunteers CSV and the roster compliance CSV feed this same list; each
 /// upload is the complete current export and replaces it entirely (the
@@ -3255,8 +3269,11 @@ model BackgroundCheckEntry {
   firstName String
   lastName  String
   /// `matchableName(firstName + " " + lastName)`, indexed so matching a
-  /// person against the list is a lookup, not a scan.
-  normalizedName String
+  /// person against the list is a lookup, not a scan. Computed in
+  /// TypeScript only, never in SQL: null on an entry carried over by the #527
+  /// migration until the first refresh or upload fills it in
+  /// (`backfillNormalizedNames`).
+  normalizedName String?
   email          String?
   /// Sealed the same way roster birth dates are sealed (ADR 0005 Addendum A,
   /// `modules/club-rosters/birth-dates.ts`). Never stored in plain text.
@@ -3265,10 +3282,11 @@ model BackgroundCheckEntry {
   site            String?
   /// The roster CSV's `user_id`, when the row has one (Sterling rows never do).
   sourceUserId    String?
-  /// What a remembered match is kept against (`ExternalIdentity.externalId`,
-  /// provider `ROSTER_IMPORT`): `sourceUserId` when the row has one,
-  /// otherwise a key derived from the row's own identifying fields, so the
-  /// same person's row is still recognized on the next upload.
+  /// What recognizes the same entry across uploads
+  /// (`backgroundCheckIdentityKey`): `userId:<user_id>` when the row has one
+  /// — the same format `ExternalIdentity.externalId` (provider
+  /// `ROSTER_IMPORT`) uses — otherwise a key derived from the row's own
+  /// identifying fields.
   identityKey      String
   /// Set by a roster row's `compliance` column (y/!/n). Null for a Sterling
   /// row, which is current/expired by `expiresOn` instead.
@@ -3311,7 +3329,8 @@ model BackgroundCheckMatch {
 /// How a `BackgroundCheckMatch` was decided. `IDENTITY`: a remembered
 /// `user_id` whose name still agrees. `AUTO`: normalized name plus exactly
 /// one of email, birth date, or site, with nothing else it could be. `MANUAL`:
-/// a staff review decision (also remembered as an `ExternalIdentity`).
+/// a staff decision; it holds across refreshes and uploads (carried to the
+/// next upload's entry with the same `identityKey`) until staff undo it.
 /// `MIGRATED`: carried over from the old per-person `BackgroundCheck` row
 /// when this list replaced it (#527), so nobody's status changed that day.
 enum BackgroundCheckMatchSource {
@@ -3323,8 +3342,8 @@ enum BackgroundCheckMatchSource {
 
 /// A list entry that could match more than one person, or whose only
 /// candidate people also match another entry — never guessed (#527). Staff
-/// resolve it by hand from `candidatePersonIds`; picking one is remembered
-/// (`ExternalIdentity`) so it holds on the next upload.
+/// resolve it by hand from `candidatePersonIds`; picking one becomes a
+/// `MANUAL` match that holds on the next upload.
 model BackgroundCheckReview {
   id                 String   @id @default(cuid())
   entryId            String

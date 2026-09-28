@@ -13,6 +13,9 @@ type ImportResponse = {
   changed?: number;
   dropped?: number;
   total?: number;
+  /** What the preview was computed against; echoed back on confirm (#527). */
+  fingerprint?: string;
+  error?: string;
   message?: string;
   issues?: Array<{ message?: string }>;
 };
@@ -51,9 +54,16 @@ export function BackgroundCheckImport({ onImported }: { onImported: (result: Imp
       const response = await fetch("/api/admin/background-checks/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ csv: text, confirm }),
+        body: JSON.stringify({ csv: text, confirm, ...(confirm && preview?.fingerprint ? { fingerprint: preview.fingerprint } : {}) }),
       });
       const result = await response.json().catch(() => ({})) as ImportResponse;
+      if (response.status === 409 && result.error === "PREVIEW_CHANGED") {
+        // The list or the file changed since this preview: show the current counts instead.
+        setPreview(null);
+        await send(text, false);
+        setError(`${result.message ?? "The list changed since this preview."} The counts below are current; review them and save again.`);
+        return;
+      }
       if (!response.ok) throw new Error(result.message ?? result.issues?.[0]?.message ?? "That file couldn't be read.");
       setPreview(result);
       if (confirm) {
@@ -180,7 +190,7 @@ export function BackgroundCheckImport({ onImported }: { onImported: (result: Imp
                 </section>
                 {problems.length > 0 && (
                   <div className="report-table-wrap roster-csv-preview">
-                    <p className="field-help">{problems.length} row{problems.length === 1 ? "" : "s"} couldn&apos;t be read and won&apos;t be saved:</p>
+                    <p className="field-help">{problems.length} row{problems.length === 1 ? "" : "s"} couldn&apos;t be read, or repeat{problems.length === 1 ? "s" : ""} another row&apos;s person, and won&apos;t be saved:</p>
                     <table className="report-table">
                       <thead><tr><th>Row</th><th>Name</th><th>Problem</th></tr></thead>
                       <tbody>

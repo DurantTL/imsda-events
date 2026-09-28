@@ -1,36 +1,42 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { RefreshCcw, UserCheck, UserX } from "lucide-react";
+import { RefreshCcw, Undo2, UserCheck, UserX } from "lucide-react";
 
 type ReviewCandidate = { personId: string; name: string; sites: string[] };
 type ReviewItem = { id: string; entryId: string; name: string; site: string | null; reason: string; candidates: ReviewCandidate[] };
+type ManualMatch = { id: string; personId: string; personName: string; entryName: string; site: string | null };
 type UnmatchedEntry = { id: string; name: string; site: string | null; complianceStatus: string | null; checkedOn: string | null; expiresOn: string | null };
 
 /**
  * Staff review for the background-check list (#527): entries or people an
  * upload couldn't match with confidence, and entries that match no one yet.
  * Nothing here is guessed — staff pick a candidate by hand, or say none of
- * them is right; a pick is remembered for the next upload.
+ * them is right. A pick is a staff decision: it holds across refreshes and
+ * uploads, even if the names differ, until staff undo it here.
  */
 export function BackgroundCheckReviewPanel() {
   const [reviews, setReviews] = useState<ReviewItem[] | null>(null);
   const [unmatched, setUnmatched] = useState<UnmatchedEntry[] | null>(null);
+  const [manualMatches, setManualMatches] = useState<ManualMatch[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
     setError("");
     try {
-      const [reviewsResponse, unmatchedResponse] = await Promise.all([
+      const [reviewsResponse, unmatchedResponse, manualResponse] = await Promise.all([
         fetch("/api/admin/background-checks/reviews"),
         fetch("/api/admin/background-checks/unmatched"),
+        fetch("/api/admin/background-checks/manual-matches"),
       ]);
       const reviewsResult = await reviewsResponse.json().catch(() => ({}));
       const unmatchedResult = await unmatchedResponse.json().catch(() => ({}));
-      if (!reviewsResponse.ok || !unmatchedResponse.ok) throw new Error("Couldn't load the review list.");
+      const manualResult = await manualResponse.json().catch(() => ({}));
+      if (!reviewsResponse.ok || !unmatchedResponse.ok || !manualResponse.ok) throw new Error("Couldn't load the review list.");
       setReviews(reviewsResult.reviews ?? []);
       setUnmatched(unmatchedResult.entries ?? []);
+      setManualMatches(manualResult.matches ?? []);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Couldn't load the review list.");
     }
@@ -53,6 +59,7 @@ export function BackgroundCheckReviewPanel() {
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message ?? "That decision couldn't be saved.");
       setReviews(result.reviews ?? []);
+      if (decision.type === "match") await load();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "That decision couldn't be saved.");
     } finally {
@@ -60,7 +67,22 @@ export function BackgroundCheckReviewPanel() {
     }
   }
 
-  if (reviews === null && unmatched === null && !error) return null;
+  async function undo(matchId: string) {
+    setBusyId(matchId);
+    setError("");
+    try {
+      const response = await fetch(`/api/admin/background-checks/manual-matches/${encodeURIComponent(matchId)}`, { method: "DELETE" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message ?? "That match couldn't be undone.");
+      await load();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "That match couldn't be undone.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  if (reviews === null && unmatched === null && manualMatches === null && !error) return null;
 
   return (
     <section className="panel">
@@ -106,6 +128,31 @@ export function BackgroundCheckReviewPanel() {
                     </ul>
                     <button className="text-button" disabled={busyId === review.id} onClick={() => void resolve(review.id, { type: "dismiss" })} type="button">
                       <UserX aria-hidden="true" size={14} /> None of these
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <h3>Matched by hand ({manualMatches?.length ?? 0})</h3>
+      {manualMatches && manualMatches.length === 0 && <p className="report-empty">No rows are matched by hand.</p>}
+      {manualMatches && manualMatches.length > 0 && (
+        <div className="report-table-wrap">
+          <table className="report-table">
+            <caption className="sr-only">Background check rows matched to a person by hand</caption>
+            <thead><tr><th>Row</th><th>Site</th><th>Matched to</th><th><span className="sr-only">Actions</span></th></tr></thead>
+            <tbody>
+              {manualMatches.map((match) => (
+                <tr key={match.id}>
+                  <td translate="no">{match.entryName || "—"}</td>
+                  <td>{match.site || "—"}</td>
+                  <td translate="no">{match.personName || "—"}</td>
+                  <td>
+                    <button className="text-button" disabled={busyId === match.id} onClick={() => void undo(match.id)} type="button">
+                      <Undo2 aria-hidden="true" size={14} /> Undo match
                     </button>
                   </td>
                 </tr>

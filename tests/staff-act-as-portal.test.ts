@@ -55,7 +55,7 @@ vi.mock("@/modules/organizations/director-access", () => ({ listDirectedClubs: m
 // A roster add now also matches the background-check list (#527) — an
 // unrelated side effect here, so it's stubbed out like the other modules
 // this "act as" flow doesn't exercise.
-vi.mock("@/modules/background-checks/repository", () => ({ refreshBackgroundCheckMatchForPerson: vi.fn() }));
+vi.mock("@/modules/background-checks/refresh-after-write", () => ({ refreshBackgroundCheckMatchesSafely: vi.fn() }));
 
 import { POST as ADD_TO_ROSTER } from "@/app/api/attendee/clubs/[organizationId]/roster/route";
 import AccountPortalLayout from "@/app/(public)/account/(portal)/layout";

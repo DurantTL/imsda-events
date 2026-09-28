@@ -3,6 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
 import {
   enqueueAttendeeSubstitutedMessage,
   enqueueRegistrationTransferredNewContactMessage,
@@ -438,7 +439,7 @@ export async function transferRegistration(
     },
   });
 
-  return runSerializableOperation(async (tx) => {
+  const result = await runSerializableOperation(async (tx) => {
     const existingOperation = await tx.registrationOperation.findUnique({
       where: {
         eventId_clientRequestId: {
@@ -670,6 +671,9 @@ export async function transferRegistration(
     });
     return { response, pendingMessageIds: notices.pendingMessageIds };
   });
+  // #527: the new person is matched against the background-check list after commit; best effort.
+  await refreshBackgroundCheckMatchesForRegistrations([registrationId]);
+  return result;
 }
 
 export async function substituteRegistrationAttendee(
@@ -694,7 +698,7 @@ export async function substituteRegistrationAttendee(
     },
   });
 
-  return runSerializableOperation(async (tx) => {
+  const result = await runSerializableOperation(async (tx) => {
     const existingOperation = await tx.registrationOperation.findUnique({
       where: {
         eventId_clientRequestId: {
@@ -957,4 +961,7 @@ export async function substituteRegistrationAttendee(
     });
     return { response, pendingMessageIds: notices.pendingMessageIds };
   });
+  // #527: the new person is matched against the background-check list after commit; best effort.
+  await refreshBackgroundCheckMatchesForRegistrations([registrationId]);
+  return result;
 }
