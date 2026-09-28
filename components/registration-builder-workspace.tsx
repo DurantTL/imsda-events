@@ -31,13 +31,22 @@ import { SearchableSelect } from "@/components/searchable-select";
 import type { AddressValue } from "@/modules/forms/address";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
-import { calculateFormTotal, calculateRosterTotal, conditionOperators, formFieldScopes, formFieldTypes, getAttendeeRosterConfig, getAvailabilityMode, imsdaChurchOptions, isChoiceFieldType, isFieldVisible, isLatePricingActive, localCalendarDate, type ChoiceUsage, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
-import { promoCodeBuilderModule } from "@/modules/forms/builder-modules";
+import { calculateFormTotal, calculateRosterTotal, conditionOperators, formFieldScopes, formFieldTypes, getAttendeeRosterConfig, getAvailabilityMode, isChoiceFieldType, isFieldVisible, isLatePricingActive, localCalendarDate, type ChoiceUsage, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
+import {
+  builderFieldModules,
+  moduleAlreadyPresentNotice,
+  moduleAttendeeRoster,
+  moduleInsertNotice,
+  planModuleInsert,
+  type BuilderModuleDefinition,
+} from "@/modules/forms/builder-modules";
+import { singleChoiceTypeHint } from "@/modules/forms/choice-defaults";
 import { creditPatchForKindChange, creditSummary, hasCredit, removeCreditPatch } from "@/modules/forms/credit-fields";
 import { getPublicRegistrationStepPlan, isPublicReviewSection, type PublicRegistrationStepId } from "@/modules/forms/public-registration-steps";
 import { batchFieldKeys, removalAnswerNote } from "@/modules/forms/field-answer-counts";
 import { slugMatchesTitle } from "@/modules/forms/slug";
-import { shirtSizeOptions } from "@/modules/registrations/shirt-sizes";
+import { recordTemplateCleanupCreated } from "@/components/template-cleanup-checklist";
+import { TemplateCleanupChecklistPanel } from "@/components/template-cleanup-checklist-panel";
 
 type PreviewValue = string | boolean | string[] | AddressValue;
 type TestSubmissionView = { id: string; isValid: boolean; submittedBy: string; createdAt: string; validation: Record<string, unknown>; responses: Record<string, unknown> };
@@ -97,185 +106,6 @@ const choicePresets = [
 
 const moduleCategories = ["All", "Common", "People", "Housing", "Group event"] as const;
 
-type FieldModuleDefinition = {
-  key: string;
-  category: "Common" | "People" | "Housing" | "Group event";
-  name: string;
-  description: string;
-  fields: Array<Omit<RegistrationFormField, "id">>;
-};
-
-const fieldModules: FieldModuleDefinition[] = [
-  {
-    key: "contact",
-    category: "Common",
-    name: "Contact details",
-    description: "First name, last name, and email",
-    fields: [
-      { key: "first_name", label: "First name", helpText: "", placeholder: "First name", type: "TEXT", scope: "REGISTRATION", required: true, options: [] },
-      { key: "last_name", label: "Last name", helpText: "", placeholder: "Last name", type: "TEXT", scope: "REGISTRATION", required: true, options: [] },
-      { key: "email", label: "Email address", helpText: "Confirmation and edit details are sent here.", placeholder: "name@example.com", type: "EMAIL", scope: "REGISTRATION", required: true, options: [] },
-    ],
-  },
-  {
-    key: "address",
-    category: "Common",
-    name: "Mailing address",
-    description: "One accessible address field with street, city, state, postal code, and country",
-    fields: [
-      { key: "mailing_address", label: "Mailing address", helpText: "", type: "ADDRESS", scope: "REGISTRATION", required: true, options: [] },
-    ],
-  },
-  {
-    key: "church_club",
-    category: "Group event",
-    name: "Church & club contact",
-    description: "Club, director, church, email, and phone",
-    fields: [
-      { key: "club_name", label: "Club name", helpText: "", placeholder: "Pathfinder club or group", type: "TEXT", scope: "REGISTRATION", required: true, options: [] },
-      { key: "director_name", label: "Club director", helpText: "", placeholder: "Full name", type: "TEXT", scope: "REGISTRATION", required: true, options: [] },
-      { key: "church_name", label: "Home church", helpText: "Start typing to search the IMSDA church directory.", type: "SELECT", scope: "REGISTRATION", required: true, options: [...imsdaChurchOptions] },
-      { key: "church_other", label: "Home church — other", helpText: "", placeholder: "Church or organization name", type: "TEXT", scope: "REGISTRATION", required: true, options: [], conditional: { fieldKey: "church_name", operator: "EQUALS", value: "Other" } },
-      { key: "email", label: "Contact email", helpText: "", placeholder: "name@example.com", type: "EMAIL", scope: "REGISTRATION", required: true, options: [] },
-      { key: "phone", label: "Contact phone", helpText: "", placeholder: "Phone number", type: "PHONE", scope: "REGISTRATION", required: true, options: [] },
-    ],
-  },
-  {
-    key: "attendee",
-    category: "People",
-    name: "Attendee preferences",
-    description: "Name, type, meal, and dietary needs",
-    fields: [
-      { key: "attendee_name", label: "Attendee name", helpText: "", placeholder: "First and last name", type: "TEXT", scope: "ATTENDEE", required: true, options: [] },
-      { key: "attendee_type", label: "Attendee type", helpText: "", type: "RADIO", scope: "ATTENDEE", required: true, options: ["Adult", "Teen"] },
-      { key: "meal_preference", label: "Meal preference", helpText: "", type: "SELECT", scope: "ATTENDEE", required: true, options: ["Regular", "Vegetarian", "Vegan", "Gluten-free"] },
-      { key: "dietary_needs", label: "Dietary needs / allergies", helpText: "Optional notes for the retreat team.", placeholder: "Share any food allergies or accommodations", type: "LONG_TEXT", scope: "ATTENDEE", required: false, options: [] },
-    ],
-  },
-  {
-    key: "guest_roster",
-    category: "People",
-    name: "Guest roster",
-    description: "Turn on a repeatable guest list with name, age, and type",
-    fields: [
-      { key: "guest_name", label: "Guest name", helpText: "This block repeats for every person in the registration.", placeholder: "First and last name", type: "TEXT", scope: "ATTENDEE", required: true, options: [] },
-      { key: "guest_age", label: "Guest age", helpText: "", type: "NUMBER", scope: "ATTENDEE", required: false, options: [] },
-      { key: "guest_type", label: "Guest type", helpText: "", type: "RADIO", scope: "ATTENDEE", required: true, options: ["Adult", "Youth", "Child"] },
-    ],
-  },
-  {
-    key: "shirt_size",
-    category: "People",
-    name: "Convention shirt size",
-    description: "Required shirt size repeated for each attendee",
-    fields: [
-      {
-        key: "shirt_size",
-        label: "T-shirt size",
-        helpText: "Choose the size this attendee wants for the convention shirt. Registrants can reconfirm it from their private registration page.",
-        type: "SELECT",
-        scope: "ATTENDEE",
-        required: true,
-        options: [...shirtSizeOptions],
-      },
-    ],
-  },
-  {
-    key: "housing",
-    category: "Housing",
-    name: "Housing & nights",
-    description: "Capacity-aware lodging with stay details",
-    fields: [
-      { key: "housing_selection", label: "Housing selection", helpText: "Each housing option can have its own room or site limit.", type: "RADIO", scope: "REGISTRATION", required: true, options: ["Dorm room", "RV / camper site", "Tent campsite", "No housing needed"], availabilityMode: "CAPACITY", choiceLimits: {} },
-      { key: "nights_staying", label: "Nights staying", helpText: "Select every night needed.", type: "MULTISELECT", scope: "REGISTRATION", required: true, options: ["Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], minSelections: 1, maxSelections: 5 },
-      { key: "first_floor_needed", label: "First-floor accommodation needed?", helpText: "For health or mobility needs.", type: "RADIO", scope: "REGISTRATION", required: true, options: ["No", "Yes"] },
-      { key: "rv_details", label: "RV / camper details", helpText: "Length and type if bringing an RV or camper.", placeholder: "For example: 28-foot travel trailer", type: "TEXT", scope: "REGISTRATION", required: false, options: [], conditional: { fieldKey: "housing_selection", operator: "EQUALS", value: "RV / camper site" } },
-    ],
-  },
-  {
-    key: "attendee_housing",
-    category: "Housing",
-    name: "Housing per attendee",
-    description: "A room or lodging choice repeated for each person",
-    fields: [
-      { key: "attendee_housing", label: "Housing choice", helpText: "Each option can have its own room or bed limit.", type: "RADIO", scope: "ATTENDEE", required: true, options: ["Dorm room", "Shared cabin", "RV / camper", "No housing needed"], availabilityMode: "CAPACITY", choiceLimits: {} },
-      { key: "roommate_request", label: "Roommate request", helpText: "Optional; requests are not guaranteed.", placeholder: "Name of requested roommate", type: "TEXT", scope: "ATTENDEE", required: false, options: [] },
-      { key: "mobility_accommodation", label: "First-floor or mobility accommodation?", helpText: "", type: "RADIO", scope: "ATTENDEE", required: true, options: ["No", "Yes"] },
-    ],
-  },
-  {
-    key: "campsite",
-    category: "Housing",
-    name: "Campsite footprint",
-    description: "Tents, trailers, canopy, size, and neighbor request",
-    fields: [
-      { key: "tents", label: "Tents and sizes", helpText: "", placeholder: "List quantities and sizes", type: "LONG_TEXT", scope: "REGISTRATION", required: false, options: [] },
-      { key: "trailers", label: "Trailers", helpText: "", placeholder: "List trailers and lengths", type: "LONG_TEXT", scope: "REGISTRATION", required: false, options: [] },
-      { key: "kitchen_canopy", label: "Kitchen canopy / size", helpText: "", placeholder: "Canopy dimensions", type: "TEXT", scope: "REGISTRATION", required: false, options: [] },
-      { key: "total_sqft", label: "Total square feet", helpText: "Estimated campsite footprint.", type: "NUMBER", scope: "REGISTRATION", required: true, options: [] },
-      { key: "camp_next_to", label: "Camp-next-to request", helpText: "Optional club or group name.", placeholder: "Club name", type: "TEXT", scope: "REGISTRATION", required: false, options: [] },
-    ],
-  },
-  {
-    key: "meal_tickets",
-    category: "Group event",
-    name: "Meal ticket quantities",
-    description: "Adult and child counts by meal",
-    fields: [
-      { key: "breakfast_adult_qty", label: "Adult breakfast tickets", helpText: "", type: "NUMBER", scope: "REGISTRATION", required: false, options: [] },
-      { key: "breakfast_child_qty", label: "Child breakfast tickets", helpText: "", type: "NUMBER", scope: "REGISTRATION", required: false, options: [] },
-      { key: "lunch_adult_qty", label: "Adult lunch tickets", helpText: "", type: "NUMBER", scope: "REGISTRATION", required: false, options: [] },
-      { key: "lunch_child_qty", label: "Child lunch tickets", helpText: "", type: "NUMBER", scope: "REGISTRATION", required: false, options: [] },
-      { key: "supper_adult_qty", label: "Adult supper tickets", helpText: "", type: "NUMBER", scope: "REGISTRATION", required: false, options: [] },
-      { key: "supper_child_qty", label: "Child supper tickets", helpText: "", type: "NUMBER", scope: "REGISTRATION", required: false, options: [] },
-      { key: "dietary_restrictions", label: "Dietary restrictions or allergies", helpText: "", placeholder: "Optional notes", type: "LONG_TEXT", scope: "REGISTRATION", required: false, options: [] },
-    ],
-  },
-  {
-    key: "activity_slots",
-    category: "Group event",
-    name: "Activity signup",
-    description: "Capacity-aware volunteer and activity slots",
-    fields: [{ key: "activity_slots", label: "Activity or volunteer slots", helpText: "Each activity can have its own participation limit.", type: "MULTISELECT", scope: "REGISTRATION", required: false, options: ["Flag raising / lowering", "Bathroom clean-up", "Special music or skit", "Campfire singing", "Bring or lead a game"], minSelections: 1, maxSelections: 3, availabilityMode: "CAPACITY", choiceLimits: {} }],
-  },
-  {
-    key: "seminar",
-    category: "Group event",
-    name: "Seminar ranking",
-    description: "Two ranked choices with room limits",
-    fields: [{ key: "seminar_preferences", label: "Seminar preferences", helpText: "Choose a first and second option.", type: "RANKED_CHOICE", scope: "ATTENDEE", required: true, options: ["Seminar A", "Seminar B", "Seminar C"], minSelections: 2, maxSelections: 2, availabilityMode: "RANKED_INTEREST", choiceLimits: {} }],
-  },
-  {
-    key: "agreement",
-    category: "Common",
-    name: "Acknowledgment",
-    description: "Required agreement checkbox",
-    fields: [{ key: "acknowledgment", label: "Acknowledgment", helpText: "", placeholder: "Yes, I understand and agree.", type: "CHECKBOX", scope: "REGISTRATION", required: true, options: [] }],
-  },
-  {
-    key: "scheduled_fee",
-    category: "Common",
-    name: "Scheduled registration fee",
-    description: "Automatic standard and late-date pricing",
-    fields: [{ key: "registration_fee", label: "Registration fee", helpText: "Automatically included in the order total.", type: "CALCULATED", scope: "REGISTRATION", required: false, options: [], priceCents: 0, latePricing: { startsOn: localCalendarDate(), label: "Late registration pricing", priceCents: 0 } }],
-  },
-  {
-    key: "payment_method",
-    category: "Common",
-    name: "Payment methods",
-    description: "Pay later and card choices without capacity counts",
-    fields: [{ key: "payment_method", label: "Payment method", helpText: "Card processing fees apply only to card payments.", type: "RADIO", scope: "REGISTRATION", required: true, options: ["Pay later", "Credit / debit card"], availabilityMode: "NONE" }],
-  },
-  promoCodeBuilderModule,
-  {
-    key: "blank",
-    category: "Common",
-    name: "Blank field",
-    description: "Start with a short-answer field",
-    fields: [{ key: "new_field", label: "New field", helpText: "", placeholder: "", type: "TEXT", scope: "REGISTRATION", required: false, options: [] }],
-  },
-];
-
 function fieldKey(value: string) {
   return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 50) || "new_field";
 }
@@ -334,6 +164,9 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState<"create" | "save" | "test" | "publish" | "unpublish" | "slug" | null>(null);
   const [notice, setNotice] = useState("");
+  // Field ids whose choice-size hint the builder dismissed this session. The
+  // hint is only a suggestion, so dismissing it just hides it.
+  const [dismissedChoiceHintIds, setDismissedChoiceHintIds] = useState<ReadonlySet<string>>(() => new Set());
   const [error, setError] = useState("");
   const [testIssues, setTestIssues] = useState<Array<{ fieldId: string | null; key: string; message: string; attendeeIndex?: number | null; path?: string }>>([]);
   const [showTemplates, setShowTemplates] = useState(initialForms.length === 0);
@@ -382,7 +215,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
   const allFields = useMemo(() => definition?.sections.flatMap((section) => section.fields) ?? [], [definition]);
   const visibleFieldModules = useMemo(() => {
     const query = moduleQuery.trim().toLocaleLowerCase();
-    return fieldModules.filter((module) => (
+    return builderFieldModules.filter((module) => (
       (moduleCategory === "All" || module.category === moduleCategory)
       && (
         !query
@@ -487,6 +320,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
       const result = await response.json();
       if (!response.ok) throw new Error(result.message ?? "Unable to create this form.");
       syncForm(result.form, "Draft created from the selected template.");
+      recordTemplateCleanupCreated(result.form.id, result.form.activeVersion.definition);
       setShowTemplates(false);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Unable to create this form."); }
     finally { setBusy(null); }
@@ -789,56 +623,38 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
     setModuleCategory("All");
   }
 
-  function addModule(sectionIndex: number, module: FieldModuleDefinition) {
+  function addModule(sectionIndex: number, module: BuilderModuleDefinition) {
     if (!definition) return;
-    if (
-      definition.sections[sectionIndex].fields.length + module.fields.length
-      > 20
-    ) {
+    const existingFields = definition.sections.flatMap((section) => section.fields);
+    const plan = planModuleInsert(module, existingFields, () => localId("field"));
+    if (plan.kind === "already-present") {
+      const existing = existingFields.find((field) => plan.existingKeys.includes(field.key));
+      setExpandedFieldId(existing?.id ?? null);
+      closeModuleLibrary();
+      setNotice(moduleAlreadyPresentNotice(module, plan));
+      return;
+    }
+    const { fields } = plan;
+    if (definition.sections[sectionIndex].fields.length + fields.length > 20) {
       setError(
         `${module.name} does not fit in this section. Add another section and place the module there.`,
       );
       return;
     }
-    const usedKeys = new Set(definition.sections.flatMap((section) => section.fields.map((field) => field.key)));
-    if (module.key === "promo_code" && usedKeys.has("promo_code")) {
-      const existing = definition.sections
-        .flatMap((section) => section.fields)
-        .find((field) => field.key === "promo_code");
-      setExpandedFieldId(existing?.id ?? null);
-      closeModuleLibrary();
-      setNotice("This form already has its Promo code module.");
-      return;
-    }
-    const moduleKeys = new Map<string, string>();
-    for (const source of module.fields) {
-      const baseKey = source.key;
-      let key = baseKey;
-      let suffix = 2;
-      while (usedKeys.has(key)) { key = `${baseKey}_${suffix}`; suffix += 1; }
-      usedKeys.add(key);
-      moduleKeys.set(source.key, key);
-    }
-    const fields = module.fields.map((source) => {
-      const cloned = structuredClone(source);
-      const conditional = cloned.conditional ? { ...cloned.conditional, fieldKey: moduleKeys.get(cloned.conditional.fieldKey) ?? cloned.conditional.fieldKey } : undefined;
-      const optionalWhen = cloned.optionalWhen ? { ...cloned.optionalWhen, fieldKey: moduleKeys.get(cloned.optionalWhen.fieldKey) ?? cloned.optionalWhen.fieldKey } : undefined;
-      return { ...cloned, id: localId("field"), key: moduleKeys.get(source.key)!, conditional, optionalWhen };
-    });
     const section = definition.sections[sectionIndex];
     const sections = definition.sections.map((candidate, index) => index === sectionIndex
       ? { ...candidate, fields: [...section.fields, ...fields] }
       : candidate);
-    const attendeeRoster = module.key === "guest_roster"
-      ? definition.attendeeRoster ?? { enabled: true, minAttendees: 1, maxAttendees: 20, attendeeLabel: "Guest", addButtonLabel: "Add another guest" }
-      : definition.attendeeRoster;
+    const attendeeRoster = moduleAttendeeRoster(definition.attendeeRoster, module);
     const nextDefinition = { ...definition, sections, attendeeRoster };
     replaceDefinition(nextDefinition);
-    if (module.key === "guest_roster" && !definition.attendeeRoster?.enabled) {
+    if (module.enablesAttendeeRoster && !definition.attendeeRoster?.enabled) {
       setPreviewAttendees(blankPreviewAttendees(nextDefinition));
     }
     setExpandedFieldId(fields[0]?.id ?? null);
     closeModuleLibrary();
+    const insertNotice = moduleInsertNotice(plan);
+    if (insertNotice) setNotice(insertNotice);
   }
 
   function addSection() {
@@ -1062,6 +878,8 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
 	      {selectedForm && selectedVersion && definition && <>
 	        <div className="builder-canvas"><section className="panel builder-editor-head"><div className="builder-status-row"><span className={`status-chip ${selectedVersion.status === "PUBLISHED" ? "green" : selectedVersion.status === "DRAFT" ? "gold" : "purple"}`}>{statusLabel(selectedVersion.status)}</span><span>Version {selectedVersion.versionNumber}</span>{dirty && <span className="unsaved-dot">Unsaved changes</span>}</div><label>Form title<input disabled={!canEdit} value={definition.title} maxLength={120} onChange={(event) => replaceDefinition({ ...definition, title: event.target.value })} /></label><label>Description<textarea disabled={!canEdit} value={definition.description} maxLength={500} rows={2} onChange={(event) => replaceDefinition({ ...definition, description: event.target.value })} /></label><div className="builder-actions"><button className="secondary-button" type="button" disabled={!canEdit || !dirty || busy !== null} onClick={saveDraft}><Save size={15} /> {busy === "save" ? "Saving…" : selectedVersion.status === "PUBLISHED" ? "Save as new draft" : "Save draft"}</button>{publishedVersion ? <a className="secondary-button" href={`/register/${eventSlug}/${selectedForm.slug}`} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Open public form</a> : <button className="secondary-button" type="button" disabled title="Publish this form to create its public link"><ExternalLink size={15} /> Open public form</button>}{selectedVersion.status === "DRAFT" && <button className="primary-button" type="button" disabled={dirty || busy !== null || !publishGateSatisfied} onClick={beginPublish}><Send size={15} /> Publish version</button>}{publishedVersion && <button className="secondary-button" type="button" disabled={busy !== null} onClick={() => setConfirmingUnpublish(true)}><FileClock size={15} /> Withdraw from public page</button>}</div>{selectedVersion.status === "DRAFT" && !publishGateSatisfied && <p className="builder-gate"><AlertTriangle size={15} /> A valid saved test submission is required before publishing this form for the first time.</p>}{isHistorical && <p className="builder-gate"><FileClock size={15} /> Historical versions are immutable and shown read-only.</p>}</section>
 
+        {canEdit && <TemplateCleanupChecklistPanel key={selectedForm.id} formId={selectedForm.id} definition={definition} />}
+
         <section className="panel roster-builder-settings">
           <div className="section-heading">
             <div><p className="eyebrow">Registration mode</p><h2>Who can this form register?</h2></div>
@@ -1145,7 +963,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
             {expandedFieldId === field.id && <div className="field-editor-body">
               <div className="field-settings field-basic-settings">
                 <label>Label<input disabled={!canEdit} value={field.label} maxLength={120} onChange={(event) => updateField(sectionIndex, fieldIndex, { label: event.target.value, key: field.key.startsWith("new_field_") ? fieldKey(event.target.value) : field.key })} /></label>
-                <label>Field type<select disabled={!canEdit} value={field.type} onChange={(event) => { const type = event.target.value as RegistrationFormField["type"]; const choiceType = isChoiceFieldType(type); const changedPricingKind = choiceType !== isChoiceFieldType(field.type); updateField(sectionIndex, fieldIndex, { type, required: type === "CALCULATED" ? false : field.required, options: choiceType ? (field.options.length < 2 ? ["Option one", "Option two"] : field.options) : [], optionDescriptions: choiceType && field.options.length >= 2 ? field.optionDescriptions : undefined, minSelections: type === "RANKED_CHOICE" ? field.minSelections ?? 2 : type === "MULTISELECT" ? field.minSelections ?? 1 : undefined, maxSelections: type === "MULTISELECT" || type === "RANKED_CHOICE" ? field.maxSelections ?? 2 : undefined, availabilityMode: choiceType ? field.availabilityMode : undefined, choiceLimits: choiceType ? field.choiceLimits : undefined, choicePricesCents: choiceType ? field.choicePricesCents : undefined, latePricing: changedPricingKind ? undefined : field.latePricing, ...creditPatchForKindChange(field, { type }) }); }}>{formFieldTypes.map((type) => <option key={type} value={type}>{fieldTypeLabels[type]}</option>)}</select></label>
+                <label>Field type<select disabled={!canEdit} value={field.type} onChange={(event) => { const type = event.target.value as RegistrationFormField["type"]; const choiceType = isChoiceFieldType(type); const changedPricingKind = choiceType !== isChoiceFieldType(field.type); const nextOptions = choiceType ? (field.options.length < 2 ? ["Option one", "Option two"] : field.options) : []; updateField(sectionIndex, fieldIndex, { type, required: type === "CALCULATED" ? false : field.required, options: nextOptions, optionDescriptions: choiceType && field.options.length >= 2 ? field.optionDescriptions : undefined, minSelections: type === "RANKED_CHOICE" ? field.minSelections ?? 2 : type === "MULTISELECT" ? field.minSelections ?? 1 : undefined, maxSelections: type === "MULTISELECT" || type === "RANKED_CHOICE" ? field.maxSelections ?? 2 : undefined, availabilityMode: choiceType ? field.availabilityMode : undefined, choiceLimits: choiceType ? field.choiceLimits : undefined, choicePricesCents: choiceType ? field.choicePricesCents : undefined, latePricing: changedPricingKind ? undefined : field.latePricing, ...creditPatchForKindChange(field, { type }) }); }}>{formFieldTypes.map((type) => <option key={type} value={type}>{fieldTypeLabels[type]}</option>)}</select></label>
                 <label>Applies to<select disabled={!canEdit} value={field.scope} onChange={(event) => {
                   const scope = event.target.value as RegistrationFormField["scope"];
                   const controller = field.conditional ? allFields.find((candidate) => candidate.key === field.conditional?.fieldKey) : null;
@@ -1159,6 +977,11 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
                 <label className="required-toggle"><input disabled={!canEdit || field.type === "CALCULATED" || field.optionSource === "ATTENDEE_TYPES"} type="checkbox" checked={field.optionSource === "ATTENDEE_TYPES" ? true : field.required} onChange={(event) => updateField(sectionIndex, fieldIndex, { required: event.target.checked, optionalWhen: event.target.checked ? field.optionalWhen : undefined })} /> Required{field.optionSource === "ATTENDEE_TYPES" && <small> — the attendee-type selector is always required</small>}</label>
                 {(field.type === "SELECT" || field.type === "RADIO") && field.scope === "ATTENDEE" && <label className="required-toggle"><input disabled={!canEdit || (!field.optionSource && allFields.some((candidate) => candidate.optionSource === "ATTENDEE_TYPES"))} type="checkbox" checked={field.optionSource === "ATTENDEE_TYPES"} onChange={(event) => updateField(sectionIndex, fieldIndex, { optionSource: event.target.checked ? "ATTENDEE_TYPES" : undefined, optionLabels: event.target.checked ? field.optionLabels : undefined, required: event.target.checked ? true : field.required, availabilityMode: event.target.checked ? "NONE" : field.availabilityMode, choiceLimits: event.target.checked ? undefined : field.choiceLimits, choicePricesCents: event.target.checked ? undefined : field.choicePricesCents, latePricing: event.target.checked ? undefined : field.latePricing })} /> Source attendee types from event configuration</label>}
               </div>
+              {canEdit && !dismissedChoiceHintIds.has(field.id) && (() => {
+                const hint = singleChoiceTypeHint(field);
+                if (!hint) return null;
+                return <div className="field-full inline-notice choice-type-hint" data-testid={`choice-type-hint-${field.key}`}><span>{hint.message}</span><button className="text-button" type="button" onClick={() => updateField(sectionIndex, fieldIndex, { type: hint.suggestedType, ...creditPatchForKindChange(field, { type: hint.suggestedType }) })}>{hint.actionLabel}</button><button className="text-button" type="button" aria-label={`Dismiss the choice control suggestion for ${field.label}`} onClick={() => setDismissedChoiceHintIds((current) => new Set(current).add(field.id))}>Keep {fieldTypeLabels[field.type].toLowerCase()}</button></div>;
+              })()}
               {isChoiceFieldType(field.type) && <section className="choice-settings"><div><p className="eyebrow">Choices, descriptions, pricing &amp; capacity</p><span>Add optional descriptions when people need more information before choosing.</span></div><div className="field-settings">
                 <label>Quick choices<select aria-label={`Quick choices for ${field.label}`} disabled={!canEdit || Boolean(field.optionSource)} value="" onChange={(event) => { const preset = choicePresets.find((item) => item.name === event.target.value); if (preset) updateField(sectionIndex, fieldIndex, { options: preset.options, optionLabels: undefined, optionDescriptions: undefined, choiceLimits: getAvailabilityMode(field) === "NONE" ? undefined : {}, choicePricesCents: {}, latePricing: field.latePricing ? { ...field.latePricing, choicePricesCents: {} } : undefined }); }}><option value="">Choose a preset…</option>{choicePresets.map((preset) => <option key={preset.name}>{preset.name}</option>)}</select></label>
                 {!field.optionSource && <label>Availability<select aria-label={`Availability tracking for ${field.label}`} disabled={!canEdit} value={getAvailabilityMode(field)} onChange={(event) => { const availabilityMode = event.target.value as RegistrationFormField["availabilityMode"]; updateField(sectionIndex, fieldIndex, { availabilityMode, choiceLimits: availabilityMode === "NONE" ? undefined : field.choiceLimits ?? {} }); }}><option value="NONE">No counts or limits</option><option value="CAPACITY">Capacity &amp; spots</option><option value="RANKED_INTEREST">Ranked interest &amp; room assignment</option></select></label>}
