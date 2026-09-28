@@ -1,23 +1,37 @@
 "use client";
 
 import { useState } from "react";
-import { Save } from "lucide-react";
+import dynamic from "next/dynamic";
+import { MapPin, Save } from "lucide-react";
 import type { ChurchLocationRecord } from "@/modules/organizations/church-location-repository";
+
+const ChurchLocationMapPicker = dynamic(
+  () => import("@/components/church-location-map-picker").then((mod) => mod.ChurchLocationMapPicker),
+  { ssr: false, loading: () => <p className="field-help">Loading map…</p> },
+);
 
 type LocationResponse = { location?: ChurchLocationRecord; message?: string; issues?: Array<{ message?: string }> };
 
-function numberOrNull(value: FormDataEntryValue | null) {
-  const text = String(value ?? "").trim();
+function numberOrNull(value: string) {
+  const text = value.trim();
   if (text === "") return null;
   const parsed = Number(text);
   return Number.isFinite(parsed) ? parsed : text;
 }
 
+/** A coordinate rounded for display after a map click or drag. */
+function displayCoordinate(value: number) {
+  return value.toFixed(6);
+}
+
 /**
- * A church's town and hand-entered map coordinates (#437), for conference
- * staff. Coordinates place the church's listed clubs on the public club
- * map; nothing here is geocoded, so staff type them in from a source they
- * trust (or leave them blank and the church just won't have a pin).
+ * A church's town and map coordinates (#437, #480), for conference staff.
+ * Coordinates place the church's listed clubs on the public club map.
+ * Staff can either drop a pin on a map (reusing the map library and CSP
+ * scoping added for the public club map, #437) or, switching to manual
+ * entry, type coordinates in from a source they trust. Address lookup
+ * (typing a street address to find the pin) is out of scope here — it
+ * needs a geocoding provider, which is a separate decision.
  */
 export function ChurchLocationForm({
   endpoint,
@@ -30,6 +44,19 @@ export function ChurchLocationForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [entryMode, setEntryMode] = useState<"manual" | "map">("manual");
+  const [latitudeText, setLatitudeText] = useState(initialLocation.latitude !== null ? displayCoordinate(initialLocation.latitude) : "");
+  const [longitudeText, setLongitudeText] = useState(initialLocation.longitude !== null ? displayCoordinate(initialLocation.longitude) : "");
+
+  const parsedLatitude = numberOrNull(latitudeText);
+  const parsedLongitude = numberOrNull(longitudeText);
+  const pinLatitude = typeof parsedLatitude === "number" ? parsedLatitude : null;
+  const pinLongitude = typeof parsedLongitude === "number" ? parsedLongitude : null;
+
+  function handlePin(latitude: number, longitude: number) {
+    setLatitudeText(displayCoordinate(latitude));
+    setLongitudeText(displayCoordinate(longitude));
+  }
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -45,8 +72,8 @@ export function ChurchLocationForm({
           city: String(form.get("city") ?? ""),
           state: String(form.get("state") ?? ""),
           zip: String(form.get("zip") ?? ""),
-          latitude: numberOrNull(form.get("latitude")),
-          longitude: numberOrNull(form.get("longitude")),
+          latitude: parsedLatitude,
+          longitude: parsedLongitude,
         }),
       });
       const result = await response.json().catch(() => ({})) as LocationResponse;
@@ -54,6 +81,8 @@ export function ChurchLocationForm({
         throw new Error(result.message ?? result.issues?.[0]?.message ?? "The church location could not be saved.");
       }
       setLocation(result.location);
+      setLatitudeText(result.location.latitude !== null ? displayCoordinate(result.location.latitude) : "");
+      setLongitudeText(result.location.longitude !== null ? displayCoordinate(result.location.longitude) : "");
       setNotice("Church location saved.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The church location could not be saved.");
@@ -89,17 +118,45 @@ export function ChurchLocationForm({
       <div className="form-grid two-column">
         <label>
           Latitude
-          <input defaultValue={location.latitude ?? ""} inputMode="decimal" name="latitude" placeholder="e.g. 41.5868" />
+          <input
+            inputMode="decimal"
+            name="latitude"
+            onChange={(event) => setLatitudeText(event.target.value)}
+            placeholder="e.g. 41.5868"
+            readOnly={entryMode === "map"}
+            value={latitudeText}
+          />
         </label>
         <label>
           Longitude
-          <input defaultValue={location.longitude ?? ""} inputMode="decimal" name="longitude" placeholder="e.g. -93.6250" />
+          <input
+            inputMode="decimal"
+            name="longitude"
+            onChange={(event) => setLongitudeText(event.target.value)}
+            placeholder="e.g. -93.6250"
+            readOnly={entryMode === "map"}
+            value={longitudeText}
+          />
         </label>
       </div>
+      <div>
+        <button
+          className="secondary-button"
+          onClick={() => setEntryMode((mode) => (mode === "map" ? "manual" : "map"))}
+          type="button"
+        >
+          <MapPin aria-hidden="true" size={16} />
+          {entryMode === "map" ? "Enter coordinates manually" : "Pick on map"}
+        </button>
+      </div>
+      {entryMode === "map" && (
+        <ChurchLocationMapPicker latitude={pinLatitude} longitude={pinLongitude} onChange={handlePin} />
+      )}
       <p className="field-help">
-        Latitude and longitude are typed in by hand, from a source you trust — nothing here looks an address
-        up automatically. Give both or leave both blank. A church without coordinates still lists its clubs;
-        it just won&apos;t have a pin on the map.
+        {entryMode === "map"
+          ? "Click the map to place the church's pin, or drag an existing pin to adjust it. Coordinates fill in above; switch to manual entry to type them instead."
+          : "Latitude and longitude are typed in by hand, from a source you trust — nothing here looks an address up automatically. Give both or leave both blank, or use “Pick on map” instead."}
+        {" "}A church without coordinates still lists its clubs; it just won&apos;t have a pin on the map.
       </p>
       <div>
         <button className="primary-button" disabled={saving} type="submit">

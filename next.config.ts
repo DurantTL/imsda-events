@@ -96,6 +96,19 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        // The church location editor's "Pick on map" helper (#480) is the
+        // only staff page that loads the same tiles. Scoped the same way as
+        // /clubs above: this rule must stay after the site-wide one so its
+        // Content-Security-Policy is the one Next.js sends for this path.
+        source: "/admin/organizations/:organizationId/location",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: contentSecurityPolicy("'none'", mapTileOrigin),
+          },
+        ],
+      },
+      {
         source: "/api/:path*",
         headers: [
           { key: "Cache-Control", value: "no-store" },

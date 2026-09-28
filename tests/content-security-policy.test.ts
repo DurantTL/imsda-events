@@ -87,7 +87,7 @@ describe("compiled Content Security Policy", () => {
 
     const policies = await compiledContentSecurityPolicies();
 
-    expect(policies).toHaveLength(3);
+    expect(policies).toHaveLength(4);
     for (const policy of policies) {
       for (const directive of [
         "script-src",
@@ -132,7 +132,7 @@ describe("compiled Content Security Policy", () => {
     const clubs = cspRules.find((rule) => rule.source === "/clubs");
     if (!siteWide || !clubs) throw new Error("Missing site-wide or /clubs policy");
 
-    for (const rule of cspRules.filter((candidate) => candidate.source !== "/clubs")) {
+    for (const rule of cspRules.filter((candidate) => candidate.source !== "/clubs" && !candidate.source.includes("location"))) {
       expect(rule.policy).not.toContain(tileOrigin);
     }
     expect(directiveSources(clubs.policy, "img-src")).toContain(tileOrigin);
@@ -144,5 +144,37 @@ describe("compiled Content Security Policy", () => {
     // one, so the /clubs rule must come after the site-wide rule.
     expect(clubs.index).toBeGreaterThan(siteWide.index);
     expect(cspRules.filter((rule) => rule.source === "/clubs")).toHaveLength(1);
+  });
+
+  it("admits OpenStreetMap tiles on the church location editor only, as scoped as #437 (#480)", async () => {
+    vi.resetModules();
+    const nextConfig = (await import("../next.config")).default;
+    const rules = (await nextConfig.headers?.()) ?? [];
+    const cspRules = rules
+      .map((rule, index) => ({
+        index,
+        source: rule.source,
+        policy: rule.headers.find((header) => header.key === "Content-Security-Policy")?.value,
+      }))
+      .filter((rule): rule is { index: number; source: string; policy: string } => rule.policy !== undefined);
+
+    const tileOrigin = "https://tile.openstreetmap.org";
+    const siteWide = cspRules.find((rule) => rule.source === "/:path*");
+    const locationEditor = cspRules.find((rule) => rule.source === "/admin/organizations/:organizationId/location");
+    if (!siteWide || !locationEditor) throw new Error("Missing site-wide or church location editor policy");
+
+    for (const rule of cspRules.filter((candidate) => candidate.source !== "/clubs" && candidate.source !== locationEditor.source)) {
+      expect(rule.policy).not.toContain(tileOrigin);
+    }
+    expect(directiveSources(locationEditor.policy, "img-src")).toContain(tileOrigin);
+
+    // Same policy otherwise: only img-src differs.
+    expect(locationEditor.policy.replace(` ${tileOrigin}`, "")).toBe(siteWide.policy);
+
+    // Both rules match this path and set the same key; Next.js sends the
+    // last one, so the location-editor rule must come after the site-wide
+    // rule.
+    expect(locationEditor.index).toBeGreaterThan(siteWide.index);
+    expect(cspRules.filter((rule) => rule.source === locationEditor.source)).toHaveLength(1);
   });
 });
