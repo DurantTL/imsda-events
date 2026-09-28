@@ -34,6 +34,7 @@ import {
   isFieldOptionalByCondition,
   isFieldVisible,
   isLatePricingActive,
+  numberFieldBounds,
   validateTestResponses,
   type ChoiceUsage,
   type FormCalculation,
@@ -55,6 +56,11 @@ import {
   getPrimaryAttendeeNameSync,
   syncFirstAttendeeNameChange,
 } from "@/modules/forms/primary-attendee-sync";
+import {
+  attendeeRoleLabel,
+  isAttendeeCardComplete,
+} from "@/modules/forms/roster-cards";
+import { summarizeRosterAttendees } from "@/modules/forms/roster-summary";
 
 declare global {
   interface Window {
@@ -71,7 +77,15 @@ export type FormIssue = {
   path?: string;
   attendeeIndex?: number | null;
 };
-export type RosterAttendee = { clientId: string; responses: FormResponses };
+export type RosterAttendee = {
+  clientId: string;
+  responses: FormResponses;
+  /** Carried over from the club roster (#483): the card starts collapsed,
+   * and any values that didn't match a form option are named here so the
+   * form can prompt for them instead of leaving the field silently blank. */
+  carriedFromRoster?: boolean;
+  carryoverMismatches?: Array<{ fieldKey: string; label: string; value: string }>;
+};
 type FieldRenderContext = {
   values: FormResponses;
   visibilityResponses: FormResponses;
@@ -368,6 +382,17 @@ export function PublicRegistrationForm({
     }
     return initial;
   });
+  // Compact attendee cards (#483): a card carried over from the roster starts
+  // collapsed; every other card (freshly added, or from CSV import) starts
+  // open. Later toggles are tracked by client id, so a card keeps its state
+  // through re-renders and reordering.
+  const [collapsedAttendeeIds, setCollapsedAttendeeIds] = useState<Set<string>>(
+    () => new Set(
+      (club ? club.initialAttendees : [])
+        .filter((attendee) => attendee.carriedFromRoster)
+        .map((attendee) => attendee.clientId),
+    ),
+  );
   const [website, setWebsite] = useState("");
   const [issues, setIssues] = useState<FormIssue[]>([]);
   const [error, setError] = useState("");
@@ -892,6 +917,15 @@ export function PublicRegistrationForm({
     clearFieldIssue(`attendees.${attendeeIndex}.responses.${key}`, key);
   }
 
+  function toggleAttendeeCollapse(clientId: string) {
+    setCollapsedAttendeeIds((current) => {
+      const next = new Set(current);
+      if (next.has(clientId)) next.delete(clientId);
+      else next.add(clientId);
+      return next;
+    });
+  }
+
   function addAttendee() {
     if (attendees.length >= roster.maxAttendees) return;
     const clientId = crypto.randomUUID();
@@ -938,6 +972,7 @@ export function PublicRegistrationForm({
         clientId: crypto.randomUUID(),
         responses,
       })));
+      setCollapsedAttendeeIds(new Set());
       setIssues([]);
       setIdempotencyKey(null);
       setRosterAnnouncement(
@@ -964,6 +999,11 @@ export function PublicRegistrationForm({
     ) return;
     const focusId = attendees[index - 1]?.clientId ?? attendees[index + 1]?.clientId;
     setAttendees((current) => current.filter((_, attendeeIndex) => attendeeIndex !== index));
+    setCollapsedAttendeeIds((current) => {
+      const next = new Set(current);
+      next.delete(attendee.clientId);
+      return next;
+    });
     setIssues([]);
     setError("");
     setIdempotencyKey(null);
@@ -1054,12 +1094,30 @@ export function PublicRegistrationForm({
       ?? (!rosterEnabled ? issueByPath.get(`responses.${field.key}`) : undefined);
   }
 
+  function carryoverMismatchNotice(field: RegistrationFormField, context: FieldRenderContext) {
+    if (context.attendeeIndex === null) return null;
+    const attendee = attendees[context.attendeeIndex];
+    const mismatch = attendee?.carryoverMismatches?.find((candidate) => candidate.fieldKey === field.key);
+    if (!mismatch) return null;
+    // Only while it's still unresolved: once the director picks a value for
+    // this field, the prompt has done its job.
+    const currentValue = context.values[field.key];
+    if (typeof currentValue === "string" && currentValue) return null;
+    return mismatch;
+  }
+
   function fieldSupport(field: RegistrationFormField, context: FieldRenderContext) {
     const issue = issueFor(field, context);
     const id = controlId(field, context.idContext);
+    const mismatch = carryoverMismatchNotice(field, context);
     return (
       <>
         {field.helpText && <small id={`${id}_help`}>{field.helpText}</small>}
+        {mismatch && (
+          <small className="public-registration-field-error" id={`${id}_mismatch`} role="alert">
+            Couldn&apos;t match &lsquo;{mismatch.value}&rsquo; — pick one.
+          </small>
+        )}
         {issue && <small className="public-registration-field-error" id={`${id}_error`}>{issue.message}</small>}
       </>
     );
@@ -1069,6 +1127,7 @@ export function PublicRegistrationForm({
     const id = controlId(field, context.idContext);
     return [
       field.helpText ? `${id}_help` : "",
+      carryoverMismatchNotice(field, context) ? `${id}_mismatch` : "",
       issueFor(field, context) ? `${id}_error` : "",
     ].filter(Boolean).join(" ") || undefined;
   }
@@ -1450,7 +1509,8 @@ export function PublicRegistrationForm({
             id={id}
             value={value}
             type={field.type === "EMAIL" ? "email" : field.type === "PHONE" ? "tel" : field.type === "DATE" ? "date" : field.type === "NUMBER" ? "number" : "text"}
-            min={field.type === "NUMBER" ? 0 : undefined}
+            min={field.type === "NUMBER" ? numberFieldBounds(field)?.minimumAge ?? 0 : undefined}
+            max={field.type === "NUMBER" ? numberFieldBounds(field)?.maximumAge : undefined}
             inputMode={field.type === "PHONE" ? "tel" : field.type === "NUMBER" ? "numeric" : undefined}
             autoComplete={autoComplete}
             required={field.required && !excused}
@@ -1561,6 +1621,9 @@ export function PublicRegistrationForm({
           {attendees.map((attendee, attendeeIndex) => {
             const context = attendeeFieldContext(attendee, attendeeIndex);
             const displayName = attendeeName(attendee, attendeeIndex, roster.attendeeLabel);
+            const roleLabel = attendeeRoleLabel(definition, registrationResponses, attendee.responses);
+            const complete = isAttendeeCardComplete(definition, registrationResponses, attendee.responses);
+            const collapsed = manageRoster && collapsedAttendeeIds.has(attendee.clientId);
             const visibleAttendeeSections = attendeeSections.map((section) => ({
               ...section,
               fields: section.fields.filter((field) => (
@@ -1570,7 +1633,7 @@ export function PublicRegistrationForm({
             })).filter((section) => section.fields.length > 0);
             return (
               <article
-                className="public-registration-attendee"
+                className={`public-registration-attendee${collapsed ? " is-collapsed" : ""}`}
                 id={`public_attendee_${safeId(attendee.clientId)}`}
                 key={attendee.clientId}
                 tabIndex={-1}
@@ -1582,10 +1645,26 @@ export function PublicRegistrationForm({
                   </span>
                   <div>
                     <small>{roster.attendeeLabel} {attendeeIndex + 1}</small>
-                    <h3 id={`public_attendee_${safeId(attendee.clientId)}_title`}>{displayName}</h3>
+                    <h3 id={`public_attendee_${safeId(attendee.clientId)}_title`}>
+                      {displayName}
+                      {roleLabel && <span className="public-registration-attendee-role"> · {roleLabel}</span>}
+                    </h3>
+                    {collapsed && (
+                      <small className="public-registration-attendee-summary">
+                        {complete ? "Complete" : "Needs attention"}
+                      </small>
+                    )}
                   </div>
                   {manageRoster && (
                     <div className="public-registration-attendee-actions">
+                      <button
+                        type="button"
+                        aria-expanded={!collapsed}
+                        aria-controls={`public_attendee_${safeId(attendee.clientId)}_body`}
+                        onClick={() => toggleAttendeeCollapse(attendee.clientId)}
+                      >
+                        <span>{collapsed ? "Show details" : "Hide details"}</span>
+                      </button>
                       <button
                         type="button"
                         disabled={attendeeIndex === 0}
@@ -1618,30 +1697,32 @@ export function PublicRegistrationForm({
                   )}
                 </header>
 
-                <div className="public-registration-attendee-body">
-                  {manageRoster && attendeeIndex === 0 && primaryAttendeeNameSync && (
-                    <p className="public-registration-attendee-name-sync">
-                      The first attendee starts with the primary contact’s name. You can edit it
-                      here when the person completing the form is registering someone else.
-                    </p>
-                  )}
-                  {visibleAttendeeSections.map((section) => (
-                    <section
-                      className="public-registration-attendee-section"
-                      key={section.id}
-                      aria-label={`${section.title} for ${displayName}`}
-                    >
-                      <div className="public-registration-fields">
-                        {section.fields.map((field) => renderField(field, context))}
-                      </div>
-                    </section>
-                  ))}
-                  {visibleAttendeeSections.length === 0 && (
-                    <p className="public-registration-attendee-empty">
-                      No additional choices apply to this attendee.
-                    </p>
-                  )}
-                </div>
+                {!collapsed && (
+                  <div className="public-registration-attendee-body" id={`public_attendee_${safeId(attendee.clientId)}_body`}>
+                    {manageRoster && attendeeIndex === 0 && primaryAttendeeNameSync && (
+                      <p className="public-registration-attendee-name-sync">
+                        The first attendee starts with the primary contact’s name. You can edit it
+                        here when the person completing the form is registering someone else.
+                      </p>
+                    )}
+                    {visibleAttendeeSections.map((section) => (
+                      <section
+                        className="public-registration-attendee-section"
+                        key={section.id}
+                        aria-label={`${section.title} for ${displayName}`}
+                      >
+                        <div className="public-registration-fields">
+                          {section.fields.map((field) => renderField(field, context))}
+                        </div>
+                      </section>
+                    ))}
+                    {visibleAttendeeSections.length === 0 && (
+                      <p className="public-registration-attendee-empty">
+                        No additional choices apply to this attendee.
+                      </p>
+                    )}
+                  </div>
+                )}
               </article>
             );
           })}
@@ -1831,8 +1912,42 @@ export function PublicRegistrationForm({
       );
     }
 
+    const rosterSummary = rosterEnabled
+      ? summarizeRosterAttendees(definition, registrationResponses, attendees.map((attendee) => attendee.responses))
+      : null;
+
     return (
       <div className="public-registration-review">
+        {rosterSummary && attendees.length > 0 && (
+          <section className="public-registration-review-card public-registration-roster-summary" aria-labelledby="public_registration_roster_summary_title">
+            <p className="public-registration-eyebrow">Before you review each person</p>
+            <h3 id="public_registration_roster_summary_title">Roster summary</h3>
+            <dl className="public-registration-roster-summary-totals">
+              <div>
+                <dt>Total {roster.attendeeLabel.toLowerCase()}s</dt>
+                <dd>{rosterSummary.total}</dd>
+              </div>
+              {rosterSummary.byRole.map((row) => (
+                <div key={row.role}>
+                  <dt translate="no">{row.role}</dt>
+                  <dd>{row.count}</dd>
+                </div>
+              ))}
+              {rosterSummary.unclassifiedCount > 0 && (
+                <div>
+                  <dt>Not yet classified</dt>
+                  <dd>{rosterSummary.unclassifiedCount}</dd>
+                </div>
+              )}
+              {rosterSummary.inductions.map((row) => (
+                <div key={row.fieldKey}>
+                  <dt>{row.label}</dt>
+                  <dd>{row.count}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        )}
         {(rosterEnabled || singleAttendeeName) && (
           <section className="public-registration-review-card">
             <p className="public-registration-eyebrow">Attendees</p>
