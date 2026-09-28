@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ShieldAlert } from "lucide-react";
-import { backgroundFlagLabels } from "@/modules/background-checks/domain";
+import { backgroundFlagLabels } from "@/modules/background-checks/display";
 import type { BackgroundFlag } from "@/modules/background-checks/repository";
 
 const badgeTitles = {

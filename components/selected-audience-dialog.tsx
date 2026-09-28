@@ -3,12 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import { LoaderCircle, MailCheck, Send, TriangleAlert, X } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
+import type { SelectedAudiencePreview } from "@/modules/communications/selected-audience";
 import {
   selectedAudienceTemplateKeys,
   selectedAudienceTemplateLabels,
-  type SelectedAudiencePreview,
   type SelectedAudienceTemplateKey,
-} from "@/modules/communications/selected-audience";
+} from "@/modules/communications/selected-audience-templates";
 
 type BatchOperation = {
   includedCount: number;
