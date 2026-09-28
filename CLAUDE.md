@@ -9,9 +9,10 @@ subagents. The agents live in `.claude/agents/`.
 - **explorer** (Haiku): broad searches, tracing call paths, and digesting long
   output (CI logs, test failures, issue lists, big diffs). Do small, targeted
   lookups yourself; spawning costs more than one or two searches.
-- **implementer** (Sonnet): one whole `codex-ready` issue with acceptance
-  criteria, in its own worktree. Never for small edits, design questions, or
-  `needs-decision` / `needs-human` issues.
+- **implementer** (Sonnet 5.5, pinned as `claude-sonnet-5-5` because the
+  `sonnet` alias can lag a release): one whole `codex-ready` issue with
+  acceptance criteria, in its own worktree. Never for small edits, design
+  questions, or `needs-decision` / `needs-human` issues.
 - **reviewer** (Opus): before opening or updating any code PR. It is the
   safety net for everything the cheaper models build, so it always runs on
   Opus.
