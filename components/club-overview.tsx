@@ -28,8 +28,15 @@ export async function ClubOverview({
   backgroundChecks,
   complianceCounts,
   honorsHref,
+  rosterYear,
 }: {
   organizationId: string;
+  /**
+   * The club year the roster section shows (#541), from the staff page's
+   * year choice. Defaults to the current year. Another year is read-only and
+   * never offers birth dates, since the reveal route covers the current year.
+   */
+  rosterYear?: string;
   birthDatesEndpoint?: string;
   reportHref: (month: string) => string;
   /** Staff can open and file a month with no report yet; others only view. */
@@ -56,18 +63,20 @@ export async function ClubOverview({
 }) {
   const now = new Date();
   const clubYear = clubYearFor(now);
+  const shownRosterYear = rosterYear ?? clubYear;
+  const otherYear = shownRosterYear !== clubYear;
   const [team, members, events, reportYear, compliance, reminderCounts, honorRows] = await Promise.all([
     listClubTeam(organizationId, now),
-    listRoster(organizationId, clubYear, now),
+    listRoster(organizationId, shownRosterYear, now),
     listClubEvents(organizationId, now),
     getClubReportYear(organizationId, clubYear),
-    backgroundChecks ? clubRosterComplianceStatuses(organizationId, clubYear, backgroundChecks) : null,
+    backgroundChecks ? clubRosterComplianceStatuses(organizationId, shownRosterYear, backgroundChecks) : null,
     // Counts only, no names (#479): shown even to a viewer who never gets `backgroundChecks`.
-    !backgroundChecks && complianceCounts ? clubComplianceReminderCounts(organizationId, clubYear) : null,
-    listClubHonorsPage(organizationId, clubYear),
+    !backgroundChecks && complianceCounts ? clubComplianceReminderCounts(organizationId, shownRosterYear) : null,
+    listClubHonorsPage(organizationId, shownRosterYear),
   ]);
   const honorSummaries = honorSummaryByMemberId(honorRows);
-  const honors = honorYearSummary(honorRows, clubYear);
+  const honors = honorYearSummary(honorRows, shownRosterYear);
   const registered = events.filter((event) => event.registration);
   const open = events.filter((event) => !event.registration && event.available && event.phase === "OPEN");
   // A club's own draft isn't shown here as filed (#426); staff open the report itself to see or edit one.
@@ -122,10 +131,12 @@ export async function ClubOverview({
       </section>
 
       <div id="open-club-roster">
+        {/* Keyed by year: the year links navigate client-side, and the roster's own state must not carry the last year's people over. */}
         <ClubRosterWorkspace
-          birthDatesEndpoint={birthDatesEndpoint}
-          canSeeBirthDates={Boolean(birthDatesEndpoint)}
-          clubYear={clubYear}
+          key={shownRosterYear}
+          birthDatesEndpoint={otherYear ? undefined : birthDatesEndpoint}
+          canSeeBirthDates={Boolean(birthDatesEndpoint) && !otherYear}
+          clubYear={shownRosterYear}
           complianceStatuses={compliance?.statuses}
           honorSummaries={honorSummaries}
           initialMembers={members}

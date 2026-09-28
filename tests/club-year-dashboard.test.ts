@@ -46,6 +46,7 @@ vi.mock("@/modules/honors/member-honor-repository", () => ({ listClubHonorsPage:
 
 import ClubHomePage from "@/app/(public)/account/(portal)/clubs/[organizationId]/page";
 import { ClubOverview } from "@/components/club-overview";
+import { ClubRosterWorkspace } from "@/components/club-roster-workspace";
 import { ClubYearTiles } from "@/components/club-year-tiles";
 
 type AnyProps = Record<string, unknown>;
@@ -292,5 +293,39 @@ describe("the shared club overview gives staff and Area Coordinators the same re
     // Honors are visible to anyone who can view the roster (#486), even without background-check access.
     expect(props.honors).toEqual({ inProgress: 1, completedThisYear: 1 });
     expect(props.honorsHref).toBe("#open-club-roster");
+  });
+});
+
+describe("the staff overview's roster year (#541)", () => {
+  const staffOverview = (rosterYear?: string) => ClubOverview({
+    organizationId: "club-1",
+    birthDatesEndpoint: "/api/admin/organizations/club-1/roster/birth-dates",
+    reportHref: (month) => `/admin/clubs/reports/club-1/${month}`,
+    reportsEditable: true,
+    backgroundChecks: { includeNotes: true },
+    rosterYear,
+  });
+  const rosterProps = (tree: ReactNode) => {
+    const element = componentElements(tree).find((candidate) => candidate.type === ClubRosterWorkspace);
+    expect(element).toBeDefined();
+    // Keyed by year: a client-side year change must remount it, not keep last year's people.
+    expect(element!.key).toBe(element!.props.clubYear);
+    return element!.props;
+  };
+
+  it("shows another year's roster read-only, with no birth-date reveal", async () => {
+    const props = rosterProps(await staffOverview("2025-26"));
+    expect(mocks.listRoster).toHaveBeenCalledWith("club-1", "2025-26", expect.any(Date));
+    expect(mocks.clubRosterComplianceStatuses).toHaveBeenCalledWith("club-1", "2025-26", { includeNotes: true });
+    expect(mocks.listClubHonorsPage).toHaveBeenCalledWith("club-1", "2025-26");
+    // Reports stay on the current club year.
+    expect(mocks.getClubReportYear).toHaveBeenCalledWith("club-1", "2026-27");
+    expect(props).toMatchObject({ clubYear: "2025-26", readOnly: true, canSeeBirthDates: false, birthDatesEndpoint: undefined });
+  });
+
+  it("keeps the current year's birth-date reveal", async () => {
+    const props = rosterProps(await staffOverview("2026-27"));
+    expect(props).toMatchObject({ clubYear: "2026-27", readOnly: true, canSeeBirthDates: true, birthDatesEndpoint: "/api/admin/organizations/club-1/roster/birth-dates" });
+    expect(rosterProps(await staffOverview())).toMatchObject({ clubYear: "2026-27", canSeeBirthDates: true });
   });
 });

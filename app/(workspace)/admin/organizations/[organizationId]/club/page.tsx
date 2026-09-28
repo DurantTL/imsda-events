@@ -4,8 +4,11 @@ import { notFound, redirect } from "next/navigation";
 import { Eye, IdCard, UserCog } from "lucide-react";
 import { ActAsButton } from "@/components/act-as-button";
 import { BackLink } from "@/components/back-link";
+import { ClubImportYearMove } from "@/components/club-import-year-move";
 import { ClubOverview } from "@/components/club-overview";
 import { getCurrentSession } from "@/modules/access/current-session";
+import { listClubImports } from "@/modules/club-imports/move-year";
+import { rosterYearView } from "@/modules/club-rosters/domain";
 import { getPrisma } from "@/lib/prisma";
 
 export const metadata: Metadata = { title: "Open club" };
@@ -15,17 +18,28 @@ export const dynamic = "force-dynamic";
  * A club as its director sees it, for conference staff, view only (#386):
  * the club's admins, this year's roster, its events, and its monthly reports.
  * Changes are made on the staff screens linked here, never on the club's behalf.
+ * `?year=` shows the previous or next club year's roster, read-only (#541),
+ * so an import can be checked in the year it went into. The one change made
+ * here is moving a club import to another club year (system administrators).
  */
-export default async function StaffOpenClubPage({ params }: { params: Promise<{ organizationId: string }> }) {
+export default async function StaffOpenClubPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ organizationId: string }>;
+  searchParams?: Promise<{ year?: string | string[] }>;
+}) {
   const { user } = await getCurrentSession();
   if (!user) redirect("/login");
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
-  const { organizationId } = await params;
+  const [{ organizationId }, query] = await Promise.all([params, searchParams]);
+  const view = rosterYearView(query?.year);
   const club = await getPrisma().organization.findUnique({
     where: { id: organizationId },
     select: { type: true, name: true, isActive: true, parentOrganization: { select: { name: true } } },
   });
   if (!club || club.type !== "CLUB") notFound();
+  const imports = await listClubImports(organizationId);
   const selfHref = `/admin/organizations/${organizationId}/club`;
   const fromHere = `?from=${encodeURIComponent(selfHref)}`;
 
@@ -66,13 +80,42 @@ export default async function StaffOpenClubPage({ params }: { params: Promise<{ 
         or correct reports from Monthly reports.
       </p>
 
+      <nav aria-label="Roster club year" className="intro-actions club-year-choice">
+        {view.choices.map((year) => (
+          <Link
+            aria-current={year === view.clubYear ? "page" : undefined}
+            className={year === view.clubYear ? "primary-button" : "secondary-button"}
+            href={year === view.currentClubYear ? selfHref : `${selfHref}?year=${encodeURIComponent(year)}`}
+            key={year}
+          >
+            {year}{year === view.currentClubYear ? " (current)" : ""}
+          </Link>
+        ))}
+      </nav>
+      {view.readOnly && (
+        <p className="inline-notice" role="status">
+          Showing the {view.clubYear} roster, read-only. Everything else on this page is for {view.currentClubYear}.
+        </p>
+      )}
+
       <ClubOverview
         backgroundChecks={{ includeNotes: true }}
         birthDatesEndpoint={`/api/admin/organizations/${encodeURIComponent(organizationId)}/roster/birth-dates`}
         organizationId={organizationId}
         reportHref={(month) => `/admin/clubs/reports/${organizationId}/${month}${fromHere}`}
         reportsEditable
+        rosterYear={view.clubYear}
       />
+
+      {/* Keyed by the imports' years, so the panel starts fresh after a move refreshes the page. */}
+      {imports.length > 0 && (
+        <ClubImportYearMove
+          imports={imports}
+          key={imports.map((item) => item.clubYear).join(",")}
+          organizationId={organizationId}
+          yearChoices={view.choices}
+        />
+      )}
     </section>
   );
 }
