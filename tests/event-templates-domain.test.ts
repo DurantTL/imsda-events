@@ -5,8 +5,10 @@ import {
   EventTemplateReferenceError,
   eventTemplatePayloadSchema,
   moduleEnablementSchema,
+  parseEventTemplatePayload,
   validateEventTemplatePayloadReferences,
 } from "@/modules/event-templates/domain";
+import { eventSettingsInputSchema } from "@/modules/events/schemas";
 import {
   requireEventTemplateApplyPermission,
   requireEventTemplateManagementPermission,
@@ -64,6 +66,48 @@ describe("event template payload schema", () => {
     expect(payload.audience).toBe("CLUB");
     expect(payload.formTemplateKeys).toEqual(["simple_rsvp"]);
     expect(payload.moduleEnablement.autoPromoteWaitlist).toBe(true);
+  });
+});
+
+describe("message template defaults use the communications rules (#152 B2)", () => {
+  const withDefault = (entry: Record<string, unknown>) => eventTemplatePayloadSchema.safeParse({
+    messageTemplateDefaults: [{ key: "REGISTRATION_CONFIRMATION", subjectTemplate: "Subject", bodyTemplate: "Body", ...entry }],
+  });
+
+  it("rejects an unknown token and a header-injecting line break in the subject", () => {
+    const result = withDefault({ subjectTemplate: "Hi {{not_a_token}}\nBcc: someone@example.test" });
+    expect(result.success).toBe(false);
+    const messages = result.error!.issues.map((issue) => issue.message).join(" | ");
+    expect(messages).toMatch(/one line/);
+    expect(messages).toMatch(/not_a_token/);
+    expect(result.error!.issues.every((issue) => issue.path.join(".") === "messageTemplateDefaults.0.subjectTemplate")).toBe(true);
+  });
+
+  it("rejects an unknown token in the body", () => {
+    const result = withDefault({ bodyTemplate: "Hello {{made_up_field}}" });
+    expect(result.success).toBe(false);
+    expect(result.error!.issues[0]!.path).toEqual(["messageTemplateDefaults", 0, "bodyTemplate"]);
+  });
+
+  it("enforces the communications editor's length limits (180 / 12,000)", () => {
+    expect(withDefault({ subjectTemplate: "s".repeat(180) }).success).toBe(true);
+    expect(withDefault({ subjectTemplate: "s".repeat(181) }).success).toBe(false);
+    expect(withDefault({ bodyTemplate: "b".repeat(12_000) }).success).toBe(true);
+    expect(withDefault({ bodyTemplate: "b".repeat(12_001) }).success).toBe(false);
+  });
+
+  it("accepts known tokens", () => {
+    expect(withDefault({ subjectTemplate: "Welcome to {{event_name}}" }).success).toBe(true);
+  });
+
+  it("parseEventTemplatePayload reports a stale stored payload as a reference error, naming each problem", () => {
+    try {
+      parseEventTemplatePayload({ messageTemplateDefaults: [{ key: "REGISTRATION_CONFIRMATION", subjectTemplate: "Hi {{nope}}", bodyTemplate: "Body" }] });
+      expect.unreachable("expected a reference error");
+    } catch (error) {
+      expect(error).toBeInstanceOf(EventTemplateReferenceError);
+      expect((error as EventTemplateReferenceError).issues[0]).toMatch(/^messageTemplateDefaults\.0\.subjectTemplate: /);
+    }
   });
 });
 
@@ -140,6 +184,27 @@ describe("applyEventTemplateInputSchema", () => {
       requestKey: "idempotency-key-0001",
     });
     expect(parsed.slug).toBe("weekend-retreat");
+  });
+
+  const base = { name: "Weekend retreat", slug: "weekend-retreat", startsOn: "2027-05-01", endsOn: "2027-05-03", requestKey: "idempotency-key-0001" };
+
+  it.each([
+    ["an impossible day (would roll over to March)", { startsOn: "2027-02-30" }],
+    ["month 13", { endsOn: "2027-13-01" }],
+    ["an end before the start", { startsOn: "2027-05-04", endsOn: "2027-05-03" }],
+    ["a slug with leading and repeated hyphens", { slug: "-x--y-" }],
+    ["a two-character slug", { slug: "ab" }],
+    ["a two-character name", { name: "ab" }],
+    ["a name longer than event settings allow", { name: "n".repeat(121) }],
+  ])("rejects %s, exactly as event settings would (#152 B3)", (_label, override) => {
+    expect(applyEventTemplateInputSchema.safeParse({ ...base, ...override }).success).toBe(false);
+  });
+
+  it("accepts every value event settings accepts, so the created event can be re-saved", () => {
+    const parsed = applyEventTemplateInputSchema.parse({ ...base, slug: "Weekend-Retreat", startsOn: "2028-02-29", endsOn: "2028-02-29" });
+    expect(parsed.slug).toBe("weekend-retreat");
+    expect(eventSettingsInputSchema.shape.name.safeParse(parsed.name).success).toBe(true);
+    expect(eventSettingsInputSchema.shape.slug.safeParse(parsed.slug).success).toBe(true);
   });
 });
 

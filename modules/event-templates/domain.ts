@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getFormTemplate } from "@/modules/forms/definition";
-import { isEventMessageTemplateKey, type MessageTemplateKey } from "@/modules/communications/templates";
+import { isEventMessageTemplateKey, validateMessageTemplate, type MessageTemplateKey } from "@/modules/communications/templates";
+import { calendarDateSchema, eventNameSchema, eventSlugSchema } from "@/modules/events/schemas";
 import { operationalReportKinds } from "@/modules/reporting/operational-reports";
 import { attendeeClassificationInputSchema, attendeeTypeInputSchema } from "@/modules/attendee-types/domain";
 
@@ -29,12 +30,26 @@ export const templateAttendeeClassificationSchema = attendeeClassificationInputS
 /** An override for one of the event's message templates (#152). Only keys a
  * real event can carry its own version of (`isEventMessageTemplateKey`) are
  * accepted; the account-only keys (activation, password reset) can never
- * appear here. */
+ * appear here.
+ *
+ * Applying a template writes these as the new event's PUBLISHED message
+ * template versions, so they must pass exactly what the communications
+ * editor enforces (`messageTemplateInputSchema`): the same length limits and
+ * `validateMessageTemplate` (known tokens only, a one-line subject). */
 export const templateMessageDefaultSchema = z.object({
   key: z.string().trim().min(1).max(80),
   isEnabled: z.boolean().default(true),
-  subjectTemplate: z.string().trim().min(1).max(200),
-  bodyTemplate: z.string().trim().min(1).max(20000),
+  subjectTemplate: z.string().trim().min(1).max(180),
+  bodyTemplate: z.string().trim().min(1).max(12_000),
+}).superRefine((input, context) => {
+  const validation = validateMessageTemplate({ subject: input.subjectTemplate, body: input.bodyTemplate });
+  for (const issue of validation.issues) {
+    context.addIssue({
+      code: "custom",
+      path: [issue.field === "subject" ? "subjectTemplate" : "bodyTemplate"],
+      message: issue.message,
+    });
+  }
 });
 
 export type TemplateMessageDefault = z.infer<typeof templateMessageDefaultSchema>;
@@ -66,6 +81,11 @@ export const eventTemplatePayloadSchema = z.object({
     collectsShirtSizes: false,
     checksAdultBackgrounds: false,
   }),
+  /** Snapshot-only in this slice (#152): no reporting domain consumes a
+   * per-event report selection yet, so applying a template records these in
+   * `EventTemplateApplication.payloadSnapshot` and creates nothing from them.
+   * A later slice that adds per-event report configuration reads them from
+   * there. */
   reportSelections: z.array(z.enum(operationalReportKinds)).max(operationalReportKinds.length).default([]),
   messageTemplateDefaults: z.array(templateMessageDefaultSchema).max(MESSAGE_TEMPLATE_DEFAULT_LIMIT).default([]),
   brandingDefaults: templateBrandingDefaultsSchema.default({
@@ -104,9 +124,27 @@ export class EventTemplateReferenceError extends Error {
   constructor(
     public readonly issues: string[],
   ) {
-    super(`Template references are invalid or unavailable: ${issues.join("; ")}`);
+    super(`This template is invalid or references something unavailable: ${issues.join("; ")}`);
     this.name = "EventTemplateReferenceError";
   }
+}
+
+/**
+ * Strictly parses a stored version payload for publish and apply (#152).
+ * A payload that no longer satisfies the current schema — for example a
+ * message default saved before its token rules tightened — is reported as an
+ * `EventTemplateReferenceError` naming every problem, so publish and apply
+ * refuse it before anything is written. Display paths use `safeParse`
+ * instead so one stale version can never break a whole page.
+ */
+export function parseEventTemplatePayload(value: unknown): EventTemplatePayload {
+  const result = eventTemplatePayloadSchema.safeParse(value);
+  if (!result.success) {
+    throw new EventTemplateReferenceError(result.error.issues.map((issue) => (
+      issue.path.length > 0 ? `${issue.path.join(".")}: ${issue.message}` : issue.message
+    )));
+  }
+  return result.data;
 }
 
 /**
@@ -163,20 +201,33 @@ export const draftEventTemplateInputSchema = z.object({
   description: eventTemplateDescriptionSchema,
   payload: eventTemplatePayloadSchema,
   /** Optimistic-concurrency guard, mirroring `updateRegistrationForm`'s
-   * `expectedUpdatedAt`: required whenever a draft version already exists so
-   * a stale tab can't silently overwrite a newer draft. */
-  expectedUpdatedAt: z.string().datetime().optional(),
+   * `expectedUpdatedAt`: the `updatedAt` of the version the editor loaded
+   * (its draft, or the published version a new draft is opened from). Every
+   * template has a version from the moment it is created, so this is always
+   * required: a stale tab can never silently overwrite a newer draft. */
+  expectedUpdatedAt: z.string().datetime(),
 });
 
+/**
+ * The new event's details when applying a template (#152). Built from the
+ * same rules `eventSettingsInputSchema` enforces (name, slug, real calendar
+ * dates, the event not ending before it starts), so an event created from a
+ * template can always be re-saved in event settings unchanged.
+ */
 export const applyEventTemplateInputSchema = z.object({
-  name: z.string().trim().min(2, "Name the event.").max(200),
-  slug: z.string().trim().min(2).max(80).regex(/^[a-z0-9-]+$/, "Use lowercase letters, numbers, and hyphens."),
-  startsOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use a calendar date in YYYY-MM-DD format."),
-  endsOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use a calendar date in YYYY-MM-DD format."),
-  /** The caller's idempotency key: retrying an apply with the same key
-   * returns the event the first attempt created instead of creating a
-   * second one (#152). */
+  name: eventNameSchema,
+  slug: eventSlugSchema,
+  startsOn: calendarDateSchema,
+  endsOn: calendarDateSchema,
+  /** The caller's idempotency key, scoped to the signed-in actor: retrying an
+   * apply with the same key and the same details returns the event the first
+   * attempt created instead of creating a second one, and reusing a key with
+   * different details is refused (#152). */
   requestKey: z.string().trim().min(8).max(200),
+}).superRefine((value, context) => {
+  if (value.endsOn < value.startsOn) {
+    context.addIssue({ code: "custom", path: ["endsOn"], message: "The event cannot end before it starts." });
+  }
 });
 
 export type ApplyEventTemplateInput = z.infer<typeof applyEventTemplateInputSchema>;

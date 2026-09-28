@@ -1,0 +1,302 @@
+/**
+ * Proves the event template guarantees (#152) against a real PostgreSQL
+ * database: applying creates a draft event with its own rows; revising and
+ * republishing the template leaves an event already created from it
+ * untouched; a save racing a publish can never overwrite or publish an
+ * unvalidated payload, and the partial unique index allows only one
+ * PUBLISHED version; parallel applies with one request key create exactly one
+ * event; a reused key with different details is refused; a stale published
+ * payload is refused at apply; and archiving sticks. Uses fictitious staff
+ * users and templates it creates and removes itself.
+ *
+ *   npm run test:event-templates
+ */
+import { loadEnvConfig } from "@next/env";
+import { Prisma, PrismaClient } from "@prisma/client";
+import { draftEventTemplateInputSchema, EventTemplateReferenceError, eventTemplatePayloadSchema } from "../modules/event-templates/domain";
+import {
+  applyEventTemplate,
+  archiveEventTemplate,
+  createEventTemplate,
+  EventTemplateOperationError,
+  getEventTemplate,
+  publishEventTemplateVersion,
+  saveEventTemplateDraft,
+} from "../modules/event-templates/repository";
+import { eventSettingsInputSchema } from "../modules/events/schemas";
+import { getEventSettings } from "../modules/events/repository";
+
+loadEnvConfig(process.cwd());
+
+const prisma = new PrismaClient();
+const P = "evttpl";
+const adminId = `${P}_admin`;
+const otherAdminId = `${P}_admin_2`;
+const actors = [adminId, otherAdminId];
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(`FAILED: ${message}`);
+}
+
+function isOperationError(error: unknown, code: EventTemplateOperationError["code"]) {
+  return error instanceof EventTemplateOperationError && error.code === code;
+}
+
+async function cleanup() {
+  await prisma.auditLog.deleteMany({ where: { actorUserId: { in: actors } } });
+  await prisma.eventTemplateApplication.deleteMany({ where: { actorUserId: { in: actors } } });
+  await prisma.event.deleteMany({ where: { slug: { startsWith: `${P}-` } } });
+  await prisma.eventTemplate.deleteMany({ where: { createdByUserId: { in: actors } } });
+  await prisma.user.deleteMany({ where: { id: { in: actors } } });
+}
+
+async function main() {
+  await cleanup();
+  try {
+    await run();
+  } finally {
+    await cleanup();
+  }
+}
+
+const goodPayload = (overrides: Record<string, unknown> = {}) => eventTemplatePayloadSchema.parse({
+  audience: "CLUB",
+  formTemplateKeys: ["simple_rsvp"],
+  attendeeTypes: [{ code: "ADULT", label: "Adult" }, { code: "YOUTH", label: "Youth" }],
+  moduleEnablement: { waitlistEnabled: true, autoPromoteWaitlist: true },
+  messageTemplateDefaults: [{ key: "EVENT_ANNOUNCEMENT", subjectTemplate: "News from {{event_name}}", bodyTemplate: "Hello {{recipient_name}}." }],
+  reportSelections: [],
+  ...overrides,
+});
+
+/** A draft that saves fine but must never be published: its form template does not exist. */
+const unpublishablePayload = () => goodPayload({ formTemplateKeys: ["evttpl_missing_form_template"] });
+
+async function latestVersion(templateId: string) {
+  const template = await getEventTemplate(templateId);
+  return template.versions.find((version) => version.status === "DRAFT")
+    ?? template.versions.find((version) => version.status === "PUBLISHED")!;
+}
+
+async function save(templateId: string, payload: ReturnType<typeof goodPayload>, expectedUpdatedAt?: string) {
+  const expected = expectedUpdatedAt ?? (await latestVersion(templateId)).updatedAt;
+  return saveEventTemplateDraft(templateId, adminId, { name: "Evttpl Retreat", description: "", payload, expectedUpdatedAt: expected });
+}
+
+/** Resolves once `count` backends in this database are waiting on a lock. */
+async function waitForLockWaiters(count: number) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const rows = await prisma.$queryRaw<{ waiting: bigint }[]>`
+      SELECT count(*) AS "waiting" FROM pg_stat_activity
+      WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+    if (Number(rows[0]?.waiting ?? 0) >= count) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`FAILED: expected ${count} lock waiter(s)`);
+}
+
+/**
+ * Holds the template row lock from a separate transaction, starts `first`,
+ * waits until it is queued behind the lock, starts `second`, waits for it
+ * too, then releases — so the two run in a known order, each after the other
+ * has fully committed or rolled back.
+ */
+async function inOrderBehindLock<A, B>(templateId: string, first: () => Promise<A>, second: () => Promise<B>) {
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => { release = resolve; });
+  let locked!: () => void;
+  const lockTaken = new Promise<void>((resolve) => { locked = resolve; });
+  const blocker = prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "EventTemplate" WHERE "id" = ${templateId} FOR UPDATE`;
+    locked();
+    await released;
+  }, { timeout: 20_000 });
+  await lockTaken;
+  const firstResult = first().then((value) => ({ ok: true as const, value }), (error: unknown) => ({ ok: false as const, error }));
+  await waitForLockWaiters(1);
+  const secondResult = second().then((value) => ({ ok: true as const, value }), (error: unknown) => ({ ok: false as const, error }));
+  await waitForLockWaiters(2);
+  release();
+  await blocker;
+  return [await firstResult, await secondResult] as const;
+}
+
+async function eventRows(eventId: string) {
+  const [event, attendeeTypes, forms, messages] = await Promise.all([
+    prisma.event.findUniqueOrThrow({ where: { id: eventId }, select: { name: true, slug: true, audience: true, waitlistEnabled: true, updatedAt: true } }),
+    prisma.eventAttendeeType.findMany({ where: { eventId }, orderBy: { code: "asc" }, select: { id: true, code: true, label: true, updatedAt: true } }),
+    prisma.registrationForm.findMany({ where: { eventId }, orderBy: { slug: "asc" }, select: { id: true, slug: true, updatedAt: true, versions: { select: { id: true, definition: true, updatedAt: true } } } }),
+    prisma.eventMessageTemplate.findMany({ where: { eventId }, select: { id: true, key: true, versions: { select: { status: true, subjectTemplate: true, bodyTemplate: true, updatedAt: true } } } }),
+  ]);
+  return JSON.stringify({ event, attendeeTypes, forms, messages });
+}
+
+async function run() {
+  await prisma.user.createMany({ data: [
+    { id: adminId, email: `${P}-admin@example.test`, displayName: "Template Check Admin", globalRole: "SYSTEM_ADMIN" },
+    { id: otherAdminId, email: `${P}-admin-2@example.test`, displayName: "Template Check Admin 2", globalRole: "SYSTEM_ADMIN" },
+  ] });
+
+  // 1. Apply creates a draft event with its own rows, and it re-saves in settings.
+  const created = await createEventTemplate(adminId, { name: "Evttpl Retreat", description: "", audience: "CLUB" });
+  const templateId = created.id;
+  await save(templateId, goodPayload());
+  await publishEventTemplateVersion(templateId, adminId);
+  const first = await applyEventTemplate(templateId, adminId, {
+    name: "Evttpl Retreat 2027", slug: `${P}-retreat-2027`, startsOn: "2027-05-01", endsOn: "2027-05-03", requestKey: `${P}-key-apply-1`,
+  });
+  assert(!first.alreadyApplied && first.event, "the first apply creates an event");
+  const firstEventId = first.event.id;
+  assert(first.event.audience === "CLUB" && first.event.waitlistEnabled && !first.event.isPublished, "the event carries the payload's audience and toggles, unpublished");
+  assert(await prisma.eventAttendeeType.count({ where: { eventId: firstEventId } }) === 2, "two attendee types were created");
+  const form = await prisma.registrationForm.findFirstOrThrow({ where: { eventId: firstEventId }, include: { versions: true } });
+  assert(await prisma.auditLog.count({ where: { action: "REGISTRATION_FORM_CREATED", entityId: form.id } }) === 1, "the form creation is audited (N3)");
+  const message = await prisma.eventMessageTemplate.findFirstOrThrow({ where: { eventId: firstEventId }, include: { versions: true } });
+  assert(message.versions.length === 1 && message.versions[0]!.status === "PUBLISHED", "the message default became the event's published version");
+  const settings = await getEventSettings(firstEventId);
+  const resave = eventSettingsInputSchema.safeParse({ ...settings, approvedPaymentInstructions: settings!.approvedPaymentInstructions ?? null });
+  assert(resave.success, `the created event re-saves in settings: ${resave.success ? "" : JSON.stringify(resave.error.issues)}`);
+  console.log("ok  apply creates a draft event with its own attendee types, audited form, and message version; it re-saves in settings");
+
+  // 2. Revising and republishing the template leaves the existing event's rows unchanged.
+  const before = await eventRows(firstEventId);
+  await save(templateId, goodPayload({
+    audience: "GENERAL",
+    attendeeTypes: [{ code: "STAFF", label: "Staff" }],
+    formTemplateKeys: ["retreat_registration"],
+    messageTemplateDefaults: [{ key: "EVENT_ANNOUNCEMENT", subjectTemplate: "Changed {{event_name}}", bodyTemplate: "Changed." }],
+  }));
+  await publishEventTemplateVersion(templateId, adminId);
+  const after = await eventRows(firstEventId);
+  assert(before === after, "the existing event's rows are unchanged after the template is revised and republished");
+  const firstApplication = await prisma.eventTemplateApplication.findFirstOrThrow({ where: { eventId: firstEventId } });
+  const snapshot = eventTemplatePayloadSchema.parse(firstApplication.payloadSnapshot);
+  assert(snapshot.attendeeTypes.length === 2 && snapshot.audience === "CLUB", "the application snapshot still records the version that was applied");
+  const firstVersion = await prisma.eventTemplateVersion.findUniqueOrThrow({ where: { id: firstApplication.templateVersionId } });
+  assert(firstVersion.status === "ARCHIVED" && JSON.stringify(eventTemplatePayloadSchema.parse(firstVersion.payload)) === JSON.stringify(snapshot), "the superseded version is archived with its payload intact");
+  console.log("ok  revising and republishing leaves an already-created event and its provenance untouched");
+
+  // 3a. Only one PUBLISHED version per template, enforced by the database.
+  await save(templateId, goodPayload());
+  const draftRow = await prisma.eventTemplateVersion.findFirstOrThrow({ where: { templateId, status: "DRAFT" } });
+  const secondPublished = await prisma.eventTemplateVersion.update({ where: { id: draftRow.id }, data: { status: "PUBLISHED" } })
+    .then(() => null, (error: unknown) => error);
+  assert(secondPublished instanceof Prisma.PrismaClientKnownRequestError && secondPublished.code === "P2002", `a second PUBLISHED version should hit P2002, got ${String(secondPublished)}`);
+  const secondDraft = await prisma.eventTemplateVersion.create({ data: { templateId, createdByUserId: adminId, versionNumber: 99, status: "DRAFT", payload: goodPayload() } })
+    .then(() => null, (error: unknown) => error);
+  assert(secondDraft instanceof Prisma.PrismaClientKnownRequestError && secondDraft.code === "P2002", `a second DRAFT version should hit P2002, got ${String(secondDraft)}`);
+  console.log("ok  the partial unique indexes allow one PUBLISHED and one DRAFT version per template");
+
+  // 3b. Publish queued ahead of a save: the save loses with EDIT_CONFLICT and
+  // the published row keeps the payload that was validated.
+  const draftBeforeRace = await latestVersion(templateId);
+  assert(draftBeforeRace.status === "DRAFT", "there is a draft to race on");
+  const validatedPayload = JSON.stringify(draftBeforeRace.payload);
+  const [publishFirst, saveSecond] = await inOrderBehindLock(
+    templateId,
+    () => publishEventTemplateVersion(templateId, adminId),
+    () => save(templateId, unpublishablePayload(), draftBeforeRace.updatedAt),
+  );
+  assert(publishFirst.ok, `the queued publish succeeds: ${publishFirst.ok ? "" : String(publishFirst.error)}`);
+  assert(!saveSecond.ok && isOperationError(saveSecond.error, "EDIT_CONFLICT"), `the stale save is refused with EDIT_CONFLICT, got ${saveSecond.ok ? "success" : String(saveSecond.error)}`);
+  const publishedAfterRace = await prisma.eventTemplateVersion.findMany({ where: { templateId, status: "PUBLISHED" } });
+  assert(publishedAfterRace.length === 1 && publishedAfterRace[0]!.id === draftBeforeRace.id, "exactly one version is published: the one that was validated");
+  assert(JSON.stringify(publishedAfterRace[0]!.payload) === validatedPayload, "the published payload is the validated one, not the racing save's");
+
+  // 3c. Save queued ahead of a publish: publish re-reads and validates the
+  // saved payload, refuses it, and publishes nothing.
+  await save(templateId, goodPayload());
+  const draftBeforeSecondRace = await latestVersion(templateId);
+  const [saveFirst, publishSecond] = await inOrderBehindLock(
+    templateId,
+    () => save(templateId, unpublishablePayload(), draftBeforeSecondRace.updatedAt),
+    () => publishEventTemplateVersion(templateId, adminId),
+  );
+  assert(saveFirst.ok, `the queued save succeeds: ${saveFirst.ok ? "" : String(saveFirst.error)}`);
+  assert(!publishSecond.ok && publishSecond.error instanceof EventTemplateReferenceError, `publish refuses the unvalidated payload, got ${publishSecond.ok ? "success" : String(publishSecond.error)}`);
+  const stillPublished = await prisma.eventTemplateVersion.findMany({ where: { templateId, status: "PUBLISHED" } });
+  assert(stillPublished.length === 1 && stillPublished[0]!.id === draftBeforeRace.id, "the earlier published version stays the only published one");
+  assert(JSON.stringify(stillPublished[0]!.payload) === validatedPayload, "its payload is still untouched");
+
+  // 3d. Unordered races: whatever the interleaving, the published payload is always a validated one.
+  await save(templateId, goodPayload());
+  for (let round = 0; round < 5; round += 1) {
+    const draft = await latestVersion(templateId);
+    const payloadBefore = JSON.stringify(draft.payload);
+    await Promise.allSettled([
+      publishEventTemplateVersion(templateId, adminId),
+      save(templateId, unpublishablePayload(), draft.updatedAt),
+    ]);
+    const published = await prisma.eventTemplateVersion.findMany({ where: { templateId, status: "PUBLISHED" } });
+    assert(published.length === 1, `round ${round}: exactly one published version`);
+    const publishedPayload = eventTemplatePayloadSchema.parse(published[0]!.payload);
+    assert(!publishedPayload.formTemplateKeys.includes("evttpl_missing_form_template"), `round ${round}: an unvalidated payload was never published`);
+    if (published[0]!.id === draft.id) assert(JSON.stringify(published[0]!.payload) === payloadBefore, `round ${round}: the published draft kept its validated payload`);
+    await save(templateId, goodPayload());
+  }
+  console.log("ok  a save racing a publish never overwrites a published payload or publishes an unvalidated one");
+
+  // 4. Parallel applies with one request key create exactly one event.
+  await publishEventTemplateVersion(templateId, adminId);
+  const parallelInput = { name: "Evttpl Parallel", slug: `${P}-parallel`, startsOn: "2027-06-01", endsOn: "2027-06-02", requestKey: `${P}-key-parallel` };
+  const parallel = await Promise.allSettled([1, 2, 3].map(() => applyEventTemplate(templateId, adminId, parallelInput)));
+  const rejected = parallel.filter((result) => result.status === "rejected");
+  assert(rejected.length === 0, `every parallel apply returns the event: ${rejected.map((result) => String((result as PromiseRejectedResult).reason)).join("; ")}`);
+  const fulfilled = parallel.map((result) => (result as PromiseFulfilledResult<Awaited<ReturnType<typeof applyEventTemplate>>>).value);
+  assert(new Set(fulfilled.map((result) => result.event.id)).size === 1, "all three return the same event");
+  assert(fulfilled.filter((result) => !result.alreadyApplied).length === 1, "exactly one of them created it");
+  assert(await prisma.event.count({ where: { slug: parallelInput.slug } }) === 1, "one event exists for the slug");
+  assert(await prisma.eventTemplateApplication.count({ where: { actorUserId: adminId, requestKey: parallelInput.requestKey } }) === 1, "one application row for the key");
+  console.log("ok  three parallel applies with one request key create exactly one event and all return it");
+
+  // 5. Key reuse: a different body is refused; another actor's same key is independent.
+  const reused = await applyEventTemplate(templateId, adminId, { ...parallelInput, slug: `${P}-parallel-other` }).then(() => null, (error: unknown) => error);
+  assert(isOperationError(reused, "REQUEST_KEY_REUSED"), `a reused key with a different slug is refused, got ${String(reused)}`);
+  assert(await prisma.event.count({ where: { slug: `${P}-parallel-other` } }) === 0, "no event was created for the reused key");
+  const otherActor = await applyEventTemplate(templateId, otherAdminId, { ...parallelInput, slug: `${P}-parallel-actor-2` });
+  assert(!otherActor.alreadyApplied && otherActor.event.id !== fulfilled[0]!.event.id, "the same key from another actor is its own request");
+  const slugTaken = await applyEventTemplate(templateId, adminId, { ...parallelInput, requestKey: `${P}-key-slug-taken` }).then(() => null, (error: unknown) => error);
+  assert(isOperationError(slugTaken, "EVENT_SLUG_TAKEN"), `a new key for a taken slug is EVENT_SLUG_TAKEN, got ${String(slugTaken)}`);
+  const badDate = await applyEventTemplate(templateId, adminId, { ...parallelInput, slug: `${P}-bad-date`, startsOn: "2027-02-30", requestKey: `${P}-key-bad-date` }).then(() => null, (error: unknown) => error);
+  assert(badDate instanceof Error && badDate.name === "ZodError", `an impossible date is a validation error, got ${String(badDate)}`);
+  console.log("ok  a reused key with different details is refused; keys are per actor; slugs and dates are validated");
+
+  // 6. A published payload that no longer passes the message rules is refused at apply.
+  const stale = await createEventTemplate(adminId, { name: "Evttpl Stale", description: "", audience: "GENERAL" });
+  const staleVersion = await prisma.eventTemplateVersion.findFirstOrThrow({ where: { templateId: stale.id } });
+  await prisma.eventTemplateVersion.update({ where: { id: staleVersion.id }, data: {
+    status: "PUBLISHED",
+    publishedAt: new Date(),
+    payload: { ...goodPayload(), messageTemplateDefaults: [{ key: "EVENT_ANNOUNCEMENT", isEnabled: true, subjectTemplate: "Hi {{not_a_token}}\nBcc: someone@example.test", bodyTemplate: "Body" }] },
+  } });
+  await prisma.eventTemplate.update({ where: { id: stale.id }, data: { status: "PUBLISHED" } });
+  assert(!draftEventTemplateInputSchema.safeParse({ name: "x-stale", payload: (await prisma.eventTemplateVersion.findUniqueOrThrow({ where: { id: staleVersion.id } })).payload, expectedUpdatedAt: new Date().toISOString() }).success, "the draft schema rejects that payload");
+  const staleListing = await getEventTemplate(stale.id);
+  assert(!staleListing.canApply && staleListing.versions[0]!.payloadIssues.length > 0, "the stale template still loads for display, flagged and not appliable");
+  const staleApply = await applyEventTemplate(stale.id, adminId, { name: "Evttpl Stale Event", slug: `${P}-stale`, startsOn: "2027-07-01", endsOn: "2027-07-01", requestKey: `${P}-key-stale` })
+    .then(() => null, (error: unknown) => error);
+  assert(staleApply instanceof EventTemplateReferenceError, `a stale published payload is refused at apply, got ${String(staleApply)}`);
+  assert(await prisma.event.count({ where: { slug: `${P}-stale` } }) === 0, "nothing was created from the stale payload");
+  console.log("ok  a published message default with an unknown token or a subject line break is refused at apply");
+
+  // 7. Archive sticks: saving, publishing, and applying are all refused afterward.
+  await archiveEventTemplate(templateId, adminId);
+  const saveArchived = await save(templateId, goodPayload()).then(() => null, (error: unknown) => error);
+  assert(isOperationError(saveArchived, "TEMPLATE_ARCHIVED"), `saving an archived template is refused, got ${String(saveArchived)}`);
+  const publishArchived = await publishEventTemplateVersion(templateId, adminId).then(() => null, (error: unknown) => error);
+  assert(isOperationError(publishArchived, "TEMPLATE_ARCHIVED"), `publishing an archived template is refused, got ${String(publishArchived)}`);
+  const applyArchived = await applyEventTemplate(templateId, adminId, { name: "Evttpl Archived", slug: `${P}-archived`, startsOn: "2027-08-01", endsOn: "2027-08-02", requestKey: `${P}-key-archived` })
+    .then(() => null, (error: unknown) => error);
+  assert(isOperationError(applyArchived, "TEMPLATE_ARCHIVED"), `applying an archived template is refused, got ${String(applyArchived)}`);
+  const archived = await getEventTemplate(templateId);
+  assert(archived.status === "ARCHIVED" && !archived.canApply, "the template is still archived and not appliable");
+  assert(await eventRows(firstEventId) === after, "archiving did not touch the event created from it");
+  console.log("ok  archive sticks: save, publish, and apply are refused afterward, and existing events are untouched");
+}
+
+main()
+  .catch((error: unknown) => {
+    console.error(error);
+    process.exitCode = 1;
+  })
+  .finally(() => prisma.$disconnect());

@@ -25,6 +25,8 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
   const [template, setTemplate] = useState(initialTemplate);
   const version = useMemo(() => currentVersion(template), [template]);
   const isDraft = version?.status === "DRAFT";
+  const isArchived = template.status === "ARCHIVED";
+  const nextVersionNumber = (template.versions[0]?.versionNumber ?? 0) + 1;
 
   const [name, setName] = useState(template.name);
   const [description, setDescription] = useState(template.description);
@@ -120,15 +122,27 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
             onChange={(event) => setPayloadText(event.target.value)}
             rows={20}
             spellCheck={false}
-            disabled={!isDraft}
+            disabled={isArchived}
           />
         </label>
-        {!isDraft ? <p>This template has no draft version. Publishing again opens a new draft.</p> : null}
+        {version && version.payloadIssues.length > 0 ? (
+          <div className="inline-notice error" role="alert">
+            This version no longer passes validation and cannot be published or applied until it is fixed:
+            <ul>{version.payloadIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul>
+          </div>
+        ) : null}
+        {isArchived ? <p>This template is archived. It can no longer be edited, published, or used to create events.</p> : null}
+        {!isArchived && !isDraft ? (
+          <p>
+            You are viewing the published version, which never changes. Saving your edits opens version {nextVersionNumber} as a new draft;
+            events already created from this template are unaffected.
+          </p>
+        ) : null}
         <p>
-          <button type="button" className="secondary-button" disabled={saving} onClick={saveDraft}>
-            {saving ? "Saving…" : "Save draft"}
+          <button type="button" className="secondary-button" disabled={saving || isArchived} onClick={saveDraft}>
+            {saving ? "Saving…" : isDraft ? "Save draft" : "Save as new draft"}
           </button>{" "}
-          <button type="button" className="primary-button" disabled={publishing || !isDraft} onClick={publish}>
+          <button type="button" className="primary-button" disabled={publishing || !isDraft || isArchived} onClick={publish}>
             {publishing ? "Publishing…" : "Publish"}
           </button>{" "}
           {template.status !== "ARCHIVED" ? (

@@ -10,7 +10,6 @@ CREATE TABLE "EventTemplate" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "description" TEXT NOT NULL DEFAULT '',
-    "audience" "EventAudience" NOT NULL DEFAULT 'GENERAL',
     "status" "EventTemplateStatus" NOT NULL DEFAULT 'DRAFT',
     "createdByUserId" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -42,6 +41,7 @@ CREATE TABLE "EventTemplateApplication" (
     "eventId" TEXT NOT NULL,
     "actorUserId" TEXT NOT NULL,
     "requestKey" TEXT NOT NULL,
+    "requestInput" JSONB NOT NULL,
     "payloadSnapshot" JSONB NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -60,8 +60,14 @@ CREATE INDEX "EventTemplateVersion_templateId_status_versionNumber_idx" ON "Even
 -- CreateIndex
 CREATE UNIQUE INDEX "EventTemplateApplication_eventId_key" ON "EventTemplateApplication"("eventId");
 
+-- Partial unique indexes Prisma cannot express (see the schema comment on
+-- EventTemplateVersion): at most one PUBLISHED and at most one DRAFT version
+-- per template, so a racing save/publish can never leave two live versions.
+CREATE UNIQUE INDEX "EventTemplateVersion_one_published_per_template" ON "EventTemplateVersion"("templateId") WHERE "status" = 'PUBLISHED';
+CREATE UNIQUE INDEX "EventTemplateVersion_one_draft_per_template" ON "EventTemplateVersion"("templateId") WHERE "status" = 'DRAFT';
+
 -- CreateIndex
-CREATE UNIQUE INDEX "EventTemplateApplication_requestKey_key" ON "EventTemplateApplication"("requestKey");
+CREATE UNIQUE INDEX "EventTemplateApplication_actorUserId_requestKey_key" ON "EventTemplateApplication"("actorUserId", "requestKey");
 
 -- CreateIndex
 CREATE INDEX "EventTemplateApplication_templateId_createdAt_idx" ON "EventTemplateApplication"("templateId", "createdAt");

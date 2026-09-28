@@ -64,3 +64,7 @@ jobs:
 
       # Real-database round trip of the full club supply reference file (#531).
       - run: npm run test:club-supplies
+
+      # Real-database check of event templates: apply, revision isolation, save/publish
+      # races, parallel same-key applies, key reuse, and sticky archive (#152).
+      - run: npm run test:event-templates

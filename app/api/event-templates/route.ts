@@ -1,30 +1,19 @@
 import { z } from "zod";
-import { AccessDeniedError } from "@/modules/access/authorization";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
+import { eventTemplateApiError } from "@/modules/event-templates/api-errors";
 import { requireEventTemplateManagementPermission } from "@/modules/event-templates/authorization";
 import { createEventTemplateInputSchema } from "@/modules/event-templates/domain";
-import { EventTemplateOperationError, createEventTemplate, listEventTemplates } from "@/modules/event-templates/repository";
+import { createEventTemplate, listEventTemplates } from "@/modules/event-templates/repository";
 import { withRequestContext } from "@/lib/request-context";
 
-function apiError(error: unknown) {
-  if (error instanceof z.ZodError) {
-    return Response.json({
-      error: "INVALID_EVENT_TEMPLATE",
-      message: error.issues[0]?.message ?? "Review the template details and try again.",
-      issues: error.issues,
-    }, { status: 400 });
-  }
-  if (error instanceof AccessDeniedError) return Response.json({ error: error.code, message: error.message }, { status: error.status });
-  if (error instanceof EventTemplateOperationError) return Response.json({ error: error.code, message: error.message }, { status: error.code === "TEMPLATE_NOT_FOUND" ? 404 : 409 });
-  return Response.json({ error: "EVENT_TEMPLATE_REQUEST_FAILED", message: "The event template request could not be completed." }, { status: 500 });
-}
+const errorOptions = { failureMessage: "The event template request could not be completed.", logMessage: "Event template request failed" };
 
 async function getHandler() {
   try {
-    await requireEventTemplateManagementPermission(await getCurrentSession());
+    requireEventTemplateManagementPermission(await getCurrentSession());
     return Response.json({ templates: await listEventTemplates() });
-  } catch (error) { return apiError(error); }
+  } catch (error) { return eventTemplateApiError(error, errorOptions); }
 }
 
 async function postHandler(request: Request) {
@@ -35,7 +24,7 @@ async function postHandler(request: Request) {
     const body = createEventTemplateInputSchema.extend({ audience: z.enum(["GENERAL", "CLUB"]).default("GENERAL") }).parse(await request.json());
     const template = await createEventTemplate(user.id, body);
     return Response.json({ template }, { status: 201 });
-  } catch (error) { return apiError(error); }
+  } catch (error) { return eventTemplateApiError(error, errorOptions); }
 }
 
 export const GET = withRequestContext(getHandler);

@@ -86,17 +86,25 @@ function validateLifecycle(
   }
 }
 
+/** An event's display name. Exported so every path that creates an event
+ * (settings, and applying an event template in #152) accepts exactly the
+ * same names settings will accept on the next save. */
+export const eventNameSchema = z.string().trim().min(3, "Enter an event name.").max(120);
+
+/** An event's short web address; shared for the same reason as the name. */
+export const eventSlugSchema = z.string()
+  .trim()
+  .toLowerCase()
+  .min(3, "Enter a short web address.")
+  .max(80)
+  .regex(
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+    "Use lowercase letters, numbers, and single hyphens only.",
+  );
+
 export const eventSettingsInputSchema = z.object({
-  name: z.string().trim().min(3, "Enter an event name.").max(120),
-  slug: z.string()
-    .trim()
-    .toLowerCase()
-    .min(3, "Enter a short web address.")
-    .max(80)
-    .regex(
-      /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
-      "Use lowercase letters, numbers, and single hyphens only.",
-    ),
+  name: eventNameSchema,
+  slug: eventSlugSchema,
   startsOn: calendarDateSchema,
   endsOn: calendarDateSchema,
   timezone: z.enum(eventTimeZones),

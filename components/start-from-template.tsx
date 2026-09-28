@@ -91,7 +91,7 @@ export function StartFromTemplate({ templates }: StartFromTemplateProps) {
         <button
           type="button"
           className="primary-button"
-          disabled={submitting || !templateId || name.trim().length < 2 || slug.trim().length < 2 || !startsOn || !endsOn}
+          disabled={submitting || !templateId || name.trim().length < 3 || slug.trim().length < 3 || !startsOn || !endsOn}
           onClick={apply}
         >
           {submitting ? "Creating…" : "Create draft event"}
