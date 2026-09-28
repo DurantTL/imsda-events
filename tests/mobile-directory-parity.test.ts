@@ -139,6 +139,8 @@ const moreOnlyPages: Record<string, (scenario: Scenario) => boolean> = {
   "/more/merchandise": (scenario) => has(scenario, "CONFIGURE_EVENT"),
   // app/(workspace)/more/program-assignments/page.tsx
   "/more/program-assignments": (scenario) => canManageProgramAssignments(scenario.permissions),
+  // app/(workspace)/more/event-patches/page.tsx: CONFIGURE_EVENT, then a CLUB-audience event (#532)
+  "/more/event-patches": (scenario) => has(scenario, "CONFIGURE_EVENT") && scenario.clubEvent,
   // app/(workspace)/more/club-assignments/page.tsx: permission, then a CLUB-audience event
   "/more/club-assignments": (scenario) => canManageClubAssignments(scenario.permissions) && scenario.clubEvent,
   // app/(workspace)/community/page.tsx

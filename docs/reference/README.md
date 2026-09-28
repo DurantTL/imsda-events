@@ -63,3 +63,57 @@ warnings. Confirming saves exactly that preview. An honor-section row whose
 name matches an existing honor links to it and sets the honor's catalog number
 and category; an unmatched row stays an unlinked item. Discontinued items can
 be marked inactive afterwards with the toggle on the same page.
+
+## `master-award-rules.json` (#532)
+
+The starting file for the Master Award rules import (Admin → Master Award
+rules, `app/(workspace)/admin/master-award-rules/page.tsx`, system
+administrators only). Nothing is seeded automatically.
+
+**Source.** The same club spreadsheet as the catalog file, supplied on
+2026-09-28. Its Master Award columns are formulas that count how many honors a
+member has in each group; the 15 rules here were parsed from those formulas'
+structure. Only honor names and minimums are in the file. No member row, and
+nothing a member wrote, is in it.
+
+**Shape.** An object keyed by the Master Award's name. Each rule has
+`groups`, an array of `{ "minimum": n, "honors": [honor names] }`, and
+`groupsRequired`, how many groups the formula said must be met. A rule is
+earned when every group reaches its minimum; a member's honors come from their
+year-round honor record (#486), the latest entry per honor being COMPLETED.
+Examples: Aquatic is one group (any 7 of 16); Health is three (3 of 7, 2 of
+5, 2 of 5); Naturalist is three (4 of 17, 2 of 16, 1 of 6).
+
+**Known limits, kept on purpose.**
+
+- Family, Origins, and Heritage parsed only partly: the formula needs two
+  groups and only one (5 of 12) could be read. The import flags it for a manual
+  check, and the administrator adds the missing group from the official
+  requirements before activating it.
+- Each group counts its own honors independently, exactly as the sheet does. An
+  honor that appears in two groups counts in both.
+- Honor names are the sheet's. They match the honor list by normalized name
+  ("X - Advanced" reads as "X, Advanced"); the preview lists every name that
+  matches nothing, and the rule keeps it on its group for review. A rule with
+  an unmatched honor is flagged for a manual check too.
+
+**Using it.** Upload it on the staff page and read the dry-run preview: rules to
+add, honors matched and unmatched, and which rules need a manual check.
+Confirming saves exactly that preview, and every rule arrives as a DRAFT. A
+rule already on file is never changed, so re-running the import can't undo an
+administrator's edits. The administrator then reviews, edits and activates each
+rule one by one; only ACTIVE rules are used to show progress. A rule flagged
+for a manual check can't be activated until the administrator says they checked
+it. Every import, edit, activation and deactivation is audited.
+
+## Earned awards signals (#532)
+
+- **Class completed.** Nothing in the app recorded that a class was finished
+  (the roster keeps only a member's current class), so a director marks it on
+  the Earned awards screen (`MemberClassCompletion`). That, and only that,
+  suggests the class's insignia set (name strip, chevron, pin, ribbon bar; Master
+  Guide: name strip, star with chevrons, pin), matched by the Investiture
+  section plus name in the supply catalog.
+- **Attended.** A person checked in to the event (an active check-in), which is
+  what the Honors Weekend write-back already treats as attendance. An ended
+  event with no check-ins at all falls back to who was registered.
