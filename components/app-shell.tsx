@@ -16,6 +16,7 @@ import { EventAutoSelectNotice } from "@/components/event-auto-select-notice";
 import { rememberLastUsedEvent } from "@/components/remember-last-event";
 import { SignOutButton } from "@/components/sign-out-button";
 import type { EventPermission } from "@/modules/access/permissions";
+import { otherWorkspaceContextsForStaff } from "@/modules/access/workspace-contexts";
 import {
   matchesVisibility,
   mobileNavigationOrder,
@@ -84,6 +85,11 @@ export function AppShell({
     events.find((event) => event.id === selectedEventId)?.permissions ?? [],
   );
   const isSystemAdmin = user.globalRole === "SYSTEM_ADMIN";
+  // The other workspaces this staff identity may switch into (#108) — the
+  // one place that decision is made, so the popover and the header button
+  // below always agree with each other and with any other surface that asks.
+  const workspaceContexts = otherWorkspaceContextsForStaff({ isSystemAdmin, attendeeAccountAvailable });
+  const canSwitchToAttendee = workspaceContexts.some((context) => context.kind === "attendee");
   const eventQuery = selectedEventId ? `?event=${encodeURIComponent(selectedEventId)}` : "";
   const visibleStatic = navigation.filter((item) => matchesVisibility(item, selectedPermissions));
   const dashboardItem = visibleStatic.find((item) => !item.group && item.href !== "/more");
@@ -226,7 +232,7 @@ export function AppShell({
             </label>
           )}
           <div className="header-actions">
-            {attendeeAccountAvailable
+            {canSwitchToAttendee
               ? (
                 <form action="/api/auth/switch-to-attendee" method="post">
                   <button
@@ -263,7 +269,7 @@ export function AppShell({
                       System management
                     </Link>
                   )}
-                  {attendeeAccountAvailable && (
+                  {canSwitchToAttendee && (
                     <form
                       action="/api/auth/switch-to-attendee"
                       className="account-switch-form"
