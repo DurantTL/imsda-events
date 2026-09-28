@@ -424,30 +424,35 @@ async function main() {
   // Published starter event templates (#546), so "Start from template" works
   // on a fresh dev database. A starter that already exists in any state
   // (including one staff edited or archived) is never touched.
-  for (const starter of starterEventTemplates) {
-    const existing = await prisma.eventTemplate.findFirst({
-      where: { versions: { some: { payload: { path: ["starterKey"], equals: starter.starterKey } } } },
-      select: { id: true },
-    });
-    if (existing) continue;
-    await prisma.eventTemplate.create({
-      data: {
-        name: starter.name,
-        description: starterDescription(starter),
-        status: EventTemplateStatus.PUBLISHED,
-        createdByUserId: systemAdmin.id,
-        versions: {
-          create: {
-            createdByUserId: systemAdmin.id,
-            versionNumber: 1,
-            status: EventTemplateStatus.PUBLISHED,
-            publishedAt: new Date(),
-            payload: starterPayload(starter) as unknown as Prisma.InputJsonValue,
+  // Under the same advisory lock "Add starter templates" takes, so a seed
+  // racing a click cannot create a starter twice.
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('event-template-starters'))`;
+    for (const starter of starterEventTemplates) {
+      const existing = await tx.eventTemplate.findFirst({
+        where: { versions: { some: { payload: { path: ["starterKey"], equals: starter.starterKey } } } },
+        select: { id: true },
+      });
+      if (existing) continue;
+      await tx.eventTemplate.create({
+        data: {
+          name: starter.name,
+          description: starterDescription(starter),
+          status: EventTemplateStatus.PUBLISHED,
+          createdByUserId: systemAdmin.id,
+          versions: {
+            create: {
+              createdByUserId: systemAdmin.id,
+              versionNumber: 1,
+              status: EventTemplateStatus.PUBLISHED,
+              publishedAt: new Date(),
+              payload: starterPayload(starter) as unknown as Prisma.InputJsonValue,
+            },
           },
         },
-      },
-    });
-  }
+      });
+    }
+  });
 }
 
 main()

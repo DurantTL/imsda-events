@@ -39,7 +39,7 @@ export const pendingStarterEvents = [
 export function starterDescription(starter: StarterEventTemplate) {
   const form = getFormTemplate(starter.formTemplateKey);
   const source = form ? `the built-in "${form.name}" form (${starter.formTemplateKey})` : `the ${starter.formTemplateKey} form`;
-  return `Starter set: created from ${source}. Review the form and settings, then publish. No pricing or capacity is set here.`;
+  return `Starter set: created from ${source}. This template sets no prices or capacity. The form keeps last year's prices, late-price dates and choice limits. Review them on the draft event before publishing.`;
 }
 
 export function starterPayload(starter: StarterEventTemplate): EventTemplatePayload {

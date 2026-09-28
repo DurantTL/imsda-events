@@ -27,7 +27,11 @@ export async function addStarterEventTemplates(actorUserId: string): Promise<Sta
     stillNeeded: pendingStarterEvents.map(({ starterKey, name, note }) => ({ starterKey, name, note })),
   };
   await getPrisma().$transaction(async (tx) => {
+    // Bounded wait: past it the lock is SQLSTATE 55P03, reported as a retryable
+    // 409 (TEMPLATE_BUSY) by `eventTemplateApiError`.
+    await tx.$executeRawUnsafe("SET LOCAL lock_timeout = '4s'");
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('event-template-starters'))`;
+    await tx.$executeRawUnsafe("SET LOCAL lock_timeout = 0");
     for (const starter of starterEventTemplates) {
       const existing = await tx.eventTemplate.findFirst({
         where: { versions: { some: { payload: { path: ["starterKey"], equals: starter.starterKey } } } },

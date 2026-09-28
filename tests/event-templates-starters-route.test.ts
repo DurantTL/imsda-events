@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
 
 /**
  * POST /api/event-templates/starters (#546): admin-only, checked on the
@@ -75,5 +76,17 @@ describe("POST /api/event-templates/starters", () => {
     expect(response.status).toBe(500);
     expect(await response.json()).toMatchObject({ error: "EVENT_TEMPLATE_REQUEST_FAILED" });
     expect(mocks.logError).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["a raw-query lock timeout (P2010, SQLSTATE 55P03)", () => new Prisma.PrismaClientKnownRequestError("Raw query failed. Code: `55P03`. Message: `ERROR: canceling statement due to lock timeout`", { code: "P2010", clientVersion: "test", meta: { code: "55P03", message: "ERROR: canceling statement due to lock timeout" } })],
+    ["a plain error carrying SQLSTATE 55P03", () => Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" })],
+    ["a transaction timeout (P2028)", () => new Prisma.PrismaClientKnownRequestError("timeout", { code: "P2028", clientVersion: "test" })],
+  ])("returns a retryable 409 TEMPLATE_BUSY for %s", async (_label, makeError) => {
+    mocks.addStarterEventTemplates.mockRejectedValue(makeError());
+    const response = await post();
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "TEMPLATE_BUSY" });
+    expect(mocks.logError).not.toHaveBeenCalled();
   });
 });

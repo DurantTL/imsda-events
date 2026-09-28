@@ -84,8 +84,9 @@ export function EventTemplateList({ initialTemplates }: EventTemplateListProps) 
       <section className="panel form-stack event-settings-panel">
         <div className="section-heading"><div><h2>Starter templates</h2></div></div>
         <p>
-          Adds a draft template for each real event that has a built-in form. Nothing is published, and no pricing or
-          capacity is set. Templates that already exist (even renamed, edited, or archived) are left alone.
+          Adds a draft template for each real event that has a built-in form. Nothing is published. Templates set no
+          prices or capacity. The forms keep last year&apos;s prices, late-price dates and choice limits. Review them on
+          the draft event before publishing. Templates that already exist (even renamed, edited, or archived) are left alone.
         </p>
         <ul>
           {starterEventTemplates.map((starter) => (
