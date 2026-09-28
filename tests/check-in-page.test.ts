@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { redirect } from "next/navigation";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const dependencies = vi.hoisted(() => ({
@@ -59,6 +60,7 @@ describe("check-in page access (#412 reviewer leftover, #465)", () => {
     ));
 
     await expect(CheckInPage({ searchParams: Promise.resolve({ event: "event_b" }) })).rejects.toThrow("redirected");
+    expect(redirect).toHaveBeenCalledWith("/select-event?unavailable=1");
 
     expect(dependencies.listClubCheckInInfo).not.toHaveBeenCalled();
     expect(dependencies.listRegistrations).not.toHaveBeenCalled();

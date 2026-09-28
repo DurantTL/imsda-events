@@ -26,22 +26,20 @@ import { findActiveMembership, listEventsForUser } from "@/modules/events/reposi
  * result.
  */
 export async function resolveEventContext(requestedEventId?: string) {
-  const user = (await getCurrentSession()).user;
-  if (!user) redirect("/login");
-  const events = await listEventsForUser(user.id, user.globalRole === "SYSTEM_ADMIN");
-
-  if (events.length === 0) {
-    redirect("/no-access");
-  }
+  const { user, events } = await loadSignedInEvents();
+  const isSystemAdmin = user.globalRole === "SYSTEM_ADMIN";
 
   const lastUsedEventId = requestedEventId ? null : await readLastUsedEventId();
   const selection = selectEventContext({ events, requestedEventId, lastUsedEventId });
 
+  // System administrators can't use /select-event (it sends them to /admin,
+  // their home, which lists every event and renders without one), so they
+  // go straight to /admin instead — a direct hop, never a loop.
   if (selection.kind === "unavailable") {
-    redirect("/select-event?unavailable=1");
+    redirect(isSystemAdmin ? "/admin?unavailable=1" : "/select-event?unavailable=1");
   }
   if (selection.kind === "picker") {
-    redirect("/select-event");
+    redirect(isSystemAdmin ? "/admin" : "/select-event");
   }
 
   const event = selection.event;
@@ -59,6 +57,45 @@ export async function resolveEventContext(requestedEventId?: string) {
     membership,
     permissions,
     /** True when this event wasn't the one requested — show the "chosen for you" notice. */
+    autoSelected: selection.kind === "cookie" || selection.kind === "nearest",
+  };
+}
+
+async function loadSignedInEvents() {
+  const user = (await getCurrentSession()).user;
+  if (!user) redirect("/login");
+  const events = await listEventsForUser(user.id, user.globalRole === "SYSTEM_ADMIN");
+
+  if (events.length === 0) {
+    redirect("/no-access");
+  }
+  return { user, events };
+}
+
+/**
+ * What the `(workspace)` layout needs for the shell: the signed-in account,
+ * its events, and the event a page with no `?event=` will show (#465).
+ *
+ * Unlike `resolveEventContext`, this never redirects for event selection —
+ * a layout can't see the page's `?event=` and wraps `/admin` too, so
+ * redirecting here would bounce valid deep links and loop admins between
+ * `/admin` and the picker. Pages still resolve (and redirect) on their own.
+ *
+ * The default comes from the same `selectEventContext` call a page with no
+ * `?event=` makes, so the shell's switcher, nav links and "chosen for you"
+ * notice agree with what the page renders. `defaultEventId` is `null` when
+ * nothing can be chosen automatically (the picker case).
+ */
+export async function loadWorkspaceEventContext() {
+  const { user, events } = await loadSignedInEvents();
+  const selection = selectEventContext({ events, lastUsedEventId: await readLastUsedEventId() });
+  const defaultEvent = selection.kind === "picker" || selection.kind === "unavailable" ? null : selection.event;
+
+  return {
+    user,
+    events,
+    defaultEventId: defaultEvent?.id ?? null,
+    /** True when the default was chosen automatically — the shell shows the notice. */
     autoSelected: selection.kind === "cookie" || selection.kind === "nearest",
   };
 }

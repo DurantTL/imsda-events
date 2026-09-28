@@ -34,7 +34,7 @@ vi.mock("@/modules/events/repository", () => ({
 }));
 vi.mock("@/modules/events/last-used-event", () => ({ readLastUsedEventId: mocks.readLastUsedEventId }));
 
-import { resolveEventContext } from "@/modules/events/selection";
+import { loadWorkspaceEventContext, resolveEventContext } from "@/modules/events/selection";
 
 const staff = { id: "usr_staff", email: "staff@imsda-events.test", displayName: "Synthetic Staff", globalRole: null };
 const admin = { ...staff, id: "usr_admin", globalRole: "SYSTEM_ADMIN" as const };
@@ -96,11 +96,12 @@ describe("resolveEventContext — an invalid or unpermitted requested id never o
     await expectRedirect("/select-event?unavailable=1", () => resolveEventContext("evt_owned_by_another_club"));
   });
 
-  it("sends a system administrator to the same not-available notice for a nonexistent id, never substituting another event", async () => {
+  it("sends a system administrator to the same not-available notice on /admin for a nonexistent id, never substituting another event", async () => {
     mocks.getCurrentSession.mockResolvedValue({ user: admin });
     mocks.listEventsForUser.mockResolvedValue([event("evt_a"), event("evt_b")]);
 
-    await expectRedirect("/select-event?unavailable=1", () => resolveEventContext("evt_does_not_exist"));
+    // /select-event sends admins to /admin, so the notice lives there — one hop, no loop.
+    await expectRedirect("/admin?unavailable=1", () => resolveEventContext("evt_does_not_exist"));
   });
 
   it("never falls back for an account with only one real event", async () => {
@@ -167,6 +168,16 @@ describe("resolveEventContext — no id given, the automatic order", () => {
     await expectRedirect("/select-event", () => resolveEventContext(undefined));
   });
 
+  it("sends a system administrator to /admin, not the picker (which would bounce them back), when nothing can be chosen automatically", async () => {
+    mocks.getCurrentSession.mockResolvedValue({ user: admin });
+    mocks.listEventsForUser.mockResolvedValue([
+      event("evt_draft_1", { isPublished: false }),
+      event("evt_draft_2", { isPublished: false }),
+    ]);
+
+    await expectRedirect("/admin", () => resolveEventContext(undefined));
+  });
+
   it("picks the nearest published/open event the same way for a system administrator", async () => {
     mocks.getCurrentSession.mockResolvedValue({ user: admin });
     mocks.listEventsForUser.mockResolvedValue([
@@ -186,5 +197,71 @@ describe("resolveEventContext — no id given, the automatic order", () => {
     mocks.listEventsForUser.mockResolvedValue([]);
 
     await expectRedirect("/no-access", () => resolveEventContext(undefined));
+  });
+});
+
+describe("loadWorkspaceEventContext — the workspace layout never redirects for event selection", () => {
+  const drafts = () => [
+    event("evt_draft_a", { isPublished: false }),
+    event("evt_draft_b", { isPublished: false }),
+  ];
+
+  it("does not redirect a system administrator whose events are all drafts (no /admin ⇄ picker loop)", async () => {
+    mocks.getCurrentSession.mockResolvedValue({ user: admin });
+    mocks.listEventsForUser.mockResolvedValue(drafts());
+
+    const context = await loadWorkspaceEventContext();
+
+    expect(mocks.redirect).not.toHaveBeenCalled();
+    expect(context.defaultEventId).toBeNull();
+    expect(context.autoSelected).toBe(false);
+    expect(context.events.map((candidate) => candidate.id)).toEqual(["evt_draft_a", "evt_draft_b"]);
+  });
+
+  it("lets a multi-event staff member with no cookie open a valid ?event= deep link to a draft", async () => {
+    mocks.getCurrentSession.mockResolvedValue({ user: staff });
+    mocks.listEventsForUser.mockResolvedValue(drafts());
+    mocks.findActiveMembership.mockResolvedValue({ eventId: "evt_draft_a", userId: staff.id, role: "READ_ONLY_STAFF", status: "ACTIVE", permissions: [] });
+
+    // The layout renders…
+    const layout = await loadWorkspaceEventContext();
+    expect(layout.defaultEventId).toBeNull();
+    // …and the page resolves the requested event.
+    const page = await resolveEventContext("evt_draft_a");
+
+    expect(page.event.id).toBe("evt_draft_a");
+    expect(page.autoSelected).toBe(false);
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+
+  it("still sends a signed-out request to /login and an account with no events to /no-access", async () => {
+    mocks.getCurrentSession.mockResolvedValue({ user: null });
+    await expectRedirect("/login", () => loadWorkspaceEventContext());
+
+    mocks.getCurrentSession.mockResolvedValue({ user: staff });
+    mocks.listEventsForUser.mockResolvedValue([]);
+    await expectRedirect("/no-access", () => loadWorkspaceEventContext());
+  });
+
+  it.each([
+    ["the last-used cookie", "evt_far"],
+    ["the nearest published event (stale cookie)", "evt_gone"],
+    ["the nearest published event (no cookie)", null],
+  ])("gives the shell the same default the page resolves to, via %s", async (_label, cookie) => {
+    mocks.getCurrentSession.mockResolvedValue({ user: staff });
+    mocks.listEventsForUser.mockResolvedValue([
+      event("evt_draft", { isPublished: false, startsAt: new Date("2026-10-01T00:00:00.000Z") }),
+      event("evt_far", { startsAt: new Date("2028-01-01T00:00:00.000Z") }),
+      event("evt_near", { startsAt: new Date("2027-01-01T00:00:00.000Z") }),
+    ]);
+    mocks.readLastUsedEventId.mockResolvedValue(cookie);
+
+    const layout = await loadWorkspaceEventContext();
+    const page = await resolveEventContext(undefined);
+
+    expect(layout.defaultEventId).toBe(page.event.id);
+    expect(layout.autoSelected).toBe(page.autoSelected);
+    expect(layout.autoSelected).toBe(true);
+    expect(layout.defaultEventId).not.toBe("evt_draft");
   });
 });

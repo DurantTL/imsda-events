@@ -4,13 +4,15 @@ import { AppShell } from "@/components/app-shell";
 import { listActiveEventPermissionsForUser, listActiveEventRolesForUser } from "@/modules/access/membership-repository";
 import { eventPermissions } from "@/modules/access/permissions";
 import { findSwitchableAttendeeAccountForStaff } from "@/modules/attendee-accounts/current-attendee";
-import { resolveEventContext } from "@/modules/events/selection";
+import { loadWorkspaceEventContext } from "@/modules/events/selection";
 import { currentStaffActingContext } from "@/modules/organizations/staff-act-as";
 
 export const dynamic = "force-dynamic";
 
 export default async function WorkspaceLayout({ children }: { children: React.ReactNode }) {
-  const { events, user } = await resolveEventContext();
+  // Never redirects for event selection (#465): pages resolve their own
+  // `?event=`; the layout only needs the default so the shell agrees with them.
+  const { autoSelected, defaultEventId, events, user } = await loadWorkspaceEventContext();
   const isSystemAdmin = user.globalRole === "SYSTEM_ADMIN";
   const permissionsByEvent = isSystemAdmin
     ? new Map(events.map((event) => [event.id, [...eventPermissions]]))
@@ -36,6 +38,8 @@ export default async function WorkspaceLayout({ children }: { children: React.Re
       <ActAsBanner acting={acting} />
       <AppShell
         attendeeAccountAvailable={attendeeAccountAvailable}
+        autoSelected={autoSelected}
+        defaultEventId={defaultEventId}
         events={shellEvents}
         user={user}
       >
