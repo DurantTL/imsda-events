@@ -1357,6 +1357,21 @@ select:focus-visible {
 .draft-created-guide-steps a { font-weight: 700; }
 .draft-created-guide-footnote { margin: 0; color: var(--muted); font-size: 0.63rem; line-height: 1.5; }
 .draft-created-guide-footnote code { background: white; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: 0.6rem; }
+.template-cleanup-checklist { display: grid; gap: 12px; border: 1px solid #dfc9e8; background: var(--imsda-purple-soft); }
+.template-cleanup-checklist-head { display: flex; align-items: flex-start; gap: 12px; }
+.template-cleanup-checklist-head svg:first-child { color: var(--imsda-purple); flex-shrink: 0; margin-top: 2px; }
+.template-cleanup-checklist-head > div { flex: 1 1 auto; display: grid; gap: 2px; }
+.template-cleanup-checklist-head h3 { margin: 0; font-size: 0.9rem; color: var(--imsda-navy); }
+.template-cleanup-checklist-head p { margin: 0; color: var(--muted); font-size: 0.68rem; line-height: 1.5; }
+.template-cleanup-checklist-head .icon-button { width: 30px; height: 30px; flex-shrink: 0; }
+.template-cleanup-checklist-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px 14px; margin: 0; padding: 0; list-style: none; }
+.template-cleanup-checklist-items li.is-section { grid-column: 1 / -1; }
+.template-cleanup-checklist-items li.is-section label span { font-weight: 700; color: var(--imsda-navy); }
+.template-cleanup-checklist-items label { display: flex; align-items: center; gap: 7px; font-size: 0.68rem; color: var(--imsda-navy); cursor: pointer; }
+.template-cleanup-checklist-items li.is-field label { padding-left: 18px; }
+.template-cleanup-checklist-items input[type="checkbox"] { accent-color: var(--imsda-purple); }
+.choice-type-hint { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 10px 0 0; }
+.choice-type-hint span { flex: 1 1 220px; }
 
 .act-as-banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
 .act-as-banner span:not(.act-as-banner-actions) { flex: 1 1 auto; }
