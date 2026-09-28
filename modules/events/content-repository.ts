@@ -89,19 +89,19 @@ export async function replaceEventContent(
   actorUserId: string,
 ) {
   const prisma = getPrisma();
+  const linkedAssetIds = [...new Set(
+    input.sections.flatMap((section) => (
+      section.kind === "RESOURCE_LINKS"
+        ? section.links.flatMap((link) => (link.assetId ? [link.assetId] : []))
+        : []
+    )),
+  )];
   try {
     await prisma.$transaction(async (tx) => {
       // Every linked file must belong to this event. Checked inside the same
       // transaction as the write, against the live table rather than a value
       // read earlier, so a file moved or removed between page load and save
       // cannot slip through. Nothing is written until this passes.
-      const linkedAssetIds = [...new Set(
-        input.sections.flatMap((section) => (
-          section.kind === "RESOURCE_LINKS"
-            ? section.links.flatMap((link) => (link.assetId ? [link.assetId] : []))
-            : []
-        )),
-      )];
       if (linkedAssetIds.length > 0) {
         const owned = await tx.eventAsset.findMany({
           where: { id: { in: linkedAssetIds }, eventId },
@@ -162,7 +162,14 @@ export async function replaceEventContent(
   } catch (error) {
     // A linked file deleted between the ownership check and the link insert
     // trips the link's foreign key. Nothing was written; say so the same way.
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003") {
+    // Only when a linked file really is gone: a foreign-key failure on the
+    // event or the audit actor is a different fault and keeps its 500.
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError
+      && error.code === "P2003"
+      && linkedAssetIds.length > 0
+      && await prisma.eventAsset.count({ where: { id: { in: linkedAssetIds }, eventId } }) < linkedAssetIds.length
+    ) {
       throw new EventContentError(
         "ASSET_NOT_IN_EVENT",
         "One of the linked files does not belong to this event. Reload and try again.",

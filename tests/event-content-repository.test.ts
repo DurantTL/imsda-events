@@ -112,10 +112,26 @@ describe("replaceEventContent", () => {
     client.$transaction.mockRejectedValueOnce(
       new Prisma.PrismaClientKnownRequestError("fk", { code: "P2003", clientVersion: "test" }),
     );
+    // The re-check after the failure finds the linked file gone.
+    Object.assign(client, { eventAsset: { count: vi.fn().mockResolvedValue(0) } });
+    const input = linksInput([{ label: "Flyer", description: "", url: null, assetId: "asset_own" }]);
 
-    await expect(replaceEventContent("event_b", linksInput([]), "user_1")).rejects.toMatchObject({
+    await expect(replaceEventContent("event_b", input, "user_1")).rejects.toMatchObject({
       code: "ASSET_NOT_IN_EVENT",
     });
+  });
+
+  it("keeps any other foreign-key failure (event, audit actor) as-is", async () => {
+    const fk = new Prisma.PrismaClientKnownRequestError("fk", { code: "P2003", clientVersion: "test" });
+    const { client } = mockPrisma([]);
+    client.$transaction.mockRejectedValue(fk);
+    // Every linked file still belongs to the event, so the file isn't the cause.
+    Object.assign(client, { eventAsset: { count: vi.fn().mockResolvedValue(1) } });
+    const withFile = linksInput([{ label: "Flyer", description: "", url: null, assetId: "asset_own" }]);
+
+    await expect(replaceEventContent("event_b", withFile, "user_1")).rejects.toBe(fk);
+    // No file links at all: never a file problem.
+    await expect(replaceEventContent("event_b", linksInput([]), "user_1")).rejects.toBe(fk);
   });
 
   it("saves a link to the event's own asset", async () => {
