@@ -190,7 +190,6 @@ export function checkIsCurrent(check: { expiresOn: string | null } | null | unde
   return Boolean(check?.expiresOn && check.expiresOn >= onDate);
 }
 
-
 export type BackgroundComplianceStatus = "CLEAR" | "FLAGGED" | "NOT_COMPLIANT";
 
 /**
@@ -393,7 +392,6 @@ export function matchesSite(site: string, candidateSites: Iterable<string>) {
   }
   return false;
 }
-
 
 /**
  * How a club page shows one person (#427). A roster import's mark is used
