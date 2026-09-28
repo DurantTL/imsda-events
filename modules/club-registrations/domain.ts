@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { RegistrationFormDefinition, RegistrationFormField } from "@/modules/forms/definition";
+import { isAgeFieldKey, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
 import { fullNameKeys, splitNameKeyPairs } from "@/modules/forms/public-domain";
 
 /**
@@ -109,10 +109,8 @@ export function attendeeNameKeys(definition: RegistrationFormDefinition): Attend
   return full ? { kind: "full", key: full } : null;
 }
 
-const AGE_KEYS = ["attendee_age", "age"];
-
 export function attendeeAgeKey(definition: RegistrationFormDefinition) {
-  return attendeeFields(definition).find((field) => field.type === "NUMBER" && AGE_KEYS.includes(field.key))?.key ?? null;
+  return attendeeFields(definition).find((field) => field.type === "NUMBER" && isAgeFieldKey(field.key))?.key ?? null;
 }
 
 const BIRTH_DATE_PATTERN = /birth|\bdob\b/i;

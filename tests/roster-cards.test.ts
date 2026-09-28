@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attendeeRoleLabel, isAttendeeCardComplete, startsCollapsed } from "@/modules/forms/roster-cards";
+import { attendeeRoleLabel, isAttendeeCardComplete, issueAttendeeIndex, startsCollapsed } from "@/modules/forms/roster-cards";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 
 function form() {
@@ -66,8 +66,43 @@ describe("attendee card role label (#483)", () => {
 });
 
 describe("card collapse state (#483)", () => {
-  it("starts collapsed only for a card carried over from the roster", () => {
-    expect(startsCollapsed(true)).toBe(true);
-    expect(startsCollapsed(false)).toBe(false);
+  const base = { carriedFromRoster: true, complete: true, mismatchCount: 0, targetedByIssue: false };
+
+  it("starts a complete club roster card collapsed", () => {
+    expect(startsCollapsed(base)).toBe(true);
+    // Computed from real answers, the way the form does it.
+    const definition = form();
+    const complete = isAttendeeCardComplete(definition, {}, { first_name: "Alex", last_name: "Sample", attendee_type: "Staff" });
+    expect(startsCollapsed({ ...base, complete })).toBe(true);
+  });
+
+  it("starts a card with a carryover mismatch expanded, so the \"Couldn't match\" prompt shows", () => {
+    expect(startsCollapsed({ ...base, mismatchCount: 1 })).toBe(false);
+  });
+
+  it("starts an incomplete card expanded", () => {
+    const definition = form();
+    // A blank carried role leaves the card incomplete.
+    const complete = isAttendeeCardComplete(definition, {}, { first_name: "Alex", last_name: "Sample" });
+    expect(complete).toBe(false);
+    expect(startsCollapsed({ ...base, complete })).toBe(false);
+  });
+
+  it("starts a card a validation issue points into expanded", () => {
+    expect(startsCollapsed({ ...base, targetedByIssue: true })).toBe(false);
+  });
+
+  it("never starts a manually added or imported card collapsed", () => {
+    expect(startsCollapsed({ ...base, carriedFromRoster: false })).toBe(false);
+  });
+});
+
+describe("issue to card mapping (#483)", () => {
+  it("uses an explicit attendee index, then the path, then the first card for an attendee field", () => {
+    expect(issueAttendeeIndex({ attendeeIndex: 2, path: "attendees.0.responses.x" }, "ATTENDEE")).toBe(2);
+    expect(issueAttendeeIndex({ path: "attendees.3.responses.skill_level" }, "ATTENDEE")).toBe(3);
+    expect(issueAttendeeIndex({ attendeeIndex: null }, "ATTENDEE")).toBe(0);
+    expect(issueAttendeeIndex({ path: "responses.email" }, "REGISTRATION")).toBeNull();
+    expect(issueAttendeeIndex({}, null)).toBeNull();
   });
 });

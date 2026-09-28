@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import {
   ArrowLeft,
   ArrowDown,
@@ -59,6 +59,8 @@ import {
 import {
   attendeeRoleLabel,
   isAttendeeCardComplete,
+  issueAttendeeIndex,
+  startsCollapsed,
 } from "@/modules/forms/roster-cards";
 import { summarizeRosterAttendees } from "@/modules/forms/roster-summary";
 
@@ -382,14 +384,20 @@ export function PublicRegistrationForm({
     }
     return initial;
   });
-  // Compact attendee cards (#483): a card carried over from the roster starts
-  // collapsed; every other card (freshly added, or from CSV import) starts
-  // open. Later toggles are tracked by client id, so a card keeps its state
-  // through re-renders and reordering.
+  // Compact attendee cards (#483): a complete card carried over from the
+  // roster starts collapsed; one with a carryover prompt or a missing answer,
+  // and every other card (freshly added, or from CSV import), starts open.
+  // Later toggles are tracked by client id, so a card keeps its state through
+  // re-renders and reordering.
   const [collapsedAttendeeIds, setCollapsedAttendeeIds] = useState<Set<string>>(
     () => new Set(
       (club ? club.initialAttendees : [])
-        .filter((attendee) => attendee.carriedFromRoster)
+        .filter((attendee) => startsCollapsed({
+          carriedFromRoster: Boolean(attendee.carriedFromRoster),
+          complete: isAttendeeCardComplete(definition, initialResponses, attendee.responses),
+          mismatchCount: attendee.carryoverMismatches?.length ?? 0,
+          targetedByIssue: false,
+        }))
         .map((attendee) => attendee.clientId),
     ),
   );
@@ -566,7 +574,9 @@ export function PublicRegistrationForm({
       ? nextIssues.filter((issue) => issueBelongsToStep(issue, targetStep))
       : [];
     if (targetStep) setCurrentStepId(targetStep.id);
-    setIssues(scopedIssues.length > 0 ? scopedIssues : nextIssues);
+    const shownIssues = scopedIssues.length > 0 ? scopedIssues : nextIssues;
+    setIssues(shownIssues);
+    expandAttendeeCardsFor(shownIssues);
     setError(message);
     window.imsdaEmbedScrollTop?.();
     window.requestAnimationFrame(() => {
@@ -917,6 +927,41 @@ export function PublicRegistrationForm({
     clearFieldIssue(`attendees.${attendeeIndex}.responses.${key}`, key);
   }
 
+  function attendeeForIssue(issue: FormIssue) {
+    if (!rosterEnabled) return null;
+    const field = allFields.find((candidate) => (
+      candidate.id === issue.fieldId || candidate.key === issue.key
+    ));
+    const attendeeIndex = issueAttendeeIndex(issue, field?.scope ?? null);
+    return attendeeIndex === null ? null : attendees[attendeeIndex] ?? null;
+  }
+
+  // A collapsed card doesn't render its fields, so any card a validation
+  // issue points into is opened (#483): the error summary's link then has a
+  // control to land on, and the message shows next to it.
+  function expandAttendeeCardsFor(targetIssues: FormIssue[]) {
+    const targetIds = new Set(targetIssues.map((issue) => attendeeForIssue(issue)?.clientId).filter(Boolean));
+    if (targetIds.size === 0) return;
+    setCollapsedAttendeeIds((current) => {
+      if (![...current].some((clientId) => targetIds.has(clientId))) return current;
+      return new Set([...current].filter((clientId) => !targetIds.has(clientId)));
+    });
+  }
+
+  // An error-summary link into a card the director collapsed again opens that
+  // card first, then moves to the control once it has rendered (#483).
+  function followIssueLink(clickEvent: ReactMouseEvent<HTMLAnchorElement>, issue: FormIssue, targetId: string) {
+    const attendee = attendeeForIssue(issue);
+    if (!attendee || !collapsedAttendeeIds.has(attendee.clientId)) return;
+    clickEvent.preventDefault();
+    expandAttendeeCardsFor([issue]);
+    window.requestAnimationFrame(() => {
+      const target = document.getElementById(targetId);
+      target?.scrollIntoView({ block: "center" });
+      target?.focus();
+    });
+  }
+
   function toggleAttendeeCollapse(clientId: string) {
     setCollapsedAttendeeIds((current) => {
       const next = new Set(current);
@@ -1097,13 +1142,18 @@ export function PublicRegistrationForm({
   function carryoverMismatchNotice(field: RegistrationFormField, context: FieldRenderContext) {
     if (context.attendeeIndex === null) return null;
     const attendee = attendees[context.attendeeIndex];
-    const mismatch = attendee?.carryoverMismatches?.find((candidate) => candidate.fieldKey === field.key);
-    if (!mismatch) return null;
     // Only while it's still unresolved: once the director picks a value for
     // this field, the prompt has done its job.
     const currentValue = context.values[field.key];
     if (typeof currentValue === "string" && currentValue) return null;
-    return mismatch;
+    const mismatch = attendee?.carryoverMismatches?.find((candidate) => candidate.fieldKey === field.key);
+    if (mismatch) return mismatch;
+    // A roster person whose role came over blank (and no type-based prefill
+    // applied) gets a "pick a role" hint instead of a silently empty choice.
+    if (attendee?.carriedFromRoster && field.key === "attendee_type" && ["RADIO", "SELECT"].includes(field.type)) {
+      return { fieldKey: field.key, label: field.label, value: "" };
+    }
+    return null;
   }
 
   function fieldSupport(field: RegistrationFormField, context: FieldRenderContext) {
@@ -1114,8 +1164,10 @@ export function PublicRegistrationForm({
       <>
         {field.helpText && <small id={`${id}_help`}>{field.helpText}</small>}
         {mismatch && (
-          <small className="public-registration-field-error" id={`${id}_mismatch`} role="alert">
-            Couldn&apos;t match &lsquo;{mismatch.value}&rsquo; — pick one.
+          <small className="public-registration-field-error" id={`${id}_mismatch`}>
+            {mismatch.value
+              ? <>Couldn&apos;t match &lsquo;{mismatch.value}&rsquo; — pick one.</>
+              : "The roster didn’t give a role — pick one."}
           </small>
         )}
         {issue && <small className="public-registration-field-error" id={`${id}_error`}>{issue.message}</small>}
@@ -1568,17 +1620,10 @@ export function PublicRegistrationForm({
     ));
     if (!field) return null;
     if (!rosterEnabled) return controlId(field);
-    const pathIndex = issue.path?.match(/^attendees\.(\d+)\./)?.[1];
-    const attendeeIndex = issue.attendeeIndex ?? (pathIndex === undefined ? null : Number(pathIndex));
-    if (attendeeIndex !== null) {
-      const attendee = attendees[attendeeIndex];
-      return attendee ? controlId(field, `attendee_${attendee.clientId}`) : null;
-    }
-    if (field.scope === "ATTENDEE") {
-      const firstAttendee = attendees[0];
-      return firstAttendee ? controlId(field, `attendee_${firstAttendee.clientId}`) : null;
-    }
-    return controlId(field, "registration");
+    const attendeeIndex = issueAttendeeIndex(issue, field.scope);
+    if (attendeeIndex === null) return controlId(field, "registration");
+    const attendee = attendees[attendeeIndex];
+    return attendee ? controlId(field, `attendee_${attendee.clientId}`) : null;
   }
 
   function renderRoster(
@@ -1586,6 +1631,10 @@ export function PublicRegistrationForm({
     allowedFieldKeys: ReadonlySet<string>,
     manageRoster: boolean,
   ) {
+    // Every multi-attendee roster can collapse its cards (#483), including a
+    // club registration's, where the roster itself is managed elsewhere and
+    // add/move/remove are hidden.
+    const canCollapse = roster.maxAttendees > 1;
     const titleId = manageRoster
       ? "public_registration_roster_attendees_title"
       : "public_registration_roster_choices_title";
@@ -1623,7 +1672,7 @@ export function PublicRegistrationForm({
             const displayName = attendeeName(attendee, attendeeIndex, roster.attendeeLabel);
             const roleLabel = attendeeRoleLabel(definition, registrationResponses, attendee.responses);
             const complete = isAttendeeCardComplete(definition, registrationResponses, attendee.responses);
-            const collapsed = manageRoster && collapsedAttendeeIds.has(attendee.clientId);
+            const collapsed = canCollapse && collapsedAttendeeIds.has(attendee.clientId);
             const visibleAttendeeSections = attendeeSections.map((section) => ({
               ...section,
               fields: section.fields.filter((field) => (
@@ -1655,44 +1704,51 @@ export function PublicRegistrationForm({
                       </small>
                     )}
                   </div>
-                  {manageRoster && (
+                  {(canCollapse || manageRoster) && (
                     <div className="public-registration-attendee-actions">
-                      <button
-                        type="button"
-                        aria-expanded={!collapsed}
-                        aria-controls={`public_attendee_${safeId(attendee.clientId)}_body`}
-                        onClick={() => toggleAttendeeCollapse(attendee.clientId)}
-                      >
-                        <span>{collapsed ? "Show details" : "Hide details"}</span>
-                      </button>
-                      <button
-                        type="button"
-                        disabled={attendeeIndex === 0}
-                        aria-label={`Move ${displayName} up`}
-                        onClick={() => moveAttendee(attendeeIndex, -1)}
-                      >
-                        <ArrowUp size={16} aria-hidden="true" />
-                        <span>Up</span>
-                      </button>
-                      <button
-                        type="button"
-                        disabled={attendeeIndex === attendees.length - 1}
-                        aria-label={`Move ${displayName} down`}
-                        onClick={() => moveAttendee(attendeeIndex, 1)}
-                      >
-                        <ArrowDown size={16} aria-hidden="true" />
-                        <span>Down</span>
-                      </button>
-                      <button
-                        className="is-danger"
-                        type="button"
-                        disabled={attendees.length <= roster.minAttendees}
-                        aria-label={`Remove ${displayName}`}
-                        onClick={() => removeAttendee(attendeeIndex)}
-                      >
-                        <Trash2 size={16} aria-hidden="true" />
-                        <span>Remove</span>
-                      </button>
+                      {canCollapse && (
+                        <button
+                          type="button"
+                          aria-expanded={!collapsed}
+                          aria-controls={`public_attendee_${safeId(attendee.clientId)}_body`}
+                          aria-label={`${collapsed ? "Show" : "Hide"} details for ${displayName}`}
+                          onClick={() => toggleAttendeeCollapse(attendee.clientId)}
+                        >
+                          <span>{collapsed ? "Show details" : "Hide details"}</span>
+                        </button>
+                      )}
+                      {manageRoster && (
+                        <>
+                          <button
+                            type="button"
+                            disabled={attendeeIndex === 0}
+                            aria-label={`Move ${displayName} up`}
+                            onClick={() => moveAttendee(attendeeIndex, -1)}
+                          >
+                            <ArrowUp size={16} aria-hidden="true" />
+                            <span>Up</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={attendeeIndex === attendees.length - 1}
+                            aria-label={`Move ${displayName} down`}
+                            onClick={() => moveAttendee(attendeeIndex, 1)}
+                          >
+                            <ArrowDown size={16} aria-hidden="true" />
+                            <span>Down</span>
+                          </button>
+                          <button
+                            className="is-danger"
+                            type="button"
+                            disabled={attendees.length <= roster.minAttendees}
+                            aria-label={`Remove ${displayName}`}
+                            onClick={() => removeAttendee(attendeeIndex)}
+                          >
+                            <Trash2 size={16} aria-hidden="true" />
+                            <span>Remove</span>
+                          </button>
+                        </>
+                      )}
                     </div>
                   )}
                 </header>
@@ -1924,7 +1980,7 @@ export function PublicRegistrationForm({
             <h3 id="public_registration_roster_summary_title">Roster summary</h3>
             <dl className="public-registration-roster-summary-totals">
               <div>
-                <dt>Total {roster.attendeeLabel.toLowerCase()}s</dt>
+                <dt>Total attendees</dt>
                 <dd>{rosterSummary.total}</dd>
               </div>
               {rosterSummary.byRole.map((row) => (
@@ -2499,7 +2555,7 @@ export function PublicRegistrationForm({
               {issues.length > 0 && (
                 <ul>{issues.map((issue, index) => {
                   const targetId = issueTargetId(issue);
-                  return <li key={`${issue.path ?? issue.key}_${index}`}>{targetId ? <a href={`#${targetId}`}>{issue.message}</a> : issue.message}</li>;
+                  return <li key={`${issue.path ?? issue.key}_${index}`}>{targetId ? <a href={`#${targetId}`} onClick={(clickEvent) => followIssueLink(clickEvent, issue, targetId)}>{issue.message}</a> : issue.message}</li>;
                 })}</ul>
               )}
             </div>

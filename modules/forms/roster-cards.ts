@@ -2,6 +2,7 @@ import {
   isFieldRequired,
   isFieldVisible,
   type RegistrationFormDefinition,
+  type RegistrationFormField,
 } from "@/modules/forms/definition";
 
 /**
@@ -58,12 +59,39 @@ export function attendeeRoleLabel(
   return field.optionLabels?.[value] ?? value;
 }
 
+export type CardCollapseInput = {
+  /** Carried over from the club roster (a club attendee, never a manually
+   * added or CSV-imported one). */
+  carriedFromRoster: boolean;
+  /** Every required, visible attendee field is answered. */
+  complete: boolean;
+  /** Carried-over values that didn't match a form option. */
+  mismatchCount: number;
+  /** A validation issue points at a control inside this card. */
+  targetedByIssue: boolean;
+};
+
 /**
- * Whether a card should start collapsed: cards carried over from the roster
- * (a club attendee, never a manually added or CSV-imported one) start
- * collapsed (#483); every other new card starts open so the person filling
- * it in can see the fields right away.
+ * Whether a card should start collapsed (#483). Only a card carried over
+ * from the roster starts collapsed, and only when there's nothing in it to
+ * act on: a card with a "Couldn't match…" prompt, a missing required answer,
+ * or a validation issue starts open so that prompt or control is visible.
  */
-export function startsCollapsed(isRosterCarried: boolean): boolean {
-  return isRosterCarried;
+export function startsCollapsed({ carriedFromRoster, complete, mismatchCount, targetedByIssue }: CardCollapseInput): boolean {
+  return carriedFromRoster && complete && mismatchCount === 0 && !targetedByIssue;
+}
+
+/**
+ * The roster position a validation issue points at, or null for a
+ * registration-level issue. An ATTENDEE-scope issue with no position is
+ * shown on the first card (matching where the error summary links to).
+ */
+export function issueAttendeeIndex(
+  issue: { path?: string; attendeeIndex?: number | null },
+  fieldScope: RegistrationFormField["scope"] | null,
+): number | null {
+  if (typeof issue.attendeeIndex === "number") return issue.attendeeIndex;
+  const pathIndex = issue.path?.match(/^attendees\.(\d+)\./)?.[1];
+  if (pathIndex !== undefined) return Number(pathIndex);
+  return fieldScope === "ATTENDEE" ? 0 : null;
 }
