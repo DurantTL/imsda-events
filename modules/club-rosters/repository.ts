@@ -306,7 +306,17 @@ export async function updateRosterMember(
 /**
  * The club takes someone off its roster: birth date, role, gender, and the
  * person link are erased. The Person record itself is deleted when nothing
- * else (a registration, another roster, an account) still refers to it.
+ * else (a registration, another roster, an account) still refers to it
+ * (ADR 0005 Addendum A §6).
+ *
+ * Honor history (#486) is not a reason to keep the Person: when the Person is
+ * deleted, their `MemberHonorEntry` rows are deleted first in this same
+ * transaction. This is the one, deliberate exception to honor entries being
+ * append-only — removal erases the person's details, and honors are among
+ * them. The foreign key stays `onDelete: Restrict`, so no other path can
+ * drop honor history silently. When the Person is kept (still on another
+ * roster, registered, linked to an account), their honor history is kept
+ * with them.
  */
 export async function removeRosterMember(organizationId: string, memberId: string, actor: Actor, now = new Date()) {
   await getPrisma().$transaction(async (tx) => {
@@ -327,6 +337,7 @@ export async function removeRosterMember(organizationId: string, memberId: strin
       },
     });
     let personDeleted = false;
+    let honorEntriesErased = 0;
     if (member.personId) {
       const person = await tx.person.findUnique({
         where: { id: member.personId },
@@ -346,12 +357,15 @@ export async function removeRosterMember(organizationId: string, memberId: strin
         },
       });
       if (person && Object.values(person._count).every((count) => count === 0)) {
+        const erased = await tx.memberHonorEntry.deleteMany({ where: { personId: member.personId } });
+        honorEntriesErased = erased.count;
         await tx.person.delete({ where: { id: member.personId } });
         personDeleted = true;
       }
     }
     await audit(tx, actor, "CLUB_ROSTER_MEMBER_REMOVED", organizationId, memberId, "Removed a person from a club roster and erased their details.", {
       personDeleted,
+      honorEntriesErased,
     });
   });
 }

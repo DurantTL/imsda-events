@@ -29,6 +29,7 @@ export function ConfirmDialog({
   busyLabel,
   cancelLabel = "Cancel",
   children,
+  confirmDisabled = false,
   confirmLabel,
   destructive = false,
   error = "",
@@ -41,6 +42,8 @@ export function ConfirmDialog({
   busyLabel?: string;
   cancelLabel?: string;
   children: React.ReactNode;
+  /** Keeps Confirm disabled (e.g. until a review has loaded) without making the dialog busy. */
+  confirmDisabled?: boolean;
   confirmLabel: string;
   destructive?: boolean;
   error?: string;
@@ -72,7 +75,7 @@ export function ConfirmDialog({
           <button className="secondary-button" disabled={busy} onClick={onCancel} type="button">{cancelLabel}</button>
           <button
             className={destructive ? "primary-button lifecycle-danger-button" : "primary-button"}
-            disabled={busy}
+            disabled={busy || confirmDisabled}
             onClick={onConfirm}
             type="button"
           >

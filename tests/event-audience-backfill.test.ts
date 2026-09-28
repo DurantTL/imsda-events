@@ -4,7 +4,7 @@ vi.mock("server-only", () => ({}));
 const mocks = vi.hoisted(() => ({ getPrisma: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({ getPrisma: mocks.getPrisma }));
 
-import { backfillEventAudience } from "@/modules/events/audience-backfill";
+import { backfillEventAudience, resolveEventAudienceBackfillMode } from "@/modules/events/audience-backfill";
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -82,5 +82,20 @@ describe("backfillEventAudience (#481)", () => {
     expect(second.totalCandidates).toBe(0);
     expect(second.updatedCount).toBe(0);
     expect(event.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("event audience backfill CLI mode (#481 review)", () => {
+  it("only reports by default", () => {
+    expect(resolveEventAudienceBackfillMode([])).toBe("report");
+  });
+
+  it("refuses --apply without --force, so it can't override a later human choice of GENERAL", () => {
+    expect(resolveEventAudienceBackfillMode(["--apply"])).toBe("refuse");
+  });
+
+  it("writes only with --apply --force", () => {
+    expect(resolveEventAudienceBackfillMode(["--apply", "--force"])).toBe("apply");
+    expect(resolveEventAudienceBackfillMode(["--force"])).toBe("report");
   });
 });

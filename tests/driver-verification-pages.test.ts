@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   getRosterAccessStateForPage: vi.fn(),
   clubPortalComplianceStatuses: vi.fn(),
   listRoster: vi.fn(),
+  listClubHonorsPage: vi.fn(),
   getCurrentSession: vi.fn(),
   redirect: vi.fn((to: string) => { throw new Error(`REDIRECT ${to}`); }),
 }));
@@ -24,6 +25,7 @@ vi.mock("next/navigation", () => ({ redirect: mocks.redirect, useRouter: () => (
 vi.mock("@/modules/club-rosters/access", () => ({ getRosterAccessStateForPage: mocks.getRosterAccessStateForPage }));
 vi.mock("@/modules/background-checks/repository", () => ({ clubPortalComplianceStatuses: mocks.clubPortalComplianceStatuses }));
 vi.mock("@/modules/club-rosters/repository", () => ({ listRoster: mocks.listRoster }));
+vi.mock("@/modules/honors/member-honor-repository", () => ({ listClubHonorsPage: mocks.listClubHonorsPage }));
 vi.mock("@/modules/access/current-session", () => ({ getCurrentSession: mocks.getCurrentSession }));
 
 import ClubRosterPage from "@/app/(public)/account/(portal)/clubs/[organizationId]/roster/page";
@@ -95,6 +97,7 @@ beforeEach(() => {
   });
   mocks.clubPortalComplianceStatuses.mockResolvedValue(null);
   mocks.listRoster.mockResolvedValue([]);
+  mocks.listClubHonorsPage.mockResolvedValue([]);
   mocks.getCurrentSession.mockResolvedValue({ user: { id: "admin-1", globalRole: "SYSTEM_ADMIN" } });
 });
 

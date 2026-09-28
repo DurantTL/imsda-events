@@ -7,10 +7,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * only on a CLUB-audience event (#481, independent of billing mode).
  * Everyone else is denied.
  */
-const mocks = vi.hoisted(() => ({ findUnique: vi.fn() }));
+const mocks = vi.hoisted(() => ({ findUnique: vi.fn(), withoutViewReports: false }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: () => ({ event: { findUnique: mocks.findUnique } }) }));
+// Every built-in EVENT_ADMIN grant includes VIEW_REPORTS, so the oversight
+// fallback is only reachable if that grant ever narrows. `withoutViewReports`
+// simulates exactly that, to exercise the fallback's audience check directly.
+vi.mock("@/modules/access/authorization", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/modules/access/authorization")>();
+  return {
+    ...actual,
+    effectivePermissions: (...args: Parameters<typeof actual.effectivePermissions>) => {
+      const permissions = actual.effectivePermissions(...args);
+      return mocks.withoutViewReports ? permissions.filter((permission) => permission !== "VIEW_REPORTS") : permissions;
+    },
+  };
+});
 
 import { AccessDeniedError } from "@/modules/access/authorization";
 import { requireClubReportsAccess } from "@/modules/reporting/club-reports-access";
@@ -23,6 +36,7 @@ function lookup(role: string | null) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.withoutViewReports = false;
 });
 
 describe("requireClubReportsAccess", () => {
@@ -52,6 +66,20 @@ describe("requireClubReportsAccess", () => {
     });
     mocks.findUnique.mockResolvedValue({ audience: "CLUB", billingMode: "ATTENDEE_PAY" });
     await expect(requireClubReportsAccess(session, "event-1", membershipLookup)).resolves.toBeDefined();
+  });
+
+  it("denies an EVENT_ADMIN without VIEW_REPORTS on a GENERAL event billed to an organization (#481)", async () => {
+    mocks.withoutViewReports = true;
+    mocks.findUnique.mockResolvedValue({ audience: "GENERAL", billingMode: "DEFERRED_ORGANIZATION_INVOICE" });
+    await expect(requireClubReportsAccess(session, "event-1", lookup("EVENT_ADMIN"))).rejects.toBeInstanceOf(AccessDeniedError);
+    expect(mocks.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "event-1" } }));
+  });
+
+  it("allows that same EVENT_ADMIN without VIEW_REPORTS once the event is CLUB (#481)", async () => {
+    mocks.withoutViewReports = true;
+    mocks.findUnique.mockResolvedValue({ audience: "CLUB", billingMode: "ATTENDEE_PAY" });
+    await expect(requireClubReportsAccess(session, "event-1", lookup("EVENT_ADMIN"))).resolves.toBeDefined();
+    expect(mocks.findUnique).toHaveBeenCalled();
   });
 
   it("denies a staff member with neither VIEW_REPORTS nor event-administrator oversight", async () => {

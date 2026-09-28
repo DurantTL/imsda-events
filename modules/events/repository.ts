@@ -7,7 +7,7 @@ import {
   remainingEventCapacity,
 } from "@/modules/events/lifecycle";
 import { getEventPublishReadiness } from "@/modules/events/readiness";
-import type { EventLifecycleInput, EventSettingsInput } from "@/modules/events/schemas";
+import type { EventSettingsInput } from "@/modules/events/schemas";
 
 export class EventOperationError extends Error {
   constructor(
@@ -219,17 +219,7 @@ export async function createEvent(
   input: EventSettingsInput,
   actorUserId: string,
 ) {
-  const readiness = getEventPublishReadiness(input, 0);
-  if (input.isPublished && !readiness.ready) {
-    const missing = readiness.items
-      .filter((item) => !item.complete)
-      .map((item) => item.label.toLowerCase());
-    throw new EventOperationError(
-      "EVENT_NOT_READY",
-      `Create the event as a draft first: ${missing.join(", ")}.`,
-    );
-  }
-
+  const audience = input.audience ?? "GENERAL";
   const eventId = await getPrisma().$transaction(async (tx) => {
     const platform = await tx.platformSettings.upsert({
       where: { id: "platform" },
@@ -249,7 +239,8 @@ export async function createEvent(
         publicInfoUrl: input.publicInfoUrl,
         supportContact: input.supportContact,
         ...lodgingCreateData(input),
-        isPublished: input.isPublished,
+        // Every new event starts as a draft (#471); only `publishEvent` publishes.
+        isPublished: false,
         registrationOpensOn: input.registrationOpensOn,
         registrationClosesOn: input.registrationClosesOn,
         waitlistEnabled: input.waitlistEnabled,
@@ -257,7 +248,7 @@ export async function createEvent(
         checksAdultBackgrounds: input.checksAdultBackgrounds,
         attendeeEditPolicy: platform.defaultAttendeeEditPolicy,
         billingMode: input.billingMode,
-        audience: input.audience,
+        audience,
         seminarPreferenceClosesOn: input.seminarPreferenceClosesOn,
         seminarPreferenceSelfServiceLocked:
           input.seminarPreferenceSelfServiceLocked,
@@ -291,7 +282,9 @@ export async function createEvent(
         entityId: event.id,
         correlationId: crypto.randomUUID(),
         summary: `Created event draft: ${event.name}.`,
-        metadata: { slug: event.slug },
+        // The initial audience (#481) is recorded, since it decides whether
+        // the event gets club features at all.
+        metadata: { slug: event.slug, audience: event.audience },
       },
     });
     return event.id;
@@ -299,6 +292,14 @@ export async function createEvent(
   return getEventSettings(eventId);
 }
 
+/**
+ * Publishing and unpublishing are their own actions (#471), never a side
+ * effect of this save: `isPublished` is not part of the settings input and
+ * is deliberately left out of the update below, so a save that races a
+ * publish or unpublish can never write a stale value back over it. Toggling
+ * it requires `publishEvent` or `unpublishEvent` below, each with its own
+ * readiness check (publish) and audit entry.
+ */
 export async function updateEventSettings(
   eventId: string,
   input: EventSettingsInput,
@@ -306,7 +307,7 @@ export async function updateEventSettings(
 ) {
   const prisma = getPrisma();
   await prisma.$transaction(async (tx) => {
-    const [current, publishedFormCount, currentPaymentInstructions] = await Promise.all([
+    const [current, currentPaymentInstructions] = await Promise.all([
       tx.event.findUnique({
         where: { id: eventId },
         select: {
@@ -339,9 +340,6 @@ export async function updateEventSettings(
           autoPromoteWaitlist: true,
         },
       }),
-      tx.registrationFormVersion.count({
-        where: { status: "PUBLISHED", form: { eventId } },
-      }),
       tx.eventPaymentInstructionVersion.findFirst({
         where: { eventId },
         orderBy: { versionNumber: "desc" },
@@ -351,16 +349,9 @@ export async function updateEventSettings(
     if (!current) {
       throw new EventOperationError("EVENT_NOT_FOUND", "That event no longer exists.");
     }
-    const readiness = getEventPublishReadiness(input, publishedFormCount);
-    if (!current.isPublished && input.isPublished && !readiness.ready) {
-      const missing = readiness.items
-        .filter((item) => !item.complete)
-        .map((item) => item.label.toLowerCase());
-      throw new EventOperationError(
-        "EVENT_NOT_READY",
-        `Finish the publish checklist first: ${missing.join(", ")}.`,
-      );
-    }
+    // An update without an audience keeps the stored one (#481 review), so a
+    // stale client can't silently reset a CLUB event to GENERAL.
+    const audience = input.audience ?? current.audience;
     await tx.event.update({
       where: { id: eventId },
       data: {
@@ -374,7 +365,7 @@ export async function updateEventSettings(
         publicInfoUrl: input.publicInfoUrl,
         supportContact: input.supportContact,
         ...lodgingUpdateData(input),
-        isPublished: input.isPublished,
+        // No `isPublished` here, on purpose (#471): see the function doc above.
         registrationOpensOn: input.registrationOpensOn,
         registrationClosesOn: input.registrationClosesOn,
         waitlistEnabled: input.waitlistEnabled,
@@ -382,7 +373,7 @@ export async function updateEventSettings(
         checksAdultBackgrounds: input.checksAdultBackgrounds,
         attendeeEditPolicy: input.attendeeEditPolicy,
         billingMode: input.billingMode,
-        audience: input.audience,
+        audience,
         seminarPreferenceClosesOn: input.seminarPreferenceClosesOn,
         seminarPreferenceSelfServiceLocked:
           input.seminarPreferenceSelfServiceLocked,
@@ -405,16 +396,132 @@ export async function updateEventSettings(
       data: {
         eventId,
         actorUserId,
-        action: current.isPublished !== input.isPublished
-          ? input.isPublished ? "EVENT_PUBLISHED" : "EVENT_UNPUBLISHED"
-          : "EVENT_SETTINGS_UPDATED",
+        action: "EVENT_SETTINGS_UPDATED",
         entityType: "Event",
         entityId: eventId,
         correlationId: crypto.randomUUID(),
-        summary: current.isPublished !== input.isPublished
-          ? input.isPublished ? `Published event: ${input.name}.` : `Unpublished event: ${input.name}.`
-          : `Updated event settings: ${input.name}.`,
-        metadata: { before: current, after: input },
+        summary: `Updated event settings: ${input.name}.`,
+        metadata: { before: current, after: { ...input, audience } },
+      },
+    });
+  });
+  return getEventSettings(eventId);
+}
+
+/**
+ * Publishing is its own action (#471), gated by the same readiness checklist
+ * the settings form always showed (checked against the saved event), but no
+ * longer reachable by saving that form. Idempotent under concurrency: the
+ * flip is a conditional `updateMany` on `isPublished: false`, and the audit
+ * entry is written only by the one request that actually changed it, so a
+ * doubled click or a race with another tab never errors or double-audits.
+ */
+export async function publishEvent(eventId: string, actorUserId: string) {
+  const prisma = getPrisma();
+  await prisma.$transaction(async (tx) => {
+    // Lock the event row before reading it, so a settings save that clears a
+    // checklist field waits for this publish (or runs first and is seen)
+    // rather than landing between the readiness check and the flip.
+    await tx.$queryRaw`SELECT "id" FROM "Event" WHERE "id" = ${eventId} FOR UPDATE`;
+    const [current, publishedFormCount] = await Promise.all([
+      tx.event.findUnique({
+        where: { id: eventId },
+        select: {
+          name: true,
+          slug: true,
+          startsAt: true,
+          endsAt: true,
+          timezone: true,
+          location: true,
+          publicInfoUrl: true,
+          supportContact: true,
+          isPublished: true,
+        },
+      }),
+      tx.registrationFormVersion.count({
+        where: { status: "PUBLISHED", form: { eventId } },
+      }),
+    ]);
+    if (!current) {
+      throw new EventOperationError("EVENT_NOT_FOUND", "That event no longer exists.");
+    }
+    if (current.isPublished) return;
+    const readiness = getEventPublishReadiness(
+      {
+        name: current.name,
+        slug: current.slug,
+        startsOn: current.startsAt.toISOString().slice(0, 10),
+        endsOn: current.endsAt.toISOString().slice(0, 10),
+        timezone: current.timezone,
+        location: current.location,
+        publicInfoUrl: current.publicInfoUrl,
+        supportContact: current.supportContact,
+      },
+      publishedFormCount,
+    );
+    if (!readiness.ready) {
+      const missing = readiness.items
+        .filter((item) => !item.complete)
+        .map((item) => item.label.toLowerCase());
+      throw new EventOperationError(
+        "EVENT_NOT_READY",
+        `Finish the publish checklist first: ${missing.join(", ")}.`,
+      );
+    }
+    const { count } = await tx.event.updateMany({
+      where: { id: eventId, isPublished: false },
+      data: { isPublished: true },
+    });
+    if (count !== 1) return;
+    await tx.auditLog.create({
+      data: {
+        eventId,
+        actorUserId,
+        action: "EVENT_PUBLISHED",
+        entityType: "Event",
+        entityId: eventId,
+        correlationId: crypto.randomUUID(),
+        summary: `Published event: ${current.name}.`,
+        metadata: { name: current.name },
+      },
+    });
+  });
+  return getEventSettings(eventId);
+}
+
+/**
+ * Unpublish is its own action (#471), confirmed in-page rather than folded
+ * into a settings save: it names the event and warns that every public
+ * registration form closes immediately, since that's the whole effect.
+ * Idempotent under concurrency the same way as `publishEvent`: a conditional
+ * `updateMany` on `isPublished: true`, audited only when it changed a row.
+ */
+export async function unpublishEvent(eventId: string, actorUserId: string) {
+  const prisma = getPrisma();
+  await prisma.$transaction(async (tx) => {
+    const current = await tx.event.findUnique({
+      where: { id: eventId },
+      select: { name: true, isPublished: true },
+    });
+    if (!current) {
+      throw new EventOperationError("EVENT_NOT_FOUND", "That event no longer exists.");
+    }
+    if (!current.isPublished) return;
+    const { count } = await tx.event.updateMany({
+      where: { id: eventId, isPublished: true },
+      data: { isPublished: false },
+    });
+    if (count !== 1) return;
+    await tx.auditLog.create({
+      data: {
+        eventId,
+        actorUserId,
+        action: "EVENT_UNPUBLISHED",
+        entityType: "Event",
+        entityId: eventId,
+        correlationId: crypto.randomUUID(),
+        summary: `Unpublished event: ${current.name}.`,
+        metadata: { name: current.name },
       },
     });
   });
@@ -553,43 +660,4 @@ export async function getEventLifecycle(eventId: string, now = new Date()) {
     remainingSpots: remainingEventCapacity(event.capacity, occupied),
     waiting,
   };
-}
-
-export async function updateEventLifecycle(
-  eventId: string,
-  input: EventLifecycleInput,
-  actorUserId: string,
-) {
-  const prisma = getPrisma();
-  await prisma.$transaction(async (tx) => {
-    const current = await tx.event.findUnique({
-      where: { id: eventId },
-      select: {
-        name: true,
-        capacity: true,
-        isPublished: true,
-        registrationOpensOn: true,
-        registrationClosesOn: true,
-        waitlistEnabled: true,
-        collectsShirtSizes: true,
-        checksAdultBackgrounds: true,
-        autoPromoteWaitlist: true,
-      },
-    });
-    if (!current) return;
-    await tx.event.update({ where: { id: eventId }, data: input });
-    await tx.auditLog.create({
-      data: {
-        eventId,
-        actorUserId,
-        action: "EVENT_REGISTRATION_LIFECYCLE_UPDATED",
-        entityType: "Event",
-        entityId: eventId,
-        correlationId: crypto.randomUUID(),
-        summary: `Updated registration lifecycle settings for ${current.name}.`,
-        metadata: { before: current, after: input },
-      },
-    });
-  });
-  return getEventLifecycle(eventId);
 }

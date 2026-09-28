@@ -18,30 +18,34 @@ export type EventAudienceBackfillReport = {
 };
 
 /**
- * Backfills the explicit `Event.audience` field (#481) from how "club event"
- * was inferred before it existed: an event billed to a club or church
- * (`billingMode: DEFERRED_ORGANIZATION_INVOICE`) becomes `CLUB`. Every other
- * event stays whatever it already is — `audience` defaults to `GENERAL` on
- * every row via the migration's column default, so "the rest become GENERAL"
- * needs no write here.
+ * Verifies the explicit `Event.audience` backfill (#481). The migration
+ * `20260928120000_event_audience` itself sets every event billed to a club or
+ * church (`billingMode: DEFERRED_ORGANIZATION_INVOICE`) to `CLUB`, so on a
+ * migrated database this report should find 0 rows. It lists any
+ * deferred-billed event that is not `CLUB`.
  *
- * Deliberately one-directional: this never sets an event back to `GENERAL`,
- * even one billed `ATTENDEE_PAY`. Audience is independent of billing mode
- * (a CLUB event may be attendee-paid, e.g. Man Camp), so an event someone has
- * already marked `CLUB` — however it was billed — must never be reclassified
- * by a later run of this backfill.
+ * After the migration, a deferred-billed event that is `GENERAL` is a
+ * deliberate human choice (audience is independent of billing mode), so this
+ * is read-only by default. `apply` exists only as a forced repair, and the
+ * CLI refuses it unless `--force` is also passed; it never sets any event to
+ * `GENERAL`. Running it against production is a human step.
  *
  * Idempotent, mirroring `backfillAttendeeTypes` (`modules/attendee-types/repository.ts`)
  * and `backfillHouseholdMembershipEffectiveDates`
  * (`modules/people/household-backfill.ts`): it only selects deferred-billed
- * rows not already `CLUB`, so a repeated run — dry or applied — finds
- * nothing left once every deferred-billed event is `CLUB`.
- *
- * `apply` defaults to false (dry run): the report, including a per-event
- * plan, is always returned; rows are only written when `apply` is true. This
- * is the human checkpoint AGENTS.md requires before writing existing data —
- * running it against production is a human step, never automated here.
+ * rows not already `CLUB`, so a repeated run finds nothing left.
  */
+/**
+ * How the CLI should run, from its arguments: a report by default; `--apply`
+ * alone is refused (it could override a human's later choice of GENERAL);
+ * only `--apply --force` writes.
+ */
+export function resolveEventAudienceBackfillMode(argv: readonly string[]): "report" | "refuse" | "apply" {
+  const apply = argv.includes("--apply");
+  if (!apply) return "report";
+  return argv.includes("--force") ? "apply" : "refuse";
+}
+
 export async function backfillEventAudience(apply = false): Promise<EventAudienceBackfillReport> {
   const prisma = getPrisma();
   const events = await prisma.event.findMany({

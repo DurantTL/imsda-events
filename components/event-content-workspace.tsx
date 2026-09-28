@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from "react";
 import { FileText, FileUp, Link2, Plus, Save, Sparkles, Trash2, X } from "lucide-react";
 import type { EventAssetRecord } from "@/modules/events/asset-repository";
 import type { EventContentSectionRecord } from "@/modules/events/content-repository";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import {
@@ -128,6 +129,10 @@ export function EventContentWorkspace({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // Review before removing a public-content section (#471): what's removed
+  // and what stays, before the click that will only take effect once the
+  // page is saved.
+  const [removeSectionIndex, setRemoveSectionIndex] = useState<number | null>(null);
 
   const dirty = JSON.stringify(sections) !== JSON.stringify(saved);
   const pendingImpact = pendingDelete ? localAssetImpact(sections, pendingDelete.id) : null;
@@ -394,7 +399,7 @@ export function EventContentWorkspace({
                 <button
                   className="secondary-button"
                   type="button"
-                  onClick={() => setSections((current) => current.filter((_, position) => position !== index))}
+                  onClick={() => setRemoveSectionIndex(index)}
                 >
                   <Trash2 size={15} aria-hidden="true" /> Remove
                 </button>
@@ -501,6 +506,26 @@ export function EventContentWorkspace({
         </div>
       </form>
 
+      <ConfirmDialog
+        busy={false}
+        confirmLabel="Remove section"
+        destructive
+        error=""
+        onCancel={() => setRemoveSectionIndex(null)}
+        onConfirm={() => {
+          if (removeSectionIndex === null) return;
+          setSections((current) => current.filter((_, position) => position !== removeSectionIndex));
+          setRemoveSectionIndex(null);
+        }}
+        open={removeSectionIndex !== null}
+        title={removeSectionIndex !== null ? `Remove "${sections[removeSectionIndex]?.title || "this section"}"?` : "Remove section?"}
+      >
+        <p>
+          This section is removed from the draft page. Nothing takes effect until you save — if it
+          was already published, visitors stop seeing it the moment you save. No registration or
+          attendee data is attached to a content section, so nothing else is affected.
+        </p>
+      </ConfirmDialog>
       {pendingDelete && (
         <div
           className="modal-backdrop"

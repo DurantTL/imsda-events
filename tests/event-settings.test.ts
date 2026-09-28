@@ -97,8 +97,11 @@ describe("event settings", () => {
     })).toThrow();
   });
 
-  it("defaults audience to GENERAL and accepts CLUB, independent of billing mode (#481)", () => {
-    expect(eventSettingsInputSchema.parse(validEvent).audience).toBe("GENERAL");
+  it("leaves an omitted audience absent and accepts CLUB, independent of billing mode (#481)", () => {
+    // No schema default: `createEvent` treats absence as GENERAL and
+    // `updateEventSettings` as "keep the stored audience".
+    expect(eventSettingsInputSchema.parse(validEvent).audience).toBeUndefined();
+    expect(eventSettingsInputSchema.parse({ ...validEvent, audience: "GENERAL" }).audience).toBe("GENERAL");
     expect(eventSettingsInputSchema.parse({
       ...validEvent,
       audience: "CLUB",

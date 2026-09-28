@@ -57,7 +57,7 @@ async function postHandler(request: Request) {
   try {
     const user = requireEventCreationPermission(await getCurrentSession());
     const input = eventSettingsInputSchema.parse(await request.json());
-    const event = await createEvent({ ...input, isPublished: false }, user.id);
+    const event = await createEvent(input, user.id);
     return Response.json({ event }, { status: 201 });
   } catch (error) { return eventApiError(error); }
 }

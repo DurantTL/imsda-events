@@ -5,95 +5,26 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Fragment, useState } from "react";
 import {
   ArrowRightLeft,
-  CheckCircle2,
   ChevronDown,
   CircleUserRound,
-  LayoutDashboard,
-  FileUp,
   Eye,
-  Megaphone,
-  MoreHorizontal,
-  PanelsTopLeft,
-  Settings2,
   ShieldCheck,
-  TicketPercent,
-  Tags,
-  Tag,
-  type LucideIcon,
-  UserCog,
   UsersRound,
-  WalletCards,
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 import { EventAutoSelectNotice } from "@/components/event-auto-select-notice";
 import { rememberLastUsedEvent } from "@/components/remember-last-event";
 import { SignOutButton } from "@/components/sign-out-button";
 import type { EventPermission } from "@/modules/access/permissions";
-import { operationalHealthEntryPermissions } from "@/modules/operations/access";
-
-/**
- * Groups for the sidebar (#428): items with no group render above any
- * heading (Dashboard) or after every group (More, a catch-all that spans
- * several of them). "Clubs and churches" and "System" are computed per
- * render, not statically, since their destination and visibility depend on
- * the signed-in user's role and (for Clubs and churches) the selected
- * event's club oversight — see docs/NAVIGATION.md.
- */
-type NavigationGroup = "events" | "clubs" | "people" | "finance" | "communications" | "system";
-
-const navigationGroupLabels: Record<NavigationGroup, string> = {
-  events: "Events",
-  clubs: "Clubs and churches",
-  people: "People",
-  finance: "Finance",
-  communications: "Communications",
-  system: "System",
-};
-
-type NavigationItem = {
-  href: string;
-  label: string;
-  mobileLabel: string;
-  icon: LucideIcon;
-  desktopOnly?: boolean;
-  requiredPermission?: EventPermission;
-  requiredAnyPermissions?: readonly EventPermission[];
-  group?: NavigationGroup;
-};
-
-const systemNavigation: NavigationItem = {
-  href: "/admin",
-  label: "System management",
-  mobileLabel: "System",
-  icon: ShieldCheck,
-};
-
-const navigation: readonly NavigationItem[] = [
-  { href: "/overview", label: "Dashboard", mobileLabel: "Home", icon: LayoutDashboard },
-  { href: "/check-in", label: "Check-in", mobileLabel: "Check-in", icon: CheckCircle2, requiredPermission: "MANAGE_CHECK_IN", group: "events" },
-  { href: "/registration-builder", label: "Registration form", mobileLabel: "Form", icon: PanelsTopLeft, desktopOnly: true, requiredPermission: "MANAGE_FORMS", group: "events" },
-  { href: "/more/attendee-configuration", label: "Attendee setup", mobileLabel: "Types", icon: Tags, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT", group: "events" },
-  { href: "/more/tags", label: "Tags", mobileLabel: "Tags", icon: Tag, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT", group: "events" },
-  { href: "/more/event-settings", label: "Event settings", mobileLabel: "Settings", icon: Settings2, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT", group: "events" },
-  { href: "/people", label: "Registrations", mobileLabel: "People", icon: UsersRound, requiredPermission: "VIEW_SENSITIVE_DATA", group: "people" },
-  { href: "/imports", label: "Imports", mobileLabel: "Imports", icon: FileUp, desktopOnly: true, requiredPermission: "MANAGE_IMPORTS", group: "people" },
-  { href: "/staff", label: "Team", mobileLabel: "Team", icon: UserCog, desktopOnly: true, requiredPermission: "MANAGE_STAFF", group: "people" },
-  { href: "/finance", label: "Payments", mobileLabel: "Payments", icon: WalletCards, requiredPermission: "MANAGE_FINANCE", group: "finance" },
-  { href: "/more/promo-codes", label: "Promo codes", mobileLabel: "Promos", icon: TicketPercent, requiredPermission: "MANAGE_FINANCE", group: "finance" },
-  { href: "/communications", label: "Emails", mobileLabel: "Emails", icon: Megaphone, requiredPermission: "MANAGE_COMMUNICATIONS", group: "communications" },
-  {
-    href: "/more",
-    label: "More",
-    mobileLabel: "More",
-    icon: MoreHorizontal,
-    requiredAnyPermissions: [
-      "VIEW_REPORTS",
-      "MANAGE_STAFF",
-      "MANAGE_FINANCE",
-      ...operationalHealthEntryPermissions,
-    ],
-  },
-];
+import {
+  matchesVisibility,
+  mobileNavigationOrder,
+  navigation,
+  navigationGroupLabels,
+  resolveClubsAndChurchesEntry,
+  systemNavigation,
+  type NavigationItem,
+} from "@/components/staff-navigation";
 
 type ShellEvent = {
   id: string;
@@ -153,26 +84,21 @@ export function AppShell({
     events.find((event) => event.id === selectedEventId)?.permissions ?? [],
   );
   const isSystemAdmin = user.globalRole === "SYSTEM_ADMIN";
-  const matchesVisibility = (item: NavigationItem) => {
-    if (item.requiredPermission && !selectedPermissions.has(item.requiredPermission)) return false;
-    if (
-      item.requiredAnyPermissions
-      && !item.requiredAnyPermissions.some((permission) => selectedPermissions.has(permission))
-    ) return false;
-    return true;
-  };
   const eventQuery = selectedEventId ? `?event=${encodeURIComponent(selectedEventId)}` : "";
-  const visibleStatic = navigation.filter(matchesVisibility);
+  const visibleStatic = navigation.filter((item) => matchesVisibility(item, selectedPermissions));
   const dashboardItem = visibleStatic.find((item) => !item.group && item.href !== "/more");
   const moreItem = visibleStatic.find((item) => item.href === "/more");
   // Audience, not billing mode, decides club features (#481): `clubOversight`
-  // (computed server-side in the layout) is already true only for a
-  // CLUB-audience selected event, for a system admin or an EVENT_ADMIN —
-  // exactly as `more/page.tsx` gates it. A system admin sees this on every
-  // CLUB event, never on a GENERAL one, matching every other role.
-  const clubsVisible = Boolean(selectedEvent?.clubOversight);
-  const clubsEntry: NavigationItem | null = clubsVisible ? {
-    href: isSystemAdmin ? "/admin/organizations" : "/more/clubs",
+  // (computed server-side in the layout) is true only for a CLUB-audience
+  // selected event, for a system admin or an EVENT_ADMIN, exactly as
+  // `more/page.tsx` gates it. A GENERAL event never shows this, even for a
+  // system admin (who still reaches the directory from System management).
+  const clubsAndChurches = resolveClubsAndChurchesEntry({
+    clubOversight: Boolean(selectedEvent?.clubOversight),
+    isSystemAdmin,
+  });
+  const clubsEntry: NavigationItem | null = clubsAndChurches.visible ? {
+    href: clubsAndChurches.href,
     label: "Clubs and churches",
     mobileLabel: "Clubs",
     icon: UsersRound,
@@ -198,9 +124,7 @@ export function AppShell({
     ...(moreItem ? [moreItem] : []),
   ];
   // The mobile tab bar keeps its own, unrelated order (#428 review) rather
-  // than deriving from the sidebar's grouping: Home, People, Payments,
-  // Promos, Check-in, Emails, More.
-  const mobileNavigationOrder = ["/overview", "/people", "/finance", "/more/promo-codes", "/check-in", "/communications", "/more"];
+  // than deriving from the sidebar's grouping — see `mobileNavigationOrder`.
   const mobileNavigation = mobileNavigationOrder
     .map((href) => visibleNavigation.find((item) => item.href === href))
     .filter((item): item is NavigationItem => Boolean(item));

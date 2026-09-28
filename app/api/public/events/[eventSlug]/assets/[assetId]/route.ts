@@ -16,8 +16,8 @@ type RouteContext = { params: Promise<{ eventSlug: string; assetId: string }> };
  */
 async function getHandler(_request: Request, context: RouteContext) {
   try {
-    const { assetId } = await context.params;
-    const asset = await findPublishedEventAsset(assetId);
+    const { eventSlug, assetId } = await context.params;
+    const asset = await findPublishedEventAsset(eventSlug, assetId);
     if (!asset) {
       // The same answer whether the id is wrong, the section is a draft, or the
       // event is unpublished. Distinguishing them would confirm what exists.
