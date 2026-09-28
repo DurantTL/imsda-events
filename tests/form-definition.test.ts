@@ -367,6 +367,10 @@ describe("registration form definitions", () => {
       club_name: "Test Pathfinders",
     })).toBe("Explicit Org");
     expect(resolveResponsibleOrganization({})).toBeNull();
+    // A "Not listed" church (#482) falls back to the typed name, like the club.
+    expect(resolveResponsibleOrganization({ church_name: "Not listed", church_name_other: "Test Fellowship" })).toBe("Test Fellowship");
+    expect(resolveResponsibleOrganization({ church_name: "Not listed" })).toBeNull();
+    expect(resolveResponsibleOrganization({ club_name: "Not listed", club_name_other: "Test Trailblazers", church_name: "Not listed", church_name_other: "Test Fellowship" })).toBe("Test Trailblazers");
 
     expect(resolveBillingContactName({ director_name: "Jane Doe" })).toBe("Jane Doe");
     expect(resolveBillingContactName({

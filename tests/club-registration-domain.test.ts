@@ -5,6 +5,7 @@ import {
   clubAttendeeClientId,
   clubDirectoryOwnedResponses,
   clubDirectoryPrefillResponses,
+  clubDraftResponsesWithDirectory,
   clubFormProblem,
   lockedAttendeeFieldKeys,
   lockedClubDirectoryFieldKeys,
@@ -219,6 +220,30 @@ describe("club and church directory lock (#482)", () => {
   it("owns only the club answer, clearing the paired \"Not listed\" free text and never touching the church", () => {
     expect(clubDirectoryOwnedResponses(directoryForm, { clubName: "Test Pathfinders", churchName: "Test SDA Church" }))
       .toEqual({ club_name: "Test Pathfinders", club_name_other: null });
+  });
+
+  it("clears only the \"Not listed\" companion, never another field that depends on the club", () => {
+    const withDependent = registrationFormDefinitionSchema.parse({
+      ...directoryForm,
+      sections: [
+        { ...directoryForm.sections[0]!, fields: [
+          // Listed first, so a lookup by `fieldKey` alone would pick it.
+          { id: "f_club_note", key: "club_contact_note", label: "Anything else about your club?", helpText: "", type: "TEXT", scope: "REGISTRATION", required: false, options: [], conditional: { fieldKey: "club_name", operator: "NOT_EMPTY", value: "" } },
+          ...directoryForm.sections[0]!.fields,
+        ] },
+        directoryForm.sections[1]!,
+      ],
+    });
+    expect(clubDirectoryOwnedResponses(withDependent, { clubName: "Test Pathfinders", churchName: null }))
+      .toEqual({ club_name: "Test Pathfinders", club_name_other: null });
+  });
+
+  it("lays the directory over a saved draft: the club always, the church only when the draft has none", () => {
+    const identity = { clubName: "Test Pathfinders", churchName: "Test SDA Church" };
+    expect(clubDraftResponsesWithDirectory(directoryForm, identity, { club_name: "Old Test Club", church_name: "Sample Chapel", email: "director@example.test" }))
+      .toEqual({ club_name: "Test Pathfinders", church_name: "Sample Chapel", email: "director@example.test" });
+    expect(clubDraftResponsesWithDirectory(directoryForm, identity, { church_name: "" }))
+      .toEqual({ club_name: "Test Pathfinders", church_name: "Test SDA Church" });
   });
 
   it("prefills the club and the sponsoring church as an editable default", () => {

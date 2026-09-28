@@ -329,6 +329,10 @@ export function resolveResponsibleOrganization(responses: Record<string, unknown
   if (clubNameOther) return clubNameOther;
   const churchName = typeof responses.church_name === "string" ? responses.church_name.trim() : "";
   if (churchName && churchName !== "Other" && churchName !== DIRECTORY_NOT_LISTED_VALUE) return churchName;
+  // A "Not listed" church (#482) falls back to the name the director typed,
+  // as the club side does.
+  const churchNameOther = typeof responses.church_name_other === "string" ? responses.church_name_other.trim() : "";
+  if (churchNameOther) return churchNameOther;
   return null;
 }
 

@@ -718,4 +718,21 @@ describe("amending a directory-sourced registration (#482)", () => {
     directoryFixture({ club_name: "Not listed", club_name_other: "Test Pathfinderz" });
     await expect(preview({ club_name: "Test Pathfinders", club_name_other: "" })).resolves.toBeDefined();
   });
+
+  it("computes server-owned answers with the amendment's own transaction", async () => {
+    const { tx } = directoryFixture({ club_name: "Not listed", club_name_other: "Test Pathfinderz" });
+    const owned = vi.fn(async (_definition: RegistrationFormDefinition, client: unknown) => {
+      expect(client).toBe(tx);
+      return { club_name: "Test Pathfinders", club_name_other: null };
+    });
+    await expect(previewRegistrationAmendment("event-1", "registration-1", {
+      clientRequestId: "7b3e1c52-0d7e-4a8e-9a55-5f0a3f6d2c11",
+      expectedUpdatedAt: initialUpdatedAt.toISOString(),
+      reason: "",
+      responses: { ...registrationResponses, club_name: "Not listed", club_name_other: "Test Pathfinderz" },
+      attendees: [{ attendeeId: "attendee-1", clientId: "attendee-row-1", responses: attendeeResponses }],
+      previewOnly: true,
+    }, { ownedRegistrationResponses: owned })).resolves.toBeDefined();
+    expect(owned).toHaveBeenCalledTimes(1);
+  });
 });

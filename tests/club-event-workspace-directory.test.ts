@@ -39,7 +39,7 @@ const definition = registrationFormDefinitionSchema.parse({
   ],
 });
 
-function mockPrisma(parentOrganization: { name: string; isActive: boolean } | null) {
+function mockPrisma(parentOrganization: { name: string; isActive: boolean } | null, draftResponses: Record<string, unknown> | null = null) {
   const prisma = {
     event: { findFirst: vi.fn().mockResolvedValue({
       id: "event-1", name: "Synthetic Camporee", slug: "synthetic-camporee",
@@ -50,7 +50,9 @@ function mockPrisma(parentOrganization: { name: string; isActive: boolean } | nu
     registrationForm: { findFirst: vi.fn().mockResolvedValue({ slug: "clubs", versions: [{ definition }] }) },
     clubRosterMember: { findMany: vi.fn().mockResolvedValue([]) },
     clubEventRegistration: { findUnique: vi.fn().mockResolvedValue(null) },
-    clubRegistrationDraft: { findUnique: vi.fn().mockResolvedValue(null) },
+    clubRegistrationDraft: { findUnique: vi.fn().mockResolvedValue(draftResponses ? {
+      selectedMemberIds: [], guests: [], responses: draftResponses, attendeeResponses: {}, updatedAt: new Date("2026-10-10T12:00:00Z"),
+    } : null) },
     organization: { findUnique: vi.fn().mockResolvedValue({ name: "Test Pathfinders", parentOrganization }) },
   };
   dependencies.getPrisma.mockReturnValue(prisma);
@@ -83,6 +85,24 @@ describe("club event workspace directory prefill (#482)", () => {
     const workspace = await getClubEventWorkspace("club-1", "event-1", now);
     expect(workspace.directory.prefillResponses).toEqual({ club_name: "Test Pathfinders" });
     expect(workspace.directory.lockedFieldKeys).toEqual(["club_name"]);
+  });
+
+  it("lays the locked club over a saved draft holding a stale club name, keeping the draft's own church", async () => {
+    mockPrisma({ name: "Test SDA Church", isActive: true }, { club_name: "Old Test Club", church_name: "Sample Chapel", director_name: "Avery Director" });
+    const workspace = await getClubEventWorkspace("club-1", "event-1", now);
+    expect(workspace.draft?.responses).toEqual({ club_name: "Test Pathfinders", church_name: "Sample Chapel", director_name: "Avery Director" });
+  });
+
+  it("fills the club and the sponsoring church into a saved draft with no club or church", async () => {
+    mockPrisma({ name: "Test SDA Church", isActive: true }, { director_name: "Avery Director" });
+    const workspace = await getClubEventWorkspace("club-1", "event-1", now);
+    expect(workspace.draft?.responses).toEqual({ club_name: "Test Pathfinders", church_name: "Test SDA Church", director_name: "Avery Director" });
+  });
+
+  it("replaces a draft's \"Not listed\" club with the real club and drops the typed name", async () => {
+    mockPrisma(null, { club_name: "Not listed", club_name_other: "Test Pathfinderz" });
+    const workspace = await getClubEventWorkspace("club-1", "event-1", now);
+    expect(workspace.draft?.responses).toEqual({ club_name: "Test Pathfinders" });
   });
 
   it("prefills the director's name from their profile", () => {

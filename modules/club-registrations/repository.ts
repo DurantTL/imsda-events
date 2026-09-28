@@ -8,6 +8,7 @@ import {
   clubAttendeeClientId,
   clubDirectoryOwnedResponses,
   clubDirectoryPrefillResponses,
+  clubDraftResponsesWithDirectory,
   clubExistingAttendeeClientId,
   clubFormProblem,
   clubGuestClientId,
@@ -470,7 +471,11 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
       ? {
         selectedMemberIds: draft.selectedMemberIds,
         guests: guestsFromJson(draft.guests),
-        responses: draft.responses as Record<string, unknown>,
+        // The locked club (and a missing church) come from the directory,
+        // not the draft (#482).
+        responses: experience
+          ? clubDraftResponsesWithDirectory(experience.form.definition, identity, draft.responses as Record<string, unknown>)
+          : draft.responses as Record<string, unknown>,
         attendeeResponses: draft.attendeeResponses as Record<string, Record<string, unknown>>,
         updatedAt: draft.updatedAt.toISOString(),
       }
@@ -947,11 +952,14 @@ export async function amendClubRegistration(
   // club's current directory record. The engine applies it against the
   // registration's own hydrated form, before validating. The church is left
   // as the registration holds it.
-  const identity = await clubDirectoryIdentity(getPrisma(), organizationId);
+  // Read inside the engine's transaction, so a rename landing between the
+  // preview and the commit can't leave a stale club name to fail on.
   const engineOptions: AmendmentServerOptions = {
     attendees: serverOptions,
     requestFingerprint,
-    ownedRegistrationResponses: (hydrated) => clubDirectoryOwnedResponses(hydrated, identity),
+    ownedRegistrationResponses: async (hydrated, tx) => (
+      clubDirectoryOwnedResponses(hydrated, await clubDirectoryIdentity(tx, organizationId))
+    ),
   };
   try {
     const preview = await previewRegistrationAmendment(eventId, registrationId, amendmentInput, engineOptions);

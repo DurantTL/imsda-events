@@ -726,4 +726,20 @@ describe("club registration edit keeps the club directory field locked (#482)", 
     expect(responses.club_name).toBe("Test Pathfinders");
     expect(responses.club_name_other).toBeFalsy();
   });
+
+  it("records a club answer changed only by a directory rename as the system's, not the director's", async () => {
+    const { prisma } = fixture({ definition: directoryDefinition, storedResponses: { club_name: "Old Test Club Name", church_name: "Test SDA Church" } });
+    await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, { ...baseEdit(), selectedMemberIds: ["m1", "m3"] }, beforeDeadline);
+    const audit = prisma.auditLog.create.mock.calls[0]![0].data as { summary: string; metadata: Record<string, unknown> };
+    expect(audit.metadata.serverOwnedChangedFields).toEqual(["club_name"]);
+    expect(audit.summary).toContain("not the director: club_name");
+  });
+
+  it("records no system change when the club answer already matches", async () => {
+    const { prisma } = fixture({ definition: directoryDefinition, storedResponses: { club_name: "Test Pathfinders" } });
+    await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, { ...baseEdit(), selectedMemberIds: ["m1", "m3"] }, beforeDeadline);
+    const audit = prisma.auditLog.create.mock.calls[0]![0].data as { summary: string; metadata: Record<string, unknown> };
+    expect(audit.metadata.serverOwnedChangedFields).toEqual([]);
+    expect(audit.summary).not.toContain("by the system");
+  });
 });

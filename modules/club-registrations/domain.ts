@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isAgeFieldKey, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
+import { DIRECTORY_NOT_LISTED_VALUE, isAgeFieldKey, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
 import { normalizeOrganizationName } from "@/modules/organizations/domain";
 import { fullNameKeys, splitNameKeyPairs } from "@/modules/forms/public-domain";
 
@@ -227,8 +227,17 @@ export function clubDirectoryOwnedResponses(
     // The free-text "Not listed" companion (the existing "show only when"
     // convention) no longer applies once the field is locked to a real
     // directory match, so clear it rather than leaving a stale answer.
-    const companion = fields.find((candidate) => candidate.conditional?.fieldKey === field.key);
-    if (companion) responses[companion.key] = null;
+    // Only the free-text companion shown for "Not listed" — never another
+    // field that merely depends on the club answer.
+    for (const companion of fields) {
+      if (
+        companion.conditional?.fieldKey === field.key
+        && companion.conditional.operator === "EQUALS"
+        && companion.conditional.value === DIRECTORY_NOT_LISTED_VALUE
+      ) {
+        responses[companion.key] = null;
+      }
+    }
   }
   return responses;
 }
@@ -253,6 +262,32 @@ export function clubDirectoryPrefillResponses(
     }
   }
   return prefill;
+}
+
+/**
+ * A saved club draft's registration answers with the directory rules laid
+ * over them (#482): the club is always the director's own (a draft can hold
+ * a stale name, no club, or "Not listed", none of which the locked field
+ * would let them fix), and the sponsoring church fills in only when the
+ * draft has no church answer yet, so a church the director picked stays.
+ */
+export function clubDraftResponsesWithDirectory(
+  definition: RegistrationFormDefinition,
+  identity: ClubDirectoryIdentity,
+  draftResponses: Record<string, unknown>,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...draftResponses };
+  for (const [key, value] of Object.entries(clubDirectoryOwnedResponses(definition, identity))) {
+    if (value === null) delete next[key];
+    else next[key] = value;
+  }
+  const prefill = clubDirectoryPrefillResponses(definition, identity);
+  for (const field of registrationFields(definition)) {
+    if (field.optionSource !== "CHURCHES_DIRECTORY" || !prefill[field.key]) continue;
+    const current = next[field.key];
+    if (current === undefined || current === null || current === "") next[field.key] = prefill[field.key];
+  }
+  return next;
 }
 
 export type RosterPerson = {
