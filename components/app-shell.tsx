@@ -141,12 +141,14 @@ export function AppShell({
   const defaultEvent = defaultEventId
     ? events.find((event) => event.id === defaultEventId)
     : undefined;
-  const selectedEvent = requestedEvent ?? defaultEvent;
+  // A `?event=` that matches nothing selects nothing, rather than quietly
+  // showing the default on pages that don't validate the id themselves.
+  const selectedEvent = requestedEventId ? requestedEvent : defaultEvent;
   const selectedEventId = selectedEvent?.id ?? "";
   // Same rule as the page (#465): no `?event=` and an automatic choice. Not on
-  // /admin, which isn't event-scoped.
+  // pages that aren't event-scoped (/admin, the global duplicate review).
   const showAutoSelectNotice = !requestedEventId && autoSelected && Boolean(defaultEvent)
-    && !pathname.startsWith(systemNavigation.href);
+    && !pathname.startsWith(systemNavigation.href) && !pathname.startsWith("/people/matches");
   const selectedPermissions = new Set(
     events.find((event) => event.id === selectedEventId)?.permissions ?? [],
   );

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * `resolveEventContext` (#465 — Q1: a wrong or missing event never silently
@@ -71,7 +71,14 @@ async function expectRedirect(path: string, run: () => Promise<unknown>) {
   expect(mocks.redirect).toHaveBeenCalledWith(path);
 }
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(() => {
+  // "Nearest event" is measured from now; pin it so the fixtures stay valid.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-28T12:00:00.000Z"));
   vi.clearAllMocks();
   mocks.redirect.mockImplementation((path: string) => {
     throw new RedirectSignal(path);
