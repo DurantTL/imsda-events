@@ -292,7 +292,8 @@ export function ClubHonorsWorkspace({
             )}
             <label>
               Note (optional)
-              <input maxLength={500} onChange={(event) => setBulkNote(event.target.value)} value={bulkNote} />
+              <input aria-describedby="honor-note-help" maxLength={500} onChange={(event) => setBulkNote(event.target.value)} value={bulkNote} />
+              <small className="field-help" id="honor-note-help">Notes stay with the member&apos;s history, including in future clubs. No health details.</small>
             </label>
             <button
               className="primary-button"
@@ -362,7 +363,8 @@ export function ClubHonorsWorkspace({
                   </label>
                   <label>
                     Note (optional)
-                    <input maxLength={500} name="note" />
+                    <input aria-describedby="honor-member-note-help" maxLength={500} name="note" />
+                    <small className="field-help" id="honor-member-note-help">Notes stay with the member&apos;s history, including in future clubs. No health details.</small>
                   </label>
                 </div>
                 <div className="form-actions">

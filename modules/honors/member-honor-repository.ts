@@ -10,6 +10,7 @@ import {
   memberHonorEntryProblem,
 } from "@/modules/honors/member-honor-domain";
 import type { BulkMemberHonorEntryInput, MemberHonorEntryInput } from "@/modules/honors/member-honor-schemas";
+import { CONFERENCE_TIME_ZONE } from "@/modules/calendar/domain";
 
 /**
  * Member honor storage (#486). Every entry is append-only and keyed to the
@@ -56,8 +57,9 @@ function actorAuditFields(actor: MemberHonorActor) {
   };
 }
 
+/** Today in the conference's time zone, so a US Central evening isn't already "tomorrow". */
 function today(now: Date) {
-  return now.toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat("en-CA", { timeZone: CONFERENCE_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
 }
 
 /** Active roster members this club may record honors for, mapped to their durable person id. */
