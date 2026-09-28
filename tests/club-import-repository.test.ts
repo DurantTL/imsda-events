@@ -14,11 +14,13 @@ const mocks = vi.hoisted(() => ({
   inviteFindFirst: vi.fn(),
   inviteCreate: vi.fn(),
   grantFindFirst: vi.fn(),
+  identityFindMany: vi.fn(),
+  orgFindMany: vi.fn(),
 }));
 
 const client = {
-  externalIdentity: { findUnique: mocks.identityFindUnique, create: mocks.identityCreate },
-  organization: { findUnique: mocks.orgFindUnique, findFirst: mocks.orgFindFirst, create: mocks.orgCreate, update: mocks.orgUpdate },
+  externalIdentity: { findUnique: mocks.identityFindUnique, create: mocks.identityCreate, findMany: mocks.identityFindMany },
+  organization: { findUnique: mocks.orgFindUnique, findFirst: mocks.orgFindFirst, create: mocks.orgCreate, update: mocks.orgUpdate, findMany: mocks.orgFindMany },
   clubRosterMember: { findMany: mocks.rosterFindMany, create: mocks.rosterCreate },
   person: { create: mocks.personCreate },
   clubInvite: { findFirst: mocks.inviteFindFirst, create: mocks.inviteCreate },
@@ -30,7 +32,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: () => client }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: mocks.writeAuditLog }));
 
-import { importClubs } from "@/modules/club-imports/repository";
+import { annotateImportDrafts, importClubs } from "@/modules/club-imports/repository";
 import { parseClubRegistrationExport } from "@/modules/club-imports/domain";
 import { clubImportItemSchema } from "@/modules/club-imports/schemas";
 import { syntheticExportEntry } from "./support/club-import-fixture";
@@ -106,7 +108,7 @@ describe("club import (#376)", () => {
     mocks.identityFindUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: "identity-1" });
     const [result] = await importClubs([item()], "admin-1", now);
     expect(result).toMatchObject({ status: "FAILED" });
-    expect(result.message).toMatch(/already has an imported registration/);
+    expect(result.message).toBe("This club already has a 2026-27 import. Add the missing people on the roster, or move/undo the earlier import.");
   });
 
   it("refuses a club with no sponsoring church, creating nothing", async () => {
@@ -208,5 +210,52 @@ describe("club import (#376)", () => {
     const [again] = await importClubs([item()], "admin-1", now);
     expect(again).toMatchObject({ status: "ALREADY_IMPORTED", organizationId: "club-new", membersAdded: 0 });
     expect(mocks.personCreate).not.toHaveBeenCalled();
+  });
+
+  it("adds a same-named youth only when Keep both is sent", async () => {
+    const twins = [
+      { firstName: "Robin", lastName: "Faux", attendeeType: "YOUTH", role: "Pathfinder", classLevel: "FRIEND", reportedAge: 9 },
+      { firstName: "Robin", lastName: "Faux", attendeeType: "YOUTH", role: "Pathfinder", classLevel: "EXPLORER", reportedAge: 12 },
+    ];
+    const [skipped] = await importClubs([item({ people: twins })], "admin-1", now);
+    expect(skipped).toMatchObject({ membersAdded: 1, membersSkipped: 1 });
+    vi.clearAllMocks();
+    mocks.personCreate.mockResolvedValue({ id: "person-x" });
+    const [kept] = await importClubs([item({ people: [twins[0], { ...twins[1], keepBoth: true }] })], "admin-1", now);
+    expect(kept).toMatchObject({ membersAdded: 2, membersSkipped: 0, skipped: [] });
+    expect(mocks.rosterCreate.mock.calls.every(([call]) => !("keepBoth" in call.data))).toBe(true);
+  });
+});
+
+describe("the preview's earlier imports (#541)", () => {
+  const drafts = () => parseClubRegistrationExport([syntheticExportEntry({ id: 777 }), syntheticExportEntry({ id: 778 })], now).drafts;
+
+  beforeEach(() => {
+    mocks.orgFindMany.mockResolvedValue([]);
+  });
+
+  it("lists every club year each entry was imported for, by entry", async () => {
+    mocks.identityFindMany.mockResolvedValue([
+      { externalId: "777", providerScope: "form-89:2025-26", organization: { id: "club-1", name: "Fixture Pathfinders" } },
+      { externalId: "777", providerScope: "form-89:2026-27", organization: { id: "club-1", name: "Fixture Pathfinders" } },
+      { externalId: "778", providerScope: "form-89:2024-25", organization: { id: "club-2", name: "Other Pathfinders" } },
+      // Not a club-year scope, and an identity whose club is gone: both ignored.
+      { externalId: "778", providerScope: "form-89:778", organization: { id: "club-2", name: "Other Pathfinders" } },
+      { externalId: "778", providerScope: "form-89:2026-27", organization: null },
+    ]);
+    const annotated = await annotateImportDrafts(drafts());
+    expect(mocks.identityFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { provider: "FLUENT_FORMS", externalId: { in: ["777", "778"] } } }));
+    expect(annotated.drafts[0].importedYears).toEqual({
+      "2025-26": { id: "club-1", name: "Fixture Pathfinders" },
+      "2026-27": { id: "club-1", name: "Fixture Pathfinders" },
+    });
+    expect(annotated.drafts[1].importedYears).toEqual({ "2024-25": { id: "club-2", name: "Other Pathfinders" } });
+    expect(annotated.drafts.every((draft) => draft.clubYear === "2026-27")).toBe(true);
+  });
+
+  it("is empty for an entry never imported", async () => {
+    mocks.identityFindMany.mockResolvedValue([]);
+    const annotated = await annotateImportDrafts(drafts());
+    expect(annotated.drafts.map((draft) => draft.importedYears)).toEqual([{}, {}]);
   });
 });

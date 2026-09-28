@@ -23,11 +23,22 @@ export const clubImportItemSchema = z.object({
     role: z.string().trim().max(60).default(""),
     classLevel: z.enum(["FRIEND", "COMPANION", "EXPLORER", "RANGER", "VOYAGER", "GUIDE", "TLT", "MASTER_GUIDE"]).nullable(),
     reportedAge: z.number().int().min(0).max(99).nullable(),
+    /** "Keep both" (#541): add this person even though an earlier person in the file has the same name and section. */
+    keepBoth: z.boolean().default(false),
   }).strict()).max(300),
 }).strict();
 
 export const clubImportConfirmSchema = z.object({
   clubs: z.array(clubImportItemSchema).min(1, "Choose at least one club to import.").max(400),
+}).strict();
+
+const clubYear = z.string().regex(/^\d{4}-\d{2}$/, "Choose a valid club year.");
+
+/** "Move this import to another club year" (#541): preview first, then move. */
+export const importYearMoveSchema = z.object({
+  fromYear: clubYear,
+  toYear: clubYear,
+  mode: z.enum(["preview", "move"]),
 }).strict();
 
 export type ClubImportItem = z.infer<typeof clubImportItemSchema>;

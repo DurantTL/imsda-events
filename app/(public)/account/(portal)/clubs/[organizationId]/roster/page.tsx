@@ -6,8 +6,7 @@ import { DriverVerificationQueue } from "@/components/driver-verification-queue"
 import { clubPortalComplianceStatuses } from "@/modules/background-checks/repository";
 import { COMPLIANCE_FILTER_VALUES, type ComplianceFilterValue } from "@/modules/background-checks/domain";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
-import { clubYearChoices } from "@/modules/club-imports/domain";
-import { clubYearFor } from "@/modules/club-rosters/domain";
+import { rosterYearView } from "@/modules/club-rosters/domain";
 import { listRoster } from "@/modules/club-rosters/repository";
 import { listTransferClubOptions } from "@/modules/club-transfers/repository";
 import { honorSummaryByMemberId } from "@/modules/honors/member-honor-domain";
@@ -25,17 +24,18 @@ export default async function ClubRosterPage({
   searchParams,
 }: {
   params: Promise<{ organizationId: string }>;
-  searchParams: Promise<{ compliance?: string; year?: string }>;
+  searchParams: Promise<{ compliance?: string; year?: string | string[] }>;
 }) {
   const [{ organizationId }, { compliance: complianceParam, year: yearParam }] = await Promise.all([params, searchParams]);
   const access = await getRosterAccessStateForPage(organizationId);
   if (access.state !== "OPEN") return null;
-  const currentClubYear = clubYearFor(new Date());
-  // The previous or next club year can be opened with ?year= (the club import links here, #541).
-  const clubYear = clubYearChoices().find((year) => year === yearParam) ?? currentClubYear;
+  // The previous or next club year can be opened with ?year= (#541), read-only:
+  // every roster write, the birth-date reveal, and transfers work on the
+  // current year, so none of them is offered for another year.
+  const { clubYear, currentClubYear, readOnly } = rosterYearView(yearParam);
   // Status only, never the note, and only for a director or deputy: this is the club's own page (#427).
   // Transfers (#489) are the same leader-only capability that manages the club's team.
-  const canTransfer = access.capabilities.manageTeam;
+  const canTransfer = access.capabilities.manageTeam && !readOnly;
   const [members, complianceStatuses, honorRows, clubOptions] = await Promise.all([
     listRoster(organizationId, clubYear),
     clubPortalComplianceStatuses(organizationId, clubYear, access.capabilities),
@@ -48,25 +48,29 @@ export default async function ClubRosterPage({
       <p className="quiet-copy">
         <a href={`/account/clubs/${organizationId}/roster/export`}>Build a roster export</a> for an outside camporee.
       </p>
-      {clubYear !== currentClubYear && (
+      {readOnly && (
         <p className="inline-notice" role="status">
-          Showing the {clubYear} roster. <a href={`/account/clubs/${organizationId}/roster`}>Back to {currentClubYear}</a>. New people are added to {currentClubYear}.
+          Showing the {clubYear} roster, read-only. <a href={`/account/clubs/${organizationId}/roster`}>Back to {currentClubYear}</a> to
+          add, edit, or remove people.
         </p>
       )}
+      {/* Keyed by year, so a client-side year change never keeps the other year's people in the table. */}
       <ClubRosterWorkspace
-        canSeeBirthDates={access.capabilities.seeBirthDates}
+        key={clubYear}
+        canSeeBirthDates={access.capabilities.seeBirthDates && !readOnly}
         clubYear={clubYear}
         complianceFilter={complianceFilterFrom(complianceParam)}
         complianceStatuses={complianceStatuses}
         headingActions={canTransfer ? <RequestTransferButton clubOptions={clubOptions} organizationId={organizationId} /> : undefined}
         honorSummaries={honorSummaryByMemberId(honorRows)}
-        honorsHref={`/account/clubs/${organizationId}/honors`}
+        honorsHref={readOnly ? undefined : `/account/clubs/${organizationId}/honors`}
         initialMembers={members}
         organizationId={organizationId}
+        readOnly={readOnly}
       />
       {canTransfer && <ClubTransfersPanel organizationId={organizationId} />}
       {/* Willing drivers, for review (#491): the same leader-only capability that manages the club's team. */}
-      {access.capabilities.manageTeam && (
+      {access.capabilities.manageTeam && !readOnly && (
         <DriverVerificationQueue
           clearEndpointBase={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/driver-verification`}
           listEndpoint={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/driver-verification`}

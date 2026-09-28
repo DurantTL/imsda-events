@@ -4,7 +4,16 @@ import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { refreshBackgroundCheckMatchesSafely } from "@/modules/background-checks/refresh-after-write";
 import { writeAuditLog } from "@/modules/audit/audit-service";
-import { churchStem, clubYearChoices, importScope, type ClubImportDraft, type ImportSkipReason } from "@/modules/club-imports/domain";
+import {
+  churchStem,
+  clubYearChoices,
+  importPersonKey,
+  importScope,
+  scopeClubYear,
+  type ClubImportDraft,
+  type ImportedYears,
+  type ImportSkipReason,
+} from "@/modules/club-imports/domain";
 import type { ClubImportItem } from "@/modules/club-imports/schemas";
 import { normalizeOrganizationName } from "@/modules/organizations/domain";
 
@@ -14,19 +23,6 @@ import { normalizeOrganizationName } from "@/modules/organizations/domain";
  * administrator kept. Each club imports in its own transaction, so one bad
  * row never blocks the rest. Audit entries carry counts, never names.
  */
-
-function nameKey(firstName: string, lastName: string) {
-  return `${firstName} ${lastName}`.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
-}
-
-/**
- * Two people count as the same only when the name AND the roster section
- * match: a parent on staff and a child in the club who share a full name
- * (a "Jr.") are different people, and are both imported (#541).
- */
-function personKey(attendeeType: string, firstName: string, lastName: string) {
-  return `${attendeeType === "STAFF" || attendeeType === "ADULT" ? "staff" : "member"}|${nameKey(firstName, lastName)}`;
-}
 
 /** What the preview needs to know about the directory: church matches, existing clubs, earlier imports. */
 export async function annotateImportDrafts(drafts: ClubImportDraft[]) {
@@ -51,11 +47,14 @@ export async function annotateImportDrafts(drafts: ClubImportDraft[]) {
     clubYearChoices: clubYearChoices(),
     drafts: drafts.map((draft) => {
       // Every club year this entry was imported into, so changing the year in
-      // the preview shows the right "already imported" state.
-      const importedYears: Record<string, { id: string; name: string }> = {};
-      for (const year of clubYearChoices()) {
-        const hit = identities.find((identity) => identity.externalId === draft.entryId && identity.providerScope === importScope(year));
-        if (hit?.organization) importedYears[year] = { id: hit.organization.id, name: hit.organization.name };
+      // the preview shows the right "already imported" state, and an import
+      // in another year suggests moving it instead of importing again.
+      const importedYears: ImportedYears = {};
+      for (const identity of identities) {
+        const year = scopeClubYear(identity.providerScope);
+        if (identity.externalId === draft.entryId && year && identity.organization) {
+          importedYears[year] = { id: identity.organization.id, name: identity.organization.name };
+        }
       }
       const church = churchByStem.get(churchStem(draft.churchName)) ?? null;
       const club = clubByName.get(normalizeOrganizationName(draft.clubName)) ?? null;
@@ -153,7 +152,12 @@ async function importOne(item: ClubImportItem, actorUserId: string, now: Date): 
         where: { organizationId_provider_providerScope: { organizationId: club.id, provider: "FLUENT_FORMS", providerScope: scope } },
         select: { id: true },
       });
-      if (yearImport) throw new ImportRefused(`This club already has an imported registration for ${item.clubYear}.`);
+      // One import per club per club year. A corrected second registration is
+      // not merged: staff add the missing people by hand or move/undo the
+      // earlier import (#541).
+      if (yearImport) {
+        throw new ImportRefused(`This club already has a ${item.clubYear} import. Add the missing people on the roster, or move/undo the earlier import.`);
+      }
       await tx.externalIdentity.create({
         data: {
           organizationId: club.id,
@@ -169,20 +173,20 @@ async function importOne(item: ClubImportItem, actorUserId: string, now: Date): 
         where: { organizationId: club.id, clubYear: item.clubYear, status: { not: "REMOVED" } },
         select: { attendeeType: true, person: { select: { firstName: true, lastName: true } } },
       });
-      const onRoster = new Set(existing.filter((row) => row.person).map((row) => personKey(row.attendeeType, row.person!.firstName, row.person!.lastName)));
+      const onRoster = new Set(existing.filter((row) => row.person).map((row) => importPersonKey({ attendeeType: row.attendeeType, ...row.person! })));
       const inThisRegistration = new Set<string>();
       const skipped: ClubImportResult["skipped"] = [];
       let membersAdded = 0;
       let membersSkipped = 0;
       for (const person of item.people) {
-        const key = personKey(person.attendeeType, person.firstName, person.lastName);
+        const key = importPersonKey(person);
         const name = `${person.firstName} ${person.lastName}`.trim();
         if (onRoster.has(key)) {
           membersSkipped += 1;
           skipped.push({ name, reason: "ALREADY_ON_ROSTER" });
           continue;
         }
-        if (inThisRegistration.has(key)) {
+        if (inThisRegistration.has(key) && !person.keepBoth) {
           membersSkipped += 1;
           skipped.push({ name, reason: "DUPLICATE_IN_REGISTRATION" });
           continue;

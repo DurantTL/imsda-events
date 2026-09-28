@@ -2,16 +2,22 @@
  * Proves the club import (#376, #541) against a real PostgreSQL database with
  * a synthetic form 89 export (fictitious names only):
  *
- * - an August submission imports into the current club year, and every person
- *   in the preview (siblings, a parent and child sharing a surname, a
- *   two-letter first name) is on that year's roster: 48 in, 48 listed;
- * - the previous year stays empty, and the same entry can then be imported
- *   into the previous year, since the identity is per club year;
- * - re-importing the same entry and year reports "already imported";
- * - a second registration into an existing roster skips only people already
- *   on it, with a reason, and still adds a same-named parent and child.
+ * - an August submission defaults to the current club year;
+ * - "Move this import to another club year": an import made into the wrong
+ *   year (2025-26) is previewed (48 rows, no conflicts) and moved to 2026-27
+ *   with the Person count unchanged, 48 listed in 2026-27 and 0 in 2025-26,
+ *   the identity's scope moved, and an audit entry with counts and ids only;
+ * - re-uploading it then reports "imported for 2026-27", and re-importing
+ *   adds no one;
+ * - a move is refused, changing nothing, when the target year already has an
+ *   import, or when a moved person is already on the target year's roster;
+ * - a second registration for the same club and year is refused and says
+ *   what to do;
+ * - two people with the same name and section: one is skipped unless "Keep
+ *   both" is sent, and "Jr." stays with the last name.
  *
- * Creates and removes its own rows. Needs a local database.
+ * Creates and removes its own rows. Needs a local database with a system
+ * administrator (npm run db:seed).
  *
  *   npm run test:club-imports
  */
@@ -44,69 +50,123 @@ async function cleanup(userId: string) {
 }
 
 async function main() {
-  const { parseClubRegistrationExport } = await import("../modules/club-imports/domain");
-  const { importClubs } = await import("../modules/club-imports/repository");
+  const { earlierImportNotice, parseClubRegistrationExport, splitName } = await import("../modules/club-imports/domain");
+  const { confirmPayload } = await import("../modules/club-imports/confirm-payload");
+  const { annotateImportDrafts, importClubs } = await import("../modules/club-imports/repository");
+  const { moveImportYear, previewImportYearMove, ImportYearMoveError } = await import("../modules/club-imports/move-year");
+  const { clubImportConfirmSchema } = await import("../modules/club-imports/schemas");
   const { listRoster } = await import("../modules/club-rosters/repository");
-  const { syntheticExportEntry, SYNTHETIC_CHURCH } = await import("../tests/support/club-import-fixture");
+  const { syntheticExportEntry } = await import("../tests/support/club-import-fixture");
 
   const admin = await prisma.user.findFirst({ where: { globalRole: "SYSTEM_ADMIN" }, select: { id: true } });
   assert(admin, "needs a system administrator in the local database (npm run db:seed)");
 
-  const toItem = (entry: ReturnType<typeof syntheticExportEntry>, clubYear?: string) => {
-    const [draft] = parseClubRegistrationExport([entry], now).drafts;
-    return {
-      sourceKey: draft.sourceKey,
-      entryId: draft.entryId,
-      clubYear: clubYear ?? draft.clubYear,
-      clubName,
+  /** The confirm payload exactly as the preview sends it, through the same schema. */
+  const itemsFor = (entry: ReturnType<typeof syntheticExportEntry>, options: { clubYear?: string; name?: string; keepBoth?: boolean } = {}) => {
+    const drafts = parseClubRegistrationExport([entry], now).drafts.map((draft) => ({
+      ...draft,
+      clubYear: options.clubYear ?? draft.clubYear,
+      clubName: options.name ?? clubName,
       churchId: null,
       newChurchName: church,
-      invites: draft.invites.filter((invite) => invite.include).map(({ role, name, email }) => ({ role, name, email })),
-      people: draft.people.filter((person) => person.include).map((person) => ({
-        firstName: person.firstName,
-        lastName: person.lastName,
-        attendeeType: person.attendeeType,
-        role: person.role,
-        classLevel: person.classLevel,
-        reportedAge: person.reportedAge,
-      })),
-    };
+      include: true,
+      people: draft.people.map((person) => ({ ...person, keepBoth: options.keepBoth ?? false })),
+    }));
+    return clubImportConfirmSchema.parse(confirmPayload(drafts)).clubs;
+  };
+  const expectRefused = async (work: () => Promise<unknown>, pattern: RegExp, message: string) => {
+    try {
+      await work();
+    } catch (error) {
+      assert(error instanceof ImportYearMoveError && error.code === "IMPORT_MOVE_CONFLICT", `${message}: refused as a conflict (${String(error)})`);
+      assert(error.preview?.conflicts.length && pattern.test(JSON.stringify(error.preview.conflicts)), `${message}: lists the conflict`);
+      return;
+    }
+    throw new Error(`FAILED: ${message}: the move was not refused`);
   };
 
   try {
     const entry = syntheticExportEntry({ id: `${stamp}1` });
     const [draft] = parseClubRegistrationExport([entry], now).drafts;
     assert(draft.submittedClubYear === "2025-26" && draft.clubYear === "2026-27", "an August submission defaults to the current club year");
-    assert(SYNTHETIC_CHURCH.length > 0, "fixture church");
 
-    const [first] = await importClubs([toItem(entry)], admin.id, now);
-    assert(first.status === "IMPORTED" && first.membersAdded === 48 && first.membersSkipped === 0, `first import adds all 48 (${JSON.stringify(first)})`);
-    const roster = await listRoster(first.organizationId!, "2026-27", now);
-    assert(roster.length === 48, `48 on the 2026-27 roster, got ${roster.length}`);
-    assert((await listRoster(first.organizationId!, "2025-26", now)).length === 0, "nothing lands in the previous year");
+    // The real-world mistake: imported into 2025-26.
+    const [wrong] = await importClubs(itemsFor(entry, { clubYear: "2025-26" }), admin.id, now);
+    assert(wrong.status === "IMPORTED" && wrong.membersAdded === 48 && wrong.membersSkipped === 0, `wrong-year import adds all 48 (${wrong.status}, ${wrong.membersAdded})`);
+    const clubId = wrong.organizationId!;
+    assert((await listRoster(clubId, "2025-26", now)).length === 48, "48 on the 2025-26 roster");
+
+    // Re-uploading now points to Move, not to importing again.
+    const [reupload] = (await annotateImportDrafts(parseClubRegistrationExport([entry], now).drafts)).drafts;
+    const hint = earlierImportNotice(reupload.importedYears, reupload.clubYear);
+    assert(hint && !hint.blocking && /Move import to another year/.test(hint.message), "a re-upload for another year suggests the Move action");
+
+    const peopleBefore = await prisma.person.count();
+    const preview = await previewImportYearMove(clubId, "2025-26", "2026-27", now);
+    assert(preview.rowsToMove === 48 && preview.peopleOnRoster === 48 && preview.conflicts.length === 0, `preview counts 48 with no conflicts (${JSON.stringify({ ...preview, conflicts: preview.conflicts.length })})`);
+    assert(await prisma.person.count() === peopleBefore, "a preview changes nothing");
+
+    const moved = await moveImportYear(clubId, "2025-26", "2026-27", admin.id, now);
+    assert(moved.rowsMoved === 48, `48 rows moved, got ${moved.rowsMoved}`);
+    assert(await prisma.person.count() === peopleBefore, "the move creates and deletes no Person");
+    const current = await listRoster(clubId, "2026-27", now);
+    assert(current.length === 48, `48 on the 2026-27 roster, got ${current.length}`);
+    assert((await listRoster(clubId, "2025-26", now)).length === 0, "0 left on the 2025-26 roster");
     for (const name of ["Cy Faux", "Kim Faux", "Bo Placeholder", "Ned Testerson"]) {
-      assert(roster.some((member) => `${member.firstName} ${member.lastName}` === name), `${name} is listed`);
+      assert(current.some((member) => `${member.firstName} ${member.lastName}` === name), `${name} is listed in 2026-27`);
     }
+    const identity = await prisma.externalIdentity.findFirst({ where: { organizationId: clubId, provider: "FLUENT_FORMS" }, select: { providerScope: true, displayLabel: true } });
+    assert(identity?.providerScope === "form-89:2026-27" && identity.displayLabel?.includes("2026-27"), "the import record moved to 2026-27");
+    const audit = await prisma.auditLog.findFirst({ where: { action: "CLUB_IMPORT_YEAR_MOVED", entityId: clubId }, select: { metadata: true, actorUserId: true } });
+    assert(audit?.actorUserId === admin.id, "the move is audited");
+    assert(!/Faux|Testerson|Placeholder|Hills/.test(JSON.stringify(audit.metadata)), "the audit has counts and ids only");
+    assert((audit.metadata as { rowsMoved?: number }).rowsMoved === 48, "the audit counts the rows moved");
 
-    const [again] = await importClubs([toItem(entry)], admin.id, now);
-    assert(again.status === "ALREADY_IMPORTED", "re-import is reported as already imported");
-    assert((await listRoster(first.organizationId!, "2026-27", now)).length === 48, "re-import adds no one");
+    // Re-uploading after the move: "imported for 2026-27", and nothing is added.
+    const [afterMove] = (await annotateImportDrafts(parseClubRegistrationExport([entry], now).drafts)).drafts;
+    const blocked = earlierImportNotice(afterMove.importedYears, afterMove.clubYear);
+    assert(blocked?.blocking && /imported for 2026-27/.test(blocked.message), "re-uploading shows imported for 2026-27");
+    const [again] = await importClubs(itemsFor(entry), admin.id, now);
+    assert(again.status === "ALREADY_IMPORTED" && /imported for 2026-27/.test(again.message), "re-import is reported as already imported for 2026-27");
+    assert((await listRoster(clubId, "2026-27", now)).length === 48 && await prisma.person.count() === peopleBefore, "re-import adds no one");
 
-    const [previous] = await importClubs([toItem(entry, "2025-26")], admin.id, now);
-    assert(previous.status === "IMPORTED" && previous.membersAdded === 48, "the same entry imports into the previous year when chosen");
+    // Refused: the target year already has an import.
+    const [previous] = await importClubs(itemsFor(entry, { clubYear: "2025-26" }), admin.id, now);
+    assert(previous.status === "IMPORTED" && previous.membersAdded === 48, "the entry can still be imported into 2025-26 deliberately");
+    const beforeRefusal = await prisma.person.count();
+    const blockedPreview = await previewImportYearMove(clubId, "2025-26", "2026-27", now);
+    assert(blockedPreview.conflicts.some((conflict) => conflict.kind === "TARGET_HAS_IMPORT"), "the preview lists the existing target import");
+    await expectRefused(() => moveImportYear(clubId, "2025-26", "2026-27", admin.id, now), /TARGET_HAS_IMPORT/, "moving into a year with an import");
 
-    // A different registration for the same club and year is refused: one
-    // import per club per club year.
-    const second = syntheticExportEntry({ id: `${stamp}2` }, {
-      leader_name: "Chris Faux",
+    // Refused: a moved person is already on the target year's roster.
+    const someone = await prisma.clubRosterMember.findFirst({ where: { organizationId: clubId, clubYear: "2025-26", source: "IMPORT" }, select: { personId: true, attendeeType: true } });
+    await prisma.clubRosterMember.create({ data: { organizationId: clubId, clubYear: "2027-28", personId: someone!.personId, attendeeType: someone!.attendeeType, source: "DIRECTOR" } });
+    await expectRefused(() => moveImportYear(clubId, "2025-26", "2027-28", admin.id, now), /ALREADY_ON_TARGET_ROSTER/, "moving someone already on the target roster");
+    assert((await listRoster(clubId, "2025-26", now)).length === 48 && (await listRoster(clubId, "2027-28", now)).length === 1, "a refused move changes no roster");
+    assert(await prisma.person.count() === beforeRefusal, "a refused move changes no Person");
+
+    // A different registration for the same club and year is refused, and says what to do.
+    const second = syntheticExportEntry({ id: `${stamp}2` });
+    const [refused] = await importClubs(itemsFor(second), admin.id, now);
+    assert(refused.status === "FAILED" && /already has a 2026-27 import\. Add the missing people on the roster, or move\/undo the earlier import\./.test(refused.message), `a second registration is refused with next steps (${refused.message})`);
+
+    // Two people with the same name and section, and a suffix.
+    assert(splitName("Chris Faux Jr.").lastName === "Faux Jr.", "Jr. stays with the last name");
+    const twins = syntheticExportEntry({ id: `${stamp}3` }, {
+      leader_name: "Chris Faux Jr.",
       co_leader_name: "",
       other_assistants: [],
-      repeater_container: [["Chris Faux", "9", "Friend"], ["Chris Faux", "9", "Friend"]],
+      repeater_container: [["Robin Faux", "9", "Friend"], ["Robin Faux", "12", "Explorer"]],
     });
-    const [refused] = await importClubs([toItem(second)], admin.id, now);
-    assert(refused.status === "FAILED" && /already has an imported registration/.test(refused.message), "a second registration for the same club and year is refused");
+    const [skippedTwin] = await importClubs(itemsFor(twins, { name: `${stamp} Twins Pathfinders` }), admin.id, now);
+    assert(skippedTwin.membersAdded === 2 && skippedTwin.skipped.length === 1 && skippedTwin.skipped[0].reason === "DUPLICATE_IN_REGISTRATION", "a same-named youth is skipped without Keep both");
+    const staffRow = (await listRoster(skippedTwin.organizationId!, "2026-27", now)).find((member) => member.firstName === "Chris");
+    assert(staffRow?.lastName === "Faux Jr.", "the leader is imported as Faux Jr.");
+    const bothTwins = syntheticExportEntry({ id: `${stamp}4` }, (twins.response as Record<string, unknown>));
+    const [keptTwin] = await importClubs(itemsFor(bothTwins, { name: `${stamp} Keep Pathfinders`, keepBoth: true }), admin.id, now);
+    assert(keptTwin.membersAdded === 3 && keptTwin.skipped.length === 0, "Keep both adds both same-named youths");
 
-    console.log("club imports verified: 48 imported into 2026-27, none in 2025-26, re-import reported, previous year importable, second registration refused");
+    console.log("club imports verified: wrong-year import moved to 2026-27 (48 rows, Person count unchanged, 0 left in 2025-26), re-upload reports 2026-27, conflicting moves refused, second registration refused with next steps, Keep both and Jr. handled");
   } finally {
     await cleanup(admin.id);
     await prisma.$disconnect();

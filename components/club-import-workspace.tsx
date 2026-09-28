@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { CheckCircle2, CircleAlert, FileUp, Upload } from "lucide-react";
 import { confirmPayload } from "@/modules/club-imports/confirm-payload";
-import { skipReasonLabel, submissionYearNote } from "@/modules/club-imports/domain";
+import { earlierImportNotice, inFileDuplicateKeys, skipReasonLabel, submissionYearNote } from "@/modules/club-imports/domain";
 import type { AnnotatedImportDraft, ClubImportResult } from "@/modules/club-imports/repository";
 import { clubClassLevelLabels } from "@/modules/club-rosters/domain";
 import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
@@ -11,6 +11,8 @@ import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-
 type Draft = AnnotatedImportDraft & { include: boolean; expanded: boolean };
 type Church = { id: string; name: string };
 type ApiError = { message?: string; issues?: Array<{ message?: string; path?: Array<string | number> }> };
+/** What the preview route returns for an uploaded export. */
+export type ClubImportPreview = { drafts: AnnotatedImportDraft[]; churches?: Church[]; clubYearChoices?: string[]; skipped?: number };
 
 const NEW_CHURCH = "__new__";
 
@@ -19,10 +21,13 @@ function importedFor(draft: Pick<AnnotatedImportDraft, "importedYears" | "clubYe
   return draft.importedYears[draft.clubYear] ?? null;
 }
 
+/** Where staff move an import to another year: the club's staff page (#541). */
+const moveHref = (clubId: string) => `/admin/organizations/${encodeURIComponent(clubId)}/club#club-import-year`;
+
 function draftProblems(draft: Draft) {
   const problems: string[] = [];
-  const imported = importedFor(draft);
-  if (imported) problems.push(`Already imported into ${imported.name} for ${draft.clubYear}. Choose another club year to import it again.`);
+  const earlier = earlierImportNotice(draft.importedYears, draft.clubYear);
+  if (earlier?.blocking) problems.push(earlier.message);
   if (draft.existingClub && !draft.existingClub.isActive) problems.push("A club with this name is inactive. Rename it or reactivate that club first.");
   if (draft.clubName.trim().length < 2) problems.push("Give the club a name.");
   if (!draft.churchId && !draft.newChurchName && !(draft.existingClub?.isActive && draft.existingClub.hasSponsoringChurch)) {
@@ -34,15 +39,30 @@ function draftProblems(draft: Draft) {
 }
 
 /**
+ * The preview's starting state (#541): every club is selected, so one click
+ * imports it, except an entry imported before in any club year. That one is
+ * unselected: importing again would add everyone a second time, and the
+ * card points to the Move action instead.
+ */
+export function loadPreviewDrafts(drafts: AnnotatedImportDraft[]): Draft[] {
+  return drafts.map((draft) => {
+    const loaded = { ...draft, include: !earlierImportNotice(draft.importedYears, draft.clubYear), expanded: false };
+    // Open the cards that need attention; the rest stay folded until clicked.
+    return { ...loaded, expanded: !loaded.include || draftProblems(loaded).length > 0 };
+  });
+}
+
+/**
  * The club import (#376): upload the form 89 export, review and edit every
  * club, then import. Nothing is emailed here; invites wait on the Club
- * invites page until an administrator sends them.
+ * invites page until an administrator sends them. `initialPreview` starts on
+ * an already-read export (render tests).
  */
-export function ClubImportWorkspace() {
-  const [drafts, setDrafts] = useState<Draft[] | null>(null);
-  const [churches, setChurches] = useState<Church[]>([]);
-  const [yearChoices, setYearChoices] = useState<string[]>([]);
-  const [skipped, setSkipped] = useState(0);
+export function ClubImportWorkspace({ initialPreview }: { initialPreview?: ClubImportPreview }) {
+  const [drafts, setDrafts] = useState<Draft[] | null>(initialPreview ? loadPreviewDrafts(initialPreview.drafts) : null);
+  const [churches, setChurches] = useState<Church[]>(initialPreview?.churches ?? []);
+  const [yearChoices, setYearChoices] = useState<string[]>(initialPreview?.clubYearChoices ?? []);
+  const [skipped, setSkipped] = useState(initialPreview?.skipped ?? 0);
   const [results, setResults] = useState<ClubImportResult[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -60,16 +80,12 @@ export function ClubImportWorkspace() {
         headers: { "Content-Type": "application/json" },
         body: await file.text(),
       });
-      const result = await response.json().catch(() => ({})) as ApiError & { drafts?: AnnotatedImportDraft[]; churches?: Church[]; clubYearChoices?: string[]; skipped?: number };
+      const result = await response.json().catch(() => ({})) as ApiError & Partial<ClubImportPreview>;
       if (!response.ok || !result.drafts) throw new Error(result.message ?? "That file could not be read.");
       setChurches(result.churches ?? []);
       setYearChoices(result.clubYearChoices ?? []);
       setSkipped(result.skipped ?? 0);
-      setDrafts(result.drafts.map((draft) => {
-        const loaded = { ...draft, include: !importedFor(draft), expanded: false };
-        // Open the cards that need attention; the rest stay folded until clicked.
-        return { ...loaded, expanded: loaded.include && draftProblems(loaded).length > 0 };
-      }));
+      setDrafts(loadPreviewDrafts(result.drafts));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "That file could not be read.");
     } finally {
@@ -81,8 +97,9 @@ export function ClubImportWorkspace() {
     setDrafts((current) => current && current.map((draft, i) => (i === index ? change(draft) : draft)));
   }
 
+  // Moving to a year it was already imported for unselects it; nothing selects it by itself.
   const changeYear = (index: number, clubYear: string) =>
-    update(index, (d) => ({ ...d, clubYear, include: !importedFor({ importedYears: d.importedYears, clubYear }) }));
+    update(index, (d) => ({ ...d, clubYear, include: importedFor({ importedYears: d.importedYears, clubYear }) ? false : d.include }));
 
   const chosen = drafts?.filter((draft) => draft.include) ?? [];
   const blocked = chosen.filter((draft) => draftProblems(draft).length > 0);
@@ -135,7 +152,7 @@ export function ClubImportWorkspace() {
                   <strong translate="no">{result.clubName}</strong> ({result.clubYear}): {result.message}
                   {result.status === "IMPORTED" && ` ${result.membersAdded} added to the roster, ${result.membersSkipped} skipped; ${result.invitesCreated} invite${result.invitesCreated === 1 ? "" : "s"} waiting.`}
                   {result.organizationId && result.status !== "FAILED" && (
-                    <> <a href={`/account/clubs/${encodeURIComponent(result.organizationId)}/roster?year=${encodeURIComponent(result.clubYear)}`}>View the {result.clubYear} roster</a>.</>
+                    <> <a href={`/admin/organizations/${encodeURIComponent(result.organizationId)}/club?year=${encodeURIComponent(result.clubYear)}`}>View the {result.clubYear} roster</a>.</>
                   )}
                   {result.skipped.length > 0 && (
                     <ul className="club-import-skipped" aria-label={`Skipped from ${result.clubName}`}>
@@ -179,6 +196,9 @@ export function ClubImportWorkspace() {
 
           {drafts.map((draft, index) => {
             const problems = draftProblems(draft);
+            const earlier = earlierImportNotice(draft.importedYears, draft.clubYear);
+            const duplicates = inFileDuplicateKeys(draft.people);
+            const unkeptDuplicates = draft.people.filter((person) => duplicates.has(person.key) && !person.keepBoth).length;
             const churchValue = draft.churchId ?? (draft.newChurchName ? NEW_CHURCH : "");
             return (
               <details
@@ -213,6 +233,12 @@ export function ClubImportWorkspace() {
 
                 {problems.length > 0 && (
                   <ul className="club-import-problems">{problems.map((problem) => <li key={problem}>{problem}</li>)}</ul>
+                )}
+                {earlier && (
+                  <p className="inline-notice club-import-move-hint" role="status">
+                    {earlier.blocking ? "" : `${earlier.message} `}
+                    <a href={moveHref(earlier.clubId)}>Open the club to move its import</a>.
+                  </p>
                 )}
 
                 <div className="form-stack">
@@ -297,9 +323,15 @@ export function ClubImportWorkspace() {
                 )}
 
                 <h3 className="club-import-subhead">Roster for {draft.clubYear}</h3>
+                {unkeptDuplicates > 0 && (
+                  <p className="field-help">
+                    {unkeptDuplicates === 1 ? "1 person has" : `${unkeptDuplicates} people have`} the same name and section as
+                    someone above and {unkeptDuplicates === 1 ? "is" : "are"} skipped. If they are different people, tick Keep both.
+                  </p>
+                )}
                 <div className="report-table-wrap">
                   <table className="report-table club-import-table">
-                    <thead><tr><th>Add</th><th>First name</th><th>Last name</th><th>Type</th><th>Class</th><th>Age</th></tr></thead>
+                    <thead><tr><th>Add</th><th>First name</th><th>Last name</th><th>Type</th><th>Class</th><th>Age</th><th>Check</th></tr></thead>
                     <tbody>
                       {draft.people.map((person, personIndex) => {
                         const set = (change: Partial<typeof person>) => update(index, (d) => ({
@@ -338,6 +370,19 @@ export function ClubImportWorkspace() {
                                 type="number"
                                 value={person.reportedAge ?? ""}
                               />
+                            </td>
+                            <td>
+                              {duplicates.has(person.key) ? (
+                                <label className="checkbox-label">
+                                  <input
+                                    aria-label={`Keep both people named ${person.firstName} ${person.lastName}`}
+                                    checked={person.keepBoth}
+                                    onChange={(event) => set({ keepBoth: event.target.checked })}
+                                    type="checkbox"
+                                  />
+                                  Same name as above. Keep both
+                                </label>
+                              ) : "—"}
                             </td>
                           </tr>
                         );

@@ -23,6 +23,7 @@ export type PreviewDraft = {
     role: string;
     classLevel: ClubImportItem["people"][number]["classLevel"];
     reportedAge: number | null;
+    keepBoth: boolean;
   }>;
 };
 
@@ -43,6 +44,7 @@ export function confirmPayload(drafts: PreviewDraft[]) {
         role: person.role,
         classLevel: person.classLevel,
         reportedAge: person.reportedAge,
+        keepBoth: person.keepBoth,
       })),
     })),
   };

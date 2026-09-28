@@ -4,7 +4,11 @@ import {
   classLevelFrom,
   clubYearChoices,
   defaultClubName,
+  earlierImportNotice,
+  importPersonKey,
+  inFileDuplicateKeys,
   parseClubRegistrationExport,
+  scopeClubYear,
   skipReasonLabel,
   splitName,
   submissionYearNote,
@@ -132,3 +136,88 @@ describe("choosing the club year (#541)", () => {
   });
 });
 
+
+describe("splitting a full name (#541)", () => {
+  it("keeps a suffix with the last name, with or without periods, in any case", () => {
+    expect(splitName("Chris Faux Jr.")).toEqual({ firstName: "Chris", lastName: "Faux Jr." });
+    expect(splitName("Chris Faux jr")).toEqual({ firstName: "Chris", lastName: "Faux jr" });
+    expect(splitName("Chris Faux SR.")).toEqual({ firstName: "Chris", lastName: "Faux SR." });
+    expect(splitName("Pat Lee Example II")).toEqual({ firstName: "Pat Lee", lastName: "Example II" });
+    expect(splitName("Pat Example iii")).toEqual({ firstName: "Pat", lastName: "Example iii" });
+    expect(splitName("Pat Example IV")).toEqual({ firstName: "Pat", lastName: "Example IV" });
+  });
+
+  it("leaves a lone first name and suffix without a last name, for staff to fix", () => {
+    expect(splitName("Chris Jr.")).toEqual({ firstName: "Chris Jr.", lastName: "" });
+  });
+
+  it("joins a particle to the last name only when another word follows it", () => {
+    expect(splitName("Ana de la Cruz")).toEqual({ firstName: "Ana", lastName: "de la Cruz" });
+    expect(splitName("Ana De Silva")).toEqual({ firstName: "Ana", lastName: "De Silva" });
+    expect(splitName("Tom van Example")).toEqual({ firstName: "Tom", lastName: "van Example" });
+    expect(splitName("Eva von Sample")).toEqual({ firstName: "Eva", lastName: "von Sample" });
+    expect(splitName("Rui da Fixture Jr.")).toEqual({ firstName: "Rui", lastName: "da Fixture Jr." });
+    expect(splitName("Lia del Mock")).toEqual({ firstName: "Lia", lastName: "del Mock" });
+    // Nothing follows the particle, or it is the only first name: an ordinary word.
+    expect(splitName("Van Example")).toEqual({ firstName: "Van", lastName: "Example" });
+    expect(splitName("Ana Maria Da")).toEqual({ firstName: "Ana Maria", lastName: "Da" });
+    // A lone "la" is not a particle; only "de la" is.
+    expect(splitName("Ana La Rosa")).toEqual({ firstName: "Ana La", lastName: "Rosa" });
+  });
+
+  it("uses the split for imported people", () => {
+    const [draft] = parseClubRegistrationExport([syntheticExportEntry({}, { leader_name: "Chris Faux Jr." })], september).drafts;
+    expect(draft.people[0]).toMatchObject({ firstName: "Chris", lastName: "Faux Jr.", keepBoth: false });
+  });
+});
+
+describe("same-named people in one registration (#541)", () => {
+  const person = (key: string, firstName: string, lastName: string, attendeeType: "STAFF" | "YOUTH", include = true) =>
+    ({ key, include, firstName, lastName, attendeeType });
+
+  it("matches on the full name and the roster section, not on case or spacing", () => {
+    expect(importPersonKey({ attendeeType: "YOUTH", firstName: "Robin", lastName: "Faux" })).toBe(importPersonKey({ attendeeType: "UNDERAGE", firstName: " robin", lastName: "FAUX " }));
+    expect(importPersonKey({ attendeeType: "STAFF", firstName: "Robin", lastName: "Faux" })).toBe(importPersonKey({ attendeeType: "ADULT", firstName: "Robin", lastName: "Faux" }));
+    expect(importPersonKey({ attendeeType: "STAFF", firstName: "Robin", lastName: "Faux" })).not.toBe(importPersonKey({ attendeeType: "YOUTH", firstName: "Robin", lastName: "Faux" }));
+  });
+
+  it("flags the later of two same-named youths, never a parent and child, and ignores skipped people", () => {
+    expect([...inFileDuplicateKeys([
+      person("a", "Robin", "Faux", "YOUTH"),
+      person("b", "robin", "faux", "YOUTH"),
+      person("c", "Robin", "Faux", "STAFF"),
+      person("d", "Sam", "Faux", "YOUTH", false),
+      person("e", "Sam", "Faux", "YOUTH"),
+    ])]).toEqual(["b"]);
+  });
+
+  it("reads the synthetic export with no false duplicates", () => {
+    const [draft] = parseClubRegistrationExport([syntheticExportEntry()], september).drafts;
+    expect(inFileDuplicateKeys(draft.people).size).toBe(0);
+  });
+});
+
+describe("earlier imports of an entry (#541)", () => {
+  const club = { id: "club-9", name: "Fixture Pathfinders" };
+
+  it("blocks the year it was imported for, pointing to Move", () => {
+    expect(earlierImportNotice({ "2026-27": club }, "2026-27")).toEqual({
+      blocking: true,
+      clubId: "club-9",
+      message: "Already imported for 2026-27. To fix the year, use Move import to another year.",
+    });
+  });
+
+  it("suggests Move, without blocking, when it was imported for another year only", () => {
+    const notice = earlierImportNotice({ "2025-26": club }, "2026-27");
+    expect(notice).toMatchObject({ blocking: false, clubId: "club-9" });
+    expect(notice?.message).toMatch(/^Already imported for 2025-26\. .*Move import to another year instead\.$/);
+    expect(earlierImportNotice({}, "2026-27")).toBeNull();
+  });
+
+  it("reads the club year out of an import scope", () => {
+    expect(scopeClubYear("form-89:2025-26")).toBe("2025-26");
+    expect(scopeClubYear("form-89:501")).toBeNull();
+    expect(scopeClubYear("form-12:2025-26")).toBeNull();
+  });
+});

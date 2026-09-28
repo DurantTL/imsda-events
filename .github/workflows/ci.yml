@@ -65,6 +65,10 @@ jobs:
       # Real-database round trip of the full club supply reference file (#531).
       - run: npm run test:club-supplies
 
+      # Real-database check of the form 89 club import: current-year default, 48 in 48 listed,
+      # one import per club and year, and moving an import to another year with no new people (#541).
+      - run: npm run test:club-imports
+
       # Real-database check of event templates: apply, revision isolation, save/publish
       # races, parallel same-key applies, key reuse, and sticky archive (#152).
       - run: npm run test:event-templates

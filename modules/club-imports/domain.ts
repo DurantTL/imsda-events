@@ -1,5 +1,7 @@
 import { z } from "zod";
-import { clubYearFor, type ClubClassLevel } from "@/modules/club-rosters/domain";
+import { clubYearChoices, clubYearFor, rosterSectionOf, type ClubClassLevel } from "@/modules/club-rosters/domain";
+
+export { clubYearChoices };
 
 /**
  * Club import (#376) from the old website's Fluent Forms export of form 89,
@@ -24,6 +26,11 @@ export type ImportPerson = {
   /** What the form said, when it isn't a known class level. */
   classText: string;
   reportedAge: number | null;
+  /**
+   * Staff pressed "Keep both" on someone who shares a name and roster section
+   * with an earlier person in this registration (#541): import them anyway.
+   */
+  keepBoth: boolean;
 };
 
 export type ImportInvite = {
@@ -66,11 +73,32 @@ function rows(value: unknown): string[][] {
     .map((row) => row.map((cell) => text(cell, 200)));
 }
 
-/** "Jane Q Example" → first "Jane Q", last "Example". One word stays a first name. */
+const NAME_SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv"]);
+const NAME_PARTICLES = new Set(["de", "van", "von", "da", "del"]);
+
+const isSuffix = (word: string) => NAME_SUFFIXES.has(word.toLowerCase().replace(/\./g, ""));
+const isParticle = (word: string) => NAME_PARTICLES.has(word.toLowerCase());
+
+/**
+ * "Jane Q Example" → first "Jane Q", last "Example". One word stays a first
+ * name. A suffix (Jr., Sr., II, III, IV) stays with the last name: "Chris
+ * Faux Jr." → last "Faux Jr." (#541). A particle (de, de la, van, von, da,
+ * del) joins the last name when another word follows it: "Ana de la Cruz" →
+ * last "de la Cruz". The first name always keeps at least one word, so "Van
+ * Example" stays first "Van". The preview shows the split and staff can edit it.
+ */
 export function splitName(fullName: string) {
   const words = text(fullName, 160).split(" ").filter(Boolean);
   if (words.length <= 1) return { firstName: words[0] ?? "", lastName: "" };
-  return { firstName: words.slice(0, -1).join(" ").slice(0, 80), lastName: words[words.length - 1].slice(0, 80) };
+  let end = words.length;
+  // A trailing suffix belongs to the word before it; with nothing before it but a first name, there is no last name to attach to.
+  while (end > 1 && isSuffix(words[end - 1])) end -= 1;
+  if (end <= 1) return { firstName: words.join(" ").slice(0, 80), lastName: "" };
+  let start = end - 1;
+  if (start > 1 && isParticle(words[start - 1])) start -= 1;
+  // "de la" is the one two-word particle.
+  else if (start > 2 && words[start - 1].toLowerCase() === "la" && words[start - 2].toLowerCase() === "de") start -= 2;
+  return { firstName: words.slice(0, start).join(" ").slice(0, 80), lastName: words.slice(start).join(" ").slice(0, 80) };
 }
 
 const classAliases: Record<string, ClubClassLevel> = {
@@ -133,6 +161,7 @@ function person(key: string, name: string, fields: Partial<ImportPerson>): Impor
     classLevel: null,
     classText: "",
     reportedAge: null,
+    keepBoth: false,
     ...fields,
   };
 }
@@ -233,10 +262,11 @@ export function importScope(clubYear: string) {
   return `form-${CLUB_IMPORT_FORM_ID}:${clubYear}`;
 }
 
-/** The club years an import may target: the previous, the current, and the next. */
-export function clubYearChoices(now = new Date()) {
-  const year = Number(clubYearFor(now).slice(0, 4));
-  return [year - 1, year, year + 1].map((start) => `${start}-${String((start + 1) % 100).padStart(2, "0")}`);
+/** "form-89:2025-26" → "2025-26"; null for any other scope. */
+export function scopeClubYear(providerScope: string) {
+  const prefix = `form-${CLUB_IMPORT_FORM_ID}:`;
+  const year = providerScope.startsWith(prefix) ? providerScope.slice(prefix.length) : "";
+  return /^\d{4}-\d{2}$/.test(year) ? year : null;
 }
 
 /** Shown when the submission date falls in a different club year than the one chosen. */
@@ -251,5 +281,61 @@ export type ImportSkipReason = "ALREADY_ON_ROSTER" | "DUPLICATE_IN_REGISTRATION"
 export function skipReasonLabel(reason: ImportSkipReason, clubYear: string) {
   return reason === "ALREADY_ON_ROSTER"
     ? `already on the roster for ${clubYear}`
-    : "listed twice in this registration with the same name and role";
+    : "listed twice in this registration with the same name in the same section (use Keep both to add both)";
+}
+
+function nameKey(firstName: string, lastName: string) {
+  return `${firstName} ${lastName}`.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
+}
+
+/**
+ * Two people count as the same only when the full name AND the roster
+ * section (`rosterSectionOf`) match: a parent on staff and a child in the
+ * club who share a name are different people (#541).
+ */
+export function importPersonKey(person: { attendeeType: "STAFF" | "YOUTH" | "ADULT" | "UNDERAGE"; firstName: string; lastName: string }) {
+  return `${rosterSectionOf(person.attendeeType)}|${nameKey(person.firstName, person.lastName)}`;
+}
+
+/**
+ * The people in one registration that repeat an earlier included person's
+ * name and section (#541), by `key`. Not added unless staff press "Keep
+ * both": two different youths can share a name, and a copy-paste repeat
+ * looks the same.
+ */
+export function inFileDuplicateKeys(people: Array<Pick<ImportPerson, "key" | "include" | "attendeeType" | "firstName" | "lastName">>) {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const person of people) {
+    if (!person.include || !person.firstName.trim()) continue;
+    const key = importPersonKey(person);
+    if (seen.has(key)) duplicates.add(person.key);
+    else seen.add(key);
+  }
+  return duplicates;
+}
+
+/** An earlier import of this entry, by club year, as the preview knows it. */
+export type ImportedYears = Record<string, { id: string; name: string }>;
+
+export const MOVE_IMPORT_ACTION = "Move import to another year";
+
+/**
+ * What the preview says about earlier imports of this entry (#541).
+ * `blocking` when it was imported for the chosen year. Otherwise a hint when
+ * it was imported for another year only: importing again would create a
+ * second copy of everyone, so the Move action is suggested instead.
+ */
+export function earlierImportNotice(importedYears: ImportedYears, clubYear: string) {
+  const here = importedYears[clubYear];
+  if (here) {
+    return { blocking: true, clubId: here.id, message: `Already imported for ${clubYear}. To fix the year, use ${MOVE_IMPORT_ACTION}.` };
+  }
+  const [otherYear, other] = Object.entries(importedYears)[0] ?? [];
+  if (!otherYear || !other) return null;
+  return {
+    blocking: false,
+    clubId: other.id,
+    message: `Already imported for ${otherYear}. Importing it again for ${clubYear} would add everyone a second time. To fix the year, use ${MOVE_IMPORT_ACTION} instead.`,
+  };
 }
