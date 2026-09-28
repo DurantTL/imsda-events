@@ -1,17 +1,20 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRight, CalendarDays, CheckCircle2, CircleAlert, FileText, UsersRound } from "lucide-react";
+import { ArrowRight, CheckCircle2, CircleAlert, FileText } from "lucide-react";
 import { BackLink } from "@/components/back-link";
+import { ClubYearTiles } from "@/components/club-year-tiles";
 import { clubPortalComplianceReminderCounts } from "@/modules/background-checks/repository";
 import { complianceReminders } from "@/modules/background-checks/domain";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { getRosterAccessStateForPage, type ClubActor } from "@/modules/club-rosters/access";
-import { clubYearFor } from "@/modules/club-rosters/domain";
+import { clubYearFor, rosterYearSummary } from "@/modules/club-rosters/domain";
 import { listRoster } from "@/modules/club-rosters/repository";
 import { clubEventRegistrationSteps, listClubEvents } from "@/modules/club-registrations/repository";
 import { calendarDateIn } from "@/modules/calendar/domain";
-import { formatDueDate, isLockedForClub, reportDueDate, reportMonthLabel, reportableMonths } from "@/modules/club-reports/domain";
+import { formatDueDate, isLockedForClub, monthlyReportProgress, reportDueDate, reportMonthLabel, reportableMonths } from "@/modules/club-reports/domain";
 import { getClubReportYear } from "@/modules/club-reports/repository";
+import { honorYearSummary } from "@/modules/honors/member-honor-domain";
+import { listClubHonorsPage } from "@/modules/honors/member-honor-repository";
 import { listDirectedClubs } from "@/modules/organizations/director-access";
 import { clubDirectorRoleLabels, clubRoleDescriptions } from "@/modules/organizations/director-grants-domain";
 
@@ -58,18 +61,28 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
   const base = `/account/clubs/${organizationId}`;
   const now = new Date();
   const clubYear = clubYearFor(now);
-  const [members, events, reportYear, clubsLink, compliance] = await Promise.all([
+  const [members, events, reportYear, clubsLink, compliance, honorRows] = await Promise.all([
     listRoster(organizationId, clubYear),
     listClubEvents(organizationId),
     access.capabilities.submitReports ? getClubReportYear(organizationId, clubYear) : Promise.resolve(null),
     allMyClubsLink(access.actor),
     // Only for roles that already see the roster's background-check column (#479).
     clubPortalComplianceReminderCounts(organizationId, clubYear, access.capabilities),
+    // Honors are visible to anyone who reaches this page: the roster's own gate already applies (#486).
+    listClubHonorsPage(organizationId, clubYear),
   ]);
   const active = members.filter((member) => member.status === "ACTIVE");
-  const youth = active.filter((member) => member.attendeeType !== "STAFF" && member.attendeeType !== "ADULT");
   const registered = events.filter((event) => event.registration);
   const open = events.filter((event) => !event.registration && event.available && event.phase === "OPEN");
+  const roster = rosterYearSummary(members);
+  const honors = honorYearSummary(honorRows, clubYear);
+  const reportProgress = reportYear
+    ? monthlyReportProgress(
+      clubYear,
+      now,
+      new Set(reportYear.reports.filter((report) => report.status === "SUBMITTED").map((report) => report.reportMonth)),
+    )
+    : null;
 
   const steps: Array<{ key: string; text: string; href: string; action: string }> = [];
   if (active.length === 0) {
@@ -99,23 +112,18 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
   return (
     <>
       {clubsLink}
-      <div className="club-home-stats">
-        <Link className="club-home-stat" href={`${base}/roster`}>
-          <UsersRound size={20} aria-hidden="true" />
-          <strong>{active.length}</strong>
-          <span>on the roster{youth.length > 0 ? ` · ${youth.length} youth` : ""}</span>
-        </Link>
-        <Link className="club-home-stat" href={`${base}/events`}>
-          <CalendarDays size={20} aria-hidden="true" />
-          <strong>{open.length}</strong>
-          <span>{open.length === 1 ? "event open to register" : "events open to register"}</span>
-        </Link>
-        <Link className="club-home-stat" href={`${base}/events`}>
-          <CheckCircle2 size={20} aria-hidden="true" />
-          <strong>{registered.length}</strong>
-          <span>{registered.length === 1 ? "event registered" : "events registered"}</span>
-        </Link>
-      </div>
+      <ClubYearTiles
+        compliance={compliance}
+        complianceHref={`${base}/roster`}
+        events={{ open: open.length, registered: registered.length }}
+        eventsHref={`${base}/events`}
+        honors={honors}
+        honorsHref={`${base}/honors`}
+        reports={reportProgress}
+        reportsHref={`${base}/reports`}
+        roster={roster}
+        rosterHref={`${base}/roster`}
+      />
 
       <section className="public-manage-card" aria-labelledby="club-next-heading">
         <div className="public-manage-card-heading">

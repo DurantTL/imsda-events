@@ -88,10 +88,11 @@ export function AppShell({
   const visibleStatic = navigation.filter((item) => matchesVisibility(item, selectedPermissions));
   const dashboardItem = visibleStatic.find((item) => !item.group && item.href !== "/more");
   const moreItem = visibleStatic.find((item) => item.href === "/more");
-  // Nobody sees a link here they couldn't already reach before this group
-  // existed (#428 review): system admins reach every club through the
-  // churches-and-clubs directory; an EVENT_ADMIN on a club-billed event
-  // reaches theirs through club oversight, exactly as `more/page.tsx` gates it.
+  // Audience, not billing mode, decides club features (#481): `clubOversight`
+  // (computed server-side in the layout) is true only for a CLUB-audience
+  // selected event, for a system admin or an EVENT_ADMIN, exactly as
+  // `more/page.tsx` gates it. A GENERAL event never shows this, even for a
+  // system admin (who still reaches the directory from System management).
   const clubsAndChurches = resolveClubsAndChurchesEntry({
     clubOversight: Boolean(selectedEvent?.clubOversight),
     isSystemAdmin,

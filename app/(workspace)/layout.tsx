@@ -17,15 +17,17 @@ export default async function WorkspaceLayout({ children }: { children: React.Re
   const permissionsByEvent = isSystemAdmin
     ? new Map(events.map((event) => [event.id, [...eventPermissions]]))
     : await listActiveEventPermissionsForUser(user.id, events.map((event) => event.id));
-  // Club oversight (#387, #428): the same rule as resolveClubOversight — a
-  // Pathfinder event billed to clubs, for its system admins or EVENT_ADMINs.
+  // Club oversight (#387, #428, #481): the same rule as resolveClubOversight —
+  // an explicit CLUB-audience event, for its system admins or EVENT_ADMINs.
+  // Audience, not billing mode, so an attendee-paid CLUB event still shows
+  // club features, and a GENERAL event never does — even for a system admin.
   const rolesByEvent = isSystemAdmin ? new Map() : await listActiveEventRolesForUser(user.id, events.map((event) => event.id));
   const shellEvents = events.map((event) => ({
     id: event.id,
     slug: event.slug,
     name: event.name,
     permissions: permissionsByEvent.get(event.id) ?? [],
-    clubOversight: event.billingMode === "DEFERRED_ORGANIZATION_INVOICE"
+    clubOversight: event.audience === "CLUB"
       && (isSystemAdmin || rolesByEvent.get(event.id) === "EVENT_ADMIN"),
   }));
   const attendeeAccountAvailable = Boolean(

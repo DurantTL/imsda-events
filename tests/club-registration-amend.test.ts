@@ -193,7 +193,7 @@ function fixture({
     event: { findFirst: vi.fn(async () => ({
       id: "event-1", name: "Honors Weekend", startsAt: new Date("2026-12-05T15:00:00Z"), endsAt: new Date("2026-12-06T20:00:00Z"),
       timezone: "America/Chicago", location: "Camp", isPublished: true, registrationOpensOn, registrationClosesOn,
-      waitlistEnabled: false, billingMode: "DEFERRED_ORGANIZATION_INVOICE", capacity: null,
+      waitlistEnabled: false, billingMode: "DEFERRED_ORGANIZATION_INVOICE", audience: "CLUB", capacity: null,
     })) },
     registrationForm: { findFirst: vi.fn(async () => ({
       slug: "clubs",

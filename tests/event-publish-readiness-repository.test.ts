@@ -6,6 +6,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: dependencies.getPrisma }));
 
 import {
+  createEvent,
   EventOperationError,
   publishEvent,
   unpublishEvent,
@@ -35,6 +36,7 @@ const baseInput = {
   checksAdultBackgrounds: false,
   attendeeEditPolicy: "VERIFY_EVERY_EDIT" as const,
   billingMode: "ATTENDEE_PAY" as const,
+  audience: "GENERAL" as const,
   seminarPreferenceClosesOn: null,
   seminarPreferenceSelfServiceLocked: false,
   waitlistEnabled: true,
@@ -46,6 +48,7 @@ type RowOverrides = Partial<{
   publicInfoUrl: string | null;
   location: string | null;
   supportContact: string | null;
+  audience: "GENERAL" | "CLUB";
 }>;
 
 const eventRow = (overrides: RowOverrides = {}) => ({
@@ -72,6 +75,7 @@ const eventRow = (overrides: RowOverrides = {}) => ({
   checksAdultBackgrounds: false,
   attendeeEditPolicy: "VERIFY_EVERY_EDIT",
   billingMode: "ATTENDEE_PAY",
+  audience: overrides.audience ?? ("GENERAL" as const),
   seminarPreferenceClosesOn: null,
   seminarPreferenceSelfServiceLocked: false,
   autoPromoteWaitlist: true,
@@ -310,5 +314,104 @@ describe("unpublishEvent (#471)", () => {
     dependencies.getPrisma.mockReturnValue(prisma);
 
     await expect(unpublishEvent("event-1", "usr_1")).rejects.toMatchObject({ code: "EVENT_NOT_FOUND" });
+  });
+});
+
+describe("event audience (#481)", () => {
+  it("writes an audience change and audits it like any other event setting", async () => {
+    const { prisma, eventUpdate, auditLogCreate } = mockPrisma({ isPublished: true }, 1, true);
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await updateEventSettings("event-1", { ...baseInput, audience: "CLUB" }, "usr_1");
+
+    expect(eventUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ audience: "CLUB" }),
+    }));
+    expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        action: "EVENT_SETTINGS_UPDATED",
+        metadata: expect.objectContaining({
+          before: expect.objectContaining({ audience: "GENERAL" }),
+          after: expect.objectContaining({ audience: "CLUB" }),
+        }),
+      }),
+    }));
+  });
+
+  it("keeps the stored CLUB audience when an update omits it, so a stale settings tab can't reset it", async () => {
+    const { prisma, eventUpdate, auditLogCreate } = mockPrisma({ isPublished: true, audience: "CLUB" }, 1, true);
+    dependencies.getPrisma.mockReturnValue(prisma);
+    const { audience: _omitted, ...withoutAudience } = baseInput;
+    void _omitted;
+
+    await updateEventSettings("event-1", withoutAudience, "usr_1");
+
+    const data = eventUpdate.mock.calls[0]?.[0]?.data as Record<string, unknown>;
+    expect(data).toBeDefined();
+    expect(data.audience === undefined || data.audience === "CLUB").toBe(true);
+    expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        metadata: expect.objectContaining({
+          before: expect.objectContaining({ audience: "CLUB" }),
+          after: expect.objectContaining({ audience: "CLUB" }),
+        }),
+      }),
+    }));
+  });
+});
+
+describe("createEvent audience (#481)", () => {
+  function mockCreate() {
+    const { prisma } = mockPrisma({ isPublished: false }, 0);
+    const eventCreate = vi.fn(({ data }: { data: Record<string, unknown> }) =>
+      Promise.resolve({ id: "event-new", name: data.name, slug: data.slug, audience: data.audience }));
+    const auditLogCreate = vi.fn().mockResolvedValue({});
+    const tx = {
+      platformSettings: { upsert: vi.fn().mockResolvedValue({ defaultAttendeeEditPolicy: "VERIFY_EVERY_EDIT" }) },
+      event: { create: eventCreate },
+      eventMembership: { create: vi.fn().mockResolvedValue({}) },
+      eventPaymentInstructionVersion: { create: vi.fn().mockResolvedValue({}) },
+      auditLog: { create: auditLogCreate },
+    };
+    const createPrisma = {
+      ...prisma,
+      $transaction: vi.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
+    };
+    dependencies.getPrisma.mockReturnValue(createPrisma);
+    return { eventCreate, auditLogCreate };
+  }
+
+  it("creates a GENERAL event when no audience is given and records it in EVENT_CREATED", async () => {
+    const { eventCreate, auditLogCreate } = mockCreate();
+    const { audience: _omitted, ...withoutAudience } = baseInput;
+    void _omitted;
+
+    await createEvent(withoutAudience, "usr_1");
+
+    expect(eventCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ audience: "GENERAL" }),
+    }));
+    expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        action: "EVENT_CREATED",
+        metadata: expect.objectContaining({ audience: "GENERAL" }),
+      }),
+    }));
+  });
+
+  it("records an initial CLUB audience in EVENT_CREATED", async () => {
+    const { eventCreate, auditLogCreate } = mockCreate();
+
+    await createEvent({ ...baseInput, audience: "CLUB" }, "usr_1");
+
+    expect(eventCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ audience: "CLUB" }),
+    }));
+    expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        action: "EVENT_CREATED",
+        metadata: { slug: "synthetic-retreat", audience: "CLUB" },
+      }),
+    }));
   });
 });

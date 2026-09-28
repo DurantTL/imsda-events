@@ -160,12 +160,24 @@ describe("application shell navigation", () => {
     expect(markup).not.toContain(groupHeading("System"));
   });
 
-  it("shows Clubs and churches, pointed at the directory, for a system admin", () => {
+  it("shows Clubs and churches, pointed at the directory, for a system admin on a CLUB-audience event, even one that is attendee-paid (#481)", () => {
+    const clubAudienceEvents = [{
+      id: "event_1",
+      slug: "man-camp-2026",
+      name: "Man Camp 2026",
+      permissions: [
+        "VIEW_SENSITIVE_DATA",
+        "MANAGE_FINANCE",
+      ] as const,
+      // Server-computed (app/(workspace)/layout.tsx): true only for a
+      // CLUB-audience event, independent of billing mode.
+      clubOversight: true,
+    }];
     const markup = renderToStaticMarkup(
       createElement(
         AppShellElement,
         {
-          events,
+          events: clubAudienceEvents,
           user: {
             displayName: "Casey System Admin",
             email: "system@imsda-events.test",
@@ -178,6 +190,36 @@ describe("application shell navigation", () => {
 
     expect(markup).toContain(groupHeading("Clubs and churches"));
     expect(markup).toContain('href="/admin/organizations"');
+    expect(markup).toContain(groupHeading("System"));
+  });
+
+  it("does not show Clubs and churches for a system admin on a GENERAL event (#481)", () => {
+    const generalAudienceEvents = [{
+      id: "event_1",
+      slug: "womens-retreat-2026",
+      name: "Women’s Retreat 2026",
+      permissions: [
+        "VIEW_SENSITIVE_DATA",
+        "MANAGE_FINANCE",
+      ] as const,
+      clubOversight: false,
+    }];
+    const markup = renderToStaticMarkup(
+      createElement(
+        AppShellElement,
+        {
+          events: generalAudienceEvents,
+          user: {
+            displayName: "Casey System Admin",
+            email: "system@imsda-events.test",
+            globalRole: "SYSTEM_ADMIN",
+          },
+        },
+        createElement("p", null, "Workspace content"),
+      ),
+    );
+
+    expect(markup).not.toContain(groupHeading("Clubs and churches"));
     expect(markup).toContain(groupHeading("System"));
   });
 
