@@ -6985,6 +6985,10 @@ select:focus-visible {
 .club-roster-stack { display: grid; gap: 16px; }
 .club-roster-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .club-roster-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0; }
+.club-roster-tools label:not(.checkbox-label) { display: grid; gap: 4px; color: var(--ink); font-size: 0.68rem; font-weight: 700; }
+.club-roster-tools label:not(.checkbox-label) input,
+.club-roster-tools label:not(.checkbox-label) select { border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd; padding: 8px 10px; font-size: 0.76rem; }
+.honor-bulk-actions { align-items: flex-end; background: var(--panel-tint, #f7faf9); border-radius: 12px; padding: 12px; margin-top: 12px; }
 .roster-dialog-status-action { margin-right: auto; }
 .roster-birth-date-notice { margin: 12px 0 0; }
 .roster-compliance-notice { margin: 12px 0 0; }
