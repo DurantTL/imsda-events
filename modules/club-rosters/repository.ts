@@ -322,6 +322,8 @@ export async function removeRosterMember(organizationId: string, memberId: strin
         classLevel: null,
         reportedAge: null,
         personId: null,
+        // A removed row is never a willing driver (#491): it leaves the queue.
+        willingToDrive: false,
       },
     });
     let personDeleted = false;

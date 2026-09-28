@@ -98,6 +98,17 @@ describe("driver verification queue (#491)", () => {
     ]);
   });
 
+  it("gives conference staff the background-check issue note, and a club's own queue never (#427)", async () => {
+    const withNote = { firstName: "Dana", lastName: "Driver", driverVerification: null,
+      backgroundCheck: { complianceStatus: "CLEAR", expiresOn: null, issuesNote: "Synthetic note: can't drive." } };
+    db.members.push(member({ person: withNote }));
+    const [global] = await listWillingDrivers({ kind: "GLOBAL" }, now);
+    expect(global.backgroundCheck).toEqual({ state: "CLEAR", note: "Synthetic note: can't drive." });
+    const [club] = await listWillingDrivers({ kind: "CLUB", organizationId: "club-1" }, now);
+    expect(club.backgroundCheck).toEqual({ state: "CLEAR", note: null });
+    expect(JSON.stringify(club)).not.toContain("Synthetic note");
+  });
+
   it("scopes a club's queue to its own organization", async () => {
     db.members.push(member(), member({ id: "member-2", personId: "person-2", organizationId: "club-2" }));
     const entries = await listWillingDrivers({ kind: "CLUB", organizationId: "club-1" }, now);

@@ -254,5 +254,11 @@ describe("club roster storage", () => {
       const actions = mocks.writeAuditLog.mock.calls.map(([entry]) => entry.action);
       expect(actions.filter((action) => action === "CLUB_ROSTER_WILLING_TO_DRIVE_SET")).toHaveLength(1);
     });
+
+    it("clears it on a removed row, so the person leaves the driver verification queue", async () => {
+      const id = await addRosterMember("club-1", "2026-27", { ...youth, attendeeType: "STAFF", willingToDrive: true }, actor, { now });
+      await removeRosterMember("club-1", id, actor, now);
+      expect(db.members.find((member) => member.id === id)).toMatchObject({ status: "REMOVED", willingToDrive: false });
+    });
   });
 });

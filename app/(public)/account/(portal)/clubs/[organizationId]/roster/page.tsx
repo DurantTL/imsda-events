@@ -33,7 +33,7 @@ export default async function ClubRosterPage({ params }: { params: Promise<{ org
       {/* Willing drivers, for review (#491): the same leader-only capability that manages the club's team. */}
       {access.capabilities.manageTeam && (
         <DriverVerificationQueue
-          clearEndpointFor={(personId) => `/api/attendee/clubs/${encodeURIComponent(organizationId)}/driver-verification/${encodeURIComponent(personId)}`}
+          clearEndpointBase={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/driver-verification`}
           listEndpoint={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/driver-verification`}
         />
       )}

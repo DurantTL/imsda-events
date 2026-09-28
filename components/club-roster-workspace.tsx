@@ -315,7 +315,7 @@ export function ClubRosterWorkspace({
                                 </span>
                               )}
                               {member.willingToDrive && (
-                                <span className="status-chip green">Willing to drive</span>
+                                <span className="status-chip neutral">Willing to drive</span>
                               )}
                               {member.status === "ACTIVE" && missing.length === 0 && !member.willingToDrive && "—"}
                               </div>

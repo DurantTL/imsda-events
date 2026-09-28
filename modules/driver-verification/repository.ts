@@ -76,7 +76,13 @@ export type DriverQueueEntry = {
   } | null;
 };
 
-function serializeQueueEntry(member: WillingDriverRow, today: string): DriverQueueEntry | null {
+/**
+ * The background-check issue note is conference staff only (#427, the same
+ * rule as `clubRosterComplianceStatuses`): a club's own queue never carries
+ * it, not even a blank to hide — `note` is always null there. Whether a club
+ * reviewer should see it is a human decision still open on #491.
+ */
+function serializeQueueEntry(member: WillingDriverRow, today: string, includeNotes: boolean): DriverQueueEntry | null {
   if (!member.personId || !member.person) return null;
   const check = member.person.backgroundCheck;
   const verification = member.person.driverVerification;
@@ -88,7 +94,7 @@ function serializeQueueEntry(member: WillingDriverRow, today: string): DriverQue
     attendeeType: member.attendeeType as DriverEligibleAttendeeType,
     organizationId: member.organizationId,
     organizationName: member.organization.name,
-    backgroundCheck: { state: clubComplianceState(check, today), note: check?.issuesNote ?? null },
+    backgroundCheck: { state: clubComplianceState(check, today), note: includeNotes ? check?.issuesNote ?? null : null },
     verification: verification ? {
       clearedToTransport: verification.clearedToTransport,
       note: verification.note,
@@ -119,7 +125,7 @@ export async function listWillingDrivers(scope: DriverQueueScope, now = new Date
     orderBy: [{ person: { lastName: "asc" } }, { person: { firstName: "asc" } }],
   });
   return members
-    .map((member) => serializeQueueEntry(member, today))
+    .map((member) => serializeQueueEntry(member, today, scope.kind === "GLOBAL"))
     .filter((entry): entry is DriverQueueEntry => entry !== null);
 }
 

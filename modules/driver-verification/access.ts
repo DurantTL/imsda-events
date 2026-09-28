@@ -2,7 +2,7 @@ import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
 import type { ClubActor } from "@/modules/club-rosters/access";
-import { requireClubCapability } from "@/modules/club-rosters/access";
+import { requireRosterAccess } from "@/modules/club-rosters/access";
 import { requireSystemAdministrator } from "@/modules/organizations/access";
 
 /**
@@ -23,8 +23,16 @@ export async function requireGlobalDriverReviewAccess(): Promise<GlobalReviewerA
   return { userId: user.id };
 }
 
-export async function requireClubDriverReviewAccess(organizationId: string) {
-  return requireClubCapability(organizationId, "manageTeam");
+/**
+ * A club's queue sits behind the roster's own gate, not just a club role:
+ * the person's own attendee session, an authenticator or passkey set up
+ * (MFA_SETUP), and a second step within the last `ROSTER_UNLOCK_HOURS`
+ * (MFA_UNLOCK) — it lists roster members' background-check status. Another
+ * club (or one the person doesn't lead) is a 404, never a hint it exists;
+ * a registrar or reporter is a 403 (`manageTeam`).
+ */
+export async function requireClubDriverReviewAccess(organizationId: string, now = new Date()) {
+  return requireRosterAccess(organizationId, now, "manageTeam");
 }
 
 /** Either identity a reviewer or a roster actor can be, for self-nomination and attribution. */
@@ -39,6 +47,15 @@ export function actorIdentity(actor: ClubActor | GlobalReviewerActor): ActorIden
  * for a staff account, `AttendeeAccountPersonLink` for an attendee account).
  * Null when the actor has no such link, which is never mistaken for a match
  * against a real roster row's `personId` (`isSelfNomination`).
+ *
+ * Known limitation (open for a human, #491): self-review is only detected
+ * through those links. A director whose own roster row was typed in by hand
+ * and never linked to their account has a different `Person`, so clearing
+ * that row isn't recognised as clearing themself. Matching by name or email
+ * would be identity merging, which is a human-only decision, so it isn't
+ * attempted here. Likewise open: a clearance is stored per person, not per
+ * club, so a person on two clubs' rosters cleared by one club's director
+ * shows as cleared on the other club's queue too.
  */
 export async function personIdForActor(identity: ActorIdentity): Promise<string | null> {
   const prisma = getPrisma();

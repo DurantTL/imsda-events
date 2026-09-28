@@ -32,7 +32,7 @@ export default async function DriverVerificationPage() {
         </div>
       </div>
       <DriverVerificationQueue
-        clearEndpointFor={(personId) => `/api/admin/driver-verification/${encodeURIComponent(personId)}`}
+        clearEndpointBase="/api/admin/driver-verification"
         listEndpoint="/api/admin/driver-verification"
         showClub
       />

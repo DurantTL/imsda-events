@@ -10,21 +10,104 @@ import type { DriverQueueEntry } from "@/modules/driver-verification/repository"
  * background-check status and note, and a reviewer's decision. Used both by
  * a system administrator (every club) and by a club director or deputy
  * (their own club only) — the two pass different endpoints, never data.
+ *
+ * Every prop is a plain string or boolean: this is a Client Component
+ * rendered from Server Component pages, and a function prop can't cross
+ * that boundary (it throws at render). The per-person endpoint is built here
+ * from `clearEndpointBase`.
  */
 
 const complianceLabel = { CLEAR: "Clear", FLAGGED: "Expiring soon", NOT_COMPLIANT: "Not in compliance", NO_RECORD: "No record" } as const;
 const complianceTone = { CLEAR: "green", FLAGGED: "gold", NOT_COMPLIANT: "coral", NO_RECORD: "gold" } as const;
 
-export function DriverVerificationQueue({
-  listEndpoint,
-  clearEndpointFor,
-  showClub = false,
-}: {
+export type DriverVerificationQueueProps = {
   listEndpoint: string;
-  clearEndpointFor: (personId: string) => string;
+  /** The decision endpoint without the person: `${clearEndpointBase}/${personId}` is posted to. */
+  clearEndpointBase: string;
   /** The admin queue spans every club, so it shows which one each row is on. */
   showClub?: boolean;
+};
+
+export function clearEndpointFor(clearEndpointBase: string, personId: string) {
+  return `${clearEndpointBase}/${encodeURIComponent(personId)}`;
+}
+
+/**
+ * Previously cleared, but the background check on file today isn't Clear
+ * (expiring, not in compliance, or gone): the old decision no longer stands
+ * on its own, so the queue asks for a fresh look.
+ */
+export function needsReReview(entry: Pick<DriverQueueEntry, "backgroundCheck" | "verification">) {
+  return Boolean(entry.verification?.clearedToTransport) && entry.backgroundCheck.state !== "CLEAR";
+}
+
+function formatReviewedAt(iso: string) {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime())
+    ? iso
+    : date.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "America/Chicago" });
+}
+
+/** One queue row. Kept hook-free so it renders on its own (tests render it statically). */
+export function DriverQueueRow({
+  entry,
+  showClub,
+  onReview,
+}: {
+  entry: DriverQueueEntry;
+  showClub: boolean;
+  onReview: (entry: DriverQueueEntry) => void;
 }) {
+  const reReview = needsReReview(entry);
+  return (
+    <tr>
+      <th scope="row" translate="no">{entry.lastName}, {entry.firstName}</th>
+      {showClub && <td translate="no">{entry.organizationName}</td>}
+      <td>
+        <span className={`status-chip ${complianceTone[entry.backgroundCheck.state]}`}>
+          {complianceLabel[entry.backgroundCheck.state]}
+        </span>
+        {entry.backgroundCheck.note && <><br /><small className="quiet-copy">{entry.backgroundCheck.note}</small></>}
+      </td>
+      <td>
+        {entry.verification ? (
+          <>
+            {reReview ? (
+              <span className="status-chip gold">Needs re-review</span>
+            ) : (
+              <span className={`status-chip ${entry.verification.clearedToTransport ? "green" : "coral"}`}>
+                {entry.verification.clearedToTransport
+                  ? <><ShieldCheck aria-hidden="true" size={12} /> Cleared</>
+                  : <><ShieldX aria-hidden="true" size={12} /> Not cleared</>}
+              </span>
+            )}
+            <br />
+            <small className="quiet-copy">
+              {reReview ? "Cleared" : "Reviewed"} {formatReviewedAt(entry.verification.reviewedAt)} by{" "}
+              <span translate="no">{entry.verification.reviewerName}</span>
+            </small>
+          </>
+        ) : <span className="status-chip gold">Needs review</span>}
+      </td>
+      <td>
+        <button
+          aria-label={`Review ${entry.firstName} ${entry.lastName}`}
+          className="secondary-button"
+          onClick={() => onReview(entry)}
+          type="button"
+        >
+          Review
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+export function DriverVerificationQueue({
+  listEndpoint,
+  clearEndpointBase,
+  showClub = false,
+}: DriverVerificationQueueProps) {
   const [entries, setEntries] = useState<DriverQueueEntry[] | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -61,7 +144,7 @@ export function DriverVerificationQueue({
     setSaving(true);
     setError("");
     try {
-      const response = await fetch(clearEndpointFor(reviewing.personId), {
+      const response = await fetch(clearEndpointFor(clearEndpointBase, reviewing.personId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ clearedToTransport, note, confirmedChecksReviewed: true }),
@@ -111,28 +194,7 @@ export function DriverVerificationQueue({
             </thead>
             <tbody>
               {entries.map((entry) => (
-                <tr key={entry.personId}>
-                  <th scope="row" translate="no">{entry.lastName}, {entry.firstName}</th>
-                  {showClub && <td translate="no">{entry.organizationName}</td>}
-                  <td>
-                    <span className={`status-chip ${complianceTone[entry.backgroundCheck.state]}`}>
-                      {complianceLabel[entry.backgroundCheck.state]}
-                    </span>
-                    {entry.backgroundCheck.note && <><br /><small className="quiet-copy">{entry.backgroundCheck.note}</small></>}
-                  </td>
-                  <td>
-                    {entry.verification ? (
-                      <span className={`status-chip ${entry.verification.clearedToTransport ? "green" : "coral"}`}>
-                        {entry.verification.clearedToTransport
-                          ? <><ShieldCheck aria-hidden="true" size={12} /> Cleared</>
-                          : <><ShieldX aria-hidden="true" size={12} /> Not cleared</>}
-                      </span>
-                    ) : <span className="status-chip gold">Needs review</span>}
-                  </td>
-                  <td>
-                    <button className="secondary-button" onClick={() => setReviewing(entry)} type="button">Review</button>
-                  </td>
-                </tr>
+                <DriverQueueRow entry={entry} key={entry.personId} onReview={setReviewing} showClub={showClub} />
               ))}
             </tbody>
           </table>
