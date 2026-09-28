@@ -85,10 +85,11 @@ export function AppShell({
     events.find((event) => event.id === selectedEventId)?.permissions ?? [],
   );
   const isSystemAdmin = user.globalRole === "SYSTEM_ADMIN";
-  // The other workspaces this staff identity may switch into (#108) — the
-  // one place that decision is made, so the popover and the header button
-  // below always agree with each other and with any other surface that asks.
+  // The other workspaces this staff identity may switch into (#108): the
+  // account popover's System management link and both attendee switch
+  // buttons read this, so they always agree with each other.
   const workspaceContexts = otherWorkspaceContextsForStaff({ isSystemAdmin, attendeeAccountAvailable });
+  const systemAdminContext = workspaceContexts.find((context) => context.kind === "system_admin");
   const canSwitchToAttendee = workspaceContexts.some((context) => context.kind === "attendee");
   const eventQuery = selectedEventId ? `?event=${encodeURIComponent(selectedEventId)}` : "";
   const visibleStatic = navigation.filter((item) => matchesVisibility(item, selectedPermissions));
@@ -263,10 +264,10 @@ export function AppShell({
               {openMenu === "account" && (
                 <div className="header-popover account-popover" role="status">
                   <strong>{user.displayName}</strong><p>{user.email}</p><small>Database-backed staff session</small>
-                  {user.globalRole === "SYSTEM_ADMIN" && (
-                    <Link className="account-system-link" href="/admin" onClick={() => setOpenMenu(null)}>
+                  {systemAdminContext && (
+                    <Link className="account-system-link" href={systemAdminContext.href} onClick={() => setOpenMenu(null)}>
                       <ShieldCheck aria-hidden="true" size={17} />
-                      System management
+                      {systemAdminContext.label}
                     </Link>
                   )}
                   {canSwitchToAttendee && (

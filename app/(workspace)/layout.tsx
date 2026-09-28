@@ -13,8 +13,9 @@ export const dynamic = "force-dynamic";
 /**
  * Every page under the staff/admin workspace is authenticated (#108): noindex
  * here so a page that doesn't set its own `robots` still isn't indexable.
- * `robots.ts` also disallows crawling these paths, but a meta tag is what
- * actually keeps an already-linked URL out of a search index.
+ * Child pages inherit it unless they set `robots` themselves. Paths that
+ * `robots.ts` disallows are never fetched by obeying crawlers, so the tag
+ * matters mainly for workspace paths it does not list (for example /admin).
  */
 export const metadata: Metadata = { robots: { index: false, follow: false } };
 

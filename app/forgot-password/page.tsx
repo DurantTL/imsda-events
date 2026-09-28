@@ -3,7 +3,10 @@ import { BrandMark } from "@/components/brand-mark";
 import { PasswordResetRequestForm } from "@/components/password-reset-request-form";
 import { isAccountEmailConfigured } from "@/modules/communications/account-email";
 
-export const metadata: Metadata = { title: "Reset password" };
+export const metadata: Metadata = {
+  title: "Reset password",
+  robots: { index: false, follow: false },
+};
 
 // This page describes what the deployment will actually do with the request, so
 // it cannot be decided at build time — a build has no sender address set.
