@@ -16,7 +16,8 @@ import { listActiveAttendeeTypes } from "@/modules/attendee-types/repository";
 import { stripAttendeeTypeOptions, withAttendeeTypeOptions } from "@/modules/attendee-types/form-options";
 import type { AttendeeTypeOption } from "@/modules/attendee-types/domain";
 import { hasDirectoryOptionSource, stripDirectoryOptions, withDirectoryOptions } from "@/modules/organizations/directory-form-options";
-import { getOrganizationDirectory, type OrganizationDirectory } from "@/modules/organizations/directory-options";
+import type { OrganizationDirectory } from "@/modules/organizations/directory-options";
+import { directoryForDefinitions, hydrateFormOptions } from "@/modules/forms/form-options-repository";
 
 const emptyDirectory: OrganizationDirectory = { clubs: [], churches: [] };
 
@@ -134,8 +135,8 @@ async function loadForm(eventId: string, formId: string) {
   return getPrisma().registrationForm.findFirst({ where: { id: formId, eventId }, include: formInclude });
 }
 
-function formsNeedDirectory(forms: readonly FormWithVersions[]): boolean {
-  return forms.some((form) => form.versions.some((version) => hasDirectoryOptionSource(definitionFromJson(version.definition))));
+function formsDirectory(forms: readonly FormWithVersions[]) {
+  return directoryForDefinitions(forms.flatMap((form) => form.versions.map((version) => definitionFromJson(version.definition))));
 }
 
 export async function listRegistrationForms(eventId: string) {
@@ -143,13 +144,13 @@ export async function listRegistrationForms(eventId: string) {
     getPrisma().registrationForm.findMany({ where: { eventId }, orderBy: { updatedAt: "desc" }, include: formInclude }),
     listActiveAttendeeTypes(eventId),
   ]);
-  const directory = formsNeedDirectory(forms) ? await getOrganizationDirectory() : emptyDirectory;
+  const directory = await formsDirectory(forms);
   return forms.map((form) => serializeForm(form, attendeeTypes, directory));
 }
 
 export async function getRegistrationForm(eventId: string, formId: string) {
   const [form, attendeeTypes] = await Promise.all([loadForm(eventId, formId), listActiveAttendeeTypes(eventId)]);
-  const directory = form && formsNeedDirectory([form]) ? await getOrganizationDirectory() : emptyDirectory;
+  const directory = form ? await formsDirectory([form]) : emptyDirectory;
   return form ? serializeForm(form, attendeeTypes, directory) : null;
 }
 
@@ -389,8 +390,7 @@ export async function createTestSubmission(
   });
   if (!version) throw new FormOperationError("VERSION_NOT_FOUND", "That form version is not available for testing.");
   const attendeeTypes = await listActiveAttendeeTypes(eventId);
-  let definition = withAttendeeTypeOptions(registrationFormDefinitionSchema.parse(version.definition), attendeeTypes);
-  if (hasDirectoryOptionSource(definition)) definition = withDirectoryOptions(definition, await getOrganizationDirectory());
+  const definition = await hydrateFormOptions(registrationFormDefinitionSchema.parse(version.definition), { attendeeTypes });
   const priorValidResponses = await getPrisma().formTestSubmission.findMany({ where: { formVersionId: version.id, isValid: true }, select: { responses: true } });
   const usage = summarizeChoiceUsage(
     definition,

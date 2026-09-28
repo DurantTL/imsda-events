@@ -155,9 +155,9 @@ export const formFieldSchema = z.object({
   }
   if (
     isDirectoryOptionSource(field.optionSource)
-    && (field.type !== "SELECT" && field.type !== "RADIO")
+    && ((field.type !== "SELECT" && field.type !== "RADIO") || field.scope !== "REGISTRATION")
   ) {
-    context.addIssue({ code: "custom", path: ["optionSource"], message: "A directory-sourced field must be a single-choice select or radio field." });
+    context.addIssue({ code: "custom", path: ["optionSource"], message: "A directory-sourced field must be a single-choice select or radio field that applies to the whole registration." });
   }
   for (const choice of Object.keys(field.choicePricesCents ?? {})) {
     if (!field.options.includes(choice)) context.addIssue({ code: "custom", path: ["choicePricesCents", choice], message: "Choice prices must reference a configured choice." });

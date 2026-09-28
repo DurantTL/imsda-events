@@ -28,7 +28,8 @@ import { adjustmentTotalCents } from "@/modules/registrations/adjustments";
 import { issuesOnChangedAnswers, splitUnconfiguredAnswers } from "@/modules/registrations/amendment-answers";
 import { registrationOperationFingerprint } from "@/modules/registrations/operations-domain";
 import { getRegistrationByIdWithClient } from "@/modules/registrations/repository";
-import { withAttendeeTypeOptions, attendeeTypeSelector } from "@/modules/attendee-types/form-options";
+import { attendeeTypeSelector } from "@/modules/attendee-types/form-options";
+import { hydrateFormOptions } from "@/modules/forms/form-options-repository";
 import type { RegistrationAmendmentInput } from "@/modules/registrations/schemas";
 
 /**
@@ -105,6 +106,14 @@ export type AmendmentServerOptions = {
    * is refused.
    */
   requestFingerprint?: string;
+  /**
+   * Registration answers the server owns outright, computed from the
+   * registration's own form definition after its options are hydrated and
+   * laid over whatever the caller sent, before anything is validated. The
+   * club director path uses it to keep the club directory field locked to
+   * the director's own club on amendment, as on submit (#482).
+   */
+  ownedRegistrationResponses?: (definition: RegistrationFormDefinition) => Record<string, unknown>;
 };
 
 function allowedProfileMetadata(metadata: AmendmentProfileMetadata | undefined) {
@@ -797,10 +806,25 @@ async function prepareAmendment(
     where: { eventId },
     orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
   });
-  const definition = withAttendeeTypeOptions(
+  const currentRegistrationResponses = storedRegistrationResponses(registration);
+  // Attendee types and the live club/church directory (#482), read through
+  // this transaction. The registration's own current club or church stays a
+  // valid choice even if it has left the directory since, so an unchanged
+  // historical answer keeps validating (like a deactivated attendee type below).
+  const definition = await hydrateFormOptions(
     registrationFormDefinitionSchema.parse(registration.publicFormSubmission.formVersion.definition),
-    configuredTypes.filter((type) => type.isActive),
+    {
+      attendeeTypes: configuredTypes.filter((type) => type.isActive),
+      client: tx,
+      retainedResponses: currentRegistrationResponses,
+    },
   );
+  if (serverOptions.ownedRegistrationResponses) {
+    input = {
+      ...input,
+      responses: { ...input.responses, ...serverOptions.ownedRegistrationResponses(definition) },
+    };
+  }
   assertAmendmentAttendeeTypeSelections(
     definition,
     input.attendees,
@@ -816,7 +840,6 @@ async function prepareAmendment(
       field.optionLabels = { ...(field.optionLabels ?? {}), [code]: current.attendeeType };
     }
   }
-  const currentRegistrationResponses = storedRegistrationResponses(registration);
   assertProtectedFieldsUnchanged(
     definition,
     currentRegistrationResponses,

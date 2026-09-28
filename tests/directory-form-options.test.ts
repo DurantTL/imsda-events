@@ -1,12 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/prisma", () => ({ getPrisma: vi.fn(() => { throw new Error("use the client passed in"); }) }));
+
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import {
   hasDirectoryOptionSource,
   stripDirectoryOptions,
   withDirectoryOptions,
 } from "@/modules/organizations/directory-form-options";
+import { getOrganizationDirectory } from "@/modules/organizations/directory-options";
+import { hydrateFormOptions } from "@/modules/forms/form-options-repository";
 
-const directory = { clubs: ["Ankeny Son-Seekers", "Fulton Foxes"], churches: ["Ankeny SDA Church"] };
+const directory = { clubs: ["Test Pathfinders", "Sample Explorers"], churches: ["Test SDA Church"] };
 
 const sourcedDefinition = registrationFormDefinitionSchema.parse({
   title: "Directory-sourced form",
@@ -42,8 +48,8 @@ describe("directory form options (#482)", () => {
   it("hydrates a directory-sourced field with the live directory plus \"Not listed\"", () => {
     const hydrated = withDirectoryOptions(sourcedDefinition, directory);
     const fields = hydrated.sections[0].fields;
-    expect(fields.find((f) => f.key === "club_name")!.options).toEqual(["Ankeny Son-Seekers", "Fulton Foxes", "Not listed"]);
-    expect(fields.find((f) => f.key === "church_name")!.options).toEqual(["Ankeny SDA Church", "Not listed"]);
+    expect(fields.find((f) => f.key === "club_name")!.options).toEqual(["Test Pathfinders", "Sample Explorers", "Not listed"]);
+    expect(fields.find((f) => f.key === "church_name")!.options).toEqual(["Test SDA Church", "Not listed"]);
     // An ordinary field is untouched.
     expect(fields.find((f) => f.key === "email")!.options).toEqual([]);
   });
@@ -64,5 +70,53 @@ describe("directory form options (#482)", () => {
     const hydrated = withDirectoryOptions(sourcedDefinition, directory);
     const rehydrated = withDirectoryOptions(stripDirectoryOptions(hydrated), directory);
     expect(rehydrated).toEqual(hydrated);
+  });
+
+  it("keeps a registration's own historical club or church as a choice, but never re-adds \"Not listed\" twice", () => {
+    const hydrated = withDirectoryOptions(sourcedDefinition, directory, { club_name: "Renamed Test Club", church_name: "Not listed" });
+    const fields = hydrated.sections[0].fields;
+    expect(fields.find((f) => f.key === "club_name")!.options).toEqual(["Test Pathfinders", "Sample Explorers", "Renamed Test Club", "Not listed"]);
+    expect(fields.find((f) => f.key === "church_name")!.options).toEqual(["Test SDA Church", "Not listed"]);
+  });
+});
+
+function organizationClient(rows: Record<"CLUB" | "CHURCH", Array<{ name: string; normalizedName: string }>>) {
+  return {
+    organization: {
+      findMany: vi.fn(async ({ where }: { where: { type: "CLUB" | "CHURCH"; isActive: boolean } }) => {
+        expect(where.isActive).toBe(true);
+        return rows[where.type];
+      }),
+    },
+  };
+}
+
+describe("live directory reads (#482)", () => {
+  it("returns active names only, one per normalized name, in a stable order", async () => {
+    const client = organizationClient({
+      CLUB: [
+        { name: "Test Pathfinders", normalizedName: "test pathfinders" },
+        { name: "test  Pathfinders", normalizedName: "test pathfinders" },
+        { name: "Sample Explorers", normalizedName: "sample explorers" },
+      ],
+      CHURCH: [{ name: "Test SDA Church", normalizedName: "test sda church" }],
+    });
+    const result = await getOrganizationDirectory(client as never);
+    expect(result).toEqual({ clubs: ["Test Pathfinders", "Sample Explorers"], churches: ["Test SDA Church"] });
+    expect(client.organization.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      orderBy: [{ name: "asc" }, { id: "asc" }],
+      select: { name: true, normalizedName: true },
+    }));
+  });
+
+  it("hydrates through the client it is given, and never reads the directory for a form without a directory field", async () => {
+    const client = organizationClient({ CLUB: [{ name: "Test Pathfinders", normalizedName: "test pathfinders" }], CHURCH: [] });
+    const hydrated = await hydrateFormOptions(sourcedDefinition, { client: client as never });
+    expect(hydrated.sections[0].fields[0].options).toEqual(["Test Pathfinders", "Not listed"]);
+    expect(client.organization.findMany).toHaveBeenCalledTimes(2);
+
+    const untouched = organizationClient({ CLUB: [], CHURCH: [] });
+    expect(await hydrateFormOptions(plainDefinition, { client: untouched as never })).toBe(plainDefinition);
+    expect(untouched.organization.findMany).not.toHaveBeenCalled();
   });
 });

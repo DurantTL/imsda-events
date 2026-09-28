@@ -24,6 +24,10 @@ export type DirectoryReviewEntry = {
   freeText: string;
 };
 
+function recordFromJson(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
 type DirectoryField = { key: string; label: string; source: DirectoryOptionSource; companionKey: string | null };
 
 function directoryFields(definition: RegistrationFormDefinition): DirectoryField[] {
@@ -40,8 +44,11 @@ function directoryFields(definition: RegistrationFormDefinition): DirectoryField
     }));
 }
 
-/** Every "Not listed" club or church answer on an active registration for
- * this event, across every form and version it has ever used. */
+/** Every "Not listed" club or church answer on an active (SUBMITTED or
+ * CONFIRMED) registration for this event, across every form and version it
+ * has ever used. Reads each registration's current answers: the latest
+ * amendment's snapshot when there is one, else the original submission — so
+ * an entry staff have since corrected to a real club drops off the list. */
 export async function listDirectoryReviewEntries(eventId: string): Promise<DirectoryReviewEntry[]> {
   const forms = await getPrisma().registrationForm.findMany({
     where: { eventId },
@@ -61,12 +68,23 @@ export async function listDirectoryReviewEntries(eventId: string): Promise<Direc
   const submissions = await getPrisma().publicRegistrationSubmission.findMany({
     where: {
       formVersionId: { in: [...fieldsByVersionId.keys()] },
-      registration: { status: { not: "CANCELLED" } },
+      registration: { status: { in: ["SUBMITTED", "CONFIRMED"] } },
     },
     select: {
       formVersionId: true,
       responses: true,
-      registration: { select: { id: true, confirmationCode: true } },
+      registration: {
+        select: {
+          id: true,
+          confirmationCode: true,
+          operations: {
+            where: { type: "AMENDMENT" },
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: { afterSnapshot: true },
+          },
+        },
+      },
     },
   });
 
@@ -74,9 +92,8 @@ export async function listDirectoryReviewEntries(eventId: string): Promise<Direc
   for (const submission of submissions) {
     const fields = fieldsByVersionId.get(submission.formVersionId);
     if (!fields) continue;
-    const responses = (submission.responses && typeof submission.responses === "object" && !Array.isArray(submission.responses)
-      ? submission.responses
-      : {}) as Record<string, unknown>;
+    const amended = recordFromJson(recordFromJson(submission.registration.operations?.[0]?.afterSnapshot).registrationResponses);
+    const responses = Object.keys(amended).length > 0 ? amended : recordFromJson(submission.responses);
     for (const field of fields) {
       if (responses[field.key] !== DIRECTORY_NOT_LISTED_VALUE) continue;
       const freeText = field.companionKey && typeof responses[field.companionKey] === "string"

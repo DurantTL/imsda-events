@@ -41,7 +41,7 @@ const plainDefinition = {
 function fixture(forms: Array<{ versions: Array<{ id: string; definition: unknown }> }>, submissions: Array<{
   formVersionId: string;
   responses: Record<string, unknown>;
-  registration: { id: string; confirmationCode: string };
+  registration: { id: string; confirmationCode: string; operations?: Array<{ afterSnapshot: unknown }> };
 }>) {
   const db = {
     registrationForm: { findMany: vi.fn().mockResolvedValue(forms) },
@@ -75,7 +75,7 @@ describe("listDirectoryReviewEntries", () => {
       freeText: "Made-Up Club",
     }]);
     expect(db.publicRegistrationSubmission.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ registration: { status: { not: "CANCELLED" } } }),
+      where: expect.objectContaining({ registration: { status: { in: ["SUBMITTED", "CONFIRMED"] } } }),
     }));
   });
 
@@ -84,7 +84,7 @@ describe("listDirectoryReviewEntries", () => {
       [{ versions: [{ id: "version-1", definition: directoryDefinition }] }],
       [{
         formVersionId: "version-1",
-        responses: { club_name: "Ankeny Son-Seekers", church_name: "Ankeny SDA Church" },
+        responses: { club_name: "Test Pathfinders", church_name: "Test SDA Church" },
         registration: { id: "registration-1", confirmationCode: "REG-1" },
       }],
     );
@@ -103,6 +103,31 @@ describe("listDirectoryReviewEntries", () => {
     const entries = await listDirectoryReviewEntries("event-1");
     expect(entries.map((entry) => entry.source)).toEqual(["CLUBS_DIRECTORY", "CHURCHES_DIRECTORY"]);
     expect(entries[1]!.freeText).toBe("");
+  });
+
+  it("reads the latest amendment's answers, so an entry staff corrected to a real club drops off", async () => {
+    fixture(
+      [{ versions: [{ id: "version-1", definition: directoryDefinition }] }],
+      [{
+        formVersionId: "version-1",
+        responses: { club_name: "Not listed", club_name_other: "Made-Up Club" },
+        registration: {
+          id: "registration-1",
+          confirmationCode: "REG-1",
+          operations: [{ afterSnapshot: { registrationResponses: { club_name: "Test Pathfinders", club_name_other: null } } }],
+        },
+      }, {
+        formVersionId: "version-1",
+        responses: { club_name: "Test Pathfinders" },
+        registration: {
+          id: "registration-2",
+          confirmationCode: "REG-2",
+          operations: [{ afterSnapshot: { registrationResponses: { club_name: "Test Pathfinders", church_name: "Not listed", church_name_other: "Test Chapel" } } }],
+        },
+      }],
+    );
+    const entries = await listDirectoryReviewEntries("event-1");
+    expect(entries).toEqual([expect.objectContaining({ registrationId: "registration-2", source: "CHURCHES_DIRECTORY" })]);
   });
 
   it("skips the database entirely when no form for the event uses a directory source", async () => {

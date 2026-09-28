@@ -4,6 +4,7 @@ import {
   attendeeNameKeys,
   clubAttendeeClientId,
   clubDirectoryOwnedResponses,
+  clubDirectoryPrefillResponses,
   clubFormProblem,
   lockedAttendeeFieldKeys,
   lockedClubDirectoryFieldKeys,
@@ -211,18 +212,38 @@ describe("club and church directory lock (#482)", () => {
     ],
   });
 
-  it("names both directory-sourced fields as locked", () => {
-    expect(lockedClubDirectoryFieldKeys(directoryForm)).toEqual(["club_name", "church_name"]);
+  it("locks only the club field; the church stays editable", () => {
+    expect(lockedClubDirectoryFieldKeys(directoryForm)).toEqual(["club_name"]);
   });
 
-  it("owns the club and church answers, clearing the paired \"Not listed\" free text", () => {
-    expect(clubDirectoryOwnedResponses(directoryForm, { clubName: "Ankeny Son-Seekers", churchName: "Ankeny SDA Church" }))
-      .toEqual({ club_name: "Ankeny Son-Seekers", club_name_other: null, church_name: "Ankeny SDA Church" });
+  it("owns only the club answer, clearing the paired \"Not listed\" free text and never touching the church", () => {
+    expect(clubDirectoryOwnedResponses(directoryForm, { clubName: "Test Pathfinders", churchName: "Test SDA Church" }))
+      .toEqual({ club_name: "Test Pathfinders", club_name_other: null });
   });
 
-  it("leaves the church answer alone when the club has no sponsoring church on file", () => {
-    expect(clubDirectoryOwnedResponses(directoryForm, { clubName: "Ankeny Son-Seekers", churchName: null }))
-      .toEqual({ club_name: "Ankeny Son-Seekers", club_name_other: null });
+  it("prefills the club and the sponsoring church as an editable default", () => {
+    expect(clubDirectoryPrefillResponses(directoryForm, { clubName: "Test Pathfinders", churchName: "Test SDA Church" }))
+      .toEqual({ club_name: "Test Pathfinders", church_name: "Test SDA Church" });
+  });
+
+  it("leaves the church blank when the club has no sponsoring church (or only an inactive one)", () => {
+    // The repository reports an inactive sponsoring church as `churchName: null`.
+    expect(clubDirectoryPrefillResponses(directoryForm, { clubName: "Test Pathfinders", churchName: null }))
+      .toEqual({ club_name: "Test Pathfinders" });
+  });
+
+  it("uses the directory's own spelling when the club's name differs only by case or spacing", () => {
+    const hydrated = {
+      ...directoryForm,
+      sections: directoryForm.sections.map((section) => ({
+        ...section,
+        fields: section.fields.map((candidate) => candidate.key === "club_name"
+          ? { ...candidate, options: ["Test Pathfinders", "Not listed"] }
+          : candidate),
+      })),
+    };
+    expect(clubDirectoryOwnedResponses(hydrated, { clubName: "test  pathfinders", churchName: null }))
+      .toMatchObject({ club_name: "Test Pathfinders" });
   });
 
   it("reports no locked fields for a form with no directory sources", () => {

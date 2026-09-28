@@ -9,6 +9,9 @@ import { Prisma, type RegistrationStatus } from "@prisma/client";
 import { withAttendeeTypeOptions } from "@/modules/attendee-types/form-options";
 import type { AttendeeTypeOption } from "@/modules/attendee-types/domain";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
+import { directoryForDefinitions } from "@/modules/forms/form-options-repository";
+import { withDirectoryOptions } from "@/modules/organizations/directory-form-options";
+import type { OrganizationDirectory } from "@/modules/organizations/directory-options";
 import { selectedCardPayment } from "@/modules/payments/square-domain";
 
 type RegistrationWithRelations = Awaited<ReturnType<typeof getRegistrationQuery>>[number];
@@ -129,7 +132,23 @@ function recordsFromJson(value: unknown): Array<Record<string, unknown>> {
     : [];
 }
 
-function serializeRegistration(registration: RegistrationWithRelations) {
+/**
+ * The live club/church directory (#482), read once for every registration
+ * being serialized and only when one of their forms has a directory field.
+ */
+function directoryForRegistrations(client: RegistrationReadClient, registrations: readonly RegistrationWithRelations[]) {
+  return directoryForDefinitions(
+    registrations.flatMap((registration) => {
+      const parsed = registration.publicFormSubmission
+        ? registrationFormDefinitionSchema.safeParse(registration.publicFormSubmission.formVersion.definition)
+        : null;
+      return parsed?.success ? [parsed.data] : [];
+    }),
+    client,
+  );
+}
+
+function serializeRegistration(registration: RegistrationWithRelations, directory: OrganizationDirectory) {
   const paidCents = registration.payments.reduce((total, payment) => {
     const refundedCents = payment.refunds.reduce(
       (refundTotal, refund) => refundTotal + moneyToCents(refund.amount),
@@ -154,10 +173,20 @@ function serializeRegistration(registration: RegistrationWithRelations) {
       : fallback
   );
 
+  const latestRegistrationResponses = Object.keys(amendedRegistrationResponses).length > 0
+    ? amendedRegistrationResponses
+    : recordFromJson(registration.publicFormSubmission?.responses);
+  // The same hydration the amendment engine validates against (#482):
+  // attendee types plus the live directory, keeping this registration's own
+  // club or church as a choice if it has since left the directory.
   const publicDefinition = registration.publicFormSubmission
-    ? withAttendeeTypeOptions(
-      registrationFormDefinitionSchema.parse(registration.publicFormSubmission.formVersion.definition),
-      registration.event.attendeeTypes as AttendeeTypeOption[],
+    ? withDirectoryOptions(
+      withAttendeeTypeOptions(
+        registrationFormDefinitionSchema.parse(registration.publicFormSubmission.formVersion.definition),
+        registration.event.attendeeTypes as AttendeeTypeOption[],
+      ),
+      directory,
+      latestRegistrationResponses,
     )
     : null;
   const balanceCents = Math.max(totalAmountCents - paidCents, 0);
@@ -282,9 +311,7 @@ function serializeRegistration(registration: RegistrationWithRelations) {
       formName: registration.publicFormSubmission.formVersion.form.name,
       formSlug: registration.publicFormSubmission.formVersion.form.slug,
       versionNumber: registration.publicFormSubmission.formVersion.versionNumber,
-      responses: Object.keys(amendedRegistrationResponses).length > 0
-        ? amendedRegistrationResponses
-        : recordFromJson(registration.publicFormSubmission.responses),
+      responses: latestRegistrationResponses,
       originalResponses: recordFromJson(registration.publicFormSubmission.responses),
       attendeeResponses: recordsFromJson(registration.publicFormSubmission.attendeeResponses),
       definition: publicDefinition ?? recordFromJson(registration.publicFormSubmission.formVersion.definition),
@@ -340,7 +367,8 @@ export async function listRegistrations(
     options?.statuses,
     options?.tagIds,
   );
-  return registrations.map(serializeRegistration);
+  const directory = await directoryForRegistrations(getPrisma(), registrations);
+  return registrations.map((registration) => serializeRegistration(registration, directory));
 }
 
 export async function createRegistration(eventId: string, input: RegistrationInput, actorUserId: string) {
@@ -524,7 +552,9 @@ export async function getRegistrationByIdWithClient(
 ) {
   const registrations = await getRegistrationQuery(client, eventId);
   const registration = registrations.find((candidate) => candidate.id === registrationId);
-  return registration ? serializeRegistration(registration) : null;
+  return registration
+    ? serializeRegistration(registration, await directoryForRegistrations(client, [registration]))
+    : null;
 }
 
 export async function addRegistrationAttendee(

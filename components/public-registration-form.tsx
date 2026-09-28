@@ -179,10 +179,10 @@ export type PublicRegistrationFormProps = {
     initialAttendees: RosterAttendee[];
     lockedAttendeeFieldKeys: string[];
     /**
-     * Registration-scope fields locked to the director's own club and its
-     * sponsoring church (#482), e.g. the "Clubs directory" / "Churches
-     * directory" option-source fields: shown read-only, enforced again
-     * server-side regardless of what the client renders.
+     * Registration-scope fields locked to the director's own club (#482):
+     * the "Clubs directory" option-source field, shown read-only and
+     * enforced again server-side regardless of what the client renders. The
+     * church is prefilled but stays editable, so it is never listed here.
      */
     lockedRegistrationFieldKeys?: string[];
     submitUrl: string;

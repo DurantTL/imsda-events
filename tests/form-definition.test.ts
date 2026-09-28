@@ -356,7 +356,7 @@ describe("registration form definitions", () => {
   });
 
   it("resolves the Spring Camporee club and director as the deferred-organization billing identity", () => {
-    expect(resolveResponsibleOrganization({ club_name: "Ankeny Son-Seekers" })).toBe("Ankeny Son-Seekers");
+    expect(resolveResponsibleOrganization({ club_name: "Test Pathfinders" })).toBe("Test Pathfinders");
     expect(resolveResponsibleOrganization({
       club_name: "Other",
       club_name_other: "New Frontier Pathfinders",
@@ -364,7 +364,7 @@ describe("registration form definitions", () => {
     expect(resolveResponsibleOrganization({ church_name: "Des Moines SDA Church" })).toBe("Des Moines SDA Church");
     expect(resolveResponsibleOrganization({
       responsible_organization: "Explicit Org",
-      club_name: "Ankeny Son-Seekers",
+      club_name: "Test Pathfinders",
     })).toBe("Explicit Org");
     expect(resolveResponsibleOrganization({})).toBeNull();
 
@@ -385,7 +385,7 @@ describe("registration form definitions", () => {
     ];
     const calculation = calculateRosterTotal(
       definition,
-      { club_name: "Ankeny Son-Seekers", director_name: "Jamie Director", email: "director@example.test", phone: "555-0100" },
+      { club_name: "Test Pathfinders", director_name: "Jamie Director", email: "director@example.test", phone: "555-0100" },
       roster,
       "2026-12-01",
     );
@@ -393,16 +393,16 @@ describe("registration form definitions", () => {
 
     // Club/church directory sources (#482) hold no options until hydrated
     // against the live directory — the same as `ATTENDEE_TYPES` fields do.
-    const hydrated = withDirectoryOptions(definition, { clubs: ["Ankeny Son-Seekers"], churches: [] });
+    const hydrated = withDirectoryOptions(definition, { clubs: ["Test Pathfinders"], churches: [] });
     const registrationResult = validateTestResponses(hydrated, {
-      club_name: "Ankeny Son-Seekers", director_name: "Jamie Director", email: "director@example.test", phone: "555-0100",
+      club_name: "Test Pathfinders", director_name: "Jamie Director", email: "director@example.test", phone: "555-0100",
     }, {}, "REGISTRATION");
     expect(registrationResult.isValid).toBe(true);
 
     const attendeeResult = validateTestResponses(definition, roster[0], {}, "ATTENDEE");
     expect(attendeeResult.isValid).toBe(true);
 
-    expect(resolveResponsibleOrganization({ club_name: "Ankeny Son-Seekers" })).toBe("Ankeny Son-Seekers");
+    expect(resolveResponsibleOrganization({ club_name: "Test Pathfinders" })).toBe("Test Pathfinders");
     expect(resolveBillingContactName({ director_name: "Jamie Director" })).toBe("Jamie Director");
   });
 
@@ -592,6 +592,12 @@ describe("live directory option sources (#482)", () => {
   it("rejects a directory source on a field type that isn't a single-choice select or radio", () => {
     expect(registrationFormDefinitionSchema.safeParse(directoryForm(directoryField({ type: "TEXT" }))).success).toBe(false);
     expect(registrationFormDefinitionSchema.safeParse(directoryForm(directoryField({ type: "MULTISELECT" }))).success).toBe(false);
+  });
+
+  it("allows a directory source only on a registration-scope field", () => {
+    expect(registrationFormDefinitionSchema.safeParse(directoryForm(directoryField({ scope: "ATTENDEE" }))).success).toBe(false);
+    expect(registrationFormDefinitionSchema.safeParse(directoryForm(directoryField({ scope: "ATTENDEE", optionSource: "CHURCHES_DIRECTORY" }))).success).toBe(false);
+    expect(registrationFormDefinitionSchema.safeParse(directoryForm(directoryField({ scope: "REGISTRATION" }))).success).toBe(true);
   });
 
   it("does not force a directory-sourced field to be required, unlike the attendee-type selector", () => {

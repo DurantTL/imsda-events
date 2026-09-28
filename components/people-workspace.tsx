@@ -638,7 +638,8 @@ export function PeopleWorkspace({
         <div className="intro-actions">
           <span className="count-badge"><UsersRound aria-hidden="true" size={17} /> {expectedPeople} expected</span>
           <a className="secondary-button" href={`/people/duplicates?event=${encodeURIComponent(eventId)}`}><CopyCheck aria-hidden="true" size={17} /> Find duplicates</a>
-          <a className="secondary-button" href={`/people/directory-review?event=${encodeURIComponent(eventId)}`}>Directory review</a>
+          {/* Same permission the review page itself requires (MANAGE_REGISTRATION). */}
+          {canEdit && <a className="secondary-button" href={`/people/directory-review?event=${encodeURIComponent(eventId)}`}>Directory review</a>}
           <a className="secondary-button" href={`/api/events/${eventId}/exports/registrations`}><Download aria-hidden="true" size={17} /> Export CSV</a>
           {canEdit && <a className="primary-button" href={`/events/${eventSlug}`} target="_blank" rel="noreferrer"><ExternalLink aria-hidden="true" size={17} /> Start registration</a>}
         </div>

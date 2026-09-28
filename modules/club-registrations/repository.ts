@@ -7,6 +7,7 @@ import { ageOn, clubYearFor } from "@/modules/club-rosters/domain";
 import {
   clubAttendeeClientId,
   clubDirectoryOwnedResponses,
+  clubDirectoryPrefillResponses,
   clubExistingAttendeeClientId,
   clubFormProblem,
   clubGuestClientId,
@@ -47,6 +48,7 @@ import {
   previewRegistrationAmendment,
   RegistrationAmendmentError,
   type AmendmentAttendeeServerOptions,
+  type AmendmentServerOptions,
 } from "@/modules/registrations/amendments-repository";
 import { registrationOperationFingerprint } from "@/modules/registrations/operations-domain";
 import type { RegistrationAmendmentInput } from "@/modules/registrations/schemas";
@@ -274,13 +276,18 @@ export async function listClubCheckInInfo(eventId: string): Promise<ClubCheckInI
 }
 
 /** The club and its sponsoring church, straight from the `Organization`
- * record — never from anything a client sends (#482). */
-async function clubDirectoryIdentity(organizationId: string): Promise<ClubDirectoryIdentity> {
-  const organization = await getPrisma().organization.findUnique({
+ * record — never from anything a client sends (#482). An inactive church is
+ * treated as none, so it is never offered as the default. */
+async function clubDirectoryIdentity(
+  client: Pick<Prisma.TransactionClient, "organization">,
+  organizationId: string,
+): Promise<ClubDirectoryIdentity> {
+  const organization = await client.organization.findUnique({
     where: { id: organizationId },
-    select: { name: true, parentOrganization: { select: { name: true } } },
+    select: { name: true, parentOrganization: { select: { name: true, isActive: true } } },
   });
-  return { clubName: organization?.name ?? "", churchName: organization?.parentOrganization?.name ?? null };
+  const church = organization?.parentOrganization;
+  return { clubName: organization?.name ?? "", churchName: church?.isActive ? church.name : null };
 }
 
 async function requireClubEvent(eventId: string): Promise<ClubEvent> {
@@ -353,7 +360,7 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
       },
     }),
     getPrisma().clubRegistrationDraft.findUnique({ where: { eventId_organizationId: { eventId, organizationId } } }),
-    clubDirectoryIdentity(organizationId),
+    clubDirectoryIdentity(getPrisma(), organizationId),
   ]);
   const problem = form ? clubFormProblem(form.definition) : "The event has no published registration form yet.";
   const experience = form && !problem ? await getPublicRegistrationExperience(event.slug, form.slug) : null;
@@ -403,16 +410,12 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
     problem,
     experience,
     lockedAttendeeFieldKeys: experience ? lockedAttendeeFieldKeys(experience.form.definition) : [],
-    // The club and church directory fields (#482), always the director's own
-    // club and its sponsoring church — never editable, verified again inside
-    // the submit transaction (`clubDirectoryOwnedResponses`).
+    // The directory fields (#482): the club is always the director's own and
+    // locked (enforced again server-side by `clubDirectoryOwnedResponses`);
+    // the church starts as the club's sponsoring church but stays editable.
     directory: {
       lockedFieldKeys: experience ? lockedClubDirectoryFieldKeys(experience.form.definition) : [],
-      prefillResponses: experience
-        ? Object.fromEntries(Object.entries(clubDirectoryOwnedResponses(experience.form.definition, identity)).flatMap(
-          ([key, value]) => (typeof value === "string" && value ? [[key, value]] : []),
-        ))
-        : {},
+      prefillResponses: experience ? clubDirectoryPrefillResponses(experience.form.definition, identity) : {},
     },
     roster,
     registration: clubRegistration
@@ -549,23 +552,14 @@ export function clubAttendeePreparer(organizationId: string): ClubSubmissionCont
     });
     const guestsById = new Map(guestsFromJson(draft?.guests).map((guest) => [guest.id, guest]));
     const eventDate = calendarDateInEventTimeZone(event.startsAt, event.timezone);
-    // The club and church directory fields (#482) are locked to this club's
-    // own `Organization` record, read inside the transaction — never from
-    // anything the client sent, whatever the client's UI let through. Only
-    // queried when the form actually has one, so most forms (no directory
-    // field at all) pay no extra cost.
-    const hasDirectoryFields = lockedClubDirectoryFieldKeys(definition as RegistrationFormDefinition).length > 0;
-    const organization = hasDirectoryFields
-      ? await tx.organization.findUnique({
-        where: { id: organizationId },
-        select: { name: true, parentOrganization: { select: { name: true } } },
-      })
-      : null;
-    const directoryResponses = hasDirectoryFields
-      ? clubDirectoryOwnedResponses(definition as RegistrationFormDefinition, {
-        clubName: organization?.name ?? "",
-        churchName: organization?.parentOrganization?.name ?? null,
-      })
+    // The club directory field (#482) is locked to this club's own
+    // `Organization` record, read inside the transaction — never from
+    // anything the client sent, whatever the client's UI let through. The
+    // church is the director's choice and is left as sent. Only queried when
+    // the form has a club directory field, so most forms pay no extra cost.
+    const hasClubDirectoryField = lockedClubDirectoryFieldKeys(definition as RegistrationFormDefinition).length > 0;
+    const directoryResponses = hasClubDirectoryField
+      ? clubDirectoryOwnedResponses(definition as RegistrationFormDefinition, await clubDirectoryIdentity(tx, organizationId))
       : {};
     const resolved: Awaited<ReturnType<ClubSubmissionContext["prepareAttendees"]>>["attendees"] = new Map();
     const rewritten = attendees.map((attendee) => {
@@ -947,8 +941,20 @@ export async function amendClubRegistration(
     attendees: amendmentAttendees,
     previewOnly: true,
   };
+  // The club directory field (#482) stays this club's own on amendment, as
+  // on submit: whatever the registration held (a "Not listed" entry, a
+  // since-renamed name, or anything a client tried to slip in) is set to the
+  // club's current directory record. The engine applies it against the
+  // registration's own hydrated form, before validating. The church is left
+  // as the registration holds it.
+  const identity = await clubDirectoryIdentity(getPrisma(), organizationId);
+  const engineOptions: AmendmentServerOptions = {
+    attendees: serverOptions,
+    requestFingerprint,
+    ownedRegistrationResponses: (hydrated) => clubDirectoryOwnedResponses(hydrated, identity),
+  };
   try {
-    const preview = await previewRegistrationAmendment(eventId, registrationId, amendmentInput, { attendees: serverOptions, requestFingerprint });
+    const preview = await previewRegistrationAmendment(eventId, registrationId, amendmentInput, engineOptions);
     const response = await amendRegistration(
       eventId,
       registrationId,
@@ -957,7 +963,7 @@ export async function amendClubRegistration(
         ? { kind: "CLUB_DIRECTOR", attendeeAccountId: actor.accountId, displayName: account?.displayName ?? "Club director" }
         : { kind: "STAFF_ACTING_DIRECTOR", id: actor.userId, actAsId: actor.actAsId, displayName: "A system administrator acting as director" },
       now,
-      { attendees: serverOptions, requestFingerprint },
+      engineOptions,
     );
     return clubEditResult(response);
   } catch (error) {

@@ -92,9 +92,9 @@ function fixture() {
 
   const db = {
     organization: {
-      findUnique: vi.fn().mockResolvedValue({ name: "Ankeny Son-Seekers", parentOrganization: { name: "Ankeny SDA Church" } }),
+      findUnique: vi.fn().mockResolvedValue({ name: "Test Pathfinders", parentOrganization: { name: "Test SDA Church" } }),
       findMany: vi.fn(async ({ where }: { where: { type?: string } }) => (
-        where.type === "CLUB" ? [{ name: "Ankeny Son-Seekers" }] : [{ name: "Ankeny SDA Church" }]
+        where.type === "CLUB" ? [{ name: "Test Pathfinders" }] : [{ name: "Test SDA Church" }]
       )),
     },
     registrationForm: { findFirst: vi.fn().mockResolvedValue({
@@ -204,7 +204,7 @@ describe("Honors Weekend template, from club registration to class seats (#436)"
     await submitPublicRegistration("honors-weekend", "clubs", publicRegistrationInputSchema.parse({
       versionId: "version-1",
       idempotencyKey: "6b1d7c52-0f7e-4d5c-9a3e-1c2b3d4e5f60",
-      responses: { club_name: "Ankeny Son-Seekers", director_name: "Jamie Director", email: "director@example.test", phone: "555-0100" },
+      responses: { club_name: "Test Pathfinders", director_name: "Jamie Director", email: "director@example.test", phone: "555-0100" },
       attendees,
       website: "",
     }), now, { organizationId: "club-1", submittedByAccountId: "director-1", prepareAttendees: clubAttendeePreparer("club-1") });
