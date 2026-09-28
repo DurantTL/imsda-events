@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RADIO_CARD_MAX_OPTIONS, isSingleChoiceType, resolvedTypeForFieldTypeChange, suggestedSingleChoiceType } from "@/modules/forms/choice-defaults";
+import { RADIO_CARD_MAX_OPTIONS, isSingleChoiceType, singleChoiceTypeHint, suggestedSingleChoiceType } from "@/modules/forms/choice-defaults";
 
 describe("choose controls by the size of the answer set (#484)", () => {
   it("suggests radio cards for a short list", () => {
@@ -22,45 +22,60 @@ describe("choose controls by the size of the answer set (#484)", () => {
   });
 });
 
-describe("the size default applies only when a field is created, never on a later edit (#484 B1)", () => {
-  it("a brand-new choice field (switching from a non-choice type) gets the size default", () => {
-    expect(resolvedTypeForFieldTypeChange("TEXT", "RADIO", 3)).toBe("RADIO");
-    expect(resolvedTypeForFieldTypeChange("TEXT", "RADIO", 12)).toBe("SELECT");
-    expect(resolvedTypeForFieldTypeChange("TEXT", "SELECT", 3)).toBe("RADIO");
-    expect(resolvedTypeForFieldTypeChange("TEXT", "SELECT", 12)).toBe("SELECT");
+describe("the size default is only a hint: the builder's pick always stands (#484)", () => {
+  const options = (count: number) => Array.from({ length: count }, (_, index) => `Option ${index + 1}`);
+
+  it("suggests radio cards on a dropdown with a short list, at and below the threshold", () => {
+    for (const count of [2, 4, RADIO_CARD_MAX_OPTIONS]) {
+      expect(singleChoiceTypeHint({ type: "SELECT", options: options(count) })).toEqual({
+        suggestedType: "RADIO",
+        message: "Short list: radio cards are easier to tap.",
+        actionLabel: "Switch to radio cards",
+      });
+    }
   });
 
-  it("switching a multi-select's many options straight to a single choice still gets the size default", () => {
-    // MULTISELECT keeps its existing options when the dropdown moves to
-    // RADIO/SELECT (registration-builder-workspace.tsx's own options-reset
-    // rule), so a 12-option multi-select becoming "Single choice" is a
-    // brand-new single-choice field with 12 options, not an edit to an
-    // existing one.
-    expect(resolvedTypeForFieldTypeChange("MULTISELECT", "RADIO", 12)).toBe("SELECT");
-    expect(resolvedTypeForFieldTypeChange("MULTISELECT", "RADIO", 3)).toBe("RADIO");
+  it("stops suggesting radio cards on a dropdown once the list is past the threshold", () => {
+    expect(singleChoiceTypeHint({ type: "SELECT", options: options(RADIO_CARD_MAX_OPTIONS + 1) })).toBeNull();
+    expect(singleChoiceTypeHint({ type: "SELECT", options: options(50) })).toBeNull();
   });
 
-  it("an explicit RADIO with 12 options stays RADIO — the resolver never touches an already-single-choice field's type", () => {
-    // This is what protects the options-edit handlers: even if the option
-    // count changes (12, or any other number), the field's own type is
-    // simply never passed through this function, and this function itself
-    // refuses to override a field that was already RADIO or SELECT.
-    expect(resolvedTypeForFieldTypeChange("RADIO", "RADIO", 12)).toBe("RADIO");
-    expect(resolvedTypeForFieldTypeChange("RADIO", "RADIO", 2)).toBe("RADIO");
+  it("suggests a searchable dropdown on radio cards with a long list", () => {
+    for (const count of [RADIO_CARD_MAX_OPTIONS + 1, 12, 50]) {
+      const hint = singleChoiceTypeHint({ type: "RADIO", options: options(count) });
+      expect(hint?.suggestedType).toBe("SELECT");
+      expect(hint?.actionLabel).toBe("Switch to a searchable dropdown");
+    }
   });
 
-  it("a template's 3-option SELECT stays SELECT when the field type is left unchanged", () => {
-    expect(resolvedTypeForFieldTypeChange("SELECT", "SELECT", 3)).toBe("SELECT");
+  it("shows nothing on radio cards with a short list", () => {
+    expect(singleChoiceTypeHint({ type: "RADIO", options: options(2) })).toBeNull();
+    expect(singleChoiceTypeHint({ type: "RADIO", options: options(RADIO_CARD_MAX_OPTIONS) })).toBeNull();
   });
 
-  it("explicitly switching between RADIO and SELECT (the builder's own override) is always respected", () => {
-    expect(resolvedTypeForFieldTypeChange("RADIO", "SELECT", 3)).toBe("SELECT");
-    expect(resolvedTypeForFieldTypeChange("SELECT", "RADIO", 12)).toBe("RADIO");
+  it("appears and disappears as the option count crosses the threshold", () => {
+    expect(singleChoiceTypeHint({ type: "RADIO", options: options(RADIO_CARD_MAX_OPTIONS) })).toBeNull();
+    expect(singleChoiceTypeHint({ type: "RADIO", options: options(RADIO_CARD_MAX_OPTIONS + 1) })).not.toBeNull();
+    expect(singleChoiceTypeHint({ type: "SELECT", options: options(RADIO_CARD_MAX_OPTIONS + 1) })).toBeNull();
+    expect(singleChoiceTypeHint({ type: "SELECT", options: options(RADIO_CARD_MAX_OPTIONS) })).not.toBeNull();
   });
 
-  it("a target type outside RADIO/SELECT is never touched", () => {
-    expect(resolvedTypeForFieldTypeChange("RADIO", "MULTISELECT", 12)).toBe("MULTISELECT");
-    expect(resolvedTypeForFieldTypeChange("TEXT", "CHECKBOX", 0)).toBe("CHECKBOX");
-    expect(resolvedTypeForFieldTypeChange("TEXT", "NUMBER", 0)).toBe("NUMBER");
+  it("disappears once the builder takes the suggestion", () => {
+    const hint = singleChoiceTypeHint({ type: "SELECT", options: options(3) })!;
+    expect(singleChoiceTypeHint({ type: hint.suggestedType, options: options(3) })).toBeNull();
+  });
+
+  it("never applies to other field types or to attendee-type-sourced options", () => {
+    for (const type of ["MULTISELECT", "RANKED_CHOICE", "CHECKBOX", "TEXT", "NUMBER"] as const) {
+      expect(singleChoiceTypeHint({ type, options: options(3) })).toBeNull();
+      expect(singleChoiceTypeHint({ type, options: options(12) })).toBeNull();
+    }
+    expect(singleChoiceTypeHint({ type: "RADIO", options: options(12), optionSource: "ATTENDEE_TYPES" })).toBeNull();
+    expect(singleChoiceTypeHint({ type: "SELECT", options: options(3), optionSource: "ATTENDEE_TYPES" })).toBeNull();
+  });
+
+  it("no longer exports a helper that rewrites the Field type pick", async () => {
+    const choiceDefaults: Record<string, unknown> = await import("@/modules/forms/choice-defaults");
+    expect(choiceDefaults.resolvedTypeForFieldTypeChange).toBeUndefined();
   });
 });

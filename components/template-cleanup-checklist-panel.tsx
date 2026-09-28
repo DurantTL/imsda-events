@@ -4,11 +4,13 @@ import { useMemo, useState, useSyncExternalStore } from "react";
 import { ListChecks, X } from "lucide-react";
 import {
   buildTemplateCleanupChecklistItems,
+  parseTemplateCleanupCreatedRecords,
   parseTemplateCleanupIdList,
   readTemplateCleanupRaw,
   readTemplateCleanupStorage,
   shouldShowTemplateCleanupChecklist,
   subscribeTemplateCleanupChecklistChanges,
+  templateCleanupCreatedFormIds,
   templateCleanupCreatedStorageKey,
   templateCleanupDismissedStorageKey,
   withTemplateCleanupDismissed,
@@ -77,12 +79,14 @@ function subscribe(onStoreChange: () => void): () => void {
 export function TemplateCleanupChecklistPanel({ formId, definition }: TemplateCleanupChecklistPanelProps) {
   const createdRaw = useSyncExternalStore(subscribe, getCreatedRawSnapshot, getServerSnapshot);
   const dismissedRaw = useSyncExternalStore(subscribe, getDismissedRawSnapshot, getServerSnapshot);
-  const createdFormIds = useMemo(() => parseTemplateCleanupIdList(createdRaw), [createdRaw]);
+  const createdRecords = useMemo(() => parseTemplateCleanupCreatedRecords(createdRaw), [createdRaw]);
+  const createdFormIds = useMemo(() => templateCleanupCreatedFormIds(createdRecords), [createdRecords]);
+  const snapshot = createdRecords.find((record) => record.formId === formId)?.snapshot;
   const dismissedFormIds = useMemo(() => parseTemplateCleanupIdList(dismissedRaw), [dismissedRaw]);
   const [confirmedIds, setConfirmedIds] = useState<ReadonlySet<string>>(() => new Set());
 
   const visible = shouldShowTemplateCleanupChecklist(createdFormIds, dismissedFormIds, formId);
-  const items = useMemo(() => (visible ? buildTemplateCleanupChecklistItems(definition) : []), [visible, definition]);
+  const items = useMemo(() => (visible ? buildTemplateCleanupChecklistItems(definition, snapshot) : []), [visible, definition, snapshot]);
 
   if (!visible || items.length === 0) return null;
 

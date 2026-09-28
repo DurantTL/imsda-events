@@ -20,39 +20,37 @@ export function isSingleChoiceType(type: RegistrationFormField["type"]): type is
 /**
  * The suggested single-choice control for a given option count: radio cards
  * for a short list, a searchable select for a long directory. This is only
- * ever a default the builder can override — nothing in the schema or
- * renderer requires a RADIO or SELECT field to match it, and switching the
- * "Field type" dropdown directly always wins.
- *
- * This is deliberately applied only when a field is *created* — a fresh
- * choice field (`resolvedTypeForFieldTypeChange`) or a field arriving with a
- * module (`instantiateModuleFields` in `modules/forms/builder-modules.ts`) —
- * never on a later edit to an existing field's options. Re-suggesting on
- * every options edit was tried and reverted: it silently overwrote a
- * builder's deliberate choice (an explicit RADIO kept at 12 options after a
- * typo fix would flip to SELECT; a template's 3-option SELECT would flip to
- * RADIO on any edit).
+ * ever a suggestion — nothing here rewrites a field's type. The builder's
+ * pick in the "Field type" dropdown always stands, and module inserts keep
+ * the type each module declares (the module data itself is written to
+ * follow this rule; see `tests/roster-field-bundle-module.test.ts`). The
+ * builder sees the suggestion as a dismissible hint with a one-click switch
+ * (`singleChoiceTypeHint`).
  */
 export function suggestedSingleChoiceType(optionCount: number): "RADIO" | "SELECT" {
   return optionCount > RADIO_CARD_MAX_OPTIONS ? "SELECT" : "RADIO";
 }
 
+export type SingleChoiceTypeHint = {
+  suggestedType: "RADIO" | "SELECT";
+  message: string;
+  actionLabel: string;
+};
+
 /**
- * The type to apply when the builder changes a field's "Field type" to
- * `nextType`. A field that is *becoming* a single-choice field for the first
- * time (its prior type wasn't already RADIO or SELECT — e.g. a plain text
- * field, or a multi-select with many options, switching to "Single choice"
- * or "Dropdown") gets the size-appropriate default instead of the literal
- * dropdown value, computed from the option count it will carry after the
- * switch. Once a field is already RADIO or SELECT, further edits (including
- * to its options) always keep the builder's own choice — see
- * `suggestedSingleChoiceType`.
+ * The size-based suggestion to show on a single-choice field, or null when
+ * there is nothing to suggest: the field isn't RADIO/SELECT, its options come
+ * from the event's attendee types (not builder-configured), or its type
+ * already matches the suggestion. Acting on the hint is the builder's choice;
+ * dismissing it or ignoring it leaves the field exactly as it is.
  */
-export function resolvedTypeForFieldTypeChange(
-  priorType: RegistrationFormField["type"],
-  nextType: RegistrationFormField["type"],
-  nextOptionCount: number,
-): RegistrationFormField["type"] {
-  if (!isSingleChoiceType(nextType) || isSingleChoiceType(priorType)) return nextType;
-  return suggestedSingleChoiceType(nextOptionCount);
+export function singleChoiceTypeHint(
+  field: Pick<RegistrationFormField, "type" | "options" | "optionSource">,
+): SingleChoiceTypeHint | null {
+  if (!isSingleChoiceType(field.type) || field.optionSource) return null;
+  const suggestedType = suggestedSingleChoiceType(field.options.length);
+  if (suggestedType === field.type) return null;
+  return suggestedType === "RADIO"
+    ? { suggestedType, message: "Short list: radio cards are easier to tap.", actionLabel: "Switch to radio cards" }
+    : { suggestedType, message: "Long list: a searchable dropdown is faster than scrolling this many cards.", actionLabel: "Switch to a searchable dropdown" };
 }

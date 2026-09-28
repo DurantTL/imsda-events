@@ -20,6 +20,11 @@ import type { RegistrationFormDefinition } from "@/modules/forms/definition";
  *   on one computer and continues on another (or a co-worker who opens the
  *   same form) won't see the checklist there, and dismissing it on one
  *   device doesn't dismiss it on another.
+ * - The "created" record also snapshots the section and field ids the
+ *   template brought in, so only those are listed as inherited — a field
+ *   the builder adds afterward never shows up here. A record written before
+ *   that snapshot existed (a bare form id) lists every current item, as it
+ *   always did.
  * - The per-item checkmarks (`confirmedIds` in
  *   `template-cleanup-checklist-panel.tsx`) aren't persisted at all — they
  *   reset on reload, since they're a personal review aid, not the record of
@@ -108,17 +113,85 @@ function withRemembered(ids: readonly string[], formId: string): string[] {
     : next;
 }
 
-export function readTemplateCleanupCreatedFormIds(storage: TemplateCleanupStorageReader | undefined): string[] {
-  return readIdList(storage, templateCleanupCreatedStorageKey);
+/** The section and field ids a form had at the moment it was created from a
+ * template — what the checklist treats as "inherited". */
+export type TemplateCleanupSnapshot = { sectionIds: string[]; fieldIds: string[] };
+
+/** One remembered "created from a template" form. `snapshot` is absent only
+ * for a record stored before snapshots existed (a bare form id). */
+export type TemplateCleanupCreatedRecord = { formId: string; snapshot?: TemplateCleanupSnapshot };
+
+function stringList(value: unknown): string[] | null {
+  return Array.isArray(value) && value.every((item) => typeof item === "string") ? [...value] : null;
 }
 
-export function writeTemplateCleanupCreatedFormIds(storage: TemplateCleanupStorageWriter | undefined, formIds: readonly string[]): void {
-  writeIdList(storage, templateCleanupCreatedStorageKey, formIds);
+function parseCreatedRecord(value: unknown): TemplateCleanupCreatedRecord | null {
+  if (typeof value === "string") return { formId: value };
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.formId !== "string") return null;
+  const sectionIds = stringList(candidate.sectionIds);
+  const fieldIds = stringList(candidate.fieldIds);
+  return sectionIds && fieldIds
+    ? { formId: candidate.formId, snapshot: { sectionIds, fieldIds } }
+    : { formId: candidate.formId };
 }
 
-/** Returns a new array; never mutates `createdFormIds`. */
-export function withTemplateCleanupCreated(createdFormIds: readonly string[], formId: string): string[] {
-  return withRemembered(createdFormIds, formId);
+/** Parses the raw stored "created" value. Accepts both the current record
+ * shape and a legacy bare form id. */
+export function parseTemplateCleanupCreatedRecords(raw: string | null): TemplateCleanupCreatedRecord[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((value) => {
+      const record = parseCreatedRecord(value);
+      return record ? [record] : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
+export function readTemplateCleanupCreatedRecords(storage: TemplateCleanupStorageReader | undefined): TemplateCleanupCreatedRecord[] {
+  return parseTemplateCleanupCreatedRecords(readTemplateCleanupRaw(storage, templateCleanupCreatedStorageKey));
+}
+
+export function writeTemplateCleanupCreatedRecords(storage: TemplateCleanupStorageWriter | undefined, records: readonly TemplateCleanupCreatedRecord[]): void {
+  if (!storage) return;
+  try {
+    storage.setItem(templateCleanupCreatedStorageKey, JSON.stringify(records.map((record) => (
+      record.snapshot ? { formId: record.formId, ...record.snapshot } : record.formId
+    ))));
+    notifyTemplateCleanupChecklistChanged();
+  } catch {
+    // Best-effort only.
+  }
+}
+
+/** The ids of every remembered created form. */
+export function templateCleanupCreatedFormIds(records: readonly TemplateCleanupCreatedRecord[]): string[] {
+  return records.map((record) => record.formId);
+}
+
+/** Returns a new array (bounded like the dismissed list), with `record`
+ * replacing any earlier record for the same form; never mutates `records`. */
+export function withTemplateCleanupCreated(
+  records: readonly TemplateCleanupCreatedRecord[],
+  record: TemplateCleanupCreatedRecord,
+): TemplateCleanupCreatedRecord[] {
+  const next = [...records.filter((candidate) => candidate.formId !== record.formId), record];
+  return next.length > maxRememberedFormIds
+    ? next.slice(next.length - maxRememberedFormIds)
+    : next;
+}
+
+/** The section and field ids of `definition`, as the inherited snapshot. */
+export function templateCleanupSnapshot(definition: RegistrationFormDefinition): TemplateCleanupSnapshot {
+  return {
+    sectionIds: definition.sections.map((section) => section.id),
+    fieldIds: definition.sections.flatMap((section) => section.fields.map((field) => field.id)),
+  };
 }
 
 export function readTemplateCleanupDismissedFormIds(storage: TemplateCleanupStorageReader | undefined): string[] {
@@ -166,18 +239,31 @@ export type TemplateCleanupChecklistItem = {
  * fresh from the current definition every render — so once the builder
  * removes something that doesn't belong, it simply drops off the list on its
  * own, with no separate "removed" bookkeeping needed.
+ *
+ * "Inherited" means present in `snapshot` (the ids the form had when it was
+ * created from its template): a section or field added afterward isn't
+ * listed. An inherited field moved into a new section is still listed,
+ * under that section's id. With no snapshot (a legacy record), every current
+ * section and field is listed.
  */
 export function buildTemplateCleanupChecklistItems(
   definition: RegistrationFormDefinition,
+  snapshot?: TemplateCleanupSnapshot,
 ): TemplateCleanupChecklistItem[] {
+  const sectionIds = snapshot ? new Set(snapshot.sectionIds) : null;
+  const fieldIds = snapshot ? new Set(snapshot.fieldIds) : null;
   return definition.sections.flatMap((section) => [
-    { id: `section:${section.id}`, kind: "section" as const, label: section.title, sectionId: section.id },
-    ...section.fields.map((field) => ({
-      id: `field:${field.id}`,
-      kind: "field" as const,
-      label: field.label,
-      sectionId: section.id,
-    })),
+    ...(!sectionIds || sectionIds.has(section.id)
+      ? [{ id: `section:${section.id}`, kind: "section" as const, label: section.title, sectionId: section.id }]
+      : []),
+    ...section.fields
+      .filter((field) => !fieldIds || fieldIds.has(field.id))
+      .map((field) => ({
+        id: `field:${field.id}`,
+        kind: "field" as const,
+        label: field.label,
+        sectionId: section.id,
+      })),
   ]);
 }
 
@@ -194,11 +280,15 @@ function browserStorage(): Storage | undefined {
 /**
  * Convenience wrapper for the one real call site (creating a form from a
  * template): records that this browser just created `formId` from a
- * template, so the checklist shows for it until dismissed.
+ * template, with the section and field ids `definition` arrived with, so the
+ * checklist shows those for it until dismissed.
  */
-export function recordTemplateCleanupCreated(formId: string): void {
+export function recordTemplateCleanupCreated(formId: string, definition: RegistrationFormDefinition): void {
   const storage = browserStorage();
-  writeTemplateCleanupCreatedFormIds(storage, withTemplateCleanupCreated(readTemplateCleanupCreatedFormIds(storage), formId));
+  writeTemplateCleanupCreatedRecords(
+    storage,
+    withTemplateCleanupCreated(readTemplateCleanupCreatedRecords(storage), { formId, snapshot: templateCleanupSnapshot(definition) }),
+  );
 }
 
 export { browserStorage as readTemplateCleanupStorage };
