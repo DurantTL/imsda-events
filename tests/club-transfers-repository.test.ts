@@ -29,6 +29,7 @@ import {
   acceptTransfer,
   approveRegistrationMove,
   listClubTransfers,
+  queueTransferRequestNotice,
   requestTransfer,
   skipRegistrationMove,
   staffFinishTransfer,
@@ -130,11 +131,22 @@ describe("requesting a transfer", () => {
     }));
   });
 
+  it("queues no notice inside the request itself, so matched and unmatched requests do the same work", async () => {
+    await requestTransfer("club-b", request, directorB, now);
+    expect(db.messageOutbox.createMany).not.toHaveBeenCalled();
+  });
+
+  const queuedTransfer = (staffReason: string | null) => ({
+    status: "PENDING", staffReason, fromOrganizationId: "club-a",
+    fromOrganization: { name: "Club A" }, toOrganization: { name: "Club B" }, person: { firstName: "Ada", lastName: "Testperson" },
+  });
+
   it("notifies the sending club without the reason, deduped, keyed without emails, never failing on a repeat", async () => {
     db.clubDirectorGrant.findMany.mockImplementation(async ({ where }: { where: { organizationId: string } }) => (
       where.organizationId === "club-a" ? [leaderGrant("account-a", "A@Example.test"), leaderGrant("account-a2", "a@example.test")] : []
     ));
-    await requestTransfer("club-b", request, directorB, now);
+    db.memberTransfer.findUnique.mockResolvedValue(queuedTransfer(null));
+    await queueTransferRequestNotice("transfer-1", now);
     const { data, skipDuplicates } = db.messageOutbox.createMany.mock.calls[0]![0] as { data: Array<Record<string, string>>; skipDuplicates: boolean };
     expect(skipDuplicates).toBe(true);
     expect(data).toHaveLength(1);
@@ -142,6 +154,22 @@ describe("requesting a transfer", () => {
     expect(data[0]!.idempotencyKey).toBe("member-transfer:transfer-1:MEMBER_TRANSFER_STARTED:account:account-a");
     expect(data[0]!.bodyTextSnapshot).not.toContain("Family moved");
     expect(data[0]!.bodyTextSnapshot).toContain("Sign in to see the details");
+    expect(data[0]!.bodyTextSnapshot).toContain("accept or decline");
+  });
+
+  it("tells a director of both clubs that conference staff will complete it, not to accept or decline", async () => {
+    db.clubDirectorGrant.findMany.mockResolvedValue([leaderGrant("account-a", "a@example.test")]);
+    db.memberTransfer.findUnique.mockResolvedValue(queuedTransfer("SAME_DIRECTOR"));
+    await queueTransferRequestNotice("transfer-1", now);
+    const body = (db.messageOutbox.createMany.mock.calls[0]![0] as { data: Array<{ bodyTextSnapshot: string }> }).data[0]!.bodyTextSnapshot;
+    expect(body).toContain("conference staff will complete this transfer");
+    expect(body).not.toContain("accept or decline it");
+  });
+
+  it("sends nothing for an unmatched request", async () => {
+    db.memberTransfer.findUnique.mockResolvedValue({ ...queuedTransfer("NO_MATCH"), status: "UNMATCHED", person: null });
+    await queueTransferRequestNotice("transfer-1", now);
+    expect(db.messageOutbox.createMany).not.toHaveBeenCalled();
   });
 
   it("audits every request with its actor and outcome", async () => {
@@ -197,6 +225,7 @@ describe("completing a transfer", () => {
     db.clubRosterMember.findFirst.mockResolvedValue(null);
     db.clubRosterMember.create.mockResolvedValue({ id: "row-new" });
     db.registrationAttendee.findMany.mockResolvedValue([]);
+    db.memberTransferRegistrationMove.findMany.mockResolvedValue([]);
     const order: string[] = [];
     db.clubRosterMember.update.mockImplementation(async () => { order.push("erase"); });
     db.clubRosterMember.create.mockImplementation(async () => { order.push("create"); return { id: "row-new" }; });
@@ -236,29 +265,44 @@ describe("registration moves (staff approve each one)", () => {
     id: "move-1", status: "PENDING", note: "", decidedAt: null, createdAt: now, eventId: "event-1",
     registrationAttendeeId: "att-1", fromRegistrationId: "reg-a", toRegistrationId: null, decidedBy: null,
     event: { name: "Camporee", startsAt: now },
-    transfer: { id: "transfer-1", fromOrganizationId: "club-a", toOrganizationId: "club-b", fromOrganization: { name: "Club A" }, toOrganization: { name: "Club B" } },
-    attendee: { id: "att-1", personId: "person-ada", registrationId: "reg-a", person: { firstName: "Ada", lastName: "Testperson" }, adjustments: [{ amountCents: -2500 }] },
-    fromRegistration: { id: "reg-a", confirmationCode: "A-1", status: "SUBMITTED", totalAmount: 75 },
+    transfer: {
+      id: "transfer-1", fromOrganizationId: "club-a", toOrganizationId: "club-b", toRosterMemberId: "row-b",
+      toRosterMember: { status: "ACTIVE", personId: "person-ada" }, fromOrganization: { name: "Club A" }, toOrganization: { name: "Club B" },
+    },
+    attendee: {
+      id: "att-1", personId: "person-ada", registrationId: "reg-a", profileSnapshot: { firstName: "Ada", clubRosterMemberId: "row-a" },
+      person: { firstName: "Ada", lastName: "Testperson" }, adjustments: [{ amountCents: -2500 }],
+      honorEnrollments: [{ offeringId: "class-1", consumesSeat: true, offering: { perClubLimit: 2 } }],
+    },
+    fromRegistration: { id: "reg-a", confirmationCode: "A-1", status: "SUBMITTED", totalAmount: 75, payments: [] },
   };
+  const destination = (overrides: Record<string, unknown> = {}) => ({
+    registration: { id: "reg-b", confirmationCode: "B-1", status: "SUBMITTED", totalAmount: 150, waitlistEntry: null, payments: [], ...overrides },
+  });
 
   beforeEach(() => {
     db.memberTransferRegistrationMove.updateMany.mockResolvedValue({ count: 1 });
     db.memberTransferRegistrationMove.findUniqueOrThrow.mockResolvedValue(storedMove);
-    db.clubEventRegistration.findUnique.mockResolvedValue({ registration: { id: "reg-b", confirmationCode: "B-1", status: "SUBMITTED", totalAmount: 150, waitlistEntry: null } });
+    db.clubEventRegistration.findUnique.mockResolvedValue(destination());
     db.registrationAttendee.findUnique.mockResolvedValue(null);
     db.registrationAttendee.findFirst.mockResolvedValue({ position: 3 });
-    for (const name of ["registrationAdjustment", "honorEnrollment", "registrationCapacityReservation", "registrationOperation"]) {
+    db.honorEnrollment.count.mockResolvedValue(1);
+    for (const name of ["registrationAdjustment", "honorEnrollment", "registrationCapacityReservation"]) {
       db[name]!.updateMany!.mockResolvedValue({ count: 1 });
     }
   });
 
   it("moves the attendee and every dependent row, shifting totals only by the person's own adjustment lines", async () => {
     const result = await approveRegistrationMove("move-1", "ok", staff, now);
-    expect(db.registrationAttendee.update).toHaveBeenCalledWith({ where: { id: "att-1" }, data: { registrationId: "reg-b", position: 4 } });
+    expect(db.registrationAttendee.update).toHaveBeenCalledWith({
+      where: { id: "att-1" },
+      data: { registrationId: "reg-b", position: 4, profileSnapshot: { firstName: "Ada", clubRosterMemberId: "row-b" } },
+    });
     expect(db.registrationAdjustment.updateMany).toHaveBeenCalledWith({ where: { registrationAttendeeId: "att-1", registrationId: "reg-a" }, data: { registrationId: "reg-b" } });
     expect(db.honorEnrollment.updateMany).toHaveBeenCalledWith({ where: { registrationAttendeeId: "att-1" }, data: { registrationId: "reg-b", organizationId: "club-b" } });
     expect(db.registrationCapacityReservation.updateMany).toHaveBeenCalledWith({ where: { registrationAttendeeId: "att-1" }, data: { registrationId: "reg-b" } });
-    expect(db.registrationOperation.updateMany).toHaveBeenCalledWith({ where: { attendeeId: "att-1" }, data: { registrationId: "reg-b" } });
+    // Operation history stays with the old registration.
+    expect(db.registrationOperation.updateMany).not.toHaveBeenCalled();
     expect(db.registration.update).toHaveBeenCalledWith({ where: { id: "reg-a" }, data: { totalAmount: 100, updatedAt: now } });
     expect(db.registration.update).toHaveBeenCalledWith({ where: { id: "reg-b" }, data: { totalAmount: 125, updatedAt: now } });
     expect(result).toMatchObject({ fromTotalCentsBefore: 7500, fromTotalCentsAfter: 10000, toTotalCentsBefore: 15000, toTotalCentsAfter: 12500 });
@@ -268,12 +312,45 @@ describe("registration moves (staff approve each one)", () => {
   });
 
   it("refuses a waitlisted destination and a person already on it, moving nothing", async () => {
-    db.clubEventRegistration.findUnique.mockResolvedValue({ registration: { id: "reg-b", confirmationCode: "B-1", status: "SUBMITTED", totalAmount: 150, waitlistEntry: { status: "WAITING" } } });
+    db.clubEventRegistration.findUnique.mockResolvedValue(destination({ waitlistEntry: { status: "WAITING" } }));
     await expect(approveRegistrationMove("move-1", "", staff, now)).rejects.toMatchObject({ code: "MOVE_BLOCKED", blocker: "DESTINATION_WAITLISTED" });
-    db.clubEventRegistration.findUnique.mockResolvedValue({ registration: { id: "reg-b", confirmationCode: "B-1", status: "SUBMITTED", totalAmount: 150, waitlistEntry: null } });
+    db.clubEventRegistration.findUnique.mockResolvedValue(destination());
     db.registrationAttendee.findUnique.mockResolvedValue({ id: "att-existing" });
     await expect(approveRegistrationMove("move-1", "", staff, now)).rejects.toMatchObject({ code: "MOVE_BLOCKED", blocker: "ALREADY_ON_DESTINATION" });
     expect(db.registrationAttendee.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses a stale move, a class over the per-club limit, and every money guard", async () => {
+    const cases: Array<[string, () => void]> = [
+      ["MEMBER_LEFT_RECEIVING_CLUB", () => db.memberTransferRegistrationMove.findUniqueOrThrow.mockResolvedValue({
+        ...storedMove, transfer: { ...storedMove.transfer, toRosterMember: { status: "REMOVED", personId: null } },
+      })],
+      ["CLUB_CLASS_LIMIT", () => db.honorEnrollment.count.mockResolvedValue(2)],
+      ["TOTAL_CLAMPED", () => db.clubEventRegistration.findUnique.mockResolvedValue(destination({ totalAmount: 0 }))],
+      // Moving a +$200 correction off a $75 registration would leave it at -$125.
+      ["TOTAL_BELOW_ZERO", () => db.memberTransferRegistrationMove.findUniqueOrThrow.mockResolvedValue({
+        ...storedMove, attendee: { ...storedMove.attendee, adjustments: [{ amountCents: 20000 }] },
+      })],
+      // Moving a -$25 scholarship onto a $150 registration already paid $140 leaves $125 < $140.
+      ["TOTAL_BELOW_PAID", () => db.clubEventRegistration.findUnique.mockResolvedValue(destination({ payments: [{ amount: 140, refunds: [] }] }))],
+    ];
+    for (const [blocker, arrange] of cases) {
+      db.memberTransferRegistrationMove.findUniqueOrThrow.mockResolvedValue(storedMove);
+      db.clubEventRegistration.findUnique.mockResolvedValue(destination());
+      db.honorEnrollment.count.mockResolvedValue(1);
+      arrange();
+      await expect(approveRegistrationMove("move-1", "", staff, now)).rejects.toMatchObject({ code: "MOVE_BLOCKED", blocker });
+    }
+    expect(db.registrationAttendee.update).not.toHaveBeenCalled();
+    expect(db.registration.update).not.toHaveBeenCalled();
+  });
+
+  it("maps a unique collision that outlasts the retries to a clear 409", async () => {
+    const { Prisma } = await import("@prisma/client");
+    db.registrationAttendee.update.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" }));
+    await expect(approveRegistrationMove("move-1", "", staff, now)).rejects.toMatchObject({
+      code: "MOVE_BLOCKED", status: 409, message: "This person is already on that registration.",
+    });
   });
 
   it("audits a skip with the actor (N4)", async () => {

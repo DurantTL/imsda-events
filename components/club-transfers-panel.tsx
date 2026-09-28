@@ -127,7 +127,7 @@ export function RequestTransferButton({ organizationId, clubOptions }: { organiz
           <label>
             Reason
             <textarea maxLength={500} onChange={(event) => setForm({ ...form, reason: event.target.value })} rows={3} value={form.reason} />
-            <small className="field-help">Both clubs and conference staff can read this. It is never emailed.</small>
+            <small className="field-help">Both clubs and conference staff can read this. It is never emailed. Don&apos;t include personal details such as health or family circumstances.</small>
           </label>
         </div>
       </ConfirmDialog>
@@ -301,6 +301,7 @@ export function ClubTransfersPanel({ organizationId }: { organizationId: string 
               <label>
                 Note for conference staff (optional)
                 <textarea maxLength={500} onChange={(event) => setNote(event.target.value)} rows={2} value={note} />
+                <small className="field-help">Don&apos;t include personal details such as health or family circumstances.</small>
               </label>
             )}
           </div>

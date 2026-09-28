@@ -38,11 +38,11 @@ export function RegistrationMoveCard({ move, onDecide }: { move: RegistrationMov
       <dl className="transfer-totals">
         <div>
           <dt>From <span translate="no">{move.fromClubName}</span></dt>
-          <dd>{move.fromRegistration ? `${move.fromRegistration.confirmationCode} · ${money(move.fromRegistration.totalCents)}` : "Gone"}</dd>
+          <dd>{move.fromRegistration ? `${move.fromRegistration.confirmationCode} · ${money(move.fromRegistration.totalCents)} (paid ${money(move.fromRegistration.paidCents)})` : "Gone"}</dd>
         </div>
         <div>
           <dt>To <span translate="no">{move.toClubName}</span></dt>
-          <dd>{move.toRegistration ? `${move.toRegistration.confirmationCode} · ${money(move.toRegistration.totalCents)}` : "No registration yet"}</dd>
+          <dd>{move.toRegistration ? `${move.toRegistration.confirmationCode} · ${money(move.toRegistration.totalCents)} (paid ${money(move.toRegistration.paidCents)})` : "No registration yet"}</dd>
         </div>
         <div>
           <dt>This person&apos;s adjustment lines</dt>
@@ -172,9 +172,11 @@ export function RegistrationMoveApprovals() {
                   <div><dt>{move.fromClubName} total</dt><dd>{money(move.fromRegistration.totalCents)} → {money(move.fromRegistration.totalCents - shift)}</dd></div>
                   <div><dt>{move.toClubName} total</dt><dd>{money(move.toRegistration.totalCents)} → {money(move.toRegistration.totalCents + shift)}</dd></div>
                 </dl>
-                <p className="quiet-copy">
-                  Totals change only by this person&apos;s own adjustment lines ({money(shift)}). The priced amount is
-                  not recalculated; payments stay where they were made.
+                <p>
+                  <strong>Nothing is repriced.</strong> {move.fromClubName}&apos;s registration still carries this
+                  person&apos;s base price, and {move.toClubName}&apos;s doesn&apos;t, until you adjust both with the
+                  registration&apos;s own tools. Only this person&apos;s adjustment lines ({money(shift)}) move with them,
+                  which is the only change to the totals above. Payments stay where they were made.
                 </p>
               </>
             ) : (
@@ -183,6 +185,7 @@ export function RegistrationMoveApprovals() {
             <label>
               Note (optional)
               <textarea maxLength={500} onChange={(event) => setNote(event.target.value)} rows={2} value={note} />
+              <small className="field-help">Don&apos;t include personal details such as health or family circumstances.</small>
             </label>
           </div>
         )}

@@ -58,8 +58,8 @@ describe("club member transfer screens (#489)", () => {
     const move = {
       id: "m1", status: "PENDING", transferId: "t1", eventId: "e1", eventName: "Camporee", eventStartsAt: iso, memberName: "Ada Testperson",
       fromClubName: "Club A", toClubName: "Club B",
-      fromRegistration: { id: "ra", confirmationCode: "A-1", status: "SUBMITTED", totalCents: 7500 },
-      toRegistration: { id: "rb", confirmationCode: "B-1", status: "DRAFT", waitlisted: false, totalCents: 15000 },
+      fromRegistration: { id: "ra", confirmationCode: "A-1", status: "SUBMITTED", totalCents: 7500, paidCents: 2000 },
+      toRegistration: { id: "rb", confirmationCode: "B-1", status: "DRAFT", waitlisted: false, totalCents: 15000, paidCents: 0 },
       adjustmentCents: -2500, blocker: "DESTINATION_DRAFT", note: "", decidedAt: null, decidedByName: null, createdAt: iso,
     } as RegistrationMoveRecord;
     const html = renderToStaticMarkup(createElement(RegistrationMoveCard, { move, onDecide: noop }));

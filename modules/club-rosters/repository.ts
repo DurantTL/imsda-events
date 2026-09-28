@@ -370,13 +370,24 @@ export async function removeRosterMember(organizationId: string, memberId: strin
         },
       });
       if (person && Object.values(person._count).every((count) => count === 0)) {
-        // A transfer record (#489) never keeps a person alive, and never keeps
-        // their name once they're erased: the typed names are blanked here and
-        // the person links fall to null with the delete (onDelete: SetNull).
-        await tx.memberTransfer.updateMany({
+        // A transfer record (#489) never keeps a person alive, and keeps no
+        // free text about them once they're erased: the typed names, the
+        // reason, staff's note, and every note on its history and its
+        // registration moves are blanked here, and the person links fall to
+        // null with the delete (onDelete: SetNull).
+        const transfers = await tx.memberTransfer.findMany({
           where: { OR: [{ personId: member.personId }, { pendingPersonId: member.personId }] },
-          data: { requestedFirstName: "", requestedLastName: "" },
+          select: { id: true },
         });
+        if (transfers.length > 0) {
+          const transferIds = transfers.map((transfer) => transfer.id);
+          await tx.memberTransfer.updateMany({
+            where: { id: { in: transferIds } },
+            data: { requestedFirstName: "", requestedLastName: "", reason: "", staffNote: "" },
+          });
+          await tx.memberTransferEvent.updateMany({ where: { transferId: { in: transferIds } }, data: { note: "" } });
+          await tx.memberTransferRegistrationMove.updateMany({ where: { transferId: { in: transferIds } }, data: { note: "" } });
+        }
         const erased = await tx.memberHonorEntry.deleteMany({ where: { personId: member.personId } });
         honorEntriesErased = erased.count;
         await tx.person.delete({ where: { id: member.personId } });

@@ -30,6 +30,7 @@ import {
 } from "@/modules/club-transfers/domain";
 import { transferNotificationKey, transferRequestKey } from "@/modules/club-transfers/keys";
 import type { RequestTransferInput } from "@/modules/club-transfers/schemas";
+import { seatHoldingEnrollment } from "@/modules/honors/enrollment-repository";
 import { directorGrantIsActive } from "@/modules/organizations/director-grants-domain";
 
 /**
@@ -210,7 +211,21 @@ export function transferNotificationEmail(input: {
   memberName: string;
   fromClubName: string;
   toClubName: string;
+  /** The same person leads both clubs (#489 N6): conference staff complete it, so the club isn't asked to answer. */
+  staffCompletes?: boolean;
 }) {
+  if (input.templateKey === "MEMBER_TRANSFER_STARTED" && input.staffCompletes) {
+    return {
+      subject: `${input.toClubName} asked to transfer a member`,
+      bodyText: [
+        `${input.toClubName} has asked to transfer ${input.memberName} from ${input.fromClubName} on IMSDA Events.`,
+        "",
+        "The same person leads both clubs, so conference staff will complete this transfer. There is nothing for you to accept or decline. Sign in to see the details.",
+        "",
+        "IMSDA Events",
+      ].join("\n"),
+    };
+  }
   if (input.templateKey === "MEMBER_TRANSFER_STARTED") {
     return {
       subject: `${input.toClubName} asked to transfer a member`,
@@ -415,26 +430,44 @@ async function requestTransferOnce(toOrganizationId: string, input: RequestTrans
       { fromOrganizationId: fromClub.id, toOrganizationId, outcome: status, staffReason },
     );
 
-    if (status === "PENDING" && personId) {
-      const [person, sendingLeaders] = await Promise.all([
-        tx.person.findUniqueOrThrow({ where: { id: personId }, select: { firstName: true, lastName: true } }),
-        activeClubLeaders(tx, fromClub.id, now),
-      ]);
-      await queueTransferNotification(
-        tx,
-        transfer.id,
-        "MEMBER_TRANSFER_STARTED",
-        leaderRecipients(sendingLeaders),
-        transferNotificationEmail({
-          templateKey: "MEMBER_TRANSFER_STARTED",
-          memberName: `${person.firstName} ${person.lastName}`,
-          fromClubName: fromClub.name,
-          toClubName: toClub.name,
-        }),
-      );
-    }
-
+    // The sending club's notice is queued separately, after this commits and
+    // after the response is sent (`queueTransferRequestNotice`), so a matched
+    // request takes no longer to answer than an unmatched one.
     return { transferId: transfer.id };
+  });
+}
+
+/**
+ * Queues the sending club's "a transfer was requested" notice (#489), for a
+ * matched request only; an unmatched one sends nothing. Called for every
+ * request after the response is sent, so the answer's timing never depends
+ * on whether the name matched. Idempotent: the outbox keys dedupe a repeat.
+ */
+export async function queueTransferRequestNotice(transferId: string, now = new Date()) {
+  await getPrisma().$transaction(async (tx) => {
+    const transfer = await tx.memberTransfer.findUnique({
+      where: { id: transferId },
+      select: {
+        status: true, staffReason: true, fromOrganizationId: true,
+        fromOrganization: { select: { name: true } }, toOrganization: { select: { name: true } },
+        person: { select: { firstName: true, lastName: true } },
+      },
+    });
+    if (!transfer || transfer.status !== "PENDING" || !transfer.person) return;
+    const sendingLeaders = await activeClubLeaders(tx, transfer.fromOrganizationId, now);
+    await queueTransferNotification(
+      tx,
+      transferId,
+      "MEMBER_TRANSFER_STARTED",
+      leaderRecipients(sendingLeaders),
+      transferNotificationEmail({
+        templateKey: "MEMBER_TRANSFER_STARTED",
+        memberName: `${transfer.person.firstName} ${transfer.person.lastName}`,
+        fromClubName: transfer.fromOrganization.name,
+        toClubName: transfer.toOrganization.name,
+        staffCompletes: transfer.staffReason === "SAME_DIRECTOR",
+      }),
+    );
   });
 }
 
@@ -586,10 +619,10 @@ async function completeTransfer(
       toOrganizationId: transfer.toOrganizationId,
       fromRosterMemberId: sending.id,
       toRosterMemberId: receiving.id,
-      ...(staffResolution ? { note: options.note } : {}),
     },
   );
 
+  await skipSupersededMoves(tx, transfer.id, personId, actor, now);
   const moves = await queueRegistrationMoves(tx, transfer.id, personId, transfer.fromOrganizationId, actor, now);
 
   const [fromClub, toClub, person, sendingLeaders, receivingLeaders] = await Promise.all([
@@ -618,6 +651,46 @@ async function completeTransfer(
   );
 
   return { transferId: transfer.id, rosterMemberId: receiving.id, registrationMovesQueued: moves };
+}
+
+const SUPERSEDED_NOTE = "Skipped automatically: a later transfer for this member completed.";
+
+/**
+ * A later transfer for the same person completed (#489): any move still
+ * pending from an earlier transfer would send their registration to a club
+ * they have already left, so it is skipped here, audited, and never left
+ * for staff to approve by mistake.
+ */
+async function skipSupersededMoves(tx: Prisma.TransactionClient, transferId: string, personId: string, actor: TransferActor, now: Date) {
+  const stale = await tx.memberTransferRegistrationMove.findMany({
+    where: { status: "PENDING", transferId: { not: transferId }, attendee: { personId } },
+    select: { id: true, transferId: true, eventId: true, registrationAttendeeId: true, fromRegistrationId: true },
+  });
+  if (stale.length === 0) return;
+  const attribution = transferActorAttribution(actor);
+  await tx.memberTransferRegistrationMove.updateMany({
+    where: { id: { in: stale.map((move) => move.id) }, status: "PENDING" },
+    data: {
+      status: "SKIPPED",
+      decidedAt: now,
+      note: SUPERSEDED_NOTE,
+      ...("userId" in attribution ? { decidedByUserId: attribution.userId } : {}),
+    },
+  });
+  for (const move of stale) {
+    await transferEvent(tx, move.transferId, "REGISTRATION_MOVE_SKIPPED", actor, SUPERSEDED_NOTE, {
+      eventId: move.eventId, moveId: move.id, automatic: true, supersededByTransferId: transferId,
+    });
+    await audit(
+      tx,
+      actor,
+      "CLUB_MEMBER_TRANSFER_REGISTRATION_MOVE_SKIPPED",
+      move.registrationAttendeeId ?? move.id,
+      "A pending registration move was skipped automatically because a later transfer for the same member completed.",
+      { transferId: move.transferId, moveId: move.id, fromRegistrationId: move.fromRegistrationId, automatic: true, supersededByTransferId: transferId },
+      { eventId: move.eventId, entityType: "RegistrationAttendee" },
+    );
+  }
 }
 
 /**
@@ -858,7 +931,8 @@ function clubVisibleEvents(transfer: ClubListTransfer, side: "RECEIVING" | "SEND
 
 function typedName(transfer: ClubListTransfer) {
   const name = `${transfer.requestedFirstName} ${transfer.requestedLastName}`.trim();
-  return name || "Removed member";
+  // Once the person is erased, the request keeps no name at all.
+  return name || "Request closed";
 }
 
 function serializeIncoming(transfer: ClubListTransfer) {
@@ -957,7 +1031,7 @@ function serializeStaff(transfer: Prisma.MemberTransferGetPayload<{ select: type
   const open = isOpenTransfer(transfer.status);
   return {
     id: transfer.id,
-    requestedName: `${transfer.requestedFirstName} ${transfer.requestedLastName}`.trim() || "Removed member",
+    requestedName: `${transfer.requestedFirstName} ${transfer.requestedLastName}`.trim() || "Erased member",
     matchedMemberName: transfer.person ? `${transfer.person.firstName} ${transfer.person.lastName}` : null,
     fromOrganizationId: transfer.fromOrganizationId,
     fromOrganizationName: transfer.fromOrganization.name,
@@ -1035,6 +1109,29 @@ function cents(value: { toString(): string } | number) {
   return Math.round(Number(value) * 100);
 }
 
+/** A registration's stored total and what has been paid on it (succeeded payments less succeeded refunds), as `checkNewTotal` reads them. */
+const registrationMoneySelect = {
+  id: true,
+  status: true,
+  totalAmount: true,
+  payments: {
+    where: { status: "SUCCEEDED" as const },
+    select: { amount: true, refunds: { where: { status: "SUCCEEDED" as const }, select: { amount: true } } },
+  },
+} satisfies Prisma.RegistrationSelect;
+
+function paidCentsOf(registration: { payments: Array<{ amount: { toString(): string }; refunds: Array<{ amount: { toString(): string } }> }> }) {
+  return registration.payments.reduce((total, payment) => (
+    total + cents(payment.amount) - payment.refunds.reduce((sum, refund) => sum + cents(refund.amount), 0)
+  ), 0);
+}
+
+const destinationSelect = {
+  ...registrationMoneySelect,
+  confirmationCode: true,
+  waitlistEntry: { select: { status: true } },
+} satisfies Prisma.RegistrationSelect;
+
 const moveSelect = {
   id: true,
   status: true,
@@ -1052,6 +1149,8 @@ const moveSelect = {
       id: true,
       fromOrganizationId: true,
       toOrganizationId: true,
+      toRosterMemberId: true,
+      toRosterMember: { select: { status: true, personId: true } },
       fromOrganization: { select: { name: true } },
       toOrganization: { select: { name: true } },
     },
@@ -1061,11 +1160,13 @@ const moveSelect = {
       id: true,
       personId: true,
       registrationId: true,
+      profileSnapshot: true,
       person: { select: { firstName: true, lastName: true } },
       adjustments: { select: { amountCents: true } },
+      honorEnrollments: { select: { offeringId: true, consumesSeat: true, offering: { select: { perClubLimit: true } } } },
     },
   },
-  fromRegistration: { select: { id: true, confirmationCode: true, status: true, totalAmount: true } },
+  fromRegistration: { select: { ...registrationMoneySelect, confirmationCode: true } },
 } satisfies Prisma.MemberTransferRegistrationMoveSelect;
 
 type StoredMove = Prisma.MemberTransferRegistrationMoveGetPayload<{ select: typeof moveSelect }>;
@@ -1073,36 +1174,73 @@ type StoredMove = Prisma.MemberTransferRegistrationMoveGetPayload<{ select: type
 async function moveDestination(client: Client, eventId: string, toOrganizationId: string) {
   const club = await client.clubEventRegistration.findUnique({
     where: { eventId_organizationId: { eventId, organizationId: toOrganizationId } },
-    select: {
-      registration: {
-        select: { id: true, confirmationCode: true, status: true, totalAmount: true, waitlistEntry: { select: { status: true } } },
-      },
-    },
+    select: { registration: { select: destinationSelect } },
   });
   return club?.registration ?? null;
+}
+
+/**
+ * Whether moving these class seats to the receiving club would put it over
+ * a class's per-club limit, counted the way class selection counts it
+ * (`seatHoldingEnrollment`, enforced in `setClassSelections`).
+ */
+async function exceedsClubClassLimit(
+  client: Client,
+  eventId: string,
+  toOrganizationId: string,
+  enrollments: Array<{ offeringId: string; consumesSeat: boolean; offering: { perClubLimit: number | null } }>,
+) {
+  for (const enrollment of enrollments) {
+    const limit = enrollment.offering.perClubLimit;
+    if (!enrollment.consumesSeat || limit === null) continue;
+    const taken = await client.honorEnrollment.count({
+      where: { eventId, offeringId: enrollment.offeringId, organizationId: toOrganizationId, ...seatHoldingEnrollment },
+    });
+    if (taken + 1 > limit) return true;
+  }
+  return false;
 }
 
 async function describeMove(client: Client, move: StoredMove) {
   const destination = move.status === "APPROVED" && move.toRegistrationId
     ? await client.registration.findUnique({
       where: { id: move.toRegistrationId },
-      select: { id: true, confirmationCode: true, status: true, totalAmount: true, waitlistEntry: { select: { status: true } } },
+      select: destinationSelect,
     })
     : await moveDestination(client, move.eventId, move.transfer.toOrganizationId);
   const personAlreadyThere = Boolean(destination && move.attendee && move.status === "PENDING" && await client.registrationAttendee.findUnique({
     where: { registrationId_personId: { registrationId: destination.id, personId: move.attendee.personId } },
     select: { id: true },
   }));
+  const adjustmentCents = move.attendee?.adjustments.reduce((total, line) => total + line.amountCents, 0) ?? 0;
+  const fromPaidCents = move.fromRegistration ? paidCentsOf(move.fromRegistration) : 0;
+  const toPaidCents = destination ? paidCentsOf(destination) : 0;
+  // A stale move (#489): the member has since left the receiving club, or moved on again.
+  const receiving = move.transfer.toRosterMember;
+  const receivingMemberActive = Boolean(receiving && receiving.status === "ACTIVE" && move.attendee && receiving.personId === move.attendee.personId);
+  const classLimitExceeded = move.status === "PENDING" && move.attendee
+    ? await exceedsClubClassLimit(client, move.eventId, move.transfer.toOrganizationId, move.attendee.honorEnrollments)
+    : false;
   const blocker = move.status === "PENDING"
     ? registrationMoveBlocker({
       attendeeOnSource: Boolean(move.attendee && move.attendee.registrationId === move.fromRegistrationId),
       sourceStatus: move.fromRegistration?.status ?? null,
+      receivingMemberActive,
       destination: destination
         ? { status: destination.status, waitlisted: destination.waitlistEntry?.status === "WAITING", personAlreadyThere }
         : null,
+      classLimitExceeded,
+      money: move.fromRegistration && destination
+        ? {
+          fromTotalCents: cents(move.fromRegistration.totalAmount),
+          fromPaidCents,
+          toTotalCents: cents(destination.totalAmount),
+          toPaidCents,
+          shiftCents: adjustmentCents,
+        }
+        : null,
     })
     : null;
-  const adjustmentCents = move.attendee?.adjustments.reduce((total, line) => total + line.amountCents, 0) ?? 0;
   return {
     id: move.id,
     status: move.status,
@@ -1114,7 +1252,13 @@ async function describeMove(client: Client, move: StoredMove) {
     fromClubName: move.transfer.fromOrganization.name,
     toClubName: move.transfer.toOrganization.name,
     fromRegistration: move.fromRegistration
-      ? { id: move.fromRegistration.id, confirmationCode: move.fromRegistration.confirmationCode, status: move.fromRegistration.status, totalCents: cents(move.fromRegistration.totalAmount) }
+      ? {
+        id: move.fromRegistration.id,
+        confirmationCode: move.fromRegistration.confirmationCode,
+        status: move.fromRegistration.status,
+        totalCents: cents(move.fromRegistration.totalAmount),
+        paidCents: fromPaidCents,
+      }
       : null,
     toRegistration: destination
       ? {
@@ -1123,6 +1267,7 @@ async function describeMove(client: Client, move: StoredMove) {
         status: destination.status,
         waitlisted: destination.waitlistEntry?.status === "WAITING",
         totalCents: cents(destination.totalAmount),
+        paidCents: toPaidCents,
       }
       : null,
     /** This person's own adjustment lines (scholarships, corrections): they move with them. */
@@ -1155,20 +1300,26 @@ export async function listRegistrationMoves(status: "PENDING" | "DECIDED" = "PEN
  * Staff approve one registration move (#489 decision 2). The attendee and
  * every row keyed to them go to the receiving club's registration together,
  * in one serializable transaction: `RegistrationAdjustment` lines,
- * `HonorEnrollment` rows (and their `organizationId`),
- * `RegistrationCapacityReservation` rows, and `RegistrationOperation`
- * history. Check-ins, attendee tags, classifications and attendee-level
+ * `HonorEnrollment` rows (and their `organizationId`), and
+ * `RegistrationCapacityReservation` rows, and the attendee snapshot's
+ * roster link is re-pointed. Operation history stays with the old
+ * registration. Check-ins, attendee tags, classifications and attendee-level
  * staff notes are keyed only to the attendee and follow it as is.
  *
  * Nothing is repriced: the priced part of each registration is untouched.
  * The one amount that follows the attendee is their own adjustment lines,
  * and each registration's stored total shifts by exactly those lines so it
- * stays "priced total plus every line". Payments stay where they were paid.
+ * stays "priced total plus every line", within the same guards a staff
+ * adjustment keeps (never below $0, never below what was paid, never from a
+ * total that may be clamped at $0). The old registration still carries the
+ * person's base price and the new one doesn't, until staff adjust.
+ * Payments stay where they were paid.
  *
  * The registration amendment engine isn't used for the move itself: it
  * works inside one registration and reprices it, which this must never do.
  */
 export async function approveRegistrationMove(moveId: string, note: string, actor: StaffTransferActor, now = new Date()) {
+  let lastError: unknown = null;
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
       return await getPrisma().$transaction(
@@ -1177,7 +1328,13 @@ export async function approveRegistrationMove(moveId: string, note: string, acto
       );
     } catch (error) {
       if (!isRetryableTransaction(error)) throw error;
+      lastError = error;
     }
+  }
+  // Still colliding on a unique index after every retry: the one a move can
+  // hit is one person per registration, so say that rather than "try again".
+  if (isUniqueViolation(lastError)) {
+    throw new MemberTransferError("MOVE_BLOCKED", "This person is already on that registration.", "ALREADY_ON_DESTINATION");
   }
   throw new MemberTransferError("TRANSFER_CONFLICT", "Another change touched these registrations at the same time. Refresh and try again.");
 }
@@ -1209,9 +1366,19 @@ async function approveRegistrationMoveOnce(tx: Prisma.TransactionClient, moveId:
     orderBy: { position: "desc" },
     select: { position: true },
   });
+  // The attendee's snapshot names their roster row; point it at the
+  // receiving club's row, so that club's registration shows them on its
+  // roster (not "off roster", where a director could untick them).
+  const snapshot = move.attendee.profileSnapshot && typeof move.attendee.profileSnapshot === "object" && !Array.isArray(move.attendee.profileSnapshot)
+    ? move.attendee.profileSnapshot as Prisma.JsonObject
+    : {};
   await tx.registrationAttendee.update({
     where: { id: attendeeId },
-    data: { registrationId: toRegistrationId, position: (last?.position ?? -1) + 1 },
+    data: {
+      registrationId: toRegistrationId,
+      position: (last?.position ?? -1) + 1,
+      profileSnapshot: { ...snapshot, clubRosterMemberId: move.transfer.toRosterMemberId },
+    },
   });
   const adjustments = await tx.registrationAdjustment.updateMany({
     where: { registrationAttendeeId: attendeeId, registrationId: fromRegistrationId },
@@ -1225,10 +1392,8 @@ async function approveRegistrationMoveOnce(tx: Prisma.TransactionClient, moveId:
     where: { registrationAttendeeId: attendeeId },
     data: { registrationId: toRegistrationId },
   });
-  const operations = await tx.registrationOperation.updateMany({
-    where: { attendeeId },
-    data: { registrationId: toRegistrationId },
-  });
+  // `RegistrationOperation` rows stay put: they are the old registration's
+  // history (substitution snapshots), and their key to the attendee still holds.
 
   const shiftCents = described.adjustmentCents;
   const fromTotalBefore = described.fromRegistration!.totalCents;
@@ -1248,7 +1413,6 @@ async function approveRegistrationMoveOnce(tx: Prisma.TransactionClient, moveId:
     adjustmentCentsMoved: shiftCents,
     honorEnrollmentsMoved: honorEnrollments.count,
     capacityReservationsMoved: reservations.count,
-    operationsMoved: operations.count,
     fromTotalCentsBefore: fromTotalBefore,
     fromTotalCentsAfter: fromTotalAfter,
     toTotalCentsBefore: toTotalBefore,

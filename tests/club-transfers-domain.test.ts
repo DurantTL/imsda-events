@@ -8,6 +8,7 @@ import {
   dedupeNotificationRecipients,
   isOpenTransfer,
   isOverdueForStaffQueue,
+  moveMoneyBlocker,
   normalizeTransferName,
   receivingClubStatusLabel,
   registrationMoveBlocker,
@@ -102,5 +103,23 @@ describe("club member transfer rules (#489)", () => {
     expect(registrationMoveBlocker({ ...open, destination: { ...destination, personAlreadyThere: true } })).toBe("ALREADY_ON_DESTINATION");
     expect(registrationMoveBlocker({ attendeeOnSource: false, sourceStatus: "SUBMITTED", destination })).toBe("ATTENDEE_GONE");
     expect(registrationMoveBlocker({ attendeeOnSource: true, sourceStatus: "CANCELLED", destination })).toBe("SOURCE_NOT_OPEN");
+  });
+
+  it("refuses a stale move and a class over the per-club limit", () => {
+    const destination = { status: "SUBMITTED", waitlisted: false, personAlreadyThere: false };
+    expect(registrationMoveBlocker({ attendeeOnSource: true, sourceStatus: "SUBMITTED", receivingMemberActive: false, destination })).toBe("MEMBER_LEFT_RECEIVING_CLUB");
+    expect(registrationMoveBlocker({ attendeeOnSource: true, sourceStatus: "SUBMITTED", destination, classLimitExceeded: true })).toBe("CLUB_CLASS_LIMIT");
+  });
+
+  it("keeps a move's adjustment shift inside the same money guards as a staff adjustment", () => {
+    const base = { fromTotalCents: 7500, fromPaidCents: 2000, toTotalCents: 15000, toPaidCents: 0 };
+    expect(moveMoneyBlocker({ ...base, shiftCents: -2500 })).toBeNull();
+    expect(moveMoneyBlocker({ ...base, fromTotalCents: 0, shiftCents: 0 })).toBeNull();
+    expect(moveMoneyBlocker({ ...base, toTotalCents: 0, shiftCents: -2500 })).toBe("TOTAL_CLAMPED");
+    expect(moveMoneyBlocker({ ...base, fromTotalCents: 0, shiftCents: 500 })).toBe("TOTAL_CLAMPED");
+    expect(moveMoneyBlocker({ ...base, shiftCents: 20000 })).toBe("TOTAL_BELOW_ZERO");
+    expect(moveMoneyBlocker({ ...base, shiftCents: -20000 })).toBe("TOTAL_BELOW_ZERO");
+    expect(moveMoneyBlocker({ ...base, shiftCents: 6000 })).toBe("TOTAL_BELOW_PAID");
+    expect(moveMoneyBlocker({ ...base, toPaidCents: 14000, shiftCents: -2500 })).toBe("TOTAL_BELOW_PAID");
   });
 });

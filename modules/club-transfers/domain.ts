@@ -146,42 +146,81 @@ export function dedupeNotificationRecipients<T extends { email: string }>(recipi
 
 /**
  * Registration move blockers (#489 decision 2). A move is refused when the
- * receiving club has no usable registration for the event, when that
- * registration is a draft or on the waitlist, or when the person is already
- * on it; the approval list shows each for staff to resolve.
+ * member has since left the receiving club, when the receiving club has no
+ * usable registration for the event, when that registration is a draft or
+ * on the waitlist, when the person is already on it, when their class seat
+ * would put the receiving club over a class's per-club limit, or when
+ * carrying their adjustment lines would break the same money rules a staff
+ * adjustment has to follow. The approval list shows each for staff to
+ * resolve.
  */
 export type RegistrationMoveBlocker =
   | "ATTENDEE_GONE"
   | "SOURCE_NOT_OPEN"
+  | "MEMBER_LEFT_RECEIVING_CLUB"
   | "NO_DESTINATION"
   | "DESTINATION_DRAFT"
   | "DESTINATION_WAITLISTED"
   | "DESTINATION_CANCELLED"
-  | "ALREADY_ON_DESTINATION";
+  | "ALREADY_ON_DESTINATION"
+  | "CLUB_CLASS_LIMIT"
+  | "TOTAL_CLAMPED"
+  | "TOTAL_BELOW_ZERO"
+  | "TOTAL_BELOW_PAID";
 
 export const registrationMoveBlockerLabels: Record<RegistrationMoveBlocker, string> = {
   ATTENDEE_GONE: "This person is no longer on the old club's registration.",
   SOURCE_NOT_OPEN: "The old club's registration is no longer submitted or confirmed.",
+  MEMBER_LEFT_RECEIVING_CLUB: "This person is no longer on the new club's roster. Skip this move.",
   NO_DESTINATION: "The new club has no registration for this event yet.",
   DESTINATION_DRAFT: "The new club's registration is still a draft.",
   DESTINATION_WAITLISTED: "The new club's registration is on the waitlist.",
   DESTINATION_CANCELLED: "The new club's registration was cancelled.",
   ALREADY_ON_DESTINATION: "This person is already on the new club's registration. Resolve it there, then skip this move.",
+  CLUB_CLASS_LIMIT: "Moving this person's class seat would put the new club over that class's per-club limit. Change their class first.",
+  TOTAL_CLAMPED: "One of these registrations has a total of $0, which may already be held at $0, so moving this person's adjustments would give the wrong amount. Fix the amounts with the adjustment tools first.",
+  TOTAL_BELOW_ZERO: "Moving this person's adjustments would bring a registration's total below $0. Fix the amounts with the adjustment tools first.",
+  TOTAL_BELOW_PAID: "Moving this person's adjustments would bring a registration's total below what has already been paid on it. Record a refund or adjust first.",
 };
+
+export type MoveMoney = { fromTotalCents: number; fromPaidCents: number; toTotalCents: number; toPaidCents: number; shiftCents: number };
+
+/**
+ * The money rules a move must keep (#489), the same ones a staff adjustment
+ * keeps (`checkNewTotal`): the person's adjustment lines leave the old
+ * registration and join the new one, so the old total moves by minus the
+ * lines and the new total by plus the lines. Neither may go below $0 or
+ * below what was already paid on it, and a stored $0 total may already be
+ * clamped, which would make the shift wrong.
+ */
+export function moveMoneyBlocker(money: MoveMoney): RegistrationMoveBlocker | null {
+  if (money.shiftCents === 0) return null;
+  if (money.fromTotalCents === 0 || money.toTotalCents === 0) return "TOTAL_CLAMPED";
+  const fromAfter = money.fromTotalCents - money.shiftCents;
+  const toAfter = money.toTotalCents + money.shiftCents;
+  if (fromAfter < 0 || toAfter < 0) return "TOTAL_BELOW_ZERO";
+  if (fromAfter < money.fromPaidCents || toAfter < money.toPaidCents) return "TOTAL_BELOW_PAID";
+  return null;
+}
 
 export function registrationMoveBlocker(input: {
   attendeeOnSource: boolean;
   sourceStatus: string | null;
+  receivingMemberActive?: boolean;
   destination: { status: string; waitlisted: boolean; personAlreadyThere: boolean } | null;
+  classLimitExceeded?: boolean;
+  money?: MoveMoney | null;
 }): RegistrationMoveBlocker | null {
   if (!input.attendeeOnSource) return "ATTENDEE_GONE";
   if (input.sourceStatus !== "SUBMITTED" && input.sourceStatus !== "CONFIRMED") return "SOURCE_NOT_OPEN";
+  if (input.receivingMemberActive === false) return "MEMBER_LEFT_RECEIVING_CLUB";
   if (!input.destination) return "NO_DESTINATION";
   if (input.destination.status === "DRAFT") return "DESTINATION_DRAFT";
   if (input.destination.status === "WAITLISTED" || input.destination.waitlisted) return "DESTINATION_WAITLISTED";
   if (input.destination.status === "CANCELLED") return "DESTINATION_CANCELLED";
   if (input.destination.personAlreadyThere) return "ALREADY_ON_DESTINATION";
-  return null;
+  if (input.classLimitExceeded) return "CLUB_CLASS_LIMIT";
+  return input.money ? moveMoneyBlocker(input.money) : null;
 }
 
 /** Staff queue filters (#489 N2). */

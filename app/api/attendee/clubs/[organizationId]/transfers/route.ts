@@ -1,7 +1,9 @@
+import { after } from "next/server";
+import { logError } from "@/lib/logger";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { requireClubTransferAccess, transferRateLimitKey } from "@/modules/club-transfers/access";
 import { memberTransferApiError } from "@/modules/club-transfers/api-errors";
-import { listClubTransfers, requestTransfer } from "@/modules/club-transfers/repository";
+import { listClubTransfers, queueTransferRequestNotice, requestTransfer } from "@/modules/club-transfers/repository";
 import { requestTransferSchema } from "@/modules/club-transfers/schemas";
 import { applyRateLimitHeaders } from "@/modules/rate-limit/domain";
 import { checkClubTransferRequestRateLimit } from "@/modules/rate-limit/service";
@@ -42,7 +44,16 @@ async function postHandler(request: Request, context: RouteContext) {
       }, { status: 429 }), rateLimit);
     }
     const input = requestTransferSchema.parse(await request.json().catch(() => ({})));
-    await requestTransfer(organizationId, input, access.actor);
+    const { transferId } = await requestTransfer(organizationId, input, access.actor);
+    // Every request, matched or not, schedules the same after-response work,
+    // so the answer's timing never tells a matched name from an unmatched one.
+    after(async () => {
+      try {
+        await queueTransferRequestNotice(transferId);
+      } catch (error) {
+        logError("Queueing a member transfer request notice failed", error);
+      }
+    });
     return applyRateLimitHeaders(Response.json({
       ok: true,
       message: "Request sent. You'll see it here as pending until it's answered.",

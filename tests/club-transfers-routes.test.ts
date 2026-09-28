@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   rejectCrossOriginRequest: vi.fn(),
   checkClubTransferRequestRateLimit: vi.fn(),
   requestTransfer: vi.fn(),
+  queueTransferRequestNotice: vi.fn(),
+  after: vi.fn(),
   listClubTransfers: vi.fn(),
   acceptTransfer: vi.fn(),
   declineTransfer: vi.fn(),
@@ -21,6 +23,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("server-only", () => ({}));
+vi.mock("next/server", async () => {
+  const actual = await vi.importActual<typeof import("next/server")>("next/server");
+  return { ...actual, after: (work: () => unknown) => mocks.after(work) };
+});
 vi.mock("@/modules/access/request-security", () => ({ rejectCrossOriginRequest: mocks.rejectCrossOriginRequest }));
 vi.mock("@/modules/rate-limit/service", () => ({ checkClubTransferRequestRateLimit: mocks.checkClubTransferRequestRateLimit }));
 vi.mock("@/modules/club-transfers/access", async () => {
@@ -32,6 +38,7 @@ vi.mock("@/modules/club-transfers/repository", async () => {
   return {
     ...actual,
     requestTransfer: mocks.requestTransfer,
+    queueTransferRequestNotice: mocks.queueTransferRequestNotice,
     listClubTransfers: mocks.listClubTransfers,
     acceptTransfer: mocks.acceptTransfer,
     declineTransfer: mocks.declineTransfer,
@@ -141,6 +148,10 @@ describe("requesting a transfer", () => {
     expect(a).toEqual(b);
     expect(JSON.stringify(a)).not.toMatch(/matched|transferId|personId/);
     expect(mocks.requestTransfer).toHaveBeenCalledWith("club-b", requestBody, clubActor);
+    // Both schedule the same after-response work; the notice itself decides whether there's anything to send.
+    expect(mocks.after).toHaveBeenCalledTimes(2);
+    for (const [work] of mocks.after.mock.calls) await (work as () => Promise<void>)();
+    expect(mocks.queueTransferRequestNotice.mock.calls).toEqual([["matched"], ["unmatched"]]);
   });
 
   it("is rate-limited per director and club, and says so without doing anything", async () => {

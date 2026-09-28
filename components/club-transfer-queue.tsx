@@ -229,6 +229,7 @@ export function ClubTransferQueue() {
             <label>
               {needsNote ? "Note (required)" : "Note (optional)"}
               <textarea maxLength={500} onChange={(event) => setNote(event.target.value)} rows={3} value={note} />
+              <small className="field-help">Staff only. Don&apos;t include personal details such as health or family circumstances.</small>
             </label>
           </div>
         )}

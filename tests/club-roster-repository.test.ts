@@ -65,6 +65,13 @@ function fakeDatabase() {
     },
     // Transfer records (#489) are blanked, never counted, when a person is erased.
     memberTransfer: {
+      findMany: async () => [{ id: "transfer-1" }],
+      updateMany: async (args: unknown) => { db.transferBlanks.push(args); return { count: 1 }; },
+    },
+    memberTransferEvent: {
+      updateMany: async (args: unknown) => { db.transferBlanks.push(args); return { count: 1 }; },
+    },
+    memberTransferRegistrationMove: {
       updateMany: async (args: unknown) => { db.transferBlanks.push(args); return { count: 0 }; },
     },
     memberHonorEntry: {
@@ -233,8 +240,11 @@ describe("club roster storage", () => {
     }
     expect(db.people.map((person) => person.firstName)).toEqual(["Other"]);
     // A deleted person's transfer records (#489) keep no name; the kept person's are untouched.
-    expect(db.transferBlanks).toHaveLength(1);
-    expect(db.transferBlanks[0]).toMatchObject({ data: { requestedFirstName: "", requestedLastName: "" } });
+    expect(db.transferBlanks).toEqual([
+      { where: { id: { in: ["transfer-1"] } }, data: { requestedFirstName: "", requestedLastName: "", reason: "", staffNote: "" } },
+      { where: { transferId: { in: ["transfer-1"] } }, data: { note: "" } },
+      { where: { transferId: { in: ["transfer-1"] } }, data: { note: "" } },
+    ]);
     expect(await listRoster("club-1", "2026-27", now)).toEqual([]);
     await expect(updateRosterMember("club-1", lone, { role: "Back" }, actor, now)).rejects.toMatchObject({ code: "MEMBER_REMOVED" });
   });

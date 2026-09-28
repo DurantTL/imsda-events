@@ -27,6 +27,8 @@ loadEnvConfig(process.cwd());
 // turns the queueing path on so duplicate recipients are exercised.
 process.env.RESEND_API_KEY ||= "verify-script-placeholder-never-sent";
 process.env.ACCOUNT_EMAIL_SENDER_ADDRESS ||= "events@xfer.example.test";
+// A synthetic key for this run's own sealed birth dates, when none is configured.
+process.env.SECRET_ENCRYPTION_KEY ||= "verify-club-transfers-synthetic-key-not-a-secret";
 
 const prisma = new PrismaClient();
 const P = "xfer";
@@ -37,7 +39,7 @@ const staffUserId = `${P}_staff`;
 const accounts = { a: `${P}_acct_a`, b: `${P}_acct_b`, c: `${P}_acct_c` };
 const now = new Date("2026-10-05T15:00:00Z");
 const clubYear = "2026-27";
-const sealed = "v1.synthetic-sealed-birth-date";
+let sealed = "";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`FAILED: ${message}`);
@@ -90,6 +92,9 @@ async function main() {
   const repo = await import("../modules/club-transfers/repository");
   const { removeRosterMember } = await import("../modules/club-rosters/repository");
   const { listClubHonorsPage, listMemberHonorHistory } = await import("../modules/honors/member-honor-repository");
+  const { getClubEventWorkspace } = await import("../modules/club-registrations/repository");
+  const { sealBirthDate } = await import("../modules/club-rosters/birth-dates");
+  sealed = sealBirthDate("2014-03-09");
 
   await cleanup();
   await prisma.organization.createMany({
@@ -131,7 +136,7 @@ async function main() {
     data: {
       id: eventId, slug: `${P}-event`, name: "Transfer verification camporee", startsAt: new Date("2026-11-06T15:00:00Z"),
       endsAt: new Date("2026-11-08T20:00:00Z"), isPublished: true, registrationOpensOn: "2026-09-01",
-      registrationClosesOn: "2026-10-30", billingMode: "DEFERRED_ORGANIZATION_INVOICE",
+      registrationClosesOn: "2026-10-30", billingMode: "DEFERRED_ORGANIZATION_INVOICE", audience: "CLUB",
     },
   });
   await prisma.person.create({ data: { id: `${P}_holder`, firstName: "Test", lastName: "Holder" } });
@@ -142,7 +147,7 @@ async function main() {
     { eventId, organizationId: clubs.b, registrationId: regB.id },
   ] });
   const adaAttendee = await prisma.registrationAttendee.create({
-    data: { eventId, registrationId: regA.id, personId: ada.personId!, attendeeType: "YOUTH", position: 0, profileSnapshot: { firstName: "Ada", lastName: "Testperson" } },
+    data: { eventId, registrationId: regA.id, personId: ada.personId!, attendeeType: "YOUTH", position: 0, profileSnapshot: { firstName: "Ada", lastName: "Testperson", clubRosterMemberId: ada.id } },
   });
   await prisma.registrationAdjustment.create({
     data: { eventId, registrationId: regA.id, registrationAttendeeId: adaAttendee.id, kind: "SCHOLARSHIP", amountCents: -2500, reason: "Test scholarship", createdByNameSnapshot: "Test Staff" },
@@ -158,6 +163,11 @@ async function main() {
   assert(Object.keys(matched).join() === Object.keys(unmatched).join(), "matched and unmatched requests answer with the same shape");
   const matchedRow = await prisma.memberTransfer.findUniqueOrThrow({ where: { id: matched.transferId } });
   const unmatchedRow = await prisma.memberTransfer.findUniqueOrThrow({ where: { id: unmatched.transferId } });
+  // The route queues each request's notice after the response; here it runs by hand, for both.
+  await repo.queueTransferRequestNotice(matched.transferId, now);
+  await repo.queueTransferRequestNotice(unmatched.transferId, now);
+  assert(await prisma.messageOutbox.count({ where: { correlationId: matched.transferId, templateKey: "MEMBER_TRANSFER_STARTED" } }) === 1, "the sending club is told about a matched request");
+  assert(await prisma.messageOutbox.count({ where: { correlationId: unmatched.transferId } }) === 0, "an unmatched request emails no one");
   assert(matchedRow.status === "PENDING" && matchedRow.pendingPersonId === ada.personId, "exact normalized name matched");
   assert(unmatchedRow.status === "UNMATCHED" && unmatchedRow.staffReason === "NO_MATCH" && !unmatchedRow.sendingClubVisible, "unmatched request goes to staff only");
   assert(await prisma.clubRosterMember.count({ where: { organizationId: clubs.b } }) === 0, "no receiving roster row before acceptance");
@@ -217,22 +227,53 @@ async function main() {
   assert(pendingMove.status === "PENDING" && (await prisma.registrationAttendee.findUniqueOrThrow({ where: { id: adaAttendee.id } })).registrationId === regA.id, "nothing moved on completion; a move waits for staff");
   console.log("ok  sending row erased, birth date moved, one Person, honors follow, attendance and reports stay, registration waits");
 
-  // 6. A draft destination is refused; then an approved move takes the attendee and dependents, never repricing.
+  // 6. Every blocker is checked for real, then an approved move takes the attendee and dependents, never repricing.
+  const blockedAs = async (blocker: string, message: string) => {
+    const error = await repo.approveRegistrationMove(pendingMove.id, "", staff, now).then(() => null, (caught: unknown) => caught);
+    assert(error && typeof error === "object" && (error as { blocker?: string }).blocker === blocker, `${message}: expected ${blocker}, got ${String(error)}`);
+    assert((await prisma.memberTransferRegistrationMove.findUniqueOrThrow({ where: { id: pendingMove.id } })).status === "PENDING", `${message}: the move stays pending`);
+  };
   await prisma.registration.update({ where: { id: regB.id }, data: { status: "DRAFT" } });
-  await expectCode(repo.approveRegistrationMove(pendingMove.id, "", staff, now), "MOVE_BLOCKED", "a draft destination");
-  assert((await prisma.memberTransferRegistrationMove.findUniqueOrThrow({ where: { id: pendingMove.id } })).status === "PENDING", "a refused move stays pending");
+  await blockedAs("DESTINATION_DRAFT", "a draft destination");
   await prisma.registration.update({ where: { id: regB.id }, data: { status: "SUBMITTED" } });
+  // Money guards, the same as a staff adjustment's: Ada carries a -$25 scholarship.
+  await prisma.registration.update({ where: { id: regB.id }, data: { totalAmount: 0 } });
+  await blockedAs("TOTAL_CLAMPED", "a destination total at $0 (maybe clamped)");
+  await prisma.registration.update({ where: { id: regB.id }, data: { totalAmount: 150 } });
+  const bigPayment = await prisma.payment.create({ data: { eventId, registrationId: regB.id, amount: 140, status: "SUCCEEDED", method: "CASH" } });
+  await blockedAs("TOTAL_BELOW_PAID", "a destination left below what it was paid ($125 < $140)");
+  await prisma.payment.delete({ where: { id: bigPayment.id } });
+  const scholarship = await prisma.registrationAdjustment.findFirstOrThrow({ where: { registrationAttendeeId: adaAttendee.id } });
+  await prisma.registrationAdjustment.update({ where: { id: scholarship.id }, data: { amountCents: 20000 } });
+  await blockedAs("TOTAL_BELOW_ZERO", "moving a +$200 line off a $75 registration");
+  await prisma.registrationAdjustment.update({ where: { id: scholarship.id }, data: { amountCents: -2500 } });
+  // Club B already has a youth in Ada's class, which allows one per club.
+  await prisma.person.create({ data: { id: `${P}_bea`, firstName: "Bea", lastName: "Testperson" } });
+  const bea = await prisma.registrationAttendee.create({
+    data: { eventId, registrationId: regB.id, personId: `${P}_bea`, attendeeType: "YOUTH", position: 0, profileSnapshot: { firstName: "Bea", lastName: "Testperson" } },
+  });
+  const beaSeat = await prisma.honorEnrollment.create({ data: { eventId, offeringId: offering.id, registrationId: regB.id, registrationAttendeeId: bea.id, organizationId: clubs.b, consumesSeat: true } });
+  await prisma.honorOffering.update({ where: { id: offering.id }, data: { perClubLimit: 1 } });
+  await blockedAs("CLUB_CLASS_LIMIT", "a class seat over the new club's per-club limit");
+  await prisma.honorEnrollment.delete({ where: { id: beaSeat.id } });
+  await prisma.honorOffering.update({ where: { id: offering.id }, data: { perClubLimit: 5 } });
+  console.log("ok  refused: draft destination, clamped total, below paid, below $0, per-club class limit; each left the move pending");
+
   const moved = await repo.approveRegistrationMove(pendingMove.id, "Approved in test", staff, now);
   const attendeeAfter = await prisma.registrationAttendee.findUniqueOrThrow({ where: { id: adaAttendee.id } });
   const enrollment = await prisma.honorEnrollment.findFirstOrThrow({ where: { registrationAttendeeId: adaAttendee.id } });
   const adjustment = await prisma.registrationAdjustment.findFirstOrThrow({ where: { registrationAttendeeId: adaAttendee.id } });
   assert(attendeeAfter.registrationId === regB.id && enrollment.registrationId === regB.id && enrollment.organizationId === clubs.b && adjustment.registrationId === regB.id, "attendee, class seat and adjustment moved together");
+  assert((attendeeAfter.profileSnapshot as { clubRosterMemberId?: string }).clubRosterMemberId === accepted.rosterMemberId, "the snapshot points at the receiving roster row");
+  const bWorkspace = await getClubEventWorkspace(clubs.b, eventId, now);
+  const adaOnB = bWorkspace.registration?.attendees.find((row) => row.attendeeId === adaAttendee.id);
+  assert(adaOnB && adaOnB.offRoster === false && adaOnB.clubRosterMemberId === accepted.rosterMemberId, "the receiving club's registration shows her on its roster");
   const [aAfter, bAfter] = await Promise.all([prisma.registration.findUniqueOrThrow({ where: { id: regA.id } }), prisma.registration.findUniqueOrThrow({ where: { id: regB.id } })]);
   assert(Number(aAfter.totalAmount) === 100 && Number(bAfter.totalAmount) === 125, `totals shift only by the moved line: A ${aAfter.totalAmount}, B ${bAfter.totalAmount}`);
   assert(moved.fromTotalCentsBefore === 7500 && moved.toTotalCentsAfter === 12500, "the move reports both totals");
   assert(await prisma.payment.count({ where: { registrationId: regA.id } }) === 1, "the payment stays with the old club's registration");
   assert(await prisma.auditLog.count({ where: { action: "CLUB_MEMBER_TRANSFER_REGISTRATION_MOVE_APPROVED", actorUserId: staffUserId } }) === 1, "the approval is audited with the actor");
-  console.log("ok  draft destination refused; approved move took attendee, seat and adjustment; payment stayed");
+  console.log("ok  approved move took attendee, seat and adjustment; snapshot re-pointed, on-roster at the new club; payment stayed");
 
   // 7. Transfer back to club A in the same club year.
   const back = await repo.requestTransfer(clubs.a, { fromOrganizationId: clubs.b, firstName: "Ada", lastName: "Testperson", reason: "Moved back." }, directorA, now);
@@ -240,10 +281,24 @@ async function main() {
   const backRow = await prisma.clubRosterMember.findUniqueOrThrow({ where: { id: backAccepted.rosterMemberId } });
   assert(backRow.organizationId === clubs.a && backRow.personId === ada.personId && backRow.sealedBirthDate === sealed, "back at club A with the birth date");
   assert(await prisma.clubRosterMember.count({ where: { personId: ada.personId, status: { not: "REMOVED" } } }) === 1, "exactly one live roster row");
+  // Transferring back queued a move of Ada's Club B registration back to Club A.
   const backMove = await prisma.memberTransferRegistrationMove.findFirstOrThrow({ where: { transferId: back.transferId } });
-  await repo.skipRegistrationMove(backMove.id, "Staying on Club B's camporee registration", staff, now);
-  assert(await prisma.auditLog.count({ where: { action: "CLUB_MEMBER_TRANSFER_REGISTRATION_MOVE_SKIPPED", actorUserId: staffUserId } }) === 1, "a skip is audited with the actor");
-  console.log("ok  transfer back to the original club in the same club year; a skipped move is audited");
+  assert(backMove.status === "PENDING" && backMove.fromRegistrationId === regB.id, "the transfer back queued her Club B registration");
+  // Stale: she's no longer active at Club A, so the move is refused.
+  await prisma.clubRosterMember.update({ where: { id: backRow.id }, data: { status: "INACTIVE" } });
+  await expectCode(repo.approveRegistrationMove(backMove.id, "", staff, now), "MOVE_BLOCKED", "a move to a club she's no longer active at");
+  const staleError = await repo.approveRegistrationMove(backMove.id, "", staff, now).then(() => null, (caught: unknown) => caught);
+  assert((staleError as { blocker?: string }).blocker === "MEMBER_LEFT_RECEIVING_CLUB", "blocked as MEMBER_LEFT_RECEIVING_CLUB");
+  await prisma.clubRosterMember.update({ where: { id: backRow.id }, data: { status: "ACTIVE" } });
+  // A later transfer for the same person completes: the older pending move is skipped automatically, and audited.
+  const again = await repo.requestTransfer(clubs.b, { fromOrganizationId: clubs.a, firstName: "Ada", lastName: "Testperson", reason: "Moved again." }, directorB, now);
+  await repo.acceptTransfer(clubs.a, again.transferId, directorA, now);
+  const superseded = await prisma.memberTransferRegistrationMove.findUniqueOrThrow({ where: { id: backMove.id } });
+  assert(superseded.status === "SKIPPED" && superseded.note.includes("later transfer"), "the older pending move was skipped automatically");
+  const autoSkipAudit = await prisma.auditLog.findFirst({ where: { action: "CLUB_MEMBER_TRANSFER_REGISTRATION_MOVE_SKIPPED", entityId: adaAttendee.id } });
+  assert(autoSkipAudit && (autoSkipAudit.metadata as { automatic?: boolean; actorAttendeeAccountId?: string }).automatic === true
+    && (autoSkipAudit.metadata as { actorAttendeeAccountId?: string }).actorAttendeeAccountId === accounts.a, "the automatic skip is audited with the actor");
+  console.log("ok  transfer back works; a stale move is refused; a later transfer skips the older pending move, audited");
 
   // 8. Complete, then remove: the receiving club's removal still deletes the Person and blanks the transfer's names.
   const quinn = await addMember(clubs.a, "quinn", "Quinn", "Testperson");
@@ -261,7 +316,14 @@ async function main() {
   await removeRosterMember(clubs.c, qFinished.rosterMemberId, { accountId: accounts.c }, later);
   assert(await prisma.person.count({ where: { id: quinn.personId! } }) === 0, "the Person is deleted once nothing else refers to it");
   const qTransfer = await prisma.memberTransfer.findUniqueOrThrow({ where: { id: q.transferId } });
-  assert(qTransfer.personId === null && qTransfer.requestedFirstName === "" && qTransfer.requestedLastName === "", "the transfer keeps no personId and no name after erasure");
+  assert(qTransfer.personId === null && qTransfer.requestedFirstName === "" && qTransfer.requestedLastName === ""
+    && qTransfer.reason === "" && qTransfer.staffNote === "", "the transfer keeps no personId, name, reason or staff note after erasure");
+  assert(await prisma.memberTransferEvent.count({ where: { transferId: q.transferId, note: { not: "" } } }) === 0, "no event note survives erasure");
+  const cView = await repo.listClubTransfers(clubs.c, directorC, later);
+  const qCard = cView.incoming.find((row) => row.id === q.transferId);
+  assert(qCard && qCard.memberName === "Request closed" && qCard.reason === "", "the receiving club sees a neutral 'Request closed'");
+  const qAudit = await prisma.auditLog.findFirst({ where: { action: "CLUB_MEMBER_TRANSFER_STAFF_FINISHED", entityId: q.transferId } });
+  assert(qAudit && !JSON.stringify(qAudit.metadata).includes("Finished after 14 days"), "the staff note is kept out of audit metadata");
   console.log("ok  complete then remove: Person deleted, transfer record keeps clubs and dates but no name");
 
   // 9. Remove, then complete: the pending transfer can't complete, and the receiving club can cancel it.
