@@ -12,6 +12,7 @@ import {
   UsersRound,
   WalletCards,
 } from "lucide-react";
+import { EventAutoSelectNotice } from "@/components/event-auto-select-notice";
 import { evaluateEventRegistrationPhase } from "@/modules/events/lifecycle";
 import { getEventOverview } from "@/modules/events/repository";
 import { resolveEventContext } from "@/modules/events/selection";
@@ -45,7 +46,7 @@ function registrationSummary(registration: Awaited<ReturnType<typeof listRegistr
 
 export default async function OverviewPage({ searchParams }: { searchParams: Promise<{ event?: string }> }) {
   const requested = (await searchParams).event;
-  const { event, permissions } = await resolveEventContext(requested);
+  const { event, permissions, autoSelected } = await resolveEventContext(requested);
   const canSeeSensitiveData = permissions.includes("VIEW_SENSITIVE_DATA");
   const canViewReports = permissions.includes("VIEW_REPORTS");
   const [overview, registrations, backgroundFlags] = await Promise.all([
@@ -88,6 +89,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
 
   return (
     <>
+      {autoSelected && <EventAutoSelectNotice eventName={event.name} />}
       <section className="event-hero">
         <div className="hero-copy">
           <span className="event-state">{eventState}</span>
