@@ -51,6 +51,25 @@ export function clubYearFor(date: Date) {
   return `${start}-${String((start + 1) % 100).padStart(2, "0")}`;
 }
 
+/** The previous, current, and next club year (#541): what an import may target and a roster may show. */
+export function clubYearChoices(now = new Date()) {
+  const year = Number(clubYearFor(now).slice(0, 4));
+  return [year - 1, year, year + 1].map((start) => `${start}-${String((start + 1) % 100).padStart(2, "0")}`);
+}
+
+/**
+ * Which club year a roster screen shows for `?year=` (#541). Anything but the
+ * previous, current, or next year falls back to the current one. Only the
+ * current year is editable: every roster write route works on the current
+ * year, so an older or newer year is shown read-only.
+ */
+export function rosterYearView(yearParam: string | string[] | undefined, now = new Date()) {
+  const currentClubYear = clubYearFor(now);
+  const choices = clubYearChoices(now);
+  const clubYear = choices.find((year) => year === yearParam) ?? currentClubYear;
+  return { clubYear, currentClubYear, choices, readOnly: clubYear !== currentClubYear };
+}
+
 const CALENDAR_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 export function parseCalendarDate(value: string) {

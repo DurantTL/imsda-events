@@ -3,6 +3,7 @@ import { logError } from "@/lib/logger";
 import { AccessDeniedError } from "@/modules/access/authorization";
 import { ClubImportParseError } from "@/modules/club-imports/domain";
 import { ClubInviteError } from "@/modules/club-imports/invites";
+import { ImportYearMoveError } from "@/modules/club-imports/move-year-domain";
 
 export function clubImportApiError(error: unknown, action: string) {
   if (error instanceof ZodError) {
@@ -23,6 +24,10 @@ export function clubImportApiError(error: unknown, action: string) {
       : error.code === "INVITE_ROLE_NOT_ALLOWED" ? 403
       : 409;
     return Response.json({ error: error.code, message: error.message }, { status });
+  }
+  if (error instanceof ImportYearMoveError) {
+    const status = error.code === "IMPORT_NOT_FOUND" ? 404 : error.code === "INVALID_TARGET_YEAR" ? 400 : 409;
+    return Response.json({ error: error.code, message: error.message, ...(error.preview ? { preview: error.preview } : {}) }, { status });
   }
   // Never log the body: an export holds names, emails, and minors' ages.
   logError(`${action} failed`, error);
