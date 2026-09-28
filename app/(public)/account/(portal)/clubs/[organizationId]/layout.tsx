@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { AccountSectionNav } from "@/components/account-section-nav";
 import Link from "next/link";
@@ -7,6 +8,11 @@ import { requireAttendeeSecondStep } from "@/modules/attendee-accounts/portal-se
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import { clubCapabilities, clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
+
+// Every page under a club's portal is an authenticated leader/director
+// destination (#108): noindex here covers each one that doesn't set its own
+// `robots`, the same way the sibling `area/[organizationId]` pages already do.
+export const metadata: Metadata = { robots: { index: false, follow: false, nocache: true } };
 
 /**
  * Every club screen shares the club's name, its tabs, and the authenticator
@@ -49,6 +55,8 @@ export default async function ClubLayout({
               { href: `${base}/roster`, label: "Roster" },
               // Honors open on the roster's own gate (#486), so the tab follows the roster capability.
               ...(access.capabilities.roster ? [{ href: `${base}/honors`, label: "Honors" }] : []),
+              // Supplies open on the roster's gate too (#531): directors and deputies edit, registrars view.
+              ...(access.capabilities.roster ? [{ href: `${base}/supplies`, label: "Supplies" }] : []),
               { href: `${base}/events`, label: "Events & classes", matchChildren: true },
               ...(access.capabilities.submitReports ? [
                 { href: `${base}/notes`, label: "Meeting notes", matchChildren: true },

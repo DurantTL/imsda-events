@@ -61,3 +61,6 @@ jobs:
       # Real-database check of the #527 background-check list migration and matching:
       # statuses unchanged across the migration, refreshes, and a re-upload (#527).
       - run: npm run test:background-check-list
+
+      # Real-database round trip of the full club supply reference file (#531).
+      - run: npm run test:club-supplies

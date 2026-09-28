@@ -16,6 +16,7 @@ import {
   LayoutTemplate,
   Map as MapIcon,
   MailCheck,
+  Package,
   RefreshCw,
   ShieldCheck,
   TentTree,
@@ -189,6 +190,7 @@ export default async function SystemAdminPage({
           <Link className="secondary-button" href="/admin/settings"><CloudCog aria-hidden="true" size={15} /> Platform settings</Link>
           <Link className="secondary-button" href="/admin/organizations"><Church aria-hidden="true" size={15} /> Churches and clubs</Link>
           <Link className="secondary-button" href="/admin/honors"><Award aria-hidden="true" size={15} /> Honor catalog</Link>
+          <Link className="secondary-button" href="/admin/club-supplies"><Package aria-hidden="true" size={15} /> Club supply catalog</Link>
           <Link className="secondary-button" href="/admin/calendar"><CalendarDays aria-hidden="true" size={15} /> Public calendar</Link>
           <Link className="secondary-button" href="/admin/organizations/background-checks"><ShieldCheck aria-hidden="true" size={15} /> Background checks</Link>
           <Link className="secondary-button" href="/admin"><RefreshCw aria-hidden="true" size={15} /> Refresh</Link>

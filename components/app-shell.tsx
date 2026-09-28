@@ -16,6 +16,7 @@ import { EventAutoSelectNotice } from "@/components/event-auto-select-notice";
 import { rememberLastUsedEvent } from "@/components/remember-last-event";
 import { SignOutButton } from "@/components/sign-out-button";
 import type { EventPermission } from "@/modules/access/permissions";
+import { otherWorkspaceContextsForStaff } from "@/modules/access/workspace-contexts";
 import {
   matchesVisibility,
   mobileNavigationOrder,
@@ -84,6 +85,12 @@ export function AppShell({
     events.find((event) => event.id === selectedEventId)?.permissions ?? [],
   );
   const isSystemAdmin = user.globalRole === "SYSTEM_ADMIN";
+  // The other workspaces this staff identity may switch into (#108): the
+  // account popover's System management link and both attendee switch
+  // buttons read this, so they always agree with each other.
+  const workspaceContexts = otherWorkspaceContextsForStaff({ isSystemAdmin, attendeeAccountAvailable });
+  const systemAdminContext = workspaceContexts.find((context) => context.kind === "system_admin");
+  const canSwitchToAttendee = workspaceContexts.some((context) => context.kind === "attendee");
   const eventQuery = selectedEventId ? `?event=${encodeURIComponent(selectedEventId)}` : "";
   const visibleStatic = navigation.filter((item) => matchesVisibility(item, selectedPermissions));
   const dashboardItem = visibleStatic.find((item) => !item.group && item.href !== "/more");
@@ -226,7 +233,7 @@ export function AppShell({
             </label>
           )}
           <div className="header-actions">
-            {attendeeAccountAvailable
+            {canSwitchToAttendee
               ? (
                 <form action="/api/auth/switch-to-attendee" method="post">
                   <button
@@ -257,13 +264,13 @@ export function AppShell({
               {openMenu === "account" && (
                 <div className="header-popover account-popover" role="status">
                   <strong>{user.displayName}</strong><p>{user.email}</p><small>Database-backed staff session</small>
-                  {user.globalRole === "SYSTEM_ADMIN" && (
-                    <Link className="account-system-link" href="/admin" onClick={() => setOpenMenu(null)}>
+                  {systemAdminContext && (
+                    <Link className="account-system-link" href={systemAdminContext.href} onClick={() => setOpenMenu(null)}>
                       <ShieldCheck aria-hidden="true" size={17} />
-                      System management
+                      {systemAdminContext.label}
                     </Link>
                   )}
-                  {attendeeAccountAvailable && (
+                  {canSwitchToAttendee && (
                     <form
                       action="/api/auth/switch-to-attendee"
                       className="account-switch-form"

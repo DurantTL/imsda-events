@@ -3,7 +3,10 @@ import { BrandMark } from "@/components/brand-mark";
 import { PasswordResetForm } from "@/components/password-reset-form";
 import { describeAccountToken } from "@/modules/access/auth-service";
 
-export const metadata: Metadata = { title: "Choose a password" };
+export const metadata: Metadata = {
+  title: "Choose a password",
+  robots: { index: false, follow: false },
+};
 
 export default async function ResetPasswordPage({ searchParams }: { searchParams: Promise<{ token?: string }> }) {
   const { token = "" } = await searchParams;

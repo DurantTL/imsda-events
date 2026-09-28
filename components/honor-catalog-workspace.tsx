@@ -73,7 +73,7 @@ export function HonorCatalogWorkspace({ initialHonors }: { initialHonors: HonorR
             eyebrow="Honor catalog CSV"
             help={(
               <p>
-                Fill in the CSV template (Code, Name, Description, Active) and save it
+                Fill in the CSV template (Code, Name, Description, Active, and optionally Catalog Number and Category) and save it
                 as CSV. Honors are matched by code: new codes are added, known codes are updated with what the file fills in.
                 Honors missing from the file are left alone; nothing is deleted.
               </p>
