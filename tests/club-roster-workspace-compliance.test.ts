@@ -25,6 +25,7 @@ function member(id: string, overrides: Partial<RosterMemberRecord> = {}): Roster
     age: 30,
     reportedAge: null,
     birthDateNeeded: false,
+    willingToDrive: false,
     updatedAt: new Date("2026-09-01T00:00:00Z").toISOString(),
     ...overrides,
   };
