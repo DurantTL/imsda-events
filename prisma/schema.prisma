@@ -1888,8 +1888,8 @@ model PersonMatchCandidate {
   id                    String                 @id @default(cuid())
   personAId             String
   personBId             String
-  matchedSignals        PersonMatchSignal[]
-  contradictingSignals  PersonMatchSignal[]
+  matchedSignals        PersonMatchSignal[] @default([])
+  contradictingSignals  PersonMatchSignal[] @default([])
   confidence            PersonMatchConfidence
   /// Bumped whenever `duplicate-match-domain.ts`'s matching rules change
   /// behavior, so an old candidate never silently claims to have been

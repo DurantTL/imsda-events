@@ -36,6 +36,19 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run db:deploy
+      # Fails when prisma/schema.prisma and the committed migration history
+      # disagree (#513) — otherwise `prisma migrate dev` silently produces
+      # unrelated DROP/RENAME statements for the next migration.
+      - name: Check for schema/migration drift
+        env:
+          PGPASSWORD: imsda_ci
+        run: |
+          psql -h localhost -U imsda -d imsda_events -c "CREATE DATABASE imsda_events_shadow;"
+          npx prisma migrate diff \
+            --from-migrations prisma/migrations \
+            --to-schema-datamodel prisma/schema.prisma \
+            --shadow-database-url postgresql://imsda:imsda_ci@localhost:5432/imsda_events_shadow?schema=public \
+            --exit-code
       - run: npm run db:seed
       - run: npm run verify
       # Real-database check that Honors Weekend class seats hold under concurrent saves (#359).
