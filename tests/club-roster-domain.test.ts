@@ -149,4 +149,15 @@ describe("club roster rules", () => {
     });
     expect(rosterYearSummary([])).toEqual({ active: 0, staff: 0, members: 0, byClass: [] });
   });
+
+  it("never counts staff or adults in the class breakdown, even if a row somehow carries a class level (review fix)", () => {
+    const summary = rosterYearSummary([
+      { status: "ACTIVE", attendeeType: "STAFF", classLevel: "RANGER" },
+      { status: "ACTIVE", attendeeType: "ADULT", classLevel: "GUIDE" },
+      { status: "ACTIVE", attendeeType: "YOUTH", classLevel: "RANGER" },
+    ]);
+    expect(summary.staff).toBe(2);
+    expect(summary.members).toBe(1);
+    expect(summary.byClass).toEqual([{ classLevel: "RANGER", label: "Ranger", count: 1 }]);
+  });
 });

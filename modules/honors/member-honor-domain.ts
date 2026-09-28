@@ -1,4 +1,5 @@
 import { isCalendarDate } from "@/modules/calendar/domain";
+import { clubYearMonths } from "@/modules/club-reports/domain";
 import { toCsv } from "@/modules/reporting/csv";
 
 /**
@@ -124,11 +125,11 @@ export type HonorYearSummary = { inProgress: number; completedThisYear: number }
  *
  * A completed honor's status can be years old (#486: honors are kept across
  * years, keyed to the person), so only entries completed on or after this
- * club year's first day (September 1) count as "recently completed" here.
- * In-progress work has no date to filter by, so every current one counts.
+ * club year's first day count as "recently completed" here. In-progress
+ * work has no date to filter by, so every current one counts.
  */
 export function honorYearSummary(rows: readonly ClubHonorsRow[], clubYear: string): HonorYearSummary {
-  const yearStart = `${clubYear.slice(0, 4)}-09-01`;
+  const yearStart = `${clubYearMonths(clubYear)[0]}-01`;
   let inProgress = 0;
   let completedThisYear = 0;
   for (const row of rows) {

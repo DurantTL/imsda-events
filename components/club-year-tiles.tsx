@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Award, CalendarDays, CheckCircle2, CircleAlert, FileText, ShieldCheck, UsersRound } from "lucide-react";
+import { formatDueDate, type MonthlyReportProgress } from "@/modules/club-reports/domain";
 import type { RosterYearSummary } from "@/modules/club-rosters/domain";
-import type { MonthlyReportProgress } from "@/modules/club-reports/domain";
 import type { HonorYearSummary } from "@/modules/honors/member-honor-domain";
 
 /**
@@ -49,7 +49,7 @@ export function ClubYearTiles({
   return (
     <div className="club-year-tiles">
       <div className="club-year-tile">
-        <p className="club-year-tile-heading"><UsersRound size={16} aria-hidden="true" /> Roster</p>
+        <h3 className="club-year-tile-heading"><UsersRound size={16} aria-hidden="true" /> Roster</h3>
         <p className="club-year-tile-stat">{roster.active}</p>
         <p className="club-year-tile-detail">active this club year · {roster.staff} staff · {roster.members} members</p>
         {roster.byClass.length > 0 && (
@@ -62,7 +62,7 @@ export function ClubYearTiles({
 
       {honors && (
         <div className="club-year-tile">
-          <p className="club-year-tile-heading"><Award size={16} aria-hidden="true" /> Honors</p>
+          <h3 className="club-year-tile-heading"><Award size={16} aria-hidden="true" /> Honors</h3>
           {honors.inProgress === 0 && honors.completedThisYear === 0 ? (
             <p className="club-year-tile-detail">None recorded yet this club year.</p>
           ) : (
@@ -77,7 +77,7 @@ export function ClubYearTiles({
 
       {compliance && (
         <div className="club-year-tile">
-          <p className="club-year-tile-heading"><ShieldCheck size={16} aria-hidden="true" /> Background checks</p>
+          <h3 className="club-year-tile-heading"><ShieldCheck size={16} aria-hidden="true" /> Background checks</h3>
           {complianceTotal === 0 ? (
             <p className="club-year-tile-detail"><CheckCircle2 size={15} aria-hidden="true" /> All current.</p>
           ) : (
@@ -87,12 +87,12 @@ export function ClubYearTiles({
               {compliance.expiringSoon > 0 && <li><CircleAlert size={13} aria-hidden="true" /> {compliance.expiringSoon} expiring soon</li>}
             </ul>
           )}
-          <Link className="secondary-button club-year-tile-link" href={complianceHref}>Open roster</Link>
+          <Link className="secondary-button club-year-tile-link" href={complianceHref}>Review background checks</Link>
         </div>
       )}
 
       <div className="club-year-tile">
-        <p className="club-year-tile-heading"><CalendarDays size={16} aria-hidden="true" /> Events</p>
+        <h3 className="club-year-tile-heading"><CalendarDays size={16} aria-hidden="true" /> Events</h3>
         <p className="club-year-tile-stat">{events.open}</p>
         <p className="club-year-tile-detail">
           {events.open === 1 ? "event open to register" : "events open to register"} · {events.registered} registered
@@ -102,10 +102,13 @@ export function ClubYearTiles({
 
       {reports && (
         <div className="club-year-tile">
-          <p className="club-year-tile-heading"><FileText size={16} aria-hidden="true" /> Monthly reports</p>
+          <h3 className="club-year-tile-heading"><FileText size={16} aria-hidden="true" /> Monthly reports</h3>
           <p className="club-year-tile-stat">{reports.filed}</p>
           <p className="club-year-tile-detail">
-            filed this club year{reports.missing > 0 ? ` · ${reports.missing} missing` : " · none missing"}
+            filed this club year
+            {reports.missing > 0 && ` · ${reports.missing} missing`}
+            {reports.dueSoon && ` · ${reports.dueSoon.count} due ${formatDueDate(reports.dueSoon.dueDate)}`}
+            {reports.missing === 0 && !reports.dueSoon && " · none missing"}
           </p>
           <Link className="secondary-button club-year-tile-link" href={reportsHref}>Open monthly reports</Link>
         </div>

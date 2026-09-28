@@ -169,8 +169,9 @@ describe("the club home page builds the director's tiles (#488)", () => {
     // One in-progress honor, and one of two completed honors falls inside this club year (started 2026-09-01).
     expect(props.honors).toEqual({ inProgress: 1, completedThisYear: 1 });
     expect(props.events).toEqual({ open: 1, registered: 1 });
-    // The September report is filed; October and November (due so far) are not.
-    expect(props.reports).toEqual({ filed: 1, missing: 2 });
+    // September is filed. October is past its own Nov 10 due date, so it's missing; November
+    // (the current month, due Dec 10) isn't missing yet — it's "due soon" instead (review fix).
+    expect(props.reports).toEqual({ filed: 1, missing: 1, dueSoon: { count: 1, dueDate: "2026-12-10" } });
     expect(props.rosterHref).toBe("/account/clubs/club-1/roster");
     expect(props.eventsHref).toBe("/account/clubs/club-1/events");
     expect(props.reportsHref).toBe("/account/clubs/club-1/reports");
@@ -179,6 +180,23 @@ describe("the club home page builds the director's tiles (#488)", () => {
     // The existing "What's next" list stays.
     const headings = allElements(tree).filter((element) => element.type === "h2").map((element) => element.props.children);
     expect(headings).toContain("To do");
+  });
+
+  it("doesn't call an unfiled month missing before it's due — matching 'What's next' on the same page (review fix)", async () => {
+    mocks.getRosterAccessStateForPage.mockResolvedValue({
+      state: "OPEN",
+      club: { organizationId: "club-1", name: "Test Pathfinders", role: "DIRECTOR", sponsoringChurch: null },
+      capabilities: { roster: true, registerForEvents: true, seeBirthDates: true, manageTeam: true, editProfile: true, submitReports: true },
+      actor: { kind: "ATTENDEE", accountId: "account-1", sessionId: "session-1" },
+    });
+    mocks.clubPortalComplianceReminderCounts.mockResolvedValue(null);
+    // Nothing filed yet, and no report is even due until October 10 for September.
+    mocks.getClubReportYear.mockResolvedValue(reportYear([]));
+    vi.setSystemTime(new Date("2026-09-28T18:00:00.000Z"));
+
+    const tree = await ClubHomePage({ params: Promise.resolve({ organizationId: "club-1" }) });
+    const props = tilesProps(tree);
+    expect(props.reports).toEqual({ filed: 0, missing: 0, dueSoon: { count: 1, dueDate: "2026-10-10" } });
   });
 
   it("hides the background-check and reports tiles for a registrar, who doesn't get either (#375)", async () => {
@@ -234,7 +252,7 @@ describe("the shared club overview gives staff and Area Coordinators the same re
     // No dedicated staff Honors page for this club — the tile points at the honor chips already on this page.
     expect(props.honorsHref).toBe("#open-club-roster");
     expect(props.events).toEqual({ open: 1, registered: 1 });
-    expect(props.reports).toEqual({ filed: 1, missing: 2 });
+    expect(props.reports).toEqual({ filed: 1, missing: 1, dueSoon: { count: 1, dueDate: "2026-12-10" } });
   });
 
   it("gives an Area Coordinator the same tiles, counts only, with no names anywhere in the tree", async () => {
@@ -251,7 +269,7 @@ describe("the shared club overview gives staff and Area Coordinators the same re
     expect(props.roster.active).toBe(3);
     expect(props.honors).toEqual({ inProgress: 1, completedThisYear: 1 });
     expect(props.events).toEqual({ open: 1, registered: 1 });
-    expect(props.reports).toEqual({ filed: 1, missing: 2 });
+    expect(props.reports).toEqual({ filed: 1, missing: 1, dueSoon: { count: 1, dueDate: "2026-12-10" } });
 
     // Every tile links to an anchor on this same read-only page, not a separate route staff can't reach here —
     // except honors, which has its own read-only Area Coordinator page (#486).

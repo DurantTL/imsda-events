@@ -133,17 +133,37 @@ export function formatDueDate(date: string) {
   return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
 }
 
-export type MonthlyReportProgress = { filed: number; missing: number };
+export type MonthlyReportProgress = {
+  filed: number;
+  /** Past its own due date and still unfiled — never the current or in-grace month. */
+  missing: number;
+  /**
+   * Unfiled but not yet locked (the current month, or last month before its
+   * due date): not "missing", just not due yet. Null when nothing is due
+   * soon. `dueDate` is the earliest of these months' own due date.
+   */
+  dueSoon: { count: number; dueDate: string } | null;
+};
 
 /**
- * Filed and missing counts for the club-year dashboard (#488), over the
- * months due so far this club year (`reportableMonths`). A club's own draft
- * isn't "filed" here either (#426) — pass only the months with a submitted
- * report.
+ * Filed, missing, and due-soon counts for the club-year dashboard (#488),
+ * over the months due so far this club year (`reportableMonths`). A club's
+ * own draft isn't "filed" here either (#426) — pass only the months with a
+ * submitted report. A month counts as "missing" only once it's past its own
+ * due date (`isLockedForClub`, the 10th of the following month) — the
+ * current month, and last month before its due date, are "due soon"
+ * instead, matching the "What's next" list on the same page.
  */
-export function monthlyReportProgress(due: readonly string[], filedMonths: ReadonlySet<string>): MonthlyReportProgress {
-  const filed = due.filter((month) => filedMonths.has(month)).length;
-  return { filed, missing: due.length - filed };
+export function monthlyReportProgress(clubYear: string, now: Date, filedMonths: ReadonlySet<string>): MonthlyReportProgress {
+  const due = reportableMonths(clubYear, now);
+  const unfiled = due.filter((month) => !filedMonths.has(month));
+  const missing = unfiled.filter((month) => isLockedForClub(month, now));
+  const dueSoon = unfiled.filter((month) => !isLockedForClub(month, now));
+  return {
+    filed: due.length - unfiled.length,
+    missing: missing.length,
+    dueSoon: dueSoon.length > 0 ? { count: dueSoon.length, dueDate: reportDueDate(dueSoon[0]!) } : null,
+  };
 }
 
 /** Year-to-date points: every report's total, plus the yearly registration when it was on time. */

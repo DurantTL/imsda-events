@@ -79,7 +79,7 @@ export async function ClubOverview({
   const complianceTile = compliance
     ? { missing: compliance.missing, notInCompliance: compliance.notInCompliance, expiringSoon: compliance.expiringSoon }
     : reminderCounts;
-  const reportProgress = monthlyReportProgress(dueMonths, new Set(submittedReports.map((report) => report.reportMonth)));
+  const reportProgress = monthlyReportProgress(clubYear, now, new Set(submittedReports.map((report) => report.reportMonth)));
 
   return (
     <>

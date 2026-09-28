@@ -78,7 +78,8 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
   const honors = honorYearSummary(honorRows, clubYear);
   const reportProgress = reportYear
     ? monthlyReportProgress(
-      reportableMonths(clubYear, now),
+      clubYear,
+      now,
       new Set(reportYear.reports.filter((report) => report.status === "SUBMITTED").map((report) => report.reportMonth)),
     )
     : null;
