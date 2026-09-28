@@ -1209,6 +1209,7 @@ model Event {
   announcements                       Announcement[]
   auditLogs                           AuditLog[]
   importRuns                          ImportRun[]
+  awardItems                          EventAwardItem[]
   registrationForms                   RegistrationForm[]
   formTestSubmissions                 FormTestSubmission[]
   publicFormSubmissions               PublicRegistrationSubmission[]
@@ -1462,6 +1463,7 @@ model Person {
   memberTransfers       MemberTransfer[] @relation("MemberTransferPerson")
   pendingMemberTransfer MemberTransfer?  @relation("MemberTransferPendingPerson")
   clubOrderNeeds        ClubOrderNeed[]
+  memberClassCompletions MemberClassCompletion[]
 
   @@index([lastName, firstName])
 }
@@ -1672,6 +1674,7 @@ model Organization {
   clubSupplyStock    ClubSupplyStock[]
   clubOrderNeeds     ClubOrderNeed[]
   clubOrderBatches   ClubSupplyOrderBatch[]
+  memberClassCompletions MemberClassCompletion[]
 
   @@index([type, isActive, name])
   @@index([parentOrganizationId, isActive])
@@ -3242,6 +3245,7 @@ model Honor {
   offerings       HonorOffering[]
   memberEntries   MemberHonorEntry[]
   clubSupplyItems ClubSupplyItem[]
+  masterAwardGroupHonors MasterAwardRuleGroupHonor[]
 
   @@index([isActive, name])
   @@index([normalizedName])
@@ -3312,6 +3316,8 @@ model ClubSupplyItem {
   stock ClubSupplyStock[]
   orderNeeds ClubOrderNeed[]
   orderLines ClubSupplyOrderLine[]
+  eventAwardItems EventAwardItem[]
+  masterAwardRules MasterAwardRule[]
 
   @@unique([section, normalizedName])
   @@index([catalogNumber])
@@ -3344,11 +3350,14 @@ model ClubSupplyStock {
 
 /// Where a `ClubOrderNeed` came from (#487). Honors is the first source;
 /// uniform ordering (#497) is the second (a director records the need by hand,
-/// so its `sourceId` is a generated key). Earned awards/insignia (#532) add
-/// their own value later without changing this table's shape.
+/// so its `sourceId` is a generated key). Earned awards (#532) are the third:
+/// class insignia, event patches, Good Conduct/TLT and Master Awards, with
+/// stable keys for the suggested ones and a generated key for hand-picked
+/// ones. No change to this table's shape.
 enum ClubOrderSourceType {
   HONOR
   UNIFORM
+  AWARD
 }
 
 /// How one need for a catalog item has moved along (#487): completed/needed
@@ -4269,4 +4278,100 @@ model EventCloneRecord {
 
   @@unique([actorUserId, requestKey])
   @@index([sourceEventId, createdAt])
+}
+
+/// A class a member finished, recorded by a director (#532). The roster only
+/// stores a member's *current* class (`ClubRosterMember.classLevel`), so this
+/// is the explicit, least-invasive signal that "completed a class" happened:
+/// one row per club, person and class. Recording it never orders anything; it
+/// only makes that class's insignia set a *suggestion* the director confirms
+/// (`insigniaDismissedAt` is set when the director chooses "Not now").
+model MemberClassCompletion {
+  id                  String         @id @default(cuid())
+  organizationId      String
+  personId            String
+  classLevel          ClubClassLevel
+  /// The calendar date (`YYYY-MM-DD`) the class was completed.
+  completedOn         String
+  insigniaDismissedAt DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  person       Person       @relation(fields: [personId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, personId, classLevel])
+  @@index([personId])
+}
+
+/// A catalog item staff link to a club event (#532): the camporee or PBE
+/// patch or pin attendees earn. Linking never orders anything; it lets the
+/// awards screen *suggest* the item for every member who attended.
+model EventAwardItem {
+  id        String   @id @default(cuid())
+  eventId   String
+  itemId    String
+  createdAt DateTime @default(now())
+
+  event Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  item  ClubSupplyItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
+
+  @@unique([eventId, itemId])
+  @@index([itemId])
+}
+
+/// Where a Master Award rule stands (#532). Rules arrive as DRAFT from the
+/// staff-reviewed import; only ACTIVE rules are used for progress.
+enum MasterAwardRuleStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+}
+
+/// A Master Award's requirements, stored as data (#532): one or more honor
+/// groups, each with a minimum; the award is earned when every group reaches
+/// its minimum. Changed only by a system administrator, and audited.
+model MasterAwardRule {
+  id               String                @id @default(cuid())
+  name             String
+  normalizedName   String                @unique
+  /// The Master Awards catalog item this rule's patch is (matched by name at import).
+  itemId           String?
+  status           MasterAwardRuleStatus @default(DRAFT)
+  /// Parsed only partly, or honors that didn't match: a system administrator
+  /// must clear this before the rule can be activated.
+  needsManualCheck Boolean               @default(false)
+  reviewNote       String                @default("")
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  item   ClubSupplyItem?        @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  groups MasterAwardRuleGroup[]
+
+  @@index([status])
+}
+
+model MasterAwardRuleGroup {
+  id                  String   @id @default(cuid())
+  ruleId              String
+  position            Int
+  minimum             Int
+  /// Honor names from the import that matched no `Honor` row, shown for review.
+  unmatchedHonorNames String[]
+
+  rule   MasterAwardRule              @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  honors MasterAwardRuleGroupHonor[]
+
+  @@unique([ruleId, position])
+}
+
+model MasterAwardRuleGroupHonor {
+  groupId String
+  honorId String
+
+  group MasterAwardRuleGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  honor Honor                @relation(fields: [honorId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, honorId])
+  @@index([honorId])
 }

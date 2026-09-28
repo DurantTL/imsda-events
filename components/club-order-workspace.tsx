@@ -236,7 +236,7 @@ export function ClubOrderWorkspace({
       {readOnly ? (
         <p className="inline-notice" role="status"><Eye aria-hidden="true" size={14} /> View only. Shows what&apos;s on file. The club director or deputy places orders.</p>
       ) : (
-        <p className="field-help">Completed honors and uniform needs that haven&apos;t been ordered yet. Add extras for spares, then place one order for everything.</p>
+        <p className="field-help">Completed honors, uniform needs, and earned awards that haven&apos;t been ordered yet. Add extras for spares, then place one order for everything.</p>
       )}
       {notice && <p className="inline-notice success" role="status">{notice}</p>}
       {error && <p className="inline-notice error" role="alert">{error}</p>}
@@ -286,7 +286,7 @@ export function ClubOrderWorkspace({
           </p>
         )}
         {lines.length === 0 ? (
-          <p className="quiet-copy">Nothing to order. New completed honors appear here on their own; record uniform needs below.</p>
+          <p className="quiet-copy">Nothing to order. New completed honors appear here on their own; record uniform needs below, and add earned awards on the Earned awards page.</p>
         ) : (
           <ul className={styles.list}>
             {lines.map((line) => {

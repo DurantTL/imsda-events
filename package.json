@@ -21,6 +21,7 @@
     "test:club-imports": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-club-imports.ts",
     "test:club-orders": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-club-order-fulfillment.ts",
     "test:uniform-orders": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-uniform-orders.ts",
+    "test:earned-awards": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-earned-awards.ts",
     "test:event-templates": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-event-templates.ts",
     "test:event-cloning": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-event-cloning.ts",
     "test:watch": "vitest",

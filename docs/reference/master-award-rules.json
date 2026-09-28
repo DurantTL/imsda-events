@@ -1,0 +1,599 @@
+{
+  "Aquatic Master Award": {
+    "groups": [
+      {
+        "minimum": 7,
+        "honors": [
+          "Canoeing",
+          "Kayaking",
+          "Navigation",
+          "Power Boating",
+          "Rowing",
+          "Sailing",
+          "Scuba Diving",
+          "Scuba Diving - Advanced",
+          "Skin Diving",
+          "Springboard Diving",
+          "Swimming",
+          "Swimming - Advanced",
+          "Swimming - Intermediate",
+          "Water Skiing",
+          "Water Skiing - Advanced",
+          "Wind Surfing"
+        ]
+      }
+    ],
+    "groupsRequired": 1
+  },
+  "Artisan Master Award": {
+    "groups": [
+      {
+        "minimum": 7,
+        "honors": [
+          "Aboriginal Lore",
+          "African Lore",
+          "Airplane Modeling",
+          "Basketry",
+          "Block Printing",
+          "Braiding",
+          "Braiding - Advanced",
+          "Bread Dough",
+          "Bridges",
+          "Cake Decorating",
+          "Candle Making",
+          "Card Making",
+          "Ceramics",
+          "Copper Enameling",
+          "Copper Enameling - Advanced",
+          "Counted Cross Stitch",
+          "Crocheting",
+          "Crocheting - Advanced",
+          "Currency",
+          "Currency - Advanced",
+          "Dams and Levees",
+          "Digital Photography",
+          "Drawing",
+          "Drawing - Advanced",
+          "Duct Tape",
+          "Découpage",
+          "Felt Craft",
+          "Flower Arrangement",
+          "Genealogy",
+          "Genealogy - Advanced",
+          "Gift Wrapping",
+          "Glass Craft",
+          "Glass Etching",
+          "Glass Painting",
+          "Guitar",
+          "Guitar - Advanced",
+          "Hot Air Balloons",
+          "Kanzashi",
+          "Knitting",
+          "Knitting - Advanced",
+          "Lapidary",
+          "Leather Craft",
+          "Leather Craft - Advanced",
+          "LEGO® Design",
+          "Lettering & Poster Making",
+          "Lighthouses",
+          "Lighthouses - Advanced",
+          "Macramé",
+          "Māori Lore",
+          "Metal Craft",
+          "Model Boats",
+          "Model Cars",
+          "Model Railroad",
+          "Model Rocketry",
+          "Model Rocketry - Advanced",
+          "Mosaic Tile",
+          "Music",
+          "Music - Advanced",
+          "Native American Lore",
+          "Native American Lore - Advanced",
+          "Native Brush Construction",
+          "Neckwear",
+          "Needle Craft",
+          "Origami",
+          "Painting",
+          "Painting - Advanced",
+          "Paper Maché",
+          "Paper Quilling",
+          "Paper Quilling - Advanced",
+          "Photography",
+          "Pin Trading",
+          "Pin Trading - Advanced",
+          "Pinewood Derby",
+          "Pinewood Derby - Advanced",
+          "Plaster Craft",
+          "Plastic Canvas",
+          "Plastic Canvas - Advanced",
+          "Plastics",
+          "Poetry and Songwriting",
+          "Postcards",
+          "Postcards - Advanced",
+          "Pottery",
+          "Scrapbooking",
+          "Scrapbooking - Advanced",
+          "Sculpturing",
+          "Silk Screen Printing",
+          "Silk Screen Printing - Advanced",
+          "Soap Craft",
+          "Soap Craft - Advanced",
+          "Spinning Yarn",
+          "Stamps",
+          "Stamps - Advanced",
+          "Street Art",
+          "String Art",
+          "Textile Painting",
+          "Thatching",
+          "Tie-Dye",
+          "Tie-Dye - Advanced",
+          "Tole Painting",
+          "Toy Boat Regatta",
+          "Toy Boat Regatta - Advanced",
+          "Upholstery",
+          "Weaving",
+          "Whistles",
+          "Whistles - Advanced",
+          "Wood Carving",
+          "Wood Handicraft"
+        ]
+      }
+    ],
+    "groupsRequired": 1
+  },
+  "Conservation Master Award": {
+    "groups": [
+      {
+        "minimum": 7,
+        "honors": [
+          "Alternative Fuels",
+          "Alternative Fuels - Advanced",
+          "Bogs & Fens",
+          "Bogs & Fens - Advanced",
+          "Dunes",
+          "Dunes - Advanced",
+          "Ecology",
+          "Ecology - Advanced",
+          "Endangered Species",
+          "Environmental Conservation",
+          "Fossils",
+          "Geology",
+          "Geology - Advanced",
+          "Mountains",
+          "Recycling",
+          "Renewable Energy",
+          "Rivers and Streams",
+          "Rivers and Streams - Advanced",
+          "Rocks & Minerals",
+          "Rocks & Minerals - Advanced",
+          "Sand",
+          "Taiga",
+          "Taiga - Advanced",
+          "Forestry",
+          "Forestry - Advanced"
+        ]
+      }
+    ],
+    "groupsRequired": 1
+  },
+  "Family, Origins, and Heritage Master Award": {
+    "groups": [
+      {
+        "minimum": 5,
+        "honors": [
+          "Biblical Archaeology",
+          "Christian Citizenship",
+          "Community Improvement",
+          "Creationism",
+          "Creationism - Advanced",
+          "Cultural Diversity Appreciation",
+          "Eschatology",
+          "Family Life",
+          "Flags",
+          "Flags - Advanced",
+          "Language Study",
+          "Genealogy"
+        ]
+      }
+    ],
+    "groupsRequired": 2
+  },
+  "Farming Master Award": {
+    "groups": [
+      {
+        "minimum": 7,
+        "honors": [
+          "Agriculture",
+          "Beekeeping",
+          "Cattle Husbandry",
+          "Dairying",
+          "Flower Culture",
+          "Fruit Growing",
+          "Gardening",
+          "Goat Husbandry",
+          "Horse Husbandry",
+          "Hydroponics and Aquaponics",
+          "Hydroponics and Aquaponics - Advanced",
+          "Island Fishing",
+          "Pigeon Raising",
+          "Poultry Raising",
+          "Sheep Husbandry",
+          "Small Fruit Growing",
+          "Subsistence Farming"
+        ]
+      }
+    ],
+    "groupsRequired": 1
+  },
+  "Health Master Award": {
+    "groups": [
+      {
+        "minimum": 3,
+        "honors": [
+          "Blood and the Body's Defenses",
+          "Bones, Muscles, and Movement",
+          "Brain and Behavior",
+          "Digestion",
+          "Health and Healing",
+          "Home Nursing",
+          "Child Care"
+        ]
+      },
+      {
+        "minimum": 2,
+        "honors": [
+          "Basic Rescue",
+          "CPR",
+          "First Aid, Basic",
+          "First Aid, Standard",
+          "Red Alert"
+        ]
+      },
+      {
+        "minimum": 2,
+        "honors": [
+          "Chemistry",
+          "Optics",
+          "Physics",
+          "Viruses",
+          "Microscopic Life"
+        ]
+      }
+    ],
+    "groupsRequired": 3
+  },
+  "Homemaking Master Award": {
+    "groups": [
+      {
+        "minimum": 7,
+        "honors": [
+          "Baking",
+          "Basic Sewing",
+          "Cooking",
+          "Cooking - Advanced",
+          "Cultural Food Preparation",
+          "Dressmaking",
+          "Dressmaking - Advanced",
+          "Food - Canning",
+          "Food - Drying",
+          "Food - Freezing",
+          "Household Budgeting",
+          "Housekeeping",
+          "Laundering",
+          "Mat Making",
+          "Nutrition",
+          "Nutrition - Advanced",
+          "Pizza Maker",
+          "Quilting",
+          "Tailoring",
+          "Tapa Cloth"
+        ]
+      }
+    ],
+    "groupsRequired": 1
+  },
+  "Modern Technology Master Award": {
+    "groups": [
+      {
+        "minimum": 7,
+        "honors": [
+          "Artificial Intelligence",
+          "Computers",
+          "Computers - Advanced",
+          "Computers and Mobile Devices",
+          "Computers and Mobile Devices - Advanced",
+          "Engineering",
+          "Internet",
+          "Internet - Advanced",
+          "Mobile Technology",
+          "Robotics",
+          "Robotics - Advanced",
+          "Social Media",
+          "Video",
+          "Video (GC)",
+          "Video - Advanced",
+          "Media Broadcast Ministry"
+        ]
+      }
+    ],
+    "groupsRequired": 1
+  },
+  "Naturalist Master Award": {
+    "groups": [
+      {
+        "minimum": 4,
+        "honors": [
+          "Cacti",
+          "Cacti - Advanced",
+          "Ferns",
+          "Fungi",
+          "House Plants",
+          "Meteorites",
+          "Midnight Sun",
+          "Orchids",
+          "Palm Trees",
+          "Seeds",
+          "Seeds - Advanced",
+          "Shells - Advanced",
+          "Shrubs",
+          "Trees",
+          "Waterfalls",
+          "Wattles",
+          "Weather"
+        ]
+      },
+      {
+        "minimum": 2,
+        "honors": [
+          "Amphibians",
+          "Antelopes",
+          "Bats",
+          "Bats - Advanced",
+          "Birds",
+          "Birds - Advanced",
+          "Dinosaurs",
+          "Insects",
+          "Insects - Advanced",
+          "Marsupials",
+          "Moths & Butterflies",
+          "Odonates",
+          "Odonates - Advanced",
+          "Sharks",
+          "Spiders",
+          "Worms"
+        ]
+      },
+      {
+        "minimum": 1,
+        "honors": [
+          "Bird Pets",
+          "Cats",
+          "Dogs",
+          "Fishes",
+          "Poultry",
+          "Small Mammal Pets"
+        ]
+      }
+    ],
+    "groupsRequired": 3
+  },
+  "Recreation Master Award": {
+    "groups": [
+      {
+        "minimum": 7,
+        "honors": [
+          "Backpacking",
+          "Caving",
+          "Drilling & Marching",
+          "Drumming & Percussion",
+          "Geocaching",
+          "Geological Geocaching",
+          "Gold Prospecting",
+          "Hiking",
+          "Horsemanship",
+          "Kites",
+          "Knot Tying",
+          "Letterboxing",
+          "Orienteering",
+          "Outdoor Leadership",
+          "Physical Fitness",
+          "Rock Climbing",
+          "Skiing - Cross Country",
+          "Snowshoeing",
+          "Snowshoeing - Advanced",
+          "Unicycling"
+        ]
+      }
+    ],
+    "groupsRequired": 1
+  },
+  "Spiritual Growth and Ministries Master Award": {
+    "groups": [
+      {
+        "minimum": 3,
+        "honors": [
+          "Adventurer for Christ",
+          "Adventurer for Christ - Advanced",
+          "Alive Bible",
+          "Bible Marking",
+          "Bible Marking - Advanced",
+          "Peace Maker",
+          "Peace Maker - Advanced",
+          "Prayer"
+        ]
+      },
+      {
+        "minimum": 4,
+        "honors": [
+          "Christian Art of Preaching",
+          "Christian Art of Preaching - Advanced",
+          "Christian Drama",
+          "Christian Storytelling",
+          "Junior Witness",
+          "Literature Evangelism",
+          "Personal Evangelism",
+          "Preach It",
+          "Preach It - Advanced",
+          "Puppetry",
+          "Sign Language",
+          "Sign Language - Advanced",
+          "Bible Evangelism",
+          "Christian Sales Principles",
+          "Teaching"
+        ]
+      }
+    ],
+    "groupsRequired": 2
+  },
+  "Sportsman Master Award": {
+    "groups": [
+      {
+        "minimum": 7,
+        "honors": [
+          "Archery",
+          "Basketball",
+          "Cycling",
+          "Cycling - Advanced",
+          "Flag Football",
+          "Golf",
+          "Horsemanship - Advanced",
+          "Physical Fitness",
+          "Skiing Downhill",
+          "Slow-Pitch Softball",
+          "Soccer",
+          "Tennis",
+          "Track & Field",
+          "Triathlon",
+          "Tumbling & Balancing",
+          "Ultimate Disc - Advanced",
+          "Volleyball"
+        ]
+      }
+    ],
+    "groupsRequired": 1
+  },
+  "Technician Master Award": {
+    "groups": [
+      {
+        "minimum": 7,
+        "honors": [
+          "Accounting",
+          "Automobile Mechanics",
+          "Automobile Mechanics - Advanced",
+          "Barbering and Hairstyling",
+          "Bible Evangelism",
+          "Bookbinding",
+          "Bookkeeping",
+          "Carpentry",
+          "Christian Sales Principles",
+          "Communications",
+          "Communications - Advanced",
+          "Electricity",
+          "Fire Safety",
+          "Forestry",
+          "House Painting, Exterior",
+          "House Painting, Interior",
+          "Journalism",
+          "Masonry",
+          "Paperhanging",
+          "Plumbing",
+          "Printing",
+          "Radio",
+          "Radio - Advanced",
+          "Radio Electronics",
+          "Shoe Repair",
+          "Shorthand",
+          "Small Engines",
+          "Teaching",
+          "Typewriting",
+          "Welding",
+          "Welding (GC)",
+          "Woodworking",
+          "Word Processing",
+          "Upholstery"
+        ]
+      }
+    ],
+    "groupsRequired": 1
+  },
+  "Wilderness Master Award": {
+    "groups": [
+      {
+        "minimum": 7,
+        "honors": [
+          "Backpacking",
+          "Camp Craft",
+          "Camp Safety",
+          "Camping Skills IV",
+          "Cold Weather Survival",
+          "Dutch Oven Cooking",
+          "Fire Building & Camp Cookery",
+          "Hiking",
+          "Knot Tying",
+          "Orienteering",
+          "Outdoor Leadership",
+          "Pioneering",
+          "Tents",
+          "Wilderness Leadership",
+          "Wilderness Living",
+          "Winter Camping",
+          "Edible Wild Plants"
+        ]
+      }
+    ],
+    "groupsRequired": 1
+  },
+  "Zoology Master Award": {
+    "groups": [
+      {
+        "minimum": 1,
+        "honors": [
+          "Cetaceans",
+          "Endangered Species",
+          "Mammals",
+          "Marine Mammals"
+        ]
+      },
+      {
+        "minimum": 4,
+        "honors": [
+          "Amphibians",
+          "Antelopes",
+          "Bats",
+          "Bats - Advanced",
+          "Birds",
+          "Birds - Advanced",
+          "Dinosaurs",
+          "Insects",
+          "Insects - Advanced",
+          "Marsupials",
+          "Microscopic Life",
+          "Moths & Butterflies",
+          "Odonates",
+          "Odonates - Advanced",
+          "Sharks",
+          "Spiders",
+          "Worms"
+        ]
+      },
+      {
+        "minimum": 2,
+        "honors": [
+          "Bird Pets",
+          "Cats",
+          "Dog Care and Training",
+          "Dogs",
+          "Fishes",
+          "Livestock",
+          "Parrots and Cockatoos",
+          "Poultry",
+          "Reptiles",
+          "Reptiles - Advanced",
+          "Small Mammal Pets"
+        ]
+      }
+    ],
+    "groupsRequired": 3
+  }
+}
