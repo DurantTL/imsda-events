@@ -7,6 +7,7 @@ import {
 } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { calendarDateInTimeZone } from "@/modules/forms/public-domain";
+import { hydrateFormOptions } from "@/modules/forms/form-options-repository";
 import {
   registrationFormDefinitionSchema,
   type FormCalculation,
@@ -317,6 +318,10 @@ function publicFormQuery(eventSlug: string, formSlug: string) {
       event: {
         select: {
           timezone: true,
+          attendeeTypes: {
+            where: { isActive: true },
+            orderBy: [{ sortOrder: "asc" as const }, { label: "asc" as const }],
+          },
         },
       },
       versions: {
@@ -477,8 +482,11 @@ export async function getPublicPromoCodeQuote(
       "This form was updated. Refresh the page before applying a promo code.",
     );
   }
-  const definition = registrationFormDefinitionSchema.parse(
-    version.definition,
+  // The same hydration the submit path validates against (#482): attendee
+  // types and the live club/church directory.
+  const definition = await hydrateFormOptions(
+    registrationFormDefinitionSchema.parse(version.definition),
+    { attendeeTypes: form.event.attendeeTypes },
   );
   const attendeeField = attendeePromoCodeField(definition);
   if (attendeeField) {

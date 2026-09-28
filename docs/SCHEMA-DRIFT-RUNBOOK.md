@@ -131,3 +131,12 @@ No application-visible data changes.
 2. Run `npx prisma migrate resolve --rolled-back 20260928200000_schema_drift_index_cleanup`
    (or `--applied` if you applied the end state by hand).
 3. Redeploy.
+
+## Expression indexes
+
+Prisma can't model an expression index, and `prisma migrate diff` leaves
+indexes it can't represent alone, so a hand-written one in a migration does
+not show up as drift. `Person_matchable_compact_idx` (#527) is one; see
+`docs/BACKGROUND-CHECK-LIST-MIGRATION.md`. Keep its expression and the query
+that relies on it identical, or Postgres silently stops using the index.
+

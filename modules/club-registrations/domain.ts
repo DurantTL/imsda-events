@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { isAgeFieldKey, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
+import { DIRECTORY_NOT_LISTED_VALUE, isAgeFieldKey, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
+import { normalizeOrganizationName } from "@/modules/organizations/domain";
 import { fullNameKeys, splitNameKeyPairs } from "@/modules/forms/public-domain";
 
 /**
@@ -171,6 +172,122 @@ export function lockedAttendeeFieldKeys(definition: RegistrationFormDefinition) 
     ...(names?.kind === "split" ? [names.first, names.last] : names ? [names.key] : []),
     ...(age ? [age] : []),
   ];
+}
+
+/**
+ * The club and its sponsoring church, read from the `Organization` record a
+ * signed-in director actually directs — never from anything the client sent
+ * (#482). `churchName` is null when the club has no sponsoring church on
+ * file, or that church is no longer active.
+ */
+export type ClubDirectoryIdentity = { clubName: string; churchName: string | null };
+
+function registrationFields(definition: RegistrationFormDefinition) {
+  return definition.sections.flatMap((section) => section.fields).filter((field) => field.scope === "REGISTRATION");
+}
+
+/** The field's own spelling of `name` when the directory lists it under a
+ * slightly different form (case, spacing), else `name` as is. */
+function directoryChoice(field: RegistrationFormField, name: string) {
+  const normalized = normalizeOrganizationName(name);
+  return field.options.find((option) => normalizeOrganizationName(option) === normalized) ?? name;
+}
+
+/**
+ * Registration-scope field keys a club registration locks to the
+ * authenticated director's own club (#482): only the "Clubs directory"
+ * field — "the club itself is locked". The church is prefilled but stays
+ * editable (`clubDirectoryPrefillResponses`). Same "locked, never trust the
+ * client" pattern as `lockedAttendeeFieldKeys` for roster-owned answers.
+ */
+export function lockedClubDirectoryFieldKeys(definition: RegistrationFormDefinition): string[] {
+  return registrationFields(definition)
+    .filter((field) => field.optionSource === "CLUBS_DIRECTORY")
+    .map((field) => field.key);
+}
+
+/**
+ * The registration-scope answers a club registration owns outright: the
+ * "Clubs directory" field, always the director's actual club, with its
+ * paired "Not listed" free-text companion cleared since a real directory
+ * match is known. Applied server-side on submit (like `rosterOwnedResponses`
+ * for attendees) and on amendment, so nothing the client sent for the club
+ * ever reaches storage. The church is deliberately not included.
+ */
+export function clubDirectoryOwnedResponses(
+  definition: RegistrationFormDefinition,
+  identity: ClubDirectoryIdentity,
+): Record<string, string | null> {
+  const responses: Record<string, string | null> = {};
+  if (!identity.clubName) return responses;
+  const fields = registrationFields(definition);
+  for (const field of fields) {
+    if (field.optionSource !== "CLUBS_DIRECTORY") continue;
+    responses[field.key] = directoryChoice(field, identity.clubName);
+    // The free-text "Not listed" companion (the existing "show only when"
+    // convention) no longer applies once the field is locked to a real
+    // directory match, so clear it rather than leaving a stale answer.
+    // Only the free-text companion shown for "Not listed" — never another
+    // field that merely depends on the club answer.
+    for (const companion of fields) {
+      if (
+        companion.conditional?.fieldKey === field.key
+        && companion.conditional.operator === "EQUALS"
+        && companion.conditional.value === DIRECTORY_NOT_LISTED_VALUE
+      ) {
+        responses[companion.key] = null;
+      }
+    }
+  }
+  return responses;
+}
+
+/**
+ * What a new club registration opens with (#482): the locked club, plus the
+ * club's sponsoring church as an editable default in any "Churches
+ * directory" field. No church on file, or an inactive one, leaves the church
+ * blank for the director to choose.
+ */
+export function clubDirectoryPrefillResponses(
+  definition: RegistrationFormDefinition,
+  identity: ClubDirectoryIdentity,
+): Record<string, string> {
+  const prefill: Record<string, string> = {};
+  for (const [key, value] of Object.entries(clubDirectoryOwnedResponses(definition, identity))) {
+    if (value) prefill[key] = value;
+  }
+  if (identity.churchName) {
+    for (const field of registrationFields(definition)) {
+      if (field.optionSource === "CHURCHES_DIRECTORY") prefill[field.key] = directoryChoice(field, identity.churchName);
+    }
+  }
+  return prefill;
+}
+
+/**
+ * A saved club draft's registration answers with the directory rules laid
+ * over them (#482): the club is always the director's own (a draft can hold
+ * a stale name, no club, or "Not listed", none of which the locked field
+ * would let them fix), and the sponsoring church fills in only when the
+ * draft has no church answer yet, so a church the director picked stays.
+ */
+export function clubDraftResponsesWithDirectory(
+  definition: RegistrationFormDefinition,
+  identity: ClubDirectoryIdentity,
+  draftResponses: Record<string, unknown>,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...draftResponses };
+  for (const [key, value] of Object.entries(clubDirectoryOwnedResponses(definition, identity))) {
+    if (value === null) delete next[key];
+    else next[key] = value;
+  }
+  const prefill = clubDirectoryPrefillResponses(definition, identity);
+  for (const field of registrationFields(definition)) {
+    if (field.optionSource !== "CHURCHES_DIRECTORY" || !prefill[field.key]) continue;
+    const current = next[field.key];
+    if (current === undefined || current === null || current === "") next[field.key] = prefill[field.key];
+  }
+  return next;
 }
 
 export type RosterPerson = {

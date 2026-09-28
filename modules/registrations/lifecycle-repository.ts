@@ -2,6 +2,7 @@ import "server-only";
 
 import { Prisma, type RegistrationStatus } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
 import {
   enqueueRegistrationCancelledMessage,
   enqueueRegistrationReactivatedMessage,
@@ -606,6 +607,9 @@ async function runSerializable<T>(
 }
 
 async function registrationResult(eventId: string, registrationId: string) {
+  // #527: a status change moves people in or out of the background-check
+  // candidate pool (active registrations only); refresh after commit, best effort.
+  await refreshBackgroundCheckMatchesForRegistrations([registrationId]);
   const registration = await getRegistrationById(eventId, registrationId);
   if (!registration) {
     throw new RegistrationLifecycleError(

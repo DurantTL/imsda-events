@@ -88,6 +88,7 @@ export function attendeeProfilePrefill(
     primary_contact_last_name: profile.lastName,
     full_name: name,
     name,
+    director_name: name,
     phone: profile.phone,
     phone_number: profile.phone,
     attendee_phone: profile.phone,

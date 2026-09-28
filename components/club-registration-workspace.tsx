@@ -189,6 +189,7 @@ export function ClubRegistrationWorkspace({
   const club = useMemo(() => ({
     initialAttendees,
     lockedAttendeeFieldKeys: workspace.lockedAttendeeFieldKeys,
+    lockedRegistrationFieldKeys: workspace.directory.lockedFieldKeys,
     submitUrl: `${base}/registration`,
     onDraftChange,
     onSubmitted: () => {
@@ -196,7 +197,7 @@ export function ClubRegistrationWorkspace({
       pending.current = null;
       router.refresh();
     },
-  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, base, onDraftChange, router]);
+  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, base, onDraftChange, router]);
 
   const saveLabel = saveState === "saving" ? "Saving draft…" : saveState === "saved" ? "Draft saved" : saveState === "error" ? "Draft not saved. Check your connection." : "";
 
