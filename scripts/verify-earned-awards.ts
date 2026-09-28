@@ -551,7 +551,8 @@ async function main() {
   for (const member of editing.members) assert(Object.keys(member).sort().join() === "classLabel,firstName,lastName,personId", `member row is names and current class only, got ${Object.keys(member).join()}`);
   assert(!JSON.stringify(editing).match(/birth|medical|allerg|insurance/i), "no birth date or medical field appears in the awards data");
   const otherView = await awards.loadEarnedAwardsWorkspace(clubs.other, { forEditing: true });
-  assert(otherView.needs.length === 0 && otherView.insignia.length === 0, "another club sees only its own data");
+  // The only need under this club is the transferred member's Master Award recorded above; nothing from the other clubs leaks in.
+  assert(otherView.needs.length === 1 && otherView.needs[0].origin === "Master Award" && otherView.insignia.length === 0, "another club sees only its own data");
 
   const stays = (await addMember(clubs.depart)).personId;
   const leaves = (await addMember(clubs.depart)).personId;
