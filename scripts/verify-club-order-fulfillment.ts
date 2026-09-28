@@ -16,6 +16,7 @@
  */
 import { loadEnvConfig } from "@next/env";
 import { PrismaClient } from "@prisma/client";
+import { clubYearFor } from "../modules/club-rosters/domain";
 
 loadEnvConfig(process.cwd());
 
@@ -33,6 +34,8 @@ const clubs = {
   handout: `${P}_club_handout`,
   from: `${P}_club_from`,
   to: `${P}_club_to`,
+  link: `${P}_club_link`,
+  stale: `${P}_club_stale`,
 };
 const honors = {
   linked: `${P}_honor_linked`,
@@ -41,6 +44,7 @@ const honors = {
   weekend: `${P}_honor_weekend`,
   fire: `${P}_honor_fire`,
   cooking: `${P}_honor_cooking`,
+  late: `${P}_honor_late`,
 };
 const items = {
   linked: `${P}_item_linked`,
@@ -72,7 +76,7 @@ async function cleanup() {
   await prisma.honorOffering.deleteMany({ where: { eventId: startsWithP } });
   await prisma.honorSession.deleteMany({ where: { eventId: startsWithP } });
   await prisma.event.deleteMany({ where: { id: startsWithP } });
-  await prisma.auditLog.deleteMany({ where: { actorUserId: staffUserId } });
+  await prisma.auditLog.deleteMany({ where: { OR: [{ actorUserId: staffUserId }, { metadata: { path: ["organizationId"], string_starts_with: `${P}_` } }] } });
   await prisma.clubOrderNeed.deleteMany({ where: { organizationId: startsWithP } });
   const batches = await prisma.clubSupplyOrderBatch.findMany({ where: { organizationId: startsWithP }, select: { id: true } });
   await prisma.clubSupplyOrderLine.deleteMany({ where: { batchId: { in: batches.map((row) => row.id) } } });
@@ -93,10 +97,12 @@ async function addPerson(key: string, firstName: string, lastName: string) {
   return id;
 }
 
-async function addMember(organizationId: string, personId: string, status: "ACTIVE" | "INACTIVE" = "ACTIVE") {
+const thisClubYear = clubYearFor(new Date());
+
+async function addMember(organizationId: string, personId: string, status: "ACTIVE" | "INACTIVE" = "ACTIVE", clubYear = thisClubYear) {
   return prisma.clubRosterMember.create({
     data: {
-      id: `${personId}_at_${organizationId}`, organizationId, clubYear: "2026-27", personId,
+      id: `${personId}_at_${organizationId}_${clubYear}`, organizationId, clubYear, personId,
       attendeeType: "YOUTH", role: "Pathfinder", classLevel: "FRIEND", status, source: "DIRECTOR",
     },
     select: { id: true },
@@ -160,6 +166,7 @@ async function main() {
       { id: honors.weekend, code: `${P.toUpperCase()}-4`, name: "Knot Tying", normalizedName: "knot tying" },
       { id: honors.fire, code: `${P.toUpperCase()}-5`, name: "Fire Building", normalizedName: "fire building" },
       { id: honors.cooking, code: `${P.toUpperCase()}-6`, name: "Camp Cooking", normalizedName: "camp cooking" },
+      { id: honors.late, code: `${P.toUpperCase()}-7`, name: "Birds", normalizedName: "birds" },
     ],
   });
   await prisma.clubSupplyItem.createMany({
@@ -461,6 +468,101 @@ async function main() {
     "award then a date correction: no new need, the awarded one stays awarded");
   assert(weekendNeeds.filter((need) => need.personId === sam).length === 1, "a later COMPLETED entry never creates a second need");
   console.log("ok  needs keyed on person and honor: a date correction or re-completion never creates a second need");
+
+  // ---------------------------------------------------------------- re-review: two weekends write back the same person and honor at once
+  const vic = await addPerson("vic", "Vic", "Twoweekends");
+  const vicMember = await addMember(clubs.weekend, vic);
+  const twoEvents = [`${P}_event_a`, `${P}_event_b`];
+  for (const [index, id] of twoEvents.entries()) {
+    await prisma.event.create({
+      data: {
+        id, slug: `${P}-event-${index}`, name: `Order check Honors Weekend ${index}`, startsAt: new Date("2026-12-05T15:00:00Z"),
+        endsAt: new Date("2026-12-06T20:00:00Z"), isPublished: true, registrationOpensOn: "2026-10-01",
+        registrationClosesOn: "2026-11-30", billingMode: "DEFERRED_ORGANIZATION_INVOICE", audience: "CLUB",
+      },
+    });
+    const reg = await prisma.registration.create({ data: { eventId: id, accountHolderPersonId: vic, confirmationCode: `${P.toUpperCase()}-HW${index}`, status: "SUBMITTED", totalAmount: 0 } });
+    await prisma.clubEventRegistration.create({ data: { eventId: id, organizationId: clubs.weekend, registrationId: reg.id } });
+    const period = await prisma.honorSession.create({ data: { eventId: id, name: "Sunday morning", normalizedName: "sunday morning" } });
+    const cooking = await prisma.honorOffering.create({ data: { eventId: id, honorId: honors.cooking, sessionId: period.id, span: "SINGLE_SESSION", capacity: 10 } });
+    const attendee = await prisma.registrationAttendee.create({
+      data: { eventId: id, registrationId: reg.id, personId: vic, attendeeType: "ATTENDEE", position: 0, profileSnapshot: { firstName: "Vic", lastName: "Twoweekends", clubRosterMemberId: vicMember.id } },
+    });
+    await prisma.honorEnrollment.create({ data: { eventId: id, offeringId: cooking.id, registrationId: reg.id, registrationAttendeeId: attendee.id, organizationId: clubs.weekend, consumesSeat: true } });
+    await prisma.checkIn.create({ data: { eventId: id, registrationAttendeeId: attendee.id, idempotencyKey: `${P}-checkin-two-${index}` } });
+  }
+  const crossRuns = await Promise.all(twoEvents.map((id) => writeBackHonorsWeekendCompletions(id, staffUserId)));
+  const vicEntries = await prisma.memberHonorEntry.count({ where: { personId: vic, honorId: honors.cooking } });
+  assert(vicEntries === 1, `two events writing back the same person and honor at once append one entry, found ${vicEntries}`);
+  assert(crossRuns[0].written + crossRuns[1].written === 1 && crossRuns[0].alreadyRecorded + crossRuns[1].alreadyRecorded === 1,
+    `one event writes, the other links as already recorded, got ${JSON.stringify(crossRuns)}`);
+  assert(await prisma.honorWeekendCompletionLink.count({ where: { enrollment: { eventId: { in: twoEvents } } } }) === 2, "both enrollments are linked");
+  console.log("ok  two Honors Weekend events writing back the same person and honor at once: 1 entry, both enrollments linked");
+
+  // ---------------------------------------------------------------- re-review: an honor linked in the catalog after its need was recorded
+  const link1 = await addPerson("link1", "Lin", "Linklater");
+  const link2 = await addPerson("link2", "Lou", "Linklater");
+  const link3 = await addPerson("link3", "Lex", "Linklater");
+  for (const personId of [link1, link2, link3]) {
+    await addMember(clubs.link, personId);
+    await complete(personId, honors.late, clubs.link);
+  }
+  await syncHonorOrderNeeds(clubs.link);
+  const beforeLink = await listOrderList(clubs.link);
+  assert(beforeLink.unmatched.length === 3 && beforeLink.lines.length === 0, "with no catalog item yet, the needs are unmatched");
+  await expectCode(createOrderBatch(clubs.link, {}, actor), "NOTHING_TO_ORDER", "nothing orderable before the honor is linked");
+  const itemA = `${P}_item_late_a`;
+  const itemB = `${P}_item_late_b`;
+  await prisma.clubSupplyItem.create({ data: { id: itemA, section: "OUTDOOR_INDUSTRIES", name: "Birds (A)", normalizedName: `${P} birds a`, catalogNumber: "006601", honorId: honors.late } });
+  await syncHonorOrderNeeds(clubs.link);
+  const afterLink = await listOrderList(clubs.link);
+  assert(afterLink.unmatched.length === 0 && afterLink.lines[0]?.item.itemId === itemA && afterLink.lines[0].needed === 3,
+    `linking the honor later moves its NEEDED needs onto the item, got ${JSON.stringify(afterLink)}`);
+  console.log("ok  an honor linked in the catalog after sync: its NEEDED needs pick up the item on the next sync");
+
+  await prisma.clubSupplyItem.update({ where: { id: itemA }, data: { honorId: null } });
+  await prisma.clubSupplyItem.create({ data: { id: itemB, section: "OUTDOOR_INDUSTRIES", name: "Birds (B)", normalizedName: `${P} birds b`, catalogNumber: "006602", honorId: honors.late } });
+  await syncHonorOrderNeeds(clubs.link);
+  const afterRelink = await prisma.clubOrderNeed.findMany({ where: { organizationId: clubs.link }, select: { itemId: true } });
+  assert(afterRelink.length === 3 && afterRelink.every((need) => need.itemId === itemB), "re-linking the honor to another item moves NEEDED needs to it");
+  await createOrderBatch(clubs.link, {}, actor);
+  await prisma.clubSupplyItem.update({ where: { id: itemB }, data: { honorId: null } });
+  await prisma.clubSupplyItem.update({ where: { id: itemA }, data: { honorId: honors.late } });
+  await syncHonorOrderNeeds(clubs.link);
+  const orderedAfterRelink = await prisma.clubOrderNeed.findMany({ where: { organizationId: clubs.link }, select: { itemId: true, status: true } });
+  assert(orderedAfterRelink.every((need) => need.status === "ORDERED" && need.itemId === itemB), "an ORDERED need keeps the item it was ordered as");
+  console.log("ok  re-linking to a different item: NEEDED needs follow it; ORDERED needs keep what was ordered");
+
+  // ---------------------------------------------------------------- re-review: a withdrawn completion
+  const wade = await addPerson("wade", "Wade", "Withdrawn");
+  await addMember(clubs.link, wade);
+  await complete(wade, honors.late, clubs.link);
+  await syncHonorOrderNeeds(clubs.link);
+  assert(await prisma.clubOrderNeed.count({ where: { personId: wade, status: "NEEDED" } }) === 1, "Wade's completion is a NEEDED need");
+  const correctBack = (personId: string) => prisma.memberHonorEntry.create({
+    data: { personId, honorId: honors.late, status: "IN_PROGRESS", organizationId: clubs.link, recordedByUserId: staffUserId },
+  });
+  await correctBack(wade);
+  await correctBack(link1); // already ORDERED: must stay
+  const withdrawnSync = await syncHonorOrderNeeds(clubs.link);
+  assert(withdrawnSync.withdrawn === 1, `one NEEDED need withdrawn, got ${JSON.stringify(withdrawnSync)}`);
+  assert(await prisma.clubOrderNeed.count({ where: { personId: wade } }) === 0, "the withdrawn completion's NEEDED need is removed");
+  assert((await prisma.clubOrderNeed.findFirst({ where: { personId: link1 }, select: { status: true } }))?.status === "ORDERED", "an ORDERED need is left alone");
+  const withdrawnAudit = await prisma.auditLog.findMany({ where: { action: "CLUB_ORDER_NEEDS_WITHDRAWN", metadata: { path: ["organizationId"], equals: clubs.link } }, select: { metadata: true } });
+  assert(withdrawnAudit.length === 1 && (withdrawnAudit[0].metadata as { needCount: number }).needCount === 1, "the withdrawal is audited with its count");
+  await complete(wade, honors.late, clubs.link, "2026-10-01");
+  await syncHonorOrderNeeds(clubs.link);
+  assert(await prisma.clubOrderNeed.count({ where: { personId: wade, status: "NEEDED" } }) === 1, "completing it again records the need afresh");
+  console.log("ok  a completion corrected back to in progress removes its NEEDED need (audited); ORDERED needs stay");
+
+  // ---------------------------------------------------------------- re-review: only this club year's roster counts
+  const lastYear = clubYearFor(new Date(Date.now() - 366 * 24 * 60 * 60 * 1000));
+  const stale = await addPerson("stale", "Sol", "Lastyear");
+  await addMember(clubs.stale, stale, "ACTIVE", lastYear);
+  await complete(stale, honors.linked, clubs.stale);
+  await syncHonorOrderNeeds(clubs.stale);
+  assert(await prisma.clubOrderNeed.count({ where: { personId: stale } }) === 0, `an ACTIVE row on last year's roster (${lastYear}) creates no need`);
+  console.log("ok  sync reads this club year's roster only, like the Honors page");
 }
 
 main()

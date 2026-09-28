@@ -100,6 +100,58 @@ export async function syncOrderNeeds(organizationId: string, sourceType: "HONOR"
   });
 }
 
+/**
+ * Brings this club's not-yet-ordered needs in line with the source (#487),
+ * under the club's lock:
+ *   - a NEEDED need takes the catalog item its source is linked to *now*
+ *     (`itemBySourceId`), so an honor linked in the catalog after its need
+ *     was recorded (null -> item), or re-linked to another item, is picked
+ *     up on the next sync;
+ *   - a NEEDED need whose source was withdrawn (`withdrawnSourceIds`: the
+ *     completion was corrected away) is removed, audited by count. If it is
+ *     completed again later, the next sync records it afresh.
+ * ORDERED, RECEIVED, and AWARDED needs are never touched: they belong to an
+ * order already placed.
+ */
+export async function reconcileNeededNeeds(
+  organizationId: string,
+  sourceType: "HONOR",
+  itemBySourceId: ReadonlyMap<string, string | null>,
+  withdrawnSourceIds: readonly string[],
+) {
+  const sourceIds = [...itemBySourceId.keys()];
+  if (sourceIds.length === 0 && withdrawnSourceIds.length === 0) return { relinked: 0, withdrawn: 0 };
+  return getPrisma().$transaction(async (tx) => {
+    await lockClubOrders(tx, organizationId);
+    const needed = sourceIds.length === 0 ? [] : await tx.clubOrderNeed.findMany({
+      where: { organizationId, sourceType, status: "NEEDED", sourceId: { in: sourceIds } },
+      select: { id: true, sourceId: true, itemId: true },
+    });
+    const idsByTarget = new Map<string | null, string[]>();
+    for (const need of needed) {
+      const target = itemBySourceId.get(need.sourceId) ?? null;
+      if (need.itemId === target) continue;
+      idsByTarget.set(target, [...(idsByTarget.get(target) ?? []), need.id]);
+    }
+    let relinked = 0;
+    for (const [itemId, ids] of idsByTarget) {
+      relinked += (await tx.clubOrderNeed.updateMany({ where: { id: { in: ids }, organizationId, status: "NEEDED" }, data: { itemId } })).count;
+    }
+    const withdrawn = withdrawnSourceIds.length === 0 ? 0 : (await tx.clubOrderNeed.deleteMany({
+      where: { organizationId, sourceType, status: "NEEDED", sourceId: { in: [...withdrawnSourceIds] } },
+    })).count;
+    if (withdrawn > 0) {
+      await writeAuditLog({
+        action: "CLUB_ORDER_NEEDS_WITHDRAWN",
+        entityType: "ClubOrderNeed",
+        summary: `Removed ${withdrawn} not-yet-ordered club supply need${withdrawn === 1 ? "" : "s"} whose completion was withdrawn.`,
+        metadata: { organizationId, sourceType, needCount: withdrawn },
+      }, tx);
+    }
+    return { relinked, withdrawn };
+  });
+}
+
 /** NEEDED (not yet ordered) needs for these source ids recorded under some other club (#487 transfers). */
 export async function listNeededNeedsElsewhere(organizationId: string, sourceType: "HONOR", sourceIds: readonly string[]) {
   if (sourceIds.length === 0) return [];

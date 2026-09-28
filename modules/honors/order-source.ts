@@ -5,8 +5,10 @@ import {
   listNeededNeedsElsewhere,
   moveNeededNeedsToClub,
   type NeedCandidate,
+  reconcileNeededNeeds,
   syncOrderNeeds,
 } from "@/modules/club-orders/repository";
+import { clubYearFor } from "@/modules/club-rosters/domain";
 
 /**
  * Honors as an order source (#487): the only place that knows a completed,
@@ -27,18 +29,20 @@ export function honorNeedSourceId(personId: string, honorId: string) {
 }
 
 /**
- * This club's active roster members whose latest entry for some honor is
- * COMPLETED, with the catalog item that honor's patch is, when the catalog
- * links one (#531). Only the latest entry per person-and-honor counts, same
- * as the Honors page.
+ * This club's active members on this club year's roster (the same rows the
+ * Honors page reads), and for each person-and-honor their latest entry — only
+ * the latest counts, same as the Honors page. A latest entry that's COMPLETED
+ * is a need candidate, carrying the catalog item that honor's patch is linked
+ * to right now (#531); one that's no longer COMPLETED (corrected back to in
+ * progress) is a withdrawn completion.
  */
-async function pendingHonorCompletions(organizationId: string) {
+async function honorCompletionsForClub(organizationId: string, now: Date) {
   const members = await getPrisma().clubRosterMember.findMany({
-    where: { organizationId, status: "ACTIVE", personId: { not: null } },
+    where: { organizationId, clubYear: clubYearFor(now), status: "ACTIVE", personId: { not: null } },
     select: { personId: true },
   });
   const personIds = [...new Set(members.map((member) => member.personId!))];
-  if (personIds.length === 0) return [];
+  if (personIds.length === 0) return { candidates: [], withdrawnSourceIds: [] };
   const entries = await getPrisma().memberHonorEntry.findMany({
     where: { personId: { in: personIds } },
     orderBy: { seq: "desc" },
@@ -49,43 +53,64 @@ async function pendingHonorCompletions(organizationId: string) {
     const key = honorNeedSourceId(entry.personId, entry.honorId);
     if (!latestByPersonHonor.has(key)) latestByPersonHonor.set(key, entry);
   }
-  const completed = [...latestByPersonHonor.values()].filter((entry) => entry.status === "COMPLETED");
-  if (completed.length === 0) return [];
+  const latest = [...latestByPersonHonor.values()];
+  const completed = latest.filter((entry) => entry.status === "COMPLETED");
+  const withdrawnSourceIds = latest
+    .filter((entry) => entry.status !== "COMPLETED")
+    .map((entry) => honorNeedSourceId(entry.personId, entry.honorId));
+  if (completed.length === 0) return { candidates: [], withdrawnSourceIds };
   const items = await getPrisma().clubSupplyItem.findMany({
     where: { honorId: { in: [...new Set(completed.map((entry) => entry.honorId))] } },
+    orderBy: { id: "asc" },
     select: { id: true, honorId: true },
   });
-  const itemByHonor = new Map(items.map((item) => [item.honorId, item.id]));
-  return completed.map((entry): NeedCandidate => ({
+  const itemByHonor = new Map<string, string>();
+  for (const item of items) if (item.honorId && !itemByHonor.has(item.honorId)) itemByHonor.set(item.honorId, item.id);
+  const candidates = completed.map((entry): NeedCandidate => ({
     sourceId: honorNeedSourceId(entry.personId, entry.honorId),
     personId: entry.personId,
     itemId: itemByHonor.get(entry.honorId) ?? null,
     sourceLabel: entry.honor.name,
     sourceDate: entry.completionDate,
   }));
+  return { candidates, withdrawnSourceIds };
 }
 
 /**
- * Records new needs from this club's completed honors (#487), skipping any
- * already on file, and brings a transferred member's not-yet-ordered needs
- * with them: a NEEDED need recorded under a club where the person is no
- * longer active moves to this club. Ordered, received, and awarded needs stay
- * with the club that ordered them. Only editors' visits and write paths call
- * this; a view-only visit never writes.
+ * Brings this club's honor needs up to date (#487). Only editors' visits and
+ * write paths call this; a view-only visit never writes.
+ *   1. New completions become needs; ones already on file are skipped.
+ *   2. A transferred member's not-yet-ordered needs come with them: a NEEDED
+ *      need recorded under a club where the person is no longer active this
+ *      club year moves here. Ordered, received, and awarded needs stay with
+ *      the club that ordered them.
+ *   3. NEEDED needs take the catalog item their honor is linked to now (an
+ *      honor linked or re-linked in the catalog after the need was recorded),
+ *      and a NEEDED need whose completion was withdrawn is removed.
  */
-export async function syncHonorOrderNeeds(organizationId: string) {
-  const candidates = await pendingHonorCompletions(organizationId);
+export async function syncHonorOrderNeeds(organizationId: string, now = new Date()) {
+  const { candidates, withdrawnSourceIds } = await honorCompletionsForClub(organizationId, now);
   const created = await syncOrderNeeds(organizationId, "HONOR", candidates);
   const elsewhere = await listNeededNeedsElsewhere(organizationId, "HONOR", candidates.map((candidate) => candidate.sourceId));
   let moved = 0;
   if (elsewhere.length > 0) {
     const stillActive = await getPrisma().clubRosterMember.findMany({
-      where: { status: "ACTIVE", OR: elsewhere.map((need) => ({ personId: need.personId, organizationId: need.organizationId })) },
+      where: {
+        status: "ACTIVE",
+        clubYear: clubYearFor(now),
+        OR: elsewhere.map((need) => ({ personId: need.personId, organizationId: need.organizationId })),
+      },
       select: { personId: true, organizationId: true },
     });
     const activeAt = new Set(stillActive.map((member) => `${member.personId}\u0000${member.organizationId}`));
     const toMove = elsewhere.filter((need) => !activeAt.has(`${need.personId}\u0000${need.organizationId}`));
     moved = (await moveNeededNeedsToClub(organizationId, toMove)).count;
   }
-  return { count: created.count, moved };
+  const reconciled = await reconcileNeededNeeds(
+    organizationId,
+    "HONOR",
+    new Map(candidates.map((candidate) => [candidate.sourceId, candidate.itemId])),
+    withdrawnSourceIds,
+  );
+  return { count: created.count, moved, ...reconciled };
 }

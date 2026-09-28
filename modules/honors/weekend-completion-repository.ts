@@ -56,7 +56,8 @@ function isUniqueViolation(error: unknown) {
  * nowhere to write a year-round record, so it's counted as skipped, not an
  * error. When the member's latest entry for that honor is already COMPLETED,
  * no second entry is appended — the enrollment is linked to that entry and
- * counted as already recorded. Runs are serialized per event; a unique-key
+ * counted as already recorded. Runs are serialized per event, and per person
+ * and honor across events (two weekends at once never both append); a unique-key
  * race that still slips through is retried once, and the retry reports those
  * enrollments as already recorded rather than failing.
  */
@@ -116,7 +117,14 @@ async function writeBackOnce(eventId: string, completionDate: string, actorUserI
 
     let written = 0;
     let linkedToExisting = 0;
+    // Two Honors Weekend events can write back the same person and honor at
+    // once, so the "is the latest entry already COMPLETED?" check is taken
+    // under a per-person-and-honor lock, in one fixed order so runs never
+    // deadlock one another.
+    const personHonorKey = (row: WriteRow) => `${row.personId}:${row.honorId}`;
+    toWrite.sort((a, b) => personHonorKey(a).localeCompare(personHonorKey(b)));
     for (const row of toWrite) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-honor-entry:${personHonorKey(row)}`}))`;
       const latest = await tx.memberHonorEntry.findFirst({
         where: { personId: row.personId, honorId: row.honorId },
         orderBy: { seq: "desc" },
