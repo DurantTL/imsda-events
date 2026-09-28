@@ -47,6 +47,7 @@ import {
   clubYearMonths,
   isLockedForClub,
   isOnTime,
+  monthlyReportProgress,
   pickedTotal,
   reportDueDate,
   reportProblems,
@@ -121,6 +122,36 @@ describe("monthly report rules (#377)", () => {
     expect(clubYearMonths("2026-27")[0]).toBe("2026-09");
     expect(clubYearMonths("2026-27")[11]).toBe("2027-08");
     expect(reportableMonths("2026-27", new Date("2026-11-15T18:00:00Z"))).toEqual(["2026-09", "2026-10", "2026-11"]);
+  });
+
+  it("counts filed, past-due missing, and due-soon months for the club-year dashboard (#488)", () => {
+    // Sept and Oct are past their own due dates (Oct 10, Nov 10) by Nov 15; Nov itself isn't due until Dec 10.
+    expect(monthlyReportProgress("2026-27", new Date("2026-11-15T18:00:00Z"), new Set(["2026-09", "2026-10"])))
+      .toEqual({ filed: 2, missing: 0, dueSoon: { count: 1, dueDate: "2026-12-10" } });
+    expect(monthlyReportProgress("2026-27", new Date("2026-11-15T18:00:00Z"), new Set()))
+      .toEqual({ filed: 0, missing: 2, dueSoon: { count: 1, dueDate: "2026-12-10" } });
+    expect(monthlyReportProgress("2026-27", new Date("2026-11-15T18:00:00Z"), new Set(["2026-09", "2026-10", "2026-11"])))
+      .toEqual({ filed: 3, missing: 0, dueSoon: null });
+    // A club's own draft isn't "filed" (#426): only months in `filedMonths` (submitted) count.
+    expect(monthlyReportProgress("2026-27", new Date("2026-09-28T12:00:00Z"), new Set()))
+      .toEqual({ filed: 0, missing: 0, dueSoon: { count: 1, dueDate: "2026-10-10" } });
+  });
+
+  it("never counts a month as missing until its own due date passes — the current or in-grace month is 'due soon' instead (review fix)", () => {
+    // September isn't due until Oct 10, so on Sept 28 it's due-soon, never missing — matching "What's next" on the same page.
+    expect(monthlyReportProgress("2026-27", new Date("2026-09-28T12:00:00Z"), new Set())).toEqual({
+      filed: 0, missing: 0, dueSoon: { count: 1, dueDate: "2026-10-10" },
+    });
+    // Right up through the due date (Nov 10, in conference time), October is still due-soon, not missing —
+    // alongside November, the current month, which is also always due-soon once unfiled.
+    expect(monthlyReportProgress("2026-27", new Date("2026-11-10T20:00:00Z"), new Set(["2026-09"]))).toEqual({
+      filed: 1, missing: 0, dueSoon: { count: 2, dueDate: "2026-11-10" },
+    });
+    // Just after midnight conference time on the 11th, the same unfiled October report is now missing;
+    // November (the current month) stays due-soon, due Dec 10.
+    expect(monthlyReportProgress("2026-27", new Date("2026-11-11T07:00:00Z"), new Set(["2026-09"]))).toEqual({
+      filed: 1, missing: 1, dueSoon: { count: 1, dueDate: "2026-12-10" },
+    });
   });
 });
 

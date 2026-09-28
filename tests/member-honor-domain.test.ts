@@ -6,6 +6,7 @@ import {
   currentHonorsFromHistory,
   filterClubHonorsRows,
   honorSummaryByMemberId,
+  honorYearSummary,
   memberHonorEntryProblem,
 } from "@/modules/honors/member-honor-domain";
 
@@ -119,5 +120,13 @@ describe("filterClubHonorsRows and clubHonorsCsv", () => {
       m2: [expect.objectContaining({ honorId: "h2" })],
       m3: [],
     });
+  });
+
+  it("counts in-progress and this-club-year-completed honors for the club-year dashboard tile (#488)", () => {
+    // m1's honor was completed 2026-09-01, the club year's own first day; m2's is still in progress.
+    expect(honorYearSummary(rows, "2026-27")).toEqual({ inProgress: 1, completedThisYear: 1 });
+    // A club year that starts after the completion date doesn't count it.
+    expect(honorYearSummary(rows, "2027-28")).toEqual({ inProgress: 1, completedThisYear: 0 });
+    expect(honorYearSummary([], "2026-27")).toEqual({ inProgress: 0, completedThisYear: 0 });
   });
 });
