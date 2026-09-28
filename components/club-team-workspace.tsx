@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { Mail, RefreshCw, UserMinus, UserPlus, X, XCircle } from "lucide-react";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { ClubTeamInvite } from "@/modules/club-imports/invites";
 import {
@@ -42,6 +43,14 @@ export function ClubTeamWorkspace({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
+  // Review before removing a club admin or cancelling an invite (#471):
+  // both go through the shared in-page confirm dialog instead of
+  // `window.confirm()`.
+  const [confirmTarget, setConfirmTarget] = useState<
+    | { kind: "remove-member"; member: ClubTeamMember }
+    | { kind: "cancel-invite"; invite: ClubTeamInvite }
+    | null
+  >(null);
   const base = `/api/attendee/clubs/${encodeURIComponent(organizationId)}/team`;
   const closeDialog = useCallback(() => setDialogOpen(false), []);
   const dialogRef = useAccessibleDialog<HTMLElement>(dialogOpen, closeDialog);
@@ -92,25 +101,34 @@ export function ClubTeamWorkspace({
     }
   }
 
-  async function remove(member: ClubTeamMember) {
-    if (!window.confirm(`Remove ${member.displayName} as ${clubDirectorRoleLabels[member.role]}? They lose access to this club right away.`)) return;
-    await call(`${base}/${encodeURIComponent(member.id)}`, "DELETE", undefined, "Removed.");
+  function remove(member: ClubTeamMember) {
+    // A leftover page error must not appear inside the new dialog.
+    setError("");
+    setConfirmTarget({ kind: "remove-member", member });
   }
 
   async function resendInvite(invite: ClubTeamInvite) {
     await call(`${base}/invites/${encodeURIComponent(invite.id)}/resend`, "POST", undefined, "Invite resent.");
   }
 
-  async function cancelInvite(invite: ClubTeamInvite) {
-    if (!window.confirm(`Cancel the invite to ${invite.email}?`)) return;
-    await call(`${base}/invites/${encodeURIComponent(invite.id)}`, "DELETE", undefined, "Invite cancelled.");
+  function cancelInvite(invite: ClubTeamInvite) {
+    setError("");
+    setConfirmTarget({ kind: "cancel-invite", invite });
+  }
+
+  async function confirmRemoveOrCancel() {
+    if (!confirmTarget) return;
+    const ok = confirmTarget.kind === "remove-member"
+      ? await call(`${base}/${encodeURIComponent(confirmTarget.member.id)}`, "DELETE", undefined, "Removed.")
+      : await call(`${base}/invites/${encodeURIComponent(confirmTarget.invite.id)}`, "DELETE", undefined, "Invite cancelled.");
+    if (ok) setConfirmTarget(null);
   }
 
   return (
     <div className="club-roster-stack">
       {notice && <div className="inline-notice success" role="status">{notice}</div>}
-      {/* While the popup is open, its own alert shows the error; one announcement, not two. */}
-      {error && !dialogOpen && <div className="inline-notice error" role="alert">{error}</div>}
+      {/* While a popup is open, its own alert shows the error; one announcement, not two. */}
+      {error && !dialogOpen && !confirmTarget && <div className="inline-notice error" role="alert">{error}</div>}
 
       <section className="public-manage-card" aria-labelledby="club-team-heading">
         <div className="public-manage-card-heading club-roster-heading">
@@ -244,6 +262,23 @@ export function ClubTeamWorkspace({
           </section>
         </div>
       )}
+
+      <ConfirmDialog
+        busy={saving}
+        confirmLabel={confirmTarget?.kind === "remove-member" ? "Remove" : "Cancel invite"}
+        destructive
+        error={error}
+        onCancel={() => setConfirmTarget(null)}
+        onConfirm={() => void confirmRemoveOrCancel()}
+        open={confirmTarget !== null}
+        title={confirmTarget
+          ? confirmTarget.kind === "remove-member"
+            ? `Remove ${confirmTarget.member.displayName} as ${clubDirectorRoleLabels[confirmTarget.member.role]}?`
+            : `Cancel the invite to ${confirmTarget.invite.email}?`
+          : ""}
+      >
+        {confirmTarget?.kind === "remove-member" && <p>They lose access to this club right away.</p>}
+      </ConfirmDialog>
     </div>
   );
 }

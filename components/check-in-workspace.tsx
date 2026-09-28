@@ -22,6 +22,7 @@ import {
 import { CheckInPaymentDue } from "@/components/check-in-payment-due";
 import { BackgroundCheckBadge } from "@/components/background-check-flags";
 import { CheckInScanner } from "@/components/check-in-scanner";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   ClubCheckInPanel,
   type ClubCheckInProgress,
@@ -89,6 +90,12 @@ export function CheckInWorkspace({
   const [query, setQuery] = useState("");
   const [undoPendingId, setUndoPendingId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  // Review before discarding saved offline data (#471): both are local,
+  // device-only discards, so there's nothing to await and no busy guard
+  // needed — the dialog still confirms in-page rather than via
+  // `window.confirm()`, which iOS Safari can silently fail to show.
+  const [discardTarget, setDiscardTarget] = useState<{ idempotencyKey: string; attendeeId: string; attendeeLabel: string } | null>(null);
+  const [confirmingDiscardUnreadable, setConfirmingDiscardUnreadable] = useState(false);
   // This device's latest result per attendee from a club run, so a row that
   // failed reads "Needs review" even when nothing was saved to the queue.
   const [bulkResultById, setBulkResultById] = useState<
@@ -254,24 +261,27 @@ export function CheckInWorkspace({
   }
 
   function discardSavedItem(idempotencyKey: string, attendeeId: string, attendeeLabel: string) {
-    const confirmed = window.confirm(
-      `Discard the saved retry for ${attendeeLabel}? This only removes the retry from this device. It does not undo a server check-in.`,
-    );
-    if (!confirmed) return;
-    if (discardQueueItem(idempotencyKey)) {
-      clearBulkResult(attendeeId);
-      setMessage(`Discarded the saved retry for ${attendeeLabel}.`);
+    setDiscardTarget({ idempotencyKey, attendeeId, attendeeLabel });
+  }
+
+  function confirmDiscardSavedItem() {
+    if (!discardTarget) return;
+    if (discardQueueItem(discardTarget.idempotencyKey)) {
+      clearBulkResult(discardTarget.attendeeId);
+      setMessage(`Discarded the saved retry for ${discardTarget.attendeeLabel}.`);
     }
+    setDiscardTarget(null);
   }
 
   function discardUnreadableSavedData() {
-    const confirmed = window.confirm(
-      `Discard ${unreadableItemCount} unreadable saved queue ${unreadableItemCount === 1 ? "item" : "items"}? This cannot undo or change any check-in already received by the server.`,
-    );
-    if (!confirmed) return;
+    setConfirmingDiscardUnreadable(true);
+  }
+
+  function confirmDiscardUnreadableSavedData() {
     if (discardUnreadableItems()) {
       setMessage("Discarded the unreadable saved queue data.");
     }
+    setConfirmingDiscardUnreadable(false);
   }
 
   function attendeeLabel(attendeeId: string) {
@@ -282,6 +292,7 @@ export function CheckInWorkspace({
   }
 
   return (
+    <>
     <section className="page-stack">
       <div className="checkin-hero">
         <div>
@@ -640,5 +651,32 @@ export function CheckInWorkspace({
         )}
       </section>
     </section>
+
+    <ConfirmDialog
+      busy={false}
+      confirmLabel="Discard retry"
+      destructive
+      error=""
+      onCancel={() => setDiscardTarget(null)}
+      onConfirm={confirmDiscardSavedItem}
+      open={discardTarget !== null}
+      title={discardTarget ? `Discard the saved retry for ${discardTarget.attendeeLabel}?` : "Discard the saved retry?"}
+    >
+      <p>This only removes the retry from this device. It does not undo a server check-in.</p>
+    </ConfirmDialog>
+
+    <ConfirmDialog
+      busy={false}
+      confirmLabel="Discard unreadable data"
+      destructive
+      error=""
+      onCancel={() => setConfirmingDiscardUnreadable(false)}
+      onConfirm={confirmDiscardUnreadableSavedData}
+      open={confirmingDiscardUnreadable}
+      title={`Discard ${unreadableItemCount} unreadable saved queue ${unreadableItemCount === 1 ? "item" : "items"}?`}
+    >
+      <p>This cannot undo or change any check-in already received by the server.</p>
+    </ConfirmDialog>
+    </>
   );
 }

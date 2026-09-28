@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { CalendarDays, Eye, EyeOff, Pencil, Plus, Save, Trash2, X } from "lucide-react";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { calendarStatusLabels, formatDateRange } from "@/modules/calendar/domain";
 import type { CalendarAdminEntry, CalendarAdminEvent } from "@/modules/calendar/repository";
 
@@ -30,6 +31,9 @@ export function CalendarAdminWorkspace({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // Review before removing a calendar entry (#471): the shared in-page
+  // confirm dialog replaces `window.confirm()`.
+  const [removeTarget, setRemoveTarget] = useState<CalendarAdminEntry | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
   async function call(url: string, method: string, body: unknown, success: string) {
@@ -92,10 +96,19 @@ export function CalendarAdminWorkspace({
     }
   }
 
-  async function remove(entry: CalendarAdminEntry) {
-    if (!window.confirm(`Remove "${entry.title}" from the calendar? This can't be undone.`)) return;
-    await call(`/api/admin/calendar/entries/${encodeURIComponent(entry.id)}`, "DELETE", undefined, "Removed.");
-    if (editing?.id === entry.id) setEditing(null);
+  function remove(entry: CalendarAdminEntry) {
+    // A leftover page error must not appear inside the new dialog.
+    setError("");
+    setRemoveTarget(entry);
+  }
+
+  async function confirmRemove() {
+    if (!removeTarget) return;
+    const ok = await call(`/api/admin/calendar/entries/${encodeURIComponent(removeTarget.id)}`, "DELETE", undefined, "Removed.");
+    if (ok) {
+      if (editing?.id === removeTarget.id) setEditing(null);
+      setRemoveTarget(null);
+    }
   }
 
   const categoryOptions = [...new Set([
@@ -133,7 +146,8 @@ export function CalendarAdminWorkspace({
       </div>
 
       {notice && <div className="inline-notice success" role="status">{notice}</div>}
-      {error && <div className="inline-notice error" role="alert">{error}</div>}
+      {/* While the remove dialog is open, its own alert shows the error; one announcement, not two. */}
+      {error && !removeTarget && <div className="inline-notice error" role="alert">{error}</div>}
 
       {tab === "entries" && (
         <>
@@ -320,6 +334,19 @@ export function CalendarAdminWorkspace({
           )}
         </section>
       )}
+
+      <ConfirmDialog
+        busy={saving}
+        confirmLabel="Remove"
+        destructive
+        error={error}
+        onCancel={() => setRemoveTarget(null)}
+        onConfirm={() => void confirmRemove()}
+        open={removeTarget !== null}
+        title={removeTarget ? `Remove "${removeTarget.title}" from the calendar?` : "Remove entry?"}
+      >
+        <p>This can&apos;t be undone.</p>
+      </ConfirmDialog>
     </section>
   );
 }
