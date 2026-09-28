@@ -72,7 +72,7 @@ async function main() {
     data: {
       id: eventId, slug: `${P}-event`, name: "Honor capacity verification", startsAt: new Date("2026-12-05T15:00:00Z"),
       endsAt: new Date("2026-12-06T20:00:00Z"), isPublished: true, registrationOpensOn: "2026-10-01",
-      registrationClosesOn: "2026-11-30", billingMode: "DEFERRED_ORGANIZATION_INVOICE",
+      registrationClosesOn: "2026-11-30", billingMode: "DEFERRED_ORGANIZATION_INVOICE", audience: "CLUB",
     },
   });
   const session = await prisma.honorSession.create({ data: { eventId, name: "Sabbath", normalizedName: "sabbath" } });

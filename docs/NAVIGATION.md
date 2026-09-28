@@ -128,13 +128,17 @@ visibility condition is exactly what gated that destination before.
   - **Clubs and churches** and **System** are computed per render, not
     static list entries, because their destination and visibility depend on
     the signed-in user and the selected event:
-    - `resolveClubsAndChurchesEntry` points system admins at
-      `/admin/organizations`; an EVENT_ADMIN on a club-billed event (the same
-      rule `resolveClubOversight` in `modules/club-rosters/event-oversight.ts`
-      uses) gets `/more/clubs?event=…` instead. `WorkspaceLayout`
+    - `resolveClubsAndChurchesEntry` shows the entry only when the selected
+      event has a CLUB audience (#481) and the user has club oversight of it
+      (a system admin or an EVENT_ADMIN — the same rule
+      `resolveClubOversight` in `modules/club-rosters/event-oversight.ts`
+      uses). It points system admins at `/admin/organizations` and an
+      EVENT_ADMIN at `/more/clubs?event=…`. On a GENERAL event nobody sees
+      it, system admins included; they still reach `/admin/organizations`
+      from System management. `WorkspaceLayout`
       (`app/(workspace)/layout.tsx`) computes this `clubOversight` flag per
-      event, server-side, the same way `more/page.tsx` does, and passes it on
-      each `ShellEvent`.
+      event, server-side, from the event's audience (not its billing mode), the
+      same way `more/page.tsx` does, and passes it on each `ShellEvent`.
     - System holds the same "System management" destination (`/admin`) as
       the existing "Global administration" callout above it — system admins
       only.
@@ -154,11 +158,12 @@ visibility condition is exactly what gated that destination before.
     Registration forms, Seminar assignments.
   - **Content & sales:** Public content, Merchandise, Promo codes, Attendee
     community.
-  - **People & access:** Staff, Clubs and churches (two cards: the
-    system-admin directory at `/admin/organizations`, and the event's club
-    oversight at `/more/clubs` for anyone with club oversight, titled "This
-    event's clubs" for a system admin who sees both), Club assignments,
-    Import registrations.
+  - **People & access:** Staff, Clubs and churches (on a CLUB-audience event
+    only, #481 — two cards: the system-admin directory at
+    `/admin/organizations`, and the event's club oversight at `/more/clubs`
+    for anyone with club oversight, titled "This event's clubs" for a system
+    admin who sees both; on a GENERAL event neither shows, for any role),
+    Club assignments, Import registrations.
   - **Reports:** Operational reports, Operational health.
   - Attendee setup and Tags reuse the sidebar's own required permission via
     `requiredPermissionFor("/more/attendee-configuration")` and

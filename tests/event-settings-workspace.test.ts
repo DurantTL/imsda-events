@@ -45,6 +45,7 @@ const baseEventFields = {
   checksAdultBackgrounds: false,
   attendeeEditPolicy: "VERIFY_EVERY_EDIT" as const,
   billingMode: "ATTENDEE_PAY" as const,
+  audience: "GENERAL" as const,
   seminarPreferenceClosesOn: null,
   seminarPreferenceSelfServiceLocked: false,
   autoPromoteWaitlist: false,

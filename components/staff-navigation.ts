@@ -136,12 +136,15 @@ export const mobileNavigationOrder = [
 ] as const;
 
 /**
- * Nobody sees a "Clubs and churches" link here they couldn't already reach
- * before this group existed (#428 review): system admins reach every club
- * through the churches-and-clubs directory; an EVENT_ADMIN on a club-billed
- * event reaches theirs through club oversight, exactly as `more/page.tsx`
- * gates it. Both the sidebar and the phone "More" directory call this so the
- * two destinations can't drift (#475).
+ * "Clubs and churches" is a club feature, so it shows only when the selected
+ * event has a CLUB audience (#481) — that is, when `clubOversight` (from
+ * `resolveClubOversight`, true only for a system admin or an EVENT_ADMIN on a
+ * CLUB-audience event) is true, exactly as `more/page.tsx` gates it. A GENERAL
+ * event never shows it, even for a system admin, who still reaches the
+ * churches-and-clubs directory from System management. The href differs by
+ * role: system admins get the full directory, event admins the event's club
+ * oversight page. Both the sidebar and the phone "More" directory call this
+ * so the two destinations can't drift (#475).
  */
 export function resolveClubsAndChurchesEntry({
   clubOversight,
@@ -152,7 +155,7 @@ export function resolveClubsAndChurchesEntry({
 }): { href: string; visible: boolean } {
   return {
     href: isSystemAdmin ? "/admin/organizations" : "/more/clubs",
-    visible: isSystemAdmin || clubOversight,
+    visible: clubOversight,
   };
 }
 
@@ -167,9 +170,10 @@ export function resolveClubsAndChurchesEntry({
  * `tests/mobile-directory-parity.test.ts` can build the same list without
  * duplicating a card's visibility rule. Two cards reuse the sidebar's own
  * required permission via `requiredPermissionFor` instead of naming it a
- * second time. "Clubs and churches" shows the directory for system admins
- * and the event's club oversight page for anyone with club oversight (a
- * system admin on a club-billed event sees both); the parity test checks
+ * second time. On a CLUB-audience event (#481), "Clubs and churches" shows
+ * the directory for system admins and the event's club oversight page for
+ * anyone with club oversight (a system admin on a CLUB event sees both); on a
+ * GENERAL event neither shows, for any role. The parity test checks
  * both against `resolveClubsAndChurchesEntry` and `/more/clubs`'s own guard.
  */
 export type MoreDirectoryGroup = "setup" | "content-sales" | "people-access" | "reports";
@@ -203,7 +207,7 @@ export type MoreDirectoryContext = {
   permissions: readonly EventPermission[];
   /** From `resolveClubOversight` (`modules/club-rosters/event-oversight.ts`), the same call `more/page.tsx` already made. */
   clubOversight: boolean;
-  /** Whether the selected event is billed to clubs, from the same `resolveClubOversight` result. */
+  /** Whether the selected event has a CLUB audience (#481), from the same `resolveClubOversight` result. */
   clubEvent: boolean;
   isSystemAdmin: boolean;
   /** `?event=<id>` (or `""` when nothing is selected), appended to every event-scoped href. */
@@ -234,19 +238,20 @@ export function buildMoreDirectoryCards({
     { key: "promo-codes", group: "content-sales", allowed: has("MANAGE_FINANCE"), href: `/more/promo-codes${eventQuery}`, icon: TicketPercent, title: "Promo codes", description: "Create bounded registration discounts, schedule dates, and review use limits.", cta: "Manage discounts" },
     { key: "community", group: "content-sales", allowed: has("MANAGE_COMMUNICATIONS"), href: `/community${eventQuery}`, icon: MessagesSquare, title: "Attendee community", description: "Open or pause discussion, review attendee reports, and moderate posts and replies.", cta: "Moderate community" },
     { key: "staff", group: "people-access", allowed: has("MANAGE_STAFF"), href: `/staff${eventQuery}`, icon: UserCog, title: "Staff", description: "Add staff and choose what each person can do for this event.", cta: "Manage team" },
-    // System admins reach the churches-and-clubs directory (the sidebar's
-    // "Clubs and churches" link for them)...
+    // On a CLUB-audience event (#481), system admins reach the
+    // churches-and-clubs directory (the sidebar's "Clubs and churches" link
+    // for them); on a GENERAL event it stays in System management only...
     {
       key: "clubs-and-churches",
       group: "people-access",
-      allowed: isSystemAdmin,
+      allowed: isSystemAdmin && clubOversight,
       href: "/admin/organizations",
       icon: UsersRound,
       title: "Clubs and churches",
       description: "The full churches-and-clubs directory: every organization, its directors, and its registrations.",
       cta: "Open directory",
     },
-    // ...and anyone with club oversight of this club-billed event — system
+    // ...and anyone with club oversight of this CLUB-audience event — system
     // admins included — keeps the event's own club rosters and monthly
     // reports, gated exactly as on main and by `/more/clubs` itself.
     {
