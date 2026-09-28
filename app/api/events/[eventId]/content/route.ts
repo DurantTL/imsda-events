@@ -3,6 +3,7 @@ import { AccessDeniedError, requirePermission } from "@/modules/access/authoriza
 import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import {
+  EventContentError,
   listEventContentSections,
   replaceEventContent,
 } from "@/modules/events/content-repository";
@@ -34,6 +35,12 @@ function apiError(error: unknown, operation: string) {
     return Response.json(
       { error: error.code, message: error.message },
       { status: error.status },
+    );
+  }
+  if (error instanceof EventContentError) {
+    return Response.json(
+      { error: error.code, message: error.message },
+      { status: 400 },
     );
   }
   logError(`${operation} failed`, error);

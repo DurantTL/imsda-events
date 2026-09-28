@@ -350,29 +350,34 @@ export async function findEventAssetForStaff(eventId: string, assetId: string) {
 }
 
 /**
- * Public view: an asset is reachable only while a *published* section of a
- * *published* event links to it, or it is the artwork of a merchandise
- * product whose catalog is enabled and approved.
+ * Public view: an asset is reachable only while it belongs to the named
+ * *published* event, and a *published* section of that same event links to
+ * it, or it is the artwork of that same event's merchandise product whose
+ * catalog is enabled and approved. Both the asset and the link are scoped to
+ * the slug, so a cross-event link row saved before #508 can't expose a file.
  *
  * Serving by id alone would mean an uploaded-but-unpublished file — next
  * year's pricing, a draft schedule — is one guessed identifier from being
- * public. Unpublishing a section (or disabling/archiving a product, or
- * pulling catalog approval) takes its files down with it, which is what
- * unpublishing is for.
+ * public, and would let one event's public page serve another event's file
+ * by id even if that file happened to be linked from a published section
+ * somewhere else. Scoping to `eventSlug` (the event whose page is being
+ * rendered) closes both. Unpublishing a section (or disabling/archiving a
+ * product, or pulling catalog approval) takes its files down with it, which
+ * is what unpublishing is for.
  */
-export async function findPublishedEventAsset(assetId: string) {
+export async function findPublishedEventAsset(eventSlug: string, assetId: string) {
   return getPrisma().eventAsset.findFirst({
     where: {
       id: assetId,
-      event: { isPublished: true },
+      event: { slug: eventSlug, isPublished: true },
       OR: [
-        { links: { some: { section: { isPublished: true } } } },
+        { links: { some: { section: { isPublished: true, event: { slug: eventSlug } } } } },
         {
           merchandiseArtworkProducts: {
             some: {
               isEnabled: true,
               isArchived: false,
-              event: { merchandiseCatalog: { isEnabled: true, status: "APPROVED" } },
+              event: { slug: eventSlug, merchandiseCatalog: { isEnabled: true, status: "APPROVED" } },
             },
           },
         },

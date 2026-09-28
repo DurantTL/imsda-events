@@ -1,7 +1,20 @@
 import "server-only";
 
+import { Prisma } from "@prisma/client";
+
 import { getPrisma } from "@/lib/prisma";
 import type { EventContentInput } from "@/modules/events/content-schemas";
+
+/** Thrown when a content save cannot be honored as written. */
+export class EventContentError extends Error {
+  constructor(
+    public readonly code: "ASSET_NOT_IN_EVENT",
+    message: string,
+  ) {
+    super(message);
+    this.name = "EventContentError";
+  }
+}
 
 export type EventContentLinkRecord = {
   label: string;
@@ -76,50 +89,93 @@ export async function replaceEventContent(
   actorUserId: string,
 ) {
   const prisma = getPrisma();
-  await prisma.$transaction(async (tx) => {
-    // Links go with their section: the foreign key cascades on delete.
-    await tx.eventContentSection.deleteMany({ where: { eventId } });
-    for (const [position, section] of input.sections.entries()) {
-      await tx.eventContentSection.create({
+  const linkedAssetIds = [...new Set(
+    input.sections.flatMap((section) => (
+      section.kind === "RESOURCE_LINKS"
+        ? section.links.flatMap((link) => (link.assetId ? [link.assetId] : []))
+        : []
+    )),
+  )];
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Every linked file must belong to this event. Checked inside the same
+      // transaction as the write, against the live table rather than a value
+      // read earlier, so a file moved or removed between page load and save
+      // cannot slip through. Nothing is written until this passes.
+      if (linkedAssetIds.length > 0) {
+        const owned = await tx.eventAsset.findMany({
+          where: { id: { in: linkedAssetIds }, eventId },
+          select: { id: true },
+        });
+        if (owned.length !== linkedAssetIds.length) {
+          throw new EventContentError(
+            "ASSET_NOT_IN_EVENT",
+            "One of the linked files does not belong to this event. Reload and try again.",
+          );
+        }
+      }
+
+      // Links go with their section: the foreign key cascades on delete.
+      await tx.eventContentSection.deleteMany({ where: { eventId } });
+      for (const [position, section] of input.sections.entries()) {
+        await tx.eventContentSection.create({
+          data: {
+            eventId,
+            kind: section.kind,
+            title: section.title,
+            body: section.kind === "RICH_TEXT" ? section.body : "",
+            isPublished: section.isPublished,
+            position,
+            links: section.kind === "RESOURCE_LINKS"
+              ? {
+                create: section.links.map((link, linkPosition) => ({
+                  label: link.label,
+                  description: link.description,
+                  // The database carries an XOR check, so exactly one is stored.
+                  url: link.assetId ? null : link.url ?? null,
+                  assetId: link.assetId ?? null,
+                  position: linkPosition,
+                })),
+              }
+              : undefined,
+          },
+        });
+      }
+      const publishedCount = input.sections.filter((section) => section.isPublished).length;
+      await tx.auditLog.create({
         data: {
           eventId,
-          kind: section.kind,
-          title: section.title,
-          body: section.kind === "RICH_TEXT" ? section.body : "",
-          isPublished: section.isPublished,
-          position,
-          links: section.kind === "RESOURCE_LINKS"
-            ? {
-              create: section.links.map((link, linkPosition) => ({
-                label: link.label,
-                description: link.description,
-                // The database carries an XOR check, so exactly one is stored.
-                url: link.assetId ? null : link.url ?? null,
-                assetId: link.assetId ?? null,
-                position: linkPosition,
-              })),
-            }
-            : undefined,
+          actorUserId,
+          action: "EVENT_CONTENT_REPLACED",
+          entityType: "EventContentSection",
+          entityId: eventId,
+          correlationId: `event-content:${eventId}:${Date.now()}`,
+          summary: `Saved ${input.sections.length} content section${input.sections.length === 1 ? "" : "s"}, ${publishedCount} published.`,
+          metadata: {
+            sectionCount: input.sections.length,
+            publishedCount,
+            titles: input.sections.map((section) => section.title),
+          },
         },
       });
-    }
-    const publishedCount = input.sections.filter((section) => section.isPublished).length;
-    await tx.auditLog.create({
-      data: {
-        eventId,
-        actorUserId,
-        action: "EVENT_CONTENT_REPLACED",
-        entityType: "EventContentSection",
-        entityId: eventId,
-        correlationId: `event-content:${eventId}:${Date.now()}`,
-        summary: `Saved ${input.sections.length} content section${input.sections.length === 1 ? "" : "s"}, ${publishedCount} published.`,
-        metadata: {
-          sectionCount: input.sections.length,
-          publishedCount,
-          titles: input.sections.map((section) => section.title),
-        },
-      },
     });
-  });
+  } catch (error) {
+    // A linked file deleted between the ownership check and the link insert
+    // trips the link's foreign key. Nothing was written; say so the same way.
+    // Only when a linked file really is gone: a foreign-key failure on the
+    // event or the audit actor is a different fault and keeps its 500.
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError
+      && error.code === "P2003"
+      && linkedAssetIds.length > 0
+      && await prisma.eventAsset.count({ where: { id: { in: linkedAssetIds }, eventId } }) < linkedAssetIds.length
+    ) {
+      throw new EventContentError(
+        "ASSET_NOT_IN_EVENT",
+        "One of the linked files does not belong to this event. Reload and try again.",
+      );
+    }
+    throw error;
+  }
   return listEventContentSections(eventId);
 }
