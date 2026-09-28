@@ -533,6 +533,7 @@ model User {
   actorOnAttendeeAccountPersonLinks  AttendeeAccountPersonLink[]  @relation("AttendeeAccountPersonLinkActorUser")
   staffActAs                         StaffActAs[]                 @relation("StaffActAsUser")
   createdClubRosterMembers           ClubRosterMember[]           @relation("ClubRosterMemberCreatedByUser")
+  createdRosterExportFormats         ClubRosterExportFormat[]     @relation("ClubRosterExportFormatCreatedByUser")
   createdClubMeetingNotes            ClubMeetingNote[]             @relation("ClubMeetingNoteCreatedByUser")
   updatedClubMeetingNotes            ClubMeetingNote[]             @relation("ClubMeetingNoteUpdatedByUser")
   submittedClubEventRegistrations    ClubEventRegistration[]      @relation("ClubEventRegistrationSubmittedByUser")
@@ -754,6 +755,7 @@ model AttendeeAccount {
   createdClubInvites                ClubInvite[]                     @relation("ClubInviteCreatedByAccount")
   revokedClubRoles                  ClubDirectorGrant[]              @relation("ClubDirectorGrantRevokedByAccount")
   createdClubRosterMembers          ClubRosterMember[]          @relation("ClubRosterMemberCreatedBy")
+  createdRosterExportFormats        ClubRosterExportFormat[]    @relation("ClubRosterExportFormatCreatedBy")
   submittedClubRegistrations        ClubEventRegistration[]     @relation("ClubEventRegistrationSubmittedBy")
   clubRegistrationDrafts            ClubRegistrationDraft[]     @relation("ClubRegistrationDraftUpdatedBy")
   /// Club registration amendments this account made as a director reopening
@@ -1584,6 +1586,7 @@ model Organization {
   externalIdentities ExternalIdentity[]
   directorGrants     ClubDirectorGrant[]
   rosterMembers      ClubRosterMember[]
+  rosterExportFormats ClubRosterExportFormat[]
   eventRegistrations ClubEventRegistration[]
   registrationDrafts ClubRegistrationDraft[]
   eventAssignments   ClubEventAssignment[]
@@ -3151,6 +3154,28 @@ model ClubRosterMember {
   @@unique([organizationId, clubYear, personId])
   @@index([organizationId, clubYear, status])
   @@index([personId])
+}
+
+/// A club-owned, named roster export format (#490): which columns, in what
+/// order, and under what header names to hand a specific outside camporee.
+/// `columns` holds only that structure (an ordered array of `{key, header}`)
+/// and is never a copy of any roster row.
+model ClubRosterExportFormat {
+  id                 String   @id @default(cuid())
+  organizationId     String
+  name               String
+  columns            Json
+  createdByAccountId String?
+  /// Set instead of `createdByAccountId` for a staff "act as" director (#442).
+  createdByUserId    String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  organization  Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy     AttendeeAccount? @relation("ClubRosterExportFormatCreatedBy", fields: [createdByAccountId], references: [id], onDelete: SetNull)
+  createdByUser User?            @relation("ClubRosterExportFormatCreatedByUser", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, name])
 }
 
 /// A person's Sterling Volunteers background check (#388), recorded from the

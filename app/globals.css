@@ -7327,3 +7327,17 @@ select:focus-visible {
 .club-assignments-block { margin-top: 16px; }
 .club-assignments-block h3 { margin: 0; font-size: 0.9rem; }
 .club-assignments-block .public-manage-club-list { margin-top: 10px; }
+
+/* Roster export builder (#490) */
+.roster-export-format-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 0; padding: 0; list-style: none; }
+.roster-export-format-list li { display: flex; align-items: center; gap: 4px; }
+.roster-export-add-column { display: grid; gap: 5px; margin: 10px 0 14px; max-width: 320px; }
+.roster-export-column-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.roster-export-column-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.roster-export-column-order { display: inline-grid; place-items: center; min-width: 20px; height: 20px; border-radius: 999px; background: var(--paper); font-size: 0.6rem; font-weight: 800; }
+.roster-export-column-actions { display: flex; gap: 4px; margin-left: auto; }
+.roster-export-confirm { display: grid; gap: 8px; margin: 14px 0; padding: 10px 12px; }
+.roster-export-confirm p { margin: 0; }
+.roster-export-save-format { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
+.roster-export-save-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.roster-export-save-row input { flex: 1 1 220px; }
