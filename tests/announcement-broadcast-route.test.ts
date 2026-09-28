@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => {
     rejectCrossOriginRequest: vi.fn(),
     findActiveMembership: vi.fn(),
     broadcastPublishedAnnouncement: vi.fn(),
+    previewAnnouncementBroadcast: vi.fn(),
   };
 });
 
@@ -48,6 +49,7 @@ vi.mock("@/modules/events/repository", () => ({
 vi.mock("@/modules/communications/announcement-broadcast", () => ({
   AnnouncementBroadcastError: mocks.AnnouncementBroadcastError,
   broadcastPublishedAnnouncement: mocks.broadcastPublishedAnnouncement,
+  previewAnnouncementBroadcast: mocks.previewAnnouncementBroadcast,
 }));
 
 import { POST } from "@/app/api/events/[eventId]/announcements/[announcementId]/broadcast/route";
@@ -85,6 +87,15 @@ beforeEach(() => {
     messageCount: 3,
     skippedCount: 0,
     deliveryMode: "LOCAL_CAPTURE",
+  });
+  mocks.previewAnnouncementBroadcast.mockResolvedValue({
+    announcementId: "announcement-1",
+    title: "Friday arrival information",
+    audienceLabel: "All active registrations (submitted or confirmed) for this event",
+    recipientCount: 3,
+    deliveryMode: "LOCAL_CAPTURE",
+    sendTiming: "IMMEDIATE",
+    generatedAt: "2026-09-28T04:06:05.000Z",
   });
 });
 
@@ -124,5 +135,39 @@ describe("announcement broadcast route", () => {
 
     expect(response.status).toBe(400);
     expect(mocks.broadcastPublishedAnnouncement).not.toHaveBeenCalled();
+  });
+
+  it("returns a recipient-count and audience review without sending anything (#472)", async () => {
+    const response = await POST(request({ mode: "preview" }), context);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(mocks.requirePermission).toHaveBeenCalledWith(
+      { user: { id: "staff-1" } },
+      "event-1",
+      "MANAGE_COMMUNICATIONS",
+      mocks.findActiveMembership,
+    );
+    expect(mocks.previewAnnouncementBroadcast).toHaveBeenCalledWith({
+      eventId: "event-1",
+      announcementId: "announcement-1",
+    });
+    expect(mocks.broadcastPublishedAnnouncement).not.toHaveBeenCalled();
+    expect(body.preview).toMatchObject({
+      recipientCount: 3,
+      audienceLabel: "All active registrations (submitted or confirmed) for this event",
+      deliveryMode: "LOCAL_CAPTURE",
+    });
+  });
+
+  it("still requires communications access for a preview", async () => {
+    mocks.requirePermission.mockRejectedValueOnce(
+      new mocks.AccessDeniedError("Communications access is required.", 403, "PERMISSION_DENIED"),
+    );
+
+    const response = await POST(request({ mode: "preview" }), context);
+
+    expect(response.status).toBe(403);
+    expect(mocks.previewAnnouncementBroadcast).not.toHaveBeenCalled();
   });
 });

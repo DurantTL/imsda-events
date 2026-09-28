@@ -8,6 +8,7 @@ import {
 import {
   enqueueEventAnnouncementMessage,
 } from "@/modules/communications/transactional-messages";
+import type { AnnouncementBroadcastPreview } from "@/modules/communications/types";
 
 export class AnnouncementBroadcastError extends Error {
   constructor(
@@ -20,6 +21,53 @@ export class AnnouncementBroadcastError extends Error {
     super(message);
     this.name = "AnnouncementBroadcastError";
   }
+}
+
+/**
+ * Read-only counterpart to `broadcastPublishedAnnouncement` (#472): the
+ * recipient count, audience, subject, and delivery mode staff must see and
+ * confirm before the review dialog lets them send anything. Never enqueues a
+ * message or writes an audit row.
+ */
+export async function previewAnnouncementBroadcast(input: {
+  eventId: string;
+  announcementId: string;
+}): Promise<AnnouncementBroadcastPreview> {
+  const prisma = getPrisma();
+  const announcement = await prisma.announcement.findFirst({
+    where: { id: input.announcementId, eventId: input.eventId },
+    select: { id: true, title: true, status: true, publishedAt: true },
+  });
+  if (!announcement) {
+    throw new AnnouncementBroadcastError(
+      "ANNOUNCEMENT_NOT_FOUND",
+      "That announcement no longer exists.",
+    );
+  }
+  if (announcement.status !== "PUBLISHED" || !announcement.publishedAt) {
+    throw new AnnouncementBroadcastError(
+      "ANNOUNCEMENT_NOT_PUBLISHED",
+      "Publish the announcement to the attendee feed before emailing it.",
+    );
+  }
+  const [recipientCount, settings] = await Promise.all([
+    prisma.registration.count({
+      where: { eventId: input.eventId, status: { in: ["SUBMITTED", "CONFIRMED"] } },
+    }),
+    prisma.eventMessageSettings.findUnique({
+      where: { eventId: input.eventId },
+      select: { deliveryMode: true },
+    }),
+  ]);
+  return {
+    announcementId: announcement.id,
+    title: announcement.title,
+    audienceLabel: "All active registrations (submitted or confirmed) for this event",
+    recipientCount,
+    deliveryMode: settings?.deliveryMode ?? "LOCAL_CAPTURE",
+    sendTiming: "IMMEDIATE",
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 export async function broadcastPublishedAnnouncement(input: {

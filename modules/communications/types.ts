@@ -210,6 +210,22 @@ export type AnnouncementRecord = {
   updatedAt: string;
 };
 
+/**
+ * The review shown before an announcement broadcast sends anything (#472):
+ * who it reaches, how many of them, and how it will go out. Read-only —
+ * fetched fresh each time the review dialog opens, never cached alongside
+ * the announcement itself.
+ */
+export type AnnouncementBroadcastPreview = {
+  announcementId: string;
+  title: string;
+  audienceLabel: string;
+  recipientCount: number;
+  deliveryMode: MessagingSettingsRecord["deliveryMode"];
+  sendTiming: "IMMEDIATE";
+  generatedAt: string;
+};
+
 export type CommunicationsView =
   | "announcements"
   | "reminders"

@@ -24,6 +24,8 @@ import {
   X,
 } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
+import { AnnouncementBroadcastReviewFacts } from "@/components/announcement-broadcast-review";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { MessageBodyEditor } from "@/components/message-body-editor";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import { messageRetryRequestPayload } from "@/modules/communications/message-retry-client";
@@ -39,6 +41,7 @@ import {
   SAMPLE_MESSAGE_TEMPLATE_CONTEXT,
 } from "@/modules/communications/templates";
 import type {
+  AnnouncementBroadcastPreview,
   AnnouncementRecord,
   BalanceReminderPreview,
   CommunicationsView,
@@ -65,6 +68,7 @@ type ApiResult = {
   announcement?: AnnouncementRecord;
   reminderPreview?: BalanceReminderPreview;
   shirtSizePreview?: ShirtSizeRequestPreview;
+  preview?: AnnouncementBroadcastPreview;
   operation?: {
     batchId?: string;
     messageId?: string;
@@ -234,13 +238,21 @@ export function CommunicationsWorkspace({
   const [announcements, setAnnouncements] = useState(initialAnnouncements);
   const [messaging, setMessaging] = useState(initialMessaging);
   const [draftOpen, setDraftOpen] = useState(openNew && canManage);
+  const [draftPrefill, setDraftPrefill] = useState<{ title: string; body: string } | null>(null);
   const draftDialogRef = useAccessibleDialog<HTMLElement>(
     draftOpen,
     () => {
-      if (!saving) setDraftOpen(false);
+      if (!saving) { setDraftOpen(false); setDraftPrefill(null); }
     },
   );
   const [saving, setSaving] = useState(false);
+  const [broadcastReview, setBroadcastReview] = useState<{
+    announcement: AnnouncementRecord;
+    preview: AnnouncementBroadcastPreview | null;
+  } | null>(null);
+  const [broadcastReviewLoading, setBroadcastReviewLoading] = useState(false);
+  const [broadcasting, setBroadcasting] = useState(false);
+  const [broadcastReviewError, setBroadcastReviewError] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const requestedTemplateId = searchParams.get("template");
@@ -408,6 +420,7 @@ export function CommunicationsWorkspace({
       }
       setAnnouncements((current) => [result.announcement!, ...current]);
       setDraftOpen(false);
+      setDraftPrefill(null);
       setNotice("Announcement draft created.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to create the draft.");
@@ -458,18 +471,48 @@ export function CommunicationsWorkspace({
     }
   }
 
+  /**
+   * Opens the review step (#472) rather than sending anything: the dialog
+   * loads a fresh preview — recipient count, audience, subject, delivery
+   * mode — and only `confirmBroadcast` below, run from an explicit confirm
+   * in that dialog, ever calls the send endpoint.
+   */
   async function broadcastAnnouncement(announcement: AnnouncementRecord) {
-    const recipientMode = messaging?.settings.deliveryMode === "EXTERNAL_EMAIL"
-      ? "send a real email"
-      : messaging?.settings.deliveryMode === "LOCAL_CAPTURE"
-        ? "create a local preview"
-        : "record a suppressed delivery";
-    if (!window.confirm(
-      `This will ${recipientMode} for every active registration contact using the current event email template. Continue?`,
-    )) return;
-    setSaving(true);
-    setError("");
-    setNotice("");
+    setBroadcastReview({ announcement, preview: null });
+    setBroadcastReviewError("");
+    setBroadcastReviewLoading(true);
+    try {
+      const response = await fetch(
+        `/api/events/${eventId}/announcements/${announcement.id}/broadcast`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: "preview" }),
+        },
+      );
+      const result = await response.json().catch(() => ({})) as ApiResult;
+      if (!response.ok || !result.preview) {
+        throw new Error(result.message ?? "Unable to review this announcement.");
+      }
+      setBroadcastReview({ announcement, preview: result.preview });
+    } catch (caught) {
+      setBroadcastReviewError(caught instanceof Error ? caught.message : "Unable to review this announcement.");
+    } finally {
+      setBroadcastReviewLoading(false);
+    }
+  }
+
+  function cancelBroadcastReview() {
+    if (broadcasting) return;
+    setBroadcastReview(null);
+    setBroadcastReviewError("");
+  }
+
+  async function confirmBroadcast() {
+    const announcement = broadcastReview?.announcement;
+    if (!announcement) return;
+    setBroadcasting(true);
+    setBroadcastReviewError("");
     try {
       const response = await fetch(
         `/api/events/${eventId}/announcements/${announcement.id}/broadcast`,
@@ -493,12 +536,21 @@ export function CommunicationsWorkspace({
       } else {
         setNotice(`${result.messageCount} announcement delivery row${result.messageCount === 1 ? " was" : "s were"} recorded as suppressed; delivery is off.${skipped}`);
       }
+      setBroadcastReview(null);
       router.refresh();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to prepare the announcement email.");
+      setBroadcastReviewError(caught instanceof Error ? caught.message : "Unable to prepare the announcement email.");
     } finally {
-      setSaving(false);
+      setBroadcasting(false);
     }
+  }
+
+  /** "Send a correction" (#472): a published announcement is never edited in place — this opens a new draft, prefilled, to the same fixed audience. */
+  function startCorrection(announcement: AnnouncementRecord) {
+    setError("");
+    setNotice("");
+    setDraftPrefill({ title: `Correction: ${announcement.title}`, body: announcement.body });
+    setDraftOpen(true);
   }
 
   async function publishTemplate(submitEvent: React.FormEvent<HTMLFormElement>) {
@@ -926,9 +978,13 @@ export function CommunicationsWorkspace({
                     <button className="secondary-button publish-button" type="button" disabled={saving} onClick={() => void setAnnouncementPinned(announcement, !announcement.pinnedAt)}>
                       <Pin aria-hidden="true" size={16} /> {announcement.pinnedAt ? "Unpin update" : "Pin to timeline"}
                     </button>
-                    <button className="secondary-button publish-button" type="button" disabled={saving} onClick={() => broadcastAnnouncement(announcement)}>
+                    <button className="secondary-button publish-button" type="button" disabled={saving || broadcastReviewLoading} onClick={() => void broadcastAnnouncement(announcement)}>
                       <Mail aria-hidden="true" size={16} /> Email active registrations
                     </button>
+                    <button className="text-button" type="button" disabled={saving} onClick={() => startCorrection(announcement)}>
+                      Send a correction
+                    </button>
+                    <p className="quiet-copy">Published announcements can&apos;t be edited. A correction sends as a new, separate announcement to the same attendees.</p>
                   </>
                 )}
               </article>
@@ -1630,21 +1686,41 @@ export function CommunicationsWorkspace({
       )}
 
       {draftOpen && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setDraftOpen(false); }}>
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) { setDraftOpen(false); setDraftPrefill(null); } }}>
           <section className="modal-card" ref={draftDialogRef} role="dialog" aria-modal="true" aria-labelledby="draft-title" tabIndex={-1}>
             <div className="modal-head">
-              <div><p className="eyebrow">Attendee event feed</p><h2 id="draft-title">Create an announcement</h2></div>
-              <button className="icon-button modal-close-button" type="button" onClick={() => setDraftOpen(false)} aria-label="Close dialog"><X aria-hidden="true" size={18} /></button>
+              <div><p className="eyebrow">Attendee event feed</p><h2 id="draft-title">{draftPrefill ? "Send a correction" : "Create an announcement"}</h2></div>
+              <button className="icon-button modal-close-button" type="button" onClick={() => { setDraftOpen(false); setDraftPrefill(null); }} aria-label="Close dialog"><X aria-hidden="true" size={18} /></button>
             </div>
-            <form className="form-stack" onSubmit={createDraft}>
-              <label>Title<input name="title" minLength={3} maxLength={120} required placeholder="Friday arrival information" /></label>
-              <label>Message<textarea name="body" minLength={5} maxLength={2000} required rows={6} placeholder="Share the details attendees need…" /></label>
+            {draftPrefill && (
+              <p className="quiet-copy">This starts a new draft to the same audience — all attendees. It doesn&apos;t change the original announcement, which stays on record as sent.</p>
+            )}
+            <form className="form-stack" onSubmit={createDraft} key={draftPrefill ? "correction" : "new"}>
+              <label>Title<input name="title" minLength={3} maxLength={120} required placeholder="Friday arrival information" defaultValue={draftPrefill?.title ?? ""} /></label>
+              <label>Message<textarea name="body" minLength={5} maxLength={2000} required rows={6} placeholder="Share the details attendees need…" defaultValue={draftPrefill?.body ?? ""} /></label>
               <label>Priority<select name="priority" defaultValue="NORMAL"><option value="NORMAL">Normal</option><option value="IMPORTANT">Important</option><option value="URGENT">Urgent</option></select></label>
-              <div className="form-actions"><button className="secondary-button" type="button" onClick={() => setDraftOpen(false)}>Cancel</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving…" : "Save draft"}</button></div>
+              <div className="form-actions"><button className="secondary-button" type="button" onClick={() => { setDraftOpen(false); setDraftPrefill(null); }}>Cancel</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving…" : "Save draft"}</button></div>
             </form>
           </section>
         </div>
       )}
+
+      <ConfirmDialog
+        busy={broadcasting}
+        busyLabel="Sending…"
+        confirmLabel="Send this announcement"
+        error={broadcastReviewError}
+        onCancel={cancelBroadcastReview}
+        onConfirm={() => void confirmBroadcast()}
+        open={Boolean(broadcastReview)}
+        title="Review before sending"
+      >
+        {broadcastReviewLoading ? (
+          <p className="quiet-copy">Loading the recipient review…</p>
+        ) : broadcastReview?.preview ? (
+          <AnnouncementBroadcastReviewFacts preview={broadcastReview.preview} />
+        ) : null}
+      </ConfirmDialog>
     </section>
   );
 }

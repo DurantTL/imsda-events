@@ -5,6 +5,7 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import {
   AnnouncementBroadcastError,
   broadcastPublishedAnnouncement,
+  previewAnnouncementBroadcast,
 } from "@/modules/communications/announcement-broadcast";
 import { findActiveMembership } from "@/modules/events/repository";
 import { withRequestContext } from "@/lib/request-context";
@@ -14,6 +15,12 @@ type Context = {
   params: Promise<{ eventId: string; announcementId: string }>;
 };
 
+/**
+ * A review step, not an extra confirmation click: preview is a POST because
+ * `mode` and the send fields share one endpoint (matching the
+ * selected-audience-messages route's own preview/send split), and it never
+ * enqueues a message or writes an audit row — only the send below does that.
+ */
 async function postHandler(request: Request, context: Context) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
@@ -25,7 +32,12 @@ async function postHandler(request: Request, context: Context) {
       "MANAGE_COMMUNICATIONS",
       findActiveMembership,
     );
-    const input = inputSchema.parse(await request.json());
+    const body = await request.json();
+    if (body?.mode === "preview") {
+      const preview = await previewAnnouncementBroadcast({ eventId, announcementId });
+      return Response.json({ preview });
+    }
+    const input = inputSchema.parse(body);
     const result = await broadcastPublishedAnnouncement({
       eventId,
       announcementId,

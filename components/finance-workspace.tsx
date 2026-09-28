@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import { BadgePercent, Banknote, Building2, CircleDollarSign, CreditCard, ReceiptText, RotateCcw, Search, WalletCards, X } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { RefundReviewFacts } from "@/components/refund-review-summary";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 import {
   activeFinancialStatuses,
@@ -55,6 +57,8 @@ export function FinanceWorkspace({
   const [selectedAdjustment, setSelectedAdjustment] = useState<AdjustmentRecord | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [pendingRefund, setPendingRefund] = useState<{ amountCents: number; reason: string } | null>(null);
+  const [refundReviewError, setRefundReviewError] = useState("");
   const dialogRef = useAccessibleDialog<HTMLElement>(Boolean(modal), closeModal);
 
   const totals = useMemo(() => summarizeFinanceTotals(registrations), [registrations]);
@@ -65,7 +69,7 @@ export function FinanceWorkspace({
   )), [filter, query, registrations]);
 
   function openDetail(registration: RegistrationRecord) { setSelected(registration); setSelectedPayment(null); setError(""); setModal("detail"); }
-  function closeModal() { if (!saving) { setModal(null); setError(""); } }
+  function closeModal() { if (!saving) { setModal(null); setError(""); setPendingRefund(null); setRefundReviewError(""); } }
   function applyRegistration(registration: RegistrationRecord) {
     setRegistrations((current) => current.map((row) => row.id === registration.id ? registration : row));
     setSelected(registration);
@@ -94,23 +98,43 @@ export function FinanceWorkspace({
     finally { setSaving(false); }
   }
 
-  async function recordRefund(event: React.FormEvent<HTMLFormElement>) {
+  /**
+   * The form only builds the review (#472); nothing is recorded until the
+   * confirm dialog below is explicitly confirmed, which repeats the amount,
+   * reason, registration, and payment one more time.
+   */
+  function reviewRefund(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedPayment) return;
-    setSaving(true); setError("");
     const form = new FormData(event.currentTarget);
+    const amountCents = Math.round(Number(form.get("amount") ?? 0) * 100);
+    const reason = String(form.get("reason") ?? "").trim();
+    setRefundReviewError("");
+    setPendingRefund({ amountCents, reason });
+  }
+
+  function cancelRefundReview() {
+    if (saving) return;
+    setPendingRefund(null);
+    setRefundReviewError("");
+  }
+
+  async function confirmRefund() {
+    if (!selectedPayment || !pendingRefund) return;
+    setSaving(true); setRefundReviewError("");
     try {
       const response = await fetch(`/api/events/${eventId}/payments/${selectedPayment.id}/refunds`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amountCents: Math.round(Number(form.get("amount") ?? 0) * 100), reason: form.get("reason") }),
+        body: JSON.stringify(pendingRefund),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message ?? result.issues?.[0]?.message ?? "Unable to record refund.");
       applyRegistration(result.registration);
       setSelectedPayment(null);
+      setPendingRefund(null);
       setModal("detail");
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "Unable to record refund."); }
+    } catch (caught) { setRefundReviewError(caught instanceof Error ? caught.message : "Unable to record refund."); }
     finally { setSaving(false); }
   }
 
@@ -278,11 +302,32 @@ export function FinanceWorkspace({
             ) : modal === "payment" ? (
               <form className="form-stack" onSubmit={recordPayment}><label>Amount<input name="amount" type="number" min="0.01" step="0.01" required defaultValue={Math.max(selected.balanceCents, 0) / 100} /></label><label>Method<select name="method" defaultValue="CHECK"><option value="CHECK">Check</option><option value="CASH">Cash</option><option value="MANUAL">Other manual payment</option></select></label><label>Reference or note<input name="reference" maxLength={120} placeholder="Check number or staff note" /></label>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><button className="secondary-button" type="button" onClick={() => setModal("detail")}>Back</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving…" : "Record payment"}</button></div></form>
             ) : (
-              <form className="form-stack" onSubmit={recordRefund}><div className="inline-notice">Refundable on this payment: {money((selectedPayment?.amountCents ?? 0) - (selectedPayment?.refundedCents ?? 0))}</div><label>Refund amount<input name="amount" type="number" min="0.01" max={((selectedPayment?.amountCents ?? 0) - (selectedPayment?.refundedCents ?? 0)) / 100} step="0.01" required /></label><label>Reason<textarea name="reason" minLength={3} maxLength={300} rows={4} required placeholder="Why is this refund being recorded?" /></label>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><button className="secondary-button" type="button" onClick={() => setModal("detail")}>Back</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving…" : "Record refund"}</button></div></form>
+              <form className="form-stack" onSubmit={reviewRefund}><div className="inline-notice">Refundable on this payment: {money((selectedPayment?.amountCents ?? 0) - (selectedPayment?.refundedCents ?? 0))}</div><label>Refund amount<input name="amount" type="number" min="0.01" max={((selectedPayment?.amountCents ?? 0) - (selectedPayment?.refundedCents ?? 0)) / 100} step="0.01" required /></label><label>Reason<textarea name="reason" minLength={3} maxLength={300} rows={4} required placeholder="Why is this refund being recorded?" /></label>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><button className="secondary-button" type="button" onClick={() => setModal("detail")}>Back</button><button className="primary-button" type="submit" disabled={saving}>Review refund</button></div></form>
             )}
           </section>
         </div>
       )}
+
+      <ConfirmDialog
+        busy={saving}
+        busyLabel="Recording…"
+        confirmLabel="Record this refund"
+        error={refundReviewError}
+        onCancel={cancelRefundReview}
+        onConfirm={() => void confirmRefund()}
+        open={Boolean(pendingRefund && selected && selectedPayment)}
+        title="Confirm this refund"
+      >
+        {pendingRefund && selected && selectedPayment && (
+          <RefundReviewFacts
+            amountCents={pendingRefund.amountCents}
+            reason={pendingRefund.reason}
+            registrationLabel={`${selected.confirmationCode} · ${selected.accountHolder.firstName} ${selected.accountHolder.lastName}`}
+            paymentAmountCents={selectedPayment.amountCents}
+            paymentMethod={selectedPayment.method}
+          />
+        )}
+      </ConfirmDialog>
     </section>
   );
 }
