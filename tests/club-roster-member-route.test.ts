@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   updateRosterMember: vi.fn(),
   removeRosterMember: vi.fn(),
   rejectCrossOriginRequest: vi.fn(),
+  refreshBackgroundCheckMatchForPerson: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -18,6 +19,7 @@ vi.mock("@/modules/club-rosters/repository", async () => {
   const actual = await vi.importActual<typeof import("@/modules/club-rosters/repository")>("@/modules/club-rosters/repository");
   return { ...actual, listRoster: mocks.listRoster, updateRosterMember: mocks.updateRosterMember, removeRosterMember: mocks.removeRosterMember };
 });
+vi.mock("@/modules/background-checks/repository", () => ({ refreshBackgroundCheckMatchForPerson: mocks.refreshBackgroundCheckMatchForPerson }));
 
 import { DELETE, PATCH } from "@/app/api/attendee/clubs/[organizationId]/roster/[memberId]/route";
 import { RosterOperationError } from "@/modules/club-rosters/repository";
@@ -34,8 +36,9 @@ beforeEach(() => {
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
   mocks.requireRosterAccess.mockResolvedValue({ state: "OPEN", actor: { kind: "ATTENDEE", accountId: "director-1", sessionId: "session-1" } });
   mocks.listRoster.mockResolvedValue([]);
-  mocks.updateRosterMember.mockResolvedValue(undefined);
+  mocks.updateRosterMember.mockResolvedValue({ personId: "person-1" });
   mocks.removeRosterMember.mockResolvedValue(undefined);
+  mocks.refreshBackgroundCheckMatchForPerson.mockResolvedValue(undefined);
 });
 
 describe("editing a roster member (#424)", () => {

@@ -6,6 +6,7 @@ import { rosterApiError } from "@/modules/club-rosters/api-errors";
 import { MAX_ROSTER_CSV_BYTES, parseRosterCsv, planRosterImport, rosterCsvAddDefaults, RosterCsvError } from "@/modules/club-rosters/csv-import";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import { addRosterMember, listRoster, RosterOperationError, updateRosterMember } from "@/modules/club-rosters/repository";
+import { refreshBackgroundCheckMatchForPerson } from "@/modules/background-checks/repository";
 import { withRequestContext } from "@/lib/request-context";
 
 const importSchema = z.object({
@@ -45,13 +46,14 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
     const results = [];
     let added = 0;
     let updated = 0;
+    const touchedPersonIds = new Set<string>();
     for (const step of plan) {
       const { row } = step;
       try {
         if (step.action === "ADD") {
           /** Blank type → Youth; blank role defaults by type (#424), same as the roster form and the preview. */
           const { attendeeType, role } = rosterCsvAddDefaults(row);
-          await addRosterMember(organizationId, clubYear, {
+          const { personId } = await addRosterMember(organizationId, clubYear, {
             firstName: row.firstName,
             lastName: row.lastName,
             birthDate: row.birthDate!,
@@ -62,16 +64,18 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
             // The roster import's CSV (#424) carries no driving willingness; add it by hand afterward (#491).
             willingToDrive: false,
           }, actor);
+          touchedPersonIds.add(personId);
           added += 1;
           results.push({ ...publicStep(step), message: "Added." });
         } else if (step.action === "UPDATE" && step.memberId) {
-          await updateRosterMember(organizationId, step.memberId, {
+          const { personId } = await updateRosterMember(organizationId, step.memberId, {
             ...(row.birthDate === undefined ? {} : { birthDate: row.birthDate }),
             ...(row.attendeeType === undefined ? {} : { attendeeType: row.attendeeType }),
             ...(row.classLevel === undefined ? {} : { classLevel: row.classLevel }),
             ...(row.role === undefined ? {} : { role: row.role }),
             ...(row.gender === undefined ? {} : { gender: row.gender }),
           }, actor);
+          if (personId) touchedPersonIds.add(personId);
           updated += 1;
           results.push({ ...publicStep(step), message: "Updated." });
         } else {
@@ -82,6 +86,9 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
         results.push({ ...publicStep(step), action: "SKIP" as const, message: error.message });
       }
     }
+    // #527: everyone touched by this import is matched against the
+    // background check list right away, without waiting on the next upload.
+    for (const personId of touchedPersonIds) await refreshBackgroundCheckMatchForPerson(personId);
     await writeAuditLog({
       ...("userId" in actor ? { actorUserId: actor.userId } : {}),
       action: "CLUB_ROSTER_CSV_IMPORTED",

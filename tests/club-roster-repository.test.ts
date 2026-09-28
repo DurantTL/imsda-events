@@ -104,7 +104,7 @@ describe("club roster storage", () => {
   });
 
   it("keeps names and birth dates out of every audit entry", async () => {
-    const id = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
     await updateRosterMember("club-1", id, { birthDate: "2014-12-07", firstName: "Renamed" }, actor, now);
     await revealRosterBirthDates("club-1", "2026-27", actor);
     await removeRosterMember("club-1", id, actor, now);
@@ -119,7 +119,7 @@ describe("club roster storage", () => {
   });
 
   it("lists ages, never birth dates, and computes age on an event date on the server", async () => {
-    const id = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
     const [member] = await listRoster("club-1", "2026-27", now);
     expect(member).toMatchObject({ firstName: "Test", age: 11 });
     expect(JSON.stringify(member)).not.toContain("2014-12-06");
@@ -141,15 +141,15 @@ describe("club roster storage", () => {
   });
 
   it("never reaches another club's roster row", async () => {
-    const id = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
     await expect(updateRosterMember("club-2", id, { role: "Hijack" }, actor, now)).rejects.toMatchObject({ code: "MEMBER_NOT_FOUND" });
     await expect(removeRosterMember("club-2", id, actor, now)).rejects.toMatchObject({ code: "MEMBER_NOT_FOUND" });
     expect(db.members[0]).toMatchObject({ role: "Pathfinder", status: "ACTIVE" });
   });
 
   it("defaults a blank role on edit by the type the person ends up with, never replacing a typed one (#424)", async () => {
-    const staffId = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Legacy", attendeeType: "STAFF", role: "" }, actor, { now });
-    const youthId = await addRosterMember("club-1", "2026-27", { ...youth, role: "" }, actor, { now });
+    const { memberId: staffId } = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Legacy", attendeeType: "STAFF", role: "" }, actor, { now });
+    const { memberId: youthId } = await addRosterMember("club-1", "2026-27", { ...youth, role: "" }, actor, { now });
     const staff = () => db.members.find((member) => member.id === staffId)!;
     const kid = () => db.members.find((member) => member.id === youthId)!;
 
@@ -172,9 +172,9 @@ describe("club roster storage", () => {
   });
 
   it("drops the old type's default role when a youth becomes staff, but keeps a typed role (#424)", async () => {
-    const formId = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Form" }, actor, { now });
-    const csvId = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Csv" }, actor, { now });
-    const typedId = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Typed", role: "TLT" }, actor, { now });
+    const { memberId: formId } = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Form" }, actor, { now });
+    const { memberId: csvId } = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Csv" }, actor, { now });
+    const { memberId: typedId } = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Typed", role: "TLT" }, actor, { now });
     const roleOf = (id: string) => db.members.find((member) => member.id === id)!.role;
     // The form sends the pre-filled "Pathfinder" along with the new type.
     await updateRosterMember("club-1", formId, { attendeeType: "STAFF", role: "Pathfinder" }, actor, now);
@@ -188,7 +188,7 @@ describe("club roster storage", () => {
   });
 
   it("requires a gender on a details edit when none is on file, but not for status alone (#424)", async () => {
-    const id = await addRosterMember("club-1", "2026-27", { ...youth, gender: null }, actor, { now });
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", { ...youth, gender: null }, actor, { now });
     const stored = () => db.members.find((member) => member.id === id)!;
 
     await expect(updateRosterMember("club-1", id, { firstName: "Renamed", role: "TLT" }, actor, now, { requireGender: true }))
@@ -209,7 +209,7 @@ describe("club roster storage", () => {
   });
 
   it("deactivating keeps the person and their history", async () => {
-    const id = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
     await updateRosterMember("club-1", id, { status: "INACTIVE" }, actor, now);
     expect(db.members[0]).toMatchObject({ status: "INACTIVE", sealedBirthDate: expect.any(String) });
     expect(mocks.writeAuditLog.mock.calls.at(-1)?.[0]).toMatchObject({ action: "CLUB_ROSTER_MEMBER_DEACTIVATED" });
@@ -217,8 +217,8 @@ describe("club roster storage", () => {
   });
 
   it("removing erases the details and deletes the person only when nothing else uses them", async () => {
-    const lone = await addRosterMember("club-1", "2026-27", youth, actor, { now });
-    const registered = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Other" }, actor, { now });
+    const { memberId: lone } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const { memberId: registered } = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Other" }, actor, { now });
     db.otherReferences.add(db.members[1].personId as string);
 
     await removeRosterMember("club-1", lone, actor, now);
@@ -233,9 +233,9 @@ describe("club roster storage", () => {
   });
 
   it("removing a member with honor history deletes the person and their honor entries, and audits the count (#486)", async () => {
-    const id = await addRosterMember("club-1", "2026-27", youth, actor, { now });
-    const otherId = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Other" }, actor, { now });
-    const elsewhereId = await addRosterMember("club-2", "2026-27", { ...youth, firstName: "Elsewhere" }, actor, { now });
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const { memberId: otherId } = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Other" }, actor, { now });
+    const { memberId: elsewhereId } = await addRosterMember("club-2", "2026-27", { ...youth, firstName: "Elsewhere" }, actor, { now });
     const personOf = (memberId: string) => db.members.find((member) => member.id === memberId)!.personId as string;
     const personId = personOf(id);
     const otherPersonId = personOf(otherId);
@@ -261,7 +261,7 @@ describe("club roster storage", () => {
   });
 
   it("keeps the person and their honor history when something else still refers to them (#486)", async () => {
-    const id = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
     const personId = db.members[0].personId as string;
     db.otherReferences.add(personId);
     db.honorEntries.push({ id: "entry-1", personId, organizationId: "club-1" });
@@ -280,7 +280,7 @@ describe("club roster storage", () => {
         .rejects.toMatchObject({ code: "WILLING_TO_DRIVE_NOT_ALLOWED" });
       expect(db.members).toHaveLength(0);
 
-      const id = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+      const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
       await expect(updateRosterMember("club-1", id, { willingToDrive: true }, actor, now))
         .rejects.toMatchObject({ code: "WILLING_TO_DRIVE_NOT_ALLOWED" });
       // Switching type and turning it on together is also refused, not silently dropped.
@@ -289,7 +289,7 @@ describe("club roster storage", () => {
     });
 
     it("stores it for staff and adult rows, and checking it never grants clearance by itself", async () => {
-      const id = await addRosterMember("club-1", "2026-27", { ...youth, attendeeType: "STAFF", willingToDrive: true }, actor, { now });
+      const { memberId: id } = await addRosterMember("club-1", "2026-27", { ...youth, attendeeType: "STAFF", willingToDrive: true }, actor, { now });
       const [stored] = await listRoster("club-1", "2026-27", now);
       expect(stored).toMatchObject({ id, willingToDrive: true });
       // Only a field on the roster row — nothing about clearance lives here.
@@ -297,7 +297,7 @@ describe("club roster storage", () => {
     });
 
     it("audits newly checking the box, not every edit that leaves it checked", async () => {
-      const id = await addRosterMember("club-1", "2026-27", { ...youth, attendeeType: "STAFF" }, actor, { now });
+      const { memberId: id } = await addRosterMember("club-1", "2026-27", { ...youth, attendeeType: "STAFF" }, actor, { now });
       await updateRosterMember("club-1", id, { willingToDrive: true }, actor, now);
       await updateRosterMember("club-1", id, { role: "Deputy" }, actor, now);
       const actions = mocks.writeAuditLog.mock.calls.map(([entry]) => entry.action);
@@ -305,7 +305,7 @@ describe("club roster storage", () => {
     });
 
     it("clears it on a removed row, so the person leaves the driver verification queue", async () => {
-      const id = await addRosterMember("club-1", "2026-27", { ...youth, attendeeType: "STAFF", willingToDrive: true }, actor, { now });
+      const { memberId: id } = await addRosterMember("club-1", "2026-27", { ...youth, attendeeType: "STAFF", willingToDrive: true }, actor, { now });
       await removeRosterMember("club-1", id, actor, now);
       expect(db.members.find((member) => member.id === id)).toMatchObject({ status: "REMOVED", willingToDrive: false });
     });

@@ -1399,7 +1399,7 @@ model Person {
   matchCandidatesAsA   PersonMatchCandidate[] @relation("PersonMatchCandidateAsA")
   matchCandidatesAsB   PersonMatchCandidate[] @relation("PersonMatchCandidateAsB")
   clubRosterMemberships ClubRosterMember[]
-  backgroundCheck       BackgroundCheck?
+  backgroundCheckMatch  BackgroundCheckMatch?
   driverVerification    DriverVerification?
 
   memberHonorEntries    MemberHonorEntry[]
@@ -3209,28 +3209,117 @@ model ClubRosterExportFormat {
 /// A person matched by that import's provider `user_id` gets an
 /// `ExternalIdentity` (`ROSTER_IMPORT`) so the next upload matches on it
 /// first, without guessing by name again.
-model BackgroundCheck {
-  id               String                        @id @default(cuid())
-  personId         String                        @unique
-  provider         String                        @default("STERLING")
-  /// Calendar dates ("2026-09-23"). Current through `expiresOn`. Null for a
-  /// roster import row, which has no expiration date at all.
-  checkedOn        String?
-  expiresOn        String?
-  /// Set by a roster import's `compliance` column (y/!/n). Null for a
-  /// Sterling row, which is current/expired by date instead.
+/// The single stored background-check list (#527). Both the Sterling
+/// Volunteers CSV and the roster compliance CSV feed this same list; each
+/// upload is the complete current export and replaces it entirely (the
+/// `BackgroundCheckUpload.format` on the current entries records which
+/// layout produced them). Matching a person happens at lookup, from
+/// `BackgroundCheckMatch` — never re-run on every render.
+model BackgroundCheckUpload {
+  id               String   @id @default(cuid())
+  format           String
+  rowCount         Int
+  added            Int
+  changed          Int
+  dropped          Int
+  uploadedByUserId String
+  createdAt        DateTime @default(now())
+
+  entries BackgroundCheckEntry[]
+
+  @@index([createdAt])
+}
+
+/// One row of the currently uploaded list (#527), kept whether or not it
+/// matches anyone today ("the CSV is the base"). Replaced wholesale by the
+/// next upload (cascades from `BackgroundCheckUpload`).
+model BackgroundCheckEntry {
+  id       String @id @default(cuid())
+  uploadId String
+  line     Int
+  firstName String
+  lastName  String
+  /// `matchableName(firstName + " " + lastName)`, indexed so matching a
+  /// person against the list is a lookup, not a scan.
+  normalizedName String
+  email          String?
+  /// Sealed the same way roster birth dates are sealed (ADR 0005 Addendum A,
+  /// `modules/club-rosters/birth-dates.ts`). Never stored in plain text.
+  sealedBirthDate String?
+  /// The person's club or sponsoring church (the roster format's `sites`).
+  site            String?
+  /// The roster CSV's `user_id`, when the row has one (Sterling rows never do).
+  sourceUserId    String?
+  /// What a remembered match is kept against (`ExternalIdentity.externalId`,
+  /// provider `ROSTER_IMPORT`): `sourceUserId` when the row has one,
+  /// otherwise a key derived from the row's own identifying fields, so the
+  /// same person's row is still recognized on the next upload.
+  identityKey      String
+  /// Set by a roster row's `compliance` column (y/!/n). Null for a Sterling
+  /// row, which is current/expired by `expiresOn` instead.
   complianceStatus BackgroundCheckComplianceStatus?
-  /// The roster import's `issues` column: the check and training dates
-  /// (e.g. which one is expiring soon). Shown to staff only, never to a club
-  /// director or on a club's own portal roster.
-  issuesNote       String?
-  recordedByUserId String?
-  createdAt        DateTime                      @default(now())
-  updatedAt        DateTime                      @updatedAt
+  /// Calendar dates ("2026-09-23"). Current through `expiresOn`. Null for a
+  /// roster row, which has no expiration date at all.
+  checkedOn String?
+  expiresOn String?
+  /// The roster row's `issues` column: the check and training dates. Staff
+  /// only, never shown to a club director or on a club's own portal roster.
+  issuesNote String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
-  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+  upload  BackgroundCheckUpload   @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  match   BackgroundCheckMatch?
+  reviews BackgroundCheckReview[]
 
-  @@index([expiresOn])
+  @@index([normalizedName])
+  @@index([uploadId])
+  @@index([identityKey])
+}
+
+/// The derived, fast-to-read match from a person to their current list entry
+/// (#527) — a single indexed row per person, so a roster render or event flag
+/// check is a join, never a scan. Refreshed at upload, when a person or
+/// roster member is added or edited, and when staff resolve a review.
+model BackgroundCheckMatch {
+  id        String                     @id @default(cuid())
+  personId  String                     @unique
+  entryId   String                     @unique
+  matchedBy BackgroundCheckMatchSource
+  createdAt DateTime                   @default(now())
+  updatedAt DateTime                   @updatedAt
+
+  person Person               @relation(fields: [personId], references: [id], onDelete: Cascade)
+  entry  BackgroundCheckEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+}
+
+/// How a `BackgroundCheckMatch` was decided. `IDENTITY`: a remembered
+/// `user_id` whose name still agrees. `AUTO`: normalized name plus exactly
+/// one of email, birth date, or site, with nothing else it could be. `MANUAL`:
+/// a staff review decision (also remembered as an `ExternalIdentity`).
+/// `MIGRATED`: carried over from the old per-person `BackgroundCheck` row
+/// when this list replaced it (#527), so nobody's status changed that day.
+enum BackgroundCheckMatchSource {
+  IDENTITY
+  AUTO
+  MANUAL
+  MIGRATED
+}
+
+/// A list entry that could match more than one person, or whose only
+/// candidate people also match another entry — never guessed (#527). Staff
+/// resolve it by hand from `candidatePersonIds`; picking one is remembered
+/// (`ExternalIdentity`) so it holds on the next upload.
+model BackgroundCheckReview {
+  id                 String   @id @default(cuid())
+  entryId            String
+  reason             String
+  candidatePersonIds Json
+  createdAt          DateTime @default(now())
+
+  entry BackgroundCheckEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@index([entryId])
 }
 
 /// A background check's compliance mark from a roster import (#427): the

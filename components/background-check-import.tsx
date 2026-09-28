@@ -1,75 +1,45 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Download, FileUp, Upload, X } from "lucide-react";
 import { isCsvFile } from "@/components/csv-import-dialog";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 
-type ImportAction = "ADD" | "UPDATE" | "SKIP" | "REVIEW";
-type ImportStep = {
-  line: number;
-  name: string;
-  action: ImportAction;
-  message: string;
-  candidates?: Array<{ personId: string; name: string; sites: string[] }>;
-  /** Roster import only, staff-only, and shown for every row (#427). */
-  note?: string | null;
-};
+type RowProblem = { line: number; name: string; problems: string[] };
 type ImportResponse = {
   format?: "ROSTER" | "STERLING";
-  steps?: ImportStep[];
+  problems?: RowProblem[];
   added?: number;
-  updated?: number;
-  idsNotRemembered?: number;
+  changed?: number;
+  dropped?: number;
+  total?: number;
   message?: string;
   issues?: Array<{ message?: string }>;
 };
 
-const actionLabels = { ADD: "Add", UPDATE: "Update", SKIP: "Not found", REVIEW: "Needs review" } as const;
-const actionTone = { ADD: "green", UPDATE: "purple", SKIP: "gold", REVIEW: "coral" } as const;
-const PAGE_SIZE = 50;
-
-type Filter = "ALL" | "MATCHED" | "REVIEW" | "NOT_FOUND";
-
-function filterMatches(filter: Filter, step: ImportStep) {
-  if (filter === "ALL") return true;
-  if (filter === "MATCHED") return step.action === "ADD" || step.action === "UPDATE";
-  if (filter === "REVIEW") return step.action === "REVIEW";
-  return step.action === "SKIP";
-}
-
 /**
- * The background check CSV upload (#388, #427): preview with filters and
- * paging (up to 5,000 rows), then confirm. Accepts the real roster export or
- * the older Sterling Volunteers export; the server tells them apart.
+ * The background-check CSV upload (#388, #427, #527): one stored list,
+ * replaced wholesale on every upload. Previews the counts an upload would
+ * change — added, changed, dropped — before saving; matching a row to a
+ * person happens afterward, at lookup, not here.
  */
 export function BackgroundCheckImport({ onImported }: { onImported: (result: ImportResponse) => void }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [csv, setCsv] = useState<string | null>(null);
-  const [format, setFormat] = useState<"ROSTER" | "STERLING" | null>(null);
-  const [steps, setSteps] = useState<ImportStep[] | null>(null);
+  const [preview, setPreview] = useState<ImportResponse | null>(null);
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
-  const [filter, setFilter] = useState<Filter>("ALL");
-  const [page, setPage] = useState(0);
-  const [idsNotRemembered, setIdsNotRemembered] = useState(0);
   const dragDepth = useRef(0);
 
   const close = useCallback(() => {
     setOpen(false);
     setCsv(null);
-    setFormat(null);
-    setSteps(null);
+    setPreview(null);
     setDone(false);
     setError("");
     setDragging(false);
-    setFilter("ALL");
-    setPage(0);
-    setIdsNotRemembered(0);
     dragDepth.current = 0;
   }, []);
   const dialogRef = useAccessibleDialog<HTMLElement>(open, close);
@@ -84,15 +54,9 @@ export function BackgroundCheckImport({ onImported }: { onImported: (result: Imp
         body: JSON.stringify({ csv: text, confirm }),
       });
       const result = await response.json().catch(() => ({})) as ImportResponse;
-      // A save that stopped part way still saved some batches; show the new counts.
-      if (confirm && !response.ok) router.refresh();
-      if (!response.ok || !result.steps) throw new Error(result.message ?? result.issues?.[0]?.message ?? "That file couldn't be read.");
-      setSteps(result.steps);
-      setFormat(result.format ?? null);
-      setFilter("ALL");
-      setPage(0);
+      if (!response.ok) throw new Error(result.message ?? result.issues?.[0]?.message ?? "That file couldn't be read.");
+      setPreview(result);
       if (confirm) {
-        setIdsNotRemembered(result.idsNotRemembered ?? 0);
         setDone(true);
         onImported(result);
       }
@@ -148,18 +112,8 @@ export function BackgroundCheckImport({ onImported }: { onImported: (result: Imp
     void openFile(files[0]);
   }
 
-  const counts = { ADD: 0, UPDATE: 0, SKIP: 0, REVIEW: 0 };
-  for (const step of steps ?? []) counts[step.action] += 1;
-  const changes = counts.ADD + counts.UPDATE;
-
-  const filtered = useMemo(() => (steps ?? []).filter((step) => filterMatches(filter, step)), [steps, filter]);
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const pageRows = filtered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
-
-  function chooseFilter(next: Filter) {
-    setFilter(next);
-    setPage(0);
-  }
+  const problems = preview?.problems ?? [];
+  const changeCount = (preview?.added ?? 0) + (preview?.changed ?? 0) + (preview?.dropped ?? 0);
 
   return (
     <>
@@ -176,7 +130,7 @@ export function BackgroundCheckImport({ onImported }: { onImported: (result: Imp
               <button aria-label="Close" className="icon-button modal-close-button" onClick={close} type="button"><X aria-hidden="true" size={18} /></button>
             </div>
             {error && <div className="inline-notice error" role="alert">{error}</div>}
-            {!steps && (
+            {!preview && (
               <>
                 <div className="field-help">
                   <p>
@@ -186,11 +140,11 @@ export function BackgroundCheckImport({ onImported }: { onImported: (result: Imp
                     <code>n</code> is not in compliance. <code>user_active</code> is ignored.
                   </p>
                   <p>
-                    Roster rows are matched by name. When <code>sites</code> is filled in, it must be the
-                    person&apos;s club or sponsoring church, and it tells apart people who share a name. A row that
-                    stays uncertain, or matches no one, is listed to review by hand &mdash; nothing is guessed. Once
-                    matched, a row&apos;s <code>user_id</code> is remembered, so the next upload matches on it first.
-                    The newest upload replaces whatever was on file for a person.
+                    This upload is the complete current list: it replaces whatever was on file. A person missing
+                    from the new file stops counting as checked. Matching a row to a person happens whenever
+                    they&apos;re looked up — a family member added to a roster later still picks up their check
+                    without a re-upload. An uncertain or unmatched row is never guessed; it goes to the review list
+                    or stays on the list as unmatched.
                   </p>
                   <p>Up to 5,000 rows at a time. The file itself is never stored.</p>
                 </div>
@@ -207,75 +161,45 @@ export function BackgroundCheckImport({ onImported }: { onImported: (result: Imp
                 </label>
               </>
             )}
-            {steps && (
+            {preview && (
               <>
                 <p className="field-help">
-                  {done ? "Done." : "Nothing is saved yet."} {format === "ROSTER" ? "Roster" : "Sterling Volunteers"} format detected.{" "}
-                  {changes} matched, {counts.REVIEW} to review, {counts.SKIP} not found.
-                  {done && idsNotRemembered > 0 && ` ${idsNotRemembered} user_id${idsNotRemembered === 1 ? " was" : "s were"} not remembered because another person already has ${idsNotRemembered === 1 ? "it" : "them"}.`}
+                  {done ? "Saved." : "Nothing is saved yet."} {preview.format === "ROSTER" ? "Roster" : "Sterling Volunteers"} format detected,{" "}
+                  {preview.total ?? 0} valid row{(preview.total ?? 0) === 1 ? "" : "s"}.
                 </p>
-                <div className="intro-actions background-check-import-filters" role="tablist">
-                  {([
-                    ["ALL", `All (${steps.length})`],
-                    ["MATCHED", `Matched (${changes})`],
-                    ["REVIEW", `Needs review (${counts.REVIEW})`],
-                    ["NOT_FOUND", `Not found (${counts.SKIP})`],
-                  ] as const).map(([value, label]) => (
-                    <button
-                      aria-selected={filter === value}
-                      className={filter === value ? "primary-button" : "secondary-button"}
-                      key={value}
-                      onClick={() => chooseFilter(value)}
-                      role="tab"
-                      type="button"
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <div className="report-table-wrap roster-csv-preview">
-                  <table className="report-table">
-                    <thead><tr><th>Row</th><th>Name</th><th>What happens</th><th>Candidates</th><th>Note (staff only)</th></tr></thead>
-                    <tbody>
-                      {pageRows.map((step) => (
-                        <tr key={step.line}>
-                          <td>{step.line}</td>
-                          <td translate="no">{step.name || "—"}</td>
-                          <td><span className={`status-chip ${actionTone[step.action]}`}>{actionLabels[step.action]}</span> {step.message}</td>
-                          <td>
-                            {step.candidates && step.candidates.length > 0 ? (
-                              <ul className="background-check-candidates">
-                                {step.candidates.map((candidate) => (
-                                  <li key={candidate.personId}>
-                                    <span translate="no">{candidate.name}</span>
-                                    <small className="quiet-copy"> {candidate.sites.length > 0 ? candidate.sites.join(", ") : "no club or church on file"}</small>
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : "—"}
-                          </td>
-                          <td>{step.note || "—"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {pageCount > 1 && (
-                  <div className="intro-actions background-check-import-pager">
-                    <button className="secondary-button" disabled={page === 0} onClick={() => setPage((current) => Math.max(0, current - 1))} type="button">
-                      Previous
-                    </button>
-                    <span className="quiet-copy">Page {page + 1} of {pageCount} ({filtered.length} rows)</span>
-                    <button className="secondary-button" disabled={page >= pageCount - 1} onClick={() => setPage((current) => Math.min(pageCount - 1, current + 1))} type="button">
-                      Next
-                    </button>
+                <section className="report-summary-grid" aria-label="What this upload changes">
+                  <article className="metric-card report-summary-card accent-green">
+                    <strong>{preview.added ?? 0}</strong><p>Added</p>
+                  </article>
+                  <article className="metric-card report-summary-card accent-purple">
+                    <strong>{preview.changed ?? 0}</strong><p>Changed</p>
+                  </article>
+                  <article className="metric-card report-summary-card accent-coral">
+                    <strong>{preview.dropped ?? 0}</strong><p>Dropped</p>
+                  </article>
+                </section>
+                {problems.length > 0 && (
+                  <div className="report-table-wrap roster-csv-preview">
+                    <p className="field-help">{problems.length} row{problems.length === 1 ? "" : "s"} couldn&apos;t be read and won&apos;t be saved:</p>
+                    <table className="report-table">
+                      <thead><tr><th>Row</th><th>Name</th><th>Problem</th></tr></thead>
+                      <tbody>
+                        {problems.slice(0, 100).map((problem) => (
+                          <tr key={problem.line}>
+                            <td>{problem.line}</td>
+                            <td translate="no">{problem.name || "—"}</td>
+                            <td>{problem.problems.join(" ")}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
                 <div className="form-actions">
                   <button className="secondary-button" disabled={busy} onClick={close} type="button">{done ? "Close" : "Cancel"}</button>
                   {!done && (
-                    <button className="primary-button" disabled={busy || !csv || changes === 0} onClick={() => csv && send(csv, true)} type="button">
-                      <Upload aria-hidden="true" size={16} /> {busy ? "Saving…" : `Save ${changes} change${changes === 1 ? "" : "s"}`}
+                    <button className="primary-button" disabled={busy || !csv || changeCount === 0} onClick={() => csv && send(csv, true)} type="button">
+                      <Upload aria-hidden="true" size={16} /> {busy ? "Saving…" : `Save ${changeCount} change${changeCount === 1 ? "" : "s"}`}
                     </button>
                   )}
                 </div>

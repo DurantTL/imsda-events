@@ -66,7 +66,7 @@ function member(overrides: Row = {}): Row {
     person: {
       firstName: "Dana",
       lastName: "Driver",
-      backgroundCheck: { complianceStatus: "CLEAR", expiresOn: null, issuesNote: null },
+      backgroundCheckMatch: { entry: { complianceStatus: "CLEAR", expiresOn: null, issuesNote: null } },
       driverVerification: null,
     },
     ...overrides,
@@ -100,7 +100,7 @@ describe("driver verification queue (#491)", () => {
 
   it("gives conference staff the background-check issue note, and a club's own queue never (#427)", async () => {
     const withNote = { firstName: "Dana", lastName: "Driver", driverVerification: null,
-      backgroundCheck: { complianceStatus: "CLEAR", expiresOn: null, issuesNote: "Synthetic note: can't drive." } };
+      backgroundCheckMatch: { entry: { complianceStatus: "CLEAR", expiresOn: null, issuesNote: "Synthetic note: can't drive." } } };
     db.members.push(member({ person: withNote }));
     const [global] = await listWillingDrivers({ kind: "GLOBAL" }, now);
     expect(global.backgroundCheck).toEqual({ state: "CLEAR", note: "Synthetic note: can't drive." });

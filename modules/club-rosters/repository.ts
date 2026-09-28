@@ -188,7 +188,7 @@ export async function addRosterMember(
   if (!willingToDriveAllowed(input.attendeeType, input.willingToDrive)) {
     throw new RosterOperationError("WILLING_TO_DRIVE_NOT_ALLOWED", "Only staff and adults can be marked willing to drive.");
   }
-  const memberId = await getPrisma().$transaction(async (tx) => {
+  const result = await getPrisma().$transaction(async (tx) => {
     await assertNotDuplicate(tx, organizationId, clubYear, input.firstName, input.lastName, input.birthDate);
     const person = await tx.person.create({
       data: { firstName: input.firstName, lastName: input.lastName },
@@ -221,9 +221,9 @@ export async function addRosterMember(
     if (input.willingToDrive) {
       await audit(tx, actor, "CLUB_ROSTER_WILLING_TO_DRIVE_SET", organizationId, member.id, "Marked a roster member willing to drive.");
     }
-    return member.id;
+    return { memberId: member.id, personId: person.id };
   });
-  return memberId;
+  return result;
 }
 
 export async function updateRosterMember(
@@ -235,7 +235,7 @@ export async function updateRosterMember(
   options: { requireGender?: boolean } = {},
 ) {
   if (input.birthDate !== undefined) assertBirthDate(input.birthDate, now);
-  await getPrisma().$transaction(async (tx) => {
+  return getPrisma().$transaction(async (tx) => {
     const member = await findMember(tx, organizationId, memberId);
     // A details edit from the roster form (#424) must leave the person with a
     // gender, sent or already on file. Marking someone active or inactive
@@ -300,6 +300,7 @@ export async function updateRosterMember(
     if (input.willingToDrive === true && member.willingToDrive !== true) {
       await audit(tx, actor, "CLUB_ROSTER_WILLING_TO_DRIVE_SET", organizationId, memberId, "Marked a roster member willing to drive.");
     }
+    return { personId: member.personId };
   });
 }
 

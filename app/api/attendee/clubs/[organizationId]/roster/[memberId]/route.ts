@@ -4,6 +4,7 @@ import { rosterApiError } from "@/modules/club-rosters/api-errors";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import { listRoster, removeRosterMember, updateRosterMember } from "@/modules/club-rosters/repository";
 import { rosterMemberUpdateSchema, rosterRemoveSchema } from "@/modules/club-rosters/schemas";
+import { refreshBackgroundCheckMatchForPerson } from "@/modules/background-checks/repository";
 import { withRequestContext } from "@/lib/request-context";
 
 type RouteContext = { params: Promise<{ organizationId: string; memberId: string }> };
@@ -21,7 +22,10 @@ async function patchHandler(request: Request, context: RouteContext) {
     const access = await requireRosterAccess(organizationId);
     const input = rosterMemberUpdateSchema.parse(await request.json());
     // A details edit must leave the person with a gender (#424); status-only edits are exempt.
-    await updateRosterMember(organizationId, memberId, input, actorAttribution(access.actor), undefined, { requireGender: true });
+    const { personId } = await updateRosterMember(organizationId, memberId, input, actorAttribution(access.actor), undefined, { requireGender: true });
+    // #527: a name change or other edit is matched against the background
+    // check list right away, without waiting on the next upload.
+    if (personId) await refreshBackgroundCheckMatchForPerson(personId);
     return Response.json(await roster(organizationId));
   } catch (error) {
     return rosterApiError(error, "Updating a roster entry");

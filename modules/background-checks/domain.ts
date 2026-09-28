@@ -321,8 +321,9 @@ export class RosterBackgroundCsvError extends Error {}
 /**
  * The real church/club export (#427): `user_id,user_last,user_first,roles,
  * sites,user_active,compliance,issues`. No email or birth date; people are
- * matched by name and `sites` (their club or sponsoring church) in
- * `planRosterBackgroundImport`. `user_active` is accepted and ignored.
+ * matched by name and `sites` (their club or sponsoring church) at lookup
+ * (#527, `modules/background-checks/repository.ts`). `user_active` is
+ * accepted and ignored.
  */
 export function parseRosterBackgroundCsv(text: string): RosterBackgroundCsvRow[] {
   if (text.length > MAX_ROSTER_CSV_BYTES) throw new RosterBackgroundCsvError("That file is too large. Upload up to 5,000 people at a time.");
@@ -452,6 +453,97 @@ export function complianceReminders(counts: ComplianceReminderCounts, rosterHref
     });
   }
   return items;
+}
+
+// --- The unified stored list (#527): both CSV formats above are input
+// parsers only. Every valid row becomes one of these, fed into the one
+// stored list, matched to people at lookup instead of at upload. ---
+
+export type BackgroundCheckListRow = {
+  line: number;
+  firstName: string;
+  lastName: string;
+  normalizedName: string;
+  email: string | null;
+  /** Plain here; the repository seals it (`club-rosters/birth-dates.ts`) before storage. */
+  birthDate: string | null;
+  /** The person's club or sponsoring church (the roster format's `sites`). */
+  site: string | null;
+  /** The roster CSV's `user_id`, when the row has one (Sterling rows never do). */
+  sourceUserId: string | null;
+  /** What a remembered or manual match is kept against; see `backgroundCheckIdentityKey`. */
+  identityKey: string;
+  complianceStatus: BackgroundComplianceStatus | null;
+  checkedOn: string | null;
+  expiresOn: string | null;
+  issuesNote: string | null;
+};
+
+/**
+ * What a manual match, or a remembered `user_id`, is remembered against
+ * (`ExternalIdentity.externalId`, provider `ROSTER_IMPORT`): the roster CSV's
+ * `user_id` when the row has one, otherwise a key built from the row's own
+ * identifying fields (in the same priority matching uses them), so the same
+ * person's row — from either format — is still recognized as "the same
+ * entry" on the next upload even without a `user_id`.
+ */
+export function backgroundCheckIdentityKey(input: {
+  sourceUserId: string | null;
+  normalizedName: string;
+  email: string | null;
+  birthDate: string | null;
+  site: string | null;
+}): string {
+  if (input.sourceUserId) return `userId:${input.sourceUserId}`;
+  if (input.email) return `email:${input.email}`;
+  if (input.birthDate) return `name-birth:${input.normalizedName}|${input.birthDate}`;
+  if (input.site) return `name-site:${input.normalizedName}|${matchableName(input.site)}`;
+  return `name:${input.normalizedName}`;
+}
+
+/**
+ * A Sterling row (#388) as a list entry. A non-clear status is now kept, not
+ * dropped (#527: "every valid row is stored"), marked not in compliance so
+ * staff still see it and why, instead of the row being silently discarded.
+ */
+export function sterlingRowToListRow(row: SterlingCsvRow): BackgroundCheckListRow {
+  const normalizedName = matchableName(`${row.firstName} ${row.lastName}`);
+  const clear = isClearStatus(row.status);
+  return {
+    line: row.line,
+    firstName: row.firstName,
+    lastName: row.lastName,
+    normalizedName,
+    email: row.email,
+    birthDate: row.birthDate,
+    site: null,
+    sourceUserId: null,
+    identityKey: backgroundCheckIdentityKey({ sourceUserId: null, normalizedName, email: row.email, birthDate: row.birthDate, site: null }),
+    complianceStatus: clear ? null : "NOT_COMPLIANT",
+    checkedOn: row.checkedOn,
+    expiresOn: clear ? row.expiresOn : null,
+    issuesNote: clear ? null : `Sterling status: ${row.status ?? "unknown"}.`,
+  };
+}
+
+/** A roster row (#427) as a list entry. */
+export function rosterRowToListRow(row: RosterBackgroundCsvRow): BackgroundCheckListRow {
+  const normalizedName = matchableName(`${row.firstName} ${row.lastName}`);
+  return {
+    line: row.line,
+    firstName: row.firstName,
+    lastName: row.lastName,
+    normalizedName,
+    email: null,
+    birthDate: null,
+    site: row.site,
+    sourceUserId: row.userId,
+    identityKey: backgroundCheckIdentityKey({ sourceUserId: row.userId, normalizedName, email: null, birthDate: null, site: row.site }),
+    complianceStatus: row.compliance,
+    checkedOn: null,
+    expiresOn: null,
+    issuesNote: row.issuesNote,
+  };
 }
 
 /** How a flag reads on the list and in its CSV. */

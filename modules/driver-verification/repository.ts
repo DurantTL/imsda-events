@@ -43,7 +43,7 @@ const willingDriverSelect = {
     select: {
       firstName: true,
       lastName: true,
-      backgroundCheck: { select: { complianceStatus: true, expiresOn: true, issuesNote: true } },
+      backgroundCheckMatch: { select: { entry: { select: { complianceStatus: true, expiresOn: true, issuesNote: true } } } },
       driverVerification: {
         select: {
           clearedToTransport: true,
@@ -84,7 +84,7 @@ export type DriverQueueEntry = {
  */
 function serializeQueueEntry(member: WillingDriverRow, today: string, includeNotes: boolean): DriverQueueEntry | null {
   if (!member.personId || !member.person) return null;
-  const check = member.person.backgroundCheck;
+  const check = member.person.backgroundCheckMatch?.entry ?? null;
   const verification = member.person.driverVerification;
   return {
     personId: member.personId,
