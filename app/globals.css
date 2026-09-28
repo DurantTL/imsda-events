@@ -1304,6 +1304,24 @@ select:focus-visible {
 .arrival-row button.undo-button { border-color: #dfc9e8; background: var(--imsda-purple-soft); color: var(--imsda-purple); }
 .arrival-row button:disabled { cursor: not-allowed; opacity: 0.55; }
 .inline-notice { border: 1px solid #b8d7ca; border-radius: 12px; background: var(--green-soft); color: var(--green); padding: 10px 13px; font-size: 0.7rem; font-weight: 600; }
+.draft-created-guide-banner {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #dfc9e8;
+  border-radius: 16px;
+  background: var(--imsda-purple-soft);
+  padding: 16px 19px;
+}
+.draft-created-guide-banner-head { display: flex; align-items: flex-start; gap: 12px; }
+.draft-created-guide-banner-head svg:first-child { color: var(--imsda-purple); flex-shrink: 0; margin-top: 2px; }
+.draft-created-guide-banner-head > div { flex: 1 1 auto; display: grid; gap: 2px; }
+.draft-created-guide-banner-head h2 { margin: 0; font-size: 0.98rem; color: var(--imsda-navy); }
+.draft-created-guide-banner-head .icon-button { width: 30px; height: 30px; flex-shrink: 0; }
+.draft-created-guide-steps { display: grid; gap: 7px; margin: 0; padding: 0 0 0 19px; font-size: 0.72rem; line-height: 1.55; color: var(--imsda-navy); }
+.draft-created-guide-steps a { font-weight: 700; }
+.draft-created-guide-footnote { margin: 0; color: var(--muted); font-size: 0.63rem; line-height: 1.5; }
+.draft-created-guide-footnote code { background: white; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: 0.6rem; }
+
 .act-as-banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
 .act-as-banner span:not(.act-as-banner-actions) { flex: 1 1 auto; }
 .act-as-banner-actions { display: flex; align-items: center; gap: 8px; }

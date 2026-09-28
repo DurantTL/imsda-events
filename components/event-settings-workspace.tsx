@@ -22,6 +22,7 @@ import {
 } from "@/modules/events/schemas";
 import { buildRegistrationEmbedCode } from "@/modules/forms/embed";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
+import { DraftCreatedGuideBanner } from "@/components/draft-created-guide-banner";
 
 type EventSettingsWorkspaceProps = {
   mode: "create" | "edit";
@@ -210,6 +211,9 @@ export function EventSettingsWorkspace({
 
   return (
     <section className="page-stack event-settings-workspace">
+      {mode === "edit" && initialEvent && (
+        <DraftCreatedGuideBanner eventId={initialEvent.id} />
+      )}
       <div className="page-intro">
         <div>
           <p className="eyebrow">{mode === "create" ? "New event setup" : "Event setup"}</p>
@@ -490,7 +494,7 @@ export function EventSettingsWorkspace({
         </div>
 
         <aside className="event-settings-side">
-          <section className="panel event-readiness-panel">
+          <section className="panel event-readiness-panel" id="event-readiness-panel">
             <p className="eyebrow">Publish readiness</p>
             <h2>{readiness.ready ? "Ready to publish" : `${readiness.completedCount} of ${readiness.items.length} ready`}</h2>
             <p>Publishing turns on the event’s public registration links. Form versions and registration dates still control what attendees can submit.</p>
