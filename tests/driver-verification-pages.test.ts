@@ -26,6 +26,7 @@ vi.mock("@/modules/club-rosters/access", () => ({ getRosterAccessStateForPage: m
 vi.mock("@/modules/background-checks/repository", () => ({ clubPortalComplianceStatuses: mocks.clubPortalComplianceStatuses }));
 vi.mock("@/modules/club-rosters/repository", () => ({ listRoster: mocks.listRoster }));
 vi.mock("@/modules/honors/member-honor-repository", () => ({ listClubHonorsPage: mocks.listClubHonorsPage }));
+vi.mock("@/modules/club-transfers/repository", () => ({ listTransferClubOptions: async () => [] }));
 vi.mock("@/modules/access/current-session", () => ({ getCurrentSession: mocks.getCurrentSession }));
 
 import ClubRosterPage from "@/app/(public)/account/(portal)/clubs/[organizationId]/roster/page";

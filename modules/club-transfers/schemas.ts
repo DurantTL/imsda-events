@@ -1,34 +1,60 @@
 import { z } from "zod";
+import { staffQueueFilters } from "@/modules/club-transfers/domain";
 
 /**
- * The receiving club's director starts a transfer while enrolling the
- * member: they pick an existing roster row at another club
- * (`fromRosterMemberId`, found through the search endpoint) and record why.
- * Roster fields (attendee type, role, class, gender, willing-to-drive) and
- * the sealed birth date come from the sending club's own roster row — they
- * are not retyped, so nothing about the move can quietly drift from what the
- * sending club already had on file.
+ * The receiving club's director requests a transfer (#489 decision 1): the
+ * member's exact first and last name, their current club (from a club
+ * picker, never a search of that club's roster), and why. Nothing else is
+ * typed: roster fields and the sealed birth date come from the sending
+ * club's own row, and only when the transfer completes.
  */
-export const initiateTransferSchema = z.object({
-  fromOrganizationId: z.string().min(1, "Choose the member's current club."),
-  fromRosterMemberId: z.string().min(1, "Choose who is transferring."),
-  reason: z.string().trim().min(1, "Enter a reason for the transfer.").max(500),
+export const requestTransferSchema = z.object({
+  fromOrganizationId: z.string().trim().min(1, "Choose the member's current club.").max(64),
+  firstName: z.string().trim().min(1, "Enter the member's first name.").max(80),
+  lastName: z.string().trim().min(1, "Enter the member's last name.").max(80),
+  reason: z.string().trim().min(1, "Enter a reason for the transfer.").max(500, "Keep the reason under 500 characters."),
 }).strict();
 
-export type InitiateTransferInput = z.infer<typeof initiateTransferSchema>;
+export type RequestTransferInput = z.infer<typeof requestTransferSchema>;
 
-/** The sending club's acknowledgment: a confirmation, nothing else to type. */
-export const acknowledgeTransferSchema = z.object({
+/** The sending club's acceptance: a confirmation, nothing else to type. */
+export const acceptTransferSchema = z.object({
   confirm: z.literal(true, "Confirm the transfer."),
 }).strict();
 
-/** Conference staff finishing or overriding a transfer records a short note. */
-export const staffResolveTransferSchema = z.object({
+/** A decline or a club cancellation may carry a short note, kept for conference staff (never emailed). */
+export const clubNoteSchema = z.object({
+  confirm: z.literal(true, "Confirm first."),
   note: z.string().trim().max(500).default(""),
 }).strict();
 
-export type StaffResolveTransferInput = z.infer<typeof staffResolveTransferSchema>;
+/** Conference staff finishing an overdue transfer may leave a note. */
+export const staffFinishTransferSchema = z.object({
+  note: z.string().trim().max(500).default(""),
+}).strict();
 
-export const transferSearchQuerySchema = z.object({
-  q: z.string().trim().min(2, "Enter at least 2 characters.").max(80),
+/**
+ * Conference staff overriding a transfer must say why (#489 N2). An
+ * unmatched request names the sending club's roster row staff chose.
+ */
+export const staffOverrideTransferSchema = z.object({
+  note: z.string().trim().min(1, "Enter a note explaining the override.").max(500),
+  fromRosterMemberId: z.string().trim().min(1).max(64).optional(),
+}).strict();
+
+export const staffCancelTransferSchema = z.object({
+  note: z.string().trim().min(1, "Enter a note explaining why this is closed.").max(500),
+}).strict();
+
+export const staffQueueQuerySchema = z.object({
+  filter: z.enum(staffQueueFilters).default("open"),
 });
+
+export const approveRegistrationMoveSchema = z.object({
+  confirm: z.literal(true, "Confirm the move."),
+  note: z.string().trim().max(500).default(""),
+}).strict();
+
+export const skipRegistrationMoveSchema = z.object({
+  note: z.string().trim().max(500).default(""),
+}).strict();

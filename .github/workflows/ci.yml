@@ -55,3 +55,5 @@ jobs:
       - run: npm run test:honor-capacity
       # Real-database check of the one-active-act-as-per-session index and racing starts (#442).
       - run: npm run test:staff-act-as
+      # Real-database check of club member transfers: unique indexes, transfer back, duplicate recipients, removal orders (#489).
+      - run: npm run test:club-transfers

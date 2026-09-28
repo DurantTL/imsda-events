@@ -20,6 +20,7 @@ export default async function OrganizationsPage() {
         <Link className="secondary-button" href="/admin/clubs/import">Import clubs</Link>
         <Link className="secondary-button" href="/admin/clubs/invites">Club invites</Link>
         <Link className="secondary-button" href="/admin/clubs/reports">Monthly reports</Link>
+        <Link className="secondary-button" href="/admin/clubs/transfers">Member transfers</Link>
         <Link className="secondary-button" href="/admin/organizations/background-checks">Background checks</Link>
         <Link className="secondary-button" href="/admin/organizations/driver-verification">Driver verification</Link>
       </div>
