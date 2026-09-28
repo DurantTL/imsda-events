@@ -99,7 +99,7 @@ export function MfaManager({
   }
 
   return (
-    <section className="panel">
+    <section className="panel" id="two-step-verification">
       <div className="section-heading">
         <div>
           <p className="eyebrow">Account security</p>

@@ -7614,3 +7614,24 @@ select:focus-visible {
 .event-clone input:disabled { opacity: 0.55; }
 .inline-notice.clone-warning { border-color: #ddcd9e; background: var(--imsda-gold-soft); color: #6f5316; line-height: 1.5; font-size: 0.78rem; }
 .clone-link { overflow-wrap: anywhere; font-size: 0.74rem; }
+
+/* Staff account menu (#543): 44px touch targets and a popover that fits 390px. */
+.account-popover { width: min(260px, calc(100vw - 32px)); }
+.account-popover .account-system-link,
+.account-popover .text-button { min-height: 44px; }
+.account-popover .account-system-link { padding-top: 0; margin-top: 8px; box-sizing: border-box; }
+.account-popover .account-system-link:focus-visible,
+.account-popover .text-button:focus-visible,
+.avatar:focus-visible { outline: 2px solid var(--imsda-purple); outline-offset: 2px; }
+@media (max-width: 760px) {
+  .avatar { width: 44px; height: 44px; }
+}
+.account-popover .text-button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  text-align: left;
+  font-size: 0.68rem;
+  font-weight: 700;
+}

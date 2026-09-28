@@ -26,7 +26,7 @@ export default async function StaffChurchLocationPage({
   if (!location) notFound();
   return (
     <section className="page-stack">
-      <BackLink href="/admin/organizations" variant="staff">Back to churches and clubs</BackLink>
+      <BackLink href="/admin/organizations" variant="staff">Back to Clubs and churches</BackLink>
       <ChurchLocationForm
         endpoint={`/api/admin/organizations/${encodeURIComponent(organizationId)}/location`}
         initialLocation={location}

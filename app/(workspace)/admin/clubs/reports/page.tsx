@@ -24,7 +24,7 @@ export default async function ClubReportsAdminPage({ searchParams }: { searchPar
   return (
     <>
       <div className="intro-actions club-admin-links">
-        <BackLink href="/admin/organizations" variant="staff">Back to churches and clubs</BackLink>
+        <BackLink href="/admin/organizations" variant="staff">Back to Clubs and churches</BackLink>
         <Link className="secondary-button" href={`/admin/clubs/reports?year=${label(start - 1)}`}>← {label(start - 1)}</Link>
         {clubYear !== current && <Link className="secondary-button" href={`/admin/clubs/reports?year=${label(start + 1)}`}>{label(start + 1)} →</Link>}
       </div>

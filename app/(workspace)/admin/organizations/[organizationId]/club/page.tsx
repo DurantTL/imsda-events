@@ -32,7 +32,7 @@ export default async function StaffOpenClubPage({ params }: { params: Promise<{ 
   return (
     <section className="page-stack">
       <div className="intro-actions club-admin-links">
-        <BackLink href="/admin/organizations" variant="staff">Back to churches and clubs</BackLink>
+        <BackLink href="/admin/organizations" variant="staff">Back to Clubs and churches</BackLink>
         <Link className="secondary-button" href={`/admin/organizations/${organizationId}/directors${fromHere}`}>
           <UserCog aria-hidden="true" size={14} /> Club admins
         </Link>

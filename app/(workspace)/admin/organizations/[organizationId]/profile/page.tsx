@@ -30,7 +30,7 @@ export default async function StaffClubProfilePage({
   const churches = await listChurchOptions(profile.sponsoringChurchId);
   const clubHref = `/admin/organizations/${organizationId}/club`;
   const backHref = allowedReturnTo(from, [clubHref], "/admin/organizations");
-  const backLabel = backHref === clubHref ? `Back to ${profile.name}` : "Back to churches and clubs";
+  const backLabel = backHref === clubHref ? `Back to ${profile.name}` : "Back to Clubs and churches";
   return (
     <section className="page-stack">
       <BackLink href={backHref} variant="staff">{backLabel}</BackLink>

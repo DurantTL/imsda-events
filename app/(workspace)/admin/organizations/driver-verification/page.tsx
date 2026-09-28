@@ -18,10 +18,10 @@ export default async function DriverVerificationPage() {
 
   return (
     <section className="page-stack">
-      <BackLink href="/admin/organizations" variant="staff">Back to churches and clubs</BackLink>
+      <BackLink href="/admin/organizations" variant="staff">Back to Clubs and churches</BackLink>
       <div className="page-intro">
         <div>
-          <p className="eyebrow">Churches and clubs</p>
+          <p className="eyebrow">Clubs and churches</p>
           <h2>Driver verification</h2>
           <p>
             Background checks already cover driver clearance status (y, n, or expiring soon, with an issue note for

@@ -12,7 +12,7 @@ export default async function ClubImportPage() {
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
   return (
     <>
-      <BackLink href="/admin/organizations" variant="staff">Back to churches and clubs</BackLink>
+      <BackLink href="/admin/organizations" variant="staff">Back to Clubs and churches</BackLink>
       <ClubImportWorkspace />
     </>
   );

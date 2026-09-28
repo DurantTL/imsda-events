@@ -29,10 +29,10 @@ export default async function BackgroundChecksPage() {
   ];
   return (
     <section className="page-stack">
-      <BackLink href="/admin/organizations" variant="staff">Back to churches and clubs</BackLink>
+      <BackLink href="/admin/organizations" variant="staff">Back to Clubs and churches</BackLink>
       <div className="page-intro">
         <div>
-          <p className="eyebrow">Churches and clubs</p>
+          <p className="eyebrow">Clubs and churches</p>
           <h2>Background checks</h2>
           <p>
             Upload the roster export (matched by name and club or church; no email or birth date needed) or the

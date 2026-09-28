@@ -2,11 +2,10 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Fragment, useState } from "react";
+import { Fragment } from "react";
 import {
   ArrowRightLeft,
   ChevronDown,
-  CircleUserRound,
   Eye,
   ShieldCheck,
   UsersRound,
@@ -14,7 +13,7 @@ import {
 import { BrandMark } from "@/components/brand-mark";
 import { EventAutoSelectNotice } from "@/components/event-auto-select-notice";
 import { rememberLastUsedEvent } from "@/components/remember-last-event";
-import { SignOutButton } from "@/components/sign-out-button";
+import { StaffAccountMenu } from "@/components/staff-account-menu";
 import type { EventPermission } from "@/modules/access/permissions";
 import { otherWorkspaceContextsForStaff } from "@/modules/access/workspace-contexts";
 import {
@@ -61,7 +60,6 @@ export function AppShell({
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [openMenu, setOpenMenu] = useState<"account" | null>(null);
   const isSystemRoute = pathname.startsWith(systemNavigation.href);
   const current = isSystemRoute
     ? systemNavigation
@@ -257,46 +255,14 @@ export function AppShell({
                 </Link>
               )}
             <span className="staff-pill">Staff mode</span>
-            <div className="menu-anchor">
-              <button className="avatar" type="button" aria-label="Staff account" aria-expanded={openMenu === "account"} onClick={() => setOpenMenu(openMenu === "account" ? null : "account")}> 
-                <CircleUserRound aria-hidden="true" size={19} />
-              </button>
-              {openMenu === "account" && (
-                <div className="header-popover account-popover" role="status">
-                  <strong>{user.displayName}</strong><p>{user.email}</p><small>Database-backed staff session</small>
-                  {systemAdminContext && (
-                    <Link className="account-system-link" href={systemAdminContext.href} onClick={() => setOpenMenu(null)}>
-                      <ShieldCheck aria-hidden="true" size={17} />
-                      {systemAdminContext.label}
-                    </Link>
-                  )}
-                  {canSwitchToAttendee && (
-                    <form
-                      action="/api/auth/switch-to-attendee"
-                      className="account-switch-form"
-                      method="post"
-                    >
-                      <button
-                        className="account-system-link account-switch-button"
-                        type="submit"
-                      >
-                        <ArrowRightLeft aria-hidden="true" size={17} />
-                        Switch to my attendee account
-                      </button>
-                    </form>
-                  )}
-                  <Link
-                    className="account-system-link"
-                    href={attendeePreviewHref}
-                    onClick={() => setOpenMenu(null)}
-                  >
-                    <Eye aria-hidden="true" size={17} />
-                    Preview attendee experience
-                  </Link>
-                  <SignOutButton />
-                </div>
-              )}
-            </div>
+            <StaffAccountMenu
+              attendeePreviewHref={attendeePreviewHref}
+              canSwitchToAttendee={canSwitchToAttendee}
+              displayName={user.displayName}
+              email={user.email}
+              settingsHref={`/more${eventQuery}`}
+              systemAdminContext={systemAdminContext}
+            />
           </div>
         </header>
         <div className="workspace-content" id="workspace-content">

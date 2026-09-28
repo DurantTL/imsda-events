@@ -10,7 +10,7 @@ import { OrganizationOperationError } from "@/modules/organizations/repository";
 export const metadata: Metadata = { title: "Club directors" };
 
 /**
- * Reached from the churches and clubs directory or from the club's own
+ * Reached from the Clubs and churches directory or from the club's own
  * overview page (#428): the back link returns to whichever sent the visitor
  * here.
  */
@@ -36,7 +36,7 @@ export default async function ClubDirectorsPage({
   }
   const clubHref = `/admin/organizations/${organizationId}/club`;
   const backHref = allowedReturnTo(from, [clubHref], "/admin/organizations");
-  const backLabel = backHref === clubHref ? `Back to ${initial.club.name}` : "Back to churches and clubs";
+  const backLabel = backHref === clubHref ? `Back to ${initial.club.name}` : "Back to Clubs and churches";
 
   return (
     <>
