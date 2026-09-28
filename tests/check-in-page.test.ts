@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { redirect } from "next/navigation";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const dependencies = vi.hoisted(() => ({
@@ -49,8 +50,8 @@ beforeEach(() => {
   dependencies.listClubCheckInInfo.mockResolvedValue([]);
 });
 
-describe("check-in page access (#412 reviewer leftover)", () => {
-  it("never loads event B's clubs for staff with MANAGE_CHECK_IN only on event A", async () => {
+describe("check-in page access (#412 reviewer leftover, #465)", () => {
+  it("never loads event B's clubs — or falls back to event A's — for staff with MANAGE_CHECK_IN only on event A; it sends them to the picker instead", async () => {
     dependencies.listEventsForUser.mockResolvedValue([event("event_a")]);
     dependencies.findActiveMembership.mockImplementation(async (userId: string, eventId: string) => (
       eventId === "event_a"
@@ -58,10 +59,11 @@ describe("check-in page access (#412 reviewer leftover)", () => {
         : null
     ));
 
-    await CheckInPage({ searchParams: Promise.resolve({ event: "event_b" }) });
+    await expect(CheckInPage({ searchParams: Promise.resolve({ event: "event_b" }) })).rejects.toThrow("redirected");
+    expect(redirect).toHaveBeenCalledWith("/select-event?unavailable=1");
 
-    expect(dependencies.listClubCheckInInfo).not.toHaveBeenCalledWith("event_b");
-    expect(dependencies.listClubCheckInInfo).toHaveBeenCalledWith("event_a");
+    expect(dependencies.listClubCheckInInfo).not.toHaveBeenCalled();
+    expect(dependencies.listRegistrations).not.toHaveBeenCalled();
   });
 
   it("never loads clubs at all for a member without MANAGE_CHECK_IN", async () => {
