@@ -4,7 +4,10 @@ import { BrandMark } from "@/components/brand-mark";
 import { EventSettingsWorkspace } from "@/components/event-settings-workspace";
 import { getCurrentSession } from "@/modules/access/current-session";
 
-export const metadata: Metadata = { title: "Create an event" };
+export const metadata: Metadata = {
+  title: "Create an event",
+  robots: { index: false, follow: false },
+};
 
 export default async function EventSetupPage() {
   const { user } = await getCurrentSession();
