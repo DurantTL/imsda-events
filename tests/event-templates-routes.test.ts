@@ -218,3 +218,14 @@ describe("conflicts → 409", () => {
     expect(mocks.applyEventTemplate).toHaveBeenCalledWith("template-1", admin.id, validApply);
   });
 });
+
+describe("starterKey is server-owned (#546)", () => {
+  it("PATCH drops a client-sent starterKey before saving", async () => {
+    mocks.saveEventTemplateDraft.mockResolvedValue({ id: "template-1" });
+    const response = await saveRoute(request("PATCH", { ...validDraft, payload: { audience: "CLUB", starterKey: "honors_weekend" } }), ctx());
+    expect(response.status).toBe(200);
+    const saved = mocks.saveEventTemplateDraft.mock.calls[0]![2] as { payload: Record<string, unknown> };
+    expect(saved.payload).not.toHaveProperty("starterKey");
+    expect(saved.payload).toMatchObject({ audience: "CLUB" });
+  });
+});

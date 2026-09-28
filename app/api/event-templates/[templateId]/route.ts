@@ -22,8 +22,11 @@ async function patchHandler(request: Request, context: { params: Promise<{ templ
   try {
     const user = requireEventTemplateManagementPermission(await getCurrentSession());
     const { templateId } = await context.params;
-    const input = draftEventTemplateInputSchema.parse(await request.json());
-    return Response.json({ template: await saveEventTemplateDraft(templateId, user.id, input) });
+    const parsed = draftEventTemplateInputSchema.parse(await request.json());
+    // `starterKey` is server-owned (#546): never accepted from a client.
+    const payload = { ...parsed.payload };
+    delete payload.starterKey;
+    return Response.json({ template: await saveEventTemplateDraft(templateId, user.id, { ...parsed, payload }) });
   } catch (error) { return eventTemplateApiError(error, errorOptions); }
 }
 
