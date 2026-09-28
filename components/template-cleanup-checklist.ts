@@ -13,6 +13,21 @@ import type { RegistrationFormDefinition } from "@/modules/forms/definition";
  * (`components/draft-created-guide.ts`, #473) uses: the client records the
  * moment of creation itself, here as a remembered form id, rather than
  * requiring a schema change to persist it server-side.
+ *
+ * Known limitation of that choice, worth calling out explicitly: everything
+ * here lives only in this one browser's `localStorage`.
+ * - It's per browser/device, not per account: a director who starts a form
+ *   on one computer and continues on another (or a co-worker who opens the
+ *   same form) won't see the checklist there, and dismissing it on one
+ *   device doesn't dismiss it on another.
+ * - The per-item checkmarks (`confirmedIds` in
+ *   `template-cleanup-checklist-panel.tsx`) aren't persisted at all — they
+ *   reset on reload, since they're a personal review aid, not the record of
+ *   what was reviewed.
+ * - Nothing about publishing clears the "created" record, so the checklist
+ *   can still show after a form has been published — until it's dismissed,
+ *   same as before publishing. That's intentional (it is never a publish
+ *   gate), but worth knowing rather than assuming it disappears on its own.
  */
 
 export const templateCleanupCreatedStorageKey = "imsda-events:template-cleanup-checklist:created";
@@ -25,27 +40,61 @@ const maxRememberedFormIds = 200;
 export type TemplateCleanupStorageReader = Pick<Storage, "getItem">;
 export type TemplateCleanupStorageWriter = Pick<Storage, "setItem">;
 
-function readIdList(storage: TemplateCleanupStorageReader | undefined, key: string): string[] {
-  if (!storage) return [];
+/**
+ * Parses a raw stored value into an id list — exported so a
+ * `useSyncExternalStore`-based reader (see `template-cleanup-checklist-panel.tsx`,
+ * #484 N2) can read the same raw string it subscribes to and parse it the
+ * same way this module does everywhere else, without going through a
+ * `Storage`-shaped object of its own.
+ */
+export function parseTemplateCleanupIdList(raw: string | null): string[] {
+  if (!raw) return [];
   try {
-    const raw = storage.getItem(key);
-    if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     return Array.isArray(parsed)
       ? parsed.filter((value): value is string => typeof value === "string")
       : [];
   } catch {
-    // Corrupt or inaccessible storage (private browsing, blocked site data,
-    // …). The checklist just may show again, or not at all, for a form
-    // whose earlier state lived only in that storage.
+    // Corrupt storage. The checklist just may show again, or not at all, for
+    // a form whose earlier state lived only in that storage.
     return [];
   }
+}
+
+/** The raw stored string for `key`, or null for missing/inaccessible storage. */
+export function readTemplateCleanupRaw(storage: TemplateCleanupStorageReader | undefined, key: string): string | null {
+  if (!storage) return null;
+  try {
+    return storage.getItem(key);
+  } catch {
+    // Private browsing or a policy that blocks storage access entirely.
+    return null;
+  }
+}
+
+function readIdList(storage: TemplateCleanupStorageReader | undefined, key: string): string[] {
+  return parseTemplateCleanupIdList(readTemplateCleanupRaw(storage, key));
+}
+
+// Notified after every successful write, so a same-tab `useSyncExternalStore`
+// subscriber re-reads immediately — the browser's own "storage" event only
+// fires in *other* tabs/windows, never the one that made the write.
+const changeListeners = new Set<() => void>();
+
+export function subscribeTemplateCleanupChecklistChanges(listener: () => void): () => void {
+  changeListeners.add(listener);
+  return () => { changeListeners.delete(listener); };
+}
+
+function notifyTemplateCleanupChecklistChanged(): void {
+  for (const listener of changeListeners) listener();
 }
 
 function writeIdList(storage: TemplateCleanupStorageWriter | undefined, key: string, ids: readonly string[]): void {
   if (!storage) return;
   try {
     storage.setItem(key, JSON.stringify(ids));
+    notifyTemplateCleanupChecklistChanged();
   } catch {
     // Best-effort only.
   }

@@ -1,13 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { ListChecks, X } from "lucide-react";
 import {
   buildTemplateCleanupChecklistItems,
-  readTemplateCleanupCreatedFormIds,
-  readTemplateCleanupDismissedFormIds,
+  parseTemplateCleanupIdList,
+  readTemplateCleanupRaw,
   readTemplateCleanupStorage,
   shouldShowTemplateCleanupChecklist,
+  subscribeTemplateCleanupChecklistChanges,
+  templateCleanupCreatedStorageKey,
+  templateCleanupDismissedStorageKey,
   withTemplateCleanupDismissed,
   writeTemplateCleanupDismissedFormIds,
 } from "@/components/template-cleanup-checklist";
@@ -18,6 +21,39 @@ type TemplateCleanupChecklistPanelProps = {
   definition: RegistrationFormDefinition;
 };
 
+function getCreatedRawSnapshot(): string | null {
+  return readTemplateCleanupRaw(readTemplateCleanupStorage(), templateCleanupCreatedStorageKey);
+}
+
+function getDismissedRawSnapshot(): string | null {
+  return readTemplateCleanupRaw(readTemplateCleanupStorage(), templateCleanupDismissedStorageKey);
+}
+
+// The server always renders as if nothing were created or dismissed yet
+// (there's no localStorage to read), so the first client render must match
+// that exactly (#484 N2) rather than reading real browser storage during
+// that first render — otherwise React logs a hydration mismatch whenever a
+// form actually has stored state. `useSyncExternalStore` is built for this:
+// it renders `getServerSnapshot` (null, same as "no window") until the
+// commit after hydration, then re-renders with the real client value.
+function getServerSnapshot(): null {
+  return null;
+}
+
+/** Cross-tab (native "storage" event) and same-tab (this module's own
+ * pub-sub, since the tab that writes never gets its own "storage" event)
+ * change notifications, combined into one `useSyncExternalStore` subscribe
+ * function. */
+function subscribe(onStoreChange: () => void): () => void {
+  const unsubscribeInternal = subscribeTemplateCleanupChecklistChanges(onStoreChange);
+  if (typeof window === "undefined") return unsubscribeInternal;
+  window.addEventListener("storage", onStoreChange);
+  return () => {
+    unsubscribeInternal();
+    window.removeEventListener("storage", onStoreChange);
+  };
+}
+
 /**
  * Inline, dismissible checklist shown in the registration builder right
  * after a draft is created from a template (#484). It lists the sections and
@@ -27,18 +63,23 @@ type TemplateCleanupChecklistPanelProps = {
  * and removing an item from the form (with the builder's existing remove
  * controls) simply drops it from this list on the next render.
  *
+ * Its created/dismissed state comes from `useSyncExternalStore` reading
+ * localStorage directly (see `getServerSnapshot` above) rather than a
+ * `useState` lazy initializer, so the very first client render matches the
+ * server's storage-less render — a `useState` initializer that reads
+ * localStorage would instead show real content on that first render,
+ * mismatching the server-rendered empty markup.
+ *
  * The caller renders this with `key={formId}` (as the registration builder
- * does), so switching forms remounts it: its storage reads run fresh for the
- * newly selected form instead of needing an effect to re-sync them.
+ * does) so `confirmedIds` — the per-item review checkmarks, which are
+ * genuinely local and not persisted — resets cleanly on switching forms.
  */
 export function TemplateCleanupChecklistPanel({ formId, definition }: TemplateCleanupChecklistPanelProps) {
-  const [dismissedFormIds, setDismissedFormIds] = useState<string[]>(
-    () => readTemplateCleanupDismissedFormIds(readTemplateCleanupStorage()),
-  );
+  const createdRaw = useSyncExternalStore(subscribe, getCreatedRawSnapshot, getServerSnapshot);
+  const dismissedRaw = useSyncExternalStore(subscribe, getDismissedRawSnapshot, getServerSnapshot);
+  const createdFormIds = useMemo(() => parseTemplateCleanupIdList(createdRaw), [createdRaw]);
+  const dismissedFormIds = useMemo(() => parseTemplateCleanupIdList(dismissedRaw), [dismissedRaw]);
   const [confirmedIds, setConfirmedIds] = useState<ReadonlySet<string>>(() => new Set());
-  const [createdFormIds] = useState<string[]>(
-    () => readTemplateCleanupCreatedFormIds(readTemplateCleanupStorage()),
-  );
 
   const visible = shouldShowTemplateCleanupChecklist(createdFormIds, dismissedFormIds, formId);
   const items = useMemo(() => (visible ? buildTemplateCleanupChecklistItems(definition) : []), [visible, definition]);
@@ -47,9 +88,7 @@ export function TemplateCleanupChecklistPanel({ formId, definition }: TemplateCl
 
   function dismiss() {
     const storage = readTemplateCleanupStorage();
-    const next = withTemplateCleanupDismissed(dismissedFormIds, formId);
-    setDismissedFormIds(next);
-    writeTemplateCleanupDismissedFormIds(storage, next);
+    writeTemplateCleanupDismissedFormIds(storage, withTemplateCleanupDismissed(dismissedFormIds, formId));
   }
 
   function toggleConfirmed(itemId: string) {

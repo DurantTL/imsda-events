@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   buildTemplateCleanupChecklistItems,
   isTemplateCleanupDismissed,
+  parseTemplateCleanupIdList,
   readTemplateCleanupCreatedFormIds,
   readTemplateCleanupDismissedFormIds,
+  readTemplateCleanupRaw,
   shouldShowTemplateCleanupChecklist,
+  subscribeTemplateCleanupChecklistChanges,
   withTemplateCleanupCreated,
   withTemplateCleanupDismissed,
   writeTemplateCleanupCreatedFormIds,
@@ -99,6 +102,51 @@ describe("template cleanup checklist: created/dismissed bookkeeping", () => {
     };
     expect(readTemplateCleanupCreatedFormIds(throwing)).toEqual([]);
     expect(() => writeTemplateCleanupCreatedFormIds(throwing, ["form_1"])).not.toThrow();
+  });
+});
+
+describe("template cleanup checklist: raw reads and change notifications (#484 N2)", () => {
+  it("readTemplateCleanupRaw and parseTemplateCleanupIdList agree with the storage-object readers", () => {
+    const store = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => { store.set(key, value); },
+    };
+    writeTemplateCleanupCreatedFormIds(storage, ["form_1", "form_2"]);
+    const raw = readTemplateCleanupRaw(storage, "imsda-events:template-cleanup-checklist:created");
+    expect(parseTemplateCleanupIdList(raw)).toEqual(["form_1", "form_2"]);
+    expect(readTemplateCleanupRaw(undefined, "any-key")).toBeNull();
+  });
+
+  it("notifies subscribers on every write, so a same-tab useSyncExternalStore reader re-renders", () => {
+    const store = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => { store.set(key, value); },
+    };
+    let notifications = 0;
+    const unsubscribe = subscribeTemplateCleanupChecklistChanges(() => { notifications += 1; });
+    try {
+      writeTemplateCleanupCreatedFormIds(storage, ["form_1"]);
+      writeTemplateCleanupDismissedFormIds(storage, ["form_1"]);
+      expect(notifications).toBe(2);
+    } finally {
+      unsubscribe();
+    }
+    // No notification once unsubscribed.
+    writeTemplateCleanupCreatedFormIds(storage, ["form_1", "form_2"]);
+    expect(notifications).toBe(2);
+  });
+
+  it("never notifies when the write is a no-op because storage is unavailable", () => {
+    let notifications = 0;
+    const unsubscribe = subscribeTemplateCleanupChecklistChanges(() => { notifications += 1; });
+    try {
+      writeTemplateCleanupCreatedFormIds(undefined, ["form_1"]);
+      expect(notifications).toBe(0);
+    } finally {
+      unsubscribe();
+    }
   });
 });
 

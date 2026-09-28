@@ -2,10 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
-import {
-  templateCleanupCreatedStorageKey,
-  templateCleanupDismissedStorageKey,
-} from "@/components/template-cleanup-checklist";
+import { templateCleanupCreatedStorageKey } from "@/components/template-cleanup-checklist";
 import { TemplateCleanupChecklistPanel } from "@/components/template-cleanup-checklist-panel";
 
 const definition = registrationFormDefinitionSchema.parse({
@@ -31,6 +28,8 @@ function stubWindow() {
       setItem: (key: string, value: string) => { store.set(key, String(value)); },
       removeItem: (key: string) => { store.delete(key); },
     },
+    addEventListener: () => {},
+    removeEventListener: () => {},
   });
 }
 
@@ -46,37 +45,20 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("template cleanup checklist panel (#484)", () => {
-  it("renders nothing without a window (server render, e.g. an isolated snapshot)", () => {
+describe("template cleanup checklist panel: no hydration mismatch (#484 N2)", () => {
+  it("renders nothing on the server, with no window at all", () => {
     expect(render("form_1")).toBe("");
   });
 
-  it("renders nothing for a form never recorded as created from a template", () => {
-    stubWindow();
-    expect(render("form_1")).toBe("");
-  });
-
-  it("renders the checklist with one item per inherited section and field once created from a template", () => {
+  it("still renders nothing during a server-style render even when storage says the checklist should show", () => {
+    // `renderToStaticMarkup` is a server render: React always uses
+    // `getServerSnapshot` there, never the real storage read, so this must
+    // stay empty regardless of what's stubbed in `window.localStorage` —
+    // proving the server markup can never disagree with a genuine browser's
+    // own first paint (which likewise starts from the server snapshot,
+    // before `useSyncExternalStore` syncs to the real value post-hydration).
     store.set(templateCleanupCreatedStorageKey, JSON.stringify(["form_1"]));
     stubWindow();
-    const markup = render("form_1");
-    expect(markup).toContain("Review what this template brought in");
-    expect(markup).toContain("Roster");
-    expect(markup).toContain("Name");
-  });
-
-  it("renders nothing once dismissed for that form", () => {
-    store.set(templateCleanupCreatedStorageKey, JSON.stringify(["form_1"]));
-    store.set(templateCleanupDismissedStorageKey, JSON.stringify(["form_1"]));
-    stubWindow();
     expect(render("form_1")).toBe("");
-  });
-
-  it("still shows for a different, non-dismissed form", () => {
-    store.set(templateCleanupCreatedStorageKey, JSON.stringify(["form_1", "form_2"]));
-    store.set(templateCleanupDismissedStorageKey, JSON.stringify(["form_1"]));
-    stubWindow();
-    expect(render("form_1")).toBe("");
-    expect(render("form_2")).toContain("Review what this template brought in");
   });
 });

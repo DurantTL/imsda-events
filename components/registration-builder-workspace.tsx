@@ -32,8 +32,15 @@ import type { AddressValue } from "@/modules/forms/address";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import { calculateFormTotal, calculateRosterTotal, conditionOperators, formFieldScopes, formFieldTypes, getAttendeeRosterConfig, getAvailabilityMode, imsdaChurchOptions, isChoiceFieldType, isFieldVisible, isLatePricingActive, localCalendarDate, type ChoiceUsage, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
-import { promoCodeBuilderModule, rosterFieldBundleModule, type BuilderModuleDefinition } from "@/modules/forms/builder-modules";
-import { isSingleChoiceType, suggestedSingleChoiceType } from "@/modules/forms/choice-defaults";
+import {
+  defaultModuleAttendeeRoster,
+  instantiateModuleFields,
+  moduleKeyCollisions,
+  promoCodeBuilderModule,
+  rosterFieldBundleModule,
+  type BuilderModuleDefinition,
+} from "@/modules/forms/builder-modules";
+import { resolvedTypeForFieldTypeChange } from "@/modules/forms/choice-defaults";
 import { creditPatchForKindChange, creditSummary, hasCredit, removeCreditPatch } from "@/modules/forms/credit-fields";
 import { getPublicRegistrationStepPlan, isPublicReviewSection, type PublicRegistrationStepId } from "@/modules/forms/public-registration-steps";
 import { batchFieldKeys, removalAnswerNote } from "@/modules/forms/field-answer-counts";
@@ -154,6 +161,8 @@ const fieldModules: FieldModuleDefinition[] = [
     category: "People",
     name: "Guest roster",
     description: "Turn on a repeatable guest list with name, age, and type",
+    enablesAttendeeRoster: true,
+    attendeeRosterDefaults: { minAttendees: 1, maxAttendees: 20, attendeeLabel: "Guest", addButtonLabel: "Add another guest" },
     fields: [
       { key: "guest_name", label: "Guest name", helpText: "This block repeats for every person in the registration.", placeholder: "First and last name", type: "TEXT", scope: "ATTENDEE", required: true, options: [] },
       { key: "guest_age", label: "Guest age", helpText: "", type: "NUMBER", scope: "ATTENDEE", required: false, options: [] },
@@ -800,40 +809,29 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
       return;
     }
     const usedKeys = new Set(definition.sections.flatMap((section) => section.fields.map((field) => field.key)));
-    if (module.key === "promo_code" && usedKeys.has("promo_code")) {
-      const existing = definition.sections
-        .flatMap((section) => section.fields)
-        .find((field) => field.key === "promo_code");
-      setExpandedFieldId(existing?.id ?? null);
-      closeModuleLibrary();
-      setNotice("This form already has its Promo code module.");
-      return;
+    if (module.singleton) {
+      const collisions = moduleKeyCollisions(module, usedKeys);
+      if (collisions.length > 0) {
+        const existing = definition.sections
+          .flatMap((section) => section.fields)
+          .find((field) => collisions.includes(field.key));
+        setExpandedFieldId(existing?.id ?? null);
+        closeModuleLibrary();
+        setNotice(`This form already has its ${module.name} module.`);
+        return;
+      }
     }
-    const moduleKeys = new Map<string, string>();
-    for (const source of module.fields) {
-      const baseKey = source.key;
-      let key = baseKey;
-      let suffix = 2;
-      while (usedKeys.has(key)) { key = `${baseKey}_${suffix}`; suffix += 1; }
-      usedKeys.add(key);
-      moduleKeys.set(source.key, key);
-    }
-    const fields = module.fields.map((source) => {
-      const cloned = structuredClone(source);
-      const conditional = cloned.conditional ? { ...cloned.conditional, fieldKey: moduleKeys.get(cloned.conditional.fieldKey) ?? cloned.conditional.fieldKey } : undefined;
-      const optionalWhen = cloned.optionalWhen ? { ...cloned.optionalWhen, fieldKey: moduleKeys.get(cloned.optionalWhen.fieldKey) ?? cloned.optionalWhen.fieldKey } : undefined;
-      return { ...cloned, id: localId("field"), key: moduleKeys.get(source.key)!, conditional, optionalWhen };
-    });
+    const fields = instantiateModuleFields(module, usedKeys, () => localId("field"));
     const section = definition.sections[sectionIndex];
     const sections = definition.sections.map((candidate, index) => index === sectionIndex
       ? { ...candidate, fields: [...section.fields, ...fields] }
       : candidate);
-    const attendeeRoster = module.key === "guest_roster"
-      ? definition.attendeeRoster ?? { enabled: true, minAttendees: 1, maxAttendees: 20, attendeeLabel: "Guest", addButtonLabel: "Add another guest" }
+    const attendeeRoster = module.enablesAttendeeRoster
+      ? definition.attendeeRoster ?? { enabled: true, ...(module.attendeeRosterDefaults ?? defaultModuleAttendeeRoster) }
       : definition.attendeeRoster;
     const nextDefinition = { ...definition, sections, attendeeRoster };
     replaceDefinition(nextDefinition);
-    if (module.key === "guest_roster" && !definition.attendeeRoster?.enabled) {
+    if (module.enablesAttendeeRoster && !definition.attendeeRoster?.enabled) {
       setPreviewAttendees(blankPreviewAttendees(nextDefinition));
     }
     setExpandedFieldId(fields[0]?.id ?? null);
@@ -1146,7 +1144,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
             {expandedFieldId === field.id && <div className="field-editor-body">
               <div className="field-settings field-basic-settings">
                 <label>Label<input disabled={!canEdit} value={field.label} maxLength={120} onChange={(event) => updateField(sectionIndex, fieldIndex, { label: event.target.value, key: field.key.startsWith("new_field_") ? fieldKey(event.target.value) : field.key })} /></label>
-                <label>Field type<select disabled={!canEdit} value={field.type} onChange={(event) => { const type = event.target.value as RegistrationFormField["type"]; const choiceType = isChoiceFieldType(type); const changedPricingKind = choiceType !== isChoiceFieldType(field.type); updateField(sectionIndex, fieldIndex, { type, required: type === "CALCULATED" ? false : field.required, options: choiceType ? (field.options.length < 2 ? ["Option one", "Option two"] : field.options) : [], optionDescriptions: choiceType && field.options.length >= 2 ? field.optionDescriptions : undefined, minSelections: type === "RANKED_CHOICE" ? field.minSelections ?? 2 : type === "MULTISELECT" ? field.minSelections ?? 1 : undefined, maxSelections: type === "MULTISELECT" || type === "RANKED_CHOICE" ? field.maxSelections ?? 2 : undefined, availabilityMode: choiceType ? field.availabilityMode : undefined, choiceLimits: choiceType ? field.choiceLimits : undefined, choicePricesCents: choiceType ? field.choicePricesCents : undefined, latePricing: changedPricingKind ? undefined : field.latePricing, ...creditPatchForKindChange(field, { type }) }); }}>{formFieldTypes.map((type) => <option key={type} value={type}>{fieldTypeLabels[type]}</option>)}</select></label>
+                <label>Field type<select disabled={!canEdit} value={field.type} onChange={(event) => { const selectedType = event.target.value as RegistrationFormField["type"]; const choiceType = isChoiceFieldType(selectedType); const changedPricingKind = choiceType !== isChoiceFieldType(field.type); const nextOptions = choiceType ? (field.options.length < 2 ? ["Option one", "Option two"] : field.options) : []; const type = resolvedTypeForFieldTypeChange(field.type, selectedType, nextOptions.length); updateField(sectionIndex, fieldIndex, { type, required: type === "CALCULATED" ? false : field.required, options: nextOptions, optionDescriptions: choiceType && field.options.length >= 2 ? field.optionDescriptions : undefined, minSelections: type === "RANKED_CHOICE" ? field.minSelections ?? 2 : type === "MULTISELECT" ? field.minSelections ?? 1 : undefined, maxSelections: type === "MULTISELECT" || type === "RANKED_CHOICE" ? field.maxSelections ?? 2 : undefined, availabilityMode: choiceType ? field.availabilityMode : undefined, choiceLimits: choiceType ? field.choiceLimits : undefined, choicePricesCents: choiceType ? field.choicePricesCents : undefined, latePricing: changedPricingKind ? undefined : field.latePricing, ...creditPatchForKindChange(field, { type }) }); }}>{formFieldTypes.map((type) => <option key={type} value={type}>{fieldTypeLabels[type]}</option>)}</select></label>
                 <label>Applies to<select disabled={!canEdit} value={field.scope} onChange={(event) => {
                   const scope = event.target.value as RegistrationFormField["scope"];
                   const controller = field.conditional ? allFields.find((candidate) => candidate.key === field.conditional?.fieldKey) : null;
@@ -1161,10 +1159,10 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
                 {(field.type === "SELECT" || field.type === "RADIO") && field.scope === "ATTENDEE" && <label className="required-toggle"><input disabled={!canEdit || (!field.optionSource && allFields.some((candidate) => candidate.optionSource === "ATTENDEE_TYPES"))} type="checkbox" checked={field.optionSource === "ATTENDEE_TYPES"} onChange={(event) => updateField(sectionIndex, fieldIndex, { optionSource: event.target.checked ? "ATTENDEE_TYPES" : undefined, optionLabels: event.target.checked ? field.optionLabels : undefined, required: event.target.checked ? true : field.required, availabilityMode: event.target.checked ? "NONE" : field.availabilityMode, choiceLimits: event.target.checked ? undefined : field.choiceLimits, choicePricesCents: event.target.checked ? undefined : field.choicePricesCents, latePricing: event.target.checked ? undefined : field.latePricing })} /> Source attendee types from event configuration</label>}
               </div>
               {isChoiceFieldType(field.type) && <section className="choice-settings"><div><p className="eyebrow">Choices, descriptions, pricing &amp; capacity</p><span>Add optional descriptions when people need more information before choosing.</span></div><div className="field-settings">
-                <label>Quick choices<select aria-label={`Quick choices for ${field.label}`} disabled={!canEdit || Boolean(field.optionSource)} value="" onChange={(event) => { const preset = choicePresets.find((item) => item.name === event.target.value); if (preset) updateField(sectionIndex, fieldIndex, { options: preset.options, type: isSingleChoiceType(field.type) ? suggestedSingleChoiceType(preset.options.length) : field.type, optionLabels: undefined, optionDescriptions: undefined, choiceLimits: getAvailabilityMode(field) === "NONE" ? undefined : {}, choicePricesCents: {}, latePricing: field.latePricing ? { ...field.latePricing, choicePricesCents: {} } : undefined }); }}><option value="">Choose a preset…</option>{choicePresets.map((preset) => <option key={preset.name}>{preset.name}</option>)}</select></label>
+                <label>Quick choices<select aria-label={`Quick choices for ${field.label}`} disabled={!canEdit || Boolean(field.optionSource)} value="" onChange={(event) => { const preset = choicePresets.find((item) => item.name === event.target.value); if (preset) updateField(sectionIndex, fieldIndex, { options: preset.options, optionLabels: undefined, optionDescriptions: undefined, choiceLimits: getAvailabilityMode(field) === "NONE" ? undefined : {}, choicePricesCents: {}, latePricing: field.latePricing ? { ...field.latePricing, choicePricesCents: {} } : undefined }); }}><option value="">Choose a preset…</option>{choicePresets.map((preset) => <option key={preset.name}>{preset.name}</option>)}</select></label>
                 {!field.optionSource && <label>Availability<select aria-label={`Availability tracking for ${field.label}`} disabled={!canEdit} value={getAvailabilityMode(field)} onChange={(event) => { const availabilityMode = event.target.value as RegistrationFormField["availabilityMode"]; updateField(sectionIndex, fieldIndex, { availabilityMode, choiceLimits: availabilityMode === "NONE" ? undefined : field.choiceLimits ?? {} }); }}><option value="NONE">No counts or limits</option><option value="CAPACITY">Capacity &amp; spots</option><option value="RANKED_INTEREST">Ranked interest &amp; room assignment</option></select></label>}
                 {(field.type === "MULTISELECT" || field.type === "RANKED_CHOICE") && <><label>Choices required<input aria-label={`Minimum selections for ${field.label}`} disabled={!canEdit} type="number" min={1} max={Math.min(10, Math.max(1, field.options.length))} value={field.minSelections ?? (field.type === "RANKED_CHOICE" ? 2 : 1)} onChange={(event) => updateField(sectionIndex, fieldIndex, { minSelections: Number(event.target.value) })} /></label><label>Maximum allowed<input aria-label={`Maximum selections for ${field.label}`} disabled={!canEdit} type="number" min={1} max={Math.min(10, Math.max(1, field.options.length))} value={field.maxSelections ?? 2} onChange={(event) => updateField(sectionIndex, fieldIndex, { maxSelections: Number(event.target.value) })} /></label></>}
-                <label className="field-full">{field.optionSource ? "Configured attendee types (read only)" : "Choices — one per line"}<textarea disabled={!canEdit || Boolean(field.optionSource)} rows={Math.min(8, Math.max(3, field.options.length))} value={field.options.map((option) => field.optionLabels?.[option] ?? option).join("\n")} onChange={(event) => { const options = event.target.value.split("\n").map((value) => value.trim()).filter(Boolean); const optionDescriptions = Object.fromEntries(options.flatMap((option, optionIndex) => { const priorOption = field.options[optionIndex]; const description = field.optionDescriptions?.[option] ?? (priorOption ? field.optionDescriptions?.[priorOption] : undefined); return description ? [[option, description]] : []; })); const choiceLimits = getAvailabilityMode(field) === "NONE" ? undefined : Object.fromEntries(Object.entries(field.choiceLimits ?? {}).filter(([choice]) => options.includes(choice))); const choicePricesCents = Object.fromEntries(Object.entries(field.choicePricesCents ?? {}).filter(([choice]) => options.includes(choice))); const lateChoicePricesCents = Object.fromEntries(Object.entries(field.latePricing?.choicePricesCents ?? {}).filter(([choice]) => options.includes(choice))); updateField(sectionIndex, fieldIndex, { options, type: isSingleChoiceType(field.type) ? suggestedSingleChoiceType(options.length) : field.type, optionLabels: undefined, optionDescriptions, choiceLimits, choicePricesCents, latePricing: field.latePricing ? { ...field.latePricing, choicePricesCents: lateChoicePricesCents } : undefined }); }} /></label>
+                <label className="field-full">{field.optionSource ? "Configured attendee types (read only)" : "Choices — one per line"}<textarea disabled={!canEdit || Boolean(field.optionSource)} rows={Math.min(8, Math.max(3, field.options.length))} value={field.options.map((option) => field.optionLabels?.[option] ?? option).join("\n")} onChange={(event) => { const options = event.target.value.split("\n").map((value) => value.trim()).filter(Boolean); const optionDescriptions = Object.fromEntries(options.flatMap((option, optionIndex) => { const priorOption = field.options[optionIndex]; const description = field.optionDescriptions?.[option] ?? (priorOption ? field.optionDescriptions?.[priorOption] : undefined); return description ? [[option, description]] : []; })); const choiceLimits = getAvailabilityMode(field) === "NONE" ? undefined : Object.fromEntries(Object.entries(field.choiceLimits ?? {}).filter(([choice]) => options.includes(choice))); const choicePricesCents = Object.fromEntries(Object.entries(field.choicePricesCents ?? {}).filter(([choice]) => options.includes(choice))); const lateChoicePricesCents = Object.fromEntries(Object.entries(field.latePricing?.choicePricesCents ?? {}).filter(([choice]) => options.includes(choice))); updateField(sectionIndex, fieldIndex, { options, optionLabels: undefined, optionDescriptions, choiceLimits, choicePricesCents, latePricing: field.latePricing ? { ...field.latePricing, choicePricesCents: lateChoicePricesCents } : undefined }); }} /></label>
                 <div className="field-full choice-description-editor"><div><strong>Descriptions shown to registrants</strong><small>Optional. Use plain language to explain the presenter, topic, activity, room, or package.</small></div>{field.options.map((option) => <label key={option}><span>{option}</span><textarea aria-label={`Description for ${option}`} disabled={!canEdit} rows={3} maxLength={2000} placeholder="Optional description shown below this choice" value={field.optionDescriptions?.[option] ?? ""} onChange={(event) => { const optionDescriptions = { ...(field.optionDescriptions ?? {}) }; if (event.target.value) optionDescriptions[option] = event.target.value; else delete optionDescriptions[option]; updateField(sectionIndex, fieldIndex, { optionDescriptions }); }} /></label>)}</div>
                 {!field.optionSource && <div className="field-full late-pricing-controls"><label className="required-toggle"><input disabled={!canEdit} type="checkbox" checked={Boolean(field.latePricing)} onChange={(event) => updateField(sectionIndex, fieldIndex, { latePricing: event.target.checked ? { startsOn: localCalendarDate(), label: "Late registration pricing", choicePricesCents: {} } : undefined })} /> Use different prices starting on a date</label>{field.latePricing && <><label>Late pricing starts<input aria-label={`Late pricing starts for ${field.label}`} disabled={!canEdit} type="date" value={field.latePricing.startsOn} onChange={(event) => updateField(sectionIndex, fieldIndex, { latePricing: { ...field.latePricing!, startsOn: event.target.value } })} /></label><label>Pricing label<input aria-label={`Late pricing label for ${field.label}`} disabled={!canEdit} value={field.latePricing.label} maxLength={80} onChange={(event) => updateField(sectionIndex, fieldIndex, { latePricing: { ...field.latePricing!, label: event.target.value } })} /></label></>}</div>}
                 <div className={`field-full choice-limit-editor ${getAvailabilityMode(field) !== "NONE" ? "with-capacity" : ""} ${field.latePricing ? "with-late-price" : ""}`}><div><strong>Price{getAvailabilityMode(field) === "CAPACITY" ? " & capacity" : getAvailabilityMode(field) === "RANKED_INTEREST" ? " & room assignment" : ""} by choice</strong><small>{getAvailabilityMode(field) === "CAPACITY" ? "Capacity limits close a choice when all spots are reserved. " : getAvailabilityMode(field) === "RANKED_INTEREST" ? "Room limits guide the assignment run; people can still rank a popular room so demand stays visible. " : ""}Leave a price blank for free.</small></div><div className="choice-editor-head"><span>Choice</span>{getAvailabilityMode(field) !== "NONE" && <span>{getAvailabilityMode(field) === "RANKED_INTEREST" ? "Room limit" : "Limit"}</span>}<span>Standard</span>{field.latePricing && <span>Late</span>}</div>{field.options.map((option) => <label key={option}><span>{option}</span>{getAvailabilityMode(field) !== "NONE" && <input aria-label={`${getAvailabilityMode(field) === "RANKED_INTEREST" ? "Room limit" : "Limit"} for ${option}`} disabled={!canEdit} type="number" min={1} max={10000} placeholder="Unlimited" value={field.choiceLimits?.[option] ?? ""} onChange={(event) => { const choiceLimits = { ...(field.choiceLimits ?? {}) }; if (event.target.value) choiceLimits[option] = Number(event.target.value); else delete choiceLimits[option]; updateField(sectionIndex, fieldIndex, { choiceLimits }); }} />}<span className="money-input"><b>$</b><input aria-label={`Price for ${option}`} disabled={!canEdit} type="number" min={0} max={100000} step="0.01" placeholder="0.00" value={field.choicePricesCents?.[option] === undefined ? "" : field.choicePricesCents[option] / 100} onChange={(event) => { const choicePricesCents = { ...(field.choicePricesCents ?? {}) }; if (event.target.value !== "") choicePricesCents[option] = Math.round(Number(event.target.value) * 100); else delete choicePricesCents[option]; updateField(sectionIndex, fieldIndex, { choicePricesCents }); }} /></span>{field.latePricing && <span className="money-input"><b>$</b><input aria-label={`Late price for ${option}`} disabled={!canEdit} type="number" min={0} max={100000} step="0.01" placeholder="Same" value={field.latePricing.choicePricesCents?.[option] === undefined ? "" : field.latePricing.choicePricesCents[option] / 100} onChange={(event) => { const choicePricesCents = { ...(field.latePricing?.choicePricesCents ?? {}) }; if (event.target.value !== "") choicePricesCents[option] = Math.round(Number(event.target.value) * 100); else delete choicePricesCents[option]; updateField(sectionIndex, fieldIndex, { latePricing: { ...field.latePricing!, choicePricesCents } }); }} /></span>}</label>)}</div>
