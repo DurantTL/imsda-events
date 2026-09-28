@@ -329,6 +329,20 @@ textarea { font: inherit; }
 button,
 a { -webkit-tap-highlight-color: transparent; }
 
+/* iOS Safari (and other coarse-pointer browsers) zoom the page when a focused
+   form control renders below 16px. Force every text-entry control to at least
+   16px on coarse pointers regardless of any smaller size set elsewhere, while
+   leaving the desktop (fine-pointer) look untouched. Checkbox/radio/range/file
+   and button-like input types are excluded because font-size does not change
+   their rendered size. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
@@ -922,7 +936,10 @@ select:focus-visible {
 .communications-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(280px, 0.75fr); gap: 20px; }
 .main-column,
 .side-column { display: grid; align-content: start; gap: 20px; }
-.panel { border-radius: 19px; padding: 21px; }
+/* `min-width: 0` keeps a panel from growing to the min-content width of what
+   it contains (e.g. a wide, horizontally-scrollable table) when it sits in a
+   grid track — the grid track, and so the page, otherwise widens to fit it. */
+.panel { min-width: 0; border-radius: 19px; padding: 21px; }
 
 .section-heading,
 .page-intro,
@@ -5074,9 +5091,18 @@ select:focus-visible {
   .public-registration-layout { gap: 12px; margin: 0 12px; padding-bottom: 35px; }
   .public-registration-intro { border-radius: 17px; padding: 20px; }
   .public-registration-progress { padding: 15px; }
+  /* At phone widths a 3+ step list wrapped a trailing step (e.g. "Payment")
+     onto its own row below the first two. A flex row with min-width: 0 items
+     keeps every step on one line instead, shrinking and ellipsizing each
+     label's text (already set on .public-registration-progress li > small)
+     rather than wrapping the list itself. */
   .public-registration-progress ol {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
+    gap: 6px;
   }
+  .public-registration-progress li { flex: 1 1 0; gap: 4px; }
+  .public-registration-progress li > span { width: 19px; height: 19px; font-size: 0.54rem; }
+  .public-registration-progress li > small { font-size: 0.6rem; }
   .public-registration-step-heading { padding: 18px; }
   .public-registration-section,
   .public-registration-roster { border-radius: 17px; }
@@ -5767,7 +5793,12 @@ select:focus-visible {
   white-space: nowrap;
 }
 
-.report-table-wrap { overflow-x: auto; }
+/* `min-width: 0` lets this scroll container shrink to its actual available
+   width instead of refusing to shrink below the table's content width, which
+   otherwise pushes ancestor grid/flex tracks (and the page's initial layout
+   viewport on some mobile browsers) wider than the device before settling
+   back down. The table itself still scrolls horizontally inside this box. */
+.report-table-wrap { overflow-x: auto; min-width: 0; max-width: 100%; }
 .report-table { width: 100%; border-collapse: collapse; font-size: 0.68rem; }
 .report-table th,
 .report-table td { border-bottom: 1px solid #eaf0f2; padding: 9px 13px; text-align: left; vertical-align: top; }
@@ -7395,6 +7426,9 @@ select:focus-visible {
 
 /* #474: rows keep their Save/Deactivate buttons without the form-actions rule line. */
 .editable-settings-table .form-actions { border-top: 0; padding-top: 0; }
+
+/* #469: the overview hero never grows wider than its container on phones. */
+.event-hero { max-width: 100%; min-width: 0; }
 
 /* Roster export builder (#490) */
 .roster-export-format-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 0; padding: 0; list-style: none; }
