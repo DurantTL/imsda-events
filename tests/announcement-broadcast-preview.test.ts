@@ -45,6 +45,7 @@ function prismaFor(overrides: {
   registrations?: SyntheticRegistration[];
   deliveryMode?: string | null;
   template?: { isEnabled: boolean; versions: Array<{ id: string }> } | null;
+  existingAudit?: { metadata: Record<string, unknown> } | null;
 } = {}) {
   const client = {
     announcement: {
@@ -77,7 +78,12 @@ function prismaFor(overrides: {
           : overrides.template,
       ),
     },
-    auditLog: { create: vi.fn().mockResolvedValue({}) },
+    auditLog: {
+      create: vi.fn().mockResolvedValue({}),
+      findFirst: vi.fn().mockResolvedValue(overrides.existingAudit ?? null),
+    },
+    messageOutbox: { findMany: vi.fn().mockResolvedValue([]) },
+    $queryRaw: vi.fn().mockResolvedValue([{ id: "announcement-1" }]),
   };
   return {
     ...client,
@@ -273,9 +279,111 @@ describe("broadcastPublishedAnnouncement review enforcement (#472)", () => {
       actorUserId: "staff-1",
     });
 
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
     expect(mocks.enqueueEventAnnouncementMessage).toHaveBeenCalledTimes(3);
     expect(result.messageCount).toBe(3);
+    expect(result.replayed).toBe(false);
     expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends exactly the reviewed recipients, each with its reviewed email", async () => {
+    const prisma = prismaFor({
+      registrations: [
+        ...defaultRegistrations,
+        { id: "reg-4", contactSnapshot: {}, accountHolderPerson: { normalizedEmail: null } },
+      ],
+    });
+    mocks.getPrisma.mockReturnValue(prisma);
+    const preview = await previewAnnouncementBroadcast({
+      eventId: "event-1",
+      announcementId: "announcement-1",
+    });
+
+    const result = await broadcastPublishedAnnouncement({
+      eventId: "event-1",
+      announcementId: "announcement-1",
+      batchId: "2d037129-32a3-4935-a4ce-b08a1d92cb6a",
+      previewFingerprint: preview.fingerprint,
+      actorUserId: "staff-1",
+    });
+
+    const sent = mocks.enqueueEventAnnouncementMessage.mock.calls.map(
+      ([, call]) => [call.registrationId, call.recipientEmail],
+    );
+    expect(sent).toEqual([
+      ["reg-1", "one@example.test"],
+      ["reg-2", "two@example.test"],
+      ["reg-3", "three@example.test"],
+    ]);
+    expect(result.skippedCount).toBe(1);
+  });
+});
+
+describe("broadcastPublishedAnnouncement replay (#472)", () => {
+  const batchId = "2d037129-32a3-4935-a4ce-b08a1d92cb6a";
+  const storedAudit = {
+    metadata: {
+      announcementId: "announcement-1",
+      batchId,
+      previewFingerprint: "c".repeat(64),
+      messageCount: 3,
+      skippedCount: 0,
+      deliveryMode: "LOCAL_CAPTURE",
+    },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns the stored result for a batch that already committed, unchanged audience", async () => {
+    const prisma = prismaFor({ existingAudit: storedAudit });
+    mocks.getPrisma.mockReturnValue(prisma);
+
+    const result = await broadcastPublishedAnnouncement({
+      eventId: "event-1",
+      announcementId: "announcement-1",
+      batchId,
+      previewFingerprint: "c".repeat(64),
+      actorUserId: "staff-1",
+    });
+
+    expect(prisma.auditLog.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        eventId: "event-1",
+        action: "EVENT_ANNOUNCEMENT_BROADCAST_ENQUEUED",
+        entityId: "announcement-1",
+        correlationId: batchId,
+      },
+    }));
+    expect(result).toMatchObject({ messageCount: 3, skippedCount: 0, deliveryMode: "LOCAL_CAPTURE", replayed: true });
+    expect(mocks.enqueueEventAnnouncementMessage).not.toHaveBeenCalled();
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("still replays (no 409, no second send) when the audience changed after the send", async () => {
+    const prisma = prismaFor({
+      existingAudit: storedAudit,
+      registrations: [
+        ...defaultRegistrations,
+        { id: "reg-5", contactSnapshot: { email: "five@example.test" }, accountHolderPerson: { normalizedEmail: null } },
+      ],
+    });
+    mocks.getPrisma.mockReturnValue(prisma);
+
+    const result = await broadcastPublishedAnnouncement({
+      eventId: "event-1",
+      announcementId: "announcement-1",
+      batchId,
+      // Stale against the grown audience, but the batch already went out.
+      previewFingerprint: "c".repeat(64),
+      actorUserId: "staff-1",
+    });
+
+    expect(result).toMatchObject({ messageCount: 3, replayed: true });
+    expect(prisma.registration.findMany).not.toHaveBeenCalled();
+    expect(mocks.enqueueEventAnnouncementMessage).not.toHaveBeenCalled();
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
   });
 
   it("refuses to send when no active registration has a contact email", async () => {

@@ -48,12 +48,20 @@ export function announcementRecipientEmail(
   return (snapshotEmail || accountHolderNormalizedEmail || "").trim().toLowerCase();
 }
 
-export function computeAnnouncementBroadcastPreview(
+export type AnnouncementBroadcastRecipient = {
+  registrationId: string;
+  recipientEmail: string;
+};
+
+/**
+ * The single recipient rule for an announcement broadcast. The preview counts
+ * and fingerprints this list, and the send enqueues exactly this list with
+ * each resolved email, so what staff reviewed is what goes out.
+ */
+export function resolveAnnouncementBroadcastAudience(
   candidates: readonly AnnouncementBroadcastCandidate[],
-  context: AnnouncementBroadcastPreviewContext,
-  now = new Date(),
-): AnnouncementBroadcastPreview {
-  const recipients: Array<{ registrationId: string; recipientEmail: string }> = [];
+) {
+  const recipients: AnnouncementBroadcastRecipient[] = [];
   const skippedRegistrationIds: string[] = [];
   const ordered = [...candidates].sort((a, b) => a.registrationId.localeCompare(b.registrationId));
   for (const candidate of ordered) {
@@ -67,6 +75,15 @@ export function computeAnnouncementBroadcastPreview(
       skippedRegistrationIds.push(candidate.registrationId);
     }
   }
+  return { recipients, skippedRegistrationIds };
+}
+
+export function computeAnnouncementBroadcastPreview(
+  candidates: readonly AnnouncementBroadcastCandidate[],
+  context: AnnouncementBroadcastPreviewContext,
+  now = new Date(),
+): AnnouncementBroadcastPreview {
+  const { recipients, skippedRegistrationIds } = resolveAnnouncementBroadcastAudience(candidates);
 
   const fingerprint = createHash("sha256").update(JSON.stringify({
     version: 1,

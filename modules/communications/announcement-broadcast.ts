@@ -2,7 +2,10 @@ import "server-only";
 
 import type { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
-import { computeAnnouncementBroadcastPreview } from "@/modules/communications/announcement-broadcast-preview";
+import {
+  computeAnnouncementBroadcastPreview,
+  resolveAnnouncementBroadcastAudience,
+} from "@/modules/communications/announcement-broadcast-preview";
 import {
   ensureEventMessagingDefaults,
   processQueuedMessageIdsAfterCommit,
@@ -81,12 +84,14 @@ async function loadAnnouncementBroadcastState(
       },
     }),
   ]);
+  const candidates = registrations.map((registration) => ({
+    registrationId: registration.id,
+    contactSnapshot: registration.contactSnapshot,
+    accountHolderNormalizedEmail: registration.accountHolderPerson?.normalizedEmail ?? null,
+  }));
+  const { recipients } = resolveAnnouncementBroadcastAudience(candidates);
   const preview = computeAnnouncementBroadcastPreview(
-    registrations.map((registration) => ({
-      registrationId: registration.id,
-      contactSnapshot: registration.contactSnapshot,
-      accountHolderNormalizedEmail: registration.accountHolderPerson?.normalizedEmail ?? null,
-    })),
+    candidates,
     {
       eventId: input.eventId,
       announcement: { id: announcement.id, title: announcement.title, body: announcement.body },
@@ -96,7 +101,7 @@ async function loadAnnouncementBroadcastState(
       templateVersionId: template?.versions[0]?.id ?? null,
     },
   );
-  return { announcement, registrations, preview };
+  return { announcement, registrations, recipients, preview };
 }
 
 /**
@@ -124,7 +129,48 @@ export async function broadcastPublishedAnnouncement(input: {
 }) {
   await ensureEventMessagingDefaults(input.eventId);
   const result = await getPrisma().$transaction(async (tx) => {
-    const { announcement, registrations, preview } = await loadAnnouncementBroadcastState(tx, input);
+    // Serializes concurrent sends of the same announcement, so a retry that
+    // races the original waits and then finds its audit row below.
+    await tx.$queryRaw`
+      SELECT "id" FROM "Announcement"
+      WHERE "id" = ${input.announcementId} AND "eventId" = ${input.eventId}
+      FOR UPDATE
+    `;
+    // A retry of a batch that already committed (a timeout, or a 500 after
+    // commit) returns what was recorded, before the fingerprint check: the
+    // audience may have moved since, but nothing new is sent either way.
+    const existingAudit = await tx.auditLog.findFirst({
+      where: {
+        eventId: input.eventId,
+        action: "EVENT_ANNOUNCEMENT_BROADCAST_ENQUEUED",
+        entityId: input.announcementId,
+        correlationId: input.batchId,
+      },
+      select: { metadata: true },
+    });
+    if (existingAudit) {
+      const metadata = existingAudit.metadata && typeof existingAudit.metadata === "object"
+        && !Array.isArray(existingAudit.metadata)
+        ? existingAudit.metadata as Record<string, unknown>
+        : {};
+      const pending = await tx.messageOutbox.findMany({
+        where: { eventId: input.eventId, correlationId: input.batchId, status: "PENDING" },
+        select: { id: true },
+      });
+      const storedMode = metadata.deliveryMode;
+      return {
+        messageIds: [] as string[],
+        messageCount: typeof metadata.messageCount === "number" ? metadata.messageCount : 0,
+        pendingMessageIds: pending.map((message) => message.id),
+        skippedCount: typeof metadata.skippedCount === "number" ? metadata.skippedCount : 0,
+        deliveryMode: storedMode === "DISABLED" || storedMode === "EXTERNAL_EMAIL"
+          ? storedMode
+          : "LOCAL_CAPTURE" as const,
+        replayed: true,
+      };
+    }
+
+    const { announcement, registrations, recipients, preview } = await loadAnnouncementBroadcastState(tx, input);
     if (preview.fingerprint !== input.previewFingerprint) {
       throw new AnnouncementBroadcastError(
         "PREVIEW_CHANGED",
@@ -140,12 +186,14 @@ export async function broadcastPublishedAnnouncement(input: {
 
     const messageIds: string[] = [];
     const pendingMessageIds: string[] = [];
-    let skippedCount = 0;
-    let deliveryMode: "DISABLED" | "LOCAL_CAPTURE" | "EXTERNAL_EMAIL" = "LOCAL_CAPTURE";
-    for (const registration of registrations) {
+    // Registrations with no contact email were reviewed as skipped.
+    let skippedCount = preview.skippedNoEmailCount;
+    let deliveryMode: "DISABLED" | "LOCAL_CAPTURE" | "EXTERNAL_EMAIL" = preview.deliveryMode;
+    for (const recipient of recipients) {
       const queued = await enqueueEventAnnouncementMessage(tx, {
         eventId: input.eventId,
-        registrationId: registration.id,
+        registrationId: recipient.registrationId,
+        recipientEmail: recipient.recipientEmail,
         correlationId: input.batchId,
         transitionKey: `announcement-broadcast:${announcement.id}:${input.batchId}`,
         announcementTitle: announcement.title,
@@ -183,17 +231,20 @@ export async function broadcastPublishedAnnouncement(input: {
     });
     return {
       messageIds,
+      messageCount: messageIds.length,
       pendingMessageIds,
       skippedCount,
       deliveryMode,
+      replayed: false,
     };
   });
   await processQueuedMessageIdsAfterCommit(result.pendingMessageIds);
   return {
     broadcastId: input.batchId,
     announcementId: input.announcementId,
-    messageCount: result.messageIds.length,
+    messageCount: result.messageCount,
     skippedCount: result.skippedCount,
     deliveryMode: result.deliveryMode,
+    replayed: result.replayed,
   };
 }

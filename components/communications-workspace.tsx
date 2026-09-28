@@ -252,6 +252,13 @@ export function CommunicationsWorkspace({
   const [broadcastReview, setBroadcastReview] = useState<{
     announcement: AnnouncementRecord;
     preview: AnnouncementBroadcastPreview | null;
+    /**
+     * One batch id per loaded review, reused by every Send retry of it, so a
+     * retry after an unclear failure replays the same batch server-side
+     * instead of emailing everyone twice. A new one only comes with a newly
+     * loaded review.
+     */
+    batchId: string;
   } | null>(null);
   const [broadcastReviewLoading, setBroadcastReviewLoading] = useState(false);
   const [broadcasting, setBroadcasting] = useState(false);
@@ -484,10 +491,11 @@ export function CommunicationsWorkspace({
    * mode — and only `confirmBroadcast` below, run from an explicit confirm
    * in that dialog, ever calls the send endpoint.
    */
-  async function broadcastAnnouncement(announcement: AnnouncementRecord) {
+  async function broadcastAnnouncement(announcement: AnnouncementRecord): Promise<boolean> {
     const requestId = broadcastReviewRequestRef.current + 1;
     broadcastReviewRequestRef.current = requestId;
-    setBroadcastReview({ announcement, preview: null });
+    const batchId = crypto.randomUUID();
+    setBroadcastReview({ announcement, preview: null, batchId });
     setBroadcastReviewError("");
     setBroadcastReviewLoading(true);
     try {
@@ -503,11 +511,13 @@ export function CommunicationsWorkspace({
       if (!response.ok || !result.preview) {
         throw new Error(result.message ?? "Unable to review this announcement.");
       }
-      if (broadcastReviewRequestRef.current !== requestId) return;
-      setBroadcastReview({ announcement, preview: result.preview });
+      if (broadcastReviewRequestRef.current !== requestId) return false;
+      setBroadcastReview({ announcement, preview: result.preview, batchId });
+      return true;
     } catch (caught) {
-      if (broadcastReviewRequestRef.current !== requestId) return;
+      if (broadcastReviewRequestRef.current !== requestId) return false;
       setBroadcastReviewError(caught instanceof Error ? caught.message : "Unable to review this announcement.");
+      return false;
     } finally {
       if (broadcastReviewRequestRef.current === requestId) setBroadcastReviewLoading(false);
     }
@@ -528,7 +538,7 @@ export function CommunicationsWorkspace({
       error: broadcastReviewError,
       preview: broadcastReview.preview,
     }).canConfirm) return;
-    const { announcement, preview } = broadcastReview;
+    const { announcement, preview, batchId } = broadcastReview;
     setBroadcasting(true);
     setBroadcastReviewError("");
     try {
@@ -538,7 +548,7 @@ export function CommunicationsWorkspace({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            batchId: crypto.randomUUID(),
+            batchId,
             previewFingerprint: preview.fingerprint,
           }),
         },
@@ -547,9 +557,13 @@ export function CommunicationsWorkspace({
       if (response.status === 409 && (result.error === "PREVIEW_CHANGED" || result.error === "PREVIEW_REQUIRED")) {
         // The reviewed audience is out of date: reload the review so staff
         // confirm against what would actually be sent now.
+        // The reloaded review brings its own new batch id.
         setBroadcasting(false);
-        await broadcastAnnouncement(announcement);
-        setBroadcastReviewError(result.message ?? "The review changed. Check it again before sending.");
+        const reloaded = await broadcastAnnouncement(announcement);
+        // A failed reload keeps its own error rather than this one.
+        if (reloaded) {
+          setBroadcastReviewError(result.message ?? "The review changed. Check it again before sending.");
+        }
         return;
       }
       if (!response.ok || typeof result.messageCount !== "number") {

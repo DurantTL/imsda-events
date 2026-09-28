@@ -59,7 +59,9 @@ export function FinanceWorkspace({
   const [error, setError] = useState("");
   const [pendingRefund, setPendingRefund] = useState<{ amountCents: number; reason: string } | null>(null);
   const [refundReviewError, setRefundReviewError] = useState("");
-  const dialogRef = useAccessibleDialog<HTMLElement>(Boolean(modal), closeModal);
+  // Both dialogs listen for Escape on the document; while the refund confirm
+  // is open, Escape belongs to it alone and must not also close this modal.
+  const dialogRef = useAccessibleDialog<HTMLElement>(Boolean(modal), () => { if (!pendingRefund) closeModal(); });
 
   const totals = useMemo(() => summarizeFinanceTotals(registrations), [registrations]);
   const hasChurchBilled = registrations.some((registration) => registration.isDeferredOrganizationBilling);
