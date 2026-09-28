@@ -64,8 +64,8 @@ async function deleteHandler(request: Request, context: RouteContext) {
   if (originError) return originError;
   try {
     const { eventId, assetId } = await context.params;
-    await authorize(eventId);
-    await removeEventAsset(eventId, assetId);
+    const access = await authorize(eventId);
+    await removeEventAsset(eventId, assetId, access.user.id);
     return Response.json({ assets: await listEventAssets(eventId) });
   } catch (error) {
     return apiError(error, "Deleting the event file");
