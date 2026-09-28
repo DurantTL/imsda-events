@@ -1,12 +1,14 @@
 import type { Metadata } from "next";
 import { BackLink } from "@/components/back-link";
 import { ClubRosterWorkspace } from "@/components/club-roster-workspace";
+import { ClubTransfersPanel, RequestTransferButton } from "@/components/club-transfers-panel";
 import { DriverVerificationQueue } from "@/components/driver-verification-queue";
 import { clubPortalComplianceStatuses } from "@/modules/background-checks/repository";
 import { COMPLIANCE_FILTER_VALUES, type ComplianceFilterValue } from "@/modules/background-checks/domain";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import { listRoster } from "@/modules/club-rosters/repository";
+import { listTransferClubOptions } from "@/modules/club-transfers/repository";
 import { honorSummaryByMemberId } from "@/modules/honors/member-honor-domain";
 import { listClubHonorsPage } from "@/modules/honors/member-honor-repository";
 
@@ -29,10 +31,13 @@ export default async function ClubRosterPage({
   if (access.state !== "OPEN") return null;
   const clubYear = clubYearFor(new Date());
   // Status only, never the note, and only for a director or deputy: this is the club's own page (#427).
-  const [members, complianceStatuses, honorRows] = await Promise.all([
+  // Transfers (#489) are the same leader-only capability that manages the club's team.
+  const canTransfer = access.capabilities.manageTeam;
+  const [members, complianceStatuses, honorRows, clubOptions] = await Promise.all([
     listRoster(organizationId, clubYear),
     clubPortalComplianceStatuses(organizationId, clubYear, access.capabilities),
     listClubHonorsPage(organizationId, clubYear),
+    canTransfer ? listTransferClubOptions(organizationId) : Promise.resolve([]),
   ]);
   return (
     <>
@@ -45,11 +50,13 @@ export default async function ClubRosterPage({
         clubYear={clubYear}
         complianceFilter={complianceFilterFrom(complianceParam)}
         complianceStatuses={complianceStatuses}
+        headingActions={canTransfer ? <RequestTransferButton clubOptions={clubOptions} organizationId={organizationId} /> : undefined}
         honorSummaries={honorSummaryByMemberId(honorRows)}
         honorsHref={`/account/clubs/${organizationId}/honors`}
         initialMembers={members}
         organizationId={organizationId}
       />
+      {canTransfer && <ClubTransfersPanel organizationId={organizationId} />}
       {/* Willing drivers, for review (#491): the same leader-only capability that manages the club's team. */}
       {access.capabilities.manageTeam && (
         <DriverVerificationQueue
