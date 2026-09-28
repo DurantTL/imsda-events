@@ -503,6 +503,7 @@ export function EventSettingsWorkspace({
               ))}
             </ul>
             {/* Never blocks publish (#467): shown for visibility only. */}
+            <p className="event-readiness-optional-heading">Optional</p>
             <ul className="event-readiness-list event-readiness-optional">
               {readiness.optionalItems.map((item) => (
                 <li className={item.complete ? "complete" : ""} key={item.id}>

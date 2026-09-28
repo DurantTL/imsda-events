@@ -82,12 +82,15 @@ export function getEventPublishReadiness(
 
   // Complete when nothing is set (there is nothing to fix) or when the
   // configured value is a valid web address. Never a blocker either way.
+  const publicInfoComplete = !hasText(event.publicInfoUrl) || isPublicWebUrl(event.publicInfoUrl);
   const optionalItems: EventReadinessOptionalItem[] = [
     {
       id: "public-info",
       label: "IMSDA.org information page (optional)",
-      detail: "Event information now lives on IMSDA Events. Set this only if a separate IMSDA.org page also describes the event.",
-      complete: !hasText(event.publicInfoUrl) || isPublicWebUrl(event.publicInfoUrl),
+      detail: publicInfoComplete
+        ? "Event information now lives on IMSDA Events. Set this only if a separate IMSDA.org page also describes the event."
+        : "The saved address isn't a complete http:// or https:// web address. Fix it or clear it.",
+      complete: publicInfoComplete,
     },
   ];
 
