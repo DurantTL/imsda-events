@@ -167,9 +167,10 @@ export function resolveClubsAndChurchesEntry({
  * `tests/mobile-directory-parity.test.ts` can build the same list without
  * duplicating a card's visibility rule. Two cards reuse the sidebar's own
  * required permission via `requiredPermissionFor` instead of naming it a
- * second time, and "Clubs and churches" reuses `resolveClubsAndChurchesEntry`
- * — the same call the sidebar makes — so none of this can drift from what
- * the desktop sidebar reaches.
+ * second time. "Clubs and churches" shows the directory for system admins
+ * and the event's club oversight page for anyone with club oversight (a
+ * system admin on a club-billed event sees both); the parity test checks
+ * both against `resolveClubsAndChurchesEntry` and `/more/clubs`'s own guard.
  */
 export type MoreDirectoryGroup = "setup" | "content-sales" | "people-access" | "reports";
 
@@ -220,9 +221,6 @@ export function buildMoreDirectoryCards({
   const has = (permission: EventPermission) => granted.has(permission);
   const attendeeConfigurationPermission = requiredPermissionFor("/more/attendee-configuration");
   const tagsPermission = requiredPermissionFor("/more/tags");
-  const clubsAndChurches = resolveClubsAndChurchesEntry({ clubOversight, isSystemAdmin });
-  // /admin routes aren't event-scoped (matches the sidebar — see app-shell.tsx).
-  const clubsAndChurchesHref = isSystemAdmin ? clubsAndChurches.href : `${clubsAndChurches.href}${eventQuery}`;
 
   return [
     { key: "event-settings", group: "setup", allowed: has("CONFIGURE_EVENT"), href: `/more/event-settings${eventQuery}`, icon: Settings2, title: "Event settings", description: "Edit dates, location, capacity, registration availability, and publishing.", cta: "Open settings" },
@@ -236,17 +234,30 @@ export function buildMoreDirectoryCards({
     { key: "promo-codes", group: "content-sales", allowed: has("MANAGE_FINANCE"), href: `/more/promo-codes${eventQuery}`, icon: TicketPercent, title: "Promo codes", description: "Create bounded registration discounts, schedule dates, and review use limits.", cta: "Manage discounts" },
     { key: "community", group: "content-sales", allowed: has("MANAGE_COMMUNICATIONS"), href: `/community${eventQuery}`, icon: MessagesSquare, title: "Attendee community", description: "Open or pause discussion, review attendee reports, and moderate posts and replies.", cta: "Moderate community" },
     { key: "staff", group: "people-access", allowed: has("MANAGE_STAFF"), href: `/staff${eventQuery}`, icon: UserCog, title: "Staff", description: "Add staff and choose what each person can do for this event.", cta: "Manage team" },
+    // System admins reach the churches-and-clubs directory (the sidebar's
+    // "Clubs and churches" link for them)...
     {
       key: "clubs-and-churches",
       group: "people-access",
-      allowed: clubsAndChurches.visible,
-      href: clubsAndChurchesHref,
+      allowed: isSystemAdmin,
+      href: "/admin/organizations",
       icon: UsersRound,
       title: "Clubs and churches",
-      description: isSystemAdmin
-        ? "The full churches-and-clubs directory: every organization, its directors, and its registrations."
-        : "Every registered club's roster (ages only) and all clubs' monthly reports, view only.",
-      cta: isSystemAdmin ? "Open directory" : "Open clubs",
+      description: "The full churches-and-clubs directory: every organization, its directors, and its registrations.",
+      cta: "Open directory",
+    },
+    // ...and anyone with club oversight of this club-billed event — system
+    // admins included — keeps the event's own club rosters and monthly
+    // reports, gated exactly as on main and by `/more/clubs` itself.
+    {
+      key: "clubs",
+      group: "people-access",
+      allowed: clubOversight,
+      href: `/more/clubs${eventQuery}`,
+      icon: UsersRound,
+      title: isSystemAdmin ? "This event's clubs" : "Clubs and churches",
+      description: "Every registered club's roster (ages only) and all clubs' monthly reports, view only.",
+      cta: "Open clubs",
     },
     { key: "club-assignments", group: "people-access", allowed: clubEvent && canManageClubAssignments(permissions), href: `/more/club-assignments${eventQuery}`, icon: Tent, title: "Club assignments", description: "Set each registered club's campsite, duty, and activity, then email directors after review.", cta: "Assign clubs" },
     { key: "imports", group: "people-access", allowed: has("MANAGE_IMPORTS"), href: `/imports${eventQuery}`, icon: FileUp, title: "Import registrations", description: "Preview a CSV, review every change, then import approved records.", cta: "Open imports" },

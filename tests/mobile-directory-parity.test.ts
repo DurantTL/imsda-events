@@ -10,6 +10,9 @@ import {
   resolveClubsAndChurchesEntry,
 } from "@/components/staff-navigation";
 import { eventPermissions, eventRoles, rolePermissions, type EventPermission } from "@/modules/access/permissions";
+import { canManageClubAssignments } from "@/modules/club-registrations/assignments-access";
+import { canAccessOperationalHealth } from "@/modules/operations/access";
+import { canManageProgramAssignments } from "@/modules/program-assignments/access";
 
 /**
  * #475: every page the desktop sidebar can reach for a role must be
@@ -53,14 +56,23 @@ const roleScenarios: Scenario[] = eventRoles.map((role) => ({
   clubEvent: false,
 }));
 
-const scenarios: Scenario[] = [
-  ...roleScenarios,
+// `clubOversight` is only ever true on a club-billed event for a system admin
+// or an EVENT_ADMIN (`resolveClubOversight`), so the scenarios stay consistent
+// with that rule.
+const specialScenarios: Scenario[] = [
   {
-    name: "SYSTEM_ADMIN",
+    name: "SYSTEM_ADMIN on a non-club event",
     permissions: eventPermissions,
     isSystemAdmin: true,
     clubOversight: false,
     clubEvent: false,
+  },
+  {
+    name: "SYSTEM_ADMIN with club oversight on a club-billed event",
+    permissions: eventPermissions,
+    isSystemAdmin: true,
+    clubOversight: true,
+    clubEvent: true,
   },
   {
     name: "EVENT_ADMIN with club oversight on a club-billed event",
@@ -69,9 +81,73 @@ const scenarios: Scenario[] = [
     clubOversight: true,
     clubEvent: true,
   },
+  {
+    name: "REGISTRATION_MANAGER on a club-billed event (no oversight)",
+    permissions: rolePermissions.REGISTRATION_MANAGER,
+    isSystemAdmin: false,
+    clubOversight: false,
+    clubEvent: true,
+  },
+  {
+    name: "custom: CHECK_IN_STAFF plus CONFIGURE_EVENT",
+    permissions: [...rolePermissions.CHECK_IN_STAFF, "CONFIGURE_EVENT"],
+    isSystemAdmin: false,
+    clubOversight: false,
+    clubEvent: false,
+  },
+  {
+    name: "custom: READ_ONLY_STAFF plus VIEW_REPORTS",
+    permissions: [...rolePermissions.READ_ONLY_STAFF, "VIEW_REPORTS"],
+    isSystemAdmin: false,
+    clubOversight: false,
+    clubEvent: false,
+  },
+  {
+    name: "custom: CHECK_IN_STAFF plus MANAGE_REGISTRATION on a club-billed event",
+    permissions: [...rolePermissions.CHECK_IN_STAFF, "MANAGE_REGISTRATION"],
+    isSystemAdmin: false,
+    clubOversight: false,
+    clubEvent: true,
+  },
 ];
 
-function moreDirectoryHrefs(scenario: Scenario): string[] {
+const scenarios: Scenario[] = [...roleScenarios, ...specialScenarios];
+
+const has = (scenario: Scenario, permission: EventPermission) => scenario.permissions.includes(permission);
+
+/**
+ * Pages the desktop sidebar has no link for, reached only through the "More"
+ * page. Each predicate mirrors that page's own server guard (not the card's
+ * `allowed` rule), so a card that leaks past its page's guard — or goes
+ * missing while the page would open — fails here.
+ */
+const moreOnlyPages: Record<string, (scenario: Scenario) => boolean> = {
+  // app/(workspace)/more/honors/page.tsx
+  "/more/honors": (scenario) => has(scenario, "CONFIGURE_EVENT"),
+  // app/(workspace)/more/event-content/page.tsx
+  "/more/event-content": (scenario) => has(scenario, "CONFIGURE_EVENT"),
+  // app/(workspace)/more/merchandise/page.tsx
+  "/more/merchandise": (scenario) => has(scenario, "CONFIGURE_EVENT"),
+  // app/(workspace)/more/program-assignments/page.tsx
+  "/more/program-assignments": (scenario) => canManageProgramAssignments(scenario.permissions),
+  // app/(workspace)/more/club-assignments/page.tsx: permission, then a club-billed event
+  "/more/club-assignments": (scenario) => canManageClubAssignments(scenario.permissions) && scenario.clubEvent,
+  // app/(workspace)/community/page.tsx
+  "/community": (scenario) => has(scenario, "MANAGE_COMMUNICATIONS"),
+  // app/(workspace)/more/reports/page.tsx
+  "/more/reports": (scenario) => has(scenario, "VIEW_REPORTS"),
+  // app/(workspace)/more/health/page.tsx
+  "/more/health": (scenario) => canAccessOperationalHealth(scenario.permissions),
+  // app/(workspace)/more/clubs/page.tsx (`resolveClubOversight().allowed`).
+  // The sidebar links a system admin to the directory instead, so for them
+  // this event view is reached only from "More".
+  "/more/clubs": (scenario) => scenario.clubOversight,
+};
+
+const moreItem = navigation.find((item) => item.href === "/more");
+if (!moreItem) throw new Error("navigation has no /more entry");
+
+function allowedMoreCardHrefs(scenario: Scenario): string[] {
   return buildMoreDirectoryCards({
     permissions: scenario.permissions,
     clubOversight: scenario.clubOversight,
@@ -84,11 +160,10 @@ function moreDirectoryHrefs(scenario: Scenario): string[] {
 }
 
 /**
- * Destinations the desktop sidebar reaches for this scenario: every
+ * Destinations the desktop sidebar links to for this scenario: every
  * sidebar-visible nav item (Dashboard, the grouped items, and the "/more"
- * gateway), "Clubs and churches" when it applies, and — since the sidebar's
- * own "More" link opens the very same page the phone's More tab opens —
- * every card that page shows.
+ * gateway) and "Clubs and churches" when it applies. The More page's cards
+ * are deliberately not included, so they are checked independently below.
  */
 function sidebarDestinations(scenario: Scenario): Set<string> {
   const granted = new Set(scenario.permissions);
@@ -97,54 +172,102 @@ function sidebarDestinations(scenario: Scenario): Set<string> {
     .map((item) => item.href);
   const clubsAndChurches = resolveClubsAndChurchesEntry(scenario);
   if (clubsAndChurches.visible) hrefs.push(clubsAndChurches.href);
-  return new Set([...hrefs, ...moreDirectoryHrefs(scenario)]);
+  return new Set(hrefs);
 }
 
-/** Destinations reachable from a phone: the bottom tabs plus every card the "More" directory shows. */
+/**
+ * Destinations reachable from a phone: the visible bottom tabs, plus every
+ * card the "More" directory shows — but only when the More tab itself is
+ * visible, since otherwise the phone has no way to open that page.
+ */
 function phoneDestinations(scenario: Scenario): Set<string> {
   const granted = new Set(scenario.permissions);
   const tabHrefs = navigation
     .filter((item) => (mobileNavigationOrder as readonly string[]).includes(item.href))
     .filter((item) => matchesVisibility(item, granted))
     .map((item) => item.href);
-  return new Set([...tabHrefs, ...moreDirectoryHrefs(scenario)]);
+  const moreHrefs = moreItem && matchesVisibility(moreItem, granted) ? allowedMoreCardHrefs(scenario) : [];
+  return new Set([...tabHrefs, ...moreHrefs]);
 }
+
+/**
+ * Hand-written pages each scenario must never reach on phone, independent of
+ * the navigation source, so a loosened card or tab rule fails for every role
+ * (not only READ_ONLY_STAFF).
+ */
+const configPages = ["/more/event-settings", "/more/attendee-configuration", "/more/tags", "/more/honors", "/more/event-content", "/more/merchandise"];
+const clubPages = ["/more/clubs", "/admin/organizations", "/more/club-assignments"];
+const deniedOnPhone: Record<string, readonly string[]> = {
+  EVENT_ADMIN: ["/admin/organizations", "/more/clubs", "/more/club-assignments", "/admin"],
+  REGISTRATION_MANAGER: [...configPages, "/check-in", "/finance", "/more/promo-codes", "/communications", "/community", "/staff", "/imports", ...clubPages],
+  FINANCE_MANAGER: [...configPages, "/check-in", "/registration-builder", "/more/program-assignments", "/communications", "/community", "/staff", "/imports", ...clubPages],
+  COMMUNICATIONS_MANAGER: [...configPages, "/people", "/check-in", "/registration-builder", "/more/program-assignments", "/finance", "/more/promo-codes", "/more/reports", "/staff", "/imports", ...clubPages],
+  CHECK_IN_STAFF: [...configPages, "/more", "/more/health", "/more/reports", "/registration-builder", "/more/program-assignments", "/finance", "/more/promo-codes", "/communications", "/community", "/staff", "/imports", ...clubPages],
+  READ_ONLY_STAFF: [...configPages, "/more", "/more/health", "/more/reports", "/people", "/check-in", "/registration-builder", "/more/program-assignments", "/finance", "/more/promo-codes", "/communications", "/community", "/staff", "/imports", ...clubPages],
+  "SYSTEM_ADMIN on a non-club event": ["/more/clubs", "/more/club-assignments"],
+  "EVENT_ADMIN with club oversight on a club-billed event": ["/admin/organizations"],
+  "REGISTRATION_MANAGER on a club-billed event (no oversight)": ["/more/clubs", "/admin/organizations", ...configPages],
+  "custom: CHECK_IN_STAFF plus CONFIGURE_EVENT": ["/more/reports", "/more/program-assignments", "/finance", "/staff", "/imports", "/community", ...clubPages],
+  "custom: READ_ONLY_STAFF plus VIEW_REPORTS": [...configPages, "/more/health", "/people", "/finance", "/staff", "/imports", "/community", ...clubPages],
+  "custom: CHECK_IN_STAFF plus MANAGE_REGISTRATION on a club-billed event": [...configPages, "/more/clubs", "/admin/organizations", "/more/reports", "/finance", "/staff"],
+};
 
 describe("phone navigation reaches every page the desktop sidebar reaches (#475)", () => {
   for (const scenario of scenarios) {
-    it(`matches the desktop sidebar for ${scenario.name}`, () => {
-      const desktop = sidebarDestinations(scenario);
-      const phone = phoneDestinations(scenario);
+    describe(scenario.name, () => {
+      it("reaches every sidebar destination on phone", () => {
+        const desktop = sidebarDestinations(scenario);
+        const phone = phoneDestinations(scenario);
+        const missingOnPhone = [...desktop].filter((href) => !phone.has(href));
+        expect(missingOnPhone, `phone navigation is missing: ${missingOnPhone.join(", ")}`).toEqual([]);
+      });
 
-      const missingOnPhone = [...desktop].filter((href) => !phone.has(href));
-      const extraOnPhone = [...phone].filter((href) => !desktop.has(href));
+      it("shows only More cards the sidebar reaches or whose page guard admits the scenario", () => {
+        const desktop = sidebarDestinations(scenario);
+        const unexplained = allowedMoreCardHrefs(scenario).filter((href) => {
+          if (desktop.has(href)) return false;
+          const guard = moreOnlyPages[href];
+          return !guard || !guard(scenario);
+        });
+        expect(unexplained, `More shows cards the role can't open: ${unexplained.join(", ")}`).toEqual([]);
+      });
 
-      expect(missingOnPhone, `phone navigation is missing: ${missingOnPhone.join(", ")}`).toEqual([]);
-      expect(extraOnPhone, `phone navigation shows destinations the role can't open: ${extraOnPhone.join(", ")}`).toEqual([]);
+      it("shows a More card for every More-only page its guard admits", () => {
+        const granted = new Set(scenario.permissions);
+        const phone = phoneDestinations(scenario);
+        const moreVisible = moreItem ? matchesVisibility(moreItem, granted) : false;
+        for (const [href, guard] of Object.entries(moreOnlyPages)) {
+          const expected = moreVisible && guard(scenario);
+          expect(phone.has(href), `${href} on phone`).toBe(expected);
+        }
+      });
+
+      it("never reaches the pages the scenario is denied", () => {
+        const denied = deniedOnPhone[scenario.name] ?? [];
+        const phone = phoneDestinations(scenario);
+        const leaked = denied.filter((href) => phone.has(href));
+        expect(leaked, `phone reaches denied pages: ${leaked.join(", ")}`).toEqual([]);
+      });
     });
   }
 
-  it("shows no destination on phone that a read-only staff member can't open", () => {
-    const scenario: Scenario = {
-      name: "READ_ONLY_STAFF",
-      permissions: rolePermissions.READ_ONLY_STAFF,
-      isSystemAdmin: false,
-      clubOversight: false,
-      clubEvent: false,
-    };
-    const phone = phoneDestinations(scenario);
+  it("has a hand-written denial list for every role and non-full-access scenario", () => {
+    for (const scenario of scenarios) {
+      if (scenario.name === "SYSTEM_ADMIN with club oversight on a club-billed event") continue;
+      expect(deniedOnPhone[scenario.name]?.length ?? 0, scenario.name).toBeGreaterThan(0);
+    }
+  });
 
-    // READ_ONLY_STAFF has only VIEW_EVENT: no configuration, finance, staff,
-    // report, or club-oversight destination should be reachable.
-    expect(phone).not.toContain("/more/event-settings");
-    expect(phone).not.toContain("/more/attendee-configuration");
-    expect(phone).not.toContain("/more/tags");
-    expect(phone).not.toContain("/more/merchandise");
-    expect(phone).not.toContain("/staff");
-    expect(phone).not.toContain("/finance");
-    expect(phone).not.toContain("/more/reports");
-    expect(phone).not.toContain("/more/clubs");
-    expect(phone).not.toContain("/admin/organizations");
+  it("keeps the event's club oversight card for a system admin with club oversight, alongside the directory", () => {
+    const hrefs = allowedMoreCardHrefs({
+      name: "SYSTEM_ADMIN with club oversight",
+      permissions: eventPermissions,
+      isSystemAdmin: true,
+      clubOversight: true,
+      clubEvent: true,
+    });
+    expect(hrefs).toContain("/more/clubs");
+    expect(hrefs).toContain("/admin/organizations");
   });
 
   it("renders the phone bottom tabs from the same source as the sidebar for a full-access role", () => {
