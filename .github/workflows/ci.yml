@@ -47,7 +47,7 @@ jobs:
           npx prisma migrate diff \
             --from-migrations prisma/migrations \
             --to-schema-datamodel prisma/schema.prisma \
-            --shadow-database-url postgresql://imsda:imsda_ci@localhost:5432/imsda_events_shadow?schema=public \
+            --shadow-database-url "postgresql://imsda:imsda_ci@localhost:5432/imsda_events_shadow?schema=public" \
             --exit-code
       - run: npm run db:seed
       - run: npm run verify

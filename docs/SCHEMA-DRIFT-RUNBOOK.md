@@ -78,12 +78,56 @@ prints the change and the command exits 2. The unmodified branch exits 0 with
 
 ## Production migration (human-only)
 
-Applying `20260928200000_schema_drift_index_cleanup` to the production
-database is a production migration and stays a human-only step per
-[`AGENTS.md`](../AGENTS.md). This issue only prepares and documents it; a
-human runs `prisma migrate deploy` against production (the same command CI
-already runs against its scratch database) after review. The migration is
-metadata-only — two `DROP INDEX` statements on indexes shown above to be
-redundant, and seven `ALTER INDEX ... RENAME` statements — so it takes no
-table lock beyond the brief catalog updates those statements require, and it
-changes no application-visible data.
+Nobody runs this migration by hand. `docker-entrypoint.sh` runs
+`npx prisma migrate deploy` on every container start (see
+[`DEPLOY-DOCKER.md`](DEPLOY-DOCKER.md)), so **deploying the merged image
+applies `20260928200000_schema_drift_index_cleanup`**. The human gate is the
+deploy itself, which stays a human-only step per [`AGENTS.md`](../AGENTS.md).
+
+### Before deploying: read-only pre-flight check
+
+Prisma runs the whole file as one transaction. If production is missing any
+index name the migration expects (for example after manual index work or a
+past `db push`), the migration rolls back, Prisma records it as failed
+(P3018), and every later container start fails (P3009) until someone
+resolves it. So a human confirms the names first:
+
+```sql
+SELECT indexname FROM pg_indexes
+WHERE schemaname = 'public' AND indexname IN (
+  'MerchandiseProduct_eventId_isEnabled_idx',
+  'MerchandiseVariantAvailability_variantId_isActive_idx',
+  'EventAttendeeClassification_eventId_kind_isActive_sortOrder_lab',
+  'MerchandiseVariantAvailability_sales_window_idx',
+  'MessageOutbox_provider_providerDeliveryStatus_providerStatusAt_',
+  'ProgramAssignmentRun_eventId_formVersionId_fieldId_invalidatedA',
+  'RegistrationAccessToken_registrationId_purpose_revokedAt_expire',
+  'RegistrationCapacityReservation_formId_fieldId_optionValue_rele',
+  'RegistrationPaymentChoiceOperation_registrationId_clientRequest'
+);
+```
+
+Expect **9 rows**. If fewer come back, don't deploy. Find out which names
+differ and fix this migration first.
+
+### Locks
+
+- The two `DROP INDEX` statements take an `ACCESS EXCLUSIVE` lock on
+  `MerchandiseProduct` and `MerchandiseVariantAvailability`, which blocks
+  reads and writes on those tables until the migration commits. They are
+  small tables and the lock is brief, but deploy outside a live merchandise
+  sale window.
+- The seven `ALTER INDEX ... RENAME` statements are catalog-only and take a
+  `SHARE UPDATE EXCLUSIVE` lock on each index.
+- `DROP INDEX CONCURRENTLY` isn't used: Postgres rejects it inside the
+  transaction Prisma wraps the file in.
+
+No application-visible data changes.
+
+### If the migration fails in production (human-only recovery)
+
+1. Fix the index names by hand to match what the migration expects, or
+   apply the intended end state by hand.
+2. Run `npx prisma migrate resolve --rolled-back 20260928200000_schema_drift_index_cleanup`
+   (or `--applied` if you applied the end state by hand).
+3. Redeploy.

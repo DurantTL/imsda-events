@@ -3,7 +3,7 @@
 -- prisma/schema.prisma's index definitions had drifted from the committed
 -- migration history, so a fresh `prisma migrate dev` produced unrelated
 -- DROP/RENAME statements for every new migration. This migration brings the
--- database in line with the schema. See docs/RUNBOOK-SCHEMA-DRIFT.md for the
+-- database in line with the schema. See docs/SCHEMA-DRIFT-RUNBOOK.md for the
 -- full decision record; a short version of the reasoning is inline below.
 
 -- Obsolete narrower indexes, superseded by a wider index that shares the same
