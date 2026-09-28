@@ -18,7 +18,8 @@ const squareFontOrigins = [
 ].join(" ");
 const buildTsconfigPath = process.env.NEXT_BUILD_TSCONFIG?.trim() || "tsconfig.json";
 
-// OpenStreetMap's tile server, for the public club map (#437) only.
+// OpenStreetMap's tile server, for the public club map (#437) and the
+// church-location pin picker (#480) only.
 const mapTileOrigin = "https://tile.openstreetmap.org";
 
 function contentSecurityPolicy(frameAncestors: string, extraImageOrigins = "") {

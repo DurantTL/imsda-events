@@ -4,6 +4,7 @@ import { useState } from "react";
 import dynamic from "next/dynamic";
 import { MapPin, Save } from "lucide-react";
 import type { ChurchLocationRecord } from "@/modules/organizations/church-location-repository";
+import { displayCoordinate, numberOrNull } from "@/components/church-location-coordinates";
 
 const ChurchLocationMapPicker = dynamic(
   () => import("@/components/church-location-map-picker").then((mod) => mod.ChurchLocationMapPicker),
@@ -11,18 +12,6 @@ const ChurchLocationMapPicker = dynamic(
 );
 
 type LocationResponse = { location?: ChurchLocationRecord; message?: string; issues?: Array<{ message?: string }> };
-
-function numberOrNull(value: string) {
-  const text = value.trim();
-  if (text === "") return null;
-  const parsed = Number(text);
-  return Number.isFinite(parsed) ? parsed : text;
-}
-
-/** A coordinate rounded for display after a map click or drag. */
-function displayCoordinate(value: number) {
-  return value.toFixed(6);
-}
 
 /**
  * A church's town and map coordinates (#437, #480), for conference staff.

@@ -55,7 +55,8 @@ export function ChurchLocationMapPicker({
       });
       marker = L.marker(position, { icon, draggable: true, keyboard: true, riseOnHover: true });
       marker.on("dragend", () => {
-        const { lat, lng } = marker!.getLatLng();
+        // Leaflet repeats the world sideways; wrap so longitude stays in ±180.
+        const { lat, lng } = marker!.getLatLng().wrap();
         onChangeRef.current(lat, lng);
       });
       marker.addTo(map);
@@ -88,7 +89,7 @@ export function ChurchLocationMapPicker({
         placeMarker(L, map, [latitude, longitude]);
       }
       map.on("click", (event: LeafletMouseEvent) => {
-        const { lat, lng } = event.latlng;
+        const { lat, lng } = event.latlng.wrap();
         placeMarker(L, map, [lat, lng]);
         onChangeRef.current(lat, lng);
       });

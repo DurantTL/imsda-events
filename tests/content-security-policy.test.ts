@@ -132,7 +132,7 @@ describe("compiled Content Security Policy", () => {
     const clubs = cspRules.find((rule) => rule.source === "/clubs");
     if (!siteWide || !clubs) throw new Error("Missing site-wide or /clubs policy");
 
-    for (const rule of cspRules.filter((candidate) => candidate.source !== "/clubs" && !candidate.source.includes("location"))) {
+    for (const rule of cspRules.filter((candidate) => candidate.source !== "/clubs" && candidate.source !== "/admin/organizations/:organizationId/location")) {
       expect(rule.policy).not.toContain(tileOrigin);
     }
     expect(directiveSources(clubs.policy, "img-src")).toContain(tileOrigin);
