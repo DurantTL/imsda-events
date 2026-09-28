@@ -79,19 +79,21 @@ describe("readableOrderCsv (#487)", () => {
 });
 
 describe("pickListCsv (#487)", () => {
-  it("carries only names, the item, and where it stands", () => {
+  it("carries only names, the item, its size, and where it stands", () => {
     const csv = pickListCsv([
-      { lastName: "Sample", firstName: "Alex", itemName: "Knot Tying", status: "To order" },
-      { lastName: "Demo", firstName: "Casey", itemName: "Camping Skills", status: "Ready to hand out (from stock)" },
+      { lastName: "Sample", firstName: "Alex", itemName: "Knot Tying", size: "", status: "To order" },
+      { lastName: "Demo", firstName: "Casey", itemName: "Camping Skills", size: "", status: "Ready to hand out (from stock)" },
+      { lastName: "Demo", firstName: "Casey", itemName: "Club Field Uniform", size: "M", status: "Ordered" },
     ]);
     const rows = parseCsvMatrix(csv);
-    expect(rows[0]).toEqual(["Last name", "First name", "Item", "Status"]);
-    expect(rows).toHaveLength(3);
-    // Sorted by last name.
-    expect(rows[1]).toEqual(["Demo", "Casey", "Camping Skills", "Ready to hand out (from stock)"]);
-    expect(rows[2]).toEqual(["Sample", "Alex", "Knot Tying", "To order"]);
+    expect(rows[0]).toEqual(["Last name", "First name", "Item", "Size", "Status"]);
+    expect(rows).toHaveLength(4);
+    // Sorted by last name, then first name, then item.
+    expect(rows[1]).toEqual(["Demo", "Casey", "Camping Skills", "", "Ready to hand out (from stock)"]);
+    expect(rows[2]).toEqual(["Demo", "Casey", "Club Field Uniform", "M", "Ordered"]);
+    expect(rows[3]).toEqual(["Sample", "Alex", "Knot Tying", "", "To order"]);
     // No column could ever carry a birth date, contact, guardian, or medical field.
-    expect(rows[0]).toHaveLength(4);
+    expect(rows[0]).toHaveLength(5);
     expect(csv).not.toMatch(/birth|phone|email|guardian|allerg|medical/i);
   });
 });

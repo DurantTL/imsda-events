@@ -2,7 +2,7 @@ import { toCsv } from "@/modules/reporting/csv";
 
 /**
  * Club order fulfillment (#487): pure rules for turning a club's open needs
- * (from honors today; uniforms and earned awards later, #497 and #532) into
+ * (from honors and uniforms today, earned awards later, #532) into
  * an AdventSource order, and for the exports the order screen offers. Every
  * count here is keyed to a `ClubSupplyItem` (#531) — this module never knows
  * where a need came from.
@@ -131,17 +131,25 @@ export function readableOrderCsv(lines: readonly OrderLine[]) {
 /** Where a pick-list row stands, in words a director hands to whoever gives out patches. */
 export type PickListStatus = "To order" | "Ordered" | "Ready to hand out" | "Ready to hand out (from stock)";
 
-export type PickListEntry = { lastName: string; firstName: string; itemName: string; status: PickListStatus };
+export type PickListEntry = {
+  lastName: string;
+  firstName: string;
+  itemName: string;
+  /** A uniform's size ("M", "Size 8"); blank for items without one, like honor patches (#497). */
+  size: string;
+  status: PickListStatus;
+};
 
 /**
- * The per-member pick list (#487): names, the item, and where it stands, so
- * it can be printed and handed to whoever distributes patches. No birth date,
- * contact, guardian, or medical field ever reaches this shape.
+ * The per-member pick list (#487, #497): names, the item, its size (uniforms),
+ * and where it stands, so it can be printed and handed to whoever gives out
+ * patches and uniforms. No birth date, contact, guardian, or medical field
+ * ever reaches this shape.
  */
 export function pickListCsv(entries: readonly PickListEntry[]) {
-  const rows: Array<Array<string | number>> = [["Last name", "First name", "Item", "Status"]];
+  const rows: Array<Array<string | number>> = [["Last name", "First name", "Item", "Size", "Status"]];
   const sorted = [...entries].sort((a, b) =>
     a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName) || a.itemName.localeCompare(b.itemName));
-  for (const entry of sorted) rows.push([entry.lastName, entry.firstName, entry.itemName, entry.status]);
+  for (const entry of sorted) rows.push([entry.lastName, entry.firstName, entry.itemName, entry.size, entry.status]);
   return toCsv(rows);
 }

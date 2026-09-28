@@ -13,6 +13,8 @@ import {
   type PickListEntry,
 } from "@/modules/club-orders/domain";
 import type { ClubSupplyStockActor } from "@/modules/club-supplies/repository";
+import { clubYearFor } from "@/modules/club-rosters/domain";
+import { itemAndSize } from "@/modules/uniforms/domain";
 
 /**
  * Club order fulfillment storage (#487): a reusable order and stock layer
@@ -40,7 +42,7 @@ import type { ClubSupplyStockActor } from "@/modules/club-supplies/repository";
 
 export type ClubOrderActor = ClubSupplyStockActor;
 
-export type ClubOrderErrorCode = "NOTHING_TO_ORDER" | "BATCH_NOT_FOUND" | "ALREADY_RECEIVED" | "ORDER_CHANGED" | "NOT_ENOUGH_STOCK";
+export type ClubOrderErrorCode = "NOTHING_TO_ORDER" | "BATCH_NOT_FOUND" | "ALREADY_RECEIVED" | "ORDER_CHANGED" | "NOT_ENOUGH_STOCK" | "ITEM_NOT_ORDERABLE" | "MEMBER_NOT_ON_ROSTER";
 
 export class ClubOrderError extends Error {
   constructor(public readonly code: ClubOrderErrorCode, message: string) {
@@ -49,10 +51,10 @@ export class ClubOrderError extends Error {
   }
 }
 
-type Db = Prisma.TransactionClient | ReturnType<typeof getPrisma>;
+export type Db = Prisma.TransactionClient | ReturnType<typeof getPrisma>;
 
 /** Serializes every order/stock write for one club (#487), released when the transaction ends. */
-async function lockClubOrders(tx: Prisma.TransactionClient, organizationId: string) {
+export async function lockClubOrders(tx: Prisma.TransactionClient, organizationId: string) {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`club-orders:${organizationId}`}))`;
 }
 
@@ -68,11 +70,51 @@ function receivedByFields(actor: ClubOrderActor) {
     : { receivedByAccountId: null, receivedByUserId: actor.userId };
 }
 
-function auditActorFields(actor: ClubOrderActor) {
+export function auditActorFields(actor: ClubOrderActor) {
   return {
     actorFields: "userId" in actor ? { actorUserId: actor.userId } : {},
     metadata: "accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId },
   };
+}
+
+/**
+ * Uniform needs of people who left (#497): a NEEDED uniform need whose member
+ * is no longer ACTIVE on this club's roster this club year is removed, audited
+ * by count, so it is never ordered. Uniform needs are NOT moved to a new club
+ * on a transfer (unlike honors): sizes and needs are club-specific, and the new
+ * club records its own. ORDERED, RECEIVED and AWARDED needs stay where they are.
+ * Runs under the club's lock, in the caller's transaction.
+ */
+export async function removeDepartedMemberNeedsInTx(tx: Prisma.TransactionClient, organizationId: string, now = new Date()) {
+  const needed = await tx.clubOrderNeed.findMany({
+    where: { organizationId, sourceType: "UNIFORM", status: "NEEDED" },
+    select: { id: true, personId: true },
+  });
+  if (needed.length === 0) return { removed: 0 };
+  const active = await tx.clubRosterMember.findMany({
+    where: { organizationId, clubYear: clubYearFor(now), status: "ACTIVE", personId: { in: [...new Set(needed.map((need) => need.personId))] } },
+    select: { personId: true },
+  });
+  const activeIds = new Set(active.map((member) => member.personId));
+  const departed = needed.filter((need) => !activeIds.has(need.personId)).map((need) => need.id);
+  if (departed.length === 0) return { removed: 0 };
+  const removed = await tx.clubOrderNeed.deleteMany({ where: { id: { in: departed }, organizationId, sourceType: "UNIFORM", status: "NEEDED" } });
+  if (removed.count > 0) {
+    await writeAuditLog({
+      action: "CLUB_UNIFORM_NEEDS_DEPARTED_REMOVED",
+      entityType: "ClubOrderNeed",
+      summary: `Removed ${removed.count} not-yet-ordered uniform need${removed.count === 1 ? "" : "s"} for members no longer on the roster.`,
+      metadata: { organizationId, needCount: removed.count },
+    }, tx);
+  }
+  return { removed: removed.count };
+}
+
+export async function removeDepartedMemberNeeds(organizationId: string, now = new Date()) {
+  return getPrisma().$transaction(async (tx) => {
+    await lockClubOrders(tx, organizationId);
+    return removeDepartedMemberNeedsInTx(tx, organizationId, now);
+  });
 }
 
 export type NeedCandidate = { sourceId: string; personId: string; itemId: string | null; sourceLabel?: string; sourceDate?: string };
@@ -212,8 +254,8 @@ function groupByItem<T extends { itemId: string | null }>(needs: readonly T[]) {
 }
 
 const neededSelect = {
-  id: true, sourceId: true, personId: true, itemId: true, sourceLabel: true, sourceDate: true, createdAt: true,
-  item: { select: itemSelect },
+  id: true, sourceType: true, sourceId: true, personId: true, itemId: true, sourceLabel: true, sourceDate: true, createdAt: true,
+  item: { select: { ...itemSelect, section: true } },
 } satisfies Prisma.ClubOrderNeedSelect;
 
 type NeededRow = Prisma.ClubOrderNeedGetPayload<{ select: typeof neededSelect }>;
@@ -271,6 +313,9 @@ export async function listOrderList(
  * need would move, no batch is created: NOTHING_TO_ORDER.
  */
 export async function createOrderBatch(organizationId: string, extras: Record<string, number>, actor: ClubOrderActor) {
+  // Never order a departed member's uniform (#497). Its own transaction, so the
+  // removal stays even when this order turns out to have nothing left to order.
+  await removeDepartedMemberNeeds(organizationId);
   return getPrisma().$transaction(async (tx) => {
     await lockClubOrders(tx, organizationId);
     const needs = await tx.clubOrderNeed.findMany({
@@ -602,6 +647,8 @@ export async function listAwardableNeeds(organizationId: string): Promise<Awarda
 
 export type WaitingNeed = {
   needId: string;
+  /** Where the need came from: only honors get the "completed before you started ordering" prompt (#497). */
+  sourceType: "HONOR" | "UNIFORM";
   itemName: string | null;
   sourceLabel: string;
   sourceDate: string;
@@ -616,6 +663,7 @@ async function waitingFrom(picture: NeededPicture, firstOrderAt: Date | null): P
   return picture.needs
     .map((need) => ({
       needId: need.id,
+      sourceType: need.sourceType,
       itemName: need.item?.name ?? null,
       sourceLabel: need.sourceLabel,
       sourceDate: need.sourceDate,
@@ -645,8 +693,14 @@ export async function loadOrderWorkspace(organizationId: string) {
   return { lines, unmatched, batches, awardable, waiting, firstOrderAt: firstOrder };
 }
 
+/** The pick list's item and size columns for a catalog row: a uniform's size is split off its name (#497). */
+function pickItem(item: { name: string; section: string }) {
+  const { itemName, size } = itemAndSize(item);
+  return { itemName, size };
+}
+
 /**
- * The per-member pick list (#487): names, the item, and where it stands.
+ * The per-member pick list (#487, #497): names, the item, its size, and where it stands.
  * For one batch: that order's needs still to hand out (Ordered, or Ready to
  * hand out). Without a batch: who is currently to order (NEEDED, labelled
  * "To order", or "Ready to hand out (from stock)" when stock covers it) and
@@ -656,31 +710,31 @@ export async function listPickList(organizationId: string, batchId?: string): Pr
   if (batchId) {
     const needs = await getPrisma().clubOrderNeed.findMany({
       where: { organizationId, batchId, status: { in: ["ORDERED", "RECEIVED"] }, itemId: { not: null } },
-      select: { personId: true, status: true, item: { select: { name: true } } },
+      select: { personId: true, status: true, item: { select: { name: true, section: true } } },
     });
     const names = await namesFor(needs.map((need) => need.personId));
     return needs.map((need) => ({
       lastName: names.get(need.personId)?.lastName ?? "",
       firstName: names.get(need.personId)?.firstName ?? "",
-      itemName: need.item!.name,
+      ...pickItem(need.item!),
       status: need.status === "RECEIVED" ? "Ready to hand out" : "Ordered",
     }));
   }
   const picture = await neededPicture(organizationId);
   const received = await getPrisma().clubOrderNeed.findMany({
     where: { organizationId, status: "RECEIVED", itemId: { not: null } },
-    select: { personId: true, item: { select: { name: true } } },
+    select: { personId: true, item: { select: { name: true, section: true } } },
   });
   const matchedNeeded = picture.needs.filter((need) => need.itemId !== null);
   const names = await namesFor([...matchedNeeded, ...received].map((need) => need.personId));
-  const entry = (personId: string, itemName: string, status: PickListEntry["status"]): PickListEntry => ({
+  const entry = (personId: string, item: { name: string; section: string }, status: PickListEntry["status"]): PickListEntry => ({
     lastName: names.get(personId)?.lastName ?? "",
     firstName: names.get(personId)?.firstName ?? "",
-    itemName,
+    ...pickItem(item),
     status,
   });
   return [
-    ...matchedNeeded.map((need) => entry(need.personId, need.item!.name, picture.fromStock.has(need.id) ? "Ready to hand out (from stock)" : "To order")),
-    ...received.map((need) => entry(need.personId, need.item!.name, "Ready to hand out")),
+    ...matchedNeeded.map((need) => entry(need.personId, need.item!, picture.fromStock.has(need.id) ? "Ready to hand out (from stock)" : "To order")),
+    ...received.map((need) => entry(need.personId, need.item!, "Ready to hand out")),
   ];
 }
