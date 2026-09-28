@@ -3199,6 +3199,17 @@ select:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.public-registration-attendee-role { color: var(--muted); font-weight: 600; }
+.public-registration-attendee-summary {
+  display: inline-block;
+  margin-top: 3px;
+  color: var(--imsda-purple);
+  font-size: 0.66rem;
+  font-weight: 800;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.public-registration-attendee.is-collapsed .public-registration-attendee-heading { border-bottom: none; }
 .public-registration-attendee-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
 .public-registration-attendee-actions button {
   display: inline-flex;
@@ -3499,6 +3510,27 @@ select:focus-visible {
   margin: 0;
   color: var(--ink);
   font-size: 0.96rem;
+}
+.public-registration-roster-summary { grid-column: 1 / -1; }
+.public-registration-roster-summary-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  margin: 10px 0 0;
+}
+.public-registration-roster-summary-totals > div { min-width: 88px; }
+.public-registration-roster-summary-totals dt {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.public-registration-roster-summary-totals dd {
+  margin: 2px 0 0;
+  color: var(--ink);
+  font-size: 1.1rem;
+  font-weight: 800;
 }
 .public-registration-review-account { grid-column: 1 / -1; }
 .public-registration-review-account > p:not(.public-registration-eyebrow) {

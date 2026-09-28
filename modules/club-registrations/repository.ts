@@ -17,6 +17,7 @@ import {
   guestsFromJson,
   type ClubGuest,
   lockedAttendeeFieldKeys,
+  rosterCarryoverMismatches,
   rosterGenderPrefill,
   rosterRolePrefill,
   rosterMemberIdFromClientId,
@@ -358,6 +359,11 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
             ...rosterRolePrefill(experience.form.definition, { ...person, role: member.role, attendeeType: member.attendeeType }),
           }
           : {},
+        // Carried-over values that don't match a form option, so the form can
+        // prompt for them instead of leaving the field silently blank (#483).
+        carryoverMismatches: experience
+          ? rosterCarryoverMismatches(experience.form.definition, { ...person, role: member.role, attendeeType: member.attendeeType })
+          : [],
       };
     })
     .sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName));
