@@ -22,6 +22,7 @@ import {
 } from "@/modules/events/schemas";
 import { buildRegistrationEmbedCode } from "@/modules/forms/embed";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
+import { UnpublishEventDialog } from "@/components/unpublish-event-dialog";
 
 type EventSettingsWorkspaceProps = {
   mode: "create" | "edit";
@@ -98,6 +99,15 @@ export function EventSettingsWorkspace({
   const [draft, setDraft] = useState<EventSettingsInput>(() => draftFromEvent(initialEvent));
   const [savedDraft, setSavedDraft] = useState<EventSettingsInput>(() => draftFromEvent(initialEvent));
   const [publishedFormCount, setPublishedFormCount] = useState(initialEvent?.publishedFormCount ?? 0);
+  // Publishing and unpublishing are their own actions (#471), never a side
+  // effect of saving this form: tracked separately from `draft` so nothing
+  // in the settings save can change it, and updated only by `publish()` and
+  // `unpublish()` below.
+  const [published, setPublished] = useState(initialEvent?.isPublished ?? false);
+  const [publishing, setPublishing] = useState(false);
+  const [unpublishDialogOpen, setUnpublishDialogOpen] = useState(false);
+  const [unpublishing, setUnpublishing] = useState(false);
+  const [unpublishError, setUnpublishError] = useState("");
   const [slugWasEdited, setSlugWasEdited] = useState(mode === "edit");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -107,8 +117,6 @@ export function EventSettingsWorkspace({
     () => getEventPublishReadiness(draft, publishedFormCount),
     [draft, publishedFormCount],
   );
-  const publishingForFirstTime = draft.isPublished && !initialEvent?.isPublished;
-  const saveBlocked = publishingForFirstTime && !readiness.ready;
   const dirty = useMemo(
     () => JSON.stringify(draft) !== JSON.stringify(savedDraft),
     [draft, savedDraft],
@@ -136,10 +144,6 @@ export function EventSettingsWorkspace({
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (saveBlocked) {
-      setError("Finish every item in the publish checklist before turning on public registration.");
-      return;
-    }
     setSaving(true);
     setError("");
     setNotice("");
@@ -157,7 +161,10 @@ export function EventSettingsWorkspace({
             registrationOpensOn: draft.registrationOpensOn || null,
             registrationClosesOn: draft.registrationClosesOn || null,
             capacity: draft.capacity || null,
-            isPublished: mode === "create" ? false : draft.isPublished,
+            // Sent for schema compatibility only: the server always keeps the
+            // event's current published state on a settings save (#471) and
+            // ignores this value.
+            isPublished: mode === "create" ? false : published,
           }),
         },
       );
@@ -181,13 +188,62 @@ export function EventSettingsWorkspace({
       setDraft(nextDraft);
       setSavedDraft(nextDraft);
       setPublishedFormCount(result.event.publishedFormCount);
-      setNotice(result.event.isPublished
-        ? "Event settings saved. Public registration is available during the registration window."
-        : "Event settings saved as a draft.");
+      setPublished(result.event.isPublished);
+      setNotice("Event settings saved.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The event could not be saved.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function publish() {
+    if (publishing || !readiness.ready) return;
+    setPublishing(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`/api/events/${initialEvent!.id}/publish`, { method: "POST" });
+      const result = await response.json().catch(() => ({})) as EventApiResult;
+      if (!response.ok || !result.event) {
+        throw new Error(result.message ?? "The event could not be published.");
+      }
+      setPublished(result.event.isPublished);
+      setNotice("Event published. Public registration is available during the registration window.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The event could not be published.");
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  function openUnpublishDialog() {
+    setUnpublishError("");
+    setUnpublishDialogOpen(true);
+  }
+
+  function cancelUnpublish() {
+    setUnpublishDialogOpen(false);
+    setUnpublishError("");
+  }
+
+  async function unpublish() {
+    if (unpublishing) return;
+    setUnpublishing(true);
+    setUnpublishError("");
+    try {
+      const response = await fetch(`/api/events/${initialEvent!.id}/unpublish`, { method: "POST" });
+      const result = await response.json().catch(() => ({})) as EventApiResult;
+      if (!response.ok || !result.event) {
+        throw new Error(result.message ?? "The event could not be unpublished.");
+      }
+      setPublished(result.event.isPublished);
+      setUnpublishDialogOpen(false);
+      setNotice("Event unpublished. Every public registration form is now closed.");
+    } catch (caught) {
+      setUnpublishError(caught instanceof Error ? caught.message : "The event could not be unpublished.");
+    } finally {
+      setUnpublishing(false);
     }
   }
 
@@ -220,9 +276,9 @@ export function EventSettingsWorkspace({
               : `Update the public details, registration dates, capacity, and publishing status for ${initialEvent?.name}.`}
           </p>
         </div>
-        <span className={`count-badge ${draft.isPublished ? "green" : ""}`}>
+        <span className={`count-badge ${published ? "green" : ""}`}>
           <ShieldCheck size={16} aria-hidden="true" />
-          {draft.isPublished ? "Published" : "Private draft"}
+          {published ? "Published" : "Private draft"}
         </span>
       </div>
 
@@ -518,18 +574,25 @@ export function EventSettingsWorkspace({
                 : <div className="inline-notice">Create this draft first. Then build, test, and publish its registration form.</div>
             )}
             {mode === "edit" && (
-              <label className={`event-publish-toggle ${readiness.ready ? "ready" : ""}`}>
-                <input
-                  type="checkbox"
-                  checked={draft.isPublished}
-                  disabled={!draft.isPublished && !readiness.ready}
-                  onChange={(event) => update("isPublished", event.target.checked)}
-                />
+              // Publishing and unpublishing are their own actions (#471), each
+              // its own request the instant it's clicked — never folded into
+              // the settings save below, so unpublishing can't happen as a
+              // side effect of an unrelated save.
+              <div className={`event-publish-toggle ${readiness.ready ? "ready" : ""}`}>
                 <span>
-                  <strong>{draft.isPublished ? "Public registration is on" : "Publish this event"}</strong>
-                  <small>{draft.isPublished ? "Turn this off to close every public form immediately." : "Available after every checklist item is complete."}</small>
+                  <strong>{published ? "Public registration is on" : "Publish this event"}</strong>
+                  <small>{published ? "Unpublish to close every public form immediately." : "Available after every checklist item is complete."}</small>
                 </span>
-              </label>
+                {published ? (
+                  <button className="secondary-button full-button" disabled={unpublishing} onClick={openUnpublishDialog} type="button">
+                    Unpublish event
+                  </button>
+                ) : (
+                  <button className="primary-button full-button" disabled={publishing || !readiness.ready} onClick={() => void publish()} type="button">
+                    {publishing ? "Publishing…" : "Publish event"}
+                  </button>
+                )}
+              </div>
             )}
           </section>
 
@@ -537,7 +600,7 @@ export function EventSettingsWorkspace({
             <section className="panel event-sharing-panel">
               <p className="eyebrow">Website sharing</p>
               <h2>Public registration</h2>
-              {draft.isPublished && initialEvent?.publishedForms.length ? (
+              {published && initialEvent?.publishedForms.length ? (
                 <>
                   <p>Link to the event page from IMSDA.org, or embed a specific form in a Custom HTML block.</p>
                   <a
@@ -574,15 +637,25 @@ export function EventSettingsWorkspace({
           )}
 
           <section className="panel event-save-panel">
-            <p>{mode === "create" ? "Nothing is public when this draft is created." : draft.isPublished ? "Saving keeps the event public unless you turn publishing off." : "Saving does not publish the event."}</p>
+            <p>{mode === "create" ? "Nothing is public when this draft is created." : "Saving never changes whether this event is published — use Publish or Unpublish above for that."}</p>
             {dirty && <span className="unsaved-dot" role="status">Unsaved changes</span>}
-            <button className="primary-button full-button" type="submit" disabled={saving || saveBlocked || !dirty}>
+            <button className="primary-button full-button" type="submit" disabled={saving || !dirty}>
               <Save size={16} aria-hidden="true" />
               {saving ? "Saving…" : mode === "create" ? "Create event draft" : "Save event settings"}
             </button>
           </section>
         </aside>
       </form>
+      {mode === "edit" && (
+        <UnpublishEventDialog
+          busy={unpublishing}
+          eventName={initialEvent?.name ?? draft.name}
+          error={unpublishError}
+          onCancel={cancelUnpublish}
+          onConfirm={() => void unpublish()}
+          open={unpublishDialogOpen}
+        />
+      )}
     </section>
   );
 }

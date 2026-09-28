@@ -5549,6 +5549,12 @@ select:focus-visible {
   padding: 12px;
 }
 
+.event-publish-toggle {
+  flex-direction: column !important;
+  align-items: stretch;
+  gap: 8px !important;
+}
+
 .event-setting-toggle.nested { margin-left: 28px; }
 .event-setting-toggle input,
 .event-publish-toggle input { width: auto; margin-top: 3px; }
@@ -5603,7 +5609,7 @@ select:focus-visible {
   background: var(--green-soft);
 }
 
-.event-publish-toggle:has(input:disabled) {
+.event-publish-toggle:has(button:disabled) {
   cursor: not-allowed;
   opacity: 0.68;
 }

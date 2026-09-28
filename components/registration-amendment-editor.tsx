@@ -9,6 +9,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { AddressFieldGroup } from "@/components/address-field-group";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   formatAddressDisplay,
   isPlainAddressObject,
@@ -311,6 +312,11 @@ export function RegistrationAmendmentEditor({
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [addedNotice, setAddedNotice] = useState("");
+  // Review before removing an attendee from this draft amendment (#471):
+  // the shared in-page confirm dialog replaces `window.confirm()`. Removing
+  // is a local edit to the draft only — nothing is sent until the amendment
+  // itself is reviewed and submitted — so there's no busy state to guard.
+  const [removeAttendeeIndex, setRemoveAttendeeIndex] = useState<number | null>(null);
   // After "Add person", bring the new card into view and put the cursor in it (WR26).
   const newAttendeeId = useRef<string | null>(null);
   useEffect(() => {
@@ -372,14 +378,22 @@ export function RegistrationAmendmentEditor({
 
   function removeAttendee(index: number) {
     if (attendees.length <= 1) return;
+    setRemoveAttendeeIndex(index);
+  }
+
+  function removeAttendeeName(index: number) {
     const attendee = attendees[index];
     const firstName = valueString(attendee.responses.first_name);
     const lastName = valueString(attendee.responses.last_name);
-    const name = `${firstName} ${lastName}`.trim() || `attendee ${index + 1}`;
-    if (!window.confirm(`Remove ${name} from this registration amendment?`)) return;
-    setAttendees((current) => current.filter((_, attendeeIndex) => attendeeIndex !== index));
+    return `${firstName} ${lastName}`.trim() || `attendee ${index + 1}`;
+  }
+
+  function confirmRemoveAttendee() {
+    if (removeAttendeeIndex === null) return;
+    setAttendees((current) => current.filter((_, attendeeIndex) => attendeeIndex !== removeAttendeeIndex));
     setAddedNotice("");
     invalidatePreview();
+    setRemoveAttendeeIndex(null);
   }
 
   function moveAttendee(index: number, direction: -1 | 1) {
@@ -506,8 +520,9 @@ export function RegistrationAmendmentEditor({
   }
 
   return (
-    // The server checks the answers; the browser's required check would block
-    // untouched answers on older registrations (e.g. a Teen with no seminar ranks).
+    <>
+    {/* The server checks the answers; the browser's required check would block
+       untouched answers on older registrations (e.g. a Teen with no seminar ranks). */}
     <form className="registration-amendment" noValidate onSubmit={reviewAmendment}>
       <div className="operation-step-heading">
         <p className="eyebrow">Step 1 of 2 · Edit registration</p>
@@ -592,5 +607,19 @@ export function RegistrationAmendmentEditor({
         <button className="primary-button" type="submit" disabled={saving}>{saving ? "Calculating…" : "Review price and changes"}</button>
       </div>
     </form>
+
+    <ConfirmDialog
+      busy={false}
+      confirmLabel="Remove attendee"
+      destructive
+      error=""
+      onCancel={() => setRemoveAttendeeIndex(null)}
+      onConfirm={confirmRemoveAttendee}
+      open={removeAttendeeIndex !== null}
+      title={removeAttendeeIndex !== null ? `Remove ${removeAttendeeName(removeAttendeeIndex)} from this registration amendment?` : "Remove attendee?"}
+    >
+      <p>This only changes the draft amendment. Nothing is submitted until you review and confirm it.</p>
+    </ConfirmDialog>
+    </>
   );
 }

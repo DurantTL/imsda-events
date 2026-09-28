@@ -25,6 +25,7 @@ import {
   X,
 } from "lucide-react";
 import { AddressFieldGroup } from "@/components/address-field-group";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { FormSlugDialog } from "@/components/form-slug-dialog";
 import { SearchableSelect } from "@/components/searchable-select";
 import type { AddressValue } from "@/modules/forms/address";
@@ -347,6 +348,15 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
       if (!busy) setConfirmingPublish(false);
     },
   );
+  // Review before removing a section or field (#471): the shared confirm
+  // dialog names what disappears and, when there's already something to
+  // lose, the real count of already-submitted answers that stay on those
+  // registrations regardless — removing a field or section only ever edits
+  // this draft version.
+  const [removeFieldTarget, setRemoveFieldTarget] = useState<{ sectionIndex: number; fieldIndex: number; field: RegistrationFormField } | null>(null);
+  const [removeSectionTarget, setRemoveSectionTarget] = useState<{ sectionIndex: number; section: RegistrationFormDefinition["sections"][number] } | null>(null);
+  const [removalAnswerCounts, setRemovalAnswerCounts] = useState<Record<string, number> | null>(null);
+  const [removalAnswerCountsLoading, setRemovalAnswerCountsLoading] = useState(false);
   const [dragging, setDragging] = useState<DragState>(null);
   const [expandedFieldId, setExpandedFieldId] = useState<string | null>(null);
   const [openModuleSection, setOpenModuleSection] = useState<number | null>(null);
@@ -685,6 +695,44 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
     updateSection(sectionIndex, { fields: section.fields.filter((_, index) => index !== fieldIndex) });
   }
 
+  async function loadRemovalAnswerCounts(fieldKeys: string[]) {
+    if (!selectedForm) return;
+    setRemovalAnswerCountsLoading(true);
+    try {
+      const response = await fetch(
+        `/api/events/${selectedForm.eventId}/forms/${selectedForm.id}/field-answer-counts`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fieldKeys }),
+        },
+      );
+      const result = await response.json().catch(() => ({})) as { counts?: Record<string, number> };
+      if (response.ok && result.counts) setRemovalAnswerCounts(result.counts);
+      // Best-effort: the dialog still shows what's removed and kept without
+      // a number when the count can't be loaded.
+    } finally {
+      setRemovalAnswerCountsLoading(false);
+    }
+  }
+
+  function openRemoveField(sectionIndex: number, fieldIndex: number) {
+    if (!definition) return;
+    const section = definition.sections[sectionIndex];
+    if (section.fields.length === 1) { setError("Each section must keep at least one field."); return; }
+    const field = section.fields[fieldIndex];
+    setRemoveFieldTarget({ sectionIndex, fieldIndex, field });
+    setRemovalAnswerCounts(null);
+    void loadRemovalAnswerCounts([field.key]);
+  }
+
+  function confirmRemoveField() {
+    if (!removeFieldTarget) return;
+    removeField(removeFieldTarget.sectionIndex, removeFieldTarget.fieldIndex);
+    setRemoveFieldTarget(null);
+    setRemovalAnswerCounts(null);
+  }
+
   function duplicateField(sectionIndex: number, fieldIndex: number) {
     if (!definition) return;
     const source = definition.sections[sectionIndex].fields[fieldIndex];
@@ -793,6 +841,22 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
     if (!definition) return;
     if (definition.sections.length === 1) { setError("A form must keep at least one section."); return; }
     replaceDefinition({ ...definition, sections: definition.sections.filter((_, index) => index !== sectionIndex) });
+  }
+
+  function openRemoveSection(sectionIndex: number) {
+    if (!definition) return;
+    if (definition.sections.length === 1) { setError("A form must keep at least one section."); return; }
+    const section = definition.sections[sectionIndex];
+    setRemoveSectionTarget({ sectionIndex, section });
+    setRemovalAnswerCounts(null);
+    void loadRemovalAnswerCounts(section.fields.map((field) => field.key));
+  }
+
+  function confirmRemoveSection() {
+    if (!removeSectionTarget) return;
+    removeSection(removeSectionTarget.sectionIndex);
+    setRemoveSectionTarget(null);
+    setRemovalAnswerCounts(null);
   }
 
   function setReviewSection(sectionIndex: number, enabled: boolean) {
@@ -1040,7 +1104,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
               <button className="drag-handle" type="button" draggable={!isPublicReviewSection(definition, section)} disabled={isPublicReviewSection(definition, section)} aria-label={`Drag section ${section.title}`} title={isPublicReviewSection(definition, section) ? "The final review step stays last" : "Drag section"} onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; setDragging({ kind: "section", sectionIndex }); }} onDragEnd={() => setDragging(null)}><GripVertical size={15} /><span>Drag</span></button>
               <button type="button" aria-label={`Move section ${section.title} up`} disabled={sectionIndex === 0 || isPublicReviewSection(definition, section)} onClick={() => moveSection(sectionIndex, -1)}><ArrowUp size={14} /><span>Up</span></button>
               <button type="button" aria-label={`Move section ${section.title} down`} disabled={sectionIndex === definition.sections.length - 1 || isPublicReviewSection(definition, definition.sections[sectionIndex + 1]!)} onClick={() => moveSection(sectionIndex, 1)}><ArrowDown size={14} /><span>Down</span></button>
-              <button className="danger" type="button" aria-label={`Remove ${section.title}`} onClick={() => removeSection(sectionIndex)}><Trash2 size={14} /><span>Remove</span></button>
+              <button className="danger" type="button" aria-label={`Remove ${section.title}`} onClick={() => openRemoveSection(sectionIndex)}><Trash2 size={14} /><span>Remove</span></button>
             </div>}
           </div>
           <div className="builder-fields">{section.fields.map((field, fieldIndex) => <article
@@ -1054,7 +1118,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
             <div className="field-module-row">
               {canEdit ? <button className="drag-handle field-drag-handle" type="button" draggable aria-label={`Drag field ${field.label}`} title="Drag field" onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; setDragging({ kind: "field", sectionIndex, fieldIndex }); }} onDragEnd={() => setDragging(null)}><GripVertical size={16} /></button> : <GripVertical className="field-grip" size={17} />}
               <button className="field-module-summary" type="button" aria-expanded={expandedFieldId === field.id} aria-label={`${expandedFieldId === field.id ? "Close settings for" : "Edit"} ${field.label}`} onClick={() => setExpandedFieldId((current) => current === field.id ? null : field.id)}><span className="field-type-mark">{fieldTypeLabels[field.type].slice(0, 1)}</span><span><strong>{field.label}</strong><small>{fieldTypeLabels[field.type]} · {field.scope === "ATTENDEE" ? "Each attendee" : "Registration"}{field.required ? " · Required" : ""}</small></span><ChevronRight className={expandedFieldId === field.id ? "expanded" : ""} size={16} /></button>
-              {canEdit && <div className="field-actions"><button type="button" aria-label={`Duplicate ${field.label}`} onClick={() => duplicateField(sectionIndex, fieldIndex)}><Copy size={14} /><span>Copy</span></button><button type="button" aria-label={`Move ${field.label} up`} disabled={fieldIndex === 0} onClick={() => moveField(sectionIndex, fieldIndex, -1)}><ArrowUp size={14} /><span>Up</span></button><button type="button" aria-label={`Move ${field.label} down`} disabled={fieldIndex === section.fields.length - 1} onClick={() => moveField(sectionIndex, fieldIndex, 1)}><ArrowDown size={14} /><span>Down</span></button><button className="danger" type="button" aria-label={`Remove ${field.label}`} onClick={() => removeField(sectionIndex, fieldIndex)}><Trash2 size={14} /><span>Remove</span></button></div>}
+              {canEdit && <div className="field-actions"><button type="button" aria-label={`Duplicate ${field.label}`} onClick={() => duplicateField(sectionIndex, fieldIndex)}><Copy size={14} /><span>Copy</span></button><button type="button" aria-label={`Move ${field.label} up`} disabled={fieldIndex === 0} onClick={() => moveField(sectionIndex, fieldIndex, -1)}><ArrowUp size={14} /><span>Up</span></button><button type="button" aria-label={`Move ${field.label} down`} disabled={fieldIndex === section.fields.length - 1} onClick={() => moveField(sectionIndex, fieldIndex, 1)}><ArrowDown size={14} /><span>Down</span></button><button className="danger" type="button" aria-label={`Remove ${field.label}`} onClick={() => openRemoveField(sectionIndex, fieldIndex)}><Trash2 size={14} /><span>Remove</span></button></div>}
             </div>
             {expandedFieldId === field.id && <div className="field-editor-body">
               <div className="field-settings field-basic-settings">
@@ -1266,5 +1330,54 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
     {selectedForm && <FormSlugDialog open={slugPrompt !== null} eventSlug={eventSlug} currentSlug={selectedForm.slug} offeredSlug={slugPrompt?.offeredSlug ?? ""} error={slugError} busy={busy === "slug"} onKeep={keepSlug} onUpdate={updateSlug} onCancel={() => { setSlugPrompt(null); setSlugError(""); }} />}
 
     {confirmingPublish && selectedForm && selectedVersion && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setConfirmingPublish(false); }}><section className="modal-card confirm-import-modal" ref={publishDialogRef} role="dialog" aria-modal="true" aria-labelledby="publish-form-title" tabIndex={-1}><div className="modal-head"><div><p className="eyebrow">Publish registration form</p><h2 id="publish-form-title">Publish version {selectedVersion.versionNumber}?</h2></div><button className="icon-button" type="button" aria-label="Close dialog" onClick={() => setConfirmingPublish(false)}><X size={18} /></button></div><div className="boundary-callout"><ShieldCheck size={19} /><span><strong>This form will be ready for the public event page</strong><small>The event must also be published in Event settings before visitors can register.</small></span></div><p className="confirm-copy">This version is saved as the public version. Later edits create a new draft, so existing registrations always retain the exact questions and prices they submitted.</p><div className="form-actions"><button className="secondary-button" type="button" onClick={() => setConfirmingPublish(false)}>Review again</button><button className="primary-button" type="button" disabled={busy !== null} onClick={publish}>{busy === "publish" ? "Publishing…" : "Publish form"}</button></div></section></div>}
+
+    <ConfirmDialog
+      busy={false}
+      confirmLabel="Remove field"
+      destructive
+      error=""
+      onCancel={() => { setRemoveFieldTarget(null); setRemovalAnswerCounts(null); }}
+      onConfirm={confirmRemoveField}
+      open={removeFieldTarget !== null}
+      title={removeFieldTarget ? `Remove "${removeFieldTarget.field.label}"?` : "Remove field?"}
+    >
+      {removeFieldTarget && <p>
+        This field is removed from the draft.{" "}
+        {removalAnswerCountsLoading
+          ? "Checking already-submitted answers…"
+          : (() => {
+            const count = removalAnswerCounts?.[removeFieldTarget.field.key] ?? 0;
+            return count > 0
+              ? `The ${count} answer${count === 1 ? "" : "s"} already submitted stay on those registrations.`
+              : "No attendee has submitted an answer for it yet.";
+          })()}
+      </p>}
+    </ConfirmDialog>
+
+    <ConfirmDialog
+      busy={false}
+      confirmLabel="Remove section"
+      destructive
+      error=""
+      onCancel={() => { setRemoveSectionTarget(null); setRemovalAnswerCounts(null); }}
+      onConfirm={confirmRemoveSection}
+      open={removeSectionTarget !== null}
+      title={removeSectionTarget ? `Remove "${removeSectionTarget.section.title}"?` : "Remove section?"}
+    >
+      {removeSectionTarget && <p>
+        This section and its {removeSectionTarget.section.fields.length} field{removeSectionTarget.section.fields.length === 1 ? "" : "s"} are removed from the draft.{" "}
+        {removalAnswerCountsLoading
+          ? "Checking already-submitted answers…"
+          : (() => {
+            const total = removeSectionTarget.section.fields.reduce(
+              (sum, field) => sum + (removalAnswerCounts?.[field.key] ?? 0),
+              0,
+            );
+            return total > 0
+              ? `The ${total} answer${total === 1 ? "" : "s"} already submitted for its fields stay on those registrations.`
+              : "No attendee has submitted an answer for these fields yet.";
+          })()}
+      </p>}
+    </ConfirmDialog>
   </section>;
 }

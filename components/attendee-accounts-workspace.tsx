@@ -2,8 +2,18 @@
 
 import { useState } from "react";
 import { LogOut, Mail, MapPinned, Search, ShieldOff } from "lucide-react";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
 import type { AttendeeAccountSummary } from "@/modules/system-admin/user-admin";
+
+type PendingAccountAction = {
+  account: AttendeeAccountSummary;
+  body: Record<string, string | boolean>;
+  title: string;
+  description: string;
+  confirmLabel: string;
+  destructive: boolean;
+};
 
 function when(value: string | null) {
   return value ? new Date(value).toLocaleDateString("en-US", { dateStyle: "medium" }) : "—";
@@ -20,6 +30,11 @@ export function AttendeeAccountsWorkspace({ initialAccounts }: { initialAccounts
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // Review before a high-consequence account action (#471): the shared
+  // in-page confirm dialog replaces `window.confirm()`, which iOS Safari can
+  // silently fail to show at all.
+  const [pendingAction, setPendingAction] = useState<PendingAccountAction | null>(null);
+  const [dialogError, setDialogError] = useState("");
 
   async function search(event?: React.FormEvent<HTMLFormElement>) {
     event?.preventDefault();
@@ -51,11 +66,26 @@ export function AttendeeAccountsWorkspace({ initialAccounts }: { initialAccounts
       if (!response.ok) throw new Error(result.message ?? "That account couldn't be updated.");
       setNotice(`${account.displayName || account.email}: ${result.message}`);
       await search();
+      return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "That account couldn't be updated.");
+      return false;
     } finally {
       setBusy("");
     }
+  }
+
+  function openConfirm(pending: PendingAccountAction) {
+    setDialogError("");
+    setPendingAction(pending);
+  }
+
+  async function confirmPendingAction() {
+    if (!pendingAction) return;
+    setDialogError("");
+    const ok = await act(pendingAction.account, pendingAction.body);
+    if (ok) setPendingAction(null);
+    else setDialogError("That account couldn't be updated.");
   }
 
   return (
@@ -73,7 +103,8 @@ export function AttendeeAccountsWorkspace({ initialAccounts }: { initialAccounts
         </div>
       </div>
       {notice && <div className="inline-notice success" role="status">{notice}</div>}
-      {error && <div className="inline-notice error" role="alert">{error}</div>}
+      {/* While the confirm dialog is open, its own alert shows the error; one announcement, not two. */}
+      {error && !pendingAction && <div className="inline-notice error" role="alert">{error}</div>}
       <form className="panel accounts-search" onSubmit={search}>
         <label>
           <span className="sr-only">Search by email or name</span>
@@ -115,7 +146,14 @@ export function AttendeeAccountsWorkspace({ initialAccounts }: { initialAccounts
                           <button
                             className="secondary-button"
                             disabled={busy === account.id}
-                            onClick={() => window.confirm(`Reset two-step sign-in for ${account.email}? Their authenticator and passkeys are removed and they're signed out.`) && void act(account, { action: "reset-two-step" })}
+                            onClick={() => openConfirm({
+                              account,
+                              body: { action: "reset-two-step" },
+                              title: `Reset two-step sign-in for ${account.email}?`,
+                              description: "Their authenticator and passkeys are removed and they're signed out.",
+                              confirmLabel: "Reset two-step",
+                              destructive: true,
+                            })}
                             type="button"
                           >
                             <ShieldOff aria-hidden="true" size={14} /> Reset two-step
@@ -124,10 +162,23 @@ export function AttendeeAccountsWorkspace({ initialAccounts }: { initialAccounts
                         <button
                           className="secondary-button"
                           disabled={busy === account.id}
-                          onClick={() => window.confirm(account.areaCoordinator
-                            ? `Remove Area Coordinator from ${account.email}? They'll no longer see other clubs.`
-                            : `Make ${account.email} an Area Coordinator? They'll see every club, view only (ages, not birth dates), after a second sign-in step.`)
-                            && void act(account, { action: "area-coordinator", on: !account.areaCoordinator })}
+                          onClick={() => openConfirm(account.areaCoordinator
+                            ? {
+                              account,
+                              body: { action: "area-coordinator", on: false },
+                              title: `Remove Area Coordinator from ${account.email}?`,
+                              description: "They'll no longer see other clubs.",
+                              confirmLabel: "Remove Area Coordinator",
+                              destructive: true,
+                            }
+                            : {
+                              account,
+                              body: { action: "area-coordinator", on: true },
+                              title: `Make ${account.email} an Area Coordinator?`,
+                              description: "They'll see every club, view only (ages, not birth dates), after a second sign-in step.",
+                              confirmLabel: "Make Area Coordinator",
+                              destructive: false,
+                            })}
                           type="button"
                         >
                           <MapPinned aria-hidden="true" size={14} /> {account.areaCoordinator ? "Remove Area Coordinator" : "Make Area Coordinator"}
@@ -135,7 +186,14 @@ export function AttendeeAccountsWorkspace({ initialAccounts }: { initialAccounts
                         <button
                           className="secondary-button"
                           disabled={busy === account.id}
-                          onClick={() => window.confirm(`Sign ${account.email} out on every device?`) && void act(account, { action: "sign-out" })}
+                          onClick={() => openConfirm({
+                            account,
+                            body: { action: "sign-out" },
+                            title: `Sign ${account.email} out on every device?`,
+                            description: "This immediately ends every active session for this account.",
+                            confirmLabel: "Sign out everywhere",
+                            destructive: true,
+                          })}
                           type="button"
                         >
                           <LogOut aria-hidden="true" size={14} /> Sign out everywhere
@@ -163,6 +221,19 @@ export function AttendeeAccountsWorkspace({ initialAccounts }: { initialAccounts
           </div>
         )}
       </section>
+
+      <ConfirmDialog
+        busy={pendingAction ? busy === pendingAction.account.id : false}
+        confirmLabel={pendingAction?.confirmLabel ?? "Confirm"}
+        destructive={pendingAction?.destructive ?? false}
+        error={dialogError}
+        onCancel={() => setPendingAction(null)}
+        onConfirm={() => void confirmPendingAction()}
+        open={pendingAction !== null}
+        title={pendingAction?.title ?? ""}
+      >
+        <p>{pendingAction?.description}</p>
+      </ConfirmDialog>
     </section>
   );
 }

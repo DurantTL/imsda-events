@@ -295,6 +295,14 @@ export async function createEvent(
   return getEventSettings(eventId);
 }
 
+/**
+ * Publishing and unpublishing are their own actions (#471), never a side
+ * effect of this save: whatever `input.isPublished` says, the event's
+ * published state is always carried over unchanged from `current`. Toggling
+ * it requires `publishEvent` or `unpublishEvent` below, each with its own
+ * audit entry and, for unpublish, an explicit in-page confirmation naming
+ * the event and the consequence rather than this settings form.
+ */
 export async function updateEventSettings(
   eventId: string,
   input: EventSettingsInput,
@@ -302,7 +310,7 @@ export async function updateEventSettings(
 ) {
   const prisma = getPrisma();
   await prisma.$transaction(async (tx) => {
-    const [current, publishedFormCount, currentPaymentInstructions] = await Promise.all([
+    const [current, currentPaymentInstructions] = await Promise.all([
       tx.event.findUnique({
         where: { id: eventId },
         select: {
@@ -334,9 +342,6 @@ export async function updateEventSettings(
           autoPromoteWaitlist: true,
         },
       }),
-      tx.registrationFormVersion.count({
-        where: { status: "PUBLISHED", form: { eventId } },
-      }),
       tx.eventPaymentInstructionVersion.findFirst({
         where: { eventId },
         orderBy: { versionNumber: "desc" },
@@ -345,16 +350,6 @@ export async function updateEventSettings(
     ]);
     if (!current) {
       throw new EventOperationError("EVENT_NOT_FOUND", "That event no longer exists.");
-    }
-    const readiness = getEventPublishReadiness(input, publishedFormCount);
-    if (!current.isPublished && input.isPublished && !readiness.ready) {
-      const missing = readiness.items
-        .filter((item) => !item.complete)
-        .map((item) => item.label.toLowerCase());
-      throw new EventOperationError(
-        "EVENT_NOT_READY",
-        `Finish the publish checklist first: ${missing.join(", ")}.`,
-      );
     }
     await tx.event.update({
       where: { id: eventId },
@@ -369,7 +364,8 @@ export async function updateEventSettings(
         publicInfoUrl: input.publicInfoUrl,
         supportContact: input.supportContact,
         ...lodgingUpdateData(input),
-        isPublished: input.isPublished,
+        // Never changed by a settings save (#471): see the function doc above.
+        isPublished: current.isPublished,
         registrationOpensOn: input.registrationOpensOn,
         registrationClosesOn: input.registrationClosesOn,
         waitlistEnabled: input.waitlistEnabled,
@@ -399,16 +395,118 @@ export async function updateEventSettings(
       data: {
         eventId,
         actorUserId,
-        action: current.isPublished !== input.isPublished
-          ? input.isPublished ? "EVENT_PUBLISHED" : "EVENT_UNPUBLISHED"
-          : "EVENT_SETTINGS_UPDATED",
+        action: "EVENT_SETTINGS_UPDATED",
         entityType: "Event",
         entityId: eventId,
         correlationId: crypto.randomUUID(),
-        summary: current.isPublished !== input.isPublished
-          ? input.isPublished ? `Published event: ${input.name}.` : `Unpublished event: ${input.name}.`
-          : `Updated event settings: ${input.name}.`,
+        summary: `Updated event settings: ${input.name}.`,
         metadata: { before: current, after: input },
+      },
+    });
+  });
+  return getEventSettings(eventId);
+}
+
+/**
+ * Publishing is its own action (#471), gated by the same readiness checklist
+ * the settings form always showed, but no longer reachable by saving that
+ * form. A no-op (still audited-free) when the event is already published, so
+ * a doubled click or a race with another tab can't produce a confusing error.
+ */
+export async function publishEvent(eventId: string, actorUserId: string) {
+  const prisma = getPrisma();
+  await prisma.$transaction(async (tx) => {
+    const [current, publishedFormCount] = await Promise.all([
+      tx.event.findUnique({
+        where: { id: eventId },
+        select: {
+          name: true,
+          slug: true,
+          startsAt: true,
+          endsAt: true,
+          timezone: true,
+          location: true,
+          publicInfoUrl: true,
+          supportContact: true,
+          isPublished: true,
+        },
+      }),
+      tx.registrationFormVersion.count({
+        where: { status: "PUBLISHED", form: { eventId } },
+      }),
+    ]);
+    if (!current) {
+      throw new EventOperationError("EVENT_NOT_FOUND", "That event no longer exists.");
+    }
+    if (current.isPublished) return;
+    const readiness = getEventPublishReadiness(
+      {
+        name: current.name,
+        slug: current.slug,
+        startsOn: current.startsAt.toISOString().slice(0, 10),
+        endsOn: current.endsAt.toISOString().slice(0, 10),
+        timezone: current.timezone,
+        location: current.location,
+        publicInfoUrl: current.publicInfoUrl,
+        supportContact: current.supportContact,
+      },
+      publishedFormCount,
+    );
+    if (!readiness.ready) {
+      const missing = readiness.items
+        .filter((item) => !item.complete)
+        .map((item) => item.label.toLowerCase());
+      throw new EventOperationError(
+        "EVENT_NOT_READY",
+        `Finish the publish checklist first: ${missing.join(", ")}.`,
+      );
+    }
+    await tx.event.update({ where: { id: eventId }, data: { isPublished: true } });
+    await tx.auditLog.create({
+      data: {
+        eventId,
+        actorUserId,
+        action: "EVENT_PUBLISHED",
+        entityType: "Event",
+        entityId: eventId,
+        correlationId: crypto.randomUUID(),
+        summary: `Published event: ${current.name}.`,
+        metadata: { name: current.name },
+      },
+    });
+  });
+  return getEventSettings(eventId);
+}
+
+/**
+ * Unpublish is its own action (#471), confirmed in-page rather than folded
+ * into a settings save: it names the event and warns that every public
+ * registration form closes immediately, since that's the whole effect. A
+ * no-op when already unpublished, for the same doubled-click/race reason as
+ * `publishEvent`.
+ */
+export async function unpublishEvent(eventId: string, actorUserId: string) {
+  const prisma = getPrisma();
+  await prisma.$transaction(async (tx) => {
+    const current = await tx.event.findUnique({
+      where: { id: eventId },
+      select: { name: true, isPublished: true },
+    });
+    if (!current) {
+      throw new EventOperationError("EVENT_NOT_FOUND", "That event no longer exists.");
+    }
+    if (!current.isPublished) return;
+    await tx.event.update({ where: { id: eventId }, data: { isPublished: false } });
+    await tx.auditLog.create({
+      data: {
+        eventId,
+        actorUserId,
+        action: "EVENT_UNPUBLISHED",
+        entityType: "Event",
+        entityId: eventId,
+        correlationId: crypto.randomUUID(),
+        summary: `Unpublished event: ${current.name}.`,
+        metadata: { name: current.name },
       },
     });
   });

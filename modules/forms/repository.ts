@@ -422,3 +422,37 @@ export async function createTestSubmission(
   });
   return { id: submission.id, isValid: validation.isValid, validation, createdAt: submission.createdAt.toISOString() };
 }
+
+/**
+ * Real counts for the builder's "review before removing" dialog (#471): how
+ * many attendees on real registrations for this event already have a
+ * non-empty answer for each given field key. Registration-scope answers are
+ * merged into every attendee's own `formResponses` at submission time (see
+ * `usageResponseSetsFromJson` above and `preparePublicRegistration`), so this
+ * single column covers both attendee- and registration-scope fields without
+ * a second query. Draft-only edits in the builder never change this: it
+ * only ever reflects what attendees have actually submitted.
+ */
+export async function countFieldAnswers(
+  eventId: string,
+  fieldKeys: string[],
+): Promise<Record<string, number>> {
+  const keys = [...new Set(fieldKeys.filter((key) => key.length > 0))];
+  if (keys.length === 0) return {};
+  const prisma = getPrisma();
+  const entries = await Promise.all(keys.map(async (key) => {
+    const rows = await prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+      SELECT COUNT(*)::bigint AS count
+      FROM "RegistrationAttendee"
+      WHERE "eventId" = ${eventId}
+        AND "formResponses" ? ${key}
+        AND jsonb_typeof("formResponses" -> ${key}) <> 'null'
+        AND NOT (
+          jsonb_typeof("formResponses" -> ${key}) = 'string'
+          AND "formResponses" ->> ${key} = ''
+        )
+    `);
+    return [key, Number(rows[0]?.count ?? 0)] as const;
+  }));
+  return Object.fromEntries(entries);
+}
