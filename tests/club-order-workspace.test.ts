@@ -27,8 +27,8 @@ const data: ClubOrderWorkspaceData = {
     { needId: "n2", itemId: "i1", itemName: "Camping Skills", firstName: "Jordan", lastName: "Example", fromStock: true },
   ],
   waiting: [
-    { needId: "n2", itemName: "Camping Skills", sourceLabel: "Camping Skills", sourceDate: "2025-05-01", firstName: "Jordan", lastName: "Example", beforeFirstOrder: true },
-    { needId: "n3", itemName: null, sourceLabel: "Orienteering", sourceDate: "2026-09-20", firstName: "Riley", lastName: "Test", beforeFirstOrder: false },
+    { needId: "n2", sourceType: "HONOR", itemName: "Camping Skills", sourceLabel: "Camping Skills", sourceDate: "2025-05-01", firstName: "Jordan", lastName: "Example", beforeFirstOrder: true },
+    { needId: "n3", sourceType: "HONOR", itemName: null, sourceLabel: "Orienteering", sourceDate: "2026-09-20", firstName: "Riley", lastName: "Test", beforeFirstOrder: false },
   ],
   firstOrderAt: "2026-08-20T15:00:00.000Z",
 };
@@ -42,7 +42,7 @@ describe("ClubOrderWorkspace (#487)", () => {
     const html = render(false);
     expect(html).toContain("Place order");
     expect(html).toContain("Mark received");
-    expect(html).toContain("Mark awarded");
+    expect(html).toContain("Mark handed out");
     expect(html).toContain("Select all");
     expect(html).toContain('type="number"');
     expect(html).toContain('type="checkbox"');
@@ -56,7 +56,7 @@ describe("ClubOrderWorkspace (#487)", () => {
     expect(html).toContain("Alex Sample");
     expect(html).not.toContain("Place order");
     expect(html).not.toContain("Mark received");
-    expect(html).not.toContain("Mark awarded");
+    expect(html).not.toContain("Mark handed out");
     expect(html).not.toContain('type="number"');
     expect(html).not.toContain('type="checkbox"');
   });

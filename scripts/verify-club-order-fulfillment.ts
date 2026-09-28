@@ -241,7 +241,7 @@ async function main() {
   const pickList = await listPickList(clubs.main, batch.batchId);
   assert(pickList.length === 2, `expected 2 pick-list entries, found ${pickList.length}`);
   for (const entry of pickList) {
-    assert(Object.keys(entry).sort().join() === "firstName,itemName,lastName,status", `pick list entry should carry only names, the item, and status, got ${Object.keys(entry).join()}`);
+    assert(Object.keys(entry).sort().join() === "firstName,itemName,lastName,size,status", `pick list entry should carry only names, the item, its size, and status, got ${Object.keys(entry).join()}`);
   }
   assert(pickList.some((entry) => entry.firstName === "Alex" && entry.itemName === "Camping Skills" && entry.status === "Ready to hand out"), "Alex should be on the pick list for Camping Skills, ready to hand out");
   console.log("ok  pick list: names, the item, and status only, no birth date, contact, guardian, or medical field");

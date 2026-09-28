@@ -57,7 +57,7 @@ export default async function ClubLayout({
               ...(access.capabilities.roster ? [{ href: `${base}/honors`, label: "Honors" }] : []),
               // Supplies open on the roster's gate too (#531): directors and deputies edit, registrars view.
               ...(access.capabilities.roster ? [{ href: `${base}/supplies`, label: "Supplies" }] : []),
-              // Honor orders share the supplies gate (#487).
+              // Orders (honors, #487, and uniforms, #497) share the supplies gate.
               ...(access.capabilities.roster ? [{ href: `${base}/orders`, label: "Orders" }] : []),
               { href: `${base}/events`, label: "Events & classes", matchChildren: true },
               ...(access.capabilities.submitReports ? [
