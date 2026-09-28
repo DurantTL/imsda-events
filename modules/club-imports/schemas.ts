@@ -6,7 +6,7 @@ const name = z.string().trim().max(80);
 export const clubImportItemSchema = z.object({
   sourceKey: z.string().trim().regex(/^form-\d+:[A-Za-z0-9_-]{1,40}$/),
   entryId: z.string().trim().min(1).max(40),
-  clubYear: z.string().regex(/^\d{4}-\d{2}$/),
+  clubYear: z.string().regex(/^\d{4}-\d{2}$/).refine((value) => (Number(value.slice(0, 4)) + 1) % 100 === Number(value.slice(5)), "Choose a valid club year."),
   clubName: z.string().trim().min(2, "Every imported club needs a name.").max(120),
   /** An existing church, or null with `newChurchName` to create one, or neither for none. */
   churchId: z.string().trim().max(40).nullable(),
@@ -23,11 +23,22 @@ export const clubImportItemSchema = z.object({
     role: z.string().trim().max(60).default(""),
     classLevel: z.enum(["FRIEND", "COMPANION", "EXPLORER", "RANGER", "VOYAGER", "GUIDE", "TLT", "MASTER_GUIDE"]).nullable(),
     reportedAge: z.number().int().min(0).max(99).nullable(),
+    /** "Keep both" (#541): add this person even though an earlier person in the file has the same name and section. */
+    keepBoth: z.boolean().default(false),
   }).strict()).max(300),
 }).strict();
 
 export const clubImportConfirmSchema = z.object({
   clubs: z.array(clubImportItemSchema).min(1, "Choose at least one club to import.").max(400),
+}).strict();
+
+const clubYear = z.string().regex(/^\d{4}-\d{2}$/, "Choose a valid club year.");
+
+/** "Move this import to another club year" (#541): preview first, then move. */
+export const importYearMoveSchema = z.object({
+  fromYear: clubYear,
+  toYear: clubYear,
+  mode: z.enum(["preview", "move"]),
 }).strict();
 
 export type ClubImportItem = z.infer<typeof clubImportItemSchema>;
