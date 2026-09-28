@@ -575,6 +575,8 @@ model User {
   submittedClubEventRegistrations    ClubEventRegistration[]      @relation("ClubEventRegistrationSubmittedByUser")
   updatedClubRegistrationDrafts      ClubRegistrationDraft[]      @relation("ClubRegistrationDraftUpdatedByUser")
   updatedClubSupplyStock             ClubSupplyStock[]            @relation("ClubSupplyStockUpdatedByUser")
+  createdClubOrderBatches            ClubSupplyOrderBatch[]       @relation("ClubSupplyOrderBatchCreatedByUser")
+  receivedClubOrderBatches           ClubSupplyOrderBatch[]       @relation("ClubSupplyOrderBatchReceivedByUser")
 
   createdEventTemplates              EventTemplate[]              @relation("EventTemplateCreatedBy")
   createdEventTemplateVersions       EventTemplateVersion[]       @relation("EventTemplateVersionCreatedBy")
@@ -809,6 +811,8 @@ model AttendeeAccount {
   /// their own club's registration (H3b, #366).
   amendedRegistrationOperations     RegistrationOperation[]     @relation("RegistrationOperationActorAttendeeAccount")
   updatedClubSupplyStock            ClubSupplyStock[]           @relation("ClubSupplyStockUpdatedByAccount")
+  createdClubOrderBatches           ClubSupplyOrderBatch[]      @relation("ClubSupplyOrderBatchCreatedByAccount")
+  receivedClubOrderBatches          ClubSupplyOrderBatch[]      @relation("ClubSupplyOrderBatchReceivedByAccount")
 
   @@index([status])
 }
@@ -1454,6 +1458,7 @@ model Person {
   memberHonorEntries    MemberHonorEntry[]
   memberTransfers       MemberTransfer[] @relation("MemberTransferPerson")
   pendingMemberTransfer MemberTransfer?  @relation("MemberTransferPendingPerson")
+  clubOrderNeeds        ClubOrderNeed[]
 
   @@index([lastName, firstName])
 }
@@ -1662,6 +1667,8 @@ model Organization {
   transfersReceived  MemberTransfer[]   @relation("MemberTransferTo")
   transfersSent      MemberTransfer[]   @relation("MemberTransferFrom")
   clubSupplyStock    ClubSupplyStock[]
+  clubOrderNeeds     ClubOrderNeed[]
+  clubOrderBatches   ClubSupplyOrderBatch[]
 
   @@index([type, isActive, name])
   @@index([parentOrganizationId, isActive])
@@ -3300,6 +3307,8 @@ model ClubSupplyItem {
 
   honor Honor?            @relation(fields: [honorId], references: [id], onDelete: SetNull)
   stock ClubSupplyStock[]
+  orderNeeds ClubOrderNeed[]
+  orderLines ClubSupplyOrderLine[]
 
   @@unique([section, normalizedName])
   @@index([catalogNumber])
@@ -3327,6 +3336,120 @@ model ClubSupplyStock {
   updatedByUser    User?            @relation("ClubSupplyStockUpdatedByUser", fields: [updatedByUserId], references: [id], onDelete: SetNull)
 
   @@unique([organizationId, itemId])
+  @@index([itemId])
+}
+
+/// Where a `ClubOrderNeed` came from (#487). Honors is the first source;
+/// uniform ordering (#497) and earned awards/insignia (#532) add their own
+/// values later without changing this table's shape.
+enum ClubOrderSourceType {
+  HONOR
+}
+
+/// How one need for a catalog item has moved along (#487): completed/needed
+/// (no row yet — computed from the source), then ordered, received, and
+/// finally awarded (handed to the person) or issued.
+enum ClubOrderNeedStatus {
+  NEEDED
+  ORDERED
+  RECEIVED
+  AWARDED
+}
+
+/// One club's need for one catalog item, for one person, from one source
+/// instance (#487): an honor completion today, a uniform size or an earned
+/// award tomorrow. `sourceType`/`sourceId` is the only source-specific part;
+/// everything else — the item, the person, and the fulfillment state — is
+/// generic. Unique on the source pair, so re-scanning a source never creates
+/// the same need twice. For honors the `sourceId` is `personId:honorId`, so a
+/// re-completion or a completion-date correction (#486 records are
+/// append-only) never makes a second need for the same patch.
+model ClubOrderNeed {
+  id             String              @id @default(cuid())
+  organizationId String
+  sourceType     ClubOrderSourceType
+  sourceId       String
+  personId       String
+  /// Null when the source item has no matching `ClubSupplyItem` at all (an
+  /// unmatched honor); flagged in the order list rather than silently dropped.
+  itemId         String?
+  /// What the source calls this need, for the screen when there's no catalog
+  /// item to name it by (an honor's name today). Never a personal field.
+  sourceLabel    String              @default("")
+  /// The calendar date (`YYYY-MM-DD`) the need arose at the source (an honor's
+  /// completion date), or blank when the source has none. Lets a club mark
+  /// "already handed out" everything completed before a date (#487).
+  sourceDate     String              @default("")
+  status         ClubOrderNeedStatus @default(NEEDED)
+  batchId        String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  person       Person                @relation(fields: [personId], references: [id], onDelete: Restrict)
+  item         ClubSupplyItem?       @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  batch        ClubSupplyOrderBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+
+  @@unique([sourceType, sourceId])
+  @@index([organizationId, status])
+  @@index([itemId])
+  @@index([batchId])
+}
+
+/// A `ClubSupplyOrderBatch`'s own two states: placed, or received.
+enum ClubSupplyOrderBatchStatus {
+  ORDERED
+  RECEIVED
+}
+
+/// One AdventSource order a club placed (#487): a set of catalog items and
+/// quantities, moved from ordered to received in bulk. Receiving adds each
+/// line's `quantityOrdered` to the club's stock; awarding a specific person's
+/// item later draws down that same stock.
+model ClubSupplyOrderBatch {
+  id                  String    @id @default(cuid())
+  organizationId      String
+  status              ClubSupplyOrderBatchStatus @default(ORDERED)
+  createdByAccountId  String?
+  /// Set instead of `createdByAccountId` for a staff "act as" director (#442).
+  createdByUserId     String?
+  createdAt           DateTime  @default(now())
+  receivedAt          DateTime?
+  receivedByAccountId String?
+  /// Set instead of `receivedByAccountId` for a staff "act as" director (#442).
+  receivedByUserId    String?
+
+  organization      Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdByAccount  AttendeeAccount?      @relation("ClubSupplyOrderBatchCreatedByAccount", fields: [createdByAccountId], references: [id], onDelete: SetNull)
+  createdByUser     User?                 @relation("ClubSupplyOrderBatchCreatedByUser", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  receivedByAccount AttendeeAccount?      @relation("ClubSupplyOrderBatchReceivedByAccount", fields: [receivedByAccountId], references: [id], onDelete: SetNull)
+  receivedByUser    User?                 @relation("ClubSupplyOrderBatchReceivedByUser", fields: [receivedByUserId], references: [id], onDelete: SetNull)
+  lines             ClubSupplyOrderLine[]
+  needs             ClubOrderNeed[]
+
+  @@index([organizationId, status])
+}
+
+/// One catalog item's line on an order batch (#487): the count needed and any
+/// extras at the moment the order was placed, and the stock on hand then
+/// (context for later review; never re-derived).
+model ClubSupplyOrderLine {
+  id               String   @id @default(cuid())
+  batchId          String
+  itemId           String
+  neededCount      Int
+  extraCount       Int      @default(0)
+  stockAtOrderTime Int
+  /// What was actually put on the AdventSource order: needed plus extras,
+  /// less the stock free to cover them then, never below zero. Receiving adds
+  /// exactly this to stock (#487).
+  quantityOrdered  Int
+  createdAt        DateTime @default(now())
+
+  batch ClubSupplyOrderBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  item  ClubSupplyItem       @relation(fields: [itemId], references: [id], onDelete: Restrict)
+
+  @@unique([batchId, itemId])
   @@index([itemId])
 }
 
@@ -3739,6 +3862,7 @@ model HonorEnrollment {
   registration         Registration         @relation(fields: [registrationId], references: [id], onDelete: Cascade)
   registrationAttendee RegistrationAttendee @relation(fields: [registrationAttendeeId], references: [id], onDelete: Cascade)
   organization         Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  weekendCompletion    HonorWeekendCompletionLink?
 
   @@unique([registrationAttendeeId, offeringId])
   @@index([offeringId, consumesSeat])
@@ -3780,10 +3904,30 @@ model MemberHonorEntry {
   organization      Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   recordedByAccount AttendeeAccount? @relation("MemberHonorEntryRecordedBy", fields: [recordedByAccountId], references: [id], onDelete: SetNull)
   recordedByUser    User?            @relation("MemberHonorEntryRecordedByUser", fields: [recordedByUserId], references: [id], onDelete: SetNull)
+  weekendCompletionLinks HonorWeekendCompletionLink[]
 
   @@index([personId, honorId, seq])
   @@index([organizationId, createdAt])
   @@index([honorId])
+}
+
+/// Marks one Honors Weekend class enrollment (#357–#360) as already written
+/// back into the member's year-round honor record (#487, #486). Unique on
+/// `enrollmentId`, so writing back is idempotent: running the job again over
+/// the same enrollments creates nothing new. Not unique on the entry: when
+/// the member's latest entry for that honor is already COMPLETED (recorded by
+/// hand, or by an earlier weekend), the enrollment links to that entry rather
+/// than appending a second one.
+model HonorWeekendCompletionLink {
+  id                 String   @id @default(cuid())
+  enrollmentId       String   @unique
+  memberHonorEntryId String
+  createdAt          DateTime @default(now())
+
+  enrollment       HonorEnrollment  @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  memberHonorEntry MemberHonorEntry @relation(fields: [memberHonorEntryId], references: [id], onDelete: Cascade)
+
+  @@index([memberHonorEntryId])
 }
 
 /// How a club member transfer (#489) was brought to a close.

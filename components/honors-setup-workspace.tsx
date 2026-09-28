@@ -155,6 +155,13 @@ export function HonorsSetupWorkspace({
     if (result) setPlan(null);
   }
 
+  async function writeBackCompletions() {
+    const result = await call(`${base}/completions`, "POST", undefined, "") as (ApiResult & { written?: number; alreadyRecorded?: number; skipped?: number }) | null;
+    if (result && typeof result.written === "number") {
+      setNotice(`Wrote ${result.written} completion${result.written === 1 ? "" : "s"} into members' honor records. ${result.alreadyRecorded ?? 0} already recorded. ${result.skipped ?? 0} skipped (not checked in, or not on the enrolling club's roster).`);
+    }
+  }
+
   return (
     <section className="page-stack">
       <div className="page-intro">
@@ -369,6 +376,25 @@ export function HonorsSetupWorkspace({
             </table>
           </div>
         ))}
+      </section>
+
+      <section className="panel form-stack">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">After the weekend</p>
+            <h2>Write back completions</h2>
+          </div>
+        </div>
+        <p className="field-help">
+          Adds each checked-in youth&apos;s classes to their year-round honor record, so the
+          club&apos;s order list picks them up. Safe to run again: a class already written back
+          is never added twice.
+        </p>
+        <div>
+          <button className="secondary-button" disabled={saving} onClick={writeBackCompletions} type="button">
+            <Award aria-hidden="true" size={14} /> Write back completions
+          </button>
+        </div>
       </section>
 
       {otherEvents.length > 0 && (
