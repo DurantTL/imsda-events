@@ -33,7 +33,7 @@ const youth = {
 
 function fakeDatabase() {
   let sequence = 0;
-  const db = { people: [] as Row[], members: [] as Row[], otherReferences: new Set<string>(), honorEntryPersons: new Set<string>() };
+  const db = { people: [] as Row[], members: [] as Row[], otherReferences: new Set<string>(), honorEntries: [] as Row[] };
   const matches = (row: Row, where: Record<string, unknown> = {}) => Object.entries(where).every(([key, value]) => {
     if (value === undefined) return true;
     if (value && typeof value === "object" && "not" in value) return row[key] !== (value as { not: unknown }).not;
@@ -58,9 +58,15 @@ function fakeDatabase() {
             householdMembers: 0, heldRegistrations: 0, registrationEvents: referenced, externalIdentities: 0,
             notes: 0, attendeeAccountLinks: 0, userLinks: 0,
             clubRosterMemberships: db.members.filter((member) => member.personId === person.id).length,
-            memberHonorEntries: db.honorEntryPersons.has(person.id) ? 1 : 0,
           },
         };
+      },
+    },
+    memberHonorEntry: {
+      deleteMany: async ({ where }: { where: { personId: string } }) => {
+        const before = db.honorEntries.length;
+        db.honorEntries = db.honorEntries.filter((entry) => entry.personId !== where.personId);
+        return { count: before - db.honorEntries.length };
       },
     },
     clubRosterMember: {
@@ -225,15 +231,45 @@ describe("club roster storage", () => {
     await expect(updateRosterMember("club-1", lone, { role: "Back" }, actor, now)).rejects.toMatchObject({ code: "MEMBER_REMOVED" });
   });
 
-  it("keeps a person on file when they still have honor history, even with no other reference (#486)", async () => {
+  it("removing a member with honor history deletes the person and their honor entries, and audits the count (#486)", async () => {
     const id = await addRosterMember("club-1", "2026-27", youth, actor, { now });
-    const personId = db.members[0].personId as string;
-    db.honorEntryPersons.add(personId);
+    const otherId = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Other" }, actor, { now });
+    const elsewhereId = await addRosterMember("club-2", "2026-27", { ...youth, firstName: "Elsewhere" }, actor, { now });
+    const personOf = (memberId: string) => db.members.find((member) => member.id === memberId)!.personId as string;
+    const personId = personOf(id);
+    const otherPersonId = personOf(otherId);
+    const elsewherePersonId = personOf(elsewhereId);
+    db.honorEntries.push(
+      { id: "entry-1", personId, organizationId: "club-1" },
+      { id: "entry-2", personId, organizationId: "club-2" },
+      { id: "entry-3", personId: otherPersonId, organizationId: "club-1" },
+      { id: "entry-4", personId: elsewherePersonId, organizationId: "club-2" },
+    );
 
     await removeRosterMember("club-1", id, actor, now);
 
-    expect(db.members[0]).toMatchObject({ status: "REMOVED", sealedBirthDate: null, personId: null });
-    // The Person row survives so their honor history (keyed by personId) is never orphaned.
+    expect(db.members.find((member) => member.id === id)).toMatchObject({ status: "REMOVED", sealedBirthDate: null, personId: null });
+    expect(db.people.some((person) => person.id === personId)).toBe(false);
+    // Every entry for that person goes, whichever club recorded it; nobody else's does.
+    expect(db.honorEntries.map((entry) => entry.id)).toEqual(["entry-3", "entry-4"]);
+    expect(db.people.some((person) => person.id === otherPersonId)).toBe(true);
+    expect(db.people.some((person) => person.id === elsewherePersonId)).toBe(true);
+    const removal = mocks.writeAuditLog.mock.calls.map(([entry]) => entry).find((entry) => entry.action === "CLUB_ROSTER_MEMBER_REMOVED");
+    expect(removal.metadata).toMatchObject({ personDeleted: true, honorEntriesErased: 2 });
+    expect(JSON.stringify(removal)).not.toContain("Test");
+  });
+
+  it("keeps the person and their honor history when something else still refers to them (#486)", async () => {
+    const id = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const personId = db.members[0].personId as string;
+    db.otherReferences.add(personId);
+    db.honorEntries.push({ id: "entry-1", personId, organizationId: "club-1" });
+
+    await removeRosterMember("club-1", id, actor, now);
+
     expect(db.people.some((person) => person.id === personId)).toBe(true);
+    expect(db.honorEntries).toHaveLength(1);
+    const removal = mocks.writeAuditLog.mock.calls.map(([entry]) => entry).find((entry) => entry.action === "CLUB_ROSTER_MEMBER_REMOVED");
+    expect(removal.metadata).toMatchObject({ personDeleted: false, honorEntriesErased: 0 });
   });
 });
