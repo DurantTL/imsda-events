@@ -255,7 +255,7 @@ export async function applyEventTemplate(
   const payloadSnapshot = payload as unknown as Prisma.InputJsonValue;
 
   try {
-    return await prisma.$transaction(async (tx) => {
+    const eventId = await prisma.$transaction(async (tx) => {
       const platform = await tx.platformSettings.upsert({
         where: { id: "platform" },
         update: {},
@@ -308,12 +308,10 @@ export async function applyEventTemplate(
         const baseSlug = slugify(definition.title);
         let slug = baseSlug;
         let suffix = 2;
-        // eslint-disable-next-line no-await-in-loop -- each candidate depends on the previous lookup within the same new event.
         while (await tx.registrationForm.findUnique({ where: { eventId_slug: { eventId: event.id, slug } }, select: { id: true } })) {
           slug = slugCandidate(baseSlug, suffix);
           suffix += 1;
         }
-        // eslint-disable-next-line no-await-in-loop -- forms are created sequentially so slug lookups above stay correct.
         await tx.registrationForm.create({
           data: {
             eventId: event.id,
@@ -328,7 +326,6 @@ export async function applyEventTemplate(
       if (payload.messageTemplateDefaults.length > 0) {
         for (const messageDefault of payload.messageTemplateDefaults) {
           const key = asEventMessageTemplateKey(messageDefault.key);
-          // eslint-disable-next-line no-await-in-loop -- one small, sequential write per template key on a fresh event.
           await tx.eventMessageTemplate.create({
             data: {
               eventId: event.id,
@@ -381,8 +378,12 @@ export async function applyEventTemplate(
         },
       });
 
-      return { event: (await getEventSettings(event.id))!, alreadyApplied: false };
+      return event.id;
     });
+    // Read back only after the transaction has committed: the outer client
+    // used here is a separate connection from `tx` and must never be asked
+    // to read rows the transaction has not yet made durable.
+    return { event: (await getEventSettings(eventId))!, alreadyApplied: false };
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       const target = Array.isArray(error.meta?.target) ? error.meta.target.join(",") : String(error.meta?.target ?? "");

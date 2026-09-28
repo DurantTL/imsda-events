@@ -60,10 +60,19 @@ export const eventTemplatePayloadSchema = z.object({
   formTemplateKeys: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
   attendeeTypes: z.array(templateAttendeeTypeSchema).max(60).default([]),
   attendeeClassifications: z.array(templateAttendeeClassificationSchema).max(60).default([]),
-  moduleEnablement: moduleEnablementSchema.default({}),
+  moduleEnablement: moduleEnablementSchema.default({
+    waitlistEnabled: false,
+    autoPromoteWaitlist: false,
+    collectsShirtSizes: false,
+    checksAdultBackgrounds: false,
+  }),
   reportSelections: z.array(z.enum(operationalReportKinds)).max(operationalReportKinds.length).default([]),
   messageTemplateDefaults: z.array(templateMessageDefaultSchema).max(MESSAGE_TEMPLATE_DEFAULT_LIMIT).default([]),
-  brandingDefaults: templateBrandingDefaultsSchema.default({}),
+  brandingDefaults: templateBrandingDefaultsSchema.default({
+    publicInfoUrl: null,
+    supportContact: null,
+    calendarCategory: null,
+  }),
 }).superRefine((payload, ctx) => {
   const attendeeTypeCodes = new Set<string>();
   payload.attendeeTypes.forEach((type, index) => {

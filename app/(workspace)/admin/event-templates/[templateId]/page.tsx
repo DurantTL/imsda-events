@@ -16,16 +16,21 @@ export default async function EventTemplateEditorPage({
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
 
   const { templateId } = await params;
+  const template = await loadTemplateOrNotFound(templateId);
+
+  return (
+    <main className="event-setup-page">
+      <header className="event-setup-header">
+        <div><p className="eyebrow">System administration</p><h1>{template.name}</h1></div>
+      </header>
+      <EventTemplateEditor initialTemplate={template} />
+    </main>
+  );
+}
+
+async function loadTemplateOrNotFound(templateId: string) {
   try {
-    const template = await getEventTemplate(templateId);
-    return (
-      <main className="event-setup-page">
-        <header className="event-setup-header">
-          <div><p className="eyebrow">System administration</p><h1>{template.name}</h1></div>
-        </header>
-        <EventTemplateEditor initialTemplate={template} />
-      </main>
-    );
+    return await getEventTemplate(templateId);
   } catch (error) {
     if (error instanceof EventTemplateOperationError && error.code === "TEMPLATE_NOT_FOUND") notFound();
     throw error;
