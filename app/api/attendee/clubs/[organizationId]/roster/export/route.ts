@@ -8,8 +8,9 @@ import { withRequestContext } from "@/lib/request-context";
 
 /**
  * Builds a preview or downloads a CSV for the chosen columns (#490). POST,
- * not GET: even a preview opens birth dates when that column is chosen, and
- * a download is always an audited action, never a cacheable read.
+ * not GET: a preview with birth dates opens (and audits) them for the few
+ * rows it shows, and a download is always an audited action, never a
+ * cacheable read. The preview row cap is enforced by the repository.
  */
 async function postHandler(request: Request, context: { params: Promise<{ organizationId: string }> }) {
   const originError = rejectCrossOriginRequest(request);
@@ -37,7 +38,10 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
         },
       });
     }
-    return Response.json({ headers: result.headers, rows: result.rows }, { headers: { "Cache-Control": "no-store" } });
+    return Response.json(
+      { headers: result.headers, rows: result.rows, totalRows: result.totalRows },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     return rosterApiError(error, "Building a roster export");
   }

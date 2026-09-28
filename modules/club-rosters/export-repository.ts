@@ -5,7 +5,12 @@ import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import type { actorAttribution } from "@/modules/club-rosters/access";
 import { buildRosterExportTable } from "@/modules/club-rosters/export";
-import { isRosterExportColumnKey, sensitiveRosterExportColumns, type RosterExportColumn } from "@/modules/club-rosters/export-columns";
+import {
+  ROSTER_EXPORT_PREVIEW_ROW_LIMIT,
+  isRosterExportColumnKey,
+  sensitiveRosterExportColumns,
+  type RosterExportColumn,
+} from "@/modules/club-rosters/export-columns";
 import type { RosterExportFormatInput, RosterExportRequest } from "@/modules/club-rosters/export-schemas";
 import { openBirthDate } from "@/modules/club-rosters/birth-dates";
 import { listRoster } from "@/modules/club-rosters/repository";
@@ -14,8 +19,9 @@ import { toCsv } from "@/modules/reporting/csv";
 /**
  * Formats and running an export (#490). Formats hold structure only — the
  * column keys, order, and header names a director chose — and are never a
- * frozen copy of the roster. Every actual export (a CSV download) is
- * audited: who, when, which club, and which columns, never row data.
+ * frozen copy of the roster. Every actual export (a CSV download), and every
+ * preview that shows birth dates, is audited: who, when, which club, and
+ * which columns, never row data.
  */
 
 type Actor = ReturnType<typeof actorAttribution>;
@@ -59,28 +65,40 @@ export async function listRosterExportFormats(organizationId: string): Promise<R
   return rows.map(serializeFormat);
 }
 
+function formatNameTaken() {
+  return new RosterExportError("FORMAT_NAME_TAKEN", "A saved format with this name already exists. Choose another name.");
+}
+
 /** Saves a named format's structure (column keys, order, header names) — never a copy of the roster. */
 export async function saveRosterExportFormat(
   organizationId: string,
   input: RosterExportFormatInput,
   actor: Actor,
 ): Promise<RosterExportFormatRecord> {
-  const existing = await getPrisma().clubRosterExportFormat.findUnique({
-    where: { organizationId_name: { organizationId, name: input.name } },
+  // Names are unique per club regardless of case ("NAD Camporee" and
+  // "nad camporee" would be indistinguishable in the picker).
+  const existing = await getPrisma().clubRosterExportFormat.findFirst({
+    where: { organizationId, name: { equals: input.name, mode: "insensitive" } },
     select: { id: true },
   });
-  if (existing) {
-    throw new RosterExportError("FORMAT_NAME_TAKEN", "A saved format with this name already exists. Choose another name.");
+  if (existing) throw formatNameTaken();
+  let row;
+  try {
+    row = await getPrisma().clubRosterExportFormat.create({
+      data: {
+        organizationId,
+        name: input.name,
+        columns: input.columns,
+        ...("accountId" in actor ? { createdByAccountId: actor.accountId } : { createdByUserId: actor.userId }),
+      },
+      select: { id: true, name: true, columns: true, updatedAt: true },
+    });
+  } catch (error) {
+    // Two saves of the same name racing past the check above: the database's
+    // unique (organizationId, name) index rejects the second one.
+    if (typeof error === "object" && error && "code" in error && error.code === "P2002") throw formatNameTaken();
+    throw error;
   }
-  const row = await getPrisma().clubRosterExportFormat.create({
-    data: {
-      organizationId,
-      name: input.name,
-      columns: input.columns,
-      ...("accountId" in actor ? { createdByAccountId: actor.accountId } : { createdByUserId: actor.userId }),
-    },
-    select: { id: true, name: true, columns: true, updatedAt: true },
-  });
   await writeAuditLog({
     ...("userId" in actor ? { actorUserId: actor.userId } : {}),
     action: "CLUB_ROSTER_EXPORT_FORMAT_SAVED",
@@ -111,12 +129,18 @@ export async function deleteRosterExportFormat(organizationId: string, formatId:
 }
 
 /**
- * Builds a preview or a CSV download for the chosen columns. Birth dates are
- * opened with the roster's own `openBirthDate` (the only place a sealed
- * birth date is ever decrypted) only when the birth-date column is chosen
- * and the actor already has `seeBirthDates`. Only a `mode: "csv"` run is
- * itself audited as an export, naming the columns but never a row; a preview
- * alone isn't a hand-off of anyone's data anywhere.
+ * Builds a preview or a CSV download for the chosen columns. Both come from
+ * the same `buildRosterExportTable`, so a preview's rows are exactly the first
+ * rows of the CSV. A preview is capped on the server at
+ * `ROSTER_EXPORT_PREVIEW_ROW_LIMIT` rows (with `totalRows` for the full
+ * count), and opens birth dates only for the members it shows.
+ *
+ * Birth dates are opened with the roster's own `openBirthDate` only when the
+ * birth-date column is chosen and the actor already has `seeBirthDates`.
+ * Every opening is audited without the dates (ADR 0005 Addendum A): a CSV as
+ * `CLUB_ROSTER_EXPORTED`, a preview that shows birth dates as
+ * `CLUB_ROSTER_EXPORT_PREVIEWED`. A preview without birth dates shows only
+ * what the roster page already shows, and isn't audited.
  */
 export async function runRosterExport(
   organizationId: string,
@@ -137,11 +161,12 @@ export async function runRosterExport(
     throw new RosterExportError("SENSITIVE_ACCESS_DENIED", "Your club role doesn't include birth dates. Ask your club director.");
   }
 
-  const members = await listRoster(organizationId, clubYear);
-  const birthDates = needsBirthDate ? await revealBirthDatesForExport(organizationId, clubYear) : null;
-  const table = buildRosterExportTable(members, request.columns, birthDates);
+  const allMembers = await listRoster(organizationId, clubYear);
+  const columnKeys = request.columns.map((column) => column.key);
 
   if (request.mode === "csv") {
+    const birthDates = needsBirthDate ? await revealBirthDatesForExport(organizationId, clubYear, null) : null;
+    const table = buildRosterExportTable(allMembers, request.columns, birthDates);
     await writeAuditLog({
       ...("userId" in actor ? { actorUserId: actor.userId } : {}),
       action: "CLUB_ROSTER_EXPORTED",
@@ -151,19 +176,50 @@ export async function runRosterExport(
       metadata: auditMetadata(actor, {
         organizationId,
         clubYear,
-        columns: request.columns.map((column) => column.key),
-        rowCount: members.length,
+        columns: columnKeys,
+        rowCount: allMembers.length,
       }),
     });
-    return { ...table, csv: toCsv([table.headers, ...table.rows]) };
+    return { ...table, totalRows: allMembers.length, csv: toCsv([table.headers, ...table.rows]) };
   }
-  return table;
+
+  const shown = allMembers.slice(0, ROSTER_EXPORT_PREVIEW_ROW_LIMIT);
+  const birthDates = needsBirthDate && shown.length > 0
+    ? await revealBirthDatesForExport(organizationId, clubYear, shown.map((member) => member.id))
+    : null;
+  const table = buildRosterExportTable(shown, request.columns, birthDates);
+  if (needsBirthDate) {
+    await writeAuditLog({
+      ...("userId" in actor ? { actorUserId: actor.userId } : {}),
+      action: "CLUB_ROSTER_EXPORT_PREVIEWED",
+      entityType: "Organization",
+      entityId: organizationId,
+      summary: "Previewed a club roster export that shows birth dates.",
+      metadata: auditMetadata(actor, {
+        organizationId,
+        clubYear,
+        columns: columnKeys,
+        count: shown.length,
+      }),
+    });
+  }
+  return { ...table, totalRows: allMembers.length };
 }
 
-/** Opens the sealed birth dates this export will use. The export itself is what gets audited (`CLUB_ROSTER_EXPORTED`). */
-async function revealBirthDatesForExport(organizationId: string, clubYear: string) {
+/**
+ * Opens the sealed birth dates this export will use: every member's for a
+ * CSV (`memberIds` null), or only the previewed members'. The caller audits
+ * the opening.
+ */
+async function revealBirthDatesForExport(organizationId: string, clubYear: string, memberIds: string[] | null) {
   const members = await getPrisma().clubRosterMember.findMany({
-    where: { organizationId, clubYear, status: { not: "REMOVED" }, sealedBirthDate: { not: null } },
+    where: {
+      organizationId,
+      clubYear,
+      status: { not: "REMOVED" },
+      sealedBirthDate: { not: null },
+      ...(memberIds ? { id: { in: memberIds } } : {}),
+    },
     select: { id: true, sealedBirthDate: true },
   });
   return Object.fromEntries(members.map((member) => [member.id, openBirthDate(member.sealedBirthDate!)]));

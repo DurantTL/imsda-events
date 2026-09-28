@@ -8,8 +8,8 @@ import type { RosterMemberRecord } from "@/modules/club-rosters/repository";
  * function backs both the preview and the CSV download, so the CSV always
  * matches what the director previewed.
  *
- * `birthDates` is only ever populated by an authorized, audited reveal
- * (`revealRosterBirthDates`); a member missing from it (or a blank map, when
+ * `birthDates` is only ever populated by an authorized, audited reveal in
+ * `runRosterExport`; a member missing from it (or a blank map, when
  * the birth-date column wasn't chosen) renders as an empty cell rather than
  * throwing, since a roster row can genuinely have no birth date on file yet.
  */

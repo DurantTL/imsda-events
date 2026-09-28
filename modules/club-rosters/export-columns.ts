@@ -42,3 +42,10 @@ export function isSensitiveRosterExportColumn(key: RosterExportColumnKey) {
 export function sensitiveRosterExportColumns(columns: RosterExportColumn[]) {
   return columns.filter((column) => isSensitiveRosterExportColumn(column.key));
 }
+
+/**
+ * How many rows a preview returns. The server enforces this cap (never only
+ * the builder), so a preview can't be used to pull the whole roster, and a
+ * preview with birth dates opens only this many.
+ */
+export const ROSTER_EXPORT_PREVIEW_ROW_LIMIT = 5;

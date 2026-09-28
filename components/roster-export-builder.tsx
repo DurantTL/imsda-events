@@ -12,10 +12,8 @@ import {
 } from "@/modules/club-rosters/export-columns";
 import type { RosterExportFormatRecord } from "@/modules/club-rosters/export-repository";
 
-type PreviewResponse = { headers?: string[]; rows?: string[][]; message?: string };
+type PreviewResponse = { headers?: string[]; rows?: string[][]; totalRows?: number; message?: string };
 type FormatsResponse = { formats?: RosterExportFormatRecord[]; format?: RosterExportFormatRecord; message?: string };
-
-const PREVIEW_ROW_LIMIT = 5;
 
 function withDefaultHeader(key: RosterExportColumnKey): RosterExportColumn {
   return { key, header: ROSTER_EXPORT_COLUMNS[key].header };
@@ -40,7 +38,7 @@ export function RosterExportBuilder({
   const base = `/api/attendee/clubs/${encodeURIComponent(organizationId)}/roster/export`;
   const [columns, setColumns] = useState<RosterExportColumn[]>(DEFAULT_ROSTER_EXPORT_COLUMNS);
   const [confirmSensitive, setConfirmSensitive] = useState(false);
-  const [preview, setPreview] = useState<{ headers: string[]; rows: string[][] } | null>(null);
+  const [preview, setPreview] = useState<{ headers: string[]; rows: string[][]; totalRows: number } | null>(null);
   const [formats, setFormats] = useState(initialFormats);
   const [formatName, setFormatName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -105,7 +103,9 @@ export function RosterExportBuilder({
       }
       const result = await response.json().catch(() => ({})) as PreviewResponse;
       if (!response.ok) throw new Error(result.message ?? "The export could not be built.");
-      if (result.headers && result.rows) setPreview({ headers: result.headers, rows: result.rows });
+      if (result.headers && result.rows) {
+        setPreview({ headers: result.headers, rows: result.rows, totalRows: result.totalRows ?? result.rows.length });
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The export could not be built.");
     } finally {
@@ -276,7 +276,7 @@ export function RosterExportBuilder({
       {preview && (
         <section aria-labelledby="roster-export-preview-heading">
           <h3 id="roster-export-preview-heading">
-            Preview {preview.rows.length > PREVIEW_ROW_LIMIT ? `(first ${PREVIEW_ROW_LIMIT} of ${preview.rows.length})` : ""}
+            Preview {preview.totalRows > preview.rows.length ? `(first ${preview.rows.length} of ${preview.totalRows})` : ""}
           </h3>
           <div className="report-table-wrap">
             <table className="report-table">
@@ -284,7 +284,7 @@ export function RosterExportBuilder({
                 <tr>{preview.headers.map((header, index) => <th key={index}>{header}</th>)}</tr>
               </thead>
               <tbody>
-                {preview.rows.slice(0, PREVIEW_ROW_LIMIT).map((row, rowIndex) => (
+                {preview.rows.map((row, rowIndex) => (
                   <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>
                 ))}
               </tbody>

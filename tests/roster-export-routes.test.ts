@@ -81,10 +81,10 @@ describe("POST .../roster/export (#490)", () => {
   });
 
   it("returns the preview JSON as-is", async () => {
-    mocks.runRosterExport.mockResolvedValueOnce({ headers: ["First"], rows: [["Ana"]] });
+    mocks.runRosterExport.mockResolvedValueOnce({ headers: ["First"], rows: [["Ana"]], totalRows: 12 });
     const response = await postExport(jsonRequest("https://events.imsda.test/x", "POST", { columns: [{ key: "firstName", header: "First" }] }), ctx);
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ headers: ["First"], rows: [["Ana"]] });
+    await expect(response.json()).resolves.toEqual({ headers: ["First"], rows: [["Ana"]], totalRows: 12 });
   });
 
   it("returns a CSV attachment for mode: csv, byte-for-byte what the repository built", async () => {
