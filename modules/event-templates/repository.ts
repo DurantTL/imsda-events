@@ -114,6 +114,8 @@ async function lockTemplate(tx: Prisma.TransactionClient, templateId: string, mo
   const rows = mode === "UPDATE"
     ? await tx.$queryRaw<{ status: EventTemplateStatus }[]>`SELECT "status"::text AS "status" FROM "EventTemplate" WHERE "id" = ${templateId} FOR UPDATE`
     : await tx.$queryRaw<{ status: EventTemplateStatus }[]>`SELECT "status"::text AS "status" FROM "EventTemplate" WHERE "id" = ${templateId} FOR SHARE`;
+  // Only the template lock wait is bounded; later waits in the transaction are not.
+  await tx.$executeRawUnsafe("SET LOCAL lock_timeout = 0");
   const row = rows[0];
   if (!row) throw new EventTemplateOperationError("TEMPLATE_NOT_FOUND", "That event template was not found.");
   return row.status;

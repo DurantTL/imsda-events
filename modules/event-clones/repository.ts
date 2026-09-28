@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
+import { getServerEnv } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
 import { isLockTimeoutError } from "@/lib/prisma-errors";
 import { asEventMessageTemplateKey } from "@/modules/event-templates/domain";
@@ -40,6 +41,11 @@ export class EventCloneOperationError extends Error {
 }
 
 type Db = Prisma.TransactionClient;
+
+/** The app's own origin, the way it builds absolute links: `/manage/` and slug links there are private. */
+function appOrigins() {
+  return [new URL(getServerEnv().APP_BASE_URL).origin];
+}
 
 function eventDate(value: string) {
   return new Date(`${value}T12:00:00.000Z`);
@@ -179,7 +185,7 @@ export async function previewEventClone(actorUserId: string, rawInput: unknown) 
   const prisma = getPrisma();
   const config = await loadSourceConfiguration(prisma, sourceEventId);
   if (!config) throw new EventCloneOperationError("SOURCE_NOT_FOUND", "That source event was not found.");
-  const plan = buildClonePlan(config, fingerprintOf(config));
+  const plan = buildClonePlan(config, fingerprintOf(config), appOrigins());
   await prisma.auditLog.create({ data: {
     eventId: sourceEventId, actorUserId, action: "EVENT_CLONE_PREVIEWED", entityType: "Event", entityId: sourceEventId,
     correlationId: randomUUID(), summary: "Previewed copying this event into a new draft.",
@@ -253,6 +259,10 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
     const { eventId, summary } = await prisma.$transaction(async (tx) => {
       await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${sourceLockTimeout}'`);
       const locked = await tx.$queryRaw<{ id: string }[]>`SELECT "id" FROM "Event" WHERE "id" = ${input.sourceEventId} FOR SHARE`;
+      // Only the source lock wait is bounded: later waits (e.g. on the slug
+      // unique index behind a concurrent clone) fall back to the transaction
+      // timeout and resolve to an idempotent retry or EVENT_SLUG_TAKEN.
+      await tx.$executeRawUnsafe("SET LOCAL lock_timeout = 0");
       if (locked.length === 0) throw new EventCloneOperationError("SOURCE_NOT_FOUND", "That source event was not found.");
       const sourceConfig = await loadSourceConfiguration(tx, input.sourceEventId);
       if (!sourceConfig) throw new EventCloneOperationError("SOURCE_NOT_FOUND", "That source event was not found.");
@@ -263,7 +273,7 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
       const issues = reviewIssues(sourceConfig, input);
       if (issues.length > 0) throw new EventCloneReviewError(issues);
       // Copy from the text as previewed: private links removed.
-      const { config, findings } = sanitizeSourceForClone(sourceConfig);
+      const { config, findings } = sanitizeSourceForClone(sourceConfig, appOrigins());
       const strippedPrivateLinks = findings.filter((finding) => input.include[finding.domain]).length;
 
       const include = input.include;

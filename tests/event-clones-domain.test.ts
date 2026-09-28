@@ -17,6 +17,7 @@ import {
   type ConfirmEventCloneInput,
   type SourceConfiguration,
 } from "@/modules/event-clones/domain";
+import { stripPrivateLinks } from "@/modules/event-clones/private-links";
 
 const lateTemplate = getFormTemplate("womens_retreat_export")!.definition;
 const capacityTemplate = getFormTemplate("camp_meeting_export")!.definition;
@@ -254,6 +255,7 @@ describe("private links in copied text", () => {
     slug: `https://events.imsda.test/events/${slug}`,
   };
   const safe = "https://example.test/schedule";
+  const appOrigins = ["https://events.imsda.test"];
   const lateDefinition = registrationFormDefinitionSchema.parse(lateTemplate);
   const withChoiceText = structuredClone(lateDefinition);
   const choiceField = withChoiceText.sections.flatMap((section) => section.fields).find((field) => field.options.length > 0 && !field.optionSource)!;
@@ -271,7 +273,7 @@ describe("private links in copied text", () => {
     registrationForms: [{ formId: "form-late", name: "Retreat", slug: "retreat", versionId: "ver-1", versionNumber: 3, definition: withChoiceText }],
     messageTemplates: [{ key: "EVENT_ANNOUNCEMENT", isEnabled: true, versionId: "mv-1", versionNumber: 2, subjectTemplate: "News from {{event_name}}", bodyTemplate: `Hi {{recipient_name}}. Your link: ${markers.token}` }],
   });
-  const { config: clean, findings } = sanitizeSourceForClone(markedConfig);
+  const { config: clean, findings } = sanitizeSourceForClone(markedConfig, appOrigins);
   const cleanJson = JSON.stringify(clean);
 
   it("finds a marker in section text, a link URL, form help and choice text, and a message body", () => {
@@ -291,12 +293,12 @@ describe("private links in copied text", () => {
     expect(clean.contentSections[0]!.links.map((link) => link.url)).toEqual([safe]);
     expect(clean.contentSections[0]!.body).toContain(safe);
     expect(JSON.stringify(clean.registrationForms[0]!.definition)).toContain(safe);
-    expect(clean.messageTemplates[0]!.bodyTemplate).toBe("Hi {{recipient_name}}. Your link: ");
+    expect(clean.messageTemplates[0]!.bodyTemplate).toBe("Hi {{recipient_name}}. Your link:");
     expect(() => registrationFormDefinitionSchema.parse(clean.registrationForms[0]!.definition)).not.toThrow();
   });
 
   it("never repeats a secret in the plan, and lists each finding as needing review", () => {
-    const plan = buildClonePlan(markedConfig, fingerprint);
+    const plan = buildClonePlan(markedConfig, fingerprint, appOrigins);
     expect(plan.review.privateLinks).toHaveLength(6);
     const planJson = JSON.stringify(plan.review.privateLinks);
     for (const secret of ["MARKER-MANAGE-TOKEN", "MARKER-TOKEN-VALUE", "MARKER-SIG-VALUE"]) expect(planJson).not.toContain(secret);
@@ -307,17 +309,80 @@ describe("private links in copied text", () => {
 
   it("leaves text without private links unchanged, and ignores a slug inside a longer word", () => {
     const quiet = config({ contentSections: [{ kind: "RICH_TEXT", title: "Hi", body: `Photos at https://example.test/${slug}-photos and ${safe}`, position: 1, links: [], assetLinkCount: 0 }] });
-    const result = sanitizeSourceForClone(quiet);
+    const result = sanitizeSourceForClone(quiet, appOrigins);
     expect(result.findings).toEqual([]);
     expect(result.config.contentSections[0]!.body).toBe(quiet.contentSections[0]!.body);
   });
 
   it("drops a private public-info or lodging link from the event details", () => {
     const details = config({ eventDetails: { ...config().eventDetails, publicInfoUrl: markers.slug, hotelBookingUrl: "https://hotel.example.test/book?group=imsda" } });
-    const result = sanitizeSourceForClone(details);
+    const result = sanitizeSourceForClone(details, appOrigins);
     expect(result.config.eventDetails.publicInfoUrl).toBeNull();
     expect(result.config.eventDetails.hotelBookingUrl).toBe("https://hotel.example.test/book?group=imsda");
     expect(result.findings.map((finding) => finding.domain)).toEqual(["eventDetails"]);
+  });
+
+  it("scans location, support contact, and the other lodging fields, clearing one left empty", () => {
+    const details = config({ eventDetails: {
+      ...config().eventDetails, location: "Synthetic Lodge", supportContact: `Questions? ${markers.manage}`,
+      hotelName: "Synthetic Inn", hotelPhone: markers.token, hotelGroupName: "IMSDA", hotelRate: "$99",
+    } });
+    const result = sanitizeSourceForClone(details, appOrigins);
+    expect(result.config.eventDetails.supportContact).toBe("Questions?");
+    expect(result.config.eventDetails.hotelPhone).toBeNull();
+    expect(result.config.eventDetails.location).toBe("Synthetic Lodge");
+    expect(result.findings.map((finding) => finding.location)).toEqual(["Support contact", "Lodging phone"]);
+  });
+});
+
+describe("private links: only the app's own links are stripped", () => {
+  const context = (slug: string) => ({ sourceEventId: "cmsource123", sourceSlug: slug, appOrigins: ["https://events.imsda.org"] });
+  const strip = (text: string, slug = "camp-meeting-2027") => stripPrivateLinks(text, context(slug));
+
+  it.each([
+    ["an outside page whose path holds the slug", "https://imsda.org/camp-meeting-2027/photos", "camp-meeting-2027"],
+    ["an outside handle that equals the slug", "https://www.youtube.com/@retreat", "retreat"],
+    ["an outside page with the slug as a path segment", "https://www.youtube.com/retreat", "retreat"],
+    ["an outside manage page", "https://www.adventistgiving.org/manage/recurring", "camp-meeting-2027"],
+    ["an app link whose segment only contains the slug", "https://events.imsda.org/events/retreat-2028", "retreat"],
+    ["an app page with an unrelated relative path", "/events/other-event", "retreat"],
+  ])("keeps %s", (_label, url, slug) => {
+    const result = strip(`See ${url} for more.`, slug);
+    expect(result.matches).toEqual([]);
+    expect(result.text).toBe(`See ${url} for more.`);
+  });
+
+  it.each([
+    ["an app-origin link to the source", "https://events.imsda.org/events/camp-meeting-2027"],
+    ["an app-origin manage link", "https://events.imsda.org/manage/SYNTHETIC-TOKEN"],
+    ["a relative manage link", "/manage/SYNTHETIC-TOKEN"],
+    ["a relative link to the source", "/events/camp-meeting-2027/register"],
+    ["an app-origin link naming the source id", "https://events.imsda.org/more/event-settings?event=cmsource123"],
+    ["a token on an outside host", "https://files.example.test/doc?token=SYNTHETIC"],
+    ["an access_token on an outside host", "https://files.example.test/doc?access_token=SYNTHETIC"],
+    ["a signature on an outside host", "https://files.example.test/doc?signature=SYNTHETIC"],
+    ["the source staff API on any host", "https://staging.example.test/api/events/cmsource123/exports"],
+  ])("strips %s", (_label, url) => {
+    const result = strip(`See ${url} for more.`);
+    expect(result.matches).toHaveLength(1);
+    expect(result.text).toBe("See for more.");
+  });
+
+  it("keeps a stripped markdown link's label as plain text and never leaves [label]()", () => {
+    const result = strip("Please [update your booking](/manage/SYNTHETIC-TOKEN) and [see photos](https://imsda.org/camp-meeting-2027/photos).");
+    expect(result.text).toBe("Please update your booking and [see photos](https://imsda.org/camp-meeting-2027/photos).");
+    expect(result.text).not.toContain("]()");
+    expect(result.matches).toHaveLength(1);
+  });
+
+  it("keeps trailing punctuation and collapses the spaces a removed link leaves", () => {
+    expect(strip("Update at https://events.imsda.org/manage/X.  Thanks!").text).toBe("Update at. Thanks!");
+    expect(strip("A  /manage/X  B").text).toBe("A B");
+  });
+
+  it("treats the source slug as a whole path segment", () => {
+    expect(strip("/events/camp-meeting-2027x").matches).toEqual([]);
+    expect(strip("/events/camp-meeting-2027/").matches).toHaveLength(1);
   });
 });
 

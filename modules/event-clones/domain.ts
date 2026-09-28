@@ -343,8 +343,11 @@ const strippedConfirmationFallback = "Thank you. Your registration was received.
  * entirely; inside text, only the link itself is removed. Choice values are
  * never rewritten, because prices, limits, and conditions refer to them.
  */
-export function sanitizeSourceForClone(config: SourceConfiguration): { config: SourceConfiguration; findings: PrivateLinkFinding[] } {
-  const context: PrivateLinkContext = { sourceEventId: config.event.id, sourceSlug: config.event.slug };
+export function sanitizeSourceForClone(
+  config: SourceConfiguration,
+  appOrigins: readonly string[] = [],
+): { config: SourceConfiguration; findings: PrivateLinkFinding[] } {
+  const context: PrivateLinkContext = { sourceEventId: config.event.id, sourceSlug: config.event.slug, appOrigins };
   const findings: PrivateLinkFinding[] = [];
   const record = (domain: CloneDomainKey, location: string, matches: PrivateLinkMatch[]) => {
     for (const match of matches) {
@@ -355,6 +358,12 @@ export function sanitizeSourceForClone(config: SourceConfiguration): { config: S
     const result = stripPrivateLinks(value, context);
     record(domain, location, result.matches);
     return result.text;
+  };
+  /** A nullable detail: stripped like text, and null when nothing is left. */
+  const optionalText = (domain: CloneDomainKey, location: string, value: string | null) => {
+    if (value === null) return null;
+    const next = text(domain, location, value).trim();
+    return next.length > 0 ? next : null;
   };
   const url = (domain: CloneDomainKey, location: string, value: string | null) => {
     if (value === null) return null;
@@ -368,7 +377,13 @@ export function sanitizeSourceForClone(config: SourceConfiguration): { config: S
     ...config.eventDetails,
     publicInfoUrl: url("eventDetails", "Public info link", config.eventDetails.publicInfoUrl),
     hotelBookingUrl: url("eventDetails", "Lodging booking link", config.eventDetails.hotelBookingUrl),
-    hotelInstructions: config.eventDetails.hotelInstructions === null ? null : text("eventDetails", "Lodging instructions", config.eventDetails.hotelInstructions),
+    hotelInstructions: optionalText("eventDetails", "Lodging instructions", config.eventDetails.hotelInstructions),
+    location: optionalText("eventDetails", "Location", config.eventDetails.location),
+    supportContact: optionalText("eventDetails", "Support contact", config.eventDetails.supportContact),
+    hotelName: optionalText("eventDetails", "Lodging name", config.eventDetails.hotelName),
+    hotelPhone: optionalText("eventDetails", "Lodging phone", config.eventDetails.hotelPhone),
+    hotelGroupName: optionalText("eventDetails", "Lodging group name", config.eventDetails.hotelGroupName),
+    hotelRate: optionalText("eventDetails", "Lodging rate", config.eventDetails.hotelRate),
   };
 
   const contentSections = config.contentSections.map((section) => ({
@@ -535,9 +550,9 @@ function plural(count: number, singular: string, pluralForm = `${singular}s`) {
   return `${count} ${count === 1 ? singular : pluralForm}`;
 }
 
-export function buildClonePlan(rawConfig: SourceConfiguration, fingerprint: string): ClonePlan {
+export function buildClonePlan(rawConfig: SourceConfiguration, fingerprint: string, appOrigins: readonly string[] = []): ClonePlan {
   // Counts and validity come from the text as it would be copied.
-  const { config, findings } = sanitizeSourceForClone(rawConfig);
+  const { config, findings } = sanitizeSourceForClone(rawConfig, appOrigins);
   const skippedForms: ClonePlanDomain["skipped"] = [];
   const latePricing: FormLatePricingItem[] = [];
   const formChoiceLimits: FormChoiceLimitItem[] = [];

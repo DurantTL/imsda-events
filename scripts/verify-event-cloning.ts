@@ -15,6 +15,7 @@
  */
 import { loadEnvConfig } from "@next/env";
 import { PrismaClient } from "@prisma/client";
+import { getServerEnv } from "../lib/env";
 import { eventCloneApiError } from "../modules/event-clones/api-errors";
 import { cloneEvent, EventCloneOperationError, previewEventClone } from "../modules/event-clones/repository";
 import { EventCloneReviewError, cloneDomainKeys, type CloneDomainKey, type ClonePlan } from "../modules/event-clones/domain";
@@ -56,6 +57,11 @@ const allIncluded = Object.fromEntries(cloneDomainKeys.map((key) => [key, true])
 const noneIncluded = Object.fromEntries(cloneDomainKeys.map((key) => [key, false])) as Record<CloneDomainKey, boolean>;
 
 type Fixture = { eventId: string; lateFormId: string; capFormId: string; promoIds: string[]; offeringIds: string[]; sectionId: string; templateKey: string };
+
+/** The app's own origin, as the clone reads it: `/manage/` links there are private. */
+function appOrigin() {
+  return new URL(getServerEnv().APP_BASE_URL).origin;
+}
 
 /** Synthetic private-link markers planted in the source's free text; none may reach a clone. */
 const marker = "EVTCLONE-MARKER";
@@ -110,7 +116,7 @@ async function buildPopulatedSource(): Promise<Fixture> {
   // Configuration.
   const asset = await prisma.eventAsset.create({ data: { eventId, displayName: "map.pdf", contentType: "application/pdf", byteSize: 10, checksum: "abc", storageKey: `${P}-storage-key` } });
   // Private-link markers (1 of 4): a registrant's manage link in a section body.
-  const section = await prisma.eventContentSection.create({ data: { eventId, kind: "RICH_TEXT", title: "Welcome", body: `Hello there. Fix your registration at https://events.example.test/manage/${marker}-MANAGE-TOKEN today.`, position: 1, isPublished: true } });
+  const section = await prisma.eventContentSection.create({ data: { eventId, kind: "RICH_TEXT", title: "Welcome", body: `Hello there. Fix your registration at ${appOrigin()}/manage/${marker}-MANAGE-TOKEN today. Photos: https://imsda.org/${sourceSlug}/photos. Give: https://www.adventistgiving.org/manage/recurring`, position: 1, isPublished: true } });
   await prisma.eventContentSection.create({ data: {
     eventId, kind: "RESOURCE_LINKS", title: "Resources", position: 2, isPublished: true,
     links: { create: [
@@ -374,7 +380,8 @@ async function run() {
   assert(offerings.some((offering) => offering.minimumAge === 10), "minimum age carries over");
 
   const dump = await cloneDump(cloneId);
-  assert(!dump.includes(marker) && !dump.includes(`/api/events/${sourceId}/`) && !dump.includes(`/api/public/events/${P}-source-2027/assets/`) && !dump.includes("/manage/"), "no private-link marker reached the clone's event, sections, links, forms, or messages");
+  assert(!dump.includes(marker) && !dump.includes(`/api/events/${sourceId}/`) && !dump.includes(`/api/public/events/${P}-source-2027/assets/`) && !dump.includes(`${appOrigin()}/manage/`), "no private-link marker reached the clone's event, sections, links, forms, or messages");
+  assert(dump.includes(`https://imsda.org/${P}-source-2027/photos`) && dump.includes("https://www.adventistgiving.org/manage/recurring"), "outside links that only look like the source's (its slug on another host, another site's /manage/) are kept");
   assert(dump.includes("https://example.test/schedule"), "safe links are kept");
   assert(cloned.summary?.skipped.privateLinks === 5, `the result counts the five removed private links, got ${JSON.stringify(cloned.summary?.skipped)}`);
   assert(cloned.summary?.pricingMessage?.startsWith("Prices copied, review before publishing") && cloned.summary.pricing.promoCodes === 2, "the result says prices were copied and must be reviewed");
@@ -528,7 +535,43 @@ async function run() {
   assert(await prisma.event.count({ where: { slug: { in: [`${P}-bad-dates`, `${P}-backwards`, `${P}-missing-source`] } } }) === 0, "refused requests created nothing");
   console.log("ok  reused keys are refused, keys are per actor, and slug, date, and source errors create nothing");
 
-  // 11. A source row lock held elsewhere is waited on for at most lock_timeout (5s), then SOURCE_BUSY.
+  // 11. Only the source lock wait is bounded: a clone queued on the slug unique
+  // index behind an uncommitted same-slug insert held past 5s still resolves,
+  // to EVENT_SLUG_TAKEN when that insert commits and to a new event when it
+  // rolls back, never a 500.
+  const racePlan = await previewEventClone(adminId, { sourceEventId: sourceId });
+  const holdSlug = async (slug: string, outcome: "commit" | "rollback") => {
+    const holderClient = new PrismaClient();
+    try {
+      let inserted!: () => void;
+      const insertedPromise = new Promise<void>((resolve) => { inserted = resolve; });
+      const holder = holderClient.$transaction(async (tx) => {
+        await tx.event.create({ data: { name: "Evtclone Slug Holder", slug, startsAt: new Date("2028-01-01T12:00:00Z"), endsAt: new Date("2028-01-02T12:00:00Z") } });
+        inserted();
+        await new Promise((resolve) => setTimeout(resolve, 7_000));
+        if (outcome === "rollback") throw new Error("synthetic rollback");
+      }, { timeout: 30_000 }).catch((error: unknown) => (outcome === "rollback" ? null : Promise.reject(error)));
+      await insertedPromise;
+      const started = Date.now();
+      const result = await cloneEvent(adminId, confirmBody(sourceId, racePlan, slug, `${P}-key-race-${outcome}`)).then((value) => ({ value }), (error: unknown) => ({ error }));
+      const waited = Date.now() - started;
+      await holder;
+      return { result, waited };
+    } finally {
+      await holderClient.$disconnect();
+    }
+  };
+  const committed = await holdSlug(`${P}-race-commit`, "commit");
+  assert("error" in committed.result && isOperationError(committed.result.error, "EVENT_SLUG_TAKEN"), `a clone behind a committed same-slug insert is EVENT_SLUG_TAKEN, got ${JSON.stringify("error" in committed.result ? String(committed.result.error) : "created")}`);
+  const committedResponse = eventCloneApiError(committed.result.error, { failureMessage: "x", logMessage: "x", invalidInputCode: "INVALID_EVENT_CLONE", uniqueViolationIsSlug: true });
+  assert(committedResponse.status === 409 && committed.waited >= 6_000, `it waited past 5s (${committed.waited}ms) and is a 409, not a 500 (got ${committedResponse.status})`);
+  const rolledBack = await holdSlug(`${P}-race-rollback`, "rollback");
+  assert("value" in rolledBack.result && !rolledBack.result.value.alreadyCloned && rolledBack.waited >= 6_000, `a clone behind a rolled-back same-slug insert creates the event after waiting ${rolledBack.waited}ms`);
+  const replay = await cloneEvent(adminId, confirmBody(sourceId, racePlan, `${P}-race-rollback`, `${P}-key-race-rollback`));
+  assert(replay.alreadyCloned && replay.event.id === rolledBack.result.value.event.id, "its retry is the idempotent 200");
+  console.log(`ok  a clone queued behind an uncommitted same-slug insert for ${Math.round(committed.waited / 100) / 10}s resolves to EVENT_SLUG_TAKEN on commit and creates the event on rollback`);
+
+  // 12. A source row lock held elsewhere is waited on for at most lock_timeout (5s), then SOURCE_BUSY.
   const busyPlan = await previewEventClone(adminId, { sourceEventId: sourceId });
   const locker = new PrismaClient();
   try {
