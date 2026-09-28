@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma as PrismaErrors } from "@prisma/client";
 
 /**
  * `/api/event-templates/**` (#152): signed-out, non-admin, cross-origin,
@@ -108,6 +109,19 @@ describe.each(cases)("$label", ({ call, repository }) => {
   it("returns a retryable 409 when the template lock wait times out", async () => {
     const { Prisma } = await import("@prisma/client");
     repository.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("timeout", { code: "P2028", clientVersion: "test" }));
+    const response = await call();
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "TEMPLATE_BUSY" });
+    expect(mocks.logError).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a raw-query lock timeout (P2010, SQLSTATE 55P03)", () => new PrismaErrors.PrismaClientKnownRequestError("Raw query failed. Code: `55P03`. Message: `ERROR: canceling statement due to lock timeout`", { code: "P2010", clientVersion: "test", meta: { code: "55P03", message: "ERROR: canceling statement due to lock timeout" } })],
+    ["a transaction lock timeout (P2034 naming 55P03)", () => new PrismaErrors.PrismaClientKnownRequestError("Transaction failed: 55P03 lock timeout", { code: "P2034", clientVersion: "test" })],
+    ["a plain error carrying SQLSTATE 55P03", () => Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" })],
+    ["a non-raw query lock timeout (unknown request error, 55P03 in the message)", () => new PrismaErrors.PrismaClientUnknownRequestError("Error occurred during query execution: code: \"55P03\", message: \"canceling statement due to lock timeout\"", { clientVersion: "test" })],
+  ])("returns a retryable 409 for %s", async (_label, makeError) => {
+    repository.mockRejectedValue(makeError());
     const response = await call();
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ error: "TEMPLATE_BUSY" });
