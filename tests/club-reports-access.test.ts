@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * Permission boundary for the four Camporee club reports, their CSVs, and
  * the staff club-pass QR (#411): `VIEW_REPORTS` on this event, or a
  * Pathfinder event manager's oversight (#387) — an event administrator, but
- * only on a club (church-billed) event. Everyone else is denied.
+ * only on a CLUB-audience event (#481, independent of billing mode).
+ * Everyone else is denied.
  */
 const mocks = vi.hoisted(() => ({ findUnique: vi.fn() }));
 
@@ -35,13 +36,21 @@ describe("requireClubReportsAccess", () => {
     expect(mocks.findUnique).not.toHaveBeenCalled();
   });
 
-  it("falls back to the event's billing mode only for a member who lacks VIEW_REPORTS but is an event administrator by role", async () => {
+  it("falls back to the event's audience only for a member who lacks VIEW_REPORTS but is an event administrator by role", async () => {
     // Exercises the oversight fallback directly: even without VIEW_REPORTS in
-    // hand, an EVENT_ADMIN membership on a club (church-billed) event passes.
+    // hand, an EVENT_ADMIN membership on a CLUB-audience event passes.
     const membershipLookup = vi.fn().mockResolvedValue({
       eventId: "event-1", userId: "user-1", role: "EVENT_ADMIN", status: "ACTIVE", permissions: [],
     });
-    mocks.findUnique.mockResolvedValue({ billingMode: "DEFERRED_ORGANIZATION_INVOICE" });
+    mocks.findUnique.mockResolvedValue({ audience: "CLUB" });
+    await expect(requireClubReportsAccess(session, "event-1", membershipLookup)).resolves.toBeDefined();
+  });
+
+  it("still falls back for a CLUB event that happens to be attendee-paid (#481)", async () => {
+    const membershipLookup = vi.fn().mockResolvedValue({
+      eventId: "event-1", userId: "user-1", role: "EVENT_ADMIN", status: "ACTIVE", permissions: [],
+    });
+    mocks.findUnique.mockResolvedValue({ audience: "CLUB", billingMode: "ATTENDEE_PAY" });
     await expect(requireClubReportsAccess(session, "event-1", membershipLookup)).resolves.toBeDefined();
   });
 

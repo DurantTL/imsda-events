@@ -76,6 +76,7 @@ const normalizedEventPayload = {
   seminarPreferenceClosesOn: null,
   seminarPreferenceSelfServiceLocked: false,
   billingMode: "ATTENDEE_PAY",
+  audience: "GENERAL",
 };
 
 function eventRequest(
@@ -117,6 +118,23 @@ describe("event settings routes", () => {
     expect(await response.json()).toMatchObject({
       event: { id: "evt_new", isPublished: false },
     });
+  });
+
+  it("defaults a new event's audience to GENERAL and forwards an explicit CLUB audience (#481)", async () => {
+    dependencies.createEvent.mockResolvedValue({ id: "evt_new", audience: "GENERAL" });
+
+    await POST(eventRequest("/api/events", "POST", eventPayload));
+    expect(dependencies.createEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ audience: "GENERAL" }),
+      "usr_system",
+    );
+
+    dependencies.createEvent.mockClear();
+    await POST(eventRequest("/api/events", "POST", { ...eventPayload, audience: "CLUB" }));
+    expect(dependencies.createEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ audience: "CLUB" }),
+      "usr_system",
+    );
   });
 
   it("requires a system administrator to create an event", async () => {

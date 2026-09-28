@@ -165,11 +165,12 @@ export function AppShell({
   const visibleStatic = navigation.filter(matchesVisibility);
   const dashboardItem = visibleStatic.find((item) => !item.group && item.href !== "/more");
   const moreItem = visibleStatic.find((item) => item.href === "/more");
-  // Nobody sees a link here they couldn't already reach before this group
-  // existed (#428 review): system admins reach every club through the
-  // churches-and-clubs directory; an EVENT_ADMIN on a club-billed event
-  // reaches theirs through club oversight, exactly as `more/page.tsx` gates it.
-  const clubsVisible = isSystemAdmin || Boolean(selectedEvent?.clubOversight);
+  // Audience, not billing mode, decides club features (#481): `clubOversight`
+  // (computed server-side in the layout) is already true only for a
+  // CLUB-audience selected event, for a system admin or an EVENT_ADMIN —
+  // exactly as `more/page.tsx` gates it. A system admin sees this on every
+  // CLUB event, never on a GENERAL one, matching every other role.
+  const clubsVisible = Boolean(selectedEvent?.clubOversight);
   const clubsEntry: NavigationItem | null = clubsVisible ? {
     href: isSystemAdmin ? "/admin/organizations" : "/more/clubs",
     label: "Clubs and churches",

@@ -31,6 +31,7 @@ const baseInput = {
   checksAdultBackgrounds: false,
   attendeeEditPolicy: "VERIFY_EVERY_EDIT" as const,
   billingMode: "ATTENDEE_PAY" as const,
+  audience: "GENERAL" as const,
   seminarPreferenceClosesOn: null,
   seminarPreferenceSelfServiceLocked: false,
   waitlistEnabled: true,
@@ -87,6 +88,7 @@ function mockPrisma(current: {
         checksAdultBackgrounds: false,
         attendeeEditPolicy: "VERIFY_EVERY_EDIT",
         billingMode: "ATTENDEE_PAY",
+        audience: "GENERAL",
         seminarPreferenceClosesOn: null,
         seminarPreferenceSelfServiceLocked: false,
         autoPromoteWaitlist: true,
@@ -129,6 +131,7 @@ function mockPrisma(current: {
         checksAdultBackgrounds: false,
         attendeeEditPolicy: "VERIFY_EVERY_EDIT",
         billingMode: "ATTENDEE_PAY",
+        audience: "GENERAL",
         seminarPreferenceClosesOn: null,
         seminarPreferenceSelfServiceLocked: false,
         autoPromoteWaitlist: true,
@@ -216,6 +219,31 @@ describe("event publish readiness gate (#467)", () => {
       data: expect.objectContaining({
         isPublished: true,
         publicInfoUrl: "https://imsda.org/event/synthetic-retreat/",
+      }),
+    }));
+  });
+});
+
+describe("event audience (#481)", () => {
+  it("writes an audience change and audits it like any other event setting", async () => {
+    const { prisma, eventUpdate, tx } = mockPrisma(
+      { isPublished: true, publicInfoUrl: null },
+      1,
+    );
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await updateEventSettings("event-1", { ...baseInput, audience: "CLUB" }, "usr_1");
+
+    expect(eventUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ audience: "CLUB" }),
+    }));
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        action: "EVENT_SETTINGS_UPDATED",
+        metadata: expect.objectContaining({
+          before: expect.objectContaining({ audience: "GENERAL" }),
+          after: expect.objectContaining({ audience: "CLUB" }),
+        }),
       }),
     }));
   });

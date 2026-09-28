@@ -58,6 +58,7 @@ export async function listEventsForUser(userId: string, isSystemAdmin: boolean) 
       checksAdultBackgrounds: true,
       attendeeEditPolicy: true,
       billingMode: true,
+      audience: true,
       seminarPreferenceClosesOn: true,
       seminarPreferenceSelfServiceLocked: true,
       autoPromoteWaitlist: true,
@@ -142,6 +143,7 @@ export async function getEventSettings(eventId: string) {
         checksAdultBackgrounds: true,
         attendeeEditPolicy: true,
         billingMode: true,
+        audience: true,
         seminarPreferenceClosesOn: true,
         seminarPreferenceSelfServiceLocked: true,
         autoPromoteWaitlist: true,
@@ -195,6 +197,7 @@ export async function getEventSettings(eventId: string) {
     checksAdultBackgrounds: event.checksAdultBackgrounds,
     attendeeEditPolicy: event.attendeeEditPolicy,
     billingMode: event.billingMode,
+    audience: event.audience,
     seminarPreferenceClosesOn: event.seminarPreferenceClosesOn,
     seminarPreferenceSelfServiceLocked:
       event.seminarPreferenceSelfServiceLocked,
@@ -254,6 +257,7 @@ export async function createEvent(
         checksAdultBackgrounds: input.checksAdultBackgrounds,
         attendeeEditPolicy: platform.defaultAttendeeEditPolicy,
         billingMode: input.billingMode,
+        audience: input.audience,
         seminarPreferenceClosesOn: input.seminarPreferenceClosesOn,
         seminarPreferenceSelfServiceLocked:
           input.seminarPreferenceSelfServiceLocked,
@@ -329,6 +333,7 @@ export async function updateEventSettings(
           checksAdultBackgrounds: true,
           attendeeEditPolicy: true,
           billingMode: true,
+          audience: true,
           seminarPreferenceClosesOn: true,
           seminarPreferenceSelfServiceLocked: true,
           autoPromoteWaitlist: true,
@@ -377,6 +382,7 @@ export async function updateEventSettings(
         checksAdultBackgrounds: input.checksAdultBackgrounds,
         attendeeEditPolicy: input.attendeeEditPolicy,
         billingMode: input.billingMode,
+        audience: input.audience,
         seminarPreferenceClosesOn: input.seminarPreferenceClosesOn,
         seminarPreferenceSelfServiceLocked:
           input.seminarPreferenceSelfServiceLocked,
