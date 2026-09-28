@@ -1,21 +1,17 @@
 import Link from "next/link";
-import { CalendarDays, CheckCircle2, CircleAlert, FileText, ShieldCheck, UsersRound } from "lucide-react";
+import { Award, CalendarDays, CheckCircle2, CircleAlert, FileText, ShieldCheck, UsersRound } from "lucide-react";
 import type { RosterYearSummary } from "@/modules/club-rosters/domain";
 import type { MonthlyReportProgress } from "@/modules/club-reports/domain";
+import type { HonorYearSummary } from "@/modules/honors/member-honor-domain";
 
 /**
- * The club-year dashboard (#488): roster, background checks, events, and
- * monthly reports at a glance, each tile linking to where the work is done.
- * Every tile is built from data its caller already loaded — no new queries
- * and no new data entry. Each `href` is the caller's own choice: a director
- * links to the club's own roster/events/reports pages, while a read-only
- * viewer whose page already shows that section inline can point at its
- * anchor on the same page instead.
- *
- * Honors (#486) isn't on `main` yet, so there's no honors tile here. Once it
- * lands, add one the same way `compliance` works below: an optional summary
- * prop that's `null` for a caller who shouldn't see it, and a tile that only
- * renders when it's given.
+ * The club-year dashboard (#488): roster, honors, background checks, events,
+ * and monthly reports at a glance, each tile linking to where the work is
+ * done. Every tile is built from data its caller already loaded — no new
+ * queries and no new data entry. Each `href` is the caller's own choice: a
+ * director links to the club's own roster/honors/events/reports pages, while
+ * a read-only viewer whose page already shows that section inline can point
+ * at its anchor on the same page instead.
  */
 
 export type EventsTileSummary = { open: number; registered: number };
@@ -26,6 +22,8 @@ export type ComplianceTileSummary = { missing: number; notInCompliance: number; 
 export function ClubYearTiles({
   roster,
   rosterHref,
+  honors,
+  honorsHref,
   compliance,
   complianceHref,
   events,
@@ -35,6 +33,9 @@ export function ClubYearTiles({
 }: {
   roster: RosterYearSummary;
   rosterHref: string;
+  /** Null hides the tile: honors are visible to anyone who can view the roster, but a caller may not have loaded them. */
+  honors: HonorYearSummary | null;
+  honorsHref: string;
   /** Null hides the tile: the viewer isn't allowed background-check information at all. */
   compliance: ComplianceTileSummary | null;
   complianceHref: string;
@@ -58,6 +59,21 @@ export function ClubYearTiles({
         )}
         <Link className="secondary-button club-year-tile-link" href={rosterHref}>Open roster</Link>
       </div>
+
+      {honors && (
+        <div className="club-year-tile">
+          <p className="club-year-tile-heading"><Award size={16} aria-hidden="true" /> Honors</p>
+          {honors.inProgress === 0 && honors.completedThisYear === 0 ? (
+            <p className="club-year-tile-detail">None recorded yet this club year.</p>
+          ) : (
+            <ul className="club-year-tile-list">
+              {honors.inProgress > 0 && <li>{honors.inProgress} in progress</li>}
+              {honors.completedThisYear > 0 && <li>{honors.completedThisYear} completed this year</li>}
+            </ul>
+          )}
+          <Link className="secondary-button club-year-tile-link" href={honorsHref}>Open honors</Link>
+        </div>
+      )}
 
       {compliance && (
         <div className="club-year-tile">

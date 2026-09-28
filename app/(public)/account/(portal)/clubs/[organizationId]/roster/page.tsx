@@ -7,6 +7,8 @@ import { COMPLIANCE_FILTER_VALUES, type ComplianceFilterValue } from "@/modules/
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import { listRoster } from "@/modules/club-rosters/repository";
+import { honorSummaryByMemberId } from "@/modules/honors/member-honor-domain";
+import { listClubHonorsPage } from "@/modules/honors/member-honor-repository";
 
 export const metadata: Metadata = { title: "Club roster" };
 export const dynamic = "force-dynamic";
@@ -27,9 +29,10 @@ export default async function ClubRosterPage({
   if (access.state !== "OPEN") return null;
   const clubYear = clubYearFor(new Date());
   // Status only, never the note, and only for a director or deputy: this is the club's own page (#427).
-  const [members, complianceStatuses] = await Promise.all([
+  const [members, complianceStatuses, honorRows] = await Promise.all([
     listRoster(organizationId, clubYear),
     clubPortalComplianceStatuses(organizationId, clubYear, access.capabilities),
+    listClubHonorsPage(organizationId, clubYear),
   ]);
   return (
     <>
@@ -42,6 +45,8 @@ export default async function ClubRosterPage({
         clubYear={clubYear}
         complianceFilter={complianceFilterFrom(complianceParam)}
         complianceStatuses={complianceStatuses}
+        honorSummaries={honorSummaryByMemberId(honorRows)}
+        honorsHref={`/account/clubs/${organizationId}/honors`}
         initialMembers={members}
         organizationId={organizationId}
       />

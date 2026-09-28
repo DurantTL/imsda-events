@@ -9,6 +9,8 @@ import { monthlyReportProgress, reportMonthLabel, reportableMonths, yearToDate }
 import { getClubReportYear } from "@/modules/club-reports/repository";
 import { clubYearFor, rosterYearSummary } from "@/modules/club-rosters/domain";
 import { listRoster } from "@/modules/club-rosters/repository";
+import { honorSummaryByMemberId, honorYearSummary } from "@/modules/honors/member-honor-domain";
+import { listClubHonorsPage } from "@/modules/honors/member-honor-repository";
 import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
 import { listClubTeam } from "@/modules/organizations/director-grants-repository";
 
@@ -25,6 +27,7 @@ export async function ClubOverview({
   reportsEditable,
   backgroundChecks,
   complianceCounts,
+  honorsHref,
 }: {
   organizationId: string;
   birthDatesEndpoint?: string;
@@ -44,10 +47,16 @@ export async function ClubOverview({
    * is set, since that caller already gets the fuller per-member view.
    */
   complianceCounts?: boolean;
+  /**
+   * The club's own Honors page, for a caller with one (an Area Coordinator,
+   * #486). Omitted callers (staff, an event manager) have no separate Honors
+   * page here, so the tile points at the roster's own honor chips instead.
+   */
+  honorsHref?: string;
 }) {
   const now = new Date();
   const clubYear = clubYearFor(now);
-  const [team, members, events, reportYear, compliance, reminderCounts] = await Promise.all([
+  const [team, members, events, reportYear, compliance, reminderCounts, honorRows] = await Promise.all([
     listClubTeam(organizationId, now),
     listRoster(organizationId, clubYear, now),
     listClubEvents(organizationId, now),
@@ -55,7 +64,10 @@ export async function ClubOverview({
     backgroundChecks ? clubRosterComplianceStatuses(organizationId, clubYear, backgroundChecks) : null,
     // Counts only, no names (#479): shown even to a viewer who never gets `backgroundChecks`.
     !backgroundChecks && complianceCounts ? clubComplianceReminderCounts(organizationId, clubYear) : null,
+    listClubHonorsPage(organizationId, clubYear),
   ]);
+  const honorSummaries = honorSummaryByMemberId(honorRows);
+  const honors = honorYearSummary(honorRows, clubYear);
   const registered = events.filter((event) => event.registration);
   const open = events.filter((event) => !event.registration && event.available && event.phase === "OPEN");
   // A club's own draft isn't shown here as filed (#426); staff open the report itself to see or edit one.
@@ -76,6 +88,8 @@ export async function ClubOverview({
         complianceHref="#open-club-roster"
         events={{ open: open.length, registered: registered.length }}
         eventsHref="#open-club-events"
+        honors={honors}
+        honorsHref={honorsHref ?? "#open-club-roster"}
         reports={reportProgress}
         reportsHref="#open-club-reports"
         roster={roster}
@@ -113,6 +127,7 @@ export async function ClubOverview({
           canSeeBirthDates={Boolean(birthDatesEndpoint)}
           clubYear={clubYear}
           complianceStatuses={compliance?.statuses}
+          honorSummaries={honorSummaries}
           initialMembers={members}
           organizationId={organizationId}
           readOnly

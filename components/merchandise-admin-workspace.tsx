@@ -25,6 +25,7 @@ import {
   toIsoOrNull,
   toLocalInputValue,
 } from "@/components/merchandise-admin-ui";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import styles from "./merchandise-admin-workspace.module.css";
 
 type Artwork = { id: string; url?: string; altText?: string | null; filename?: string };
@@ -135,6 +136,12 @@ export function MerchandiseAdminWorkspace({ eventId }: { eventId: string }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [variantEditing, setVariantEditing] = useState<Variant | "new" | null>(null);
+  // Review before archiving (#471): archiving is the merchandise "removal"
+  // action — never deleted, always reachable in history — so it gets the
+  // same confirm dialog before it takes effect.
+  const [archiveTarget, setArchiveTarget] = useState<
+    { kind: "product"; product: Product } | { kind: "variant"; variant: Variant } | null
+  >(null);
 
   /** Re-fetches admin catalog, assets, and the safe attendee preview without
    * flipping the full-page loading state, so a mutation's refresh never
@@ -269,9 +276,28 @@ export function MerchandiseAdminWorkspace({ eventId }: { eventId: string }) {
     if (saved) setVariantEditing(null);
   }
 
+  function openArchive(target: NonNullable<typeof archiveTarget>) {
+    // A leftover page error must not appear inside the new dialog.
+    setError("");
+    setArchiveTarget(target);
+  }
+
+  async function confirmArchive() {
+    if (!archiveTarget) return;
+    const ok = archiveTarget.kind === "product"
+      ? await mutate(
+        merchandiseEndpoint(eventId, `/products/${encodeURIComponent(archiveTarget.product.id)}`),
+        "PATCH",
+        { ...productPayload(archiveTarget.product, archiveTarget.product.position ?? 0), isEnabled: false, isArchived: true },
+        `${archiveTarget.product.name} archived. Existing history is preserved.`,
+      )
+      : await archiveVariantAction(archiveTarget.variant);
+    if (ok) setArchiveTarget(null);
+  }
+
   async function archiveVariantAction(variant: Variant) {
-    if (!selected) return;
-    await mutate(
+    if (!selected) return false;
+    return mutate(
       merchandiseEndpoint(eventId, `/products/${encodeURIComponent(selected.id)}/variants/${encodeURIComponent(variant.id)}`),
       "DELETE",
       undefined,
@@ -345,7 +371,8 @@ export function MerchandiseAdminWorkspace({ eventId }: { eventId: string }) {
         <div className={styles.actions}><button className="secondary-button" type="button" onClick={() => void mutate(merchandiseEndpoint(eventId), "PATCH", { isEnabled: !catalog.isEnabled }, catalog.isEnabled ? "Merchandise disabled for this event." : "Merchandise enabled for this event.")} disabled={saving} aria-pressed={catalog.isEnabled}>{catalog.isEnabled ? "Disable catalog" : "Enable catalog"}</button><button className="primary-button" type="button" onClick={() => { setEditing("new"); setError(""); }}><Plus size={16} aria-hidden="true" /> Add product</button></div>
       </div>
       {notice && <div className="inline-notice success" role="status">{notice}</div>}
-      {error && <div className="inline-notice error" role="alert">{error}</div>}
+      {/* While the archive dialog is open, its own alert shows the error; one announcement, not two. */}
+      {error && !archiveTarget && <div className="inline-notice error" role="alert">{error}</div>}
       {!catalog.isEnabled && <div className="inline-notice warning"><PackageOpen size={17} aria-hidden="true" /><span><strong>Catalog disabled.</strong> Attendees will not see merchandise until you enable it.</span></div>}
 
       <div className={styles.layout}>
@@ -363,7 +390,7 @@ export function MerchandiseAdminWorkspace({ eventId }: { eventId: string }) {
                   <button className="icon-button" type="button" aria-label={`Move ${product.name} up`} disabled={saving || index === 0} onClick={() => void moveProduct(product, -1)}><ChevronUp size={16} aria-hidden="true" /></button>
                   <button className="icon-button" type="button" aria-label={`Move ${product.name} down`} disabled={saving || index === ordered.length - 1} onClick={() => void moveProduct(product, 1)}><ChevronDown size={16} aria-hidden="true" /></button>
                   <button className="icon-button" type="button" aria-label={`Edit ${product.name}`} onClick={() => setEditing(product)}><Pencil size={16} aria-hidden="true" /></button>
-                  {!product.isArchived && <button className="icon-button" type="button" aria-label={`Archive ${product.name}`} onClick={() => void mutate(merchandiseEndpoint(eventId, `/products/${encodeURIComponent(product.id)}`), "PATCH", { ...productPayload(product, product.position ?? 0), isEnabled: false, isArchived: true }, `${product.name} archived. Existing history is preserved.`)}><Archive size={16} aria-hidden="true" /></button>}
+                  {!product.isArchived && <button className="icon-button" type="button" aria-label={`Archive ${product.name}`} onClick={() => openArchive({ kind: "product", product })}><Archive size={16} aria-hidden="true" /></button>}
                 </div>
               </article>;
             })}
@@ -382,7 +409,7 @@ export function MerchandiseAdminWorkspace({ eventId }: { eventId: string }) {
               <button className="icon-button" type="button" aria-label={`Move ${variant.label} up`} disabled={saving || index === 0} onClick={() => void moveVariant(variant, -1)}><ChevronUp size={14} aria-hidden="true" /></button>
               <button className="icon-button" type="button" aria-label={`Move ${variant.label} down`} disabled={saving || index === ordered.length - 1} onClick={() => void moveVariant(variant, 1)}><ChevronDown size={14} aria-hidden="true" /></button>
               <button className="text-button" type="button" onClick={() => setVariantEditing(variant)}>Edit</button>
-              {!variant.isArchived && <button className="text-button" type="button" onClick={() => void archiveVariantAction(variant)}>Archive</button>}
+              {!variant.isArchived && <button className="text-button" type="button" onClick={() => openArchive({ kind: "variant", variant })}>Archive</button>}
             </span>
           </div>)}</div>}
         </aside>
@@ -402,6 +429,26 @@ export function MerchandiseAdminWorkspace({ eventId }: { eventId: string }) {
         <div className="form-actions"><button className="secondary-button" type="button" onClick={() => setVariantEditing(null)}>Cancel</button><button className="primary-button" type="submit" disabled={saving}><Save size={16} aria-hidden="true" />{saving ? "Saving…" : "Save variant"}</button></div>
       </form></section></div>}
       {editing && <div className="modal-backdrop" role="presentation"><section className={`modal-card ${styles.editor}`} role="dialog" aria-modal="true" aria-labelledby="merchandise-editor-title"><div className="modal-head"><div><p className="eyebrow">{editing === "new" ? "New catalog item" : "Edit catalog item"}</p><h2 id="merchandise-editor-title">{editing === "new" ? "Add product" : editing.name}</h2></div><button className="icon-button" type="button" aria-label="Close product editor" onClick={() => setEditing(null)}><X size={18} aria-hidden="true" /></button></div><form className="form-stack" onSubmit={saveProduct}><label>Product name<input name="name" required maxLength={120} defaultValue={editing === "new" ? "" : editing.name} /></label><label>Description <small>Shown to attendees</small><textarea name="description" rows={3} maxLength={500} defaultValue={editing === "new" ? "" : editing.description ?? ""} /></label><div className={styles.artworkControls}><label>Artwork<input type="file" accept="image/jpeg,image/png,image/webp" onChange={uploadArtwork} disabled={saving} /></label><label>Use uploaded artwork<select name="artworkAssetId" defaultValue={editing === "new" ? "" : editing.artwork?.id ?? ""}><option value="">No artwork</option>{assets.map((asset) => <option value={asset.id} key={asset.id}>{asset.filename ?? asset.id}{asset.altText ? " · alt text set" : " · alt text needed"}</option>)}</select></label><label>Meaningful alt text <small>Required when artwork is selected</small><input name="artworkAltText" maxLength={240} defaultValue={editing === "new" ? "" : editing.artwork?.altText ?? ""} /></label></div><label className="public-registration-check"><input name="isEnabled" type="checkbox" defaultChecked={editing === "new" ? true : editing.isEnabled} /><span><strong>Enabled</strong><small>Disable instead of deleting a product referenced by order history.</small></span></label><p className={styles.variantNote}><strong>Variants and availability</strong><br />Save the product first, then use the variant controls in the product detail panel. Prices are stored and sent as integer cents.</p><div className="form-actions"><button className="secondary-button" type="button" onClick={() => setEditing(null)}>Cancel</button><button className="primary-button" type="submit" disabled={saving}><Save size={16} aria-hidden="true" />{saving ? "Saving…" : "Save product"}</button></div></form></section></div>}
+
+      <ConfirmDialog
+        busy={saving}
+        busyLabel="Archiving…"
+        confirmLabel="Archive"
+        destructive
+        error={error}
+        onCancel={() => setArchiveTarget(null)}
+        onConfirm={() => void confirmArchive()}
+        open={archiveTarget !== null}
+        title={archiveTarget
+          ? `Archive ${archiveTarget.kind === "product" ? archiveTarget.product.name : archiveTarget.variant.label}?`
+          : "Archive?"}
+      >
+        <p>
+          {archiveTarget?.kind === "product"
+            ? "This product and its variants stop being offered to attendees right away. It cannot be deleted, so existing orders and order history are preserved exactly as they are."
+            : "This variant stops being offered to attendees right away. It cannot be deleted, so existing orders and order history are preserved exactly as they are."}
+        </p>
+      </ConfirmDialog>
     </section>
   );
 }

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Eye } from "lucide-react";
+import { Award, Eye } from "lucide-react";
 import { BackLink } from "@/components/back-link";
 import { ClubOverview } from "@/components/club-overview";
 import { getPrisma } from "@/lib/prisma";
@@ -34,8 +35,12 @@ export default async function AreaClubPage({ params }: { params: Promise<{ organ
           <Eye aria-hidden="true" size={14} /> View only. You see what the club&apos;s director sees, with ages instead of
           birth dates. The club makes changes.
         </p>
+        <Link className="secondary-button club-event-action" href={`/account/area/${organizationId}/honors`}>
+          <Award aria-hidden="true" size={14} /> View honors
+        </Link>
         <ClubOverview
           complianceCounts
+          honorsHref={`/account/area/${organizationId}/honors`}
           organizationId={organizationId}
           reportHref={(month) => `/account/area/${organizationId}/reports/${month}`}
           reportsEditable={false}

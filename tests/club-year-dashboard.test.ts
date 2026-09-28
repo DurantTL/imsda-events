@@ -4,10 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 /**
  * The club-year dashboard (#488): the director's own club home and the
  * shared staff/Area Coordinator overview both build the same at-a-glance
- * tiles (roster, background checks, events, monthly reports) from data they
- * already load — no new queries. These tests walk each server page's
- * returned tree (the pattern from `driver-verification-pages.test.ts`) and
- * check the `ClubYearTiles` props each role gets, without rendering to DOM.
+ * tiles (roster, honors, background checks, events, monthly reports) from
+ * data they already load — no new queries. These tests walk each server
+ * page's returned tree (the pattern from `driver-verification-pages.test.ts`)
+ * and check the `ClubYearTiles` props each role gets, without rendering to DOM.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   clubComplianceReminderCounts: vi.fn(),
   clubRosterComplianceStatuses: vi.fn(),
   listClubTeam: vi.fn(),
+  listClubHonorsPage: vi.fn(),
   redirect: vi.fn((to: string) => { throw new Error(`REDIRECT ${to}`); }),
 }));
 
@@ -41,6 +42,7 @@ vi.mock("@/modules/background-checks/repository", () => ({
   clubRosterComplianceStatuses: mocks.clubRosterComplianceStatuses,
 }));
 vi.mock("@/modules/organizations/director-grants-repository", () => ({ listClubTeam: mocks.listClubTeam }));
+vi.mock("@/modules/honors/member-honor-repository", () => ({ listClubHonorsPage: mocks.listClubHonorsPage }));
 
 import ClubHomePage from "@/app/(public)/account/(portal)/clubs/[organizationId]/page";
 import { ClubOverview } from "@/components/club-overview";
@@ -103,6 +105,23 @@ const registeredEvent = {
   registration: { confirmationCode: "ABC123", status: "CONFIRMED", attendeeCount: 5, amountOwedCents: 0 },
 };
 
+/** `listClubHonorsPage` rows (#486): one in-progress honor and one completed this club year, plus one completed years ago. */
+const honorRows = [
+  {
+    memberId: "member-1", firstName: "Dana", lastName: "Pathfinder", classLevel: "FRIEND",
+    honors: [
+      { honorId: "honor-1", honorCode: "H1", honorName: "Camping Skills I", status: "IN_PROGRESS", completionDate: "", createdAt: "2026-10-01T00:00:00.000Z" },
+      { honorId: "honor-2", honorCode: "H2", honorName: "Knot Tying", status: "COMPLETED", completionDate: "2026-10-05", createdAt: "2026-10-05T00:00:00.000Z" },
+    ],
+  },
+  {
+    memberId: "member-2", firstName: "Sam", lastName: "Pathfinder", classLevel: "RANGER",
+    honors: [
+      { honorId: "honor-3", honorCode: "H3", honorName: "First Aid", status: "COMPLETED", completionDate: "2020-05-01", createdAt: "2020-05-01T00:00:00.000Z" },
+    ],
+  },
+];
+
 const reportYear = (reports: Array<{ reportMonth: string; status: string; totalPoints?: number }> = []) => ({
   reports: reports.map((report) => ({
     id: `report-${report.reportMonth}`, organizationId: "club-1", clubYear: "2026-27", reportMonth: report.reportMonth,
@@ -124,6 +143,7 @@ beforeEach(() => {
   mocks.listClubTeam.mockResolvedValue([]);
   mocks.clubRosterComplianceStatuses.mockResolvedValue({ statuses: {}, notInCompliance: 1, expiringSoon: 2, missing: 3 });
   mocks.clubComplianceReminderCounts.mockResolvedValue({ notInCompliance: 0, expiringSoon: 0, missing: 1 });
+  mocks.listClubHonorsPage.mockResolvedValue(honorRows);
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-11-15T18:00:00.000Z"));
 });
@@ -146,12 +166,15 @@ describe("the club home page builds the director's tiles (#488)", () => {
       byClass: [{ classLevel: "FRIEND", label: "Friend", count: 1 }, { classLevel: "RANGER", label: "Ranger", count: 1 }],
     });
     expect(props.compliance).toEqual({ notInCompliance: 1, expiringSoon: 0, missing: 2 });
+    // One in-progress honor, and one of two completed honors falls inside this club year (started 2026-09-01).
+    expect(props.honors).toEqual({ inProgress: 1, completedThisYear: 1 });
     expect(props.events).toEqual({ open: 1, registered: 1 });
     // The September report is filed; October and November (due so far) are not.
     expect(props.reports).toEqual({ filed: 1, missing: 2 });
     expect(props.rosterHref).toBe("/account/clubs/club-1/roster");
     expect(props.eventsHref).toBe("/account/clubs/club-1/events");
     expect(props.reportsHref).toBe("/account/clubs/club-1/reports");
+    expect(props.honorsHref).toBe("/account/clubs/club-1/honors");
 
     // The existing "What's next" list stays.
     const headings = allElements(tree).filter((element) => element.type === "h2").map((element) => element.props.children);
@@ -171,8 +194,11 @@ describe("the club home page builds the director's tiles (#488)", () => {
     const props = tilesProps(tree);
     expect(props.compliance).toBeNull();
     expect(props.reports).toBeNull();
-    // The roster and events tiles are unaffected by the registrar's narrower access.
+    // The roster, honors, and events tiles are unaffected by the registrar's narrower access:
+    // honors (#486) are visible to anyone who can view the roster, which a registrar can.
     expect(props.roster.active).toBe(3);
+    expect(props.honors).toEqual({ inProgress: 1, completedThisYear: 1 });
+    expect(props.honorsHref).toBe("/account/clubs/club-1/honors");
     expect(props.events).toEqual({ open: 1, registered: 1 });
   });
 
@@ -204,6 +230,9 @@ describe("the shared club overview gives staff and Area Coordinators the same re
     // Counts only, from the per-member compliance statuses staff already see with names — never a second query.
     expect(props.compliance).toEqual({ notInCompliance: 1, expiringSoon: 2, missing: 3 });
     expect(mocks.clubComplianceReminderCounts).not.toHaveBeenCalled();
+    expect(props.honors).toEqual({ inProgress: 1, completedThisYear: 1 });
+    // No dedicated staff Honors page for this club — the tile points at the honor chips already on this page.
+    expect(props.honorsHref).toBe("#open-club-roster");
     expect(props.events).toEqual({ open: 1, registered: 1 });
     expect(props.reports).toEqual({ filed: 1, missing: 2 });
   });
@@ -211,6 +240,7 @@ describe("the shared club overview gives staff and Area Coordinators the same re
   it("gives an Area Coordinator the same tiles, counts only, with no names anywhere in the tree", async () => {
     const tree = await ClubOverview({
       organizationId: "club-1",
+      honorsHref: "/account/area/club-1/honors",
       reportHref: (month) => `/account/area/club-1/reports/${month}`,
       reportsEditable: false,
       complianceCounts: true,
@@ -219,13 +249,16 @@ describe("the shared club overview gives staff and Area Coordinators the same re
     expect(props.compliance).toEqual({ notInCompliance: 0, expiringSoon: 0, missing: 1 });
     expect(mocks.clubRosterComplianceStatuses).not.toHaveBeenCalled();
     expect(props.roster.active).toBe(3);
+    expect(props.honors).toEqual({ inProgress: 1, completedThisYear: 1 });
     expect(props.events).toEqual({ open: 1, registered: 1 });
     expect(props.reports).toEqual({ filed: 1, missing: 2 });
 
-    // Every tile links to an anchor on this same read-only page, not a separate route staff can't reach here.
+    // Every tile links to an anchor on this same read-only page, not a separate route staff can't reach here —
+    // except honors, which has its own read-only Area Coordinator page (#486).
     expect(props.rosterHref).toBe("#open-club-roster");
     expect(props.eventsHref).toBe("#open-club-events");
     expect(props.reportsHref).toBe("#open-club-reports");
+    expect(props.honorsHref).toBe("/account/area/club-1/honors");
   });
 
   it("hides the background-check tile for a viewer allowed neither names nor counts (an event manager)", async () => {
@@ -238,5 +271,8 @@ describe("the shared club overview gives staff and Area Coordinators the same re
     expect(props.compliance).toBeNull();
     expect(mocks.clubRosterComplianceStatuses).not.toHaveBeenCalled();
     expect(mocks.clubComplianceReminderCounts).not.toHaveBeenCalled();
+    // Honors are visible to anyone who can view the roster (#486), even without background-check access.
+    expect(props.honors).toEqual({ inProgress: 1, completedThisYear: 1 });
+    expect(props.honorsHref).toBe("#open-club-roster");
   });
 });

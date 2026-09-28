@@ -13,6 +13,8 @@ import { clubEventRegistrationSteps, listClubEvents } from "@/modules/club-regis
 import { calendarDateIn } from "@/modules/calendar/domain";
 import { formatDueDate, isLockedForClub, monthlyReportProgress, reportDueDate, reportMonthLabel, reportableMonths } from "@/modules/club-reports/domain";
 import { getClubReportYear } from "@/modules/club-reports/repository";
+import { honorYearSummary } from "@/modules/honors/member-honor-domain";
+import { listClubHonorsPage } from "@/modules/honors/member-honor-repository";
 import { listDirectedClubs } from "@/modules/organizations/director-access";
 import { clubDirectorRoleLabels, clubRoleDescriptions } from "@/modules/organizations/director-grants-domain";
 
@@ -59,18 +61,21 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
   const base = `/account/clubs/${organizationId}`;
   const now = new Date();
   const clubYear = clubYearFor(now);
-  const [members, events, reportYear, clubsLink, compliance] = await Promise.all([
+  const [members, events, reportYear, clubsLink, compliance, honorRows] = await Promise.all([
     listRoster(organizationId, clubYear),
     listClubEvents(organizationId),
     access.capabilities.submitReports ? getClubReportYear(organizationId, clubYear) : Promise.resolve(null),
     allMyClubsLink(access.actor),
     // Only for roles that already see the roster's background-check column (#479).
     clubPortalComplianceReminderCounts(organizationId, clubYear, access.capabilities),
+    // Honors are visible to anyone who reaches this page: the roster's own gate already applies (#486).
+    listClubHonorsPage(organizationId, clubYear),
   ]);
   const active = members.filter((member) => member.status === "ACTIVE");
   const registered = events.filter((event) => event.registration);
   const open = events.filter((event) => !event.registration && event.available && event.phase === "OPEN");
   const roster = rosterYearSummary(members);
+  const honors = honorYearSummary(honorRows, clubYear);
   const reportProgress = reportYear
     ? monthlyReportProgress(
       reportableMonths(clubYear, now),
@@ -111,6 +116,8 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
         complianceHref={`${base}/roster`}
         events={{ open: open.length, registered: registered.length }}
         eventsHref={`${base}/events`}
+        honors={honors}
+        honorsHref={`${base}/honors`}
         reports={reportProgress}
         reportsHref={`${base}/reports`}
         roster={roster}

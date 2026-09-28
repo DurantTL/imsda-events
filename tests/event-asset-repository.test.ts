@@ -287,10 +287,10 @@ describe("findPublishedEventAsset", () => {
     const findFirst = vi.fn().mockResolvedValue({ displayName: "shirt.png", contentType: "image/png", storageKey: "key_1" });
     dependencies.getPrisma.mockReturnValue({ eventAsset: { findFirst } });
 
-    await findPublishedEventAsset("asset_1");
+    await findPublishedEventAsset("synthetic-retreat", "asset_1");
 
-    const query = findFirst.mock.calls[0][0] as { where: { event: { isPublished: boolean }; OR: Array<Record<string, unknown>> } };
-    expect(query.where.event).toEqual({ isPublished: true });
+    const query = findFirst.mock.calls[0][0] as { where: { event: { slug: string; isPublished: boolean }; OR: Array<Record<string, unknown>> } };
+    expect(query.where.event).toEqual({ slug: "synthetic-retreat", isPublished: true });
     const merchandiseBranch = query.where.OR.find((clause) => "merchandiseArtworkProducts" in clause) as {
       merchandiseArtworkProducts: { some: { isEnabled: boolean; isArchived: boolean; event: { merchandiseCatalog: { isEnabled: boolean; status: string } } } };
     };
@@ -302,5 +302,27 @@ describe("findPublishedEventAsset", () => {
     });
     const sectionBranch = query.where.OR.find((clause) => "links" in clause);
     expect(sectionBranch).toBeDefined();
+  });
+
+  it("never serves an asset through another event's section or product (#508)", async () => {
+    const findFirst = vi.fn().mockResolvedValue(null);
+    dependencies.getPrisma.mockReturnValue({ eventAsset: { findFirst } });
+
+    await findPublishedEventAsset("event-a", "asset_1");
+
+    // Asset, linking section, and artwork product must all be the named event's:
+    // a cross-event link row saved before #508 can't expose a draft file.
+    const query = findFirst.mock.calls[0][0] as {
+      where: { event: unknown; OR: Array<Record<string, { some: Record<string, unknown> }>> };
+    };
+    expect(query.where.event).toEqual({ slug: "event-a", isPublished: true });
+    const sectionBranch = query.where.OR.find((clause) => "links" in clause)!;
+    expect(sectionBranch.links.some).toEqual({
+      section: { isPublished: true, event: { slug: "event-a" } },
+    });
+    const merchandiseBranch = query.where.OR.find((clause) => "merchandiseArtworkProducts" in clause)!;
+    expect(merchandiseBranch.merchandiseArtworkProducts.some).toMatchObject({
+      event: { slug: "event-a" },
+    });
   });
 });
