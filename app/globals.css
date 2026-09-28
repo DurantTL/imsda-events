@@ -5574,6 +5574,7 @@ select:focus-visible {
 .event-readiness-list strong { font-size: 0.64rem; }
 .event-readiness-list small { color: var(--muted); font-size: 0.54rem; line-height: 1.4; }
 .event-readiness-list li.complete { background: var(--green-soft); }
+.event-readiness-optional-heading { margin: 10px 0 4px; color: var(--muted); font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
 
 .event-publish-toggle {
   cursor: pointer;

@@ -98,6 +98,25 @@ describe("public event landing announcement feed", () => {
   });
 });
 
+describe("public event page without an information URL (#467)", () => {
+  it("renders cleanly and drops the 'More information' links rather than an empty one", async () => {
+    landingMocks.getPublicEventLanding.mockResolvedValueOnce({
+      ...landing,
+      links: { ...landing.links, detailsUrl: null },
+    });
+
+    const markup = renderToStaticMarkup(await PublicEventPage({
+      params: Promise.resolve({ eventSlug: "public-retreat" }),
+    }));
+
+    expect(markup).not.toContain("Back to full event details");
+    expect(markup).not.toContain("View on imsda.org");
+    expect(markup).not.toContain('href=""');
+    // The support link is unrelated and must still render.
+    expect(markup).toContain("Contact IMSDA");
+  });
+});
+
 describe("public event extra information", () => {
   it("renders plain-text lines and lists as escaped, scannable blocks", async () => {
     landingMocks.getPublicEventLanding.mockResolvedValueOnce({

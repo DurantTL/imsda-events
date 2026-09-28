@@ -198,4 +198,27 @@ describe("event settings routes", () => {
     ];
     expect(forwarded.hotelName).toBeNull();
   });
+
+  it("accepts an update with no IMSDA.org information page (#467)", async () => {
+    dependencies.updateEventSettings.mockResolvedValue({
+      id: "evt_wr28",
+      ...eventPayload,
+      publicInfoUrl: null,
+    });
+
+    for (const publicInfoUrl of [null, ""]) {
+      dependencies.updateEventSettings.mockClear();
+      const response = await PATCH(
+        eventRequest("/api/events/evt_wr28", "PATCH", { ...eventPayload, publicInfoUrl }),
+        { params: Promise.resolve({ eventId: "evt_wr28" }) },
+      );
+
+      expect(response.status).toBe(200);
+      const [, forwarded] = dependencies.updateEventSettings.mock.calls[0] as [
+        string,
+        Record<string, unknown>,
+      ];
+      expect(forwarded.publicInfoUrl).toBeNull();
+    }
+  });
 });
