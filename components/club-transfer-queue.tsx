@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeftRight } from "lucide-react";
+import { ArrowLeftRight, ChevronDown, Filter } from "lucide-react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { TransferDate, transferEventLabel } from "@/components/transfer-format";
 import {
   memberTransferStaffReasonLabels,
   memberTransferStaffStatusLabels,
@@ -34,13 +35,6 @@ const API = "/api/admin/club-transfers";
 type Action = { transfer: StaffTransferRecord; kind: "finish" | "override" | "cancel" };
 type Candidate = { rosterMemberId: string; firstName: string; lastName: string; attendeeType: string };
 
-function formatDate(iso: string) {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime())
-    ? iso
-    : date.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "America/Chicago" });
-}
-
 /** One queue card. Hook-free so it renders on its own in tests. */
 export function StaffTransferCard({ transfer, onAction }: { transfer: StaffTransferRecord; onAction: (action: Action) => void }) {
   return (
@@ -52,7 +46,7 @@ export function StaffTransferCard({ transfer, onAction }: { transfer: StaffTrans
         </span>
       </div>
       <p>
-        <span translate="no">{transfer.fromOrganizationName}</span> → <span translate="no">{transfer.toOrganizationName}</span> · requested {formatDate(transfer.initiatedAt)} · due {formatDate(transfer.acknowledgeDueAt)}
+        <span translate="no">{transfer.fromOrganizationName}</span> → <span translate="no">{transfer.toOrganizationName}</span> · requested <TransferDate iso={transfer.initiatedAt} /> · due <TransferDate iso={transfer.acknowledgeDueAt} />
       </p>
       {transfer.matchedMemberName && transfer.matchedMemberName !== transfer.requestedName && (
         <p>Typed as: <span translate="no">{transfer.requestedName}</span></p>
@@ -63,7 +57,7 @@ export function StaffTransferCard({ transfer, onAction }: { transfer: StaffTrans
         <ul className="transfer-history" aria-label="History">
           {transfer.events.filter((event) => event.type !== "NOTIFIED").map((event) => (
             <li key={event.id}>
-              {event.type.replaceAll("_", " ").toLowerCase()}, {formatDate(event.createdAt)}
+              {transferEventLabel(event.type)}, <TransferDate iso={event.createdAt} />
               {event.actorName && <> by <span translate="no">{event.actorName}</span></>}
               {event.note && event.type !== "REQUESTED" && <>: {event.note}</>}
             </li>
@@ -178,11 +172,15 @@ export function ClubTransferQueue() {
         </div>
       </div>
       <div className="transfer-filter-row">
-        <label>
-          Show
-          <select onChange={(event) => setFilter(event.target.value as StaffQueueFilter)} value={filter}>
-            {staffQueueFilters.map((value) => <option key={value} value={value}>{filterLabels[value]}</option>)}
-          </select>
+        <label className="filter-field transfer-filter-field">
+          <Filter aria-hidden="true" size={16} />
+          <span>Show</span>
+          <span className="transfer-filter-select">
+            <select onChange={(event) => setFilter(event.target.value as StaffQueueFilter)} value={filter}>
+              {staffQueueFilters.map((value) => <option key={value} value={value}>{filterLabels[value]}</option>)}
+            </select>
+            <ChevronDown aria-hidden="true" size={15} />
+          </span>
         </label>
       </div>
       {notice && <div className="inline-notice success" role="status">{notice}</div>}

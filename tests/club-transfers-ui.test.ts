@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -5,7 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { ClubTransferCard, RequestTransferButton, transferActionEndpoint } from "@/components/club-transfers-panel";
-import { StaffTransferCard } from "@/components/club-transfer-queue";
+import { ClubTransferQueue, StaffTransferCard } from "@/components/club-transfer-queue";
+import { formatTransferDate, transferEventLabels } from "@/components/transfer-format";
 import { RegistrationMoveCard } from "@/components/registration-move-approvals";
 import type { ClubTransferRecord, RegistrationMoveRecord, StaffTransferRecord } from "@/modules/club-transfers/repository";
 
@@ -73,5 +75,55 @@ describe("club member transfer screens (#489)", () => {
     const html = renderToStaticMarkup(createElement(RequestTransferButton, { organizationId: "club-b", clubOptions: [{ id: "club-a", name: "Club A" }] }));
     expect(html).toContain("Request a transfer");
     expect(transferActionEndpoint("club a", "t/1", "accept")).toBe("/api/attendee/clubs/club%20a/transfers/t%2F1/accept");
+  });
+
+  it("lays out card actions in one scoped row, primary first, and keeps dates on one line", () => {
+    const transfer = {
+      id: "t4", requestedName: "Ada Testperson", matchedMemberName: "Ada Testperson", fromOrganizationId: "a", fromOrganizationName: "Club A",
+      toOrganizationId: "b", toOrganizationName: "Club B", reason: "r", status: "PENDING", staffReason: null, resolution: null,
+      staffNote: "", initiatedAt: iso, acknowledgeDueAt: iso, declinedAt: null, resolvedAt: null, overdue: true, canFinish: true,
+      canOverride: true, canCancel: true, needsMemberChoice: false, pendingRegistrationMoves: 0,
+      events: [
+        { id: "e1", type: "REQUESTED", note: "reason text", actorName: "Director B", createdAt: iso },
+        { id: "e2", type: "STAFF_OVERRIDDEN", note: "", actorName: null, createdAt: iso },
+        { id: "e3", type: "NOTIFIED", note: "", actorName: null, createdAt: iso },
+      ],
+    } as unknown as StaffTransferRecord;
+    const html = renderToStaticMarkup(createElement(StaffTransferCard, { transfer, onAction: noop }));
+    const actions = html.slice(html.indexOf('class="transfer-card-actions"'));
+    expect(actions.indexOf(">Finish<")).toBeLessThan(actions.indexOf(">Override<"));
+    expect(actions.indexOf(">Override<")).toBeLessThan(actions.indexOf(">Close<"));
+    // Staff history uses the same labels as the director panel, never a lowercased enum.
+    expect(html).toContain(`${transferEventLabels.REQUESTED}, <span class="transfer-date">${formatTransferDate(iso)}</span>`);
+    expect(html).toContain(transferEventLabels.STAFF_OVERRIDDEN);
+    expect(html).not.toMatch(/staff overridden|requested,/);
+    expect(html).not.toContain("Notice queued");
+    expect(html).toContain(`due <span class="transfer-date">${formatTransferDate(iso)}</span>`);
+  });
+
+  it("styles the staff queue's Show filter as a visible field", () => {
+    const html = renderToStaticMarkup(createElement(ClubTransferQueue));
+    expect(html).toMatch(/<label class="filter-field transfer-filter-field">/);
+    expect(html).toContain('class="transfer-filter-select"');
+    expect(html).toContain("All open");
+  });
+
+  it("keeps move dates on one line", () => {
+    const move = {
+      id: "m2", status: "SKIPPED", transferId: "t1", eventId: "e1", eventName: "Camporee", eventStartsAt: iso, memberName: "Ada Testperson",
+      fromClubName: "Club A", toClubName: "Club B", fromRegistration: null, toRegistration: null, adjustmentCents: 0, blocker: null,
+      note: "Stays", decidedAt: iso, decidedByName: "Staff", createdAt: iso,
+    } as RegistrationMoveRecord;
+    const html = renderToStaticMarkup(createElement(RegistrationMoveCard, { move, onDecide: noop }));
+    expect(html).toContain(`Skipped <span class="transfer-date">${formatTransferDate(iso)}</span>`);
+  });
+
+  it("scopes equal-width, 44px actions to transfer cards and leaves the global phone rule alone", () => {
+    const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+    expect(css).toMatch(/\.transfer-card-actions \.primary-button,\s*\.transfer-card-actions \.secondary-button \{ flex: 1 1 120px; width: auto; min-height: 44px;/);
+    // The global phone rule is untouched; the scoped rule above is more specific, so it wins inside transfer cards.
+    expect(css).toMatch(/\n  \.secondary-button \{ width: 100%; \}/);
+    expect(css).toMatch(/\.transfer-history \{ margin: 0; padding: 0;/);
+    expect(css).toContain(".transfer-date { white-space: nowrap; }");
   });
 });

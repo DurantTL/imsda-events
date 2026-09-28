@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeftRight, Send } from "lucide-react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { TransferDate, transferEventLabel } from "@/components/transfer-format";
 import type { ClubTransferRecord } from "@/modules/club-transfers/repository";
 
 /**
@@ -32,23 +33,6 @@ function transfersEndpoint(organizationId: string) {
 export function transferActionEndpoint(organizationId: string, transferId: string, action: "accept" | "decline" | "cancel") {
   return `${transfersEndpoint(organizationId)}/${encodeURIComponent(transferId)}/${action}`;
 }
-
-function formatDate(iso: string) {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime())
-    ? iso
-    : date.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "America/Chicago" });
-}
-
-const eventLabels: Record<string, string> = {
-  REQUESTED: "Requested",
-  ACCEPTED: "Accepted",
-  DECLINED: "Declined; sent to conference staff",
-  CANCELLED: "Cancelled",
-  STAFF_FINISHED: "Finished by conference staff",
-  STAFF_OVERRIDDEN: "Completed by conference staff",
-  COMPLETED: "Completed",
-};
 
 async function postJson(url: string, body: unknown) {
   const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -148,13 +132,13 @@ export function ClubTransferCard({ transfer, onAction }: { transfer: ClubTransfe
         <span className={`status-chip ${tone}`}>{transfer.statusLabel}</span>
       </div>
       <p>
-        {incoming ? "From " : "To "}<span translate="no">{transfer.otherClubName}</span> · requested {formatDate(transfer.initiatedAt)}
-        {"acknowledgeDueAt" in transfer && transfer.status === "PENDING" && <> · answer by {formatDate(transfer.acknowledgeDueAt)}</>}
+        {incoming ? "From " : "To "}<span translate="no">{transfer.otherClubName}</span> · requested <TransferDate iso={transfer.initiatedAt} />
+        {"acknowledgeDueAt" in transfer && transfer.status === "PENDING" && <> · answer by <TransferDate iso={transfer.acknowledgeDueAt} /></>}
       </p>
       <p>Reason: {transfer.reason}</p>
       {transfer.events.length > 0 && (
         <ul className="transfer-history" aria-label="History">
-          {transfer.events.map((event) => <li key={event.id}>{eventLabels[event.type] ?? event.type}, {formatDate(event.createdAt)}</li>)}
+          {transfer.events.map((event) => <li key={event.id}>{transferEventLabel(event.type)}, <TransferDate iso={event.createdAt} /></li>)}
         </ul>
       )}
       {(transfer.canAccept || transfer.canDecline || transfer.canCancel) && (

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ClipboardCheck } from "lucide-react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { TransferDate } from "@/components/transfer-format";
 import { registrationMoveBlockerLabels, type RegistrationMoveBlocker } from "@/modules/club-transfers/domain";
 import type { RegistrationMoveRecord } from "@/modules/club-transfers/repository";
 
@@ -52,7 +53,7 @@ export function RegistrationMoveCard({ move, onDecide }: { move: RegistrationMov
       {blocker && <p className="form-error">{registrationMoveBlockerLabels[blocker]}</p>}
       {move.status !== "PENDING" && move.decidedAt && (
         <p className="quiet-copy">
-          {move.status === "APPROVED" ? "Approved" : "Skipped"} {new Date(move.decidedAt).toLocaleDateString("en-US", { timeZone: "America/Chicago" })}
+          {move.status === "APPROVED" ? "Approved" : "Skipped"} <TransferDate iso={move.decidedAt} />
           {move.decidedByName && <> by <span translate="no">{move.decidedByName}</span></>}{move.note && <>: {move.note}</>}
         </p>
       )}

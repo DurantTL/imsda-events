@@ -7559,15 +7559,26 @@ select:focus-visible {
 .transfer-card { display: grid; gap: 6px; min-width: 0; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; overflow-wrap: anywhere; }
 .transfer-card-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; }
 .transfer-card-head strong { min-width: 0; }
-.transfer-card p { margin: 0; font-size: 0.72rem; }
+.transfer-card p { margin: 0; font-size: 0.8rem; }
+/* Equal-width, wrapping actions with the primary one first. Scoped here so the
+   phone rule that makes every .secondary-button full width elsewhere doesn't
+   stack each action on its own row. 44px tall for touch. */
 .transfer-card-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.transfer-card-actions button { flex: 0 1 auto; }
-.transfer-history { margin: 0; padding-left: 18px; font-size: 0.68rem; color: var(--muted); }
+.transfer-card-actions .primary-button,
+.transfer-card-actions .secondary-button { flex: 1 1 120px; width: auto; min-height: 44px; justify-content: center; }
+.transfer-history { margin: 0; padding: 0; list-style: none; font-size: 0.74rem; color: var(--muted); }
+.transfer-history li + li { margin-top: 2px; }
+.transfer-date { white-space: nowrap; }
 .transfer-section + .transfer-section { margin-top: 18px; }
 .transfer-section h3 { margin: 0; font-size: 0.9rem; }
 .transfer-filter-row { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin-top: 10px; }
-.transfer-filter-row label { display: grid; gap: 4px; min-width: 0; }
+.transfer-filter-row label { min-width: 0; }
+/* The queue's "Show" filter: the .filter-field pattern as a visible, outlined control. */
+.transfer-filter-field { min-height: 44px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); padding: 0 12px; font-size: 0.8rem; font-weight: 700; }
+.transfer-filter-select { position: relative; display: inline-flex; align-items: center; }
+.transfer-filter-select select { appearance: none; cursor: pointer; padding: 10px 22px 10px 2px; font-size: 0.8rem; }
+.transfer-filter-select svg { position: absolute; right: 0; pointer-events: none; }
 .transfer-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 0; }
 .transfer-totals div { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
-.transfer-totals dt { font-size: 0.64rem; color: var(--muted); }
+.transfer-totals dt { font-size: 0.74rem; color: var(--muted); }
 .transfer-totals dd { margin: 2px 0 0; font-weight: 700; }
