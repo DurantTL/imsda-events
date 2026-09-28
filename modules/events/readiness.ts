@@ -10,7 +10,20 @@ export type EventReadinessSource = {
 };
 
 export type EventReadinessItem = {
-  id: "basics" | "location" | "public-info" | "support" | "registration-form";
+  id: "basics" | "location" | "support" | "registration-form";
+  label: string;
+  detail: string;
+  complete: boolean;
+};
+
+/**
+ * Event information no longer lives on a required IMSDA.org page (#467):
+ * it is an optional setting, never counted toward "ready" and never a
+ * publish blocker. It is reported separately so a caller that wants to show
+ * it can, without folding it back into readiness math.
+ */
+export type EventReadinessOptionalItem = {
+  id: "public-info";
   label: string;
   detail: string;
   complete: boolean;
@@ -54,12 +67,6 @@ export function getEventPublishReadiness(
       complete: hasText(event.location),
     },
     {
-      id: "public-info",
-      label: "IMSDA.org information page",
-      detail: "Attendees have a public page for the full event description.",
-      complete: isPublicWebUrl(event.publicInfoUrl),
-    },
-    {
       id: "support",
       label: "Support contact",
       detail: "Attendees know who to contact with registration questions.",
@@ -73,9 +80,21 @@ export function getEventPublishReadiness(
     },
   ];
 
+  // Complete when nothing is set (there is nothing to fix) or when the
+  // configured value is a valid web address. Never a blocker either way.
+  const optionalItems: EventReadinessOptionalItem[] = [
+    {
+      id: "public-info",
+      label: "IMSDA.org information page (optional)",
+      detail: "Event information now lives on IMSDA Events. Set this only if a separate IMSDA.org page also describes the event.",
+      complete: !hasText(event.publicInfoUrl) || isPublicWebUrl(event.publicInfoUrl),
+    },
+  ];
+
   return {
     ready: items.every((item) => item.complete),
     completedCount: items.filter((item) => item.complete).length,
     items,
+    optionalItems,
   };
 }

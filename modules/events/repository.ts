@@ -218,9 +218,12 @@ export async function createEvent(
 ) {
   const readiness = getEventPublishReadiness(input, 0);
   if (input.isPublished && !readiness.ready) {
+    const missing = readiness.items
+      .filter((item) => !item.complete)
+      .map((item) => item.label.toLowerCase());
     throw new EventOperationError(
       "EVENT_NOT_READY",
-      "Create the event as a draft, publish a registration form, and complete the readiness checklist before publishing.",
+      `Create the event as a draft first: ${missing.join(", ")}.`,
     );
   }
 

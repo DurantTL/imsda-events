@@ -427,13 +427,13 @@ export function EventSettingsWorkspace({
 
           <section className="panel form-stack event-settings-panel">
             <div className="section-heading">
-              <div><p className="eyebrow">Step 3</p><h2>Public information &amp; help</h2><p>Connect registration to the full event information already maintained on IMSDA.org.</p></div>
+              <div><p className="eyebrow">Step 3</p><h2>Public information &amp; help</h2><p>Event information lives on IMSDA Events. Link an IMSDA.org page too only if one still exists for this event.</p></div>
               <Globe2 size={21} aria-hidden="true" />
             </div>
             <label>
-              IMSDA.org event page
+              IMSDA.org event page (optional)
               <input type="url" value={draft.publicInfoUrl ?? ""} maxLength={500} placeholder="https://imsda.org/event/your-event/" onChange={(event) => update("publicInfoUrl", event.target.value || null)} />
-              <small>This WordPress page remains the public source for schedules, speakers, packing lists, and event details.</small>
+              <small>Not required to publish. Leave blank when schedules, speakers, and event details live only on this event&rsquo;s IMSDA Events page.</small>
             </label>
             <label>
               Registration support contact
@@ -496,6 +496,15 @@ export function EventSettingsWorkspace({
             <p>Publishing turns on the event’s public registration links. Form versions and registration dates still control what attendees can submit.</p>
             <ul className="event-readiness-list">
               {readiness.items.map((item) => (
+                <li className={item.complete ? "complete" : ""} key={item.id}>
+                  {item.complete ? <CheckCircle2 size={18} aria-hidden="true" /> : <span aria-hidden="true" />}
+                  <span><strong>{item.label}</strong><small>{item.detail}</small></span>
+                </li>
+              ))}
+            </ul>
+            {/* Never blocks publish (#467): shown for visibility only. */}
+            <ul className="event-readiness-list event-readiness-optional">
+              {readiness.optionalItems.map((item) => (
                 <li className={item.complete ? "complete" : ""} key={item.id}>
                   {item.complete ? <CheckCircle2 size={18} aria-hidden="true" /> : <span aria-hidden="true" />}
                   <span><strong>{item.label}</strong><small>{item.detail}</small></span>
