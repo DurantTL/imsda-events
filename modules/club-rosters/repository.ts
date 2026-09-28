@@ -6,6 +6,7 @@ import { writeAuditLog } from "@/modules/audit/audit-service";
 import { openBirthDate, sealBirthDate } from "@/modules/club-rosters/birth-dates";
 import { ageOn, birthDateProblem, calendarDateOf, defaultRosterRole } from "@/modules/club-rosters/domain";
 import type { RosterMemberInput, RosterMemberUpdate } from "@/modules/club-rosters/schemas";
+import { willingToDriveAllowed } from "@/modules/driver-verification/domain";
 
 /**
  * Club roster storage (#356). Birth dates are sealed on write and opened only
@@ -13,7 +14,13 @@ import type { RosterMemberInput, RosterMemberUpdate } from "@/modules/club-roste
  * roster row, never a person's name or birth date.
  */
 
-export type RosterErrorCode = "MEMBER_NOT_FOUND" | "DUPLICATE_MEMBER" | "BIRTH_DATE_INVALID" | "MEMBER_REMOVED" | "GENDER_REQUIRED";
+export type RosterErrorCode =
+  | "MEMBER_NOT_FOUND"
+  | "DUPLICATE_MEMBER"
+  | "BIRTH_DATE_INVALID"
+  | "MEMBER_REMOVED"
+  | "GENDER_REQUIRED"
+  | "WILLING_TO_DRIVE_NOT_ALLOWED";
 
 export class RosterOperationError extends Error {
   constructor(public readonly code: RosterErrorCode, message: string) {
@@ -44,6 +51,7 @@ const memberSelect = {
   status: true,
   source: true,
   sourceRegistrationId: true,
+  willingToDrive: true,
   updatedAt: true,
   person: { select: { firstName: true, lastName: true } },
 } satisfies Prisma.ClubRosterMemberSelect;
@@ -65,6 +73,8 @@ function serializeMember(member: StoredMember, today: string) {
     gender: member.gender,
     status: member.status,
     source: member.source,
+    /** Q1 (#491): never grants clearance by itself — see `modules/driver-verification`. */
+    willingToDrive: member.willingToDrive,
     age: ageFrom(member, today),
     /** Imported without a birth date (#376): the form's age, until a birth date is added. */
     reportedAge: member.sealedBirthDate ? null : member.reportedAge,
@@ -175,6 +185,9 @@ export async function addRosterMember(
 ) {
   const now = options.now ?? new Date();
   assertBirthDate(input.birthDate, now);
+  if (!willingToDriveAllowed(input.attendeeType, input.willingToDrive)) {
+    throw new RosterOperationError("WILLING_TO_DRIVE_NOT_ALLOWED", "Only staff and adults can be marked willing to drive.");
+  }
   const memberId = await getPrisma().$transaction(async (tx) => {
     await assertNotDuplicate(tx, organizationId, clubYear, input.firstName, input.lastName, input.birthDate);
     const person = await tx.person.create({
@@ -191,6 +204,7 @@ export async function addRosterMember(
         classLevel: input.classLevel,
         gender: input.gender,
         sealedBirthDate: sealBirthDate(input.birthDate),
+        willingToDrive: input.willingToDrive,
         source: options.source ?? "DIRECTOR",
         sourceRegistrationId: options.sourceRegistrationId ?? null,
         ...("accountId" in actor ? { createdByAccountId: actor.accountId } : { createdByUserId: actor.userId }),
@@ -202,6 +216,11 @@ export async function addRosterMember(
       attendeeType: input.attendeeType,
       source: options.source ?? "DIRECTOR",
     });
+    // A follow-up item (#491): added straight to the driver verification
+    // queue, never cleared by this alone — see `modules/driver-verification`.
+    if (input.willingToDrive) {
+      await audit(tx, actor, "CLUB_ROSTER_WILLING_TO_DRIVE_SET", organizationId, member.id, "Marked a roster member willing to drive.");
+    }
     return member.id;
   });
   return memberId;
@@ -248,6 +267,12 @@ export async function updateRosterMember(
     if ((input.firstName !== undefined || input.lastName !== undefined) && member.personId) {
       await tx.person.update({ where: { id: member.personId }, data: { firstName, lastName } });
     }
+    // "Willing to drive" (#491) is meaningful for staff and adults only,
+    // whatever the row ends up being after this edit.
+    const finalWillingToDrive = input.willingToDrive === undefined ? member.willingToDrive : input.willingToDrive;
+    if (!willingToDriveAllowed(finalType, finalWillingToDrive)) {
+      throw new RosterOperationError("WILLING_TO_DRIVE_NOT_ALLOWED", "Only staff and adults can be marked willing to drive.");
+    }
     await tx.clubRosterMember.update({
       where: { id: memberId },
       data: {
@@ -257,6 +282,7 @@ export async function updateRosterMember(
         ...(input.gender === undefined ? {} : { gender: input.gender }),
         ...(input.status === undefined ? {} : { status: input.status }),
         ...(input.birthDate === undefined ? {} : { sealedBirthDate: sealBirthDate(input.birthDate), reportedAge: null }),
+        ...(input.willingToDrive === undefined ? {} : { willingToDrive: input.willingToDrive }),
       },
     });
     const action = input.status === "INACTIVE" && member.status !== "INACTIVE"
@@ -267,6 +293,13 @@ export async function updateRosterMember(
     await audit(tx, actor, action, organizationId, memberId, "Updated a person on a club roster.", {
       fields: Object.keys(input),
     });
+    // A follow-up item (#491), never clearance: checking the box for the
+    // first time puts the person in the driver verification queue. Recorded
+    // as its own entry only on the flip from not-willing to willing, so the
+    // audit trail shows exactly when someone was newly added to the queue.
+    if (input.willingToDrive === true && member.willingToDrive !== true) {
+      await audit(tx, actor, "CLUB_ROSTER_WILLING_TO_DRIVE_SET", organizationId, memberId, "Marked a roster member willing to drive.");
+    }
   });
 }
 

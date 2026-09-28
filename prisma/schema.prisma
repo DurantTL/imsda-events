@@ -526,6 +526,7 @@ model User {
   revokedClubDirectorships       ClubDirectorGrant[]              @relation("ClubDirectorGrantRevokedBy")
   createdClubInvites             ClubInvite[]                     @relation("ClubInviteCreatedBy")
   passkeys                       UserPasskey[]
+  driverVerificationsReviewed    DriverVerification[]              @relation("DriverVerificationReviewedByUser")
   /// The person this staff account is explicitly linked to, if any. Grants
   /// nothing by itself — see `UserPersonLink`.
   personLink                        UserPersonLink?              @relation("UserPersonLinkUser")
@@ -746,6 +747,7 @@ model AttendeeAccount {
   /// Grants nothing by itself — see `AttendeeAccountPersonLink`.
   personLink                        AttendeeAccountPersonLink?  @relation("AttendeeAccountPersonLinkAccount")
   actorOnAttendeeAccountPersonLinks AttendeeAccountPersonLink[] @relation("AttendeeAccountPersonLinkActorAccount")
+  driverVerificationsReviewed       DriverVerification[]        @relation("DriverVerificationReviewedBy")
   /// Clubs this account directs. Explicit staff grants only — never inferred.
   clubDirectorGrants                ClubDirectorGrant[]
   areaCoordinatorGrant              AreaCoordinatorGrant?
@@ -1392,6 +1394,7 @@ model Person {
   matchCandidatesAsB   PersonMatchCandidate[] @relation("PersonMatchCandidateAsB")
   clubRosterMemberships ClubRosterMember[]
   backgroundCheck       BackgroundCheck?
+  driverVerification    DriverVerification?
 
   @@index([lastName, firstName])
 }
@@ -3140,6 +3143,13 @@ model ClubRosterMember {
   /// Set instead of `createdByAccountId` for a staff "act as" director (#442).
   createdByUserId      String?
   removedAt            DateTime?
+  /// Q1 (#491): the person has said they're willing to drive for club or
+  /// event transportation. Checking it never grants clearance by itself — it
+  /// only adds them to the driver verification queue (`DriverVerification`)
+  /// for a reviewer to confirm license, insurance, and background-check
+  /// status elsewhere and record an outcome. Meaningful for STAFF and ADULT
+  /// rows only (`canBeWillingDriver`); youth and underage rows never carry it.
+  willingToDrive       Boolean                @default(false)
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
 
@@ -3199,6 +3209,37 @@ enum BackgroundCheckComplianceStatus {
   CLEAR
   FLAGGED
   NOT_COMPLIANT
+}
+
+/// A driver clearance decision (Q1, #491). Driver clearance itself is not a
+/// new compliance status — `BackgroundCheck` already carries the underlying
+/// background-check result — this is only the reviewer's own confirmation
+/// that the license, insurance, and background-check clearance were checked,
+/// and the outcome of that review. Never the license or insurance numbers or
+/// files themselves (ADR 0005 Addendum A; #491 acceptance criteria). One row
+/// per person; a later review replaces the previous outcome, and every
+/// decision is also written to `AuditLog` (`DRIVER_VERIFICATION_REVIEWED`) so
+/// the history of who decided what, and when, survives a later overwrite.
+/// The reviewer is attributed the same way a club roster edit is (#442):
+/// either the attendee account of a club director/deputy, or the staff user
+/// (with `actAsId` in the audit metadata for an "act as" director), never both.
+model DriverVerification {
+  id                  String    @id @default(cuid())
+  personId            String    @unique
+  clearedToTransport  Boolean
+  note                String    @default("")
+  reviewedByAccountId String?
+  reviewedByUserId    String?
+  reviewedAt          DateTime
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  person         Person          @relation(fields: [personId], references: [id], onDelete: Cascade)
+  reviewedBy     AttendeeAccount? @relation("DriverVerificationReviewedBy", fields: [reviewedByAccountId], references: [id], onDelete: SetNull)
+  reviewedByUser User?           @relation("DriverVerificationReviewedByUser", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([reviewedByAccountId])
+  @@index([reviewedByUserId])
 }
 
 /// A club's single registration for a club event (#358): an ordinary

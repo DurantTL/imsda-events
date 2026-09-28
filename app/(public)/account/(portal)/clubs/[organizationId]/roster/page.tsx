@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { BackLink } from "@/components/back-link";
 import { ClubRosterWorkspace } from "@/components/club-roster-workspace";
+import { DriverVerificationQueue } from "@/components/driver-verification-queue";
 import { clubPortalComplianceStatuses } from "@/modules/background-checks/repository";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { clubYearFor } from "@/modules/club-rosters/domain";
@@ -29,6 +30,13 @@ export default async function ClubRosterPage({ params }: { params: Promise<{ org
         initialMembers={members}
         organizationId={organizationId}
       />
+      {/* Willing drivers, for review (#491): the same leader-only capability that manages the club's team. */}
+      {access.capabilities.manageTeam && (
+        <DriverVerificationQueue
+          clearEndpointFor={(personId) => `/api/attendee/clubs/${encodeURIComponent(organizationId)}/driver-verification/${encodeURIComponent(personId)}`}
+          listEndpoint={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/driver-verification`}
+        />
+      )}
     </>
   );
 }
