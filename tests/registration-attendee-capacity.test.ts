@@ -4,6 +4,7 @@ const dependencies = vi.hoisted(() => ({
   getPrisma: vi.fn(),
 }));
 
+vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: dependencies.getPrisma }));
 
 import {

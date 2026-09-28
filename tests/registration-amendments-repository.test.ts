@@ -665,3 +665,74 @@ describe("registration amendments repository", () => {
   });
 });
 
+
+describe("amending a directory-sourced registration (#482)", () => {
+  const directoryFields = [
+    { id: "club-field", key: "club_name", label: "Pathfinder club", helpText: "", type: "SELECT", scope: "REGISTRATION", required: true, options: [], optionSource: "CLUBS_DIRECTORY" },
+    { id: "club-other-field", key: "club_name_other", label: "Club — not listed", helpText: "", type: "TEXT", scope: "REGISTRATION", required: true, options: [], conditional: { fieldKey: "club_name", operator: "EQUALS", value: "Not listed" } },
+    { id: "church-field", key: "church_name", label: "Church", helpText: "", type: "SELECT", scope: "REGISTRATION", required: false, options: [], optionSource: "CHURCHES_DIRECTORY" },
+  ];
+
+  function directoryFixture(stored: Record<string, unknown>) {
+    const fixture = repositoryFixture();
+    const sourced = structuredClone(definition) as unknown as { sections: Array<{ fields: Array<Record<string, unknown>> }> };
+    sourced.sections[0]!.fields.push(...directoryFields);
+    fixture.registration.publicFormSubmission.formVersion.definition = sourced as unknown as typeof definition;
+    fixture.registration.publicFormSubmission.responses = { ...registrationResponses, ...stored } as typeof registrationResponses;
+    const organization = {
+      findMany: vi.fn(async ({ where }: { where: { type: "CLUB" | "CHURCH" } }) => (
+        where.type === "CLUB"
+          ? [{ name: "Test Pathfinders", normalizedName: "test pathfinders" }, { name: "Sample Explorers", normalizedName: "sample explorers" }]
+          : [{ name: "Test SDA Church", normalizedName: "test sda church" }]
+      )),
+    };
+    Object.assign(fixture.tx, { organization });
+    return { ...fixture, organization };
+  }
+
+  function preview(responses: Record<string, unknown>) {
+    return previewRegistrationAmendment("event-1", "registration-1", {
+      clientRequestId: "7b3e1c52-0d7e-4a8e-9a55-5f0a3f6d2c11",
+      expectedUpdatedAt: initialUpdatedAt.toISOString(),
+      reason: "Staff correction.",
+      responses: { ...registrationResponses, ...responses },
+      attendees: [{ attendeeId: "attendee-1", clientId: "attendee-row-1", responses: attendeeResponses }],
+      previewOnly: true,
+    });
+  }
+
+  it("validates an unchanged club and church, even ones since renamed out of the directory, reading it through the transaction", async () => {
+    const { organization } = directoryFixture({ club_name: "Old Test Club Name", church_name: "Test SDA Church" });
+    await expect(preview({ club_name: "Old Test Club Name", church_name: "Test SDA Church" })).resolves.toBeDefined();
+    expect(organization.findMany).toHaveBeenCalled();
+  });
+
+  it("lets staff change the club to a different directory value, and rejects one that isn't in the directory", async () => {
+    directoryFixture({ club_name: "Test Pathfinders", church_name: "Test SDA Church" });
+    await expect(preview({ club_name: "Sample Explorers", church_name: "Test SDA Church" })).resolves.toBeDefined();
+    await expect(preview({ club_name: "A Made-Up Club", church_name: "Test SDA Church" }))
+      .rejects.toMatchObject({ code: "INVALID_AMENDMENT" });
+  });
+
+  it("lets staff correct a \"Not listed\" entry to the real club", async () => {
+    directoryFixture({ club_name: "Not listed", club_name_other: "Test Pathfinderz" });
+    await expect(preview({ club_name: "Test Pathfinders", club_name_other: "" })).resolves.toBeDefined();
+  });
+
+  it("computes server-owned answers with the amendment's own transaction", async () => {
+    const { tx } = directoryFixture({ club_name: "Not listed", club_name_other: "Test Pathfinderz" });
+    const owned = vi.fn(async (_definition: RegistrationFormDefinition, client: unknown) => {
+      expect(client).toBe(tx);
+      return { club_name: "Test Pathfinders", club_name_other: null };
+    });
+    await expect(previewRegistrationAmendment("event-1", "registration-1", {
+      clientRequestId: "7b3e1c52-0d7e-4a8e-9a55-5f0a3f6d2c11",
+      expectedUpdatedAt: initialUpdatedAt.toISOString(),
+      reason: "",
+      responses: { ...registrationResponses, club_name: "Not listed", club_name_other: "Test Pathfinderz" },
+      attendees: [{ attendeeId: "attendee-1", clientId: "attendee-row-1", responses: attendeeResponses }],
+      previewOnly: true,
+    }, { ownedRegistrationResponses: owned })).resolves.toBeDefined();
+    expect(owned).toHaveBeenCalledTimes(1);
+  });
+});

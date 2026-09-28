@@ -15,6 +15,11 @@ import { slugCandidate, slugify, slugMatchesTitle } from "@/modules/forms/slug";
 import { listActiveAttendeeTypes } from "@/modules/attendee-types/repository";
 import { stripAttendeeTypeOptions, withAttendeeTypeOptions } from "@/modules/attendee-types/form-options";
 import type { AttendeeTypeOption } from "@/modules/attendee-types/domain";
+import { hasDirectoryOptionSource, stripDirectoryOptions, withDirectoryOptions } from "@/modules/organizations/directory-form-options";
+import type { OrganizationDirectory } from "@/modules/organizations/directory-options";
+import { directoryForDefinitions, hydrateFormOptions } from "@/modules/forms/form-options-repository";
+
+const emptyDirectory: OrganizationDirectory = { clubs: [], churches: [] };
 
 export class FormOperationError extends Error {
   constructor(
@@ -80,9 +85,10 @@ function usageResponseSetsFromJson(value: Prisma.JsonValue): Array<Record<string
   return [record];
 }
 
-function serializeForm(form: FormWithVersions, attendeeTypes: AttendeeTypeOption[] = []) {
+function serializeForm(form: FormWithVersions, attendeeTypes: AttendeeTypeOption[] = [], directory: OrganizationDirectory = emptyDirectory) {
   const versions = form.versions.map((version) => {
-    const definition = withAttendeeTypeOptions(definitionFromJson(version.definition), attendeeTypes);
+    let definition = withAttendeeTypeOptions(definitionFromJson(version.definition), attendeeTypes);
+    if (hasDirectoryOptionSource(definition)) definition = withDirectoryOptions(definition, directory);
     const validResponseSets = version.testSubmissions
       .filter((submission) => submission.isValid)
       .flatMap((submission) => usageResponseSetsFromJson(submission.responses));
@@ -129,17 +135,23 @@ async function loadForm(eventId: string, formId: string) {
   return getPrisma().registrationForm.findFirst({ where: { id: formId, eventId }, include: formInclude });
 }
 
+function formsDirectory(forms: readonly FormWithVersions[]) {
+  return directoryForDefinitions(forms.flatMap((form) => form.versions.map((version) => definitionFromJson(version.definition))));
+}
+
 export async function listRegistrationForms(eventId: string) {
   const [forms, attendeeTypes] = await Promise.all([
     getPrisma().registrationForm.findMany({ where: { eventId }, orderBy: { updatedAt: "desc" }, include: formInclude }),
     listActiveAttendeeTypes(eventId),
   ]);
-  return forms.map((form) => serializeForm(form, attendeeTypes));
+  const directory = await formsDirectory(forms);
+  return forms.map((form) => serializeForm(form, attendeeTypes, directory));
 }
 
 export async function getRegistrationForm(eventId: string, formId: string) {
   const [form, attendeeTypes] = await Promise.all([loadForm(eventId, formId), listActiveAttendeeTypes(eventId)]);
-  return form ? serializeForm(form, attendeeTypes) : null;
+  const directory = form ? await formsDirectory([form]) : emptyDirectory;
+  return form ? serializeForm(form, attendeeTypes, directory) : null;
 }
 
 export function listFormTemplates() {
@@ -153,7 +165,7 @@ export async function createRegistrationForm(eventId: string, actorUserId: strin
   const template = getFormTemplate(templateKey);
   if (!template) throw new FormOperationError("TEMPLATE_NOT_FOUND", "That form template is not available.");
   const definition = registrationFormDefinitionSchema.parse(structuredClone(template.definition));
-  const storedDefinition = stripAttendeeTypeOptions(definition);
+  const storedDefinition = stripDirectoryOptions(stripAttendeeTypeOptions(definition));
   const created = await getPrisma().$transaction(async (tx) => {
     const baseSlug = slugify(definition.title);
     let slug = baseSlug;
@@ -187,7 +199,7 @@ export async function updateRegistrationForm(
   input: { definition: RegistrationFormDefinition; expectedUpdatedAt: string },
 ) {
   const definition = registrationFormDefinitionSchema.parse(input.definition);
-  const storedDefinition = stripAttendeeTypeOptions(definition);
+  const storedDefinition = stripDirectoryOptions(stripAttendeeTypeOptions(definition));
   await getPrisma().$transaction(async (tx) => {
     let invalidatedTestCount = 0;
     const form = await tx.registrationForm.findFirst({ where: { id: formId, eventId }, include: { versions: { orderBy: { versionNumber: "desc" } } } });
@@ -378,7 +390,7 @@ export async function createTestSubmission(
   });
   if (!version) throw new FormOperationError("VERSION_NOT_FOUND", "That form version is not available for testing.");
   const attendeeTypes = await listActiveAttendeeTypes(eventId);
-  const definition = withAttendeeTypeOptions(registrationFormDefinitionSchema.parse(version.definition), attendeeTypes);
+  const definition = await hydrateFormOptions(registrationFormDefinitionSchema.parse(version.definition), { attendeeTypes });
   const priorValidResponses = await getPrisma().formTestSubmission.findMany({ where: { formVersionId: version.id, isValid: true }, select: { responses: true } });
   const usage = summarizeChoiceUsage(
     definition,

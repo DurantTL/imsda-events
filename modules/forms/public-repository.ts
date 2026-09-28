@@ -52,7 +52,8 @@ import {
   recordPromoCodeRedemption,
   type ClaimedPromoCode,
 } from "@/modules/promo-codes/repository";
-import { attendeeTypeSelector, withAttendeeTypeOptions } from "@/modules/attendee-types/form-options";
+import { attendeeTypeSelector } from "@/modules/attendee-types/form-options";
+import { hydrateFormOptions } from "@/modules/forms/form-options-repository";
 
 export type PublicRegistrationErrorCode =
   | "FORM_NOT_FOUND"
@@ -444,7 +445,7 @@ export async function getPublicRegistrationExperience(eventSlug: string, formSlu
   const form = await prisma.registrationForm.findFirst(publishedFormQuery(eventSlug, formSlug));
   const version = form?.versions[0];
   if (!form || !version) return null;
-  const definition = withAttendeeTypeOptions(definitionFromJson(version.definition), form.event.attendeeTypes);
+  const definition = await hydrateFormOptions(definitionFromJson(version.definition), { attendeeTypes: form.event.attendeeTypes });
   const now = new Date();
   const [reservations, occupied, waitingRegistrations] = await Promise.all([
     prisma.registrationCapacityReservation.findMany({
@@ -564,7 +565,12 @@ async function createPublicRegistrationTransaction(
     throw new PublicRegistrationError("FORM_VERSION_CHANGED", "This form was updated while it was open. Refresh the page before submitting.");
   }
 
-  const definition = withAttendeeTypeOptions(definitionFromJson(version.definition), form.event.attendeeTypes);
+  // Read through the transaction, so the directory the answers are validated
+  // against is the same snapshot the registration is written in (#482).
+  const definition = await hydrateFormOptions(definitionFromJson(version.definition), {
+    attendeeTypes: form.event.attendeeTypes,
+    client: tx,
+  });
   if (form.event.billingMode === "DEFERRED_ORGANIZATION_INVOICE" && definition.payment?.enabled) {
     // A deferred-organization event must never create an attendee balance or
     // online payment. This form should never have been published with a

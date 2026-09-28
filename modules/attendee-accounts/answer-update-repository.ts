@@ -11,6 +11,7 @@ import {
 import { enqueueRegistrationUpdatedMessage } from "@/modules/communications/transactional-messages";
 import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
+import { hydrateFormOptions } from "@/modules/forms/form-options-repository";
 import { publicAttendeeName } from "@/modules/public-access/domain";
 
 function recordFromJson(value: unknown): Record<string, unknown> {
@@ -134,8 +135,11 @@ export async function updateTieredRegistrationAnswersWithClient(
   }
 
   const submission = registration.publicFormSubmission;
-  const definition = registrationFormDefinitionSchema.parse(
-    submission.formVersion.definition,
+  // Stored definitions hold no directory choices (#482); hydrate them (via
+  // this transaction) before the answers are checked against the form.
+  const definition = await hydrateFormOptions(
+    registrationFormDefinitionSchema.parse(submission.formVersion.definition),
+    { client: tx, retainedResponses: recordFromJson(submission.responses) },
   );
   const editable = editableAttendeeFields(
     definition,

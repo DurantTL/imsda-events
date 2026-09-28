@@ -152,6 +152,7 @@ type FixtureOptions = {
   attendees?: Array<ReturnType<typeof attendee>>;
   definition?: TestDefinition;
   rosterNames?: Record<string, { firstName: string; lastName: string }>;
+  storedResponses?: Record<string, unknown>;
 };
 
 function fixture({
@@ -161,6 +162,7 @@ function fixture({
   attendees = [attendee("attendee-m1", "m1", "Alex", "Sample", 11), attendee("attendee-m2", "m2", "Jordan", "Example", 38)],
   definition = baseDefinition,
   rosterNames = {},
+  storedResponses = {},
 }: FixtureOptions = {}) {
   const registration = {
     id: "registration-1",
@@ -174,7 +176,7 @@ function fixture({
     publicFormSubmission: {
       formVersionId: "version-1",
       createdAt: new Date("2026-10-01T12:00:00.000Z"),
-      responses: { ...registrationResponses },
+      responses: { ...registrationResponses, ...storedResponses },
       pricingSnapshot: { totalCents: 0, pricingDate: "2026-10-01" },
       formVersion: { id: "version-1", versionNumber: 1, definition, form: { id: "form-1", name: "Club form", slug: "clubs" } },
     },
@@ -251,6 +253,15 @@ function fixture({
       create: vi.fn(async ({ data }: { data: { firstName: string; lastName: string } }) => ({ id: `person-new-${data.firstName.toLowerCase()}`, ...data })),
     },
     auditLog: { create: vi.fn(async (call: { data: Record<string, unknown> }) => call) },
+    // The club's own record and the live directory (#482).
+    organization: {
+      findUnique: vi.fn(async () => ({ name: "Test Pathfinders", parentOrganization: { name: "Test SDA Church", isActive: true } })),
+      findMany: vi.fn(async ({ where }: { where: { type: "CLUB" | "CHURCH" } }) => (
+        where.type === "CLUB"
+          ? [{ name: "Test Pathfinders", normalizedName: "test pathfinders" }, { name: "Sample Explorers", normalizedName: "sample explorers" }]
+          : [{ name: "Test SDA Church", normalizedName: "test sda church" }, { name: "Sample Chapel", normalizedName: "sample chapel" }]
+      )),
+    },
   };
   const client = { ...prisma, $transaction: vi.fn(async (operation: (tx: typeof prisma) => unknown) => operation(prisma)) };
   dependencies.getPrisma.mockReturnValue(client);
@@ -668,5 +679,67 @@ describe("server-only amendment attendee options (B4)", () => {
     expect(snapshot.firstName).toBe("Alex");
     expect(snapshot.ageOnEventDate).toBe(12);
     expect(snapshot).not.toHaveProperty("birthDate");
+  });
+});
+
+describe("club registration edit keeps the club directory field locked (#482)", () => {
+  const directoryDefinition: TestDefinition = {
+    ...baseDefinition,
+    sections: [
+      { ...baseDefinition.sections[0]!, fields: [
+        ...baseDefinition.sections[0]!.fields,
+        { id: "c_club", key: "club_name", label: "Pathfinder club", helpText: "", type: "SELECT", scope: "REGISTRATION", required: true, options: [], optionSource: "CLUBS_DIRECTORY" },
+        { id: "c_club_other", key: "club_name_other", label: "Club — not listed", helpText: "", type: "TEXT", scope: "REGISTRATION", required: true, options: [], conditional: { fieldKey: "club_name", operator: "EQUALS", value: "Not listed" } },
+        { id: "c_church", key: "church_name", label: "Church", helpText: "", type: "SELECT", scope: "REGISTRATION", required: false, options: [], optionSource: "CHURCHES_DIRECTORY" },
+      ] },
+      baseDefinition.sections[1]!,
+    ],
+  };
+
+  function amendedRegistrationResponses(prisma: ReturnType<typeof fixture>["prisma"]) {
+    const operation = prisma.registrationOperation.create.mock.calls[0]![0].data as { afterSnapshot: { registrationResponses: Record<string, unknown> } };
+    return operation.afterSnapshot.registrationResponses;
+  }
+
+  it("keeps the director's own club and leaves the church as registered", async () => {
+    const { prisma } = fixture({ definition: directoryDefinition, storedResponses: { club_name: "Test Pathfinders", church_name: "Sample Chapel" } });
+    await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, { ...baseEdit(), selectedMemberIds: ["m1", "m3"] }, beforeDeadline);
+    expect(amendedRegistrationResponses(prisma)).toMatchObject({ club_name: "Test Pathfinders", church_name: "Sample Chapel" });
+  });
+
+  it("puts another club's name back to the director's own club, whatever the registration or client held", async () => {
+    const { prisma } = fixture({ definition: directoryDefinition, storedResponses: { club_name: "Sample Explorers", church_name: "Test SDA Church" } });
+    await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, {
+      ...baseEdit(),
+      // Anything a client adds beyond the edit input is dropped by the schema;
+      // registration answers only ever come from the server.
+      selectedMemberIds: ["m1", "m3"],
+    }, beforeDeadline);
+    expect(amendedRegistrationResponses(prisma)).toMatchObject({ club_name: "Test Pathfinders" });
+    expect(JSON.stringify(amendedRegistrationResponses(prisma))).not.toContain("Sample Explorers");
+  });
+
+  it("replaces an old \"Not listed\" club with the director's real club and clears the typed name", async () => {
+    const { prisma } = fixture({ definition: directoryDefinition, storedResponses: { club_name: "Not listed", club_name_other: "Test Pathfinderz" } });
+    await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, { ...baseEdit(), selectedMemberIds: ["m1", "m3"] }, beforeDeadline);
+    const responses = amendedRegistrationResponses(prisma);
+    expect(responses.club_name).toBe("Test Pathfinders");
+    expect(responses.club_name_other).toBeFalsy();
+  });
+
+  it("records a club answer changed only by a directory rename as the system's, not the director's", async () => {
+    const { prisma } = fixture({ definition: directoryDefinition, storedResponses: { club_name: "Old Test Club Name", church_name: "Test SDA Church" } });
+    await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, { ...baseEdit(), selectedMemberIds: ["m1", "m3"] }, beforeDeadline);
+    const audit = prisma.auditLog.create.mock.calls[0]![0].data as { summary: string; metadata: Record<string, unknown> };
+    expect(audit.metadata.serverOwnedChangedFields).toEqual(["club_name"]);
+    expect(audit.summary).toContain("not the director: club_name");
+  });
+
+  it("records no system change when the club answer already matches", async () => {
+    const { prisma } = fixture({ definition: directoryDefinition, storedResponses: { club_name: "Test Pathfinders" } });
+    await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, { ...baseEdit(), selectedMemberIds: ["m1", "m3"] }, beforeDeadline);
+    const audit = prisma.auditLog.create.mock.calls[0]![0].data as { summary: string; metadata: Record<string, unknown> };
+    expect(audit.metadata.serverOwnedChangedFields).toEqual([]);
+    expect(audit.summary).not.toContain("by the system");
   });
 });
