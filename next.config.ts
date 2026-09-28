@@ -69,13 +69,36 @@ const nextConfig: NextConfig = {
   },
   async redirects() {
     return [
-      // The public events home lives at "/" (#437). "/events" is a
-      // predictable address people guess; keep it permanent so it survives
-      // #106 later building a separate directory at that path.
+      // The public events home lives at "/" (#437), and "/events" is a
+      // predictable address people guess (#470). This matches "/events"
+      // exactly, never "/events/<slug>". A permanent redirect is cached by
+      // browsers and would shadow a real page, so whoever builds #106's
+      // separate "/events" directory must remove this rule in that change.
       {
         source: "/events",
         destination: "/",
         permanent: true,
+      },
+      // A signed-out visitor to check-in goes to staff sign-in and comes
+      // back here afterwards (#470). The staff workspace layout redirects
+      // signed-out requests to a bare "/login" and, since layouts render in
+      // parallel with pages, wins over the page's own redirect; this rule
+      // runs before rendering. It only checks that the session cookie is
+      // absent (the name matches SESSION_COOKIE_NAME, asserted in
+      // tests/route-fallbacks.test.ts); the page and layout still verify
+      // any session that is present. Not permanent: it depends on a cookie.
+      {
+        source: "/check-in",
+        has: [{ type: "query", key: "event", value: "(?<event>[A-Za-z0-9_-]{1,64})" }],
+        missing: [{ type: "cookie", key: "imsda_session" }],
+        destination: "/login?next=/check-in%3Fevent%3D:event",
+        permanent: false,
+      },
+      {
+        source: "/check-in",
+        missing: [{ type: "cookie", key: "imsda_session" }],
+        destination: "/login?next=/check-in",
+        permanent: false,
       },
     ];
   },
