@@ -7,13 +7,13 @@ export default function PublicManageNotFound() {
     <main className="public-registration-page public-manage-page">
       <header className="public-registration-header">
         <div className="public-registration-header-inner">
-          <a
+          <Link
             className="public-registration-brand public-event-brand-link"
-            href="https://imsda.org/"
+            href="/"
           >
             <BrandMark />
             <span><strong>IMSDA</strong><small>Events</small></span>
-          </a>
+          </Link>
         </div>
       </header>
       <section className="public-registration-not-found">

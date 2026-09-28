@@ -277,6 +277,13 @@ export function formatPublicEventSchedule(
   };
 }
 
+/**
+ * The IMSDA.org information page is an optional setting (#467), not a
+ * required one: event information now lives on IMSDA Events. When neither a
+ * configured `publicInfoUrl` nor a known legacy page exists for this event,
+ * `detailsUrl` is `null` so a caller drops the "More information" link
+ * instead of rendering one that points nowhere useful.
+ */
 export function publicEventWebsiteLinks(
   eventSlug: string,
   configuredDetailsUrl?: string | null,
@@ -287,8 +294,8 @@ export function publicEventWebsiteLinks(
 
   return {
     detailsUrl: configuredDetailsUrl
-      ?? eventDetailsBySlug[eventSlug]
-      ?? "https://imsda.org/events/",
+      || eventDetailsBySlug[eventSlug]
+      || null,
     supportUrl: "https://imsda.org/contact/",
   };
 }

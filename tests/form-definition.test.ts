@@ -1,5 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { calculateRosterTotal, formTemplates, registrationFormDefinitionSchema, resolveBillingContactName, resolveResponsibleOrganization, summarizeChoiceUsage, validateTestResponses } from "@/modules/forms/definition";
+import { calculateRosterTotal, formTemplates, numberFieldBounds, registrationFormDefinitionSchema, resolveBillingContactName, resolveResponsibleOrganization, summarizeChoiceUsage, validateTestResponses } from "@/modules/forms/definition";
+
+function ageForm(ageBounds?: { minimumAge: number | null; maximumAge: number | null }) {
+  return registrationFormDefinitionSchema.parse({
+    title: "Age form",
+    description: "",
+    confirmationMessage: "Done",
+    attendeeRoster: { enabled: true, minAttendees: 1, maxAttendees: 20, attendeeLabel: "Attendee", addButtonLabel: "Add" },
+    sections: [{
+      id: "s_roster",
+      title: "Roster",
+      description: "",
+      fields: [
+        { id: "f_first_name", key: "first_name", label: "First name", helpText: "", type: "TEXT", scope: "ATTENDEE", required: true, options: [] },
+        { id: "f_last_name", key: "last_name", label: "Last name", helpText: "", type: "TEXT", scope: "ATTENDEE", required: true, options: [] },
+        { id: "f_age", key: "attendee_age", label: "Age", helpText: "", type: "NUMBER", scope: "ATTENDEE", required: true, options: [], ...(ageBounds ? { ageBounds } : {}) },
+      ],
+    }],
+  });
+}
 
 describe("registration form definitions", () => {
   it("ships valid starter templates", () => {
@@ -497,6 +516,51 @@ describe("registration form definitions", () => {
 
     seminar.optionalWhen = { fieldKey: seminar.key, operator: "EQUALS", value: "x" };
     expect(registrationFormDefinitionSchema.safeParse(definition).success).toBe(false);
+  });
+});
+
+describe("bounded age input (#483)", () => {
+  it("defaults an age field's bounds to 0–120 when none are configured", () => {
+    const definition = ageForm();
+    const ageField = definition.sections[0].fields.find((field) => field.key === "attendee_age")!;
+    expect(numberFieldBounds(ageField)).toEqual({ minimumAge: 0, maximumAge: 120 });
+
+    expect(validateTestResponses(definition, { first_name: "A", last_name: "B", attendee_age: "11" }, {}, "ATTENDEE").isValid).toBe(true);
+    const tooOld = validateTestResponses(definition, { first_name: "A", last_name: "B", attendee_age: "121" }, {}, "ATTENDEE");
+    expect(tooOld.isValid).toBe(false);
+    expect(tooOld.issues[0]!.message).toMatch(/whole number from 0 to 120/);
+    const negative = validateTestResponses(definition, { first_name: "A", last_name: "B", attendee_age: "-1" }, {}, "ATTENDEE");
+    expect(negative.isValid).toBe(false);
+    const fractional = validateTestResponses(definition, { first_name: "A", last_name: "B", attendee_age: "11.5" }, {}, "ATTENDEE");
+    expect(fractional.isValid).toBe(false);
+  });
+
+  it("narrows an age field's bounds to a configured age band (#133)", () => {
+    const definition = ageForm({ minimumAge: 5, maximumAge: 17 });
+    const ageField = definition.sections[0].fields.find((field) => field.key === "attendee_age")!;
+    expect(numberFieldBounds(ageField)).toEqual({ minimumAge: 5, maximumAge: 17 });
+
+    expect(validateTestResponses(definition, { first_name: "A", last_name: "B", attendee_age: "17" }, {}, "ATTENDEE").isValid).toBe(true);
+    const tooYoung = validateTestResponses(definition, { first_name: "A", last_name: "B", attendee_age: "4" }, {}, "ATTENDEE");
+    expect(tooYoung.isValid).toBe(false);
+    const tooOld = validateTestResponses(definition, { first_name: "A", last_name: "B", attendee_age: "18" }, {}, "ATTENDEE");
+    expect(tooOld.isValid).toBe(false);
+  });
+
+  it("rejects a field's ageBounds where the minimum exceeds the maximum", () => {
+    expect(() => ageForm({ minimumAge: 18, maximumAge: 5 })).toThrow(/Minimum age cannot exceed maximum age/);
+  });
+
+  it("leaves an ordinary (non-age) number field on the general 0–100,000 range", () => {
+    const definition = registrationFormDefinitionSchema.parse({
+      title: "General", description: "", confirmationMessage: "Done",
+      sections: [{
+        id: "sec_general", title: "Section", description: "",
+        fields: [{ id: "field_guest_count", key: "guest_count", label: "Guests", helpText: "", type: "NUMBER", scope: "REGISTRATION", required: true, options: [] }],
+      }],
+    });
+    expect(validateTestResponses(definition, { guest_count: "500" }).isValid).toBe(true);
+    expect(validateTestResponses(definition, { guest_count: "500.5" }).isValid).toBe(true);
   });
 });
 

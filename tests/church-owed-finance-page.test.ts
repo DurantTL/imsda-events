@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { redirect } from "next/navigation";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const dependencies = vi.hoisted(() => ({
@@ -39,8 +40,8 @@ beforeEach(() => {
   dependencies.listChurchAmountsOwed.mockResolvedValue([]);
 });
 
-describe("owed-by-churches page access (#409)", () => {
-  it("never loads event B's amounts for a finance manager assigned only to event A", async () => {
+describe("owed-by-churches page access (#409, #465)", () => {
+  it("never loads event B's amounts — or falls back to event A's — for a finance manager assigned only to event A; it sends them to the picker instead", async () => {
     dependencies.listEventsForUser.mockResolvedValue([event("event_a")]);
     dependencies.findActiveMembership.mockImplementation(async (userId: string, eventId: string) => (
       eventId === "event_a"
@@ -48,10 +49,10 @@ describe("owed-by-churches page access (#409)", () => {
         : null
     ));
 
-    await ChurchOwedPage({ searchParams: Promise.resolve({ event: "event_b" }) });
+    await expect(ChurchOwedPage({ searchParams: Promise.resolve({ event: "event_b" }) })).rejects.toThrow("redirected");
+    expect(redirect).toHaveBeenCalledWith("/select-event?unavailable=1");
 
-    expect(dependencies.listChurchAmountsOwed).not.toHaveBeenCalledWith("event_b");
-    expect(dependencies.listChurchAmountsOwed).toHaveBeenCalledWith("event_a");
+    expect(dependencies.listChurchAmountsOwed).not.toHaveBeenCalled();
   });
 
   it("refuses event B when the user holds MANAGE_FINANCE only on event A", async () => {

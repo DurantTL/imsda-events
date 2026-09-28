@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { CalendarDays, CheckCircle2, FileText, UserCog, UsersRound } from "lucide-react";
+import { CalendarDays, CheckCircle2, CircleAlert, FileText, UserCog, UsersRound } from "lucide-react";
 import { ClubRosterWorkspace } from "@/components/club-roster-workspace";
-import { clubRosterComplianceStatuses } from "@/modules/background-checks/repository";
+import { complianceReminders } from "@/modules/background-checks/domain";
+import { clubComplianceReminderCounts, clubRosterComplianceStatuses } from "@/modules/background-checks/repository";
 import { formatCalendarDate } from "@/modules/club-registrations/domain";
 import { listClubEvents } from "@/modules/club-registrations/repository";
 import { reportMonthLabel, reportableMonths, yearToDate } from "@/modules/club-reports/domain";
@@ -25,6 +26,7 @@ export async function ClubOverview({
   reportHref,
   reportsEditable,
   backgroundChecks,
+  complianceCounts,
 }: {
   organizationId: string;
   birthDatesEndpoint?: string;
@@ -37,17 +39,27 @@ export async function ClubOverview({
    * `includeNotes` is true only for staff who may also see the staff-only note.
    */
   backgroundChecks?: { includeNotes: boolean };
+  /**
+   * Counts only, no names or notes (#479): for a viewer who isn't allowed the
+   * full `backgroundChecks` column but should still see whether the club has
+   * anything outstanding (an Area Coordinator). Ignored when `backgroundChecks`
+   * is set, since that caller already gets the fuller per-member view.
+   */
+  complianceCounts?: boolean;
 }) {
   const now = new Date();
   const clubYear = clubYearFor(now);
-  const [team, members, events, reportYear, compliance, honorRows] = await Promise.all([
+  const [team, members, events, reportYear, compliance, reminderCounts, honorRows] = await Promise.all([
     listClubTeam(organizationId, now),
     listRoster(organizationId, clubYear, now),
     listClubEvents(organizationId, now),
     getClubReportYear(organizationId, clubYear),
     backgroundChecks ? clubRosterComplianceStatuses(organizationId, clubYear, backgroundChecks) : null,
+    // Counts only, no names (#479): shown even to a viewer who never gets `backgroundChecks`.
+    !backgroundChecks && complianceCounts ? clubComplianceReminderCounts(organizationId, clubYear) : null,
     listClubHonorsPage(organizationId, clubYear),
   ]);
+  const reminders = reminderCounts ? complianceReminders(reminderCounts, "") : [];
   const honorSummaries = honorSummaryByMemberId(honorRows);
   const active = members.filter((member) => member.status === "ACTIVE");
   const registered = events.filter((event) => event.registration);
@@ -75,6 +87,17 @@ export async function ClubOverview({
           <span>points this club year</span>
         </div>
       </div>
+
+      {reminders.length > 0 && (
+        <ul className="public-manage-club-list">
+          {reminders.map((reminder) => (
+            <li key={reminder.key}>
+              <CircleAlert size={17} aria-hidden="true" />
+              <span><strong>{reminder.text}</strong></span>
+            </li>
+          ))}
+        </ul>
+      )}
 
       <section className="public-manage-card" aria-labelledby="open-club-team">
         <div className="public-manage-card-heading">

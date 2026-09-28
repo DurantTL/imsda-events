@@ -121,14 +121,18 @@ describe("public event landing domain", () => {
     });
   });
 
-  it("uses the known event page and safe site-wide fallbacks", () => {
+  it("uses the known legacy event page and drops the link when none exists (#467)", () => {
     expect(publicEventWebsiteLinks("womens-retreat-2026")).toEqual({
       detailsUrl: "https://imsda.org/event/womens-retreat-3/",
       supportUrl: "https://imsda.org/contact/",
     });
     expect(publicEventWebsiteLinks("womens-retreat-2026", "https://imsda.org/custom-event/").detailsUrl)
       .toBe("https://imsda.org/custom-event/");
-    expect(publicEventWebsiteLinks("another-event").detailsUrl).toBe("https://imsda.org/events/");
+    // An event with no configured information URL and no known legacy page
+    // gets no "More information" link at all, rather than a generic one.
+    expect(publicEventWebsiteLinks("another-event").detailsUrl).toBeNull();
+    expect(publicEventWebsiteLinks("another-event", null).detailsUrl).toBeNull();
+    expect(publicEventWebsiteLinks("another-event", "").detailsUrl).toBeNull();
   });
 
   it("projects only already-published exact all-attendee announcements", () => {

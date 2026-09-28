@@ -6,10 +6,13 @@ import {
   clubFormProblem,
   lockedAttendeeFieldKeys,
   medicalFreeTextFields,
+  rosterCarryoverMismatches,
   rosterGenderPrefill,
   rosterMemberIdFromClientId,
   rosterOwnedResponses,
   rosterRolePrefill,
+  unmatchedRosterGender,
+  unmatchedRosterRole,
 } from "@/modules/club-registrations/domain";
 import { formTemplates, registrationFormDefinitionSchema } from "@/modules/forms/definition";
 
@@ -136,11 +139,41 @@ describe("club form mapping", () => {
     expect(rosterRolePrefill(roleForm, { ...person, role: " pathfinder ", attendeeType: "YOUTH" })).toEqual({ attendee_type: "Pathfinder" });
     expect(rosterRolePrefill(roleForm, { ...person, role: "Counselor", attendeeType: "STAFF" })).toEqual({ attendee_type: "Staff" });
     expect(rosterRolePrefill(roleForm, { ...person, role: "", attendeeType: "UNDERAGE" })).toEqual({ attendee_type: "Child" });
-    // A youth with no roster role starts as a Pathfinder; an unrecognized role is left for the director.
+    // An unrecognized role is left for the director (#483): never guessed from type.
     expect(rosterRolePrefill(roleForm, { ...person, role: "Explorer", attendeeType: "YOUTH" })).toEqual({});
-    expect(rosterRolePrefill(roleForm, { ...person, role: "", attendeeType: "YOUTH" })).toEqual({ attendee_type: "Pathfinder" });
+    // A youth with no roster role is also left for the director (#483): a
+    // blank role no longer defaults to Pathfinder.
+    expect(rosterRolePrefill(roleForm, { ...person, role: "", attendeeType: "YOUTH" })).toEqual({});
     expect(rosterRolePrefill(roleForm, { ...person, role: "Explorer" })).toEqual({});
     expect(rosterRolePrefill(form([field("first_name"), field("last_name")]), { ...person, role: "Pathfinder" })).toEqual({});
+  });
+
+  it("reports an unmatched roster role instead of guessing or leaving it silently blank (#483)", () => {
+    const roleForm = form([field("first_name"), field("last_name"), field("attendee_type", "RADIO", "ATTENDEE", ["Pathfinder", "TLT", "Staff", "Child"])]);
+    expect(unmatchedRosterRole(roleForm, { role: "Teen Leader" })).toBe("Teen Leader");
+    expect(unmatchedRosterRole(roleForm, { role: " pathfinder " })).toBeNull();
+    expect(unmatchedRosterRole(roleForm, { role: "" })).toBeNull();
+    expect(unmatchedRosterRole(roleForm, { role: undefined })).toBeNull();
+    expect(unmatchedRosterRole(form([field("first_name"), field("last_name")]), { role: "Teen Leader" })).toBeNull();
+  });
+
+  it("reports an unmatched roster gender the same way (#483)", () => {
+    const genderForm = form([field("first_name"), field("last_name"), field("gender", "SELECT", "ATTENDEE", ["Female", "Male"])]);
+    expect(unmatchedRosterGender(genderForm, { gender: "FEMALE" })).toBeNull();
+    expect(unmatchedRosterGender(form([field("first_name"), field("last_name")]), { gender: "FEMALE" })).toBeNull();
+    expect(unmatchedRosterGender(genderForm, { gender: null })).toBeNull();
+  });
+
+  it("collects every carryover mismatch for one person (#483)", () => {
+    const roleForm = form([
+      field("first_name"), field("last_name"),
+      field("attendee_type", "RADIO", "ATTENDEE", ["Pathfinder", "TLT", "Staff", "Child"]),
+      field("gender", "SELECT", "ATTENDEE", ["Female", "Male"], "Gender"),
+    ]);
+    expect(rosterCarryoverMismatches(roleForm, { ...person, role: "Teen Leader", gender: "FEMALE" })).toEqual([
+      { fieldKey: "attendee_type", label: "attendee_type", value: "Teen Leader" },
+    ]);
+    expect(rosterCarryoverMismatches(roleForm, { ...person, role: "Pathfinder", gender: "FEMALE" })).toEqual([]);
   });
 });
 

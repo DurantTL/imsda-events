@@ -64,10 +64,10 @@ export default async function AccountPortalLayout({ children }: { children: Reac
       <AttendeeAuthReturn />
       <header className="public-registration-header">
         <div className="public-registration-header-inner">
-          <a className="public-registration-brand public-event-brand-link" href="https://imsda.org/">
+          <Link className="public-registration-brand public-event-brand-link" href="/">
             <BrandMark />
             <span><strong>IMSDA</strong><small>Events</small></span>
-          </a>
+          </Link>
           {staffSession.user
             ? <Link className="text-button" href="/overview">Back to staff workspace</Link>
             : <AttendeeSignOutButton />}

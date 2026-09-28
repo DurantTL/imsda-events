@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
+import { Info } from "lucide-react";
 
 type TagRow = { id: string; name: string; color: string; description: string; isActive: boolean };
 
@@ -53,16 +55,17 @@ export function TagConfigurationWorkspace({
   }
 
   return <div className="settings-stack">
-    <div className="page-intro"><div><p className="eyebrow">Event configuration</p><h2>Tags</h2><p>Configure the tag vocabulary staff can apply to registrations and attendees for {eventName}. Free-text tags are not supported — every tag is defined here first, so filters and reports stay consistent.</p></div></div>
+    <div className="page-intro"><div><p className="eyebrow">Event configuration</p><h2>Tags</h2><p>Configure the tag vocabulary staff can apply to registrations for {eventName}. Free-text tags are not supported — every tag is defined here first, so tagging stays consistent.</p></div></div>
+    <p className="usage-note"><Info aria-hidden="true" size={16} /><span>Where this shows up: staff add or remove these tags from a registration&rsquo;s notes &amp; tags panel in <Link href={`/people?event=${eventId}`}>People</Link>.</span></p>
     {error && <p className="form-error" role="alert">{error}</p>}
     <section className="panel">
       <div className="section-heading"><div><h2>Configured tags</h2><p>Deactivating a tag hides it from new assignments; it stays visible on anything already tagged.</p></div></div>
-      <div className="table-wrap"><table><thead><tr><th>Color</th><th>Name</th><th>Description</th><th>Status</th><th /></tr></thead><tbody>{tags.map((row) => <tr key={row.id}>
-        <td><input aria-label={`Color for ${row.name}`} type="color" value={row.color} onChange={(event) => setTags((current) => current.map((candidate) => candidate.id === row.id ? { ...candidate, color: event.target.value } : candidate))} /></td>
-        <td><input aria-label={`Name for ${row.name}`} value={row.name} onChange={(event) => setTags((current) => current.map((candidate) => candidate.id === row.id ? { ...candidate, name: event.target.value } : candidate))} /></td>
-        <td><input aria-label={`Description for ${row.name}`} value={row.description} onChange={(event) => setTags((current) => current.map((candidate) => candidate.id === row.id ? { ...candidate, description: event.target.value } : candidate))} /></td>
-        <td>{row.isActive ? "Active" : "Inactive"}</td>
-        <td><span className="form-actions"><button className="secondary-button" disabled={saving} type="button" onClick={() => updateTag(row, {})}>Save</button><button className="secondary-button" disabled={saving} type="button" onClick={() => updateTag(row, { isActive: !row.isActive })}>{row.isActive ? "Deactivate" : "Activate"}</button></span></td>
+      <div className="table-wrap"><table className="editable-settings-table"><thead><tr><th>Color</th><th>Name</th><th>Description</th><th>Status</th><th>Actions</th></tr></thead><tbody>{tags.map((row) => <tr key={row.id}>
+        <td data-label="Color"><input aria-label={`Color for ${row.name}`} type="color" value={row.color} onChange={(event) => setTags((current) => current.map((candidate) => candidate.id === row.id ? { ...candidate, color: event.target.value } : candidate))} /></td>
+        <td data-label="Name"><input aria-label={`Name for ${row.name}`} value={row.name} onChange={(event) => setTags((current) => current.map((candidate) => candidate.id === row.id ? { ...candidate, name: event.target.value } : candidate))} /></td>
+        <td data-label="Description"><input aria-label={`Description for ${row.name}`} value={row.description} onChange={(event) => setTags((current) => current.map((candidate) => candidate.id === row.id ? { ...candidate, description: event.target.value } : candidate))} /></td>
+        <td data-label="Status">{row.isActive ? "Active" : "Inactive"}</td>
+        <td data-label="Actions"><span className="form-actions"><button className="secondary-button" disabled={saving} type="button" onClick={() => updateTag(row, {})}>Save</button><button className="secondary-button" disabled={saving} type="button" onClick={() => updateTag(row, { isActive: !row.isActive })}>{row.isActive ? "Deactivate" : "Activate"}</button></span></td>
       </tr>)}</tbody></table></div>
       <form className="form-stack inset-form" action={addTag}>
         <div className="form-grid two-column"><label>Name<input name="name" required placeholder="VIP" /></label><label>Color<input name="color" type="color" defaultValue="#4F46E5" /></label></div>

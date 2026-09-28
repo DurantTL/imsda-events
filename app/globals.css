@@ -329,6 +329,20 @@ textarea { font: inherit; }
 button,
 a { -webkit-tap-highlight-color: transparent; }
 
+/* iOS Safari (and other coarse-pointer browsers) zoom the page when a focused
+   form control renders below 16px. Force every text-entry control to at least
+   16px on coarse pointers regardless of any smaller size set elsewhere, while
+   leaving the desktop (fine-pointer) look untouched. Checkbox/radio/range/file
+   and button-like input types are excluded because font-size does not change
+   their rendered size. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
@@ -539,7 +553,24 @@ select:focus-visible {
   transform: translateY(-50%);
 }
 
-.primary-nav { display: grid; gap: 6px; }
+/* #468: let the nav scroll inside the fixed sidebar so every link stays
+   reachable at short window heights; the brand and account areas above/below
+   stay fixed since they aren't part of this flex child. */
+.primary-nav {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* Room for the 3px + 3px-offset focus ring and the hover nudge, which the
+     scroll box would otherwise clip; the negative margin keeps the layout. */
+  margin-inline: -6px;
+  padding: 6px;
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+  scrollbar-width: thin;
+}
 
 /* Groups the sidebar's destinations (#428): Events, People, Finance, Communications. */
 .nav-group-label {
@@ -905,7 +936,10 @@ select:focus-visible {
 .communications-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(280px, 0.75fr); gap: 20px; }
 .main-column,
 .side-column { display: grid; align-content: start; gap: 20px; }
-.panel { border-radius: 19px; padding: 21px; }
+/* `min-width: 0` keeps a panel from growing to the min-content width of what
+   it contains (e.g. a wide, horizontally-scrollable table) when it sits in a
+   grid track — the grid track, and so the page, otherwise widens to fit it. */
+.panel { min-width: 0; border-radius: 19px; padding: 21px; }
 
 .section-heading,
 .page-intro,
@@ -1734,6 +1768,10 @@ select:focus-visible {
 .password-requirements li[data-met="true"] svg { color: var(--green); opacity: 1; }
 .field-help { margin: -9px 0 0; color: var(--muted); font-size: 0.63rem; }
 .field-help code { overflow-wrap: anywhere; }
+/* #478: .field-help's -9px pull only makes sense right under a label/input.
+   Following a full paragraph (as on the two-step "set up an authenticator"
+   card) it instead overlapped that paragraph's text. */
+.quiet-copy + .field-help { margin-top: 6px; }
 .recovery-code-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 6px; margin: 10px 0; padding: 0; list-style: none; }
 .recovery-code-list code { display: block; border: 1px solid #b8d7ca; border-radius: 8px; background: #fff; padding: 7px 9px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; letter-spacing: 0.04em; text-align: center; }
 .auth-back-link { justify-self: center; margin-top: 3px; }
@@ -1773,6 +1811,7 @@ select:focus-visible {
 .forbidden-state > span { display: grid; width: 58px; height: 58px; margin-bottom: 16px; place-items: center; border-radius: 17px; background: var(--imsda-purple-soft); color: var(--imsda-purple); }
 .forbidden-state h2 { margin: 3px 0 7px; }
 .forbidden-state > p:not(.eyebrow) { max-width: 500px; margin: 0; color: var(--muted); font-size: 0.72rem; }
+.forbidden-state .forbidden-state-action { margin-top: 16px; }
 
 .import-top-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(360px, 0.9fr); gap: 12px; }
 .import-upload-panel > .quiet-copy { margin: -4px 0 16px; }
@@ -3160,6 +3199,17 @@ select:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.public-registration-attendee-role { color: var(--muted); font-weight: 600; }
+.public-registration-attendee-summary {
+  display: inline-block;
+  margin-top: 3px;
+  color: var(--imsda-purple);
+  font-size: 0.66rem;
+  font-weight: 800;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.public-registration-attendee.is-collapsed .public-registration-attendee-heading { border-bottom: none; }
 .public-registration-attendee-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
 .public-registration-attendee-actions button {
   display: inline-flex;
@@ -3460,6 +3510,27 @@ select:focus-visible {
   margin: 0;
   color: var(--ink);
   font-size: 0.96rem;
+}
+.public-registration-roster-summary { grid-column: 1 / -1; }
+.public-registration-roster-summary-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  margin: 10px 0 0;
+}
+.public-registration-roster-summary-totals > div { min-width: 88px; }
+.public-registration-roster-summary-totals dt {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.public-registration-roster-summary-totals dd {
+  margin: 2px 0 0;
+  color: var(--ink);
+  font-size: 1.1rem;
+  font-weight: 800;
 }
 .public-registration-review-account { grid-column: 1 / -1; }
 .public-registration-review-account > p:not(.public-registration-eyebrow) {
@@ -4093,6 +4164,8 @@ select:focus-visible {
   text-decoration: none;
 }
 .public-event-not-found-link:hover { text-decoration: underline; }
+.public-not-found-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; }
+.public-not-found-links .public-event-not-found-link { margin-top: 0; }
 
 /* Private registration confirmation and contact management */
 .public-manage-hero {
@@ -5054,9 +5127,18 @@ select:focus-visible {
   .public-registration-layout { gap: 12px; margin: 0 12px; padding-bottom: 35px; }
   .public-registration-intro { border-radius: 17px; padding: 20px; }
   .public-registration-progress { padding: 15px; }
+  /* At phone widths a 3+ step list wrapped a trailing step (e.g. "Payment")
+     onto its own row below the first two. A flex row with min-width: 0 items
+     keeps every step on one line instead, shrinking and ellipsizing each
+     label's text (already set on .public-registration-progress li > small)
+     rather than wrapping the list itself. */
   .public-registration-progress ol {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
+    gap: 6px;
   }
+  .public-registration-progress li { flex: 1 1 0; gap: 4px; }
+  .public-registration-progress li > span { width: 19px; height: 19px; font-size: 0.54rem; }
+  .public-registration-progress li > small { font-size: 0.6rem; }
   .public-registration-step-heading { padding: 18px; }
   .public-registration-section,
   .public-registration-roster { border-radius: 17px; }
@@ -5574,6 +5656,7 @@ select:focus-visible {
 .event-readiness-list strong { font-size: 0.64rem; }
 .event-readiness-list small { color: var(--muted); font-size: 0.54rem; line-height: 1.4; }
 .event-readiness-list li.complete { background: var(--green-soft); }
+.event-readiness-optional-heading { margin: 10px 0 4px; color: var(--muted); font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
 
 .event-publish-toggle {
   cursor: pointer;
@@ -5746,7 +5829,12 @@ select:focus-visible {
   white-space: nowrap;
 }
 
-.report-table-wrap { overflow-x: auto; }
+/* `min-width: 0` lets this scroll container shrink to its actual available
+   width instead of refusing to shrink below the table's content width, which
+   otherwise pushes ancestor grid/flex tracks (and the page's initial layout
+   viewport on some mobile browsers) wider than the device before settling
+   back down. The table itself still scrolls horizontally inside this box. */
+.report-table-wrap { overflow-x: auto; min-width: 0; max-width: 100%; }
 .report-table { width: 100%; border-collapse: collapse; font-size: 0.68rem; }
 .report-table th,
 .report-table td { border-bottom: 1px solid #eaf0f2; padding: 9px 13px; text-align: left; vertical-align: top; }
@@ -6943,6 +7031,10 @@ select:focus-visible {
 .two-step-card { display: grid; gap: 12px; }
 .two-step-card .field-help { margin: 0; }
 .two-step-body { display: grid; gap: 16px; }
+/* #478: this hint sits after a whole method card, not right under a single
+   field, so it must not inherit .field-help's -9px "hug the field above it"
+   margin — that pulled it up onto the previous line and made both overlap. */
+.two-step-setup-hint { margin: 4px 0 0; }
 .passkey-sign-in { display: grid; gap: 8px; margin-bottom: 10px; }
 .passkey-sign-in-button { width: 100%; justify-content: center; min-height: 46px; }
 .club-roster-heading-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
@@ -7003,6 +7095,16 @@ select:focus-visible {
 .club-guest-section .club-roster-tools small { display: block; margin-top: 2px; }
 .club-guest-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; font-size: 0.78rem; }
 .club-guest-form { display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+/* Standard field styling (#478): the "Add a person" inputs were unstyled
+   browser defaults, well under the standard field height and at least
+   16px required on phones (#469) to avoid iOS zoom-on-focus. */
+.club-guest-form label { display: grid; gap: 6px; color: var(--ink); font-size: 0.7rem; font-weight: 700; }
+.club-guest-form input {
+  width: 100%; border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd;
+  color: var(--ink); padding: 10px 11px; font-size: 0.78rem; font-family: inherit; outline: 0;
+}
+@media (pointer: coarse) { .club-guest-form input { font-size: 1rem; } }
+.club-guest-form input:focus { border-color: var(--imsda-purple); box-shadow: 0 0 0 3px rgba(88, 44, 131, 0.1); }
 .club-sticky-bar {
   position: sticky; bottom: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center;
   justify-content: space-between; gap: 10px; margin: 16px -4px 0; padding: 12px 4px;
@@ -7300,6 +7402,43 @@ select:focus-visible {
   .club-schedule-actions .secondary-button { width: auto; min-height: 44px; }
   .club-schedule-table td small { display: block; }
 }
+
+/* Attendee setup & tags: readable table headers and "where this shows up" (#474) */
+.table-wrap { overflow-x: auto; }
+.usage-note {
+  display: flex; align-items: flex-start; gap: 8px; margin: 10px 0 0; padding: 10px 14px;
+  border-radius: 10px; background: var(--imsda-navy-soft); color: var(--imsda-navy);
+  font-size: 0.78rem; line-height: 1.5;
+}
+.usage-note svg { flex: none; margin-top: 2px; }
+.usage-note a { color: var(--imsda-purple); font-weight: 700; text-decoration: none; }
+.usage-note a:hover { text-decoration: underline; }
+.editable-settings-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.editable-settings-table th,
+.editable-settings-table td { border-bottom: 1px solid #eaf0f2; padding: 10px 13px; text-align: left; vertical-align: middle; }
+.editable-settings-table thead th {
+  background: #f6f9fa; color: var(--muted); font-size: 0.62rem; font-weight: 800;
+  letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap;
+}
+.editable-settings-table tbody tr:last-child > * { border-bottom: 0; }
+@media (max-width: 640px) {
+  .editable-settings-table, .editable-settings-table tbody, .editable-settings-table tr,
+  .editable-settings-table td, .editable-settings-table th { display: block; width: 100%; box-sizing: border-box; }
+  .editable-settings-table thead { display: none; }
+  .editable-settings-table tbody tr {
+    margin-bottom: 12px; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+  }
+  .editable-settings-table td { border: 0; padding: 6px 0; }
+  .editable-settings-table td[data-label] {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
+  }
+  .editable-settings-table td[data-label]::before {
+    content: attr(data-label); flex: 0 0 auto; color: var(--muted); font-weight: 700;
+    font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .editable-settings-table td[data-label] input:not([type="color"]),
+  .editable-settings-table td[data-label] .form-grid { flex: 1 1 auto; min-width: 0; }
+}
 @media print {
   .account-nav, .account-portal .public-registration-header, .account-portal .account-page-hero,
   .club-schedule-actions, .honor-roster-downloads, .retreat-packet-selector { display: none !important; }
@@ -7312,6 +7451,13 @@ select:focus-visible {
 
 .act-as { display: grid; gap: 6px; }
 .act-as .inline-notice a { font-weight: 800; }
+
+.confirm-dialog { width: min(440px, 100%); }
+.confirm-dialog-body { display: grid; gap: 12px; margin-bottom: 4px; }
+.confirm-dialog-facts { display: grid; gap: 9px; margin: 0; }
+.confirm-dialog-facts > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; border-radius: 9px; background: var(--paper); padding: 8px 11px; }
+.confirm-dialog-facts dt { color: var(--muted); font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; }
+.confirm-dialog-facts dd { margin: 0; color: var(--ink); font-size: 0.72rem; font-weight: 700; text-align: right; }
 
 /* Club assignments (#410): staff screen, send preview, and the director's read-only block. */
 .compact-list { display: grid; gap: 3px; margin: 0; padding: 0 0 0 16px; font-size: 0.66rem; line-height: 1.45; }
@@ -7331,3 +7477,9 @@ select:focus-visible {
 .club-assignments-block { margin-top: 16px; }
 .club-assignments-block h3 { margin: 0; font-size: 0.9rem; }
 .club-assignments-block .public-manage-club-list { margin-top: 10px; }
+
+/* #474: rows keep their Save/Deactivate buttons without the form-actions rule line. */
+.editable-settings-table .form-actions { border-top: 0; padding-top: 0; }
+
+/* #469: the overview hero never grows wider than its container on phones. */
+.event-hero { max-width: 100%; min-width: 0; }

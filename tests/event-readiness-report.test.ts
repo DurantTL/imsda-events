@@ -73,7 +73,6 @@ describe("collectEventReadinessReport", () => {
   it.each([
     ["publish basics", { event: { name: "" } }, "PUBLISH_BASICS"],
     ["publish location", { event: { location: null } }, "PUBLISH_LOCATION"],
-    ["public info", { event: { publicInfoUrl: "not-a-url" } }, "PUBLISH_PUBLIC_INFO"],
     ["support", { event: { supportContact: null } }, "PUBLISH_SUPPORT"],
     ["published form", { publishedFormCount: 0 }, "PUBLISH_REGISTRATION_FORM"],
     ["event publication", { event: { isPublished: false } }, "EVENT_PUBLISHED"],
@@ -84,6 +83,19 @@ describe("collectEventReadinessReport", () => {
     const { prisma } = dataSource(overrides);
     const env = code === "SQUARE" ? {} : readyEnv;
     expect(check(await collectEventReadinessReport(prisma, "synthetic-retreat", env), code)?.severity).toBe("BLOCKER");
+  });
+
+  it("never blocks publish on the optional IMSDA.org information page (#467)", async () => {
+    const { prisma } = dataSource({ event: { publicInfoUrl: null } });
+    const withoutUrl = await collectEventReadinessReport(prisma, "synthetic-retreat", readyEnv);
+    expect(withoutUrl?.summary).toEqual({ blockers: 0, warnings: 0, isReady: true });
+    expect(check(withoutUrl, "PUBLISH_PUBLIC_INFO")?.severity).toBe("READY");
+
+    const { prisma: prismaInvalid } = dataSource({ event: { publicInfoUrl: "not-a-url" } });
+    const withInvalidUrl = await collectEventReadinessReport(prismaInvalid, "synthetic-retreat", readyEnv);
+    expect(check(withInvalidUrl, "PUBLISH_PUBLIC_INFO")?.severity).toBe("WARNING");
+    expect(withInvalidUrl?.summary.blockers).toBe(0);
+    expect(withInvalidUrl?.summary.isReady).toBe(true);
   });
 
   it("blocks for a missing provider key and an invalid Square configuration", async () => {

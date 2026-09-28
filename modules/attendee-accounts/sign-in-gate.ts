@@ -16,15 +16,29 @@ import { listDirectedClubs } from "@/modules/organizations/director-access";
  */
 export type SignInGate = "OK" | "VERIFY" | "SETUP";
 
-export async function accountNeedsSecondStep(accountId: string, sessionId: string | null, now = new Date()): Promise<SignInGate> {
-  if (!sessionId) return "OK";
+/**
+ * Whether the account holds anything the second step protects at all: a
+ * current club role, or Area Coordinator status (#387). `listDirectedClubs`
+ * alone never answers this — an Area Coordinator directs no club, so a
+ * caller that gated on it alone would refuse an Area Coordinator's own
+ * second step (#464). Every caller that needs to know whether the gate
+ * applies to this account (rather than what club role it has) uses this,
+ * not `listDirectedClubs` on its own.
+ */
+export async function accountHasSecondStepAccess(accountId: string, now = new Date()): Promise<boolean> {
   const prisma = getPrisma();
   const [clubs, areaGrant] = await Promise.all([
     listDirectedClubs(accountId, now),
     prisma.areaCoordinatorGrant.findUnique({ where: { attendeeAccountId: accountId }, select: { revokedAt: true, expiresAt: true } }),
   ]);
   const areaCoordinator = Boolean(areaGrant && !areaGrant.revokedAt && (!areaGrant.expiresAt || areaGrant.expiresAt > now));
-  if (clubs.length === 0 && !areaCoordinator) return "OK";
+  return clubs.length > 0 || areaCoordinator;
+}
+
+export async function accountNeedsSecondStep(accountId: string, sessionId: string | null, now = new Date()): Promise<SignInGate> {
+  if (!sessionId) return "OK";
+  if (!(await accountHasSecondStepAccess(accountId, now))) return "OK";
+  const prisma = getPrisma();
   const [session, enrollment, passkeyCount, passkeysOn] = await Promise.all([
     prisma.attendeeSession.findUnique({ where: { id: sessionId }, select: { secondFactorVerifiedAt: true } }),
     prisma.attendeeMfaEnrollment.findUnique({ where: { accountId }, select: { status: true } }),

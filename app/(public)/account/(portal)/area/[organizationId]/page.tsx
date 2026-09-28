@@ -39,6 +39,7 @@ export default async function AreaClubPage({ params }: { params: Promise<{ organ
           <Award aria-hidden="true" size={14} /> View honors
         </Link>
         <ClubOverview
+          complianceCounts
           organizationId={organizationId}
           reportHref={(month) => `/account/area/${organizationId}/reports/${month}`}
           reportsEditable={false}
