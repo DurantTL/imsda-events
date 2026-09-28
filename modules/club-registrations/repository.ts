@@ -11,11 +11,13 @@ import {
   clubGuestClientId,
   clubRegistrationEditWindow,
   type ClubRegistrationEditInput,
+  formatCalendarDate,
   guestIdFromClientId,
   guestIsAdult,
   guestsFromJson,
   type ClubGuest,
   lockedAttendeeFieldKeys,
+  rosterCarryoverMismatches,
   rosterGenderPrefill,
   rosterRolePrefill,
   rosterMemberIdFromClientId,
@@ -172,6 +174,25 @@ export async function listClubEvents(organizationId: string, now = new Date()) {
 }
 
 export type ClubEventSummary = Awaited<ReturnType<typeof listClubEvents>>[number];
+
+export type ClubEventRegistrationStep = { key: string; text: string; href: string; action: string };
+
+/**
+ * Club home's "What's next" (#478): one item per open club event the club
+ * hasn't registered for yet, so a director always sees where to register —
+ * not only on the Events & classes tab. A club with a saved draft still gets
+ * an item, worded to continue rather than start.
+ */
+export function clubEventRegistrationSteps(events: ClubEventSummary[], base: string): ClubEventRegistrationStep[] {
+  return events
+    .filter((event) => !event.registration && event.available && event.phase === "OPEN")
+    .map((event) => ({
+      key: event.id,
+      text: `${event.draft ? "Finish registering" : "Register"} for ${event.name}${event.registrationClosesOn ? ` by ${formatCalendarDate(event.registrationClosesOn)}` : ""}.`,
+      href: `${base}/events/${event.id}`,
+      action: event.draft ? "Continue" : "Register",
+    }));
+}
 
 /**
  * What each club's church owes for an event billed to the church (#409):
@@ -338,6 +359,11 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
             ...rosterRolePrefill(experience.form.definition, { ...person, role: member.role, attendeeType: member.attendeeType }),
           }
           : {},
+        // Carried-over values that don't match a form option, so the form can
+        // prompt for them instead of leaving the field silently blank (#483).
+        carryoverMismatches: experience
+          ? rosterCarryoverMismatches(experience.form.definition, { ...person, role: member.role, attendeeType: member.attendeeType })
+          : [],
       };
     })
     .sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName));

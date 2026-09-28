@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { RegistrationFormDefinition, RegistrationFormField } from "@/modules/forms/definition";
+import { isAgeFieldKey, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
 import { fullNameKeys, splitNameKeyPairs } from "@/modules/forms/public-domain";
 
 /**
@@ -109,10 +109,8 @@ export function attendeeNameKeys(definition: RegistrationFormDefinition): Attend
   return full ? { kind: "full", key: full } : null;
 }
 
-const AGE_KEYS = ["attendee_age", "age"];
-
 export function attendeeAgeKey(definition: RegistrationFormDefinition) {
-  return attendeeFields(definition).find((field) => field.type === "NUMBER" && AGE_KEYS.includes(field.key))?.key ?? null;
+  return attendeeFields(definition).find((field) => field.type === "NUMBER" && isAgeFieldKey(field.key))?.key ?? null;
 }
 
 const BIRTH_DATE_PATTERN = /birth|\bdob\b/i;
@@ -208,37 +206,92 @@ export function rosterGenderPrefill(definition: RegistrationFormDefinition, pers
   return field && option ? { [field.key]: option } : {};
 }
 
+// Staff, adult, and underage prefill from the roster's own attendee type,
+// since that's read directly off the roster rather than guessed among many
+// options. Youth are never guessed this way (#483): a youth's role only
+// prefills when the roster's own role matches a configured option, and a
+// blank or unrecognized youth role (e.g. "Teen Leader") is left for the
+// director to pick — never silently defaulted to a role like Pathfinder.
 const TYPE_OPTION_NAMES: Record<string, string[]> = {
   STAFF: ["staff"],
   ADULT: ["adult", "staff"],
   UNDERAGE: ["child", "underage"],
 };
 
-/** Youth are only guessed from their type when the roster gives no role; an unrecognized role (e.g. "Teen Leader") is left for the director. */
-const BLANK_ROLE_TYPE_OPTION_NAMES: Record<string, string[]> = {
-  YOUTH: ["pathfinder", "youth"],
-};
+function roleField(definition: RegistrationFormDefinition) {
+  return attendeeFields(definition).find((candidate) => (
+    candidate.key === "attendee_type" && ["RADIO", "SELECT"].includes(candidate.type) && candidate.options.length > 0
+  )) ?? null;
+}
+
+function optionsByName(field: RegistrationFormField) {
+  return new Map(field.options.map((option) => [option.trim().toLowerCase(), option]));
+}
 
 /**
  * A starting answer for the form's roster-role question (e.g. Pathfinder,
  * TLT, Staff, Child), so a director doesn't re-pick it for every person. The
- * roster's own role wins when it matches an option; otherwise its type does.
- * Only a prefill: the director can still change it.
+ * roster's own role wins when it matches an option; otherwise its type does
+ * (staff, adult, underage only — see above). Only a prefill: the director
+ * can still change it. A role that doesn't match, or a blank youth role,
+ * prefills nothing; `unmatchedRosterRole` reports the former so the form can
+ * prompt for it instead of leaving it silently blank (#483).
  */
 export function rosterRolePrefill(definition: RegistrationFormDefinition, person: RosterPerson) {
-  const field = attendeeFields(definition).find((candidate) => (
-    candidate.key === "attendee_type" && ["RADIO", "SELECT"].includes(candidate.type) && candidate.options.length > 0
-  ));
+  const field = roleField(definition);
   if (!field) return {};
-  const byName = new Map(field.options.map((option) => [option.trim().toLowerCase(), option]));
+  const byName = optionsByName(field);
   const role = person.role?.trim().toLowerCase();
   const fromRole = role ? byName.get(role) : undefined;
-  const typeNames = person.attendeeType
-    ? TYPE_OPTION_NAMES[person.attendeeType] ?? (role ? [] : BLANK_ROLE_TYPE_OPTION_NAMES[person.attendeeType] ?? [])
-    : [];
-  const fromType = typeNames.map((name) => byName.get(name)).find(Boolean);
+  const typeNames = person.attendeeType ? TYPE_OPTION_NAMES[person.attendeeType] ?? [] : [];
+  const fromType = fromRole ? undefined : typeNames.map((name) => byName.get(name)).find(Boolean);
   const option = fromRole ?? fromType;
   return option ? { [field.key]: option } : {};
+}
+
+/**
+ * The roster's carried-over role, when it's given but doesn't match any of
+ * the form's configured role options (e.g. "Teen Leader") — never silently
+ * dropped or defaulted (#483). Null when the role is blank or matches.
+ */
+export function unmatchedRosterRole(definition: RegistrationFormDefinition, person: Pick<RosterPerson, "role">): string | null {
+  const field = roleField(definition);
+  if (!field) return null;
+  const role = person.role?.trim();
+  if (!role) return null;
+  return optionsByName(field).has(role.toLowerCase()) ? null : role;
+}
+
+/**
+ * The roster's carried-over gender, when it's given but the form's gender
+ * field offers no matching option — never silently dropped (#483). Null when
+ * there's no gender, or it matches.
+ */
+export function unmatchedRosterGender(definition: RegistrationFormDefinition, person: Pick<RosterPerson, "gender">): string | null {
+  if (!person.gender) return null;
+  const field = attendeeFields(definition).find((candidate) => candidate.key === "gender");
+  if (!field) return null;
+  const wanted = person.gender === "FEMALE" ? "female" : "male";
+  const matched = field.options.some((option) => option.trim().toLowerCase() === wanted);
+  return matched ? null : (person.gender === "FEMALE" ? "Female" : "Male");
+}
+
+export type RosterCarryoverMismatch = { fieldKey: string; label: string; value: string };
+
+/**
+ * Every roster-carried value that doesn't match a configured form option, so
+ * the form can show "Couldn't match '…' — pick one" instead of leaving the
+ * field silently blank (#483).
+ */
+export function rosterCarryoverMismatches(definition: RegistrationFormDefinition, person: RosterPerson): RosterCarryoverMismatch[] {
+  const mismatches: RosterCarryoverMismatch[] = [];
+  const role = unmatchedRosterRole(definition, person);
+  const roleFieldRef = roleField(definition);
+  if (role && roleFieldRef) mismatches.push({ fieldKey: roleFieldRef.key, label: roleFieldRef.label, value: role });
+  const gender = unmatchedRosterGender(definition, person);
+  const genderFieldRef = attendeeFields(definition).find((candidate) => candidate.key === "gender");
+  if (gender && genderFieldRef) mismatches.push({ fieldKey: genderFieldRef.key, label: genderFieldRef.label, value: gender });
+  return mismatches;
 }
 
 /**

@@ -172,7 +172,9 @@ describe("Honors Weekend template, from club registration to class seats (#436)"
     expect(roster.map((member) => rosterRolePrefill(definition, rosterPerson(member)))).toEqual([
       { attendee_type: "Pathfinder" },
       { attendee_type: "TLT" },
-      { attendee_type: "Pathfinder" },
+      // m3 has no roster role: left for the director to pick (#483), never
+      // guessed as Pathfinder.
+      {},
       { attendee_type: "Staff" },
       { attendee_type: "Child" },
     ]);
@@ -182,10 +184,16 @@ describe("Honors Weekend template, from club registration to class seats (#436)"
     const { db, enrollments } = fixture();
 
     // The director's answers: the prefilled role, plus a name that isn't the
-    // roster's, which the server must ignore.
+    // roster's, which the server must ignore. m3 has no roster role, so the
+    // director must pick one explicitly (#483) — here, Pathfinder.
     const attendees = roster.map((member) => ({
       clientId: `member:${member.id}`,
-      responses: { ...rosterRolePrefill(definition, rosterPerson(member)), first_name: "Somebody", attendee_age: "99" },
+      responses: {
+        ...rosterRolePrefill(definition, rosterPerson(member)),
+        ...(member.id === "m3" ? { attendee_type: "Pathfinder" } : {}),
+        first_name: "Somebody",
+        attendee_age: "99",
+      },
     }));
     await submitPublicRegistration("honors-weekend", "clubs", publicRegistrationInputSchema.parse({
       versionId: "version-1",

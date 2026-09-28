@@ -24,6 +24,14 @@ const role = z.string().trim().max(60);
  */
 const gender = z.enum(["FEMALE", "MALE"]).nullable();
 
+/**
+ * "Willing to drive" (#491): a follow-up flag on staff and adult rows only —
+ * `willingToDriveAllowed` (checked by the repository, which knows the
+ * stored type for a partial edit) rejects it on any other type. It never
+ * grants clearance by itself; see `modules/driver-verification`.
+ */
+const willingToDrive = z.boolean();
+
 export const rosterMemberInputSchema = z.object({
   firstName: name("first name"),
   lastName: name("last name"),
@@ -32,6 +40,7 @@ export const rosterMemberInputSchema = z.object({
   role: role.default(""),
   classLevel: classLevel.default(null),
   gender: gender.default(null),
+  willingToDrive: willingToDrive.default(false),
 }).strict()
   .refine((data) => data.gender !== null, { message: "Choose Male or Female.", path: ["gender"] })
   .transform((data) => ({ ...data, role: rosterRoleOrDefault(data.role, data.attendeeType) }));
@@ -45,6 +54,7 @@ export const rosterMemberUpdateSchema = z.object({
   classLevel,
   gender,
   status: z.enum(["ACTIVE", "INACTIVE"]),
+  willingToDrive,
 }).partial().strict().refine((data) => !("gender" in data) || data.gender !== null, {
   message: "Choose Male or Female.",
   path: ["gender"],

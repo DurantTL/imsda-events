@@ -143,6 +143,11 @@ export function ClubRegistrationWorkspace({
         ...(draft.attendeeResponses[person.memberId] ?? {}),
         ...(person.ownedResponses as FormResponses),
       },
+      // Compact attendee cards (#483): a roster person's card starts
+      // collapsed, and any carried-over value that didn't match a form
+      // option is prompted for instead of left silently blank.
+      carriedFromRoster: true,
+      carryoverMismatches: person.carryoverMismatches,
     })),
     // Extra people: names and age come from Who's going, like roster people.
     ...draft.guests.map((guest) => {
