@@ -100,7 +100,10 @@ beforeEach(() => {
 
 describe("driver verification pages pass only serializable props (#491)", () => {
   it("the club roster page gives the queue plain strings, and it renders", async () => {
-    const tree = await ClubRosterPage({ params: Promise.resolve({ organizationId: "club-1" }) });
+    const tree = await ClubRosterPage({
+      params: Promise.resolve({ organizationId: "club-1" }),
+      searchParams: Promise.resolve({}),
+    });
     const props = queueProps(tree);
     expect(props).toEqual({
       clearEndpointBase: "/api/attendee/clubs/club-1/driver-verification",
