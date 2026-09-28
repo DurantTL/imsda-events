@@ -340,4 +340,40 @@ describe("event publish/unpublish routes (#471)", () => {
     expect(response.status).toBe(403);
     expect(dependencies.unpublishEvent).not.toHaveBeenCalled();
   });
+
+  it("rejects a cross-origin or unpermitted publish request before writing", async () => {
+    const crossOrigin = await PUBLISH(
+      actionRequest("/api/events/evt_wr28/publish", "https://untrusted.example"),
+      { params: Promise.resolve({ eventId: "evt_wr28" }) },
+    );
+    expect(crossOrigin.status).toBe(403);
+
+    dependencies.getCurrentSession.mockResolvedValue({
+      user: { id: "usr_staff", email: "staff@example.test", displayName: "Staff", globalRole: null },
+    });
+    dependencies.findActiveMembership.mockResolvedValue(null);
+    const denied = await PUBLISH(
+      actionRequest("/api/events/evt_wr28/publish"),
+      { params: Promise.resolve({ eventId: "evt_wr28" }) },
+    );
+    expect(denied.status).toBe(403);
+    expect(dependencies.publishEvent).not.toHaveBeenCalled();
+  });
+
+  it("maps a missing event to 404 on publish and unpublish", async () => {
+    const missing = new dependencies.EventOperationError("EVENT_NOT_FOUND", "That event no longer exists.");
+    dependencies.publishEvent.mockRejectedValue(missing);
+    dependencies.unpublishEvent.mockRejectedValue(missing);
+
+    const published = await PUBLISH(
+      actionRequest("/api/events/evt_gone/publish"),
+      { params: Promise.resolve({ eventId: "evt_gone" }) },
+    );
+    const unpublished = await UNPUBLISH(
+      actionRequest("/api/events/evt_gone/unpublish"),
+      { params: Promise.resolve({ eventId: "evt_gone" }) },
+    );
+    expect(published.status).toBe(404);
+    expect(unpublished.status).toBe(404);
+  });
 });

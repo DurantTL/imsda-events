@@ -96,6 +96,7 @@ function mockPrisma(
   const eventUpdateMany = vi.fn().mockResolvedValue({ count: changedRows });
   const auditLogCreate = vi.fn().mockResolvedValue({});
   const tx = {
+    $queryRaw: vi.fn().mockResolvedValue([{ id: "event-1" }]),
     event: {
       findUnique: vi.fn().mockResolvedValue(eventRow(current)),
       update: eventUpdate,
@@ -168,7 +169,7 @@ describe("event settings save never changes publish state (#471)", () => {
 
 describe("publishEvent (#467, #471)", () => {
   it("publishes a draft with every other item complete and no information URL, with a conditional update", async () => {
-    const { prisma, eventUpdate, eventUpdateMany, auditLogCreate } = mockPrisma({ isPublished: false }, 1, true);
+    const { prisma, tx, eventUpdate, eventUpdateMany, auditLogCreate } = mockPrisma({ isPublished: false }, 1, true);
     dependencies.getPrisma.mockReturnValue(prisma);
 
     const result = await publishEvent("event-1", "usr_1");
@@ -181,6 +182,11 @@ describe("publishEvent (#467, #471)", () => {
     expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ action: "EVENT_PUBLISHED", summary: "Published event: Synthetic Retreat." }),
     }));
+    // The row is locked before the checklist is read, so a concurrent
+    // settings save can't clear a field between the check and the flip.
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.$queryRaw.mock.invocationCallOrder[0])
+      .toBeLessThan(tx.event.findUnique.mock.invocationCallOrder[0]);
     expect(result?.isPublished).toBe(true);
   });
 

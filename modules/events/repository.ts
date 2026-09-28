@@ -407,6 +407,10 @@ export async function updateEventSettings(
 export async function publishEvent(eventId: string, actorUserId: string) {
   const prisma = getPrisma();
   await prisma.$transaction(async (tx) => {
+    // Lock the event row before reading it, so a settings save that clears a
+    // checklist field waits for this publish (or runs first and is seen)
+    // rather than landing between the readiness check and the flip.
+    await tx.$queryRaw`SELECT "id" FROM "Event" WHERE "id" = ${eventId} FOR UPDATE`;
     const [current, publishedFormCount] = await Promise.all([
       tx.event.findUnique({
         where: { id: eventId },
