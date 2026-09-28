@@ -48,7 +48,9 @@ const publicInfoUrlSchema = nullableText(500).refine((value) => {
 
 const lifecycleFields = {
   capacity: z.number().int().min(1).max(100_000).nullable(),
-  isPublished: z.boolean(),
+  // No `isPublished` (#471): publishing and unpublishing are their own
+  // actions (`publishEvent` / `unpublishEvent`), so a client-sent value is
+  // stripped here and can never reach a settings save or its audit entry.
   registrationOpensOn: calendarDateSchema.nullable(),
   registrationClosesOn: calendarDateSchema.nullable(),
   waitlistEnabled: z.boolean(),
@@ -83,12 +85,6 @@ function validateLifecycle(
     });
   }
 }
-
-export const eventLifecycleInputSchema = z.object({
-  ...lifecycleFields,
-}).superRefine((value, context) => {
-  validateLifecycle(value, context);
-});
 
 export const eventSettingsInputSchema = z.object({
   name: z.string().trim().min(3, "Enter an event name.").max(120),
@@ -155,5 +151,4 @@ export const eventSettingsInputSchema = z.object({
   }
 });
 
-export type EventLifecycleInput = z.infer<typeof eventLifecycleInputSchema>;
 export type EventSettingsInput = z.infer<typeof eventSettingsInputSchema>;
