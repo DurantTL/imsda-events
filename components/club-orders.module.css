@@ -21,3 +21,11 @@
 .people { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
 .check { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: .74rem; }
 .check input { width: 22px; height: 22px; flex: 0 0 auto; }
+.muted { color: var(--muted); font-size: .63rem; }
+.prompt { border: 1px solid var(--line); border-radius: 12px; background: #f6fafb; padding: 11px 12px; }
+.prompt h3 { display: flex; align-items: center; gap: 6px; }
+.promptCopy { margin: 0; color: var(--muted); font-size: .68rem; line-height: 1.5; }
+.dateSelect { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: .68rem; }
+.dateSelect :global(.secondary-button) { min-height: 44px; }
+.date { min-height: 44px; min-width: 0; max-width: 100%; border: 1px solid #cbdbe2; border-radius: 8px; background: #fff; padding: 6px 8px; font-size: 16px; }
+.actions :global(.text-button) { min-height: 44px; }

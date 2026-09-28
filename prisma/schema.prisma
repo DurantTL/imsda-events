@@ -3360,9 +3360,10 @@ enum ClubOrderNeedStatus {
 /// instance (#487): an honor completion today, a uniform size or an earned
 /// award tomorrow. `sourceType`/`sourceId` is the only source-specific part;
 /// everything else — the item, the person, and the fulfillment state — is
-/// generic. Unique on the source pair, so re-scanning a source (a club's
-/// completed honors, say) never creates the same need twice: the order list
-/// picks up only genuinely new completions.
+/// generic. Unique on the source pair, so re-scanning a source never creates
+/// the same need twice. For honors the `sourceId` is `personId:honorId`, so a
+/// re-completion or a completion-date correction (#486 records are
+/// append-only) never makes a second need for the same patch.
 model ClubOrderNeed {
   id             String              @id @default(cuid())
   organizationId String
@@ -3372,6 +3373,13 @@ model ClubOrderNeed {
   /// Null when the source item has no matching `ClubSupplyItem` at all (an
   /// unmatched honor); flagged in the order list rather than silently dropped.
   itemId         String?
+  /// What the source calls this need, for the screen when there's no catalog
+  /// item to name it by (an honor's name today). Never a personal field.
+  sourceLabel    String              @default("")
+  /// The calendar date (`YYYY-MM-DD`) the need arose at the source (an honor's
+  /// completion date), or blank when the source has none. Lets a club mark
+  /// "already handed out" everything completed before a date (#487).
+  sourceDate     String              @default("")
   status         ClubOrderNeedStatus @default(NEEDED)
   batchId        String?
   createdAt      DateTime            @default(now())
@@ -3395,9 +3403,9 @@ enum ClubSupplyOrderBatchStatus {
 }
 
 /// One AdventSource order a club placed (#487): a set of catalog items and
-/// quantities, moved from ordered to received in bulk. Receiving adds the
-/// full ordered quantity (needed plus extras) to the club's stock; awarding a
-/// specific person's item later draws down that same stock.
+/// quantities, moved from ordered to received in bulk. Receiving adds each
+/// line's `quantityOrdered` to the club's stock; awarding a specific person's
+/// item later draws down that same stock.
 model ClubSupplyOrderBatch {
   id                  String    @id @default(cuid())
   organizationId      String
@@ -3432,6 +3440,10 @@ model ClubSupplyOrderLine {
   neededCount      Int
   extraCount       Int      @default(0)
   stockAtOrderTime Int
+  /// What was actually put on the AdventSource order: needed plus extras,
+  /// less the stock free to cover them then, never below zero. Receiving adds
+  /// exactly this to stock (#487).
+  quantityOrdered  Int
   createdAt        DateTime @default(now())
 
   batch ClubSupplyOrderBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
@@ -3892,7 +3904,7 @@ model MemberHonorEntry {
   organization      Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   recordedByAccount AttendeeAccount? @relation("MemberHonorEntryRecordedBy", fields: [recordedByAccountId], references: [id], onDelete: SetNull)
   recordedByUser    User?            @relation("MemberHonorEntryRecordedByUser", fields: [recordedByUserId], references: [id], onDelete: SetNull)
-  weekendCompletionLink HonorWeekendCompletionLink?
+  weekendCompletionLinks HonorWeekendCompletionLink[]
 
   @@index([personId, honorId, seq])
   @@index([organizationId, createdAt])
@@ -3902,16 +3914,20 @@ model MemberHonorEntry {
 /// Marks one Honors Weekend class enrollment (#357–#360) as already written
 /// back into the member's year-round honor record (#487, #486). Unique on
 /// `enrollmentId`, so writing back is idempotent: running the job again over
-/// the same enrollments creates nothing new, whether it finds this row first
-/// or a concurrent run's insert wins the race.
+/// the same enrollments creates nothing new. Not unique on the entry: when
+/// the member's latest entry for that honor is already COMPLETED (recorded by
+/// hand, or by an earlier weekend), the enrollment links to that entry rather
+/// than appending a second one.
 model HonorWeekendCompletionLink {
   id                 String   @id @default(cuid())
   enrollmentId       String   @unique
-  memberHonorEntryId String   @unique
+  memberHonorEntryId String
   createdAt          DateTime @default(now())
 
   enrollment       HonorEnrollment  @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
   memberHonorEntry MemberHonorEntry @relation(fields: [memberHonorEntryId], references: [id], onDelete: Cascade)
+
+  @@index([memberHonorEntryId])
 }
 
 /// How a club member transfer (#489) was brought to a close.

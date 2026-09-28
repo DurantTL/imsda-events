@@ -16,8 +16,9 @@ export default async function ClubOrdersPage({ params }: { params: Promise<{ org
   const { organizationId } = await params;
   const access = await getRosterAccessStateForPage(organizationId);
   if (access.state !== "OPEN") return null;
-  // New completions since the last visit become needs; ones already on file are skipped.
-  await syncHonorOrderNeeds(organizationId);
+  // An editor's visit records new completions as needs (ones on file are
+  // skipped); a registrar's view-only visit reads what's on file and never writes.
+  if (access.capabilities.manageTeam) await syncHonorOrderNeeds(organizationId);
   return (
     <>
       <BackLink href={`/account/clubs/${organizationId}`}>Back to {access.club.name}</BackLink>

@@ -27,7 +27,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
   mocks.requireHonorPermission.mockResolvedValue({ user: { id: "staff-1" } });
-  mocks.writeBackHonorsWeekendCompletions.mockResolvedValue({ written: 3, skipped: 1 });
+  mocks.writeBackHonorsWeekendCompletions.mockResolvedValue({ written: 3, alreadyRecorded: 2, skipped: 1 });
 });
 
 describe("Honors Weekend write-back route (#487)", () => {
@@ -36,7 +36,7 @@ describe("Honors Weekend write-back route (#487)", () => {
     expect(mocks.requireHonorPermission).toHaveBeenCalledWith("site-b");
     expect(mocks.writeBackHonorsWeekendCompletions).toHaveBeenCalledWith("site-b", "staff-1");
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ written: 3, skipped: 1 });
+    expect(await response.json()).toEqual({ written: 3, alreadyRecorded: 2, skipped: 1 });
   });
 
   it("refuses someone without permission on this event", async () => {

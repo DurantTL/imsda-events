@@ -12,14 +12,16 @@ type RouteContext = { params: Promise<{ organizationId: string }> };
  * A club's order list (#487): every completed-but-not-ordered honor, grouped
  * by catalog item, with stock applied. Syncing first means a completion
  * recorded since the last visit shows up with no manual comparison against
- * a prior file. Directors and deputies edit; registrars and Area
- * Coordinators view, the same gate as club supplies (#531).
+ * a prior file. Directors and deputies edit (and their visit syncs);
+ * registrars and Area Coordinators view what's on file and never write, the
+ * same gate as club supplies (#531).
  */
 async function getHandler(_request: Request, context: RouteContext) {
   try {
     const { organizationId } = await context.params;
     const access = await requireClubSupplyAccess(organizationId);
-    await syncHonorOrderNeeds(organizationId);
+    // Only an editor's visit records new needs; a view-only role reads what's on file.
+    if (access.mode === "EDIT") await syncHonorOrderNeeds(organizationId);
     return Response.json({ ...(await loadOrderWorkspace(organizationId)), canEdit: access.mode === "EDIT" });
   } catch (error) {
     return clubOrderApiError(error, "Loading the order list");

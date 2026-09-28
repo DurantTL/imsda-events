@@ -11,9 +11,9 @@ import { CONFERENCE_TIME_ZONE } from "@/modules/calendar/domain";
  * keeps (#486) — the same record the club's own bulk marking writes to, so
  * the order list (`modules/honors/order-source.ts`) sees it exactly the same
  * way either way. `HonorWeekendCompletionLink` is unique on `enrollmentId`,
- * so an enrollment already written back is left out of the very query that
- * finds candidates: running this twice over the same roster writes nothing
- * the second time.
+ * so an enrollment already linked is never written again: running this twice
+ * over the same roster writes nothing the second time. A member whose latest
+ * entry for that honor is already COMPLETED gets no second entry.
  */
 
 type Snapshot = { clubRosterMemberId?: string };
@@ -32,58 +32,101 @@ export class HonorsWeekendWriteBackError extends Error {
 
 const WRITE_BACK_TRANSACTION = { timeout: 60_000, maxWait: 10_000 };
 
+export type HonorsWeekendWriteBackResult = {
+  /** New COMPLETED entries appended to members' honor records. */
+  written: number;
+  /**
+   * Enrollments already reflected in the member's record: linked by an
+   * earlier (or concurrent) run, or the member's latest entry for that honor
+   * was already COMPLETED (recorded by hand, say), so only the link was added.
+   */
+  alreadyRecorded: number;
+  /** Not checked in, or no roster member at the enrolling club to write to. */
+  skipped: number;
+};
+
+function isUniqueViolation(error: unknown) {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code: unknown }).code === "P2002";
+}
+
 /**
  * Writes back every checked-in Honors Weekend class enrollment at this event
- * that isn't already linked. An enrollment with no roster member behind it
- * (a one-off attendee never on the club's roster) has nowhere to write a
- * year-round record, so it's counted as skipped, not an error.
+ * that isn't already linked. An enrollment with no roster member behind it at
+ * the enrolling club (a one-off attendee, or a member of some other club) has
+ * nowhere to write a year-round record, so it's counted as skipped, not an
+ * error. When the member's latest entry for that honor is already COMPLETED,
+ * no second entry is appended — the enrollment is linked to that entry and
+ * counted as already recorded. Runs are serialized per event; a unique-key
+ * race that still slips through is retried once, and the retry reports those
+ * enrollments as already recorded rather than failing.
  */
-export async function writeBackHonorsWeekendCompletions(eventId: string, actorUserId: string) {
-  const prisma = getPrisma();
-  const event = await prisma.event.findUnique({ where: { id: eventId }, select: { id: true, startsAt: true } });
+export async function writeBackHonorsWeekendCompletions(eventId: string, actorUserId: string): Promise<HonorsWeekendWriteBackResult> {
+  const event = await getPrisma().event.findUnique({ where: { id: eventId }, select: { id: true, startsAt: true } });
   if (!event) throw new HonorsWeekendWriteBackError("EVENT_NOT_FOUND", "That event could not be found.");
   const completionDate = eventCompletionDate(event.startsAt);
+  try {
+    return await writeBackOnce(eventId, completionDate, actorUserId);
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+    return writeBackOnce(eventId, completionDate, actorUserId);
+  }
+}
 
-  const candidates = await prisma.honorEnrollment.findMany({
-    where: {
-      eventId,
-      weekendCompletion: null,
-      registration: { status: { in: ["SUBMITTED", "CONFIRMED"] } },
-    },
-    select: {
-      id: true,
-      organizationId: true,
-      offering: { select: { honorId: true } },
-      registrationAttendee: {
-        select: { profileSnapshot: true, checkIns: { where: { undoneAt: null }, select: { id: true }, take: 1 } },
+type WriteRow = { enrollmentId: string; organizationId: string; honorId: string; personId: string };
+
+async function writeBackOnce(eventId: string, completionDate: string, actorUserId: string): Promise<HonorsWeekendWriteBackResult> {
+  return getPrisma().$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`honors-weekend-write-back:${eventId}`}))`;
+    const enrollments = await tx.honorEnrollment.findMany({
+      where: { eventId, registration: { status: { in: ["SUBMITTED", "CONFIRMED"] } } },
+      select: {
+        id: true,
+        organizationId: true,
+        weekendCompletion: { select: { id: true } },
+        offering: { select: { honorId: true } },
+        registrationAttendee: {
+          select: { profileSnapshot: true, checkIns: { where: { undoneAt: null }, select: { id: true }, take: 1 } },
+        },
       },
-    },
-  });
+    });
+    const linkedAlready = enrollments.filter((enrollment) => enrollment.weekendCompletion !== null).length;
+    const candidates = enrollments.filter((enrollment) => enrollment.weekendCompletion === null);
+    const eligible = candidates.filter((candidate) => candidate.registrationAttendee.checkIns.length > 0);
+    const memberIds = eligible
+      .map((candidate) => (candidate.registrationAttendee.profileSnapshot as Snapshot).clubRosterMemberId)
+      .filter((id): id is string => Boolean(id));
+    const members = memberIds.length
+      ? await tx.clubRosterMember.findMany({
+        where: { id: { in: memberIds }, status: { not: "REMOVED" }, personId: { not: null } },
+        select: { id: true, personId: true, organizationId: true },
+      })
+      : [];
+    const memberById = new Map(members.map((member) => [member.id, member]));
 
-  const eligible = candidates.filter((candidate) => candidate.registrationAttendee.checkIns.length > 0);
-  const memberIds = eligible
-    .map((candidate) => (candidate.registrationAttendee.profileSnapshot as Snapshot).clubRosterMemberId)
-    .filter((id): id is string => Boolean(id));
-  const members = memberIds.length
-    ? await prisma.clubRosterMember.findMany({
-      where: { id: { in: memberIds }, status: { not: "REMOVED" }, personId: { not: null } },
-      select: { id: true, personId: true },
-    })
-    : [];
-  const personByMember = new Map(members.map((member) => [member.id, member.personId!]));
+    const toWrite = eligible
+      .map((candidate): WriteRow | null => {
+        const memberId = (candidate.registrationAttendee.profileSnapshot as Snapshot).clubRosterMemberId;
+        const member = memberId ? memberById.get(memberId) : undefined;
+        // The roster member must belong to the club that enrolled them: a
+        // snapshot pointing at another club's roster never writes there.
+        if (!member || member.organizationId !== candidate.organizationId) return null;
+        return { enrollmentId: candidate.id, organizationId: candidate.organizationId, honorId: candidate.offering.honorId, personId: member.personId! };
+      })
+      .filter((row): row is WriteRow => row !== null);
 
-  const toWrite = eligible
-    .map((candidate) => {
-      const memberId = (candidate.registrationAttendee.profileSnapshot as Snapshot).clubRosterMemberId;
-      const personId = memberId ? personByMember.get(memberId) : undefined;
-      return personId ? { enrollmentId: candidate.id, organizationId: candidate.organizationId, honorId: candidate.offering.honorId, personId } : null;
-    })
-    .filter((row): row is { enrollmentId: string; organizationId: string; honorId: string; personId: string } => row !== null);
-
-  if (toWrite.length === 0) return { written: 0, skipped: candidates.length };
-
-  await prisma.$transaction(async (tx) => {
+    let written = 0;
+    let linkedToExisting = 0;
     for (const row of toWrite) {
+      const latest = await tx.memberHonorEntry.findFirst({
+        where: { personId: row.personId, honorId: row.honorId },
+        orderBy: { seq: "desc" },
+        select: { id: true, status: true },
+      });
+      if (latest?.status === "COMPLETED") {
+        await tx.honorWeekendCompletionLink.create({ data: { enrollmentId: row.enrollmentId, memberHonorEntryId: latest.id } });
+        linkedToExisting += 1;
+        continue;
+      }
       const entry = await tx.memberHonorEntry.create({
         data: {
           personId: row.personId,
@@ -95,9 +138,7 @@ export async function writeBackHonorsWeekendCompletions(eventId: string, actorUs
         },
         select: { id: true },
       });
-      await tx.honorWeekendCompletionLink.create({
-        data: { enrollmentId: row.enrollmentId, memberHonorEntryId: entry.id },
-      });
+      await tx.honorWeekendCompletionLink.create({ data: { enrollmentId: row.enrollmentId, memberHonorEntryId: entry.id } });
       await writeAuditLog({
         actorUserId,
         action: "HONORS_WEEKEND_COMPLETION_WRITTEN",
@@ -106,8 +147,18 @@ export async function writeBackHonorsWeekendCompletions(eventId: string, actorUs
         summary: "Wrote an Honors Weekend class completion into a member's year-round honor record.",
         metadata: { eventId, organizationId: row.organizationId, honorId: row.honorId, enrollmentId: row.enrollmentId },
       }, tx);
+      written += 1;
     }
+    if (linkedToExisting > 0) {
+      await writeAuditLog({
+        actorUserId,
+        action: "HONORS_WEEKEND_COMPLETION_ALREADY_RECORDED",
+        entityType: "Event",
+        entityId: eventId,
+        summary: `Linked ${linkedToExisting} Honors Weekend class completion${linkedToExisting === 1 ? "" : "s"} to honors already recorded as completed.`,
+        metadata: { eventId, enrollmentCount: linkedToExisting },
+      }, tx);
+    }
+    return { written, alreadyRecorded: linkedAlready + linkedToExisting, skipped: candidates.length - toWrite.length };
   }, WRITE_BACK_TRANSACTION);
-
-  return { written: toWrite.length, skipped: candidates.length - toWrite.length };
 }

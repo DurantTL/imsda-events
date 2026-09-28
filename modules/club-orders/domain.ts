@@ -14,7 +14,13 @@ export type OrderCatalogItem = {
   catalogNumber: string | null;
 };
 
-/** One catalog item's line on the order screen: what's needed, what's on hand, and what to order. */
+/**
+ * One catalog item's line on the order screen: what's needed, the stock free
+ * to cover it, and what to order. `inStock` is *available* stock — on hand
+ * less units already received for someone and not yet handed out
+ * (`availableStock`) — so a received-but-unawarded patch is never counted
+ * twice. For a placed order, `toOrder` is the quantity actually ordered.
+ */
 export type OrderLine = {
   item: OrderCatalogItem;
   needed: number;
@@ -26,24 +32,67 @@ export type OrderLine = {
 };
 
 /**
+ * Stock free to cover new needs (#487): on hand, less the units already
+ * received for a specific person and not yet handed out (RECEIVED needs).
+ * Never below zero, even when a hand-edited stock count (#531) is lower than
+ * what's been received.
+ */
+export function availableStock(onHand: number, reservedForReceived: number) {
+  return Math.max(0, onHand - reservedForReceived);
+}
+
+/** The quantity to put on an order: needed plus extras, less available stock, never below zero. */
+export function quantityToOrder(needed: number, extra: number, available: number) {
+  return Math.max(0, needed + extra - available);
+}
+
+/** A typed-in extras value: a whole number, never negative; anything else counts as zero. */
+export function normalizeExtra(value: unknown) {
+  const number = typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : 0;
+  return Number.isFinite(number) ? Math.max(0, Math.trunc(number)) : 0;
+}
+
+/**
  * The order screen's lines: one per item with an open need, "to order" never
- * below zero. Items are sorted by name for a stable screen and export order.
+ * below zero. `availableByItem` is `availableStock` per item. Items are sorted
+ * by name for a stable screen and export order.
  */
 export function buildOrderLines(
   items: readonly OrderCatalogItem[],
   neededByItem: ReadonlyMap<string, number>,
-  stockByItem: ReadonlyMap<string, number>,
+  availableByItem: ReadonlyMap<string, number>,
   extraByItem: ReadonlyMap<string, number>,
 ): OrderLine[] {
   return [...items]
     .map((item): OrderLine => {
       const needed = neededByItem.get(item.itemId) ?? 0;
-      const extra = Math.max(0, Math.trunc(extraByItem.get(item.itemId) ?? 0));
-      const inStock = stockByItem.get(item.itemId) ?? 0;
-      const toOrder = Math.max(0, needed + extra - inStock);
-      return { item, needed, extra, inStock, toOrder, missingCatalogNumber: !item.catalogNumber };
+      const extra = normalizeExtra(extraByItem.get(item.itemId));
+      const inStock = availableByItem.get(item.itemId) ?? 0;
+      return { item, needed, extra, inStock, toOrder: quantityToOrder(needed, extra, inStock), missingCatalogNumber: !item.catalogNumber };
     })
     .sort((a, b) => a.item.name.localeCompare(b.item.name));
+}
+
+/**
+ * The screen's extras applied to the order lines (#487). The order screen and
+ * the top-level exports both go through this, so the files a director
+ * downloads say exactly what the screen shows.
+ */
+export function applyExtras(lines: readonly OrderLine[], extras: Readonly<Record<string, unknown>>): OrderLine[] {
+  return lines.map((line) => {
+    const extra = normalizeExtra(extras[line.item.itemId]);
+    return { ...line, extra, toOrder: quantityToOrder(line.needed, extra, line.inStock) };
+  });
+}
+
+/**
+ * Splits one item's NEEDED needs (oldest first) into the ones available stock
+ * already covers — ready to hand out "from stock" — and the ones that still
+ * have to go on an order (#487).
+ */
+export function splitNeedsByStock<T>(neededOldestFirst: readonly T[], available: number) {
+  const covered = Math.min(neededOldestFirst.length, Math.max(0, available));
+  return { fromStock: neededOldestFirst.slice(0, covered), toOrder: neededOldestFirst.slice(covered) };
 }
 
 /**
@@ -79,17 +128,20 @@ export function readableOrderCsv(lines: readonly OrderLine[]) {
   return toCsv(rows);
 }
 
-export type PickListEntry = { lastName: string; firstName: string; itemName: string };
+/** Where a pick-list row stands, in words a director hands to whoever gives out patches. */
+export type PickListStatus = "To order" | "Ordered" | "Ready to hand out" | "Ready to hand out (from stock)";
+
+export type PickListEntry = { lastName: string; firstName: string; itemName: string; status: PickListStatus };
 
 /**
- * The per-member pick list (#487): names and honors only, so it can be
- * printed and handed to whoever distributes patches. No birth date, contact,
- * guardian, or medical field ever reaches this shape.
+ * The per-member pick list (#487): names, the item, and where it stands, so
+ * it can be printed and handed to whoever distributes patches. No birth date,
+ * contact, guardian, or medical field ever reaches this shape.
  */
 export function pickListCsv(entries: readonly PickListEntry[]) {
-  const rows: Array<Array<string | number>> = [["Last name", "First name", "Item"]];
-  for (const entry of [...entries].sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName))) {
-    rows.push([entry.lastName, entry.firstName, entry.itemName]);
-  }
+  const rows: Array<Array<string | number>> = [["Last name", "First name", "Item", "Status"]];
+  const sorted = [...entries].sort((a, b) =>
+    a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName) || a.itemName.localeCompare(b.itemName));
+  for (const entry of sorted) rows.push([entry.lastName, entry.firstName, entry.itemName, entry.status]);
   return toCsv(rows);
 }

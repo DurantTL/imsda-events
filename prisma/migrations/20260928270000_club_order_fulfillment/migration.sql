@@ -3,7 +3,10 @@
 -- "needs". Uniform ordering (#497) and earned awards/insignia (#532) will add
 -- their own ClubOrderSourceType values later without changing this shape.
 -- Also links an Honors Weekend class enrollment (#357-#360) to the
--- MemberHonorEntry it wrote back, so the write-back job is idempotent.
+-- MemberHonorEntry it wrote back (or the member's existing COMPLETED entry
+-- for that honor), so the write-back job is idempotent. Honor needs are keyed
+-- on "personId:honorId", so a re-completion or a date correction never makes
+-- a second need for the same patch.
 -- Hand-written; matches `prisma migrate diff` against the schema exactly.
 
 
@@ -24,6 +27,8 @@ CREATE TABLE "ClubOrderNeed" (
     "sourceId" TEXT NOT NULL,
     "personId" TEXT NOT NULL,
     "itemId" TEXT,
+    "sourceLabel" TEXT NOT NULL DEFAULT '',
+    "sourceDate" TEXT NOT NULL DEFAULT '',
     "status" "ClubOrderNeedStatus" NOT NULL DEFAULT 'NEEDED',
     "batchId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -55,6 +60,7 @@ CREATE TABLE "ClubSupplyOrderLine" (
     "neededCount" INTEGER NOT NULL,
     "extraCount" INTEGER NOT NULL DEFAULT 0,
     "stockAtOrderTime" INTEGER NOT NULL,
+    "quantityOrdered" INTEGER NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "ClubSupplyOrderLine_pkey" PRIMARY KEY ("id")
@@ -95,7 +101,7 @@ CREATE UNIQUE INDEX "ClubSupplyOrderLine_batchId_itemId_key" ON "ClubSupplyOrder
 CREATE UNIQUE INDEX "HonorWeekendCompletionLink_enrollmentId_key" ON "HonorWeekendCompletionLink"("enrollmentId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "HonorWeekendCompletionLink_memberHonorEntryId_key" ON "HonorWeekendCompletionLink"("memberHonorEntryId");
+CREATE INDEX "HonorWeekendCompletionLink_memberHonorEntryId_idx" ON "HonorWeekendCompletionLink"("memberHonorEntryId");
 
 -- AddForeignKey
 ALTER TABLE "ClubOrderNeed" ADD CONSTRAINT "ClubOrderNeed_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;

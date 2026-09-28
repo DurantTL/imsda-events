@@ -3,7 +3,15 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
-import { buildOrderLines, type OrderCatalogItem, type OrderLine, type PickListEntry } from "@/modules/club-orders/domain";
+import {
+  availableStock,
+  buildOrderLines,
+  quantityToOrder,
+  splitNeedsByStock,
+  type OrderCatalogItem,
+  type OrderLine,
+  type PickListEntry,
+} from "@/modules/club-orders/domain";
 import type { ClubSupplyStockActor } from "@/modules/club-supplies/repository";
 
 /**
@@ -13,17 +21,39 @@ import type { ClubSupplyStockActor } from "@/modules/club-supplies/repository";
  * candidates keyed by `sourceType`/`sourceId`, and this module tracks each
  * one from NEEDED through ORDERED, RECEIVED, and AWARDED, moving
  * `ClubSupplyStock` (#531) along the way.
+ *
+ * The stock model. For each club and item:
+ *   - on hand is `ClubSupplyStock.quantityOnHand`;
+ *   - reserved is the RECEIVED needs (arrived for a named person, not yet
+ *     handed out);
+ *   - available is on hand less reserved, never below zero (`availableStock`).
+ * The order list orders `needed + extras - available`. The oldest NEEDED needs
+ * that available stock already covers are "ready to hand out, from stock"
+ * and may go straight from NEEDED to AWARDED; the rest go on the order.
+ *
+ * Concurrency. Every write that moves needs or stock for a club takes the
+ * same per-club transaction lock (`lockClubOrders`) first, and every status
+ * change is a guarded `updateMany` whose moved count is what's acted on, so
+ * two taps of the same button (or two directors at once) can never create a
+ * phantom batch, receive twice, or award the same need twice.
  */
 
 export type ClubOrderActor = ClubSupplyStockActor;
 
-export type ClubOrderErrorCode = "NOTHING_TO_ORDER" | "BATCH_NOT_FOUND" | "ALREADY_RECEIVED";
+export type ClubOrderErrorCode = "NOTHING_TO_ORDER" | "BATCH_NOT_FOUND" | "ALREADY_RECEIVED" | "ORDER_CHANGED" | "NOT_ENOUGH_STOCK";
 
 export class ClubOrderError extends Error {
   constructor(public readonly code: ClubOrderErrorCode, message: string) {
     super(message);
     this.name = "ClubOrderError";
   }
+}
+
+type Db = Prisma.TransactionClient | ReturnType<typeof getPrisma>;
+
+/** Serializes every order/stock write for one club (#487), released when the transaction ends. */
+async function lockClubOrders(tx: Prisma.TransactionClient, organizationId: string) {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`club-orders:${organizationId}`}))`;
 }
 
 function createdByFields(actor: ClubOrderActor) {
@@ -45,14 +75,14 @@ function auditActorFields(actor: ClubOrderActor) {
   };
 }
 
-export type NeedCandidate = { sourceId: string; personId: string; itemId: string | null };
+export type NeedCandidate = { sourceId: string; personId: string; itemId: string | null; sourceLabel?: string; sourceDate?: string };
 
 /**
  * Records new needs from one source (#487), skipping any `sourceId` this
  * source has already recorded (the unique `[sourceType, sourceId]` index).
- * Safe to call on every visit to the order screen: a completion already on
- * file creates nothing new, so only genuinely new completions ever show up as
- * NEEDED, with no manual comparison against a prior file.
+ * Safe to call again and again: a need already on file creates nothing new.
+ * Only editors' visits and write paths call it; view-only roles read what's
+ * on file.
  */
 export async function syncOrderNeeds(organizationId: string, sourceType: "HONOR", candidates: readonly NeedCandidate[]) {
   if (candidates.length === 0) return { count: 0 };
@@ -63,8 +93,37 @@ export async function syncOrderNeeds(organizationId: string, sourceType: "HONOR"
       sourceId: candidate.sourceId,
       personId: candidate.personId,
       itemId: candidate.itemId,
+      sourceLabel: candidate.sourceLabel ?? "",
+      sourceDate: candidate.sourceDate ?? "",
     })),
     skipDuplicates: true,
+  });
+}
+
+/** NEEDED (not yet ordered) needs for these source ids recorded under some other club (#487 transfers). */
+export async function listNeededNeedsElsewhere(organizationId: string, sourceType: "HONOR", sourceIds: readonly string[]) {
+  if (sourceIds.length === 0) return [];
+  return getPrisma().clubOrderNeed.findMany({
+    where: { sourceType, sourceId: { in: [...sourceIds] }, status: "NEEDED", organizationId: { not: organizationId } },
+    select: { id: true, sourceId: true, personId: true, organizationId: true },
+  });
+}
+
+/**
+ * A NEEDED need follows its person to their current club (#487): the need
+ * moves to `organizationId`, but only while it is still NEEDED. Anything
+ * already ordered, received, or awarded stays with the club that ordered it.
+ */
+export async function moveNeededNeedsToClub(organizationId: string, needs: ReadonlyArray<{ id: string; organizationId: string }>) {
+  if (needs.length === 0) return { count: 0 };
+  return getPrisma().$transaction(async (tx) => {
+    for (const club of [...new Set([organizationId, ...needs.map((need) => need.organizationId)])].sort()) {
+      await lockClubOrders(tx, club);
+    }
+    return tx.clubOrderNeed.updateMany({
+      where: { id: { in: needs.map((need) => need.id) }, status: "NEEDED" },
+      data: { organizationId },
+    });
   });
 }
 
@@ -74,69 +133,140 @@ function toCatalogItem(item: { id: string; name: string; catalogNumber: string |
   return { itemId: item.id, name: item.name, catalogNumber: item.catalogNumber };
 }
 
+/** The oldest need first: the one stock covers first, the same order everywhere. */
+const oldestFirst: Prisma.ClubOrderNeedOrderByWithRelationInput[] = [{ sourceDate: "asc" }, { createdAt: "asc" }, { id: "asc" }];
+
+/** Available stock per item (on hand less RECEIVED-not-awarded), for the given items. */
+async function availableByItem(db: Db, organizationId: string, itemIds: readonly string[]) {
+  if (itemIds.length === 0) return new Map<string, number>();
+  const [stock, received] = await Promise.all([
+    db.clubSupplyStock.findMany({ where: { organizationId, itemId: { in: [...itemIds] } }, select: { itemId: true, quantityOnHand: true } }),
+    db.clubOrderNeed.groupBy({ by: ["itemId"], where: { organizationId, status: "RECEIVED", itemId: { in: [...itemIds] } }, _count: { _all: true } }),
+  ]);
+  const reserved = new Map(received.map((row) => [row.itemId, row._count._all]));
+  const onHand = new Map(stock.map((row) => [row.itemId, row.quantityOnHand]));
+  return new Map(itemIds.map((itemId) => [itemId, availableStock(onHand.get(itemId) ?? 0, reserved.get(itemId) ?? 0)]));
+}
+
+function groupByItem<T extends { itemId: string | null }>(needs: readonly T[]) {
+  const byItem = new Map<string, T[]>();
+  for (const need of needs) {
+    if (need.itemId === null) continue;
+    const group = byItem.get(need.itemId) ?? [];
+    group.push(need);
+    byItem.set(need.itemId, group);
+  }
+  return byItem;
+}
+
+const neededSelect = {
+  id: true, sourceId: true, personId: true, itemId: true, sourceLabel: true, sourceDate: true, createdAt: true,
+  item: { select: itemSelect },
+} satisfies Prisma.ClubOrderNeedSelect;
+
+type NeededRow = Prisma.ClubOrderNeedGetPayload<{ select: typeof neededSelect }>;
+
+/** Every NEEDED need for a club, grouped by item, with available stock and which needs it already covers. */
+async function neededPicture(organizationId: string) {
+  const needs: NeededRow[] = await getPrisma().clubOrderNeed.findMany({
+    where: { organizationId, status: "NEEDED" },
+    orderBy: oldestFirst,
+    select: neededSelect,
+  });
+  const byItem = groupByItem(needs);
+  const available = await availableByItem(getPrisma(), organizationId, [...byItem.keys()]);
+  const fromStock = new Set<string>();
+  for (const [itemId, group] of byItem) {
+    for (const need of splitNeedsByStock(group, available.get(itemId) ?? 0).fromStock) fromStock.add(need.id);
+  }
+  return { needs, byItem, available, fromStock };
+}
+
+type NeededPicture = Awaited<ReturnType<typeof neededPicture>>;
+
 export type UnmatchedNeed = { sourceId: string; personId: string };
+
+function orderListFrom(picture: NeededPicture, extraByItem: ReadonlyMap<string, number>) {
+  const items = [...picture.byItem.values()].map((group) => toCatalogItem(group[0].item!));
+  const neededByItem = new Map([...picture.byItem].map(([itemId, group]) => [itemId, group.length]));
+  const lines = buildOrderLines(items, neededByItem, picture.available, extraByItem);
+  const unmatched: UnmatchedNeed[] = picture.needs
+    .filter((need) => need.itemId === null)
+    .map((need) => ({ sourceId: need.sourceId, personId: need.personId }));
+  return { lines, unmatched };
+}
 
 /**
  * The order screen's data (#487): one line per catalog item with an open
- * need, extras applied, stock subtracted, never below zero. Needs whose
- * honor has no matching catalog item at all (not merely no number) come back
- * separately as `unmatched`, so they're flagged rather than silently dropped.
+ * need, extras applied, available stock subtracted, never below zero. Extras
+ * only apply to items on the list. Needs whose honor has no matching catalog
+ * item at all come back separately as `unmatched`, flagged rather than
+ * silently dropped.
  */
 export async function listOrderList(
   organizationId: string,
   extraByItem: ReadonlyMap<string, number> = new Map(),
 ): Promise<{ lines: OrderLine[]; unmatched: UnmatchedNeed[] }> {
-  const needs = await getPrisma().clubOrderNeed.findMany({
-    where: { organizationId, status: "NEEDED" },
-    select: { sourceId: true, personId: true, itemId: true },
-  });
-  const matched = needs.filter((need): need is typeof need & { itemId: string } => need.itemId !== null);
-  const unmatched: UnmatchedNeed[] = needs
-    .filter((need) => need.itemId === null)
-    .map((need) => ({ sourceId: need.sourceId, personId: need.personId }));
-  const itemIds = [...new Set([...matched.map((need) => need.itemId), ...extraByItem.keys()])];
-  if (itemIds.length === 0) return { lines: [], unmatched };
-  const [items, stock] = await Promise.all([
-    getPrisma().clubSupplyItem.findMany({ where: { id: { in: itemIds } }, select: itemSelect }),
-    getPrisma().clubSupplyStock.findMany({ where: { organizationId, itemId: { in: itemIds } }, select: { itemId: true, quantityOnHand: true } }),
-  ]);
-  const neededByItem = new Map<string, number>();
-  for (const need of matched) neededByItem.set(need.itemId, (neededByItem.get(need.itemId) ?? 0) + 1);
-  const stockByItem = new Map(stock.map((row) => [row.itemId, row.quantityOnHand]));
-  const lines = buildOrderLines(items.map(toCatalogItem), neededByItem, stockByItem, extraByItem);
-  return { lines, unmatched };
+  return orderListFrom(await neededPicture(organizationId), extraByItem);
 }
 
 /**
- * Places an order (#487): recomputes the order list inside the transaction
- * (so a need recorded a moment ago is included), creates one order line per
- * item with something to order, and moves every currently-NEEDED need for
- * those items to ORDERED. Items with nothing to order (extras only, already
- * covered by stock) are left out of the batch entirely.
+ * Places an order (#487). Under the club's lock it reads the NEEDED needs,
+ * works out per item how many available stock already covers (those stay
+ * NEEDED, ready to hand out from stock) and how many must be ordered, moves
+ * exactly those to ORDERED with a guarded update, and records each line's
+ * `quantityOrdered` (needed + extras - available, never below zero). If no
+ * need would move, no batch is created: NOTHING_TO_ORDER.
  */
 export async function createOrderBatch(organizationId: string, extras: Record<string, number>, actor: ClubOrderActor) {
-  const extraByItem = new Map(Object.entries(extras).filter(([, value]) => value > 0));
   return getPrisma().$transaction(async (tx) => {
+    await lockClubOrders(tx, organizationId);
     const needs = await tx.clubOrderNeed.findMany({
       where: { organizationId, status: "NEEDED", itemId: { not: null } },
+      orderBy: oldestFirst,
       select: { id: true, itemId: true },
     });
-    const neededByItem = new Map<string, number>();
-    for (const need of needs) neededByItem.set(need.itemId!, (neededByItem.get(need.itemId!) ?? 0) + 1);
-    const itemIds = [...new Set([...neededByItem.keys(), ...extraByItem.keys()])];
-    if (itemIds.length === 0) throw new ClubOrderError("NOTHING_TO_ORDER", "There's nothing to order right now.");
-    const [items, stock] = await Promise.all([
+    const byItem = groupByItem(needs);
+    const itemIds = [...byItem.keys()];
+    const [items, available] = await Promise.all([
       tx.clubSupplyItem.findMany({ where: { id: { in: itemIds } }, select: itemSelect }),
-      tx.clubSupplyStock.findMany({ where: { organizationId, itemId: { in: itemIds } }, select: { itemId: true, quantityOnHand: true } }),
+      availableByItem(tx, organizationId, itemIds),
     ]);
-    const stockByItem = new Map(stock.map((row) => [row.itemId, row.quantityOnHand]));
-    const lines = buildOrderLines(items.map(toCatalogItem), neededByItem, stockByItem, extraByItem).filter((line) => line.toOrder > 0);
-    if (lines.length === 0) throw new ClubOrderError("NOTHING_TO_ORDER", "There's nothing to order right now.");
+    const plan = items.map((item) => {
+      const group = byItem.get(item.id) ?? [];
+      const inStock = available.get(item.id) ?? 0;
+      const extra = Math.max(0, Math.trunc(extras[item.id] ?? 0));
+      return {
+        item: toCatalogItem(item),
+        needed: group.length,
+        extra,
+        inStock,
+        quantityOrdered: quantityToOrder(group.length, extra, inStock),
+        moveIds: splitNeedsByStock(group.map((need) => need.id), inStock).toOrder,
+      };
+    });
+    const moveIds = plan.flatMap((line) => line.moveIds);
+    if (moveIds.length === 0) {
+      throw new ClubOrderError(
+        "NOTHING_TO_ORDER",
+        needs.length > 0 ? "Everything needed is already in stock. Hand it out from stock instead." : "There's nothing to order right now.",
+      );
+    }
 
     const batch = await tx.clubSupplyOrderBatch.create({
       data: { organizationId, status: "ORDERED", ...createdByFields(actor) },
       select: { id: true, createdAt: true },
     });
+    const moved = await tx.clubOrderNeed.updateMany({
+      where: { id: { in: moveIds }, organizationId, status: "NEEDED" },
+      data: { status: "ORDERED", batchId: batch.id },
+    });
+    // The club lock makes this impossible for writes that take it; anything
+    // else that moved a need in between rolls the whole order back.
+    if (moved.count !== moveIds.length) {
+      throw new ClubOrderError("ORDER_CHANGED", "The order list changed while placing this order. Reload and try again.");
+    }
+    const lines = plan.filter((line) => line.quantityOrdered > 0);
     await tx.clubSupplyOrderLine.createMany({
       data: lines.map((line) => ({
         batchId: batch.id,
@@ -144,13 +274,10 @@ export async function createOrderBatch(organizationId: string, extras: Record<st
         neededCount: line.needed,
         extraCount: line.extra,
         stockAtOrderTime: line.inStock,
+        quantityOrdered: line.quantityOrdered,
       })),
     });
-    const orderedItemIds = lines.map((line) => line.item.itemId);
-    await tx.clubOrderNeed.updateMany({
-      where: { organizationId, status: "NEEDED", itemId: { in: orderedItemIds } },
-      data: { status: "ORDERED", batchId: batch.id },
-    });
+    const totalQuantity = lines.reduce((sum, line) => sum + line.quantityOrdered, 0);
     const who = auditActorFields(actor);
     await writeAuditLog({
       ...who.actorFields,
@@ -158,134 +285,193 @@ export async function createOrderBatch(organizationId: string, extras: Record<st
       entityType: "ClubSupplyOrderBatch",
       entityId: batch.id,
       summary: `Placed a club supply order for ${lines.length} item${lines.length === 1 ? "" : "s"}.`,
-      metadata: {
-        organizationId,
-        itemCount: lines.length,
-        totalQuantity: lines.reduce((sum, line) => sum + line.toOrder, 0),
-        ...who.metadata,
-      },
+      metadata: { organizationId, itemCount: lines.length, totalQuantity, needCount: moved.count, ...who.metadata },
     }, tx);
-    return { batchId: batch.id, createdAt: batch.createdAt.toISOString(), lines };
+    const orderLines: OrderLine[] = lines.map((line) => ({
+      item: line.item,
+      needed: line.needed,
+      extra: line.extra,
+      inStock: line.inStock,
+      toOrder: line.quantityOrdered,
+      missingCatalogNumber: !line.item.catalogNumber,
+    }));
+    return { batchId: batch.id, createdAt: batch.createdAt.toISOString(), needCount: moved.count, lines: orderLines };
   });
 }
 
-/** One order batch's lines, for the CSV exports and the receiving screen (#487). */
-export async function getOrderBatch(organizationId: string, batchId: string) {
-  const batch = await getPrisma().clubSupplyOrderBatch.findFirst({
-    where: { id: batchId, organizationId },
-    select: {
-      id: true, status: true, createdAt: true, receivedAt: true,
-      lines: { select: { itemId: true, neededCount: true, extraCount: true, stockAtOrderTime: true, item: { select: itemSelect } } },
-    },
-  });
-  if (!batch) throw new ClubOrderError("BATCH_NOT_FOUND", "That order could not be found.");
-  const lines: OrderLine[] = batch.lines.map((line) => ({
+const batchLineSelect = {
+  itemId: true, neededCount: true, extraCount: true, stockAtOrderTime: true, quantityOrdered: true, item: { select: itemSelect },
+} satisfies Prisma.ClubSupplyOrderLineSelect;
+
+function toBatchOrderLine(line: Prisma.ClubSupplyOrderLineGetPayload<{ select: typeof batchLineSelect }>): OrderLine {
+  return {
     item: toCatalogItem(line.item),
     needed: line.neededCount,
     extra: line.extraCount,
     inStock: line.stockAtOrderTime,
-    toOrder: line.neededCount + line.extraCount,
+    toOrder: line.quantityOrdered,
     missingCatalogNumber: !line.item.catalogNumber,
-  }));
+  };
+}
+
+/** One order batch's lines, for the CSV exports and the receiving screen (#487). `toOrder` is what was ordered. */
+export async function getOrderBatch(organizationId: string, batchId: string) {
+  const batch = await getPrisma().clubSupplyOrderBatch.findFirst({
+    where: { id: batchId, organizationId },
+    select: { id: true, status: true, createdAt: true, receivedAt: true, lines: { select: batchLineSelect } },
+  });
+  if (!batch) throw new ClubOrderError("BATCH_NOT_FOUND", "That order could not be found.");
+  const lines = batch.lines.map(toBatchOrderLine).sort((a, b) => a.item.name.localeCompare(b.item.name));
   return { id: batch.id, status: batch.status, createdAt: batch.createdAt.toISOString(), receivedAt: batch.receivedAt?.toISOString() ?? null, lines };
 }
 
 /**
- * Marks an order received (#487): the full ordered quantity of every line
- * (needed plus extras) is added to the club's stock, and every need that
- * order covers moves from ORDERED to RECEIVED, ready to be awarded. Stock
- * gains the whole quantity rather than only the extras, because who
- * specifically gets which unit is decided later, at awarding.
+ * Marks an order received (#487). The batch flips ORDERED to RECEIVED with a
+ * guarded update first; if nothing flipped it was already received (or isn't
+ * this club's), and stock is never touched. Then exactly each line's
+ * `quantityOrdered` joins the club's stock, and the batch's ORDERED needs
+ * move to RECEIVED, reserved for their person until awarded.
  */
 export async function markOrderBatchReceived(organizationId: string, batchId: string, actor: ClubOrderActor) {
   return getPrisma().$transaction(async (tx) => {
-    const batch = await tx.clubSupplyOrderBatch.findFirst({
-      where: { id: batchId, organizationId },
-      select: { id: true, status: true, createdAt: true, lines: { select: { itemId: true, neededCount: true, extraCount: true, item: { select: itemSelect } } } },
+    await lockClubOrders(tx, organizationId);
+    const receivedAt = new Date();
+    const flipped = await tx.clubSupplyOrderBatch.updateMany({
+      where: { id: batchId, organizationId, status: "ORDERED" },
+      data: { status: "RECEIVED", receivedAt, ...receivedByFields(actor) },
     });
-    if (!batch) throw new ClubOrderError("BATCH_NOT_FOUND", "That order could not be found.");
-    if (batch.status === "RECEIVED") throw new ClubOrderError("ALREADY_RECEIVED", "That order was already marked received.");
+    if (flipped.count === 0) {
+      const exists = await tx.clubSupplyOrderBatch.findFirst({ where: { id: batchId, organizationId }, select: { id: true } });
+      if (!exists) throw new ClubOrderError("BATCH_NOT_FOUND", "That order could not be found.");
+      throw new ClubOrderError("ALREADY_RECEIVED", "That order was already marked received.");
+    }
+    const batch = await tx.clubSupplyOrderBatch.findUniqueOrThrow({
+      where: { id: batchId },
+      select: { id: true, createdAt: true, lines: { select: batchLineSelect } },
+    });
     for (const line of batch.lines) {
-      const quantity = line.neededCount + line.extraCount;
+      if (line.quantityOrdered <= 0) continue;
       await tx.clubSupplyStock.upsert({
         where: { organizationId_itemId: { organizationId, itemId: line.itemId } },
-        create: { organizationId, itemId: line.itemId, quantityOnHand: quantity },
-        update: { quantityOnHand: { increment: quantity } },
+        create: { organizationId, itemId: line.itemId, quantityOnHand: line.quantityOrdered },
+        update: { quantityOnHand: { increment: line.quantityOrdered } },
       });
     }
-    await tx.clubOrderNeed.updateMany({
+    const needs = await tx.clubOrderNeed.updateMany({
       where: { organizationId, batchId: batch.id, status: "ORDERED" },
       data: { status: "RECEIVED" },
     });
-    await tx.clubSupplyOrderBatch.update({
-      where: { id: batch.id },
-      data: { status: "RECEIVED", receivedAt: new Date(), ...receivedByFields(actor) },
-    });
+    const totalQuantity = batch.lines.reduce((sum, line) => sum + line.quantityOrdered, 0);
     const who = auditActorFields(actor);
     await writeAuditLog({
       ...who.actorFields,
       action: "CLUB_ORDER_RECEIVED",
       entityType: "ClubSupplyOrderBatch",
       entityId: batch.id,
-      summary: `Marked a club supply order received: ${batch.lines.length} item${batch.lines.length === 1 ? "" : "s"} added to stock.`,
-      metadata: {
-        organizationId,
-        itemCount: batch.lines.length,
-        totalQuantity: batch.lines.reduce((sum, line) => sum + line.neededCount + line.extraCount, 0),
-        ...who.metadata,
-      },
+      summary: `Marked a club supply order received: ${totalQuantity} unit${totalQuantity === 1 ? "" : "s"} added to stock.`,
+      metadata: { organizationId, itemCount: batch.lines.length, totalQuantity, needCount: needs.count, ...who.metadata },
     }, tx);
-    const receivedLines: OrderLine[] = batch.lines.map((line) => ({
-      item: toCatalogItem(line.item),
-      needed: line.neededCount,
-      extra: line.extraCount,
-      inStock: line.neededCount + line.extraCount,
-      toOrder: line.neededCount + line.extraCount,
-      missingCatalogNumber: !line.item.catalogNumber,
-    }));
-    return { id: batch.id, status: "RECEIVED" as const, createdAt: batch.createdAt.toISOString(), receivedAt: new Date().toISOString(), lines: receivedLines };
+    return {
+      id: batch.id,
+      status: "RECEIVED" as const,
+      createdAt: batch.createdAt.toISOString(),
+      receivedAt: receivedAt.toISOString(),
+      lines: batch.lines.map(toBatchOrderLine),
+    };
   });
 }
 
+/** Takes `count` units off one item's stock in SQL, floored at zero: never a read-then-write. */
+async function decrementStock(tx: Prisma.TransactionClient, organizationId: string, itemId: string, count: number) {
+  if (count <= 0) return;
+  await tx.$executeRaw`
+    UPDATE "ClubSupplyStock"
+    SET "quantityOnHand" = GREATEST(0, "quantityOnHand" - ${count}::int), "updatedAt" = CURRENT_TIMESTAMP
+    WHERE "organizationId" = ${organizationId} AND "itemId" = ${itemId}`;
+}
+
 /**
- * Awards a group of received needs (#487): each one takes one unit off the
- * club's stock for its item, floored at zero, and moves to AWARDED. Needs
- * that aren't RECEIVED (already awarded, or never ordered) are left alone
- * rather than guessed at.
+ * Marks needs awarded (handed out) (#487). A RECEIVED need draws down the
+ * unit that arrived for it; a NEEDED need may be handed out "from stock"
+ * when available stock covers it (refused as NOT_ENOUGH_STOCK otherwise).
+ * Each status change is a guarded update, stock moves in SQL by exactly the
+ * number of needs that actually moved, and one audit row records the counts,
+ * so a double tap or two directors at once never count a need twice. Needs
+ * already awarded, still on order, or with no catalog item are left alone.
  */
 export async function markNeedsAwarded(organizationId: string, needIds: readonly string[], actor: ClubOrderActor) {
   return getPrisma().$transaction(async (tx) => {
+    await lockClubOrders(tx, organizationId);
     const needs = await tx.clubOrderNeed.findMany({
-      where: { id: { in: [...needIds] }, organizationId, status: "RECEIVED", itemId: { not: null } },
-      select: { id: true, itemId: true },
+      where: { id: { in: [...needIds] }, organizationId, status: { in: ["RECEIVED", "NEEDED"] }, itemId: { not: null } },
+      select: { id: true, itemId: true, status: true, item: { select: { name: true } } },
     });
-    if (needs.length === 0) return { awarded: 0 };
-    const countByItem = new Map<string, number>();
-    for (const need of needs) countByItem.set(need.itemId!, (countByItem.get(need.itemId!) ?? 0) + 1);
-    for (const [itemId, count] of countByItem) {
-      const stock = await tx.clubSupplyStock.findUnique({ where: { organizationId_itemId: { organizationId, itemId } }, select: { quantityOnHand: true } });
-      const nextQuantity = Math.max(0, (stock?.quantityOnHand ?? 0) - count);
-      await tx.clubSupplyStock.upsert({
-        where: { organizationId_itemId: { organizationId, itemId } },
-        create: { organizationId, itemId, quantityOnHand: nextQuantity },
-        update: { quantityOnHand: nextQuantity },
-      });
+    const byItem = groupByItem(needs);
+    const available = await availableByItem(tx, organizationId, [...byItem.keys()]);
+    for (const [itemId, group] of byItem) {
+      const fromStock = group.filter((need) => need.status === "NEEDED").length;
+      if (fromStock > (available.get(itemId) ?? 0)) {
+        throw new ClubOrderError(
+          "NOT_ENOUGH_STOCK",
+          `Not enough ${group[0].item!.name} in stock to hand out ${fromStock}. Order more, or update the stock count.`,
+        );
+      }
     }
-    await tx.clubOrderNeed.updateMany({ where: { id: { in: needs.map((need) => need.id) } }, data: { status: "AWARDED" } });
+    let received = 0;
+    let fromStock = 0;
+    const itemCounts: Record<string, number> = {};
+    for (const [itemId, group] of byItem) {
+      const receivedMoved = await tx.clubOrderNeed.updateMany({
+        where: { id: { in: group.filter((need) => need.status === "RECEIVED").map((need) => need.id) }, organizationId, status: "RECEIVED" },
+        data: { status: "AWARDED" },
+      });
+      const stockMoved = await tx.clubOrderNeed.updateMany({
+        where: { id: { in: group.filter((need) => need.status === "NEEDED").map((need) => need.id) }, organizationId, status: "NEEDED" },
+        data: { status: "AWARDED" },
+      });
+      const moved = receivedMoved.count + stockMoved.count;
+      await decrementStock(tx, organizationId, itemId, moved);
+      received += receivedMoved.count;
+      fromStock += stockMoved.count;
+      if (moved > 0) itemCounts[itemId] = moved;
+    }
+    const awarded = received + fromStock;
+    if (awarded === 0) return { awarded: 0, fromStock: 0 };
     const who = auditActorFields(actor);
     await writeAuditLog({
       ...who.actorFields,
       action: "CLUB_ORDER_AWARDED",
       entityType: "ClubOrderNeed",
-      summary: `Marked ${needs.length} club supply need${needs.length === 1 ? "" : "s"} awarded.`,
-      metadata: {
-        organizationId,
-        needCount: needs.length,
-        itemCounts: Object.fromEntries(countByItem),
-        ...who.metadata,
-      },
+      summary: `Marked ${awarded} club supply need${awarded === 1 ? "" : "s"} awarded${fromStock > 0 ? `, ${fromStock} from stock` : ""}.`,
+      metadata: { organizationId, needCount: awarded, receivedCount: received, fromStockCount: fromStock, itemCounts, ...who.metadata },
     }, tx);
-    return { awarded: needs.length };
+    return { awarded, fromStock };
+  });
+}
+
+/**
+ * "Already handed out" (#487): for honors a club gave out before it ordered
+ * here (or got some other way). Moves the selected NEEDED needs straight to
+ * AWARDED without touching stock, and records one audit row with the count.
+ * Never automatic: only the needs a director or deputy picked.
+ */
+export async function markNeedsAlreadyAwarded(organizationId: string, needIds: readonly string[], actor: ClubOrderActor) {
+  return getPrisma().$transaction(async (tx) => {
+    await lockClubOrders(tx, organizationId);
+    const moved = await tx.clubOrderNeed.updateMany({
+      where: { id: { in: [...needIds] }, organizationId, status: "NEEDED" },
+      data: { status: "AWARDED" },
+    });
+    if (moved.count === 0) return { marked: 0 };
+    const who = auditActorFields(actor);
+    await writeAuditLog({
+      ...who.actorFields,
+      action: "CLUB_ORDER_MARKED_ALREADY_AWARDED",
+      entityType: "ClubOrderNeed",
+      summary: `Marked ${moved.count} club supply need${moved.count === 1 ? "" : "s"} as already handed out.`,
+      metadata: { organizationId, needCount: moved.count, ...who.metadata },
+    }, tx);
+    return { marked: moved.count };
   });
 }
 
@@ -296,7 +482,7 @@ export type OrderBatchSummary = {
   receivedAt: string | null;
   itemCount: number;
   totalQuantity: number;
-  lines: Array<{ itemId: string; name: string; catalogNumber: string | null; neededCount: number; extraCount: number }>;
+  lines: Array<{ itemId: string; name: string; catalogNumber: string | null; neededCount: number; extraCount: number; quantityOrdered: number }>;
 };
 
 /** Every order this club has placed, most recent first (#487): the order screen's history and "Mark received". */
@@ -306,7 +492,7 @@ export async function listOrderBatches(organizationId: string): Promise<OrderBat
     orderBy: { createdAt: "desc" },
     select: {
       id: true, status: true, createdAt: true, receivedAt: true,
-      lines: { select: { itemId: true, neededCount: true, extraCount: true, item: { select: { name: true, catalogNumber: true } } } },
+      lines: { select: { itemId: true, neededCount: true, extraCount: true, quantityOrdered: true, item: { select: { name: true, catalogNumber: true } } } },
     },
   });
   return batches.map((batch) => ({
@@ -315,79 +501,134 @@ export async function listOrderBatches(organizationId: string): Promise<OrderBat
     createdAt: batch.createdAt.toISOString(),
     receivedAt: batch.receivedAt?.toISOString() ?? null,
     itemCount: batch.lines.length,
-    totalQuantity: batch.lines.reduce((sum, line) => sum + line.neededCount + line.extraCount, 0),
+    totalQuantity: batch.lines.reduce((sum, line) => sum + line.quantityOrdered, 0),
     lines: batch.lines.map((line) => ({
       itemId: line.itemId, name: line.item.name, catalogNumber: line.item.catalogNumber,
-      neededCount: line.neededCount, extraCount: line.extraCount,
+      neededCount: line.neededCount, extraCount: line.extraCount, quantityOrdered: line.quantityOrdered,
     })),
   }));
 }
 
-export type AwardableNeed = { needId: string; itemId: string; itemName: string; firstName: string; lastName: string };
+async function namesFor(personIds: Iterable<string>) {
+  const ids = [...new Set(personIds)];
+  if (ids.length === 0) return new Map<string, { firstName: string; lastName: string }>();
+  const people = await getPrisma().person.findMany({ where: { id: { in: ids } }, select: { id: true, firstName: true, lastName: true } });
+  return new Map(people.map((person) => [person.id, { firstName: person.firstName, lastName: person.lastName }]));
+}
 
-/**
- * Received needs, ready to be handed out (#487): one row per person per item,
- * for the "select members or needs, mark awarded" screen. Only names and the
- * item — nothing else about the person ever reaches this list.
- */
-export async function listAwardableNeeds(organizationId: string): Promise<AwardableNeed[]> {
-  const needs = await getPrisma().clubOrderNeed.findMany({
+const byItemThenName = <T extends { itemName: string; firstName: string; lastName: string }>(a: T, b: T) =>
+  a.itemName.localeCompare(b.itemName) || a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName);
+
+export type AwardableNeed = { needId: string; itemId: string; itemName: string; firstName: string; lastName: string; fromStock: boolean };
+
+async function awardableFrom(organizationId: string, picture: NeededPicture): Promise<AwardableNeed[]> {
+  const received = await getPrisma().clubOrderNeed.findMany({
     where: { organizationId, status: "RECEIVED", itemId: { not: null } },
     select: { id: true, personId: true, itemId: true, item: { select: { name: true } } },
   });
-  if (needs.length === 0) return [];
-  const people = await getPrisma().person.findMany({
-    where: { id: { in: [...new Set(needs.map((need) => need.personId))] } },
-    select: { id: true, firstName: true, lastName: true },
+  const fromStock = picture.needs.filter((need) => picture.fromStock.has(need.id));
+  const names = await namesFor([...received, ...fromStock].map((need) => need.personId));
+  const row = (need: { id: string; personId: string; itemId: string | null; item: { name: string } | null }, isFromStock: boolean): AwardableNeed => ({
+    needId: need.id,
+    itemId: need.itemId!,
+    itemName: need.item!.name,
+    firstName: names.get(need.personId)?.firstName ?? "",
+    lastName: names.get(need.personId)?.lastName ?? "",
+    fromStock: isFromStock,
   });
-  const byId = new Map(people.map((person) => [person.id, person]));
-  return needs
-    .map((need) => {
-      const person = byId.get(need.personId);
-      return { needId: need.id, itemId: need.itemId!, itemName: need.item!.name, firstName: person?.firstName ?? "", lastName: person?.lastName ?? "" };
-    })
-    .sort((a, b) => a.itemName.localeCompare(b.itemName) || a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName));
+  return [...received.map((need) => row(need, false)), ...fromStock.map((need) => row(need, true))].sort(byItemThenName);
 }
 
 /**
- * Everything the order screen shows at once (#487): pending needs, past
- * orders, and who's waiting for an item that's already arrived. Callers sync
- * each source's needs (`modules/honors/order-source.ts` today) before calling
- * this, so it always reflects completions recorded since the last visit.
+ * Ready to hand out (#487): RECEIVED needs, plus NEEDED needs that available
+ * stock already covers (`fromStock`). One row per person per item, names and
+ * the item only — nothing else about the person ever reaches this list.
+ */
+export async function listAwardableNeeds(organizationId: string): Promise<AwardableNeed[]> {
+  return awardableFrom(organizationId, await neededPicture(organizationId));
+}
+
+export type WaitingNeed = {
+  needId: string;
+  itemName: string | null;
+  sourceLabel: string;
+  sourceDate: string;
+  firstName: string;
+  lastName: string;
+  /** Recorded before this club's first order here (or no order yet): maybe handed out long ago. */
+  beforeFirstOrder: boolean;
+};
+
+async function waitingFrom(picture: NeededPicture, firstOrderAt: Date | null): Promise<WaitingNeed[]> {
+  const names = await namesFor(picture.needs.map((need) => need.personId));
+  return picture.needs
+    .map((need) => ({
+      needId: need.id,
+      itemName: need.item?.name ?? null,
+      sourceLabel: need.sourceLabel,
+      sourceDate: need.sourceDate,
+      firstName: names.get(need.personId)?.firstName ?? "",
+      lastName: names.get(need.personId)?.lastName ?? "",
+      beforeFirstOrder: firstOrderAt === null || need.createdAt < firstOrderAt,
+    }))
+    .sort((a, b) => byItemThenName({ ...a, itemName: a.itemName ?? a.sourceLabel }, { ...b, itemName: b.itemName ?? b.sourceLabel }));
+}
+
+/**
+ * Everything the order screen shows at once (#487): the order list, past
+ * orders, who's ready to hand out, and who's still waiting (NEEDED), with
+ * the date of the club's first order so the screen can offer "Already handed
+ * out" for honors completed before ordering started here. Reads only: an
+ * editor's visit syncs needs first (`modules/honors/order-source.ts`); a
+ * view-only visit sees what's on file.
  */
 export async function loadOrderWorkspace(organizationId: string) {
-  const [{ lines, unmatched }, batches, awardable] = await Promise.all([
-    listOrderList(organizationId),
-    listOrderBatches(organizationId),
-    listAwardableNeeds(organizationId),
+  const [picture, batches] = await Promise.all([neededPicture(organizationId), listOrderBatches(organizationId)]);
+  const firstOrder = batches.at(-1)?.createdAt ?? null;
+  const { lines, unmatched } = orderListFrom(picture, new Map());
+  const [awardable, waiting] = await Promise.all([
+    awardableFrom(organizationId, picture),
+    waitingFrom(picture, firstOrder ? new Date(firstOrder) : null),
   ]);
-  return { lines, unmatched, batches, awardable };
+  return { lines, unmatched, batches, awardable, waiting, firstOrderAt: firstOrder };
 }
 
 /**
- * The per-member pick list (#487): names and honors only, for needs that have
- * an order placed against them (ORDERED or RECEIVED, not yet AWARDED).
- * Restricted to one batch when given, for "who gets which patch when this
- * order arrives".
+ * The per-member pick list (#487): names, the item, and where it stands.
+ * For one batch: that order's needs still to hand out (Ordered, or Ready to
+ * hand out). Without a batch: who is currently to order (NEEDED, labelled
+ * "To order", or "Ready to hand out (from stock)" when stock covers it) and
+ * who is ready to hand out (RECEIVED).
  */
 export async function listPickList(organizationId: string, batchId?: string): Promise<PickListEntry[]> {
-  const needs = await getPrisma().clubOrderNeed.findMany({
-    where: {
-      organizationId,
-      status: { in: ["ORDERED", "RECEIVED"] },
-      ...(batchId ? { batchId } : {}),
-      itemId: { not: null },
-    },
+  if (batchId) {
+    const needs = await getPrisma().clubOrderNeed.findMany({
+      where: { organizationId, batchId, status: { in: ["ORDERED", "RECEIVED"] }, itemId: { not: null } },
+      select: { personId: true, status: true, item: { select: { name: true } } },
+    });
+    const names = await namesFor(needs.map((need) => need.personId));
+    return needs.map((need) => ({
+      lastName: names.get(need.personId)?.lastName ?? "",
+      firstName: names.get(need.personId)?.firstName ?? "",
+      itemName: need.item!.name,
+      status: need.status === "RECEIVED" ? "Ready to hand out" : "Ordered",
+    }));
+  }
+  const picture = await neededPicture(organizationId);
+  const received = await getPrisma().clubOrderNeed.findMany({
+    where: { organizationId, status: "RECEIVED", itemId: { not: null } },
     select: { personId: true, item: { select: { name: true } } },
   });
-  if (needs.length === 0) return [];
-  const people = await getPrisma().person.findMany({
-    where: { id: { in: [...new Set(needs.map((need) => need.personId))] } },
-    select: { id: true, firstName: true, lastName: true },
+  const matchedNeeded = picture.needs.filter((need) => need.itemId !== null);
+  const names = await namesFor([...matchedNeeded, ...received].map((need) => need.personId));
+  const entry = (personId: string, itemName: string, status: PickListEntry["status"]): PickListEntry => ({
+    lastName: names.get(personId)?.lastName ?? "",
+    firstName: names.get(personId)?.firstName ?? "",
+    itemName,
+    status,
   });
-  const byId = new Map(people.map((person) => [person.id, person]));
-  return needs.map((need) => {
-    const person = byId.get(need.personId);
-    return { lastName: person?.lastName ?? "", firstName: person?.firstName ?? "", itemName: need.item!.name };
-  });
+  return [
+    ...matchedNeeded.map((need) => entry(need.personId, need.item!.name, picture.fromStock.has(need.id) ? "Ready to hand out (from stock)" : "To order")),
+    ...received.map((need) => entry(need.personId, need.item!.name, "Ready to hand out")),
+  ];
 }

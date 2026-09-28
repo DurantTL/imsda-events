@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   adventSourceOrderCsv,
+  applyExtras,
+  availableStock,
   buildOrderLines,
   pickListCsv,
   readableOrderCsv,
+  splitNeedsByStock,
   type OrderCatalogItem,
 } from "@/modules/club-orders/domain";
 import { parseCsvMatrix } from "@/modules/imports/csv-parser";
@@ -76,19 +79,72 @@ describe("readableOrderCsv (#487)", () => {
 });
 
 describe("pickListCsv (#487)", () => {
-  it("carries only names and the item, nothing else", () => {
+  it("carries only names, the item, and where it stands", () => {
     const csv = pickListCsv([
-      { lastName: "Sample", firstName: "Alex", itemName: "Knot Tying" },
-      { lastName: "Demo", firstName: "Casey", itemName: "Camping Skills" },
+      { lastName: "Sample", firstName: "Alex", itemName: "Knot Tying", status: "To order" },
+      { lastName: "Demo", firstName: "Casey", itemName: "Camping Skills", status: "Ready to hand out (from stock)" },
     ]);
     const rows = parseCsvMatrix(csv);
-    expect(rows[0]).toEqual(["Last name", "First name", "Item"]);
+    expect(rows[0]).toEqual(["Last name", "First name", "Item", "Status"]);
     expect(rows).toHaveLength(3);
     // Sorted by last name.
-    expect(rows[1]).toEqual(["Demo", "Casey", "Camping Skills"]);
-    expect(rows[2]).toEqual(["Sample", "Alex", "Knot Tying"]);
+    expect(rows[1]).toEqual(["Demo", "Casey", "Camping Skills", "Ready to hand out (from stock)"]);
+    expect(rows[2]).toEqual(["Sample", "Alex", "Knot Tying", "To order"]);
     // No column could ever carry a birth date, contact, guardian, or medical field.
-    expect(rows[0]).toHaveLength(3);
+    expect(rows[0]).toHaveLength(4);
     expect(csv).not.toMatch(/birth|phone|email|guardian|allerg|medical/i);
   });
 });
+
+describe("the stock model (#487)", () => {
+  it("available stock is on hand less units received for someone and not yet handed out, never below zero", () => {
+    expect(availableStock(5, 3)).toBe(2);
+    expect(availableStock(3, 3)).toBe(0);
+    // A hand-edited stock count lower than what's been received.
+    expect(availableStock(1, 3)).toBe(0);
+  });
+
+  it("3 received-but-unawarded plus 2 new completions orders 2, not 0", () => {
+    const [line] = buildOrderLines(
+      [{ itemId: "item-knots", name: "Knot Tying", catalogNumber: "002120" }],
+      new Map([["item-knots", 2]]),
+      new Map([["item-knots", availableStock(3, 3)]]),
+      new Map(),
+    );
+    expect(line).toMatchObject({ needed: 2, inStock: 0, toOrder: 2 });
+  });
+
+  it("stock covers the oldest needs first; the rest go on the order", () => {
+    expect(splitNeedsByStock(["a", "b", "c", "d", "e"], 2)).toEqual({ fromStock: ["a", "b"], toOrder: ["c", "d", "e"] });
+    expect(splitNeedsByStock(["a"], 4)).toEqual({ fromStock: ["a"], toOrder: [] });
+    expect(splitNeedsByStock(["a", "b"], -1)).toEqual({ fromStock: [], toOrder: ["a", "b"] });
+  });
+
+  it("a full cycle leaves exactly the extras in stock: 5 needed, 2 in stock, 1 extra", () => {
+    let onHand = 2;
+    const [line] = buildOrderLines(
+      [{ itemId: "item-knots", name: "Knot Tying", catalogNumber: "002120" }],
+      new Map([["item-knots", 5]]),
+      new Map([["item-knots", availableStock(onHand, 0)]]),
+      new Map([["item-knots", 1]]),
+    );
+    expect(line.toOrder).toBe(4);
+    const { fromStock, toOrder } = splitNeedsByStock([1, 2, 3, 4, 5], line.inStock);
+    onHand -= fromStock.length; // handed out from stock
+    onHand += line.toOrder; // received
+    onHand -= toOrder.length; // awarded
+    expect(onHand).toBe(1);
+  });
+});
+
+describe("applyExtras (#487)", () => {
+  it("applies the screen's typed extras exactly as the order does, ignoring junk", () => {
+    const needed = new Map([["item-knots", 5], ["item-camping", 1]]);
+    const base = buildOrderLines(items, needed, new Map([["item-knots", 2]]), new Map());
+    const withExtras = applyExtras(base, { "item-knots": "3", "item-camping": "-4", "item-no-number": "abc" });
+    const direct = buildOrderLines(items, needed, new Map([["item-knots", 2]]), new Map([["item-knots", 3]]));
+    expect(withExtras).toEqual(direct);
+    expect(withExtras.find((line) => line.item.itemId === "item-knots")).toMatchObject({ extra: 3, toOrder: 6 });
+  });
+});
+
