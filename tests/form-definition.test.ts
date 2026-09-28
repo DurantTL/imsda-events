@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { calculateRosterTotal, formTemplates, numberFieldBounds, registrationFormDefinitionSchema, resolveBillingContactName, resolveResponsibleOrganization, summarizeChoiceUsage, validateTestResponses } from "@/modules/forms/definition";
+import { withDirectoryOptions } from "@/modules/organizations/directory-form-options";
 
 function ageForm(ageBounds?: { minimumAge: number | null; maximumAge: number | null }) {
   return registrationFormDefinitionSchema.parse({
@@ -390,7 +391,10 @@ describe("registration form definitions", () => {
     );
     expect(calculation).toMatchObject({ subtotalCents: 0, totalCents: 0 });
 
-    const registrationResult = validateTestResponses(definition, {
+    // Club/church directory sources (#482) hold no options until hydrated
+    // against the live directory — the same as `ATTENDEE_TYPES` fields do.
+    const hydrated = withDirectoryOptions(definition, { clubs: ["Ankeny Son-Seekers"], churches: [] });
+    const registrationResult = validateTestResponses(hydrated, {
       club_name: "Ankeny Son-Seekers", director_name: "Jamie Director", email: "director@example.test", phone: "555-0100",
     }, {}, "REGISTRATION");
     expect(registrationResult.isValid).toBe(true);
@@ -561,6 +565,54 @@ describe("bounded age input (#483)", () => {
     });
     expect(validateTestResponses(definition, { guest_count: "500" }).isValid).toBe(true);
     expect(validateTestResponses(definition, { guest_count: "500.5" }).isValid).toBe(true);
+  });
+});
+
+describe("live directory option sources (#482)", () => {
+  function directoryField(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "f_club", key: "club_name", label: "Club", helpText: "", type: "SELECT",
+      scope: "REGISTRATION", required: true, options: [], optionSource: "CLUBS_DIRECTORY",
+      ...overrides,
+    };
+  }
+
+  function directoryForm(field: Record<string, unknown>) {
+    return {
+      title: "Directory form", description: "", confirmationMessage: "Done",
+      sections: [{ id: "s_contact", title: "Contact", description: "", fields: [field] }],
+    };
+  }
+
+  it("accepts a SELECT or RADIO field sourced from the clubs or churches directory with no static options", () => {
+    expect(registrationFormDefinitionSchema.safeParse(directoryForm(directoryField())).success).toBe(true);
+    expect(registrationFormDefinitionSchema.safeParse(directoryForm(directoryField({ type: "RADIO", optionSource: "CHURCHES_DIRECTORY" }))).success).toBe(true);
+  });
+
+  it("rejects a directory source on a field type that isn't a single-choice select or radio", () => {
+    expect(registrationFormDefinitionSchema.safeParse(directoryForm(directoryField({ type: "TEXT" }))).success).toBe(false);
+    expect(registrationFormDefinitionSchema.safeParse(directoryForm(directoryField({ type: "MULTISELECT" }))).success).toBe(false);
+  });
+
+  it("does not force a directory-sourced field to be required, unlike the attendee-type selector", () => {
+    expect(registrationFormDefinitionSchema.safeParse(directoryForm(directoryField({ required: false }))).success).toBe(true);
+  });
+
+  it("switches the Honors Weekend and Camporee templates to directory sources instead of a static list (#482)", () => {
+    for (const key of ["honors_weekend", "spring_camporee_export"]) {
+      const definition = formTemplates.find((template) => template.key === key)!.definition;
+      const allFields = definition.sections.flatMap((section) => section.fields);
+      const club = allFields.find((f) => f.key === "club_name")!;
+      const church = allFields.find((f) => f.key === "church_name")!;
+      expect(club.optionSource).toBe("CLUBS_DIRECTORY");
+      expect(club.options).toEqual([]);
+      expect(church.optionSource).toBe("CHURCHES_DIRECTORY");
+      expect(church.options).toEqual([]);
+      // A "Not listed" companion, the same "show only when" convention the
+      // static "Other" choice used before.
+      const clubOther = allFields.find((f) => f.key === "club_name_other")!;
+      expect(clubOther.conditional).toEqual({ fieldKey: "club_name", operator: "EQUALS", value: "Not listed" });
+    }
   });
 });
 

@@ -3,8 +3,10 @@ import {
   attendeeAgeKey,
   attendeeNameKeys,
   clubAttendeeClientId,
+  clubDirectoryOwnedResponses,
   clubFormProblem,
   lockedAttendeeFieldKeys,
+  lockedClubDirectoryFieldKeys,
   medicalFreeTextFields,
   rosterCarryoverMismatches,
   rosterGenderPrefill,
@@ -190,5 +192,40 @@ describe("extra people not on the roster (#388)", () => {
     expect(guestIdFromClientId("member:m1")).toBeNull();
     expect(guestIsAdult({ age: 17 })).toBe(false);
     expect(guestIsAdult({ age: 18 })).toBe(true);
+  });
+});
+
+describe("club and church directory lock (#482)", () => {
+  const directoryForm = registrationFormDefinitionSchema.parse({
+    title: "Directory form",
+    description: "",
+    confirmationMessage: "Done",
+    attendeeRoster: { enabled: true, minAttendees: 1, maxAttendees: 50, attendeeLabel: "Member", addButtonLabel: "Add" },
+    sections: [
+      { id: "s_contact", title: "Contact", description: "", fields: [
+        { id: "f_club", key: "club_name", label: "Pathfinder club", helpText: "", type: "SELECT", scope: "REGISTRATION", required: true, options: [], optionSource: "CLUBS_DIRECTORY" },
+        { id: "f_club_other", key: "club_name_other", label: "Club — not listed", helpText: "", type: "TEXT", scope: "REGISTRATION", required: true, options: [], conditional: { fieldKey: "club_name", operator: "EQUALS", value: "Not listed" } },
+        { id: "f_church", key: "church_name", label: "Church", helpText: "", type: "SELECT", scope: "REGISTRATION", required: false, options: [], optionSource: "CHURCHES_DIRECTORY" },
+      ] },
+      { id: "s_roster", title: "Roster", description: "", fields: [field("first_name"), field("last_name")] },
+    ],
+  });
+
+  it("names both directory-sourced fields as locked", () => {
+    expect(lockedClubDirectoryFieldKeys(directoryForm)).toEqual(["club_name", "church_name"]);
+  });
+
+  it("owns the club and church answers, clearing the paired \"Not listed\" free text", () => {
+    expect(clubDirectoryOwnedResponses(directoryForm, { clubName: "Ankeny Son-Seekers", churchName: "Ankeny SDA Church" }))
+      .toEqual({ club_name: "Ankeny Son-Seekers", club_name_other: null, church_name: "Ankeny SDA Church" });
+  });
+
+  it("leaves the church answer alone when the club has no sponsoring church on file", () => {
+    expect(clubDirectoryOwnedResponses(directoryForm, { clubName: "Ankeny Son-Seekers", churchName: null }))
+      .toEqual({ club_name: "Ankeny Son-Seekers", club_name_other: null });
+  });
+
+  it("reports no locked fields for a form with no directory sources", () => {
+    expect(lockedClubDirectoryFieldKeys(form([field("first_name"), field("last_name")]))).toEqual([]);
   });
 });

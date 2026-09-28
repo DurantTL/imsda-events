@@ -64,6 +64,10 @@ export default async function ClubEventRegistrationPage({
       registrationKeys.has(key) && typeof value === "string" && value ? [[key, value]] : []
     )));
   }
+  // The club and church directory fields (#482): always this club's own
+  // record, whether an attendee director or staff acting as director is
+  // registering — never a personal preference, so it applies either way.
+  contactPrefill = { ...contactPrefill, ...workspace.directory.prefillResponses };
 
   return (
     <>

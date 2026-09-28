@@ -1158,6 +1158,24 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
                 }}>{formFieldScopes.map((scope) => <option key={scope} value={scope}>{scope === "ATTENDEE" ? "Each attendee" : "Registration"}</option>)}</select></label>
                 <label className="required-toggle"><input disabled={!canEdit || field.type === "CALCULATED" || field.optionSource === "ATTENDEE_TYPES"} type="checkbox" checked={field.optionSource === "ATTENDEE_TYPES" ? true : field.required} onChange={(event) => updateField(sectionIndex, fieldIndex, { required: event.target.checked, optionalWhen: event.target.checked ? field.optionalWhen : undefined })} /> Required{field.optionSource === "ATTENDEE_TYPES" && <small> — the attendee-type selector is always required</small>}</label>
                 {(field.type === "SELECT" || field.type === "RADIO") && field.scope === "ATTENDEE" && <label className="required-toggle"><input disabled={!canEdit || (!field.optionSource && allFields.some((candidate) => candidate.optionSource === "ATTENDEE_TYPES"))} type="checkbox" checked={field.optionSource === "ATTENDEE_TYPES"} onChange={(event) => updateField(sectionIndex, fieldIndex, { optionSource: event.target.checked ? "ATTENDEE_TYPES" : undefined, optionLabels: event.target.checked ? field.optionLabels : undefined, required: event.target.checked ? true : field.required, availabilityMode: event.target.checked ? "NONE" : field.availabilityMode, choiceLimits: event.target.checked ? undefined : field.choiceLimits, choicePricesCents: event.target.checked ? undefined : field.choicePricesCents, latePricing: event.target.checked ? undefined : field.latePricing })} /> Source attendee types from event configuration</label>}
+                {(field.type === "SELECT" || field.type === "RADIO") && field.scope === "REGISTRATION" && (["CLUBS_DIRECTORY", "CHURCHES_DIRECTORY"] as const).map((source) => (
+                  <label className="required-toggle" key={source}>
+                    <input
+                      disabled={!canEdit || (field.optionSource !== source && Boolean(field.optionSource))}
+                      type="checkbox"
+                      checked={field.optionSource === source}
+                      onChange={(event) => updateField(sectionIndex, fieldIndex, {
+                        optionSource: event.target.checked ? source : undefined,
+                        optionLabels: undefined,
+                        optionDescriptions: event.target.checked ? undefined : field.optionDescriptions,
+                        availabilityMode: event.target.checked ? "NONE" : field.availabilityMode,
+                        choiceLimits: event.target.checked ? undefined : field.choiceLimits,
+                        choicePricesCents: event.target.checked ? undefined : field.choicePricesCents,
+                        latePricing: event.target.checked ? undefined : field.latePricing,
+                      })}
+                    /> Source from the {source === "CLUBS_DIRECTORY" ? "clubs" : "churches"} directory
+                  </label>
+                ))}
               </div>
               {isChoiceFieldType(field.type) && <section className="choice-settings"><div><p className="eyebrow">Choices, descriptions, pricing &amp; capacity</p><span>Add optional descriptions when people need more information before choosing.</span></div><div className="field-settings">
                 <label>Quick choices<select aria-label={`Quick choices for ${field.label}`} disabled={!canEdit || Boolean(field.optionSource)} value="" onChange={(event) => { const preset = choicePresets.find((item) => item.name === event.target.value); if (preset) updateField(sectionIndex, fieldIndex, { options: preset.options, optionLabels: undefined, optionDescriptions: undefined, choiceLimits: getAvailabilityMode(field) === "NONE" ? undefined : {}, choicePricesCents: {}, latePricing: field.latePricing ? { ...field.latePricing, choicePricesCents: {} } : undefined }); }}><option value="">Choose a preset…</option>{choicePresets.map((preset) => <option key={preset.name}>{preset.name}</option>)}</select></label>

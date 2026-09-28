@@ -91,6 +91,12 @@ function fixture() {
   };
 
   const db = {
+    organization: {
+      findUnique: vi.fn().mockResolvedValue({ name: "Ankeny Son-Seekers", parentOrganization: { name: "Ankeny SDA Church" } }),
+      findMany: vi.fn(async ({ where }: { where: { type?: string } }) => (
+        where.type === "CLUB" ? [{ name: "Ankeny Son-Seekers" }] : [{ name: "Ankeny SDA Church" }]
+      )),
+    },
     registrationForm: { findFirst: vi.fn().mockResolvedValue({
       id: "form-1", slug: "clubs", eventId: "event-1", event,
       versions: [{ id: "version-1", versionNumber: 1, definition, publishedAt: new Date("2026-09-01T00:00:00Z") }],

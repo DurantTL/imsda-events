@@ -26,7 +26,7 @@ const field = (id: string, key: string, label: string, type: string, scope: "ATT
   { id, key, label, helpText: "", type, scope, required, options: [] }
 );
 
-function definition(extraAttendeeFields: ReturnType<typeof field>[] = []) {
+function definition(extraAttendeeFields: Record<string, unknown>[] = [], extraRegistrationFields: Record<string, unknown>[] = []) {
   return registrationFormDefinitionSchema.parse({
     title: "Honors Weekend club registration",
     description: "Fictitious club form.",
@@ -37,6 +37,7 @@ function definition(extraAttendeeFields: ReturnType<typeof field>[] = []) {
         field("c_first", "primary_contact_first_name", "First name", "TEXT", "REGISTRATION", true),
         field("c_last", "primary_contact_last_name", "Last name", "TEXT", "REGISTRATION", true),
         field("c_email", "email", "Email", "EMAIL", "REGISTRATION", true),
+        ...extraRegistrationFields,
       ] },
       { id: "roster", title: "Roster", description: "", fields: [
         field("a_first", "first_name", "First name", "TEXT", "ATTENDEE", true),
@@ -47,6 +48,16 @@ function definition(extraAttendeeFields: ReturnType<typeof field>[] = []) {
       ] },
     ],
   });
+}
+
+/** A directory-sourced club/church field pair (#482), matching the Honors
+ * Weekend and Camporee templates. */
+function directoryFields(): Record<string, unknown>[] {
+  return [
+    { id: "d_club", key: "club_name", label: "Pathfinder club", helpText: "", type: "SELECT", scope: "REGISTRATION", required: true, options: [], optionSource: "CLUBS_DIRECTORY" },
+    { id: "d_club_other", key: "club_name_other", label: "Club — not listed", helpText: "", type: "TEXT", scope: "REGISTRATION", required: true, options: [], conditional: { fieldKey: "club_name", operator: "EQUALS", value: "Not listed" } },
+    { id: "d_church", key: "church_name", label: "Church", helpText: "", type: "SELECT", scope: "REGISTRATION", required: false, options: [], optionSource: "CHURCHES_DIRECTORY" },
+  ];
 }
 
 const baseInput: {
@@ -72,6 +83,12 @@ function fixture({ billingMode = "DEFERRED_ORGANIZATION_INVOICE", audience = "CL
     { id: "m2", personId: "person-m2", attendeeType: "STAFF", role: "Counselor", gender: null, sealedBirthDate: sealSecret("1988-03-02", "club-roster:birth-date"), person: { firstName: "Jordan", lastName: "Example" } },
   ];
   const tx = {
+    organization: {
+      findUnique: vi.fn().mockResolvedValue({ name: "Ankeny Son-Seekers", parentOrganization: { name: "Ankeny SDA Church" } }),
+      findMany: vi.fn(async ({ where }: { where: { type?: string } }) => (
+        where.type === "CLUB" ? [{ name: "Ankeny Son-Seekers" }] : [{ name: "Ankeny SDA Church" }]
+      )),
+    },
     registrationForm: { findFirst: vi.fn().mockResolvedValue({
       id: "form-1", slug: "clubs", eventId: "event-1",
       event: {
@@ -102,7 +119,10 @@ function fixture({ billingMode = "DEFERRED_ORGANIZATION_INVOICE", audience = "CL
     messageOutbox: { findMany: vi.fn().mockResolvedValue([]) },
     auditLog: { create: vi.fn().mockResolvedValue({ id: "audit-1" }) },
   };
-  dependencies.getPrisma.mockReturnValue({ $transaction: vi.fn(async (operation: (client: typeof tx) => unknown) => operation(tx)) });
+  dependencies.getPrisma.mockReturnValue({
+    organization: tx.organization,
+    $transaction: vi.fn(async (operation: (client: typeof tx) => unknown) => operation(tx)),
+  });
   return tx;
 }
 
@@ -326,5 +346,27 @@ describe("club registration submit", () => {
     const tx = fixture({ registrationClosesOn: "2026-10-10" });
     await expect(submit()).rejects.toMatchObject({ code: "REGISTRATION_CLOSED" });
     expect(tx.registration.create).not.toHaveBeenCalled();
+  });
+
+  it("locks the club and church directory fields to the club's own Organization record, ignoring whatever the client sent (#482)", async () => {
+    const tx = fixture({ form: definition([], directoryFields()) });
+    await submit({
+      ...baseInput,
+      responses: {
+        ...baseInput.responses,
+        club_name: "A Made-Up Club",
+        club_name_other: "Sneaky free text",
+        church_name: "Some Other Church",
+      },
+    });
+
+    const submission = tx.publicRegistrationSubmission.create.mock.calls[0]![0].data;
+    expect(submission.responses).toMatchObject({
+      club_name: "Ankeny Son-Seekers",
+      church_name: "Ankeny SDA Church",
+    });
+    // The "Not listed" free-text companion no longer applies once locked to a
+    // real directory match, so it is cleared rather than kept.
+    expect(submission.responses.club_name_other).toBeFalsy();
   });
 });

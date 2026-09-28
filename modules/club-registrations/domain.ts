@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isAgeFieldKey, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
+import { isAgeFieldKey, isDirectoryOptionSource, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
 import { fullNameKeys, splitNameKeyPairs } from "@/modules/forms/public-domain";
 
 /**
@@ -171,6 +171,61 @@ export function lockedAttendeeFieldKeys(definition: RegistrationFormDefinition) 
     ...(names?.kind === "split" ? [names.first, names.last] : names ? [names.key] : []),
     ...(age ? [age] : []),
   ];
+}
+
+/**
+ * The club and its sponsoring church, read from the `Organization` record a
+ * signed-in director actually directs — never from anything the client sent
+ * (#482).
+ */
+export type ClubDirectoryIdentity = { clubName: string; churchName: string | null };
+
+function registrationFields(definition: RegistrationFormDefinition) {
+  return definition.sections.flatMap((section) => section.fields).filter((field) => field.scope === "REGISTRATION");
+}
+
+/**
+ * Registration-scope field keys a club registration locks to the
+ * authenticated director's own club (and its sponsoring church), so the
+ * client can only ever submit what the server already knows to be true
+ * (#482) — the same "locked, never trust the client" pattern as
+ * `lockedAttendeeFieldKeys` uses for roster-owned attendee answers.
+ */
+export function lockedClubDirectoryFieldKeys(definition: RegistrationFormDefinition): string[] {
+  return registrationFields(definition)
+    .filter((field) => isDirectoryOptionSource(field.optionSource))
+    .map((field) => field.key);
+}
+
+/**
+ * The registration-scope answers a club registration owns outright: the
+ * club and church directory fields, always set to the director's actual
+ * club and its sponsoring church, and the paired "Not listed" free-text
+ * companion cleared out since a real directory match was found. Applied
+ * inside the submit transaction (like `rosterOwnedResponses` for attendees),
+ * so nothing the client sent for these fields ever reaches storage.
+ */
+export function clubDirectoryOwnedResponses(
+  definition: RegistrationFormDefinition,
+  identity: ClubDirectoryIdentity,
+): Record<string, string | null> {
+  const responses: Record<string, string | null> = {};
+  const fields = registrationFields(definition);
+  for (const field of fields) {
+    if (field.optionSource === "CLUBS_DIRECTORY") {
+      responses[field.key] = identity.clubName;
+    } else if (field.optionSource === "CHURCHES_DIRECTORY" && identity.churchName) {
+      responses[field.key] = identity.churchName;
+    } else {
+      continue;
+    }
+    // The free-text "Not listed" companion (the existing "show only when"
+    // convention) no longer applies once the field is locked to a real
+    // directory match, so clear it rather than leaving a stale answer.
+    const companion = fields.find((candidate) => candidate.conditional?.fieldKey === field.key);
+    if (companion) responses[companion.key] = null;
+  }
+  return responses;
 }
 
 export type RosterPerson = {

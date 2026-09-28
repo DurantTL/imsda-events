@@ -52,6 +52,8 @@ import {
   type ClaimedPromoCode,
 } from "@/modules/promo-codes/repository";
 import { attendeeTypeSelector, withAttendeeTypeOptions } from "@/modules/attendee-types/form-options";
+import { hasDirectoryOptionSource, withDirectoryOptions } from "@/modules/organizations/directory-form-options";
+import { getOrganizationDirectory } from "@/modules/organizations/directory-options";
 
 export type PublicRegistrationErrorCode =
   | "FORM_NOT_FOUND"
@@ -443,7 +445,10 @@ export async function getPublicRegistrationExperience(eventSlug: string, formSlu
   const form = await prisma.registrationForm.findFirst(publishedFormQuery(eventSlug, formSlug));
   const version = form?.versions[0];
   if (!form || !version) return null;
-  const definition = withAttendeeTypeOptions(definitionFromJson(version.definition), form.event.attendeeTypes);
+  let definition = withAttendeeTypeOptions(definitionFromJson(version.definition), form.event.attendeeTypes);
+  if (hasDirectoryOptionSource(definition)) {
+    definition = withDirectoryOptions(definition, await getOrganizationDirectory());
+  }
   const now = new Date();
   const [reservations, occupied, waitingRegistrations] = await Promise.all([
     prisma.registrationCapacityReservation.findMany({
@@ -562,7 +567,10 @@ async function createPublicRegistrationTransaction(
     throw new PublicRegistrationError("FORM_VERSION_CHANGED", "This form was updated while it was open. Refresh the page before submitting.");
   }
 
-  const definition = withAttendeeTypeOptions(definitionFromJson(version.definition), form.event.attendeeTypes);
+  let definition = withAttendeeTypeOptions(definitionFromJson(version.definition), form.event.attendeeTypes);
+  if (hasDirectoryOptionSource(definition)) {
+    definition = withDirectoryOptions(definition, await getOrganizationDirectory());
+  }
   if (form.event.billingMode === "DEFERRED_ORGANIZATION_INVOICE" && definition.payment?.enabled) {
     // A deferred-organization event must never create an attendee balance or
     // online payment. This form should never have been published with a
