@@ -5,7 +5,7 @@ import { BrandMark } from "@/components/brand-mark";
 import { SignOutButton } from "@/components/sign-out-button";
 import { getCurrentSession } from "@/modules/access/current-session";
 
-export const metadata: Metadata = { title: "No event access" };
+export const metadata: Metadata = { title: "No event access", robots: { index: false, follow: false } };
 
 export default async function NoAccessPage() {
   const session = await getCurrentSession();

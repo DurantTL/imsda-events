@@ -6,6 +6,7 @@ import { AttendeeAuthReturn } from "@/components/attendee-sign-in-form";
 import { AttendeeSignOutButton } from "@/components/attendee-sign-out-button";
 import { BrandMark } from "@/components/brand-mark";
 import { getCurrentSession } from "@/modules/access/current-session";
+import { otherWorkspaceContextsForAttendee } from "@/modules/access/workspace-contexts";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { accountNeedsSecondStep } from "@/modules/attendee-accounts/sign-in-gate";
 import { isAreaCoordinator } from "@/modules/organizations/area-coordinators";
@@ -41,6 +42,10 @@ export default async function AccountPortalLayout({ children }: { children: Reac
   // attendee account checks the second step itself.
   if (secondStepPending && !acting) redirect("/account/two-step");
   const chromeAccount = secondStepPending ? null : account;
+  // The one other workspace this attendee identity may switch into (#108):
+  // the staff workspace, only when this browser also carries a live staff
+  // session — the same decision `app-shell.tsx` makes in the other direction.
+  const [workspaceContext] = otherWorkspaceContextsForAttendee({ hasStaffSession: Boolean(staffSession.user) });
   const [clubs, areaCoordinator] = chromeAccount
     ? await Promise.all([listDirectedClubs(chromeAccount.id), isAreaCoordinator(chromeAccount.id)])
     : [[], false];
@@ -68,8 +73,8 @@ export default async function AccountPortalLayout({ children }: { children: Reac
             <BrandMark />
             <span><strong>IMSDA</strong><small>Events</small></span>
           </Link>
-          {staffSession.user
-            ? <Link className="text-button" href="/overview">Back to staff workspace</Link>
+          {workspaceContext
+            ? <Link className="text-button" href={workspaceContext.href}>Back to staff workspace</Link>
             : <AttendeeSignOutButton />}
         </div>
       </header>
