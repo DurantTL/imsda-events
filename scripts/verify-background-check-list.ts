@@ -37,7 +37,7 @@ import { calendarDateInEventTimeZone } from "../modules/events/lifecycle";
 loadEnvConfig(process.cwd());
 
 const BEFORE_527 = "20260928200000";
-const MIGRATION_527 = "20260928210000_background_check_list";
+const MIGRATION_527 = "20260928240000_background_check_list";
 const P = "bgverify";
 
 function assert(condition: unknown, message: string): asserts condition {

@@ -1,6 +1,6 @@
 # Background-check list migration (#527)
 
-Migration `20260928210000_background_check_list` replaces the old
+Migration `20260928240000_background_check_list` replaces the old
 one-row-per-person `BackgroundCheck` table with the stored list
 (`BackgroundCheckUpload`, `BackgroundCheckEntry`, `BackgroundCheckMatch`,
 `BackgroundCheckReview`). It runs automatically with `prisma migrate deploy`,

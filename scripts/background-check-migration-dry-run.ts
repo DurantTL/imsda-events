@@ -1,7 +1,7 @@
 import { getPrisma } from "@/lib/prisma";
 
 /**
- * Dry run for the #527 migration (`prisma/migrations/20260928210000_
+ * Dry run for the #527 migration (`prisma/migrations/20260928240000_
  * background_check_list`): counts how many existing `BackgroundCheck` rows
  * would be carried over as migrated entries, and how many have no matching
  * `Person` row (which the migration's join would silently drop). Run this

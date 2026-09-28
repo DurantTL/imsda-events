@@ -385,6 +385,12 @@ enum MessageTemplateKey {
   ACCOUNT_LOCKOUT
   /// The attendee/club-leader equivalent of ACCOUNT_LOCKOUT.
   ATTENDEE_LOCKOUT
+  /// A club member transfer (#489) was started: sent to the sending club.
+  MEMBER_TRANSFER_STARTED
+  /// A club member transfer (#489) was resolved (acknowledged, staff-finished,
+  /// or staff-overridden): sent to both clubs, and the member or guardian if
+  /// an email is on file.
+  MEMBER_TRANSFER_COMPLETED
 }
 
 enum MessageTemplateStatus {
@@ -458,6 +464,8 @@ enum ClubRosterSource {
   DIRECTOR
   REGISTRATION
   IMPORT
+  /// Created by the receiving club's director starting a club member transfer (#489).
+  TRANSFER
 }
 
 /// A conference invite to become a club's director or deputy (#376). Created
@@ -548,6 +556,10 @@ model User {
   createdRosterExportFormats         ClubRosterExportFormat[]     @relation("ClubRosterExportFormatCreatedByUser")
 
   recordedMemberHonorEntries         MemberHonorEntry[]           @relation("MemberHonorEntryRecordedByUser")
+  initiatedMemberTransfers           MemberTransfer[]             @relation("MemberTransferInitiatedByUser")
+  resolvedMemberTransfers            MemberTransfer[]             @relation("MemberTransferResolvedByUser")
+  memberTransferEvents               MemberTransferEvent[]        @relation("MemberTransferEventActorUser")
+  decidedMemberTransferMoves         MemberTransferRegistrationMove[] @relation("MemberTransferMoveDecidedBy")
   createdClubMeetingNotes            ClubMeetingNote[]             @relation("ClubMeetingNoteCreatedByUser")
   updatedClubMeetingNotes            ClubMeetingNote[]             @relation("ClubMeetingNoteUpdatedByUser")
   submittedClubEventRegistrations    ClubEventRegistration[]      @relation("ClubEventRegistrationSubmittedByUser")
@@ -773,6 +785,9 @@ model AttendeeAccount {
   createdRosterExportFormats        ClubRosterExportFormat[]    @relation("ClubRosterExportFormatCreatedBy")
 
   recordedMemberHonorEntries        MemberHonorEntry[]          @relation("MemberHonorEntryRecordedBy")
+  initiatedMemberTransfers          MemberTransfer[]            @relation("MemberTransferInitiatedByAccount")
+  resolvedMemberTransfers           MemberTransfer[]            @relation("MemberTransferResolvedByAccount")
+  memberTransferEvents              MemberTransferEvent[]       @relation("MemberTransferEventActorAccount")
   submittedClubRegistrations        ClubEventRegistration[]     @relation("ClubEventRegistrationSubmittedBy")
   clubRegistrationDrafts            ClubRegistrationDraft[]     @relation("ClubRegistrationDraftUpdatedBy")
   /// Club registration amendments this account made as a director reopening
@@ -1193,6 +1208,7 @@ model Event {
   clubRegistrationDrafts              ClubRegistrationDraft[]
   clubAssignments                     ClubEventAssignment[]
   honorEnrollments                    HonorEnrollment[]
+  memberTransferRegistrationMoves     MemberTransferRegistrationMove[]
   registrationOperations              RegistrationOperation[]
   registrationPaymentChoiceOperations RegistrationPaymentChoiceOperation[]
   communitySettings                   EventCommunitySettings?
@@ -1419,6 +1435,8 @@ model Person {
   driverVerification    DriverVerification?
 
   memberHonorEntries    MemberHonorEntry[]
+  memberTransfers       MemberTransfer[] @relation("MemberTransferPerson")
+  pendingMemberTransfer MemberTransfer?  @relation("MemberTransferPendingPerson")
 
   @@index([lastName, firstName])
 }
@@ -1624,6 +1642,8 @@ model Organization {
   churchLocation     ChurchLocation?
   staffActAs         StaffActAs[]
   memberHonorEntries MemberHonorEntry[]
+  transfersReceived  MemberTransfer[]   @relation("MemberTransferTo")
+  transfersSent      MemberTransfer[]   @relation("MemberTransferFrom")
 
   @@index([type, isActive, name])
   @@index([parentOrganizationId, isActive])
@@ -1966,6 +1986,8 @@ model Registration {
   clubRegistration        ClubEventRegistration?
   honorEnrollments        HonorEnrollment[]
   adjustments             RegistrationAdjustment[]
+  memberTransferMovesFrom MemberTransferRegistrationMove[] @relation("MemberTransferMoveFrom")
+  memberTransferMovesTo   MemberTransferRegistrationMove[] @relation("MemberTransferMoveTo")
 
   @@unique([eventId, confirmationCode])
   @@index([eventId, status])
@@ -2112,6 +2134,7 @@ model RegistrationAttendee {
   tagAssignments         AttendeeTagAssignment[]
   honorEnrollments       HonorEnrollment[]
   adjustments            RegistrationAdjustment[]
+  memberTransferMoves    MemberTransferRegistrationMove[]
 
   @@unique([registrationId, personId])
   @@index([registrationId, position])
@@ -3180,10 +3203,14 @@ model ClubRosterMember {
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
 
-  organization  Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  person        Person?          @relation(fields: [personId], references: [id], onDelete: SetNull)
-  createdBy     AttendeeAccount? @relation("ClubRosterMemberCreatedBy", fields: [createdByAccountId], references: [id], onDelete: SetNull)
-  createdByUser User?            @relation("ClubRosterMemberCreatedByUser", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  organization       Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  person             Person?          @relation(fields: [personId], references: [id], onDelete: SetNull)
+  createdBy          AttendeeAccount? @relation("ClubRosterMemberCreatedBy", fields: [createdByAccountId], references: [id], onDelete: SetNull)
+  createdByUser      User?            @relation("ClubRosterMemberCreatedByUser", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  /// Transfer requests (#489) that matched this row as the sending club's member.
+  transferAsSender   MemberTransfer[] @relation("MemberTransferFromRoster")
+  /// The transfer, if any, that created this row at the receiving club (#489).
+  transferAsReceiver MemberTransfer?  @relation("MemberTransferToRoster")
 
   @@unique([organizationId, clubYear, personId])
   @@index([organizationId, clubYear, status])
@@ -3551,6 +3578,180 @@ model MemberHonorEntry {
   @@index([personId, honorId, seq])
   @@index([organizationId, createdAt])
   @@index([honorId])
+}
+
+/// How a club member transfer (#489) was brought to a close.
+enum MemberTransferResolution {
+  /// The sending club accepted the request itself.
+  SENDING_CLUB_ACCEPTED
+  /// Conference staff finished a request the sending club had not answered within 14 days.
+  STAFF_FINISHED
+  /// Conference staff overrode the request (any time, with a note): a decline, an unmatched request, or one routed to staff.
+  STAFF_OVERRIDDEN
+}
+
+/// What a `MemberTransferEvent` recorded happening, for both clubs' history and staff's audit trail.
+enum MemberTransferEventType {
+  REQUESTED
+  ACCEPTED
+  DECLINED
+  CANCELLED
+  STAFF_FINISHED
+  STAFF_OVERRIDDEN
+  REGISTRATION_MOVE_QUEUED
+  REGISTRATION_MOVE_APPROVED
+  REGISTRATION_MOVE_SKIPPED
+  NOTIFIED
+}
+
+enum MemberTransferStatus {
+  /// Matched to one active member of the named club, waiting on that club.
+  PENDING
+  /// No single exact match (or it could not be sent to the club): on the conference staff list only.
+  UNMATCHED
+  /// The sending club declined: on the conference staff list.
+  DECLINED
+  COMPLETED
+  CANCELLED
+}
+
+/// Why a request needs conference staff rather than the sending club (#489).
+enum MemberTransferStaffReason {
+  /// No active member of the named club has exactly that name this club year.
+  NO_MATCH
+  /// More than one active member of the named club has exactly that name.
+  AMBIGUOUS_MATCH
+  /// The matched person already has another open transfer.
+  ALREADY_PENDING
+  /// The requesting director also leads the sending club: no self-acknowledgment (#489 N6).
+  SAME_DIRECTOR
+}
+
+/// A club member transfer request (#489). The receiving club's director
+/// enters the member's exact name and current club; the server matches on
+/// normalized exact names inside that club's current-year roster and always
+/// answers "request sent", so the request can't be used to probe a roster.
+/// A match goes to the sending club (`PENDING`); anything else goes to the
+/// conference staff list (`UNMATCHED`). The receiving club's roster row
+/// (`toRosterMember`) is created only when the transfer completes, and the
+/// sending row is erased at that moment (ADR 0005 Addendum A section 6).
+///
+/// Once the person is erased from every roster (their `Person` deleted),
+/// `personId` and `pendingPersonId` fall to null and the typed names are
+/// blanked: the record keeps the two clubs, the dates, the status, and the
+/// reason, but nothing that names the person.
+model MemberTransfer {
+  id                   String                     @id @default(cuid())
+  personId             String?
+  /// Set only while a matched request is open (PENDING or DECLINED): one open matched transfer per person, enforced here.
+  pendingPersonId      String?                    @unique
+  /// Hash of receiving club, sending club, and the normalized typed name, set while the request is open: no duplicate open request from one club.
+  requestKey           String?                    @unique
+  clubYear             String
+  fromOrganizationId   String
+  toOrganizationId     String
+  fromRosterMemberId   String?
+  toRosterMemberId     String?                    @unique
+  requestedFirstName   String
+  requestedLastName    String
+  reason               String
+  status               MemberTransferStatus       @default(PENDING)
+  staffReason          MemberTransferStaffReason?
+  /// True once the sending club has been shown this request (a match), so an unmatched request never appears on another club's page.
+  sendingClubVisible   Boolean                    @default(false)
+  resolution           MemberTransferResolution?
+  initiatedByAccountId String?
+  /// Set instead of `initiatedByAccountId` for a staff "act as" director (#442).
+  initiatedByUserId    String?
+  initiatedAt          DateTime                   @default(now())
+  /// `initiatedAt` + 14 days: when a pending request becomes overdue for the conference staff queue.
+  acknowledgeDueAt     DateTime
+  declinedAt           DateTime?
+  resolvedByAccountId  String?
+  resolvedByUserId     String?
+  /// Completed or cancelled.
+  resolvedAt           DateTime?
+  staffNote            String                     @default("")
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
+
+  person             Person?                          @relation("MemberTransferPerson", fields: [personId], references: [id], onDelete: SetNull)
+  pendingPerson      Person?                          @relation("MemberTransferPendingPerson", fields: [pendingPersonId], references: [id], onDelete: SetNull)
+  fromOrganization   Organization                     @relation("MemberTransferFrom", fields: [fromOrganizationId], references: [id], onDelete: Restrict)
+  toOrganization     Organization                     @relation("MemberTransferTo", fields: [toOrganizationId], references: [id], onDelete: Restrict)
+  fromRosterMember   ClubRosterMember?                @relation("MemberTransferFromRoster", fields: [fromRosterMemberId], references: [id], onDelete: SetNull)
+  toRosterMember     ClubRosterMember?                @relation("MemberTransferToRoster", fields: [toRosterMemberId], references: [id], onDelete: SetNull)
+  initiatedByAccount AttendeeAccount?                 @relation("MemberTransferInitiatedByAccount", fields: [initiatedByAccountId], references: [id], onDelete: SetNull)
+  initiatedByUser    User?                            @relation("MemberTransferInitiatedByUser", fields: [initiatedByUserId], references: [id], onDelete: SetNull)
+  resolvedByAccount  AttendeeAccount?                 @relation("MemberTransferResolvedByAccount", fields: [resolvedByAccountId], references: [id], onDelete: SetNull)
+  resolvedByUser     User?                            @relation("MemberTransferResolvedByUser", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+  events             MemberTransferEvent[]
+  registrationMoves  MemberTransferRegistrationMove[]
+
+  @@index([personId])
+  @@index([fromRosterMemberId])
+  @@index([toOrganizationId, createdAt])
+  @@index([fromOrganizationId, createdAt])
+  @@index([status, acknowledgeDueAt])
+}
+
+/// One append-only entry in a transfer's audit trail (#489), shown as the
+/// transfer's history on both clubs' roster pages and to conference staff.
+model MemberTransferEvent {
+  id             String                  @id @default(cuid())
+  transferId     String
+  type           MemberTransferEventType
+  actorAccountId String?
+  actorUserId    String?
+  note           String                  @default("")
+  metadata       Json?
+  createdAt      DateTime                @default(now())
+
+  transfer     MemberTransfer   @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  actorAccount AttendeeAccount? @relation("MemberTransferEventActorAccount", fields: [actorAccountId], references: [id], onDelete: SetNull)
+  actorUser    User?            @relation("MemberTransferEventActorUser", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([transferId, createdAt])
+}
+
+enum MemberTransferRegistrationMoveStatus {
+  PENDING
+  APPROVED
+  SKIPPED
+}
+
+/// One of a transferred member's open club-billed event registrations,
+/// waiting on conference staff (#489 decision 2). Completing a transfer
+/// moves nothing on its own: staff approve or skip each move. An approved
+/// move takes the attendee and every row keyed to them to the receiving
+/// club's registration for that event; nothing is repriced.
+model MemberTransferRegistrationMove {
+  id                     String                               @id @default(cuid())
+  transferId             String
+  eventId                String
+  registrationAttendeeId String?
+  fromRegistrationId     String?
+  /// The receiving club's registration the attendee moved to, once approved.
+  toRegistrationId       String?
+  status                 MemberTransferRegistrationMoveStatus @default(PENDING)
+  decidedByUserId        String?
+  decidedAt              DateTime?
+  note                   String                               @default("")
+  createdAt              DateTime                             @default(now())
+
+  transfer         MemberTransfer        @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  event            Event                 @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  attendee         RegistrationAttendee? @relation(fields: [registrationAttendeeId], references: [id], onDelete: SetNull)
+  fromRegistration Registration?         @relation("MemberTransferMoveFrom", fields: [fromRegistrationId], references: [id], onDelete: SetNull)
+  toRegistration   Registration?         @relation("MemberTransferMoveTo", fields: [toRegistrationId], references: [id], onDelete: SetNull)
+  decidedBy        User?                 @relation("MemberTransferMoveDecidedBy", fields: [decidedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([transferId, registrationAttendeeId])
+  @@index([status, createdAt])
+  @@index([eventId])
+  @@index([registrationAttendeeId])
+  @@index([fromRegistrationId])
+  @@index([toRegistrationId])
 }
 
 enum CalendarEntryStatus {

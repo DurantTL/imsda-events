@@ -135,7 +135,7 @@ WHERE "provider" = 'ROSTER_IMPORT'
 -- "changed", not dropped and re-added.
 DO $$
 DECLARE
-  migration_upload_id TEXT := 'mig20260928210000';
+  migration_upload_id TEXT := 'mig20260928240000';
   row_count INTEGER;
 BEGIN
   SELECT COUNT(*) INTO row_count FROM "BackgroundCheck" bc JOIN "Person" p ON p."id" = bc."personId";
