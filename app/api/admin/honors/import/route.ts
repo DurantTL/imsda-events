@@ -27,6 +27,7 @@ async function postHandler(request: Request) {
     }
     const existing = (await listHonors()).map((honor) => ({
       id: honor.id, code: honor.code, name: honor.name, description: honor.description, isActive: honor.isActive,
+      catalogNumber: honor.catalogNumber, category: honor.category,
     }));
     const plan = planHonorImport(rows, existing);
     const steps = plan.map(({ line, name, action, message }) => ({ line, name, action, message }));

@@ -552,6 +552,7 @@ model User {
   updatedClubMeetingNotes            ClubMeetingNote[]             @relation("ClubMeetingNoteUpdatedByUser")
   submittedClubEventRegistrations    ClubEventRegistration[]      @relation("ClubEventRegistrationSubmittedByUser")
   updatedClubRegistrationDrafts      ClubRegistrationDraft[]      @relation("ClubRegistrationDraftUpdatedByUser")
+  updatedClubSupplyStock             ClubSupplyStock[]            @relation("ClubSupplyStockUpdatedByUser")
 
   @@index([accountStatus])
 }
@@ -778,6 +779,7 @@ model AttendeeAccount {
   /// Club registration amendments this account made as a director reopening
   /// their own club's registration (H3b, #366).
   amendedRegistrationOperations     RegistrationOperation[]     @relation("RegistrationOperationActorAttendeeAccount")
+  updatedClubSupplyStock            ClubSupplyStock[]           @relation("ClubSupplyStockUpdatedByAccount")
 
   @@index([status])
 }
@@ -1623,6 +1625,7 @@ model Organization {
   churchLocation     ChurchLocation?
   staffActAs         StaffActAs[]
   memberHonorEntries MemberHonorEntry[]
+  clubSupplyStock    ClubSupplyStock[]
 
   @@index([type, isActive, name])
   @@index([parentOrganizationId, isActive])
@@ -3084,20 +3087,120 @@ model ProgramAttendeeAssignment {
 /// Staff-maintained catalog of Pathfinder/Adventurer honors (#357). Global,
 /// not per event, so every Honors Weekend site offers from the same list.
 model Honor {
-  id             String   @id @default(cuid())
-  code           String   @unique
+  id             String         @id @default(cuid())
+  code           String         @unique
   name           String
   normalizedName String
-  description    String   @default("")
-  isActive       Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  description    String         @default("")
+  isActive       Boolean        @default(true)
+  /// The AdventSource catalog number for this honor's patch (#531), kept as
+  /// a string so leading zeros survive. Every "X - Advanced" honor shares
+  /// 007400 (the Advanced Honor Star), so this is never unique.
+  catalogNumber  String?
+  /// The General Conference honor category (#531).
+  category       HonorCategory?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
 
-  offerings     HonorOffering[]
-  memberEntries MemberHonorEntry[]
+  offerings       HonorOffering[]
+  memberEntries   MemberHonorEntry[]
+  clubSupplyItems ClubSupplyItem[]
 
   @@index([isActive, name])
   @@index([normalizedName])
+  @@index([category])
+}
+
+/// The General Conference honor categories (#531), plus Master Awards.
+enum HonorCategory {
+  NATURE
+  HEALTH_AND_SCIENCE
+  SPIRITUAL_GROWTH_OUTREACH_AND_HERITAGE
+  ARTS_CRAFTS_AND_HOBBIES
+  RECREATION
+  HOUSEHOLD_ARTS
+  VOCATIONAL
+  OUTDOOR_INDUSTRIES
+  MISCELLANEOUS_HONORS
+  MASTER_AWARDS
+}
+
+/// Every section of the club supply catalog (#531). The last ten are the
+/// honor categories (same names as `HonorCategory`); their rows link to a
+/// matching `Honor` when one exists.
+enum ClubSupplySection {
+  INVESTITURE
+  CAMPOREES
+  PATHFINDER_BIBLE_EXPERIENCE
+  TEEN_LEADERSHIP_TRAINING
+  MISCELLANEOUS
+  CLASS_A_DRESS_APPAREL
+  CLASS_A_UNIFORM_ACCESSORIES
+  OTHER_APPAREL
+  NATURE
+  HEALTH_AND_SCIENCE
+  SPIRITUAL_GROWTH_OUTREACH_AND_HERITAGE
+  ARTS_CRAFTS_AND_HOBBIES
+  RECREATION
+  HOUSEHOLD_ARTS
+  VOCATIONAL
+  OUTDOOR_INDUSTRIES
+  MISCELLANEOUS_HONORS
+  MASTER_AWARDS
+}
+
+/// A conference-wide club supply catalog item (#531): one AdventSource order
+/// line, one row per size. Identity is section plus normalized name; catalog
+/// numbers repeat in the real data (Good Conduct Stars, belts, every
+/// Advanced honor), so they are indexed, never unique. Changed only by the
+/// staff CSV import and the active toggle; nothing is auto-seeded.
+model ClubSupplyItem {
+  id             String            @id @default(cuid())
+  section        ClubSupplySection
+  name           String
+  normalizedName String
+  /// Kept as a string so leading zeros survive; optional (conference-made
+  /// camporee patches have none).
+  catalogNumber  String?
+  /// A size parsed from the item name ("Size 8", "XL"), or null.
+  sizeLabel      String?
+  isActive       Boolean           @default(true)
+  /// The honor this row is the patch for, when an honor-section row's name
+  /// matches an existing `Honor`.
+  honorId        String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  honor Honor?            @relation(fields: [honorId], references: [id], onDelete: SetNull)
+  stock ClubSupplyStock[]
+
+  @@unique([section, normalizedName])
+  @@index([catalogNumber])
+  @@index([honorId])
+  @@index([isActive, section, name])
+}
+
+/// How many of one catalog item a club has on hand (#531). One row per club
+/// per item. Directors and deputies edit it; registrars and Area
+/// Coordinators only view it.
+model ClubSupplyStock {
+  id                 String   @id @default(cuid())
+  organizationId     String
+  itemId             String
+  quantityOnHand     Int      @default(0)
+  updatedByAccountId String?
+  /// Set instead of `updatedByAccountId` for a staff "act as" director (#442).
+  updatedByUserId    String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  organization     Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  item             ClubSupplyItem   @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  updatedByAccount AttendeeAccount? @relation("ClubSupplyStockUpdatedByAccount", fields: [updatedByAccountId], references: [id], onDelete: SetNull)
+  updatedByUser    User?            @relation("ClubSupplyStockUpdatedByUser", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, itemId])
+  @@index([itemId])
 }
 
 /// A named class period at one Honors Weekend site (event). Names differ by

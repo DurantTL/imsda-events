@@ -18,6 +18,55 @@ export function normalizeHonorCode(value: string) {
   return value.trim().replace(/\s+/g, " ").toLocaleUpperCase("en-US");
 }
 
+/**
+ * The General Conference honor categories (#531), plus Master Awards. The
+ * category lives on `Honor` itself; the club supply catalog import sets it
+ * for linked honors and the honor catalog CSV (#385) accepts it directly.
+ */
+export const honorCategoryLabels = {
+  NATURE: "Nature",
+  HEALTH_AND_SCIENCE: "Health and Science",
+  SPIRITUAL_GROWTH_OUTREACH_AND_HERITAGE: "Spiritual Growth, Outreach, and Heritage",
+  ARTS_CRAFTS_AND_HOBBIES: "Arts, Crafts, and Hobbies",
+  RECREATION: "Recreation",
+  HOUSEHOLD_ARTS: "Household Arts",
+  VOCATIONAL: "Vocational",
+  OUTDOOR_INDUSTRIES: "Outdoor Industries",
+  MISCELLANEOUS_HONORS: "Miscellaneous Honors",
+  MASTER_AWARDS: "Master Awards",
+} as const;
+
+export type HonorCategory = keyof typeof honorCategoryLabels;
+
+/**
+ * Category or section text for lookups: whitespace and case collapsed, "&"
+ * read as "and", commas ignored, and the source sheet's one typo
+ * ("Reacreation") read as "Recreation".
+ */
+export function normalizeHonorCategoryText(value: string) {
+  return value
+    .normalize("NFKC")
+    .replace(/&/g, " and ")
+    .replace(/,/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase("en-US")
+    .replace(/\breacreation\b/, "recreation");
+}
+
+const honorCategoryByText = new Map(
+  (Object.entries(honorCategoryLabels) as Array<[HonorCategory, string]>)
+    .flatMap(([category, label]) => [
+      [normalizeHonorCategoryText(label), category] as const,
+      [normalizeHonorCategoryText(category.replace(/_/g, " ")), category] as const,
+    ]),
+);
+
+/** An honor category from free text (a CSV cell), or null when it matches none. */
+export function resolveHonorCategory(text: string): HonorCategory | null {
+  return honorCategoryByText.get(normalizeHonorCategoryText(text)) ?? null;
+}
+
 type OfferingSlot = { honorId: string; span: HonorOfferingSpan; sessionId: string | null };
 
 /**

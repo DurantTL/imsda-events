@@ -49,6 +49,8 @@ export default async function ClubLayout({
               { href: `${base}/roster`, label: "Roster" },
               // Honors open on the roster's own gate (#486), so the tab follows the roster capability.
               ...(access.capabilities.roster ? [{ href: `${base}/honors`, label: "Honors" }] : []),
+              // Supplies open on the roster's gate too (#531): directors and deputies edit, registrars view.
+              ...(access.capabilities.roster ? [{ href: `${base}/supplies`, label: "Supplies" }] : []),
               { href: `${base}/events`, label: "Events & classes", matchChildren: true },
               ...(access.capabilities.submitReports ? [
                 { href: `${base}/notes`, label: "Meeting notes", matchChildren: true },
