@@ -21,7 +21,10 @@ export default async function EventSetupPage() {
         <div className="brand"><BrandMark /><span><strong>IMSDA</strong><small>Events</small></span></div>
         <div><p className="eyebrow">System administration</p><h1>Set up a new event</h1></div>
       </header>
-      <p><Link className="secondary-button" href="/event-setup/from-template">Start from template</Link></p>
+      <div className="event-setup-entry-actions">
+        <Link className="secondary-button" href="/event-setup/from-template">Start from template</Link>
+        <Link className="secondary-button" href="/event-setup/copy">Copy from a past event</Link>
+      </div>
       <EventSettingsWorkspace mode="create" initialEvent={null} />
     </main>
   );

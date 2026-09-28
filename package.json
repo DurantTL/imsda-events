@@ -19,6 +19,7 @@
     "test:background-check-list": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-background-check-list.ts",
     "test:club-supplies": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-club-supply-catalog.ts",
     "test:event-templates": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-event-templates.ts",
+    "test:event-cloning": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-event-cloning.ts",
     "test:watch": "vitest",
     "verify": "npm run lint && npm run typecheck && npm run test && npm run build",
     "db:generate": "prisma generate",

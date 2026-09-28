@@ -163,11 +163,9 @@ export function listFormTemplates() {
 
 /**
  * Creates one draft registration form from a code-defined form template
- * inside the caller's transaction: the stored definition has its attendee
- * type and directory options stripped (they are hydrated live on read), the
- * slug is made unique within the event, and `REGISTRATION_FORM_CREATED` is
- * audited. Shared by `createRegistrationForm` and by applying an event
- * template (#152), so both paths store and audit forms identically.
+ * inside the caller's transaction. Shared by `createRegistrationForm` and by
+ * applying an event template (#152); the storing itself is
+ * `createRegistrationFormFromDefinitionInTransaction`.
  */
 export async function createRegistrationFormFromTemplateInTransaction(
   tx: Prisma.TransactionClient,
@@ -177,9 +175,38 @@ export async function createRegistrationFormFromTemplateInTransaction(
 ) {
   const template = getFormTemplate(templateKey);
   if (!template) throw new FormOperationError("TEMPLATE_NOT_FOUND", "That form template is not available.");
-  const definition = registrationFormDefinitionSchema.parse(structuredClone(template.definition));
+  return createRegistrationFormFromDefinitionInTransaction(tx, eventId, actorUserId, {
+    definition: template.definition,
+    summary: (formName) => `Created ${formName} from the ${template.name} template.`,
+    metadata: { templateKey },
+  });
+}
+
+/**
+ * Creates one DRAFT registration form (version 1) from a form definition
+ * inside the caller's transaction, whatever the definition came from: a
+ * code-defined template, or the current published definition of another
+ * event's form (annual cloning, #157). The stored definition has its attendee
+ * type and directory options stripped (they are hydrated live on read), the
+ * slug is made unique within the event (`preferredSlug` first, else the
+ * title's), and `REGISTRATION_FORM_CREATED` is audited. The one place a new
+ * form's stored shape is decided, so every creation path stores and audits
+ * forms identically. The new form is always a draft: nothing here publishes.
+ */
+export async function createRegistrationFormFromDefinitionInTransaction(
+  tx: Prisma.TransactionClient,
+  eventId: string,
+  actorUserId: string,
+  source: {
+    definition: unknown;
+    preferredSlug?: string;
+    summary: (formName: string) => string;
+    metadata: Record<string, Prisma.InputJsonValue>;
+  },
+) {
+  const definition = registrationFormDefinitionSchema.parse(structuredClone(source.definition));
   const storedDefinition = stripDirectoryOptions(stripAttendeeTypeOptions(definition));
-  const baseSlug = slugify(definition.title);
+  const baseSlug = source.preferredSlug || slugify(definition.title);
   let slug = baseSlug;
   let suffix = 2;
   while (await tx.registrationForm.findUnique({ where: { eventId_slug: { eventId, slug } }, select: { id: true } })) {
@@ -197,7 +224,7 @@ export async function createRegistrationFormFromTemplateInTransaction(
   });
   await tx.auditLog.create({ data: {
     eventId, actorUserId, action: "REGISTRATION_FORM_CREATED", entityType: "RegistrationForm", entityId: form.id,
-    correlationId: randomUUID(), summary: `Created ${form.name} from the ${template.name} template.`, metadata: { templateKey, productionWrite: false },
+    correlationId: randomUUID(), summary: source.summary(form.name), metadata: { ...source.metadata, productionWrite: false },
   } });
   return form;
 }

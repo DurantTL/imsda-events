@@ -579,6 +579,7 @@ model User {
   createdEventTemplates              EventTemplate[]              @relation("EventTemplateCreatedBy")
   createdEventTemplateVersions       EventTemplateVersion[]       @relation("EventTemplateVersionCreatedBy")
   eventTemplateApplications          EventTemplateApplication[]   @relation("EventTemplateApplicationActor")
+  eventCloneRecords                  EventCloneRecord[]           @relation("EventCloneRecordActor")
 
   @@index([accountStatus])
 }
@@ -1244,6 +1245,8 @@ model Event {
   registrationTagAssignments          RegistrationTagAssignment[]
   attendeeTagAssignments              AttendeeTagAssignment[]
   templateApplication                 EventTemplateApplication?
+  cloneRecord                         EventCloneRecord?            @relation("EventCloneResult")
+  clonedInto                          EventCloneRecord[]           @relation("EventCloneSource")
 
   @@index([badgeBackgroundAssetId])
 }
@@ -4083,4 +4086,41 @@ model UserPasskeyChallenge {
 
   @@index([sessionId, purpose])
   @@index([purpose, expiresAt])
+}
+
+/// Provenance for one reviewed annual clone (#157): a new draft `Event` built
+/// from the configuration of a prior event. `resultEventId` is unique, so one
+/// clone request yields one event; `(actorUserId, requestKey)` makes retries
+/// idempotent. `sourceEventId` is nulled if the source is ever deleted; the
+/// `snapshot` keeps the source's name and slug so provenance still reads.
+/// Nothing here is a live link: the clone never follows later source edits.
+model EventCloneRecord {
+  id                String   @id @default(cuid())
+  sourceEventId     String?
+  resultEventId     String   @unique
+  actorUserId       String
+  requestKey        String
+  /// The confirm body as sent (minus the key): what a retry with the same
+  /// `requestKey` is compared against.
+  requestInput      Json
+  /// Hash of the source configuration the reviewer previewed; the clone was
+  /// refused with SOURCE_CHANGED unless the source still matched it.
+  sourceFingerprint String
+  /// Ids and version numbers of the source configuration that was copied:
+  /// registration form versions and message template versions.
+  sourceVersions    Json
+  /// Which domains were included, and which were excluded.
+  selections        Json
+  exclusions        Json
+  /// Counts, the values that were reset or supplied anew, and the source's
+  /// identity, as of the clone. Ids and counts only.
+  snapshot          Json
+  createdAt         DateTime @default(now())
+
+  sourceEvent Event? @relation("EventCloneSource", fields: [sourceEventId], references: [id], onDelete: SetNull)
+  resultEvent Event  @relation("EventCloneResult", fields: [resultEventId], references: [id], onDelete: Cascade)
+  actor       User   @relation("EventCloneRecordActor", fields: [actorUserId], references: [id])
+
+  @@unique([actorUserId, requestKey])
+  @@index([sourceEventId, createdAt])
 }
