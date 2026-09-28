@@ -1171,6 +1171,14 @@ export function validateTestResponses(
 }
 
 export const createFormSchema = z.object({ templateKey: z.string().trim().min(1).max(80) });
+export const updateFormSlugSchema = z.object({
+  slug: z.string()
+    .trim()
+    .toLowerCase()
+    .min(1, "Enter a short web address.")
+    .max(60)
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers, and single hyphens only."),
+});
 export const updateFormSchema = z.object({
   definition: registrationFormDefinitionSchema,
   expectedUpdatedAt: z.iso.datetime(),

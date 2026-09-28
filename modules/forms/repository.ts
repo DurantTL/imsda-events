@@ -11,13 +11,14 @@ import {
   type RegistrationFormDefinition,
 } from "@/modules/forms/definition";
 import { preparePublicRegistration } from "@/modules/forms/public-domain";
+import { slugCandidate, slugify, slugMatchesTitle } from "@/modules/forms/slug";
 import { listActiveAttendeeTypes } from "@/modules/attendee-types/repository";
 import { stripAttendeeTypeOptions, withAttendeeTypeOptions } from "@/modules/attendee-types/form-options";
 import type { AttendeeTypeOption } from "@/modules/attendee-types/domain";
 
 export class FormOperationError extends Error {
   constructor(
-    public readonly code: "FORM_NOT_FOUND" | "TEMPLATE_NOT_FOUND" | "EDIT_CONFLICT" | "NO_DRAFT" | "TEST_REQUIRED" | "VERSION_NOT_FOUND" | "NOT_PUBLISHED",
+    public readonly code: "FORM_NOT_FOUND" | "TEMPLATE_NOT_FOUND" | "EDIT_CONFLICT" | "NO_DRAFT" | "TEST_REQUIRED" | "VERSION_NOT_FOUND" | "NOT_PUBLISHED" | "SLUG_LOCKED" | "FORM_SLUG_TAKEN",
     message: string,
   ) {
     super(message);
@@ -148,10 +149,6 @@ export function listFormTemplates() {
   }));
 }
 
-function slugify(value: string) {
-  return value.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "registration-form";
-}
-
 export async function createRegistrationForm(eventId: string, actorUserId: string, templateKey: string) {
   const template = getFormTemplate(templateKey);
   if (!template) throw new FormOperationError("TEMPLATE_NOT_FOUND", "That form template is not available.");
@@ -162,7 +159,7 @@ export async function createRegistrationForm(eventId: string, actorUserId: strin
     let slug = baseSlug;
     let suffix = 2;
     while (await tx.registrationForm.findUnique({ where: { eventId_slug: { eventId, slug } }, select: { id: true } })) {
-      slug = `${baseSlug}-${suffix}`;
+      slug = slugCandidate(baseSlug, suffix);
       suffix += 1;
     }
     const form = await tx.registrationForm.create({
@@ -216,6 +213,84 @@ export async function updateRegistrationForm(
     } });
   });
   return (await getRegistrationForm(eventId, formId))!;
+}
+
+/**
+ * Updates a form's web address (slug) before its first publish.
+ *
+ * A form copied from a template keeps the template's slug even after its
+ * title changes, so the builder prompts staff to sync the two before the
+ * first publish (#476). Once a version of this form has ever been published,
+ * the slug is locked: shared links depend on it, so nothing may change it
+ * automatically or silently — only this explicit, pre-first-publish choice
+ * is allowed to move it.
+ */
+export async function updateRegistrationFormSlug(eventId: string, formId: string, actorUserId: string, slug: string) {
+  try {
+    await getPrisma().$transaction(async (tx) => {
+      // Read and write in one transaction, as publishRegistrationForm does, so
+      // a publish landing between the lock check and the write cannot slip a
+      // slug change past SLUG_LOCKED.
+      const form = await tx.registrationForm.findFirst({
+        where: { id: formId, eventId },
+        select: { id: true, name: true, slug: true, versions: { select: { publishedAt: true } } },
+      });
+      if (!form) throw new FormOperationError("FORM_NOT_FOUND", "That registration form was not found.");
+      if (form.versions.some((version) => version.publishedAt)) {
+        throw new FormOperationError("SLUG_LOCKED", "This form has already been published, so its web address can no longer change automatically.");
+      }
+      if (slug === form.slug) return;
+      const existing = await tx.registrationForm.findUnique({ where: { eventId_slug: { eventId, slug } }, select: { id: true } });
+      if (existing) throw slugTakenError();
+      await tx.registrationForm.update({ where: { id: formId }, data: { slug } });
+      await tx.auditLog.create({ data: {
+        eventId, actorUserId, action: "REGISTRATION_FORM_SLUG_UPDATED", entityType: "RegistrationForm", entityId: formId,
+        correlationId: randomUUID(), summary: `Updated the web address for ${form.name} to /${slug}.`, metadata: { previousSlug: form.slug, slug, productionWrite: false },
+      } });
+    });
+  } catch (error) {
+    // Another form claimed the address between the check and the write.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") throw slugTakenError();
+    throw error;
+  }
+  return (await getRegistrationForm(eventId, formId))!;
+}
+
+function slugTakenError() {
+  return new FormOperationError("FORM_SLUG_TAKEN", "That web address is already used by another form for this event. Choose another address.");
+}
+
+/**
+ * What the builder should offer before a form's first publish (#476): the
+ * address its saved title would get, resolved to the next free one the same
+ * way createRegistrationForm does (`title`, `title-2`, …), so "Update" can
+ * succeed. `needsSync` is false once the form has ever been published (the
+ * slug is locked) or when the slug already reflects the title, including a
+ * `title-N` suffix that creation added.
+ */
+export async function suggestRegistrationFormSlug(eventId: string, formId: string) {
+  const prisma = getPrisma();
+  const form = await prisma.registrationForm.findFirst({
+    where: { id: formId, eventId },
+    select: { id: true, slug: true, versions: { select: { status: true, publishedAt: true, definition: true }, orderBy: { versionNumber: "desc" } } },
+  });
+  if (!form) throw new FormOperationError("FORM_NOT_FOUND", "That registration form was not found.");
+  const locked = form.versions.some((version) => version.publishedAt);
+  const titleVersion = form.versions.find((version) => version.status === RegistrationFormStatus.DRAFT) ?? form.versions[0];
+  const title = titleVersion ? definitionFromJson(titleVersion.definition).title : "";
+  if (locked || !title || slugMatchesTitle(form.slug, title)) {
+    return { currentSlug: form.slug, offeredSlug: form.slug, needsSync: false, locked };
+  }
+  const baseSlug = slugify(title);
+  const taken = new Set((await prisma.registrationForm.findMany({
+    // An event has a handful of forms, so reading every other slug is cheap.
+    where: { eventId, id: { not: formId } },
+    select: { slug: true },
+  })).map((row) => row.slug));
+  let suffix = 1;
+  while (taken.has(slugCandidate(baseSlug, suffix))) suffix += 1;
+  const offeredSlug = slugCandidate(baseSlug, suffix);
+  return { currentSlug: form.slug, offeredSlug, needsSync: offeredSlug !== form.slug, locked };
 }
 
 export async function publishRegistrationForm(eventId: string, formId: string, actorUserId: string) {
