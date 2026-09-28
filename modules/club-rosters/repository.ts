@@ -111,7 +111,7 @@ export async function listRoster(organizationId: string, clubYear: string, now =
   const today = calendarDateOf(now);
   return members
     .map((member) => serializeMember(member, today))
-    .sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName));
+    .sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName) || a.id.localeCompare(b.id));
 }
 
 /** Ages on a given date (e.g. an event's start) for the roster, computed on the server. */

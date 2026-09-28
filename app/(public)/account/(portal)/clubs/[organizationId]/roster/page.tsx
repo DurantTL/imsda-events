@@ -33,6 +33,9 @@ export default async function ClubRosterPage({
   return (
     <>
       <BackLink href={`/account/clubs/${organizationId}`}>Back to {access.club.name}</BackLink>
+      <p className="quiet-copy">
+        <a href={`/account/clubs/${organizationId}/roster/export`}>Build a roster export</a> for an outside camporee.
+      </p>
       <ClubRosterWorkspace
         canSeeBirthDates={access.capabilities.seeBirthDates}
         clubYear={clubYear}
