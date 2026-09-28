@@ -159,7 +159,7 @@ export async function createRegistrationForm(eventId: string, actorUserId: strin
     let slug = baseSlug;
     let suffix = 2;
     while (await tx.registrationForm.findUnique({ where: { eventId_slug: { eventId, slug } }, select: { id: true } })) {
-      slug = `${baseSlug}-${suffix}`;
+      slug = slugCandidate(baseSlug, suffix);
       suffix += 1;
     }
     const form = await tx.registrationForm.create({
