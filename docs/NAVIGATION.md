@@ -154,10 +154,11 @@ visibility condition is exactly what gated that destination before.
     Registration forms, Seminar assignments.
   - **Content & sales:** Public content, Merchandise, Promo codes, Attendee
     community.
-  - **People & access:** Staff, Clubs and churches (the system-admin
-    directory or an event manager's club oversight, from
-    `resolveClubsAndChurchesEntry` — the same call the sidebar makes), Club
-    assignments, Import registrations.
+  - **People & access:** Staff, Clubs and churches (two cards: the
+    system-admin directory at `/admin/organizations`, and the event's club
+    oversight at `/more/clubs` for anyone with club oversight, titled "This
+    event's clubs" for a system admin who sees both), Club assignments,
+    Import registrations.
   - **Reports:** Operational reports, Operational health.
   - Attendee setup and Tags reuse the sidebar's own required permission via
     `requiredPermissionFor("/more/attendee-configuration")` and

@@ -109,6 +109,14 @@ const specialScenarios: Scenario[] = [
     clubOversight: false,
     clubEvent: true,
   },
+  {
+    // MANAGE_REGISTRATION without VIEW_SENSITIVE_DATA: seminar assignments need both.
+    name: "custom: READ_ONLY_STAFF plus MANAGE_REGISTRATION",
+    permissions: [...rolePermissions.READ_ONLY_STAFF, "MANAGE_REGISTRATION"],
+    isSystemAdmin: false,
+    clubOversight: false,
+    clubEvent: false,
+  },
 ];
 
 const scenarios: Scenario[] = [...roleScenarios, ...specialScenarios];
@@ -210,6 +218,7 @@ const deniedOnPhone: Record<string, readonly string[]> = {
   "custom: CHECK_IN_STAFF plus CONFIGURE_EVENT": ["/more/reports", "/more/program-assignments", "/finance", "/staff", "/imports", "/community", ...clubPages],
   "custom: READ_ONLY_STAFF plus VIEW_REPORTS": [...configPages, "/more/health", "/people", "/finance", "/staff", "/imports", "/community", ...clubPages],
   "custom: CHECK_IN_STAFF plus MANAGE_REGISTRATION on a club-billed event": [...configPages, "/more/clubs", "/admin/organizations", "/more/reports", "/finance", "/staff"],
+  "custom: READ_ONLY_STAFF plus MANAGE_REGISTRATION": [...configPages, "/more/program-assignments", "/finance", "/staff", "/community", ...clubPages],
 };
 
 describe("phone navigation reaches every page the desktop sidebar reaches (#475)", () => {
