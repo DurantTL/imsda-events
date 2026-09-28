@@ -35,6 +35,7 @@ export default async function AreaClubPage({ params }: { params: Promise<{ organ
           birth dates. The club makes changes.
         </p>
         <ClubOverview
+          complianceCounts
           organizationId={organizationId}
           reportHref={(month) => `/account/area/${organizationId}/reports/${month}`}
           reportsEditable={false}

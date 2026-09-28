@@ -393,6 +393,67 @@ export function clubComplianceState(check: StoredCheck | null | undefined, today
   return "NO_RECORD";
 }
 
+/**
+ * Counts behind the club home "What's next" and club overview reminders
+ * (#479): how many active adult roster members are missing a current check,
+ * not in compliance (an expired Sterling check, or a roster import's "n"
+ * mark), or expiring within 60 days ("!"). "Missing" is counted here even
+ * though the roster's own inline notice never counts it (#427) — a home-page
+ * reminder to add a check is a different message from a warning about one
+ * already on file.
+ */
+export type ComplianceReminderCounts = { missing: number; notInCompliance: number; expiringSoon: number };
+
+/** The `?compliance=` roster filter value each reminder links to. */
+export const COMPLIANCE_FILTER_VALUES = ["missing", "expired", "expiring"] as const;
+export type ComplianceFilterValue = (typeof COMPLIANCE_FILTER_VALUES)[number];
+
+/** Which roster state a `?compliance=` filter value narrows the roster to. */
+export const complianceFilterState: Record<ComplianceFilterValue, ClubComplianceState> = {
+  missing: "NO_RECORD",
+  expired: "NOT_COMPLIANT",
+  expiring: "FLAGGED",
+};
+
+/** How the roster's active filter reads back to whoever followed the link. */
+export const complianceFilterLabels: Record<ComplianceFilterValue, string> = {
+  missing: "missing a current background check",
+  expired: "expired or not in compliance",
+  expiring: "expiring within 60 days",
+};
+
+/**
+ * Never blocks registration (#405): flags only, as counts with a link to the
+ * filtered roster. Never anyone's name; that stays behind the roster
+ * column's own access rule. Skips a count that is zero, so a club with
+ * nothing outstanding sees no reminder at all.
+ */
+export function complianceReminders(counts: ComplianceReminderCounts, rosterHref: string) {
+  const items: Array<{ key: string; text: string; href: string }> = [];
+  if (counts.missing > 0) {
+    items.push({
+      key: "background-check-missing",
+      text: `${counts.missing} adult${counts.missing === 1 ? "" : "s"} missing a current background check.`,
+      href: `${rosterHref}?compliance=missing`,
+    });
+  }
+  if (counts.notInCompliance > 0) {
+    items.push({
+      key: "background-check-not-compliant",
+      text: `${counts.notInCompliance} background check${counts.notInCompliance === 1 ? "" : "s"} expired or not in compliance.`,
+      href: `${rosterHref}?compliance=expired`,
+    });
+  }
+  if (counts.expiringSoon > 0) {
+    items.push({
+      key: "background-check-expiring",
+      text: `${counts.expiringSoon} background check${counts.expiringSoon === 1 ? " expires" : "s expire"} within 60 days.`,
+      href: `${rosterHref}?compliance=expiring`,
+    });
+  }
+  return items;
+}
+
 /** How a flag reads on the list and in its CSV. */
 export const backgroundFlagLabels = {
   MISSING: "None on file",

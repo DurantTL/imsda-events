@@ -5,6 +5,7 @@ import { Eye, Pencil, Plus, Power, Save, Trash2, UsersRound, X } from "lucide-re
 import { BirthDateField } from "@/components/birth-date-field";
 import { RosterCsvImport } from "@/components/roster-csv-import";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
+import { complianceFilterLabels, complianceFilterState, type ComplianceFilterValue } from "@/modules/background-checks/domain";
 import {
   clubClassLevelLabels,
   clubRosterAttendeeTypeLabels,
@@ -15,6 +16,7 @@ import {
   rosterSectionOf,
 } from "@/modules/club-rosters/domain";
 import type { RosterMemberRecord } from "@/modules/club-rosters/repository";
+import { canBeWillingDriver } from "@/modules/driver-verification/domain";
 
 type RosterResponse = {
   members?: RosterMemberRecord[];
@@ -41,6 +43,7 @@ export function ClubRosterWorkspace({
   readOnly = false,
   birthDatesEndpoint,
   complianceStatuses,
+  complianceFilter: initialComplianceFilter = null,
 }: {
   /** Directors and deputies only; a registrar enters birth dates but sees ages (#375). */
   canSeeBirthDates: boolean;
@@ -57,6 +60,8 @@ export function ClubRosterWorkspace({
    * caller is allowed to see it (club directors never get a note).
    */
   complianceStatuses?: Record<string, RosterComplianceInfo>;
+  /** `?compliance=` from the What's next reminder link (#479): narrows the list to that one flag. */
+  complianceFilter?: ComplianceFilterValue | null;
 }) {
   const [members, setMembers] = useState(initialMembers);
   const [editing, setEditing] = useState<RosterMemberRecord | null>(null);
@@ -65,6 +70,7 @@ export function ClubRosterWorkspace({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [birthDates, setBirthDates] = useState<Record<string, string> | null>(null);
   const [showInactive, setShowInactive] = useState(false);
+  const [complianceFilter, setComplianceFilter] = useState(initialComplianceFilter);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -92,7 +98,10 @@ export function ClubRosterWorkspace({
   const expiringSoon = complianceStatuses
     ? active.filter((member) => complianceStatuses[member.id]?.state === "FLAGGED").length
     : 0;
-  const visible = showInactive ? members : active;
+  const beforeComplianceFilter = showInactive ? members : active;
+  const visible = complianceFilter && complianceStatuses
+    ? beforeComplianceFilter.filter((member) => complianceStatuses[member.id]?.state === complianceFilterState[complianceFilter])
+    : beforeComplianceFilter;
   const sections = [
     { key: "STAFF", title: "Staff", empty: "No staff on the roster yet.", people: visible.filter((member) => rosterSectionOf(member.attendeeType) === "STAFF") },
     { key: "MEMBERS", title: "Members", empty: "No Pathfinders on the roster yet.", people: visible.filter((member) => rosterSectionOf(member.attendeeType) === "MEMBERS") },
@@ -130,13 +139,17 @@ export function ClubRosterWorkspace({
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const birthDate = String(form.get("birthDate") ?? "");
+    const attendeeType = String(form.get("attendeeType") ?? "YOUTH");
     const details = {
       firstName: String(form.get("firstName") ?? ""),
       lastName: String(form.get("lastName") ?? ""),
-      attendeeType: String(form.get("attendeeType") ?? "YOUTH"),
+      attendeeType,
       role: String(form.get("role") ?? ""),
       classLevel: String(form.get("classLevel") ?? "") || null,
       gender: String(form.get("gender") ?? "") || null,
+      // Only staff and adults can be willing drivers (#491); the checkbox is
+      // hidden for anyone else, so nothing is ever sent for them either.
+      willingToDrive: canBeWillingDriver(attendeeType) ? form.get("willingToDrive") === "on" : false,
     };
     const result = editing
       ? await call(`${base}/${encodeURIComponent(editing.id)}`, "PATCH", {
@@ -211,6 +224,12 @@ export function ClubRosterWorkspace({
             {expiringSoon > 0 && ` · ${expiringSoon} expiring soon`}
           </p>
         )}
+        {complianceFilter && complianceStatuses && (
+          <p className="inline-notice roster-compliance-notice" role="status">
+            Showing only people {complianceFilterLabels[complianceFilter]}.{" "}
+            <button className="text-button" onClick={() => setComplianceFilter(null)} type="button">Clear filter</button>
+          </p>
+        )}
         <div className="club-roster-tools">
           <label className="checkbox-label">
             <input checked={showInactive} onChange={(event) => setShowInactive(event.target.checked)} type="checkbox" />
@@ -240,9 +259,11 @@ export function ClubRosterWorkspace({
         </div>
         {visible.length === 0 ? (
           <p className="public-manage-empty">
-            <UsersRound size={17} aria-hidden="true" /> {readOnly
-              ? "No one is on this club's roster yet."
-              : "No one is on the roster yet. Add people below, or they'll be added when you register your club for an event."}
+            <UsersRound size={17} aria-hidden="true" /> {complianceFilter && complianceStatuses
+              ? "No one matches this filter."
+              : readOnly
+                ? "No one is on this club's roster yet."
+                : "No one is on the roster yet. Add people below, or they'll be added when you register your club for an event."}
           </p>
         ) : (
           <div className="report-table-wrap">
@@ -309,7 +330,10 @@ export function ClubRosterWorkspace({
                                   Missing info: {missing.join(", ")}
                                 </span>
                               )}
-                              {member.status === "ACTIVE" && missing.length === 0 && "—"}
+                              {member.willingToDrive && (
+                                <span className="status-chip neutral">Willing to drive</span>
+                              )}
+                              {member.status === "ACTIVE" && missing.length === 0 && !member.willingToDrive && "—"}
                               </div>
                             </td>
                             {complianceStatuses && (
@@ -408,6 +432,23 @@ export function ClubRosterWorkspace({
             </select>
           </label>
         </div>
+        {canBeWillingDriver(formType) && (
+          <>
+            <label className="checkbox-label roster-willing-to-drive">
+              <input
+                defaultChecked={editing?.willingToDrive ?? false}
+                key={editing?.id ?? "new"}
+                name="willingToDrive"
+                type="checkbox"
+              />
+              Willing to drive
+            </label>
+            <p className="field-help">
+              This doesn&apos;t clear them to transport youth by itself — it adds them to the driver verification
+              queue, where a reviewer confirms their license, insurance, and background-check status were checked.
+            </p>
+          </>
+        )}
         <p className="field-help">
           Birth dates are encrypted and shown only to your club&apos;s director and deputy. Registrars and event
           staff see age only. Don&apos;t enter medical or insurance information here.
