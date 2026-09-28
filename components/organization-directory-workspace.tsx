@@ -365,13 +365,18 @@ export function OrganizationDirectoryWorkspace({
                     <Pencil aria-hidden="true" size={14} /> Edit
                   </button>
                   {organization.type === "CHURCH" && (
-                    <Link
+                    // A full page load, not a client-side <Link>: the location
+                    // page's Content-Security-Policy is the only staff policy
+                    // that admits the map tiles (#542), and a soft navigation
+                    // keeps the policy of the page we came from, which blocks
+                    // every tile and leaves the "Pick on map" map blank.
+                    <a
                       aria-label={`Location for ${organization.name}`}
                       className="secondary-button"
                       href={`/admin/organizations/${organization.id}/location`}
                     >
                       <MapPin aria-hidden="true" size={14} /> Location
-                    </Link>
+                    </a>
                   )}
                   {organization.type === "CLUB" && (
                     <>
