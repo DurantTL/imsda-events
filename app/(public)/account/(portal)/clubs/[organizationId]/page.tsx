@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight, CalendarDays, CheckCircle2, CircleAlert, FileText, UsersRound } from "lucide-react";
 import { BackLink } from "@/components/back-link";
+import { clubComplianceReminderCounts } from "@/modules/background-checks/repository";
+import { complianceReminders } from "@/modules/background-checks/domain";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { getRosterAccessStateForPage, type ClubActor } from "@/modules/club-rosters/access";
 import { clubYearFor } from "@/modules/club-rosters/domain";
@@ -57,11 +59,13 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
   const base = `/account/clubs/${organizationId}`;
   const now = new Date();
   const clubYear = clubYearFor(now);
-  const [members, events, reportYear, clubsLink] = await Promise.all([
+  const [members, events, reportYear, clubsLink, compliance] = await Promise.all([
     listRoster(organizationId, clubYear),
     listClubEvents(organizationId),
     access.capabilities.submitReports ? getClubReportYear(organizationId, clubYear) : Promise.resolve(null),
     allMyClubsLink(access.actor),
+    // Only for roles that already see the roster's background-check column (#479).
+    access.capabilities.seeBirthDates ? clubComplianceReminderCounts(organizationId, clubYear) : Promise.resolve(null),
   ]);
   const active = members.filter((member) => member.status === "ACTIVE");
   const youth = active.filter((member) => member.attendeeType !== "STAFF" && member.attendeeType !== "ADULT");
@@ -92,6 +96,12 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
       href: `${base}/events/${event.id}`,
       action: event.draft ? "Continue" : "Register",
     });
+  }
+  // Flags only, never blocks registration (#405, #479).
+  if (compliance) {
+    for (const reminder of complianceReminders(compliance, `${base}/roster`)) {
+      steps.push({ key: reminder.key, text: reminder.text, href: reminder.href, action: "Open roster" });
+    }
   }
 
   return (

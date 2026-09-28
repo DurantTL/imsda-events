@@ -36,6 +36,7 @@ import {
   backgroundCheckState,
   backgroundFlagsCsv,
   clubComplianceState,
+  complianceReminders,
   detectBackgroundCsvFormat,
   isClearStatus,
   matchableName,
@@ -49,6 +50,7 @@ import {
   applyRosterBackgroundImport,
   applySterlingImport,
   backgroundCheckSummary,
+  clubComplianceReminderCounts,
   clubPortalComplianceStatuses,
   clubRosterComplianceStatuses,
   listEventBackgroundFlags,
@@ -711,6 +713,8 @@ describe("club page compliance (#427)", () => {
     // "2 adults not in compliance · 1 expiring soon".
     expect(result.notInCompliance).toBe(2);
     expect(result.expiringSoon).toBe(1);
+    // The home-page "missing" reminder (#479) counts No record, unlike the roster's own inline notice above.
+    expect(result.missing).toBe(1);
   });
 
   it("never includes the note unless the caller is allowed to see it", async () => {
@@ -739,5 +743,42 @@ describe("club page compliance (#427)", () => {
         "member-1": { state: "FLAGGED", note: null },
       });
     }
+  });
+});
+
+describe("Club home and club overview compliance reminders (#479)", () => {
+  it("returns missing, not-in-compliance, and expiring-soon counts, never the per-member statuses or a note", async () => {
+    mocks.rosterFindMany.mockResolvedValue([
+      { id: "member-clear", person: { backgroundCheck: { complianceStatus: "CLEAR", expiresOn: null, issuesNote: null } } },
+      { id: "member-soon", person: { backgroundCheck: { complianceStatus: "FLAGGED", expiresOn: null, issuesNote: "Training expires 2026-11-01" } } },
+      { id: "member-not-compliant", person: { backgroundCheck: { complianceStatus: "NOT_COMPLIANT", expiresOn: null, issuesNote: null } } },
+      { id: "member-expired", person: { backgroundCheck: { complianceStatus: null, expiresOn: "2020-01-01", issuesNote: null } } },
+      { id: "member-none", person: { backgroundCheck: null } },
+    ]);
+
+    const counts = await clubComplianceReminderCounts("org-1", "2026");
+    expect(counts).toEqual({ notInCompliance: 2, expiringSoon: 1, missing: 1 });
+    expect(JSON.stringify(counts)).not.toContain("Training expires");
+    expect(JSON.stringify(counts)).not.toContain("member-");
+  });
+
+  it("counts nothing outstanding for a fully-current roster", async () => {
+    mocks.rosterFindMany.mockResolvedValue([
+      { id: "member-1", person: { backgroundCheck: { complianceStatus: "CLEAR", expiresOn: null, issuesNote: null } } },
+    ]);
+    await expect(clubComplianceReminderCounts("org-1", "2026")).resolves.toEqual({ notInCompliance: 0, expiringSoon: 0, missing: 0 });
+  });
+
+  it("turns counts into reminder lines with a filtered-roster link each, skipping any count that's zero", () => {
+    const items = complianceReminders({ missing: 3, notInCompliance: 2, expiringSoon: 1 }, "/account/clubs/club-1/roster");
+    expect(items).toEqual([
+      { key: "background-check-missing", text: "3 adults missing a current background check.", href: "/account/clubs/club-1/roster?compliance=missing" },
+      { key: "background-check-not-compliant", text: "2 background checks expired or not in compliance.", href: "/account/clubs/club-1/roster?compliance=expired" },
+      { key: "background-check-expiring", text: "1 background check expires within 60 days.", href: "/account/clubs/club-1/roster?compliance=expiring" },
+    ]);
+  });
+
+  it("shows nothing when every count is zero", () => {
+    expect(complianceReminders({ missing: 0, notInCompliance: 0, expiringSoon: 0 }, "/account/clubs/club-1/roster")).toEqual([]);
   });
 });
