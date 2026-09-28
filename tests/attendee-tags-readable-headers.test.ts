@@ -74,7 +74,7 @@ describe("attendee configuration: readable table headers and where-this-shows-up
       eventId: "event_1", eventName: "Fall Retreat", initialTypes: [attendeeType], initialClassifications: [classification],
     }));
     expect(markup.toLowerCase()).not.toContain("orthogonal");
-    expect(markup).toContain("Categories (an attendee can have several)");
+    expect(markup).toContain("an attendee can have several of each");
   });
 });
 

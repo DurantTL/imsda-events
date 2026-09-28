@@ -7330,7 +7330,7 @@ select:focus-visible {
     content: attr(data-label); flex: 0 0 auto; color: var(--muted); font-weight: 700;
     font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em;
   }
-  .editable-settings-table td[data-label] input,
+  .editable-settings-table td[data-label] input:not([type="color"]),
   .editable-settings-table td[data-label] .form-grid { flex: 1 1 auto; min-width: 0; }
 }
 @media print {
@@ -7364,3 +7364,6 @@ select:focus-visible {
 .club-assignments-block { margin-top: 16px; }
 .club-assignments-block h3 { margin: 0; font-size: 0.9rem; }
 .club-assignments-block .public-manage-club-list { margin-top: 10px; }
+
+/* #474: rows keep their Save/Deactivate buttons without the form-actions rule line. */
+.editable-settings-table .form-actions { border-top: 0; padding-top: 0; }
