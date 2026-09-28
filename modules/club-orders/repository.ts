@@ -289,6 +289,81 @@ export async function markNeedsAwarded(organizationId: string, needIds: readonly
   });
 }
 
+export type OrderBatchSummary = {
+  id: string;
+  status: "ORDERED" | "RECEIVED";
+  createdAt: string;
+  receivedAt: string | null;
+  itemCount: number;
+  totalQuantity: number;
+  lines: Array<{ itemId: string; name: string; catalogNumber: string | null; neededCount: number; extraCount: number }>;
+};
+
+/** Every order this club has placed, most recent first (#487): the order screen's history and "Mark received". */
+export async function listOrderBatches(organizationId: string): Promise<OrderBatchSummary[]> {
+  const batches = await getPrisma().clubSupplyOrderBatch.findMany({
+    where: { organizationId },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true, status: true, createdAt: true, receivedAt: true,
+      lines: { select: { itemId: true, neededCount: true, extraCount: true, item: { select: { name: true, catalogNumber: true } } } },
+    },
+  });
+  return batches.map((batch) => ({
+    id: batch.id,
+    status: batch.status,
+    createdAt: batch.createdAt.toISOString(),
+    receivedAt: batch.receivedAt?.toISOString() ?? null,
+    itemCount: batch.lines.length,
+    totalQuantity: batch.lines.reduce((sum, line) => sum + line.neededCount + line.extraCount, 0),
+    lines: batch.lines.map((line) => ({
+      itemId: line.itemId, name: line.item.name, catalogNumber: line.item.catalogNumber,
+      neededCount: line.neededCount, extraCount: line.extraCount,
+    })),
+  }));
+}
+
+export type AwardableNeed = { needId: string; itemId: string; itemName: string; firstName: string; lastName: string };
+
+/**
+ * Received needs, ready to be handed out (#487): one row per person per item,
+ * for the "select members or needs, mark awarded" screen. Only names and the
+ * item — nothing else about the person ever reaches this list.
+ */
+export async function listAwardableNeeds(organizationId: string): Promise<AwardableNeed[]> {
+  const needs = await getPrisma().clubOrderNeed.findMany({
+    where: { organizationId, status: "RECEIVED", itemId: { not: null } },
+    select: { id: true, personId: true, itemId: true, item: { select: { name: true } } },
+  });
+  if (needs.length === 0) return [];
+  const people = await getPrisma().person.findMany({
+    where: { id: { in: [...new Set(needs.map((need) => need.personId))] } },
+    select: { id: true, firstName: true, lastName: true },
+  });
+  const byId = new Map(people.map((person) => [person.id, person]));
+  return needs
+    .map((need) => {
+      const person = byId.get(need.personId);
+      return { needId: need.id, itemId: need.itemId!, itemName: need.item!.name, firstName: person?.firstName ?? "", lastName: person?.lastName ?? "" };
+    })
+    .sort((a, b) => a.itemName.localeCompare(b.itemName) || a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName));
+}
+
+/**
+ * Everything the order screen shows at once (#487): pending needs, past
+ * orders, and who's waiting for an item that's already arrived. Callers sync
+ * each source's needs (`modules/honors/order-source.ts` today) before calling
+ * this, so it always reflects completions recorded since the last visit.
+ */
+export async function loadOrderWorkspace(organizationId: string) {
+  const [{ lines, unmatched }, batches, awardable] = await Promise.all([
+    listOrderList(organizationId),
+    listOrderBatches(organizationId),
+    listAwardableNeeds(organizationId),
+  ]);
+  return { lines, unmatched, batches, awardable };
+}
+
 /**
  * The per-member pick list (#487): names and honors only, for needs that have
  * an order placed against them (ORDERED or RECEIVED, not yet AWARDED).

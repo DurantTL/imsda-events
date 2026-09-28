@@ -1,7 +1,7 @@
 import { withRequestContext } from "@/lib/request-context";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { clubOrderApiError } from "@/modules/club-orders/api-errors";
-import { createOrderBatch, listOrderList } from "@/modules/club-orders/repository";
+import { createOrderBatch, loadOrderWorkspace } from "@/modules/club-orders/repository";
 import { clubOrderBatchInputSchema } from "@/modules/club-orders/schemas";
 import { requireClubSupplyAccess, requireClubSupplyEditAccess } from "@/modules/club-supplies/access";
 import { syncHonorOrderNeeds } from "@/modules/honors/order-source";
@@ -20,8 +20,7 @@ async function getHandler(_request: Request, context: RouteContext) {
     const { organizationId } = await context.params;
     const access = await requireClubSupplyAccess(organizationId);
     await syncHonorOrderNeeds(organizationId);
-    const { lines, unmatched } = await listOrderList(organizationId);
-    return Response.json({ lines, unmatched, canEdit: access.mode === "EDIT" });
+    return Response.json({ ...(await loadOrderWorkspace(organizationId)), canEdit: access.mode === "EDIT" });
   } catch (error) {
     return clubOrderApiError(error, "Loading the order list");
   }

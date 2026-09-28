@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   findSettings: vi.fn(),
   findAreaGrant: vi.fn(),
   findOrganization: vi.fn(),
-  listOrderList: vi.fn(),
+  loadOrderWorkspace: vi.fn(),
   createOrderBatch: vi.fn(),
   markOrderBatchReceived: vi.fn(),
   markNeedsAwarded: vi.fn(),
@@ -43,7 +43,7 @@ vi.mock("@/modules/club-orders/repository", async () => {
   const actual = await vi.importActual<typeof import("@/modules/club-orders/repository")>("@/modules/club-orders/repository");
   return {
     ...actual,
-    listOrderList: mocks.listOrderList,
+    loadOrderWorkspace: mocks.loadOrderWorkspace,
     createOrderBatch: mocks.createOrderBatch,
     markOrderBatchReceived: mocks.markOrderBatchReceived,
     markNeedsAwarded: mocks.markNeedsAwarded,
@@ -77,7 +77,7 @@ beforeEach(() => {
   mocks.findAreaGrant.mockResolvedValue(null);
   mocks.findOrganization.mockResolvedValue({ type: "CLUB", isActive: true });
   mocks.syncHonorOrderNeeds.mockResolvedValue({ count: 0 });
-  mocks.listOrderList.mockResolvedValue({ lines: [], unmatched: [] });
+  mocks.loadOrderWorkspace.mockResolvedValue({ lines: [], unmatched: [], batches: [], awardable: [] });
   mocks.createOrderBatch.mockResolvedValue({ batchId: "batch-1", createdAt: "2026-09-28T00:00:00.000Z", lines: [] });
   mocks.markOrderBatchReceived.mockResolvedValue({ id: "batch-1", status: "RECEIVED", createdAt: "x", receivedAt: "y", lines: [] });
   mocks.markNeedsAwarded.mockResolvedValue({ awarded: 1 });

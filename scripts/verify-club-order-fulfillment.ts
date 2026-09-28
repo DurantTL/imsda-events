@@ -76,6 +76,8 @@ async function main() {
   const {
     createOrderBatch,
     getOrderBatch,
+    listAwardableNeeds,
+    listOrderBatches,
     listOrderList,
     listPickList,
     markNeedsAwarded,
@@ -169,6 +171,12 @@ async function main() {
   }
   assert(pickList.some((entry) => entry.firstName === "Alex" && entry.itemName === "Camping Skills"), "Alex should be on the pick list for Camping Skills");
   console.log("ok  pick list: names and the item only, no birth date, contact, guardian, or medical field");
+
+  const awardable = await listAwardableNeeds(clubId);
+  assert(awardable.length === 2 && awardable.every((row) => Object.keys(row).sort().join() === "firstName,itemId,itemName,lastName,needId"), "awardable needs carry names, the item, and ids only");
+  const history = await listOrderBatches(clubId);
+  assert(history.length === 1 && history[0].status === "RECEIVED" && history[0].totalQuantity === 4, "order history shows the received order (3 + 1)");
+  console.log("ok  order history and awardable list: names and items only");
 
   // 8. Awarding decrements stock by one per need, and never below zero.
   const receivedNeeds = await prisma.clubOrderNeed.findMany({ where: { organizationId: clubId, status: "RECEIVED" }, select: { id: true, itemId: true } });

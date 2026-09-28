@@ -1,0 +1,23 @@
+/* Club honor orders (#487). Built to hold at 390px: 44px targets, 16px inputs, no sideways scroll. */
+.block { display: grid; gap: 10px; margin-top: 16px; }
+.block h3 { margin: 0; color: var(--imsda-navy); font-size: .86rem; }
+.list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; border: 1px solid var(--line); border-radius: 12px; padding: 9px 11px; }
+.text { display: grid; flex: 1 1 200px; gap: 2px; min-width: 0; }
+.text strong { color: var(--imsda-navy); font-size: .76rem; overflow-wrap: anywhere; }
+.text small { color: var(--muted); font-size: .63rem; }
+.numbers { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); flex: 1 1 260px; gap: 6px; margin: 0; }
+.numbers div { display: grid; gap: 2px; min-width: 0; }
+.numbers dt { color: var(--muted); font-size: .58rem; }
+.numbers dd { display: flex; align-items: center; min-height: 44px; margin: 0; font-size: .8rem; }
+.number { width: 100%; min-width: 0; min-height: 44px; border: 1px solid #cbdbe2; border-radius: 8px; background: #fff; padding: 8px; font-size: 16px; text-align: right; }
+.flag { display: flex; align-items: flex-start; gap: 6px; margin: 0; border: 1px solid var(--coral); border-radius: 10px; padding: 8px 10px; color: var(--coral); font-size: .66rem; line-height: 1.5; }
+.flag svg { flex: 0 0 auto; margin-top: 3px; }
+.flagInline { display: inline-flex; align-items: center; gap: 4px; color: var(--coral); }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.actions :global(.secondary-button), .actions :global(.primary-button), .groupHead :global(.text-button) { min-height: 44px; }
+.group { display: grid; gap: 6px; border: 1px solid var(--line); border-radius: 12px; padding: 9px 11px; }
+.groupHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.people { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.check { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: .74rem; }
+.check input { width: 22px; height: 22px; flex: 0 0 auto; }
