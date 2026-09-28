@@ -1,6 +1,26 @@
 import { parseRosterBirthDateInput } from "@/modules/club-rosters/domain";
 import { CsvImportError, parseCsvMatrix } from "@/modules/imports/csv-parser";
 import { toCsv } from "@/modules/reporting/csv";
+import {
+  backgroundFlagLabels,
+  COMPLIANCE_FILTER_VALUES,
+  complianceFilterLabels,
+  complianceFilterState,
+  type BackgroundCheckState,
+  type ClubComplianceState,
+  type ComplianceFilterValue,
+} from "@/modules/background-checks/display";
+
+// Re-exported so server code keeps importing everything from this module.
+export {
+  backgroundFlagLabels,
+  COMPLIANCE_FILTER_VALUES,
+  complianceFilterLabels,
+  complianceFilterState,
+  type BackgroundCheckState,
+  type ClubComplianceState,
+  type ComplianceFilterValue,
+};
 
 /**
  * Sterling Volunteers background checks (#388). Pure: reading the CSV a system
@@ -169,8 +189,6 @@ export function parseSterlingCsv(text: string): SterlingCsvRow[] {
 export function checkIsCurrent(check: { expiresOn: string | null } | null | undefined, onDate: string) {
   return Boolean(check?.expiresOn && check.expiresOn >= onDate);
 }
-
-export type BackgroundCheckState = "CURRENT" | "EXPIRED" | "MISSING" | "NOT_COMPLIANT";
 
 export type BackgroundComplianceStatus = "CLEAR" | "FLAGGED" | "NOT_COMPLIANT";
 
@@ -375,8 +393,6 @@ export function matchesSite(site: string, candidateSites: Iterable<string>) {
   return false;
 }
 
-export type ClubComplianceState = "CLEAR" | "FLAGGED" | "NOT_COMPLIANT" | "NO_RECORD";
-
 /**
  * How a club page shows one person (#427). A roster import's mark is used
  * when there is one: Clear, Expiring soon ("!", `FLAGGED`), or Not in
@@ -407,24 +423,6 @@ export function clubComplianceState(check: StoredCheck | null | undefined, today
  * already on file.
  */
 export type ComplianceReminderCounts = { missing: number; notInCompliance: number; expiringSoon: number };
-
-/** The `?compliance=` roster filter value each reminder links to. */
-export const COMPLIANCE_FILTER_VALUES = ["missing", "expired", "expiring"] as const;
-export type ComplianceFilterValue = (typeof COMPLIANCE_FILTER_VALUES)[number];
-
-/** Which roster state a `?compliance=` filter value narrows the roster to. */
-export const complianceFilterState: Record<ComplianceFilterValue, ClubComplianceState> = {
-  missing: "NO_RECORD",
-  expired: "NOT_COMPLIANT",
-  expiring: "FLAGGED",
-};
-
-/** How the roster's active filter reads back to whoever followed the link. */
-export const complianceFilterLabels: Record<ComplianceFilterValue, string> = {
-  missing: "missing a current background check",
-  expired: "expired or not in compliance",
-  expiring: "expiring within 60 days",
-};
 
 /**
  * Never blocks registration (#405): flags only, as counts with a link to the
@@ -599,13 +597,6 @@ export function rosterRowToListRow(row: RosterBackgroundCsvRow): BackgroundCheck
     issuesNote: row.issuesNote,
   };
 }
-
-/** How a flag reads on the list and in its CSV. */
-export const backgroundFlagLabels = {
-  MISSING: "None on file",
-  EXPIRED: "Expired",
-  NOT_COMPLIANT: "Not in compliance",
-} as const satisfies Record<Exclude<BackgroundCheckState, "CURRENT">, string>;
 
 /** The "Background check needed" list as CSV, for staff and event managers. */
 export function backgroundFlagsCsv(people: Array<{

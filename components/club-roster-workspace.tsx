@@ -6,7 +6,7 @@ import { Award, Eye, Pencil, Plus, Power, Save, Trash2, UsersRound, X } from "lu
 import { BirthDateField } from "@/components/birth-date-field";
 import { RosterCsvImport } from "@/components/roster-csv-import";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
-import { complianceFilterLabels, complianceFilterState, type ComplianceFilterValue } from "@/modules/background-checks/domain";
+import { complianceFilterLabels, complianceFilterState, type ComplianceFilterValue } from "@/modules/background-checks/display";
 import {
   clubClassLevelLabels,
   clubRosterAttendeeTypeLabels,
