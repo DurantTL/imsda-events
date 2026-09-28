@@ -70,6 +70,30 @@ export function resolveLoginDestination(input: LoginRoutingInput): string {
   return EVENT_PICKER_PATH;
 }
 
+export const STAFF_LOGIN_PATH = "/login";
+/**
+ * Request header `proxy.ts` sets to the visited path plus query, so server
+ * components (which cannot see the request URL) can build a `?next=` deep
+ * link. Never trusted as-is: `staffLoginPathFor` validates it.
+ */
+export const REQUEST_TARGET_HEADER = "x-imsda-request-target";
+
+/**
+ * The staff sign-in URL that returns to `target` afterwards (#108). `target`
+ * must pass `safeReturnTo` (single-slash relative path, no scheme, no
+ * backslash, no API route); anything else, including a missing value,
+ * yields a plain `/login`, so arbitrary input is never reflected.
+ */
+export function staffLoginPathFor(target: string | null | undefined): string {
+  const safe = safeReturnTo(target, "");
+  if (!safe) return STAFF_LOGIN_PATH;
+  // Never bounce back into the sign-in flow itself.
+  if (safe === STAFF_LOGIN_PATH || safe.startsWith(`${STAFF_LOGIN_PATH}?`) || safe.startsWith(`${STAFF_LOGIN_PATH}/`)) {
+    return STAFF_LOGIN_PATH;
+  }
+  return `${STAFF_LOGIN_PATH}?next=${encodeURIComponent(safe)}`;
+}
+
 function eventWorkspacePath(eventId: string): string {
   return `/overview?event=${encodeURIComponent(eventId)}`;
 }

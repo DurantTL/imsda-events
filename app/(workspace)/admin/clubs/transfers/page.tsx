@@ -1,3 +1,4 @@
+import { staffLoginRedirectPath } from "@/modules/access/login-redirect";
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { BackLink } from "@/components/back-link";
@@ -11,7 +12,7 @@ export const dynamic = "force-dynamic";
 /** Conference staff (#489): the transfer queue and the registration-move approval list. System administrators only. */
 export default async function ClubTransfersAdminPage() {
   const { user } = await getCurrentSession();
-  if (!user) redirect("/login");
+  if (!user) redirect(await staffLoginRedirectPath());
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
   return (
     <>

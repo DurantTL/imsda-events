@@ -1,3 +1,4 @@
+import { staffLoginRedirectPath } from "@/modules/access/login-redirect";
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { BrandMark } from "@/components/brand-mark";
@@ -38,7 +39,7 @@ export default async function SelectEventPage({
   const unavailable = unavailableParam === "1";
 
   const session = await getCurrentSession();
-  if (!session.user) redirect("/login");
+  if (!session.user) redirect(await staffLoginRedirectPath());
   if (session.user.globalRole === "SYSTEM_ADMIN") redirect("/admin");
 
   const events = await listEventsForUser(session.user.id, false);

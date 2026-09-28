@@ -1,3 +1,4 @@
+import { staffLoginRedirectPath } from "@/modules/access/login-redirect";
 import "server-only";
 
 import { redirect } from "next/navigation";
@@ -63,7 +64,7 @@ export async function resolveEventContext(requestedEventId?: string) {
 
 async function loadSignedInEvents() {
   const user = (await getCurrentSession()).user;
-  if (!user) redirect("/login");
+  if (!user) redirect(await staffLoginRedirectPath());
   const events = await listEventsForUser(user.id, user.globalRole === "SYSTEM_ADMIN");
 
   if (events.length === 0) {
