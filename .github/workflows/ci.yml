@@ -64,3 +64,8 @@ jobs:
 
       # Real-database round trip of the full club supply reference file (#531).
       - run: npm run test:club-supplies
+
+      # Real-database round trip of club order fulfillment: idempotent need
+      # syncing, order/stock math, receiving, awarding never below zero, and
+      # an idempotent Honors Weekend write-back (#487).
+      - run: npm run test:club-orders
