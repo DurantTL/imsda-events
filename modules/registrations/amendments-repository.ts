@@ -3,6 +3,7 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
 import { isSeminarPreferenceField } from "@/modules/attendee-accounts/registration-answer-policy";
 import { enqueueRegistrationUpdatedMessage } from "@/modules/communications/transactional-messages";
 import {
@@ -25,10 +26,11 @@ import {
   type PromoCodeEvaluation,
 } from "@/modules/promo-codes/domain";
 import { adjustmentTotalCents } from "@/modules/registrations/adjustments";
-import { issuesOnChangedAnswers, splitUnconfiguredAnswers } from "@/modules/registrations/amendment-answers";
+import { issuesOnChangedAnswers, sameAnswer, splitUnconfiguredAnswers } from "@/modules/registrations/amendment-answers";
 import { registrationOperationFingerprint } from "@/modules/registrations/operations-domain";
 import { getRegistrationByIdWithClient } from "@/modules/registrations/repository";
-import { withAttendeeTypeOptions, attendeeTypeSelector } from "@/modules/attendee-types/form-options";
+import { attendeeTypeSelector } from "@/modules/attendee-types/form-options";
+import { hydrateFormOptions } from "@/modules/forms/form-options-repository";
 import type { RegistrationAmendmentInput } from "@/modules/registrations/schemas";
 
 /**
@@ -105,6 +107,20 @@ export type AmendmentServerOptions = {
    * is refused.
    */
   requestFingerprint?: string;
+  /**
+   * Registration answers the server owns outright, computed from the
+   * registration's own form definition after its options are hydrated and
+   * laid over whatever the caller sent, before anything is validated. The
+   * club director path uses it to keep the club directory field locked to
+   * the director's own club on amendment, as on submit (#482). Called with
+   * the amendment's own transaction, so what it reads (the club's current
+   * name) is the same snapshot the amendment is validated and written in.
+   * Keys it changes are recorded as server-owned, not as the actor's edits.
+   */
+  ownedRegistrationResponses?: (
+    definition: RegistrationFormDefinition,
+    tx: Prisma.TransactionClient,
+  ) => Promise<Record<string, unknown>>;
 };
 
 function allowedProfileMetadata(metadata: AmendmentProfileMetadata | undefined) {
@@ -797,10 +813,33 @@ async function prepareAmendment(
     where: { eventId },
     orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
   });
-  const definition = withAttendeeTypeOptions(
+  const currentRegistrationResponses = storedRegistrationResponses(registration);
+  // Attendee types and the live club/church directory (#482), read through
+  // this transaction. The registration's own current club or church stays a
+  // valid choice even if it has left the directory since, so an unchanged
+  // historical answer keeps validating (like a deactivated attendee type below).
+  const definition = await hydrateFormOptions(
     registrationFormDefinitionSchema.parse(registration.publicFormSubmission.formVersion.definition),
-    configuredTypes.filter((type) => type.isActive),
+    {
+      attendeeTypes: configuredTypes.filter((type) => type.isActive),
+      client: tx,
+      retainedResponses: currentRegistrationResponses,
+    },
   );
+  // Answers the server set itself (e.g. the club renamed in the directory
+  // since this registration was submitted), kept apart from the actor's own
+  // changes in the audit record.
+  const serverOwnedChangedKeys: string[] = [];
+  if (serverOptions.ownedRegistrationResponses) {
+    const owned = await serverOptions.ownedRegistrationResponses(definition, tx);
+    for (const [key, value] of Object.entries(owned)) {
+      if (!sameAnswer(value, currentRegistrationResponses[key])) serverOwnedChangedKeys.push(key);
+    }
+    input = {
+      ...input,
+      responses: { ...input.responses, ...owned },
+    };
+  }
   assertAmendmentAttendeeTypeSelections(
     definition,
     input.attendees,
@@ -816,7 +855,6 @@ async function prepareAmendment(
       field.optionLabels = { ...(field.optionLabels ?? {}), [code]: current.attendeeType };
     }
   }
-  const currentRegistrationResponses = storedRegistrationResponses(registration);
   assertProtectedFieldsUnchanged(
     definition,
     currentRegistrationResponses,
@@ -1087,6 +1125,7 @@ async function prepareAmendment(
     seminarPreferencesChanged,
     configuredTypes,
     rosterRenamedCount,
+    serverOwnedChangedKeys: serverOwnedChangedKeys.sort(),
   };
 }
 
@@ -1182,7 +1221,7 @@ export async function amendRegistration(
   const prisma = getPrisma();
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
-      return await prisma.$transaction(async (tx) => {
+      const amended = await prisma.$transaction(async (tx) => {
         const existing = await tx.registrationOperation.findUnique({
           where: {
             eventId_clientRequestId: {
@@ -1518,7 +1557,7 @@ export async function amendRegistration(
             entityType: "RegistrationOperation",
             entityId: amendmentId,
             correlationId: input.clientRequestId,
-            summary: `Amended registration ${prepared.registration.confirmationCode}: ${prepared.registration.attendees.length} to ${prepared.prepared.attendees.length} attendees and ${cents(prepared.registration.totalAmount) / 100} to ${prepared.finalTotalCents / 100}.`,
+            summary: `Amended registration ${prepared.registration.confirmationCode}: ${prepared.registration.attendees.length} to ${prepared.prepared.attendees.length} attendees and ${cents(prepared.registration.totalAmount) / 100} to ${prepared.finalTotalCents / 100}.${prepared.serverOwnedChangedKeys.length > 0 ? ` Also updated by the system, not the ${actor.kind === "STAFF" ? "staff member" : "director"}: ${prepared.serverOwnedChangedKeys.join(", ")} (to match the live directory).` : ""}`,
             metadata: {
               operationId: amendmentId,
               clientRequestId: input.clientRequestId,
@@ -1538,11 +1577,18 @@ export async function amendRegistration(
               // How many kept people took a corrected club roster name (a
               // count only; names stay out of audit metadata).
               rosterNameUpdatedCount: prepared.rosterRenamedCount,
+              // Registration answers the server set (the locked club, when
+              // renamed in the directory since), not the actor's edits (#482).
+              serverOwnedChangedFields: prepared.serverOwnedChangedKeys,
             },
           },
         });
         return response;
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      // #527: a new or renamed attendee on the background-check list is
+      // matched after commit; best effort, never fails the amendment.
+      await refreshBackgroundCheckMatchesForRegistrations([registrationId]);
+      return amended;
     } catch (error) {
       if (!retryable(error)) throw error;
     }

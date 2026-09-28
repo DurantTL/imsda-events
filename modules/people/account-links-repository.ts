@@ -2,6 +2,7 @@ import "server-only";
 
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { refreshBackgroundCheckMatchesSafely } from "@/modules/background-checks/refresh-after-write";
 import {
   attendeeAccountPersonLinkInputSchema,
   userPersonLinkInputSchema,
@@ -109,6 +110,8 @@ export async function linkAttendeeAccountToPerson(accountId: string, rawInput: u
         evidenceReference: input.evidenceReference,
       },
     });
+    // #527: the account's email is matching evidence for the background-check list; best effort.
+    await refreshBackgroundCheckMatchesSafely([input.personId]);
     return serializeAttendeeAccountLink(created);
   } catch (error) {
     return conflict(error);

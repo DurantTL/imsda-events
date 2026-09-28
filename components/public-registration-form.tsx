@@ -178,6 +178,13 @@ export type PublicRegistrationFormProps = {
   club?: {
     initialAttendees: RosterAttendee[];
     lockedAttendeeFieldKeys: string[];
+    /**
+     * Registration-scope fields locked to the director's own club (#482):
+     * the "Clubs directory" option-source field, shown read-only and
+     * enforced again server-side regardless of what the client renders. The
+     * church is prefilled but stays editable, so it is never listed here.
+     */
+    lockedRegistrationFieldKeys?: string[];
     submitUrl: string;
     onDraftChange?: (draft: { responses: FormResponses; attendees: RosterAttendee[] }) => void;
     onSubmitted?: () => void;
@@ -419,6 +426,10 @@ export function PublicRegistrationForm({
   const lockedAttendeeFieldKeys = useMemo(
     () => new Set(club?.lockedAttendeeFieldKeys ?? []),
     [club?.lockedAttendeeFieldKeys],
+  );
+  const lockedRegistrationFieldKeys = useMemo(
+    () => new Set(club?.lockedRegistrationFieldKeys ?? []),
+    [club?.lockedRegistrationFieldKeys],
   );
   const onClubDraftChange = club?.onDraftChange;
   useEffect(() => {
@@ -1474,6 +1485,17 @@ export function PublicRegistrationForm({
     }
 
     if (field.type === "SELECT") {
+      const registrationLocked = context.attendeeIndex === null && lockedRegistrationFieldKeys.has(field.key);
+      if (registrationLocked) {
+        const lockedValue = typeof context.values[field.key] === "string" ? context.values[field.key] as string : "";
+        return (
+          <div className={wrapperClass} key={field.id}>
+            <label htmlFor={id}>{fieldLabel(field, context)}</label>
+            <input id={id} value={optionLabel(lockedValue) || lockedValue} type="text" readOnly disabled aria-describedby={description} />
+            {fieldSupport(field, context)}
+          </div>
+        );
+      }
       return (
         <div className={wrapperClass} key={field.id}>
           <label htmlFor={id}>{fieldLabel(field, context)}</label>
