@@ -29,8 +29,8 @@ import { POST } from "@/app/api/admin/honors/import/route";
 import { honorCsvTemplate, parseHonorCsv, planHonorImport } from "@/modules/honors/catalog-csv";
 
 const existing = [
-  { id: "h-1", code: "AC-001", name: "Knot Tying", description: "", isActive: true },
-  { id: "h-2", code: "HM-010", name: "Camping Skills I", description: "Basic camping", isActive: true },
+  { id: "h-1", code: "AC-001", name: "Knot Tying", description: "", isActive: true, catalogNumber: null, category: null },
+  { id: "h-2", code: "HM-010", name: "Camping Skills I", description: "Basic camping", isActive: true, catalogNumber: null, category: null },
 ];
 const csv = [
   "Code,Name,Description,Active",
@@ -57,7 +57,40 @@ beforeEach(() => {
 
 describe("honor catalog CSV (#385)", () => {
   it("offers a template with the catalog's columns", () => {
-    expect(honorCsvTemplate().trim()).toBe('"Code","Name","Description","Active"');
+    expect(honorCsvTemplate().trim()).toBe('"Code","Name","Description","Active","Catalog Number","Category"');
+  });
+
+  it("accepts optional Catalog Number and Category columns (#531), keeping leading zeros", () => {
+    const rows = parseHonorCsv([
+      "Code,Name,Catalog Number,Category",
+      "AC-001,Knot Tying,005850,Outdoor Industries",
+      "HM-010,Camping Skills I,,",
+      "NA-020,Birds,005180,Reacreation",
+      "NA-021,Bats,005170,Underwater Basket Weaving",
+      "NA-022,Bears,00 51?,Nature",
+    ].join("\n"));
+    expect(rows[4].catalogNumber).toBeUndefined();
+    expect(rows[4].problems[0]).toMatch(/letters, digits, or dashes/);
+    expect(rows[0]).toMatchObject({ catalogNumber: "005850", category: "OUTDOOR_INDUSTRIES", problems: [] });
+    expect(rows[1].catalogNumber).toBeUndefined();
+    expect(rows[1].category).toBeUndefined();
+    expect(rows[2]).toMatchObject({ category: "RECREATION", problems: [] });
+    expect(rows[3].problems[0]).toMatch(/isn't one of the honor catalog's categories/);
+
+    const plan = planHonorImport(rows, existing);
+    expect(plan.map((step) => step.action)).toEqual(["UPDATE", "SKIP", "ADD", "SKIP", "SKIP"]);
+  });
+
+  it("saves the catalog number and category on add and update", async () => {
+    const withCatalog = "Code,Name,Catalog Number,Category\nAC-001,Knot Tying,005850,Outdoor Industries\nNA-020,Birds,005180,Nature";
+    expect((await POST(request({ csv: withCatalog, confirm: true }))).status).toBe(200);
+    expect(mocks.createMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ code: "NA-020", catalogNumber: "005180", category: "NATURE" })],
+    });
+    expect(mocks.update).toHaveBeenCalledWith({
+      where: { id: "h-1" },
+      data: expect.objectContaining({ catalogNumber: "005850", category: "OUTDOOR_INDUSTRIES" }),
+    });
   });
 
   it("matches by code, updates only what changed, and never guesses", () => {

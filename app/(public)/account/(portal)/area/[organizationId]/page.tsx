@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { Eye } from "lucide-react";
+import Link from "next/link";
+import { Eye, Package } from "lucide-react";
 import { BackLink } from "@/components/back-link";
 import { ClubOverview } from "@/components/club-overview";
 import { getPrisma } from "@/lib/prisma";
@@ -30,6 +31,9 @@ export default async function AreaClubPage({ params }: { params: Promise<{ organ
       </section>
       <div className="account-page-body club-roster-stack">
         <BackLink href="/account/clubs">All clubs</BackLink>
+        <Link className="secondary-button" href={`/account/area/${organizationId}/supplies`}>
+          <Package aria-hidden="true" size={14} /> Club supplies
+        </Link>
         <p className="inline-notice" role="status">
           <Eye aria-hidden="true" size={14} /> View only. You see what the club&apos;s director sees, with ages instead of
           birth dates. The club makes changes.

@@ -69,6 +69,8 @@ const honorSelect = {
   name: true,
   description: true,
   isActive: true,
+  catalogNumber: true,
+  category: true,
   updatedAt: true,
   _count: { select: { offerings: true } },
 } satisfies Prisma.HonorSelect;
@@ -80,6 +82,8 @@ function serializeHonor(honor: Prisma.HonorGetPayload<{ select: typeof honorSele
     name: honor.name,
     description: honor.description,
     isActive: honor.isActive,
+    catalogNumber: honor.catalogNumber,
+    category: honor.category,
     offeringCount: honor._count.offerings,
     updatedAt: honor.updatedAt.toISOString(),
   };
@@ -440,6 +444,8 @@ export async function applyHonorImport(steps: readonly HonorImportStep[], actorU
             normalizedName: normalizeHonorText(row.name),
             description: row.description ?? "",
             isActive: row.isActive ?? true,
+            catalogNumber: row.catalogNumber ?? null,
+            category: row.category ?? null,
           })),
         });
       }
@@ -451,6 +457,8 @@ export async function applyHonorImport(steps: readonly HonorImportStep[], actorU
             normalizedName: normalizeHonorText(row.name),
             ...(row.description === undefined ? {} : { description: row.description }),
             ...(row.isActive === undefined ? {} : { isActive: row.isActive }),
+            ...(row.catalogNumber === undefined ? {} : { catalogNumber: row.catalogNumber }),
+            ...(row.category === undefined ? {} : { category: row.category }),
           },
         });
       }
