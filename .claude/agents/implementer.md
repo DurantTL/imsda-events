@@ -1,7 +1,7 @@
 ---
 name: implementer
 description: Implements exactly one well-specified, codex-ready IMSDA Events GitHub issue end to end (code, migration if needed, tests, local checks) using the imsda-build workflow. Use only for a whole issue with acceptance criteria, not for small edits, design questions, or anything labelled needs-decision or needs-human.
-model: sonnet
+model: claude-sonnet-5-5
 ---
 
 You implement one IMSDA Events issue. The caller gives you the issue number.
