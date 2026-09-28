@@ -1,0 +1,79 @@
+.frame {
+  position: relative;
+  min-width: 0;
+}
+
+.map {
+  width: 100%;
+  height: 280px;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: #eef2f4;
+  cursor: crosshair;
+}
+
+.map :global(.leaflet-container) {
+  width: 100%;
+  height: 100%;
+  font-family: inherit;
+}
+
+/* A pin drawn in CSS on the (empty) divIcon itself, not fetched as an
+   image, so nothing but the tiles reaches an external host. Larger and
+   draggable, unlike the read-only public club map's pins (#437). */
+.markerIcon {
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background: var(--imsda-purple, #4a2e83);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  cursor: grab;
+}
+
+.markerIcon:active {
+  cursor: grabbing;
+}
+
+.attribution {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  z-index: 1000;
+  margin: 0;
+  padding: 1px 6px;
+  border-top-left-radius: 6px;
+  border-bottom-right-radius: 15px;
+  background: rgba(255, 255, 255, 0.85);
+  color: #333;
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+
+.attribution a {
+  color: inherit;
+}
+
+.hint {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 700px) {
+  .map {
+    height: 240px;
+  }
+}

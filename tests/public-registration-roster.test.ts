@@ -521,3 +521,69 @@ describe("repeatable public attendee rosters", () => {
     }).success).toBe(false);
   });
 });
+
+describe("role-conditional attendee answers (#483)", () => {
+  function roleDefinition() {
+    return registrationFormDefinitionSchema.parse({
+      title: "Club roster by role",
+      description: "Fictitious club registration used by unit tests.",
+      confirmationMessage: "Received.",
+      attendeeRoster: { enabled: true, minAttendees: 1, maxAttendees: 10, attendeeLabel: "Attendee", addButtonLabel: "Add" },
+      sections: [
+        {
+          id: "registration_details",
+          title: "Registration details",
+          description: "",
+          fields: [
+            { id: "contact_name_field", key: "contact_name", label: "Primary contact name", helpText: "", type: "TEXT", scope: "REGISTRATION", required: true, options: [] },
+            { id: "contact_email_field", key: "email", label: "Primary contact email", helpText: "", type: "EMAIL", scope: "REGISTRATION", required: true, options: [] },
+          ],
+        },
+        {
+          id: "attendee_details",
+          title: "Attendee details",
+          description: "",
+          fields: [
+            { id: "attendee_name_field", key: "attendee_name", label: "Attendee name", helpText: "", type: "TEXT", scope: "ATTENDEE", required: true, options: [] },
+            {
+              id: "attendee_type_field", key: "attendee_type", label: "Role", helpText: "", type: "RADIO", scope: "ATTENDEE", required: true,
+              options: ["Pathfinder", "Staff"],
+            },
+            {
+              id: "master_guide_field", key: "master_guide_investiture", label: "Master Guide investiture?", helpText: "", type: "CHECKBOX", scope: "ATTENDEE", required: false,
+              options: [], conditional: { fieldKey: "attendee_type", operator: "EQUALS", value: "Staff" },
+            },
+          ],
+        },
+      ],
+    });
+  }
+
+  function prepare(attendeeResponses: Record<string, unknown>) {
+    return preparePublicRegistration(
+      roleDefinition(),
+      publicRegistrationInputSchema.parse({
+        versionId: "role-version-1",
+        idempotencyKey,
+        responses: { contact_name: "Roster Contact", email: "roster.contact@example.test" },
+        attendees: [{ clientId: "attendee-1", responses: attendeeResponses }],
+      }),
+      { timeZone: "America/Chicago", now: new Date("2026-08-01T12:00:00Z") },
+    );
+  }
+
+  it("keeps a role-conditional answer while the role shows that field", () => {
+    const prepared = prepare({ attendee_name: "Sam Sample", attendee_type: "Staff", master_guide_investiture: true });
+    expect(prepared.isValid).toBe(true);
+    expect(prepared.attendees[0].responses).toMatchObject({ attendee_type: "Staff", master_guide_investiture: true });
+  });
+
+  it("drops the answer once the role changes to one that hides the field", () => {
+    // Answered while Staff, then the role was switched to Pathfinder: the
+    // investiture field is hidden now, so its stale answer isn't submitted.
+    const prepared = prepare({ attendee_name: "Sam Sample", attendee_type: "Pathfinder", master_guide_investiture: true });
+    expect(prepared.isValid).toBe(true);
+    expect(prepared.attendees[0].responses).toEqual({ attendee_name: "Sam Sample", attendee_type: "Pathfinder" });
+    expect(Object.hasOwn(prepared.attendees[0].responses, "master_guide_investiture")).toBe(false);
+  });
+});

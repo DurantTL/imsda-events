@@ -89,7 +89,14 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
     return [
       ...workspace.roster.filter((person) => selectedMemberIds.includes(person.memberId)).map((person) => {
         const current = registeredByMemberId.get(person.memberId);
-        return withEdits(clubAttendeeClientId(person.memberId), current ? current.responses : person.prefillResponses, person.ownedResponses);
+        return {
+          ...withEdits(clubAttendeeClientId(person.memberId), current ? current.responses : person.prefillResponses, person.ownedResponses),
+          // Compact attendee cards (#483): a roster person's card starts
+          // collapsed, and a carried-over value that didn't match a form
+          // option is prompted for rather than left silently blank.
+          carriedFromRoster: true,
+          carryoverMismatches: person.carryoverMismatches,
+        };
       }),
       ...offRoster.filter((attendee) => keptOffRosterIds.includes(attendee.attendeeId))
         .map((attendee) => withEdits(clubExistingAttendeeClientId(attendee.attendeeId), attendee.responses)),

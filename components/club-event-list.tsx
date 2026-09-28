@@ -25,7 +25,7 @@ export function ClubEventList({ events, organizationId }: { events: ClubEventSum
       </div>
       {events.length === 0 ? (
         <p className="public-manage-empty">
-          <CalendarDays size={17} aria-hidden="true" /> No club events are open yet. They&apos;ll appear here when registration is set up.
+          <CalendarDays size={17} aria-hidden="true" /> No club events yet. Club events billed to your church appear here once the conference publishes registration. If you expected one, contact the conference office.
         </p>
       ) : (
         <ul className="public-manage-club-list">

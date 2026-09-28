@@ -1,19 +1,48 @@
 "use client";
 
-import { useState } from "react";
-import { FileText, Link2, Plus, Save, Sparkles, Trash2 } from "lucide-react";
+import { useCallback, useRef, useState } from "react";
+import { FileText, FileUp, Link2, Plus, Save, Sparkles, Trash2, X } from "lucide-react";
 import type { EventAssetRecord } from "@/modules/events/asset-repository";
 import type { EventContentSectionRecord } from "@/modules/events/content-repository";
+import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
+import {
+  localAssetImpact,
+  quoteList,
+  withoutAssetTiles,
+  type SectionDraft,
+} from "@/components/event-content-asset-tiles";
 
-type LinkDraft = { label: string; description: string; url: string | null; assetId: string | null };
-type SectionDraft = {
-  kind: "RICH_TEXT" | "RESOURCE_LINKS";
-  title: string;
-  body: string;
-  isPublished: boolean;
-  links: LinkDraft[];
+const assetTypeLabels: Record<string, string> = {
+  "application/pdf": "PDF",
+  "image/png": "PNG",
+  "image/jpeg": "JPEG",
+  "image/webp": "WebP",
 };
+
+function assetTypeLabel(contentType: string) {
+  return assetTypeLabels[contentType] ?? contentType;
+}
+
+function formatUploadDate(iso: string) {
+  return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+/** Where-it's-used, for the file list: the same information the server's
+ * delete check relies on, shown up front so staff aren't surprised by it. */
+function usageSummary(usage: EventAssetRecord["usage"]) {
+  const parts: string[] = [];
+  if (usage.publishedSectionTitles.length > 0) {
+    parts.push(`published in ${usage.publishedSectionTitles.join(", ")}`);
+  }
+  if (usage.draftSectionTitles.length > 0) {
+    parts.push(`linked from ${usage.draftSectionTitles.length === 1 ? "a draft section" : "draft sections"}`);
+  }
+  if (usage.isBadgeBackground) {
+    parts.push("badge background");
+  }
+  return parts.length > 0 ? parts.join(" · ") : "not used yet";
+}
 
 const retreatGuideStarterSections: SectionDraft[] = [
   {
@@ -76,6 +105,24 @@ export function EventContentWorkspace({
 }) {
   const [assets, setAssets] = useState(initialAssets);
   const [uploading, setUploading] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  // Entering and leaving the label's own children fires dragleave on the
+  // label too, so count enters and leaves instead of flickering (#424).
+  const dragDepth = useRef(0);
+  const [pendingDelete, setPendingDelete] = useState<EventAssetRecord | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const closeDeleteDialog = useCallback(() => {
+    setPendingDelete(null);
+    setDeleteError("");
+  }, []);
+  // Escape goes through here too: while the delete is in flight the dialog
+  // stays open, so staff always see how it turned out.
+  const dismissDeleteDialog = useCallback(() => {
+    if (deleting) return;
+    closeDeleteDialog();
+  }, [closeDeleteDialog, deleting]);
+  const deleteDialogRef = useAccessibleDialog<HTMLElement>(pendingDelete !== null, dismissDeleteDialog);
   const [saved, setSaved] = useState(() => draftsFrom(initialSections));
   const [sections, setSections] = useState(() => draftsFrom(initialSections));
   const [saving, setSaving] = useState(false);
@@ -83,6 +130,11 @@ export function EventContentWorkspace({
   const [notice, setNotice] = useState("");
 
   const dirty = JSON.stringify(sections) !== JSON.stringify(saved);
+  const pendingImpact = pendingDelete ? localAssetImpact(sections, pendingDelete.id) : null;
+  // The server only knows the saved page; an unsaved resource-links section
+  // whose only tile is this file would be left unsaveable, so wait for the
+  // editor to fix it rather than strip it to nothing.
+  const deleteBlockedLocally = dirty && (pendingImpact?.emptiedTitles.length ?? 0) > 0;
   const allowNextNavigation = useUnsavedChangesGuard(
     dirty,
     "This event page has unsaved changes. Leave and discard them?",
@@ -149,6 +201,74 @@ export function EventContentWorkspace({
     }
   }
 
+  function onDragEnter(dragEvent: React.DragEvent<HTMLLabelElement>) {
+    dragEvent.preventDefault();
+    dragDepth.current += 1;
+    if (!uploading) setDragging(true);
+  }
+
+  function onDragOver(dragEvent: React.DragEvent<HTMLLabelElement>) {
+    dragEvent.preventDefault();
+    if (!uploading) setDragging(true);
+  }
+
+  function onDragLeave(dragEvent: React.DragEvent<HTMLLabelElement>) {
+    dragEvent.preventDefault();
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
+  }
+
+  function onDrop(dragEvent: React.DragEvent<HTMLLabelElement>) {
+    dragEvent.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    if (uploading) return;
+    const files = dragEvent.dataTransfer.files;
+    if (!files || files.length === 0) return;
+    if (files.length > 1) {
+      setError("Drop one file at a time.");
+      return;
+    }
+    void uploadAsset(files[0]);
+  }
+
+  async function confirmDeleteAsset(asset: EventAssetRecord) {
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      const savedAtStart = saved;
+      const response = await fetch(`/api/events/${eventId}/assets/${asset.id}`, { method: "DELETE" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.assets || !result.sections) {
+        throw new Error(result.message ?? "That file could not be deleted.");
+      }
+      setAssets(result.assets);
+      // The delete may have removed draft tiles on the server. `saved` always
+      // follows the server so the next save can't re-link the deleted file.
+      // With no unsaved edits the editor takes the server copy too; with
+      // unsaved edits it keeps them and strips only this file's tiles, so no
+      // edit is lost (the dialog said which sections would change).
+      const serverDrafts = draftsFrom(result.sections);
+      setSaved(serverDrafts);
+      setSections((current) => (
+        JSON.stringify(current) === JSON.stringify(savedAtStart)
+          ? serverDrafts
+          : withoutAssetTiles(current, asset.id)
+      ));
+      setPendingDelete(null);
+      const removedFrom: string[] = Array.isArray(result.removedFromDraftSectionTitles)
+        ? result.removedFromDraftSectionTitles
+        : [];
+      setNotice(removedFrom.length > 0
+        ? `Deleted ${asset.displayName} and removed its tile from ${quoteList(removedFrom)}.`
+        : `Deleted ${asset.displayName}.`);
+    } catch (caught) {
+      setDeleteError(caught instanceof Error ? caught.message : "That file could not be deleted.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   async function save(submitEvent: React.FormEvent<HTMLFormElement>) {
     submitEvent.preventDefault();
     setSaving(true);
@@ -168,6 +288,12 @@ export function EventContentWorkspace({
       setSections(next);
       setSaved(next);
       allowNextNavigation();
+      // Where each file is used just changed; refresh it for the file list and
+      // delete dialog. Best effort: the server re-checks on delete anyway.
+      void fetch(`/api/events/${eventId}/assets`)
+        .then((assetsResponse) => (assetsResponse.ok ? assetsResponse.json() : null))
+        .then((assetsResult) => { if (assetsResult?.assets) setAssets(assetsResult.assets); })
+        .catch(() => undefined);
       const published = next.filter((section) => section.isPublished).length;
       setNotice(`Saved. ${published} section${published === 1 ? "" : "s"} visible on the public event page.`);
     } catch (caught) {
@@ -204,8 +330,16 @@ export function EventContentWorkspace({
             <p>PDF, PNG, JPEG, or WebP, up to 25 MB. A file is only reachable publicly while a published tile links to it.</p>
           </div>
         </div>
-        <label>
-          Add a file
+        <label
+          className={`club-import-upload${dragging ? " club-import-upload-dragging" : ""}`}
+          onDragEnter={onDragEnter}
+          onDragLeave={onDragLeave}
+          onDragOver={onDragOver}
+          onDrop={onDrop}
+        >
+          <FileUp aria-hidden="true" size={24} />
+          <strong>{uploading ? "Uploading…" : dragging ? "Drop the file here" : "Drag a file here, or choose one"}</strong>
+          <small>PDF, PNG, JPEG, or WebP, up to 25 MB.</small>
           <input
             type="file"
             accept="application/pdf,image/png,image/jpeg,image/webp"
@@ -225,9 +359,16 @@ export function EventContentWorkspace({
                   {asset.displayName}
                 </a>
                 <small>
-                  {(asset.byteSize / 1024).toFixed(0)} KB ·{" "}
-                  {asset.linkCount === 0 ? "not used yet" : `used on ${asset.linkCount} tile${asset.linkCount === 1 ? "" : "s"}`}
+                  {assetTypeLabel(asset.contentType)} · {(asset.byteSize / 1024).toFixed(0)} KB · Uploaded {formatUploadDate(asset.createdAt)} · {usageSummary(asset.usage)}
                 </small>
+                <button
+                  aria-label={`Delete ${asset.displayName}`}
+                  className="icon-button danger"
+                  onClick={() => { setDeleteError(""); setPendingDelete(asset); }}
+                  type="button"
+                >
+                  <Trash2 aria-hidden="true" size={15} />
+                </button>
               </li>
             ))}
           </ul>
@@ -359,6 +500,52 @@ export function EventContentWorkspace({
           </button>
         </div>
       </form>
+
+      {pendingDelete && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => { if (event.target === event.currentTarget) dismissDeleteDialog(); }}
+          role="presentation"
+        >
+          <section aria-labelledby="delete-asset-title" aria-modal="true" className="modal-card" ref={deleteDialogRef} role="dialog" tabIndex={-1}>
+            <div className="modal-head">
+              <div>
+                <p className="eyebrow">Files</p>
+                <h2 id="delete-asset-title">Delete {pendingDelete.displayName}?</h2>
+              </div>
+              <button aria-label="Close" className="icon-button modal-close-button" disabled={deleting} onClick={closeDeleteDialog} type="button">
+                <X aria-hidden="true" size={18} />
+              </button>
+            </div>
+            {deleteError && <div className="inline-notice error" role="alert">{deleteError}</div>}
+            <p className="field-help">This removes the file and its stored copy. This can&apos;t be undone.</p>
+            {pendingDelete.usage.draftSectionTitles.length > 0 && (
+              <p className="field-help">
+                Its tile will also be removed from the draft {pendingDelete.usage.draftSectionTitles.length === 1 ? "section" : "sections"} {quoteList(pendingDelete.usage.draftSectionTitles)}.
+              </p>
+            )}
+            {dirty && pendingImpact && pendingImpact.emptiedTitles.length > 0 && (
+              <div className="inline-notice error" role="alert">
+                In your unsaved edits this file is the only link in {quoteList(pendingImpact.emptiedTitles)}. Remove its tile from that section first, or add another link there.
+              </div>
+            )}
+            {dirty && (
+              <p className="field-help">
+                You have unsaved page edits. They are kept
+                {pendingImpact && pendingImpact.affectedTitles.length > 0
+                  ? <>; only this file&apos;s tiles are removed from {quoteList(pendingImpact.affectedTitles)}.</>
+                  : "."}
+              </p>
+            )}
+            <div className="form-actions">
+              <button className="secondary-button" disabled={deleting} onClick={closeDeleteDialog} type="button">Cancel</button>
+              <button className="primary-button" disabled={deleting || deleteBlockedLocally} onClick={() => void confirmDeleteAsset(pendingDelete)} type="button">
+                <Trash2 aria-hidden="true" size={16} /> {deleting ? "Deleting…" : "Delete file"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </section>
   );
 }

@@ -18,7 +18,8 @@ const squareFontOrigins = [
 ].join(" ");
 const buildTsconfigPath = process.env.NEXT_BUILD_TSCONFIG?.trim() || "tsconfig.json";
 
-// OpenStreetMap's tile server, for the public club map (#437) only.
+// OpenStreetMap's tile server, for the public club map (#437) and the
+// church-location pin picker (#480) only.
 const mapTileOrigin = "https://tile.openstreetmap.org";
 
 function contentSecurityPolicy(frameAncestors: string, extraImageOrigins = "") {
@@ -123,6 +124,19 @@ const nextConfig: NextConfig = {
         // (for a header key set by two matching rules, Next.js sends the
         // last), leaving /clubs with a single policy.
         source: "/clubs",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: contentSecurityPolicy("'none'", mapTileOrigin),
+          },
+        ],
+      },
+      {
+        // The church location editor's "Pick on map" helper (#480) is the
+        // only staff page that loads the same tiles. Scoped the same way as
+        // /clubs above: this rule must stay after the site-wide one so its
+        // Content-Security-Policy is the one Next.js sends for this path.
+        source: "/admin/organizations/:organizationId/location",
         headers: [
           {
             key: "Content-Security-Policy",

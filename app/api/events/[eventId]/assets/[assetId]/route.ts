@@ -8,6 +8,7 @@ import {
   removeEventAsset,
 } from "@/modules/events/asset-repository";
 import { eventAssetResponse } from "@/modules/events/asset-response";
+import { listEventContentSections } from "@/modules/events/content-repository";
 import { findActiveMembership } from "@/modules/events/repository";
 import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
@@ -64,9 +65,19 @@ async function deleteHandler(request: Request, context: RouteContext) {
   if (originError) return originError;
   try {
     const { eventId, assetId } = await context.params;
-    await authorize(eventId);
-    await removeEventAsset(eventId, assetId);
-    return Response.json({ assets: await listEventAssets(eventId) });
+    const access = await authorize(eventId);
+    const removed = await removeEventAsset(eventId, assetId, access.user.id);
+    // The delete may have removed draft tiles, so the editor gets the saved
+    // sections back too; saving its stale copy would re-link the deleted file.
+    const [assets, sections] = await Promise.all([
+      listEventAssets(eventId),
+      listEventContentSections(eventId),
+    ]);
+    return Response.json({
+      assets,
+      sections,
+      removedFromDraftSectionTitles: removed.removedFromDraftSectionTitles,
+    });
   } catch (error) {
     return apiError(error, "Deleting the event file");
   }
