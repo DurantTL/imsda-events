@@ -477,8 +477,9 @@ async function verifyStarters() {
 
   // 6. Edited and archived starters are left alone by a re-run, and the key is server-owned on save.
   assert(own.length >= 2, "at least two starters of this run are available to edit and archive");
-  const editedTemplate = own[0]!;
-  const archivedTemplate = own[1]!;
+  const ownPublished = (await starterTemplates()).filter(isOwn);
+  const editedTemplate = ownPublished[0]!;
+  const archivedTemplate = ownPublished[1]!;
   const editedKey = keyOf(editedTemplate)!;
   const publishedVersion = editedTemplate.versions.find((version) => version.status === "PUBLISHED")!;
   // Staff rename it and try to change the key: the stored key is kept.
