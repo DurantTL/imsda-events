@@ -103,8 +103,23 @@ describe("act-as routes for a system administrator (#442)", () => {
     mocks.findFirst.mockResolvedValueOnce({ id: "act-1", role: "CLUB_DIRECTOR", organizationId: "club-1" });
     mocks.updateMany.mockResolvedValueOnce({ count: 1 });
     const stopped = await routes[2][1]();
-    expect(await stopped.json()).toEqual({ ok: true, stopped: true });
+    // The club-director href (#466) so "Stop acting" lands back on a staff
+    // page instead of refreshing an attendee-portal page out from under them.
+    expect(await stopped.json()).toEqual({ ok: true, stopped: true, href: "/admin/organizations/club-1/club" });
     expect(mocks.updateMany).toHaveBeenLastCalledWith({ where: { id: "act-1", endedAt: null }, data: expect.objectContaining({ endedReason: "STOPPED" }) });
+  });
+
+  it("stops acting as an Area Coordinator to the clubs list, not a club page (#466)", async () => {
+    mocks.findFirst.mockResolvedValueOnce({ id: "act-2", role: "AREA_COORDINATOR", organizationId: null });
+    mocks.updateMany.mockResolvedValueOnce({ count: 1 });
+    const stopped = await routes[2][1]();
+    expect(await stopped.json()).toEqual({ ok: true, stopped: true, href: "/admin/organizations" });
+  });
+
+  it("still answers a safe staff href when nothing was active to stop (#466)", async () => {
+    mocks.findFirst.mockResolvedValueOnce(null);
+    const stopped = await routes[2][1]();
+    expect(await stopped.json()).toEqual({ ok: true, stopped: false, href: "/admin/organizations" });
   });
 
   it("answers 409, not 500, when two starts on one session keep racing (P2002)", async () => {
