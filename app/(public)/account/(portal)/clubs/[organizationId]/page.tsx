@@ -6,8 +6,7 @@ import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee
 import { getRosterAccessStateForPage, type ClubActor } from "@/modules/club-rosters/access";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import { listRoster } from "@/modules/club-rosters/repository";
-import { formatCalendarDate } from "@/modules/club-registrations/domain";
-import { listClubEvents } from "@/modules/club-registrations/repository";
+import { clubEventRegistrationSteps, listClubEvents } from "@/modules/club-registrations/repository";
 import { calendarDateIn } from "@/modules/calendar/domain";
 import { formatDueDate, isLockedForClub, reportDueDate, reportMonthLabel, reportableMonths } from "@/modules/club-reports/domain";
 import { getClubReportYear } from "@/modules/club-reports/repository";
@@ -85,14 +84,7 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
       });
     }
   }
-  for (const event of open) {
-    steps.push({
-      key: event.id,
-      text: `${event.draft ? "Finish registering" : "Register"} for ${event.name}${event.registrationClosesOn ? ` by ${formatCalendarDate(event.registrationClosesOn)}` : ""}.`,
-      href: `${base}/events/${event.id}`,
-      action: event.draft ? "Continue" : "Register",
-    });
-  }
+  steps.push(...clubEventRegistrationSteps(events, base));
 
   return (
     <>

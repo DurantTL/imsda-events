@@ -58,7 +58,7 @@ export function TwoStepSetup({
           onAdded={() => setDone(true)}
         />
       )}
-      <p className="field-help">
+      <p className="field-help two-step-setup-hint">
         Either an authenticator app or a passkey is enough to continue — you don&apos;t need both.
       </p>
     </>
