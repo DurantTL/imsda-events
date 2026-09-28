@@ -29,6 +29,7 @@ const youth = {
   role: "Pathfinder",
   classLevel: null,
   gender: "FEMALE" as const,
+  willingToDrive: false,
 };
 
 function fakeDatabase() {
@@ -271,5 +272,42 @@ describe("club roster storage", () => {
     expect(db.honorEntries).toHaveLength(1);
     const removal = mocks.writeAuditLog.mock.calls.map(([entry]) => entry).find((entry) => entry.action === "CLUB_ROSTER_MEMBER_REMOVED");
     expect(removal.metadata).toMatchObject({ personDeleted: false, honorEntriesErased: 0 });
+  });
+
+  describe("willing to drive (#491)", () => {
+    it("refuses it on a youth or underage row, on add or edit", async () => {
+      await expect(addRosterMember("club-1", "2026-27", { ...youth, willingToDrive: true }, actor, { now }))
+        .rejects.toMatchObject({ code: "WILLING_TO_DRIVE_NOT_ALLOWED" });
+      expect(db.members).toHaveLength(0);
+
+      const id = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+      await expect(updateRosterMember("club-1", id, { willingToDrive: true }, actor, now))
+        .rejects.toMatchObject({ code: "WILLING_TO_DRIVE_NOT_ALLOWED" });
+      // Switching type and turning it on together is also refused, not silently dropped.
+      await expect(updateRosterMember("club-1", id, { attendeeType: "YOUTH", willingToDrive: true }, actor, now))
+        .rejects.toMatchObject({ code: "WILLING_TO_DRIVE_NOT_ALLOWED" });
+    });
+
+    it("stores it for staff and adult rows, and checking it never grants clearance by itself", async () => {
+      const id = await addRosterMember("club-1", "2026-27", { ...youth, attendeeType: "STAFF", willingToDrive: true }, actor, { now });
+      const [stored] = await listRoster("club-1", "2026-27", now);
+      expect(stored).toMatchObject({ id, willingToDrive: true });
+      // Only a field on the roster row — nothing about clearance lives here.
+      expect(stored).not.toHaveProperty("clearedToTransport");
+    });
+
+    it("audits newly checking the box, not every edit that leaves it checked", async () => {
+      const id = await addRosterMember("club-1", "2026-27", { ...youth, attendeeType: "STAFF" }, actor, { now });
+      await updateRosterMember("club-1", id, { willingToDrive: true }, actor, now);
+      await updateRosterMember("club-1", id, { role: "Deputy" }, actor, now);
+      const actions = mocks.writeAuditLog.mock.calls.map(([entry]) => entry.action);
+      expect(actions.filter((action) => action === "CLUB_ROSTER_WILLING_TO_DRIVE_SET")).toHaveLength(1);
+    });
+
+    it("clears it on a removed row, so the person leaves the driver verification queue", async () => {
+      const id = await addRosterMember("club-1", "2026-27", { ...youth, attendeeType: "STAFF", willingToDrive: true }, actor, { now });
+      await removeRosterMember("club-1", id, actor, now);
+      expect(db.members.find((member) => member.id === id)).toMatchObject({ status: "REMOVED", willingToDrive: false });
+    });
   });
 });

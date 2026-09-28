@@ -59,6 +59,8 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
             role,
             classLevel: row.classLevel ?? null,
             gender: row.gender ?? null,
+            // The roster import's CSV (#424) carries no driving willingness; add it by hand afterward (#491).
+            willingToDrive: false,
           }, actor);
           added += 1;
           results.push({ ...publicStep(step), message: "Added." });

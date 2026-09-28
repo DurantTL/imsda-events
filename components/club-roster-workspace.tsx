@@ -17,6 +17,8 @@ import {
   rosterSectionOf,
 } from "@/modules/club-rosters/domain";
 import type { RosterMemberRecord } from "@/modules/club-rosters/repository";
+import { canBeWillingDriver } from "@/modules/driver-verification/domain";
+
 import type { CurrentMemberHonor } from "@/modules/honors/member-honor-domain";
 
 type RosterResponse = {
@@ -146,13 +148,17 @@ export function ClubRosterWorkspace({
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const birthDate = String(form.get("birthDate") ?? "");
+    const attendeeType = String(form.get("attendeeType") ?? "YOUTH");
     const details = {
       firstName: String(form.get("firstName") ?? ""),
       lastName: String(form.get("lastName") ?? ""),
-      attendeeType: String(form.get("attendeeType") ?? "YOUTH"),
+      attendeeType,
       role: String(form.get("role") ?? ""),
       classLevel: String(form.get("classLevel") ?? "") || null,
       gender: String(form.get("gender") ?? "") || null,
+      // Only staff and adults can be willing drivers (#491); the checkbox is
+      // hidden for anyone else, so nothing is ever sent for them either.
+      willingToDrive: canBeWillingDriver(attendeeType) ? form.get("willingToDrive") === "on" : false,
     };
     const result = editing
       ? await call(`${base}/${encodeURIComponent(editing.id)}`, "PATCH", {
@@ -334,7 +340,10 @@ export function ClubRosterWorkspace({
                                   Missing info: {missing.join(", ")}
                                 </span>
                               )}
-                              {member.status === "ACTIVE" && missing.length === 0 && "—"}
+                              {member.willingToDrive && (
+                                <span className="status-chip neutral">Willing to drive</span>
+                              )}
+                              {member.status === "ACTIVE" && missing.length === 0 && !member.willingToDrive && "—"}
                               </div>
                             </td>
                             {complianceStatuses && (
@@ -447,6 +456,23 @@ export function ClubRosterWorkspace({
             </select>
           </label>
         </div>
+        {canBeWillingDriver(formType) && (
+          <>
+            <label className="checkbox-label roster-willing-to-drive">
+              <input
+                defaultChecked={editing?.willingToDrive ?? false}
+                key={editing?.id ?? "new"}
+                name="willingToDrive"
+                type="checkbox"
+              />
+              Willing to drive
+            </label>
+            <p className="field-help">
+              This doesn&apos;t clear them to transport youth by itself — it adds them to the driver verification
+              queue, where a reviewer confirms their license, insurance, and background-check status were checked.
+            </p>
+          </>
+        )}
         <p className="field-help">
           Birth dates are encrypted and shown only to your club&apos;s director and deputy. Registrars and event
           staff see age only. Don&apos;t enter medical or insurance information here.

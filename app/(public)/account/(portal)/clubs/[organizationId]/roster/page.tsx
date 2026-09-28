@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { BackLink } from "@/components/back-link";
 import { ClubRosterWorkspace } from "@/components/club-roster-workspace";
+import { DriverVerificationQueue } from "@/components/driver-verification-queue";
 import { clubPortalComplianceStatuses } from "@/modules/background-checks/repository";
 import { COMPLIANCE_FILTER_VALUES, type ComplianceFilterValue } from "@/modules/background-checks/domain";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
@@ -36,6 +37,9 @@ export default async function ClubRosterPage({
   return (
     <>
       <BackLink href={`/account/clubs/${organizationId}`}>Back to {access.club.name}</BackLink>
+      <p className="quiet-copy">
+        <a href={`/account/clubs/${organizationId}/roster/export`}>Build a roster export</a> for an outside camporee.
+      </p>
       <ClubRosterWorkspace
         canSeeBirthDates={access.capabilities.seeBirthDates}
         clubYear={clubYear}
@@ -46,6 +50,13 @@ export default async function ClubRosterPage({
         initialMembers={members}
         organizationId={organizationId}
       />
+      {/* Willing drivers, for review (#491): the same leader-only capability that manages the club's team. */}
+      {access.capabilities.manageTeam && (
+        <DriverVerificationQueue
+          clearEndpointBase={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/driver-verification`}
+          listEndpoint={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/driver-verification`}
+        />
+      )}
     </>
   );
 }

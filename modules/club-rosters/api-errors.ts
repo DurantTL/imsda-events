@@ -3,6 +3,7 @@ import { logError } from "@/lib/logger";
 import { AttendeeMfaError } from "@/modules/attendee-accounts/mfa-service";
 import { ClubInviteError } from "@/modules/club-imports/invites";
 import { RosterAccessError } from "@/modules/club-rosters/access";
+import { RosterExportError } from "@/modules/club-rosters/export-repository";
 import { RosterOperationError } from "@/modules/club-rosters/repository";
 import { organizationApiError } from "@/modules/organizations/api-errors";
 import { OrganizationOperationError } from "@/modules/organizations/repository";
@@ -18,7 +19,18 @@ export function rosterApiError(error: unknown, action: string) {
     return Response.json({ error: error.code, message: error.message }, { status: error.status });
   }
   if (error instanceof RosterOperationError) {
-    const status = error.code === "MEMBER_NOT_FOUND" ? 404 : error.code === "BIRTH_DATE_INVALID" || error.code === "GENDER_REQUIRED" ? 400 : 409;
+    const status = error.code === "MEMBER_NOT_FOUND"
+      ? 404
+      : error.code === "BIRTH_DATE_INVALID" || error.code === "GENDER_REQUIRED" || error.code === "WILLING_TO_DRIVE_NOT_ALLOWED"
+        ? 400
+        : 409;
+    return Response.json({ error: error.code, message: error.message }, { status });
+  }
+  if (error instanceof RosterExportError) {
+    const status = error.code === "FORMAT_NOT_FOUND" ? 404
+      : error.code === "SENSITIVE_ACCESS_DENIED" ? 403
+      : error.code === "FORMAT_NAME_TAKEN" ? 409
+      : 400;
     return Response.json({ error: error.code, message: error.message }, { status });
   }
   // Club team and profile changes (#375) raise the directory's own errors.
