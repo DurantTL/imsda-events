@@ -151,6 +151,39 @@ export function rosterRoleOrDefault(role: string | null | undefined, attendeeTyp
   return typed || defaultRosterRole(attendeeType);
 }
 
+export type RosterYearSummary = {
+  active: number;
+  staff: number;
+  members: number;
+  byClass: Array<{ classLevel: ClubClassLevel; label: string; count: number }>;
+};
+
+/**
+ * Roster counts for the club-year dashboard (#488): how many are active, the
+ * staff/member split, and how many are in each class. Counts only — never a
+ * name — so it's safe on a tile for a viewer who isn't allowed the roster
+ * itself. Only active rows count, and the class breakdown is the MEMBERS
+ * section only (`rosterSectionOf`) — never staff, even if a row somehow
+ * carries a class level.
+ */
+export function rosterYearSummary(
+  members: ReadonlyArray<{ status: string; attendeeType: keyof typeof clubRosterAttendeeTypeLabels; classLevel: ClubClassLevel | null }>,
+): RosterYearSummary {
+  const active = members.filter((member) => member.status === "ACTIVE");
+  const staff = active.filter((member) => rosterSectionOf(member.attendeeType) === "STAFF").length;
+  const counts = new Map<ClubClassLevel, number>();
+  for (const member of active) {
+    // Class levels are a Pathfinder's own field (#375): staff never have one, but only the
+    // MEMBERS section is tallied here, so a future staff class level (if one is ever added) can't leak in.
+    if (rosterSectionOf(member.attendeeType) !== "MEMBERS" || !member.classLevel) continue;
+    counts.set(member.classLevel, (counts.get(member.classLevel) ?? 0) + 1);
+  }
+  const byClass = clubClassLevels
+    .filter((level) => counts.has(level))
+    .map((level) => ({ classLevel: level, label: clubClassLevelLabels[level], count: counts.get(level)! }));
+  return { active: active.length, staff, members: active.length - staff, byClass };
+}
+
 /** The roster's own fields, for the "Missing info" flag (#424). */
 export const rosterFieldLabels = {
   birthDate: "Birth date",

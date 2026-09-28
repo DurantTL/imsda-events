@@ -1,4 +1,5 @@
 import { isCalendarDate } from "@/modules/calendar/domain";
+import { clubYearMonths } from "@/modules/club-reports/domain";
 import { toCsv } from "@/modules/reporting/csv";
 
 /**
@@ -111,6 +112,33 @@ export function filterClubHonorsRows(rows: readonly ClubHonorsRow[], filter: Clu
 /** The roster card's own shape (#486): current honors keyed by roster member id. */
 export function honorSummaryByMemberId(rows: readonly ClubHonorsRow[]): Record<string, CurrentMemberHonor[]> {
   return Object.fromEntries(rows.map((row) => [row.memberId, row.honors]));
+}
+
+export type HonorYearSummary = { inProgress: number; completedThisYear: number };
+
+/**
+ * Honors tile counts for the club-year dashboard (#488): how many honors are
+ * in progress right now, and how many were completed since this club year
+ * began. Built from `listClubHonorsPage`'s rows — the same read the roster
+ * card and the Honors page already use, no new query. Counts only, never a
+ * name: safe for a tile even though `listClubHonorsPage` itself carries names.
+ *
+ * A completed honor's status can be years old (#486: honors are kept across
+ * years, keyed to the person), so only entries completed on or after this
+ * club year's first day count as "recently completed" here. In-progress
+ * work has no date to filter by, so every current one counts.
+ */
+export function honorYearSummary(rows: readonly ClubHonorsRow[], clubYear: string): HonorYearSummary {
+  const yearStart = `${clubYearMonths(clubYear)[0]}-01`;
+  let inProgress = 0;
+  let completedThisYear = 0;
+  for (const row of rows) {
+    for (const honor of row.honors) {
+      if (honor.status === "IN_PROGRESS") inProgress += 1;
+      else if (honor.status === "COMPLETED" && honor.completionDate >= yearStart) completedThisYear += 1;
+    }
+  }
+  return { inProgress, completedThisYear };
 }
 
 /** Names and honors only — no birth dates, ages, or any medical field. */

@@ -9,6 +9,7 @@ import {
   parseCalendarDate,
   parseRosterBirthDateInput,
   rosterRoleOrDefault,
+  rosterYearSummary,
 } from "@/modules/club-rosters/domain";
 import { rosterMemberInputSchema, rosterMemberUpdateSchema } from "@/modules/club-rosters/schemas";
 
@@ -116,5 +117,47 @@ describe("club roster rules", () => {
     expect(missingRosterFields({ ...staff, attendeeType: "YOUTH" })).toEqual(["Current class"]);
     // A blank role only matters for youth; staff show their type instead.
     expect(missingRosterFields({ ...staff, role: "" })).toEqual([]);
+  });
+
+  it("summarizes the roster for the club-year dashboard: active, staff vs. members, and by class (#488)", () => {
+    const member = (overrides: Partial<Parameters<typeof rosterYearSummary>[0][number]>) => ({
+      status: "ACTIVE", attendeeType: "YOUTH" as const, classLevel: null, ...overrides,
+    });
+    const summary = rosterYearSummary([
+      member({ attendeeType: "STAFF", classLevel: null }),
+      member({ attendeeType: "ADULT", classLevel: null }),
+      member({ attendeeType: "YOUTH", classLevel: "FRIEND" }),
+      member({ attendeeType: "YOUTH", classLevel: "FRIEND" }),
+      member({ attendeeType: "YOUTH", classLevel: "RANGER" }),
+      // Removed and inactive rows never count.
+      member({ status: "REMOVED", attendeeType: "YOUTH", classLevel: "RANGER" }),
+      member({ status: "INACTIVE", attendeeType: "YOUTH", classLevel: "RANGER" }),
+    ]);
+    expect(summary.active).toBe(5);
+    expect(summary.staff).toBe(2);
+    expect(summary.members).toBe(3);
+    // In class order (Friend before Ranger), never a name.
+    expect(summary.byClass).toEqual([
+      { classLevel: "FRIEND", label: "Friend", count: 2 },
+      { classLevel: "RANGER", label: "Ranger", count: 1 },
+    ]);
+  });
+
+  it("gives an empty class breakdown for a roster with only staff, or nobody active", () => {
+    expect(rosterYearSummary([{ status: "ACTIVE", attendeeType: "STAFF", classLevel: null }])).toEqual({
+      active: 1, staff: 1, members: 0, byClass: [],
+    });
+    expect(rosterYearSummary([])).toEqual({ active: 0, staff: 0, members: 0, byClass: [] });
+  });
+
+  it("never counts staff or adults in the class breakdown, even if a row somehow carries a class level (review fix)", () => {
+    const summary = rosterYearSummary([
+      { status: "ACTIVE", attendeeType: "STAFF", classLevel: "RANGER" },
+      { status: "ACTIVE", attendeeType: "ADULT", classLevel: "GUIDE" },
+      { status: "ACTIVE", attendeeType: "YOUTH", classLevel: "RANGER" },
+    ]);
+    expect(summary.staff).toBe(2);
+    expect(summary.members).toBe(1);
+    expect(summary.byClass).toEqual([{ classLevel: "RANGER", label: "Ranger", count: 1 }]);
   });
 });
