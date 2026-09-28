@@ -7,7 +7,7 @@ import { OrganizationDirectoryWorkspace } from "@/components/organization-direct
 import { getCurrentSession } from "@/modules/access/current-session";
 import { listOrganizations } from "@/modules/organizations/repository";
 
-export const metadata: Metadata = { title: "Churches and clubs" };
+export const metadata: Metadata = { title: "Clubs and churches" };
 
 export default async function OrganizationsPage() {
   const { user } = await getCurrentSession();

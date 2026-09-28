@@ -9,7 +9,7 @@ import { useState } from "react";
  * returns to a different sign-in page, because the two session types are
  * separate all the way down.
  */
-export function AttendeeSignOutButton({ className = "text-button" }: { className?: string }) {
+export function AttendeeSignOutButton({ className = "text-button", label = "Sign out" }: { className?: string; label?: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
 
@@ -25,7 +25,7 @@ export function AttendeeSignOutButton({ className = "text-button" }: { className
 
   return (
     <button className={className} type="button" onClick={signOut} disabled={busy}>
-      <LogOut aria-hidden="true" size={16} /> {busy ? "Signing out…" : "Sign out"}
+      <LogOut aria-hidden="true" size={16} /> {busy ? "Signing out…" : label}
     </button>
   );
 }

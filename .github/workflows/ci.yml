@@ -79,6 +79,12 @@ jobs:
       # one", a combined honors + uniforms batch, and double-tap safety (#497).
       - run: npm run test:uniform-orders
 
+      # Real-database check of earned awards on the same order layer: insignia
+      # suggested and added only on confirmation, event patches for attendees
+      # only, multi-group Master Award rules (staff-edited and audited), one
+      # batch with honors and uniforms, and double-tap safety (#532).
+      - run: npm run test:earned-awards
+
       # Real-database check of event templates: apply, revision isolation, save/publish
       # races, parallel same-key applies, key reuse, and sticky archive (#152).
       - run: npm run test:event-templates

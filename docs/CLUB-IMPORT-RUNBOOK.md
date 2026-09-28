@@ -23,7 +23,7 @@ in an issue, or paste it into a chat. Delete it when you're done.
 
 ## 2. Import
 
-System administration → Churches and clubs → **Import clubs**. Choose the file.
+System administration → Clubs and churches → **Import clubs**. Choose the file.
 
 The preview shows one card per registration. For each one:
 
@@ -55,7 +55,7 @@ needed" and shows the age from the form until the director adds one.
 
 ## 3. Send invites
 
-Churches and clubs → **Club invites**. Check the emails, then press **Send**
+Clubs and churches → **Club invites**. Check the emails, then press **Send**
 for one club or **Send all unsent**. Each person gets an email telling them to
 sign in or create an account at `/account` with that email address, then
 press **Accept**.

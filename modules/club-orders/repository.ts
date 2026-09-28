@@ -42,7 +42,9 @@ import { itemAndSize } from "@/modules/uniforms/domain";
 
 export type ClubOrderActor = ClubSupplyStockActor;
 
-export type ClubOrderErrorCode = "NOTHING_TO_ORDER" | "BATCH_NOT_FOUND" | "ALREADY_RECEIVED" | "ORDER_CHANGED" | "NOT_ENOUGH_STOCK" | "ITEM_NOT_ORDERABLE" | "MEMBER_NOT_ON_ROSTER";
+export type ClubOrderErrorCode = "NOTHING_TO_ORDER" | "BATCH_NOT_FOUND" | "ALREADY_RECEIVED" | "ORDER_CHANGED" | "NOT_ENOUGH_STOCK" | "ITEM_NOT_ORDERABLE" | "MEMBER_NOT_ON_ROSTER"
+  // Earned awards (#532): a confirmation must match what was suggested or earned.
+  | "NOT_SUGGESTED" | "NOT_ELIGIBLE" | "RULE_HAS_NO_ITEM";
 
 export class ClubOrderError extends Error {
   constructor(public readonly code: ClubOrderErrorCode, message: string) {
@@ -78,36 +80,47 @@ export function auditActorFields(actor: ClubOrderActor) {
 }
 
 /**
- * Uniform needs of people who left (#497): a NEEDED uniform need whose member
- * is no longer ACTIVE on this club's roster this club year is removed, audited
- * by count, so it is never ordered. Uniform needs are NOT moved to a new club
- * on a transfer (unlike honors): sizes and needs are club-specific, and the new
- * club records its own. ORDERED, RECEIVED and AWARDED needs stay where they are.
- * Runs under the club's lock, in the caller's transaction.
+ * Needs of people who left (#497, #532): a NEEDED uniform or earned-award need
+ * whose member is no longer ACTIVE on this club's roster this club year is
+ * removed, audited by count, so it is never ordered. Each source is filtered
+ * by its own `sourceType`, so honor needs (which follow a transferred member,
+ * #487) are never touched. These needs are NOT moved to a new club on a
+ * transfer (unlike honors): sizes and awards are club-specific, and the new
+ * club records its own. ORDERED, RECEIVED and AWARDED needs stay where they
+ * are. Runs under the club's lock, in the caller's transaction.
  */
+const DEPARTED_SOURCES = [
+  { sourceType: "UNIFORM", action: "CLUB_UNIFORM_NEEDS_DEPARTED_REMOVED", noun: "uniform" },
+  { sourceType: "AWARD", action: "CLUB_AWARD_NEEDS_DEPARTED_REMOVED", noun: "earned award" },
+] as const;
+
 export async function removeDepartedMemberNeedsInTx(tx: Prisma.TransactionClient, organizationId: string, now = new Date()) {
-  const needed = await tx.clubOrderNeed.findMany({
-    where: { organizationId, sourceType: "UNIFORM", status: "NEEDED" },
-    select: { id: true, personId: true },
-  });
-  if (needed.length === 0) return { removed: 0 };
-  const active = await tx.clubRosterMember.findMany({
-    where: { organizationId, clubYear: clubYearFor(now), status: "ACTIVE", personId: { in: [...new Set(needed.map((need) => need.personId))] } },
-    select: { personId: true },
-  });
-  const activeIds = new Set(active.map((member) => member.personId));
-  const departed = needed.filter((need) => !activeIds.has(need.personId)).map((need) => need.id);
-  if (departed.length === 0) return { removed: 0 };
-  const removed = await tx.clubOrderNeed.deleteMany({ where: { id: { in: departed }, organizationId, sourceType: "UNIFORM", status: "NEEDED" } });
-  if (removed.count > 0) {
-    await writeAuditLog({
-      action: "CLUB_UNIFORM_NEEDS_DEPARTED_REMOVED",
-      entityType: "ClubOrderNeed",
-      summary: `Removed ${removed.count} not-yet-ordered uniform need${removed.count === 1 ? "" : "s"} for members no longer on the roster.`,
-      metadata: { organizationId, needCount: removed.count },
-    }, tx);
+  let total = 0;
+  for (const source of DEPARTED_SOURCES) {
+    const needed = await tx.clubOrderNeed.findMany({
+      where: { organizationId, sourceType: source.sourceType, status: "NEEDED" },
+      select: { id: true, personId: true },
+    });
+    if (needed.length === 0) continue;
+    const active = await tx.clubRosterMember.findMany({
+      where: { organizationId, clubYear: clubYearFor(now), status: "ACTIVE", personId: { in: [...new Set(needed.map((need) => need.personId))] } },
+      select: { personId: true },
+    });
+    const activeIds = new Set(active.map((member) => member.personId));
+    const departed = needed.filter((need) => !activeIds.has(need.personId)).map((need) => need.id);
+    if (departed.length === 0) continue;
+    const removed = await tx.clubOrderNeed.deleteMany({ where: { id: { in: departed }, organizationId, sourceType: source.sourceType, status: "NEEDED" } });
+    if (removed.count > 0) {
+      await writeAuditLog({
+        action: source.action,
+        entityType: "ClubOrderNeed",
+        summary: `Removed ${removed.count} not-yet-ordered ${source.noun} need${removed.count === 1 ? "" : "s"} for members no longer on the roster.`,
+        metadata: { organizationId, needCount: removed.count },
+      }, tx);
+    }
+    total += removed.count;
   }
-  return { removed: removed.count };
+  return { removed: total };
 }
 
 export async function removeDepartedMemberNeeds(organizationId: string, now = new Date()) {
@@ -648,7 +661,7 @@ export async function listAwardableNeeds(organizationId: string): Promise<Awarda
 export type WaitingNeed = {
   needId: string;
   /** Where the need came from: only honors get the "completed before you started ordering" prompt (#497). */
-  sourceType: "HONOR" | "UNIFORM";
+  sourceType: "HONOR" | "UNIFORM" | "AWARD";
   itemName: string | null;
   sourceLabel: string;
   sourceDate: string;

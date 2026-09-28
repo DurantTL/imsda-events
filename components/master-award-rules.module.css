@@ -1,0 +1,35 @@
+/* Master Award rules (#532): staff review screen. Built to hold at 390px: 44px targets, 16px inputs, no sideways scroll. */
+.rules { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.rules details { border: 1px solid var(--line); border-radius: 12px; padding: 4px 11px 10px; }
+.rules summary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; min-height: 44px; cursor: pointer; font-size: .76rem; }
+.rules summary strong { color: var(--imsda-navy); overflow-wrap: anywhere; }
+.badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.badge { border-radius: 999px; padding: 2px 9px; font-size: .6rem; border: 1px solid var(--line); color: var(--muted); }
+.DRAFT { border-color: var(--gold, #c9a227); color: #7a5b00; }
+.ACTIVE { border-color: var(--green, #2f7d4f); color: var(--green, #2f7d4f); }
+.INACTIVE { color: var(--muted); }
+.check_flag { border-color: var(--coral); color: var(--coral); }
+.editor { display: grid; gap: 10px; }
+.group { display: grid; gap: 8px; min-width: 0; margin: 0; border: 1px solid var(--line); border-radius: 12px; padding: 9px 11px; }
+.group legend { padding: 0 6px; color: var(--imsda-navy); font-size: .7rem; font-weight: 600; }
+.field { display: grid; flex: 1 1 200px; gap: 4px; min-width: 0; font-size: .68rem; }
+.field input, .field select, .field textarea { width: 100%; min-width: 0; min-height: 44px; border: 1px solid #cbdbe2; border-radius: 8px; background: #fff; padding: 8px 10px; font-size: 16px; }
+.addRow { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 10px; }
+.addRow :global(.secondary-button) { min-height: 44px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.chips li { display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 4px 2px 12px; font-size: .7rem; }
+.chips button { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border: 0; background: none; color: var(--muted); cursor: pointer; }
+.flag { display: flex; align-items: flex-start; gap: 6px; margin: 0; border: 1px solid var(--coral); border-radius: 10px; padding: 8px 10px; color: var(--coral); font-size: .66rem; line-height: 1.5; }
+.flag svg { flex: 0 0 auto; margin-top: 3px; }
+.unmatched { margin: 0; color: var(--coral); font-size: .64rem; line-height: 1.5; }
+.problems { margin: 0; padding-left: 18px; color: var(--muted); font-size: .66rem; line-height: 1.6; }
+.check { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: .74rem; }
+.check input { width: 22px; height: 22px; flex: 0 0 auto; }
+.steps { display: grid; gap: 6px; margin: 0 0 12px; padding: 0; list-style: none; max-height: 420px; overflow: auto; }
+.steps li { display: grid; gap: 2px; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.steps strong { color: var(--imsda-navy); font-size: .74rem; overflow-wrap: anywhere; }
+.steps small { color: var(--muted); font-size: .63rem; }
+.reason { display: flex; align-items: flex-start; gap: 4px; color: var(--coral) !important; line-height: 1.5; }
+.subhead { margin: 0 0 6px; color: var(--imsda-navy); font-size: .8rem; }
+.unmatchedList { display: grid; gap: 4px; margin: 0 0 12px; padding: 0; list-style: none; font-size: .68rem; }
+.unmatchedList small { color: var(--muted); }

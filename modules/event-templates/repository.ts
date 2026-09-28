@@ -14,7 +14,6 @@ import {
 } from "@/modules/event-templates/domain";
 import { createRegistrationFormFromTemplateInTransaction } from "@/modules/forms/repository";
 import { getEventSettings } from "@/modules/events/repository";
-
 export class EventTemplateOperationError extends Error {
   constructor(
     public readonly code:
@@ -200,7 +199,16 @@ export async function saveEventTemplateDraft(
     if (!current || current.updatedAt.getTime() !== expectedUpdatedAt) {
       throw new EventTemplateOperationError("EDIT_CONFLICT", "This template changed in another session. Reload it before saving again.");
     }
-    const payload = input.payload as unknown as Prisma.InputJsonValue;
+    // `starterKey` is server-owned (#546): only "Add starter templates" and the
+    // seed set it. Whatever the client sent is dropped, and the key already
+    // stored on this template (or none) is written, so a save can neither
+    // forge a starter's identity nor lose it.
+    const storedStarterKey = versions.map((version) => (version.payload as { starterKey?: unknown } | null)?.starterKey).find((key) => typeof key === "string");
+    const clientPayload = { ...input.payload };
+    delete clientPayload.starterKey;
+    const payload = (typeof storedStarterKey === "string"
+      ? { ...clientPayload, starterKey: storedStarterKey }
+      : clientPayload) as unknown as Prisma.InputJsonValue;
     if (draft) {
       const { count } = await tx.eventTemplateVersion.updateMany({
         where: { id: draft.id, status: "DRAFT", updatedAt: draft.updatedAt },

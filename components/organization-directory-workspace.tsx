@@ -244,7 +244,7 @@ export function OrganizationDirectoryWorkspace({
       <div className="page-intro">
         <div>
           <p className="eyebrow">Shared IMSDA foundation</p>
-          <h2>Churches and clubs</h2>
+          <h2>Clubs and churches</h2>
           <p>
             Maintain one organization directory for events, club rosters,
             treasury billing, and provider reconciliation. External identifiers

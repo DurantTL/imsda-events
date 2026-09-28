@@ -114,7 +114,9 @@ describe("POST /api/attendee/mfa regenerate-recovery-codes", () => {
 
     const response = await POST(request({ action: "regenerate-recovery-codes", code: totpCode(SECRET, new Date()) }));
 
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(401);
+    expect((await response.json()).error).toBe("OWN_SESSION_REQUIRED");
+    expect(mocks.checkAttendeeRosterUnlockRateLimit).not.toHaveBeenCalled();
     expect(prisma.attendeeMfaRecoveryCode.createMany).not.toHaveBeenCalled();
   });
 

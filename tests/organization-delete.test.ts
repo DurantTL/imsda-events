@@ -55,7 +55,7 @@ beforeEach(() => {
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
 });
 
-describe("deleting churches and clubs (#386)", () => {
+describe("deleting Clubs and churches (#386)", () => {
   it("reports what a club deletion removes", async () => {
     const check = await getOrganizationDeletionCheck("club-1");
     expect(check.blockers).toEqual([]);

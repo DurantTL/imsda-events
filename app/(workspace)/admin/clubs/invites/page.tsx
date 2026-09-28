@@ -16,7 +16,7 @@ export default async function ClubInvitesPage() {
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
   return (
     <>
-      <BackLink href="/admin/organizations" variant="staff">Back to churches and clubs</BackLink>
+      <BackLink href="/admin/organizations" variant="staff">Back to Clubs and churches</BackLink>
       <ClubInvitesWorkspace emailConfigured={isAccountEmailConfigured()} initialInvites={await listClubInvites()} />
     </>
   );
