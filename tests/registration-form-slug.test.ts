@@ -11,13 +11,15 @@ vi.mock("@/modules/attendee-types/repository", () => ({
   listActiveAttendeeTypes: dependencies.listActiveAttendeeTypes,
 }));
 
-import { formTemplates } from "@/modules/forms/definition";
+import { Prisma } from "@prisma/client";
+import { formTemplates, updateFormSlugSchema } from "@/modules/forms/definition";
 import {
   FormOperationError,
   publishRegistrationForm,
+  suggestRegistrationFormSlug,
   updateRegistrationFormSlug,
 } from "@/modules/forms/repository";
-import { slugify } from "@/modules/forms/slug";
+import { slugCandidate, slugify, slugMatchesTitle } from "@/modules/forms/slug";
 
 const definition = formTemplates[0].definition;
 
@@ -38,8 +40,8 @@ function versionRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
-// The shape `updateRegistrationFormSlug`'s own precheck reads (a narrow
-// `select`), before it has ever been published.
+// The shape `updateRegistrationFormSlug` reads inside its transaction (a
+// narrow `select`), before it has ever been published.
 function neverPublishedPrecheck(overrides: Record<string, unknown> = {}) {
   return {
     id: "form-1",
@@ -71,27 +73,54 @@ beforeEach(() => {
   dependencies.listActiveAttendeeTypes.mockResolvedValue([]);
 });
 
+/**
+ * A Prisma client whose transaction runs against `tx`, where the form lookup
+ * (`findFirst`) happens, and whose top-level `findFirst` is the read-back
+ * `getRegistrationForm` does after a successful call.
+ */
+function prismaFor(tx: Record<string, unknown>, readBack: unknown = null) {
+  return {
+    $transaction: vi.fn(async (operation: (client: typeof tx) => unknown) => operation(tx)),
+    registrationForm: { findFirst: vi.fn().mockResolvedValue(readBack) },
+  };
+}
+
 describe("form slug sync before first publish (#476)", () => {
   it("detects when a renamed form's title no longer matches its slug, the same way the builder does", () => {
     expect(slugify("Honors Weekend Registration")).toBe("honors-weekend-registration");
-    expect(slugify("Honors Weekend Registration")).not.toBe("womens-retreat-registration");
+    expect(slugMatchesTitle("womens-retreat-registration", "Honors Weekend Registration")).toBe(false);
+    expect(slugMatchesTitle("honors-weekend-registration", "Honors Weekend Registration")).toBe(true);
+  });
+
+  it("treats a -2/-3 suffix added at creation as already matching the title", () => {
+    expect(slugMatchesTitle("honors-weekend-registration-2", "Honors Weekend Registration")).toBe(true);
+    expect(slugMatchesTitle("honors-weekend-registration-3", "Honors Weekend Registration")).toBe(true);
+    expect(slugMatchesTitle("honors-weekend-registration-x", "Honors Weekend Registration")).toBe(false);
+    expect(slugMatchesTitle("honors-weekend-2", "Honors Weekend Registration")).toBe(false);
+  });
+
+  it("never ends a slug in a hyphen after shortening a long title", () => {
+    // 59 letters then a space: the 60-character cut lands on the separator.
+    const title = `${"a".repeat(59)} tail`;
+    const slug = slugify(title);
+    expect(slug).toBe("a".repeat(59));
+    expect(updateFormSlugSchema.safeParse({ slug }).success).toBe(true);
+    const candidate = slugCandidate(slug, 12);
+    expect(candidate.length).toBeLessThanOrEqual(60);
+    expect(updateFormSlugSchema.safeParse({ slug: candidate }).success).toBe(true);
   });
 
   it("updates the slug when staff choose the new address, on a never-published form", async () => {
-    const findFirst = vi.fn()
-      .mockResolvedValueOnce(neverPublishedPrecheck())
-      .mockResolvedValueOnce(fullFormRow("honors-weekend-registration"));
+    const findFirst = vi.fn().mockResolvedValue(neverPublishedPrecheck());
     const findUnique = vi.fn().mockResolvedValue(null); // no other form owns the new address
     const update = vi.fn().mockResolvedValue({});
     const auditCreate = vi.fn().mockResolvedValue({});
-    const tx = { registrationForm: { findUnique, update }, auditLog: { create: auditCreate } };
-    dependencies.getPrisma.mockReturnValue({
-      $transaction: vi.fn(async (operation: (client: typeof tx) => unknown) => operation(tx)),
-      registrationForm: { findFirst },
-    });
+    const tx = { registrationForm: { findFirst, findUnique, update }, auditLog: { create: auditCreate } };
+    dependencies.getPrisma.mockReturnValue(prismaFor(tx, fullFormRow("honors-weekend-registration")));
 
     const result = await updateRegistrationFormSlug("event-1", "form-1", "user-1", "honors-weekend-registration");
 
+    expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "form-1", eventId: "event-1" } }));
     expect(findUnique).toHaveBeenCalledWith({
       where: { eventId_slug: { eventId: "event-1", slug: "honors-weekend-registration" } },
       select: { id: true },
@@ -104,27 +133,24 @@ describe("form slug sync before first publish (#476)", () => {
   });
 
   it("keeps the current slug and makes no write when staff choose to keep the old address", async () => {
-    const findFirst = vi.fn()
-      .mockResolvedValueOnce(neverPublishedPrecheck())
-      .mockResolvedValueOnce(fullFormRow("womens-retreat-registration"));
-    const transactionSpy = vi.fn();
-    dependencies.getPrisma.mockReturnValue({ $transaction: transactionSpy, registrationForm: { findFirst } });
+    const update = vi.fn();
+    const tx = { registrationForm: { findFirst: vi.fn().mockResolvedValue(neverPublishedPrecheck()), findUnique: vi.fn(), update }, auditLog: { create: vi.fn() } };
+    dependencies.getPrisma.mockReturnValue(prismaFor(tx, fullFormRow("womens-retreat-registration")));
 
     const result = await updateRegistrationFormSlug("event-1", "form-1", "user-1", "womens-retreat-registration");
 
-    expect(transactionSpy).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
     expect(result.slug).toBe("womens-retreat-registration");
   });
 
-  it("refuses a web address already used by another form in the event, with the same message style as event addresses", async () => {
-    const findFirst = vi.fn().mockResolvedValue(neverPublishedPrecheck());
-    const findUnique = vi.fn().mockResolvedValue({ id: "form-2" }); // another form already has it
+  it("refuses a web address already used by another form in the event", async () => {
     const update = vi.fn();
-    const tx = { registrationForm: { findUnique, update }, auditLog: { create: vi.fn() } };
-    dependencies.getPrisma.mockReturnValue({
-      $transaction: vi.fn(async (operation: (client: typeof tx) => unknown) => operation(tx)),
-      registrationForm: { findFirst },
-    });
+    const tx = {
+      registrationForm: { findFirst: vi.fn().mockResolvedValue(neverPublishedPrecheck()), findUnique: vi.fn().mockResolvedValue({ id: "form-2" }), update },
+      auditLog: { create: vi.fn() },
+    };
+    dependencies.getPrisma.mockReturnValue(prismaFor(tx));
 
     await expect(
       updateRegistrationFormSlug("event-1", "form-1", "user-1", "honors-weekend-registration"),
@@ -132,26 +158,98 @@ describe("form slug sync before first publish (#476)", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("locks the slug once any version of the form has ever been published", async () => {
-    const findFirst = vi.fn().mockResolvedValue(
-      neverPublishedPrecheck({ versions: [{ publishedAt: new Date("2026-08-02T00:00:00.000Z") }] }),
-    );
-    const transactionSpy = vi.fn();
-    dependencies.getPrisma.mockReturnValue({ $transaction: transactionSpy, registrationForm: { findFirst } });
+  it("maps a unique-constraint race on the write to FORM_SLUG_TAKEN", async () => {
+    const conflict = new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" });
+    const tx = {
+      registrationForm: { findFirst: vi.fn().mockResolvedValue(neverPublishedPrecheck()), findUnique: vi.fn().mockResolvedValue(null), update: vi.fn().mockRejectedValue(conflict) },
+      auditLog: { create: vi.fn() },
+    };
+    dependencies.getPrisma.mockReturnValue(prismaFor(tx));
+
+    await expect(
+      updateRegistrationFormSlug("event-1", "form-1", "user-1", "honors-weekend-registration"),
+    ).rejects.toMatchObject({ code: "FORM_SLUG_TAKEN" });
+  });
+
+  it("locks the slug once any version of the form has ever been published, checked inside the transaction", async () => {
+    const update = vi.fn();
+    const tx = {
+      registrationForm: {
+        findFirst: vi.fn().mockResolvedValue(neverPublishedPrecheck({ versions: [{ publishedAt: new Date("2026-08-02T00:00:00.000Z") }] })),
+        findUnique: vi.fn(),
+        update,
+      },
+      auditLog: { create: vi.fn() },
+    };
+    const prisma = prismaFor(tx);
+    dependencies.getPrisma.mockReturnValue(prisma);
 
     await expect(
       updateRegistrationFormSlug("event-1", "form-1", "user-1", "a-brand-new-address"),
     ).rejects.toMatchObject({ code: "SLUG_LOCKED" });
-    expect(transactionSpy).not.toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(tx.registrationForm.findFirst).toHaveBeenCalledTimes(1);
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("raises FORM_NOT_FOUND for a form outside the event", async () => {
-    const findFirst = vi.fn().mockResolvedValue(null);
-    dependencies.getPrisma.mockReturnValue({ $transaction: vi.fn(), registrationForm: { findFirst } });
+    const tx = { registrationForm: { findFirst: vi.fn().mockResolvedValue(null), findUnique: vi.fn(), update: vi.fn() }, auditLog: { create: vi.fn() } };
+    dependencies.getPrisma.mockReturnValue(prismaFor(tx));
 
     await expect(
       updateRegistrationFormSlug("event-1", "missing-form", "user-1", "anything"),
     ).rejects.toMatchObject({ code: "FORM_NOT_FOUND" });
+  });
+});
+
+describe("the address offered before a first publish (#476)", () => {
+  function suggestionPrisma(slug: string, title: string, otherSlugs: string[], publishedAt: Date | null = null) {
+    const draftDefinition = { ...definition, title };
+    return {
+      registrationForm: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: "form-1",
+          slug,
+          versions: [{ status: publishedAt ? "PUBLISHED" : "DRAFT", publishedAt, definition: draftDefinition }],
+        }),
+        findMany: vi.fn().mockResolvedValue(otherSlugs.map((other) => ({ slug: other }))),
+      },
+    };
+  }
+
+  it("does not prompt for a form whose -2 suffix was added at creation", async () => {
+    dependencies.getPrisma.mockReturnValue(suggestionPrisma("honors-weekend-registration-2", "Honors Weekend Registration", ["honors-weekend-registration"]));
+
+    await expect(suggestRegistrationFormSlug("event-1", "form-1")).resolves.toMatchObject({ needsSync: false });
+  });
+
+  it("offers the next free address, the same way creation picks one, when the plain one is taken", async () => {
+    dependencies.getPrisma.mockReturnValue(suggestionPrisma(
+      "womens-retreat-registration",
+      "Honors Weekend Registration",
+      ["honors-weekend-registration", "honors-weekend-registration-2"],
+    ));
+
+    await expect(suggestRegistrationFormSlug("event-1", "form-1")).resolves.toMatchObject({
+      currentSlug: "womens-retreat-registration",
+      offeredSlug: "honors-weekend-registration-3",
+      needsSync: true,
+    });
+  });
+
+  it("offers the plain title address when it is free", async () => {
+    dependencies.getPrisma.mockReturnValue(suggestionPrisma("womens-retreat-registration", "Honors Weekend Registration", ["other-form"]));
+
+    await expect(suggestRegistrationFormSlug("event-1", "form-1")).resolves.toMatchObject({
+      offeredSlug: "honors-weekend-registration",
+      needsSync: true,
+    });
+  });
+
+  it("never offers a change once the form has been published", async () => {
+    dependencies.getPrisma.mockReturnValue(suggestionPrisma("womens-retreat-registration", "Honors Weekend Registration", [], new Date("2026-08-02T00:00:00.000Z")));
+
+    await expect(suggestRegistrationFormSlug("event-1", "form-1")).resolves.toMatchObject({ needsSync: false, locked: true });
   });
 });
 
@@ -193,13 +291,20 @@ describe("a published form's slug never changes on its own", () => {
   });
 
   it("still exposes no repository path that writes a slug once a version was ever published", async () => {
-    const findFirst = vi.fn().mockResolvedValue(
-      neverPublishedPrecheck({ versions: [{ publishedAt: new Date("2026-08-02T00:00:00.000Z") }] }),
-    );
-    dependencies.getPrisma.mockReturnValue({ $transaction: vi.fn(), registrationForm: { findFirst } });
+    const update = vi.fn();
+    const tx = {
+      registrationForm: {
+        findFirst: vi.fn().mockResolvedValue(neverPublishedPrecheck({ versions: [{ publishedAt: new Date("2026-08-02T00:00:00.000Z") }] })),
+        findUnique: vi.fn(),
+        update,
+      },
+      auditLog: { create: vi.fn() },
+    };
+    dependencies.getPrisma.mockReturnValue(prismaFor(tx));
 
     await expect(
       updateRegistrationFormSlug("event-1", "form-1", "user-1", "renamed-again"),
     ).rejects.toBeInstanceOf(FormOperationError);
+    expect(update).not.toHaveBeenCalled();
   });
 });

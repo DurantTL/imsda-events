@@ -25,6 +25,7 @@ import {
   X,
 } from "lucide-react";
 import { AddressFieldGroup } from "@/components/address-field-group";
+import { FormSlugDialog } from "@/components/form-slug-dialog";
 import { SearchableSelect } from "@/components/searchable-select";
 import type { AddressValue } from "@/modules/forms/address";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
@@ -33,7 +34,7 @@ import { calculateFormTotal, calculateRosterTotal, conditionOperators, formField
 import { promoCodeBuilderModule } from "@/modules/forms/builder-modules";
 import { creditPatchForKindChange, creditSummary, hasCredit, removeCreditPatch } from "@/modules/forms/credit-fields";
 import { getPublicRegistrationStepPlan, isPublicReviewSection, type PublicRegistrationStepId } from "@/modules/forms/public-registration-steps";
-import { slugify } from "@/modules/forms/slug";
+import { slugMatchesTitle } from "@/modules/forms/slug";
 import { shirtSizeOptions } from "@/modules/registrations/shirt-sizes";
 
 type PreviewValue = string | boolean | string[] | AddressValue;
@@ -336,17 +337,14 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
   const [showTemplates, setShowTemplates] = useState(initialForms.length === 0);
   const [confirmingPublish, setConfirmingPublish] = useState(false);
   const [confirmingUnpublish, setConfirmingUnpublish] = useState(false);
-  const [resolvingSlug, setResolvingSlug] = useState(false);
+  // The address the server offers when a renamed, never-published form's
+  // slug no longer matches its title; null while no prompt is open.
+  const [slugPrompt, setSlugPrompt] = useState<{ offeredSlug: string } | null>(null);
+  const [slugError, setSlugError] = useState("");
   const publishDialogRef = useAccessibleDialog<HTMLElement>(
     confirmingPublish,
     () => {
       if (!busy) setConfirmingPublish(false);
-    },
-  );
-  const slugDialogRef = useAccessibleDialog<HTMLElement>(
-    resolvingSlug,
-    () => {
-      if (!busy) setResolvingSlug(false);
     },
   );
   const [dragging, setDragging] = useState<DragState>(null);
@@ -440,9 +438,10 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
   // its title changes. Before a form's first publish only, offer to sync the
   // slug to the current title — after that, shared links depend on the slug
   // never changing on its own (#476).
-  const expectedSlug = definition ? slugify(definition.title) : "";
-  const slugNeedsSync = Boolean(
-    selectedForm && !hasEverPublished && expectedSlug && expectedSlug !== selectedForm.slug,
+  // A `title-N` slug that creation added counts as matching. The server
+  // makes the final call and picks a free address to offer.
+  const slugMayNeedSync = Boolean(
+    selectedForm && definition && !hasEverPublished && definition.title.trim() && !slugMatchesTitle(selectedForm.slug, definition.title),
   );
 
   function replaceDefinition(next: RegistrationFormDefinition) {
@@ -525,26 +524,37 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
     finally { setBusy(null); }
   }
 
-  function beginPublish() {
-    if (slugNeedsSync) { setError(""); setNotice(""); setResolvingSlug(true); return; }
-    setConfirmingPublish(true);
+  async function beginPublish() {
+    if (!selectedForm || !slugMayNeedSync) { setConfirmingPublish(true); return; }
+    setBusy("slug"); setError(""); setNotice("");
+    try {
+      const response = await fetch(`/api/events/${eventId}/forms/${selectedForm.id}/slug`);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message ?? "Unable to check the web address.");
+      if (result.suggestion.needsSync) { setSlugError(""); setSlugPrompt({ offeredSlug: result.suggestion.offeredSlug }); }
+      else setConfirmingPublish(true);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Unable to check the web address."); }
+    finally { setBusy(null); }
   }
 
-  async function chooseSlug(nextSlug: string) {
-    if (!selectedForm) return;
-    if (nextSlug === selectedForm.slug) { setResolvingSlug(false); setConfirmingPublish(true); return; }
-    setBusy("slug"); setError(""); setNotice("");
+  function keepSlug() {
+    setSlugPrompt(null); setSlugError(""); setConfirmingPublish(true);
+  }
+
+  async function updateSlug() {
+    if (!selectedForm || !slugPrompt) return;
+    setBusy("slug"); setSlugError("");
     try {
       const response = await fetch(`/api/events/${eventId}/forms/${selectedForm.id}/slug`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slug: nextSlug }),
+        body: JSON.stringify({ slug: slugPrompt.offeredSlug }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message ?? "Unable to update the web address.");
       syncForm(result.form, `The web address is now /register/${eventSlug}/${result.form.slug}.`, true);
-      setResolvingSlug(false);
+      setSlugPrompt(null);
       setConfirmingPublish(true);
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "Unable to update the web address."); }
+    } catch (caught) { setSlugError(caught instanceof Error ? caught.message : "Unable to update the web address."); }
     finally { setBusy(null); }
   }
 
@@ -1253,7 +1263,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
 
     {confirmingUnpublish && selectedForm && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setConfirmingUnpublish(false); }}><section className="modal-card confirm-import-modal" role="dialog" aria-modal="true" aria-labelledby="unpublish-form-title" tabIndex={-1}><div className="modal-head"><div><p className="eyebrow">Withdraw registration form</p><h2 id="unpublish-form-title">Stop offering {selectedForm.name}?</h2></div><button className="icon-button" type="button" aria-label="Close dialog" onClick={() => setConfirmingUnpublish(false)}><X size={18} /></button></div><div className="boundary-callout"><ShieldCheck size={19} /><span><strong>Registrations already taken are not changed</strong><small>They reference the exact version they were submitted under, including its questions and prices.</small></span></div><p className="confirm-copy">The form disappears from the public event page and stops accepting new registrations. Publishing it again later creates a new version.</p><div className="form-actions"><button className="secondary-button" type="button" onClick={() => setConfirmingUnpublish(false)}>Keep it published</button><button className="primary-button" type="button" disabled={busy !== null} onClick={unpublish}>{busy === "unpublish" ? "Withdrawing…" : "Withdraw form"}</button></div></section></div>}
 
-    {resolvingSlug && selectedForm && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && busy !== "slug") setResolvingSlug(false); }}><section className="modal-card confirm-import-modal" ref={slugDialogRef} role="dialog" aria-modal="true" aria-labelledby="slug-sync-title" tabIndex={-1}><div className="modal-head"><div><p className="eyebrow">Web address</p><h2 id="slug-sync-title">This form&rsquo;s title changed</h2></div><button className="icon-button" type="button" aria-label="Close dialog" disabled={busy === "slug"} onClick={() => setResolvingSlug(false)}><X size={18} /></button></div><p className="confirm-copy">Update the web address to <code>/register/{eventSlug}/{expectedSlug}</code>, or keep <code>/register/{eventSlug}/{selectedForm.slug}</code>. This is the only chance to change it automatically — once this form is first published, shared links depend on its address staying put.</p><div className="form-actions"><button className="secondary-button" type="button" disabled={busy === "slug"} onClick={() => chooseSlug(selectedForm.slug)}>Keep {selectedForm.slug}</button><button className="primary-button" type="button" disabled={busy === "slug"} onClick={() => chooseSlug(expectedSlug)}>{busy === "slug" ? "Updating…" : `Update to ${expectedSlug}`}</button></div></section></div>}
+    {selectedForm && <FormSlugDialog open={slugPrompt !== null} eventSlug={eventSlug} currentSlug={selectedForm.slug} offeredSlug={slugPrompt?.offeredSlug ?? ""} error={slugError} busy={busy === "slug"} onKeep={keepSlug} onUpdate={updateSlug} onCancel={() => { setSlugPrompt(null); setSlugError(""); }} />}
 
     {confirmingPublish && selectedForm && selectedVersion && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setConfirmingPublish(false); }}><section className="modal-card confirm-import-modal" ref={publishDialogRef} role="dialog" aria-modal="true" aria-labelledby="publish-form-title" tabIndex={-1}><div className="modal-head"><div><p className="eyebrow">Publish registration form</p><h2 id="publish-form-title">Publish version {selectedVersion.versionNumber}?</h2></div><button className="icon-button" type="button" aria-label="Close dialog" onClick={() => setConfirmingPublish(false)}><X size={18} /></button></div><div className="boundary-callout"><ShieldCheck size={19} /><span><strong>This form will be ready for the public event page</strong><small>The event must also be published in Event settings before visitors can register.</small></span></div><p className="confirm-copy">This version is saved as the public version. Later edits create a new draft, so existing registrations always retain the exact questions and prices they submitted.</p><div className="form-actions"><button className="secondary-button" type="button" onClick={() => setConfirmingPublish(false)}>Review again</button><button className="primary-button" type="button" disabled={busy !== null} onClick={publish}>{busy === "publish" ? "Publishing…" : "Publish form"}</button></div></section></div>}
   </section>;

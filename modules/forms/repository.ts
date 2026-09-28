@@ -11,7 +11,7 @@ import {
   type RegistrationFormDefinition,
 } from "@/modules/forms/definition";
 import { preparePublicRegistration } from "@/modules/forms/public-domain";
-import { slugify } from "@/modules/forms/slug";
+import { slugCandidate, slugify, slugMatchesTitle } from "@/modules/forms/slug";
 import { listActiveAttendeeTypes } from "@/modules/attendee-types/repository";
 import { stripAttendeeTypeOptions, withAttendeeTypeOptions } from "@/modules/attendee-types/form-options";
 import type { AttendeeTypeOption } from "@/modules/attendee-types/domain";
@@ -226,26 +226,71 @@ export async function updateRegistrationForm(
  * is allowed to move it.
  */
 export async function updateRegistrationFormSlug(eventId: string, formId: string, actorUserId: string, slug: string) {
-  const form = await getPrisma().registrationForm.findFirst({
-    where: { id: formId, eventId },
-    select: { id: true, name: true, slug: true, versions: { select: { publishedAt: true } } },
-  });
-  if (!form) throw new FormOperationError("FORM_NOT_FOUND", "That registration form was not found.");
-  if (form.versions.some((version) => version.publishedAt)) {
-    throw new FormOperationError("SLUG_LOCKED", "This form has already been published, so its web address can no longer change automatically.");
-  }
-  if (slug !== form.slug) {
+  try {
     await getPrisma().$transaction(async (tx) => {
+      // Read and write in one transaction, as publishRegistrationForm does, so
+      // a publish landing between the lock check and the write cannot slip a
+      // slug change past SLUG_LOCKED.
+      const form = await tx.registrationForm.findFirst({
+        where: { id: formId, eventId },
+        select: { id: true, name: true, slug: true, versions: { select: { publishedAt: true } } },
+      });
+      if (!form) throw new FormOperationError("FORM_NOT_FOUND", "That registration form was not found.");
+      if (form.versions.some((version) => version.publishedAt)) {
+        throw new FormOperationError("SLUG_LOCKED", "This form has already been published, so its web address can no longer change automatically.");
+      }
+      if (slug === form.slug) return;
       const existing = await tx.registrationForm.findUnique({ where: { eventId_slug: { eventId, slug } }, select: { id: true } });
-      if (existing) throw new FormOperationError("FORM_SLUG_TAKEN", "That web address is already used by another form for this event. Choose another address.");
+      if (existing) throw slugTakenError();
       await tx.registrationForm.update({ where: { id: formId }, data: { slug } });
       await tx.auditLog.create({ data: {
         eventId, actorUserId, action: "REGISTRATION_FORM_SLUG_UPDATED", entityType: "RegistrationForm", entityId: formId,
         correlationId: randomUUID(), summary: `Updated the web address for ${form.name} to /${slug}.`, metadata: { previousSlug: form.slug, slug, productionWrite: false },
       } });
     });
+  } catch (error) {
+    // Another form claimed the address between the check and the write.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") throw slugTakenError();
+    throw error;
   }
   return (await getRegistrationForm(eventId, formId))!;
+}
+
+function slugTakenError() {
+  return new FormOperationError("FORM_SLUG_TAKEN", "That web address is already used by another form for this event. Choose another address.");
+}
+
+/**
+ * What the builder should offer before a form's first publish (#476): the
+ * address its saved title would get, resolved to the next free one the same
+ * way createRegistrationForm does (`title`, `title-2`, …), so "Update" can
+ * succeed. `needsSync` is false once the form has ever been published (the
+ * slug is locked) or when the slug already reflects the title, including a
+ * `title-N` suffix that creation added.
+ */
+export async function suggestRegistrationFormSlug(eventId: string, formId: string) {
+  const prisma = getPrisma();
+  const form = await prisma.registrationForm.findFirst({
+    where: { id: formId, eventId },
+    select: { id: true, slug: true, versions: { select: { status: true, publishedAt: true, definition: true }, orderBy: { versionNumber: "desc" } } },
+  });
+  if (!form) throw new FormOperationError("FORM_NOT_FOUND", "That registration form was not found.");
+  const locked = form.versions.some((version) => version.publishedAt);
+  const titleVersion = form.versions.find((version) => version.status === RegistrationFormStatus.DRAFT) ?? form.versions[0];
+  const title = titleVersion ? definitionFromJson(titleVersion.definition).title : "";
+  if (locked || !title || slugMatchesTitle(form.slug, title)) {
+    return { currentSlug: form.slug, offeredSlug: form.slug, needsSync: false, locked };
+  }
+  const baseSlug = slugify(title);
+  const taken = new Set((await prisma.registrationForm.findMany({
+    // An event has a handful of forms, so reading every other slug is cheap.
+    where: { eventId, id: { not: formId } },
+    select: { slug: true },
+  })).map((row) => row.slug));
+  let suffix = 1;
+  while (taken.has(slugCandidate(baseSlug, suffix))) suffix += 1;
+  const offeredSlug = slugCandidate(baseSlug, suffix);
+  return { currentSlug: form.slug, offeredSlug, needsSync: offeredSlug !== form.slug, locked };
 }
 
 export async function publishRegistrationForm(eventId: string, formId: string, actorUserId: string) {
