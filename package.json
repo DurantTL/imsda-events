@@ -18,6 +18,7 @@
     "test:club-transfers": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-club-member-transfers.ts",
     "test:background-check-list": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-background-check-list.ts",
     "test:club-supplies": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-club-supply-catalog.ts",
+    "test:club-orders": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-club-order-fulfillment.ts",
     "test:event-templates": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-event-templates.ts",
     "test:event-cloning": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-event-cloning.ts",
     "test:watch": "vitest",
