@@ -26,7 +26,7 @@ const field = (id: string, key: string, label: string, type: string, scope: "ATT
   { id, key, label, helpText: "", type, scope, required, options: [] }
 );
 
-function definition(extraAttendeeFields: ReturnType<typeof field>[] = []) {
+function definition(extraAttendeeFields: Record<string, unknown>[] = [], extraRegistrationFields: Record<string, unknown>[] = []) {
   return registrationFormDefinitionSchema.parse({
     title: "Honors Weekend club registration",
     description: "Fictitious club form.",
@@ -37,6 +37,7 @@ function definition(extraAttendeeFields: ReturnType<typeof field>[] = []) {
         field("c_first", "primary_contact_first_name", "First name", "TEXT", "REGISTRATION", true),
         field("c_last", "primary_contact_last_name", "Last name", "TEXT", "REGISTRATION", true),
         field("c_email", "email", "Email", "EMAIL", "REGISTRATION", true),
+        ...extraRegistrationFields,
       ] },
       { id: "roster", title: "Roster", description: "", fields: [
         field("a_first", "first_name", "First name", "TEXT", "ATTENDEE", true),
@@ -47,6 +48,16 @@ function definition(extraAttendeeFields: ReturnType<typeof field>[] = []) {
       ] },
     ],
   });
+}
+
+/** A directory-sourced club/church field pair (#482), matching the Honors
+ * Weekend and Camporee templates. */
+function directoryFields(): Record<string, unknown>[] {
+  return [
+    { id: "d_club", key: "club_name", label: "Pathfinder club", helpText: "", type: "SELECT", scope: "REGISTRATION", required: true, options: [], optionSource: "CLUBS_DIRECTORY" },
+    { id: "d_club_other", key: "club_name_other", label: "Club — not listed", helpText: "", type: "TEXT", scope: "REGISTRATION", required: true, options: [], conditional: { fieldKey: "club_name", operator: "EQUALS", value: "Not listed" } },
+    { id: "d_church", key: "church_name", label: "Church", helpText: "", type: "SELECT", scope: "REGISTRATION", required: false, options: [], optionSource: "CHURCHES_DIRECTORY" },
+  ];
 }
 
 const baseInput: {
@@ -72,6 +83,12 @@ function fixture({ billingMode = "DEFERRED_ORGANIZATION_INVOICE", audience = "CL
     { id: "m2", personId: "person-m2", attendeeType: "STAFF", role: "Counselor", gender: null, sealedBirthDate: sealSecret("1988-03-02", "club-roster:birth-date"), person: { firstName: "Jordan", lastName: "Example" } },
   ];
   const tx = {
+    organization: {
+      findUnique: vi.fn().mockResolvedValue({ name: "Test Pathfinders", parentOrganization: { name: "Test SDA Church", isActive: true } }),
+      findMany: vi.fn(async ({ where }: { where: { type?: string } }) => (
+        where.type === "CLUB" ? [{ name: "Test Pathfinders" }] : [{ name: "Test SDA Church" }]
+      )),
+    },
     registrationForm: { findFirst: vi.fn().mockResolvedValue({
       id: "form-1", slug: "clubs", eventId: "event-1",
       event: {
@@ -102,7 +119,14 @@ function fixture({ billingMode = "DEFERRED_ORGANIZATION_INVOICE", audience = "CL
     messageOutbox: { findMany: vi.fn().mockResolvedValue([]) },
     auditLog: { create: vi.fn().mockResolvedValue({ id: "audit-1" }) },
   };
-  dependencies.getPrisma.mockReturnValue({ $transaction: vi.fn(async (operation: (client: typeof tx) => unknown) => operation(tx)) });
+  dependencies.getPrisma.mockReturnValue({
+    // Directory reads during submit must go through the transaction (#482).
+    organization: {
+      findUnique: vi.fn(() => { throw new Error("read the organization through the transaction"); }),
+      findMany: vi.fn(() => { throw new Error("read the directory through the transaction"); }),
+    },
+    $transaction: vi.fn(async (operation: (client: typeof tx) => unknown) => operation(tx)),
+  });
   return tx;
 }
 
@@ -326,5 +350,69 @@ describe("club registration submit", () => {
     const tx = fixture({ registrationClosesOn: "2026-10-10" });
     await expect(submit()).rejects.toMatchObject({ code: "REGISTRATION_CLOSED" });
     expect(tx.registration.create).not.toHaveBeenCalled();
+  });
+
+  it("locks the club directory field to the club's own Organization record, ignoring whatever the client sent (#482)", async () => {
+    const tx = fixture({ form: definition([], directoryFields()) });
+    await submit({
+      ...baseInput,
+      responses: {
+        ...baseInput.responses,
+        club_name: "A Made-Up Club",
+        club_name_other: "Sneaky free text",
+        church_name: "Test SDA Church",
+      },
+    });
+
+    const submission = tx.publicRegistrationSubmission.create.mock.calls[0]![0].data;
+    expect(submission.responses).toMatchObject({
+      club_name: "Test Pathfinders",
+      church_name: "Test SDA Church",
+    });
+    // The "Not listed" free-text companion no longer applies once locked to a
+    // real directory match, so it is cleared rather than kept.
+    expect(submission.responses.club_name_other).toBeFalsy();
+    // Validated against the directory read inside the transaction.
+    expect(tx.organization.findMany).toHaveBeenCalled();
+  });
+
+  it("keeps the church the director chose, even when it differs from the sponsoring church (#482)", async () => {
+    const tx = fixture({ form: definition([], directoryFields()) });
+    tx.organization.findMany.mockImplementation(async ({ where }: { where: { type?: string } }) => (
+      where.type === "CLUB" ? [{ name: "Test Pathfinders" }] : [{ name: "Test SDA Church" }, { name: "Sample Chapel" }]
+    ));
+    await submit({ ...baseInput, responses: { ...baseInput.responses, church_name: "Sample Chapel" } });
+    const submission = tx.publicRegistrationSubmission.create.mock.calls[0]![0].data;
+    expect(submission.responses).toMatchObject({ club_name: "Test Pathfinders", church_name: "Sample Chapel" });
+  });
+
+  it("accepts a \"Not listed\" church with its typed name, never blocking the registration (#482)", async () => {
+    const tx = fixture({ form: definition([], [
+      ...directoryFields(),
+      { id: "d_church_other", key: "church_name_other", label: "Church — not listed", helpText: "", type: "TEXT", scope: "REGISTRATION", required: true, options: [], conditional: { fieldKey: "church_name", operator: "EQUALS", value: "Not listed" } },
+    ]) });
+    await submit({ ...baseInput, responses: { ...baseInput.responses, church_name: "Not listed", church_name_other: "Test Fellowship" } });
+    const submission = tx.publicRegistrationSubmission.create.mock.calls[0]![0].data;
+    expect(submission.responses).toMatchObject({ club_name: "Test Pathfinders", church_name: "Not listed", church_name_other: "Test Fellowship" });
+  });
+
+  it("refuses a church that is neither in the live directory nor \"Not listed\" (#482)", async () => {
+    const tx = fixture({ form: definition([], directoryFields()) });
+    await expect(submit({ ...baseInput, responses: { ...baseInput.responses, church_name: "A Made-Up Church" } }))
+      .rejects.toMatchObject({ code: "INVALID_SUBMISSION" });
+    expect(tx.registration.create).not.toHaveBeenCalled();
+  });
+
+  it("accepts a \"Not listed\" club with its typed name through the ordinary public submit (#482)", async () => {
+    const tx = fixture({ form: definition([], directoryFields()), audience: "GENERAL", billingMode: "ATTENDEE_PAY" });
+    tx.person.create.mockImplementation(async ({ data }: { data: { firstName: string; lastName: string } }) => ({ id: `person-${data.firstName}`, ...data }));
+    tx.person.findUnique.mockResolvedValue(null);
+    await submitPublicRegistration("honors-weekend", "clubs", publicRegistrationInputSchema.parse({
+      ...baseInput,
+      responses: { ...baseInput.responses, club_name: "Not listed", club_name_other: "Test Trailblazers" },
+      attendees: [{ clientId: "attendee-1", responses: { first_name: "Alex", last_name: "Sample", attendee_age: "12" } }],
+    }), now);
+    const submission = tx.publicRegistrationSubmission.create.mock.calls[0]![0].data;
+    expect(submission.responses).toMatchObject({ club_name: "Not listed", club_name_other: "Test Trailblazers" });
   });
 });

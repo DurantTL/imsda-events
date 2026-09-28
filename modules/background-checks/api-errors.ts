@@ -1,6 +1,7 @@
 import { ZodError } from "zod";
 import { AccessDeniedError } from "@/modules/access/authorization";
 import { logError } from "@/lib/logger";
+import { BackgroundCheckOperationError } from "@/modules/background-checks/errors";
 
 export function backgroundCheckApiError(error: unknown, action: string) {
   if (error instanceof ZodError) {
@@ -10,6 +11,9 @@ export function backgroundCheckApiError(error: unknown, action: string) {
     );
   }
   if (error instanceof AccessDeniedError) {
+    return Response.json({ error: error.code, message: error.message }, { status: error.status });
+  }
+  if (error instanceof BackgroundCheckOperationError) {
     return Response.json({ error: error.code, message: error.message }, { status: error.status });
   }
   logError(`${action} failed`, error);

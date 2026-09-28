@@ -4,11 +4,16 @@ const mocks = vi.hoisted(() => ({
   getPrisma: vi.fn(),
   writeAuditLog: vi.fn(),
   personIdForActor: vi.fn(),
+  uncachedChecksForRosterMembers: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: mocks.getPrisma }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: mocks.writeAuditLog }));
+vi.mock("@/modules/background-checks/repository", async () => {
+  const actual = await vi.importActual<typeof import("@/modules/background-checks/repository")>("@/modules/background-checks/repository");
+  return { ...actual, uncachedChecksForRosterMembers: mocks.uncachedChecksForRosterMembers };
+});
 vi.mock("@/modules/driver-verification/access", async () => {
   const actual = await vi.importActual<typeof import("@/modules/driver-verification/access")>("@/modules/driver-verification/access");
   return { ...actual, personIdForActor: mocks.personIdForActor };
@@ -66,7 +71,7 @@ function member(overrides: Row = {}): Row {
     person: {
       firstName: "Dana",
       lastName: "Driver",
-      backgroundCheck: { complianceStatus: "CLEAR", expiresOn: null, issuesNote: null },
+      backgroundCheckMatch: { entry: { complianceStatus: "CLEAR", expiresOn: null, issuesNote: null } },
       driverVerification: null,
     },
     ...overrides,
@@ -79,6 +84,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.writeAuditLog.mockResolvedValue({});
   mocks.personIdForActor.mockResolvedValue(null);
+  mocks.uncachedChecksForRosterMembers.mockResolvedValue(new Map());
   db = fakeDatabase();
 });
 
@@ -100,13 +106,23 @@ describe("driver verification queue (#491)", () => {
 
   it("gives conference staff the background-check issue note, and a club's own queue never (#427)", async () => {
     const withNote = { firstName: "Dana", lastName: "Driver", driverVerification: null,
-      backgroundCheck: { complianceStatus: "CLEAR", expiresOn: null, issuesNote: "Synthetic note: can't drive." } };
+      backgroundCheckMatch: { entry: { complianceStatus: "CLEAR", expiresOn: null, issuesNote: "Synthetic note: can't drive." } } };
     db.members.push(member({ person: withNote }));
     const [global] = await listWillingDrivers({ kind: "GLOBAL" }, now);
     expect(global.backgroundCheck).toEqual({ state: "CLEAR", note: "Synthetic note: can't drive." });
     const [club] = await listWillingDrivers({ kind: "CLUB", organizationId: "club-1" }, now);
     expect(club.backgroundCheck).toEqual({ state: "CLEAR", note: null });
     expect(JSON.stringify(club)).not.toContain("Synthetic note");
+  });
+
+  it("uses the same read-time lookup as the club roster for a driver the cache hasn't matched yet (#527)", async () => {
+    db.members.push(member({ person: { firstName: "Dana", lastName: "Driver", driverVerification: null, backgroundCheckMatch: null } }));
+    mocks.uncachedChecksForRosterMembers.mockResolvedValue(new Map([["person-1", { complianceStatus: "FLAGGED", expiresOn: null, issuesNote: "Synthetic note" }]]));
+    const [global] = await listWillingDrivers({ kind: "GLOBAL" }, now);
+    expect(global.backgroundCheck).toEqual({ state: "FLAGGED", note: "Synthetic note" });
+    expect(mocks.uncachedChecksForRosterMembers).toHaveBeenCalledWith([expect.objectContaining({ personId: "person-1" })]);
+    const [club] = await listWillingDrivers({ kind: "CLUB", organizationId: "club-1" }, now);
+    expect(club.backgroundCheck).toEqual({ state: "FLAGGED", note: null });
   });
 
   it("scopes a club's queue to its own organization", async () => {

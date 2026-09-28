@@ -26,6 +26,27 @@ export function isChoiceFieldType(type: string): type is typeof choiceFieldTypes
   return choiceFieldTypes.includes(type as typeof choiceFieldTypes[number]);
 }
 
+/**
+ * Live directory option sources (#482): "Clubs directory" and "Churches
+ * directory" read current `Organization` records instead of a hand-typed
+ * list, alongside the existing `ATTENDEE_TYPES` mechanism.
+ */
+export const directoryOptionSources = ["CLUBS_DIRECTORY", "CHURCHES_DIRECTORY"] as const;
+export type DirectoryOptionSource = typeof directoryOptionSources[number];
+
+export function isDirectoryOptionSource(source: string | undefined): source is DirectoryOptionSource {
+  return source === "CLUBS_DIRECTORY" || source === "CHURCHES_DIRECTORY";
+}
+
+/**
+ * The sentinel choice for "my club/church isn't on this list" (#482): kept
+ * alongside the live directory entries so it validates as an ordinary
+ * configured choice. Paired, by the existing "show only when" convention, with
+ * a free-text field the director fills in instead — the same pattern the
+ * templates already use for a static "Other" choice.
+ */
+export const DIRECTORY_NOT_LISTED_VALUE = "Not listed";
+
 /** The NUMBER field keys that hold an attendee's age (#483). */
 export const AGE_FIELD_KEYS = ["attendee_age", "age"] as const;
 
@@ -68,7 +89,7 @@ export const formFieldSchema = z.object({
   scope: z.enum(formFieldScopes),
   required: z.boolean(),
   options: z.array(z.string().trim().min(1).max(120)).max(200).default([]),
-  optionSource: z.literal("ATTENDEE_TYPES").optional(),
+  optionSource: z.enum(["ATTENDEE_TYPES", "CLUBS_DIRECTORY", "CHURCHES_DIRECTORY"]).optional(),
   optionLabels: z.record(z.string(), z.string().trim().min(1).max(120)).optional(),
   optionDescriptions: z.record(
     z.string(),
@@ -126,11 +147,17 @@ export const formFieldSchema = z.object({
   for (const choice of Object.keys(field.optionLabels ?? {})) {
     if (!field.options.includes(choice)) context.addIssue({ code: "custom", path: ["optionLabels", choice], message: "Choice labels must reference a configured choice." });
   }
-  if (field.optionSource && (!isChoiceFieldType(field.type) || field.scope !== "ATTENDEE" || field.type === "MULTISELECT" || field.type === "RANKED_CHOICE")) {
+  if (field.optionSource === "ATTENDEE_TYPES" && (!isChoiceFieldType(field.type) || field.scope !== "ATTENDEE" || field.type === "MULTISELECT" || field.type === "RANKED_CHOICE")) {
     context.addIssue({ code: "custom", path: ["optionSource"], message: "The attendee-type selector must be a single-choice attendee field." });
   }
-  if (field.optionSource && !field.required) {
+  if (field.optionSource === "ATTENDEE_TYPES" && !field.required) {
     context.addIssue({ code: "custom", path: ["required"], message: "The attendee-type selector must be required." });
+  }
+  if (
+    isDirectoryOptionSource(field.optionSource)
+    && ((field.type !== "SELECT" && field.type !== "RADIO") || field.scope !== "REGISTRATION")
+  ) {
+    context.addIssue({ code: "custom", path: ["optionSource"], message: "A directory-sourced field must be a single-choice select or radio field that applies to the whole registration." });
   }
   for (const choice of Object.keys(field.choicePricesCents ?? {})) {
     if (!field.options.includes(choice)) context.addIssue({ code: "custom", path: ["choicePricesCents", choice], message: "Choice prices must reference a configured choice." });
@@ -297,11 +324,15 @@ export function resolveResponsibleOrganization(responses: Record<string, unknown
     : "";
   if (explicit) return explicit;
   const clubName = typeof responses.club_name === "string" ? responses.club_name.trim() : "";
-  if (clubName && clubName !== "Other") return clubName;
+  if (clubName && clubName !== "Other" && clubName !== DIRECTORY_NOT_LISTED_VALUE) return clubName;
   const clubNameOther = typeof responses.club_name_other === "string" ? responses.club_name_other.trim() : "";
   if (clubNameOther) return clubNameOther;
   const churchName = typeof responses.church_name === "string" ? responses.church_name.trim() : "";
-  if (churchName && churchName !== "Other") return churchName;
+  if (churchName && churchName !== "Other" && churchName !== DIRECTORY_NOT_LISTED_VALUE) return churchName;
+  // A "Not listed" church (#482) falls back to the name the director typed,
+  // as the club side does.
+  const churchNameOther = typeof responses.church_name_other === "string" ? responses.church_name_other.trim() : "";
+  if (churchNameOther) return churchNameOther;
   return null;
 }
 
@@ -482,43 +513,6 @@ export const imsdaChurchOptions = [
   "Winterset SDA Church",
   "Woodland Hills SDA",
   "Other",
-];
-
-const pathfinderClubOptions = [
-  "Ankeny Son-Seekers",
-  "Branson East",
-  "Cape Girardeau",
-  "Cedar Rapids",
-  "College Park",
-  "Coordinators",
-  "Davenport Soaring Eagles",
-  "Des Moines Navigators",
-  "Des Moines Spanish",
-  "Ebenezer",
-  "Fulton Foxes",
-  "Gladstone",
-  "Houston Knights",
-  "KC Alpha & Omega",
-  "Latin American",
-  "Macon Messengers",
-  "Moberly Prospectors",
-  "Mtn Grove Trailblazers",
-  "Muscatine",
-  "NC4Y",
-  "Nevada Frogs",
-  "Nevada MO",
-  "Oak Grove Heights",
-  "Ottumwa",
-  "Sedalia",
-  "Sikeston Spartans",
-  "Springfield",
-  "St Louis Mid-Rivers Cats",
-  "St Louis West County Pioneers",
-  "St Louis Maranata",
-  "Sunnydale",
-  "Other",
-  "Waterloo Blackhawks",
-  "West Plain Warriors",
 ];
 
 const manCampRegistrationPackages = [
@@ -752,10 +746,11 @@ export const formTemplates: FormTemplate[] = [
       attendeeRoster: { enabled: true, minAttendees: 1, maxAttendees: 50, attendeeLabel: "Club member", addButtonLabel: "Add another club member" },
       sections: [
         { id: "sc_club", title: "Club & contact", description: "Select the Pathfinder club and enter the director’s contact information.", fields: [
-          templateField("sc_club_name", "club_name", "Pathfinder club", "SELECT", true, pathfinderClubOptions),
-          templateField("sc_club_other", "club_name_other", "Club name — other", "TEXT", true, [], { conditional: { fieldKey: "club_name", operator: "EQUALS", value: "Other" } }),
+          templateField("sc_club_name", "club_name", "Pathfinder club", "SELECT", true, [], { optionSource: "CLUBS_DIRECTORY" }),
+          templateField("sc_club_other", "club_name_other", "Club name — not listed", "TEXT", true, [], { conditional: { fieldKey: "club_name", operator: "EQUALS", value: DIRECTORY_NOT_LISTED_VALUE } }),
           templateField("sc_director", "director_name", "Club director", "TEXT", true),
-          templateField("sc_church", "church_name", "Church", "SELECT", false, imsdaChurchOptions),
+          templateField("sc_church", "church_name", "Church", "SELECT", false, [], { optionSource: "CHURCHES_DIRECTORY" }),
+          templateField("sc_church_other", "church_name_other", "Church — not listed", "TEXT", true, [], { conditional: { fieldKey: "church_name", operator: "EQUALS", value: DIRECTORY_NOT_LISTED_VALUE } }),
           templateField("sc_email", "email", "Email", "EMAIL", true),
           templateField("sc_phone", "phone", "Mobile phone", "PHONE", true),
         ] },
@@ -879,10 +874,11 @@ export const formTemplates: FormTemplate[] = [
       attendeeRoster: { enabled: true, minAttendees: 1, maxAttendees: 50, attendeeLabel: "Club member", addButtonLabel: "Add another club member" },
       sections: [
         { id: "hw_club", title: "Club & contact", description: "Select the Pathfinder club and enter the director’s contact information.", fields: [
-          templateField("hw_club_name", "club_name", "Pathfinder club", "SELECT", true, pathfinderClubOptions),
-          templateField("hw_club_other", "club_name_other", "Club name — other", "TEXT", true, [], { conditional: { fieldKey: "club_name", operator: "EQUALS", value: "Other" } }),
+          templateField("hw_club_name", "club_name", "Pathfinder club", "SELECT", true, [], { optionSource: "CLUBS_DIRECTORY" }),
+          templateField("hw_club_other", "club_name_other", "Club name — not listed", "TEXT", true, [], { conditional: { fieldKey: "club_name", operator: "EQUALS", value: DIRECTORY_NOT_LISTED_VALUE } }),
           templateField("hw_director", "director_name", "Club director", "TEXT", true),
-          templateField("hw_church", "church_name", "Church", "SELECT", false, imsdaChurchOptions),
+          templateField("hw_church", "church_name", "Church", "SELECT", false, [], { optionSource: "CHURCHES_DIRECTORY" }),
+          templateField("hw_church_other", "church_name_other", "Church — not listed", "TEXT", true, [], { conditional: { fieldKey: "church_name", operator: "EQUALS", value: DIRECTORY_NOT_LISTED_VALUE } }),
           templateField("hw_email", "email", "Email", "EMAIL", true),
           templateField("hw_phone", "phone", "Mobile phone", "PHONE", true),
         ] },

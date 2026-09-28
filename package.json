@@ -16,6 +16,7 @@
     "test:honor-capacity": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-honor-class-capacity.ts",
     "test:staff-act-as": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-staff-act-as.ts",
     "test:club-transfers": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-club-member-transfers.ts",
+    "test:background-check-list": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-background-check-list.ts",
     "test:club-supplies": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-club-supply-catalog.ts",
     "test:watch": "vitest",
     "verify": "npm run lint && npm run typecheck && npm run test && npm run build",
@@ -35,6 +36,7 @@
     "household-membership:backfill": "tsx scripts/backfill-household-membership-effective-dates.ts",
     "event-audience:backfill": "tsx --require ./scripts/support/allow-server-only.cjs scripts/backfill-event-audience.ts",
     "issue:from-spec": "tsx scripts/spec-to-issue.ts",
+    "background-checks:migration-dry-run": "tsx scripts/background-check-migration-dry-run.ts",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate"
   },
