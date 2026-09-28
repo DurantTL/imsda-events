@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Check, Download, FileUp, Package, RefreshCw, Upload } from "lucide-react";
 import styles from "@/components/club-supplies.module.css";
-import type { ClubSupplyImportSummary, RepeatedCatalogNumber } from "@/modules/club-supplies/catalog-csv";
+import type { ClubSupplyImportSummary, MergedNumberConflict, RepeatedCatalogNumber } from "@/modules/club-supplies/catalog-csv";
 import { type ClubSupplySection, clubSupplySectionLabels, clubSupplySections } from "@/modules/club-supplies/domain";
 import type { ClubSupplyItemRecord } from "@/modules/club-supplies/repository";
 
@@ -21,6 +21,7 @@ type ImportResponse = {
   steps?: PreviewStep[];
   summary?: ClubSupplyImportSummary;
   repeatedNumbers?: RepeatedCatalogNumber[];
+  mergedNumberConflicts?: MergedNumberConflict[];
   fingerprint?: string;
   items?: ClubSupplyItemRecord[];
   error?: string;
@@ -28,7 +29,14 @@ type ImportResponse = {
   issues?: Array<{ message?: string }>;
 };
 
-type Preview = { csv: string; steps: PreviewStep[]; summary: ClubSupplyImportSummary; repeatedNumbers: RepeatedCatalogNumber[]; fingerprint: string };
+type Preview = {
+  csv: string;
+  steps: PreviewStep[];
+  summary: ClubSupplyImportSummary;
+  repeatedNumbers: RepeatedCatalogNumber[];
+  mergedNumberConflicts: MergedNumberConflict[];
+  fingerprint: string;
+};
 
 /** A file download from an API route, not a page, so a plain link. */
 const TEMPLATE_HREF = "/api/admin/club-supplies/template";
@@ -72,7 +80,10 @@ export function ClubSupplyCatalogWorkspace({ initialItems }: { initialItems: Clu
       if (!response.ok || !result.steps || !result.summary || !result.fingerprint) {
         throw new Error(result.message ?? result.issues?.[0]?.message ?? "That file couldn't be read.");
       }
-      setPreview({ csv, steps: result.steps, summary: result.summary, repeatedNumbers: result.repeatedNumbers ?? [], fingerprint: result.fingerprint });
+      setPreview({ csv, steps: result.steps, summary: result.summary, repeatedNumbers: result.repeatedNumbers ?? [],
+        mergedNumberConflicts: result.mergedNumberConflicts ?? [],
+        fingerprint: result.fingerprint,
+      });
     } catch (caught) {
       setPreview(null);
       setError(caught instanceof Error ? caught.message : "That file couldn't be read.");
@@ -143,6 +154,7 @@ export function ClubSupplyCatalogWorkspace({ initialItems }: { initialItems: Clu
     ["Honors matched", preview.summary.honorsMatched],
     ["Honors unmatched", preview.summary.honorsUnmatched],
     ["Repeated numbers", preview.summary.repeatedNumbers],
+    ["Merged rows with another number", preview.summary.mergedNumberConflicts],
   ] : [];
 
   return (
@@ -170,8 +182,8 @@ export function ClubSupplyCatalogWorkspace({ initialItems }: { initialItems: Clu
         </div>
         <p className="field-help">
           Columns: Section, Item, Catalog Number, and an optional Active (Yes or No). Items are matched by section and
-          name; a repeated catalog number is only a warning. Without an Active column, each item keeps its current
-          setting. The reference file is <code>docs/reference/adventsource-club-catalog.csv</code>. Nothing is saved
+          name, not by number; a repeated catalog number is only a warning. A missing column or blank cell keeps what
+          is saved: numbers are never cleared, and each item keeps its active setting. The reference file is <code>docs/reference/adventsource-club-catalog.csv</code>. Nothing is saved
           until you confirm the preview.
         </p>
         <div className={styles.actions}>
@@ -195,6 +207,15 @@ export function ClubSupplyCatalogWorkspace({ initialItems }: { initialItems: Clu
           <ul className={styles.counts}>
             {counts.map(([label, value]) => <li key={label}><strong>{value}</strong><span>{label}</span></li>)}
           </ul>
+          {preview.mergedNumberConflicts.length > 0 && (
+            <ul className={styles.warnings} aria-label="Merged rows with a different catalog number">
+              {preview.mergedNumberConflicts.map((entry) => (
+                <li key={entry.line}>
+                  Row {entry.line} repeats row {entry.duplicateOfLine} with number <code>{entry.catalogNumber}</code>; the item keeps <code>{entry.keptCatalogNumber}</code>.
+                </li>
+              ))}
+            </ul>
+          )}
           {preview.repeatedNumbers.length > 0 && (
             <ul className={styles.warnings} aria-label="Repeated catalog numbers">
               {preview.repeatedNumbers.map((entry) => (

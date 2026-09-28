@@ -46,6 +46,17 @@ fails if any total or label row, or any free-text note (a `?`, or a name over
 - Some names have typos ("Sashe", "largee", "Sldie"). They import as they are;
   a typo that breaks the size pattern just leaves the size label blank.
 
+**How rows match.** An item is identified by its section plus its normalized
+name (trimmed, whitespace collapsed, lower-cased, "&" read as "and", a trailing
+"(GC)" dropped, "X - Advanced" read as "X, Advanced"), never by catalog number,
+because AdventSource reuses numbers across items. So a renamed item that keeps
+its number imports as a new item; staff then mark the old one inactive. A
+missing Catalog Number column or a blank cell keeps the saved number: an import
+never clears a number. When repeated rows for one item carry different numbers,
+the first non-blank number is kept and the preview warns about the others. An
+"X - Advanced" honor with no number in the file, on the saved item, or on its
+linked honor gets 007400; the First Aid honors never do.
+
 **Using it.** Upload it on the staff page and read the dry-run preview: added,
 updated, and skipped counts, honors matched and unmatched, and repeated-number
 warnings. Confirming saves exactly that preview. An honor-section row whose

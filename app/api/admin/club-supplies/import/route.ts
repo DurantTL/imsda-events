@@ -13,6 +13,7 @@ function publicPlan(plan: ClubSupplyImportPlan) {
     })),
     summary: plan.summary,
     repeatedNumbers: plan.repeatedNumbers,
+    mergedNumberConflicts: plan.mergedNumberConflicts,
   };
 }
 

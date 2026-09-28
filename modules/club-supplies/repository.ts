@@ -227,8 +227,8 @@ export async function setClubStockQuantity(
         where: { id: itemId },
         select: { isActive: true, stock: { where: { organizationId }, select: { quantityOnHand: true } } },
       });
-      // An inactive item stays editable only while the club still holds some.
-      if (!item || (!item.isActive && item.stock.length === 0)) {
+      // An inactive item stays editable only while the club still holds some (as `listClubStock` shows it).
+      if (!item || (!item.isActive && (item.stock[0]?.quantityOnHand ?? 0) <= 0)) {
         throw new ClubSupplyError("ITEM_NOT_FOUND", "That catalog item could not be found.");
       }
       const previousQuantity = item.stock[0]?.quantityOnHand ?? 0;

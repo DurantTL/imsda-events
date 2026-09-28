@@ -67,7 +67,10 @@ describe("honor catalog CSV (#385)", () => {
       "HM-010,Camping Skills I,,",
       "NA-020,Birds,005180,Reacreation",
       "NA-021,Bats,005170,Underwater Basket Weaving",
+      "NA-022,Bears,00 51?,Nature",
     ].join("\n"));
+    expect(rows[4].catalogNumber).toBeUndefined();
+    expect(rows[4].problems[0]).toMatch(/letters, digits, or dashes/);
     expect(rows[0]).toMatchObject({ catalogNumber: "005850", category: "OUTDOOR_INDUSTRIES", problems: [] });
     expect(rows[1].catalogNumber).toBeUndefined();
     expect(rows[1].category).toBeUndefined();
@@ -75,7 +78,7 @@ describe("honor catalog CSV (#385)", () => {
     expect(rows[3].problems[0]).toMatch(/isn't one of the honor catalog's categories/);
 
     const plan = planHonorImport(rows, existing);
-    expect(plan.map((step) => step.action)).toEqual(["UPDATE", "SKIP", "ADD", "SKIP"]);
+    expect(plan.map((step) => step.action)).toEqual(["UPDATE", "SKIP", "ADD", "SKIP", "SKIP"]);
   });
 
   it("saves the catalog number and category on add and update", async () => {

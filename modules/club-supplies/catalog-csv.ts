@@ -5,6 +5,7 @@ import {
   extractSizeLabel,
   honorCategoryForSection,
   isAdvancedHonorName,
+  isFirstAidSeries,
   normalizeClubSupplyName,
   resolveClubSupplySection,
 } from "@/modules/club-supplies/domain";
@@ -39,6 +40,10 @@ export type ClubSupplyCsvRow = {
   section: ClubSupplySection | null;
   name: string;
   normalizedName: string;
+  /**
+   * The number the file gives, or null when the column is missing or the
+   * cell is blank. Null never clears a saved number.
+   */
   catalogNumber: string | null;
   sizeLabel: string | null;
   /** Only set when the file has an Active column and this row fills it. */
@@ -75,16 +80,13 @@ export function parseClubSupplyCsv(text: string): ClubSupplyCsvRow[] {
     const rawSection = clean(cells[section]);
     const name = clean(cells[item]).slice(0, 200);
     const resolved = rawSection ? resolveClubSupplySection(rawSection) : null;
-    let number = catalogNumber >= 0 ? clean(cells[catalogNumber]) || null : null;
+    // Absent column or blank cell: "not given", never "clear it" (the planner keeps the saved number).
+    const number = catalogNumber >= 0 ? clean(cells[catalogNumber]) || null : null;
     const problems: string[] = [];
     if (!rawSection) problems.push("Every row needs a section.");
     else if (!resolved) problems.push(`"${rawSection}" isn't a section this catalog recognizes.`);
     if (!name) problems.push("Every row needs an item name.");
     if (number && !/^[A-Za-z0-9-]{1,40}$/.test(number)) problems.push(`Catalog number "${number}" should be letters, digits, or dashes.`);
-    // Every "X - Advanced" honor is ordered as the Advanced Honor Star.
-    if (!number && resolved && honorCategoryForSection(resolved) && isAdvancedHonorName(name)) {
-      number = ADVANCED_HONOR_STAR_CATALOG_NUMBER;
-    }
     const row: ClubSupplyCsvRow = {
       line,
       rawSection,
@@ -156,6 +158,9 @@ export type ClubSupplyImportStep = {
 
 export type RepeatedCatalogNumber = { catalogNumber: string; count: number; lines: number[] };
 
+/** A merged repeat row whose own number differs from the number the item keeps. */
+export type MergedNumberConflict = { line: number; duplicateOfLine: number; catalogNumber: string; keptCatalogNumber: string };
+
 export type ClubSupplyImportSummary = {
   rows: number;
   added: number;
@@ -167,12 +172,14 @@ export type ClubSupplyImportSummary = {
   honorsUnmatched: number;
   honorsUpdated: number;
   repeatedNumbers: number;
+  mergedNumberConflicts: number;
 };
 
 export type ClubSupplyImportPlan = {
   steps: ClubSupplyImportStep[];
   summary: ClubSupplyImportSummary;
   repeatedNumbers: RepeatedCatalogNumber[];
+  mergedNumberConflicts: MergedNumberConflict[];
 };
 
 const key = (section: string, normalizedName: string) => `${section}\u0000${normalizedName}`;
@@ -184,6 +191,14 @@ const key = (section: string, normalizedName: string) => `${section}\u0000${norm
  * the honor whose normalized name matches, and sets that honor's catalog
  * number and category; an unmatched honor row stays an unlinked item and is
  * counted. A catalog number used by more than one item is only a warning.
+ *
+ * Catalog numbers are never cleared implicitly: a missing column or a blank
+ * cell keeps the item's saved number (and never clears a linked honor's).
+ * Within a group of repeats, the first non-blank number wins whatever the row
+ * order; a repeat with a different number is reported, not dropped silently.
+ * An "X - Advanced" honor with no number anywhere (file, saved item, linked
+ * honor) defaults to the Advanced Honor Star, 007400, except the First Aid
+ * series, which AdventSource numbers separately.
  */
 export function planClubSupplyImport(
   rows: readonly ClubSupplyCsvRow[],
@@ -197,6 +212,14 @@ export function planClubSupplyImport(
     if (!honorsByName.has(name)) honorsByName.set(name, honor);
   }
   const firstLineByKey = new Map<string, number>();
+  // The number each item group keeps: the first non-blank one in the file, whatever the order.
+  const groupNumber = new Map<string, string>();
+  for (const row of rows) {
+    if (row.problems.length > 0 || !row.section || !row.catalogNumber) continue;
+    const rowKey = key(row.section, row.normalizedName);
+    if (!groupNumber.has(rowKey)) groupNumber.set(rowKey, row.catalogNumber);
+  }
+  const mergedNumberConflicts: MergedNumberConflict[] = [];
   const plannedHonorUpdates = new Set<string>();
   const linesByNumber = new Map<string, number[]>();
 
@@ -219,26 +242,37 @@ export function planClubSupplyImport(
     const rowKey = key(section, row.normalizedName);
     const earlier = firstLineByKey.get(rowKey);
     const existing = itemsByKey.get(rowKey) ?? null;
+    const fileNumber = groupNumber.get(rowKey) ?? null;
     if (earlier !== undefined) {
+      const conflict = row.catalogNumber && fileNumber && row.catalogNumber !== fileNumber;
+      if (conflict) {
+        mergedNumberConflicts.push({ line: row.line, duplicateOfLine: earlier, catalogNumber: row.catalogNumber!, keptCatalogNumber: fileNumber! });
+      }
       return {
         ...base,
         itemId: existing?.id ?? null,
         action: "SKIP",
-        message: `Same item as row ${earlier}; merged into it.`,
+        message: conflict
+          ? `Same item as row ${earlier}; merged into it. Warning: this row's number ${row.catalogNumber} differs from ${fileNumber}, which is kept.`
+          : `Same item as row ${earlier}; merged into it.`,
         duplicateOfLine: earlier,
       };
     }
     firstLineByKey.set(rowKey, row.line);
-    if (row.catalogNumber) linesByNumber.set(row.catalogNumber, [...(linesByNumber.get(row.catalogNumber) ?? []), row.line]);
 
     const category = honorCategoryForSection(section);
     const honor = category ? honorsByName.get(row.normalizedName) ?? null : null;
     const honorMatch = category ? (honor ? "MATCHED" : "UNMATCHED") : null;
+    const advancedDefault = !fileNumber && !existing?.catalogNumber && !honor?.catalogNumber
+      && category !== null && isAdvancedHonorName(row.name) && !isFirstAidSeries(row.name);
+    const catalogNumber = fileNumber ?? existing?.catalogNumber ?? (advancedDefault ? ADVANCED_HONOR_STAR_CATALOG_NUMBER : null);
+    if (catalogNumber) linesByNumber.set(catalogNumber, [...(linesByNumber.get(catalogNumber) ?? []), row.line]);
     let honorUpdate: ClubSupplyImportStep["honorUpdate"] = null;
     if (honor && category && !plannedHonorUpdates.has(honor.id)) {
-      const catalogNumber = row.catalogNumber ?? honor.catalogNumber;
-      if (honor.catalogNumber !== catalogNumber || honor.category !== category) {
-        honorUpdate = { honorId: honor.id, catalogNumber, category };
+      // The file's own number wins; otherwise the honor keeps its number, or takes the item's when it has none.
+      const honorNumber = fileNumber ?? honor.catalogNumber ?? catalogNumber;
+      if (honor.catalogNumber !== honorNumber || honor.category !== category) {
+        honorUpdate = { honorId: honor.id, catalogNumber: honorNumber, category };
         plannedHonorUpdates.add(honor.id);
       }
     }
@@ -246,21 +280,29 @@ export function planClubSupplyImport(
       section,
       name: row.name,
       normalizedName: row.normalizedName,
-      catalogNumber: row.catalogNumber,
+      catalogNumber,
       sizeLabel: row.sizeLabel,
       isActive: row.isActive ?? existing?.isActive ?? true,
       honorId: honor?.id ?? null,
     };
     const honorNote = honorUpdate ? " Sets the honor's catalog number and category." : "";
+    const defaultNote = advancedDefault ? ` Uses the Advanced Honor Star number ${ADVANCED_HONOR_STAR_CATALOG_NUMBER}.` : "";
     const honorLabel = honorMatch === "MATCHED" ? " Linked to its honor." : honorMatch === "UNMATCHED" ? " No matching honor; left unlinked." : "";
     if (!existing) {
-      return { ...base, action: "ADD", message: `Will be added.${honorLabel}${honorNote}`, write, honorMatch, honorUpdate };
+      return { ...base, action: "ADD", message: `Will be added.${defaultNote}${honorLabel}${honorNote}`, write, honorMatch, honorUpdate };
     }
     const changed = existing.name !== write.name
       || existing.catalogNumber !== write.catalogNumber
       || existing.sizeLabel !== write.sizeLabel
       || existing.isActive !== write.isActive
       || existing.honorId !== write.honorId;
+    const changes = [
+      existing.name !== write.name && "name",
+      existing.catalogNumber !== write.catalogNumber && `catalog number ${existing.catalogNumber ?? "none"} to ${write.catalogNumber ?? "none"}`,
+      existing.sizeLabel !== write.sizeLabel && "size label",
+      existing.isActive !== write.isActive && (write.isActive ? "active" : "inactive"),
+      existing.honorId !== write.honorId && "honor link",
+    ].filter(Boolean);
     if (!changed && !honorUpdate) {
       return { ...base, itemId: existing.id, action: "SKIP", message: `Already in the catalog; nothing to change.${honorLabel}`, honorMatch };
     }
@@ -268,7 +310,7 @@ export function planClubSupplyImport(
       ...base,
       itemId: existing.id,
       action: "UPDATE",
-      message: `Will update this item.${honorLabel}${honorNote}`,
+      message: `${changes.length > 0 ? `Will update: ${changes.join(", ")}.` : "Will update this item."}${defaultNote}${honorLabel}${honorNote}`,
       write,
       honorMatch,
       honorUpdate,
@@ -290,8 +332,9 @@ export function planClubSupplyImport(
     honorsUnmatched: count((step) => step.honorMatch === "UNMATCHED"),
     honorsUpdated: count((step) => step.honorUpdate !== null),
     repeatedNumbers: repeatedNumbers.length,
+    mergedNumberConflicts: mergedNumberConflicts.length,
   };
-  return { steps, summary, repeatedNumbers };
+  return { steps, summary, repeatedNumbers, mergedNumberConflicts };
 }
 
 const iso = (value: Date | string) => (value instanceof Date ? value.toISOString() : value);

@@ -10,6 +10,8 @@
 .previewTable { max-height: 420px; overflow: auto; }
 .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .filters > label { display: grid; flex: 1 1 180px; gap: 4px; min-width: 0; font-size: .66rem; }
+/* Visible fields, 44px touch targets, and 16px text so phones don't zoom in on focus. */
+.filters select, .filters input, .quantity { min-height: 44px; border: 1px solid #cbdbe2; border-radius: 8px; background: #fff; padding: 8px 10px; font-size: 16px; }
 .filters select, .filters input { width: 100%; min-width: 0; }
 .itemList { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .itemRow { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; border: 1px solid var(--line); border-radius: 12px; padding: 9px 11px; }
@@ -17,7 +19,8 @@
 .itemText strong { color: var(--imsda-navy); font-size: .76rem; overflow-wrap: anywhere; }
 .itemText small { color: var(--muted); font-size: .63rem; }
 .itemControls { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
-.quantity { width: 76px; text-align: right; }
+.quantity { width: 84px; text-align: right; }
+.itemControls :global(.secondary-button) { min-height: 44px; }
 .sectionBlock { display: grid; gap: 8px; }
 .sectionBlock + .sectionBlock { margin-top: 16px; }
 .sectionBlock h3 { margin: 0; color: var(--imsda-navy); font-size: .86rem; }

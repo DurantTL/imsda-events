@@ -79,7 +79,8 @@ describe("club supply CSV parsing (#531)", () => {
       [3, "008243", "X-Large"],
       [4, "000001", null],
       [5, null, null],
-      [6, "007400", null],
+      // A blank number stays "not given" at parse time; the planner decides any default.
+      [6, null, null],
       [7, "005180", null],
     ]);
     expect(rows[2].problems[0]).toMatch(/isn't a section/);
@@ -183,6 +184,95 @@ describe("club supply import plan (#531)", () => {
     // Unmatched honors are still catalog items.
     expect(plan.steps.every((step) => step.action === "ADD")).toBe(true);
     expect(plan.summary).toMatchObject({ honorsMatched: 3, honorsUnmatched: 2, honorsUpdated: 2 });
+  });
+});
+
+describe("club supply import never clears a catalog number (#531 review)", () => {
+  const saved = [
+    item({ id: "i-1", section: "INVESTITURE", name: "Friend Pin", catalogNumber: "002120" }),
+    item({ id: "i-2", section: "NATURE", name: "Bogs & Fens", catalogNumber: "005157", honorId: "h-1" }),
+  ];
+  const linked = [honor("h-1", "SYN-001", "Bogs and Fens", { catalogNumber: "005157", category: "NATURE" })];
+
+  it("keeps saved numbers when the Catalog Number column is missing", () => {
+    const plan = planClubSupplyImport(
+      parseClubSupplyCsv("Section,Item,Active\nInvestiture,Friend Pin,No\nNature,Bogs & Fens,"),
+      saved,
+      linked,
+    );
+    expect(plan.steps.map((step) => [step.action, step.write?.catalogNumber ?? null, step.honorUpdate])).toEqual([
+      ["UPDATE", "002120", null],
+      ["SKIP", null, null],
+    ]);
+    expect(plan.steps[0].message).toBe("Will update: inactive.");
+  });
+
+  it("keeps saved numbers, and the linked honor's, when a cell is blank", () => {
+    const plan = planClubSupplyImport(
+      parseClubSupplyCsv("Section,Item,Catalog Number\nInvestiture,Friend Pin,\nNature,Bogs & Fens,"),
+      saved,
+      linked,
+    );
+    expect(plan.steps.map((step) => step.action)).toEqual(["SKIP", "SKIP"]);
+    expect(plan.summary).toMatchObject({ added: 0, updated: 0, honorsUpdated: 0 });
+  });
+
+  it("says which number changes when a file does change one", () => {
+    const plan = planClubSupplyImport(parseClubSupplyCsv("Section,Item,Catalog Number\nInvestiture,Friend Pin,002199"), saved, []);
+    expect(plan.steps[0].message).toBe("Will update: catalog number 002120 to 002199.");
+  });
+});
+
+describe("Advanced honor default number (#531 review)", () => {
+  const csv = "Section,Item,Catalog Number\nNature,Birds - Advanced,\nHealth And Science,First Aid - Advanced,\nHealth And Science,First Aid - Basic,";
+
+  it("defaults an unnumbered Advanced row to 007400 only when neither the item nor the honor has a number", () => {
+    const fresh = planClubSupplyImport(parseClubSupplyCsv(csv), [], [honor("h-9", "SYN-009", "Birds, Advanced")]);
+    expect(fresh.steps.map((step) => step.write?.catalogNumber)).toEqual(["007400", null, null]);
+    expect(fresh.steps[0].message).toMatch(/Advanced Honor Star number 007400/);
+    expect(fresh.steps[0].honorUpdate).toEqual({ honorId: "h-9", catalogNumber: "007400", category: "NATURE" });
+  });
+
+  it("never applies the default over a saved item number or a linked honor's number", () => {
+    const savedItem = planClubSupplyImport(
+      parseClubSupplyCsv(csv),
+      [item({ id: "i-1", section: "NATURE", name: "Birds - Advanced", catalogNumber: "005999" })],
+      [],
+    );
+    expect(savedItem.steps[0]).toMatchObject({ action: "SKIP" });
+
+    const numberedHonor = planClubSupplyImport(parseClubSupplyCsv(csv), [], [
+      honor("h-9", "SYN-009", "Birds, Advanced", { catalogNumber: "005888", category: "NATURE" }),
+    ]);
+    expect(numberedHonor.steps[0].write?.catalogNumber).toBeNull();
+    expect(numberedHonor.steps[0].honorUpdate).toBeNull();
+  });
+});
+
+describe("merged repeats keep their numbers (#531 review)", () => {
+  it("merges a blank number with a non-blank one whatever the row order", () => {
+    for (const lines of [["PBE Pin 2016,", "PBE Pin 2016,009100"], ["PBE Pin 2016,009100", "PBE Pin 2016,"]]) {
+      const plan = planClubSupplyImport(
+        parseClubSupplyCsv(["section,item,adventsource_catalog_number", ...lines.map((line) => `Pathfinder Bible Experience,${line}`)].join("\n")),
+        [],
+        [],
+      );
+      expect(plan.steps.map((step) => [step.action, step.write?.catalogNumber ?? null])).toEqual([["ADD", "009100"], ["SKIP", null]]);
+      expect(plan.mergedNumberConflicts).toEqual([]);
+    }
+  });
+
+  it("warns when a repeat carries a different number", () => {
+    const plan = planClubSupplyImport(parseClubSupplyCsv([
+      "section,item,adventsource_catalog_number",
+      "Pathfinder Bible Experience,PBE Pin 2017,",
+      "Pathfinder Bible Experience,PBE Pin 2017,009101",
+      "Pathfinder Bible Experience,PBE Pin 2017,009102",
+    ].join("\n")), [], []);
+    expect(plan.steps[0].write?.catalogNumber).toBe("009101");
+    expect(plan.mergedNumberConflicts).toEqual([{ line: 4, duplicateOfLine: 2, catalogNumber: "009102", keptCatalogNumber: "009101" }]);
+    expect(plan.summary.mergedNumberConflicts).toBe(1);
+    expect(plan.steps[2].message).toMatch(/Warning: this row's number 009102 differs from 009101/);
   });
 });
 

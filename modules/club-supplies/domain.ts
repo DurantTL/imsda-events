@@ -75,7 +75,12 @@ export function isAdvancedHonorName(value: string) {
   return normalizeClubSupplyName(value).endsWith(", advanced");
 }
 
-/** Every "X - Advanced" honor is ordered as the Advanced Honor Star. */
+/** The First Aid honors (Basic, Standard, Advanced), which AdventSource numbers separately. */
+export function isFirstAidSeries(value: string) {
+  return /^first aid\b/.test(normalizeClubSupplyName(value));
+}
+
+/** Every other "X - Advanced" honor is ordered as the Advanced Honor Star. */
 export const ADVANCED_HONOR_STAR_CATALOG_NUMBER = "007400";
 
 const BARE_SIZE_TOKEN = /^(XXXXL|XXXL|XXL|XL|X-?LARGE|XX-?LARGE|L|LARGE|M|MEDIUM|S|SMALL|XS|X-?SMALL|[0-9]+(\.[0-9]+)?)$/i;

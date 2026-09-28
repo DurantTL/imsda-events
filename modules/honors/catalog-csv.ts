@@ -66,7 +66,11 @@ export function parseHonorCsv(text: string): HonorCsvRow[] {
       else if (["no", "n", "false", "0", "inactive"].includes(value)) row.isActive = false;
       else row.problems.push(`Active "${clean(cells[active])}" should be Yes or No.`);
     }
-    if (catalogNumber >= 0 && clean(cells[catalogNumber])) row.catalogNumber = clean(cells[catalogNumber]).slice(0, 40);
+    if (catalogNumber >= 0 && clean(cells[catalogNumber])) {
+      const number = clean(cells[catalogNumber]);
+      if (/^[A-Za-z0-9-]{1,40}$/.test(number)) row.catalogNumber = number;
+      else row.problems.push(`Catalog number "${number}" should be up to 40 letters, digits, or dashes.`);
+    }
     if (category >= 0 && clean(cells[category])) {
       const resolved = resolveHonorCategory(clean(cells[category]));
       if (resolved) row.category = resolved;

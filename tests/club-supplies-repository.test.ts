@@ -145,12 +145,20 @@ describe("club stock (#531)", () => {
     }), expect.anything());
   });
 
-  it("refuses an unknown item, or an inactive one the club holds none of", async () => {
+  it("refuses an unknown item, or an inactive one the club holds none of (no row, or a row at 0)", async () => {
     mocks.itemFindUnique.mockResolvedValue(null);
     await expect(setClubStockQuantity("club-1", "nope", 1, { accountId: "acct-1" })).rejects.toMatchObject({ code: "ITEM_NOT_FOUND" });
     mocks.itemFindUnique.mockResolvedValue({ isActive: false, stock: [] });
     await expect(setClubStockQuantity("club-1", "old", 1, { accountId: "acct-1" })).rejects.toMatchObject({ code: "ITEM_NOT_FOUND" });
+    mocks.itemFindUnique.mockResolvedValue({ isActive: false, stock: [{ quantityOnHand: 0 }] });
+    await expect(setClubStockQuantity("club-1", "old", 1, { accountId: "acct-1" })).rejects.toMatchObject({ code: "ITEM_NOT_FOUND" });
     expect(mocks.stockUpsert).not.toHaveBeenCalled();
+  });
+
+  it("still lets a club record an inactive item it holds some of", async () => {
+    mocks.itemFindUnique.mockResolvedValue({ isActive: false, stock: [{ quantityOnHand: 2 }] });
+    mocks.stockUpsert.mockResolvedValue({ id: "stock-9", itemId: "old", quantityOnHand: 0 });
+    await expect(setClubStockQuantity("club-1", "old", 0, { accountId: "acct-1" })).resolves.toMatchObject({ quantityOnHand: 0 });
   });
 
   it("maps two racing first saves (P2002) to CATALOG_CONFLICT", async () => {
