@@ -1,3 +1,4 @@
+import { isCalendarDate } from "@/modules/calendar/domain";
 import { toCsv } from "@/modules/reporting/csv";
 
 /**
@@ -14,8 +15,6 @@ export const memberHonorStatusLabels = {
 
 export type MemberHonorStatus = keyof typeof memberHonorStatusLabels;
 
-const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
 /**
  * Why a new entry can't be recorded, or null. Completed work needs a
  * completion date that isn't in the future; in-progress work has none yet
@@ -27,7 +26,9 @@ export function memberHonorEntryProblem(
   today: string,
 ) {
   if (input.status === "COMPLETED") {
-    if (!CALENDAR_DATE.test(input.completionDate)) return "Enter the completion date.";
+    if (!input.completionDate) return "Enter the completion date.";
+    // A real calendar day: 2026-13-45 or 2026-02-30 is refused, not stored.
+    if (!isCalendarDate(input.completionDate)) return "Enter a real completion date.";
     if (input.completionDate > today) return "The completion date can't be in the future.";
   }
   return null;

@@ -24,6 +24,10 @@ import type { BulkMemberHonorEntryInput, MemberHonorEntryInput } from "@/modules
  * the audit trail; a person's full history is returned regardless of which
  * club (past or present) made each entry, matching #489's "honor history
  * follows the member" requirement.
+ *
+ * The one exception to append-only is removal: when a club removes someone
+ * and their `Person` is deleted (`removeRosterMember`, ADR 0005 Addendum A
+ * §6), that person's entries are deleted with it, in the same transaction.
  */
 
 export type MemberHonorActor = { accountId: string } | { userId: string; actAsId: string };
@@ -35,6 +39,21 @@ export class MemberHonorError extends Error {
     super(message);
     this.name = "MemberHonorError";
   }
+}
+
+/**
+ * A bulk entry covers up to 500 members (the schema's cap), each one an entry
+ * plus an audit row. Like the roster import (`ROSTER_IMPORT_TRANSACTION` in
+ * background-checks), it gets an explicit window instead of Prisma's 5-second
+ * interactive-transaction default.
+ */
+const BULK_HONOR_TRANSACTION = { timeout: 60_000, maxWait: 10_000 };
+
+function actorAuditFields(actor: MemberHonorActor) {
+  return {
+    actorFields: "userId" in actor ? { actorUserId: actor.userId } : {},
+    metadata: "accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId },
+  };
 }
 
 function today(now: Date) {
@@ -90,8 +109,10 @@ export async function recordMemberHonorEntries(
         },
         select: { id: true },
       });
+      const who = actorAuditFields(actor);
+      // `tx`: the audit row commits or rolls back with the entry it describes.
       await writeAuditLog({
-        ...("userId" in actor ? { actorUserId: actor.userId } : {}),
+        ...who.actorFields,
         action: "MEMBER_HONOR_RECORDED",
         entityType: "MemberHonorEntry",
         entityId: entry.id,
@@ -101,10 +122,32 @@ export async function recordMemberHonorEntries(
           memberId,
           honorId: honor.id,
           status: input.status,
-          ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId }),
+          ...who.metadata,
         },
-      });
+      }, tx);
     }
+  }, BULK_HONOR_TRANSACTION);
+}
+
+/**
+ * Records that someone downloaded a club's honors CSV (#486): which club,
+ * which club year, and how many rows — never a name or an honor detail.
+ */
+export async function auditClubHonorsExport(
+  organizationId: string,
+  clubYear: string,
+  rowCount: number,
+  viewer: MemberHonorActor,
+  readOnly: boolean,
+) {
+  const who = actorAuditFields(viewer);
+  await writeAuditLog({
+    ...who.actorFields,
+    action: "CLUB_HONORS_EXPORTED",
+    entityType: "Organization",
+    entityId: organizationId,
+    summary: "Exported a club's honors as CSV.",
+    metadata: { organizationId, clubYear, rowCount, readOnly, ...who.metadata },
   });
 }
 

@@ -47,7 +47,8 @@ export default async function ClubLayout({
             items={[
               { href: base, label: "Club home" },
               { href: `${base}/roster`, label: "Roster" },
-              { href: `${base}/honors`, label: "Honors" },
+              // Honors open on the roster's own gate (#486), so the tab follows the roster capability.
+              ...(access.capabilities.roster ? [{ href: `${base}/honors`, label: "Honors" }] : []),
               { href: `${base}/events`, label: "Events & classes", matchChildren: true },
               ...(access.capabilities.submitReports ? [
                 { href: `${base}/notes`, label: "Meeting notes", matchChildren: true },

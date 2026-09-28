@@ -34,6 +34,14 @@ describe("memberHonorEntryProblem", () => {
       .toMatch(/can't be in the future/);
   });
 
+  it("refuses a completion date that isn't a real calendar day", () => {
+    for (const bad of ["2026-13-45", "2026-02-30", "2026-00-10", "2025-02-29"]) {
+      expect(memberHonorEntryProblem({ status: "COMPLETED", completionDate: bad }, "2026-09-28"))
+        .toMatch(/Enter a real completion date/);
+    }
+    expect(memberHonorEntryProblem({ status: "COMPLETED", completionDate: "2024-02-29" }, "2026-09-28")).toBeNull();
+  });
+
   it("allows in-progress with no completion date", () => {
     expect(memberHonorEntryProblem({ status: "IN_PROGRESS", completionDate: "" }, "2026-09-28")).toBeNull();
   });

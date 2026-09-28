@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ getPrisma: vi.fn(), writeAuditLog: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getPrisma: vi.fn(), writeAuditLog: vi.fn(), transactionOptions: [] as unknown[] }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: mocks.getPrisma }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: mocks.writeAuditLog }));
 
 import {
+  auditClubHonorsExport,
   listActiveHonorOptions,
   listClubHonorsPage,
   listMemberHonorHistory,
@@ -83,8 +84,14 @@ function fakeDatabase() {
       },
     },
   };
-  mocks.getPrisma.mockReturnValue({ ...client, $transaction: async (work: (tx: typeof client) => unknown) => work(client) });
-  return db;
+  mocks.getPrisma.mockReturnValue({
+    ...client,
+    $transaction: async (work: (tx: typeof client) => unknown, options?: unknown) => {
+      mocks.transactionOptions.push(options);
+      return work(client);
+    },
+  });
+  return { ...db, client };
 }
 
 function addMember(db: ReturnType<typeof fakeDatabase>, overrides: Partial<Row> = {}) {
@@ -109,6 +116,7 @@ let db: ReturnType<typeof fakeDatabase>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.transactionOptions.length = 0;
   mocks.writeAuditLog.mockResolvedValue({});
   db = fakeDatabase();
 });
@@ -126,6 +134,30 @@ describe("recordMemberHonorEntries", () => {
     expect(db.entries).toHaveLength(24);
     expect(new Set(db.entries.map((entry) => entry.personId)).size).toBe(24);
     expect(mocks.writeAuditLog).toHaveBeenCalledTimes(24);
+  });
+
+  it("handles a 500-member batch in one transaction with an explicit timeout, auditing inside it", async () => {
+    const members = Array.from({ length: 500 }, () => addMember(db));
+    await recordMemberHonorEntries(
+      "club-1",
+      members.map((member) => member.id as string),
+      { honorId: "honor-1", status: "COMPLETED", completionDate: "2026-09-27", note: "" },
+      actor,
+      now,
+    );
+    expect(db.entries).toHaveLength(500);
+    expect(mocks.transactionOptions).toEqual([expect.objectContaining({ timeout: 60_000, maxWait: 10_000 })]);
+    // Every audit row is written on the transaction client, so it rolls back with the entries.
+    expect(mocks.writeAuditLog).toHaveBeenCalledTimes(500);
+    for (const [, client] of mocks.writeAuditLog.mock.calls) expect(client).toBe(db.client);
+  });
+
+  it("refuses a completion date that isn't a real calendar day, writing nothing", async () => {
+    const member = addMember(db);
+    await expect(recordMemberHonorEntries("club-1", [member.id as string], {
+      honorId: "honor-1", status: "COMPLETED", completionDate: "2026-13-45", note: "",
+    }, actor, now)).rejects.toMatchObject({ code: "ENTRY_INVALID" });
+    expect(db.entries).toHaveLength(0);
   });
 
   it("refuses a completed honor with no completion date, writing nothing", async () => {
@@ -193,6 +225,26 @@ describe("listClubHonorsPage and rollover", () => {
     expect(lastYearRows).toEqual([
       expect.objectContaining({ memberId: lastYear.id, honors: [expect.objectContaining({ status: "COMPLETED" })] }),
     ]);
+  });
+});
+
+describe("auditClubHonorsExport", () => {
+  it("records the club, year, and row count, with no names", async () => {
+    await auditClubHonorsExport("club-1", "2026-27", 12, actor, false);
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      action: "CLUB_HONORS_EXPORTED",
+      entityType: "Organization",
+      entityId: "club-1",
+      metadata: { organizationId: "club-1", clubYear: "2026-27", rowCount: 12, readOnly: false, actorAttendeeAccountId: "account-director" },
+    }));
+  });
+
+  it("attributes a staff act-as viewer to the staff user", async () => {
+    await auditClubHonorsExport("club-1", "2026-27", 3, { userId: "user-9", actAsId: "actas-1" }, true);
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      actorUserId: "user-9",
+      metadata: expect.objectContaining({ actAsId: "actas-1", readOnly: true }),
+    }));
   });
 });
 

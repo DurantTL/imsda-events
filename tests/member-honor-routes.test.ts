@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   listActiveHonorOptions: vi.fn(),
   recordMemberHonorEntries: vi.fn(),
   listMemberHonorHistory: vi.fn(),
+  auditClubHonorsExport: vi.fn(),
   rejectCrossOriginRequest: vi.fn(),
 }));
 
@@ -23,6 +24,7 @@ vi.mock("@/modules/honors/member-honor-repository", async () => {
     listActiveHonorOptions: mocks.listActiveHonorOptions,
     recordMemberHonorEntries: mocks.recordMemberHonorEntries,
     listMemberHonorHistory: mocks.listMemberHonorHistory,
+    auditClubHonorsExport: mocks.auditClubHonorsExport,
   };
 });
 vi.mock("@/modules/access/request-security", () => ({ rejectCrossOriginRequest: mocks.rejectCrossOriginRequest }));
@@ -62,7 +64,7 @@ describe("GET club honors", () => {
   });
 
   it("returns the same data read-only for an Area Coordinator", async () => {
-    mocks.requireHonorsAccess.mockResolvedValue({ mode: "READ" });
+    mocks.requireHonorsAccess.mockResolvedValue({ mode: "READ", viewer: { accountId: "acct-ac" } });
     const response = await CLUB_HONORS_GET(getRequest(), ctx());
     expect(await response.json()).toMatchObject({ readOnly: true });
   });
@@ -109,10 +111,12 @@ describe("POST club honors (bulk entry)", () => {
 
 describe("CSV export", () => {
   it("is available to both an editor and a read-only Area Coordinator", async () => {
-    mocks.requireHonorsAccess.mockResolvedValue({ mode: "READ" });
+    mocks.requireHonorsAccess.mockResolvedValue({ mode: "READ", viewer: { accountId: "acct-ac" } });
     const response = await CSV_GET(getRequest(), ctx());
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toContain("text/csv");
+    // Audited with the club, year, and row count only.
+    expect(mocks.auditClubHonorsExport).toHaveBeenCalledWith("club-1", expect.any(String), rows.length, { accountId: "acct-ac" }, true);
   });
 });
 
