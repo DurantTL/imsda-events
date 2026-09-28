@@ -304,40 +304,25 @@ describe("findPublishedEventAsset", () => {
     expect(sectionBranch).toBeDefined();
   });
 
-  it("never serves an asset that belongs to a different event, even when the id is known", async () => {
-    // A tiny in-memory stand-in for the query, filtering the way the real
-    // WHERE clause would: by asset id and by the *named* event's slug. This
-    // is what stops event B's public page from serving event A's file by id.
-    const assets = [
-      {
-        id: "asset_from_event_a",
-        eventSlug: "event-a",
-        eventIsPublished: true,
-        hasPublishedLink: true,
-        displayName: "flyer.pdf",
-        contentType: "application/pdf",
-        storageKey: "key_a",
-      },
-    ];
-    const findFirst = vi.fn((args: { where: { id: string; event: { slug: string; isPublished: boolean } } }) => {
-      const match = assets.find((asset) => (
-        asset.id === args.where.id
-        && asset.eventSlug === args.where.event.slug
-        && asset.eventIsPublished === args.where.event.isPublished
-        && asset.hasPublishedLink
-      ));
-      return Promise.resolve(match
-        ? { displayName: match.displayName, contentType: match.contentType, storageKey: match.storageKey }
-        : null);
-    });
+  it("never serves an asset through another event's section or product (#508)", async () => {
+    const findFirst = vi.fn().mockResolvedValue(null);
     dependencies.getPrisma.mockReturnValue({ eventAsset: { findFirst } });
 
-    // Event B's public page asking for event A's asset id: nothing is served.
-    await expect(findPublishedEventAsset("event-b", "asset_from_event_a")).resolves.toBeNull();
+    await findPublishedEventAsset("event-a", "asset_1");
 
-    // Event A's own public page asking for the same id: served.
-    await expect(findPublishedEventAsset("event-a", "asset_from_event_a")).resolves.toMatchObject({
-      displayName: "flyer.pdf",
+    // Asset, linking section, and artwork product must all be the named event's:
+    // a cross-event link row saved before #508 can't expose a draft file.
+    const query = findFirst.mock.calls[0][0] as {
+      where: { event: unknown; OR: Array<Record<string, { some: Record<string, unknown> }>> };
+    };
+    expect(query.where.event).toEqual({ slug: "event-a", isPublished: true });
+    const sectionBranch = query.where.OR.find((clause) => "links" in clause)!;
+    expect(sectionBranch.links.some).toEqual({
+      section: { isPublished: true, event: { slug: "event-a" } },
+    });
+    const merchandiseBranch = query.where.OR.find((clause) => "merchandiseArtworkProducts" in clause)!;
+    expect(merchandiseBranch.merchandiseArtworkProducts.some).toMatchObject({
+      event: { slug: "event-a" },
     });
   });
 });

@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const dependencies = vi.hoisted(() => ({ getPrisma: vi.fn() }));
@@ -56,7 +57,7 @@ describe("replaceEventContent", () => {
 
   it("rejects a save that links another event's asset, and writes nothing", async () => {
     // The asset lookup (scoped to eventId) finds nothing for "asset_from_other_event".
-    const { deleteMany, create, auditLogCreate } = mockPrisma([]);
+    const { deleteMany, create, auditLogCreate, findMany } = mockPrisma([]);
     const input = linksInput([
       { label: "Flyer", description: "", url: null, assetId: "asset_from_other_event" },
     ]);
@@ -73,6 +74,48 @@ describe("replaceEventContent", () => {
     expect(deleteMany).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
     expect(auditLogCreate).not.toHaveBeenCalled();
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: { in: ["asset_from_other_event"] }, eventId: "event_b" },
+    }));
+  });
+
+  it("rejects a save mixing an own file with another event's file", async () => {
+    const { deleteMany, create } = mockPrisma(["asset_own"]);
+    const input = linksInput([
+      { label: "Own", description: "", url: null, assetId: "asset_own" },
+      { label: "Foreign", description: "", url: null, assetId: "asset_foreign" },
+    ]);
+
+    await expect(replaceEventContent("event_b", input, "user_1")).rejects.toMatchObject({
+      code: "ASSET_NOT_IN_EVENT",
+    });
+    expect(deleteMany).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("accepts the same own file linked twice", async () => {
+    const { create, findMany } = mockPrisma(["asset_own"]);
+    const input = linksInput([
+      { label: "First", description: "", url: null, assetId: "asset_own" },
+      { label: "Again", description: "", url: null, assetId: "asset_own" },
+    ]);
+
+    await replaceEventContent("event_b", input, "user_1");
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: { in: ["asset_own"] }, eventId: "event_b" },
+    }));
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps a file deleted mid-save (foreign key) to the same 400 error", async () => {
+    const { client } = mockPrisma([]);
+    client.$transaction.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError("fk", { code: "P2003", clientVersion: "test" }),
+    );
+
+    await expect(replaceEventContent("event_b", linksInput([]), "user_1")).rejects.toMatchObject({
+      code: "ASSET_NOT_IN_EVENT",
+    });
   });
 
   it("saves a link to the event's own asset", async () => {
