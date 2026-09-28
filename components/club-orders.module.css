@@ -29,3 +29,13 @@
 .dateSelect :global(.secondary-button) { min-height: 44px; }
 .date { min-height: 44px; min-width: 0; max-width: 100%; border: 1px solid #cbdbe2; border-radius: 8px; background: #fff; padding: 6px 8px; font-size: 16px; }
 .actions :global(.text-button) { min-height: 44px; }
+
+/* Uniforms (#497): item and size pickers, chosen-item chips. */
+.pickerRow { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 10px; }
+.pickerField { display: grid; flex: 1 1 200px; gap: 4px; min-width: 0; font-size: .68rem; }
+.select { width: 100%; min-width: 0; min-height: 44px; border: 1px solid #cbdbe2; border-radius: 8px; background: #fff; padding: 8px; font-size: 16px; }
+.pickerRow :global(.secondary-button) { min-height: 44px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.chips li { display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 4px 2px 12px; font-size: .72rem; }
+.chipRemove { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border: 0; background: none; color: var(--muted); cursor: pointer; }
+.rowStatic { display: flex; align-items: center; min-height: 44px; padding-left: 32px; font-size: .74rem; }
