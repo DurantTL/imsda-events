@@ -40,9 +40,12 @@ export default async function StaffOpenClubPage({ params }: { params: Promise<{ 
           <IdCard aria-hidden="true" size={14} /> Club profile
         </Link>
         <ActAsButton
-          confirmText={`Act as ${club.name}'s Director for the next 2 hours, with full director powers? This is recorded and ends by itself (or with Stop acting), and never touches your own attendee account. Starting this ends any other role you're currently acting as.`}
+          access="Full director powers, attributed to you"
+          club={club.name}
           endpoint={`/api/admin/organizations/${encodeURIComponent(organizationId)}/act-as-director`}
           label="Act as Director (2 hours)"
+          resultAction="Open the club portal"
+          role="Director"
         />
       </div>
 
