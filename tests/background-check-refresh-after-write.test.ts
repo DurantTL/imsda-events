@@ -7,12 +7,13 @@ const mocks = vi.hoisted(() => ({
   refreshBackgroundCheckMatches: vi.fn(),
   registrationFindMany: vi.fn(),
   logError: vi.fn(),
+  logInfo: vi.fn(),
   after: vi.fn<(work: () => Promise<void>) => void>(() => { throw new Error("`after` was called outside a request scope."); }),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: () => ({ registration: { findMany: mocks.registrationFindMany } }) }));
-vi.mock("@/lib/logger", () => ({ logError: mocks.logError }));
+vi.mock("@/lib/logger", () => ({ logError: mocks.logError, logInfo: mocks.logInfo, describeError: (error: unknown) => ({ name: error instanceof Error ? error.name : typeof error }) }));
 vi.mock("@/modules/background-checks/repository", () => ({ refreshBackgroundCheckMatches: mocks.refreshBackgroundCheckMatches }));
 vi.mock("next/server", () => ({ after: mocks.after }));
 
@@ -70,5 +71,17 @@ describe("refreshing background-check matches after a save (#527)", () => {
     await vi.waitFor(() => expect(mocks.refreshBackgroundCheckMatches).toHaveBeenCalledWith(["p-1"]));
     finish();
     await running;
+  });
+
+  it("runs inline quietly outside a request, and says so once when after() fails for any other reason", async () => {
+    await refreshBackgroundCheckMatchesSafely(["p-1"]);
+    expect(mocks.refreshBackgroundCheckMatches).toHaveBeenCalledWith(["p-1"]);
+    expect(mocks.logInfo).not.toHaveBeenCalled();
+
+    mocks.after.mockImplementation(() => { throw new TypeError("after is not available here"); });
+    await refreshBackgroundCheckMatchesSafely(["p-2"]);
+    expect(mocks.refreshBackgroundCheckMatches).toHaveBeenLastCalledWith(["p-2"]);
+    expect(mocks.logInfo).toHaveBeenCalledTimes(1);
+    expect(mocks.logInfo).toHaveBeenCalledWith("Background check refresh ran inline: after() was unavailable", { reason: "TypeError" });
   });
 });

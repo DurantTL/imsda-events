@@ -89,6 +89,14 @@ CREATE UNIQUE INDEX "BackgroundCheckMatch_entryId_key" ON "BackgroundCheckMatch"
 -- CreateIndex
 CREATE UNIQUE INDEX "BackgroundCheckReview_entryId_key" ON "BackgroundCheckReview"("entryId");
 
+-- The refresh and read-time lookup find everyone in a name group by this
+-- coarse, compacted name (everything but ASCII letters and digits stripped
+-- after NFKD); the exact rule, `matchableName`, is re-checked in TypeScript.
+-- An expression index so that lookup is an index scan, not a full scan of
+-- "Person". Prisma can't model an expression index; see
+-- docs/SCHEMA-DRIFT-RUNBOOK.md for how the drift check treats it.
+CREATE INDEX "Person_matchable_compact_idx" ON "Person" ((regexp_replace(lower(normalize("firstName" || ' ' || "lastName", NFKD)), '[^a-z0-9]+', '', 'g')));
+
 -- AddForeignKey
 ALTER TABLE "BackgroundCheckEntry" ADD CONSTRAINT "BackgroundCheckEntry_uploadId_fkey" FOREIGN KEY ("uploadId") REFERENCES "BackgroundCheckUpload"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 

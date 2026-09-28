@@ -26,7 +26,7 @@
  *     read time, and after staff dismiss its review.
  */
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { loadEnvConfig } from "@next/env";
 import { PrismaClient } from "@prisma/client";
@@ -216,6 +216,20 @@ async function main() {
   assert(names.some((entry) => entry.normalizedName === "jose nunez"), "an accented name normalizes the TypeScript way");
   assert(names.some((entry) => entry.normalizedName === "maryann smith jones"), "a hyphenated, double-spaced name normalizes the TypeScript way");
   console.log("ok  refreshes keep every state and fill normalizedName in TypeScript");
+
+  // The name-group lookup uses the expression index, not a scan of every person.
+  const migrationSql = readFileSync(path.join(migrationsDir, MIGRATION_527, "migration.sql"), "utf8");
+  assert(migrationSql.includes(`ON "Person" ((${repository.PERSON_COMPACT_NAME_SQL}))`), "the lookup's name expression is exactly the index's");
+  await db.$executeRawUnsafe(`INSERT INTO "Person" ("id", "firstName", "lastName", "updatedAt") SELECT '${P}_bulk_' || g, 'Bulk' || g, 'Person' || (g % 997), NOW() FROM generate_series(1, 20000) g`);
+  await db.$executeRawUnsafe(`ANALYZE "Person"`);
+  const plan = await db.$queryRawUnsafe<Array<{ "QUERY PLAN": unknown }>>(
+    `EXPLAIN (FORMAT JSON) SELECT "id" FROM "Person" WHERE ${repository.PERSON_COMPACT_NAME_SQL} = ANY($1::text[])`,
+    ["josenunez"],
+  );
+  const planText = JSON.stringify(plan);
+  assert(planText.includes("Person_matchable_compact_idx") && !planText.includes('"Seq Scan"'), `the name-group lookup is an index scan at 20,000 people, got ${planText}`);
+  await db.person.deleteMany({ where: { id: { startsWith: `${P}_bulk_` } } });
+  console.log("ok  the name-group lookup is an index scan on Person_matchable_compact_idx");
 
   // 6. A roster upload with the same user_ids: "changed", and still matched.
   const rosterCsv = [

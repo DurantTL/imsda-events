@@ -9,7 +9,8 @@ export type BackgroundCheckOperationErrorCode =
   | "NOT_A_CANDIDATE"
   | "MATCH_NOT_FOUND"
   | "NOT_A_MANUAL_MATCH"
-  | "UPLOAD_IN_PROGRESS";
+  | "UPLOAD_IN_PROGRESS"
+  | "LIST_CHANGED";
 
 const statusByCode: Record<BackgroundCheckOperationErrorCode, number> = {
   PREVIEW_CHANGED: 409,
@@ -18,6 +19,7 @@ const statusByCode: Record<BackgroundCheckOperationErrorCode, number> = {
   MATCH_NOT_FOUND: 404,
   NOT_A_MANUAL_MATCH: 400,
   UPLOAD_IN_PROGRESS: 409,
+  LIST_CHANGED: 409,
 };
 
 export class BackgroundCheckOperationError extends Error {

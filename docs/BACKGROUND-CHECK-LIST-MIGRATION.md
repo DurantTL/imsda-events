@@ -45,6 +45,31 @@ it expects the old table name and raw `user_id`s.
 - A non-clear Sterling status is reported as a row problem ("not a clear
   check, nothing was recorded") and never stored, exactly as before #527.
 
+## Staff review decisions
+
+- **Match** makes a `MANUAL` match: a staff decision that holds across
+  refreshes and uploads (carried to the next upload's entry with the same
+  identity key, even if the name changed) until staff use "Undo match".
+- **None of these** (a dismissal) holds until the next upload replaces the
+  list. Until then that entry is matched to no one — not by a refresh, not at
+  read time — and it shows under "Not matched yet". Anyone the dismissed
+  review named is held too: if two rows matched one person and staff dismiss
+  one, the other row's review stays open and that person isn't auto-matched
+  to it until staff decide. The next upload starts every entry fresh.
+- A decision made while an upload is in progress, or one that collides with
+  a concurrent change, is refused with a 409 and can simply be retried.
+
+## Indexes Prisma can't model
+
+The migration adds `Person_matchable_compact_idx`, an expression index on the
+compacted name the name-group lookup filters by
+(`PERSON_COMPACT_NAME_SQL` in `modules/background-checks/repository.ts`,
+which must match the index expression exactly). Prisma's schema can't
+express an expression index, and `prisma migrate diff` ignores indexes it
+can't represent, so the drift check still exits 0; `npm run
+test:background-check-list` asserts the lookup's expression is the index's
+and that the query plan is an index scan.
+
 ## Follow-up: drop `BackgroundCheck_pre527`
 
 The migration does not drop the old table. It renames it to

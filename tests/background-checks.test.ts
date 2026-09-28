@@ -347,7 +347,7 @@ function makeFakeDb() {
     // and the refresh's coarse name filter: people whose compacted name is one asked for.
     $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
       if (strings.join("?").includes("pg_try_advisory_xact_lock_shared")) return [{ locked: !lock.held }];
-      const [compacts] = values as [string[]];
+      const compacts = values.find((value): value is string[] => Array.isArray(value)) ?? [];
       return [...persons.values()]
         .filter((person) => compacts.includes(compactName(person.firstName as string, person.lastName as string)))
         .map((person) => ({ id: person.id, firstName: person.firstName, lastName: person.lastName }));
@@ -983,6 +983,55 @@ describe("staff review resolution (#527)", () => {
     expect([...seed.reviews.values()]).toEqual([expect.objectContaining({ id: "r-1", dismissedAt: expect.any(Date) })]);
     expect((await listUnmatchedBackgroundCheckEntries()).map((entry) => entry.id)).toEqual(["e-1"]);
     await expect(resolveBackgroundCheckReview("r-1", { type: "match", personId: "p-kim-1" }, "admin-1")).rejects.toMatchObject({ code: "REVIEW_NOT_FOUND" });
+  });
+
+  it("dismissing one of two rows that match one person keeps the other row's review open, and never auto-matches them", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    seed.persons.set("p-ana", { id: "p-ana", firstName: "Ana", lastName: "Rivera", normalizedEmail: "ana@example.test" });
+    seed.rosterMembers.push({
+      id: "rm-ana", personId: "p-ana", organizationId: "org-1", clubYear: "2026-27", status: "ACTIVE", attendeeType: "ADULT", sealedBirthDate: null,
+      person: { firstName: "Ana", lastName: "Rivera", normalizedEmail: "ana@example.test", attendeeAccountLinks: [{ account: { email: "ana.alt@example.test" } }] },
+      organization: { name: "Test Pathfinders", parentOrganization: null },
+    });
+    const rows = parseSterlingCsv([
+      "First name,Last name,Email,Expiration date",
+      "Ana,Rivera,ana@example.test,2029-01-01",
+      "Ana,Rivera,ana.alt@example.test,2028-01-01",
+    ].join("\n")).map(sterlingRowToListRow);
+    await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", new Date("2026-09-28T12:00:00Z"));
+    const [first, second] = await listBackgroundCheckReviews();
+    expect(first && second).toBeTruthy();
+
+    await resolveBackgroundCheckReview(first!.id, { type: "dismiss" }, "admin-1");
+    await refreshBackgroundCheckMatchForPerson("p-ana", new Date("2026-09-29T12:00:00Z"));
+
+    expect(seed.matches.size).toBe(0);
+    const open = await listBackgroundCheckReviews();
+    expect(open.map((review) => review.id)).toEqual([second!.id]);
+    expect(open[0]!.candidates.map((candidate) => candidate.personId)).toEqual(["p-ana"]);
+
+    // Staff can still decide the open one.
+    await resolveBackgroundCheckReview(second!.id, { type: "match", personId: "p-ana" }, "admin-1");
+    expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-ana", entryId: second!.entryId, matchedBy: "MANUAL" })]);
+  });
+
+  it("answers 409 when a staff match or undo collides with a concurrent change (P2002)", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    ambiguousKimCho(seed);
+    const clash = Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+    const create = client.backgroundCheckMatch.create;
+    client.backgroundCheckMatch.create = async () => { throw clash; };
+    await expect(resolveBackgroundCheckReview("r-1", { type: "match", personId: "p-kim-1" }, "admin-1")).rejects.toMatchObject({ code: "LIST_CHANGED", status: 409 });
+    client.backgroundCheckMatch.create = create;
+
+    await resolveBackgroundCheckReview("r-1", { type: "match", personId: "p-kim-1" }, "admin-1");
+    const [manual] = await listManualBackgroundCheckMatches();
+    const deleteMany = client.backgroundCheckMatch.deleteMany;
+    client.backgroundCheckMatch.deleteMany = async () => { throw clash; };
+    await expect(undoManualBackgroundCheckMatch(manual!.id, "admin-1")).rejects.toMatchObject({ code: "LIST_CHANGED", status: 409 });
+    client.backgroundCheckMatch.deleteMany = deleteMany;
   });
 
   it("never creates a second review for the same entry (N2)", async () => {

@@ -1,6 +1,6 @@
 import { after } from "next/server";
 import { getPrisma } from "@/lib/prisma";
-import { logError } from "@/lib/logger";
+import { describeError, logError, logInfo } from "@/lib/logger";
 
 /**
  * Fills the background-check match cache after a write that adds or edits a
@@ -28,8 +28,11 @@ function runAfterResponse(work: () => Promise<void>): Promise<void> {
   try {
     after(work);
     return Promise.resolve();
-  } catch {
-    // Not inside a request scope: nothing to defer past, so run it now.
+  } catch (error) {
+    // Expected outside a request (a script, a test): nothing to defer past.
+    // Anything else is unexpected, so say so once — then still do the work.
+    const outsideRequest = error instanceof Error && error.message.includes("outside a request scope");
+    if (!outsideRequest) logInfo("Background check refresh ran inline: after() was unavailable", { reason: describeError(error).name });
     return work();
   }
 }

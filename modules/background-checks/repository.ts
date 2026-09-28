@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import type { Prisma, PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { logError, logInfo } from "@/lib/logger";
 import { writeAuditLog } from "@/modules/audit/audit-service";
@@ -340,18 +340,27 @@ async function buildCandidateIndex(tx: PrismaLike, now: Date, scope?: { personId
 }
 
 /**
+ * The coarse compacted-name expression, exactly as the #527 migration's
+ * `Person_matchable_compact_idx` expression index defines it — it must stay
+ * character-for-character the same, or Postgres can't use the index and
+ * falls back to scanning every person.
+ */
+export const PERSON_COMPACT_NAME_SQL = `regexp_replace(lower(normalize("firstName" || ' ' || "lastName", NFKD)), '[^a-z0-9]+', '', 'g')`;
+
+/**
  * The people whose `matchableName` is one of `names` (#527 N6): the same
  * grouping the full pass uses, not a case-insensitive first/last compare,
  * so "José Núñez" and "Jose Nunez" are one group. The SQL is only a coarse
  * superset filter (everything but ASCII letters and digits stripped after
- * NFKD); the exact rule is `matchableName`, applied here in TypeScript.
+ * NFKD), served by `Person_matchable_compact_idx`; the exact rule is
+ * `matchableName`, applied here in TypeScript.
  */
 async function personIdsNamed(tx: PrismaLike, names: string[]) {
   const compacts = [...new Set(names.map((name) => name.replace(/ /g, "")).filter(Boolean))];
   if (compacts.length === 0) return [];
   const rows = await tx.$queryRaw<Array<{ id: string; firstName: string; lastName: string }>>`
     SELECT "id", "firstName", "lastName" FROM "Person"
-    WHERE regexp_replace(lower(normalize("firstName" || ' ' || "lastName", NFKD)), '[^a-z0-9]+', '', 'g') = ANY(${compacts}::text[])
+    WHERE ${Prisma.raw(PERSON_COMPACT_NAME_SQL)} = ANY(${compacts}::text[])
   `;
   const wanted = new Set(names);
   return rows.filter((row) => wanted.has(matchableName(`${row.firstName} ${row.lastName}`))).map((row) => row.id);
@@ -564,20 +573,37 @@ async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: stri
   const [entries, personIds] = await Promise.all([
     tx.backgroundCheckEntry.findMany({
       where: { uploadId, normalizedName: { in: groupNames } },
-      select: { ...entryForMatchSelect, match: { select: { personId: true, matchedBy: true } }, review: { select: { dismissedAt: true } } },
+      select: {
+        ...entryForMatchSelect,
+        match: { select: { personId: true, matchedBy: true } },
+        review: { select: { dismissedAt: true, candidatePersonIds: true } },
+      },
     }),
     personIdsNamed(tx, groupNames),
   ]);
   // Staff said none of the candidates is right: that entry matches no one until the next upload.
   const dismissed = (entry: (typeof entries)[number]) => Boolean(entry.review?.dismissedAt);
+  const reviewCandidates = (entry: (typeof entries)[number]) => (
+    Array.isArray(entry.review?.candidatePersonIds) ? entry.review.candidatePersonIds as string[] : []
+  );
+  // People a dismissed review named are held until staff decide the rest:
+  // dismissing one of two "rows match this person" reviews says nothing about
+  // the other row, so that row's review stays open and the person isn't
+  // auto-matched to it (#527) — until staff resolve it, or the next upload.
+  const held = new Set(entries.filter(dismissed).flatMap(reviewCandidates));
+  const heldOpenReview = (entry: (typeof entries)[number]) => (
+    Boolean(entry.review) && !dismissed(entry) && reviewCandidates(entry).some((personId) => held.has(personId))
+  );
   const derivedEntryIds = entries.filter((entry) => entry.match && !LOCKED_SOURCES.has(entry.match.matchedBy)).map((entry) => entry.id);
-  const entryIds = entries.map((entry) => entry.id);
   if (derivedEntryIds.length > 0) {
     await tx.backgroundCheckMatch.deleteMany({ where: { entryId: { in: derivedEntryIds }, matchedBy: { in: [...DERIVED_SOURCES] } } });
   }
-  if (entryIds.length > 0) await tx.backgroundCheckReview.deleteMany({ where: { entryId: { in: entryIds }, dismissedAt: null } });
+  const reopenedEntryIds = entries.filter((entry) => !heldOpenReview(entry)).map((entry) => entry.id);
+  if (reopenedEntryIds.length > 0) await tx.backgroundCheckReview.deleteMany({ where: { entryId: { in: reopenedEntryIds }, dismissedAt: null } });
 
-  const toMatch = entries.filter((entry) => !(entry.match && LOCKED_SOURCES.has(entry.match.matchedBy)) && !dismissed(entry));
+  const toMatch = entries.filter((entry) => (
+    !(entry.match && LOCKED_SOURCES.has(entry.match.matchedBy)) && !dismissed(entry) && !heldOpenReview(entry)
+  ));
   if (toMatch.length === 0) return;
   const [index, identityByKey, stillMatched] = await Promise.all([
     buildCandidateIndex(tx, now, { personIds }),
@@ -589,7 +615,16 @@ async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: stri
   const unavailable = new Set(stillMatched.map((match) => match.personId));
   // A remembered id can point at someone outside the name group only when
   // the names disagree (a review, never a match), so this covers everyone.
-  const { matches, reviews } = matchEntries(toMatch, index, identityByKey, unavailable);
+  const result = matchEntries(toMatch, index, identityByKey, unavailable);
+  const matches = result.matches.filter((match) => !held.has(match.personId));
+  const reviews = [
+    ...result.reviews,
+    ...result.matches.filter((match) => held.has(match.personId)).map((match) => ({
+      entryId: match.entryId,
+      reason: "Staff dismissed another row that matched this person. Nothing was guessed; match this one by hand, or dismiss it too.",
+      candidatePersonIds: [match.personId],
+    })),
+  ];
   await saveMatchResults(tx, matches, reviews, now);
 }
 
@@ -852,8 +887,14 @@ export async function resolveBackgroundCheckReview(
     // The entry or person vanished mid-way (a foreign key or missing row): a 404, not a 500.
     const code = (error as { code?: unknown } | null)?.code;
     if (code === "P2003" || code === "P2025") throw notFound();
+    if (code === "P2002") throw listChanged();
     throw error;
   });
+}
+
+/** A concurrent refresh or staff decision wrote the same match or identity first (a unique clash): a 409, not a 500. */
+function listChanged() {
+  return new BackgroundCheckOperationError("LIST_CHANGED", "The list changed while this was saving. Refresh and try again.");
 }
 
 export type ManualBackgroundCheckMatch = { id: string; personId: string; personName: string; entryName: string; site: string | null };
@@ -908,6 +949,9 @@ export async function undoManualBackgroundCheckMatch(matchId: string, actorUserI
       metadata: { entryId: match.entryId },
     }, tx);
     return match.personId;
+  }).catch((error: unknown) => {
+    if ((error as { code?: unknown } | null)?.code === "P2002") throw listChanged();
+    throw error;
   });
   try {
     await refreshBackgroundCheckMatches([personId]);
