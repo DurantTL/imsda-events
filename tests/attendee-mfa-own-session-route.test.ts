@@ -44,7 +44,6 @@ vi.mock("@/modules/attendee-accounts/mfa-service", async () => {
 });
 
 import { GET, POST } from "@/app/api/attendee/mfa/route";
-import { AttendeeMfaError } from "@/modules/attendee-accounts/mfa-service";
 
 const account = { id: "account-1", verifiedEmail: "director@example.test", displayName: "Test Director" };
 const status = { enrolled: false };
@@ -105,16 +104,16 @@ describe("/api/attendee/mfa own-session rule", () => {
       expectNoStateChange();
     });
 
-    it("cannot mint recovery codes", async () => {
-      // Already guarded inside the service: no session id means no codes.
-      // (tests/attendee-mfa-recovery-route.test.ts covers it end to end.)
-      mocks.regenerate.mockRejectedValue(
-        new AttendeeMfaError("RECENT_VERIFICATION_REQUIRED", "Sign in with your own attendee account."),
-      );
-      const response = await POST(post({ action: "regenerate-recovery-codes", code: "123456" }));
-      expect(response.status).toBe(403);
-      expect(mocks.regenerate).toHaveBeenCalledWith("account-1", { sessionId: null, code: "123456" });
-      expect(mocks.markRosterUnlocked).not.toHaveBeenCalled();
+    it.each([
+      ["without a code", { action: "regenerate-recovery-codes" }],
+      ["with a code", { action: "regenerate-recovery-codes", code: "123456" }],
+    ])("cannot mint recovery codes %s, and spends no rate-limit budget", async (_name, body) => {
+      const response = await POST(post(body));
+      expect(response.status).toBe(401);
+      expect((await response.json()).error).toBe("OWN_SESSION_REQUIRED");
+      expect(mocks.regenerate).not.toHaveBeenCalled();
+      expect(mocks.checkRateLimit).not.toHaveBeenCalled();
+      expectNoStateChange();
     });
   });
 

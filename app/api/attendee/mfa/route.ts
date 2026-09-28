@@ -2,7 +2,6 @@ import { z } from "zod";
 import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
-import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { PasskeySessionError, requireOwnAttendeeSession } from "@/modules/attendee-accounts/passkey-api";
 import { markRosterUnlocked } from "@/modules/club-rosters/access";
 import { applyRateLimitHeaders } from "@/modules/rate-limit/domain";
@@ -30,6 +29,7 @@ const actionSchema = z.discriminatedUnion("action", [
 ]);
 
 function failure(error: unknown) {
+  if (error instanceof PasskeySessionError) return ownSessionRequired();
   if (error instanceof AttendeeMfaError) {
     const status = error.code === "MFA_LOCKED" ? 429
       : error.code === "RECENT_VERIFICATION_REQUIRED" ? 403
@@ -57,12 +57,6 @@ function ownSessionRequired() {
   );
 }
 
-/** Setting up an authenticator proves a code, so this sign-in has passed its second step. */
-async function markThisSessionVerified() {
-  const { via, sessionId } = await getCurrentAttendee();
-  if (via === "attendee" && sessionId) await markRosterUnlocked(sessionId);
-}
-
 async function getHandler() {
   try {
     // Two-step settings belong to the person's own attendee sign-in, never a
@@ -70,7 +64,6 @@ async function getHandler() {
     const { account } = await requireOwnAttendeeSession();
     return Response.json(await getAttendeeMfaStatus(account.id));
   } catch (error) {
-    if (error instanceof PasskeySessionError) return ownSessionRequired();
     return failure(error);
   }
 }
@@ -78,33 +71,23 @@ async function getHandler() {
 async function postHandler(request: Request) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
-  const { account, via } = await getCurrentAttendee();
-  if (!account) {
-    return Response.json({ error: "SIGN_IN_REQUIRED", message: "Sign in first." }, { status: 401 });
-  }
-  const id = account.id;
-  // Every action except recovery codes needs the person's own attendee
-  // session before anything is read or changed (#555). Recovery codes keep
-  // their existing, stricter refusal (403) inside the service.
-  const ownSession = via === "attendee";
   try {
+    // Every action needs the person's own attendee session before anything
+    // is parsed, rate-limited, read or changed (#555).
+    const { account, sessionId } = await requireOwnAttendeeSession();
+    const id = account.id;
     const input = actionSchema.parse(await request.json());
-    if (!ownSession && input.action !== "regenerate-recovery-codes") {
-      return ownSessionRequired();
-    }
     if (input.action === "begin") {
       return Response.json(await beginAttendeeMfaEnrollment(id));
     }
     if (input.action === "confirm") {
       const confirmed = await confirmAttendeeMfaEnrollment(id, input.code);
-      await markThisSessionVerified();
+      // Setting up an authenticator proves a code, so this sign-in has passed its second step.
+      await markRosterUnlocked(sessionId);
       return Response.json({ ...confirmed, status: await getAttendeeMfaStatus(id) });
     }
     if (input.action === "regenerate-recovery-codes") {
-      // Only the person's own attendee session can mint codes; a staff member
-      // viewing their linked attendee account has no attendee session here.
-      const { via, sessionId } = await getCurrentAttendee();
-      const proof = { sessionId: via === "attendee" ? sessionId : null, code: input.code ?? null };
+      const proof = { sessionId, code: input.code ?? null };
       if (!proof.code) return Response.json(await regenerateAttendeeRecoveryCodes(id, proof));
       // A code here is a second-factor guess like the roster unlock, so it
       // spends from the same budget (5 per account, 20 per client, per 15
