@@ -38,7 +38,7 @@ a label that names the destination — never a bare "Back."
 import { BackLink } from "@/components/back-link";
 
 <BackLink href={`/account/clubs/${organizationId}`}>Back to {club.name}</BackLink>
-<BackLink href="/admin/organizations" variant="staff">Back to churches and clubs</BackLink>
+<BackLink href="/admin/organizations" variant="staff">Back to Clubs and churches</BackLink>
 ```
 
 ### When a page can be reached from more than one place
@@ -58,7 +58,7 @@ const clubHref = `/admin/organizations/${organizationId}/club`;
 // On the destination page:
 const clubHref = `/admin/organizations/${organizationId}/club`;
 const backHref = allowedReturnTo(from, [clubHref], "/admin/organizations");
-const backLabel = backHref === clubHref ? `Back to ${club.name}` : "Back to churches and clubs";
+const backLabel = backHref === clubHref ? `Back to ${club.name}` : "Back to Clubs and churches";
 ```
 
 Pages using this today:
@@ -93,13 +93,13 @@ follows the same pattern: `area/[organizationId]` → "All clubs";
 
 ## Staff club and organization pages
 
-- `admin/organizations` (the churches and clubs directory) → "Back to system
+- `admin/organizations` (the clubs and churches directory) → "Back to system
   administration"
 - `admin/organizations/[organizationId]/club` (a club as its director sees
-  it) → "Back to churches and clubs"; its own links to Club admins, Club
+  it) → "Back to Clubs and churches"; its own links to Club admins, Club
   profile, and each monthly report pass `from` back to itself
 - `admin/clubs/import`, `admin/clubs/invites`, `admin/clubs/reports`,
-  `admin/organizations/background-checks` → "Back to churches and clubs"
+  `admin/organizations/background-checks` → "Back to Clubs and churches"
 - `more/clubs` (a Pathfinder event's club oversight) → "Back to More"
 - `more/clubs/[organizationId]` → "Back to clubs"; its links to each monthly
   report pass `from` back to itself
