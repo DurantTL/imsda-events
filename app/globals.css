@@ -539,7 +539,17 @@ select:focus-visible {
   transform: translateY(-50%);
 }
 
-.primary-nav { display: grid; gap: 6px; }
+/* #468: let the nav scroll inside the fixed sidebar so every link stays
+   reachable at short window heights; the brand and account areas above/below
+   stay fixed since they aren't part of this flex child. */
+.primary-nav {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
 
 /* Groups the sidebar's destinations (#428): Events, People, Finance, Communications. */
 .nav-group-label {
