@@ -104,6 +104,15 @@ describe.each(cases)("$label", ({ call, repository }) => {
     expect(await response.json()).toMatchObject({ error: "EVENT_TEMPLATE_REQUEST_FAILED" });
     expect(mocks.logError).toHaveBeenCalledTimes(1);
   });
+
+  it("returns a retryable 409 when the template lock wait times out", async () => {
+    const { Prisma } = await import("@prisma/client");
+    repository.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("timeout", { code: "P2028", clientVersion: "test" }));
+    const response = await call();
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "TEMPLATE_BUSY" });
+    expect(mocks.logError).not.toHaveBeenCalled();
+  });
 });
 
 describe("cross-origin mutations are rejected before the session is read", () => {
