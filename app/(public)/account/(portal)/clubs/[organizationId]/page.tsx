@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight, CalendarDays, CheckCircle2, CircleAlert, FileText, UsersRound } from "lucide-react";
 import { BackLink } from "@/components/back-link";
-import { clubComplianceReminderCounts } from "@/modules/background-checks/repository";
+import { clubPortalComplianceReminderCounts } from "@/modules/background-checks/repository";
 import { complianceReminders } from "@/modules/background-checks/domain";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { getRosterAccessStateForPage, type ClubActor } from "@/modules/club-rosters/access";
@@ -65,7 +65,7 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
     access.capabilities.submitReports ? getClubReportYear(organizationId, clubYear) : Promise.resolve(null),
     allMyClubsLink(access.actor),
     // Only for roles that already see the roster's background-check column (#479).
-    access.capabilities.seeBirthDates ? clubComplianceReminderCounts(organizationId, clubYear) : Promise.resolve(null),
+    clubPortalComplianceReminderCounts(organizationId, clubYear, access.capabilities),
   ]);
   const active = members.filter((member) => member.status === "ACTIVE");
   const youth = active.filter((member) => member.attendeeType !== "STAFF" && member.attendeeType !== "ADULT");

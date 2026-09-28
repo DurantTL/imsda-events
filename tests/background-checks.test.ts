@@ -51,6 +51,7 @@ import {
   applySterlingImport,
   backgroundCheckSummary,
   clubComplianceReminderCounts,
+  clubPortalComplianceReminderCounts,
   clubPortalComplianceStatuses,
   clubRosterComplianceStatuses,
   listEventBackgroundFlags,
@@ -780,5 +781,15 @@ describe("Club home and club overview compliance reminders (#479)", () => {
 
   it("shows nothing when every count is zero", () => {
     expect(complianceReminders({ missing: 0, notInCompliance: 0, expiringSoon: 0 }, "/account/clubs/club-1/roster")).toEqual([]);
+  });
+});
+
+describe("Club home reminder gate (#479 review)", () => {
+  it("gives directors and deputies counts and registrars nothing, the same rule as the roster column", async () => {
+    await expect(clubPortalComplianceReminderCounts("org-1", "2026", clubCapabilities("REGISTRAR"))).resolves.toBeNull();
+    const director = await clubPortalComplianceReminderCounts("org-1", "2026", clubCapabilities("DIRECTOR"));
+    expect(director).toEqual(expect.objectContaining({ missing: expect.any(Number), expiringSoon: expect.any(Number), notInCompliance: expect.any(Number) }));
+    const deputy = await clubPortalComplianceReminderCounts("org-1", "2026", clubCapabilities("DEPUTY"));
+    expect(deputy).not.toBeNull();
   });
 });

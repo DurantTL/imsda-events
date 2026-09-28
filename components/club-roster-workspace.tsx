@@ -254,7 +254,7 @@ export function ClubRosterWorkspace({
         </div>
         {visible.length === 0 ? (
           <p className="public-manage-empty">
-            <UsersRound size={17} aria-hidden="true" /> {complianceFilter
+            <UsersRound size={17} aria-hidden="true" /> {complianceFilter && complianceStatuses
               ? "No one matches this filter."
               : readOnly
                 ? "No one is on this club's roster yet."

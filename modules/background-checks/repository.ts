@@ -839,6 +839,19 @@ export async function clubComplianceReminderCounts(organizationId: string, clubY
 }
 
 /**
+ * Club home's reminder counts (#479): the same gate as the roster's own
+ * compliance column below (directors and deputies only), so the two can't drift.
+ */
+export async function clubPortalComplianceReminderCounts(
+  organizationId: string,
+  clubYear: string,
+  capabilities: Pick<ClubCapabilities, "seeBirthDates">,
+) {
+  if (!capabilities.seeBirthDates) return null;
+  return clubComplianceReminderCounts(organizationId, clubYear);
+}
+
+/**
  * The club portal's own roster (#427): compliance status for a director or
  * deputy only (the same people who see full birth dates), never a note, and
  * nothing at all for a registrar.
