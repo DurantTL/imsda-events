@@ -71,6 +71,11 @@ const MESSAGE_TEMPLATE_DEFAULT_LIMIT = 30;
  * references" from ever reaching a created event.
  */
 export const eventTemplatePayloadSchema = z.object({
+  /** Stable identity of a built-in starter template (#546). Set only on the
+   * drafts "Add starter templates" creates; it lets a re-run recognise a
+   * starter after staff rename or edit it, and it carries no behavior when a
+   * template is applied. Optional, so no migration is involved. */
+  starterKey: z.string().trim().min(1).max(60).optional(),
   audience: z.enum(["GENERAL", "CLUB"]).default("GENERAL"),
   formTemplateKeys: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
   attendeeTypes: z.array(templateAttendeeTypeSchema).max(60).default([]),

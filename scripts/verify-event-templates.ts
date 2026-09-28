@@ -13,7 +13,15 @@
  */
 import { loadEnvConfig } from "@next/env";
 import { Prisma, PrismaClient } from "@prisma/client";
-import { draftEventTemplateInputSchema, EventTemplateReferenceError, eventTemplatePayloadSchema } from "../modules/event-templates/domain";
+import {
+  draftEventTemplateInputSchema,
+  EventTemplateReferenceError,
+  eventTemplatePayloadSchema,
+  parseEventTemplatePayload,
+  validateEventTemplatePayloadReferences,
+} from "../modules/event-templates/domain";
+import { addStarterEventTemplates } from "../modules/event-templates/starter-repository";
+import { starterEventTemplates } from "../modules/event-templates/starters";
 import {
   applyEventTemplate,
   archiveEventTemplate,
@@ -51,12 +59,38 @@ async function cleanup() {
   await prisma.user.deleteMany({ where: { id: { in: actors } } });
 }
 
+/** Seeded starter templates set aside by `verifyStarters`, put back after cleanup. */
+let seededStarterSnapshot: Awaited<ReturnType<typeof starterTemplates>> = [];
+
+async function restoreSeededStarters() {
+  for (const template of seededStarterSnapshot) {
+    if (await prisma.eventTemplate.findUnique({ where: { id: template.id }, select: { id: true } })) continue;
+    const { versions, ...row } = template;
+    await prisma.eventTemplate.create({
+      data: {
+        ...row,
+        versions: { create: versions.map((version) => ({
+          id: version.id,
+          createdByUserId: version.createdByUserId,
+          versionNumber: version.versionNumber,
+          status: version.status,
+          payload: version.payload as Prisma.InputJsonValue,
+          publishedAt: version.publishedAt,
+          createdAt: version.createdAt,
+          updatedAt: version.updatedAt,
+        })) },
+      },
+    });
+  }
+}
+
 async function main() {
   await cleanup();
   try {
     await run();
   } finally {
     await cleanup();
+    await restoreSeededStarters();
   }
 }
 
@@ -318,6 +352,105 @@ async function run() {
   assert(archived.status === "ARCHIVED" && !archived.canApply, "the template is still archived and not appliable");
   assert(await eventRows(firstEventId) === after, "archiving did not touch the event created from it");
   console.log("ok  archive sticks: save, publish, and apply are refused afterward, and existing events are untouched");
+
+  await verifyStarters();
+}
+
+/** Every template whose payload carries a `starterKey`, with its versions. */
+async function starterTemplates() {
+  const all = await prisma.eventTemplate.findMany({ include: { versions: true } });
+  return all.filter((template) => template.versions.some((version) => typeof (version.payload as { starterKey?: unknown } | null)?.starterKey === "string"));
+}
+
+/**
+ * Starter templates (#546). A dev database that was seeded already holds
+ * published starters, which would make "one click adds 5" untestable, so the
+ * seeded ones are set aside first and restored, byte for byte, in `main`.
+ */
+async function verifyStarters() {
+  const seeded = (await starterTemplates()).filter((template) => !actors.includes(template.createdByUserId));
+  seededStarterSnapshot = seeded;
+  await prisma.eventTemplate.deleteMany({ where: { id: { in: seeded.map((template) => template.id) } } });
+  assert((await starterTemplates()).length === 0, "no starter templates remain before the starter checks");
+
+  // 1. One click creates five drafts, each valid, priceless, and named for its source form.
+  const first = await addStarterEventTemplates(adminId);
+  assert(first.added.length === 5 && first.skipped.length === 0, `one click adds 5 drafts, added ${first.added.length}`);
+  assert(first.stillNeeded.length === 1 && first.stillNeeded[0]!.name === "Fall Camporee", "Fall Camporee is listed as still needing a form");
+  const created = await starterTemplates();
+  assert(created.length === 5, "five starter templates exist");
+  for (const starter of starterEventTemplates) {
+    const template = created.find((entry) => (entry.versions[0]!.payload as { starterKey?: string }).starterKey === starter.starterKey);
+    assert(template, `${starter.name} was created`);
+    assert(template.status === "DRAFT" && template.versions.length === 1 && template.versions[0]!.status === "DRAFT", `${starter.name} is a DRAFT`);
+    assert(template.name === starter.name && template.description.includes("Starter set") && template.description.includes(starter.formTemplateKey), `${starter.name} names its source form`);
+    const payload = parseEventTemplatePayload(template.versions[0]!.payload);
+    validateEventTemplatePayloadReferences(payload);
+    assert(payload.audience === starter.audience, `${starter.name} audience`);
+    assert(!/price|capacity|cents/i.test(JSON.stringify(template.versions[0]!.payload)), `${starter.name} carries no pricing or capacity`);
+  }
+  assert(await prisma.auditLog.count({ where: { actorUserId: adminId, action: "EVENT_TEMPLATE_CREATED", summary: { startsWith: "Created starter event template" } } }) === 5, "each starter creation is audited");
+  console.log("ok  one click creates 5 valid DRAFT starters (no pricing or capacity), and Fall Camporee is listed as form still needed");
+
+  // 2. Re-running adds nothing.
+  const second = await addStarterEventTemplates(adminId);
+  assert(second.added.length === 0 && second.skipped.length === 5, `re-running adds 0, added ${second.added.length}`);
+  assert((await starterTemplates()).length === 5, "still five starters after a re-run");
+  console.log("ok  re-running adds 0 and skips all 5");
+
+  // 3. Two clicks at once still add each starter only once.
+  await prisma.eventTemplate.deleteMany({ where: { id: { in: created.map((template) => template.id) } } });
+  const raced = await Promise.all([addStarterEventTemplates(adminId), addStarterEventTemplates(otherAdminId)]);
+  assert(raced[0].added.length + raced[1].added.length === 5 && (await starterTemplates()).length === 5, "concurrent clicks add each starter exactly once");
+  console.log("ok  two simultaneous clicks add each starter exactly once");
+
+  // 4. Every draft publishes, then applies to a complete draft event.
+  for (const starter of starterEventTemplates) {
+    const template = (await starterTemplates()).find((entry) => (entry.versions[0]!.payload as { starterKey?: string }).starterKey === starter.starterKey)!;
+    const published = await publishEventTemplateVersion(template.id, adminId);
+    assert(published.status === "PUBLISHED" && published.canApply, `${starter.name} publishes and is appliable`);
+    const slug = `${P}-starter-${starter.starterKey.replace(/_/g, "-")}`;
+    const applied = await applyEventTemplate(template.id, adminId, { name: `${starter.name} 2027`, slug, startsOn: "2027-06-01", endsOn: "2027-06-03", requestKey: `${P}-key-starter-${starter.starterKey}` });
+    const event = applied.event;
+    assert(!applied.alreadyApplied && !event.isPublished && event.audience === starter.audience, `${starter.name} applies to an unpublished ${starter.audience} draft event`);
+    assert(event.collectsShirtSizes === starter.collectsShirtSizes && event.checksAdultBackgrounds === starter.checksAdultBackgrounds, `${starter.name} carries its module switches`);
+    assert(!event.waitlistEnabled, `${starter.name} leaves the waitlist off`);
+    const stored = await prisma.event.findUniqueOrThrow({ where: { id: event.id }, select: { capacity: true } });
+    assert(stored.capacity === null, `${starter.name} sets no capacity`);
+    const forms = await prisma.registrationForm.findMany({ where: { eventId: event.id }, include: { versions: true } });
+    assert(forms.length === 1 && forms[0]!.versions.length === 1 && forms[0]!.versions[0]!.definition !== null, `${starter.name} created its registration form draft`);
+    assert(await prisma.eventMembership.count({ where: { eventId: event.id, userId: adminId, role: "EVENT_ADMIN" } }) === 1, `${starter.name} made the applier its event admin`);
+    assert(await prisma.eventTemplateApplication.count({ where: { templateId: template.id, eventId: event.id } }) === 1, `${starter.name} recorded its application`);
+    const resave = eventSettingsInputSchema.safeParse({ ...(await getEventSettings(event.id)), approvedPaymentInstructions: null });
+    assert(resave.success, `${starter.name} event re-saves in settings`);
+  }
+  console.log("ok  all 5 starters publish and apply to complete unpublished draft events (form, switches, no capacity)");
+
+  // 5. Edited and archived starters are left alone by a re-run.
+  const all = await starterTemplates();
+  const byKey = (key: string) => all.find((entry) => (entry.versions[0]!.payload as { starterKey?: string }).starterKey === key)!;
+  const retreat = byKey("womens_retreat");
+  const retreatPublished = retreat.versions.find((version) => version.status === "PUBLISHED")!;
+  // Staff rename it and save a payload that has dropped the starterKey.
+  const edited = eventTemplatePayloadSchema.parse({ audience: "CLUB", formTemplateKeys: ["simple_rsvp"] });
+  assert(edited.starterKey === undefined, "the edited payload has no starterKey");
+  await saveEventTemplateDraft(retreat.id, adminId, {
+    name: "Evttpl Renamed Retreat", description: "Edited by staff.", payload: edited, expectedUpdatedAt: retreatPublished.updatedAt.toISOString(),
+  });
+  const manCamp = byKey("man_camp");
+  await archiveEventTemplate(manCamp.id, adminId);
+  const third = await addStarterEventTemplates(adminId);
+  assert(third.added.length === 0 && third.skipped.length === 5, `re-running after edits adds 0, added ${third.added.length}`);
+  assert(third.skipped.find((entry) => entry.starterKey === "man_camp")?.reason === "ARCHIVED", "the archived starter is reported as archived");
+  const afterRetreat = await getEventTemplate(retreat.id);
+  const draft = afterRetreat.versions.find((version) => version.status === "DRAFT")!;
+  assert(afterRetreat.name === "Evttpl Renamed Retreat" && afterRetreat.description === "Edited by staff.", "the edited starter keeps staff's name and description");
+  assert((draft.payload as { audience?: string; formTemplateKeys?: string[] }).audience === "CLUB" && (draft.payload as { formTemplateKeys?: string[] }).formTemplateKeys?.[0] === "simple_rsvp", "the edited starter keeps staff's payload");
+  assert((draft.payload as { starterKey?: string }).starterKey === "womens_retreat", "saving a draft keeps the starter's identity");
+  const afterManCamp = await getEventTemplate(manCamp.id);
+  assert(afterManCamp.status === "ARCHIVED" && !afterManCamp.canApply, "the archived starter stays archived");
+  assert((await starterTemplates()).length === 5, "no duplicates after edits and archive");
+  console.log("ok  an edited (renamed, payload changed) starter and an archived starter are left alone; no duplicates");
 }
 
 main()

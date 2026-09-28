@@ -14,7 +14,6 @@ import {
 } from "@/modules/event-templates/domain";
 import { createRegistrationFormFromTemplateInTransaction } from "@/modules/forms/repository";
 import { getEventSettings } from "@/modules/events/repository";
-
 export class EventTemplateOperationError extends Error {
   constructor(
     public readonly code:
@@ -200,7 +199,11 @@ export async function saveEventTemplateDraft(
     if (!current || current.updatedAt.getTime() !== expectedUpdatedAt) {
       throw new EventTemplateOperationError("EDIT_CONFLICT", "This template changed in another session. Reload it before saving again.");
     }
-    const payload = input.payload as unknown as Prisma.InputJsonValue;
+    // A starter's identity (#546) survives edits that drop it from the payload.
+    const priorStarterKey = versions.map((version) => (version.payload as { starterKey?: unknown } | null)?.starterKey).find((key) => typeof key === "string");
+    const payload = (input.payload.starterKey || typeof priorStarterKey !== "string"
+      ? input.payload
+      : { ...input.payload, starterKey: priorStarterKey }) as unknown as Prisma.InputJsonValue;
     if (draft) {
       const { count } = await tx.eventTemplateVersion.updateMany({
         where: { id: draft.id, status: "DRAFT", updatedAt: draft.updatedAt },

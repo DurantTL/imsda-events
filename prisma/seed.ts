@@ -3,6 +3,8 @@ import {
   AnnouncementStatus,
   EventPermission,
   EventRole,
+  EventTemplateStatus,
+  Prisma,
   ImportRunStatus,
   MembershipStatus,
   PaymentMethod,
@@ -14,6 +16,7 @@ import {
 } from "@prisma/client";
 import { hashPassword } from "../modules/access/passwords";
 import { formTemplates } from "../modules/forms/definition";
+import { starterDescription, starterEventTemplates, starterPayload } from "../modules/event-templates/starters";
 
 /**
  * Fictitious demo data for local work and CI. It writes fabricated events,
@@ -417,6 +420,34 @@ async function main() {
       definition: retreatDefinition,
     },
   });
+
+  // Published starter event templates (#546), so "Start from template" works
+  // on a fresh dev database. A starter that already exists in any state
+  // (including one staff edited or archived) is never touched.
+  for (const starter of starterEventTemplates) {
+    const existing = await prisma.eventTemplate.findFirst({
+      where: { versions: { some: { payload: { path: ["starterKey"], equals: starter.starterKey } } } },
+      select: { id: true },
+    });
+    if (existing) continue;
+    await prisma.eventTemplate.create({
+      data: {
+        name: starter.name,
+        description: starterDescription(starter),
+        status: EventTemplateStatus.PUBLISHED,
+        createdByUserId: systemAdmin.id,
+        versions: {
+          create: {
+            createdByUserId: systemAdmin.id,
+            versionNumber: 1,
+            status: EventTemplateStatus.PUBLISHED,
+            publishedAt: new Date(),
+            payload: starterPayload(starter) as unknown as Prisma.InputJsonValue,
+          },
+        },
+      },
+    });
+  }
 }
 
 main()
