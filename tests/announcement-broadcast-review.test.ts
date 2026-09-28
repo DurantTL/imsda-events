@@ -1,7 +1,11 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AnnouncementBroadcastReviewFacts, deliveryTimingLabel } from "@/components/announcement-broadcast-review";
+import {
+  AnnouncementBroadcastReviewFacts,
+  announcementBroadcastConfirmState,
+  deliveryTimingLabel,
+} from "@/components/announcement-broadcast-review";
 import type { AnnouncementBroadcastPreview } from "@/modules/communications/types";
 
 function preview(overrides: Partial<AnnouncementBroadcastPreview> = {}): AnnouncementBroadcastPreview {
@@ -9,8 +13,13 @@ function preview(overrides: Partial<AnnouncementBroadcastPreview> = {}): Announc
     announcementId: "announcement-1",
     title: "Friday arrival information",
     audienceLabel: "All active registrations (submitted or confirmed) for this event",
+    activeRegistrationCount: 42,
     recipientCount: 42,
+    skippedNoEmailCount: 0,
     deliveryMode: "LOCAL_CAPTURE",
+    templateEnabled: true,
+    suppressed: false,
+    fingerprint: "a".repeat(64),
     sendTiming: "IMMEDIATE",
     generatedAt: "2026-09-28T04:06:05.000Z",
     ...overrides,
@@ -25,11 +34,14 @@ function preview(overrides: Partial<AnnouncementBroadcastPreview> = {}): Announc
  * mounting the whole stateful workspace.
  */
 describe("AnnouncementBroadcastReviewFacts (#472)", () => {
-  it("shows the subject, audience, and recipient count from the preview", () => {
+  it("shows the announcement title, audience, and recipient count from the preview", () => {
     const html = renderToStaticMarkup(createElement(AnnouncementBroadcastReviewFacts, {
       preview: preview(),
     }));
 
+    expect(html).toContain("Announcement title");
+    expect(html).not.toContain("Subject");
+    expect(html).not.toContain("Skipped");
     expect(html).toContain("Friday arrival information");
     expect(html).toContain("All active registrations (submitted or confirmed) for this event");
     expect(html).toContain("42");
@@ -57,5 +69,75 @@ describe("deliveryTimingLabel (#472)", () => {
     expect(deliveryTimingLabel("EXTERNAL_EMAIL")).toMatch(/immediately/i);
     expect(deliveryTimingLabel("LOCAL_CAPTURE")).toMatch(/immediately/i);
     expect(deliveryTimingLabel("DISABLED")).toMatch(/immediately/i);
+  });
+});
+
+describe("AnnouncementBroadcastReviewFacts skipped and suppressed states (#472)", () => {
+  it("shows registrations skipped for having no contact email", () => {
+    const html = renderToStaticMarkup(createElement(AnnouncementBroadcastReviewFacts, {
+      preview: preview({ activeRegistrationCount: 44, recipientCount: 42, skippedNoEmailCount: 2 }),
+    }));
+
+    expect(html).toContain("Skipped");
+    expect(html).toContain("2 registrations have no contact email");
+  });
+
+  it("warns that a disabled template suppresses every message", () => {
+    const html = renderToStaticMarkup(createElement(AnnouncementBroadcastReviewFacts, {
+      preview: preview({ templateEnabled: false, suppressed: true }),
+    }));
+
+    expect(html).toContain("template is turned off");
+    expect(html).toContain("suppressed");
+  });
+});
+
+describe("announcementBroadcastConfirmState (#472)", () => {
+  it("keeps Send disabled while there is no open review", () => {
+    expect(announcementBroadcastConfirmState(null).canConfirm).toBe(false);
+  });
+
+  it("keeps Send disabled while the review is loading", () => {
+    expect(announcementBroadcastConfirmState({ loading: true, error: "", preview: null }).canConfirm).toBe(false);
+  });
+
+  it("keeps Send disabled when the preview is null", () => {
+    const state = announcementBroadcastConfirmState({ loading: false, error: "", preview: null });
+    expect(state.canConfirm).toBe(false);
+    expect(state.reason).toMatch(/hasn't loaded/);
+  });
+
+  it("keeps Send disabled after the preview request failed", () => {
+    const state = announcementBroadcastConfirmState({
+      loading: false,
+      error: "Unable to review this announcement.",
+      preview: null,
+    });
+    expect(state.canConfirm).toBe(false);
+  });
+
+  it("keeps Send disabled and explains why when there are 0 recipients", () => {
+    const none = announcementBroadcastConfirmState({
+      loading: false,
+      error: "",
+      preview: preview({ activeRegistrationCount: 0, recipientCount: 0 }),
+    });
+    expect(none.canConfirm).toBe(false);
+    expect(none.reason).toMatch(/no active registrations/i);
+
+    const noEmail = announcementBroadcastConfirmState({
+      loading: false,
+      error: "",
+      preview: preview({ activeRegistrationCount: 2, recipientCount: 0, skippedNoEmailCount: 2 }),
+    });
+    expect(noEmail.canConfirm).toBe(false);
+    expect(noEmail.reason).toMatch(/contact email/i);
+  });
+
+  it("enables Send once a successful preview reaches at least one recipient", () => {
+    expect(announcementBroadcastConfirmState({ loading: false, error: "", preview: preview() })).toEqual({
+      canConfirm: true,
+      reason: "",
+    });
   });
 });

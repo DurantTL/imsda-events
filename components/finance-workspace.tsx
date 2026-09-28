@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { BadgePercent, Banknote, Building2, CircleDollarSign, CreditCard, ReceiptText, RotateCcw, Search, WalletCards, X } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { RefundReviewFacts } from "@/components/refund-review-summary";
+import { RefundReviewFacts, refundReasonError } from "@/components/refund-review-summary";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 import {
   activeFinancialStatuses,
@@ -109,6 +109,9 @@ export function FinanceWorkspace({
     const form = new FormData(event.currentTarget);
     const amountCents = Math.round(Number(form.get("amount") ?? 0) * 100);
     const reason = String(form.get("reason") ?? "").trim();
+    const reasonError = refundReasonError(reason);
+    if (reasonError) { setError(reasonError); return; }
+    setError("");
     setRefundReviewError("");
     setPendingRefund({ amountCents, reason });
   }

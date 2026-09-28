@@ -1,6 +1,8 @@
 import "server-only";
 
+import type { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { computeAnnouncementBroadcastPreview } from "@/modules/communications/announcement-broadcast-preview";
 import {
   ensureEventMessagingDefaults,
   processQueuedMessageIdsAfterCommit,
@@ -15,7 +17,9 @@ export class AnnouncementBroadcastError extends Error {
     public readonly code:
       | "ANNOUNCEMENT_NOT_FOUND"
       | "ANNOUNCEMENT_NOT_PUBLISHED"
-      | "NO_ACTIVE_REGISTRATIONS",
+      | "NO_ACTIVE_REGISTRATIONS"
+      | "PREVIEW_REQUIRED"
+      | "PREVIEW_CHANGED",
     message: string,
   ) {
     super(message);
@@ -23,20 +27,20 @@ export class AnnouncementBroadcastError extends Error {
   }
 }
 
+type BroadcastDatabaseClient = Prisma.TransactionClient | ReturnType<typeof getPrisma>;
+
 /**
- * Read-only counterpart to `broadcastPublishedAnnouncement` (#472): the
- * recipient count, audience, subject, and delivery mode staff must see and
- * confirm before the review dialog lets them send anything. Never enqueues a
- * message or writes an audit row.
+ * Loads what both the review and the send need, through the same query, so
+ * the preview's counts and fingerprint are computed exactly as the send will
+ * recompute them inside its transaction.
  */
-export async function previewAnnouncementBroadcast(input: {
-  eventId: string;
-  announcementId: string;
-}): Promise<AnnouncementBroadcastPreview> {
-  const prisma = getPrisma();
-  const announcement = await prisma.announcement.findFirst({
+async function loadAnnouncementBroadcastState(
+  client: BroadcastDatabaseClient,
+  input: { eventId: string; announcementId: string },
+) {
+  const announcement = await client.announcement.findFirst({
     where: { id: input.announcementId, eventId: input.eventId },
-    select: { id: true, title: true, status: true, publishedAt: true },
+    select: { id: true, title: true, body: true, status: true, publishedAt: true },
   });
   if (!announcement) {
     throw new AnnouncementBroadcastError(
@@ -50,68 +54,87 @@ export async function previewAnnouncementBroadcast(input: {
       "Publish the announcement to the attendee feed before emailing it.",
     );
   }
-  const [recipientCount, settings] = await Promise.all([
-    prisma.registration.count({
+  const [registrations, settings, template] = await Promise.all([
+    client.registration.findMany({
       where: { eventId: input.eventId, status: { in: ["SUBMITTED", "CONFIRMED"] } },
+      orderBy: [{ submittedAt: "asc" }, { id: "asc" }],
+      select: {
+        id: true,
+        contactSnapshot: true,
+        accountHolderPerson: { select: { normalizedEmail: true } },
+      },
     }),
-    prisma.eventMessageSettings.findUnique({
+    client.eventMessageSettings.findUnique({
       where: { eventId: input.eventId },
       select: { deliveryMode: true },
     }),
+    client.eventMessageTemplate.findUnique({
+      where: { eventId_key: { eventId: input.eventId, key: "EVENT_ANNOUNCEMENT" } },
+      select: {
+        isEnabled: true,
+        versions: {
+          where: { status: "PUBLISHED" },
+          orderBy: { versionNumber: "desc" },
+          take: 1,
+          select: { id: true },
+        },
+      },
+    }),
   ]);
-  return {
-    announcementId: announcement.id,
-    title: announcement.title,
-    audienceLabel: "All active registrations (submitted or confirmed) for this event",
-    recipientCount,
-    deliveryMode: settings?.deliveryMode ?? "LOCAL_CAPTURE",
-    sendTiming: "IMMEDIATE",
-    generatedAt: new Date().toISOString(),
-  };
+  const preview = computeAnnouncementBroadcastPreview(
+    registrations.map((registration) => ({
+      registrationId: registration.id,
+      contactSnapshot: registration.contactSnapshot,
+      accountHolderNormalizedEmail: registration.accountHolderPerson?.normalizedEmail ?? null,
+    })),
+    {
+      eventId: input.eventId,
+      announcement: { id: announcement.id, title: announcement.title, body: announcement.body },
+      deliveryMode: settings?.deliveryMode ?? "LOCAL_CAPTURE",
+      // Matches the send: a missing template row is not suppressed.
+      templateEnabled: template?.isEnabled !== false,
+      templateVersionId: template?.versions[0]?.id ?? null,
+    },
+  );
+  return { announcement, registrations, preview };
+}
+
+/**
+ * Read-only counterpart to `broadcastPublishedAnnouncement` (#472): who the
+ * send will reach, who it will skip for having no contact email, whether the
+ * messages will be suppressed, and the fingerprint the send must echo back.
+ * Never enqueues a message or writes an audit row.
+ */
+export async function previewAnnouncementBroadcast(input: {
+  eventId: string;
+  announcementId: string;
+}): Promise<AnnouncementBroadcastPreview> {
+  // The send ensures these defaults before it fingerprints, so the review
+  // must too, or a first-ever send would always look stale.
+  await ensureEventMessagingDefaults(input.eventId);
+  return (await loadAnnouncementBroadcastState(getPrisma(), input)).preview;
 }
 
 export async function broadcastPublishedAnnouncement(input: {
   eventId: string;
   announcementId: string;
   batchId: string;
+  previewFingerprint: string;
   actorUserId: string;
 }) {
   await ensureEventMessagingDefaults(input.eventId);
   const result = await getPrisma().$transaction(async (tx) => {
-    const announcement = await tx.announcement.findFirst({
-      where: { id: input.announcementId, eventId: input.eventId },
-      select: {
-        id: true,
-        title: true,
-        body: true,
-        status: true,
-        publishedAt: true,
-      },
-    });
-    if (!announcement) {
+    const { announcement, registrations, preview } = await loadAnnouncementBroadcastState(tx, input);
+    if (preview.fingerprint !== input.previewFingerprint) {
       throw new AnnouncementBroadcastError(
-        "ANNOUNCEMENT_NOT_FOUND",
-        "That announcement no longer exists.",
+        "PREVIEW_CHANGED",
+        "The recipients, template, or announcement changed since you reviewed it. Review it again before sending.",
       );
     }
-    if (announcement.status !== "PUBLISHED" || !announcement.publishedAt) {
-      throw new AnnouncementBroadcastError(
-        "ANNOUNCEMENT_NOT_PUBLISHED",
-        "Publish the announcement to the attendee feed before emailing it.",
-      );
-    }
-    const registrations = await tx.registration.findMany({
-      where: {
-        eventId: input.eventId,
-        status: { in: ["SUBMITTED", "CONFIRMED"] },
-      },
-      orderBy: [{ submittedAt: "asc" }, { id: "asc" }],
-      select: { id: true },
-    });
-    if (registrations.length === 0) {
+    if (preview.recipientCount === 0) {
       throw new AnnouncementBroadcastError(
         "NO_ACTIVE_REGISTRATIONS",
-        "There are no active registrations to notify.",
+        "There are no active registrations with a contact email to notify.",
       );
     }
 
@@ -150,6 +173,7 @@ export async function broadcastPublishedAnnouncement(input: {
         metadata: {
           announcementId: announcement.id,
           batchId: input.batchId,
+          previewFingerprint: input.previewFingerprint,
           activeRegistrationCount: registrations.length,
           messageCount: messageIds.length,
           skippedCount,

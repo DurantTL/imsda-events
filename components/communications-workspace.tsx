@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -24,7 +24,10 @@ import {
   X,
 } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
-import { AnnouncementBroadcastReviewFacts } from "@/components/announcement-broadcast-review";
+import {
+  AnnouncementBroadcastReviewFacts,
+  announcementBroadcastConfirmState,
+} from "@/components/announcement-broadcast-review";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { MessageBodyEditor } from "@/components/message-body-editor";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
@@ -238,7 +241,7 @@ export function CommunicationsWorkspace({
   const [announcements, setAnnouncements] = useState(initialAnnouncements);
   const [messaging, setMessaging] = useState(initialMessaging);
   const [draftOpen, setDraftOpen] = useState(openNew && canManage);
-  const [draftPrefill, setDraftPrefill] = useState<{ title: string; body: string } | null>(null);
+  const [draftPrefill, setDraftPrefill] = useState<{ title: string; body: string; priority: string } | null>(null);
   const draftDialogRef = useAccessibleDialog<HTMLElement>(
     draftOpen,
     () => {
@@ -253,6 +256,10 @@ export function CommunicationsWorkspace({
   const [broadcastReviewLoading, setBroadcastReviewLoading] = useState(false);
   const [broadcasting, setBroadcasting] = useState(false);
   const [broadcastReviewError, setBroadcastReviewError] = useState("");
+  // Identifies the review request that is still open, so a preview that
+  // arrives after Cancel (or after a newer review started) is dropped
+  // instead of reopening the dialog.
+  const broadcastReviewRequestRef = useRef(0);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const requestedTemplateId = searchParams.get("template");
@@ -478,6 +485,8 @@ export function CommunicationsWorkspace({
    * in that dialog, ever calls the send endpoint.
    */
   async function broadcastAnnouncement(announcement: AnnouncementRecord) {
+    const requestId = broadcastReviewRequestRef.current + 1;
+    broadcastReviewRequestRef.current = requestId;
     setBroadcastReview({ announcement, preview: null });
     setBroadcastReviewError("");
     setBroadcastReviewLoading(true);
@@ -494,23 +503,32 @@ export function CommunicationsWorkspace({
       if (!response.ok || !result.preview) {
         throw new Error(result.message ?? "Unable to review this announcement.");
       }
+      if (broadcastReviewRequestRef.current !== requestId) return;
       setBroadcastReview({ announcement, preview: result.preview });
     } catch (caught) {
+      if (broadcastReviewRequestRef.current !== requestId) return;
       setBroadcastReviewError(caught instanceof Error ? caught.message : "Unable to review this announcement.");
     } finally {
-      setBroadcastReviewLoading(false);
+      if (broadcastReviewRequestRef.current === requestId) setBroadcastReviewLoading(false);
     }
   }
 
   function cancelBroadcastReview() {
     if (broadcasting) return;
+    broadcastReviewRequestRef.current += 1;
+    setBroadcastReviewLoading(false);
     setBroadcastReview(null);
     setBroadcastReviewError("");
   }
 
   async function confirmBroadcast() {
-    const announcement = broadcastReview?.announcement;
-    if (!announcement) return;
+    if (!broadcastReview?.preview) return;
+    if (!announcementBroadcastConfirmState({
+      loading: broadcastReviewLoading,
+      error: broadcastReviewError,
+      preview: broadcastReview.preview,
+    }).canConfirm) return;
+    const { announcement, preview } = broadcastReview;
     setBroadcasting(true);
     setBroadcastReviewError("");
     try {
@@ -519,10 +537,21 @@ export function CommunicationsWorkspace({
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ batchId: crypto.randomUUID() }),
+          body: JSON.stringify({
+            batchId: crypto.randomUUID(),
+            previewFingerprint: preview.fingerprint,
+          }),
         },
       );
       const result = await response.json().catch(() => ({})) as ApiResult;
+      if (response.status === 409 && (result.error === "PREVIEW_CHANGED" || result.error === "PREVIEW_REQUIRED")) {
+        // The reviewed audience is out of date: reload the review so staff
+        // confirm against what would actually be sent now.
+        setBroadcasting(false);
+        await broadcastAnnouncement(announcement);
+        setBroadcastReviewError(result.message ?? "The review changed. Check it again before sending.");
+        return;
+      }
       if (!response.ok || typeof result.messageCount !== "number") {
         throw new Error(result.message ?? "Unable to prepare the announcement email.");
       }
@@ -545,11 +574,19 @@ export function CommunicationsWorkspace({
     }
   }
 
-  /** "Send a correction" (#472): a published announcement is never edited in place — this opens a new draft, prefilled, to the same fixed audience. */
+  /**
+   * "Send a correction" (#472): a published announcement is never edited in
+   * place — this opens a new draft, prefilled with the original's text and
+   * priority, which then needs its own publish and its own send review.
+   */
   function startCorrection(announcement: AnnouncementRecord) {
     setError("");
     setNotice("");
-    setDraftPrefill({ title: `Correction: ${announcement.title}`, body: announcement.body });
+    setDraftPrefill({
+      title: `Correction: ${announcement.title}`,
+      body: announcement.body,
+      priority: announcement.priority,
+    });
     setDraftOpen(true);
   }
 
@@ -916,6 +953,10 @@ export function CommunicationsWorkspace({
     { id: "settings", label: "Settings", icon: Settings },
   ];
 
+  const broadcastConfirm = announcementBroadcastConfirmState(broadcastReview
+    ? { loading: broadcastReviewLoading, error: broadcastReviewError, preview: broadcastReview.preview }
+    : null);
+
   return (
     <section className="page-stack communications-workspace">
       <div className="page-intro">
@@ -984,7 +1025,7 @@ export function CommunicationsWorkspace({
                     <button className="text-button" type="button" disabled={saving} onClick={() => startCorrection(announcement)}>
                       Send a correction
                     </button>
-                    <p className="quiet-copy">Published announcements can&apos;t be edited. A correction sends as a new, separate announcement to the same attendees.</p>
+                    <p className="quiet-copy">Published announcements can&apos;t be edited. A correction creates a new draft; it needs its own publish and its own send review before anyone receives it.</p>
                   </>
                 )}
               </article>
@@ -1693,12 +1734,12 @@ export function CommunicationsWorkspace({
               <button className="icon-button modal-close-button" type="button" onClick={() => { setDraftOpen(false); setDraftPrefill(null); }} aria-label="Close dialog"><X aria-hidden="true" size={18} /></button>
             </div>
             {draftPrefill && (
-              <p className="quiet-copy">This starts a new draft to the same audience — all attendees. It doesn&apos;t change the original announcement, which stays on record as sent.</p>
+              <p className="quiet-copy">This creates a new draft for the same audience — all attendees. Nothing is sent yet: publish the draft, then review and send it like any announcement. The original announcement stays unchanged.</p>
             )}
             <form className="form-stack" onSubmit={createDraft} key={draftPrefill ? "correction" : "new"}>
               <label>Title<input name="title" minLength={3} maxLength={120} required placeholder="Friday arrival information" defaultValue={draftPrefill?.title ?? ""} /></label>
               <label>Message<textarea name="body" minLength={5} maxLength={2000} required rows={6} placeholder="Share the details attendees need…" defaultValue={draftPrefill?.body ?? ""} /></label>
-              <label>Priority<select name="priority" defaultValue="NORMAL"><option value="NORMAL">Normal</option><option value="IMPORTANT">Important</option><option value="URGENT">Urgent</option></select></label>
+              <label>Priority<select name="priority" defaultValue={draftPrefill?.priority ?? "NORMAL"}><option value="NORMAL">Normal</option><option value="IMPORTANT">Important</option><option value="URGENT">Urgent</option></select></label>
               <div className="form-actions"><button className="secondary-button" type="button" onClick={() => { setDraftOpen(false); setDraftPrefill(null); }}>Cancel</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving…" : "Save draft"}</button></div>
             </form>
           </section>
@@ -1708,6 +1749,7 @@ export function CommunicationsWorkspace({
       <ConfirmDialog
         busy={broadcasting}
         busyLabel="Sending…"
+        confirmDisabled={!broadcastConfirm.canConfirm}
         confirmLabel="Send this announcement"
         error={broadcastReviewError}
         onCancel={cancelBroadcastReview}
@@ -1720,6 +1762,7 @@ export function CommunicationsWorkspace({
         ) : broadcastReview?.preview ? (
           <AnnouncementBroadcastReviewFacts preview={broadcastReview.preview} />
         ) : null}
+        {broadcastConfirm.reason && <p className="quiet-copy">{broadcastConfirm.reason}</p>}
       </ConfirmDialog>
     </section>
   );

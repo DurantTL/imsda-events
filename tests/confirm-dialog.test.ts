@@ -84,3 +84,33 @@ describe("cancelUnlessBusy (#466 review)", () => {
     expect(onCancel).not.toHaveBeenCalled();
   });
 });
+
+describe("ConfirmDialog confirmDisabled (#472)", () => {
+  function render(confirmDisabled?: boolean) {
+    const props: DialogProps = {
+      busy: false,
+      ...(confirmDisabled === undefined ? {} : { confirmDisabled }),
+      confirmLabel: "Send this announcement",
+      error: "",
+      onCancel: () => {},
+      onConfirm: () => {},
+      open: true,
+      title: "Review before sending",
+    };
+    return renderToStaticMarkup(createElement(
+      ConfirmDialog,
+      props as unknown as ComponentProps<typeof ConfirmDialog>,
+      createElement("p", null, "Loading the recipient review…"),
+    ));
+  }
+
+  it("disables only the confirm button, leaving Cancel usable", () => {
+    const html = render(true);
+    expect(html).toContain('<button class="primary-button" disabled="" type="button">Send this announcement</button>');
+    expect(html).toContain('<button class="secondary-button" type="button">Cancel</button>');
+  });
+
+  it("keeps confirm enabled by default for existing callers", () => {
+    expect(render()).toContain('<button class="primary-button" type="button">Send this announcement</button>');
+  });
+});

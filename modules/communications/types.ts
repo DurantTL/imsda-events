@@ -220,8 +220,19 @@ export type AnnouncementBroadcastPreview = {
   announcementId: string;
   title: string;
   audienceLabel: string;
+  /** Every SUBMITTED or CONFIRMED registration, before the email check. */
+  activeRegistrationCount: number;
+  /** Registrations the send will actually write a message for. */
   recipientCount: number;
+  /** Active registrations with no contact email, which the send skips. */
+  skippedNoEmailCount: number;
   deliveryMode: MessagingSettingsRecord["deliveryMode"];
+  /** False when the EVENT_ANNOUNCEMENT template is switched off. */
+  templateEnabled: boolean;
+  /** True when every message will be recorded as SUPPRESSED, not delivered. */
+  suppressed: boolean;
+  /** Echoed back by the send so the server can refuse a stale review. */
+  fingerprint: string;
   sendTiming: "IMMEDIATE";
   generatedAt: string;
 };

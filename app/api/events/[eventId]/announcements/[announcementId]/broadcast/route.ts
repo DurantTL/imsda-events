@@ -10,7 +10,12 @@ import {
 import { findActiveMembership } from "@/modules/events/repository";
 import { withRequestContext } from "@/lib/request-context";
 
-const inputSchema = z.strictObject({ batchId: z.uuid() });
+const inputSchema = z.strictObject({
+  batchId: z.uuid(),
+  // Optional at the schema so a missing fingerprint gets the review-specific
+  // 409 below rather than a generic 400.
+  previewFingerprint: z.string().trim().max(128).optional(),
+});
 type Context = {
   params: Promise<{ eventId: string; announcementId: string }>;
 };
@@ -20,6 +25,8 @@ type Context = {
  * `mode` and the send fields share one endpoint (matching the
  * selected-audience-messages route's own preview/send split), and it never
  * enqueues a message or writes an audit row — only the send below does that.
+ * The send must echo the preview's fingerprint; a missing or stale one is
+ * refused with 409 so an unreviewed or out-of-date audience never goes out.
  */
 async function postHandler(request: Request, context: Context) {
   const originError = rejectCrossOriginRequest(request);
@@ -38,10 +45,20 @@ async function postHandler(request: Request, context: Context) {
       return Response.json({ preview });
     }
     const input = inputSchema.parse(body);
+    if (!input.previewFingerprint) {
+      return Response.json(
+        {
+          error: "PREVIEW_REQUIRED",
+          message: "Review the recipients before sending this announcement.",
+        },
+        { status: 409 },
+      );
+    }
     const result = await broadcastPublishedAnnouncement({
       eventId,
       announcementId,
       batchId: input.batchId,
+      previewFingerprint: input.previewFingerprint,
       actorUserId: session.user.id,
     });
     return Response.json(result);
@@ -54,7 +71,7 @@ async function postHandler(request: Request, context: Context) {
     }
     if (error instanceof z.ZodError) {
       return Response.json(
-        { error: "INVALID_REQUEST", message: "A valid broadcast batch ID is required." },
+        { error: "INVALID_REQUEST", message: "A valid broadcast batch ID and review fingerprint are required." },
         { status: 400 },
       );
     }

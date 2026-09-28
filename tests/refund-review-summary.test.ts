@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { RefundReviewFacts } from "@/components/refund-review-summary";
+import { RefundReviewFacts, refundReasonError } from "@/components/refund-review-summary";
 
 /**
  * The refund confirm dialog's body (#472): staff must see the amount,
@@ -37,5 +37,20 @@ describe("RefundReviewFacts (#472)", () => {
 
     expect(html).toContain("Square card");
     expect(html).not.toContain("CARD_REFERENCE");
+  });
+});
+
+describe("refundReasonError (#472)", () => {
+  it("rejects a reason that is too short once trimmed", () => {
+    expect(refundReasonError("   ")).toMatch(/at least 3/);
+    expect(refundReasonError("  ab  ")).toMatch(/at least 3/);
+  });
+
+  it("rejects a reason over 300 characters", () => {
+    expect(refundReasonError("x".repeat(301))).toMatch(/300/);
+  });
+
+  it("accepts a trimmed reason within the limits", () => {
+    expect(refundReasonError("  Duplicate card charge  ")).toBe("");
   });
 });
