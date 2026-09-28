@@ -82,9 +82,11 @@ export default async function PublicEventPage({
             <BrandMark />
             <span><strong>IMSDA</strong><small>Events</small></span>
           </Link>
-          <a className="public-event-details-link" href={landing.links.detailsUrl}>
-            Back to full event details <ExternalLink size={15} aria-hidden="true" />
-          </a>
+          {landing.links.detailsUrl && (
+            <a className="public-event-details-link" href={landing.links.detailsUrl}>
+              Back to full event details <ExternalLink size={15} aria-hidden="true" />
+            </a>
+          )}
         </div>
       </header>
       <TranslateHint />
@@ -307,13 +309,15 @@ export default async function PublicEventPage({
             </a>
           </section>
 
-          <a className="public-event-full-details-card" href={landing.links.detailsUrl}>
-            <span>
-              <small>Schedule, speakers, and full details</small>
-              <strong>View on imsda.org</strong>
-            </span>
-            <ExternalLink size={18} aria-hidden="true" />
-          </a>
+          {landing.links.detailsUrl && (
+            <a className="public-event-full-details-card" href={landing.links.detailsUrl}>
+              <span>
+                <small>Schedule, speakers, and full details</small>
+                <strong>View on imsda.org</strong>
+              </span>
+              <ExternalLink size={18} aria-hidden="true" />
+            </a>
+          )}
         </aside>
       </div>
     </main>

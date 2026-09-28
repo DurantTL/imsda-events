@@ -154,13 +154,15 @@ export default async function PublicManagePage({
                 <dd>{submittedLabel(view.registration.submittedAt, view.event.timezone)}</dd>
               </div>
             </dl>
-            <a
-              className="public-manage-inline-link"
-              href={view.event.detailsUrl}
-              rel="noreferrer"
-            >
-              View full event details <ExternalLink size={15} aria-hidden="true" />
-            </a>
+            {view.event.detailsUrl && (
+              <a
+                className="public-manage-inline-link"
+                href={view.event.detailsUrl}
+                rel="noreferrer"
+              >
+                View full event details <ExternalLink size={15} aria-hidden="true" />
+              </a>
+            )}
           </section>
 
           <section className="public-manage-card">
