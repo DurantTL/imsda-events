@@ -1734,6 +1734,10 @@ select:focus-visible {
 .password-requirements li[data-met="true"] svg { color: var(--green); opacity: 1; }
 .field-help { margin: -9px 0 0; color: var(--muted); font-size: 0.63rem; }
 .field-help code { overflow-wrap: anywhere; }
+/* #478: .field-help's -9px pull only makes sense right under a label/input.
+   Following a full paragraph (as on the two-step "set up an authenticator"
+   card) it instead overlapped that paragraph's text. */
+.quiet-copy + .field-help { margin-top: 6px; }
 .recovery-code-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 6px; margin: 10px 0; padding: 0; list-style: none; }
 .recovery-code-list code { display: block; border: 1px solid #b8d7ca; border-radius: 8px; background: #fff; padding: 7px 9px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; letter-spacing: 0.04em; text-align: center; }
 .auth-back-link { justify-self: center; margin-top: 3px; }
@@ -6939,6 +6943,10 @@ select:focus-visible {
 .two-step-card { display: grid; gap: 12px; }
 .two-step-card .field-help { margin: 0; }
 .two-step-body { display: grid; gap: 16px; }
+/* #478: this hint sits after a whole method card, not right under a single
+   field, so it must not inherit .field-help's -9px "hug the field above it"
+   margin — that pulled it up onto the previous line and made both overlap. */
+.two-step-setup-hint { margin: 4px 0 0; }
 .passkey-sign-in { display: grid; gap: 8px; margin-bottom: 10px; }
 .passkey-sign-in-button { width: 100%; justify-content: center; min-height: 46px; }
 .club-roster-heading-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
@@ -6999,6 +7007,15 @@ select:focus-visible {
 .club-guest-section .club-roster-tools small { display: block; margin-top: 2px; }
 .club-guest-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; font-size: 0.78rem; }
 .club-guest-form { display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+/* Standard field styling (#478): the "Add a person" inputs were unstyled
+   browser defaults, well under the standard field height and at least
+   16px required on phones (#469) to avoid iOS zoom-on-focus. */
+.club-guest-form label { display: grid; gap: 6px; color: var(--ink); font-size: 0.7rem; font-weight: 700; }
+.club-guest-form input {
+  width: 100%; border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd;
+  color: var(--ink); padding: 10px 11px; font-size: 1rem; font-family: inherit; outline: 0;
+}
+.club-guest-form input:focus { border-color: var(--imsda-purple); box-shadow: 0 0 0 3px rgba(88, 44, 131, 0.1); }
 .club-sticky-bar {
   position: sticky; bottom: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center;
   justify-content: space-between; gap: 10px; margin: 16px -4px 0; padding: 12px 4px;
