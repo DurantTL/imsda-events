@@ -35,6 +35,7 @@ import { calculateFormTotal, calculateRosterTotal, conditionOperators, formField
 import { promoCodeBuilderModule } from "@/modules/forms/builder-modules";
 import { creditPatchForKindChange, creditSummary, hasCredit, removeCreditPatch } from "@/modules/forms/credit-fields";
 import { getPublicRegistrationStepPlan, isPublicReviewSection, type PublicRegistrationStepId } from "@/modules/forms/public-registration-steps";
+import { batchFieldKeys, removalAnswerNote } from "@/modules/forms/field-answer-counts";
 import { slugMatchesTitle } from "@/modules/forms/slug";
 import { shirtSizeOptions } from "@/modules/registrations/shirt-sizes";
 
@@ -357,6 +358,9 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
   const [removeSectionTarget, setRemoveSectionTarget] = useState<{ sectionIndex: number; section: RegistrationFormDefinition["sections"][number] } | null>(null);
   const [removalAnswerCounts, setRemovalAnswerCounts] = useState<Record<string, number> | null>(null);
   const [removalAnswerCountsLoading, setRemovalAnswerCountsLoading] = useState(false);
+  // Each count lookup gets an id; a response for anything but the latest
+  // lookup (the dialog was closed or reopened for another field) is ignored.
+  const removalAnswerRequestId = useRef(0);
   const [dragging, setDragging] = useState<DragState>(null);
   const [expandedFieldId, setExpandedFieldId] = useState<string | null>(null);
   const [openModuleSection, setOpenModuleSection] = useState<number | null>(null);
@@ -695,25 +699,45 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
     updateSection(sectionIndex, { fields: section.fields.filter((_, index) => index !== fieldIndex) });
   }
 
+  function resetRemovalAnswerCounts() {
+    removalAnswerRequestId.current += 1;
+    setRemovalAnswerCounts(null);
+    setRemovalAnswerCountsLoading(false);
+  }
+
+  /**
+   * Best-effort real counts for the removal dialog (#471), in batches the
+   * route accepts. Any failure (HTTP error, network error, bad body) leaves
+   * the counts null, which the dialog words neutrally rather than as "no
+   * answers"; a stale response never overwrites a newer lookup.
+   */
   async function loadRemovalAnswerCounts(fieldKeys: string[]) {
-    if (!selectedForm) return;
+    const requestId = removalAnswerRequestId.current + 1;
+    removalAnswerRequestId.current = requestId;
+    setRemovalAnswerCounts(null);
+    if (!selectedForm) { setRemovalAnswerCountsLoading(false); return; }
     setRemovalAnswerCountsLoading(true);
+    let merged: Record<string, number> | null = {};
     try {
-      const response = await fetch(
-        `/api/events/${selectedForm.eventId}/forms/${selectedForm.id}/field-answer-counts`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fieldKeys }),
-        },
-      );
-      const result = await response.json().catch(() => ({})) as { counts?: Record<string, number> };
-      if (response.ok && result.counts) setRemovalAnswerCounts(result.counts);
-      // Best-effort: the dialog still shows what's removed and kept without
-      // a number when the count can't be loaded.
-    } finally {
-      setRemovalAnswerCountsLoading(false);
+      for (const batch of batchFieldKeys(fieldKeys)) {
+        const response = await fetch(
+          `/api/events/${selectedForm.eventId}/forms/${selectedForm.id}/field-answer-counts`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ fieldKeys: batch }),
+          },
+        );
+        const result = await response.json().catch(() => ({})) as { counts?: Record<string, number> };
+        if (!response.ok || !result.counts) { merged = null; break; }
+        merged = { ...merged, ...result.counts };
+      }
+    } catch {
+      merged = null;
     }
+    if (removalAnswerRequestId.current !== requestId) return;
+    setRemovalAnswerCounts(merged);
+    setRemovalAnswerCountsLoading(false);
   }
 
   function openRemoveField(sectionIndex: number, fieldIndex: number) {
@@ -722,7 +746,6 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
     if (section.fields.length === 1) { setError("Each section must keep at least one field."); return; }
     const field = section.fields[fieldIndex];
     setRemoveFieldTarget({ sectionIndex, fieldIndex, field });
-    setRemovalAnswerCounts(null);
     void loadRemovalAnswerCounts([field.key]);
   }
 
@@ -730,7 +753,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
     if (!removeFieldTarget) return;
     removeField(removeFieldTarget.sectionIndex, removeFieldTarget.fieldIndex);
     setRemoveFieldTarget(null);
-    setRemovalAnswerCounts(null);
+    resetRemovalAnswerCounts();
   }
 
   function duplicateField(sectionIndex: number, fieldIndex: number) {
@@ -848,7 +871,6 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
     if (definition.sections.length === 1) { setError("A form must keep at least one section."); return; }
     const section = definition.sections[sectionIndex];
     setRemoveSectionTarget({ sectionIndex, section });
-    setRemovalAnswerCounts(null);
     void loadRemovalAnswerCounts(section.fields.map((field) => field.key));
   }
 
@@ -856,7 +878,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
     if (!removeSectionTarget) return;
     removeSection(removeSectionTarget.sectionIndex);
     setRemoveSectionTarget(null);
-    setRemovalAnswerCounts(null);
+    resetRemovalAnswerCounts();
   }
 
   function setReviewSection(sectionIndex: number, enabled: boolean) {
@@ -1336,7 +1358,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
       confirmLabel="Remove field"
       destructive
       error=""
-      onCancel={() => { setRemoveFieldTarget(null); setRemovalAnswerCounts(null); }}
+      onCancel={() => { setRemoveFieldTarget(null); resetRemovalAnswerCounts(); }}
       onConfirm={confirmRemoveField}
       open={removeFieldTarget !== null}
       title={removeFieldTarget ? `Remove "${removeFieldTarget.field.label}"?` : "Remove field?"}
@@ -1345,12 +1367,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
         This field is removed from the draft.{" "}
         {removalAnswerCountsLoading
           ? "Checking already-submitted answers…"
-          : (() => {
-            const count = removalAnswerCounts?.[removeFieldTarget.field.key] ?? 0;
-            return count > 0
-              ? `The ${count} answer${count === 1 ? "" : "s"} already submitted stay on those registrations.`
-              : "No attendee has submitted an answer for it yet.";
-          })()}
+          : removalAnswerNote("field", [removeFieldTarget.field.key], removalAnswerCounts)}
       </p>}
     </ConfirmDialog>
 
@@ -1359,7 +1376,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
       confirmLabel="Remove section"
       destructive
       error=""
-      onCancel={() => { setRemoveSectionTarget(null); setRemovalAnswerCounts(null); }}
+      onCancel={() => { setRemoveSectionTarget(null); resetRemovalAnswerCounts(); }}
       onConfirm={confirmRemoveSection}
       open={removeSectionTarget !== null}
       title={removeSectionTarget ? `Remove "${removeSectionTarget.section.title}"?` : "Remove section?"}
@@ -1368,15 +1385,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
         This section and its {removeSectionTarget.section.fields.length} field{removeSectionTarget.section.fields.length === 1 ? "" : "s"} are removed from the draft.{" "}
         {removalAnswerCountsLoading
           ? "Checking already-submitted answers…"
-          : (() => {
-            const total = removeSectionTarget.section.fields.reduce(
-              (sum, field) => sum + (removalAnswerCounts?.[field.key] ?? 0),
-              0,
-            );
-            return total > 0
-              ? `The ${total} answer${total === 1 ? "" : "s"} already submitted for its fields stay on those registrations.`
-              : "No attendee has submitted an answer for these fields yet.";
-          })()}
+          : removalAnswerNote("section", removeSectionTarget.section.fields.map((field) => field.key), removalAnswerCounts)}
       </p>}
     </ConfirmDialog>
   </section>;

@@ -2,7 +2,15 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// The workspace renders the #473 draft-created banner, which reads the URL
+// through the App Router; a static render has no router mounted.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: () => {}, push: () => {}, refresh: () => {} }),
+  useSearchParams: () => new URLSearchParams(),
+  usePathname: () => "/more/event-settings",
+}));
 import { EventSettingsWorkspace } from "@/components/event-settings-workspace";
 import { UnpublishEventDialog } from "@/components/unpublish-event-dialog";
 import { getEventPublishReadiness } from "@/modules/events/readiness";
@@ -65,14 +73,19 @@ describe("EventSettingsWorkspace never folds publish state into a settings save 
     expect(workspaceSource).not.toMatch(/update\("isPublished"/);
   });
 
-  it("never sends draft.isPublished in the settings save body", () => {
-    // The save body still carries `isPublished` for schema shape, but from
-    // the dedicated `published` state, not the editable settings draft —
-    // the repository ignores it either way (see
-    // event-publish-readiness-repository.test.ts), but this keeps the two
-    // concepts from ever reconverging in this component.
+  it("never sends isPublished in the settings save body", () => {
+    // `isPublished` isn't part of the settings schema at all (#471); the
+    // draft no longer carries it, and the save body never adds it back.
     expect(workspaceSource).not.toMatch(/isPublished:\s*draft\.isPublished/);
-    expect(workspaceSource).toContain("isPublished: mode === \"create\" ? false : published");
+    expect(workspaceSource).not.toMatch(/isPublished:\s*mode ===/);
+    expect(workspaceSource).not.toMatch(/isPublished: event\?\.isPublished/);
+  });
+
+  it("gates Publish on the saved settings, not unsaved edits or an in-flight save", () => {
+    expect(workspaceSource).toContain("getEventPublishReadiness(savedDraft, publishedFormCount)");
+    expect(workspaceSource).toContain("const publishBlockedBySave = dirty || saving;");
+    expect(workspaceSource).toContain("disabled={!canPublish}");
+    expect(workspaceSource).toContain("Save your changes first.");
   });
 
   it("publishes and unpublishes through their own endpoints, not the settings PATCH", () => {
@@ -97,7 +110,16 @@ describe("EventSettingsWorkspace never folds publish state into a settings save 
       initialEvent: { ...baseEvent, isPublished: false, supportContact: null },
     }));
     expect(markup).toContain("Private draft");
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Publish event<\/button>/);
+  });
+
+  it("enables Publish for a ready, saved, unpublished event", () => {
+    const markup = renderToStaticMarkup(createElement(EventSettingsWorkspace, {
+      mode: "edit",
+      initialEvent: { ...baseEvent, isPublished: false },
+    }));
     expect(markup).toMatch(/Publish event<\/button>/);
+    expect(markup).not.toMatch(/<button[^>]*disabled=""[^>]*>Publish event<\/button>/);
   });
 });
 

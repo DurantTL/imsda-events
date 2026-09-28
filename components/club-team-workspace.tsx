@@ -102,6 +102,8 @@ export function ClubTeamWorkspace({
   }
 
   function remove(member: ClubTeamMember) {
+    // A leftover page error must not appear inside the new dialog.
+    setError("");
     setConfirmTarget({ kind: "remove-member", member });
   }
 
@@ -110,6 +112,7 @@ export function ClubTeamWorkspace({
   }
 
   function cancelInvite(invite: ClubTeamInvite) {
+    setError("");
     setConfirmTarget({ kind: "cancel-invite", invite });
   }
 

@@ -424,14 +424,30 @@ export async function createTestSubmission(
 }
 
 /**
+ * Whether `formId` is one of `eventId`'s forms. The answer-count route
+ * (#471) uses it so a form id from another event is a 404, never a way to
+ * probe that event's data under this event's permission.
+ */
+export async function formBelongsToEvent(eventId: string, formId: string) {
+  const form = await getPrisma().registrationForm.findFirst({
+    where: { id: formId, eventId },
+    select: { id: true },
+  });
+  return form !== null;
+}
+
+/**
  * Real counts for the builder's "review before removing" dialog (#471): how
- * many attendees on real registrations for this event already have a
- * non-empty answer for each given field key. Registration-scope answers are
- * merged into every attendee's own `formResponses` at submission time (see
- * `usageResponseSetsFromJson` above and `preparePublicRegistration`), so this
- * single column covers both attendee- and registration-scope fields without
- * a second query. Draft-only edits in the builder never change this: it
- * only ever reflects what attendees have actually submitted.
+ * many of this event's registrations already hold a submitted answer for
+ * each given field key. Counted per registration, not per attendee, because
+ * registration-scope answers are merged into every attendee's own
+ * `formResponses` at submission time (see `usageResponseSetsFromJson` above
+ * and `preparePublicRegistration`): counting attendees would multiply one
+ * family's single answer by its size. `null`, `false`, `""`, `[]` and `{}`
+ * are what an untouched optional field stores, so none of them count as an
+ * answer. One parameterised query for every key; keys are matched exactly
+ * as stored, never trimmed. Draft-only edits in the builder never change
+ * this: it only ever reflects what attendees have actually submitted.
  */
 export async function countFieldAnswers(
   eventId: string,
@@ -439,20 +455,20 @@ export async function countFieldAnswers(
 ): Promise<Record<string, number>> {
   const keys = [...new Set(fieldKeys.filter((key) => key.length > 0))];
   if (keys.length === 0) return {};
-  const prisma = getPrisma();
-  const entries = await Promise.all(keys.map(async (key) => {
-    const rows = await prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
-      SELECT COUNT(*)::bigint AS count
-      FROM "RegistrationAttendee"
-      WHERE "eventId" = ${eventId}
-        AND "formResponses" ? ${key}
-        AND jsonb_typeof("formResponses" -> ${key}) <> 'null'
-        AND NOT (
-          jsonb_typeof("formResponses" -> ${key}) = 'string'
-          AND "formResponses" ->> ${key} = ''
-        )
-    `);
-    return [key, Number(rows[0]?.count ?? 0)] as const;
-  }));
-  return Object.fromEntries(entries);
+  const rows = await getPrisma().$queryRaw<Array<{ key: string; count: bigint }>>(Prisma.sql`
+    SELECT k.key AS key, COUNT(DISTINCT a."registrationId")::bigint AS count
+    FROM unnest(${keys}::text[]) AS k(key)
+    LEFT JOIN "RegistrationAttendee" a
+      ON a."eventId" = ${eventId}
+      AND a."formResponses" ? k.key
+      AND (a."formResponses" -> k.key) NOT IN (
+        'null'::jsonb, 'false'::jsonb, '""'::jsonb, '[]'::jsonb, '{}'::jsonb
+      )
+    GROUP BY k.key
+  `);
+  const counts: Record<string, number> = Object.fromEntries(keys.map((key) => [key, 0]));
+  for (const row of rows) {
+    if (Object.prototype.hasOwnProperty.call(counts, row.key)) counts[row.key] = Number(row.count);
+  }
+  return counts;
 }

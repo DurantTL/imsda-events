@@ -70,8 +70,12 @@ const eventPayload = {
  * create, so an older client saving an unrelated setting cannot erase lodging
  * it never knew about.
  */
+// `isPublished` is stripped by the schema (#471): publishing has its own
+// routes, so a client-sent value never reaches a settings save.
+const { isPublished: _clientSentIsPublished, ...eventPayloadWithoutPublish } = eventPayload;
+void _clientSentIsPublished;
 const normalizedEventPayload = {
-  ...eventPayload,
+  ...eventPayloadWithoutPublish,
   checksAdultBackgrounds: false,
   hotelName: undefined,
   hotelBookingUrl: undefined,
@@ -117,9 +121,12 @@ describe("event settings routes", () => {
 
     expect(response.status).toBe(201);
     expect(dependencies.createEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ isPublished: false, slug: "womens-retreat-2028" }),
+      expect.objectContaining({ slug: "womens-retreat-2028" }),
       "usr_system",
     );
+    // The client's `isPublished: true` never reaches the repository, which
+    // always creates a draft.
+    expect(dependencies.createEvent.mock.calls[0]![0]).not.toHaveProperty("isPublished");
     expect(await response.json()).toMatchObject({
       event: { id: "evt_new", isPublished: false },
     });
@@ -243,6 +250,21 @@ describe("event settings routes", () => {
 
     expect(dependencies.publishEvent).not.toHaveBeenCalled();
     expect(dependencies.unpublishEvent).not.toHaveBeenCalled();
+  });
+
+  it("strips a client-sent isPublished, so the settings audit's `after` can never record it", async () => {
+    dependencies.updateEventSettings.mockResolvedValue({ id: "evt_wr28", ...eventPayload });
+
+    for (const isPublished of [true, false]) {
+      dependencies.updateEventSettings.mockClear();
+      const response = await PATCH(
+        eventRequest("/api/events/evt_wr28", "PATCH", { ...eventPayload, isPublished }),
+        { params: Promise.resolve({ eventId: "evt_wr28" }) },
+      );
+      expect(response.status).toBe(200);
+      const [, forwarded] = dependencies.updateEventSettings.mock.calls[0] as [string, Record<string, unknown>];
+      expect(forwarded).not.toHaveProperty("isPublished");
+    }
   });
 });
 

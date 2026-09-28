@@ -97,6 +97,8 @@ export function CalendarAdminWorkspace({
   }
 
   function remove(entry: CalendarAdminEntry) {
+    // A leftover page error must not appear inside the new dialog.
+    setError("");
     setRemoveTarget(entry);
   }
 

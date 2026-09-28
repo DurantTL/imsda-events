@@ -74,8 +74,11 @@ describe("removal review dialogs say what's removed and what's kept (#471)", () 
   it("registration builder shows the real submitted-answer count before removing a field or section", () => {
     const code = source("components/registration-builder-workspace.tsx");
     expect(code).toContain("<ConfirmDialog");
-    expect(code).toContain("stay on those registrations");
+    expect(code).toContain("removalAnswerNote(");
     expect(code).toContain("/field-answer-counts");
+    // A failed lookup is worded neutrally, never as "no answers".
+    expect(code).not.toContain("No attendee has submitted an answer");
+    expect(source("modules/forms/field-answer-counts.ts")).toContain("stay on those registrations");
   });
 
   it("event content workspace explains a removed section only takes effect on save", () => {
@@ -94,5 +97,24 @@ describe("removal review dialogs say what's removed and what's kept (#471)", () 
     const code = source("components/merchandise-admin-workspace.tsx");
     expect(code).toContain("<ConfirmDialog");
     expect(code).toContain("existing orders and order history are preserved");
+  });
+
+  it("attendee accounts shows the server's specific error inside the dialog", () => {
+    const code = source("components/attendee-accounts-workspace.tsx");
+    expect(code).toContain("setDialogError(failure)");
+    expect(code).not.toContain('setDialogError("That account couldn\'t be updated.")');
+  });
+
+  it("clears a leftover page error when a confirm dialog opens, so it can't show in the new dialog", () => {
+    const openers: Array<[string, RegExp]> = [
+      ["components/calendar-admin-workspace.tsx", /function remove\(entry[^)]*\) \{[^}]*setError\(""\);[^}]*setRemoveTarget\(entry\)/],
+      ["components/club-team-workspace.tsx", /function remove\(member[^)]*\) \{[^}]*setError\(""\);[^}]*setConfirmTarget/],
+      ["components/club-team-workspace.tsx", /function cancelInvite\(invite[^)]*\) \{[^}]*setError\(""\);[^}]*setConfirmTarget/],
+      ["components/merchandise-admin-workspace.tsx", /function openArchive\([^)]*\) \{[^}]*setError\(""\);[^}]*setArchiveTarget\(target\)/],
+      ["components/tag-configuration-workspace.tsx", /function openDeactivate\([^)]*\) \{[^}]*setError\(""\);[^}]*setDeactivateTarget\(row\)/],
+    ];
+    for (const [file, pattern] of openers) expect(source(file), file).toMatch(pattern);
+    expect(source("components/merchandise-admin-workspace.tsx")).not.toContain("onClick={() => setArchiveTarget(");
+    expect(source("components/tag-configuration-workspace.tsx")).not.toContain("? setDeactivateTarget(row)");
   });
 });

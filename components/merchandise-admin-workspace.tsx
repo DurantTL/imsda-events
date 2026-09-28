@@ -276,6 +276,12 @@ export function MerchandiseAdminWorkspace({ eventId }: { eventId: string }) {
     if (saved) setVariantEditing(null);
   }
 
+  function openArchive(target: NonNullable<typeof archiveTarget>) {
+    // A leftover page error must not appear inside the new dialog.
+    setError("");
+    setArchiveTarget(target);
+  }
+
   async function confirmArchive() {
     if (!archiveTarget) return;
     const ok = archiveTarget.kind === "product"
@@ -384,7 +390,7 @@ export function MerchandiseAdminWorkspace({ eventId }: { eventId: string }) {
                   <button className="icon-button" type="button" aria-label={`Move ${product.name} up`} disabled={saving || index === 0} onClick={() => void moveProduct(product, -1)}><ChevronUp size={16} aria-hidden="true" /></button>
                   <button className="icon-button" type="button" aria-label={`Move ${product.name} down`} disabled={saving || index === ordered.length - 1} onClick={() => void moveProduct(product, 1)}><ChevronDown size={16} aria-hidden="true" /></button>
                   <button className="icon-button" type="button" aria-label={`Edit ${product.name}`} onClick={() => setEditing(product)}><Pencil size={16} aria-hidden="true" /></button>
-                  {!product.isArchived && <button className="icon-button" type="button" aria-label={`Archive ${product.name}`} onClick={() => setArchiveTarget({ kind: "product", product })}><Archive size={16} aria-hidden="true" /></button>}
+                  {!product.isArchived && <button className="icon-button" type="button" aria-label={`Archive ${product.name}`} onClick={() => openArchive({ kind: "product", product })}><Archive size={16} aria-hidden="true" /></button>}
                 </div>
               </article>;
             })}
@@ -403,7 +409,7 @@ export function MerchandiseAdminWorkspace({ eventId }: { eventId: string }) {
               <button className="icon-button" type="button" aria-label={`Move ${variant.label} up`} disabled={saving || index === 0} onClick={() => void moveVariant(variant, -1)}><ChevronUp size={14} aria-hidden="true" /></button>
               <button className="icon-button" type="button" aria-label={`Move ${variant.label} down`} disabled={saving || index === ordered.length - 1} onClick={() => void moveVariant(variant, 1)}><ChevronDown size={14} aria-hidden="true" /></button>
               <button className="text-button" type="button" onClick={() => setVariantEditing(variant)}>Edit</button>
-              {!variant.isArchived && <button className="text-button" type="button" onClick={() => setArchiveTarget({ kind: "variant", variant })}>Archive</button>}
+              {!variant.isArchived && <button className="text-button" type="button" onClick={() => openArchive({ kind: "variant", variant })}>Archive</button>}
             </span>
           </div>)}</div>}
         </aside>

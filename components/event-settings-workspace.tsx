@@ -75,7 +75,6 @@ function draftFromEvent(event: EventSettingsRecord | null): EventSettingsInput {
     hotelGroupName: event?.hotelGroupName ?? null,
     hotelRate: event?.hotelRate ?? null,
     hotelInstructions: event?.hotelInstructions ?? null,
-    isPublished: event?.isPublished ?? false,
     registrationOpensOn: event?.registrationOpensOn ?? null,
     registrationClosesOn: event?.registrationClosesOn ?? null,
     collectsShirtSizes: event?.collectsShirtSizes ?? false,
@@ -114,14 +113,19 @@ export function EventSettingsWorkspace({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [copiedFormSlug, setCopiedFormSlug] = useState("");
+  // Readiness reflects the saved event (#471), not unsaved edits: that is
+  // what the server checks when Publish is clicked, so the checklist and the
+  // button never promise something a save hasn't made true yet.
   const readiness = useMemo(
-    () => getEventPublishReadiness(draft, publishedFormCount),
-    [draft, publishedFormCount],
+    () => getEventPublishReadiness(savedDraft, publishedFormCount),
+    [savedDraft, publishedFormCount],
   );
   const dirty = useMemo(
     () => JSON.stringify(draft) !== JSON.stringify(savedDraft),
     [draft, savedDraft],
   );
+  const publishBlockedBySave = dirty || saving;
+  const canPublish = readiness.ready && !publishBlockedBySave && !publishing;
   const allowNextNavigation = useUnsavedChangesGuard(
     dirty,
     "These event settings have not been saved. Leave and discard the changes?",
@@ -162,10 +166,6 @@ export function EventSettingsWorkspace({
             registrationOpensOn: draft.registrationOpensOn || null,
             registrationClosesOn: draft.registrationClosesOn || null,
             capacity: draft.capacity || null,
-            // Sent for schema compatibility only: the server always keeps the
-            // event's current published state on a settings save (#471) and
-            // ignores this value.
-            isPublished: mode === "create" ? false : published,
           }),
         },
       );
@@ -199,7 +199,7 @@ export function EventSettingsWorkspace({
   }
 
   async function publish() {
-    if (publishing || !readiness.ready) return;
+    if (!canPublish) return;
     setPublishing(true);
     setError("");
     setNotice("");
@@ -554,6 +554,7 @@ export function EventSettingsWorkspace({
             <p className="eyebrow">Publish readiness</p>
             <h2>{readiness.ready ? "Ready to publish" : `${readiness.completedCount} of ${readiness.items.length} ready`}</h2>
             <p>Publishing turns on the event’s public registration links. Form versions and registration dates still control what attendees can submit.</p>
+            {mode === "edit" && dirty && <p className="field-help">This checklist reflects the saved settings. Save your changes to update it.</p>}
             <ul className="event-readiness-list">
               {readiness.items.map((item) => (
                 <li className={item.complete ? "complete" : ""} key={item.id}>
@@ -585,14 +586,20 @@ export function EventSettingsWorkspace({
               <div className={`event-publish-toggle ${readiness.ready ? "ready" : ""}`}>
                 <span>
                   <strong>{published ? "Public registration is on" : "Publish this event"}</strong>
-                  <small>{published ? "Unpublish to close every public form immediately." : "Available after every checklist item is complete."}</small>
+                  <small>
+                    {published
+                      ? "Unpublish to close every public form immediately."
+                      : publishBlockedBySave
+                        ? "Save your changes first. Publishing checks the saved settings."
+                        : "Available after every checklist item is complete."}
+                  </small>
                 </span>
                 {published ? (
                   <button className="secondary-button full-button" disabled={unpublishing} onClick={openUnpublishDialog} type="button">
                     Unpublish event
                   </button>
                 ) : (
-                  <button className="primary-button full-button" disabled={publishing || !readiness.ready} onClick={() => void publish()} type="button">
+                  <button className="primary-button full-button" disabled={!canPublish} onClick={() => void publish()} type="button">
                     {publishing ? "Publishing…" : "Publish event"}
                   </button>
                 )}

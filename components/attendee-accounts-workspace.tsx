@@ -52,7 +52,8 @@ export function AttendeeAccountsWorkspace({ initialAccounts }: { initialAccounts
     }
   }
 
-  async function act(account: AttendeeAccountSummary, body: Record<string, string | boolean>) {
+  /** Resolves to `null` on success, or the specific message to show on failure. */
+  async function act(account: AttendeeAccountSummary, body: Record<string, string | boolean>): Promise<string | null> {
     setBusy(account.id);
     setError("");
     setNotice("");
@@ -66,10 +67,11 @@ export function AttendeeAccountsWorkspace({ initialAccounts }: { initialAccounts
       if (!response.ok) throw new Error(result.message ?? "That account couldn't be updated.");
       setNotice(`${account.displayName || account.email}: ${result.message}`);
       await search();
-      return true;
+      return null;
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "That account couldn't be updated.");
-      return false;
+      const message = caught instanceof Error ? caught.message : "That account couldn't be updated.";
+      setError(message);
+      return message;
     } finally {
       setBusy("");
     }
@@ -83,9 +85,11 @@ export function AttendeeAccountsWorkspace({ initialAccounts }: { initialAccounts
   async function confirmPendingAction() {
     if (!pendingAction) return;
     setDialogError("");
-    const ok = await act(pendingAction.account, pendingAction.body);
-    if (ok) setPendingAction(null);
-    else setDialogError("That account couldn't be updated.");
+    // The server's own message (e.g. why this account can't be changed),
+    // not a generic one, so the dialog explains what actually went wrong.
+    const failure = await act(pendingAction.account, pendingAction.body);
+    if (failure === null) setPendingAction(null);
+    else setDialogError(failure);
   }
 
   return (

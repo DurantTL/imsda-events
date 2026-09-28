@@ -21,7 +21,7 @@ const baseInput = {
   location: "Camp Heritage",
   capacity: 350,
   publicInfoUrl: null,
-  supportContact: "registration@imsda.org",
+  supportContact: "registration@example.test",
   hotelName: undefined,
   hotelBookingUrl: undefined,
   hotelPhone: undefined,
@@ -29,7 +29,6 @@ const baseInput = {
   hotelRate: undefined,
   hotelInstructions: undefined,
   approvedPaymentInstructions: undefined,
-  isPublished: true,
   registrationOpensOn: "2027-05-01",
   registrationClosesOn: "2027-10-01",
   collectsShirtSizes: false,
@@ -42,16 +41,23 @@ const baseInput = {
   autoPromoteWaitlist: true,
 };
 
-const eventRow = (overrides: Partial<{ isPublished: boolean; publicInfoUrl: string | null }> = {}) => ({
+type RowOverrides = Partial<{
+  isPublished: boolean;
+  publicInfoUrl: string | null;
+  location: string | null;
+  supportContact: string | null;
+}>;
+
+const eventRow = (overrides: RowOverrides = {}) => ({
   name: "Synthetic Retreat",
   slug: "synthetic-retreat",
   startsAt: new Date("2027-10-08T12:00:00.000Z"),
   endsAt: new Date("2027-10-10T12:00:00.000Z"),
   timezone: "America/Chicago",
-  location: "Camp Heritage",
+  location: overrides.location === undefined ? "Camp Heritage" : overrides.location,
   capacity: 350,
   publicInfoUrl: overrides.publicInfoUrl ?? null,
-  supportContact: "registration@imsda.org",
+  supportContact: overrides.supportContact === undefined ? "registration@example.test" : overrides.supportContact,
   hotelName: null,
   hotelBookingUrl: null,
   hotelPhone: null,
@@ -77,14 +83,23 @@ const eventRow = (overrides: Partial<{ isPublished: boolean; publicInfoUrl: stri
  * uses for another repository function in this module. `afterIsPublished`
  * is what `getEventSettings`'s own re-read (via `prisma.event.findUnique`,
  * not the transaction client) should report once the write commits.
+ * `changedRows` is what the conditional publish/unpublish `updateMany`
+ * reports: 0 simulates another request having flipped it first.
  */
-function mockPrisma(current: { isPublished: boolean; publicInfoUrl?: string | null }, publishedFormCount: number, afterIsPublished?: boolean) {
+function mockPrisma(
+  current: RowOverrides & { isPublished: boolean },
+  publishedFormCount: number,
+  afterIsPublished?: boolean,
+  changedRows = 1,
+) {
   const eventUpdate = vi.fn().mockResolvedValue({});
+  const eventUpdateMany = vi.fn().mockResolvedValue({ count: changedRows });
   const auditLogCreate = vi.fn().mockResolvedValue({});
   const tx = {
     event: {
       findUnique: vi.fn().mockResolvedValue(eventRow(current)),
       update: eventUpdate,
+      updateMany: eventUpdateMany,
     },
     registrationFormVersion: {
       count: vi.fn().mockResolvedValue(publishedFormCount),
@@ -107,7 +122,7 @@ function mockPrisma(current: { isPublished: boolean; publicInfoUrl?: string | nu
     registrationForm: { findMany: vi.fn().mockResolvedValue([]) },
     eventPaymentInstructionVersion: { findFirst: vi.fn().mockResolvedValue(null) },
   };
-  return { prisma, tx, eventUpdate, auditLogCreate };
+  return { prisma, tx, eventUpdate, eventUpdateMany, auditLogCreate };
 }
 
 beforeEach(() => {
@@ -115,126 +130,176 @@ beforeEach(() => {
 });
 
 describe("event settings save never changes publish state (#471)", () => {
-  it("keeps the event unpublished even when the saved input asks to publish it", async () => {
-    const { prisma, eventUpdate, auditLogCreate } = mockPrisma({ isPublished: false, publicInfoUrl: null }, 0);
+  it("leaves isPublished out of the update entirely, so a racing publish or unpublish is never reverted", async () => {
+    const { prisma, eventUpdate, auditLogCreate } = mockPrisma({ isPublished: false }, 0);
     dependencies.getPrisma.mockReturnValue(prisma);
 
-    const result = await updateEventSettings("event-1", { ...baseInput, isPublished: true }, "usr_1");
+    await updateEventSettings("event-1", baseInput, "usr_1");
 
-    expect(eventUpdate).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ isPublished: false }),
-    }));
-    expect(result?.isPublished).toBe(false);
+    expect(eventUpdate).toHaveBeenCalledTimes(1);
+    const data = eventUpdate.mock.calls[0]![0].data as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(data, "isPublished")).toBe(false);
     expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ action: "EVENT_SETTINGS_UPDATED" }),
     }));
   });
 
-  it("keeps the event published even when the saved input asks to unpublish it", async () => {
-    const { prisma, eventUpdate } = mockPrisma({ isPublished: true, publicInfoUrl: null }, 1, true);
+  it("keeps a published event published after a save", async () => {
+    const { prisma, eventUpdate } = mockPrisma({ isPublished: true }, 1, true);
     dependencies.getPrisma.mockReturnValue(prisma);
 
-    const result = await updateEventSettings("event-1", { ...baseInput, isPublished: false }, "usr_1");
+    const result = await updateEventSettings("event-1", baseInput, "usr_1");
 
-    expect(eventUpdate).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ isPublished: true }),
-    }));
+    const data = eventUpdate.mock.calls[0]![0].data as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(data, "isPublished")).toBe(false);
     expect(result?.isPublished).toBe(true);
   });
 
   it("never blocks an ordinary save on the publish checklist, since it can no longer publish", async () => {
-    const { prisma, eventUpdate } = mockPrisma({ isPublished: false, publicInfoUrl: null }, 0);
+    const { prisma, eventUpdate } = mockPrisma({ isPublished: false }, 0);
     dependencies.getPrisma.mockReturnValue(prisma);
 
     await expect(
-      updateEventSettings("event-1", { ...baseInput, isPublished: true, supportContact: null }, "usr_1"),
+      updateEventSettings("event-1", { ...baseInput, supportContact: null }, "usr_1"),
     ).resolves.toBeTruthy();
     expect(eventUpdate).toHaveBeenCalled();
   });
 });
 
 describe("publishEvent (#467, #471)", () => {
-  it("publishes a draft with every other item complete and no information URL", async () => {
-    const { prisma, eventUpdate, auditLogCreate } = mockPrisma(
-      { isPublished: false, publicInfoUrl: null },
-      1,
-      true,
-    );
+  it("publishes a draft with every other item complete and no information URL, with a conditional update", async () => {
+    const { prisma, eventUpdate, eventUpdateMany, auditLogCreate } = mockPrisma({ isPublished: false }, 1, true);
     dependencies.getPrisma.mockReturnValue(prisma);
 
     const result = await publishEvent("event-1", "usr_1");
 
-    expect(eventUpdate).toHaveBeenCalledWith(expect.objectContaining({
+    expect(eventUpdateMany).toHaveBeenCalledWith({
+      where: { id: "event-1", isPublished: false },
       data: { isPublished: true },
-    }));
+    });
+    expect(eventUpdate).not.toHaveBeenCalled();
     expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ action: "EVENT_PUBLISHED", summary: "Published event: Synthetic Retreat." }),
     }));
     expect(result?.isPublished).toBe(true);
   });
 
-  it("still blocks publish and names what is missing when a required item is incomplete", async () => {
-    const { prisma, eventUpdate } = mockPrisma({ isPublished: false, publicInfoUrl: null }, 0);
+  it("writes no audit entry when a concurrent request already published it", async () => {
+    const { prisma, eventUpdateMany, auditLogCreate } = mockPrisma({ isPublished: false }, 1, true, 0);
     dependencies.getPrisma.mockReturnValue(prisma);
 
-    await expect(
-      publishEvent("event-1", "usr_1"),
-    ).rejects.toMatchObject({
+    const result = await publishEvent("event-1", "usr_1");
+
+    expect(eventUpdateMany).toHaveBeenCalled();
+    expect(auditLogCreate).not.toHaveBeenCalled();
+    expect(result?.isPublished).toBe(true);
+  });
+
+  it("still blocks publish and names what is missing when there is no published form", async () => {
+    const { prisma, eventUpdateMany } = mockPrisma({ isPublished: false }, 0);
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await expect(publishEvent("event-1", "usr_1")).rejects.toMatchObject({
       code: "EVENT_NOT_READY",
       message: expect.stringContaining("published registration form"),
     });
-    expect(eventUpdate).not.toHaveBeenCalled();
+    expect(eventUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("never mentions the optional information page in a publish-blocked message", async () => {
-    const { prisma, eventUpdate } = mockPrisma({ isPublished: false, publicInfoUrl: null }, 0);
+  it("blocks publish when the saved event has no location", async () => {
+    const { prisma, eventUpdateMany, auditLogCreate } = mockPrisma({ isPublished: false, location: null }, 1);
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await expect(publishEvent("event-1", "usr_1")).rejects.toMatchObject({
+      code: "EVENT_NOT_READY",
+      message: expect.stringContaining("event location"),
+    });
+    expect(eventUpdateMany).not.toHaveBeenCalled();
+    expect(auditLogCreate).not.toHaveBeenCalled();
+  });
+
+  it("blocks publish when the saved event has no support contact", async () => {
+    const { prisma, eventUpdateMany } = mockPrisma({ isPublished: false, supportContact: "   " }, 1);
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await expect(publishEvent("event-1", "usr_1")).rejects.toMatchObject({
+      code: "EVENT_NOT_READY",
+      message: expect.stringContaining("support contact"),
+    });
+    expect(eventUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("never mentions the information page in a publish-blocked message, even when it is set to an invalid value", async () => {
+    const { prisma, eventUpdateMany } = mockPrisma({ isPublished: false, publicInfoUrl: "not-a-url" }, 0);
     dependencies.getPrisma.mockReturnValue(prisma);
 
     const rejection = await publishEvent("event-1", "usr_1").catch((error: unknown) => error);
     expect(rejection).toBeInstanceOf(EventOperationError);
-    expect((rejection as InstanceType<typeof EventOperationError>).message).not.toContain("information page");
-    expect(eventUpdate).not.toHaveBeenCalled();
+    const message = (rejection as InstanceType<typeof EventOperationError>).message;
+    expect(message).toContain("published registration form");
+    expect(message).not.toContain("information page");
+    expect(message).not.toContain("IMSDA.org");
+    expect(eventUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("is a no-op, without a duplicate audit entry, when the event is already published", async () => {
-    const { prisma, eventUpdate, auditLogCreate } = mockPrisma({ isPublished: true, publicInfoUrl: null }, 1, true);
+  it("publishes even when the optional information URL is invalid", async () => {
+    const { prisma, eventUpdateMany } = mockPrisma({ isPublished: false, publicInfoUrl: "not-a-url" }, 1, true);
     dependencies.getPrisma.mockReturnValue(prisma);
 
     await publishEvent("event-1", "usr_1");
 
-    expect(eventUpdate).not.toHaveBeenCalled();
+    expect(eventUpdateMany).toHaveBeenCalled();
+  });
+
+  it("is a no-op, without a duplicate audit entry, when the event is already published", async () => {
+    const { prisma, eventUpdateMany, auditLogCreate } = mockPrisma({ isPublished: true }, 1, true);
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await publishEvent("event-1", "usr_1");
+
+    expect(eventUpdateMany).not.toHaveBeenCalled();
     expect(auditLogCreate).not.toHaveBeenCalled();
   });
 });
 
 describe("unpublishEvent (#471)", () => {
-  it("unpublishes a published event and records who did it", async () => {
-    const { prisma, eventUpdate, auditLogCreate } = mockPrisma({ isPublished: true, publicInfoUrl: null }, 1, false);
+  it("unpublishes a published event with a conditional update and records who did it", async () => {
+    const { prisma, eventUpdateMany, auditLogCreate } = mockPrisma({ isPublished: true }, 1, false);
     dependencies.getPrisma.mockReturnValue(prisma);
 
     const result = await unpublishEvent("event-1", "usr_1");
 
-    expect(eventUpdate).toHaveBeenCalledWith(expect.objectContaining({
+    expect(eventUpdateMany).toHaveBeenCalledWith({
+      where: { id: "event-1", isPublished: true },
       data: { isPublished: false },
-    }));
+    });
     expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ action: "EVENT_UNPUBLISHED", summary: "Unpublished event: Synthetic Retreat." }),
+      data: expect.objectContaining({ action: "EVENT_UNPUBLISHED", summary: "Unpublished event: Synthetic Retreat.", actorUserId: "usr_1" }),
     }));
     expect(result?.isPublished).toBe(false);
   });
 
-  it("is a no-op, without a duplicate audit entry, when the event is already unpublished", async () => {
-    const { prisma, eventUpdate, auditLogCreate } = mockPrisma({ isPublished: false, publicInfoUrl: null }, 0, false);
+  it("writes no audit entry when a concurrent request already unpublished it", async () => {
+    const { prisma, auditLogCreate } = mockPrisma({ isPublished: true }, 1, false, 0);
     dependencies.getPrisma.mockReturnValue(prisma);
 
     await unpublishEvent("event-1", "usr_1");
 
-    expect(eventUpdate).not.toHaveBeenCalled();
+    expect(auditLogCreate).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op, without a duplicate audit entry, when the event is already unpublished", async () => {
+    const { prisma, eventUpdateMany, auditLogCreate } = mockPrisma({ isPublished: false }, 0, false);
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await unpublishEvent("event-1", "usr_1");
+
+    expect(eventUpdateMany).not.toHaveBeenCalled();
     expect(auditLogCreate).not.toHaveBeenCalled();
   });
 
   it("reports EVENT_NOT_FOUND for a missing event", async () => {
-    const { prisma, tx } = mockPrisma({ isPublished: true, publicInfoUrl: null }, 1);
+    const { prisma, tx } = mockPrisma({ isPublished: true }, 1);
     tx.event.findUnique.mockResolvedValue(null);
     dependencies.getPrisma.mockReturnValue(prisma);
 

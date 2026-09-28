@@ -47,6 +47,12 @@ export function TagConfigurationWorkspace({
     finally { setSaving(false); }
   }
 
+  function openDeactivate(row: TagRow) {
+    // A leftover page error must not appear inside the new dialog.
+    setError("");
+    setDeactivateTarget(row);
+  }
+
   async function updateTag(row: TagRow, patch: Partial<TagRow>) {
     setSaving(true); setError("");
     try {
@@ -74,7 +80,7 @@ export function TagConfigurationWorkspace({
         <td data-label="Name"><input aria-label={`Name for ${row.name}`} value={row.name} onChange={(event) => setTags((current) => current.map((candidate) => candidate.id === row.id ? { ...candidate, name: event.target.value } : candidate))} /></td>
         <td data-label="Description"><input aria-label={`Description for ${row.name}`} value={row.description} onChange={(event) => setTags((current) => current.map((candidate) => candidate.id === row.id ? { ...candidate, description: event.target.value } : candidate))} /></td>
         <td data-label="Status">{row.isActive ? "Active" : "Inactive"}</td>
-        <td data-label="Actions"><span className="form-actions"><button className="secondary-button" disabled={saving} type="button" onClick={() => updateTag(row, {})}>Save</button><button className="secondary-button" disabled={saving} type="button" onClick={() => row.isActive ? setDeactivateTarget(row) : updateTag(row, { isActive: true })}>{row.isActive ? "Deactivate" : "Activate"}</button></span></td>
+        <td data-label="Actions"><span className="form-actions"><button className="secondary-button" disabled={saving} type="button" onClick={() => updateTag(row, {})}>Save</button><button className="secondary-button" disabled={saving} type="button" onClick={() => row.isActive ? openDeactivate(row) : updateTag(row, { isActive: true })}>{row.isActive ? "Deactivate" : "Activate"}</button></span></td>
       </tr>)}</tbody></table></div>
       <form className="form-stack inset-form" action={addTag}>
         <div className="form-grid two-column"><label>Name<input name="name" required placeholder="VIP" /></label><label>Color<input name="color" type="color" defaultValue="#4F46E5" /></label></div>
