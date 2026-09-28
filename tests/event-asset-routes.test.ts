@@ -8,6 +8,7 @@ const dependencies = vi.hoisted(() => ({
   removeEventAsset: vi.fn(),
   findEventAssetForStaff: vi.fn(),
   eventAssetResponse: vi.fn(),
+  listEventContentSections: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -30,6 +31,10 @@ vi.mock("@/modules/events/asset-repository", async (importOriginal) => {
     findEventAssetForStaff: dependencies.findEventAssetForStaff,
   };
 });
+
+vi.mock("@/modules/events/content-repository", () => ({
+  listEventContentSections: dependencies.listEventContentSections,
+}));
 
 vi.mock("@/modules/events/asset-response", () => ({
   eventAssetResponse: dependencies.eventAssetResponse,
@@ -62,6 +67,7 @@ function expectNoRepositoryCalls() {
   expect(dependencies.listEventAssets).not.toHaveBeenCalled();
   expect(dependencies.findEventAssetForStaff).not.toHaveBeenCalled();
   expect(dependencies.removeEventAsset).not.toHaveBeenCalled();
+  expect(dependencies.listEventContentSections).not.toHaveBeenCalled();
 }
 
 beforeEach(() => {
@@ -121,13 +127,52 @@ describe("DELETE /api/events/[eventId]/assets/[assetId]", () => {
 
   it("deletes an unused file for a permitted caller, passing the actor for the audit entry", async () => {
     signInAsConfigurer();
-    dependencies.removeEventAsset.mockResolvedValue(undefined);
+    dependencies.removeEventAsset.mockResolvedValue({ removedFromDraftSectionTitles: [] });
     dependencies.listEventAssets.mockResolvedValue([]);
+    dependencies.listEventContentSections.mockResolvedValue([]);
 
     const response = await deleteAsset(request(`/api/events/${eventId}/assets/${assetId}`, "DELETE"), assetParams);
 
     expect(response.status).toBe(200);
     expect(dependencies.removeEventAsset).toHaveBeenCalledWith(eventId, assetId, "usr_admin");
+  });
+
+  it("returns the refreshed sections after a delete removed a draft tile, with no reference to the deleted file", async () => {
+    signInAsConfigurer();
+    dependencies.removeEventAsset.mockResolvedValue({ removedFromDraftSectionTitles: ["Retreat resources"] });
+    dependencies.listEventAssets.mockResolvedValue([]);
+    dependencies.listEventContentSections.mockResolvedValue([{
+      id: "section_draft",
+      kind: "RESOURCE_LINKS",
+      title: "Retreat resources",
+      body: "",
+      isPublished: false,
+      links: [{ label: "Site map", description: "", url: "https://example.test/map", assetId: null }],
+    }]);
+
+    const response = await deleteAsset(request(`/api/events/${eventId}/assets/${assetId}`, "DELETE"), assetParams);
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(dependencies.listEventContentSections).toHaveBeenCalledWith(eventId);
+    expect(body.removedFromDraftSectionTitles).toEqual(["Retreat resources"]);
+    expect(body.sections).toHaveLength(1);
+    expect(JSON.stringify(body.sections)).not.toContain(assetId);
+  });
+
+  it("returns 409 when a draft section would be left with no links, naming that section", async () => {
+    signInAsConfigurer();
+    const { EventAssetError } = await import("@/modules/events/asset-repository");
+    dependencies.removeEventAsset.mockRejectedValue(new EventAssetError(
+      "ASSET_IN_USE",
+      'Remove it from the draft section "Retreat resources" first, or add another link there. It is the only link, and a resource-links section needs at least one.',
+    ));
+
+    const response = await deleteAsset(request(`/api/events/${eventId}/assets/${assetId}`, "DELETE"), assetParams);
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).message).toContain('the draft section "Retreat resources"');
+    expect(dependencies.listEventContentSections).not.toHaveBeenCalled();
   });
 
   it("returns 409 with the naming message when the repository reports the file is in use", async () => {

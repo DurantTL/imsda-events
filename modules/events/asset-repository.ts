@@ -1,6 +1,8 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
+import { Prisma } from "@prisma/client";
+import { logError } from "@/lib/logger";
 import { getPrisma } from "@/lib/prisma";
 import {
   bytesMatchType,
@@ -33,9 +35,10 @@ export type EventAssetUsage = {
   /** Titles of published sections whose resource tiles link this file. A
    * non-empty list blocks delete: a visitor could be looking at it. */
   publishedSectionTitles: string[];
-  /** Titles of draft (unpublished) sections that link this file. These never
-   * block delete — nothing public depends on a draft — so deleting the file
-   * quietly drops the tile's reference to it instead. */
+  /** Titles of draft (unpublished) sections that link this file. Nothing
+   * public depends on a draft, so deleting the file removes those tiles —
+   * unless that would leave a resource-links draft with no links at all,
+   * which the delete refuses (see removeEventAsset). */
   draftSectionTitles: string[];
   /** Whether this file is the event's current printed name-badge background. */
   isBadgeBackground: boolean;
@@ -73,10 +76,17 @@ function summarizeUsage(asset: {
   };
 }
 
-const usageSelect = {
-  links: { select: { section: { select: { title: true, isPublished: true } } } },
-  badgeBackgroundEvents: { select: { id: true } },
-} as const;
+/** Usage is scoped to this event's own sections, so another event's section
+ * titles can never surface in this event's file list or delete messages. */
+function usageSelect(eventId: string) {
+  return {
+    links: {
+      where: { section: { eventId } },
+      select: { section: { select: { title: true, isPublished: true } } },
+    },
+    badgeBackgroundEvents: { select: { id: true } },
+  } as const;
+}
 
 export async function listEventAssets(eventId: string): Promise<EventAssetRecord[]> {
   const assets = await getPrisma().eventAsset.findMany({
@@ -88,7 +98,7 @@ export async function listEventAssets(eventId: string): Promise<EventAssetRecord
       contentType: true,
       byteSize: true,
       createdAt: true,
-      ...usageSelect,
+      ...usageSelect(eventId),
     },
   });
   return assets.map((asset) => ({
@@ -176,6 +186,21 @@ function namePublishedUse(titles: string[]) {
   return `Remove the tile that links to this file from ${label} before deleting it.`;
 }
 
+function nameEmptiedDrafts(titles: string[]) {
+  const label = titles.length === 1
+    ? `the draft section "${titles[0]}"`
+    : `the draft sections ${titles.map((title) => `"${title}"`).join(", ")}`;
+  const there = titles.length === 1 ? "there" : "to each";
+  return `Remove it from ${label} first, or add another link ${there}. It is the only link, and a resource-links section needs at least one.`;
+}
+
+export type RemovedEventAsset = {
+  /** Draft sections whose tiles for this file were removed with it. */
+  removedFromDraftSectionTitles: string[];
+};
+
+const JUST_LINKED_MESSAGE = "This file was just linked; reload and try again.";
+
 /**
  * Deletes an uploaded file, refusing while anything public still depends on
  * it.
@@ -183,75 +208,137 @@ function namePublishedUse(titles: string[]) {
  * A **published** section's resource tile, or the event's current badge
  * background, blocks the delete outright — the message names exactly what
  * uses it, so staff know what to undo first. A **draft** section's tile does
- * not block: nothing public depends on it, so the tile's reference to the
- * file is cleared as part of the same deletion rather than making staff hunt
- * it down first. Merchandise artwork always blocks, matching how the
- * merchandise catalog already treats its artwork file.
+ * not block: nothing public depends on it, so the tile is removed in the same
+ * transaction. The one exception is a resource-links draft where this file is
+ * its only link: removing the tile would leave a section the editor can no
+ * longer save ("Add at least one link…"), so the delete is refused and names
+ * that draft instead of silently deleting the section. Merchandise artwork
+ * always blocks, matching how the merchandise catalog already treats its
+ * artwork file.
+ *
+ * The lookup and every check run inside the transaction. A tile linked by a
+ * concurrent save between check and delete trips the Restrict foreign key
+ * (P2003); that is reported as ASSET_IN_USE rather than a generic failure.
  */
-export async function removeEventAsset(eventId: string, assetId: string, actorUserId: string) {
+export async function removeEventAsset(
+  eventId: string,
+  assetId: string,
+  actorUserId: string,
+): Promise<RemovedEventAsset> {
   const prisma = getPrisma();
-  const asset = await prisma.eventAsset.findFirst({
-    where: { id: assetId, eventId },
-    select: {
-      id: true,
-      displayName: true,
-      storageKey: true,
-      links: { select: { id: true, section: { select: { title: true, isPublished: true } } } },
-      badgeBackgroundEvents: { select: { id: true } },
-      _count: { select: { merchandiseArtworkProducts: true } },
-    },
-  });
-  if (!asset) {
-    throw new EventAssetError("ASSET_NOT_FOUND", "That file is no longer available.");
-  }
-
-  const publishedSectionTitles = [...new Set(
-    asset.links.filter((link) => link.section.isPublished).map((link) => link.section.title),
-  )];
-  if (publishedSectionTitles.length > 0) {
-    throw new EventAssetError("ASSET_IN_USE", namePublishedUse(publishedSectionTitles));
-  }
-  if (asset.badgeBackgroundEvents.length > 0) {
-    throw new EventAssetError(
-      "ASSET_IN_USE",
-      "Remove this image as the name badge background before deleting it.",
-    );
-  }
-  if (asset._count.merchandiseArtworkProducts > 0) {
-    throw new EventAssetError(
-      "ASSET_IN_USE",
-      "Remove this artwork from the merchandise products that use it before deleting it.",
-    );
-  }
-
-  const draftLinkIds = asset.links.filter((link) => !link.section.isPublished).map((link) => link.id);
-  await prisma.$transaction(async (tx) => {
-    if (draftLinkIds.length > 0) {
-      // These tiles only ever pointed at this file; with the file gone they
-      // have nothing left to point at, so the tile goes with it rather than
-      // being left dangling in someone's draft.
-      await tx.eventContentLink.deleteMany({ where: { id: { in: draftLinkIds } } });
-    }
-    await tx.eventAsset.delete({ where: { id: asset.id } });
-    await tx.auditLog.create({
-      data: {
-        eventId,
-        actorUserId,
-        action: "EVENT_ASSET_DELETED",
-        entityType: "EventAsset",
-        entityId: asset.id,
-        correlationId: randomUUID(),
-        summary: `Deleted the uploaded file "${asset.displayName}".`,
-        metadata: {
-          assetId: asset.id,
-          displayName: asset.displayName,
-          clearedDraftTileCount: draftLinkIds.length,
-          productionWrite: false,
+  let removed: { storageKey: string; removedFromDraftSectionTitles: string[] };
+  try {
+    removed = await prisma.$transaction(async (tx) => {
+      const asset = await tx.eventAsset.findFirst({
+        where: { id: assetId, eventId },
+        select: {
+          id: true,
+          displayName: true,
+          storageKey: true,
+          links: {
+            where: { section: { eventId } },
+            select: {
+              id: true,
+              section: {
+                select: {
+                  id: true,
+                  kind: true,
+                  title: true,
+                  isPublished: true,
+                  _count: { select: { links: true } },
+                },
+              },
+            },
+          },
+          badgeBackgroundEvents: { select: { id: true } },
+          _count: { select: { merchandiseArtworkProducts: true } },
         },
-      },
+      });
+      if (!asset) {
+        throw new EventAssetError("ASSET_NOT_FOUND", "That file is no longer available.");
+      }
+
+      const publishedSectionTitles = [...new Set(
+        asset.links.filter((link) => link.section.isPublished).map((link) => link.section.title),
+      )];
+      if (publishedSectionTitles.length > 0) {
+        throw new EventAssetError("ASSET_IN_USE", namePublishedUse(publishedSectionTitles));
+      }
+      if (asset.badgeBackgroundEvents.length > 0) {
+        throw new EventAssetError(
+          "ASSET_IN_USE",
+          "Remove this image as the name badge background before deleting it.",
+        );
+      }
+      if (asset._count.merchandiseArtworkProducts > 0) {
+        throw new EventAssetError(
+          "ASSET_IN_USE",
+          "Remove this artwork from the merchandise products that use it before deleting it.",
+        );
+      }
+
+      const draftLinks = asset.links.filter((link) => !link.section.isPublished);
+      const draftSections = new Map<string, { title: string; kind: string; total: number; removing: number }>();
+      for (const link of draftLinks) {
+        const entry = draftSections.get(link.section.id) ?? {
+          title: link.section.title,
+          kind: link.section.kind,
+          total: link.section._count.links,
+          removing: 0,
+        };
+        entry.removing += 1;
+        draftSections.set(link.section.id, entry);
+      }
+      const emptiedTitles = [...draftSections.values()]
+        .filter((section) => section.kind === "RESOURCE_LINKS" && section.removing >= section.total)
+        .map((section) => section.title);
+      if (emptiedTitles.length > 0) {
+        throw new EventAssetError("ASSET_IN_USE", nameEmptiedDrafts([...new Set(emptiedTitles)]));
+      }
+
+      const draftLinkIds = draftLinks.map((link) => link.id);
+      if (draftLinkIds.length > 0) {
+        // These tiles only ever pointed at this file; with the file gone they
+        // have nothing left to point at. Each section keeps its other links.
+        await tx.eventContentLink.deleteMany({ where: { id: { in: draftLinkIds } } });
+      }
+      await tx.eventAsset.delete({ where: { id: asset.id } });
+      const removedFromDraftSectionTitles = [...new Set([...draftSections.values()].map((section) => section.title))];
+      await tx.auditLog.create({
+        data: {
+          eventId,
+          actorUserId,
+          action: "EVENT_ASSET_DELETED",
+          entityType: "EventAsset",
+          entityId: asset.id,
+          correlationId: randomUUID(),
+          summary: `Deleted the uploaded file "${asset.displayName}".`,
+          metadata: {
+            assetId: asset.id,
+            displayName: asset.displayName,
+            clearedDraftTileCount: draftLinkIds.length,
+            productionWrite: false,
+          },
+        },
+      });
+      return { storageKey: asset.storageKey, removedFromDraftSectionTitles };
     });
-  });
-  await deleteAsset(asset.storageKey);
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003") {
+      throw new EventAssetError("ASSET_IN_USE", JUST_LINKED_MESSAGE);
+    }
+    throw error;
+  }
+
+  try {
+    await deleteAsset(removed.storageKey);
+  } catch (error) {
+    // The row is already gone, so the delete the user asked for has happened.
+    // A stray stored copy is unreachable (nothing can serve it without the
+    // row); log it for cleanup rather than reporting a failure that didn't.
+    logError("Removing a deleted event file's stored copy failed", error, { eventId, assetId });
+  }
+  return { removedFromDraftSectionTitles: removed.removedFromDraftSectionTitles };
 }
 
 /** Staff view: any asset belonging to the event. */

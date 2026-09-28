@@ -6,6 +6,12 @@ import type { EventAssetRecord } from "@/modules/events/asset-repository";
 import type { EventContentSectionRecord } from "@/modules/events/content-repository";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
+import {
+  localAssetImpact,
+  quoteList,
+  withoutAssetTiles,
+  type SectionDraft,
+} from "@/components/event-content-asset-tiles";
 
 const assetTypeLabels: Record<string, string> = {
   "application/pdf": "PDF",
@@ -37,15 +43,6 @@ function usageSummary(usage: EventAssetRecord["usage"]) {
   }
   return parts.length > 0 ? parts.join(" · ") : "not used yet";
 }
-
-type LinkDraft = { label: string; description: string; url: string | null; assetId: string | null };
-type SectionDraft = {
-  kind: "RICH_TEXT" | "RESOURCE_LINKS";
-  title: string;
-  body: string;
-  isPublished: boolean;
-  links: LinkDraft[];
-};
 
 const retreatGuideStarterSections: SectionDraft[] = [
   {
@@ -119,7 +116,13 @@ export function EventContentWorkspace({
     setPendingDelete(null);
     setDeleteError("");
   }, []);
-  const deleteDialogRef = useAccessibleDialog<HTMLElement>(pendingDelete !== null, closeDeleteDialog);
+  // Escape goes through here too: while the delete is in flight the dialog
+  // stays open, so staff always see how it turned out.
+  const dismissDeleteDialog = useCallback(() => {
+    if (deleting) return;
+    closeDeleteDialog();
+  }, [closeDeleteDialog, deleting]);
+  const deleteDialogRef = useAccessibleDialog<HTMLElement>(pendingDelete !== null, dismissDeleteDialog);
   const [saved, setSaved] = useState(() => draftsFrom(initialSections));
   const [sections, setSections] = useState(() => draftsFrom(initialSections));
   const [saving, setSaving] = useState(false);
@@ -127,6 +130,11 @@ export function EventContentWorkspace({
   const [notice, setNotice] = useState("");
 
   const dirty = JSON.stringify(sections) !== JSON.stringify(saved);
+  const pendingImpact = pendingDelete ? localAssetImpact(sections, pendingDelete.id) : null;
+  // The server only knows the saved page; an unsaved resource-links section
+  // whose only tile is this file would be left unsaveable, so wait for the
+  // editor to fix it rather than strip it to nothing.
+  const deleteBlockedLocally = dirty && (pendingImpact?.emptiedTitles.length ?? 0) > 0;
   const allowNextNavigation = useUnsavedChangesGuard(
     dirty,
     "This event page has unsaved changes. Leave and discard them?",
@@ -228,14 +236,32 @@ export function EventContentWorkspace({
     setDeleting(true);
     setDeleteError("");
     try {
+      const savedAtStart = saved;
       const response = await fetch(`/api/events/${eventId}/assets/${asset.id}`, { method: "DELETE" });
       const result = await response.json().catch(() => ({}));
-      if (!response.ok || !result.assets) {
+      if (!response.ok || !result.assets || !result.sections) {
         throw new Error(result.message ?? "That file could not be deleted.");
       }
       setAssets(result.assets);
+      // The delete may have removed draft tiles on the server. `saved` always
+      // follows the server so the next save can't re-link the deleted file.
+      // With no unsaved edits the editor takes the server copy too; with
+      // unsaved edits it keeps them and strips only this file's tiles, so no
+      // edit is lost (the dialog said which sections would change).
+      const serverDrafts = draftsFrom(result.sections);
+      setSaved(serverDrafts);
+      setSections((current) => (
+        JSON.stringify(current) === JSON.stringify(savedAtStart)
+          ? serverDrafts
+          : withoutAssetTiles(current, asset.id)
+      ));
       setPendingDelete(null);
-      setNotice(`Deleted ${asset.displayName}.`);
+      const removedFrom: string[] = Array.isArray(result.removedFromDraftSectionTitles)
+        ? result.removedFromDraftSectionTitles
+        : [];
+      setNotice(removedFrom.length > 0
+        ? `Deleted ${asset.displayName} and removed its tile from ${quoteList(removedFrom)}.`
+        : `Deleted ${asset.displayName}.`);
     } catch (caught) {
       setDeleteError(caught instanceof Error ? caught.message : "That file could not be deleted.");
     } finally {
@@ -472,7 +498,7 @@ export function EventContentWorkspace({
       {pendingDelete && (
         <div
           className="modal-backdrop"
-          onMouseDown={(event) => { if (event.target === event.currentTarget && !deleting) closeDeleteDialog(); }}
+          onMouseDown={(event) => { if (event.target === event.currentTarget) dismissDeleteDialog(); }}
           role="presentation"
         >
           <section aria-labelledby="delete-asset-title" aria-modal="true" className="modal-card" ref={deleteDialogRef} role="dialog" tabIndex={-1}>
@@ -487,9 +513,27 @@ export function EventContentWorkspace({
             </div>
             {deleteError && <div className="inline-notice error" role="alert">{deleteError}</div>}
             <p className="field-help">This removes the file and its stored copy. This can&apos;t be undone.</p>
+            {pendingDelete.usage.draftSectionTitles.length > 0 && (
+              <p className="field-help">
+                Its tile will also be removed from the draft {pendingDelete.usage.draftSectionTitles.length === 1 ? "section" : "sections"} {quoteList(pendingDelete.usage.draftSectionTitles)}.
+              </p>
+            )}
+            {dirty && pendingImpact && pendingImpact.emptiedTitles.length > 0 && (
+              <div className="inline-notice error" role="alert">
+                In your unsaved edits this file is the only link in {quoteList(pendingImpact.emptiedTitles)}. Remove its tile from that section first, or add another link there.
+              </div>
+            )}
+            {dirty && (
+              <p className="field-help">
+                You have unsaved page edits. They are kept
+                {pendingImpact && pendingImpact.affectedTitles.length > 0
+                  ? <>; only this file&apos;s tiles are removed from {quoteList(pendingImpact.affectedTitles)}.</>
+                  : "."}
+              </p>
+            )}
             <div className="form-actions">
               <button className="secondary-button" disabled={deleting} onClick={closeDeleteDialog} type="button">Cancel</button>
-              <button className="primary-button" disabled={deleting} onClick={() => void confirmDeleteAsset(pendingDelete)} type="button">
+              <button className="primary-button" disabled={deleting || deleteBlockedLocally} onClick={() => void confirmDeleteAsset(pendingDelete)} type="button">
                 <Trash2 aria-hidden="true" size={16} /> {deleting ? "Deleting…" : "Delete file"}
               </button>
             </div>
