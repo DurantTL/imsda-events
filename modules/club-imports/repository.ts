@@ -2,6 +2,7 @@ import "server-only";
 
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { refreshBackgroundCheckMatchesSafely } from "@/modules/background-checks/refresh-after-write";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { churchStem, importScope, type ClubImportDraft } from "@/modules/club-imports/domain";
 import type { ClubImportItem } from "@/modules/club-imports/schemas";
@@ -83,8 +84,9 @@ async function importOne(item: ClubImportItem, actorUserId: string, now: Date): 
     return { ...base, status: "ALREADY_IMPORTED", message: "This registration was imported before. Nothing was changed.", organizationId: earlier.organizationId };
   }
 
+  const addedPersonIds: string[] = [];
   try {
-    return await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const normalizedName = normalizeOrganizationName(item.clubName);
       let club = await tx.organization.findFirst({ where: { type: "CLUB", normalizedName }, select: { id: true, isActive: true, parentOrganizationId: true } });
       if (club && !club.isActive) throw new ImportRefused("A club with that name is inactive. Reactivate it first, or give the import another name.");
@@ -155,6 +157,7 @@ async function importOne(item: ClubImportItem, actorUserId: string, now: Date): 
         }
         seen.add(key);
         const created = await tx.person.create({ data: { firstName: person.firstName, lastName: person.lastName }, select: { id: true } });
+        addedPersonIds.push(created.id);
         await tx.clubRosterMember.create({
           data: {
             organizationId: club.id,
@@ -220,6 +223,9 @@ async function importOne(item: ClubImportItem, actorUserId: string, now: Date): 
         invitesCreated,
       };
     });
+    // #527: imported roster adults on the background-check list are matched after commit; best effort.
+    await refreshBackgroundCheckMatchesSafely(addedPersonIds);
+    return result;
   } catch (error) {
     if (error instanceof ImportRefused) return { ...base, status: "FAILED", message: error.message, organizationId: null };
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {

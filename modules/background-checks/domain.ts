@@ -158,6 +158,9 @@ export function parseSterlingCsv(text: string): SterlingCsvRow[] {
     if (!expiresRaw) problems.push("The expiration date is blank.");
     else if (!expiresOn) problems.push("The expiration date isn't a date.");
     const status = value("status") || null;
+    // As before #527: only a clear check is ever recorded. A non-clear result
+    // is reported to the administrator and stored nowhere (#527 decision).
+    if (!isClearStatus(status)) problems.push(`Status is "${status}", not a clear check, so nothing was recorded. Review this person in Sterling.`);
     return { line: index + 2, firstName, lastName, email, birthDate, checkedOn, expiresOn, status, problems };
   });
 }
@@ -321,8 +324,9 @@ export class RosterBackgroundCsvError extends Error {}
 /**
  * The real church/club export (#427): `user_id,user_last,user_first,roles,
  * sites,user_active,compliance,issues`. No email or birth date; people are
- * matched by name and `sites` (their club or sponsoring church) in
- * `planRosterBackgroundImport`. `user_active` is accepted and ignored.
+ * matched by name and `sites` (their club or sponsoring church) at lookup
+ * (#527, `modules/background-checks/repository.ts`). `user_active` is
+ * accepted and ignored.
  */
 export function parseRosterBackgroundCsv(text: string): RosterBackgroundCsvRow[] {
   if (text.length > MAX_ROSTER_CSV_BYTES) throw new RosterBackgroundCsvError("That file is too large. Upload up to 5,000 people at a time.");
@@ -452,6 +456,148 @@ export function complianceReminders(counts: ComplianceReminderCounts, rosterHref
     });
   }
   return items;
+}
+
+// --- The unified stored list (#527): both CSV formats above are input
+// parsers only. Every valid row becomes one of these, fed into the one
+// stored list, matched to people at lookup instead of at upload. ---
+
+export type BackgroundCheckListRow = {
+  line: number;
+  firstName: string;
+  lastName: string;
+  normalizedName: string;
+  email: string | null;
+  /** Plain here; the repository seals it (`club-rosters/birth-dates.ts`) before storage. */
+  birthDate: string | null;
+  /** The person's club or sponsoring church (the roster format's `sites`). */
+  site: string | null;
+  /** The roster CSV's `user_id`, when the row has one (Sterling rows never do). */
+  sourceUserId: string | null;
+  /** What a remembered or manual match is kept against; see `backgroundCheckIdentityKey`. */
+  identityKey: string;
+  complianceStatus: BackgroundComplianceStatus | null;
+  checkedOn: string | null;
+  expiresOn: string | null;
+  issuesNote: string | null;
+};
+
+/**
+ * The one format a roster `user_id` is kept in, both as a list entry's
+ * `identityKey` and as `ExternalIdentity.externalId` (provider
+ * `ROSTER_IMPORT`). The #527 migration rewrites identities remembered before
+ * it (the raw id) into this format, so nothing remembered is orphaned.
+ */
+export const USER_ID_IDENTITY_PREFIX = "userId:";
+
+export function userIdIdentityKey(userId: string) {
+  return `${USER_ID_IDENTITY_PREFIX}${userId}`;
+}
+
+/**
+ * Only a provider `user_id` is ever remembered as an `ExternalIdentity`
+ * (#527 N3). A key built from a name, email, birth date, or site is not an
+ * identity the provider issued — and a person holds only one `ROSTER_IMPORT`
+ * identity, so remembering one of those would evict their real `user_id`. A
+ * staff match on such an entry is kept by the match itself instead, and
+ * carried forward to the next upload's entry with the same key.
+ */
+export function isRememberedIdentityKey(identityKey: string) {
+  return identityKey.startsWith(USER_ID_IDENTITY_PREFIX) && identityKey.length > USER_ID_IDENTITY_PREFIX.length;
+}
+
+/**
+ * One row per identity key in an upload (#527 B4). The later row is kept, as
+ * before, but every earlier row it replaces is reported back as a problem so
+ * staff see it — never dropped silently.
+ */
+export function dedupeListRows<T extends { line: number; identityKey: string; firstName: string; lastName: string }>(rows: T[]): {
+  rows: T[];
+  duplicates: Array<{ line: number; name: string; problems: string[] }>;
+} {
+  const byKey = new Map<string, T>();
+  const duplicates: Array<{ line: number; name: string; problems: string[] }> = [];
+  for (const row of [...rows].sort((a, b) => a.line - b.line)) {
+    const earlier = byKey.get(row.identityKey);
+    if (earlier) {
+      duplicates.push({
+        line: earlier.line,
+        name: `${earlier.firstName} ${earlier.lastName}`.trim(),
+        problems: [`Row ${row.line} is the same person, so only row ${row.line} is kept.`],
+      });
+    }
+    byKey.set(row.identityKey, row);
+  }
+  return { rows: [...byKey.values()].sort((a, b) => a.line - b.line), duplicates: duplicates.sort((a, b) => a.line - b.line) };
+}
+
+/**
+ * What recognizes "the same entry" from one upload to the next: the roster
+ * CSV's `user_id` when the row has one (also what is remembered as an
+ * `ExternalIdentity`, see `isRememberedIdentityKey`), otherwise a key built
+ * from the row's own identifying fields in the same priority matching uses
+ * them. Upload counts (added/changed/dropped) and carrying a staff match
+ * forward both compare by this key.
+ */
+export function backgroundCheckIdentityKey(input: {
+  sourceUserId: string | null;
+  normalizedName: string;
+  email: string | null;
+  birthDate: string | null;
+  site: string | null;
+}): string {
+  if (input.sourceUserId) return userIdIdentityKey(input.sourceUserId);
+  // Name as well as email: IMSDA households routinely share one adult's
+  // email, so a spouse on the same address is a different entry (#527 B4).
+  if (input.email) return `email:${input.email}|${input.normalizedName}`;
+  if (input.birthDate) return `name-birth:${input.normalizedName}|${input.birthDate}`;
+  if (input.site) return `name-site:${input.normalizedName}|${matchableName(input.site)}`;
+  return `name:${input.normalizedName}`;
+}
+
+/**
+ * A Sterling row (#388) as a list entry. Only a row with no problems — so a
+ * clear check (`parseSterlingCsv` reports any other status as a problem) —
+ * is ever mapped: dated, with no compliance mark and no note, exactly the
+ * fields the Sterling import stored before #527.
+ */
+export function sterlingRowToListRow(row: SterlingCsvRow): BackgroundCheckListRow {
+  const normalizedName = matchableName(`${row.firstName} ${row.lastName}`);
+  return {
+    line: row.line,
+    firstName: row.firstName,
+    lastName: row.lastName,
+    normalizedName,
+    email: row.email,
+    birthDate: row.birthDate,
+    site: null,
+    sourceUserId: null,
+    identityKey: backgroundCheckIdentityKey({ sourceUserId: null, normalizedName, email: row.email, birthDate: row.birthDate, site: null }),
+    complianceStatus: null,
+    checkedOn: row.checkedOn,
+    expiresOn: row.expiresOn,
+    issuesNote: null,
+  };
+}
+
+/** A roster row (#427) as a list entry. */
+export function rosterRowToListRow(row: RosterBackgroundCsvRow): BackgroundCheckListRow {
+  const normalizedName = matchableName(`${row.firstName} ${row.lastName}`);
+  return {
+    line: row.line,
+    firstName: row.firstName,
+    lastName: row.lastName,
+    normalizedName,
+    email: null,
+    birthDate: null,
+    site: row.site,
+    sourceUserId: row.userId,
+    identityKey: backgroundCheckIdentityKey({ sourceUserId: row.userId, normalizedName, email: null, birthDate: null, site: row.site }),
+    complianceStatus: row.compliance,
+    checkedOn: null,
+    expiresOn: null,
+    issuesNote: row.issuesNote,
+  };
 }
 
 /** How a flag reads on the list and in its CSV. */

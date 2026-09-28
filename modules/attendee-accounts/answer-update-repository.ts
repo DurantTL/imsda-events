@@ -117,6 +117,7 @@ export async function updateTieredRegistrationAnswersWithClient(
         }>;
       }),
       pendingMessageIds: [] as string[],
+      registrationId: registration.id,
     };
   }
   if (!registration.publicFormSubmission) {
@@ -348,7 +349,7 @@ export async function updateTieredRegistrationAnswersWithClient(
         } as unknown as Prisma.InputJsonObject,
       },
     });
-    return { ...result, pendingMessageIds: queued.pendingMessageIds };
+    return { ...result, pendingMessageIds: queued.pendingMessageIds, registrationId: registration.id };
   }
 
   return {
@@ -367,5 +368,6 @@ export async function updateTieredRegistrationAnswersWithClient(
       lockedFieldKeys: lockedFieldKeys(update.attendee.id),
     })),
     pendingMessageIds: [] as string[],
+    registrationId: registration.id,
   };
 }

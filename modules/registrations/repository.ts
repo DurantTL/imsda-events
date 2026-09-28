@@ -1,4 +1,5 @@
 import { getPrisma } from "@/lib/prisma";
+import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
 import { decideEventCapacity } from "@/modules/events/lifecycle";
 import type {
   AttendeeInput,
@@ -416,6 +417,8 @@ export async function createRegistration(eventId: string, input: RegistrationInp
     return registration.id;
   });
 
+  // #527: a person on the background-check list is matched without a re-upload.
+  await refreshBackgroundCheckMatchesForRegistrations([registrationId]);
   return getRegistrationById(eventId, registrationId);
 }
 
@@ -510,6 +513,7 @@ export async function updateRegistration(
     });
   });
 
+  await refreshBackgroundCheckMatchesForRegistrations([registrationId]);
   return getRegistrationById(eventId, registrationId);
 }
 
@@ -642,6 +646,7 @@ export async function addRegistrationAttendee(
           },
         });
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      await refreshBackgroundCheckMatchesForRegistrations([registrationId]);
       return getRegistrationById(eventId, registrationId);
     } catch (error) {
       if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2034") {
@@ -698,5 +703,7 @@ export async function updateRegistrationAttendeeEmail(
     });
   });
 
+  // An email is matching evidence for the background-check list (#527).
+  await refreshBackgroundCheckMatchesForRegistrations([registrationId]);
   return getRegistrationById(eventId, registrationId);
 }

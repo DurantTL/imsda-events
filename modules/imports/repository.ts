@@ -3,6 +3,7 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { ImportRecordStatus, ImportRunStatus, Prisma, type PrismaClient } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
 import { createImportSnapshotIdentity, CsvImportError, parseImportCsv, type NormalizedImportData, type ParsedImportRow } from "@/modules/imports/csv-parser";
 import { parseWr26Bundle, type Wr26BundleFile } from "@/modules/imports/wr26-bundle";
 
@@ -674,6 +675,7 @@ export async function commitImportRun(eventId: string, importRunId: string, acto
     );
   }
 
+  const touchedRegistrationIds = new Set<string>();
   await getPrisma().$transaction(async (tx) => {
     const claimed = await tx.importRun.updateMany({ where: { id: importRunId, eventId, status: ImportRunStatus.PENDING }, data: { status: ImportRunStatus.RUNNING } });
     if (claimed.count !== 1) throw new ImportOperationError("IMPORT_CONFLICT", "Another commit is already processing this import.");
@@ -744,6 +746,7 @@ export async function commitImportRun(eventId: string, importRunId: string, acto
         && (record.proposedAction === "CREATE" || record.proposedAction === "UPDATE")
       ) {
         await syncImportedDetails(tx, eventId, registrationId, data);
+        touchedRegistrationIds.add(registrationId);
       }
       await tx.importRecord.update({ where: { id: record.id }, data: { status: finalStatus, committedEntityId: registrationId } });
     }
@@ -782,6 +785,8 @@ export async function commitImportRun(eventId: string, importRunId: string, acto
     });
   }, { timeout: 30_000 });
 
+  // #527: imported people on the background-check list are matched after commit; best effort.
+  await refreshBackgroundCheckMatchesForRegistrations(touchedRegistrationIds);
   return (await getImportRun(eventId, importRunId))!;
 }
 

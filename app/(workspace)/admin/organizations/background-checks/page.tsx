@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { ShieldAlert, ShieldCheck } from "lucide-react";
 import { BackLink } from "@/components/back-link";
 import { BackgroundCheckImportPanel } from "@/components/background-check-import-panel";
+import { BackgroundCheckReviewPanel } from "@/components/background-check-review-panel";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { backgroundCheckSummary } from "@/modules/background-checks/repository";
 
@@ -24,6 +25,7 @@ export default async function BackgroundChecksPage() {
     { label: "Current checks", value: summary.current, detail: "Clear or expiring soon, or a Sterling check good through today", tone: "green" },
     { label: "Expiring soon", value: summary.expiringSoon, detail: "Marked \"!\" on the roster, or a Sterling check ending within 60 days", tone: "gold" },
     { label: "Not current", value: summary.notCurrent, detail: "Not in compliance or expired; flagged at youth events", tone: "purple" },
+    { label: "Needs a look", value: summary.reviewCount + summary.unmatchedCount, detail: "Rows to review by hand, plus rows not matched to anyone yet", tone: "coral" },
   ];
   return (
     <section className="page-stack">
@@ -92,6 +94,8 @@ export default async function BackgroundChecksPage() {
           </div>
         )}
       </section>
+
+      <BackgroundCheckReviewPanel />
     </section>
   );
 }

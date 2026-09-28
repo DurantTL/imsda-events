@@ -3,6 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
 import {
   editableAttendeeFields,
   isSeminarPreferenceField,
@@ -238,6 +239,8 @@ export async function updateTieredAttendeeAnswers(input: {
   });
   if (!result) return null;
   await processQueuedMessageIdsAfterCommit(result.pendingMessageIds);
+  // #527: a changed answer (a birth date, say) is background-check matching evidence.
+  await refreshBackgroundCheckMatchesForRegistrations([result.registrationId]);
   return {
     expectedUpdatedAt: result.expectedUpdatedAt,
     attendees: result.attendees,
