@@ -56,33 +56,34 @@ const roleScenarios: Scenario[] = eventRoles.map((role) => ({
   clubEvent: false,
 }));
 
-// `clubOversight` is only ever true on a club-billed event for a system admin
-// or an EVENT_ADMIN (`resolveClubOversight`), so the scenarios stay consistent
-// with that rule.
+// `clubOversight` is only ever true on a CLUB-audience event (#481) for a
+// system admin or an EVENT_ADMIN (`resolveClubOversight`), so the scenarios
+// stay consistent with that rule. `clubEvent` means a CLUB audience, not a
+// billing mode.
 const specialScenarios: Scenario[] = [
   {
-    name: "SYSTEM_ADMIN on a non-club event",
+    name: "SYSTEM_ADMIN on a GENERAL event",
     permissions: eventPermissions,
     isSystemAdmin: true,
     clubOversight: false,
     clubEvent: false,
   },
   {
-    name: "SYSTEM_ADMIN with club oversight on a club-billed event",
+    name: "SYSTEM_ADMIN with club oversight on a CLUB-audience event",
     permissions: eventPermissions,
     isSystemAdmin: true,
     clubOversight: true,
     clubEvent: true,
   },
   {
-    name: "EVENT_ADMIN with club oversight on a club-billed event",
+    name: "EVENT_ADMIN with club oversight on a CLUB-audience event",
     permissions: rolePermissions.EVENT_ADMIN,
     isSystemAdmin: false,
     clubOversight: true,
     clubEvent: true,
   },
   {
-    name: "REGISTRATION_MANAGER on a club-billed event (no oversight)",
+    name: "REGISTRATION_MANAGER on a CLUB-audience event (no oversight)",
     permissions: rolePermissions.REGISTRATION_MANAGER,
     isSystemAdmin: false,
     clubOversight: false,
@@ -103,7 +104,7 @@ const specialScenarios: Scenario[] = [
     clubEvent: false,
   },
   {
-    name: "custom: CHECK_IN_STAFF plus MANAGE_REGISTRATION on a club-billed event",
+    name: "custom: CHECK_IN_STAFF plus MANAGE_REGISTRATION on a CLUB-audience event",
     permissions: [...rolePermissions.CHECK_IN_STAFF, "MANAGE_REGISTRATION"],
     isSystemAdmin: false,
     clubOversight: false,
@@ -138,7 +139,7 @@ const moreOnlyPages: Record<string, (scenario: Scenario) => boolean> = {
   "/more/merchandise": (scenario) => has(scenario, "CONFIGURE_EVENT"),
   // app/(workspace)/more/program-assignments/page.tsx
   "/more/program-assignments": (scenario) => canManageProgramAssignments(scenario.permissions),
-  // app/(workspace)/more/club-assignments/page.tsx: permission, then a club-billed event
+  // app/(workspace)/more/club-assignments/page.tsx: permission, then a CLUB-audience event
   "/more/club-assignments": (scenario) => canManageClubAssignments(scenario.permissions) && scenario.clubEvent,
   // app/(workspace)/community/page.tsx
   "/community": (scenario) => has(scenario, "MANAGE_COMMUNICATIONS"),
@@ -212,12 +213,14 @@ const deniedOnPhone: Record<string, readonly string[]> = {
   COMMUNICATIONS_MANAGER: [...configPages, "/people", "/check-in", "/registration-builder", "/more/program-assignments", "/finance", "/more/promo-codes", "/more/reports", "/staff", "/imports", ...clubPages],
   CHECK_IN_STAFF: [...configPages, "/more", "/more/health", "/more/reports", "/registration-builder", "/more/program-assignments", "/finance", "/more/promo-codes", "/communications", "/community", "/staff", "/imports", ...clubPages],
   READ_ONLY_STAFF: [...configPages, "/more", "/more/health", "/more/reports", "/people", "/check-in", "/registration-builder", "/more/program-assignments", "/finance", "/more/promo-codes", "/communications", "/community", "/staff", "/imports", ...clubPages],
-  "SYSTEM_ADMIN on a non-club event": ["/more/clubs", "/more/club-assignments"],
-  "EVENT_ADMIN with club oversight on a club-billed event": ["/admin/organizations"],
-  "REGISTRATION_MANAGER on a club-billed event (no oversight)": ["/more/clubs", "/admin/organizations", ...configPages],
+  // #481: a GENERAL event shows no club features, even for a system admin
+  // (who still reaches the directory from System management, not the phone).
+  "SYSTEM_ADMIN on a GENERAL event": ["/admin/organizations", "/more/clubs", "/more/club-assignments"],
+  "EVENT_ADMIN with club oversight on a CLUB-audience event": ["/admin/organizations"],
+  "REGISTRATION_MANAGER on a CLUB-audience event (no oversight)": ["/more/clubs", "/admin/organizations", ...configPages],
   "custom: CHECK_IN_STAFF plus CONFIGURE_EVENT": ["/more/reports", "/more/program-assignments", "/finance", "/staff", "/imports", "/community", ...clubPages],
   "custom: READ_ONLY_STAFF plus VIEW_REPORTS": [...configPages, "/more/health", "/people", "/finance", "/staff", "/imports", "/community", ...clubPages],
-  "custom: CHECK_IN_STAFF plus MANAGE_REGISTRATION on a club-billed event": [...configPages, "/more/clubs", "/admin/organizations", "/more/reports", "/finance", "/staff"],
+  "custom: CHECK_IN_STAFF plus MANAGE_REGISTRATION on a CLUB-audience event": [...configPages, "/more/clubs", "/admin/organizations", "/more/reports", "/finance", "/staff"],
   "custom: READ_ONLY_STAFF plus MANAGE_REGISTRATION": [...configPages, "/more/program-assignments", "/finance", "/staff", "/community", ...clubPages],
 };
 
@@ -262,9 +265,24 @@ describe("phone navigation reaches every page the desktop sidebar reaches (#475)
 
   it("has a hand-written denial list for every role and non-full-access scenario", () => {
     for (const scenario of scenarios) {
-      if (scenario.name === "SYSTEM_ADMIN with club oversight on a club-billed event") continue;
+      if (scenario.name === "SYSTEM_ADMIN with club oversight on a CLUB-audience event") continue;
       expect(deniedOnPhone[scenario.name]?.length ?? 0, scenario.name).toBeGreaterThan(0);
     }
+  });
+
+  it("gives a system admin on a GENERAL event neither club destination on phone (#481)", () => {
+    const scenario: Scenario = {
+      name: "SYSTEM_ADMIN on a GENERAL event billed to an organization",
+      permissions: eventPermissions,
+      isSystemAdmin: true,
+      clubOversight: false,
+      clubEvent: false,
+    };
+    const phone = phoneDestinations(scenario);
+    expect(phone.has("/admin/organizations")).toBe(false);
+    expect(phone.has("/more/clubs")).toBe(false);
+    expect(sidebarDestinations(scenario).has("/admin/organizations")).toBe(false);
+    expect(resolveClubsAndChurchesEntry(scenario).visible).toBe(false);
   });
 
   it("keeps the event's club oversight card for a system admin with club oversight, alongside the directory", () => {

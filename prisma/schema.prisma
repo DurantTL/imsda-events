@@ -212,6 +212,17 @@ enum SquareWebhookEventStatus {
   IGNORED
 }
 
+/// Explicit event audience (#481): GENERAL is the default; CLUB marks a
+/// Pathfinder/club or church event. Independent of `billingMode` — a CLUB
+/// event may still be attendee-paid (e.g. Man Camp) — so club and church
+/// navigation, club registration oversight, and club reports key off this
+/// field rather than inferring "club event" from deferred-organization
+/// billing.
+enum EventAudience {
+  GENERAL
+  CLUB
+}
+
 enum PromoDiscountType {
   FIXED_CENTS
   PERCENT_BPS
@@ -1120,6 +1131,10 @@ model Event {
   checksAdultBackgrounds Boolean          @default(false)
   attendeeEditPolicy   AttendeeEditPolicy @default(VERIFY_EVERY_EDIT)
   billingMode          EventBillingMode   @default(ATTENDEE_PAY)
+  /// Explicit audience (#481), independent of `billingMode`: club and church
+  /// navigation, club registration oversight, and club reports key off this
+  /// field, not the billing mode.
+  audience             EventAudience      @default(GENERAL)
   seminarPreferenceClosesOn          String?
   seminarPreferenceSelfServiceLocked Boolean @default(false)
   /// Lodging for this event, rendered into messages through the

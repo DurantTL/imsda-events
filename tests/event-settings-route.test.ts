@@ -86,6 +86,9 @@ const normalizedEventPayload = {
   seminarPreferenceClosesOn: null,
   seminarPreferenceSelfServiceLocked: false,
   billingMode: "ATTENDEE_PAY",
+  // Absent, not defaulted (#481 review): the repository turns an absence into
+  // GENERAL on create and "keep the stored audience" on update.
+  audience: undefined,
 };
 
 function eventRequest(
@@ -130,6 +133,21 @@ describe("event settings routes", () => {
     expect(await response.json()).toMatchObject({
       event: { id: "evt_new", isPublished: false },
     });
+  });
+
+  it("leaves an omitted audience absent and forwards an explicit CLUB audience (#481)", async () => {
+    dependencies.createEvent.mockResolvedValue({ id: "evt_new", audience: "GENERAL" });
+
+    await POST(eventRequest("/api/events", "POST", eventPayload));
+    const [forwarded] = dependencies.createEvent.mock.calls[0] as [Record<string, unknown>];
+    expect(forwarded.audience).toBeUndefined();
+
+    dependencies.createEvent.mockClear();
+    await POST(eventRequest("/api/events", "POST", { ...eventPayload, audience: "CLUB" }));
+    expect(dependencies.createEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ audience: "CLUB" }),
+      "usr_system",
+    );
   });
 
   it("requires a system administrator to create an event", async () => {

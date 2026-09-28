@@ -72,7 +72,7 @@ function fixture() {
     startsAt: new Date("2026-12-05T15:00:00.000Z"), endsAt: new Date("2026-12-06T20:00:00.000Z"),
     timezone: "America/Chicago", location: "Fictional Camp", capacity: null, isPublished: true,
     registrationOpensOn: "2026-10-01", registrationClosesOn: "2026-11-30", waitlistEnabled: false,
-    billingMode: "DEFERRED_ORGANIZATION_INVOICE", attendeeTypes: [],
+    billingMode: "DEFERRED_ORGANIZATION_INVOICE", audience: "CLUB", attendeeTypes: [],
   };
   const members = roster.map((member) => ({
     id: member.id, personId: member.personId, attendeeType: member.attendeeType, role: member.role, gender: member.gender,

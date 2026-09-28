@@ -23,7 +23,7 @@ function context(role: string | null, globalRole = "STAFF") {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.eventFindUnique.mockResolvedValue({ id: "event-1", name: "Camporee", billingMode: "DEFERRED_ORGANIZATION_INVOICE" });
+  mocks.eventFindUnique.mockResolvedValue({ id: "event-1", name: "Camporee", audience: "CLUB" });
 });
 
 describe("Pathfinder event managers (#387)", () => {
@@ -37,13 +37,25 @@ describe("Pathfinder event managers (#387)", () => {
     await expect(resolveClubOversight("event-1")).resolves.toMatchObject({ allowed: false });
 
     mocks.resolveEventContext.mockResolvedValue(context("EVENT_ADMIN"));
-    mocks.eventFindUnique.mockResolvedValue({ id: "event-1", name: "Retreat", billingMode: "INDIVIDUAL" });
+    mocks.eventFindUnique.mockResolvedValue({ id: "event-1", name: "Retreat", audience: "GENERAL" });
     await expect(resolveClubOversight("event-1")).resolves.toMatchObject({ allowed: false, clubEvent: false });
   });
 
   it("lets system administrators oversee any club event", async () => {
     mocks.resolveEventContext.mockResolvedValue(context(null, "SYSTEM_ADMIN"));
     await expect(resolveClubOversight("event-1")).resolves.toMatchObject({ allowed: true });
+  });
+
+  it("still oversees a club event that happens to be attendee-paid (#481)", async () => {
+    mocks.resolveEventContext.mockResolvedValue(context("EVENT_ADMIN"));
+    mocks.eventFindUnique.mockResolvedValue({ id: "event-1", name: "Man Camp", audience: "CLUB", billingMode: "ATTENDEE_PAY" });
+    await expect(resolveClubOversight("event-1")).resolves.toMatchObject({ allowed: true, clubEvent: true });
+  });
+
+  it("keeps a system admin out of a GENERAL event's club oversight, even one billed to an organization", async () => {
+    mocks.resolveEventContext.mockResolvedValue(context(null, "SYSTEM_ADMIN"));
+    mocks.eventFindUnique.mockResolvedValue({ id: "event-1", name: "Retreat", audience: "GENERAL", billingMode: "DEFERRED_ORGANIZATION_INVOICE" });
+    await expect(resolveClubOversight("event-1")).resolves.toMatchObject({ allowed: false, clubEvent: false });
   });
 
   it("only opens clubs registered for this event", async () => {
