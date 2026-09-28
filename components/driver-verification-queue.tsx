@@ -225,7 +225,8 @@ export function DriverVerificationQueue({
               </fieldset>
               <label>
                 Note
-                <textarea defaultValue={reviewing.verification?.note ?? ""} maxLength={2000} name="note" rows={3} />
+                <textarea aria-describedby="driver-review-note-help" defaultValue={reviewing.verification?.note ?? ""} maxLength={2000} name="note" rows={3} />
+                <small className="field-help" id="driver-review-note-help">The club&apos;s director and deputies can see this note. Don&apos;t copy background-check details into it.</small>
               </label>
               <div className="form-actions">
                 <button className="secondary-button" disabled={saving} onClick={closeDialog} type="button">Cancel</button>
