@@ -684,3 +684,43 @@ export async function checkAttendeeRosterUnlockRateLimit(
     },
   ], configuration);
 }
+
+const oneDay = 24 * 60 * 60;
+
+/**
+ * A club member transfer request (#489) is matched against another club's
+ * roster, so an unlimited one is a slow way to test names against it, even
+ * though every answer reads "request sent". Held per acting director (their
+ * attendee account, or a staff user acting as director), per receiving club,
+ * and per client.
+ */
+export async function checkClubTransferRequestRateLimit(
+  request: Request,
+  actorKey: string,
+  organizationId: string,
+) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  const actor = hashRateLimitIdentifier("club-transfer-actor", actorKey, configuration);
+  const club = hashRateLimitIdentifier("club-transfer-club", organizationId, configuration);
+  return evaluate([
+    {
+      policy: "club-transfer.request.client",
+      limit: 20,
+      windowSeconds: oneHour,
+      identifierHashes: [client],
+    },
+    {
+      policy: "club-transfer.request.actor",
+      limit: 10,
+      windowSeconds: oneHour,
+      identifierHashes: [actor],
+    },
+    {
+      policy: "club-transfer.request.club",
+      limit: 30,
+      windowSeconds: oneDay,
+      identifierHashes: [club],
+    },
+  ], configuration);
+}

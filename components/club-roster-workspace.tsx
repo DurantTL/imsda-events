@@ -49,6 +49,7 @@ export function ClubRosterWorkspace({
   honorSummaries,
   honorsHref,
   complianceFilter: initialComplianceFilter = null,
+  headingActions,
 }: {
   /** Directors and deputies only; a registrar enters birth dates but sees ages (#375). */
   canSeeBirthDates: boolean;
@@ -71,6 +72,8 @@ export function ClubRosterWorkspace({
   honorsHref?: string;
   /** `?compliance=` from the What's next reminder link (#479): narrows the list to that one flag. */
   complianceFilter?: ComplianceFilterValue | null;
+  /** Extra actions beside "Add to roster", such as "Request a transfer" (#489). */
+  headingActions?: React.ReactNode;
 }) {
   const [members, setMembers] = useState(initialMembers);
   const [editing, setEditing] = useState<RosterMemberRecord | null>(null);
@@ -219,6 +222,7 @@ export function ClubRosterWorkspace({
                 <Plus aria-hidden="true" size={16} /> Add to roster
               </button>
             )}
+            {!readOnly && headingActions}
           </div>
         </div>
         {needBirthDates > 0 && (
