@@ -1790,6 +1790,7 @@ select:focus-visible {
 .forbidden-state > span { display: grid; width: 58px; height: 58px; margin-bottom: 16px; place-items: center; border-radius: 17px; background: var(--imsda-purple-soft); color: var(--imsda-purple); }
 .forbidden-state h2 { margin: 3px 0 7px; }
 .forbidden-state > p:not(.eyebrow) { max-width: 500px; margin: 0; color: var(--muted); font-size: 0.72rem; }
+.forbidden-state .forbidden-state-action { margin-top: 16px; }
 
 .import-top-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(360px, 0.9fr); gap: 12px; }
 .import-upload-panel > .quiet-copy { margin: -4px 0 16px; }
@@ -4110,6 +4111,8 @@ select:focus-visible {
   text-decoration: none;
 }
 .public-event-not-found-link:hover { text-decoration: underline; }
+.public-not-found-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; }
+.public-not-found-links .public-event-not-found-link { margin-top: 0; }
 
 /* Private registration confirmation and contact management */
 .public-manage-hero {

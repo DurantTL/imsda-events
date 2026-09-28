@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { connection } from "next/server";
 import { notFound } from "next/navigation";
 import {
@@ -88,13 +89,13 @@ export default async function PublicManagePage({
     <main className="public-registration-page public-manage-page">
       <header className="public-registration-header">
         <div className="public-registration-header-inner">
-          <a
+          <Link
             className="public-registration-brand public-event-brand-link"
-            href="https://imsda.org/"
+            href="/"
           >
             <BrandMark />
             <span><strong>IMSDA</strong><small>Events</small></span>
-          </a>
+          </Link>
           <span className="public-registration-secure">
             <LockKeyhole size={15} aria-hidden="true" />
             Private registration link
