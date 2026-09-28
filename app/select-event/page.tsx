@@ -21,15 +21,31 @@ function formatEventDates(start: Date, end: Date, timeZone: string) {
  * memberships and no usable remembered event (#108 queue 1). Lives outside
  * `(workspace)`, whose layout would otherwise pick an event for them before
  * this page ever renders.
+ *
+ * Also where `resolveEventContext` sends a request for an event id that
+ * doesn't match one of this account's own events — missing, mistyped,
+ * deleted, or just not permitted (#465). `?unavailable=1` marks that case: it
+ * shows a "that event isn't available" notice instead of the ordinary
+ * greeting, and, unlike the ordinary picker, does not auto-continue into an
+ * account's one remaining event without saying why it's here.
  */
-export default async function SelectEventPage() {
+export default async function SelectEventPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ unavailable?: string }>;
+}) {
+  const { unavailable: unavailableParam } = await searchParams;
+  const unavailable = unavailableParam === "1";
+
   const session = await getCurrentSession();
   if (!session.user) redirect("/login");
   if (session.user.globalRole === "SYSTEM_ADMIN") redirect("/admin");
 
   const events = await listEventsForUser(session.user.id, false);
   if (events.length === 0) redirect("/no-access");
-  if (events.length === 1) redirect(`/overview?event=${encodeURIComponent(events[0].id)}`);
+  if (events.length === 1 && !unavailable) {
+    redirect(`/overview?event=${encodeURIComponent(events[0].id)}`);
+  }
 
   return (
     <main className="auth-page">
@@ -41,8 +57,15 @@ export default async function SelectEventPage() {
         <div className="auth-heading">
           <p className="eyebrow">Staff workspace</p>
           <h1>Choose an event</h1>
-          <p>{session.user.email} has access to more than one event. Pick one to continue.</p>
+          {unavailable
+            ? <p>That event isn&rsquo;t available. It may not exist, or this account may not have access to it.</p>
+            : <p>{session.user.email} has access to more than one event. Pick one to continue.</p>}
         </div>
+        {unavailable && (
+          <div className="inline-notice error" role="status">
+            <span>Choose one of your events below to continue.</span>
+          </div>
+        )}
         <SelectEventList
           events={events.map((event) => ({
             id: event.id,

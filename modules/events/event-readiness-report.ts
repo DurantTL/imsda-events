@@ -93,12 +93,22 @@ export async function collectEventReadinessReport(
     startsOn: event.startsAt.toISOString(),
     endsOn: event.endsAt.toISOString(),
   }, publishedFormCount);
-  const publishChecks: OperationalReadinessCheck[] = publishReadiness.items.map((item) => ({
-    code: `PUBLISH_${item.id.replaceAll("-", "_").toUpperCase()}`,
-    label: item.label,
-    severity: item.complete ? "READY" : "BLOCKER",
-    detail: item.detail,
-  }));
+  const publishChecks: OperationalReadinessCheck[] = [
+    ...publishReadiness.items.map((item) => ({
+      code: `PUBLISH_${item.id.replaceAll("-", "_").toUpperCase()}`,
+      label: item.label,
+      severity: item.complete ? "READY" : "BLOCKER",
+      detail: item.detail,
+    } satisfies OperationalReadinessCheck)),
+    // Never a blocker (#467): a misconfigured optional info URL is worth
+    // flagging, but it must never stop publish.
+    ...publishReadiness.optionalItems.map((item) => ({
+      code: `PUBLISH_${item.id.replaceAll("-", "_").toUpperCase()}`,
+      label: item.label,
+      severity: item.complete ? "READY" : "WARNING",
+      detail: item.detail,
+    } satisfies OperationalReadinessCheck)),
+  ];
 
   const square = getSquareConfiguration(env);
   const facts: OperationalReadinessFacts = {

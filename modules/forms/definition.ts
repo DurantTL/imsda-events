@@ -26,6 +26,32 @@ export function isChoiceFieldType(type: string): type is typeof choiceFieldTypes
   return choiceFieldTypes.includes(type as typeof choiceFieldTypes[number]);
 }
 
+/** The NUMBER field keys that hold an attendee's age (#483). */
+export const AGE_FIELD_KEYS = ["attendee_age", "age"] as const;
+
+export function isAgeFieldKey(key: string) {
+  return (AGE_FIELD_KEYS as readonly string[]).includes(key);
+}
+
+/** Age can't be entered outside a plausible human range when a field carries
+ * no more specific `ageBounds` (#483). */
+export const DEFAULT_AGE_BOUNDS = { minimumAge: 0, maximumAge: 120 } as const;
+
+/** The allowed numeric range for a NUMBER field: its own `ageBounds` when
+ * configured, else the default age range for a recognized age field key, else
+ * null (no age-specific bound — the general 0–100,000 numeric check applies). */
+export function numberFieldBounds(
+  field: Pick<RegistrationFormField, "key" | "ageBounds">,
+): { minimumAge: number; maximumAge: number } | null {
+  if (field.ageBounds) {
+    return {
+      minimumAge: field.ageBounds.minimumAge ?? DEFAULT_AGE_BOUNDS.minimumAge,
+      maximumAge: field.ageBounds.maximumAge ?? DEFAULT_AGE_BOUNDS.maximumAge,
+    };
+  }
+  return isAgeFieldKey(field.key) ? { ...DEFAULT_AGE_BOUNDS } : null;
+}
+
 export function getAvailabilityMode(field: Pick<RegistrationFormField, "type" | "choiceLimits" | "availabilityMode">) {
   if (field.availabilityMode) return field.availabilityMode;
   if (field.choiceLimits !== undefined) return field.type === "RANKED_CHOICE" ? "RANKED_INTEREST" : "CAPACITY";
@@ -68,6 +94,19 @@ export const formFieldSchema = z.object({
    * rankings for Teens (WR26): shown with a note, answerable, never forced.
    */
   optionalWhen: z.object({ fieldKey: z.string().trim().min(2).max(60), operator: z.enum(conditionOperators), value: z.string().max(120).default("") }).optional(),
+  /**
+   * A numeric field's allowed range (#483), e.g. the configured age bands
+   * (#133) narrowed to one attendee type. Only meaningful on a NUMBER field;
+   * a bare age field (`attendee_age`/`age`) without this falls back to
+   * `DEFAULT_AGE_BOUNDS` rather than accepting any number.
+   */
+  ageBounds: z.object({
+    minimumAge: z.number().int().min(0).max(130).nullable(),
+    maximumAge: z.number().int().min(0).max(130).nullable(),
+  }).refine(
+    (bounds) => bounds.minimumAge === null || bounds.maximumAge === null || bounds.minimumAge <= bounds.maximumAge,
+    { message: "Minimum age cannot exceed maximum age." },
+  ).optional(),
 }).superRefine((field, context) => {
   if (isChoiceFieldType(field.type) && field.options.length < 2 && !field.optionSource) {
     context.addIssue({ code: "custom", path: ["options"], message: "Choice fields need at least two choices." });
@@ -1132,7 +1171,14 @@ export function validateTestResponses(
       }
       if (field.type === "NUMBER") {
         const numeric = typeof value === "number" || typeof value === "string" ? Number(value) : Number.NaN;
-        if (!Number.isFinite(numeric) || numeric < 0 || numeric > 100000) issues.push({ fieldId: field.id, key: field.key, message: `${field.label} must be a number from 0 to 100,000.` });
+        const bounds = numberFieldBounds(field);
+        if (bounds) {
+          if (!Number.isInteger(numeric) || numeric < bounds.minimumAge || numeric > bounds.maximumAge) {
+            issues.push({ fieldId: field.id, key: field.key, message: `${field.label} must be a whole number from ${bounds.minimumAge} to ${bounds.maximumAge}.` });
+          }
+        } else if (!Number.isFinite(numeric) || numeric < 0 || numeric > 100000) {
+          issues.push({ fieldId: field.id, key: field.key, message: `${field.label} must be a number from 0 to 100,000.` });
+        }
       }
       if (field.type === "CHECKBOX" && typeof value !== "boolean") issues.push({ fieldId: field.id, key: field.key, message: `${field.label} must be checked or unchecked.` });
       if (field.type === "ADDRESS") {
@@ -1171,6 +1217,14 @@ export function validateTestResponses(
 }
 
 export const createFormSchema = z.object({ templateKey: z.string().trim().min(1).max(80) });
+export const updateFormSlugSchema = z.object({
+  slug: z.string()
+    .trim()
+    .toLowerCase()
+    .min(1, "Enter a short web address.")
+    .max(60)
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers, and single hyphens only."),
+});
 export const updateFormSchema = z.object({
   definition: registrationFormDefinitionSchema,
   expectedUpdatedAt: z.iso.datetime(),

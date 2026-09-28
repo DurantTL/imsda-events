@@ -37,10 +37,10 @@ export default async function Home() {
     <main className="public-registration-page public-calendar-page public-home-page">
       <header className="public-registration-header">
         <div className="public-registration-header-inner">
-          <a className="public-registration-brand public-event-brand-link" href="https://imsda.org/">
+          <Link className="public-registration-brand public-event-brand-link" href="/">
             <BrandMark />
             <span><strong>IMSDA</strong><small>Events</small></span>
-          </a>
+          </Link>
           {/* Staff sign-in isn't linked from the public site; administrators use /login directly. */}
           {session.user && (
             <Link className="text-button" href="/overview">

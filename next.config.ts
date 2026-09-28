@@ -18,7 +18,8 @@ const squareFontOrigins = [
 ].join(" ");
 const buildTsconfigPath = process.env.NEXT_BUILD_TSCONFIG?.trim() || "tsconfig.json";
 
-// OpenStreetMap's tile server, for the public club map (#437) only.
+// OpenStreetMap's tile server, for the public club map (#437) and the
+// church-location pin picker (#480) only.
 const mapTileOrigin = "https://tile.openstreetmap.org";
 
 function contentSecurityPolicy(frameAncestors: string, extraImageOrigins = "") {
@@ -67,6 +68,41 @@ const nextConfig: NextConfig = {
   typescript: {
     tsconfigPath: buildTsconfigPath,
   },
+  async redirects() {
+    return [
+      // The public events home lives at "/" (#437), and "/events" is a
+      // predictable address people guess (#470). This matches "/events"
+      // exactly, never "/events/<slug>". A permanent redirect is cached by
+      // browsers and would shadow a real page, so whoever builds #106's
+      // separate "/events" directory must remove this rule in that change.
+      {
+        source: "/events",
+        destination: "/",
+        permanent: true,
+      },
+      // A signed-out visitor to check-in goes to staff sign-in and comes
+      // back here afterwards (#470). The staff workspace layout redirects
+      // signed-out requests to a bare "/login" and, since layouts render in
+      // parallel with pages, wins over the page's own redirect; this rule
+      // runs before rendering. It only checks that the session cookie is
+      // absent (the name matches SESSION_COOKIE_NAME, asserted in
+      // tests/route-fallbacks.test.ts); the page and layout still verify
+      // any session that is present. Not permanent: it depends on a cookie.
+      {
+        source: "/check-in",
+        has: [{ type: "query", key: "event", value: "(?<event>[A-Za-z0-9_-]{1,64})" }],
+        missing: [{ type: "cookie", key: "imsda_session" }],
+        destination: "/login?next=/check-in%3Fevent%3D:event",
+        permanent: false,
+      },
+      {
+        source: "/check-in",
+        missing: [{ type: "cookie", key: "imsda_session" }],
+        destination: "/login?next=/check-in",
+        permanent: false,
+      },
+    ];
+  },
   async headers() {
     return [
       {
@@ -88,6 +124,19 @@ const nextConfig: NextConfig = {
         // (for a header key set by two matching rules, Next.js sends the
         // last), leaving /clubs with a single policy.
         source: "/clubs",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: contentSecurityPolicy("'none'", mapTileOrigin),
+          },
+        ],
+      },
+      {
+        // The church location editor's "Pick on map" helper (#480) is the
+        // only staff page that loads the same tiles. Scoped the same way as
+        // /clubs above: this rule must stay after the site-wide one so its
+        // Content-Security-Policy is the one Next.js sends for this path.
+        source: "/admin/organizations/:organizationId/location",
         headers: [
           {
             key: "Content-Security-Policy",
