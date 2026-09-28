@@ -10,6 +10,14 @@ describe("CSV export safety", () => {
     expect(csvCell("=HYPERLINK(\"bad\")")).toBe('"\'=HYPERLINK(""bad"")"');
   });
 
+  it("neutralizes a leading tab", () => {
+    expect(csvCell("\tShady")).toBe('"\'\tShady"');
+  });
+
+  it("neutralizes a leading carriage return", () => {
+    expect(csvCell("\rShady")).toBe('"\'\rShady"');
+  });
+
   it("uses CRLF rows for downloadable exports", () => {
     expect(toCsv([["Name", "Balance"], ["Alicia", 0]])).toBe('"Name","Balance"\r\n"Alicia","0"\r\n');
   });
