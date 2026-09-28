@@ -7219,6 +7219,21 @@ select:focus-visible {
 .club-event-heading .text-button { justify-self: start; display: inline-flex; align-items: center; gap: 4px; }
 .club-event-heading h2 { margin: 2px 0 0; }
 .club-event-heading p { margin: 0; }
+.club-year-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.club-year-tile {
+  display: flex; flex-direction: column; gap: 6px;
+  border: 1px solid var(--line); border-radius: 16px; background: #fff; padding: 14px 16px;
+}
+.club-year-tile-heading { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--imsda-navy); font-size: 0.78rem; font-weight: 800; }
+.club-year-tile-stat { margin: 0; font-size: 1.5rem; font-weight: 800; line-height: 1.1; color: var(--ink); }
+.club-year-tile-detail { display: flex; align-items: center; gap: 4px; margin: 0; color: var(--muted); font-size: 0.72rem; }
+.club-year-tile-list { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 0.7rem; }
+.club-year-tile-list li { display: flex; align-items: center; gap: 3px; }
+.club-year-tile-link { margin-top: auto; align-self: flex-start; }
+.club-year-tiles-points { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; }
+@media (max-width: 480px) {
+  .club-year-tiles { grid-template-columns: 1fr; }
+}
 @media (max-width: 1228px) {
   .account-nav, .account-page-body, .account-overview-grid { margin-right: 24px; margin-left: 24px; }
   .account-nav-secondary { margin: 0; }

@@ -47,6 +47,7 @@ import {
   clubYearMonths,
   isLockedForClub,
   isOnTime,
+  monthlyReportProgress,
   pickedTotal,
   reportDueDate,
   reportProblems,
@@ -121,6 +122,15 @@ describe("monthly report rules (#377)", () => {
     expect(clubYearMonths("2026-27")[0]).toBe("2026-09");
     expect(clubYearMonths("2026-27")[11]).toBe("2027-08");
     expect(reportableMonths("2026-27", new Date("2026-11-15T18:00:00Z"))).toEqual(["2026-09", "2026-10", "2026-11"]);
+  });
+
+  it("counts filed and missing months for the club-year dashboard (#488)", () => {
+    const due = reportableMonths("2026-27", new Date("2026-11-15T18:00:00Z"));
+    expect(monthlyReportProgress(due, new Set(["2026-09", "2026-10"]))).toEqual({ filed: 2, missing: 1 });
+    expect(monthlyReportProgress(due, new Set())).toEqual({ filed: 0, missing: 3 });
+    expect(monthlyReportProgress(due, new Set(due))).toEqual({ filed: 3, missing: 0 });
+    // A club's own draft isn't "filed" (#426): only months in `filedMonths` (submitted) count.
+    expect(monthlyReportProgress(["2026-09"], new Set())).toEqual({ filed: 0, missing: 1 });
   });
 });
 

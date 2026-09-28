@@ -1,13 +1,13 @@
 import Link from "next/link";
-import { CalendarDays, CheckCircle2, CircleAlert, FileText, UserCog, UsersRound } from "lucide-react";
+import { CalendarDays, CheckCircle2, FileText, UserCog } from "lucide-react";
 import { ClubRosterWorkspace } from "@/components/club-roster-workspace";
-import { complianceReminders } from "@/modules/background-checks/domain";
+import { ClubYearTiles } from "@/components/club-year-tiles";
 import { clubComplianceReminderCounts, clubRosterComplianceStatuses } from "@/modules/background-checks/repository";
 import { formatCalendarDate } from "@/modules/club-registrations/domain";
 import { listClubEvents } from "@/modules/club-registrations/repository";
-import { reportMonthLabel, reportableMonths, yearToDate } from "@/modules/club-reports/domain";
+import { monthlyReportProgress, reportMonthLabel, reportableMonths, yearToDate } from "@/modules/club-reports/domain";
 import { getClubReportYear } from "@/modules/club-reports/repository";
-import { clubYearFor } from "@/modules/club-rosters/domain";
+import { clubYearFor, rosterYearSummary } from "@/modules/club-rosters/domain";
 import { listRoster } from "@/modules/club-rosters/repository";
 import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
 import { listClubTeam } from "@/modules/organizations/director-grants-repository";
@@ -56,44 +56,34 @@ export async function ClubOverview({
     // Counts only, no names (#479): shown even to a viewer who never gets `backgroundChecks`.
     !backgroundChecks && complianceCounts ? clubComplianceReminderCounts(organizationId, clubYear) : null,
   ]);
-  const reminders = reminderCounts ? complianceReminders(reminderCounts, "") : [];
-  const active = members.filter((member) => member.status === "ACTIVE");
   const registered = events.filter((event) => event.registration);
+  const open = events.filter((event) => !event.registration && event.available && event.phase === "OPEN");
   // A club's own draft isn't shown here as filed (#426); staff open the report itself to see or edit one.
   const submittedReports = reportYear.reports.filter((report) => report.status === "SUBMITTED");
   const reportsByMonth = new Map(submittedReports.map((report) => [report.reportMonth, report]));
-  const months = reportableMonths(clubYear, now).reverse();
+  const dueMonths = reportableMonths(clubYear, now);
+  const months = [...dueMonths].reverse();
+  const roster = rosterYearSummary(members);
+  const complianceTile = compliance
+    ? { missing: compliance.missing, notInCompliance: compliance.notInCompliance, expiringSoon: compliance.expiringSoon }
+    : reminderCounts;
+  const reportProgress = monthlyReportProgress(dueMonths, new Set(submittedReports.map((report) => report.reportMonth)));
 
   return (
     <>
-      <div className="club-home-stats">
-        <div className="club-home-stat">
-          <UsersRound size={20} aria-hidden="true" />
-          <strong>{active.length}</strong>
-          <span>on the {clubYear} roster</span>
-        </div>
-        <div className="club-home-stat">
-          <CheckCircle2 size={20} aria-hidden="true" />
-          <strong>{registered.length}</strong>
-          <span>{registered.length === 1 ? "upcoming event registered" : "upcoming events registered"}</span>
-        </div>
-        <div className="club-home-stat">
-          <FileText size={20} aria-hidden="true" />
-          <strong>{yearToDate(submittedReports, reportYear.registrationOnTime)}</strong>
-          <span>points this club year</span>
-        </div>
-      </div>
-
-      {reminders.length > 0 && (
-        <ul className="public-manage-club-list">
-          {reminders.map((reminder) => (
-            <li key={reminder.key}>
-              <CircleAlert size={17} aria-hidden="true" />
-              <span><strong>{reminder.text}</strong></span>
-            </li>
-          ))}
-        </ul>
-      )}
+      <ClubYearTiles
+        compliance={complianceTile}
+        complianceHref="#open-club-roster"
+        events={{ open: open.length, registered: registered.length }}
+        eventsHref="#open-club-events"
+        reports={reportProgress}
+        reportsHref="#open-club-reports"
+        roster={roster}
+        rosterHref="#open-club-roster"
+      />
+      <p className="club-year-tiles-points quiet-copy">
+        <FileText size={15} aria-hidden="true" /> {yearToDate(submittedReports, reportYear.registrationOnTime)} points this club year.
+      </p>
 
       <section className="public-manage-card" aria-labelledby="open-club-team">
         <div className="public-manage-card-heading">
@@ -117,15 +107,17 @@ export async function ClubOverview({
         )}
       </section>
 
-      <ClubRosterWorkspace
-        birthDatesEndpoint={birthDatesEndpoint}
-        canSeeBirthDates={Boolean(birthDatesEndpoint)}
-        clubYear={clubYear}
-        complianceStatuses={compliance?.statuses}
-        initialMembers={members}
-        organizationId={organizationId}
-        readOnly
-      />
+      <div id="open-club-roster">
+        <ClubRosterWorkspace
+          birthDatesEndpoint={birthDatesEndpoint}
+          canSeeBirthDates={Boolean(birthDatesEndpoint)}
+          clubYear={clubYear}
+          complianceStatuses={compliance?.statuses}
+          initialMembers={members}
+          organizationId={organizationId}
+          readOnly
+        />
+      </div>
 
       <section className="public-manage-card" aria-labelledby="open-club-events">
         <div className="public-manage-card-heading">

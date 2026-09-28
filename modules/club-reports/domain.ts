@@ -133,6 +133,19 @@ export function formatDueDate(date: string) {
   return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
 }
 
+export type MonthlyReportProgress = { filed: number; missing: number };
+
+/**
+ * Filed and missing counts for the club-year dashboard (#488), over the
+ * months due so far this club year (`reportableMonths`). A club's own draft
+ * isn't "filed" here either (#426) — pass only the months with a submitted
+ * report.
+ */
+export function monthlyReportProgress(due: readonly string[], filedMonths: ReadonlySet<string>): MonthlyReportProgress {
+  const filed = due.filter((month) => filedMonths.has(month)).length;
+  return { filed, missing: due.length - filed };
+}
+
 /** Year-to-date points: every report's total, plus the yearly registration when it was on time. */
 export function yearToDate(reports: ReadonlyArray<{ totalPoints: number }>, registrationOnTime: boolean) {
   return reports.reduce((sum, report) => sum + report.totalPoints, 0) + (registrationOnTime ? YEARLY_REGISTRATION_POINTS : 0);
