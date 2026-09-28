@@ -306,6 +306,9 @@ export async function removeRosterMember(organizationId: string, memberId: strin
               attendeeAccountLinks: true,
               userLinks: true,
               clubRosterMemberships: true,
+              // A person's honor history (#486) is kept even after they leave
+              // every roster, so it's there if they come back or transfer in.
+              memberHonorEntries: true,
             },
           },
         },

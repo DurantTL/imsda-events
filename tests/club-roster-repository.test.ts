@@ -33,7 +33,7 @@ const youth = {
 
 function fakeDatabase() {
   let sequence = 0;
-  const db = { people: [] as Row[], members: [] as Row[], otherReferences: new Set<string>() };
+  const db = { people: [] as Row[], members: [] as Row[], otherReferences: new Set<string>(), honorEntryPersons: new Set<string>() };
   const matches = (row: Row, where: Record<string, unknown> = {}) => Object.entries(where).every(([key, value]) => {
     if (value === undefined) return true;
     if (value && typeof value === "object" && "not" in value) return row[key] !== (value as { not: unknown }).not;
@@ -58,6 +58,7 @@ function fakeDatabase() {
             householdMembers: 0, heldRegistrations: 0, registrationEvents: referenced, externalIdentities: 0,
             notes: 0, attendeeAccountLinks: 0, userLinks: 0,
             clubRosterMemberships: db.members.filter((member) => member.personId === person.id).length,
+            memberHonorEntries: db.honorEntryPersons.has(person.id) ? 1 : 0,
           },
         };
       },
@@ -222,5 +223,17 @@ describe("club roster storage", () => {
     expect(db.people.map((person) => person.firstName)).toEqual(["Other"]);
     expect(await listRoster("club-1", "2026-27", now)).toEqual([]);
     await expect(updateRosterMember("club-1", lone, { role: "Back" }, actor, now)).rejects.toMatchObject({ code: "MEMBER_REMOVED" });
+  });
+
+  it("keeps a person on file when they still have honor history, even with no other reference (#486)", async () => {
+    const id = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const personId = db.members[0].personId as string;
+    db.honorEntryPersons.add(personId);
+
+    await removeRosterMember("club-1", id, actor, now);
+
+    expect(db.members[0]).toMatchObject({ status: "REMOVED", sealedBirthDate: null, personId: null });
+    // The Person row survives so their honor history (keyed by personId) is never orphaned.
+    expect(db.people.some((person) => person.id === personId)).toBe(true);
   });
 });

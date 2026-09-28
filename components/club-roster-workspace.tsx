@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { Eye, Pencil, Plus, Power, Save, Trash2, UsersRound, X } from "lucide-react";
+import Link from "next/link";
+import { Award, Eye, Pencil, Plus, Power, Save, Trash2, UsersRound, X } from "lucide-react";
 import { BirthDateField } from "@/components/birth-date-field";
 import { RosterCsvImport } from "@/components/roster-csv-import";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
@@ -15,6 +16,7 @@ import {
   rosterSectionOf,
 } from "@/modules/club-rosters/domain";
 import type { RosterMemberRecord } from "@/modules/club-rosters/repository";
+import type { CurrentMemberHonor } from "@/modules/honors/member-honor-domain";
 
 type RosterResponse = {
   members?: RosterMemberRecord[];
@@ -41,6 +43,8 @@ export function ClubRosterWorkspace({
   readOnly = false,
   birthDatesEndpoint,
   complianceStatuses,
+  honorSummaries,
+  honorsHref,
 }: {
   /** Directors and deputies only; a registrar enters birth dates but sees ages (#375). */
   canSeeBirthDates: boolean;
@@ -57,6 +61,10 @@ export function ClubRosterWorkspace({
    * caller is allowed to see it (club directors never get a note).
    */
   complianceStatuses?: Record<string, RosterComplianceInfo>;
+  /** Each active member's current honors (#486), keyed by roster member id. Omitted where honors aren't shown here. */
+  honorSummaries?: Record<string, CurrentMemberHonor[]>;
+  /** The club's Honors page, linked from each honor cell. */
+  honorsHref?: string;
 }) {
   const [members, setMembers] = useState(initialMembers);
   const [editing, setEditing] = useState<RosterMemberRecord | null>(null);
@@ -98,7 +106,7 @@ export function ClubRosterWorkspace({
     { key: "MEMBERS", title: "Members", empty: "No Pathfinders on the roster yet.", people: visible.filter((member) => rosterSectionOf(member.attendeeType) === "MEMBERS") },
   ] as const;
   /** Name, Age, Type, Current class, Role, Gender, Flags — plus every optional column, for the section-title row's colSpan. */
-  const rosterColumnCount = 7 + (birthDates ? 1 : 0) + (complianceStatuses ? 1 : 0) + (readOnly ? 0 : 1);
+  const rosterColumnCount = 7 + (birthDates ? 1 : 0) + (complianceStatuses ? 1 : 0) + (honorSummaries ? 1 : 0) + (readOnly ? 0 : 1);
 
   async function call(url: string, method: string, body: unknown, success: string) {
     setSaving(true);
@@ -267,6 +275,7 @@ export function ClubRosterWorkspace({
                   <th>Gender</th>
                   <th>Flags</th>
                   {complianceStatuses && <th>Background check</th>}
+                  {honorSummaries && <th>Honors</th>}
                   {!readOnly && <th><span className="sr-only">Actions</span></th>}
                 </tr>
               </thead>
@@ -324,6 +333,20 @@ export function ClubRosterWorkspace({
                                     )}
                                   </>
                                 ) : "—"}
+                              </td>
+                            )}
+                            {honorSummaries && (
+                              <td data-label="Honors">
+                                {(honorSummaries[member.id] ?? []).length === 0 ? "—" : (
+                                  <div className="roster-flag-list">
+                                    {(honorSummaries[member.id] ?? []).map((honor) => (
+                                      <span className={`status-chip ${honor.status === "COMPLETED" ? "green" : "gold"}`} key={honor.honorId}>
+                                        <Award aria-hidden="true" size={12} /> {honor.honorName}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                                {honorsHref && <Link className="text-button" href={honorsHref}>Edit</Link>}
                               </td>
                             )}
                             {!readOnly && <td className="roster-card-actions" data-label="Actions">

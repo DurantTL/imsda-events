@@ -533,6 +533,7 @@ model User {
   actorOnAttendeeAccountPersonLinks  AttendeeAccountPersonLink[]  @relation("AttendeeAccountPersonLinkActorUser")
   staffActAs                         StaffActAs[]                 @relation("StaffActAsUser")
   createdClubRosterMembers           ClubRosterMember[]           @relation("ClubRosterMemberCreatedByUser")
+  recordedMemberHonorEntries         MemberHonorEntry[]           @relation("MemberHonorEntryRecordedByUser")
   createdClubMeetingNotes            ClubMeetingNote[]             @relation("ClubMeetingNoteCreatedByUser")
   updatedClubMeetingNotes            ClubMeetingNote[]             @relation("ClubMeetingNoteUpdatedByUser")
   submittedClubEventRegistrations    ClubEventRegistration[]      @relation("ClubEventRegistrationSubmittedByUser")
@@ -754,6 +755,7 @@ model AttendeeAccount {
   createdClubInvites                ClubInvite[]                     @relation("ClubInviteCreatedByAccount")
   revokedClubRoles                  ClubDirectorGrant[]              @relation("ClubDirectorGrantRevokedByAccount")
   createdClubRosterMembers          ClubRosterMember[]          @relation("ClubRosterMemberCreatedBy")
+  recordedMemberHonorEntries        MemberHonorEntry[]          @relation("MemberHonorEntryRecordedBy")
   submittedClubRegistrations        ClubEventRegistration[]     @relation("ClubEventRegistrationSubmittedBy")
   clubRegistrationDrafts            ClubRegistrationDraft[]     @relation("ClubRegistrationDraftUpdatedBy")
   /// Club registration amendments this account made as a director reopening
@@ -1392,6 +1394,7 @@ model Person {
   matchCandidatesAsB   PersonMatchCandidate[] @relation("PersonMatchCandidateAsB")
   clubRosterMemberships ClubRosterMember[]
   backgroundCheck       BackgroundCheck?
+  memberHonorEntries    MemberHonorEntry[]
 
   @@index([lastName, firstName])
 }
@@ -1595,6 +1598,7 @@ model Organization {
   yearStandings      ClubYearStanding[]
   churchLocation     ChurchLocation?
   staffActAs         StaffActAs[]
+  memberHonorEntries MemberHonorEntry[]
 
   @@index([type, isActive, name])
   @@index([parentOrganizationId, isActive])
@@ -3065,7 +3069,8 @@ model Honor {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  offerings HonorOffering[]
+  offerings     HonorOffering[]
+  memberEntries MemberHonorEntry[]
 
   @@index([isActive, name])
   @@index([normalizedName])
@@ -3314,6 +3319,45 @@ model HonorEnrollment {
   @@index([registrationId])
 }
 
+enum MemberHonorStatus {
+  IN_PROGRESS
+  COMPLETED
+}
+
+/// One append-only entry in a member's year-round honor record (#486). The
+/// record follows the durable `Person`, never a `ClubRosterMember` row, so it
+/// carries across a club-year rollover (#414) and a future club transfer
+/// (#489) without copying. A correction is never edited in place: it is a new
+/// entry, and `seq` (not `createdAt`, which can tie under a bulk write) orders
+/// history so the highest `seq` per (personId, honorId) is always the current
+/// status. `organizationId` records which club made the entry, for the audit
+/// trail only — it is never part of the identity or the read key.
+model MemberHonorEntry {
+  id                  String            @id @default(cuid())
+  seq                 Int               @default(autoincrement())
+  personId            String
+  honorId             String
+  status              MemberHonorStatus
+  /// A calendar date (`YYYY-MM-DD`), required for COMPLETED and blank for
+  /// IN_PROGRESS. Never a birth date or any other sealed field.
+  completionDate      String            @default("")
+  note                String            @default("")
+  organizationId      String
+  recordedByAccountId String?
+  /// Set instead of `recordedByAccountId` for a staff "act as" director (#442).
+  recordedByUserId    String?
+  createdAt           DateTime          @default(now())
+
+  person            Person           @relation(fields: [personId], references: [id], onDelete: Restrict)
+  honor             Honor            @relation(fields: [honorId], references: [id], onDelete: Restrict)
+  organization      Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  recordedByAccount AttendeeAccount? @relation("MemberHonorEntryRecordedBy", fields: [recordedByAccountId], references: [id], onDelete: SetNull)
+  recordedByUser    User?            @relation("MemberHonorEntryRecordedByUser", fields: [recordedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([personId, honorId, seq])
+  @@index([organizationId, createdAt])
+  @@index([honorId])
+}
 
 enum CalendarEntryStatus {
   SCHEDULED

@@ -8,6 +8,8 @@ import { reportMonthLabel, reportableMonths, yearToDate } from "@/modules/club-r
 import { getClubReportYear } from "@/modules/club-reports/repository";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import { listRoster } from "@/modules/club-rosters/repository";
+import { honorSummaryByMemberId } from "@/modules/honors/member-honor-domain";
+import { listClubHonorsPage } from "@/modules/honors/member-honor-repository";
 import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
 import { listClubTeam } from "@/modules/organizations/director-grants-repository";
 
@@ -38,13 +40,15 @@ export async function ClubOverview({
 }) {
   const now = new Date();
   const clubYear = clubYearFor(now);
-  const [team, members, events, reportYear, compliance] = await Promise.all([
+  const [team, members, events, reportYear, compliance, honorRows] = await Promise.all([
     listClubTeam(organizationId, now),
     listRoster(organizationId, clubYear, now),
     listClubEvents(organizationId, now),
     getClubReportYear(organizationId, clubYear),
     backgroundChecks ? clubRosterComplianceStatuses(organizationId, clubYear, backgroundChecks) : null,
+    listClubHonorsPage(organizationId, clubYear),
   ]);
+  const honorSummaries = honorSummaryByMemberId(honorRows);
   const active = members.filter((member) => member.status === "ACTIVE");
   const registered = events.filter((event) => event.registration);
   // A club's own draft isn't shown here as filed (#426); staff open the report itself to see or edit one.
@@ -99,6 +103,7 @@ export async function ClubOverview({
         canSeeBirthDates={Boolean(birthDatesEndpoint)}
         clubYear={clubYear}
         complianceStatuses={compliance?.statuses}
+        honorSummaries={honorSummaries}
         initialMembers={members}
         organizationId={organizationId}
         readOnly
