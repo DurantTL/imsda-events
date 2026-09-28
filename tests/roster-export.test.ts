@@ -23,6 +23,7 @@ function member(overrides: Partial<RosterMemberRecord> = {}): RosterMemberRecord
     age: 12,
     reportedAge: null,
     birthDateNeeded: false,
+    willingToDrive: false,
     updatedAt: "2026-09-01T00:00:00.000Z",
     ...overrides,
   };
