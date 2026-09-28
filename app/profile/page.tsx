@@ -2,9 +2,11 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { AttendeeAccountSettings } from "@/components/attendee-account-settings";
+import { ActAsBanner } from "@/components/act-as-banner";
 import { AttendeeSignOutButton } from "@/components/attendee-sign-out-button";
 import { BrandMark } from "@/components/brand-mark";
 import { MfaManager, type MfaStatus } from "@/components/mfa-manager";
+import { SignOutButton } from "@/components/sign-out-button";
 import { StaffPasskeyManager } from "@/components/staff-passkey-manager";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { getMfaStatus } from "@/modules/access/mfa-service";
@@ -16,6 +18,7 @@ import {
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { attendeeSecondStepPending } from "@/modules/attendee-accounts/portal-second-step";
 import { listDirectedClubs } from "@/modules/organizations/director-access";
+import { currentStaffActingContext } from "@/modules/organizations/staff-act-as";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +49,10 @@ export default async function ProfilePage() {
     : [null, null];
   const clubs = attendeeAccount && !secondStepPending ? await listDirectedClubs(attendeeAccount.id) : [];
 
+  // The same banner the workspace and portal layouts show while a system
+  // administrator is acting as a club role (#442); staff sessions only.
+  const acting = staff ? await currentStaffActingContext() : null;
+
   const staffWorkspace = staff ? otherWorkspaceContextsForAttendee({ hasStaffSession: true })[0] : undefined;
   const systemAdmin = staff
     ? otherWorkspaceContextsForStaff({
@@ -62,9 +69,9 @@ export default async function ProfilePage() {
             <BrandMark />
             <span><strong>IMSDA</strong><small>Events</small></span>
           </Link>
-          {!staff && <AttendeeSignOutButton />}
         </div>
       </header>
+      <ActAsBanner acting={acting} />
 
       <section className="public-registration-hero public-manage-hero account-page-hero">
         <div>
@@ -103,6 +110,7 @@ export default async function ProfilePage() {
                 <span>{staff.email}</span>
                 <small>Your name and email are managed by a system administrator.</small>
               </div>
+              <SignOutButton label="Sign out of staff account" />
             </section>
           </div>
           <div className="account-page-body">
@@ -120,9 +128,12 @@ export default async function ProfilePage() {
         <section aria-labelledby="profile-registration-heading" className="profile-account-section">
           <div className="account-page-body">
             <h2 className="profile-account-heading" id="profile-registration-heading">Registration account</h2>
-            <p className="field-help">
-              Signed in as <strong>{attendeeAccount.verifiedEmail}</strong>. Saved details fill in new registration forms for you.
-            </p>
+            {!secondStepPending && (
+              <p className="field-help">
+                Signed in as <strong>{attendeeAccount.verifiedEmail}</strong>. Saved details fill in new registration forms for you.
+              </p>
+            )}
+            <AttendeeSignOutButton label="Sign out of registration account" />
           </div>
           {secondStepPending
             ? (

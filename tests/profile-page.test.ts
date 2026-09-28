@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   listDirectedClubs: vi.fn(),
   getMfaStatus: vi.fn(),
   getPasskeySettings: vi.fn(),
+  currentStaffActingContext: vi.fn(),
   redirect: vi.fn((path: string) => {
     throw new Error(`REDIRECT ${path}`);
   }),
@@ -41,8 +42,15 @@ vi.mock("@/components/attendee-account-settings", () => ({
   AttendeeAccountSettings: () => createElement("div", { "data-manager": "attendee-settings" }),
 }));
 vi.mock("@/components/attendee-sign-out-button", () => ({
-  AttendeeSignOutButton: () => createElement("button", { type: "button" }, "Sign out"),
+  AttendeeSignOutButton: (props: { label?: string }) => createElement("button", { type: "button" }, props.label ?? "Sign out"),
 }));
+vi.mock("@/components/sign-out-button", () => ({
+  SignOutButton: (props: { label?: string }) => createElement("button", { type: "button" }, props.label ?? "Sign out"),
+}));
+vi.mock("@/components/act-as-banner", () => ({
+  ActAsBanner: (props: { acting: unknown }) => (props.acting ? createElement("aside", null, "ACT-AS-BANNER") : null),
+}));
+vi.mock("@/modules/organizations/staff-act-as", () => ({ currentStaffActingContext: mocks.currentStaffActingContext }));
 
 import ProfilePage from "@/app/profile/page";
 import ProfileSignInPage from "@/app/profile/sign-in/page";
@@ -69,6 +77,7 @@ beforeEach(() => {
   mocks.attendeeSecondStepPending.mockResolvedValue(false);
   mocks.requireAttendeeSecondStep.mockResolvedValue(undefined);
   mocks.listDirectedClubs.mockResolvedValue([]);
+  mocks.currentStaffActingContext.mockResolvedValue(null);
   mocks.getMfaStatus.mockResolvedValue({ status: "NONE", required: false });
   mocks.getPasskeySettings.mockResolvedValue({ available: true, passkeys: [], verification: [] });
 });
@@ -132,6 +141,29 @@ describe("/profile", () => {
     expect(markup).toContain("My registrations");
   });
 
+  it("labels which session each sign-out button ends when both are signed in", async () => {
+    signedIn({ staff, attendee: true });
+    const markup = await render();
+    expect(markup).toContain(">Sign out of staff account<");
+    expect(markup).toContain(">Sign out of registration account<");
+    expect(markup.indexOf("Sign out of staff account")).toBeLessThan(markup.indexOf("Registration account"));
+    signedIn({ staff });
+    expect(await render()).toContain(">Sign out of staff account<");
+    signedIn({ attendee: true });
+    const attendeeOnly = await render();
+    expect(attendeeOnly).toContain(">Sign out of registration account<");
+    expect(attendeeOnly).not.toContain("Sign out of staff account");
+  });
+
+  it("shows the act-as banner only when a staff act-as context is active", async () => {
+    signedIn({ staff });
+    expect(await render()).not.toContain("ACT-AS-BANNER");
+    mocks.currentStaffActingContext.mockResolvedValue({ role: "CLUB_DIRECTOR" });
+    expect(await render()).toContain("ACT-AS-BANNER");
+    signedIn({ attendee: true });
+    expect(await render()).not.toContain("ACT-AS-BANNER");
+  });
+
   it("does not treat a staff session that merely matches an attendee email as a registration account", async () => {
     signedIn({ staff, attendee: true, sessionVia: "staff" });
     const markup = await render();
@@ -151,6 +183,12 @@ describe("/profile", () => {
     expect(markup).toContain('data-manager="staff-mfa"');
     expect(markup).not.toContain('data-manager="attendee-settings"');
     expect(markup).toContain("/account/two-step");
+    // The verified email stays hidden until the second step is passed.
+    expect(markup).not.toContain("pat@imsda-events.test");
+    expect(markup).toContain("Sign out of registration account");
+
+    mocks.attendeeSecondStepPending.mockResolvedValue(false);
+    expect(await render()).toContain("pat@imsda-events.test");
   });
 
   it("redirects a signed-out visitor to the sign-in chooser", async () => {
