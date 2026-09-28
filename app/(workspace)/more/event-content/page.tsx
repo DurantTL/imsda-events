@@ -6,7 +6,7 @@ import { listEventAssets } from "@/modules/events/asset-repository";
 import { listEventContentSections } from "@/modules/events/content-repository";
 import { resolveEventContext } from "@/modules/events/selection";
 
-export const metadata: Metadata = { title: "Event page" };
+export const metadata: Metadata = { title: "Public content" };
 
 export default async function EventContentPage({
   searchParams,

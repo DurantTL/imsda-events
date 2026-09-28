@@ -109,23 +109,29 @@ follows the same pattern: `area/[organizationId]` → "All clubs";
 
 ## Staff navigation grouping
 
-Related staff destinations sit together under six labeled groups: **Events,
-Clubs and churches, People, Finance, Communications, System.** Nobody sees a
-link they couldn't already reach before this grouping existed — every
-group's visibility condition is exactly what gated that destination before.
+`components/staff-navigation.ts` is the single source both the desktop
+sidebar and the phone directory read (#475), so the two destinations can't
+drift: a static `navigation` list (href, label, required permission,
+sidebar group), plus `resolveClubsAndChurchesEntry` for the one destination
+whose target depends on the signed-in user (system admin vs. club-oversight
+event manager) rather than a fixed permission. Nobody sees a link they
+couldn't already reach before this grouping existed — every group's
+visibility condition is exactly what gated that destination before.
 
 - **Sidebar (`components/app-shell.tsx`):** the primary nav groups its
-  destinations under all six headings; a heading only renders when at least
-  one item under it is visible for the signed-in user and selected event.
+  destinations under six headings — **Events, Clubs and churches, People,
+  Finance, Communications, System** — reading `navigation` from
+  `components/staff-navigation.ts`; a heading only renders when at least one
+  item under it is visible for the signed-in user and selected event.
   Dashboard stays pinned above every group; More stays a catch-all after
   them, since it spans several groups.
   - **Clubs and churches** and **System** are computed per render, not
     static list entries, because their destination and visibility depend on
     the signed-in user and the selected event:
-    - System admins see Clubs and churches pointed at `/admin/organizations`;
-      an EVENT_ADMIN on a club-billed event (the same rule
-      `resolveClubOversight` in `modules/club-rosters/event-oversight.ts`
-      uses) sees it pointed at `/more/clubs?event=…` instead. `WorkspaceLayout`
+    - `resolveClubsAndChurchesEntry` points system admins at
+      `/admin/organizations`; an EVENT_ADMIN on a club-billed event (the same
+      rule `resolveClubOversight` in `modules/club-rosters/event-oversight.ts`
+      uses) gets `/more/clubs?event=…` instead. `WorkspaceLayout`
       (`app/(workspace)/layout.tsx`) computes this `clubOversight` flag per
       event, server-side, the same way `more/page.tsx` does, and passes it on
       each `ShellEvent`.
@@ -134,14 +140,31 @@ group's visibility condition is exactly what gated that destination before.
       only.
   - The **mobile tab bar** keeps its own, separate order — Home, People,
     Payments, Promos, Check-in, Emails, More — regardless of the sidebar's
-    grouping, and never shows Clubs and churches or System (`mobileNavigationOrder`
-    in `components/app-shell.tsx`).
-- **More page (`app/(workspace)/more/page.tsx`):** its cards are grouped
-  under all six headings (`<h2>` group labels, `<h3>` card titles), including
-  **Clubs and churches** (Clubs, Club assignments) and **System** (Operational
-  health, Operational reports). A group renders only when at least one of its
-  cards is visible; the visibility condition for every card is unchanged
-  from before the sweep.
+    grouping, and never shows Clubs and churches or System
+    (`mobileNavigationOrder` in `components/staff-navigation.ts`).
+- **More page (`app/(workspace)/more/page.tsx`), the phone directory (#475):**
+  its cards are grouped under four headings — **Setup, Content & sales,
+  People & access, Reports** — a different grouping from the sidebar's,
+  matched to how staff described the tasks they look for on a phone. It is
+  the complete set of destinations reachable from the desktop sidebar that
+  aren't one of the six bottom tabs, so together the bottom tabs and this
+  page reach exactly what the sidebar reaches, for every role
+  (`tests/mobile-directory-parity.test.ts`):
+  - **Setup:** Event settings, Attendee setup, Tags, Honors Weekend classes,
+    Registration forms, Seminar assignments.
+  - **Content & sales:** Public content, Merchandise, Promo codes, Attendee
+    community.
+  - **People & access:** Staff, Clubs and churches (two cards: the
+    system-admin directory at `/admin/organizations`, and the event's club
+    oversight at `/more/clubs` for anyone with club oversight, titled "This
+    event's clubs" for a system admin who sees both), Club assignments,
+    Import registrations.
+  - **Reports:** Operational reports, Operational health.
+  - Attendee setup and Tags reuse the sidebar's own required permission via
+    `requiredPermissionFor("/more/attendee-configuration")` and
+    `requiredPermissionFor("/more/tags")` (both `components/staff-navigation.ts`)
+    instead of naming `CONFIGURE_EVENT` a second time. A group renders only
+    when at least one of its cards is visible.
 - **System Command Center (`app/(workspace)/admin/page.tsx`):** its header
   actions (Create event, Team, Accounts, Platform settings, Churches and
   clubs, Honor catalog, Public calendar, Background checks, Refresh) now wrap
