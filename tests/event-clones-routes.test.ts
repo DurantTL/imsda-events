@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma as PrismaErrors } from "@prisma/client";
 
 /**
  * `/api/event-clones/**` (#157): signed-out, non-admin, cross-origin, unknown
@@ -49,7 +50,8 @@ const validPreview = { sourceEventId: "event-src" };
 const validClone = {
   sourceEventId: "event-src", expectedFingerprint: "a".repeat(64), requestKey: "idempotency-key-0001",
   name: "Annual 2028", slug: "annual-2028", startsOn: "2028-05-03", endsOn: "2028-05-05",
-  capacity: null, registrationOpensOn: null, registrationClosesOn: null, include,
+  capacity: { value: null, none: true }, registrationOpensOn: { value: null, none: true }, registrationClosesOn: { value: null, none: true },
+  include, formChoiceLimits: [],
 };
 
 type Case = { label: string; call: (requestOrigin?: string) => Promise<Response>; repository: ReturnType<typeof vi.fn> };
@@ -113,6 +115,18 @@ describe.each(cases)("$label", ({ call, repository }) => {
     expect(await response.json()).toMatchObject({ error: "SOURCE_BUSY" });
     expect(mocks.logError).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["a raw-query lock timeout (P2010, SQLSTATE 55P03)", () => new PrismaErrors.PrismaClientKnownRequestError("Raw query failed. Code: `55P03`. Message: `ERROR: canceling statement due to lock timeout`", { code: "P2010", clientVersion: "test", meta: { code: "55P03", message: "ERROR: canceling statement due to lock timeout" } })],
+    ["a transaction lock timeout (P2034 naming 55P03)", () => new PrismaErrors.PrismaClientKnownRequestError("Transaction failed: 55P03 lock timeout", { code: "P2034", clientVersion: "test" })],
+    ["a plain error carrying SQLSTATE 55P03", () => Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" })],
+  ])("returns a retryable 409 for %s", async (_label, makeError) => {
+    repository.mockRejectedValue(makeError());
+    const response = await call();
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "SOURCE_BUSY" });
+    expect(mocks.logError).not.toHaveBeenCalled();
+  });
 });
 
 describe("invalid input → 400", () => {
@@ -131,6 +145,21 @@ describe("invalid input → 400", () => {
     const response = await cloneRoute(request(withoutCapacity));
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: "INVALID_EVENT_CLONE" });
+  });
+
+  it("clone maps a bare null capacity (not answered) to 400", async () => {
+    mocks.cloneEvent.mockImplementation(async (_actor: string, body: unknown) => confirmEventCloneInputSchema.parse(body));
+    const response = await cloneRoute(request({ ...validClone, capacity: null }));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "INVALID_EVENT_CLONE" });
+  });
+
+  it("clone maps a missing formChoiceLimits to 400", async () => {
+    mocks.cloneEvent.mockImplementation(async (_actor: string, body: unknown) => confirmEventCloneInputSchema.parse(body));
+    const withoutLimits: Partial<typeof validClone> = { ...validClone };
+    delete withoutLimits.formChoiceLimits;
+    const response = await cloneRoute(request(withoutLimits));
+    expect(response.status).toBe(400);
   });
 
   it("clone rejects a body that is not JSON without logging", async () => {
@@ -175,9 +204,12 @@ describe("success", () => {
   });
 
   it("a successful clone is 201, and an idempotent retry is 200", async () => {
-    mocks.cloneEvent.mockResolvedValueOnce({ event: { id: "event-1" }, alreadyCloned: false });
-    mocks.cloneEvent.mockResolvedValueOnce({ event: { id: "event-1" }, alreadyCloned: true });
-    expect((await cloneRoute(request(validClone))).status).toBe(201);
+    const summary = { copiedCounts: { tags: 2 }, skipped: { forms: 0, messageTemplates: 0, assetLinks: 0, privateLinks: 3 }, pricing: { pricedFormFields: 1, lateFormFields: 0, formsWithCardFees: 0, promoCodes: 2 }, pricingMessage: "Prices copied, review before publishing: 1 priced form field, 2 promo codes." };
+    mocks.cloneEvent.mockResolvedValueOnce({ event: { id: "event-1" }, alreadyCloned: false, summary });
+    mocks.cloneEvent.mockResolvedValueOnce({ event: { id: "event-1" }, alreadyCloned: true, summary });
+    const first = await cloneRoute(request(validClone));
+    expect(first.status).toBe(201);
+    expect(await first.json()).toMatchObject({ summary: { skipped: { privateLinks: 3 }, pricingMessage: expect.stringContaining("Prices copied") } });
     expect((await cloneRoute(request(validClone))).status).toBe(200);
     expect(mocks.cloneEvent).toHaveBeenCalledWith(admin.id, validClone);
   });

@@ -5,13 +5,17 @@
  * more) is previewed and cloned; the clone must carry only reviewed
  * configuration and none of the transactional, private, or protected history.
  * Also covers excluded domains, disabled modules, missing and reused review
- * dates, a stale source, parallel duplicate requests, and key reuse. Uses
+ * dates, re-entered choice and per-club limits, explicit "none" answers,
+ * private links stripped from copied text, the prices-copied summary, a
+ * bounded source lock wait, a stale source, parallel duplicate requests, and
+ * key reuse. Uses
  * fictitious users and data it creates and removes itself.
  *
  *   npm run test:event-cloning
  */
 import { loadEnvConfig } from "@next/env";
 import { PrismaClient } from "@prisma/client";
+import { eventCloneApiError } from "../modules/event-clones/api-errors";
 import { cloneEvent, EventCloneOperationError, previewEventClone } from "../modules/event-clones/repository";
 import { EventCloneReviewError, cloneDomainKeys, type CloneDomainKey, type ClonePlan } from "../modules/event-clones/domain";
 import { eventSettingsInputSchema } from "../modules/events/schemas";
@@ -53,6 +57,10 @@ const noneIncluded = Object.fromEntries(cloneDomainKeys.map((key) => [key, false
 
 type Fixture = { eventId: string; lateFormId: string; capFormId: string; promoIds: string[]; offeringIds: string[]; sectionId: string; templateKey: string };
 
+/** Synthetic private-link markers planted in the source's free text; none may reach a clone. */
+const marker = "EVTCLONE-MARKER";
+const none = { value: null, none: true } as const;
+
 /** The payload a fully reviewed confirm sends, built from the previewed plan. */
 function confirmBody(source: string, plan: ClonePlan, slug: string, requestKey: string, overrides: Record<string, unknown> = {}) {
   return {
@@ -63,13 +71,14 @@ function confirmBody(source: string, plan: ClonePlan, slug: string, requestKey: 
     slug,
     startsOn: "2028-05-04",
     endsOn: "2028-05-06",
-    capacity: 250,
-    registrationOpensOn: "2028-01-15",
-    registrationClosesOn: "2028-04-20",
+    capacity: { value: 250 },
+    registrationOpensOn: { value: "2028-01-15" },
+    registrationClosesOn: { value: "2028-04-20" },
     include: { ...allIncluded },
     formLatePricingDates: plan.review.latePricing.map((item) => ({ formId: item.formId, fieldKey: item.fieldKey, startsOn: "2028-03-01" })),
-    promoCodeWindows: plan.review.promoCodes.map((promo) => ({ promoCodeId: promo.promoCodeId, startsOn: "2028-02-01", endsOn: "2028-04-30" })),
-    honorOfferingCapacities: plan.review.honorOfferings.map((offering) => ({ offeringId: offering.offeringId, capacity: 12 })),
+    formChoiceLimits: plan.review.formChoiceLimits.map((item) => ({ formId: item.formId, fieldKey: item.fieldKey, choice: item.choice, limit: 9 })),
+    promoCodeWindows: plan.review.promoCodes.map((promo) => ({ promoCodeId: promo.promoCodeId, startsOn: { value: "2028-02-01" }, endsOn: { value: "2028-04-30" } })),
+    honorOfferingCapacities: plan.review.honorOfferings.map((offering) => ({ offeringId: offering.offeringId, capacity: 12, perClubLimit: 3 })),
     ...overrides,
   };
 }
@@ -87,10 +96,11 @@ async function buildPopulatedSource(): Promise<Fixture> {
       calendarCategory: "Camp meeting", hotelName: "Synthetic Inn", hotelRate: "$99", isPublished: true, capacity: 400,
       registrationOpensOn: "2027-01-10", registrationClosesOn: "2027-04-20", seminarPreferenceClosesOn: "2027-04-01", seminarPreferenceSelfServiceLocked: true,
       waitlistEnabled: true, autoPromoteWaitlist: true, collectsShirtSizes: true, checksAdultBackgrounds: true,
-      audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE",
+      audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE", showOnCalendar: false,
     },
   });
   const eventId = event.id;
+  const sourceSlug = event.slug;
   await prisma.user.createMany({ data: [
     { id: adminId, email: `${P}-admin@example.test`, displayName: "Clone Check Admin", globalRole: "SYSTEM_ADMIN" },
     { id: otherAdminId, email: `${P}-admin-2@example.test`, displayName: "Clone Check Admin 2", globalRole: "SYSTEM_ADMIN" },
@@ -99,12 +109,15 @@ async function buildPopulatedSource(): Promise<Fixture> {
 
   // Configuration.
   const asset = await prisma.eventAsset.create({ data: { eventId, displayName: "map.pdf", contentType: "application/pdf", byteSize: 10, checksum: "abc", storageKey: `${P}-storage-key` } });
-  const section = await prisma.eventContentSection.create({ data: { eventId, kind: "RICH_TEXT", title: "Welcome", body: "Hello there.", position: 1, isPublished: true } });
+  // Private-link markers (1 of 4): a registrant's manage link in a section body.
+  const section = await prisma.eventContentSection.create({ data: { eventId, kind: "RICH_TEXT", title: "Welcome", body: `Hello there. Fix your registration at https://events.example.test/manage/${marker}-MANAGE-TOKEN today.`, position: 1, isPublished: true } });
   await prisma.eventContentSection.create({ data: {
     eventId, kind: "RESOURCE_LINKS", title: "Resources", position: 2, isPublished: true,
     links: { create: [
       { label: "Schedule", url: "https://example.test/schedule", position: 1 },
       { label: "Campus map", assetId: asset.id, position: 2 },
+      // Private-link markers (2 of 4): a link URL into the source's staff API.
+      { label: "Roster export", url: `https://events.example.test/api/events/${eventId}/exports/roster.csv?${marker}`, position: 3 },
     ] },
   } });
   await prisma.eventCommunitySettings.create({ data: { eventId, isEnabled: true, allowReplies: false, retentionDays: 45 } });
@@ -123,7 +136,7 @@ async function buildPopulatedSource(): Promise<Fixture> {
   const honor = await prisma.honor.create({ data: { code: `${P}-honor-1`, name: "Evtclone Knots", normalizedName: `${P} knots` } });
   const honor2 = await prisma.honor.create({ data: { code: `${P}-honor-2`, name: "Evtclone Birds", normalizedName: `${P} birds` } });
   const session = await prisma.honorSession.create({ data: { eventId, name: "Friday", normalizedName: "friday" } });
-  const offeringA = await prisma.honorOffering.create({ data: { eventId, honorId: honor.id, sessionId: session.id, span: "SINGLE_SESSION", capacity: 30, teacherName: "Synthetic Teacher" } });
+  const offeringA = await prisma.honorOffering.create({ data: { eventId, honorId: honor.id, sessionId: session.id, span: "SINGLE_SESSION", capacity: 30, perClubLimit: 4, minimumAge: 10, teacherName: "Synthetic Teacher" } });
   const offeringB = await prisma.honorOffering.create({ data: { eventId, honorId: honor2.id, span: "ALL_SESSIONS", capacity: 20, isActive: false } });
 
   // Forms: one with late pricing, one with capacity limits, one never published.
@@ -134,10 +147,17 @@ async function buildPopulatedSource(): Promise<Fixture> {
   }));
   await publishForm(forms.late.id);
   await publishForm(forms.cap.id);
+  // Private-link markers (3 of 4): a signed URL in form help and a source asset URL in choice text.
+  const lateVersion = await prisma.registrationFormVersion.findFirstOrThrow({ where: { formId: forms.late.id, status: "PUBLISHED" } });
+  const lateDefinition = registrationFormDefinitionSchema.parse(lateVersion.definition);
+  const choiceField = lateDefinition.sections.flatMap((entry) => entry.fields).find((field) => field.options.length > 0 && !field.optionSource)!;
+  lateDefinition.sections[0]!.fields[0]!.helpText = `Details: https://files.example.test/file?sig=${marker}-SIG and https://example.test/schedule`;
+  choiceField.optionDescriptions = { ...(choiceField.optionDescriptions ?? {}), [choiceField.options[0]!]: `Map: /api/public/events/${sourceSlug}/assets/${marker}-ASSET` };
+  await prisma.registrationFormVersion.update({ where: { id: lateVersion.id }, data: { definition: registrationFormDefinitionSchema.parse(lateDefinition) } });
 
   // Message templates: one published (with a newer draft), one draft-only.
   const published = await prisma.eventMessageTemplate.create({ data: { eventId, key: "EVENT_ANNOUNCEMENT", isEnabled: false, versions: { create: [
-    { createdByUserId: adminId, versionNumber: 1, status: "PUBLISHED", subjectTemplate: "News from {{event_name}}", bodyTemplate: "Hello {{recipient_name}}.", publishedAt: new Date() },
+    { createdByUserId: adminId, versionNumber: 1, status: "PUBLISHED", subjectTemplate: "News from {{event_name}}", bodyTemplate: `Hello {{recipient_name}}. Your link: https://example.test/share?token=${marker}-TOKEN`, publishedAt: new Date() },
     { createdByUserId: adminId, versionNumber: 2, status: "DRAFT", subjectTemplate: "Draft subject", bodyTemplate: "Draft body." },
   ] } }, include: { versions: true } });
   await prisma.eventMessageTemplate.create({ data: { eventId, key: "WAITLIST_JOINED", versions: { create: { createdByUserId: adminId, versionNumber: 1, status: "DRAFT", subjectTemplate: "Waitlisted", bodyTemplate: "You are waitlisted." } } } });
@@ -217,6 +237,22 @@ async function sourceDump(eventId: string) {
   return JSON.stringify({ event, sections, forms, types, classifications, templates, tags, promos, sessions, offerings, history: await historyCounts(eventId) });
 }
 
+/** Every copied configuration row of a clone, as text, to prove no marker reached it. */
+async function cloneDump(eventId: string) {
+  const [event, sections, forms, templates] = await Promise.all([
+    prisma.event.findUniqueOrThrow({ where: { id: eventId } }),
+    prisma.eventContentSection.findMany({ where: { eventId }, include: { links: true } }),
+    prisma.registrationForm.findMany({ where: { eventId }, include: { versions: true } }),
+    prisma.eventMessageTemplate.findMany({ where: { eventId }, include: { versions: true } }),
+  ]);
+  return JSON.stringify({ event, sections, forms, templates });
+}
+
+/** The value of `fieldKey`'s choice limits in a clone's copied form. */
+function choiceLimitsOf(definition: unknown, fieldKey: string) {
+  return registrationFormDefinitionSchema.parse(definition).sections.flatMap((section) => section.fields).find((field) => field.key === fieldKey)?.choiceLimits;
+}
+
 async function run() {
   const source = await buildPopulatedSource();
   const sourceId = source.eventId;
@@ -234,6 +270,16 @@ async function run() {
   assert(domain("messageTemplates").count === 1 && domain("messageTemplates").skipped.length === 1, "only the published message template is copyable; the draft-only one is skipped");
   assert(domain("promoCodes").count === 2 && domain("honors").count === 2, "promo codes and honor offerings are counted");
   assert(plan.review.latePricing.length >= 1 && plan.review.promoCodes.length === 2 && plan.review.honorOfferings.length === 2, "the plan lists what needs new dates and capacities");
+  const rvLimit = plan.review.formChoiceLimits.find((item) => item.choice === "RV / camper hookup");
+  assert(rvLimit && rvLimit.sourceLimit === 16 && rvLimit.formId === source.capFormId, `the plan lists the RV hookup choice limit of 16 for review, got ${JSON.stringify(plan.review.formChoiceLimits)}`);
+  const offeringReview = plan.review.honorOfferings.find((offering) => offering.offeringId === source.offeringIds[0]);
+  assert(offeringReview && offeringReview.sourceCapacity === 30 && offeringReview.sourcePerClubLimit === 4 && offeringReview.minimumAge === 10, "the plan shows the old class capacity and per-club limit as hints and the minimum age that carries over");
+  const findings = plan.review.privateLinks;
+  assert(new Set(findings.map((finding) => finding.domain)).size === 3 && ["contentSections", "registrationForms", "messageTemplates"].every((key) => findings.some((finding) => finding.domain === key)), `private links are found in sections, forms, and messages: ${JSON.stringify(findings.map((finding) => finding.location))}`);
+  assert(findings.length === 5, `five private links need review (section body, link URL, form help, choice text, message body), got ${findings.length}`);
+  assert(findings.some((finding) => finding.location.includes("link \"Roster export\"")) && findings.some((finding) => finding.location.includes("help")) && findings.some((finding) => finding.location.includes("choice")) && findings.some((finding) => finding.location.endsWith("body")), "each finding names where it was found");
+  assert(!JSON.stringify(plan).includes(`${marker}-MANAGE-TOKEN`) && !JSON.stringify(plan).includes(`${marker}-SIG`) && !JSON.stringify(plan).includes(`${marker}-TOKEN`), "the plan masks manage paths, signatures, and tokens");
+  assert(plan.pricing.pricedFormFields > 0 && plan.pricing.promoCodes === 2 && plan.pricingMessage?.startsWith("Prices copied, review before publishing"), `the plan says prices are copied and must be reviewed, got ${plan.pricingMessage}`);
   assert(plan.unsupported.every((entry) => entry.sourceCount > 0) && plan.unsupported.length === 4, "unsupported domains are listed with their source counts");
   assert(plan.neverCopied.length > 5, "the never-copied list is shown");
   assert(await prisma.auditLog.count({ where: { action: "EVENT_CLONE_PREVIEWED", entityId: sourceId, actorUserId: adminId } }) === 1, "the preview is audited");
@@ -244,16 +290,27 @@ async function run() {
   console.log("ok  preview lists every domain with counts, review items, skipped and unsupported domains, and is audited");
 
   // 2. Review is required: missing and carried-over dates create nothing.
-  const missingDates = await cloneEvent(adminId, confirmBody(sourceId, plan, `${P}-missing`, `${P}-key-missing`, { formLatePricingDates: [], promoCodeWindows: [], honorOfferingCapacities: [] })).then(() => null, (error: unknown) => error);
-  assert(missingDates instanceof EventCloneReviewError && missingDates.issues.length >= 3, `missing review values are refused, got ${String(missingDates)}`);
+  const missingDates = await cloneEvent(adminId, confirmBody(sourceId, plan, `${P}-missing`, `${P}-key-missing`, { formLatePricingDates: [], formChoiceLimits: [], promoCodeWindows: [], honorOfferingCapacities: [] })).then(() => null, (error: unknown) => error);
+  assert(missingDates instanceof EventCloneReviewError && missingDates.issues.length >= 4, `missing review values are refused, got ${String(missingDates)}`);
+  const missingLimit = await cloneEvent(adminId, confirmBody(sourceId, plan, `${P}-nolimit`, `${P}-key-nolimit`, { formChoiceLimits: [] })).then(() => null, (error: unknown) => error);
+  assert(missingLimit instanceof EventCloneReviewError && missingLimit.issues.some((issue) => issue.includes("RV / camper hookup")), `a choice limit left unanswered is refused, got ${String(missingLimit)}`);
+  for (const [label, overrides] of [
+    ["a bare null capacity", { capacity: null }],
+    ["a registration date with no answer", { registrationOpensOn: { value: null } }],
+    ["a promo date left blank", { promoCodeWindows: plan.review.promoCodes.map((promo) => ({ promoCodeId: promo.promoCodeId, startsOn: null, endsOn: none })) }],
+    ["an offering without a per-club answer", { honorOfferingCapacities: plan.review.honorOfferings.map((offering) => ({ offeringId: offering.offeringId, capacity: 12 })) }],
+  ] as const) {
+    const refused = await cloneEvent(adminId, confirmBody(sourceId, plan, `${P}-unanswered`, `${P}-key-unanswered`, overrides)).then(() => null, (error: unknown) => error);
+    assert(refused instanceof Error && refused.name === "ZodError", `${label} is "not answered" and refused, got ${String(refused)}`);
+  }
   const carriedOver = await cloneEvent(adminId, confirmBody(sourceId, plan, `${P}-carried`, `${P}-key-carried`, {
     formLatePricingDates: plan.review.latePricing.map((item) => ({ formId: item.formId, fieldKey: item.fieldKey, startsOn: item.sourceStartsOn })),
   })).then(() => null, (error: unknown) => error);
   assert(carriedOver instanceof EventCloneReviewError && carriedOver.issues.some((issue) => issue.includes("source event's date")), `a source date carried over is refused, got ${String(carriedOver)}`);
   const missingKeys = await cloneEvent(adminId, { ...confirmBody(sourceId, plan, `${P}-nokeys`, `${P}-key-nokeys`), capacity: undefined }).then(() => null, (error: unknown) => error);
   assert(missingKeys instanceof Error && missingKeys.name === "ZodError", "a body without an explicit capacity is a validation error");
-  assert(await prisma.event.count({ where: { slug: { in: [`${P}-missing`, `${P}-carried`, `${P}-nokeys`] } } }) === 0 && await prisma.eventCloneRecord.count({ where: { actorUserId: adminId } }) === 0, "nothing was created by a refused review");
-  console.log("ok  missing or carried-over dates, capacities, and windows are refused and create nothing");
+  assert(await prisma.event.count({ where: { slug: { in: [`${P}-missing`, `${P}-carried`, `${P}-nokeys`, `${P}-nolimit`, `${P}-unanswered`] } } }) === 0 && await prisma.eventCloneRecord.count({ where: { actorUserId: adminId } }) === 0, "nothing was created by a refused review");
+  console.log("ok  missing or carried-over dates, unanswered limits and capacities, and blank-for-none answers are refused and create nothing");
 
   // 3. The full clone: configuration copied, history never.
   const before = await sourceDump(sourceId);
@@ -267,6 +324,7 @@ async function run() {
   assert(cloned.event.startsOn === "2028-05-04" && cloned.event.endsOn === "2028-05-06", "event dates are the reviewed values");
   assert(cloneRow.seminarPreferenceClosesOn === null && !cloneRow.seminarPreferenceSelfServiceLocked, "the seminar preference deadline and lock are reset");
   assert(cloneRow.location === "Synthetic Lodge" && cloneRow.timezone === "America/Denver" && cloneRow.hotelName === "Synthetic Inn" && cloneRow.calendarCategory === "Camp meeting", "branding and details are copied");
+  assert(cloneRow.showOnCalendar === false, "showOnCalendar is copied with the event details (the source hides it; the default is shown)");
   assert(cloneRow.audience === "CLUB" && cloneRow.billingMode === "DEFERRED_ORGANIZATION_INVOICE", "audience and billing mode are copied");
   assert(cloneRow.waitlistEnabled && cloneRow.autoPromoteWaitlist && cloneRow.collectsShirtSizes && cloneRow.checksAdultBackgrounds, "module toggles are copied");
   const community = await prisma.eventCommunitySettings.findUniqueOrThrow({ where: { eventId: cloneId } });
@@ -299,7 +357,9 @@ async function run() {
   assert(lateDates.length >= 1 && lateDates.every((date) => date === "2028-03-01"), "late-pricing dates are the reviewed ones");
   const capForm = cloneForms.find((form) => form.name === sourceForms.find((entry) => entry.id === source.capFormId)!.name)!;
   const capDefinition = registrationFormDefinitionSchema.parse(capForm.versions[0]!.definition);
-  assert(capDefinition.sections.flatMap((section) => section.fields).every((field) => Object.keys(field.choiceLimits ?? {}).length === 0), "choice capacity limits are cleared");
+  const rvField = capDefinition.sections.flatMap((section) => section.fields).find((field) => field.choiceLimits?.["RV / camper hookup"] !== undefined);
+  assert(rvField && rvField.choiceLimits!["RV / camper hookup"] === 9, `the RV hookup limit is the reviewed 9, not the source's 16 or unlimited, got ${JSON.stringify(rvField?.choiceLimits)}`);
+  assert(capDefinition.sections.flatMap((section) => section.fields).every((field) => Object.values(field.choiceLimits ?? {}).every((limit) => limit === 9)), "every copied choice limit is a reviewed value");
   assert(await prisma.auditLog.count({ where: { eventId: cloneId, action: "REGISTRATION_FORM_CREATED" } }) === 2, "each copied form creation is audited");
 
   const messages = await prisma.eventMessageTemplate.findMany({ where: { eventId: cloneId }, include: { versions: true } });
@@ -310,6 +370,15 @@ async function run() {
   assert(promos[0]!.maximumUses === 100 && await prisma.promoCodeRedemption.count({ where: { eventId: cloneId } }) === 0, "promo rules carry over but redemptions do not");
   const offerings = await prisma.honorOffering.findMany({ where: { eventId: cloneId }, include: { session: true } });
   assert(offerings.length === 2 && offerings.every((offering) => offering.capacity === 12) && offerings.some((offering) => offering.session?.name === "Friday") && offerings.some((offering) => offering.sessionId === null), "honor offerings are copied with the reviewed capacity and their own sessions");
+  assert(offerings.every((offering) => offering.perClubLimit === 3), "per-club limits are the reviewed values, not the source's");
+  assert(offerings.some((offering) => offering.minimumAge === 10), "minimum age carries over");
+
+  const dump = await cloneDump(cloneId);
+  assert(!dump.includes(marker) && !dump.includes(`/api/events/${sourceId}/`) && !dump.includes(`/api/public/events/${P}-source-2027/assets/`) && !dump.includes("/manage/"), "no private-link marker reached the clone's event, sections, links, forms, or messages");
+  assert(dump.includes("https://example.test/schedule"), "safe links are kept");
+  assert(cloned.summary?.skipped.privateLinks === 5, `the result counts the five removed private links, got ${JSON.stringify(cloned.summary?.skipped)}`);
+  assert(cloned.summary?.pricingMessage?.startsWith("Prices copied, review before publishing") && cloned.summary.pricing.promoCodes === 2, "the result says prices were copied and must be reviewed");
+  assert(promos.every((promo) => promo.discountValue > 0) && promos.some((promo) => promo.maximumUses === 100), "prices and promo rules are copied as they are (reviewed on the inactive code)");
   const cloneSessionIds = (await prisma.honorSession.findMany({ where: { eventId: cloneId } })).map((entry) => entry.id);
   assert(cloneSessionIds.length === 1 && offerings.filter((offering) => offering.sessionId).every((offering) => cloneSessionIds.includes(offering.sessionId!)), "offerings point at the clone's own session");
 
@@ -335,6 +404,7 @@ async function run() {
   // 5. Idempotency: a retry, even after the source changed, returns the same event.
   const retry = await cloneEvent(adminId, fullBody);
   assert(retry.alreadyCloned && retry.event.id === cloneId, "a retry returns the event the first attempt created");
+  assert(retry.summary?.skipped.privateLinks === 5 && retry.summary.pricingMessage === cloned.summary?.pricingMessage, "a retry shows the same result summary");
   await prisma.eventContentSection.update({ where: { id: source.sectionId }, data: { title: "Welcome (edited)" } });
   const retryAfterEdit = await cloneEvent(adminId, fullBody);
   assert(retryAfterEdit.alreadyCloned && retryAfterEdit.event.id === cloneId, "a retry after the source changed still returns the existing clone, not SOURCE_CHANGED");
@@ -378,7 +448,7 @@ async function run() {
   const partialPlan = previous;
   const partial = await cloneEvent(adminId, confirmBody(sourceId, partialPlan, `${P}-partial`, `${P}-key-partial`, {
     include: { ...noneIncluded, attendeeTypes: true, tags: true },
-    formLatePricingDates: [], promoCodeWindows: [], honorOfferingCapacities: [],
+    formLatePricingDates: [], formChoiceLimits: [], promoCodeWindows: [], honorOfferingCapacities: [],
   }));
   const partialId = partial.event.id;
   assert(await prisma.eventAttendeeType.count({ where: { eventId: partialId } }) === 2 && await prisma.eventTag.count({ where: { eventId: partialId } }) === 2, "the selected domains are copied");
@@ -395,19 +465,30 @@ async function run() {
   assert(!partialEvent.waitlistEnabled && !partialEvent.autoPromoteWaitlist && !partialEvent.collectsShirtSizes && !partialEvent.checksAdultBackgrounds, "excluded module settings are off");
   const partialRecord = await prisma.eventCloneRecord.findUniqueOrThrow({ where: { resultEventId: partialId } });
   assert(JSON.stringify(partialRecord.exclusions).includes("registrationForms") && JSON.stringify(partialRecord.exclusions).includes("promoCodes"), "provenance records the exclusions");
-  const emptyClone = await cloneEvent(adminId, confirmBody(sourceId, partialPlan, `${P}-empty`, `${P}-key-empty`, { include: { ...noneIncluded }, formLatePricingDates: [], promoCodeWindows: [], honorOfferingCapacities: [] }));
+  const emptyClone = await cloneEvent(adminId, confirmBody(sourceId, partialPlan, `${P}-empty`, `${P}-key-empty`, { include: { ...noneIncluded }, formLatePricingDates: [], formChoiceLimits: [], promoCodeWindows: [], honorOfferingCapacities: [] }));
   assert(await prisma.eventAttendeeType.count({ where: { eventId: emptyClone.event.id } }) === 0, "a clone with nothing selected is an empty draft");
   const strayReview = await cloneEvent(adminId, confirmBody(sourceId, partialPlan, `${P}-stray`, `${P}-key-stray`, { include: { ...noneIncluded } })).then(() => null, (error: unknown) => error);
   assert(strayReview instanceof EventCloneReviewError, "review values for an excluded domain are refused");
-  console.log("ok  excluded domains are absent, selected ones present, and review values must match the selection");
+  // Explicit "no limit" for a choice keeps the field in capacity mode with no limit for that choice.
+  const unlimited = await cloneEvent(adminId, confirmBody(sourceId, partialPlan, `${P}-unlimited`, `${P}-key-unlimited`, {
+    include: { ...noneIncluded, registrationForms: true },
+    formChoiceLimits: partialPlan.review.formChoiceLimits.map((item) => ({ formId: item.formId, fieldKey: item.fieldKey, choice: item.choice, limit: null })),
+    promoCodeWindows: [], honorOfferingCapacities: [],
+  }));
+  const unlimitedForms = await prisma.registrationForm.findMany({ where: { eventId: unlimited.event.id }, include: { versions: true } });
+  const unlimitedCap = unlimitedForms.map((form) => choiceLimitsOf(form.versions[0]!.definition, rvField!.key)).find((limits) => limits !== undefined);
+  assert(unlimitedCap !== undefined && Object.keys(unlimitedCap).length === 0, `an explicit no-limit answer removes the limit, got ${JSON.stringify(unlimitedCap)}`);
+  console.log("ok  excluded domains are absent, selected ones present, review values must match the selection, and an explicit no-limit is honoured");
 
   // 8. Disabled modules stay disabled: a source with everything off clones with everything off.
   const quiet = await prisma.event.create({ data: { name: "Evtclone Quiet", slug: `${P}-quiet-source`, startsAt: new Date("2027-09-01T12:00:00Z"), endsAt: new Date("2027-09-02T12:00:00Z"), waitlistEnabled: false, autoPromoteWaitlist: false } });
   await prisma.eventCommunitySettings.create({ data: { eventId: quiet.id, isEnabled: false } });
   await prisma.eventMessageTemplate.create({ data: { eventId: quiet.id, key: "EVENT_ANNOUNCEMENT", isEnabled: false, versions: { create: { versionNumber: 1, status: "PUBLISHED", subjectTemplate: "Off", bodyTemplate: "Off", publishedAt: new Date() } } } });
   const quietPlan = await previewEventClone(adminId, { sourceEventId: quiet.id });
-  const quietClone = await cloneEvent(adminId, confirmBody(quiet.id, quietPlan, `${P}-quiet-clone`, `${P}-key-quiet`));
+  const quietClone = await cloneEvent(adminId, confirmBody(quiet.id, quietPlan, `${P}-quiet-clone`, `${P}-key-quiet`, { capacity: none, registrationOpensOn: none, registrationClosesOn: none }));
   const quietRow = await prisma.event.findUniqueOrThrow({ where: { id: quietClone.event.id } });
+  assert(quietRow.capacity === null && quietRow.registrationOpensOn === null && quietRow.registrationClosesOn === null, "explicit none answers store no capacity and no registration dates");
+  assert(quietClone.summary?.pricingMessage === null && quietRow.showOnCalendar, "a source with nothing priced has no prices-copied message; showOnCalendar carries its default");
   assert(!quietRow.waitlistEnabled && !quietRow.autoPromoteWaitlist && !quietRow.collectsShirtSizes && !quietRow.checksAdultBackgrounds, "disabled toggles stay disabled");
   const quietCommunity = await prisma.eventCommunitySettings.findUniqueOrThrow({ where: { eventId: quietClone.event.id } });
   const quietMessage = await prisma.eventMessageTemplate.findFirstOrThrow({ where: { eventId: quietClone.event.id } });
@@ -446,6 +527,37 @@ async function run() {
   assert(isOperationError(missingSource, "SOURCE_NOT_FOUND"), "cloning a missing source is SOURCE_NOT_FOUND");
   assert(await prisma.event.count({ where: { slug: { in: [`${P}-bad-dates`, `${P}-backwards`, `${P}-missing-source`] } } }) === 0, "refused requests created nothing");
   console.log("ok  reused keys are refused, keys are per actor, and slug, date, and source errors create nothing");
+
+  // 11. A source row lock held elsewhere is waited on for at most lock_timeout (5s), then SOURCE_BUSY.
+  const busyPlan = await previewEventClone(adminId, { sourceEventId: sourceId });
+  const locker = new PrismaClient();
+  try {
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    let locked!: () => void;
+    const lockTaken = new Promise<void>((resolve) => { locked = resolve; });
+    const holder = locker.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "Event" WHERE "id" = ${sourceId} FOR UPDATE`;
+      locked();
+      await released;
+    }, { timeout: 30_000 });
+    await lockTaken;
+    const started = Date.now();
+    const busy = await cloneEvent(adminId, confirmBody(sourceId, busyPlan, `${P}-busy`, `${P}-key-busy`)).then(() => null, (error: unknown) => error);
+    const waited = Date.now() - started;
+    release();
+    await holder;
+    assert(isOperationError(busy, "SOURCE_BUSY"), `a held source lock is SOURCE_BUSY, got ${String(busy)}`);
+    assert(waited >= 4_000 && waited < 15_000, `the wait is bounded by lock_timeout, waited ${waited}ms`);
+    const response = eventCloneApiError(busy, { failureMessage: "x", logMessage: "x", invalidInputCode: "INVALID_EVENT_CLONE" });
+    assert(response.status === 409 && (await response.json()).error === "SOURCE_BUSY", "SOURCE_BUSY is a retryable 409");
+    assert(await prisma.event.count({ where: { slug: `${P}-busy` } }) === 0 && await prisma.eventCloneRecord.count({ where: { requestKey: `${P}-key-busy` } }) === 0, "a busy clone created nothing");
+    const afterBusy = await cloneEvent(adminId, confirmBody(sourceId, busyPlan, `${P}-busy`, `${P}-key-busy`));
+    assert(!afterBusy.alreadyCloned, "the same request succeeds once the lock is released");
+    console.log(`ok  a held source lock times out after ${Math.round(waited / 100) / 10}s as a retryable 409 SOURCE_BUSY and creates nothing`);
+  } finally {
+    await locker.$disconnect();
+  }
 }
 
 async function main() {

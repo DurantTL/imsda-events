@@ -109,6 +109,8 @@ async function loadTemplate(templateId: string) {
  * writes.
  */
 async function lockTemplate(tx: Prisma.TransactionClient, templateId: string, mode: "UPDATE" | "SHARE") {
+  // Bounded wait: past it the lock is SQLSTATE 55P03, reported as TEMPLATE_BUSY.
+  await tx.$executeRawUnsafe("SET LOCAL lock_timeout = '5s'");
   const rows = mode === "UPDATE"
     ? await tx.$queryRaw<{ status: EventTemplateStatus }[]>`SELECT "status"::text AS "status" FROM "EventTemplate" WHERE "id" = ${templateId} FOR UPDATE`
     : await tx.$queryRaw<{ status: EventTemplateStatus }[]>`SELECT "status"::text AS "status" FROM "EventTemplate" WHERE "id" = ${templateId} FOR SHARE`;

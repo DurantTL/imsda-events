@@ -23,6 +23,7 @@ import {
   publishEventTemplateVersion,
   saveEventTemplateDraft,
 } from "../modules/event-templates/repository";
+import { eventTemplateApiError } from "../modules/event-templates/api-errors";
 import { eventSettingsInputSchema } from "../modules/events/schemas";
 import { getEventSettings } from "../modules/events/repository";
 
@@ -279,7 +280,32 @@ async function run() {
   assert(await prisma.event.count({ where: { slug: `${P}-stale` } }) === 0, "nothing was created from the stale payload");
   console.log("ok  a published message default with an unknown token or a subject line break is refused at apply");
 
-  // 7. Archive sticks: saving, publishing, and applying are all refused afterward.
+  // 7. A template lock held elsewhere is waited on for at most lock_timeout (5s),
+  // then reported as a retryable TEMPLATE_BUSY; nothing is written.
+  const beforeBusy = await latestVersion(templateId);
+  let releaseLock!: () => void;
+  const lockReleased = new Promise<void>((resolve) => { releaseLock = resolve; });
+  let lockHeld!: () => void;
+  const lockTaken = new Promise<void>((resolve) => { lockHeld = resolve; });
+  const holder = prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "EventTemplate" WHERE "id" = ${templateId} FOR UPDATE`;
+    lockHeld();
+    await lockReleased;
+  }, { timeout: 30_000 });
+  await lockTaken;
+  const busyStarted = Date.now();
+  const busy = await save(templateId, goodPayload(), beforeBusy.updatedAt).then(() => null, (error: unknown) => error);
+  const busyWaited = Date.now() - busyStarted;
+  releaseLock();
+  await holder;
+  assert(busy !== null, "a save behind a held template lock fails instead of waiting forever");
+  const busyResponse = eventTemplateApiError(busy, { failureMessage: "x", logMessage: "x" });
+  assert(busyResponse.status === 409 && (await busyResponse.json()).error === "TEMPLATE_BUSY", `the lock timeout maps to 409 TEMPLATE_BUSY, got ${String(busy)}`);
+  assert(busyWaited >= 4_000 && busyWaited < 15_000, `the wait is bounded by lock_timeout, waited ${busyWaited}ms`);
+  assert((await latestVersion(templateId)).updatedAt === beforeBusy.updatedAt, "a busy save wrote nothing");
+  console.log(`ok  a held template lock times out after ${Math.round(busyWaited / 100) / 10}s as a retryable 409 TEMPLATE_BUSY and writes nothing`);
+
+  // 8. Archive sticks: saving, publishing, and applying are all refused afterward.
   await archiveEventTemplate(templateId, adminId);
   const saveArchived = await save(templateId, goodPayload()).then(() => null, (error: unknown) => error);
   assert(isOperationError(saveArchived, "TEMPLATE_ARCHIVED"), `saving an archived template is refused, got ${String(saveArchived)}`);

@@ -128,6 +128,7 @@ function mockApply(options: {
   const messageTemplateCreate = vi.fn().mockResolvedValue({});
 
   const tx = {
+    $executeRawUnsafe: vi.fn().mockResolvedValue(0),
     $queryRaw: vi.fn().mockResolvedValue(templateStatus ? [{ status: templateStatus }] : []),
     eventTemplate: { findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "template-1", name: "Weekend Retreat" }) },
     eventTemplateVersion: {
@@ -175,6 +176,7 @@ describe("applyEventTemplate (#152)", () => {
     expect(result.alreadyApplied).toBe(false);
     expect(result.event?.id).toBe("event-1");
     expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.$executeRawUnsafe).toHaveBeenCalledWith("SET LOCAL lock_timeout = '5s'");
     expect(eventCreate).toHaveBeenCalledTimes(1);
     const eventData = eventCreate.mock.calls[0]![0].data;
     expect(eventData).toMatchObject({ audience: "CLUB", waitlistEnabled: true, autoPromoteWaitlist: true, isPublished: false });
@@ -321,6 +323,7 @@ describe("applyEventTemplate (#152)", () => {
 
 function mockMutation(options: { status?: "DRAFT" | "PUBLISHED" | "ARCHIVED"; versions: ReturnType<typeof versionRow>[]; casCount?: number }) {
   const tx = {
+    $executeRawUnsafe: vi.fn().mockResolvedValue(0),
     $queryRaw: vi.fn().mockResolvedValue([{ status: options.status ?? "PUBLISHED" }]),
     eventTemplate: {
       findUniqueOrThrow: vi.fn().mockResolvedValue({ name: "Weekend Retreat" }),

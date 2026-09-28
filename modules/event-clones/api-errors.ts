@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { logError } from "@/lib/logger";
+import { isLockTimeoutError } from "@/lib/prisma-errors";
 import { AccessDeniedError } from "@/modules/access/authorization";
 import { EventCloneReviewError } from "@/modules/event-clones/domain";
 import { EventCloneOperationError } from "@/modules/event-clones/repository";
@@ -8,6 +9,7 @@ import { EventCloneOperationError } from "@/modules/event-clones/repository";
 const operationStatus: Record<EventCloneOperationError["code"], number> = {
   SOURCE_NOT_FOUND: 404,
   SOURCE_CHANGED: 409,
+  SOURCE_BUSY: 409,
   EVENT_SLUG_TAKEN: 409,
   REQUEST_KEY_REUSED: 409,
 };
@@ -46,9 +48,10 @@ export function eventCloneApiError(
       message: "That event web address is already in use. Choose another short address.",
     }, { status: 409 });
   }
-  // A lock wait past the transaction timeout (P2028) or a serialization
-  // failure (P2034) is a busy source, not a fault: nothing was written.
-  if (error instanceof Prisma.PrismaClientKnownRequestError && (error.code === "P2028" || error.code === "P2034")) {
+  // A source lock wait past `lock_timeout` (SQLSTATE 55P03), a wait past the
+  // transaction timeout (P2028), or a serialization failure (P2034) is a busy
+  // source, not a fault: nothing was written.
+  if (isLockTimeoutError(error) || (error instanceof Prisma.PrismaClientKnownRequestError && (error.code === "P2028" || error.code === "P2034"))) {
     return Response.json({ error: "SOURCE_BUSY", message: "The source event is busy right now. Try again in a moment." }, { status: 409 });
   }
   logError(options.logMessage, error);

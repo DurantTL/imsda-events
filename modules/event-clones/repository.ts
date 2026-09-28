@@ -3,20 +3,25 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
-import { isEventMessageTemplateKey, validateMessageTemplate } from "@/modules/communications/templates";
+import { isLockTimeoutError } from "@/lib/prisma-errors";
 import { asEventMessageTemplateKey } from "@/modules/event-templates/domain";
 import {
   buildClonePlan,
   canonicalJson,
+  clonePricingSummary,
+  pricingSummaryMessage,
   cloneRequestInputOf,
   cloneDomainKeys,
   confirmEventCloneInputSchema,
   EventCloneReviewError,
   excludedDomains,
+  isCopyableMessageTemplate,
   parseFormDefinition,
   previewEventCloneInputSchema,
   reviewIssues,
   rewriteFormDefinitionForClone,
+  sanitizeSourceForClone,
+  type ClonePricingSummary,
   type ConfirmEventCloneInput,
   type SourceConfiguration,
 } from "@/modules/event-clones/domain";
@@ -26,7 +31,7 @@ import { createRegistrationFormFromDefinitionInTransaction } from "@/modules/for
 
 export class EventCloneOperationError extends Error {
   constructor(
-    public readonly code: "SOURCE_NOT_FOUND" | "SOURCE_CHANGED" | "EVENT_SLUG_TAKEN" | "REQUEST_KEY_REUSED",
+    public readonly code: "SOURCE_NOT_FOUND" | "SOURCE_CHANGED" | "SOURCE_BUSY" | "EVENT_SLUG_TAKEN" | "REQUEST_KEY_REUSED",
     message: string,
   ) {
     super(message);
@@ -53,7 +58,7 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
     where: { id: eventId },
     select: {
       id: true, name: true, slug: true, startsAt: true, endsAt: true, timezone: true, isPublished: true,
-      location: true, publicInfoUrl: true, supportContact: true, calendarCategory: true,
+      location: true, publicInfoUrl: true, supportContact: true, calendarCategory: true, showOnCalendar: true,
       hotelName: true, hotelBookingUrl: true, hotelPhone: true, hotelGroupName: true, hotelRate: true, hotelInstructions: true,
       audience: true, billingMode: true,
       waitlistEnabled: true, autoPromoteWaitlist: true, collectsShirtSizes: true, checksAdultBackgrounds: true,
@@ -103,7 +108,7 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
     },
     eventDetails: {
       location: event.location, timezone: event.timezone, publicInfoUrl: event.publicInfoUrl, supportContact: event.supportContact,
-      calendarCategory: event.calendarCategory, hotelName: event.hotelName, hotelBookingUrl: event.hotelBookingUrl,
+      calendarCategory: event.calendarCategory, showOnCalendar: event.showOnCalendar, hotelName: event.hotelName, hotelBookingUrl: event.hotelBookingUrl,
       hotelPhone: event.hotelPhone, hotelGroupName: event.hotelGroupName, hotelRate: event.hotelRate,
       hotelInstructions: event.hotelInstructions, audience: event.audience, billingMode: event.billingMode,
     },
@@ -198,8 +203,20 @@ async function resolveExistingClone(actorUserId: string, input: ConfirmEventClon
   if (canonicalJson(existing.requestInput) !== canonicalJson(cloneRequestInputOf(input))) {
     throw new EventCloneOperationError("REQUEST_KEY_REUSED", "This request was already used to create a different event. Reload the page and try again.");
   }
-  return { event: (await getEventSettings(existing.resultEventId))!, alreadyCloned: true };
+  const snapshot = existing.snapshot as { summary?: CloneResultSummary } | null;
+  return { event: (await getEventSettings(existing.resultEventId))!, alreadyCloned: true, summary: snapshot?.summary ?? null };
 }
+
+/** What the result screen shows after a clone (#157), kept in the clone record's snapshot. */
+export type CloneResultSummary = {
+  copiedCounts: Record<string, number>;
+  skipped: { forms: number; messageTemplates: number; assetLinks: number; privateLinks: number };
+  pricing: ClonePricingSummary;
+  pricingMessage: string | null;
+};
+
+/** Bounded wait for the source row lock; past it the clone is SOURCE_BUSY, never a hang. */
+const sourceLockTimeout = "5s";
 
 /**
  * Confirms a reviewed clone: creates one new DRAFT event and copies only the
@@ -210,12 +227,17 @@ async function resolveExistingClone(actorUserId: string, input: ConfirmEventClon
  * - Idempotent per actor by `requestKey`: a finished request is detected up
  *   front and again on any unique-constraint race, so retries and parallel
  *   duplicates return the one event the first attempt created.
- * - The source `Event` row is share-locked for the whole copy, its
- *   configuration is read inside the transaction, and its fingerprint must
- *   equal the one the reviewer previewed (`SOURCE_CHANGED` otherwise). The
- *   copy is made from the very object that was fingerprinted.
+ * - The source `Event` row is share-locked for the whole copy (waiting at
+ *   most `sourceLockTimeout`, then `SOURCE_BUSY`). `FOR SHARE` protects only
+ *   that row, so an edit to the event's own settings waits, but child
+ *   configuration (forms, sections, promo codes, offerings, ...) is not
+ *   locked. Such edits are caught instead by the fingerprint: the
+ *   configuration is read inside the transaction and must hash to the value
+ *   the reviewer previewed (`SOURCE_CHANGED` otherwise), and the copy is made
+ *   from that very object.
  * - Every date-bound or capacity value the selected domains need must have
  *   been supplied anew (`reviewIssues`); nothing is shifted or defaulted.
+ * - Private links in copied text are removed (`sanitizeSourceForClone`).
  * - Only configuration tables are read (see `loadSourceConfiguration`), so no
  *   registration, payment, check-in, outbox, audit, or protected data can be
  *   copied. The new event is unpublished and its creator is its administrator.
@@ -228,17 +250,21 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
   if (alreadyCloned) return alreadyCloned;
 
   try {
-    const eventId = await prisma.$transaction(async (tx) => {
+    const { eventId, summary } = await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${sourceLockTimeout}'`);
       const locked = await tx.$queryRaw<{ id: string }[]>`SELECT "id" FROM "Event" WHERE "id" = ${input.sourceEventId} FOR SHARE`;
       if (locked.length === 0) throw new EventCloneOperationError("SOURCE_NOT_FOUND", "That source event was not found.");
-      const config = await loadSourceConfiguration(tx, input.sourceEventId);
-      if (!config) throw new EventCloneOperationError("SOURCE_NOT_FOUND", "That source event was not found.");
-      const fingerprint = fingerprintOf(config);
+      const sourceConfig = await loadSourceConfiguration(tx, input.sourceEventId);
+      if (!sourceConfig) throw new EventCloneOperationError("SOURCE_NOT_FOUND", "That source event was not found.");
+      const fingerprint = fingerprintOf(sourceConfig);
       if (fingerprint !== input.expectedFingerprint) {
         throw new EventCloneOperationError("SOURCE_CHANGED", "The source event changed after you previewed it. Preview it again and review the plan.");
       }
-      const issues = reviewIssues(config, input);
+      const issues = reviewIssues(sourceConfig, input);
       if (issues.length > 0) throw new EventCloneReviewError(issues);
+      // Copy from the text as previewed: private links removed.
+      const { config, findings } = sanitizeSourceForClone(sourceConfig);
+      const strippedPrivateLinks = findings.filter((finding) => input.include[finding.domain]).length;
 
       const include = input.include;
       const platform = await tx.platformSettings.upsert({
@@ -254,15 +280,15 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
           endsAt: eventDate(input.endsOn),
           // Reset, never copied: nothing is public until staff publish.
           isPublished: false,
-          capacity: input.capacity,
-          registrationOpensOn: input.registrationOpensOn,
-          registrationClosesOn: input.registrationClosesOn,
+          capacity: input.capacity.value,
+          registrationOpensOn: input.registrationOpensOn.value,
+          registrationClosesOn: input.registrationClosesOn.value,
           seminarPreferenceClosesOn: null,
           seminarPreferenceSelfServiceLocked: false,
           attendeeEditPolicy: platform.defaultAttendeeEditPolicy,
           ...(details ? {
             timezone: details.timezone, location: details.location, publicInfoUrl: details.publicInfoUrl,
-            supportContact: details.supportContact, calendarCategory: details.calendarCategory,
+            supportContact: details.supportContact, calendarCategory: details.calendarCategory, showOnCalendar: details.showOnCalendar,
             hotelName: details.hotelName, hotelBookingUrl: details.hotelBookingUrl, hotelPhone: details.hotelPhone,
             hotelGroupName: details.hotelGroupName, hotelRate: details.hotelRate, hotelInstructions: details.hotelInstructions,
             audience: details.audience, billingMode: details.billingMode,
@@ -277,7 +303,7 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
 
       const copied: Record<string, number> = Object.fromEntries(cloneDomainKeys.map((key) => [key, 0]));
       const sourceVersions: { forms: Array<{ sourceFormId: string; versionId: string; versionNumber: number; newFormId: string }>; messageTemplates: Array<{ key: string; versionId: string; versionNumber: number }> } = { forms: [], messageTemplates: [] };
-      const skipped = { forms: 0, messageTemplates: 0, assetLinks: 0 };
+      const skipped = { forms: 0, messageTemplates: 0, assetLinks: 0, privateLinks: strippedPrivateLinks };
 
       if (include.eventDetails) copied.eventDetails = 1;
       if (include.moduleToggles) {
@@ -324,8 +350,15 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
           const definition = parseFormDefinition(form.definition);
           if (!definition) { skipped.forms += 1; continue; }
           const dates = new Map(input.formLatePricingDates.filter((entry) => entry.formId === form.formId).map((entry) => [entry.fieldKey, entry.startsOn]));
+          const limits = new Map<string, Map<string, number | null>>();
+          for (const entry of input.formChoiceLimits) {
+            if (entry.formId !== form.formId) continue;
+            const field = limits.get(entry.fieldKey) ?? new Map<string, number | null>();
+            field.set(entry.choice, entry.limit);
+            limits.set(entry.fieldKey, field);
+          }
           const created = await createRegistrationFormFromDefinitionInTransaction(tx, event.id, actorUserId, {
-            definition: rewriteFormDefinitionForClone(definition, dates),
+            definition: rewriteFormDefinitionForClone(definition, dates, limits),
             preferredSlug: form.slug,
             summary: (formName) => `Copied ${formName} from the published version of a prior event's form.`,
             metadata: { sourceEventId: config.event.id, sourceFormId: form.formId, sourceVersionId: form.versionId, sourceVersionNumber: form.versionNumber },
@@ -338,9 +371,9 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
 
       if (include.messageTemplates) {
         for (const template of config.messageTemplates) {
-          const valid = isEventMessageTemplateKey(template.key)
-            && validateMessageTemplate({ subject: template.subjectTemplate, body: template.bodyTemplate }).issues.length === 0;
-          if (!valid) { skipped.messageTemplates += 1; continue; }
+          if (!isCopyableMessageTemplate(template)) { skipped.messageTemplates += 1; continue; }
+          // Copied live, deliberately: a PUBLISHED version 1 of the source's
+          // current published text, keeping the source's `isEnabled` switch.
           await tx.eventMessageTemplate.create({
             data: {
               eventId: event.id,
@@ -368,7 +401,8 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
               // Reset: inactive until staff review and activate; usage starts at zero.
               isActive: false, redeemedCount: 0,
               discountType: promo.discountType, discountValue: promo.discountValue,
-              startsOn: window.startsOn, endsOn: window.endsOn,
+              startsOn: window.startsOn.value, endsOn: window.endsOn.value,
+              // Copied as they are (#157): the inactive code is the review point.
               minimumSubtotalCents: promo.minimumSubtotalCents, maximumUses: promo.maximumUses,
               maximumDiscountCents: promo.maximumDiscountCents,
             },
@@ -385,14 +419,16 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
           });
           sessionIds.set(session.id, created.id);
         }
-        const capacities = new Map(input.honorOfferingCapacities.map((entry) => [entry.offeringId, entry.capacity]));
+        const reviewedOfferings = new Map(input.honorOfferingCapacities.map((entry) => [entry.offeringId, entry]));
         for (const offering of config.honorOfferings) {
           await tx.honorOffering.create({
             data: {
               eventId: event.id, honorId: offering.honorId,
               sessionId: offering.sessionId ? sessionIds.get(offering.sessionId) ?? null : null,
-              span: offering.span, capacity: capacities.get(offering.id)!,
-              minimumAge: offering.minimumAge, perClubLimit: offering.perClubLimit,
+              span: offering.span, capacity: reviewedOfferings.get(offering.id)!.capacity,
+              perClubLimit: reviewedOfferings.get(offering.id)!.perClubLimit,
+              // Carried over as it is; shown in the preview.
+              minimumAge: offering.minimumAge,
               teacherName: offering.teacherName, location: offering.location, isActive: offering.isActive,
             },
           });
@@ -401,6 +437,8 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
       }
 
       const excluded = excludedDomains(include);
+      const pricing = clonePricingSummary(config, include);
+      const summary: CloneResultSummary = { copiedCounts: copied, skipped, pricing, pricingMessage: pricingSummaryMessage(pricing) };
       const record = await tx.eventCloneRecord.create({
         data: {
           sourceEventId: config.event.id,
@@ -416,12 +454,14 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
             source: config.event,
             copiedCounts: copied,
             skipped,
+            summary,
             reset: {
               isPublished: false,
-              capacity: input.capacity,
-              registrationOpensOn: input.registrationOpensOn,
-              registrationClosesOn: input.registrationClosesOn,
+              capacity: input.capacity.value,
+              registrationOpensOn: input.registrationOpensOn.value,
+              registrationClosesOn: input.registrationClosesOn.value,
               formLatePricingDates: input.formLatePricingDates.length,
+              formChoiceLimits: input.formChoiceLimits.length,
               promoCodeWindows: input.promoCodeWindows.length,
               honorOfferingCapacities: input.honorOfferingCapacities.length,
             },
@@ -437,11 +477,14 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
           copiedCounts: copied, skipped, excludedDomains: excluded,
         },
       } });
-      return event.id;
+      return { eventId: event.id, summary };
     }, { timeout: 30_000, maxWait: 10_000 });
     // Read back only after commit: the outer client is a separate connection.
-    return { event: (await getEventSettings(eventId))!, alreadyCloned: false };
+    return { event: (await getEventSettings(eventId))!, alreadyCloned: false, summary };
   } catch (error) {
+    if (isLockTimeoutError(error)) {
+      throw new EventCloneOperationError("SOURCE_BUSY", "The source event is busy right now. Try again in a moment.");
+    }
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       // Whatever constraint fired, a concurrent request with this actor's key
       // may have committed first (typically the new event's slug, inserted

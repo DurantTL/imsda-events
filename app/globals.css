@@ -7606,3 +7606,11 @@ select:focus-visible {
 .clone-plain-list { display: grid; gap: 4px; margin: 0; padding-left: 18px; font-size: 0.8rem; overflow-wrap: anywhere; }
 .clone-confirm { width: 100%; }
 @media (min-width: 581px) { .clone-confirm { width: auto; justify-self: start; } }
+/* #157 review inputs: each value is typed in or explicitly marked none; the "none" box is a 44px target. */
+.clone-review-field { display: grid; gap: 4px; min-width: 0; }
+.clone-review-group { border-top: 1px solid var(--line); padding-top: 10px; }
+.clone-none-toggle { min-height: 44px; font-size: 0.8rem !important; color: var(--ink) !important; }
+.clone-none-toggle input { width: 22px !important; height: 22px; flex: 0 0 auto; }
+.event-clone input:disabled { opacity: 0.55; }
+.inline-notice.clone-warning { border-color: #ddcd9e; background: var(--imsda-gold-soft); color: #6f5316; line-height: 1.5; font-size: 0.78rem; }
+.clone-link { overflow-wrap: anywhere; font-size: 0.74rem; }

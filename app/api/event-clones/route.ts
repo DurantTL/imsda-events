@@ -13,7 +13,7 @@ async function postHandler(request: Request) {
     const user = requireEventClonePermission(await getCurrentSession());
     const body = await request.json();
     const result = await cloneEvent(user.id, body);
-    return Response.json({ event: result.event, alreadyCloned: result.alreadyCloned }, { status: result.alreadyCloned ? 200 : 201 });
+    return Response.json({ event: result.event, alreadyCloned: result.alreadyCloned, summary: result.summary }, { status: result.alreadyCloned ? 200 : 201 });
   } catch (error) {
     return eventCloneApiError(error, {
       failureMessage: "The event could not be copied.",

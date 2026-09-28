@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { logError } from "@/lib/logger";
+import { isLockTimeoutError } from "@/lib/prisma-errors";
 import { AccessDeniedError } from "@/modules/access/authorization";
 import { EventTemplateReferenceError } from "@/modules/event-templates/domain";
 import { EventTemplateOperationError } from "@/modules/event-templates/repository";
@@ -55,10 +56,11 @@ export function eventTemplateApiError(
       message: "That event web address is already in use. Choose another short address.",
     }, { status: 409 });
   }
-  // A lock wait that outlasts the transaction timeout (P2028) or a
-  // serialization failure (P2034) is a busy template, not a server fault:
-  // nothing was written, so the caller can simply try again.
-  if (error instanceof Prisma.PrismaClientKnownRequestError && (error.code === "P2028" || error.code === "P2034")) {
+  // A template lock wait past `lock_timeout` (SQLSTATE 55P03), a wait that
+  // outlasts the transaction timeout (P2028), or a serialization failure
+  // (P2034) is a busy template, not a server fault: nothing was written, so
+  // the caller can simply try again.
+  if (isLockTimeoutError(error) || (error instanceof Prisma.PrismaClientKnownRequestError && (error.code === "P2028" || error.code === "P2034"))) {
     return Response.json({ error: "TEMPLATE_BUSY", message: "This template is busy right now. Try again in a moment." }, { status: 409 });
   }
   logError(options.logMessage, error);

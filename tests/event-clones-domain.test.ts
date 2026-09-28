@@ -3,6 +3,8 @@ import { getFormTemplate, registrationFormDefinitionSchema } from "@/modules/for
 import {
   buildClonePlan,
   canonicalJson,
+  cloneAlwaysReset,
+  clonePricingSummary,
   cloneDomainKeys,
   cloneRequestInputOf,
   confirmEventCloneInputSchema,
@@ -10,6 +12,7 @@ import {
   previewEventCloneInputSchema,
   reviewIssues,
   rewriteFormDefinitionForClone,
+  sanitizeSourceForClone,
   type CloneDomainKey,
   type ConfirmEventCloneInput,
   type SourceConfiguration,
@@ -22,7 +25,7 @@ function config(overrides: Partial<SourceConfiguration> = {}): SourceConfigurati
   return {
     event: { id: "event-src", name: "Annual 2027", slug: "annual-2027", startsOn: "2027-05-05", endsOn: "2027-05-07", isPublished: true },
     eventDetails: {
-      location: "Synthetic Lodge", timezone: "America/Denver", publicInfoUrl: null, supportContact: null, calendarCategory: null,
+      location: "Synthetic Lodge", timezone: "America/Denver", publicInfoUrl: null, supportContact: null, calendarCategory: null, showOnCalendar: false,
       hotelName: null, hotelBookingUrl: null, hotelPhone: null, hotelGroupName: null, hotelRate: null, hotelInstructions: null,
       audience: "GENERAL", billingMode: "ATTENDEE_PAY",
     },
@@ -56,12 +59,18 @@ function config(overrides: Partial<SourceConfiguration> = {}): SourceConfigurati
 }
 
 const all = Object.fromEntries(cloneDomainKeys.map((key) => [key, true])) as Record<CloneDomainKey, boolean>;
-const none = Object.fromEntries(cloneDomainKeys.map((key) => [key, false])) as Record<CloneDomainKey, boolean>;
+const noDomains = Object.fromEntries(cloneDomainKeys.map((key) => [key, false])) as Record<CloneDomainKey, boolean>;
 const fingerprint = "a".repeat(64);
 
 function lateItems() {
   return buildClonePlan(config(), fingerprint).review.latePricing;
 }
+
+function limitItems() {
+  return buildClonePlan(config(), fingerprint).review.formChoiceLimits;
+}
+
+const none = { value: null, none: true } as const;
 
 function validBody(overrides: Record<string, unknown> = {}) {
   return {
@@ -72,13 +81,14 @@ function validBody(overrides: Record<string, unknown> = {}) {
     slug: "annual-2028",
     startsOn: "2028-05-03",
     endsOn: "2028-05-05",
-    capacity: null,
-    registrationOpensOn: null,
-    registrationClosesOn: null,
+    capacity: none,
+    registrationOpensOn: none,
+    registrationClosesOn: none,
     include: { ...all },
     formLatePricingDates: lateItems().map((item) => ({ formId: item.formId, fieldKey: item.fieldKey, startsOn: "2028-03-01" })),
-    promoCodeWindows: [{ promoCodeId: "promo-1", startsOn: "2028-01-10", endsOn: null }],
-    honorOfferingCapacities: [{ offeringId: "offering-1", capacity: 25 }],
+    formChoiceLimits: limitItems().map((item) => ({ formId: item.formId, fieldKey: item.fieldKey, choice: item.choice, limit: 14 })),
+    promoCodeWindows: [{ promoCodeId: "promo-1", startsOn: { value: "2028-01-10" }, endsOn: none }],
+    honorOfferingCapacities: [{ offeringId: "offering-1", capacity: 25, perClubLimit: null }],
     ...overrides,
   };
 }
@@ -129,7 +139,7 @@ describe("rewriteFormDefinitionForClone", () => {
     const definition = registrationFormDefinitionSchema.parse(lateTemplate);
     const fields = definition.sections.flatMap((section) => section.fields).filter((field) => field.latePricing);
     const dates = new Map(fields.map((field) => [field.key, "2028-03-01"]));
-    const rewritten = rewriteFormDefinitionForClone(definition, dates);
+    const rewritten = rewriteFormDefinitionForClone(definition, dates, new Map());
     const rewrittenFields = rewritten.sections.flatMap((section) => section.fields).filter((field) => field.latePricing);
     expect(rewrittenFields.map((field) => field.latePricing!.startsOn)).toEqual(fields.map(() => "2028-03-01"));
     expect(rewrittenFields.map((field) => field.latePricing!.priceCents)).toEqual(fields.map((field) => field.latePricing!.priceCents));
@@ -137,16 +147,199 @@ describe("rewriteFormDefinitionForClone", () => {
     expect(() => registrationFormDefinitionSchema.parse(rewritten)).not.toThrow();
   });
 
-  it("clears choice capacity limits but keeps the choices and availability mode", () => {
-    const definition = registrationFormDefinitionSchema.parse(capacityTemplate);
-    const limited = definition.sections.flatMap((section) => section.fields).find((field) => Object.keys(field.choiceLimits ?? {}).length > 0)!;
-    expect(limited).toBeDefined();
-    const rewritten = rewriteFormDefinitionForClone(definition, new Map());
-    const same = rewritten.sections.flatMap((section) => section.fields).find((field) => field.key === limited.key)!;
-    expect(same.choiceLimits).toEqual({});
+  const definition = registrationFormDefinitionSchema.parse(capacityTemplate);
+  const limited = definition.sections.flatMap((section) => section.fields).find((field) => Object.keys(field.choiceLimits ?? {}).length > 0)!;
+  const [choice, sourceLimit] = Object.entries(limited.choiceLimits!)[0]!;
+  const rewrittenField = (limits: Map<string, Map<string, number | null>>) => rewriteFormDefinitionForClone(definition, new Map(), limits)
+    .sections.flatMap((section) => section.fields).find((field) => field.key === limited.key)!;
+
+  it("writes the reviewed choice limit and keeps the choices and availability mode", () => {
+    expect(choice).toBe("RV / camper hookup");
+    expect(sourceLimit).toBe(16);
+    const same = rewrittenField(new Map([[limited.key, new Map([[choice, 9]])]]));
+    expect(same.choiceLimits).toEqual({ [choice]: 9 });
     expect(same.options).toEqual(limited.options);
     expect(same.availabilityMode).toBe(limited.availabilityMode);
-    expect(() => registrationFormDefinitionSchema.parse(rewritten)).not.toThrow();
+    expect(limited.choiceLimits![choice]).toBe(16);
+  });
+
+  it("removes a limit only for a reviewed null, and never carries the source limit forward", () => {
+    expect(rewrittenField(new Map([[limited.key, new Map([[choice, null]])]])).choiceLimits).toEqual({});
+    // Defensive: a limit with no reviewed entry (refused earlier by reviewIssues) is not the source's 16.
+    expect(rewrittenField(new Map()).choiceLimits).toEqual({});
+    expect(() => registrationFormDefinitionSchema.parse(rewriteFormDefinitionForClone(definition, new Map(), new Map([[limited.key, new Map([[choice, 9]])]])))).not.toThrow();
+  });
+});
+
+describe("choice capacity limits in the plan and the review", () => {
+  const parse = (overrides: Record<string, unknown> = {}): ConfirmEventCloneInput => confirmEventCloneInputSchema.parse(validBody(overrides));
+
+  it("lists every source choice limit with its old value", () => {
+    const items = limitItems();
+    expect(items).toContainEqual(expect.objectContaining({ formId: "form-cap", choice: "RV / camper hookup", sourceLimit: 16 }));
+    expect(buildClonePlan(config(), fingerprint).domains.find((domain) => domain.key === "registrationForms")!.notes.join(" ")).toContain("entered again");
+  });
+
+  it("treats a missing entry as an error and a null as an explicit no limit", () => {
+    expect(reviewIssues(config(), parse({ formChoiceLimits: [] })).some((issue) => issue.includes("RV / camper hookup"))).toBe(true);
+    const explicitNone = parse({ formChoiceLimits: limitItems().map((item) => ({ formId: item.formId, fieldKey: item.fieldKey, choice: item.choice, limit: null })) });
+    expect(reviewIssues(config(), explicitNone)).toEqual([]);
+  });
+
+  it("refuses a duplicate, an unknown choice, and a limit for an excluded form", () => {
+    const item = limitItems()[0]!;
+    const entry = { formId: item.formId, fieldKey: item.fieldKey, choice: item.choice, limit: 3 };
+    expect(reviewIssues(config(), parse({ formChoiceLimits: [...limitItems().map((i) => ({ ...entry, choice: i.choice })), entry] })).some((issue) => issue.includes("twice"))).toBe(true);
+    expect(reviewIssues(config(), parse({ formChoiceLimits: [...validBody().formChoiceLimits, { ...entry, choice: "Tent pad" }] }))).toHaveLength(1);
+    const excluded = parse({ include: { ...all, registrationForms: false }, formLatePricingDates: [] });
+    expect(reviewIssues(config(), excluded).some((issue) => issue.includes("not being copied"))).toBe(true);
+  });
+
+  it("requires the formChoiceLimits key", () => {
+    const body: Record<string, unknown> = validBody();
+    delete body.formChoiceLimits;
+    expect(confirmEventCloneInputSchema.safeParse(body).success).toBe(false);
+    expect(confirmEventCloneInputSchema.safeParse(validBody({ formChoiceLimits: [{ formId: "form-cap", fieldKey: "x", choice: "y" }] })).success).toBe(false);
+  });
+});
+
+describe("honors per-club limits and minimum age", () => {
+  it("lists the old capacity and per-club limit as hints and shows the carried-over minimum age", () => {
+    const plan = buildClonePlan(config({ honorOfferings: [{ ...config().honorOfferings[0]!, perClubLimit: 4, minimumAge: 10 }] }), fingerprint);
+    expect(plan.review.honorOfferings[0]).toMatchObject({ sourceCapacity: 30, sourcePerClubLimit: 4, minimumAge: 10 });
+  });
+
+  it("requires an explicit per-club limit or null in each offering entry", () => {
+    expect(confirmEventCloneInputSchema.safeParse(validBody({ honorOfferingCapacities: [{ offeringId: "offering-1", capacity: 25 }] })).success).toBe(false);
+    expect(confirmEventCloneInputSchema.safeParse(validBody({ honorOfferingCapacities: [{ offeringId: "offering-1", capacity: 25, perClubLimit: 3 }] })).success).toBe(true);
+    expect(confirmEventCloneInputSchema.safeParse(validBody({ honorOfferingCapacities: [{ offeringId: "offering-1", capacity: 25, perClubLimit: 0 }] })).success).toBe(false);
+  });
+});
+
+describe("explicit none for the event capacity, registration dates, and promo windows", () => {
+  it.each([
+    ["a bare null capacity", { capacity: null }],
+    ["a capacity with no answer", { capacity: { value: null } }],
+    ["a capacity that is both a value and none", { capacity: { value: 5, none: true } }],
+    ["a bare registration open date", { registrationOpensOn: "2028-01-01" }],
+    ["a bare null close date", { registrationClosesOn: null }],
+    ["a none that is false", { registrationClosesOn: { value: null, none: false } }],
+    ["a promo start left blank", { promoCodeWindows: [{ promoCodeId: "promo-1", startsOn: null, endsOn: none }] }],
+    ["a promo end with no answer", { promoCodeWindows: [{ promoCodeId: "promo-1", startsOn: { value: "2028-01-10" }, endsOn: { value: null } }] }],
+  ])("refuses %s", (_label, overrides) => {
+    expect(confirmEventCloneInputSchema.safeParse(validBody(overrides)).success).toBe(false);
+  });
+
+  it("accepts values and explicit nones", () => {
+    const parsed = confirmEventCloneInputSchema.parse(validBody({
+      capacity: { value: 250 }, registrationOpensOn: { value: "2028-01-01" }, registrationClosesOn: none,
+      promoCodeWindows: [{ promoCodeId: "promo-1", startsOn: none, endsOn: none }],
+    }));
+    expect(parsed.capacity.value).toBe(250);
+    expect(parsed.registrationClosesOn.value).toBeNull();
+    expect(parsed.promoCodeWindows[0]!.startsOn).toEqual(none);
+  });
+});
+
+describe("private links in copied text", () => {
+  const source = config();
+  const sourceId = source.event.id;
+  const slug = source.event.slug;
+  const markers = {
+    manage: "https://events.imsda.test/manage/MARKER-MANAGE-TOKEN",
+    adminApi: `https://events.imsda.test/api/events/${sourceId}/exports/roster.csv`,
+    asset: `/api/public/events/${slug}/assets/MARKER-ASSET`,
+    token: "https://example.test/share?token=MARKER-TOKEN-VALUE&x=1",
+    sig: "https://example.test/file?sig=MARKER-SIG-VALUE",
+    slug: `https://events.imsda.test/events/${slug}`,
+  };
+  const safe = "https://example.test/schedule";
+  const lateDefinition = registrationFormDefinitionSchema.parse(lateTemplate);
+  const withChoiceText = structuredClone(lateDefinition);
+  const choiceField = withChoiceText.sections.flatMap((section) => section.fields).find((field) => field.options.length > 0 && !field.optionSource)!;
+  const firstField = withChoiceText.sections[0]!.fields[0]!;
+  firstField.helpText = `Update here: ${markers.manage} or ${safe}`;
+  choiceField.optionDescriptions = { ...(choiceField.optionDescriptions ?? {}), [choiceField.options[0]!]: `See ${markers.asset} for details.` };
+  const markedConfig = config({
+    contentSections: [{
+      kind: "RESOURCE_LINKS", title: "Links", body: `Roster: ${markers.adminApi}. Schedule: ${safe}. Photos: ${markers.slug}`, position: 1, assetLinkCount: 0,
+      links: [
+        { label: "Schedule", description: "", url: safe, position: 1 },
+        { label: "Shared file", description: "", url: markers.sig, position: 2 },
+      ],
+    }],
+    registrationForms: [{ formId: "form-late", name: "Retreat", slug: "retreat", versionId: "ver-1", versionNumber: 3, definition: withChoiceText }],
+    messageTemplates: [{ key: "EVENT_ANNOUNCEMENT", isEnabled: true, versionId: "mv-1", versionNumber: 2, subjectTemplate: "News from {{event_name}}", bodyTemplate: `Hi {{recipient_name}}. Your link: ${markers.token}` }],
+  });
+  const { config: clean, findings } = sanitizeSourceForClone(markedConfig);
+  const cleanJson = JSON.stringify(clean);
+
+  it("finds a marker in section text, a link URL, form help and choice text, and a message body", () => {
+    expect(new Set(findings.map((finding) => finding.domain))).toEqual(new Set(["contentSections", "registrationForms", "messageTemplates"]));
+    expect(findings).toHaveLength(6);
+    expect(findings.some((finding) => finding.location.includes("link \"Shared file\""))).toBe(true);
+    expect(findings.some((finding) => finding.location.includes("help"))).toBe(true);
+    expect(findings.some((finding) => finding.location.includes("description") && finding.location.includes("choice"))).toBe(true);
+    expect(findings.some((finding) => finding.location === "Message EVENT_ANNOUNCEMENT body")).toBe(true);
+    expect(findings.some((finding) => finding.reasons.includes("the source event's own address or id"))).toBe(true);
+  });
+
+  it("strips each marker from the copy, drops a private link row, and keeps safe links", () => {
+    for (const marker of ["MARKER-MANAGE-TOKEN", "MARKER-ASSET", "MARKER-TOKEN-VALUE", "MARKER-SIG-VALUE", `/api/events/${sourceId}/`, `/events/${slug}`]) {
+      expect(cleanJson).not.toContain(marker);
+    }
+    expect(clean.contentSections[0]!.links.map((link) => link.url)).toEqual([safe]);
+    expect(clean.contentSections[0]!.body).toContain(safe);
+    expect(JSON.stringify(clean.registrationForms[0]!.definition)).toContain(safe);
+    expect(clean.messageTemplates[0]!.bodyTemplate).toBe("Hi {{recipient_name}}. Your link: ");
+    expect(() => registrationFormDefinitionSchema.parse(clean.registrationForms[0]!.definition)).not.toThrow();
+  });
+
+  it("never repeats a secret in the plan, and lists each finding as needing review", () => {
+    const plan = buildClonePlan(markedConfig, fingerprint);
+    expect(plan.review.privateLinks).toHaveLength(6);
+    const planJson = JSON.stringify(plan.review.privateLinks);
+    for (const secret of ["MARKER-MANAGE-TOKEN", "MARKER-TOKEN-VALUE", "MARKER-SIG-VALUE"]) expect(planJson).not.toContain(secret);
+    expect(planJson).toContain("/manage/…");
+    expect(plan.domains.find((domain) => domain.key === "messageTemplates")!.notes.join(" ")).toContain("1 private link needs review");
+    expect(plan.domains.find((domain) => domain.key === "messageTemplates")!.count).toBe(1);
+  });
+
+  it("leaves text without private links unchanged, and ignores a slug inside a longer word", () => {
+    const quiet = config({ contentSections: [{ kind: "RICH_TEXT", title: "Hi", body: `Photos at https://example.test/${slug}-photos and ${safe}`, position: 1, links: [], assetLinkCount: 0 }] });
+    const result = sanitizeSourceForClone(quiet);
+    expect(result.findings).toEqual([]);
+    expect(result.config.contentSections[0]!.body).toBe(quiet.contentSections[0]!.body);
+  });
+
+  it("drops a private public-info or lodging link from the event details", () => {
+    const details = config({ eventDetails: { ...config().eventDetails, publicInfoUrl: markers.slug, hotelBookingUrl: "https://hotel.example.test/book?group=imsda" } });
+    const result = sanitizeSourceForClone(details);
+    expect(result.config.eventDetails.publicInfoUrl).toBeNull();
+    expect(result.config.eventDetails.hotelBookingUrl).toBe("https://hotel.example.test/book?group=imsda");
+    expect(result.findings.map((finding) => finding.domain)).toEqual(["eventDetails"]);
+  });
+});
+
+describe("prices copied as they are", () => {
+  it("counts priced fields, late prices, card fees, and promo codes, and says to review them", () => {
+    const summary = clonePricingSummary(config());
+    expect(summary.pricedFormFields).toBeGreaterThan(0);
+    expect(summary.lateFormFields).toBe(lateItems().length);
+    expect(summary.promoCodes).toBe(1);
+    const plan = buildClonePlan(config(), fingerprint);
+    expect(plan.pricing).toEqual(summary);
+    expect(plan.pricingMessage).toMatch(/^Prices copied, review before publishing: /);
+    expect(plan.pricingMessage).toContain("1 promo code");
+  });
+
+  it("counts only the selected domains, and has no message when nothing priced is copied", () => {
+    expect(clonePricingSummary(config(), { registrationForms: false, promoCodes: false })).toEqual({ pricedFormFields: 0, lateFormFields: 0, formsWithCardFees: 0, promoCodes: 0 });
+    expect(buildClonePlan(config({ registrationForms: [], promoCodes: [] }), fingerprint).pricingMessage).toBeNull();
+  });
+
+  it("says message templates are copied published and keep whether they are enabled", () => {
+    expect(cloneAlwaysReset.join(" ")).toMatch(/Message templates .*published.*enabled/);
   });
 });
 
@@ -165,12 +358,12 @@ describe("confirmEventCloneInputSchema", () => {
     ["a short request key", { requestKey: "short" }],
     ["an impossible date", { startsOn: "2028-02-30" }],
     ["an event that ends before it starts", { endsOn: "2028-05-01" }],
-    ["registration closing before it opens", { registrationOpensOn: "2028-04-01", registrationClosesOn: "2028-03-01" }],
-    ["registration opening after the event ends", { registrationOpensOn: "2028-06-01" }],
-    ["a zero capacity", { capacity: 0 }],
+    ["registration closing before it opens", { registrationOpensOn: { value: "2028-04-01" }, registrationClosesOn: { value: "2028-03-01" } }],
+    ["registration opening after the event ends", { registrationOpensOn: { value: "2028-06-01" } }],
+    ["a zero capacity", { capacity: { value: 0 } }],
     ["a domain left out of the selection", { include: { ...all, promoCodes: undefined } }],
     ["an unknown domain", { include: { ...all, staffAccess: true } }],
-    ["a promo code ending before it starts", { promoCodeWindows: [{ promoCodeId: "promo-1", startsOn: "2028-02-01", endsOn: "2028-01-01" }] }],
+    ["a promo code ending before it starts", { promoCodeWindows: [{ promoCodeId: "promo-1", startsOn: { value: "2028-02-01" }, endsOn: { value: "2028-01-01" } }] }],
   ])("rejects %s", (_label, overrides) => {
     const body: Record<string, unknown> = validBody(overrides);
     for (const [key, value] of Object.entries(overrides)) if (value === undefined) delete body[key];
@@ -198,7 +391,7 @@ describe("reviewIssues", () => {
   });
 
   it("asks for every missing late-pricing date, promo window, and honor capacity", () => {
-    const issues = reviewIssues(config(), parse({ formLatePricingDates: [], promoCodeWindows: [], honorOfferingCapacities: [] }));
+    const issues = reviewIssues(config(), parse({ formLatePricingDates: [], formChoiceLimits: [], promoCodeWindows: [], honorOfferingCapacities: [] }));
     expect(issues.filter((issue) => issue.includes("late-pricing date"))).toHaveLength(lateItems().length);
     expect(issues.some((issue) => issue.includes("promo code EARLY"))).toBe(true);
     expect(issues.some((issue) => issue.includes("Knots (Friday)"))).toBe(true);
@@ -208,29 +401,29 @@ describe("reviewIssues", () => {
     const item = lateItems()[0]!;
     const issues = reviewIssues(config(), parse({
       formLatePricingDates: lateItems().map((entry) => ({ formId: entry.formId, fieldKey: entry.fieldKey, startsOn: entry.formId === item.formId && entry.fieldKey === item.fieldKey ? item.sourceStartsOn : "2028-03-01" })),
-      promoCodeWindows: [{ promoCodeId: "promo-1", startsOn: "2027-01-10", endsOn: null }],
+      promoCodeWindows: [{ promoCodeId: "promo-1", startsOn: { value: "2027-01-10" }, endsOn: none }],
     }));
     expect(issues.some((issue) => issue.includes("source event's date"))).toBe(true);
     expect(issues.some((issue) => issue.includes("promo code EARLY"))).toBe(true);
   });
 
   it("does not ask for values of an excluded domain, and refuses values supplied for one", () => {
-    const excluded = parse({ include: { ...none }, formLatePricingDates: [], promoCodeWindows: [], honorOfferingCapacities: [] });
+    const excluded = parse({ include: { ...noDomains }, formLatePricingDates: [], formChoiceLimits: [], promoCodeWindows: [], honorOfferingCapacities: [] });
     expect(reviewIssues(config(), excluded)).toEqual([]);
-    const stray = parse({ include: { ...none } });
-    expect(reviewIssues(config(), stray).length).toBeGreaterThanOrEqual(3);
+    const stray = parse({ include: { ...noDomains } });
+    expect(reviewIssues(config(), stray).length).toBeGreaterThanOrEqual(4);
   });
 
   it("refuses values for things that do not exist on the source", () => {
     const issues = reviewIssues(config(), parse({
       formLatePricingDates: [...lateItems().map((item) => ({ formId: item.formId, fieldKey: item.fieldKey, startsOn: "2028-03-01" })), { formId: "form-x", fieldKey: "nope", startsOn: "2028-03-01" }],
-      honorOfferingCapacities: [{ offeringId: "offering-1", capacity: 25 }, { offeringId: "offering-9", capacity: 5 }],
+      honorOfferingCapacities: [{ offeringId: "offering-1", capacity: 25, perClubLimit: null }, { offeringId: "offering-9", capacity: 5, perClubLimit: null }],
     }));
     expect(issues).toHaveLength(2);
   });
 
   it("does not ask for a form's late-pricing date when its form is unsupported", () => {
-    const issues = reviewIssues(config({ registrationForms: [] }), parse({ formLatePricingDates: [] }));
+    const issues = reviewIssues(config({ registrationForms: [] }), parse({ formLatePricingDates: [], formChoiceLimits: [] }));
     expect(issues).toEqual([]);
   });
 });

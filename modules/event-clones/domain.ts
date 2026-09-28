@@ -2,6 +2,7 @@ import { z } from "zod";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import { isEventMessageTemplateKey, validateMessageTemplate } from "@/modules/communications/templates";
 import { calendarDateSchema, eventNameSchema, eventSlugSchema } from "@/modules/events/schemas";
+import { privateLinkReasonLabels, privateLinkValue, stripPrivateLinks, type PrivateLinkContext, type PrivateLinkMatch } from "@/modules/event-clones/private-links";
 
 /**
  * Reviewed annual event cloning (#157). A clone is a one-time, non-live copy
@@ -34,7 +35,7 @@ export type CloneDomainKey = (typeof cloneDomainKeys)[number];
 export const cloneDomainLabels: Record<CloneDomainKey, { label: string; description: string }> = {
   eventDetails: {
     label: "Branding and event details",
-    description: "Location, time zone, public info link, support contact, calendar category, lodging, audience, and billing mode.",
+    description: "Location, time zone, public info link, support contact, calendar category and whether it shows on the calendar, lodging, audience, and billing mode.",
   },
   moduleToggles: {
     label: "Module settings",
@@ -46,7 +47,7 @@ export const cloneDomainLabels: Record<CloneDomainKey, { label: string; descript
   },
   registrationForms: {
     label: "Registration forms",
-    description: "The current published definition of each form, copied as a new draft to review and publish.",
+    description: "The current published definition of each form, copied as a new draft to review and publish. Prices, late prices, and card fees are copied as they are.",
   },
   attendeeTypes: {
     label: "Attendee types",
@@ -58,7 +59,7 @@ export const cloneDomainLabels: Record<CloneDomainKey, { label: string; descript
   },
   messageTemplates: {
     label: "Message templates",
-    description: "The current published subject and body of each event message, and whether it is enabled.",
+    description: "The current published subject and body of each event message, copied already published, and whether it is enabled.",
   },
   tags: {
     label: "Staff tags",
@@ -66,11 +67,11 @@ export const cloneDomainLabels: Record<CloneDomainKey, { label: string; descript
   },
   promoCodes: {
     label: "Promo codes",
-    description: "Discount rules copied inactive, with a new date window reviewed for each and usage reset to zero.",
+    description: "Discount rules copied inactive, with a new date window reviewed for each and usage reset to zero. Discount amounts and limits are copied as they are.",
   },
   honors: {
     label: "Honors sessions and classes",
-    description: "Class sessions and offerings, each with a capacity you enter anew (never enrollments).",
+    description: "Class sessions and offerings, each with a capacity and per-club limit you enter anew (never enrollments). Minimum ages carry over.",
   },
 };
 
@@ -122,6 +123,7 @@ export type SourceEventDetails = {
   publicInfoUrl: string | null;
   supportContact: string | null;
   calendarCategory: string | null;
+  showOnCalendar: boolean;
   hotelName: string | null;
   hotelBookingUrl: string | null;
   hotelPhone: string | null;
@@ -248,28 +250,52 @@ export function latePricingItems(formId: string, formName: string, definition: P
     .map((field) => ({ formId, formName, fieldKey: field.key, fieldLabel: field.label, sourceStartsOn: field.latePricing!.startsOn })));
 }
 
-export function capacityLimitCount(definition: ParsedDefinition) {
-  return definition.sections.reduce((total, section) => total + section.fields.reduce(
-    (fieldTotal, field) => fieldTotal + Object.keys(field.choiceLimits ?? {}).length,
-    0,
-  ), 0);
+export type FormChoiceLimitItem = {
+  formId: string;
+  formName: string;
+  fieldKey: string;
+  fieldLabel: string;
+  choice: string;
+  sourceLimit: number;
+};
+
+/** Every choice capacity limit in a definition: each one is re-entered on a clone. */
+export function choiceLimitItems(formId: string, formName: string, definition: ParsedDefinition): FormChoiceLimitItem[] {
+  return definition.sections.flatMap((section) => section.fields.flatMap((field) => Object.entries(field.choiceLimits ?? {})
+    .map(([choice, sourceLimit]) => ({ formId, formName, fieldKey: field.key, fieldLabel: field.label, choice, sourceLimit }))));
+}
+
+/** One key per (form, field, choice); choices are free text, so no separator is safe. */
+export function choiceLimitKey(formId: string, fieldKey: string, choice: string) {
+  return JSON.stringify([formId, fieldKey, choice]);
 }
 
 function attendeeTypeFieldCount(definition: ParsedDefinition) {
   return definition.sections.reduce((total, section) => total + section.fields.filter((field) => field.optionSource === "ATTENDEE_TYPES").length, 0);
 }
 
+/** Priced fields in a definition, for the "prices copied" summary. */
+function pricedFieldCounts(definition: ParsedDefinition) {
+  const fields = definition.sections.flatMap((section) => section.fields);
+  return {
+    priced: fields.filter((field) => field.priceCents !== undefined || field.choicePricesCents !== undefined || field.creditCentsPerUnit !== undefined).length,
+    latePriced: fields.filter((field) => field.latePricing).length,
+    cardFees: definition.payment?.enabled ? 1 : 0,
+  };
+}
+
 /**
  * The definition a clone stores: the source's current published definition
- * with its date-bound and capacity values reset (#157). Each late-pricing
- * start date is replaced by the date the reviewer supplied, and every choice
- * capacity limit is cleared (the choices, prices, and availability mode stay)
- * so the new event never inherits a prior year's seat counts. Nothing is
- * shifted or guessed.
+ * with its date-bound and capacity values replaced by reviewed ones (#157).
+ * Each late-pricing start date is the date the reviewer supplied, and each
+ * choice capacity limit is the limit the reviewer re-entered (a reviewed
+ * `null` removes that choice's limit). Nothing is shifted, guessed, or
+ * silently cleared; choices, prices, and the availability mode stay.
  */
 export function rewriteFormDefinitionForClone(
   definition: ParsedDefinition,
   latePricingDates: ReadonlyMap<string, string>,
+  choiceLimits: ReadonlyMap<string, ReadonlyMap<string, number | null>>,
 ): ParsedDefinition {
   const next = structuredClone(definition);
   for (const section of next.sections) {
@@ -278,10 +304,168 @@ export function rewriteFormDefinitionForClone(
         const startsOn = latePricingDates.get(field.key);
         if (startsOn) field.latePricing.startsOn = startsOn;
       }
-      if (field.choiceLimits !== undefined) field.choiceLimits = {};
+      if (field.choiceLimits !== undefined) {
+        const reviewed = choiceLimits.get(field.key);
+        const limits: Record<string, number> = {};
+        for (const choice of Object.keys(field.choiceLimits)) {
+          const limit = reviewed?.get(choice);
+          if (typeof limit === "number") limits[choice] = limit;
+        }
+        field.choiceLimits = limits;
+      }
     }
   }
   return next;
+}
+
+// ---------------------------------------------------------------------------
+// Private links inside copied text
+// ---------------------------------------------------------------------------
+
+export type PrivateLinkFinding = {
+  domain: CloneDomainKey;
+  /** Where the link was found, in words (never the text around it). */
+  location: string;
+  /** The link with any token or manage path masked. */
+  link: string;
+  reasons: string[];
+};
+
+/** A confirmation message must stay at least three characters after stripping. */
+const strippedConfirmationFallback = "Thank you. Your registration was received.";
+
+/**
+ * The source configuration as a clone copies it (#157): every private link in
+ * copied free text is found and removed (see `private-links.ts`). Section
+ * bodies, content links, form help, placeholder, description, and choice text,
+ * message template subjects and bodies, and the event's own info and lodging
+ * links are scanned. A private content link row or settings URL is dropped
+ * entirely; inside text, only the link itself is removed. Choice values are
+ * never rewritten, because prices, limits, and conditions refer to them.
+ */
+export function sanitizeSourceForClone(config: SourceConfiguration): { config: SourceConfiguration; findings: PrivateLinkFinding[] } {
+  const context: PrivateLinkContext = { sourceEventId: config.event.id, sourceSlug: config.event.slug };
+  const findings: PrivateLinkFinding[] = [];
+  const record = (domain: CloneDomainKey, location: string, matches: PrivateLinkMatch[]) => {
+    for (const match of matches) {
+      findings.push({ domain, location, link: match.redacted, reasons: match.reasons.map((reason) => privateLinkReasonLabels[reason]) });
+    }
+  };
+  const text = (domain: CloneDomainKey, location: string, value: string) => {
+    const result = stripPrivateLinks(value, context);
+    record(domain, location, result.matches);
+    return result.text;
+  };
+  const url = (domain: CloneDomainKey, location: string, value: string | null) => {
+    if (value === null) return null;
+    const match = privateLinkValue(value, context);
+    if (!match) return value;
+    record(domain, location, [match]);
+    return null;
+  };
+
+  const eventDetails: SourceEventDetails = {
+    ...config.eventDetails,
+    publicInfoUrl: url("eventDetails", "Public info link", config.eventDetails.publicInfoUrl),
+    hotelBookingUrl: url("eventDetails", "Lodging booking link", config.eventDetails.hotelBookingUrl),
+    hotelInstructions: config.eventDetails.hotelInstructions === null ? null : text("eventDetails", "Lodging instructions", config.eventDetails.hotelInstructions),
+  };
+
+  const contentSections = config.contentSections.map((section) => ({
+    ...section,
+    body: text("contentSections", `Section "${section.title}" text`, section.body),
+    links: section.links.flatMap((link) => {
+      if (url("contentSections", `Section "${section.title}" link "${link.label}"`, link.url) === null) return [];
+      return [{ ...link, description: text("contentSections", `Section "${section.title}" link "${link.label}" description`, link.description) }];
+    }),
+  }));
+
+  const registrationForms = config.registrationForms.map((form) => {
+    const definition = parseFormDefinition(form.definition);
+    if (!definition) return form;
+    const next = structuredClone(definition);
+    const where = (detail: string) => `Form "${form.name}" ${detail}`;
+    next.description = text("registrationForms", where("description"), next.description);
+    const confirmation = text("registrationForms", where("confirmation message"), next.confirmationMessage).trim();
+    next.confirmationMessage = confirmation.length >= 3 ? confirmation : strippedConfirmationFallback;
+    for (const section of next.sections) {
+      section.description = text("registrationForms", where(`section "${section.title}" description`), section.description);
+      for (const field of section.fields) {
+        field.helpText = text("registrationForms", where(`field "${field.label}" help`), field.helpText);
+        if (field.placeholder !== undefined) field.placeholder = text("registrationForms", where(`field "${field.label}" placeholder`), field.placeholder);
+        for (const [choice, value] of Object.entries(field.optionDescriptions ?? {})) {
+          field.optionDescriptions![choice] = text("registrationForms", where(`field "${field.label}" choice "${choice}" description`), value);
+        }
+        for (const [choice, value] of Object.entries(field.optionLabels ?? {})) {
+          const label = text("registrationForms", where(`field "${field.label}" choice "${choice}" label`), value).trim();
+          if (label.length > 0) field.optionLabels![choice] = label;
+          else delete field.optionLabels![choice];
+        }
+      }
+    }
+    return { ...form, definition: next };
+  });
+
+  const messageTemplates = config.messageTemplates.map((template) => ({
+    ...template,
+    subjectTemplate: text("messageTemplates", `Message ${template.key} subject`, template.subjectTemplate),
+    bodyTemplate: text("messageTemplates", `Message ${template.key} body`, template.bodyTemplate),
+  }));
+
+  return { config: { ...config, eventDetails, contentSections, registrationForms, messageTemplates }, findings };
+}
+
+// ---------------------------------------------------------------------------
+// Prices copied as they are
+// ---------------------------------------------------------------------------
+
+export type ClonePricingSummary = {
+  /** Form fields that charge a price, a choice price, or a per-unit credit. */
+  pricedFormFields: number;
+  /** Form fields with a late price. */
+  lateFormFields: number;
+  /** Forms that take card payments and so carry a card processing fee. */
+  formsWithCardFees: number;
+  /** Promo codes, each with its discount amount and limits. */
+  promoCodes: number;
+};
+
+/**
+ * What a clone copies without a per-value review (#157): prices, late prices,
+ * card fees, and promo discount rules. Copied forms are drafts and copied
+ * codes are inactive; those are the human review points, and this summary is
+ * shown in the preview and on the result so the reviewer checks them before
+ * publishing. Counts only what `include` selects (everything when omitted).
+ */
+export function clonePricingSummary(
+  config: SourceConfiguration,
+  include?: Pick<Record<CloneDomainKey, boolean>, "registrationForms" | "promoCodes">,
+): ClonePricingSummary {
+  const summary: ClonePricingSummary = { pricedFormFields: 0, lateFormFields: 0, formsWithCardFees: 0, promoCodes: 0 };
+  if (!include || include.registrationForms) {
+    for (const form of config.registrationForms) {
+      const definition = parseFormDefinition(form.definition);
+      if (!definition) continue;
+      const counts = pricedFieldCounts(definition);
+      summary.pricedFormFields += counts.priced;
+      summary.lateFormFields += counts.latePriced;
+      summary.formsWithCardFees += counts.cardFees;
+    }
+  }
+  if (!include || include.promoCodes) summary.promoCodes = config.promoCodes.length;
+  return summary;
+}
+
+/** The one-line "prices copied" message, or null when nothing priced is copied. */
+export function pricingSummaryMessage(summary: ClonePricingSummary) {
+  const parts = [
+    summary.pricedFormFields > 0 ? plural(summary.pricedFormFields, "priced form field") : null,
+    summary.lateFormFields > 0 ? plural(summary.lateFormFields, "late price", "late prices") : null,
+    summary.formsWithCardFees > 0 ? plural(summary.formsWithCardFees, "form with card fees", "forms with card fees") : null,
+    summary.promoCodes > 0 ? plural(summary.promoCodes, "promo code") : null,
+  ].filter((part): part is string => part !== null);
+  if (parts.length === 0) return null;
+  return `Prices copied, review before publishing: ${parts.join(", ")}.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -305,33 +489,58 @@ export type ClonePlan = {
   domains: ClonePlanDomain[];
   review: {
     latePricing: FormLatePricingItem[];
+    /** Every choice capacity limit in a copyable form: each is re-entered. */
+    formChoiceLimits: FormChoiceLimitItem[];
     promoCodes: Array<{ promoCodeId: string; code: string; sourceStartsOn: string | null; sourceEndsOn: string | null }>;
-    honorOfferings: Array<{ offeringId: string; honorName: string; sessionName: string | null; sourceCapacity: number }>;
+    honorOfferings: Array<{
+      offeringId: string;
+      honorName: string;
+      sessionName: string | null;
+      sourceCapacity: number;
+      sourcePerClubLimit: number | null;
+      /** Carried over as it is; shown so the reviewer sees it. */
+      minimumAge: number | null;
+    }>;
+    /** Private links found in copied text: each "needs review" and is removed from the copy. */
+    privateLinks: PrivateLinkFinding[];
   };
+  /** What is copied without a per-value review: prices, late prices, fees, and promo rules. */
+  pricing: ClonePricingSummary;
+  pricingMessage: string | null;
   /** Values that are always reset on the new draft, whatever is selected. */
   resets: string[];
   unsupported: Array<{ key: CloneUnsupportedKey; label: string; reason: string; sourceCount: number }>;
   neverCopied: readonly string[];
 };
 
-/** Always reset on the clone (#157): none is copied and none is shifted. */
+/**
+ * How the clone treats what it copies (#157), shown in every preview. Dates,
+ * capacities, and limits are never copied or shifted: each is entered anew.
+ * Message templates are the one thing copied live: their published text is
+ * copied as a PUBLISHED version and each keeps its `isEnabled` switch.
+ */
 export const cloneAlwaysReset = [
   "Publication: the new event is an unpublished draft.",
-  "Event dates, registration open and close dates, and the event capacity are entered below.",
+  "Event dates, registration open and close dates, and the event capacity are entered below (or marked as none).",
   "The seminar preference deadline and lock are cleared.",
   "Public content sections are copied unpublished.",
   "Copied registration forms are new drafts; publish them after review.",
-  "Choice capacity limits inside copied forms are cleared.",
+  "Choice capacity limits in copied forms, class capacities, and per-club limits are entered below (or marked as no limit).",
+  "Promo codes are copied inactive with usage reset to zero; each date window is entered below.",
+  "Message templates are copied as their current published text, already published, and each keeps whether it is enabled.",
+  "Private links and tokens found in copied text are removed.",
 ] as const;
 
 function plural(count: number, singular: string, pluralForm = `${singular}s`) {
   return `${count} ${count === 1 ? singular : pluralForm}`;
 }
 
-export function buildClonePlan(config: SourceConfiguration, fingerprint: string): ClonePlan {
+export function buildClonePlan(rawConfig: SourceConfiguration, fingerprint: string): ClonePlan {
+  // Counts and validity come from the text as it would be copied.
+  const { config, findings } = sanitizeSourceForClone(rawConfig);
   const skippedForms: ClonePlanDomain["skipped"] = [];
   const latePricing: FormLatePricingItem[] = [];
-  let capacityLimits = 0;
+  const formChoiceLimits: FormChoiceLimitItem[] = [];
   let attendeeTypeFields = 0;
   let copyableForms = 0;
   for (const form of config.registrationForms) {
@@ -342,7 +551,7 @@ export function buildClonePlan(config: SourceConfiguration, fingerprint: string)
     }
     copyableForms += 1;
     latePricing.push(...latePricingItems(form.formId, form.name, definition));
-    capacityLimits += capacityLimitCount(definition);
+    formChoiceLimits.push(...choiceLimitItems(form.formId, form.name, definition));
     attendeeTypeFields += attendeeTypeFieldCount(definition);
   }
   if (config.formsWithoutPublishedVersion > 0) {
@@ -352,9 +561,7 @@ export function buildClonePlan(config: SourceConfiguration, fingerprint: string)
   const skippedMessages: ClonePlanDomain["skipped"] = [];
   let copyableMessages = 0;
   for (const template of config.messageTemplates) {
-    const valid = isEventMessageTemplateKey(template.key)
-      && validateMessageTemplate({ subject: template.subjectTemplate, body: template.bodyTemplate }).issues.length === 0;
-    if (valid) copyableMessages += 1;
+    if (isCopyableMessageTemplate(template)) copyableMessages += 1;
     else skippedMessages.push({ label: template.key, reason: "Its published text no longer passes the message rules." });
   }
   if (config.messageTemplatesWithoutPublishedVersion > 0) {
@@ -364,25 +571,36 @@ export function buildClonePlan(config: SourceConfiguration, fingerprint: string)
   const assetLinks = config.contentSections.reduce((total, section) => total + section.assetLinkCount, 0);
   const linkCount = config.contentSections.reduce((total, section) => total + section.links.length, 0);
   const moduleCount = 4 + (config.moduleToggles.community ? 1 : 0);
+  const privateLinkNote = (key: CloneDomainKey) => {
+    const count = findings.filter((finding) => finding.domain === key).length;
+    return count > 0 ? [`${plural(count, "private link")} need${count === 1 ? "s" : ""} review and will be removed from the copy.`] : [];
+  };
+  const pricing = clonePricingSummary(config);
 
   const notes: Record<CloneDomainKey, string[]> = {
-    eventDetails: [],
+    eventDetails: privateLinkNote("eventDetails"),
     moduleToggles: [`${moduleCount - (config.moduleToggles.community ? 1 : 0)} switches${config.moduleToggles.community ? " and community settings" : ""} are copied as they are, on or off.`],
     contentSections: [
       linkCount > 0 ? `${plural(linkCount, "web link")} copied.` : "No web links.",
       ...(assetLinks > 0 ? [`${plural(assetLinks, "link")} to uploaded files will be skipped.`] : []),
+      ...privateLinkNote("contentSections"),
     ],
     registrationForms: [
       ...(latePricing.length > 0 ? [`${plural(latePricing.length, "late-pricing date")} need a new date.`] : []),
-      ...(capacityLimits > 0 ? [`${plural(capacityLimits, "choice capacity limit")} will be cleared.`] : []),
+      ...(formChoiceLimits.length > 0 ? [`${plural(formChoiceLimits.length, "choice capacity limit")} need${formChoiceLimits.length === 1 ? "s" : ""} to be entered again.`] : []),
+      ...(pricing.pricedFormFields + pricing.lateFormFields + pricing.formsWithCardFees > 0 ? ["Prices, late prices, and card fees are copied as they are: review them before publishing."] : []),
       ...(attendeeTypeFields > 0 && config.attendeeTypes.length > 0 ? ["Some fields choose from attendee types: include attendee types too."] : []),
+      ...privateLinkNote("registrationForms"),
     ],
     attendeeTypes: [],
     attendeeClassifications: [],
-    messageTemplates: [],
+    messageTemplates: [
+      ...(copyableMessages > 0 ? ["Copied already published, each keeping whether it is enabled."] : []),
+      ...privateLinkNote("messageTemplates"),
+    ],
     tags: [],
-    promoCodes: config.promoCodes.length > 0 ? ["Copied inactive with usage reset to zero. Each needs a new date window."] : [],
-    honors: config.honorOfferings.length > 0 ? ["Each offering needs a capacity you enter anew."] : [],
+    promoCodes: config.promoCodes.length > 0 ? ["Copied inactive with usage reset to zero. Each needs a new date window. Discount amounts and limits are copied as they are."] : [],
+    honors: config.honorOfferings.length > 0 ? ["Each offering needs a capacity and a per-club limit you enter anew. Minimum ages carry over."] : [],
   };
 
   const counts: Record<CloneDomainKey, number> = {
@@ -422,17 +640,28 @@ export function buildClonePlan(config: SourceConfiguration, fingerprint: string)
     })),
     review: {
       latePricing,
+      formChoiceLimits,
       promoCodes: config.promoCodes.map((promo) => ({ promoCodeId: promo.id, code: promo.code, sourceStartsOn: promo.startsOn, sourceEndsOn: promo.endsOn })),
       honorOfferings: config.honorOfferings.map((offering) => ({
-        offeringId: offering.id, honorName: offering.honorName, sessionName: offering.sessionName, sourceCapacity: offering.capacity,
+        offeringId: offering.id, honorName: offering.honorName, sessionName: offering.sessionName,
+        sourceCapacity: offering.capacity, sourcePerClubLimit: offering.perClubLimit, minimumAge: offering.minimumAge,
       })),
+      privateLinks: findings,
     },
+    pricing,
+    pricingMessage: pricingSummaryMessage(pricing),
     resets: [...cloneAlwaysReset],
     unsupported: (Object.keys(cloneUnsupportedLabels) as CloneUnsupportedKey[]).map((key) => ({
       key, ...cloneUnsupportedLabels[key], sourceCount: supportCounts[key],
     })),
     neverCopied: cloneNeverCopied,
   };
+}
+
+/** A message template a clone can copy: an event key whose text still validates. */
+export function isCopyableMessageTemplate(template: Pick<SourceConfiguration["messageTemplates"][number], "key" | "subjectTemplate" | "bodyTemplate">) {
+  return isEventMessageTemplateKey(template.key)
+    && validateMessageTemplate({ subject: template.subjectTemplate, body: template.bodyTemplate }).issues.length === 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -446,12 +675,27 @@ export const previewEventCloneInputSchema = z.object({
 const includeShape = Object.fromEntries(cloneDomainKeys.map((key) => [key, z.boolean()])) as Record<CloneDomainKey, z.ZodBoolean>;
 
 /**
+ * A reviewed value that may be "none" (#157): either `{ value }` or the
+ * explicit `{ value: null, none: true }`. A blank or a bare `null` is
+ * refused, so "not answered" can never be read as "no limit" or "no date".
+ */
+function reviewed<T extends z.ZodType>(schema: T, message: string) {
+  return z.union([
+    z.object({ value: schema }).strict(),
+    z.object({ value: z.null(), none: z.literal(true) }).strict(),
+  ], { error: message });
+}
+
+/**
  * The confirm body (#157). Strict: an unknown key is refused. Every domain is
  * an explicit true/false, and every date-bound or capacity value is a key the
- * caller must send (`null` is a reviewed "none", never an omission), so the
- * clone can never fall back to a silent default or a shifted date. Built from
- * the same rules event settings enforces, so the new event re-saves there
- * unchanged.
+ * caller must send. The event capacity, the registration dates, and each side
+ * of a promo window are `{ value }` or an explicit `{ value: null, none: true }`.
+ * A choice limit or per-club limit is a number or a reviewed `null` inside an
+ * entry that must be present for every source value. So the clone can never
+ * fall back to a silent default, a carried-over limit, or a shifted date.
+ * Built from the same rules event settings enforces, so the new event re-saves
+ * there unchanged.
  */
 export const confirmEventCloneInputSchema = z.object({
   sourceEventId: z.string().trim().min(1).max(100),
@@ -462,36 +706,48 @@ export const confirmEventCloneInputSchema = z.object({
   slug: eventSlugSchema,
   startsOn: calendarDateSchema,
   endsOn: calendarDateSchema,
-  capacity: z.number().int().min(1).max(100_000).nullable(),
-  registrationOpensOn: calendarDateSchema.nullable(),
-  registrationClosesOn: calendarDateSchema.nullable(),
+  capacity: reviewed(z.number().int().min(1).max(100_000), "Enter the event capacity, or choose no limit."),
+  registrationOpensOn: reviewed(calendarDateSchema, "Enter the registration opening date, or choose no date."),
+  registrationClosesOn: reviewed(calendarDateSchema, "Enter the registration closing date, or choose no date."),
   include: z.object(includeShape).strict(),
   formLatePricingDates: z.array(z.object({
     formId: z.string().trim().min(1).max(100),
     fieldKey: z.string().trim().min(1).max(60),
     startsOn: calendarDateSchema,
   }).strict()).max(500).default([]),
+  /** Required: one entry per source choice limit in a copied form. */
+  formChoiceLimits: z.array(z.object({
+    formId: z.string().trim().min(1).max(100),
+    fieldKey: z.string().trim().min(1).max(60),
+    choice: z.string().min(1).max(120),
+    /** A reviewed limit, or `null` for an explicit "no limit". */
+    limit: z.number().int().min(1).max(10_000).nullable(),
+  }).strict()).max(2000),
   promoCodeWindows: z.array(z.object({
     promoCodeId: z.string().trim().min(1).max(100),
-    startsOn: calendarDateSchema.nullable(),
-    endsOn: calendarDateSchema.nullable(),
+    startsOn: reviewed(calendarDateSchema, "Enter a promo code start date, or choose no start date."),
+    endsOn: reviewed(calendarDateSchema, "Enter a promo code end date, or choose no end date."),
   }).strict()).max(500).default([]),
   honorOfferingCapacities: z.array(z.object({
     offeringId: z.string().trim().min(1).max(100),
     capacity: z.number().int().min(1).max(10_000),
+    /** A reviewed per-club limit, or `null` for an explicit "no per-club limit". */
+    perClubLimit: z.number().int().min(1).max(1_000).nullable(),
   }).strict()).max(1000).default([]),
 }).strict().superRefine((value, context) => {
+  const opensOn = value.registrationOpensOn.value;
+  const closesOn = value.registrationClosesOn.value;
   if (value.endsOn < value.startsOn) {
     context.addIssue({ code: "custom", path: ["endsOn"], message: "The event cannot end before it starts." });
   }
-  if (value.registrationOpensOn && value.registrationClosesOn && value.registrationOpensOn > value.registrationClosesOn) {
+  if (opensOn && closesOn && opensOn > closesOn) {
     context.addIssue({ code: "custom", path: ["registrationClosesOn"], message: "Registration cannot close before it opens." });
   }
-  if (value.registrationOpensOn && value.registrationOpensOn > value.endsOn) {
+  if (opensOn && opensOn > value.endsOn) {
     context.addIssue({ code: "custom", path: ["registrationOpensOn"], message: "Registration cannot open after the event ends." });
   }
   value.promoCodeWindows.forEach((window, index) => {
-    if (window.startsOn && window.endsOn && window.startsOn > window.endsOn) {
+    if (window.startsOn.value && window.endsOn.value && window.startsOn.value > window.endsOn.value) {
       context.addIssue({ code: "custom", path: ["promoCodeWindows", index, "endsOn"], message: "A promo code cannot end before it starts." });
     }
   });
@@ -545,20 +801,42 @@ export function reviewIssues(config: SourceConfiguration, input: ConfirmEventClo
     if (!suppliedLate.has(key)) issues.push(`Enter a new late-pricing date for ${item.fieldLabel} on ${item.formName}.`);
   }
 
+  // Choice capacity limits: like class capacities, every one is re-entered,
+  // and a reviewed `null` is the only way to copy a choice without a limit.
+  const expectedLimits = new Map<string, FormChoiceLimitItem>();
+  if (input.include.registrationForms) {
+    for (const form of config.registrationForms) {
+      const definition = parseFormDefinition(form.definition);
+      if (!definition) continue;
+      for (const item of choiceLimitItems(form.formId, form.name, definition)) expectedLimits.set(choiceLimitKey(item.formId, item.fieldKey, item.choice), item);
+    }
+  }
+  const suppliedLimits = new Set<string>();
+  for (const entry of input.formChoiceLimits) {
+    const key = choiceLimitKey(entry.formId, entry.fieldKey, entry.choice);
+    const item = expectedLimits.get(key);
+    if (!item) issues.push(`A choice limit was supplied for something that is not being copied (${entry.fieldKey}: ${entry.choice}).`);
+    else if (suppliedLimits.has(key)) issues.push(`The limit for ${item.choice} (${item.fieldLabel}) was supplied twice.`);
+    suppliedLimits.add(key);
+  }
+  for (const [key, item] of expectedLimits) {
+    if (!suppliedLimits.has(key)) issues.push(`Enter a limit for ${item.choice} (${item.fieldLabel} on ${item.formName}), or choose no limit.`);
+  }
+
   const promoById = new Map(config.promoCodes.map((promo) => [promo.id, promo]));
   const suppliedPromo = new Set<string>();
   for (const window of input.promoCodeWindows) {
     const promo = promoById.get(window.promoCodeId);
     if (!input.include.promoCodes || !promo) issues.push("A promo code window was supplied for a code that is not being copied.");
     else if (suppliedPromo.has(promo.id)) issues.push(`The window for promo code ${promo.code} was supplied twice.`);
-    else if ((promo.startsOn && window.startsOn === promo.startsOn) || (promo.endsOn && window.endsOn === promo.endsOn)) {
+    else if ((promo.startsOn && window.startsOn.value === promo.startsOn) || (promo.endsOn && window.endsOn.value === promo.endsOn)) {
       issues.push(`Choose new dates for promo code ${promo.code}; a date is still the source event's.`);
     }
     if (promo) suppliedPromo.add(promo.id);
   }
   if (input.include.promoCodes) {
     for (const promo of config.promoCodes) {
-      if (!suppliedPromo.has(promo.id)) issues.push(`Enter a date window for promo code ${promo.code} (leave both blank for no window).`);
+      if (!suppliedPromo.has(promo.id)) issues.push(`Enter a date window for promo code ${promo.code}, or choose no start and no end date.`);
     }
   }
 
@@ -572,7 +850,7 @@ export function reviewIssues(config: SourceConfiguration, input: ConfirmEventClo
   }
   if (input.include.honors) {
     for (const offering of config.honorOfferings) {
-      if (!suppliedOfferings.has(offering.id)) issues.push(`Enter a capacity for ${offering.honorName}${offering.sessionName ? ` (${offering.sessionName})` : ""}.`);
+      if (!suppliedOfferings.has(offering.id)) issues.push(`Enter a capacity and per-club limit for ${offering.honorName}${offering.sessionName ? ` (${offering.sessionName})` : ""}.`);
     }
   }
   return issues;
