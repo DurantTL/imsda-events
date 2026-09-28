@@ -267,6 +267,10 @@ export function CommunicationsWorkspace({
   // arrives after Cancel (or after a newer review started) is dropped
   // instead of reopening the dialog.
   const broadcastReviewRequestRef = useRef(0);
+  // A send whose outcome is unknown (network error, 5xx) keeps its batch id
+  // per announcement, so cancelling and reopening the review retries the
+  // same batch: the server replays it instead of emailing everyone again.
+  const unsettledBroadcastBatchRef = useRef<Record<string, string>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const requestedTemplateId = searchParams.get("template");
@@ -494,7 +498,7 @@ export function CommunicationsWorkspace({
   async function broadcastAnnouncement(announcement: AnnouncementRecord): Promise<boolean> {
     const requestId = broadcastReviewRequestRef.current + 1;
     broadcastReviewRequestRef.current = requestId;
-    const batchId = crypto.randomUUID();
+    const batchId = unsettledBroadcastBatchRef.current[announcement.id] ?? crypto.randomUUID();
     setBroadcastReview({ announcement, preview: null, batchId });
     setBroadcastReviewError("");
     setBroadcastReviewLoading(true);
@@ -541,6 +545,7 @@ export function CommunicationsWorkspace({
     const { announcement, preview, batchId } = broadcastReview;
     setBroadcasting(true);
     setBroadcastReviewError("");
+    unsettledBroadcastBatchRef.current[announcement.id] = batchId;
     try {
       const response = await fetch(
         `/api/events/${eventId}/announcements/${announcement.id}/broadcast`,
@@ -553,6 +558,9 @@ export function CommunicationsWorkspace({
           }),
         },
       );
+      // A success or a 4xx is a definite answer (a 4xx never commits a send),
+      // so the next review may start a new batch.
+      if (response.status < 500) delete unsettledBroadcastBatchRef.current[announcement.id];
       const result = await response.json().catch(() => ({})) as ApiResult;
       if (response.status === 409 && (result.error === "PREVIEW_CHANGED" || result.error === "PREVIEW_REQUIRED")) {
         // The reviewed audience is out of date: reload the review so staff

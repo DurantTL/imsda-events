@@ -154,7 +154,12 @@ export async function broadcastPublishedAnnouncement(input: {
         ? existingAudit.metadata as Record<string, unknown>
         : {};
       const pending = await tx.messageOutbox.findMany({
-        where: { eventId: input.eventId, correlationId: input.batchId, status: "PENDING" },
+        where: {
+          eventId: input.eventId,
+          correlationId: input.batchId,
+          templateKey: "EVENT_ANNOUNCEMENT",
+          status: "PENDING",
+        },
         select: { id: true },
       });
       const storedMode = metadata.deliveryMode;
