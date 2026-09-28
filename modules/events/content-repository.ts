@@ -3,6 +3,17 @@ import "server-only";
 import { getPrisma } from "@/lib/prisma";
 import type { EventContentInput } from "@/modules/events/content-schemas";
 
+/** Thrown when a content save cannot be honored as written. */
+export class EventContentError extends Error {
+  constructor(
+    public readonly code: "ASSET_NOT_IN_EVENT",
+    message: string,
+  ) {
+    super(message);
+    this.name = "EventContentError";
+  }
+}
+
 export type EventContentLinkRecord = {
   label: string;
   description: string;
@@ -77,6 +88,30 @@ export async function replaceEventContent(
 ) {
   const prisma = getPrisma();
   await prisma.$transaction(async (tx) => {
+    // Every linked file must belong to this event. Checked inside the same
+    // transaction as the write, against the live table rather than a value
+    // read earlier, so a file moved or removed between page load and save
+    // cannot slip through. Nothing is written until this passes.
+    const linkedAssetIds = [...new Set(
+      input.sections.flatMap((section) => (
+        section.kind === "RESOURCE_LINKS"
+          ? section.links.flatMap((link) => (link.assetId ? [link.assetId] : []))
+          : []
+      )),
+    )];
+    if (linkedAssetIds.length > 0) {
+      const owned = await tx.eventAsset.findMany({
+        where: { id: { in: linkedAssetIds }, eventId },
+        select: { id: true },
+      });
+      if (owned.length !== linkedAssetIds.length) {
+        throw new EventContentError(
+          "ASSET_NOT_IN_EVENT",
+          "One of the linked files does not belong to this event. Reload and try again.",
+        );
+      }
+    }
+
     // Links go with their section: the foreign key cascades on delete.
     await tx.eventContentSection.deleteMany({ where: { eventId } });
     for (const [position, section] of input.sections.entries()) {
