@@ -62,6 +62,9 @@ one-off operational notices to named people, not bulk mail to attendees.
   and provider events. A failed send never touches a registration: the message
   stays queued and the next sweep retries it. While account email is not
   configured nothing is queued and the changes wait.
+- **Held-back changes.** If some recipients of a change already had today's
+  digest and others did not, the change stays unstamped, so it is sent again in
+  the next day's digest. Recipients who already saw it may see it a second time.
 - **Edge.** A change committed late enough to fall before the send time but
   after the day's digest was queued waits for the next day's digest.
 

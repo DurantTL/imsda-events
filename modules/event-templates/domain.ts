@@ -77,7 +77,7 @@ export const templateLocationSchema = z.object({
   lastDayOffset: z.number().int().min(0).max(365).nullable().default(null),
   registrationClosesOffset: z.number().int().min(-365).max(365).nullable().default(null),
   /** The location's Area Coordinator (#599); applied only while that account is still an active coordinator. */
-  coordinatorAccountId: z.string().trim().min(1).max(100).nullable().default(null),
+  coordinatorAccountId: z.string().trim().min(1).max(100).nullable().optional(),
 }).strict().superRefine((location, context) => {
   if (location.firstDayOffset !== null && location.lastDayOffset !== null && location.lastDayOffset < location.firstDayOffset) {
     context.addIssue({ code: "custom", path: ["lastDayOffset"], message: "A location's last day cannot be before its first day." });

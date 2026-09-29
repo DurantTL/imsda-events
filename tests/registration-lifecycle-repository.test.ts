@@ -861,6 +861,26 @@ describe("location waitlists (#599)", () => {
       expect(raw.mock.calls.filter(([, ...values]) => values[0] === "loc-busy")).toHaveLength(1);
     });
 
+    it("does not rewrite a blocked reason the entry already carries, so concurrent passes do not wait on the same row", async () => {
+      const busyReason = "The registration's location was busy, so it was not promoted automatically. Promote it by hand.";
+      const stale = waiting("busy-1", "loc-busy", 1);
+      (stale.waitlistEntry as unknown as Record<string, unknown>).lastBlockedReason = busyReason;
+      const fresh = waiting("busy-2", "loc-busy", 2);
+      const tx = locationFixture([stale, fresh], [
+        { id: "entry-busy-1", registrationId: "busy-1", position: 1, locationId: "loc-busy" },
+        { id: "entry-busy-2", registrationId: "busy-2", position: 2, locationId: "loc-busy" },
+      ]);
+      Object.assign(tx, { $queryRaw: vi.fn(async () => { throw Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" }); }) });
+      await promoteWaitlistAfterSeatsFreed(tx as never, { eventId: event.id, actorUserId: "user-1", trigger: { locationId: "loc-busy", reason: "Raised." }, now: when });
+      // The first entry already says so, the second (never blocked) is skipped as busy without a write either.
+      expect(tx.registrationWaitlistEntry.update).not.toHaveBeenCalled();
+      const changed = waiting("busy-3", "loc-busy", 3);
+      const tx2 = locationFixture([changed], [{ id: "entry-busy-3", registrationId: "busy-3", position: 3, locationId: "loc-busy" }]);
+      Object.assign(tx2, { $queryRaw: vi.fn(async () => { throw Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" }); }) });
+      await promoteWaitlistAfterSeatsFreed(tx2 as never, { eventId: event.id, actorUserId: "user-1", trigger: { locationId: "loc-busy", reason: "Raised." }, now: when });
+      expect(tx2.registrationWaitlistEntry.update).toHaveBeenCalledWith({ where: { id: "entry-busy-3" }, data: { lastBlockedReason: busyReason } });
+    });
+
     it("warns when a repeating pass reaches its round limit", async () => {
       const queue = [{ id: "entry-a", registrationId: "a", position: 1, locationId: "loc-1" }];
       // The read model never shows the club leaving the queue, so the pass keeps promoting until the cap.

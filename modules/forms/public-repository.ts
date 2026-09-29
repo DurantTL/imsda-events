@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Prisma, RegistrationFormStatus } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
-import { isSerializationFailure } from "@/lib/prisma-errors";
+import { isSerializationFailure, pauseBeforeRetry } from "@/lib/prisma-errors";
 import { admitToLocation } from "@/modules/event-locations/admission";
 import { locationWaitlistPlace, recordLocationWaitlistChange } from "@/modules/event-locations/waitlist";
 import { locationTransactionTimeoutMs } from "@/modules/event-locations/errors";
@@ -1179,6 +1179,8 @@ async function createPublicRegistrationTransaction(
   };
 }
 
+const submitAttempts = 4;
+
 function retryableTransactionError(error: unknown) {
   return (
     isSerializationFailure(error)
@@ -1197,7 +1199,7 @@ export async function submitPublicRegistration(
   club?: ClubSubmissionContext,
 ) {
   const prisma = getPrisma();
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  for (let attempt = 0; attempt < submitAttempts; attempt += 1) {
     try {
       const result = await prisma.$transaction(
         (tx) => createPublicRegistrationTransaction(tx, eventSlug, formSlug, input, now, club),
@@ -1247,6 +1249,7 @@ export async function submitPublicRegistration(
       };
     } catch (error) {
       if (!retryableTransactionError(error)) throw error;
+      if (attempt < submitAttempts - 1) await pauseBeforeRetry(attempt);
     }
   }
   throw new PublicRegistrationError("SUBMISSION_CONFLICT", "Another registration changed availability at the same time. Review the form and submit again.");

@@ -25,8 +25,9 @@ function draftFrom(location: EventLocationRecord): Draft {
     lastDay: location.lastDay ?? "",
     registrationClosesOn: location.registrationClosesOn ?? "",
     capacity: location.capacity === null ? "" : String(location.capacity),
-    // A coordinator who is no longer active is not carried into the form: saving without picking one clears them.
-    coordinatorAccountId: location.coordinatorActive ? location.coordinatorAccountId ?? "" : "",
+    // The stored coordinator stays selected even when no longer active (shown as "inactive"), so choosing
+    // "No coordinator" is a real change that clears them, and an unrelated edit leaves them alone.
+    coordinatorAccountId: location.coordinatorAccountId ?? "",
   };
 }
 
@@ -123,6 +124,9 @@ export function EventLocationsPanel({
   }
 
   const formOpen = adding || editingId !== null;
+  // The location being edited has a stored coordinator who is no longer an active Area Coordinator.
+  const editedLocation = editingId ? locations.find((row) => row.id === editingId) : undefined;
+  const inactiveCoordinator = editedLocation?.coordinator && !editedLocation.coordinatorActive ? editedLocation.coordinator : null;
 
   return (
     <section aria-labelledby="event-locations-title" className="panel form-stack event-settings-panel" id="event-locations">
@@ -216,6 +220,7 @@ export function EventLocationsPanel({
               Area Coordinator (optional)
               <select onChange={(event) => setDraft({ ...draft, coordinatorAccountId: event.target.value })} value={draft.coordinatorAccountId}>
                 <option value="">No coordinator</option>
+                {inactiveCoordinator && <option value={inactiveCoordinator.accountId}>{inactiveCoordinator.name} (inactive)</option>}
                 {areaCoordinators.map((coordinator) => (
                   <option key={coordinator.accountId} value={coordinator.accountId}>{coordinator.name} ({coordinator.email})</option>
                 ))}

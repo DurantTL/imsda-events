@@ -1243,6 +1243,8 @@ export async function previewRegistrationAmendment(
   ));
 }
 
+const maxRetryAttempts = 6;
+
 function retryable(error: unknown) {
   return isSerializationFailure(error)
     || (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002");
@@ -1268,7 +1270,7 @@ export async function amendRegistration(
     },
   });
   const prisma = getPrisma();
-  for (let attempt = 0; attempt < 6; attempt += 1) {
+  for (let attempt = 0; attempt < maxRetryAttempts; attempt += 1) {
     try {
       const amended = await prisma.$transaction(async (tx) => {
         const existing = await tx.registrationOperation.findUnique({
@@ -1670,7 +1672,7 @@ export async function amendRegistration(
       return amended;
     } catch (error) {
       if (!retryable(error)) throw error;
-      await pauseBeforeRetry(attempt);
+      if (attempt < maxRetryAttempts - 1) await pauseBeforeRetry(attempt);
     }
   }
   throw new RegistrationAmendmentError(

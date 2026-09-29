@@ -546,6 +546,17 @@ async function promoteWithinTransaction(
 }
 
 const maximumPromotionRounds = 50;
+const maxRetryAttempts = 6;
+
+/**
+ * Records why a waiting club was not promoted, unless that is already what the
+ * entry says. Concurrent promotion passes then do not each write the same row
+ * (and wait on each other outside a savepoint) just to repeat a reason.
+ */
+async function noteBlocked(tx: Prisma.TransactionClient, entryId: string, currentReason: string | null, reason: string) {
+  if (currentReason === reason) return;
+  await tx.registrationWaitlistEntry.update({ where: { id: entryId }, data: { lastBlockedReason: reason } });
+}
 
 /** What freed seats: the location they were at (if any) decides who is offered them first. */
 export type SeatsFreedTrigger = { locationId: string | null; reason: string };
@@ -579,13 +590,9 @@ async function autoPromoteEarliestFitting(
     const entryLocationId = entry.registration?.locationId;
     if (entryLocationId && busyLocationIds.has(entryLocationId)) continue;
     const candidate = await loadRegistration(tx, event.id, entry.registrationId);
+    const currentReason = candidate.waitlistEntry?.lastBlockedReason ?? null;
     if (candidate.status !== "WAITLISTED" || candidate.waitlistEntry?.status !== "WAITING") {
-      await tx.registrationWaitlistEntry.update({
-        where: { id: entry.id },
-        data: {
-          lastBlockedReason: "Registration is no longer in a promotable waitlist state.",
-        },
-      });
+      await noteBlocked(tx, entry.id, currentReason, "Registration is no longer in a promotable waitlist state.");
       continue;
     }
 
@@ -602,18 +609,12 @@ async function autoPromoteEarliestFitting(
       if (!locationSavepoint || !(error instanceof EventLocationError && error.code === "LOCATION_BUSY")) throw error;
       await tx.$executeRawUnsafe("ROLLBACK TO SAVEPOINT auto_promote_candidate");
       busyLocationIds.add(locationSavepoint);
-      await tx.registrationWaitlistEntry.update({
-        where: { id: entry.id },
-        data: { lastBlockedReason: "The registration's location was busy, so it was not promoted automatically. Promote it by hand." },
-      });
+      await noteBlocked(tx, entry.id, currentReason, "The registration's location was busy, so it was not promoted automatically. Promote it by hand.");
       continue;
     }
     if (locationSavepoint) await tx.$executeRawUnsafe("RELEASE SAVEPOINT auto_promote_candidate");
     if (!eventCapacity.fits) {
-      await tx.registrationWaitlistEntry.update({
-        where: { id: entry.id },
-        data: { lastBlockedReason: eventCapacity.reason?.slice(0, 500) ?? "Event capacity is unavailable." },
-      });
+      await noteBlocked(tx, entry.id, currentReason, eventCapacity.reason?.slice(0, 500) ?? "Event capacity is unavailable.");
       continue;
     }
 
@@ -622,18 +623,12 @@ async function autoPromoteEarliestFitting(
       claims = desiredReservationClaims(candidate);
     } catch (error) {
       if (!(error instanceof RegistrationLifecycleError)) throw error;
-      await tx.registrationWaitlistEntry.update({
-        where: { id: entry.id },
-        data: { lastBlockedReason: error.message.slice(0, 500) },
-      });
+      await noteBlocked(tx, entry.id, currentReason, error.message.slice(0, 500));
       continue;
     }
     const optionCapacity = await checkOptionCapacity(tx, candidate, claims);
     if (!optionCapacity.fits) {
-      await tx.registrationWaitlistEntry.update({
-        where: { id: entry.id },
-        data: { lastBlockedReason: optionCapacity.reason?.slice(0, 500) ?? "Option capacity is unavailable." },
-      });
+      await noteBlocked(tx, entry.id, currentReason, optionCapacity.reason?.slice(0, 500) ?? "Option capacity is unavailable.");
       continue;
     }
 
@@ -710,7 +705,7 @@ async function runSerializable<T>(
   operation: (tx: Prisma.TransactionClient) => Promise<T>,
 ) {
   const prisma = getPrisma();
-  for (let attempt = 0; attempt < 6; attempt += 1) {
+  for (let attempt = 0; attempt < maxRetryAttempts; attempt += 1) {
     try {
       return await prisma.$transaction(operation, {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -719,7 +714,7 @@ async function runSerializable<T>(
       });
     } catch (error) {
       if (!retryableTransactionError(error)) throw error;
-      await pauseBeforeRetry(attempt);
+      if (attempt < maxRetryAttempts - 1) await pauseBeforeRetry(attempt);
     }
   }
   throw new RegistrationLifecycleError(

@@ -71,7 +71,7 @@ describe("template locations (#413)", () => {
 
   it("validates a location: a name, a positive capacity, and a last day not before the first", () => {
     expect(templateLocationSchema.parse({ name: "Des Moines" })).toEqual({
-      name: "Des Moines", address: null, capacity: null, firstDayOffset: null, lastDayOffset: null, registrationClosesOffset: null, coordinatorAccountId: null,
+      name: "Des Moines", address: null, capacity: null, firstDayOffset: null, lastDayOffset: null, registrationClosesOffset: null,
     });
     expect(templateLocationSchema.safeParse({ name: "" }).success).toBe(false);
     expect(templateLocationSchema.safeParse({ name: "A", capacity: 0 }).success).toBe(false);
@@ -141,7 +141,7 @@ describe("template locations (#413)", () => {
 
   it("accepts a coordinator on a template location, with none by default", () => {
     expect(templateLocationSchema.parse({ name: "A", coordinatorAccountId: "account-1" }).coordinatorAccountId).toBe("account-1");
-    expect(templateLocationSchema.parse({ name: "A" }).coordinatorAccountId).toBeNull();
+    expect(templateLocationSchema.parse({ name: "A" }).coordinatorAccountId).toBeUndefined();
     expect(templateLocationSchema.safeParse({ name: "A", coordinatorAccountId: "" }).success).toBe(false);
   });
 

@@ -1,4 +1,4 @@
-import { isSerializationFailure } from "@/lib/prisma-errors";
+import { isSerializationFailure, pauseBeforeRetry } from "@/lib/prisma-errors";
 import { checkLocationSeats } from "@/modules/event-locations/admission";
 import { promoteWaitlistAfterSeatsFreed } from "@/modules/registrations/lifecycle-repository";
 import { crossSitePickCount } from "@/modules/honors/locations";
@@ -1379,6 +1379,7 @@ export async function approveRegistrationMove(moveId: string, note: string, acto
     } catch (error) {
       if (!isRetryableTransaction(error)) throw error;
       lastError = error;
+      if (attempt < 3) await pauseBeforeRetry(attempt);
     }
   }
   // Still colliding on a unique index after every retry: the one a move can
