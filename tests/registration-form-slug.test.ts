@@ -79,8 +79,10 @@ beforeEach(() => {
  * `getRegistrationForm` does after a successful call.
  */
 function prismaFor(tx: Record<string, unknown>, readBack: unknown = null) {
+  const lock = { $executeRaw: vi.fn().mockResolvedValue(0), $queryRaw: vi.fn().mockResolvedValue([]) };
   return {
-    $transaction: vi.fn(async (operation: (client: typeof tx) => unknown) => operation(tx)),
+    ...lock,
+    $transaction: vi.fn(async (operation: (client: typeof tx) => unknown) => operation({ ...lock, ...tx })),
     registrationForm: { findFirst: vi.fn().mockResolvedValue(readBack) },
   };
 }
@@ -190,6 +192,21 @@ describe("form slug sync before first publish (#476)", () => {
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     expect(tx.registrationForm.findFirst).toHaveBeenCalledTimes(1);
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it("takes the form-row lock, scoped to the event, before it reads the form (#564)", async () => {
+    const findFirst = vi.fn().mockResolvedValue(neverPublishedPrecheck());
+    const tx = { registrationForm: { findFirst, findUnique: vi.fn().mockResolvedValue(null), update: vi.fn().mockResolvedValue({}) }, auditLog: { create: vi.fn().mockResolvedValue({}) } };
+    const prisma = prismaFor(tx, fullFormRow("womens-retreat-registration"));
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await updateRegistrationFormSlug("event-1", "form-1", "user-1", "womens-retreat-registration");
+
+    const [strings, lockedFormId, lockedEventId] = prisma.$queryRaw.mock.calls[0] as [TemplateStringsArray, string, string];
+    expect(strings.join("?")).toContain('FOR UPDATE');
+    expect(strings.join("?")).toContain('"eventId"');
+    expect([lockedFormId, lockedEventId]).toEqual(["form-1", "event-1"]);
+    expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(findFirst.mock.invocationCallOrder[0]!);
   });
 
   it("raises FORM_NOT_FOUND for a form outside the event", async () => {

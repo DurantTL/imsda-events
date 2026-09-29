@@ -103,6 +103,11 @@ async function run() {
   await publishRegistrationForm(event.id, formId, userId);
   await assertOpen(slug, event.id, v1.id, "v1 live");
 
+  // The form lock is scoped to the event: another event's id finds nothing, so
+  // it is a plain not-found and never blocks on (or writes to) this form.
+  await rejectsWith(unpublishRegistrationForm("other-event-id", formId, userId), "FORM_NOT_FOUND", "a foreign event cannot withdraw this form");
+  await rejectsWith(publishRegistrationForm("other-event-id", formId, userId), "FORM_NOT_FOUND", "a foreign event cannot publish this form");
+
   // Create a draft from the live form: the live version keeps serving.
   const live = (await getRegistrationForm(event.id, formId))!;
   const revised = structuredClone(live.activeVersion.definition);
@@ -158,6 +163,33 @@ function eventData(slug: string) {
   };
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Holds the form-row lock from a separate connection while `first` and then
+ * `second` start and queue on it, then releases it, so `first` gets the lock
+ * first. Both are started with a pause between them so the order is real.
+ */
+async function heldLockRace<A, B>(formId: string, first: () => Promise<A>, second: () => Promise<B>) {
+  let release!: () => void;
+  let locked!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const lockTaken = new Promise<void>((resolve) => { locked = resolve; });
+  const holder = prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "RegistrationForm" WHERE "id" = ${formId} FOR UPDATE`;
+    locked();
+    await held;
+  }, { timeout: 20_000 });
+  await lockTaken;
+  const firstResult = Promise.allSettled([first()]);
+  await sleep(400);
+  const secondResult = Promise.allSettled([second()]);
+  await sleep(400);
+  release();
+  await holder;
+  return [(await firstResult)[0]!, (await secondResult)[0]!] as const;
+}
+
 async function settle<A, B>(a: Promise<A>, b: Promise<B>) {
   const [ra, rb] = await Promise.allSettled([a, b]);
   return [ra, rb] as const;
@@ -185,7 +217,7 @@ async function liveForm(eventId: string, title: string) {
 
 async function races() {
   const event = await prisma.event.create({ data: eventData(raceEventSlug) });
-  const rounds = 8;
+  const rounds = 6;
 
   // Save vs publish: the version that got published is never mutated by the save.
   const saveVsPublish = { publishedFirst: 0, savedFirst: 0 };
@@ -197,12 +229,16 @@ async function races() {
     const tested = await createTestSubmission(event.id, formId, userId, { versionId: draft.id, responses: contact });
     assert(tested.isValid, "the draft is tested before the race");
     const edited = { ...structuredClone(draftDefinition), title: `Race A${i} edited` };
-    const [save, publish] = await settle(
-      updateRegistrationForm(event.id, formId, userId, { definition: edited, expectedUpdatedAt: draft.updatedAt }),
-      publishRegistrationForm(event.id, formId, userId),
-    );
+    // Even rounds queue the publish first, odd rounds the save first (deterministic, not luck).
+    const runSave = () => updateRegistrationForm(event.id, formId, userId, { definition: edited, expectedUpdatedAt: draft.updatedAt });
+    const runPublish = () => publishRegistrationForm(event.id, formId, userId);
+    const publishFirst = i % 2 === 0;
+    const [first, second] = publishFirst ? await heldLockRace(formId, runPublish, runSave) : await heldLockRace(formId, runSave, runPublish);
+    const save = publishFirst ? second : first;
+    const publish = publishFirst ? first : second;
     const v2 = await prisma.registrationFormVersion.findUniqueOrThrow({ where: { id: draft.id } });
     const v2Title = (v2.definition as { title: string }).title;
+    assert((v2.status === "PUBLISHED") === publishFirst, "the writer that queued first won");
     if (v2.status === "PUBLISHED") {
       saveVsPublish.publishedFirst += 1;
       assert(publish.status === "fulfilled", "publish won the race");
@@ -237,22 +273,37 @@ async function races() {
   }
 
   // Test vs save: a test computed against the old content never survives as valid on the edited draft.
+  // Deterministic orders: this script holds the form lock, starts the first
+  // writer (which queues on the lock), then the second, then releases. Even
+  // rounds queue the test first, odd rounds the save first; the script fails
+  // if either order does not produce its expected outcome.
   const testVsSave = { testedFirst: 0, savedFirst: 0 };
-  for (let i = 0; i < rounds; i += 1) {
+  for (let i = 0; i < 6; i += 1) {
     const { formId, relaxed } = await liveForm(event.id, `Race C${i} live`);
     const draftDefinition = { ...structuredClone(relaxed), title: `Race C${i} draft` };
     const withDraft = await updateRegistrationForm(event.id, formId, userId, { definition: draftDefinition, expectedUpdatedAt: (await getRegistrationForm(event.id, formId))!.activeVersion.updatedAt });
     const draft = withDraft.activeVersion;
-    const [test, save] = await settle(
-      createTestSubmission(event.id, formId, userId, { versionId: draft.id, responses: contact }),
-      updateRegistrationForm(event.id, formId, userId, { definition: { ...structuredClone(draftDefinition), title: `Race C${i} edited` }, expectedUpdatedAt: draft.updatedAt }),
-    );
+    const runTest = () => createTestSubmission(event.id, formId, userId, { versionId: draft.id, responses: contact });
+    const runSave = () => updateRegistrationForm(event.id, formId, userId, { definition: { ...structuredClone(draftDefinition), title: `Race C${i} edited` }, expectedUpdatedAt: draft.updatedAt });
+    const testFirst = i % 2 === 0;
+    const [first, second] = testFirst
+      ? await heldLockRace(formId, runTest, runSave)
+      : await heldLockRace(formId, runSave, runTest);
+    const test = testFirst ? first : second;
+    const save = testFirst ? second : first;
     assert(save.status === "fulfilled", "the save applies");
-    if (test.status === "fulfilled") testVsSave.testedFirst += 1;
-    else { assert(conflictCode(test) === "EDIT_CONFLICT", `a losing test is refused as a conflict (got ${conflictCode(test) ?? "other"})`); testVsSave.savedFirst += 1; }
+    if (testFirst) {
+      assert(test.status === "fulfilled", "the test that queued first committed");
+      testVsSave.testedFirst += 1;
+    } else {
+      assert(conflictCode(test) === "EDIT_CONFLICT", `the test queued behind the save is refused as a conflict (got ${conflictCode(test) ?? test.status})`);
+      testVsSave.savedFirst += 1;
+    }
     assert((await prisma.formTestSubmission.count({ where: { formVersionId: draft.id, isValid: true } })) === 0, "no valid test remains against the edited draft");
     await rejectsWith(publishRegistrationForm(event.id, formId, userId), "TEST_REQUIRED", "the edited draft cannot publish on a stale test");
   }
+  assert(testVsSave.testedFirst > 0 && testVsSave.savedFirst > 0, `both test-vs-save orders happened (${JSON.stringify(testVsSave)})`);
+  assert(saveVsPublish.publishedFirst > 0 && saveVsPublish.savedFirst > 0, `both save-vs-publish orders happened (${JSON.stringify(saveVsPublish)})`);
   console.log("Race orders seen", JSON.stringify({ saveVsPublish, saveVsWithdraw, testVsSave }));
 }
 

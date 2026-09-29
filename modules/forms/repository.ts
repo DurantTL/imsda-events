@@ -21,17 +21,17 @@ import type { OrganizationDirectory } from "@/modules/organizations/directory-op
 import { directoryForDefinitions, hydrateFormOptions } from "@/modules/forms/form-options-repository";
 
 /**
- * Every writer of a form's versions (save, test, publish, withdraw) runs in
- * one of these: the first statement locks the form row, so the writers are
+ * Every writer of a form's versions or slug (save, test, publish, withdraw, slug update) runs in
+ * one of these: the first statement locks the form row (scoped to its event, so another event's form id locks nothing and reads as not found), so the writers are
  * serialized and each re-reads current state under the lock (#564). Because
  * they all take this one lock first, there is no lock-order cycle. The lock
  * wait gives up after 5s as a readable "busy" error instead of hanging.
  */
-async function formWriteTransaction<T>(operation: (tx: Prisma.TransactionClient) => Promise<T>, formId: string): Promise<T> {
+async function formWriteTransaction<T>(operation: (tx: Prisma.TransactionClient) => Promise<T>, formId: string, eventId: string): Promise<T> {
   try {
     return await getPrisma().$transaction(async (tx) => {
       await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
-      await tx.$queryRaw`SELECT "id" FROM "RegistrationForm" WHERE "id" = ${formId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT "id" FROM "RegistrationForm" WHERE "id" = ${formId} AND "eventId" = ${eventId} FOR UPDATE`;
       await tx.$executeRaw`SET LOCAL lock_timeout = 0`;
       return operation(tx);
     }, { timeout: 10_000 });
@@ -301,7 +301,7 @@ export async function updateRegistrationForm(
       eventId, actorUserId, action: "REGISTRATION_FORM_DRAFT_SAVED", entityType: "RegistrationForm", entityId: formId,
       correlationId: randomUUID(), summary: `Saved a draft of ${definition.title}.`, metadata: { sectionCount: definition.sections.length, invalidatedTestCount, productionWrite: false },
     } });
-  }, formId);
+  }, formId, eventId);
   } catch (error) {
     // Two staff creating the next draft at once collide on (formId, versionNumber).
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -324,10 +324,10 @@ export async function updateRegistrationForm(
  */
 export async function updateRegistrationFormSlug(eventId: string, formId: string, actorUserId: string, slug: string) {
   try {
-    await getPrisma().$transaction(async (tx) => {
-      // Read and write in one transaction, as publishRegistrationForm does, so
-      // a publish landing between the lock check and the write cannot slip a
-      // slug change past SLUG_LOCKED.
+    await formWriteTransaction(async (tx) => {
+      // Runs under the same form-row lock as publish, and reads inside it, so a
+      // first publish committing between the SLUG_LOCKED check and the write
+      // cannot slip a slug change past it (#564).
       const form = await tx.registrationForm.findFirst({
         where: { id: formId, eventId },
         select: { id: true, name: true, slug: true, versions: { select: { publishedAt: true } } },
@@ -344,7 +344,7 @@ export async function updateRegistrationFormSlug(eventId: string, formId: string
         eventId, actorUserId, action: "REGISTRATION_FORM_SLUG_UPDATED", entityType: "RegistrationForm", entityId: formId,
         correlationId: randomUUID(), summary: `Updated the web address for ${form.name} to /${slug}.`, metadata: { previousSlug: form.slug, slug, productionWrite: false },
       } });
-    });
+    }, formId, eventId);
   } catch (error) {
     // Another form claimed the address between the check and the write.
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") throw slugTakenError();
@@ -418,7 +418,7 @@ export async function publishRegistrationForm(eventId: string, formId: string, a
       eventId, actorUserId, action: "REGISTRATION_FORM_PUBLISHED", entityType: "RegistrationForm", entityId: formId,
       correlationId: randomUUID(), summary: `Published ${definition.title} version ${draft.versionNumber}.`, metadata: { versionId: draft.id, versionNumber: draft.versionNumber, productionWrite: false },
     } });
-  }, formId);
+  }, formId, eventId);
   return (await getRegistrationForm(eventId, formId))!;
 }
 
@@ -456,7 +456,7 @@ export async function unpublishRegistrationForm(eventId: string, formId: string,
       summary: `Withdrew ${form.name} version ${published.versionNumber} from the public event page.`,
       metadata: { versionId: published.id, versionNumber: published.versionNumber, productionWrite: false },
     } });
-  }, formId);
+  }, formId, eventId);
   return (await getRegistrationForm(eventId, formId))!;
 }
 
@@ -524,7 +524,7 @@ export async function createTestSubmission(
       metadata: { isValid: validation.isValid, issueCount: validation.issues.length, productionWrite: false },
     } });
     return created;
-  }, formId);
+  }, formId, eventId);
   return { id: submission.id, isValid: validation.isValid, validation, createdAt: submission.createdAt.toISOString() };
 }
 
