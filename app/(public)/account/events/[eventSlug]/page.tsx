@@ -21,6 +21,7 @@ import { getCurrentSession } from "@/modules/access/current-session";
 import { requireAttendeeSecondStep } from "@/modules/attendee-accounts/portal-second-step";
 import { attendeeSignInRedirectPath } from "@/modules/attendee-accounts/return-redirect";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { splitParagraphs } from "@/modules/communications/account-banner-domain";
 import {
   getAttendeeRetreatHub,
   getStaffRetreatHubPreview,
@@ -68,9 +69,7 @@ function eventTimeLabel(
   return `${times.format(new Date(startsAt))} – ${times.format(new Date(endsAt))}`;
 }
 
-function paragraphs(body: string) {
-  return body.split(/\n\s*\n/).map((entry) => entry.trim()).filter(Boolean);
-}
+const paragraphs = splitParagraphs;
 
 export default async function AttendeeEventHubPage({
   params,

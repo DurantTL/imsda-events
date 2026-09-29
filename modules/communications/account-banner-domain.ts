@@ -7,10 +7,15 @@ import {
 
 /**
  * Which published announcements an account banner may show (#590). The
- * audience rule is the event hub's own (`isExactAllAttendeesAudience`, shared
- * with the public event page); this only adds the banner placement, the
- * event-ended cut-off and the ordering.
+ * audience rule is the public event page's (`isExactAllAttendeesAudience`);
+ * the attendee event hub itself applies no audience filter. This adds the
+ * banner placement, the event-ended cut-off and the ordering.
  */
+
+/** Blank-line paragraph split, shared with the attendee event hub. */
+export function splitParagraphs(body: string) {
+  return body.split(/\n\s*\n/).map((entry) => entry.trim()).filter(Boolean);
+}
 
 export type AccountBannerCandidate = {
   id: string;
@@ -23,6 +28,11 @@ export type AccountBannerCandidate = {
   publishedAt: Date | null;
   pinnedAt: Date | null;
   event: { name: string; slug: string; timezone: string; endsAt: Date | null };
+  /** Set when the account has its own active registration for the event. */
+  hasOwnRegistration: boolean;
+  /** A directed or deputised club with an active club registration, if any. */
+  clubOrganizationId: string | null;
+  eventId: string;
 };
 
 export type AccountBannerAnnouncement = {
@@ -32,7 +42,8 @@ export type AccountBannerAnnouncement = {
   priority: PublicAnnouncementPriority;
   pinned: boolean;
   eventName: string;
-  eventSlug: string;
+  /** Where "Read more" goes: the hub for a personal registration, else the club's event page. */
+  href: string;
 };
 
 export function selectAccountBannerAnnouncements(
@@ -63,6 +74,8 @@ export function selectAccountBannerAnnouncements(
       priority: candidate.priority,
       pinned: Boolean(candidate.pinnedAt),
       eventName: candidate.event.name,
-      eventSlug: candidate.event.slug,
+      href: candidate.hasOwnRegistration || !candidate.clubOrganizationId
+        ? `/account/events/${candidate.event.slug}`
+        : `/account/clubs/${candidate.clubOrganizationId}/events/${candidate.eventId}`,
     }));
 }

@@ -49,13 +49,17 @@ export default async function AccountPortalLayout({ children }: { children: Reac
   // the staff workspace, only when this browser also carries a live staff
   // session — the same decision `app-shell.tsx` makes in the other direction.
   const [workspaceContext] = otherWorkspaceContextsForAttendee({ hasStaffSession: Boolean(staffSession.user) });
-  const [clubs, areaCoordinator] = chromeAccount
-    ? await Promise.all([listDirectedClubs(chromeAccount.id), isAreaCoordinator(chromeAccount.id)])
-    : [[], false];
-
   // Banner announcements are account-session only: a staff "act as" with no
-  // attendee account (or a second step still pending) gets none.
-  const bannerAnnouncements = chromeAccount ? await listAccountBannerAnnouncements(chromeAccount) : [];
+  // attendee account (or a second step still pending) gets none. The banner
+  // query starts as soon as the clubs load, alongside the coordinator check.
+  const clubsPromise = chromeAccount ? listDirectedClubs(chromeAccount.id) : Promise.resolve([]);
+  const [clubs, areaCoordinator, bannerAnnouncements] = chromeAccount
+    ? await Promise.all([
+      clubsPromise,
+      isAreaCoordinator(chromeAccount.id),
+      clubsPromise.then((directed) => listAccountBannerAnnouncements(chromeAccount, directed)),
+    ])
+    : [[], false, []];
 
   const actingAsAreaCoordinator = acting?.role === "AREA_COORDINATOR";
   const actingAsDirector = acting?.role === "CLUB_DIRECTOR";
@@ -87,7 +91,7 @@ export default async function AccountPortalLayout({ children }: { children: Reac
       </header>
       <ActAsBanner acting={acting} />
       <AccountSectionNav items={items} label="Your account" />
-      <AccountAnnouncementBanner announcements={bannerAnnouncements} />
+      {chromeAccount && <AccountAnnouncementBanner accountId={chromeAccount.id} announcements={bannerAnnouncements} />}
       {children}
     </main>
   );

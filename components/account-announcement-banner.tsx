@@ -1,18 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useSyncExternalStore } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 import { Megaphone, X } from "lucide-react";
-import type { AccountBannerAnnouncement } from "@/modules/communications/account-banner-domain";
+import { splitParagraphs, type AccountBannerAnnouncement } from "@/modules/communications/account-banner-domain";
 
-const storageKey = "imsda:dismissed-announcements";
+// Dismissals are per browser and per account, so a shared browser doesn't
+// carry one person's dismissals to the next.
+const storageKeyFor = (accountId: string) => `imsda:dismissed-announcements:${accountId}`;
 const trimAt = 180;
 
 const listeners = new Set<() => void>();
+// Used when storage is blocked: the dismissal then lasts for this page view.
+const memory = new Map<string, string>();
 
-function readRaw(): string {
+function snapshot(key: string): string {
+  const held = memory.get(key);
+  if (held !== undefined) return held;
   try {
-    return window.localStorage.getItem(storageKey) ?? "[]";
+    return window.localStorage.getItem(key) ?? "[]";
   } catch {
     return "[]";
   }
@@ -27,14 +33,6 @@ function parseDismissed(raw: string): string[] {
   }
 }
 
-// Dismissals are per browser. When storage is blocked they last for this page
-// view only, via the in-memory copy.
-let memoryRaw: string | null = null;
-
-function snapshot(): string {
-  return memoryRaw ?? readRaw();
-}
-
 function subscribe(listener: () => void) {
   listeners.add(listener);
   window.addEventListener("storage", listener);
@@ -44,11 +42,11 @@ function subscribe(listener: () => void) {
   };
 }
 
-function writeDismissed(ids: string[]) {
+function writeDismissed(key: string, ids: string[]) {
   const raw = JSON.stringify(ids);
-  memoryRaw = raw;
+  memory.set(key, raw);
   try {
-    window.localStorage.setItem(storageKey, raw);
+    window.localStorage.setItem(key, raw);
   } catch {
     // Storage can be blocked; the in-memory copy still hides it for now.
   }
@@ -63,7 +61,7 @@ function BannerItem({
   onDismiss: (id: string) => void;
 }) {
   const long = announcement.body.length > trimAt;
-  const body = long ? `${announcement.body.slice(0, trimAt).trimEnd()}…` : announcement.body;
+  const text = long ? `${announcement.body.trim().slice(0, trimAt).trimEnd()}…` : announcement.body;
   return (
     <article className={`account-announcement is-${announcement.priority.toLowerCase()}`}>
       <Megaphone size={16} aria-hidden="true" />
@@ -71,8 +69,8 @@ function BannerItem({
         <p className="account-announcement-event" translate="no">{announcement.eventName}</p>
         <h2>{announcement.title}</h2>
         {/* Plain text child, exactly as the event hub renders it: no HTML injection. */}
-        <p>{body}</p>
-        {long && <Link href={`/account/events/${announcement.eventSlug}`}>Read more</Link>}
+        {splitParagraphs(text).map((paragraph, index) => <p key={index}>{paragraph}</p>)}
+        {long && <Link href={announcement.href}>Read more</Link>}
       </div>
       {announcement.priority !== "URGENT" && (
         <button
@@ -93,22 +91,37 @@ function BannerItem({
  * server has already decided what this account may see; this only orders the
  * presentation and remembers per-browser dismissals. URGENT never dismisses.
  */
-export function AccountAnnouncementBanner({ announcements }: { announcements: AccountBannerAnnouncement[] }) {
-  const dismissed = parseDismissed(useSyncExternalStore(subscribe, snapshot, () => "[]"));
+export function AccountAnnouncementBanner({
+  accountId,
+  announcements,
+}: {
+  accountId: string;
+  announcements: AccountBannerAnnouncement[];
+}) {
+  const key = storageKeyFor(accountId);
+  const getSnapshot = useCallback(() => snapshot(key), [key]);
+  const dismissed = parseDismissed(useSyncExternalStore(subscribe, getSnapshot, () => "[]"));
   const [expanded, setExpanded] = useState(false);
 
   const visible = announcements.filter((item) => item.priority === "URGENT" || !dismissed.includes(item.id));
   if (visible.length === 0) return null;
-  const [top, ...rest] = visible;
+  // URGENT announcements are never collapsed. With none, the top one shows
+  // and the rest sit behind "N more".
+  const urgent = visible.filter((item) => item.priority === "URGENT");
+  const others = visible.filter((item) => item.priority !== "URGENT");
+  const shown = urgent.length > 0 ? urgent : others.slice(0, 1);
+  const collapsed = urgent.length > 0 ? others : others.slice(1);
 
   function dismiss(id: string) {
-    writeDismissed([...new Set([...parseDismissed(snapshot()), id])]);
+    // Keep only ids still in the current list, so old entries don't pile up.
+    const current = new Set(announcements.map((item) => item.id));
+    writeDismissed(key, [...new Set([...parseDismissed(snapshot(key)), id])].filter((entry) => current.has(entry)));
   }
 
   return (
     <section className="account-announcements" aria-label="Announcements">
-      <BannerItem announcement={top} onDismiss={dismiss} />
-      {rest.length > 0 && (
+      {shown.map((item) => <BannerItem announcement={item} key={item.id} onDismiss={dismiss} />)}
+      {collapsed.length > 0 && (
         <>
           <button
             className="text-button"
@@ -116,9 +129,9 @@ export function AccountAnnouncementBanner({ announcements }: { announcements: Ac
             aria-expanded={expanded}
             onClick={() => setExpanded((current) => !current)}
           >
-            {expanded ? "Show fewer" : `${rest.length} more`}
+            {expanded ? "Show fewer" : `${collapsed.length} more`}
           </button>
-          {expanded && rest.map((item) => <BannerItem announcement={item} key={item.id} onDismiss={dismiss} />)}
+          {expanded && collapsed.map((item) => <BannerItem announcement={item} key={item.id} onDismiss={dismiss} />)}
         </>
       )}
     </section>

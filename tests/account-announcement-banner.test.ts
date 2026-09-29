@@ -4,25 +4,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   registrationIds: vi.fn(),
-  directedClubs: vi.fn(),
-  registrationFindMany: vi.fn(),
-  clubRegistrationFindMany: vi.fn(),
   announcementFindMany: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({
   getPrisma: () => ({
-    registration: { findMany: mocks.registrationFindMany },
-    clubEventRegistration: { findMany: mocks.clubRegistrationFindMany },
     announcement: { findMany: mocks.announcementFindMany },
   }),
 }));
 vi.mock("@/modules/attendee-accounts/registrations-repository", () => ({
   matchingRegistrationIdsForVerifiedEmail: mocks.registrationIds,
-}));
-vi.mock("@/modules/organizations/director-access", () => ({
-  listDirectedClubs: mocks.directedClubs,
 }));
 
 import { AccountAnnouncementBanner } from "@/components/account-announcement-banner";
@@ -49,6 +41,9 @@ function candidate(id: string, overrides: Partial<AccountBannerCandidate> = {}):
     publishedAt: new Date("2026-09-20T12:00:00.000Z"),
     pinnedAt: null,
     event: liveEvent,
+    eventId: "event-1",
+    hasOwnRegistration: true,
+    clubOrganizationId: null,
     ...overrides,
   };
 }
@@ -91,75 +86,104 @@ describe("selectAccountBannerAnnouncements", () => {
 });
 
 describe("listAccountBannerAnnouncements", () => {
+  const directorClub = { organizationId: "club-dir", name: "A", role: "DIRECTOR" as const, sponsoringChurch: null };
+  const deputyClub = { organizationId: "club-dep", name: "B", role: "DEPUTY" as const, sponsoringChurch: null };
+  const registrarClub = { organizationId: "club-reg", name: "C", role: "REGISTRAR" as const, sponsoringChurch: null };
+
+  // What the database hands back for one announcement row.
+  function row(id: string, link: { own?: boolean; club?: string | null }, overrides: Record<string, unknown> = {}) {
+    const base = candidate(id);
+    return {
+      id: base.id,
+      title: base.title,
+      body: base.body,
+      audience: base.audience,
+      placement: base.placement,
+      status: base.status,
+      priority: base.priority,
+      publishedAt: base.publishedAt,
+      pinnedAt: base.pinnedAt,
+      eventId: "event-1",
+      event: {
+        ...liveEvent,
+        registrations: link.own ? [{ id: "reg-1" }] : [],
+        clubRegistrations: link.club ? [{ organizationId: link.club }] : [],
+      },
+      ...overrides,
+    };
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.registrationIds.mockResolvedValue([]);
-    mocks.directedClubs.mockResolvedValue([]);
-    mocks.registrationFindMany.mockResolvedValue([]);
-    mocks.clubRegistrationFindMany.mockResolvedValue([]);
-    mocks.announcementFindMany.mockResolvedValue([candidate("a")]);
+    mocks.announcementFindMany.mockResolvedValue([row("a", { own: true })]);
   });
 
   it("shows nothing and reads no announcements when the account has no link to an event", async () => {
-    expect(await listAccountBannerAnnouncements(account, now)).toEqual([]);
+    expect(await listAccountBannerAnnouncements(account, [], now)).toEqual([]);
+    expect(await listAccountBannerAnnouncements(account, [registrarClub], now)).toEqual([]);
     expect(mocks.announcementFindMany).not.toHaveBeenCalled();
   });
 
-  it("links an event through an active registration", async () => {
+  it("links an event through an active registration, in the one announcement query", async () => {
     mocks.registrationIds.mockResolvedValue(["reg-1"]);
-    mocks.registrationFindMany.mockResolvedValue([{ eventId: "event-1" }]);
-    const result = await listAccountBannerAnnouncements(account, now);
+    const result = await listAccountBannerAnnouncements(account, [], now);
     expect(result.map((item) => item.id)).toEqual(["a"]);
-    expect(mocks.registrationFindMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: { in: ["reg-1"] }, status: { in: ["SUBMITTED", "CONFIRMED"] } },
-    }));
+    expect(result[0].href).toBe("/account/events/synthetic-retreat");
+    expect(mocks.announcementFindMany).toHaveBeenCalledTimes(1);
     expect(mocks.announcementFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
-        eventId: { in: ["event-1"] },
         status: "PUBLISHED",
         placement: "HOME_BANNER",
+        event: {
+          OR: [{ registrations: { some: { id: { in: ["reg-1"] }, status: { in: ["SUBMITTED", "CONFIRMED"] } } } }],
+        },
       }),
     }));
   });
 
-  it("links an event through a directed or deputised club's active club registration", async () => {
-    mocks.directedClubs.mockResolvedValue([
-      { organizationId: "club-dir", name: "A", role: "DIRECTOR", sponsoringChurch: null },
-      { organizationId: "club-dep", name: "B", role: "DEPUTY", sponsoringChurch: null },
-      { organizationId: "club-reg", name: "C", role: "REGISTRAR", sponsoringChurch: null },
-    ]);
-    mocks.clubRegistrationFindMany.mockResolvedValue([{ eventId: "event-2" }, { eventId: "event-2" }]);
-    const result = await listAccountBannerAnnouncements(account, now);
+  it("links an event through a directed or deputised club, never a registrar's", async () => {
+    mocks.announcementFindMany.mockResolvedValue([row("a", { club: "club-dir" })]);
+    const result = await listAccountBannerAnnouncements(account, [directorClub, deputyClub, registrarClub], now);
     expect(result.map((item) => item.id)).toEqual(["a"]);
-    expect(mocks.clubRegistrationFindMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: {
-        organizationId: { in: ["club-dir", "club-dep"] },
-        registration: { status: { in: ["SUBMITTED", "CONFIRMED"] } },
-      },
-    }));
     expect(mocks.announcementFindMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ eventId: { in: ["event-2"] } }),
+      where: expect.objectContaining({
+        event: {
+          OR: [{
+            clubRegistrations: {
+              some: {
+                organizationId: { in: ["club-dir", "club-dep"] },
+                registration: { status: { in: ["SUBMITTED", "CONFIRMED"] } },
+              },
+            },
+          }],
+        },
+      }),
     }));
   });
 
-  it("ignores registrar and reporter roles", async () => {
-    mocks.directedClubs.mockResolvedValue([
-      { organizationId: "club-reg", name: "C", role: "REGISTRAR", sponsoringChurch: null },
-    ]);
-    expect(await listAccountBannerAnnouncements(account, now)).toEqual([]);
-    expect(mocks.clubRegistrationFindMany).not.toHaveBeenCalled();
+  it("links a club-only director to the club's event page, not the hub they cannot open", async () => {
+    mocks.announcementFindMany.mockResolvedValue([row("a", { club: "club-dir" })]);
+    const [item] = await listAccountBannerAnnouncements(account, [directorClub], now);
+    expect(item.href).toBe("/account/clubs/club-dir/events/event-1");
+  });
+
+  it("prefers the hub when the account also has its own registration", async () => {
+    mocks.registrationIds.mockResolvedValue(["reg-1"]);
+    mocks.announcementFindMany.mockResolvedValue([row("a", { own: true, club: "club-dir" })]);
+    const [item] = await listAccountBannerAnnouncements(account, [directorClub], now);
+    expect(item.href).toBe("/account/events/synthetic-retreat");
   });
 
   it("filters drafts, ended events and other audiences from what the database returned", async () => {
     mocks.registrationIds.mockResolvedValue(["reg-1"]);
-    mocks.registrationFindMany.mockResolvedValue([{ eventId: "event-1" }]);
     mocks.announcementFindMany.mockResolvedValue([
-      candidate("draft", { status: "DRAFT" }),
-      candidate("ended", { event: endedEvent }),
-      candidate("audience", { audience: { type: "SOMEONE_ELSE" } }),
-      candidate("ok"),
+      row("draft", { own: true }, { status: "DRAFT" }),
+      row("ended", { own: true }, { event: { ...endedEvent, registrations: [{ id: "reg-1" }], clubRegistrations: [] } }),
+      row("audience", { own: true }, { audience: { type: "SOMEONE_ELSE" } }),
+      row("ok", { own: true }),
     ]);
-    expect((await listAccountBannerAnnouncements(account, now)).map((item) => item.id)).toEqual(["ok"]);
+    expect((await listAccountBannerAnnouncements(account, [], now)).map((item) => item.id)).toEqual(["ok"]);
   });
 });
 
@@ -168,9 +192,11 @@ describe("AccountAnnouncementBanner", () => {
     candidate("urgent", { priority: "URGENT", body: "Urgent <b>body</b>" }),
     candidate("normal"),
   ], now);
+  const show = (announcements: typeof items) =>
+    renderToStaticMarkup(createElement(AccountAnnouncementBanner, { accountId: "acct-1", announcements }));
 
-  it("shows the top announcement, an N more control, and no dismiss on URGENT", () => {
-    const markup = renderToStaticMarkup(createElement(AccountAnnouncementBanner, { announcements: items }));
+  it("always shows URGENT items outside the collapsed list, with no dismiss button", () => {
+    const markup = show(items);
     expect(markup).toContain("Synthetic Retreat");
     expect(markup).toContain("Title urgent");
     expect(markup).toContain("1 more");
@@ -178,21 +204,53 @@ describe("AccountAnnouncementBanner", () => {
     expect(markup).not.toContain("Dismiss announcement");
   });
 
+  it("shows every URGENT item even when several are present", () => {
+    const many = selectAccountBannerAnnouncements([
+      candidate("u1", { priority: "URGENT" }),
+      candidate("u2", { priority: "URGENT" }),
+      candidate("n1"),
+    ], now);
+    const markup = show(many);
+    expect(markup).toContain("Title u1");
+    expect(markup).toContain("Title u2");
+    expect(markup).toContain("1 more");
+  });
+
+  it("shows only the top item and N more when nothing is urgent", () => {
+    const many = selectAccountBannerAnnouncements([
+      candidate("n1"),
+      candidate("n2", { publishedAt: new Date("2026-09-10T12:00:00.000Z") }),
+      candidate("n3", { publishedAt: new Date("2026-09-09T12:00:00.000Z") }),
+    ], now);
+    const markup = show(many);
+    expect(markup).toContain("Title n1");
+    expect(markup).not.toContain("Title n2");
+    expect(markup).toContain("2 more");
+  });
+
   it("escapes the body instead of injecting HTML", () => {
-    const markup = renderToStaticMarkup(createElement(AccountAnnouncementBanner, { announcements: items }));
+    const markup = show(items);
     expect(markup).toContain("Urgent &lt;b&gt;body&lt;/b&gt;");
     expect(markup).not.toContain("<b>body</b>");
   });
 
-  it("offers dismissal on non-urgent announcements and trims long bodies with a link to the event hub", () => {
-    const long = selectAccountBannerAnnouncements([candidate("long", { body: "x".repeat(400) })], now);
-    const markup = renderToStaticMarkup(createElement(AccountAnnouncementBanner, { announcements: long }));
+  it("splits paragraphs and trims whitespace like the event hub", () => {
+    const two = selectAccountBannerAnnouncements([candidate("p", { body: "  First line.\n\n  Second line.  " })], now);
+    const markup = show(two);
+    expect(markup).toContain("<p>First line.</p><p>Second line.</p>");
+  });
+
+  it("offers dismissal on non-urgent announcements and trims long bodies with the item's own link", () => {
+    const long = selectAccountBannerAnnouncements([
+      candidate("long", { body: "x".repeat(400), hasOwnRegistration: false, clubOrganizationId: "club-dir" }),
+    ], now);
+    const markup = show(long);
     expect(markup).toContain("Dismiss announcement: Title long");
-    expect(markup).toContain('href="/account/events/synthetic-retreat"');
+    expect(markup).toContain('href="/account/clubs/club-dir/events/event-1"');
     expect(markup).not.toContain("x".repeat(400));
   });
 
   it("renders nothing when there are no announcements", () => {
-    expect(renderToStaticMarkup(createElement(AccountAnnouncementBanner, { announcements: [] }))).toBe("");
+    expect(show([])).toBe("");
   });
 });
