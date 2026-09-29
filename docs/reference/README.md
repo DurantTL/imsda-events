@@ -134,8 +134,8 @@ generator's output or when the real import parser reports any error.
 | `imports/club-supply-catalog.csv` | 850 items | Admin → Club supply catalog (`app/(workspace)/admin/club-supplies/page.tsx`) | `POST /api/admin/club-supplies/import`, columns `Section,Item,Catalog Number,Active` |
 | `imports/master-award-rules.json` | 15 rules (412 honor names) | Admin → Master Award rules (`app/(workspace)/admin/master-award-rules/page.tsx`) | `POST /api/admin/master-award-rules/import` |
 
-Both pages are for system administrators only, and both show a dry-run preview
-before anything is saved.
+All three pages are for system administrators only, and each shows a dry-run
+preview before anything is saved.
 
 **Club supply file.** One row per source row, in the source's order, with the
 header the template route produces. `section` is rewritten to the import's own
@@ -156,7 +156,11 @@ supply file, so once honors exist they match by name.
 ### Order to import
 
 1. **Honors** (`imports/honors.csv`). Honors must exist before the two files
-   below, or nothing links.
+   below, or nothing links. **Check the preview against any honors staff
+   already created by hand first.** The honor import matches by code only, so
+   a hand-made honor saved under a different code would be added again as a
+   second honor with the same name. Remove or rename the hand-made ones (or
+   drop their rows from the file) before confirming.
 2. **Club supply catalog.** Honor-section rows link to the honors whose names
    match and set each honor's catalog number and category. Without honors they
    import as unlinked items, and a later re-import links them (an import
@@ -176,12 +180,16 @@ Class A Dress Apparel, Class A Uniform Accessories and Other Apparel rows of
 - **Honor codes are derived, not official.** No honor code exists in the
   repository, and the honor import requires a unique `Code`. The codes in
   `imports/honors.csv` are system identifiers derived from the names (uppercase
-  ASCII, each run of other characters as `-`, at most 40 characters, and a
-  long "X - Advanced" name keeps its `-ADVANCED` ending), for example "Basic
-  Rescue" becomes `BASIC-RESCUE`. If two honors ever produced the same code,
-  the generator adds the category to both, and fails if they still collide
-  (none collide today). They are not General Conference numbers. **Renaming an
-  honor later must keep its code**, because the honor import matches by code.
+  ASCII, each run of other characters as `-`, at most 40 characters cut at a
+  whole word, and a long "X - Advanced" name keeps its `-ADVANCED` ending), for
+  example "Basic Rescue" becomes `BASIC-RESCUE`. A honor that appears on
+  several rows (such as "Video" and "Video (GC)") goes by the name without
+  "(GC)", so the file doesn't depend on row order. The committed
+  `imports/honors.csv` is the ledger: the generator reads it, an honor already
+  in it keeps its code, and only a new honor whose code would collide gets its
+  category added (a collision after that fails the build; none collide today).
+  The codes are not General Conference numbers. **Renaming an honor later must
+  keep its code**, because the honor import matches by code.
 - **No descriptions or prices.** The sources have neither, so they are blank.
 - **89 supply rows have no catalog number** (conference-made patches and most
   PBE pins), as in the source.
