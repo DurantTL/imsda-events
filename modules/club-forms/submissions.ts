@@ -25,7 +25,7 @@ import {
 } from "@/modules/club-forms/domain";
 import { ClubFormError } from "@/modules/club-forms/errors";
 import { openSensitiveAnswers, sealSensitiveAnswers } from "@/modules/club-forms/sealed-answers";
-import { lockClubFormTemplateForWrite } from "@/modules/club-forms/template-lock";
+import { assertClubFormTemplateCurrent, lockClubFormTemplateForWrite } from "@/modules/club-forms/template-lock";
 import { getEnabledClubFormTemplate, withLiveDirectory } from "@/modules/club-forms/templates";
 
 /**
@@ -103,6 +103,7 @@ export async function saveClubFormSubmission(viewer: ClubFormsViewer, input: Sav
   if (!club || club.type !== "CLUB" || !club.isActive) throw new ClubFormError("CLUB_NOT_FOUND", "That club could not be found.");
 
   const template = await getEnabledClubFormTemplate(input.templateKey, prisma);
+  assertClubFormTemplateCurrent(template);
   const definition = await withLiveDirectory(template.definition, prisma);
   const memberName = input.rosterMemberId
     ? await resolveRosterMemberName(prisma, input.organizationId, input.rosterMemberId)

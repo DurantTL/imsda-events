@@ -315,6 +315,31 @@ describe("opening a private link (#610)", () => {
   });
 });
 
+describe("a template that is behind the code (#610)", () => {
+  const behind = () => ({ ...templateRow("off_premises_permission_slip"), version: templateRow("off_premises_permission_slip").version - 1 });
+
+  it("does not make a link for a form that cannot be saved", async () => {
+    mocks.templateFindFirst.mockResolvedValue(behind());
+    await expect(createClubFormLink(director, { organizationId: "club-a", templateKey: "off_premises_permission_slip", recipientEmail: "parent@example.test" }, now))
+      .rejects.toMatchObject({ code: "FORM_UNAVAILABLE", message: "This form is temporarily unavailable. Please try again later." });
+    expect(mocks.linkCreate).not.toHaveBeenCalled();
+    expect(mocks.outboxCreate).not.toHaveBeenCalled();
+  });
+
+  it("does not open the link page for it, and the link is not spent by looking", async () => {
+    mocks.linkFindUnique.mockResolvedValue(openLink({ template: behind() }));
+    await expect(resolveClubFormLinkForFill(TOKEN, now)).rejects.toMatchObject({ code: "FORM_UNAVAILABLE" });
+    expect(mocks.linkUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not accept a submit for it, and leaves the link unspent", async () => {
+    mocks.linkFindUnique.mockResolvedValue(openLink({ template: behind() }));
+    await expect(submitClubFormViaLink(TOKEN, slipAnswers, now)).rejects.toMatchObject({ code: "FORM_UNAVAILABLE" });
+    expect(mocks.linkUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.submissionCreate).not.toHaveBeenCalled();
+  });
+});
+
 describe("a link submit that cannot get the template lock (#610)", () => {
   it("answers FORM_BUSY and leaves the link unspent, since the lock comes before the spend", async () => {
     mocks.queryRaw.mockRejectedValue({ code: "P2010", meta: { code: "55P03" }, message: "Raw query failed. Code: `55P03`" });

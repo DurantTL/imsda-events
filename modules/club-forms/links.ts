@@ -24,7 +24,7 @@ import {
 import { ClubFormError } from "@/modules/club-forms/errors";
 import { CLUB_FORM_LINK_TEMPLATE_KEY, clubFormLinkEmailContent } from "@/modules/club-forms/link-email";
 import { sealSensitiveAnswers } from "@/modules/club-forms/sealed-answers";
-import { lockClubFormTemplateForWrite } from "@/modules/club-forms/template-lock";
+import { assertClubFormTemplateCurrent, lockClubFormTemplateForWrite } from "@/modules/club-forms/template-lock";
 import { assertAnswersSize, resolveRosterMemberName } from "@/modules/club-forms/submissions";
 import { getEnabledClubFormTemplate, withLiveDirectory } from "@/modules/club-forms/templates";
 import { getAccountEmailSender, isAccountEmailConfigured } from "@/modules/communications/account-email";
@@ -73,6 +73,7 @@ export async function createClubFormLink(viewer: ClubFormsViewer, input: CreateC
   });
   if (!club || club.type !== "CLUB" || !club.isActive) throw new ClubFormError("CLUB_NOT_FOUND", "That club could not be found.");
   const template = await getEnabledClubFormTemplate(input.templateKey, prisma);
+  assertClubFormTemplateCurrent(template);
   const memberName = input.rosterMemberId
     ? await resolveRosterMemberName(prisma, input.organizationId, input.rosterMemberId)
     : "";
@@ -258,6 +259,7 @@ async function findUsableLink(token: string, now: Date) {
 export async function resolveClubFormLinkForFill(token: string, now = new Date()) {
   const link = await findUsableLink(token, now);
   const template = parseClubFormTemplate(link.template);
+  assertClubFormTemplateCurrent(template);
   const definition = await withLiveDirectory(definitionForLink(template));
   const sectionIds = new Set(definition.sections.map((section) => section.id));
   return {
@@ -284,6 +286,7 @@ export async function submitClubFormViaLink(token: string, rawAnswers: Record<st
   assertAnswersSize(rawAnswers);
   const link = await findUsableLink(token, now);
   const template = parseClubFormTemplate(link.template);
+  assertClubFormTemplateCurrent(template);
   const definition = await withLiveDirectory(template.definition);
   // Office-use fields are not the filler's to write, even by hand-crafted request.
   const answers = sanitizeClubFormAnswers(definition, rawAnswers, template.staffOnlyFieldKeys);

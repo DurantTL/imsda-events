@@ -12,7 +12,8 @@ What happens on `docker compose up`:
 
 1. **postgres** starts (PostgreSQL 16) and becomes healthy.
 2. **app** builds from the `Dockerfile`, waits for postgres to be healthy, then its
-   entrypoint runs `prisma migrate deploy` before starting `next start` on port 3000.
+   entrypoint runs `prisma migrate deploy` and then `npm run club-forms:sync` (club
+   form templates, #610) before starting `next start` on port 3000.
    The app validates its whole environment before accepting a request and **refuses
    to start** if anything required is missing — see [Environment variables](#environment-variables-set-these-in-the-xcloud-env-panel).
 3. **outbox-sweeper** retries queued email that failed a first delivery attempt, and
@@ -323,6 +324,13 @@ the override file above, and the commit SHA being deployed.
    404 for every uploaded file. Nothing is lost: stop it and start it again
    with the volume.
 
+   The container's entrypoint runs the club form sync (`npm run club-forms:sync`)
+   right after migrations, so `docker logs` should show
+   `Club form templates are in sync.` before `Starting`. If it prints `REFUSED`,
+   the container exits: a form version would make a sensitive answer or birth date
+   readable again, which needs a reviewed change; roll back below. A large
+   re-seal can take minutes before the app answers `/api/health`.
+
 **Rollback**, if anything looks wrong:
 
 ```bash
@@ -438,9 +446,10 @@ clean deployment is still being rebuilt.
    configured — development only, since production requires it — the link is
    shown to you once instead, to pass on yourself.)
 6. Confirm `APP_BASE_URL` is the final `https` domain before sending any real links.
-7. Sync the club form templates (#610). This is a step after migrations on the
-   first deploy and on **every deploy that changes a club form's version**
-   (`modules/club-forms/definitions.ts`):
+7. Confirm the club form templates were synced (#610). `docker-entrypoint.sh`
+   runs `npm run club-forms:sync` after `prisma migrate deploy` and before the
+   app starts, on every deploy, so there is normally nothing to do; look for
+   `Club form templates are in sync.` in the logs. To run it by hand:
 
    ```bash
    docker compose exec app npm run club-forms:sync
@@ -455,6 +464,9 @@ clean deployment is still being rebuilt.
    treat the new code's sensitive keys as restricted. It is safe to run again, and
    it refuses (changing nothing for that form) a version that would make a
    sensitive answer or a birth date readable again; that needs a reviewed change.
+   It carries on with the other forms, reports every refusal, and exits non-zero,
+   so the container stops and the deploy fails loudly. The app healthcheck
+   `start_period` is 300 s so a large re-seal fits before health checks count.
 
 **There is no seed step, and `RUN_DB_SEED` is no longer supported.** `prisma/seed.ts`
 writes fictitious events, people, registrations, payments and a refund, and gives
@@ -603,5 +615,13 @@ For local work you still run only the database and the dev server on the host:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres
+npm run db:deploy
+npm run db:seed
+npm run club-forms:sync
 npm run dev
 ```
+
+`club-forms:sync` creates the club form templates (off) and brings them to the
+code's version; run it once after `db:seed`, and again after pulling a change to
+`modules/club-forms/definitions.ts`. Until it has run, the Club forms admin page
+shows "Needs sync" and no form can be turned on.

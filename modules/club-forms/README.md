@@ -80,8 +80,19 @@ same transaction as the template update, moving the answer into each
 submission's sealed value. It needs `SECRET_ENCRYPTION_KEY`, and it fails (and
 changes nothing) if it cannot re-seal. A version that would make a sensitive
 field **stop** being sensitive is refused outright; that needs a reviewed,
-hand-written change. Changing only the birth-date class needs no re-seal, since
-both classes are sealed.
+hand-written change; so is a birth-date field that stops being one. Changing only
+the birth-date class needs no re-seal, since both classes are sealed.
+
+The re-seal runs in the **sync step**, `npm run club-forms:sync`, which
+`docker-entrypoint.sh` runs after `prisma migrate deploy` and before the app
+starts (run it by hand locally after `db:seed`). It is never run by the admin
+page or a request. It carries on past a form it refuses, reports every refusal
+and exits non-zero. Until it has run for a version bump, writers refuse the
+behind form ("temporarily unavailable"), the admin page shows "Needs sync", and
+readers and the CSV restrict the union of the stored and the code's sensitive
+keys. Writers also take a share lock on the template row with a 3 s
+`lock_timeout` and answer "being updated" (`FORM_BUSY`) rather than wait behind
+a re-seal.
 
 ## Private links
 
@@ -91,8 +102,10 @@ both classes are sealed.
 - The email body holds a sentinel. The token is minted when the message is
   delivered (`prepareClubFormLinkBodyForDelivery`), only its SHA-256 is stored.
 - If the email finally fails the link is withdrawn: a non-retryable error or
-  running out of retries (`email-delivery.ts`), or a bounce, complaint, failure
-  or suppression from the provider (`resend-webhook-repository.ts`), all through
+  running out of retries or a stale claim on the last attempt (`email-delivery.ts`),
+  or a bounce, failure or suppression from the provider that actually applied
+  (`resend-webhook-repository.ts`; a spam complaint arrives after delivery and
+  does not withdraw the link), all through
   `retireClubFormLinkForMessage`. The director's list shows the email's delivery
   status (sending, sent, delivered, not delivered).
 - Single use: the submit path spends the link with a guarded `updateMany`

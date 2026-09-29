@@ -170,6 +170,25 @@ describe("club form templates are off until a system administrator turns them on
     expect(mocks.templateUpdate.mock.calls.map(([call]) => call.where.key)).not.toContain(member.key);
   });
 
+  it("carries on past a refused form when asked, syncs the others, and reports every refusal", async () => {
+    const other = clubFormTemplateSeeds.find((seed) => seed.key !== slip.key)!;
+    mocks.templateFindMany.mockResolvedValue(storedRows({
+      [slip.key]: { sensitiveFieldKeys: [...slip.sensitiveFieldKeys, "activity"] },
+      [other.key]: { sensitiveFieldKeys: [...other.sensitiveFieldKeys, "extra_stored_only"] },
+    }));
+    const result = await syncClubFormTemplates(client as never, { continueOnRefusal: true });
+    expect(result.refused.map((item) => item.key).sort()).toEqual([slip.key, other.key].sort());
+    const updated = mocks.templateUpdate.mock.calls.map(([call]) => call.where.key);
+    expect(updated).not.toContain(slip.key);
+    expect(updated).not.toContain(other.key);
+    expect(updated.length).toBe(clubFormTemplateSeeds.length - 2);
+  });
+
+  it("still stops at the first refusal by default", async () => {
+    mocks.templateFindMany.mockResolvedValue(storedRows({ [slip.key]: { sensitiveFieldKeys: [...slip.sensitiveFieldKeys, "activity"] } }));
+    await expect(syncClubFormTemplates(client as never)).rejects.toMatchObject({ code: "INVALID_TEMPLATE" });
+  });
+
   it("refuses a version that would make a sensitive field readable again", async () => {
     mocks.templateFindMany.mockResolvedValue(storedRows({ [slip.key]: { sensitiveFieldKeys: [...slip.sensitiveFieldKeys, "activity"] } }));
     await expect(syncClubFormTemplates(client as never)).rejects.toMatchObject({ code: "INVALID_TEMPLATE" });

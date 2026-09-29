@@ -43,47 +43,70 @@ const templateSelect = {
  * created disabled; a changed definition (higher `version`) is written over
  * the stored one. The `enabled` switch is never touched. Safe to call often.
  */
-export async function syncClubFormTemplates(client: Client = getPrisma()) {
+export async function syncClubFormTemplates(
+  client: Client = getPrisma(),
+  options: { continueOnRefusal?: boolean } = {},
+) {
+  const refused: Array<{ key: string; message: string }> = [];
   const existing = await client.clubFormTemplate.findMany({ select: { id: true, key: true, version: true, sensitiveFieldKeys: true, birthDateFieldKeys: true } });
   const stored = new Map(existing.map((row) => [row.key, row]));
   for (const seed of clubFormTemplateSeeds) {
-    const definition = registrationFormDefinitionSchema.parse(seed.definition);
-    const problems = templateSpecProblems({ ...seed, definition });
-    if (problems.length > 0) throw new ClubFormError("INVALID_TEMPLATE", `${seed.key}: ${problems[0]}`);
-    const data = {
-      name: seed.name,
-      description: seed.description,
-      version: seed.version,
-      definition: definition as unknown as Prisma.InputJsonValue,
-      sectionNotes: seed.sectionNotes as unknown as Prisma.InputJsonValue,
-      sensitiveFieldKeys: seed.sensitiveFieldKeys,
-      birthDateFieldKeys: seed.birthDateFieldKeys,
-      staffOnlyFieldKeys: seed.staffOnlyFieldKeys,
-      printLayout: seed.printLayout,
-      sortOrder: seed.sortOrder,
-    };
-    const current = stored.get(seed.key);
-    if (!current) {
-      await client.clubFormTemplate.upsert({
-        where: { key: seed.key },
-        create: { key: seed.key, ...data, enabled: false },
-        update: {},
-      });
-    } else if (current.version < seed.version) {
-      const apply = async (tx: Prisma.TransactionClient) => {
-        // Lock, then decide from the locked row: a concurrent save or sync cannot change the keys under us.
-        const locked = await lockClubFormTemplateForReseal(tx, current.id);
-        if (locked.version >= seed.version) return;
-        assertNotLoosened(seed, locked);
-        const newlySensitive = seed.sensitiveFieldKeys.filter((key) => !locked.sensitiveFieldKeys.includes(key));
-        // A newly sensitive field must be sealed in existing submissions in the same transaction as the update.
-        await resealClubFormSubmissions(tx, current.id, newlySensitive);
-        await tx.clubFormTemplate.update({ where: { key: seed.key }, data });
-      };
-      assertNotLoosened(seed, current);
-      if ("$transaction" in client) await client.$transaction(apply, RESEAL_TRANSACTION);
-      else await apply(client);
+    try {
+      await syncOneTemplate(client, seed, stored.get(seed.key));
+    } catch (error) {
+      // A refused loosening stops that form only; the operator script asks to carry on and reports every refusal.
+      if (options.continueOnRefusal && error instanceof ClubFormError && error.code === "INVALID_TEMPLATE") {
+        refused.push({ key: seed.key, message: error.message });
+        continue;
+      }
+      throw error;
     }
+  }
+  return { refused };
+}
+
+type Seed = (typeof clubFormTemplateSeeds)[number];
+
+async function syncOneTemplate(
+  client: Client,
+  seed: Seed,
+  current: { id: string; version: number; sensitiveFieldKeys: string[]; birthDateFieldKeys: string[] } | undefined,
+) {
+  const definition = registrationFormDefinitionSchema.parse(seed.definition);
+  const problems = templateSpecProblems({ ...seed, definition });
+  if (problems.length > 0) throw new ClubFormError("INVALID_TEMPLATE", `${seed.key}: ${problems[0]}`);
+  const data = {
+    name: seed.name,
+    description: seed.description,
+    version: seed.version,
+    definition: definition as unknown as Prisma.InputJsonValue,
+    sectionNotes: seed.sectionNotes as unknown as Prisma.InputJsonValue,
+    sensitiveFieldKeys: seed.sensitiveFieldKeys,
+    birthDateFieldKeys: seed.birthDateFieldKeys,
+    staffOnlyFieldKeys: seed.staffOnlyFieldKeys,
+    printLayout: seed.printLayout,
+    sortOrder: seed.sortOrder,
+  };
+  if (!current) {
+    await client.clubFormTemplate.upsert({
+      where: { key: seed.key },
+      create: { key: seed.key, ...data, enabled: false },
+      update: {},
+    });
+  } else if (current.version < seed.version) {
+    const apply = async (tx: Prisma.TransactionClient) => {
+      // Lock, then decide from the locked row: a concurrent save or sync cannot change the keys under us.
+      const locked = await lockClubFormTemplateForReseal(tx, current.id);
+      if (locked.version >= seed.version) return;
+      assertNotLoosened(seed, locked);
+      const newlySensitive = seed.sensitiveFieldKeys.filter((key) => !locked.sensitiveFieldKeys.includes(key));
+      // A newly sensitive field must be sealed in existing submissions in the same transaction as the update.
+      await resealClubFormSubmissions(tx, current.id, newlySensitive);
+      await tx.clubFormTemplate.update({ where: { key: seed.key }, data });
+    };
+    assertNotLoosened(seed, current);
+    if ("$transaction" in client) await client.$transaction(apply, RESEAL_TRANSACTION);
+    else await apply(client);
   }
 }
 

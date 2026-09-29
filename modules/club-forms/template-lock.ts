@@ -2,7 +2,7 @@ import "server-only";
 
 import type { Prisma } from "@prisma/client";
 import { clubFormTemplateSeeds } from "@/modules/club-forms/definitions";
-import { formBusyError, isLockTimeoutError } from "@/modules/club-forms/errors";
+import { formBusyError, formUnavailableError, isLockTimeoutError, isTransactionApiError } from "@/modules/club-forms/errors";
 
 /**
  * Row locks on a club form template (#610). The template's sensitive-field
@@ -29,14 +29,14 @@ export async function lockClubFormTemplateForWrite(tx: Prisma.TransactionClient,
     await tx.$queryRaw`SELECT "id" FROM "ClubFormTemplate" WHERE "id" = ${template.id} FOR SHARE`;
     locked = await readLockedKeys(tx, template.id);
   } catch (error) {
-    if (isLockTimeoutError(error)) throw formBusyError();
+    if (isLockTimeoutError(error) || isTransactionApiError(error)) throw formBusyError();
     throw error;
   }
   // The definition the writer validated against must be the one it seals by.
   if (locked.version !== template.version) throw formBusyError();
   // A deploy that bumped a seed version has not been synced (and re-sealed) yet: nothing is written until it is.
   const seed = clubFormTemplateSeeds.find((candidate) => candidate.key === template.key);
-  if (seed && locked.version < seed.version) throw formBusyError();
+  if (seed && locked.version < seed.version) throw formUnavailableError();
   return {
     version: locked.version,
     sensitiveFieldKeys: union(locked.sensitiveFieldKeys, seed?.sensitiveFieldKeys),
@@ -60,4 +60,15 @@ async function readLockedKeys(tx: Prisma.TransactionClient, templateId: string) 
   });
   if (!row) throw new Error("Club form template disappeared during a write.");
   return row;
+}
+
+/**
+ * Throws "temporarily unavailable" when the stored template is behind the
+ * code's seed version (a deploy that has not been synced yet). Checked where a
+ * form is opened or a link is made, so nobody fills in a form that cannot be
+ * saved; the writers check it again under the lock.
+ */
+export function assertClubFormTemplateCurrent(template: { key: string; version: number }) {
+  const seed = clubFormTemplateSeeds.find((candidate) => candidate.key === template.key);
+  if (seed && template.version < seed.version) throw formUnavailableError();
 }

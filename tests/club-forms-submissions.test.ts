@@ -144,11 +144,11 @@ describe("a save that cannot get the template lock (#610)", () => {
     expect(mocks.submissionCreate).not.toHaveBeenCalled();
   });
 
-  it("refuses when the stored template is behind the code's version, before the first sync", async () => {
+  it("says the form is temporarily unavailable when the stored template is behind the code's version, before the first sync", async () => {
     const behind = { ...slipTemplateRow(), version: slipTemplateRow().version - 1 };
     mocks.templateFindFirst.mockResolvedValue(behind);
     mocks.templateFindUnique.mockResolvedValue(behind);
-    await expect(save()).rejects.toMatchObject({ code: "FORM_BUSY" });
+    await expect(save()).rejects.toMatchObject({ code: "FORM_UNAVAILABLE", message: "This form is temporarily unavailable. Please try again later." });
     expect(mocks.submissionCreate).not.toHaveBeenCalled();
   });
 });

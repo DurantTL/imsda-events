@@ -39,7 +39,7 @@
     "db:seed": "prisma db seed",
     "db:refresh-demo": "tsx scripts/refresh-local-demo.ts",
     "club-forms:sync": "tsx --require ./scripts/support/allow-server-only.cjs scripts/sync-club-form-templates.ts",
-    "admin:create":"tsx scripts/create-admin.ts",
+    "admin:create": "tsx scripts/create-admin.ts",
     "admin:reset-mfa": "tsx scripts/reset-mfa.ts",
     "registrations:cleanup": "tsx scripts/cleanup-imported-duplicates.ts",
     "event:readiness": "tsx scripts/event-readiness.ts",
