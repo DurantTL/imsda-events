@@ -550,46 +550,65 @@ async function main() {
   assert(!/1988|sealed|birth/i.test(lookupJson), "the lookup never shows a birth date");
   console.log("ok  Refresh re-matches stored entries; the lookup explains non-matches without birth dates");
 
-  // 12. #619: a row with no user_id (Sterling-style) remembers its name-only and
-  // variant matches in BackgroundCheckRememberedMatch.
+  // 12. #619: name-only and variant matches are remembered in
+  // BackgroundCheckRememberedMatch. Memory only changes a label; it never
+  // overrides the normal rules, and staff can reject a remembered match.
   await rosterPerson("lena", "Lena", "Ortiz");
   await rosterPerson("jonas", "Jonas", "Vega");
-  const noIdRow = (first: string, last: string, site: string, key: string) => ({
-    ...parseRosterBackgroundCsv(`user_id,user_last,user_first,sites,compliance\n1,${last},${first},"${site}",y`).map(rosterRowToListRow)[0]!,
-    sourceUserId: null,
-    identityKey: key,
-  });
+  await rosterPerson("jane", "Jane", "Doe");
+  // Sterling-shaped rows: no user_id, no site, keyed by email or by name alone.
+  const sterlingRow = (first: string, last: string, options: { email?: string | null; site?: string | null } = {}) => {
+    const email = options.email ?? null;
+    return {
+      ...parseRosterBackgroundCsv(`user_id,user_last,user_first,sites,compliance\n1,${last},${first},"x",y`).map(rosterRowToListRow)[0]!,
+      sourceUserId: null,
+      site: options.site ?? null,
+      email,
+      identityKey: email ? `email:${email}|${matchableName(`${first} ${last}`)}` : `name:${matchableName(`${first} ${last}`)}`,
+    };
+  };
+  const janeEmail = `jane.doe.${P}@example.test`;
   const noIdRows = [
-    noIdRow("Lena", "Ortiz", otherSite, "name-site:lena ortiz|faraway"),
-    noIdRow("Jon", "Vega", "Verify Church (Springfield)", "name-site:jon vega|verifychurch"),
+    { ...sterlingRow("Lena", "Ortiz"), site: otherSite, identityKey: "name-site:lena ortiz|faraway" },
+    sterlingRow("Jon", "Vega", { site: "Verify Church (Springfield)" }),
+    sterlingRow("Jane", "Doe", { email: janeEmail }),
   ];
   const noIdUpload = async () => {
     const preview = await repository.planBackgroundCheckUpload(noIdRows);
     await repository.applyBackgroundCheckUpload(noIdRows, "STERLING", ids.user, new Date(), { expectedFingerprint: preview.fingerprint });
   };
+  const lastUploadAudit = async () => (await db.auditLog.findFirst({ where: { action: "BACKGROUND_CHECK_LIST_UPLOADED" }, orderBy: { createdAt: "desc" } }))?.metadata as Record<string, number> | undefined;
   await noIdUpload();
   assert((await matchOf("lena"))?.matchedBy === "NAME_ONLY", "a row with no user_id matches by name only");
   assert((await matchOf("jonas"))?.matchedBy === "NAME_ONLY", "a lone first-name variant with a matching site matches");
-  assertEqual((await db.backgroundCheckRememberedMatch.findMany({ where: { identityKey: { startsWith: "name-site:" } }, select: { identityKey: true, matchedBy: true }, orderBy: { identityKey: "asc" } })), [
-    { identityKey: "name-site:jon vega|verifychurch", matchedBy: "VARIANT" },
-    { identityKey: "name-site:lena ortiz|faraway", matchedBy: "NAME_ONLY" },
-  ], "both are remembered by the row's identity key");
-  assert((await db.externalIdentity.count({ where: { personId: { in: [ids.person("lena"), ids.person("jonas")] } } })) === 0, "no id is remembered for a row that has none");
-  assert((await repository.listNameOnlyBackgroundCheckMatches()).length === 2, "both are new on the spot-check list");
+  assert((await matchOf("jane"))?.matchedBy === "NAME_ONLY", "a Sterling row with an email and no site matches the only Jane Doe by name");
+  assertEqual((await db.backgroundCheckRememberedMatch.findMany({ where: { personId: { in: ["lena", "jonas", "jane"].map((key) => ids.person(key)) } }, select: { matchedBy: true }, orderBy: { matchedBy: "asc" } })), [
+    { matchedBy: "NAME_ONLY" }, { matchedBy: "NAME_ONLY" }, { matchedBy: "VARIANT" },
+  ], "all three are remembered by the row's identity key");
+  assert((await repository.listNameOnlyBackgroundCheckMatches()).length === 3, "all three are new on the spot-check list");
+  const firstAudit = await lastUploadAudit();
+  assert(firstAudit?.rememberedWritten === 3 && firstAudit?.rememberedMatched === 0 && firstAudit?.forgotRemembered === 0, "the upload audit counts what was remembered, and nothing else");
   await noIdUpload();
-  assert((await matchOf("lena"))?.matchedBy === "IDENTITY" && (await matchOf("jonas"))?.matchedBy === "IDENTITY", "the next upload matches both from the memory");
-  assert((await repository.listNameOnlyBackgroundCheckMatches()).length === 0, "and lists neither as new");
-  await repository.rejectNameOnlyBackgroundCheckMatch((await matchOf("lena"))!.id, ids.user).then(
-    () => { throw new Error("FAILED: an IDENTITY-labelled match can't be undone from the spot-check list"); },
-    (error: { code?: string }) => assert(error.code === "NOT_A_NAME_ONLY_MATCH", "only a NAME_ONLY match can be rejected from the list"),
-  );
-  await db.backgroundCheckMatch.update({ where: { personId: ids.person("lena") }, data: { matchedBy: "NAME_ONLY" } });
-  await repository.rejectNameOnlyBackgroundCheckMatch((await matchOf("lena"))!.id, ids.user);
+  for (const key of ["lena", "jonas", "jane"]) assert((await matchOf(key))?.matchedBy === "IDENTITY", `the next upload matches ${key} from the memory`);
+  assert((await repository.listNameOnlyBackgroundCheckMatches()).length === 0, "and lists none as new");
+  assert((await lastUploadAudit())?.rememberedMatched === 3, "the audit counts the remembered matches");
+  // B1: a second Jane Doe whose email equals the row's wins by AUTO; the memory never keeps the first.
+  await db.person.create({ data: { id: ids.person("jane-2"), firstName: "Jane", lastName: "Doe", normalizedEmail: janeEmail } });
+  await db.clubRosterMember.create({ data: { id: ids.member("jane-2"), organizationId: ids.club, clubYear, personId: ids.person("jane-2"), attendeeType: "ADULT", source: "DIRECTOR" } });
+  await noIdUpload();
+  assert((await matchOf("jane-2"))?.matchedBy === "AUTO" && !(await matchOf("jane")), "a second Jane Doe with the row's email is matched by AUTO, not the remembered first");
+  assert((await db.backgroundCheckRememberedMatch.count({ where: { personId: ids.person("jane") } })) === 0, "the stale memory is dropped");
+  assert(((await lastUploadAudit())?.forgotRemembered ?? 0) >= 1, "the audit counts the dropped memory");
+  // B3: reject remembered IDENTITY matches (no user_id, and a remembered variant) without touching the DB rows.
+  const lenaMatch = (await matchOf("lena"))!;
+  assert(lenaMatch.matchedBy === "IDENTITY", "the match to reject is a remembered IDENTITY match");
+  await repository.rejectNameOnlyBackgroundCheckMatch(lenaMatch.id, ids.user);
   assert((await db.backgroundCheckRememberedMatch.count({ where: { identityKey: "name-site:lena ortiz|faraway" } })) === 0, "not the same person deletes the memory");
+  assert((await db.auditLog.count({ where: { action: "BACKGROUND_CHECK_NAME_ONLY_MATCH_REJECTED" } })) >= 1, "the rejection is audited");
+  await repository.rejectNameOnlyBackgroundCheckMatch((await matchOf("jonas"))!.id, ids.user);
   await noIdUpload();
-  assert(!(await matchOf("lena")), "the rejected row stays unmatched on the next upload");
-  assert((await matchOf("jonas"))?.matchedBy === "IDENTITY", "the other remembered row is unaffected");
-  console.log("ok  a row with no user_id remembers name-only and variant matches; a rejection clears the memory");
+  assert(!(await matchOf("lena")) && !(await matchOf("jonas")), "rejected rows stay unmatched on the next upload");
+  console.log("ok  name-only and variant matches are remembered without overriding the rules; a rejection clears the memory");
 }
 
 main()

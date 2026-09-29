@@ -13,8 +13,8 @@ async function postHandler(request: Request) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
   try {
-    await requireSystemAdministrator();
-    await rematchBackgroundCheckList();
+    const admin = await requireSystemAdministrator();
+    await rematchBackgroundCheckList(new Date(), admin.id);
     return Response.json({ ok: true });
   } catch (error) {
     return backgroundCheckApiError(error, "Re-matching the background check list");

@@ -485,8 +485,18 @@ type MatchContext = {
   rowCounts?: ReadonlyMap<string, number>;
   /** People staff said a row is not, by the row's identity key (#598): never offered for that row. */
   rejected?: ReadonlyMap<string, ReadonlySet<string>>;
-  /** Name-only and variant matches remembered for rows with no `user_id`, by identity key (#619). */
+  /**
+   * Name-only and variant matches remembered by identity key (#619). Memory
+   * only ever changes a label: a match the normal rules make anyway becomes
+   * `IDENTITY` (so it isn't listed as new). It never makes a match itself.
+   */
   remembered?: ReadonlyMap<string, { personId: string; matchedName: string }>;
+  /**
+   * True when the index holds every candidate on file (an upload's pass or the
+   * whole-list Refresh). A first-name variant is auto-matched only then: a
+   * scoped pass can't know it is the only variant.
+   */
+  wholeList?: boolean;
 };
 
 /** The reason text of a first-name variant review: the one review a scoped refresh can't rebuild (#598). */
@@ -508,7 +518,7 @@ async function rejectedPairingsFor(tx: PrismaLike, identityKeys: string[]): Prom
 
 /** The name-only and variant matches remembered for rows with no `user_id`, by identity key (#619). */
 async function rememberedMatchesFor(tx: PrismaLike, identityKeys: string[]): Promise<Map<string, { personId: string; matchedName: string }>> {
-  const keys = [...new Set(identityKeys.filter((key) => !isRememberedIdentityKey(key)))];
+  const keys = [...new Set(identityKeys)];
   if (keys.length === 0) return new Map();
   const rows = await tx.backgroundCheckRememberedMatch.findMany({ where: { identityKey: { in: keys } }, select: { identityKey: true, personId: true, matchedName: true } });
   return new Map(rows.map((row) => [row.identityKey, { personId: row.personId, matchedName: row.matchedName }]));
@@ -538,14 +548,20 @@ function countRowsByName(entries: Array<Pick<EntryForMatch, "normalizedName">>) 
  *   and a first name that is a form of the row's (Jon/Jonathan) is a match
  *   (`NAME_ONLY`) only when exactly one person is such a variant AND the row's
  *   email, birth date, or site agrees with them (#619); otherwise it goes to
- *   review. A variant match is not remembered as an id (the names differ, so
- *   the remembered id would be a name mismatch), so it is re-derived by each
- *   upload under these same rules.
+ *   review. It is auto-matched only when the pass sees every candidate on file
+ *   (`wholeList`), and is not remembered as an id (the names differ).
  * - A `NAME_ONLY` match of a `user_id` row is remembered like an `AUTO` one
  *   (#619): the next upload finds it as `IDENTITY`, with no staff action, and
  *   no later namesake un-makes it. A rejection ("not the same person") still
  *   wins over a remembered id: the row goes to review instead, and rejecting
  *   also forgets the id.
+ * - Every `NAME_ONLY` match (any key, variants too) is also written to
+ *   `BackgroundCheckRememberedMatch` (#619). For a row with no `user_id`, and
+ *   for variants, that memory decides nothing: the normal rules above run
+ *   first, and only when they make the same `NAME_ONLY` match again is it
+ *   relabelled `IDENTITY`, so staff aren't shown it as new. If the rules make a
+ *   different match, or send the row to review, or the memory no longer fits,
+ *   the memory is dropped (returned in `forget`) and the rules decide alone.
  * - A person matched by more than one entry is also a review, for every
  *   entry that matched them — never guessed which one is right.
  * - `unavailable` people already hold a match that isn't being recomputed
@@ -558,8 +574,9 @@ function matchEntries(
   identityByKey: Map<string, { personId: string; name: string }>,
   unavailable: Set<string> = new Set(),
   context: MatchContext = {},
-): { matches: MatchResult[]; reviews: ReviewResult[] } {
+): { matches: MatchResult[]; reviews: ReviewResult[]; forget: string[]; rememberedMatched: number } {
   const reviews: ReviewResult[] = [];
+  const viaIdentityBranch = new Set<string>();
   const rowCounts = context.rowCounts ?? countRowsByName(entries);
   const tentativeByPerson = new Map<string, Array<{ entryId: string; identityKey: string; rowName: string; matchedBy: MatchedBy; viaVariant?: boolean }>>();
   const pushTentative = (entry: EntryForMatch, personId: string, matchedBy: MatchedBy, viaVariant = false) => {
@@ -572,6 +589,7 @@ function matchEntries(
     if (!entry.normalizedName) continue; // Not normalized yet; the next refresh fills it in first.
     const identity = identityByKey.get(entry.identityKey);
     if (identity) {
+      viaIdentityBranch.add(entry.id);
       if (matchableName(identity.name) === entry.normalizedName && context.rejected?.get(entry.identityKey)?.has(identity.personId)) {
         // Staff said this row is not this person: a remembered id doesn't override that (#598).
         reviews.push({
@@ -598,23 +616,6 @@ function matchEntries(
     }
     const sameName = index.byName.get(entry.normalizedName) ?? [];
     const rejectedHere = context.rejected?.get(entry.identityKey) ?? new Set<string>();
-    const memory = context.remembered?.get(entry.identityKey);
-    const remembered = memory ? index.byPerson.get(memory.personId) : undefined;
-    if (
-      memory && remembered
-      && memory.matchedName === entry.normalizedName
-      && !unavailable.has(memory.personId)
-      && !rejectedHere.has(memory.personId)
-      && !contradictsEntry(entry, remembered)
-      && (matchableName(`${remembered.firstName} ${remembered.lastName}`) === entry.normalizedName
-        || (matchableName(remembered.lastName) === matchableName(entry.lastName) && firstNameVariant(entry.firstName, remembered.firstName)))
-    ) {
-      // A name-only or variant match made on an earlier upload (#619): the same
-      // row, person, and name, nothing contradicting, no rejection. It is the
-      // same kind as a remembered id, so it isn't listed as new.
-      pushTentative(entry, memory.personId, "IDENTITY");
-      continue;
-    }
     const pool = sameName.filter((candidate) => !unavailable.has(candidate.personId) && !rejectedHere.has(candidate.personId));
     const candidates = candidatesForEntry(entry, pool, index.directoryStems);
     if (candidates.length > 1) {
@@ -651,7 +652,7 @@ function matchEntries(
     }
     if (sameName.length > 0) continue; // Only someone already matched to another row, or one staff rejected: nothing left to suggest.
     const variants = firstNameVariantCandidates(entry, index, unavailable, rejectedHere);
-    if (variants.length === 1 && candidatesForEntry(entry, variants, index.directoryStems).length === 1) {
+    if (context.wholeList && variants.length === 1 && candidatesForEntry(entry, variants, index.directoryStems).length === 1) {
       // Exactly one person has this surname with a variant first name, and the
       // row's email, birth date, or site agrees with them (#619).
       pushTentative(entry, variants[0]!.personId, "NAME_ONLY", true);
@@ -681,7 +682,37 @@ function matchEntries(
       });
     }
   }
-  return { matches, reviews };
+  // Memory changes labels and is dropped when stale (#619). It never decides.
+  const forget: string[] = [];
+  let rememberedMatched = 0;
+  if (context.remembered && context.remembered.size > 0) {
+    const finalByEntry = new Map(matches.map((match) => [match.entryId, match]));
+    for (const entry of entries) {
+      const memory = context.remembered.get(entry.identityKey);
+      if (!memory || viaIdentityBranch.has(entry.id) || !entry.normalizedName) continue;
+      const match = finalByEntry.get(entry.id);
+      const person = index.byPerson.get(memory.personId);
+      const fits = Boolean(person)
+        && memory.matchedName === entry.normalizedName
+        && !context.rejected?.get(entry.identityKey)?.has(memory.personId)
+        && !contradictsEntry(entry, person!)
+        && (matchableName(`${person!.firstName} ${person!.lastName}`) === entry.normalizedName
+          || (matchableName(person!.lastName) === matchableName(entry.lastName) && firstNameVariant(entry.firstName, person!.firstName)));
+      if (match && match.personId === memory.personId) {
+        if (match.matchedBy === "NAME_ONLY" && fits) {
+          match.matchedBy = "IDENTITY";
+          rememberedMatched += 1;
+        } else if (!fits) {
+          forget.push(entry.identityKey);
+        }
+        continue;
+      }
+      // A different person, a review, or nothing. A scoped pass can't tell
+      // "nothing" from "not in this index", so it drops only what it can see is wrong.
+      if (match || (person && !fits) || context.wholeList) forget.push(entry.identityKey);
+    }
+  }
+  return { matches, reviews, forget, rememberedMatched };
 }
 
 async function identitiesByKeys(tx: PrismaLike, identityKeys: string[]) {
@@ -745,7 +776,9 @@ async function rememberUserIdIdentities(tx: PrismaLike, matches: Array<{ personI
   if (toCreate.length > 0) await tx.externalIdentity.createMany({ data: toCreate, skipDuplicates: true });
 }
 
-async function saveMatchResults(tx: PrismaLike, matches: MatchResult[], reviews: ReviewResult[], now: Date) {
+type MemoryCounts = { rememberedMatched: number; rememberedWritten: number; forgotRemembered: number };
+const NO_MEMORY_COUNTS: MemoryCounts = { rememberedMatched: 0, rememberedWritten: 0, forgotRemembered: 0 };
+async function saveMatchResults(tx: PrismaLike, matches: MatchResult[], reviews: ReviewResult[], now: Date, memory: { forget: string[]; rememberedMatched: number } = { forget: [], rememberedMatched: 0 }): Promise<MemoryCounts> {
   if (matches.length > 0) {
     await tx.backgroundCheckMatch.createMany({
       data: matches.map((match) => ({ personId: match.personId, entryId: match.entryId, matchedBy: match.matchedBy })),
@@ -766,16 +799,33 @@ async function saveMatchResults(tx: PrismaLike, matches: MatchResult[], reviews:
   // `matchEntries`, and rejecting forgets it. A variant match isn't remembered:
   // the remembered id's name check would fail against the row's variant name.
   await rememberUserIdIdentities(tx, matches.filter((match) => !match.viaVariant), now);
-  // A row with no `user_id` has no id to remember: a name-only or variant match
-  // is remembered by the row's identity key instead (#619).
-  const toRemember = matches.filter((match) => match.matchedBy === "NAME_ONLY" && !isRememberedIdentityKey(match.identityKey));
-  if (toRemember.length > 0) {
-    await tx.backgroundCheckRememberedMatch.deleteMany({ where: { identityKey: { in: toRemember.map((match) => match.identityKey) } } });
-    await tx.backgroundCheckRememberedMatch.createMany({
-      data: toRemember.map((match) => ({ identityKey: match.identityKey, personId: match.personId, matchedName: match.rowName, matchedBy: match.viaVariant ? "VARIANT" : "NAME_ONLY" })),
-      skipDuplicates: true,
-    });
+  // Every name-only match, whatever its key, and every variant match is also
+  // written to `BackgroundCheckRememberedMatch` (#619): the origin marker that
+  // lets staff reject a later `IDENTITY` match, and the memory that keeps a
+  // no-`user_id` or variant match off the spot-check list. A stale memory
+  // (the rules made another match, or none) is dropped first.
+  let forgotRemembered = 0;
+  if (memory.forget.length > 0) {
+    forgotRemembered = (await tx.backgroundCheckRememberedMatch.deleteMany({ where: { identityKey: { in: [...new Set(memory.forget)] } } })).count;
   }
+  const nameOnly = matches.filter((match) => match.matchedBy === "NAME_ONLY");
+  let rememberedWritten = 0;
+  if (nameOnly.length > 0) {
+    const existing = await rememberedMatchesFor(tx, nameOnly.map((match) => match.identityKey));
+    const toWrite = nameOnly.filter((match) => {
+      const known = existing.get(match.identityKey);
+      return !(known && known.personId === match.personId && known.matchedName === match.rowName);
+    });
+    if (toWrite.length > 0) {
+      await tx.backgroundCheckRememberedMatch.deleteMany({ where: { identityKey: { in: toWrite.map((match) => match.identityKey) } } });
+      await tx.backgroundCheckRememberedMatch.createMany({
+        data: toWrite.map((match) => ({ identityKey: match.identityKey, personId: match.personId, matchedName: match.rowName, matchedBy: match.viaVariant ? "VARIANT" : "NAME_ONLY" })),
+        skipDuplicates: true,
+      });
+      rememberedWritten = toWrite.length;
+    }
+  }
+  return { rememberedMatched: memory.rememberedMatched, rememberedWritten, forgotRemembered };
 }
 
 /** Every entry in a fresh upload, matched once, in one bounded pass (#527). */
@@ -784,10 +834,10 @@ async function runFullMatchPass(
   uploadId: string,
   now: Date,
   kept: { entryIds: Set<string>; personIds: Set<string> },
-) {
+): Promise<MemoryCounts> {
   const everyEntry = await tx.backgroundCheckEntry.findMany({ where: { uploadId }, select: entryForMatchSelect });
   const entries = everyEntry.filter((entry) => !kept.entryIds.has(entry.id));
-  if (entries.length === 0) return;
+  if (entries.length === 0) return NO_MEMORY_COUNTS;
   const [index, identityByKey, rejected, remembered, named] = await Promise.all([
     buildCandidateIndex(tx, now),
     identitiesByKeys(tx, [...new Set(entries.map((entry) => entry.identityKey))]),
@@ -795,13 +845,14 @@ async function runFullMatchPass(
     rememberedMatchesFor(tx, entries.map((entry) => entry.identityKey)),
     peopleNamed(tx, [...new Set(entries.map((entry) => entry.normalizedName).filter((name): name is string => Boolean(name)))]),
   ]);
-  const { matches, reviews } = matchEntries(entries, index, identityByKey, kept.personIds, {
+  const { matches, reviews, forget, rememberedMatched } = matchEntries(entries, index, identityByKey, kept.personIds, {
     namesakes: namesakeCounts(named),
     rowCounts: countRowsByName(everyEntry),
     rejected,
     remembered,
+    wholeList: true,
   });
-  await saveMatchResults(tx, matches, reviews, now);
+  return saveMatchResults(tx, matches, reviews, now, { forget, rememberedMatched });
 }
 
 /**
@@ -813,10 +864,10 @@ async function runFullMatchPass(
  * recomputed (B1): a `MANUAL` or `MIGRATED` match stays exactly as it is,
  * and its entry and person sit this pass out.
  */
-async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: string[] | null, now: Date) {
+async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: string[] | null, now: Date): Promise<MemoryCounts> {
   const whole = names === null;
   const groupNames = [...new Set((names ?? []).filter(Boolean))];
-  if (!whole && groupNames.length === 0) return;
+  if (!whole && groupNames.length === 0) return NO_MEMORY_COUNTS;
   // A scoped refresh locks its entry rows first, so a staff "not the same
   // person" on one of them (which locks the row too) either lands before this
   // reads or waits for it: the refresh never re-inserts over a rejection
@@ -846,20 +897,28 @@ async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: stri
     Boolean(entry.review) && !dismissed(entry) && reviewCandidates(entry).some((personId) => held.has(personId))
   );
   // A scoped pass can't rebuild a first-name variant match (its index holds
-  // one name group, not everyone with that last name), so it leaves one alone
-  // unless someone with the row's exact name is now in the group (#619).
+  // one name group, not everyone with that last name), so it leaves a match
+  // alone only when all of these hold (#619): the person's name differs from
+  // the row's but is still a first-name variant with the same last name,
+  // nothing on the row contradicts them, no one with the row's exact name is
+  // now in the group, and it is not a remembered `user_id` (a renamed person
+  // there goes to review, as a mismatched id always does). Otherwise it is
+  // recomputed like any other match.
   const variantMatchedIds = new Set<string>();
   if (!whole) {
-    const nameOnlyMatched = entries.filter((entry) => entry.match?.matchedBy === "NAME_ONLY" || entry.match?.matchedBy === "IDENTITY");
-    if (nameOnlyMatched.length > 0) {
-      const matchedPeople = await tx.person.findMany({
-        where: { id: { in: nameOnlyMatched.map((entry) => entry.match!.personId) } },
-        select: { id: true, firstName: true, lastName: true },
-      });
-      const nameOf = new Map(matchedPeople.map((person) => [person.id, matchableName(`${person.firstName} ${person.lastName}`)]));
+    const heldMatches = entries.filter((entry) => entry.match?.matchedBy === "NAME_ONLY" || entry.match?.matchedBy === "IDENTITY");
+    if (heldMatches.length > 0) {
+      const matchedIndex = await buildCandidateIndex(tx, now, { personIds: heldMatches.map((entry) => entry.match!.personId) });
       const exactNames = new Set(named.map((row) => matchableName(`${row.firstName} ${row.lastName}`)));
-      for (const entry of nameOnlyMatched) {
-        if (entry.normalizedName && nameOf.get(entry.match!.personId) !== entry.normalizedName && !exactNames.has(entry.normalizedName)) variantMatchedIds.add(entry.id);
+      for (const entry of heldMatches) {
+        const person = matchedIndex.byPerson.get(entry.match!.personId);
+        if (!person || !entry.normalizedName) continue;
+        if (matchableName(`${person.firstName} ${person.lastName}`) === entry.normalizedName) continue;
+        if (exactNames.has(entry.normalizedName)) continue;
+        if (isRememberedIdentityKey(entry.identityKey) && entry.match!.matchedBy === "IDENTITY") continue;
+        if (matchableName(person.lastName) !== matchableName(entry.lastName) || !firstNameVariant(entry.firstName, person.firstName)) continue;
+        if (contradictsEntry(entry, person)) continue;
+        variantMatchedIds.add(entry.id);
       }
     }
   }
@@ -888,7 +947,7 @@ async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: stri
   ));
   if (toMatch.length === 0) {
     await clearOpenReviews(new Set());
-    return;
+    return NO_MEMORY_COUNTS;
   }
   const [index, identityByKey, rejected, remembered, stillMatched] = await Promise.all([
     buildCandidateIndex(tx, now, whole ? undefined : { personIds }),
@@ -909,6 +968,7 @@ async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: stri
     rowCounts: countRowsByName(entries),
     rejected,
     remembered,
+    wholeList: whole,
   });
   const matches = result.matches
     .filter((match) => !held.has(match.personId))
@@ -922,7 +982,7 @@ async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: stri
     })),
   ];
   await clearOpenReviews(new Set([...matches.map((match) => match.entryId), ...reviews.map((review) => review.entryId)]));
-  await saveMatchResults(tx, matches, reviews, now);
+  return saveMatchResults(tx, matches, reviews, now, { forget: result.forget, rememberedMatched: result.rememberedMatched });
 }
 
 /**
@@ -1089,14 +1149,14 @@ export async function applyBackgroundCheckUpload(
       }
       if (carried.length > 0) await tx.backgroundCheckMatch.createMany({ data: carried });
     }
-    await runFullMatchPass(tx, upload.id, now, kept);
+    const memoryCounts = await runFullMatchPass(tx, upload.id, now, kept);
     await writeAuditLog({
       actorUserId,
       action: "BACKGROUND_CHECK_LIST_UPLOADED",
       entityType: "BackgroundCheckUpload",
       entityId: upload.id,
       summary: `Uploaded a background-check list of ${deduped.length} row${deduped.length === 1 ? "" : "s"} (${format === "ROSTER" ? "roster" : "Sterling"} format): ${counts.added} added, ${counts.changed} changed, ${counts.dropped} dropped.`,
-      metadata: { format, rowCount: deduped.length, added: counts.added, changed: counts.changed, dropped: counts.dropped, manualMatchesKept: kept.entryIds.size },
+      metadata: { format, rowCount: deduped.length, added: counts.added, changed: counts.changed, dropped: counts.dropped, manualMatchesKept: kept.entryIds.size, ...memoryCounts },
     }, tx);
     return counts;
   }, { timeout: 120_000, maxWait: 15_000 });
@@ -1321,7 +1381,7 @@ export async function undoManualBackgroundCheckMatch(matchId: string, actorUserI
  * per-person refresh, or another Refresh holds it, it is refused (`LIST_BUSY`,
  * 409) and nothing changes.
  */
-export async function rematchBackgroundCheckList(now = new Date()) {
+export async function rematchBackgroundCheckList(now = new Date(), actorUserId?: string) {
   await getPrisma().$transaction(async (tx) => {
     if (!(await tryExclusiveListLock(tx))) {
       throw listBusy();
@@ -1329,7 +1389,17 @@ export async function rematchBackgroundCheckList(now = new Date()) {
     const current = await latestUpload(tx);
     if (!current) return;
     await backfillNormalizedNames(tx);
-    await recomputeNameGroups(tx, current.id, null, now);
+    const memoryCounts = await recomputeNameGroups(tx, current.id, null, now);
+    if (actorUserId) {
+      await writeAuditLog({
+        actorUserId,
+        action: "BACKGROUND_CHECK_LIST_REFRESHED",
+        entityType: "BackgroundCheckUpload",
+        entityId: current.id,
+        summary: "Staff re-matched the background-check list.",
+        metadata: { ...memoryCounts },
+      }, tx);
+    }
   }, { timeout: 120_000, maxWait: 10_000 }).catch((error: unknown) => {
     if ((error as { code?: unknown } | null)?.code === "P2002") throw listChanged();
     throw error;
@@ -1402,8 +1472,13 @@ export async function rejectNameOnlyBackgroundCheckMatch(matchId: string, actorU
       select: { id: true, personId: true, entryId: true, matchedBy: true, entry: { select: { identityKey: true } } },
     });
     if (!match) throw new BackgroundCheckOperationError("MATCH_NOT_FOUND", "That match no longer exists. Refresh the list.");
-    if (match.matchedBy !== "NAME_ONLY") throw new BackgroundCheckOperationError("NOT_A_NAME_ONLY_MATCH", "Only a match made on the name alone can be undone here.");
-    const deleted = await tx.backgroundCheckMatch.deleteMany({ where: { entryId: match.entryId, matchedBy: "NAME_ONLY" } });
+    // A name-only match, or an `IDENTITY` one that came from a remembered
+    // name-only match (its origin marker is the remembered-match row, #619).
+    const remembered = await tx.backgroundCheckRememberedMatch.findMany({ where: { identityKey: match.entry.identityKey, personId: match.personId }, select: { id: true } });
+    if (match.matchedBy !== "NAME_ONLY" && !(match.matchedBy === "IDENTITY" && remembered.length > 0)) {
+      throw new BackgroundCheckOperationError("NOT_A_NAME_ONLY_MATCH", "Only a match made on the name alone can be undone here.");
+    }
+    const deleted = await tx.backgroundCheckMatch.deleteMany({ where: { entryId: match.entryId, matchedBy: match.matchedBy } });
     if (deleted.count !== 1) throw listChanged();
     // The id remembered for this match (#619) goes too: staff said it is wrong.
     if (isRememberedIdentityKey(match.entry.identityKey)) {
@@ -1411,8 +1486,8 @@ export async function rejectNameOnlyBackgroundCheckMatch(matchId: string, actorU
         where: { provider: ROSTER_IMPORT_PROVIDER, providerScope: "", externalId: match.entry.identityKey, personId: match.personId },
       });
     }
-    // The match remembered for a row with no `user_id` (#619) goes too.
-    await tx.backgroundCheckRememberedMatch.deleteMany({ where: { identityKey: match.entry.identityKey, personId: match.personId } });
+    // The remembered match (#619) goes too.
+    const forgotten = await tx.backgroundCheckRememberedMatch.deleteMany({ where: { identityKey: match.entry.identityKey, personId: match.personId } });
     // Remembered by the row's identity key, so it holds across every upload.
     await tx.backgroundCheckRejectedPairing.createMany({
       data: [{ identityKey: match.entry.identityKey, personId: match.personId, rejectedByUserId: actorUserId }],
@@ -1424,7 +1499,7 @@ export async function rejectNameOnlyBackgroundCheckMatch(matchId: string, actorU
       entityType: "BackgroundCheckMatch",
       entityId: match.id,
       summary: "Staff said a background-check row matched on the name alone is not the same person.",
-      metadata: { entryId: match.entryId },
+      metadata: { entryId: match.entryId, forgotRemembered: forgotten.count },
     }, tx);
   }).catch((error: unknown) => {
     const code = (error as { code?: unknown } | null)?.code;
@@ -1475,6 +1550,8 @@ export type BackgroundCheckLookupPair = {
   personName: string;
   /** A plain-language reason the two are, or are not, matched. Never a birth date. */
   reason: string;
+  /** Set when staff can say "Not the same person" about this match: a name-only match, or a remembered one (#619). */
+  rejectMatchId: string | null;
 };
 export type BackgroundCheckLookup = {
   query: string;
@@ -1556,7 +1633,7 @@ export async function lookupBackgroundCheckName(rawQuery: string, now = new Date
 
   const personIds = people.map((person) => person.id);
   const entryIds = rows.map((row) => row.id);
-  const [index, rosterMemberships, matches, reviews, rejected] = await Promise.all([
+  const [index, rosterMemberships, matches, reviews, rejected, rememberedMatches] = await Promise.all([
     buildCandidateIndex(prisma, now, { personIds }),
     personIds.length > 0
       ? prisma.clubRosterMember.findMany({
@@ -1575,6 +1652,7 @@ export async function lookupBackgroundCheckName(rawQuery: string, now = new Date
       })
       : Promise.resolve([]),
     rejectedPairingsFor(prisma, rows.map((row) => row.identityKey)),
+    rememberedMatchesFor(prisma, rows.map((row) => row.identityKey)),
   ]);
   const matchByEntry = new Map(matches.map((match) => [match.entryId, match]));
   const matchByPerson = new Map(matches.map((match) => [match.personId, match]));
@@ -1670,7 +1748,9 @@ export async function lookupBackgroundCheckName(rawQuery: string, now = new Date
           else reasons.push("The name is unique, so it matches by name only on the next Refresh.");
         }
       }
-      pairs.push({ entryId: row.id, personId: person.id, rowName: fullName(row), personName: fullName(person), reason: reasons.join(" ") });
+      const rememberedHere = rememberedMatches.get(row.identityKey)?.personId === person.id;
+      const rejectMatchId = match?.personId === person.id && (match.matchedBy === "NAME_ONLY" || (match.matchedBy === "IDENTITY" && rememberedHere)) ? match.id : null;
+      pairs.push({ entryId: row.id, personId: person.id, rowName: fullName(row), personName: fullName(person), reason: reasons.join(" "), rejectMatchId });
     }
   }
   const rejectedOut = rows.flatMap((row) => people

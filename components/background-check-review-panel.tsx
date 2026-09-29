@@ -12,7 +12,7 @@ type LookupResult = {
   hasList: boolean;
   rows: Array<{ id: string; name: string; site: string | null; status: string }>;
   people: Array<{ personId: string; name: string; sites: string[]; status: string }>;
-  pairs: Array<{ entryId: string; personId: string; rowName: string; personName: string; reason: string }>;
+  pairs: Array<{ entryId: string; personId: string; rowName: string; personName: string; reason: string; rejectMatchId: string | null }>;
   rejected: Array<{ entryId: string; personId: string; rowName: string; personName: string }>;
   truncated: boolean;
 };
@@ -109,6 +109,11 @@ export function BackgroundCheckReviewPanel() {
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message ?? "That match couldn't be undone.");
       await load();
+      if (lookupName.trim()) {
+        const again = await fetch(`/api/admin/background-checks/lookup?name=${encodeURIComponent(lookupName.trim())}`);
+        const next = await again.json().catch(() => ({}));
+        if (again.ok) setLookup(next.lookup ?? null);
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "That match couldn't be undone.");
     } finally {
@@ -230,7 +235,7 @@ export function BackgroundCheckReviewPanel() {
       )}
 
       <h3>Matched by name, new since the last upload ({nameOnlyMatches?.length ?? 0})</h3>
-      <p className="quiet-copy">These were matched by name. No action needed unless one is wrong. Each already counts, and it is remembered for the next upload, so it won&apos;t be listed again. &quot;Not the same person&quot; puts the row back to unmatched, and that person is never offered for that row again, even after a new upload (you can still match them by hand).</p>
+      <p className="quiet-copy">These were matched by name. No action needed unless one is wrong. Each already counts, and it is remembered for the next upload, so it won&apos;t be listed again. &quot;Not the same person&quot; puts the row back to unmatched, and that person is never offered for that row again, even after a new upload (you can still match them by hand). A match remembered from an earlier upload can be undone the same way from the name lookup below.</p>
       {nameOnlyMatches && nameOnlyMatches.length === 0 && <p className="report-empty">No new matches by name since the last upload.</p>}
       {nameOnlyMatches && nameOnlyMatches.length > 0 && (
         <div className="report-table-wrap">
@@ -337,13 +342,20 @@ export function BackgroundCheckReviewPanel() {
             <div className="report-table-wrap">
               <table className="report-table">
                 <caption className="sr-only">Why each row and person did or didn&apos;t match</caption>
-                <thead><tr><th>Row</th><th>Person</th><th>Why</th></tr></thead>
+                <thead><tr><th>Row</th><th>Person</th><th>Why</th><th><span className="sr-only">Actions</span></th></tr></thead>
                 <tbody>
                   {lookup.pairs.map((pair) => (
                     <tr key={`${pair.entryId}:${pair.personId}`}>
                       <td translate="no">{pair.rowName}</td>
                       <td translate="no">{pair.personName}</td>
                       <td>{pair.reason}</td>
+                      <td>
+                        {pair.rejectMatchId && (
+                          <button className="text-button" disabled={busyId === pair.rejectMatchId} onClick={() => void notTheSamePerson(pair.rejectMatchId!)} type="button">
+                            <UserX aria-hidden="true" size={14} /> Not the same person
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

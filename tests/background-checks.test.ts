@@ -302,8 +302,9 @@ function makeFakeDb() {
       },
     },
     backgroundCheckRememberedMatch: {
-      findMany: async ({ where }: { where: { identityKey: { in: string[] } } }) => [...rememberedMatches.values()]
-        .filter((row) => where.identityKey.in.includes(row.identityKey as string))
+      findMany: async ({ where }: { where: { identityKey: string | { in: string[] }; personId?: string } }) => [...rememberedMatches.values()]
+        .filter((row) => (typeof where.identityKey === "string" ? row.identityKey === where.identityKey : where.identityKey.in.includes(row.identityKey as string))
+          && (where.personId === undefined || row.personId === where.personId))
         .map((row) => ({ ...row })),
       createMany: async ({ data }: { data: Row[] }) => {
         for (const row of data) if (!rememberedMatches.has(row.identityKey as string)) rememberedMatches.set(row.identityKey as string, { id: nextId("remembered"), createdAt: new Date(), ...row });
@@ -839,6 +840,14 @@ function rosterAdult(seed: ReturnType<typeof makeFakeDb>["seed"], personId: stri
     person: { firstName, lastName, normalizedEmail: extra.email ?? null, attendeeAccountLinks: [] },
     organization: { name: extra.clubName ?? "Test Pathfinders", parentOrganization: extra.parentName ? { name: extra.parentName } : null },
   });
+}
+
+/** Renames a person everywhere the fake keeps their name (the person row and their roster memberships). */
+function renamePerson(seed: ReturnType<typeof makeFakeDb>["seed"], personId: string, firstName: string) {
+  seed.persons.set(personId, { ...seed.persons.get(personId)!, firstName });
+  for (const member of seed.rosterMembers) {
+    if (member.personId === personId) (member.person as Record<string, unknown>).firstName = firstName;
+  }
 }
 
 function seedEntry(seed: ReturnType<typeof makeFakeDb>["seed"], id: string, fields: Row) {
@@ -1820,7 +1829,7 @@ describe("name-only matches, variants, adults by age, and the lookup (#598)", ()
     expect(seed.matches.size).toBe(0);
     expect(await listBackgroundCheckReviews()).toEqual([]); // not waiting on anyone
     expect([...seed.rejectedPairings.values()]).toEqual([expect.objectContaining({ identityKey: "userId:7001", personId: "p-mina", rejectedByUserId: "admin-1" })]);
-    expect(auditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "BACKGROUND_CHECK_NAME_ONLY_MATCH_REJECTED", metadata: { entryId: expect.any(String) } }), expect.anything());
+    expect(auditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "BACKGROUND_CHECK_NAME_ONLY_MATCH_REJECTED", metadata: { entryId: expect.any(String), forgotRemembered: 1 } }), expect.anything());
     expect(JSON.stringify(auditLog.mock.calls.at(-1))).not.toContain("Osei");
 
     await refreshBackgroundCheckMatchForPerson("p-mina", now);
@@ -2069,89 +2078,224 @@ describe("name-only matches, variants, adults by age, and the lookup (#598)", ()
     expect(seed.reviews.size).toBe(1); // Jon Reyes: two candidates. Nessa Cole: her email contradicts, so no suggestion.
   });
 
-  describe("rows with no user_id remember a name-only or variant match in a table (#619)", () => {
-    const noIdRow = (first: string, last: string, site: string, key: string, extra: { email?: string | null } = {}) => ({
-      ...rosterRows({ userId: "1", last, first, sites: site })[0]!,
-      sourceUserId: null,
-      identityKey: key,
-      ...extra,
-    });
+  describe("remembered name-only and variant matches only ever change a label (#619)", () => {
+    /** A row with no user_id, shaped like a Sterling row: no site, keyed by email or by name alone. */
+    const sterlingRow = (first: string, last: string, options: { email?: string | null; site?: string | null; key?: string } = {}) => {
+      const email = options.email ?? null;
+      const name = `${first} ${last}`.toLowerCase();
+      return {
+        ...rosterRows({ userId: "1", last, first, sites: otherChurch })[0]!,
+        sourceUserId: null,
+        site: options.site ?? null,
+        email,
+        identityKey: options.key ?? (email ? `email:${email}|${name}` : `name:${name}`),
+      };
+    };
+    const uploadedAudit = () => auditLog.mock.calls.map((call) => call[0] as { action: string; metadata?: Record<string, unknown> }).filter((call) => call.action === "BACKGROUND_CHECK_LIST_UPLOADED").at(-1)!;
 
-    it("a name-only row comes back remembered and off the list on the next upload, whatever namesake appears", async () => {
+    it("a Sterling name-only row comes back remembered and off the list on the next upload, with audit counts only", async () => {
       const { client, seed } = makeFakeDb();
       currentClient = client;
       rosterAdult(seed, "p-mina", "Mina", "Osei", mapleGrove);
-      const rows = [noIdRow("Mina", "Osei", otherChurch, "name-site:mina osei|faraway")];
+      const rows = [sterlingRow("Mina", "Osei")];
       await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", now);
+      expect(rows[0]!.identityKey).toBe("name:mina osei");
       expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-mina", matchedBy: "NAME_ONLY" })]);
-      expect([...seed.rememberedMatches.values()]).toEqual([expect.objectContaining({ identityKey: "name-site:mina osei|faraway", personId: "p-mina", matchedName: "mina osei", matchedBy: "NAME_ONLY" })]);
+      expect([...seed.rememberedMatches.values()]).toEqual([expect.objectContaining({ identityKey: "name:mina osei", personId: "p-mina", matchedName: "mina osei", matchedBy: "NAME_ONLY" })]);
       expect(seed.identities.size).toBe(0);
+      expect(uploadedAudit().metadata).toMatchObject({ rememberedMatched: 0, rememberedWritten: 1, forgotRemembered: 0 });
       expect(await listNameOnlyBackgroundCheckMatches(now)).toHaveLength(1);
       // A Refresh in the same upload keeps it on the list: still new since the last upload.
       await rematchBackgroundCheckList(now);
+      expect([...seed.matches.values()]).toEqual([expect.objectContaining({ matchedBy: "NAME_ONLY" })]);
       expect(await listNameOnlyBackgroundCheckMatches(now)).toHaveLength(1);
-      seed.persons.set("p-mina-two", { id: "p-mina-two", firstName: "Mina", lastName: "Osei" });
       await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", now);
       expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-mina", matchedBy: "IDENTITY" })]);
-      expect(seed.reviews.size).toBe(0);
       expect(await listNameOnlyBackgroundCheckMatches(now)).toEqual([]);
+      expect(uploadedAudit().metadata).toMatchObject({ rememberedMatched: 1, rememberedWritten: 0, forgotRemembered: 0 });
+      expect(JSON.stringify(uploadedAudit().metadata)).not.toMatch(/mina|osei|name:/i);
     });
 
-    it("a variant is remembered the same way", async () => {
-      const { client, seed } = makeFakeDb();
-      currentClient = client;
-      rosterAdult(seed, "p-jonathan", "Jonathan", "Reyes", mapleGrove);
-      const rows = [noIdRow("Jon", "Reyes", "Maple Grove SDA Church (Springfield)", "name-site:jon reyes|maplegrove")];
-      await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", now);
-      expect([...seed.rememberedMatches.values()]).toEqual([expect.objectContaining({ personId: "p-jonathan", matchedName: "jon reyes", matchedBy: "VARIANT" })]);
-      expect(await listNameOnlyBackgroundCheckMatches(now)).toHaveLength(1);
-      // A second person with a variant name would have made it a review; the memory holds.
-      rosterAdult(seed, "p-jonas", "Jonas", "Reyes", mapleGrove);
-      await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", now);
-      expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-jonathan", matchedBy: "IDENTITY" })]);
-      expect(seed.reviews.size).toBe(0);
-      expect(await listNameOnlyBackgroundCheckMatches(now)).toEqual([]);
-      // The scoped refresh after a person save leaves it in place.
-      await refreshBackgroundCheckMatchForPerson("p-jonathan", now);
-      expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-jonathan", matchedBy: "IDENTITY" })]);
-    });
-
-    it("'Not the same person' clears the memory, and it stays cleared on the next upload", async () => {
+    it("a Sterling row keyed by email is remembered the same way", async () => {
       const { client, seed } = makeFakeDb();
       currentClient = client;
       rosterAdult(seed, "p-mina", "Mina", "Osei", mapleGrove);
-      const rows = [noIdRow("Mina", "Osei", otherChurch, "name-site:mina osei|faraway")];
+      const rows = [sterlingRow("Mina", "Osei", { email: "mina@example.test" })];
+      await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", now);
+      expect([...seed.rememberedMatches.values()]).toEqual([expect.objectContaining({ identityKey: "email:mina@example.test|mina osei", personId: "p-mina" })]);
+      await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", now);
+      expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-mina", matchedBy: "IDENTITY" })]);
+      expect(await listNameOnlyBackgroundCheckMatches(now)).toEqual([]);
+    });
+
+    it("never keeps a wrong match: a second Jane Doe whose email equals the row's wins by AUTO, and the memory is dropped (B1)", async () => {
+      const { client, seed } = makeFakeDb();
+      currentClient = client;
+      rosterAdult(seed, "p-jane-1", "Jane", "Doe", mapleGrove);
+      const rows = [sterlingRow("Jane", "Doe", { email: "jane.doe@example.test" })];
+      await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", now);
+      expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-jane-1", matchedBy: "NAME_ONLY" })]);
+      expect(seed.rememberedMatches.size).toBe(1);
+      rosterAdult(seed, "p-jane-2", "Jane", "Doe", { ...mapleGrove, email: "jane.doe@example.test" });
+      await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", now);
+      expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-jane-2", matchedBy: "AUTO" })]);
+      expect(seed.rememberedMatches.size).toBe(0);
+      expect(uploadedAudit().metadata).toMatchObject({ rememberedMatched: 0, forgotRemembered: 1 });
+    });
+
+    it("a namesake with nothing to tell them apart sends the row to review instead of keeping the old match (B1)", async () => {
+      const { client, seed } = makeFakeDb();
+      currentClient = client;
+      rosterAdult(seed, "p-mina", "Mina", "Osei", mapleGrove);
+      const rows = [sterlingRow("Mina", "Osei")];
+      await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", now);
+      rosterAdult(seed, "p-mina-2", "Mina", "Osei", { clubName: "Cedar Hill Pathfinders", parentName: "Cedar Hill SDA Church" });
+      await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", now);
+      expect(seed.matches.size).toBe(0);
+      expect((await listBackgroundCheckReviews()).map((review) => review.candidates.length)).toEqual([2]);
+      expect(seed.rememberedMatches.size).toBe(0);
+    });
+
+    it("a variant is remembered, then goes to review, not to its old match, once a second variant exists (B1)", async () => {
+      const { client, seed } = makeFakeDb();
+      currentClient = client;
+      rosterAdult(seed, "p-jonathan", "Jonathan", "Reyes", mapleGrove);
+      const rows = [sterlingRow("Jon", "Reyes", { email: "jon.reyes@example.test", site: "Maple Grove SDA Church (Springfield)" })];
+      await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", now);
+      expect([...seed.rememberedMatches.values()]).toEqual([expect.objectContaining({ personId: "p-jonathan", matchedName: "jon reyes", matchedBy: "VARIANT" })]);
+      await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", now);
+      expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-jonathan", matchedBy: "IDENTITY" })]);
+      expect(await listNameOnlyBackgroundCheckMatches(now)).toEqual([]);
+      rosterAdult(seed, "p-jonas", "Jonas", "Reyes", mapleGrove);
+      await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", now);
+      expect(seed.matches.size).toBe(0);
+      expect((await listBackgroundCheckReviews()).map((review) => review.candidates.map((candidate) => candidate.name).sort())).toEqual([["Jonas Reyes", "Jonathan Reyes"]]);
+      expect(seed.rememberedMatches.size).toBe(0);
+    });
+
+    it("a variant on a row that has a user_id is remembered too, and drops off the list (S2)", async () => {
+      const { client, seed } = makeFakeDb();
+      currentClient = client;
+      rosterAdult(seed, "p-jonathan", "Jonathan", "Reyes", mapleGrove);
+      const rows = rosterRows({ userId: "6001", last: "Reyes", first: "Jon", sites: "Maple Grove SDA Church (Springfield)" });
+      await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
+      expect(seed.identities.size).toBe(0);
+      expect([...seed.rememberedMatches.values()]).toEqual([expect.objectContaining({ identityKey: "userId:6001", personId: "p-jonathan", matchedBy: "VARIANT" })]);
+      expect(await listNameOnlyBackgroundCheckMatches(now)).toHaveLength(1);
+      await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
+      expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-jonathan", matchedBy: "IDENTITY" })]);
+      expect(await listNameOnlyBackgroundCheckMatches(now)).toEqual([]);
+    });
+
+    it("drops a memory that no longer fits and lets the normal rules decide", async () => {
+      const { client, seed } = makeFakeDb();
+      currentClient = client;
+      rosterAdult(seed, "p-mina", "Mina", "Osei", { ...mapleGrove, email: "mina@example.test" });
+      const key = "name:mina osei";
+      const remember = (personId: string, matchedName = "mina osei") => seed.rememberedMatches.set(key, { id: "rm", identityKey: key, personId, matchedName, matchedBy: "NAME_ONLY" });
+      // A contradicting email: no match at all, and the memory goes.
+      remember("p-mina");
+      await applyBackgroundCheckUpload([sterlingRow("Mina", "Osei", { email: "someone-else@example.test", key })], "STERLING", "admin-1", now);
+      expect(seed.matches.size).toBe(0);
+      expect(seed.rememberedMatches.size).toBe(0);
+      // A different recorded name: the rules make a fresh name-only match, and the memory is rewritten.
+      remember("p-mina", "mina osei-smith");
+      await applyBackgroundCheckUpload([sterlingRow("Mina", "Osei", { key })], "STERLING", "admin-1", now);
+      expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-mina", matchedBy: "NAME_ONLY" })]);
+      expect([...seed.rememberedMatches.values()]).toEqual([expect.objectContaining({ personId: "p-mina", matchedName: "mina osei" })]);
+      // A person who no longer exists: dropped, and the rules decide.
+      remember("p-gone");
+      await applyBackgroundCheckUpload([sterlingRow("Mina", "Osei", { key })], "STERLING", "admin-1", now);
+      expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-mina", matchedBy: "NAME_ONLY" })]);
+      expect([...seed.rememberedMatches.values()]).toEqual([expect.objectContaining({ personId: "p-mina" })]);
+    });
+
+    it("staff can say 'Not the same person' about a remembered IDENTITY match, with no user_id or with one (B3)", async () => {
+      const { client, seed } = makeFakeDb();
+      currentClient = client;
+      rosterAdult(seed, "p-mina", "Mina", "Osei", mapleGrove);
+      rosterAdult(seed, "p-nora", "Nora", "Osei", mapleGrove);
+      const sterling = [sterlingRow("Mina", "Osei")];
+      const roster = rosterRows({ userId: "7001", last: "Osei", first: "Nora", sites: otherChurch });
+      await applyBackgroundCheckUpload([...sterling, ...roster], "STERLING", "admin-1", now);
+      await applyBackgroundCheckUpload([...sterling, ...roster], "STERLING", "admin-1", now);
+      const matches = [...seed.matches.values()];
+      expect(matches.map((match) => match.matchedBy)).toEqual(["IDENTITY", "IDENTITY"]);
+      expect(await listNameOnlyBackgroundCheckMatches(now)).toEqual([]);
+      // The lookup offers the button for both.
+      const lookup = await lookupBackgroundCheckName("Osei", now);
+      expect(lookup.pairs.map((pair) => Boolean(pair.rejectMatchId))).toEqual([true, true]);
+      // An IDENTITY match that did not come from a name-only match can't be rejected.
+      seed.rememberedMatches.clear();
+      await expect(rejectNameOnlyBackgroundCheckMatch(matches[0]!.id as string, "admin-1")).rejects.toMatchObject({ code: "NOT_A_NAME_ONLY_MATCH" });
+      seed.rememberedMatches.set("name:mina osei", { id: "rm-1", identityKey: "name:mina osei", personId: "p-mina", matchedName: "mina osei", matchedBy: "NAME_ONLY" });
+      seed.rememberedMatches.set("userId:7001", { id: "rm-2", identityKey: "userId:7001", personId: "p-nora", matchedName: "nora osei", matchedBy: "NAME_ONLY" });
+      for (const match of matches) await rejectNameOnlyBackgroundCheckMatch(match.id as string, "admin-1");
+      expect(seed.matches.size).toBe(0);
+      expect(seed.rememberedMatches.size).toBe(0);
+      expect(seed.identities.size).toBe(0);
+      expect(seed.rejectedPairings.size).toBe(2);
+      expect(auditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "BACKGROUND_CHECK_NAME_ONLY_MATCH_REJECTED", metadata: { entryId: expect.any(String), forgotRemembered: 1 } }), expect.anything());
+      // Both stay rejected on the next upload.
+      await applyBackgroundCheckUpload([...sterling, ...roster], "STERLING", "admin-1", now);
+      expect(seed.matches.size).toBe(0);
+    });
+
+    it("a rejection clears the memory and stays cleared; a leftover memory row loses to it", async () => {
+      const { client, seed } = makeFakeDb();
+      currentClient = client;
+      rosterAdult(seed, "p-mina", "Mina", "Osei", mapleGrove);
+      const rows = [sterlingRow("Mina", "Osei")];
       await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", now);
       await rejectNameOnlyBackgroundCheckMatch([...seed.matches.values()][0]!.id as string, "admin-1");
       expect(seed.rememberedMatches.size).toBe(0);
       await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", now);
       expect(seed.matches.size).toBe(0);
-      expect(seed.rememberedMatches.size).toBe(0);
-      // Even a memory left behind loses to the rejection.
-      seed.rememberedMatches.set("name-site:mina osei|faraway", { id: "rm", identityKey: "name-site:mina osei|faraway", personId: "p-mina", matchedName: "mina osei", matchedBy: "NAME_ONLY" });
+      seed.rememberedMatches.set("name:mina osei", { id: "rm", identityKey: "name:mina osei", personId: "p-mina", matchedName: "mina osei", matchedBy: "NAME_ONLY" });
       await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", now);
+      expect(seed.matches.size).toBe(0);
+      expect(seed.rememberedMatches.size).toBe(0);
+    });
+
+    it("a per-person refresh sends a renamed remembered-id match to review instead of keeping it (B2)", async () => {
+      const { client, seed } = makeFakeDb();
+      currentClient = client;
+      rosterAdult(seed, "p-mina", "Mina", "Osei", mapleGrove);
+      const rows = rosterRows({ userId: "7001", last: "Osei", first: "Mina", sites: "Maple Grove SDA Church (Springfield)" });
+      await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
+      await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
+      expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-mina", matchedBy: "IDENTITY" })]);
+      // The person is renamed to a similar first name (a variant): the remembered id still names someone else now.
+      renamePerson(seed, "p-mina", "Minara");
+      await refreshBackgroundCheckMatchForPerson("p-mina", now);
+      expect(seed.matches.size).toBe(0);
+      expect([...seed.reviews.values()].map((review) => String(review.reason))).toEqual([expect.stringMatching(/belongs to Minara Osei/)]);
+    });
+
+    it("a per-person refresh drops a renamed remembered match that is no longer a variant, and keeps one that still is", async () => {
+      const { client, seed } = makeFakeDb();
+      currentClient = client;
+      rosterAdult(seed, "p-jonathan", "Jonathan", "Reyes", mapleGrove);
+      const rows = [sterlingRow("Jon", "Reyes", { site: "Maple Grove SDA Church (Springfield)" })];
+      await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", now);
+      await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", now);
+      expect([...seed.matches.values()]).toEqual([expect.objectContaining({ matchedBy: "IDENTITY" })]);
+      renamePerson(seed, "p-jonathan", "Jonathon");
+      await refreshBackgroundCheckMatchForPerson("p-jonathan", now);
+      expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-jonathan", matchedBy: "IDENTITY" })]); // still a variant
+      renamePerson(seed, "p-jonathan", "Rafael");
+      await refreshBackgroundCheckMatchForPerson("p-jonathan", now);
       expect(seed.matches.size).toBe(0);
     });
 
-    it("falls back to the normal rules when the memory no longer fits", async () => {
+    it("the staff Refresh audits memory counts only", async () => {
       const { client, seed } = makeFakeDb();
       currentClient = client;
-      rosterAdult(seed, "p-mina", "Mina", "Osei", { ...mapleGrove, email: "mina@example.test" });
-      const key = "name-site:mina osei|faraway";
-      const remember = (personId: string, matchedName = "mina osei") => seed.rememberedMatches.set(key, { id: "rm", identityKey: key, personId, matchedName, matchedBy: "NAME_ONLY" });
-      // A contradicting email: not remembered, and the normal rules find no match either.
-      remember("p-mina");
-      await applyBackgroundCheckUpload([noIdRow("Mina", "Osei", otherChurch, key, { email: "someone-else@example.test" })], "STERLING", "admin-1", now);
-      expect(seed.matches.size).toBe(0);
-      // A different name than the one recorded: the normal rules apply (here, a fresh name-only match).
-      remember("p-mina", "mina osei-smith");
-      await applyBackgroundCheckUpload([noIdRow("Mina", "Osei", otherChurch, key)], "STERLING", "admin-1", now);
-      expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-mina", matchedBy: "NAME_ONLY" })]);
-      // A person who no longer exists: ignored, and the normal rules apply.
-      remember("p-gone");
-      await applyBackgroundCheckUpload([noIdRow("Mina", "Osei", otherChurch, key)], "STERLING", "admin-1", now);
-      expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-mina", matchedBy: "NAME_ONLY" })]);
-      expect([...seed.rememberedMatches.values()]).toEqual([expect.objectContaining({ personId: "p-mina" })]);
+      seed.uploads.set("u-1", { id: "u-1", createdAt: new Date("2026-09-01") });
+      rosterAdult(seed, "p-mina", "Mina", "Osei", mapleGrove);
+      seedEntry(seed, "e-mina", { identityKey: "name:mina osei", firstName: "Mina", lastName: "Osei", normalizedName: "mina osei", site: null });
+      await rematchBackgroundCheckList(now, "admin-1");
+      expect(auditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "BACKGROUND_CHECK_LIST_REFRESHED", actorUserId: "admin-1", metadata: { rememberedMatched: 0, rememberedWritten: 1, forgotRemembered: 0 } }), expect.anything());
     });
   });
 
