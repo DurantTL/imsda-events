@@ -437,8 +437,12 @@ type EntryForMatch = {
   site: string | null;
 };
 type MatchedBy = "IDENTITY" | "AUTO" | "NAME_ONLY";
-/** `viaVariant`: a first-name variant match (#619). The names differ, so it is never remembered as an id. */
-type MatchResult = { entryId: string; personId: string; identityKey: string; rowName: string; matchedBy: MatchedBy; viaVariant?: boolean };
+/**
+ * `viaVariant`: a first-name variant match (#619). `viaMemory`: a name-only or
+ * variant match relabelled `IDENTITY` by the remembered-match table. Neither is
+ * ever written as a remembered id.
+ */
+type MatchResult = { entryId: string; personId: string; identityKey: string; rowName: string; matchedBy: MatchedBy; viaVariant?: boolean; viaMemory?: boolean };
 type ReviewResult = { entryId: string; reason: string; candidatePersonIds: string[] };
 
 const entryForMatchSelect = { id: true, identityKey: true, firstName: true, lastName: true, normalizedName: true, email: true, sealedBirthDate: true, site: true } as const;
@@ -550,18 +554,18 @@ function countRowsByName(entries: Array<Pick<EntryForMatch, "normalizedName">>) 
  *   email, birth date, or site agrees with them (#619); otherwise it goes to
  *   review. It is auto-matched only when the pass sees every candidate on file
  *   (`wholeList`), and is not remembered as an id (the names differ).
- * - A `NAME_ONLY` match of a `user_id` row is remembered like an `AUTO` one
- *   (#619): the next upload finds it as `IDENTITY`, with no staff action, and
- *   no later namesake un-makes it. A rejection ("not the same person") still
- *   wins over a remembered id: the row goes to review instead, and rejecting
- *   also forgets the id.
- * - Every `NAME_ONLY` match (any key, variants too) is also written to
- *   `BackgroundCheckRememberedMatch` (#619). For a row with no `user_id`, and
- *   for variants, that memory decides nothing: the normal rules above run
- *   first, and only when they make the same `NAME_ONLY` match again is it
- *   relabelled `IDENTITY`, so staff aren't shown it as new. If the rules make a
- *   different match, or send the row to review, or the memory no longer fits,
- *   the memory is dropped (returned in `forget`) and the rules decide alone.
+ * - A remembered `user_id` (an `ExternalIdentity`) is written only for `AUTO`
+ *   and staff matches, never for a `NAME_ONLY` or variant one (#619): a
+ *   remembered id beats the rules on every upload, so it must not outlive a
+ *   guess. A rejection ("not the same person") wins over a remembered id: the
+ *   row goes to review instead.
+ * - Every `NAME_ONLY` match (any key kind, `user_id` keys and variants too) is
+ *   written to `BackgroundCheckRememberedMatch` (#619). That memory decides
+ *   nothing: the normal rules above run first, and only when they make the
+ *   same `NAME_ONLY` match again is it relabelled `IDENTITY`, so staff aren't
+ *   shown it as new. If the rules make a different match, or send the row to
+ *   review, or the memory no longer fits, the memory is dropped (returned in
+ *   `forget`) and the rules decide alone.
  * - A person matched by more than one entry is also a review, for every
  *   entry that matched them — never guessed which one is right.
  * - `unavailable` people already hold a match that isn't being recomputed
@@ -701,6 +705,7 @@ function matchEntries(
       if (match && match.personId === memory.personId) {
         if (match.matchedBy === "NAME_ONLY" && fits) {
           match.matchedBy = "IDENTITY";
+          match.viaMemory = true;
           rememberedMatched += 1;
         } else if (!fits) {
           forget.push(entry.identityKey);
@@ -793,12 +798,12 @@ async function saveMatchResults(tx: PrismaLike, matches: MatchResult[], reviews:
       skipDuplicates: true,
     });
   }
-  // Every match is remembered by the row's `user_id`, name-only ones too
-  // (#619; #598 skipped them): the next upload finds them as `IDENTITY` so
-  // staff don't recheck each upload. A rejection outranks the remembered id in
-  // `matchEntries`, and rejecting forgets it. A variant match isn't remembered:
-  // the remembered id's name check would fail against the row's variant name.
-  await rememberUserIdIdentities(tx, matches.filter((match) => !match.viaVariant), now);
+  // A remembered id beats the rules on every later upload, so only a match the
+  // rules stand behind may write one: `AUTO`, an `IDENTITY` that already had
+  // one, and (elsewhere) a staff hand match. Never a name-only or variant match
+  // (#619): those live only in `BackgroundCheckRememberedMatch`, which decides
+  // nothing and only relabels a match the rules make again.
+  await rememberUserIdIdentities(tx, matches.filter((match) => match.matchedBy !== "NAME_ONLY" && !match.viaVariant && !match.viaMemory), now);
   // Every name-only match, whatever its key, and every variant match is also
   // written to `BackgroundCheckRememberedMatch` (#619): the origin marker that
   // lets staff reject a later `IDENTITY` match, and the memory that keeps a
@@ -909,13 +914,15 @@ async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: stri
     const heldMatches = entries.filter((entry) => entry.match?.matchedBy === "NAME_ONLY" || entry.match?.matchedBy === "IDENTITY");
     if (heldMatches.length > 0) {
       const matchedIndex = await buildCandidateIndex(tx, now, { personIds: heldMatches.map((entry) => entry.match!.personId) });
+      const realIds = await identitiesByKeys(tx, heldMatches.map((entry) => entry.identityKey));
       const exactNames = new Set(named.map((row) => matchableName(`${row.firstName} ${row.lastName}`)));
       for (const entry of heldMatches) {
         const person = matchedIndex.byPerson.get(entry.match!.personId);
         if (!person || !entry.normalizedName) continue;
         if (matchableName(`${person.firstName} ${person.lastName}`) === entry.normalizedName) continue;
         if (exactNames.has(entry.normalizedName)) continue;
-        if (isRememberedIdentityKey(entry.identityKey) && entry.match!.matchedBy === "IDENTITY") continue;
+        // A real remembered id (not a name-only memory) means a rename is a mismatch: recompute.
+        if (entry.match!.matchedBy === "IDENTITY" && realIds.get(entry.identityKey)?.personId === entry.match!.personId) continue;
         if (matchableName(person.lastName) !== matchableName(entry.lastName) || !firstNameVariant(entry.firstName, person.firstName)) continue;
         if (contradictsEntry(entry, person)) continue;
         variantMatchedIds.add(entry.id);

@@ -1758,8 +1758,9 @@ describe("name-only matches, variants, adults by age, and the lookup (#598)", ()
     await applyBackgroundCheckUpload(rosterRows({ userId: "7001", last: "Osei", first: "Mina", sites: otherChurch }), "ROSTER", "admin-1", now);
     expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-mina", matchedBy: "NAME_ONLY" })]);
     expect(seed.reviews.size).toBe(0);
-    // Remembered like an automatic match (#619).
-    expect([...seed.identities.values()]).toEqual([expect.objectContaining({ externalId: "userId:7001", personId: "p-mina" })]);
+    // Remembered only in the relabel-only table, never as an id that beats the rules (#619).
+    expect(seed.identities.size).toBe(0);
+    expect([...seed.rememberedMatches.values()]).toEqual([expect.objectContaining({ identityKey: "userId:7001", personId: "p-mina", matchedBy: "NAME_ONLY" })]);
     await expect(listNameOnlyBackgroundCheckMatches(now)).resolves.toEqual([
       expect.objectContaining({ personName: "Mina Osei", entryName: "Mina Osei", site: otherChurch, personSites: ["Maple Grove Pathfinders", "Maple Grove SDA Church"] }),
     ]);
@@ -1974,12 +1975,57 @@ describe("name-only matches, variants, adults by age, and the lookup (#598)", ()
     await rematchBackgroundCheckList(now);
     expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-mina", matchedBy: "NAME_ONLY" })]);
     expect(await listNameOnlyBackgroundCheckMatches(now)).toHaveLength(1);
-    // A later namesake would have stopped a fresh name-only match, not a remembered one.
-    seed.persons.set("p-mina-two", { id: "p-mina-two", firstName: "Mina", lastName: "Osei" });
+    // With nothing else changed, the next upload finds it again and it is off the list.
     await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
     expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-mina", matchedBy: "IDENTITY" })]);
-    expect(seed.reviews.size).toBe(0);
     expect(await listNameOnlyBackgroundCheckMatches(now)).toEqual([]);
+    expect(seed.identities.size).toBe(0);
+    // A later namesake stops it, as it would a fresh name-only match: review, and the memory goes.
+    seed.persons.set("p-mina-two", { id: "p-mina-two", firstName: "Mina", lastName: "Osei" });
+    await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
+    expect(seed.matches.size).toBe(0);
+    expect(seed.reviews.size).toBe(1);
+    expect(seed.rememberedMatches.size).toBe(0);
+  });
+
+  it("a name-only match on a user_id row never becomes a remembered id: a second namesake at the row's site wins by AUTO on refresh, upload and Refresh (#619)", async () => {
+    const stoneSite = "Stone Hollow SDA Church (Elsewhere)";
+    const stoneHollow = { clubName: "Stone Hollow Pathfinders", parentName: "Stone Hollow SDA Church" };
+    for (const path of ["per-person refresh", "upload", "staff Refresh"] as const) {
+      const { client, seed } = makeFakeDb();
+      currentClient = client;
+      rosterAdult(seed, "p-mia-1", "Mia", "Stone", mapleGrove);
+      const rows = rosterRows({ userId: "84001", last: "Stone", first: "Mia", sites: stoneSite });
+      await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
+      expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-mia-1", matchedBy: "NAME_ONLY" })]);
+      expect(seed.identities.size).toBe(0);
+      rosterAdult(seed, "p-mia-2", "Mia", "Stone", stoneHollow);
+      if (path === "per-person refresh") await refreshBackgroundCheckMatchForPerson("p-mia-2", now);
+      else if (path === "upload") await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
+      else await rematchBackgroundCheckList(now);
+      expect([...seed.matches.values()], path).toEqual([expect.objectContaining({ personId: "p-mia-2", matchedBy: "AUTO" })]);
+      expect(seed.rememberedMatches.size, path).toBe(0);
+      expect(seed.reviews.size, path).toBe(0);
+      // Only the AUTO match may write a remembered id.
+      expect([...seed.identities.values()].map((identity) => identity.personId), path).toEqual(["p-mia-2"]);
+    }
+  });
+
+  it("a relabelled match on a user_id row survives a per-person refresh while it is still a variant, and is recomputed once it is not (Ron Pike)", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    rosterAdult(seed, "p-ronald", "Ronald", "Pike", mapleGrove);
+    const rows = rosterRows({ userId: "9101", last: "Pike", first: "Ron", sites: "Maple Grove SDA Church (Springfield)" });
+    await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
+    await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
+    expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-ronald", matchedBy: "IDENTITY" })]);
+    expect(seed.identities.size).toBe(0);
+    await refreshBackgroundCheckMatchForPerson("p-ronald", now);
+    expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-ronald", matchedBy: "IDENTITY" })]);
+    expect(seed.reviews.size).toBe(0);
+    renamePerson(seed, "p-ronald", "Rafael");
+    await refreshBackgroundCheckMatchForPerson("p-ronald", now);
+    expect(seed.matches.size).toBe(0);
   });
 
   it("a rejection beats a remembered name-only match, on Refresh and on the next upload (#619)", async () => {
@@ -1988,9 +2034,10 @@ describe("name-only matches, variants, adults by age, and the lookup (#598)", ()
     rosterAdult(seed, "p-mina", "Mina", "Osei", mapleGrove);
     const rows = rosterRows({ userId: "7001", last: "Osei", first: "Mina", sites: otherChurch });
     await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
-    expect(seed.identities.size).toBe(1);
+    expect(seed.identities.size).toBe(0);
+    expect(seed.rememberedMatches.size).toBe(1);
     await rejectNameOnlyBackgroundCheckMatch([...seed.matches.values()][0]!.id as string, "admin-1");
-    expect(seed.identities.size).toBe(0); // the remembered id is forgotten too
+    expect(seed.rememberedMatches.size).toBe(0);
     await rematchBackgroundCheckList(now);
     await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
     expect(seed.matches.size).toBe(0);
