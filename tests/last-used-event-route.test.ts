@@ -120,14 +120,18 @@ describe("POST /api/staff/last-event", () => {
     expect(LAST_USED_EVENT_COOKIE_MAX_AGE_SECONDS).toBe(60 * 24 * 60 * 60);
   });
 
-  it("accepts a system administrator without a membership lookup, and records nothing routing would ignore", async () => {
+  it("accepts a system administrator without a membership lookup, and remembers the event as their current selection", async () => {
     mocks.getCurrentSession.mockResolvedValue({ user: admin });
 
     const response = await POST(post({ eventId: "evt_wr26" }));
 
     expect(response.status).toBe(200);
     expect(mocks.findActiveMembership).not.toHaveBeenCalled();
-    expect(mocks.cookieSet).not.toHaveBeenCalled();
+    expect(mocks.cookieSet).toHaveBeenCalledWith(
+      LAST_USED_EVENT_COOKIE_NAME,
+      "evt_wr26",
+      expect.objectContaining({ httpOnly: true }),
+    );
   });
 });
 

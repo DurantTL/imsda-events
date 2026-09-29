@@ -65,6 +65,20 @@ export type NavigationItem = {
   group?: NavigationGroup;
 };
 
+/**
+ * Adds the current event to a staff link so moving between areas (dashboard,
+ * System management, Clubs and churches) keeps it (#616). Replaces any
+ * `event` already on the href; leaves the href alone with no event.
+ */
+export function withCurrentEvent(href: string, eventId: string | null | undefined): string {
+  if (!eventId) return href;
+  const [pathAndQuery, hash] = href.split("#");
+  const [path, query = ""] = pathAndQuery.split("?");
+  const params = new URLSearchParams(query);
+  params.set("event", eventId);
+  return `${path}?${params.toString()}${hash ? `#${hash}` : ""}`;
+}
+
 export const systemNavigation: NavigationItem = {
   href: "/admin",
   label: "System management",

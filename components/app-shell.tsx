@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Fragment } from "react";
+import { Fragment, useEffect } from "react";
 import {
   ArrowRightLeft,
   ChevronDown,
@@ -23,6 +23,7 @@ import {
   navigationGroupLabels,
   resolveClubsAndChurchesEntry,
   systemNavigation,
+  withCurrentEvent,
   type NavigationItem,
 } from "@/components/staff-navigation";
 
@@ -137,6 +138,13 @@ export function AppShell({
     ? `/account/events/${encodeURIComponent(selectedEvent.slug)}?preview=staff`
     : "/account";
 
+  // An event named in the URL becomes the remembered selection (#616), so the
+  // next page without `?event=` keeps it instead of falling back to the default.
+  const rememberedEventId = requestedEvent && requestedEvent.id !== defaultEventId ? requestedEvent.id : null;
+  useEffect(() => {
+    if (rememberedEventId) rememberLastUsedEvent(rememberedEventId);
+  }, [rememberedEventId]);
+
   function selectEvent(eventId: string) {
     const params = new URLSearchParams(searchParams.toString());
     params.set("event", eventId);
@@ -162,7 +170,7 @@ export function AppShell({
             <span className="system-navigation-label">Global administration</span>
             <Link
               className={isSystemRoute ? "system-navigation-link active" : "system-navigation-link"}
-              href={systemNavigation.href}
+              href={withCurrentEvent(systemNavigation.href, selectedEventId)}
               aria-current={isSystemRoute ? "page" : undefined}
             >
               <span className="system-navigation-icon">
@@ -195,14 +203,14 @@ export function AppShell({
 
         <nav className="primary-nav" aria-label="Primary navigation">
           {visibleNavigation.map(({ href, icon: Icon, label, group }, index) => {
-            // /admin routes aren't event-scoped, so they never carry the event query.
+            // Every link carries the current event, /admin included (#616).
             const isActive = href.startsWith("/admin") ? pathname.startsWith(href) : current.href === href;
             const previousGroup = index > 0 ? visibleNavigation[index - 1].group : undefined;
             const startsGroup = group && group !== previousGroup;
             return (
               <Fragment key={href}>
                 {startsGroup && <span className="nav-group-label">{navigationGroupLabels[group]}</span>}
-                <Link className={isActive ? "nav-item active" : "nav-item"} href={href.startsWith("/admin") ? href : `${href}${eventQuery}`} aria-current={isActive ? "page" : undefined}>
+                <Link className={isActive ? "nav-item active" : "nav-item"} href={withCurrentEvent(href, selectedEventId)} aria-current={isActive ? "page" : undefined}>
                   <Icon aria-hidden="true" size={19} strokeWidth={1.9} />
                   <span>{label}</span>
                 </Link>
@@ -260,7 +268,7 @@ export function AppShell({
               canSwitchToAttendee={canSwitchToAttendee}
               displayName={user.displayName}
               email={user.email}
-              systemAdminContext={systemAdminContext}
+              systemAdminContext={systemAdminContext ? { ...systemAdminContext, href: withCurrentEvent(systemAdminContext.href, selectedEventId) } : systemAdminContext}
             />
           </div>
         </header>

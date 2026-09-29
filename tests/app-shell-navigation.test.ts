@@ -189,7 +189,8 @@ describe("application shell navigation", () => {
     );
 
     expect(markup).toContain(groupHeading("Clubs and churches"));
-    expect(markup).toContain('href="/admin/organizations"');
+    expect(markup).toContain('href="/admin/organizations?event=event_1"');
+    expect(markup).toContain('href="/admin?event=event_1"');
     expect(markup).toContain(groupHeading("System"));
   });
 
