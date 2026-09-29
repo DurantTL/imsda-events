@@ -15,7 +15,7 @@ async function getHandler(_request: Request, { params }: Context) {
     if (!data || !data.clubs.some((club) => club.id === organizationId)) {
       return Response.json({ error: "NOT_REGISTERED", message: "Your club isn't registered for this event." }, { status: 404 });
     }
-    const csv = clubScheduleCsv(buildClubSchedule(organizationId, data.sessions, data.offerings, data.enrollments, data.attendees));
+    const csv = clubScheduleCsv(buildClubSchedule(organizationId, data.sessions, data.offerings, data.enrollments, data.attendees, data.locations), data.hasLocations);
     return new Response(csv, {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",

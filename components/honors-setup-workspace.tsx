@@ -4,8 +4,9 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Award, CalendarRange, ClipboardList, Copy, Pencil, Plus, Power, Save, Trash2, TriangleAlert, X } from "lucide-react";
 import { honorOfferingSpanLabels } from "@/modules/honors/domain";
+import { siteChangePatch } from "@/modules/honors/locations";
 import type { HonorCopyPlan } from "@/modules/honors/copy";
-import { nextSessionOrder, sessionClassWarning, sortHonorSessions } from "@/modules/honors/session-order";
+import { groupSessionsBySite, nextSessionOrder, sessionClassWarning, sharedSessionsLabel } from "@/modules/honors/session-order";
 import type { EventHonorSetup } from "@/modules/honors/repository";
 
 type Offering = EventHonorSetup["offerings"][number];
@@ -35,6 +36,7 @@ export function HonorsSetupWorkspace({
   otherEvents: Array<{ id: string; name: string }>;
 }) {
   const [setup, setSetup] = useState(initialSetup);
+  const [newSessionSite, setNewSessionSite] = useState(initialSetup.locations.find((location) => location.isActive)?.id ?? "");
   const [span, setSpan] = useState<"SINGLE_SESSION" | "ALL_SESSIONS">("SINGLE_SESSION");
   const [editing, setEditing] = useState<Offering | null>(null);
   const [copySource, setCopySource] = useState(otherEvents[0]?.id ?? "");
@@ -44,16 +46,28 @@ export function HonorsSetupWorkspace({
   const [notice, setNotice] = useState("");
   const base = `/api/events/${encodeURIComponent(eventId)}/honors`;
 
-  const sessions = useMemo(() => sortHonorSessions(setup.sessions), [setup.sessions]);
+  // Sites in the location's sort order, sessions ordered within each site (#589).
+  // An event without locations is one group, exactly as before.
+  const hasSites = setup.locations.length > 0;
+  const siteGroups = useMemo(() => groupSessionsBySite(setup.sessions, setup.locations), [setup.sessions, setup.locations]);
+  const sessions = useMemo(() => siteGroups.flatMap((group) => group.sessions), [siteGroups]);
+  const siteName = (locationId: string | null) => setup.locations.find((location) => location.id === locationId)?.name ?? null;
+  const sessionSiteSuffix = (locationId: string | null) => (hasSites ? ` — ${siteName(locationId) ?? "No site"}` : "");
 
   const groups = useMemo(() => [
-    { key: "all", title: "All sessions", offerings: setup.offerings.filter((offering) => offering.span === "ALL_SESSIONS") },
+    // An all-sessions class is at its own site (#589): one "All sessions" group per site, in the sites' order.
+    ...siteGroups.map((group) => ({
+      key: `all-${group.location?.id ?? "none"}`,
+      title: hasSites ? `All sessions — ${group.location?.name ?? "No site"}` : "All sessions",
+      offerings: setup.offerings.filter((offering) => offering.span === "ALL_SESSIONS" && (offering.locationId ?? null) === (group.location?.id ?? null)),
+    })),
     ...sessions.map((session) => ({
       key: session.id,
-      title: session.name,
+      title: `${session.name}${hasSites ? ` — ${setup.locations.find((location) => location.id === session.locationId)?.name ?? "No site"}` : ""}`,
       offerings: setup.offerings.filter((offering) => offering.sessionId === session.id),
     })),
-  ], [setup, sessions]);
+  ], [setup, sessions, hasSites, siteGroups]);
+  const hasActiveSites = setup.locations.some((location) => location.isActive !== false);
 
   const totalSeats = setup.offerings
     .filter((offering) => offering.isActive)
@@ -74,7 +88,7 @@ export function HonorsSetupWorkspace({
         throw new Error(result.message ?? result.issues?.[0]?.message ?? "The change could not be saved.");
       }
       const next = result.setup ?? (result.sessions && result.offerings ? result as EventHonorSetup : null);
-      if (next) setSetup({ sessions: next.sessions, offerings: next.offerings });
+      if (next) setSetup({ locations: next.locations, sessions: next.sessions, offerings: next.offerings });
       if (success) setNotice(success);
       return result;
     } catch (caught) {
@@ -92,6 +106,7 @@ export function HonorsSetupWorkspace({
     const result = await call(`${base}/sessions`, "POST", {
       name: String(form.get("name") ?? ""),
       sortOrder: Number(form.get("sortOrder") ?? 0),
+      locationId: hasSites ? String(form.get("locationId") ?? "") || null : null,
     }, "Session added.");
     if (result) formElement.reset();
   }
@@ -100,6 +115,10 @@ export function HonorsSetupWorkspace({
     const name = window.prompt("Session name", current);
     if (name === null || name.trim() === current) return;
     await call(`${base}/sessions/${encodeURIComponent(sessionId)}`, "PATCH", { name }, "Session renamed.");
+  }
+
+  async function moveSession(sessionId: string, locationId: string) {
+    await call(`${base}/sessions/${encodeURIComponent(sessionId)}`, "PATCH", { locationId: locationId || null }, "Session moved.");
   }
 
   async function removeSession(sessionId: string, name: string) {
@@ -117,6 +136,11 @@ export function HonorsSetupWorkspace({
       perClubLimit: optionalNumber(form.get("perClubLimit")),
       teacherName: String(form.get("teacherName") ?? ""),
       location: String(form.get("location") ?? ""),
+      // Only an all-sessions class has its own site; a single-session class is at its session's.
+      // Editing sends the site only when it changed (a legacy no-site class, or one with picks, keeps editing its other fields).
+      ...(editing
+        ? siteChangePatch(editing.locationId ?? null, form.get("locationId"))
+        : span === "ALL_SESSIONS" && hasSites ? { locationId: String(form.get("locationId") ?? "") || null } : {}),
     };
     const result = editing
       ? await call(`${base}/offerings/${encodeURIComponent(editing.id)}`, "PATCH", details, "Class updated.")
@@ -196,38 +220,75 @@ export function HonorsSetupWorkspace({
           </div>
           <span className="count-badge">{setup.sessions.length} sessions</span>
         </div>
-        {setup.sessions.length > 0 && (
-          <ul className="honor-session-list">
-            {sessions.map((session) => (
-              <li key={session.id}>
-                <CalendarRange aria-hidden="true" size={16} />
-                <strong>{session.name}</strong>
-                <small>{session.offeringCount} classes</small>
-                {sessionClassWarning(session) && (
-                  <p className="honor-session-warning" role="status">
-                    <TriangleAlert aria-hidden="true" size={14} /> {sessionClassWarning(session)}
-                  </p>
-                )}
-                <button className="text-button" disabled={saving} onClick={() => renameSession(session.id, session.name)} type="button">
-                  <Pencil aria-hidden="true" size={13} /> Rename
-                </button>
-                {session.offeringCount === 0 && (
-                  <button className="text-button" disabled={saving} onClick={() => removeSession(session.id, session.name)} type="button">
-                    <Trash2 aria-hidden="true" size={13} /> Remove
+        {siteGroups.filter((group) => group.sessions.length > 0).map((group) => (
+          <div key={group.location?.id ?? "none"}>
+            {hasSites && (
+              <h3 className="honor-group-heading">
+                <span translate="no">{group.location ? group.location.name : sharedSessionsLabel}</span>
+                {group.location && group.location.isActive === false ? " (inactive)" : ""}
+              </h3>
+            )}
+            <ul className="honor-session-list">
+              {group.sessions.map((session) => (
+                <li key={session.id}>
+                  <CalendarRange aria-hidden="true" size={16} />
+                  <strong>{session.name}</strong>
+                  <small>{session.offeringCount} classes</small>
+                  {sessionClassWarning(session) && (
+                    <p className="honor-session-warning" role="status">
+                      <TriangleAlert aria-hidden="true" size={14} /> {sessionClassWarning(session)}
+                    </p>
+                  )}
+                  {hasSites && (
+                    <label className="honor-session-site">
+                      <span className="sr-only">Site for {session.name}</span>
+                      <select disabled={saving} onChange={(event) => moveSession(session.id, event.target.value)} value={session.locationId ?? ""}>
+                        <option value="">No site</option>
+                        {setup.locations.map((location) => (
+                          <option key={location.id} value={location.id}>{location.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  <button className="text-button" disabled={saving} onClick={() => renameSession(session.id, session.name)} type="button">
+                    <Pencil aria-hidden="true" size={13} /> Rename
                   </button>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
+                  {session.offeringCount === 0 && (
+                    <button className="text-button" disabled={saving} onClick={() => removeSession(session.id, session.name)} type="button">
+                      <Trash2 aria-hidden="true" size={13} /> Remove
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
         <form className="form-stack honor-inline-form" onSubmit={addSession}>
+          {hasSites && (
+            <label>
+              Site
+              <select name="locationId" onChange={(event) => setNewSessionSite(event.target.value)} required={hasActiveSites} value={newSessionSite}>
+                <option value="">{hasActiveSites ? "Choose a site" : "No site (shown to every site)"}</option>
+                {setup.locations.map((location) => (
+                  <option key={location.id} value={location.id}>{location.name}{location.isActive ? "" : " (inactive)"}</option>
+                ))}
+              </select>
+            </label>
+          )}
           <label>
             Session name
             <input maxLength={80} name="name" placeholder="e.g. Sabbath afternoon" required />
           </label>
           <label>
             Order
-            <input defaultValue={nextSessionOrder(sessions)} max={99} min={0} name="sortOrder" type="number" />
+            <input
+              defaultValue={nextSessionOrder(setup.sessions.filter((session) => (session.locationId ?? "") === newSessionSite))}
+              key={newSessionSite}
+              max={99}
+              min={0}
+              name="sortOrder"
+              type="number"
+            />
           </label>
           <button className="secondary-button" disabled={saving} type="submit">
             <Plus aria-hidden="true" size={14} /> Add session
@@ -265,13 +326,24 @@ export function HonorsSetupWorkspace({
                 <option value="ALL_SESSIONS">{honorOfferingSpanLabels.ALL_SESSIONS} (fills every session)</option>
               </select>
             </label>
+            {span === "ALL_SESSIONS" && hasSites && (
+              <label>
+                Site
+                <select name="locationId" required={hasActiveSites}>
+                  <option value="">{hasActiveSites ? "Choose a site" : "No site"}</option>
+                  {setup.locations.map((location) => (
+                    <option key={location.id} value={location.id}>{location.name}{location.isActive === false ? " (inactive)" : ""}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             {span === "SINGLE_SESSION" && (
               <label>
                 Session
                 <select name="sessionId" required>
                   <option value="">Choose a session</option>
                   {sessions.map((session) => (
-                    <option key={session.id} value={session.id}>{session.name}</option>
+                    <option key={session.id} value={session.id}>{session.name}{sessionSiteSuffix(session.locationId)}</option>
                   ))}
                 </select>
               </label>
@@ -279,6 +351,24 @@ export function HonorsSetupWorkspace({
           </div>
         )}
         <div className="form-grid two-column">
+          {editing && editing.span === "ALL_SESSIONS" && hasSites && (
+            editing.enrolled > 0 ? (
+              // Clubs have picked this class, so it can't move: show the site, don't ask for one.
+              <p className="field-help" data-testid="class-site-readonly">
+                Site: <strong translate="no">{siteName(editing.locationId) ?? "No site"}</strong> (fixed once clubs have picked this class)
+              </p>
+            ) : (
+              <label>
+                Site
+                <select defaultValue={editing.locationId ?? ""} name="locationId" required={hasActiveSites && editing.locationId !== null}>
+                  <option value="">{hasActiveSites ? "Choose a site" : "No site"}</option>
+                  {setup.locations.map((location) => (
+                    <option key={location.id} value={location.id}>{location.name}{location.isActive === false ? " (inactive)" : ""}</option>
+                  ))}
+                </select>
+              </label>
+            )
+          )}
           <label>
             Youth seats
             <input defaultValue={editing?.capacity ?? ""} max={10000} min={0} name="capacity" required type="number" />
@@ -437,6 +527,12 @@ export function HonorsSetupWorkspace({
                 <strong>{plan.skipCount}</strong> skipped.{" "}
                 {plan.sessions.filter((session) => session.action === "CREATE").length} new sessions will be added.
               </p>
+              {plan.warnings.length > 0 && (
+                <div className="inline-notice error" role="status">
+                  <TriangleAlert aria-hidden="true" size={14} /> <strong>Some sessions will have no site.</strong>
+                  <ul>{plan.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
+                </div>
+              )}
               <div className="report-table-wrap">
                 <table className="report-table">
                   <thead>

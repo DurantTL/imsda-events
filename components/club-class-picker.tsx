@@ -70,6 +70,20 @@ export function ClubClassPicker({
   const allSessionOfferings = workspace.offerings.filter((offering) => offering.span === "ALL_SESSIONS");
   const offeringById = useMemo(() => new Map(workspace.offerings.map((offering) => [offering.id, offering])), [workspace.offerings]);
 
+  // With sites on the event, classes are per site: no site picked, nothing to choose (#589).
+  if (workspace.locationRequired) {
+    return (
+      <section className="public-manage-card" aria-labelledby="class-picker-heading">
+        <div className="public-manage-card-heading club-roster-heading">
+          <div>
+            <p className="public-registration-eyebrow">Step 3 of 3 · Classes</p>
+            <h2 id="class-picker-heading"><Award size={18} aria-hidden="true" /> Choose classes</h2>
+          </div>
+        </div>
+        <p className="public-manage-empty" role="status">{workspace.locationMessage ?? "Choose your location first."}</p>
+      </section>
+    );
+  }
   if (workspace.offerings.length === 0) return null;
 
   function held(attendeeId: string, offeringId: string) {
@@ -129,6 +143,9 @@ export function ClubClassPicker({
           <h2 id="class-picker-heading"><Award size={18} aria-hidden="true" /> Choose classes</h2>
         </div>
       </div>
+      {workspace.location && (
+        <p className="field-help">Classes at <strong translate="no">{workspace.location.name}</strong>.</p>
+      )}
       <p>
         Pick one class per session, or one class that fills every session. Seats go to the first
         clubs to save. Only youth use a seat; staff, adults, and underage children join without one.

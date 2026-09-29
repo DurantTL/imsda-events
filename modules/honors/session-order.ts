@@ -48,3 +48,31 @@ export function nextSessionOrder(sessions: readonly { sortOrder: number }[]) {
   for (let order = 0; order <= MAX_SESSION_ORDER; order += 1) if (!used.has(order)) return order;
   return MAX_SESSION_ORDER;
 }
+
+/**
+ * Sessions grouped by site (#589), for the setup screen and the rosters. Sites
+ * come in the location's `sortOrder`; sessions with no site (an event without
+ * locations, or a session every site shares) form one group at the end. Inside
+ * a group, `sortOrder` applies per site (#570). An event with no locations
+ * yields a single group with a null location.
+ */
+export type SiteOrderedSession = OrderableHonorSession & { locationId?: string | null };
+export type SiteRef = { id: string; name: string; sortOrder: number; isActive?: boolean };
+
+export function groupSessionsBySite<T extends SiteOrderedSession>(sessions: readonly T[], locations: readonly SiteRef[]) {
+  const orderedLocations = [...locations].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+  const groups: Array<{ location: SiteRef | null; sessions: T[] }> = orderedLocations.map((location) => ({
+    location,
+    sessions: sortHonorSessions(sessions.filter((session) => session.locationId === location.id)),
+  }));
+  const shared = sortHonorSessions(sessions.filter((session) => !session.locationId || !locations.some((location) => location.id === session.locationId)));
+  if (shared.length > 0 || groups.length === 0) groups.push({ location: null, sessions: shared });
+  return groups;
+}
+
+/** Flat order for rosters: by site, then session order within each site. */
+export function sortSessionsBySite<T extends SiteOrderedSession>(sessions: readonly T[], locations: readonly SiteRef[]): T[] {
+  return groupSessionsBySite(sessions, locations).flatMap((group) => group.sessions);
+}
+
+export const sharedSessionsLabel = "No site (shown to every site)";

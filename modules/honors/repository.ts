@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import type { HonorImportStep } from "@/modules/honors/catalog-csv";
+import { eventHasActiveLocations, offeringSiteId } from "@/modules/honors/locations";
 import {
   normalizeHonorCode,
   normalizeHonorText,
@@ -27,6 +28,10 @@ export type HonorErrorCode =
   | "HONOR_INACTIVE"
   | "SESSION_NAME_CONFLICT"
   | "SESSION_IN_USE"
+  | "LOCATION_NOT_FOUND"
+  | "LOCATION_REQUIRED"
+  | "SESSION_HAS_PICKS"
+  | "OFFERING_HAS_PICKS"
   | "OFFERING_CONFLICT"
   | "COPY_SAME_EVENT"
   | "COPY_SOURCE_CHANGED";
@@ -167,11 +172,11 @@ export async function updateHonor(honorId: string, input: HonorUpdate, actorUser
 // Sessions and offerings (per event; CONFIGURE_EVENT)
 
 async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: string) {
-  const [sessions, offerings, enrollmentCounts] = await Promise.all([
+  const [sessions, offerings, enrollmentCounts, locations] = await Promise.all([
     client.honorSession.findMany({
       where: { eventId },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { name: "asc" }],
-      select: { id: true, name: true, sortOrder: true, createdAt: true, _count: { select: { offerings: true } } },
+      select: { id: true, name: true, locationId: true, sortOrder: true, createdAt: true, _count: { select: { offerings: true } } },
     }),
     client.honorOffering.findMany({
       where: { eventId },
@@ -180,6 +185,7 @@ async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: st
         id: true,
         honorId: true,
         sessionId: true,
+        locationId: true,
         span: true,
         capacity: true,
         minimumAge: true,
@@ -196,6 +202,11 @@ async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: st
       where: { eventId, registration: { status: { in: ["SUBMITTED", "CONFIRMED"] } } },
       _count: { _all: true },
     }),
+    client.eventLocation.findMany({
+      where: { eventId },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      select: { id: true, name: true, sortOrder: true, isActive: true },
+    }),
   ]);
   const seatsTaken = new Map<string, number>();
   const enrolled = new Map<string, number>();
@@ -204,9 +215,11 @@ async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: st
     if (row.consumesSeat) seatsTaken.set(row.offeringId, row._count._all);
   }
   return {
+    locations,
     sessions: sessions.map((session) => ({
       id: session.id,
       name: session.name,
+      locationId: session.locationId,
       sortOrder: session.sortOrder,
       createdAt: session.createdAt,
       offeringCount: session._count.offerings,
@@ -219,6 +232,7 @@ async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: st
       honorName: offering.honor.name,
       honorIsActive: offering.honor.isActive,
       sessionId: offering.sessionId,
+      locationId: offering.locationId,
       span: offering.span,
       capacity: offering.capacity,
       minimumAge: offering.minimumAge,
@@ -244,6 +258,19 @@ async function requireEvent(tx: Prisma.TransactionClient, eventId: string) {
   return event;
 }
 
+/** The site must belong to this event (#589). Null is always allowed: a session no site owns. */
+async function requireSessionLocation(tx: Prisma.TransactionClient, eventId: string, locationId: string | null | undefined) {
+  if (!locationId) return;
+  const location = await tx.eventLocation.findFirst({ where: { id: locationId, eventId }, select: { id: true } });
+  if (!location) throw new HonorConfigurationError("LOCATION_NOT_FOUND", "That site could not be found for this event.");
+}
+
+/** With active locations, a session or all-sessions class must say which site it is at (#589). */
+const siteRequired = (what: "session" | "all-sessions class") => new HonorConfigurationError(
+  "LOCATION_REQUIRED",
+  `Choose the site for this ${what}.`,
+);
+
 const sessionNameConflict = () => new HonorConfigurationError(
   "SESSION_NAME_CONFLICT",
   "This site already has a session with that name.",
@@ -253,9 +280,12 @@ export async function createHonorSession(eventId: string, input: HonorSessionInp
   try {
     await getPrisma().$transaction(async (tx) => {
       await requireEvent(tx, eventId);
+      await requireSessionLocation(tx, eventId, input.locationId);
+      if (!input.locationId && await eventHasActiveLocations(tx, eventId)) throw siteRequired("session");
       const session = await tx.honorSession.create({
         data: {
           eventId,
+          locationId: input.locationId,
           name: input.name,
           normalizedName: normalizeHonorText(input.name),
           sortOrder: input.sortOrder,
@@ -284,12 +314,27 @@ export async function updateHonorSession(
   actorUserId: string,
 ) {
   try {
-    await getPrisma().$transaction(async (tx) => {
-      const existing = await tx.honorSession.findFirst({ where: { id: sessionId, eventId }, select: { id: true } });
+    // Serializable, so a class pick saved at the same moment can't slip past the count below (#589).
+    await serializable(async (tx) => {
+      const existing = await tx.honorSession.findFirst({ where: { id: sessionId, eventId }, select: { id: true, locationId: true } });
       if (!existing) throw new HonorConfigurationError("SESSION_NOT_FOUND", "That session could not be found.");
+      if (input.locationId !== undefined && input.locationId !== existing.locationId) {
+        await requireSessionLocation(tx, eventId, input.locationId);
+        if (!input.locationId && await eventHasActiveLocations(tx, eventId)) throw siteRequired("session");
+        // Moving a session to another site would strand clubs that picked its
+        // classes at the old one; nothing is removed silently (#589).
+        const picks = await tx.honorEnrollment.count({ where: { offering: { sessionId } } });
+        if (picks > 0) {
+          throw new HonorConfigurationError(
+            "SESSION_HAS_PICKS",
+            "Clubs have already picked classes in this session, so it can't move to another site.",
+          );
+        }
+      }
       const session = await tx.honorSession.update({
         where: { id: sessionId },
         data: {
+          ...(input.locationId === undefined ? {} : { locationId: input.locationId }),
           ...(input.name === undefined ? {} : { name: input.name, normalizedName: normalizeHonorText(input.name) }),
           ...(input.sortOrder === undefined ? {} : { sortOrder: input.sortOrder }),
         },
@@ -348,18 +393,30 @@ export async function createHonorOffering(eventId: string, input: HonorOfferingI
       if (!honor.isActive) {
         throw new HonorConfigurationError("HONOR_INACTIVE", "That honor is inactive in the catalog.");
       }
+      let sessionSite: string | null = null;
       if (input.sessionId) {
         const session = await tx.honorSession.findFirst({
           where: { id: input.sessionId, eventId },
-          select: { id: true },
+          select: { id: true, locationId: true },
         });
         if (!session) throw new HonorConfigurationError("SESSION_NOT_FOUND", "That session could not be found.");
+        sessionSite = session.locationId;
+      }
+      // An all-sessions class has its own site; a single-session class takes its session's (#589).
+      let locationId: string | null = null;
+      if (input.span === "ALL_SESSIONS") {
+        await requireSessionLocation(tx, eventId, input.locationId);
+        if (!input.locationId && await eventHasActiveLocations(tx, eventId)) throw siteRequired("all-sessions class");
+        locationId = input.locationId;
       }
       const existing = await tx.honorOffering.findMany({
         where: { eventId, honorId: input.honorId },
-        select: { honorId: true, span: true, sessionId: true },
+        select: { honorId: true, span: true, sessionId: true, locationId: true, session: { select: { locationId: true } } },
       });
-      const conflict = offeringSlotConflict(input, existing);
+      const conflict = offeringSlotConflict(
+        { ...input, locationId: input.span === "ALL_SESSIONS" ? locationId : sessionSite },
+        existing.map((offering) => ({ ...offering, locationId: offeringSiteId(offering) })),
+      );
       if (conflict) throw new HonorConfigurationError("OFFERING_CONFLICT", conflict);
 
       const offering = await tx.honorOffering.create({
@@ -367,6 +424,7 @@ export async function createHonorOffering(eventId: string, input: HonorOfferingI
           eventId,
           honorId: input.honorId,
           sessionId: input.sessionId,
+          locationId,
           span: input.span,
           capacity: input.capacity,
           minimumAge: input.minimumAge,
@@ -408,12 +466,33 @@ export async function updateHonorOffering(
   input: HonorOfferingUpdate,
   actorUserId: string,
 ) {
-  await getPrisma().$transaction(async (tx) => {
+  // Serializable, so a class pick saved at the same moment can't slip past the pick count on a site move (#589).
+  await serializable(async (tx) => {
     const existing = await tx.honorOffering.findFirst({
       where: { id: offeringId, eventId },
-      select: { id: true, honor: { select: { name: true } } },
+      select: { id: true, honorId: true, span: true, locationId: true, honor: { select: { name: true } } },
     });
     if (!existing) throw new HonorConfigurationError("OFFERING_NOT_FOUND", "That honor offering could not be found.");
+    if (input.locationId !== undefined && input.locationId !== existing.locationId) {
+      if (existing.span !== "ALL_SESSIONS") {
+        throw new HonorConfigurationError("OFFERING_CONFLICT", "A single-session class is at its session's site. Move the session instead.");
+      }
+      await requireSessionLocation(tx, eventId, input.locationId);
+      if (!input.locationId && await eventHasActiveLocations(tx, eventId)) throw siteRequired("all-sessions class");
+      // Clubs that picked this class at its site would be stranded; nothing is removed silently.
+      if (await tx.honorEnrollment.count({ where: { offeringId } }) > 0) {
+        throw new HonorConfigurationError("OFFERING_HAS_PICKS", "Clubs have already picked this class, so it can't move to another site.");
+      }
+      const others = await tx.honorOffering.findMany({
+        where: { eventId, honorId: existing.honorId, id: { not: offeringId } },
+        select: { honorId: true, span: true, sessionId: true, locationId: true, session: { select: { locationId: true } } },
+      });
+      const conflict = offeringSlotConflict(
+        { honorId: existing.honorId, span: "ALL_SESSIONS", sessionId: null, locationId: input.locationId },
+        others.map((offering) => ({ ...offering, locationId: offeringSiteId(offering) })),
+      );
+      if (conflict) throw new HonorConfigurationError("OFFERING_CONFLICT", conflict);
+    }
     await tx.honorOffering.update({ where: { id: offeringId }, data: input });
     await writeAuditLog({
       eventId,

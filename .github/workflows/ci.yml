@@ -113,3 +113,7 @@ jobs:
       # timing out as a retryable busy, the location filters and CSV columns,
       # and cloning with shifted dates (#413).
       - run: npm run test:event-locations
+
+      # Real-database check of Honors Weekend sessions at sites: per-site names beside the
+      # no-site rule, copying and cloning by site name with the no-match warning (#589).
+      - run: npm run test:honor-sites

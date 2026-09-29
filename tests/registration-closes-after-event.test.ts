@@ -377,6 +377,7 @@ describe("other paths that follow the phase", () => {
         }),
       },
       clubRosterMember: { findMany: vi.fn().mockResolvedValue([]) },
+      eventLocation: { count: vi.fn().mockResolvedValue(0) },
     };
     dependencies.getPrisma.mockReturnValue({
       $transaction: vi.fn(async (operation: (client: typeof tx) => unknown) => operation(tx)),

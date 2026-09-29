@@ -39,16 +39,21 @@ function dietaryAnswer(responses: unknown, keys: readonly string[]) {
  */
 export async function getHonorRosterData(
   eventId: string,
-  options: { includeDietary: boolean; organizationId?: string },
+  options: { includeDietary: boolean; organizationId?: string; /** Only this site's registrations and sessions (#589). */ locationId?: string },
 ) {
   const prisma = getPrisma();
-  const [event, sessions, offerings, clubRegistrations] = await Promise.all([
+  const [event, allSessions, allOfferings, clubRegistrations, locations] = await Promise.all([
     prisma.event.findUnique({ where: { id: eventId }, select: { id: true, name: true, startsAt: true, endsAt: true, timezone: true, location: true } }),
-    prisma.honorSession.findMany({ where: { eventId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { name: "asc" }], select: { id: true, name: true, sortOrder: true, createdAt: true } }),
+    prisma.honorSession.findMany({
+      where: { eventId, ...(options.locationId ? { OR: [{ locationId: options.locationId }, { locationId: null }] } : {}) },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { name: "asc" }],
+      select: { id: true, name: true, locationId: true, sortOrder: true, createdAt: true, location: { select: { name: true } } },
+    }),
     prisma.honorOffering.findMany({
       where: { eventId },
       select: {
-        id: true, span: true, sessionId: true, capacity: true, teacherName: true, location: true, isActive: true,
+        id: true, span: true, sessionId: true, locationId: true, site: { select: { name: true } },
+        capacity: true, teacherName: true, location: true, isActive: true,
         honor: { select: { name: true, code: true } },
       },
     }),
@@ -56,13 +61,15 @@ export async function getHonorRosterData(
       where: {
         eventId,
         ...(options.organizationId ? { organizationId: options.organizationId } : {}),
-        registration: { status: { in: ["SUBMITTED", "CONFIRMED"] } },
+        registration: { status: { in: ["SUBMITTED", "CONFIRMED"] }, ...(options.locationId ? { locationId: options.locationId } : {}) },
       },
       select: {
         organizationId: true,
         organization: { select: { name: true } },
         registration: {
           select: {
+            locationId: true,
+            location: { select: { name: true } },
             publicFormSubmission: { select: { formVersion: { select: { definition: true } } } },
             attendees: {
               orderBy: { position: "asc" },
@@ -77,8 +84,17 @@ export async function getHonorRosterData(
         },
       },
     }),
+    prisma.eventLocation.findMany({ where: { eventId }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }], select: { id: true, name: true, sortOrder: true } }),
   ]);
   if (!event) return null;
+  const sessions = allSessions.map((session) => ({ id: session.id, name: session.name, locationId: session.locationId, sortOrder: session.sortOrder, createdAt: session.createdAt }));
+  const siteBySession = new Map(allSessions.map((session) => [session.id, session.location?.name ?? null]));
+  // A class rides on its session's site; with a site filter, classes of other sites drop out.
+  // With a site filter: single-session classes of other sites' sessions drop out (their session isn't loaded),
+  // and so do all-sessions classes at another site. Classes with no site stay.
+  const offerings = allOfferings.filter((offering) => (offering.sessionId
+    ? siteBySession.has(offering.sessionId)
+    : !options.locationId || !offering.locationId || offering.locationId === options.locationId));
 
   const memberIds = clubRegistrations.flatMap((club) => club.registration.attendees
     .map((attendee) => (attendee.profileSnapshot as Snapshot).clubRosterMemberId)
@@ -101,6 +117,8 @@ export async function getHonorRosterData(
         ageOnEventDate: typeof snapshot.ageOnEventDate === "number" ? snapshot.ageOnEventDate : null,
         attendeeType: snapshot.clubRosterMemberId ? typeByMember.get(snapshot.clubRosterMemberId) ?? null : snapshot.temporaryAttendeeType ?? null,
         checkedIn: attendee.checkIns.length > 0,
+        locationId: club.registration.locationId,
+        locationName: club.registration.location?.name ?? null,
         dietary: options.includeDietary ? dietaryAnswer((attendee as { formResponses?: unknown }).formResponses, keys) : null,
       };
     });
@@ -137,10 +155,14 @@ export async function getHonorRosterData(
       teacherName: offering.teacherName,
       location: offering.location,
       isActive: offering.isActive,
+      siteName: offering.sessionId ? siteBySession.get(offering.sessionId) ?? null : offering.site?.name ?? null,
     })),
     enrollments,
     attendees,
-    clubs: [...new Map(clubRegistrations.map((club) => [club.organizationId, { id: club.organizationId, name: club.organization.name }])).values()]
+    /** Every site of the event (#589); empty for an event without locations. */
+    locations,
+    hasLocations: locations.length > 0,
+    clubs: [...new Map(clubRegistrations.map((club) => [club.organizationId, { id: club.organizationId, name: club.organization.name, siteName: club.registration.location?.name ?? null }])).values()]
       .sort((a, b) => a.name.localeCompare(b.name)),
   };
 }

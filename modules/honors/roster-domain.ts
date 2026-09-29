@@ -1,4 +1,4 @@
-import { sortHonorSessions } from "./session-order";
+import { sortHonorSessions, sortSessionsBySite, type SiteRef } from "./session-order";
 import { toCsv } from "@/modules/reporting/csv";
 
 /**
@@ -30,11 +30,21 @@ export type RosterAttendee = {
   ageOnEventDate: number | null;
   attendeeType: string | null;
   checkedIn: boolean;
+  /** The site the club registered at (#589); null when the event has no locations. */
+  locationId?: string | null;
+  locationName?: string | null;
   /** Only filled when the viewer may see sensitive answers. */
   dietary: string | null;
 };
 
-export type RosterSession = { id: string; name: string; sortOrder: number; createdAt?: Date | string | null };
+export type RosterSession = {
+  id: string;
+  name: string;
+  sortOrder: number;
+  createdAt?: Date | string | null;
+  /** The site (#589); null for a session no site owns. */
+  locationId?: string | null;
+};
 
 export type RosterOffering = {
   id: string;
@@ -46,6 +56,8 @@ export type RosterOffering = {
   teacherName: string;
   location: string;
   isActive: boolean;
+  /** The site, from the class's session (#589); null for an all-sessions class or an event with no locations. */
+  siteName?: string | null;
 };
 
 export type RosterEnrollment = { offeringId: string; attendeeId: string; consumesSeat: boolean };
@@ -64,9 +76,10 @@ export function buildClassRosters(
   offerings: readonly RosterOffering[],
   enrollments: readonly RosterEnrollment[],
   attendees: readonly RosterAttendee[],
+  locations: readonly SiteRef[] = [],
 ) {
   const attendeesById = new Map(attendees.map((attendee) => [attendee.id, attendee]));
-  const order = new Map(sortHonorSessions(sessions).map((session, position) => [session.id, position]));
+  const order = new Map(sortSessionsBySite(sessions, locations).map((session, position) => [session.id, position]));
   const sortKey = (offering: RosterOffering) => (offering.span === "ALL_SESSIONS" ? -1 : order.get(offering.sessionId ?? "") ?? 999);
   return [...offerings]
     .sort((a, b) => sortKey(a) - sortKey(b) || a.honorName.localeCompare(b.honorName))
@@ -79,6 +92,7 @@ export function buildClassRosters(
       return {
         offering,
         session: sessionLabel(offering, sessions),
+        siteName: offering.siteName ?? null,
         people,
         // Counted from the enrollment rows, exactly as H5 counts taken seats.
         youthSeats: rows.filter((row) => row.consumesSeat).length,
@@ -108,11 +122,17 @@ export function buildClubSchedule(
   offerings: readonly RosterOffering[],
   enrollments: readonly RosterEnrollment[],
   attendees: readonly RosterAttendee[],
+  locations: readonly SiteRef[] = [],
 ) {
   const offeringsById = new Map(offerings.map((offering) => [offering.id, offering]));
-  const orderedSessions = sortHonorSessions(sessions);
   const people = attendees.filter((attendee) => attendee.clubId === clubId).sort(byName);
+  // A club sees its own site's sessions plus any with no site (#589). A club
+  // with no site (an event without locations) sees every session, as before.
+  const site = people.find((person) => person.locationId) ?? null;
+  const visible = site ? sessions.filter((session) => !session.locationId || session.locationId === site.locationId) : sessions;
+  const orderedSessions = locations.length > 0 ? sortSessionsBySite(visible, locations) : sortHonorSessions(visible);
   return {
+    siteName: site?.locationName ?? null,
     sessions: orderedSessions,
     people: people.map((person) => {
       const classes = enrollments
@@ -137,13 +157,20 @@ function classPlace(offering: RosterOffering) {
   return [offering.location, offering.teacherName].filter(Boolean).join(" · ");
 }
 
-export function classRostersCsv(rosters: readonly ClassRoster[]) {
+export const allSitesLabel = "All sites";
+
+/** With locations on the event, every export row names its site (#589); without, the columns are unchanged. */
+export function classRostersCsv(rosters: readonly ClassRoster[], showSite = false) {
   const rows: Array<Array<string | number>> = [[
+    ...(showSite ? ["Site"] : []),
     "Session", "Honor code", "Honor", "Location", "Teacher", "Youth seats", "Capacity",
     "Last name", "First name", "Club", "Age at event", "Type",
   ]];
   for (const roster of rosters) {
-    const head = [roster.session, roster.offering.honorCode, roster.offering.honorName, roster.offering.location, roster.offering.teacherName, roster.youthSeats, roster.offering.capacity];
+    const head = [
+      ...(showSite ? [roster.siteName ?? allSitesLabel] : []),
+      roster.session, roster.offering.honorCode, roster.offering.honorName, roster.offering.location, roster.offering.teacherName, roster.youthSeats, roster.offering.capacity,
+    ];
     if (roster.people.length === 0) rows.push([...head, "", "", "", "", ""]);
     for (const person of roster.people) {
       rows.push([...head, person.lastName, person.firstName, person.clubName, age(person.ageOnEventDate), rosterGroupLabels[rosterGroupOf(person.attendeeType)]]);
@@ -152,13 +179,15 @@ export function classRostersCsv(rosters: readonly ClassRoster[]) {
   return toCsv(rows);
 }
 
-export function siteRosterCsv(site: ReturnType<typeof buildSiteRoster>, includeDietary: boolean) {
+export function siteRosterCsv(site: ReturnType<typeof buildSiteRoster>, includeDietary: boolean, showSite = false) {
   const rows: Array<Array<string | number>> = [[
+    ...(showSite ? ["Site"] : []),
     "Club", "Last name", "First name", "Age at event", "Type", "Checked in",
     ...(includeDietary ? ["Dietary notes"] : []),
   ]];
   for (const person of site.people) {
     rows.push([
+      ...(showSite ? [person.locationName ?? ""] : []),
       person.clubName, person.lastName, person.firstName, age(person.ageOnEventDate),
       rosterGroupLabels[rosterGroupOf(person.attendeeType)], person.checkedIn ? "Yes" : "",
       ...(includeDietary ? [person.dietary ?? ""] : []),
@@ -167,12 +196,14 @@ export function siteRosterCsv(site: ReturnType<typeof buildSiteRoster>, includeD
   return toCsv(rows);
 }
 
-export function clubScheduleCsv(schedule: ClubSchedule) {
+export function clubScheduleCsv(schedule: ClubSchedule, showSite = false) {
   const rows: Array<Array<string | number>> = [[
+    ...(showSite ? ["Site"] : []),
     "Last name", "First name", "Age at event", "Type", ...schedule.sessions.map((session) => session.name),
   ]];
   for (const row of schedule.people) {
     rows.push([
+      ...(showSite ? [schedule.siteName ?? ""] : []),
       row.person.lastName, row.person.firstName, age(row.person.ageOnEventDate),
       rosterGroupLabels[rosterGroupOf(row.person.attendeeType)],
       ...schedule.sessions.map((session) => {
