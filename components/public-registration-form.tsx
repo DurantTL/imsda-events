@@ -23,6 +23,7 @@ import {
 import { AddressFieldGroup } from "@/components/address-field-group";
 import { BrandMark } from "@/components/brand-mark";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { PerPersonPriceNotice } from "@/components/per-person-price-notice";
 import { RegistrationAccountPrompt } from "@/components/registration-account-prompt";
 import { SearchableSelect } from "@/components/searchable-select";
 import { TranslateHint } from "@/components/translate-hint";
@@ -45,6 +46,7 @@ import {
   type RegistrationFormDefinition,
   type RegistrationFormField,
 } from "@/modules/forms/definition";
+import { perPersonPrice } from "@/modules/club-registrations/per-person-price";
 import {
   AttendeeRosterCsvError,
   createAttendeeRosterCsvTemplate,
@@ -110,7 +112,7 @@ type FieldRenderContext = {
   idContext: string;
   issuePath: (key: string) => string;
   attendeeIndex: number | null;
-  calculation: FormCalculation;
+  calculation: Pick<FormCalculation, "lineItems">;
 };
 
 type PublicEvent = {
@@ -135,12 +137,13 @@ type Confirmation = {
   confirmationCode: string;
   message: string;
   email: string;
-  totalCents: number;
-  subtotalCents: number;
-  preDiscountSubtotalCents: number;
-  discountAmountCents: number;
+  /** Omitted by the server on a church-billed event (#621): only the per-person `lineItems` come back. */
+  totalCents?: number;
+  subtotalCents?: number;
+  preDiscountSubtotalCents?: number;
+  discountAmountCents?: number;
   promoCode: string | null;
-  processingFeeCents: number;
+  processingFeeCents?: number;
   lineItems: Array<{ key: string; label: string; amountCents: number; pricingLabel?: string }>;
   pricingDate: string;
   cardSelected: boolean;
@@ -158,8 +161,9 @@ type Confirmation = {
   waitlistPosition: number | null;
 };
 
-type PromoCodeQuote = FormCalculation & {
-  preDiscountSubtotalCents: number;
+type PromoCodeQuote = Pick<FormCalculation, "lineItems"> & Partial<Omit<FormCalculation, "lineItems">> & {
+  /** Absent on a church-billed event (#621). */
+  preDiscountSubtotalCents?: number;
   discountAmountCents: number;
   promoCode: string;
   /** The church sponsoring the code the attendee entered (#545); nothing else about it is shown. */
@@ -576,7 +580,10 @@ export function PublicRegistrationForm({
     activeQuote?.discountAmountCents ?? 0;
   const displayedPreDiscountSubtotalCents =
     activeQuote?.preDiscountSubtotalCents
-    ?? calculation.subtotalCents;
+    ?? calculation.subtotalCents
+    ?? 0;
+  // Church-billed events show the per-person price only, never a total (#621).
+  const perPerson = perPersonPrice(calculation.lineItems);
   const displayedPromoCode = activeQuote?.promoCode ?? null;
   const visibleFieldKeys = useMemo(() => {
     const visible = new Set<string>();
@@ -2204,12 +2211,17 @@ export function PublicRegistrationForm({
 
         <section className="public-registration-review-card public-registration-review-order">
           <p className="public-registration-eyebrow">
-            {joiningWaitlist ? "Estimated cost" : deferredOrganizationBilling ? "Estimated rate" : "Price & fees"}
+            {joiningWaitlist ? "Estimated cost" : deferredOrganizationBilling ? "Price" : "Price & fees"}
           </p>
           <h3>
-            {joiningWaitlist ? "If space becomes available" : "Registration total"}
+            {joiningWaitlist ? "If space becomes available" : deferredOrganizationBilling ? "Price per person" : "Registration total"}
           </h3>
-          {calculation.lineItems.length > 0 ? (
+          {deferredOrganizationBilling ? (
+            <>
+              <PerPersonPriceNotice price={perPerson} className="public-registration-review-lines" />
+              {displayedDiscountCents > 0 && <p>Promo code {displayedPromoCode} applied.</p>}
+            </>
+          ) : calculation.lineItems.length > 0 ? (
             <div className="public-registration-review-lines">
               {calculation.lineItems.map((item) => (
                 <div key={item.key}>
@@ -2229,23 +2241,23 @@ export function PublicRegistrationForm({
                   </div>
                   <div>
                     <span>Discounted subtotal</span>
-                    <strong translate="no">{money(calculation.subtotalCents)}</strong>
+                    <strong translate="no">{money(calculation.subtotalCents ?? 0)}</strong>
                   </div>
                 </>
               )}
-              {calculation.processingFeeCents > 0 && (
+              {(calculation.processingFeeCents ?? 0) > 0 && (
                 <div>
                   <span>Card processing</span>
-                  <strong translate="no">{money(calculation.processingFeeCents)}</strong>
+                  <strong translate="no">{money(calculation.processingFeeCents ?? 0)}</strong>
                 </div>
               )}
               <div className="is-total">
-                <span>{joiningWaitlist ? "Estimated if promoted" : deferredOrganizationBilling ? "Estimated total" : "Total"}</span>
+                <span>{joiningWaitlist ? "Estimated if promoted" : "Total"}</span>
                 <strong translate="no">
                   {money(
-                    joiningWaitlist
+                    (joiningWaitlist
                       ? calculation.subtotalCents
-                      : calculation.totalCents,
+                      : calculation.totalCents) ?? 0,
                   )}
                 </strong>
               </div>
@@ -2262,7 +2274,7 @@ export function PublicRegistrationForm({
           )}
           {!joiningWaitlist && deferredOrganizationBilling && (
             <p className="public-registration-review-waitlist">
-              No payment is due online. Your organization will be billed later based on final attendance.
+              No payment is due online.
             </p>
           )}
         </section>
@@ -2568,12 +2580,15 @@ export function PublicRegistrationForm({
                 </div>
               )}
               <div><dt>{waitlisted ? "Estimate date" : "Pricing date"}</dt><dd>{formatPricingDate(confirmation.pricingDate)}</dd></div>
-              <div><dt>{waitlisted ? "Estimated total if promoted" : deferredOrganizationBilling ? "Estimated total" : "Total recorded"}</dt><dd translate="no">{money(confirmation.totalCents)}</dd></div>
+              {confirmation.totalCents !== undefined && !deferredOrganizationBilling && (
+                <div><dt>{waitlisted ? "Estimated total if promoted" : "Total recorded"}</dt><dd translate="no">{money(confirmation.totalCents)}</dd></div>
+              )}
             </dl>
-            {!waitlisted && deferredOrganizationBilling && (
-              <p className="public-registration-review-waitlist">
-                No payment is due online. Your organization will be billed later based on final attendance.
-              </p>
+            {deferredOrganizationBilling && (
+              <>
+                <PerPersonPriceNotice price={perPersonPrice(confirmation.lineItems)} className="public-registration-review-waitlist" />
+                {!waitlisted && <p className="public-registration-review-waitlist">No payment is due online.</p>}
+              </>
             )}
             {rosterEnabled && confirmation.attendeeNames.length > 0 && (
               <section className="public-registration-confirmation-attendees" aria-label="Registered attendees">
@@ -2581,21 +2596,21 @@ export function PublicRegistrationForm({
                 <ul>{confirmation.attendeeNames.map((name, index) => <li key={`${name}_${index}`}>{name}</li>)}</ul>
               </section>
             )}
-            {confirmation.lineItems.length > 0 && (
+            {confirmation.lineItems.length > 0 && !deferredOrganizationBilling && (
               <section className="public-registration-confirmation-order" aria-label="Recorded order">
-                <h2>{waitlisted ? "Estimated order if promoted" : deferredOrganizationBilling ? "Estimated order" : "Recorded order"}</h2>
+                <h2>{waitlisted ? "Estimated order if promoted" : "Recorded order"}</h2>
                 {confirmation.lineItems.map((item) => (
                   <div key={item.key}><span>{item.label}{item.pricingLabel && <small>{item.pricingLabel}</small>}</span><strong translate="no">{money(item.amountCents)}</strong></div>
                 ))}
-                <div><span>Subtotal</span><strong translate="no">{money(confirmation.preDiscountSubtotalCents)}</strong></div>
-                {confirmation.discountAmountCents > 0 && (
+                <div><span>Subtotal</span><strong translate="no">{money(confirmation.preDiscountSubtotalCents ?? 0)}</strong></div>
+                {(confirmation.discountAmountCents ?? 0) > 0 && (
                   <>
-                    <div className="is-discount"><span>Promo code {confirmation.promoCode}</span><strong translate="no">−{money(confirmation.discountAmountCents)}</strong></div>
-                    <div><span>Discounted subtotal</span><strong translate="no">{money(confirmation.subtotalCents)}</strong></div>
+                    <div className="is-discount"><span>Promo code {confirmation.promoCode}</span><strong translate="no">−{money(confirmation.discountAmountCents ?? 0)}</strong></div>
+                    <div><span>Discounted subtotal</span><strong translate="no">{money(confirmation.subtotalCents ?? 0)}</strong></div>
                   </>
                 )}
-                {confirmation.processingFeeCents > 0 && <div><span>Card processing</span><strong translate="no">{money(confirmation.processingFeeCents)}</strong></div>}
-                <div className="is-total"><span>{deferredOrganizationBilling ? "Estimated total" : "Total"}</span><strong translate="no">{money(confirmation.totalCents)}</strong></div>
+                {(confirmation.processingFeeCents ?? 0) > 0 && <div><span>Card processing</span><strong translate="no">{money(confirmation.processingFeeCents ?? 0)}</strong></div>}
+                <div className="is-total"><span>Total</span><strong translate="no">{money(confirmation.totalCents ?? 0)}</strong></div>
               </section>
             )}
             {confirmation.managePath && (
@@ -2817,7 +2832,7 @@ export function PublicRegistrationForm({
           <p className="public-registration-eyebrow">Order summary</p>
           <h2>{joiningWaitlist ? "Your waitlist request" : "Your registration"}</h2>
           {rosterEnabled && <p className="public-registration-summary-roster"><UsersRound size={15} aria-hidden="true" /> {attendees.length} {attendees.length === 1 ? roster.attendeeLabel.toLowerCase() : `${roster.attendeeLabel.toLowerCase()}s`}</p>}
-          {calculation.lineItems.length === 0 ? <p className="public-registration-summary-empty">Select any priced options to see your total.</p> : (
+          {deferredOrganizationBilling ? <PerPersonPriceNotice price={perPerson} className="public-registration-summary-lines" /> : calculation.lineItems.length === 0 ? <p className="public-registration-summary-empty">Select any priced options to see your total.</p> : (
             <div className="public-registration-summary-lines">
               {calculation.lineItems.map((item) => (
                 <div key={item.key}><span>{item.label}{item.pricingLabel && <small>{item.pricingLabel}</small>}</span><strong translate="no">{money(item.amountCents)}</strong></div>
@@ -2826,15 +2841,15 @@ export function PublicRegistrationForm({
               {displayedDiscountCents > 0 && (
                 <>
                   <div className="is-discount"><span>Promo code {displayedPromoCode}</span><strong translate="no">−{money(displayedDiscountCents)}</strong></div>
-                  <div><span>Discounted subtotal</span><strong translate="no">{money(calculation.subtotalCents)}</strong></div>
+                  <div><span>Discounted subtotal</span><strong translate="no">{money(calculation.subtotalCents ?? 0)}</strong></div>
                 </>
               )}
-              {calculation.processingFeeCents > 0 && <div><span>Card processing</span><strong translate="no">{money(calculation.processingFeeCents)}</strong></div>}
-              <div className="is-total"><span>{joiningWaitlist ? "Estimated if promoted" : deferredOrganizationBilling ? "Estimated total" : "Total"}</span><strong translate="no">{money(joiningWaitlist ? calculation.subtotalCents : calculation.totalCents)}</strong></div>
+              {(calculation.processingFeeCents ?? 0) > 0 && <div><span>Card processing</span><strong translate="no">{money(calculation.processingFeeCents ?? 0)}</strong></div>}
+              <div className="is-total"><span>{joiningWaitlist ? "Estimated if promoted" : "Total"}</span><strong translate="no">{money((joiningWaitlist ? calculation.subtotalCents : calculation.totalCents) ?? 0)}</strong></div>
             </div>
           )}
           <small className="public-registration-pricing-date">Pricing verified for {formatPricingDate(pricingDate)}</small>
-          <div className="public-registration-summary-note">{joiningWaitlist ? <Clock3 size={15} aria-hidden="true" /> : <LockKeyhole size={15} aria-hidden="true" />}<span>{joiningWaitlist ? "This estimate is not charged while you are on the waitlist." : deferredOrganizationBilling ? "No payment is due online. Your organization will be billed later based on final attendance." : "Final pricing and availability are confirmed securely on submission."}</span></div>
+          <div className="public-registration-summary-note">{joiningWaitlist ? <Clock3 size={15} aria-hidden="true" /> : <LockKeyhole size={15} aria-hidden="true" />}<span>{joiningWaitlist ? "This estimate is not charged while you are on the waitlist." : deferredOrganizationBilling ? "No payment is due online." : "Final pricing and availability are confirmed securely on submission."}</span></div>
         </aside>
       </form>
       {(() => {

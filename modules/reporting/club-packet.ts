@@ -81,8 +81,11 @@ export type ClubPacket = {
     baptismNames: string;
     bibleNames: string;
   };
-  amountOwedCents: number;
+  /** Staff packet only. Null on the director's own packet (#621): a director never sees the total. */
+  amountOwedCents: number | null;
   isBilled: boolean;
+  /** Director packet only (#621): the per-person price notice shown in place of the amount. */
+  perPersonNotice?: string;
 };
 
 export function buildClubPacket(club: ClubEventRecord, event: ClubPacketEvent): ClubPacket {

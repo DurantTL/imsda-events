@@ -224,7 +224,7 @@ describe("verified attendee registration views", () => {
     });
   });
 
-  function deferredRegistrationFixture(status: string) {
+  function deferredRegistrationFixture(status: string, pricingSnapshot: unknown = null) {
     dependencies.getPrisma.mockReturnValue({
       $queryRaw: vi.fn().mockResolvedValue([{ id: "registration-1" }]),
       registration: {
@@ -258,7 +258,9 @@ describe("verified attendee registration views", () => {
             programAssignmentRuns: [],
           },
           attendees: [],
-          publicFormSubmission: null,
+          publicFormSubmission: pricingSnapshot
+            ? { formVersion: { definition: {} }, pricingSnapshot }
+            : null,
           payments: [],
           waitlistEntry: null,
         }]),
@@ -271,29 +273,44 @@ describe("verified attendee registration views", () => {
 
     const [registration] = await listRegistrationsForVerifiedEmail("director@example.test");
 
-    expect(registration?.totalCents).toBe(6300);
+    // A church-billed registrant never gets a total, amount paid or balance (#621).
+    expect(registration?.totalCents).toBeNull();
+    expect(registration?.paidCents).toBeNull();
     // Never a balance to pay: this is billed to the church directly.
     expect(registration?.balanceCents).toBe(0);
     expect(registration?.event.isDeferredOrganizationBilling).toBe(true);
     expect(registration?.churchBilling).toEqual({
       billed: true,
-      amountOwedCents: 6300,
+      perPerson: { notice: "Your church is billed after the event.", attendeeLines: [], uniformAmountCents: null },
       label: "billed to your church after the event, not paid online",
     });
+    expect(JSON.stringify(registration)).not.toContain("6300");
+  });
+
+  it("shows the per-person price on a church-billed registration without summing attendees (#621)", async () => {
+    deferredRegistrationFixture("SUBMITTED", {
+      lineItems: [
+        { key: "attendees.0.fee", label: "Fee — A", amountCents: 2500, attendeeIndex: 0, attendeeLabel: "A" },
+        { key: "attendees.1.fee", label: "Fee — B", amountCents: 2500, attendeeIndex: 1, attendeeLabel: "B" },
+      ],
+      totalCents: 5000,
+    });
+    const [registration] = await listRegistrationsForVerifiedEmail("director@example.test");
+    expect(registration?.churchBilling?.perPerson.notice).toBe("$25 per person. Your church is billed after the event.");
+    expect(JSON.stringify(registration)).not.toContain("5000");
   });
 
   it("shows nothing owed by the church while a club is waitlisted or cancelled (#409)", async () => {
     deferredRegistrationFixture("WAITLISTED");
     const [waitlisted] = await listRegistrationsForVerifiedEmail("director@example.test");
-    expect(waitlisted?.churchBilling).toEqual({
+    expect(waitlisted?.churchBilling).toMatchObject({
       billed: false,
-      amountOwedCents: 0,
       label: "No amount owed while waitlisted",
     });
 
     deferredRegistrationFixture("CANCELLED");
     const [cancelled] = await listRegistrationsForVerifiedEmail("director@example.test");
-    expect(cancelled?.churchBilling).toMatchObject({ billed: false, amountOwedCents: 0, label: "Cancelled — nothing owed" });
+    expect(cancelled?.churchBilling).toMatchObject({ billed: false, label: "Cancelled — nothing owed" });
   });
 });
 

@@ -44,6 +44,7 @@ import {
 } from "@/modules/events/lifecycle";
 import { issueRegistrationAccessToken } from "@/modules/public-access/repository";
 import { logError } from "@/lib/logger";
+import { isChurchBilledBillingMode } from "@/modules/club-registrations/per-person-price";
 import {
   applyAttendeePromoCodes,
   applyPromoCodeToCalculation,
@@ -158,12 +159,16 @@ export type PublicRegistrationConfirmation = {
   confirmationCode: string;
   message: string;
   email: string;
-  totalCents: number;
-  subtotalCents: number;
-  preDiscountSubtotalCents: number;
-  discountAmountCents: number;
+  /**
+   * The order totals. Omitted on a church-billed event (#621): the registrant
+   * sees the per-person `lineItems` only, never a total, subtotal or fee sum.
+   */
+  totalCents?: number;
+  subtotalCents?: number;
+  preDiscountSubtotalCents?: number;
+  discountAmountCents?: number;
   promoCode: string | null;
-  processingFeeCents: number;
+  processingFeeCents?: number;
   lineItems: FormCalculation["lineItems"];
   pricingDate: string;
   cardSelected: boolean;
@@ -420,21 +425,26 @@ function confirmationFromSnapshot(
   notificationStatus: PublicRegistrationConfirmation["notificationStatus"],
   registrationStatus: PublicRegistrationConfirmation["registrationStatus"] = snapshot.registrationStatus ?? "SUBMITTED",
   waitlistPosition: number | null = snapshot.waitlistPosition ?? null,
+  churchBilled = false,
 ): PublicRegistrationConfirmation {
   const isWaitlisted = registrationStatus === "WAITLISTED";
+  const totals = churchBilled
+    ? {}
+    : {
+        totalCents: snapshot.totalCents,
+        subtotalCents: snapshot.subtotalCents,
+        preDiscountSubtotalCents: snapshot.preDiscountSubtotalCents ?? snapshot.subtotalCents,
+        discountAmountCents: snapshot.discountAmountCents ?? 0,
+        processingFeeCents: snapshot.processingFeeCents,
+      };
   return {
     confirmationCode,
     message: isWaitlisted
       ? "You have joined the event waitlist. This is not a confirmed registration, and no payment was collected."
       : definition.confirmationMessage,
     email,
-    totalCents: snapshot.totalCents,
-    subtotalCents: snapshot.subtotalCents,
-    preDiscountSubtotalCents:
-      snapshot.preDiscountSubtotalCents ?? snapshot.subtotalCents,
-    discountAmountCents: snapshot.discountAmountCents ?? 0,
+    ...totals,
     promoCode: snapshot.promoCode ?? null,
-    processingFeeCents: snapshot.processingFeeCents,
     lineItems: snapshot.lineItems,
     pricingDate: snapshot.pricingDate,
     cardSelected: !isWaitlisted && snapshot.cardSelected,
@@ -512,6 +522,7 @@ async function findExistingConfirmation(
   idempotencyKey: string,
   requestHash: string,
   definition: RegistrationFormDefinition,
+  churchBilled: boolean,
 ) {
   const existing = await tx.publicRegistrationSubmission.findUnique({
     where: { formVersionId_idempotencyKey: { formVersionId, idempotencyKey } },
@@ -555,6 +566,7 @@ async function findExistingConfirmation(
       notificationStatus,
       existing.registration.status === "WAITLISTED" ? "WAITLISTED" : "SUBMITTED",
       existing.registration.waitlistEntry?.position ?? null,
+      churchBilled,
     ),
     pendingMessageIds: messages.filter((message) => message.status === "PENDING").map((message) => message.id),
     registrantMessageIds: messages.map((message) => message.id),
@@ -608,7 +620,7 @@ async function createPublicRegistrationTransaction(
     clubAttendees = clubPrepared.attendees;
   }
   const requestHash = submissionHash(input);
-  const replay = await findExistingConfirmation(tx, version.id, input.idempotencyKey, requestHash, definition);
+  const replay = await findExistingConfirmation(tx, version.id, input.idempotencyKey, requestHash, definition, isChurchBilledBillingMode(form.event.billingMode));
   if (replay) return replay;
   if (club) {
     const existingClubRegistration = await tx.clubEventRegistration.findUnique({
@@ -1169,6 +1181,7 @@ async function createPublicRegistrationTransaction(
         queuedMessages.deliveryMode === "DISABLED" ? "DISABLED" : "PENDING",
         isWaitlisted ? "WAITLISTED" : "SUBMITTED",
         waitlistPosition,
+        isChurchBilledBillingMode(form.event.billingMode),
       ),
       managePath: access.managePath,
       manageLinkExpiresAt: access.expiresAt.toISOString(),

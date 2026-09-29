@@ -9,10 +9,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getRosterAccessState: vi.fn(),
   getClubPacketData: vi.fn(),
+  findSubmission: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/modules/club-rosters/access", () => ({ getRosterAccessState: mocks.getRosterAccessState }));
+vi.mock("@/lib/prisma", () => ({
+  getPrisma: () => ({ clubEventRegistration: { findUnique: mocks.findSubmission } }),
+}));
 vi.mock("@/modules/reporting/club-packet-repository", () => ({ getClubPacketData: mocks.getClubPacketData }));
 
 import { loadDirectorClubPacket } from "@/modules/reporting/director-club-packet";
@@ -23,6 +27,7 @@ const packetA = { club: { organizationId: "org-a" } };
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getClubPacketData.mockResolvedValue(packetA);
+  mocks.findSubmission.mockResolvedValue(null);
 });
 
 describe("loadDirectorClubPacket", () => {
@@ -56,7 +61,25 @@ describe("loadDirectorClubPacket", () => {
     mocks.getRosterAccessState.mockResolvedValue({
       state: "OPEN", club: clubA, capabilities: { roster: true }, accountId: "account-1", sessionId: "session-1",
     });
-    await expect(loadDirectorClubPacket("org-a", "event-1")).resolves.toBe(packetA);
+    await expect(loadDirectorClubPacket("org-a", "event-1")).resolves.toMatchObject(packetA);
     expect(mocks.getClubPacketData).toHaveBeenCalledWith("event-1", "org-a");
+  });
+
+  it("never carries what the church owes to the director, only the per-person price (#621)", async () => {
+    mocks.getRosterAccessState.mockResolvedValue({
+      state: "OPEN", club: clubA, capabilities: { roster: true }, accountId: "account-1", sessionId: "session-1",
+    });
+    mocks.getClubPacketData.mockResolvedValue({ ...packetA, amountOwedCents: 4500, isBilled: true });
+    mocks.findSubmission.mockResolvedValue({
+      registration: {
+        publicFormSubmission: {
+          pricingSnapshot: { lineItems: [{ label: "Fee", amountCents: 2500, attendeeIndex: 0, attendeeLabel: "A" }] },
+        },
+      },
+    });
+    const packet = await loadDirectorClubPacket("org-a", "event-1");
+    expect(packet?.amountOwedCents).toBeNull();
+    expect(packet?.perPersonNotice).toBe("$25 per person. Your church is billed after the event.");
+    expect(JSON.stringify(packet)).not.toContain("4500");
   });
 });

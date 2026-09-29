@@ -10,7 +10,9 @@ import {
   renderMessageTemplate,
   type MessageTemplateContext,
   withChurchBilledLinkWording,
+  withChurchBilledPriceWording,
 } from "@/modules/communications/templates";
+import { lineItemsFromPricingSnapshot, perPersonPriceInline } from "@/modules/club-registrations/per-person-price";
 import {
   buildHotelInformationBlock,
   buildPaymentStatusBlock,
@@ -280,6 +282,7 @@ async function enqueueTransactionalMessage(
         status: true,
         totalAmount: true,
         contactSnapshot: true,
+        publicFormSubmission: { select: { pricingSnapshot: true } },
         location: { select: { name: true, address: true } },
         accountHolderPerson: {
           select: {
@@ -414,10 +417,17 @@ async function enqueueTransactionalMessage(
     || settings.replyToEmail
     || settings.senderEmail
     || "the IMSDA event office";
-  const churchWordedBody = withChurchBilledLinkWording(
-    source?.bodyTemplate ?? fallback.body,
+  const churchWordedBody = withChurchBilledPriceWording(
+    withChurchBilledLinkWording(
+      source?.bodyTemplate ?? fallback.body,
+      isDeferredOrganizationBilling,
+    ),
     isDeferredOrganizationBilling,
   );
+  // A church-billed registrant sees the per-person price only, never a total or balance (#621).
+  const perPersonNotice = isDeferredOrganizationBilling
+    ? perPersonPriceInline(lineItemsFromPricingSnapshot(registration.publicFormSubmission?.pricingSnapshot))
+    : null;
   // A waitlist email for a club at a location says which location, even when
   // the template (a customized one, or one of the defaults) has no location
   // line of its own (#599).
@@ -448,9 +458,9 @@ async function enqueueTransactionalMessage(
     attendee_summary: registration.attendees
       .map((attendee, index) => `${index + 1}. ${attendeeName(attendee)}`)
       .join("\n") || "No attendee names are recorded.",
-    total_amount: formatMessageMoney(totalCents),
+    total_amount: perPersonNotice ?? formatMessageMoney(totalCents),
     restored_status: registration.status,
-    balance_amount: formatMessageMoney(balanceCents),
+    balance_amount: perPersonNotice ? "Nothing is due online." : formatMessageMoney(balanceCents),
     payment_instructions: instructions,
     portal_url: REGISTRATION_MANAGE_LINK_SENTINEL,
     reply_to_email:
@@ -476,6 +486,7 @@ async function enqueueTransactionalMessage(
       paymentInstructions: instructions,
       portalUrl: REGISTRATION_MANAGE_LINK_SENTINEL,
       cancellationNote: cancellationPaymentWording({ paidCents, refundedCents }),
+      perPersonNotice,
     }),
     ...buildRegistrationCheckinTokens({
       confirmationCode: registration.confirmationCode,

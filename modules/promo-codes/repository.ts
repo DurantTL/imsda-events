@@ -34,6 +34,7 @@ import {
   type PromoCodeRule,
 } from "@/modules/promo-codes/domain";
 import { eventBillsSponsoredPromoCodes } from "@/modules/promo-codes/church-sponsored";
+import { isChurchBilledBillingMode } from "@/modules/club-registrations/per-person-price";
 import type {
   PromoCodeInput,
   PublicPromoCodeQuoteInput,
@@ -487,6 +488,7 @@ function publicFormQuery(eventSlug: string, formSlug: string) {
           registrationOpensOn: true,
           registrationClosesOn: true,
           waitlistEnabled: true,
+          billingMode: true,
           attendeeTypes: {
             where: { isActive: true },
             orderBy: [{ sortOrder: "asc" as const }, { label: "asc" as const }],
@@ -623,6 +625,17 @@ export async function evaluateAttendeePromoCodes(
   return { discounts, issues };
 }
 
+const hiddenQuoteTotals = ["subtotalCents", "totalCents", "processingFeeCents", "preDiscountSubtotalCents"] as const;
+/** A quote for a church-billed event (#621): no subtotal, total or fee sum, only per-person lines and the discount. */
+export type ChurchBilledPromoQuote<T> = Omit<T, (typeof hiddenQuoteTotals)[number]>;
+
+function withoutQuoteTotals<T extends DiscountedFormCalculation>(quote: T, churchBilled: boolean): T | ChurchBilledPromoQuote<T> {
+  if (!churchBilled) return quote;
+  const copy: Partial<T> = { ...quote };
+  for (const key of hiddenQuoteTotals) delete copy[key];
+  return copy as ChurchBilledPromoQuote<T>;
+}
+
 export type PublicAttendeePromoQuote = DiscountedFormCalculation & {
   /** Sponsoring church name by normalized code, for the codes entered (#545). */
   sponsors?: Record<string, string>;
@@ -635,7 +648,12 @@ export async function getPublicPromoCodeQuote(
   formSlug: string,
   input: PublicPromoCodeQuoteInput,
   now = new Date(),
-): Promise<PublicPromoCodeQuote | PublicAttendeePromoQuote> {
+): Promise<
+  | PublicPromoCodeQuote
+  | PublicAttendeePromoQuote
+  | ChurchBilledPromoQuote<PublicPromoCodeQuote>
+  | ChurchBilledPromoQuote<PublicAttendeePromoQuote>
+> {
   const prisma = getPrisma();
   const form = await prisma.registrationForm.findFirst(
     publicFormQuery(eventSlug, formSlug),
@@ -665,6 +683,7 @@ export async function getPublicPromoCodeQuote(
     registrationFormDefinitionSchema.parse(version.definition),
     { attendeeTypes: form.event.attendeeTypes },
   );
+  const churchBilled = isChurchBilledBillingMode(form.event.billingMode);
   const attendeeField = attendeePromoCodeField(definition);
   if (attendeeField) {
     // Per person (#397): every attendee's code is checked together; problems
@@ -691,12 +710,12 @@ export async function getPublicPromoCodeQuote(
         where: { eventId: form.eventId, normalizedCode: { in: enteredCodes }, sponsoringOrganizationId: { not: null } },
         select: { normalizedCode: true, sponsoringOrganization: { select: { name: true } } },
       });
-    return {
+    return withoutQuoteTotals({
       ...applyAttendeePromoCodes(definition, prepared.registrationResponses, prepared.calculation, discounts),
       attendeeIssues: issues,
       sponsors: Object.fromEntries(sponsored.flatMap((promo) =>
         promo.sponsoringOrganization ? [[promo.normalizedCode, promo.sponsoringOrganization.name]] : [])),
-    } satisfies PublicAttendeePromoQuote;
+    } satisfies PublicAttendeePromoQuote, churchBilled);
   }
   const field = requirePromoField(definition);
   const responses = {
@@ -734,7 +753,7 @@ export async function getPublicPromoCodeQuote(
       select: { name: true },
     })
     : null;
-  return {
+  return withoutQuoteTotals({
     ...applyPromoCodeToCalculation(
       definition,
       prepared.registrationResponses,
@@ -742,7 +761,7 @@ export async function getPublicPromoCodeQuote(
       evaluation,
     ),
     sponsoredBy: sponsor?.name ?? null,
-  };
+  }, churchBilled);
 }
 
 export async function claimPromoCode(

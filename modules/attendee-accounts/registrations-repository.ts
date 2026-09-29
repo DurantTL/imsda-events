@@ -25,7 +25,8 @@ import {
   type PublicRegistrationStatusSummary,
   type PublicContactUpdateInput,
 } from "@/modules/public-access/domain";
-import { churchOwedCents, isChurchBilledStatus, notBilledLabel } from "@/modules/club-registrations/church-owed";
+import { isChurchBilledStatus, notBilledLabel } from "@/modules/club-registrations/church-owed";
+import { lineItemsFromPricingSnapshot, perPersonPrice, type PerPersonPrice } from "@/modules/club-registrations/per-person-price";
 
 /**
  * Every registration an account may see: those whose contact address is the
@@ -266,11 +267,11 @@ export type AttendeeRegistrationSummary = {
     isDeferredOrganizationBilling: boolean;
   };
   /**
-   * On a church-billed event only: whether the church is billed for this
-   * registration right now (submitted or confirmed), the estimated amount it
-   * owes ($0 while waitlisted or cancelled), and the wording to show.
+   * On a church-billed event only (#621): whether the church is billed for this
+   * registration right now, the per-person price (never a total or amount
+   * owed), and the wording to show.
    */
-  churchBilling: { billed: boolean; amountOwedCents: number; label: string } | null;
+  churchBilling: { billed: boolean; perPerson: PerPersonPrice; label: string } | null;
   contact: {
     firstName: string;
     lastName: string;
@@ -290,8 +291,9 @@ export type AttendeeRegistrationSummary = {
       lockedFieldKeys: string[];
     }>;
   };
-  totalCents: number;
-  paidCents: number;
+  /** Null on a church-billed event (#621): registrants never see a total, amount paid or balance there. */
+  totalCents: number | null;
+  paidCents: number | null;
   balanceCents: number;
 };
 
@@ -366,6 +368,7 @@ export async function listRegistrationsForVerifiedEmail(
       publicFormSubmission: {
         select: {
           formVersion: { select: { definition: true } },
+          pricingSnapshot: true,
         },
       },
       payments: {
@@ -466,7 +469,8 @@ export async function listRegistrationsForVerifiedEmail(
       churchBilling: isDeferredOrganizationBilling
         ? {
           billed: isChurchBilledStatus(registration.status),
-          amountOwedCents: churchOwedCents(registration.status, totalCents),
+          // The per-person price only (#621); the amount the church owes is never shown to a registrant.
+          perPerson: perPersonPrice(lineItemsFromPricingSnapshot(registration.publicFormSubmission?.pricingSnapshot)),
           label: isChurchBilledStatus(registration.status)
             ? "billed to your church after the event, not paid online"
             : notBilledLabel(registration.status),
@@ -507,8 +511,8 @@ export async function listRegistrationsForVerifiedEmail(
           ),
         })),
       },
-      totalCents,
-      paidCents: Math.max(0, totalCents - balanceCents),
+      totalCents: isDeferredOrganizationBilling ? null : totalCents,
+      paidCents: isDeferredOrganizationBilling ? null : Math.max(0, totalCents - balanceCents),
       balanceCents,
     };
   });

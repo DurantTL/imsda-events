@@ -21,6 +21,7 @@ import { PublicRegistrationContactForm } from "@/components/public-registration-
 import { PublicShirtSizeConfirmation } from "@/components/public-shirt-size-confirmation";
 import { AttendeeRegistrationAnswersForm } from "@/components/attendee-registration-answers-form";
 import { PublicSquarePayment } from "@/components/public-square-payment";
+import { PerPersonPriceNotice } from "@/components/per-person-price-notice";
 import { resolveRegistrationAccessToken } from "@/modules/public-access/repository";
 
 export const dynamic = "force-dynamic";
@@ -245,6 +246,7 @@ export default async function PublicManagePage({
               <h2>{view.payment.label}</h2>
               <p>{view.payment.detail}</p>
             </div>
+            {view.perPerson && <PerPersonPriceNotice price={view.perPerson} className="public-manage-order-breakdown" />}
             {view.order && view.order.discountAmountCents > 0 && (
               <div className="public-manage-order-breakdown">
                 <p className="public-registration-eyebrow">Saved order</p>
@@ -274,6 +276,7 @@ export default async function PublicManagePage({
                 )}
               </div>
             )}
+            {view.payment.totalCents !== null && view.payment.paidCents !== null && view.payment.refundedCents !== null && view.payment.amountDueCents !== null && (
             <dl className="public-manage-payment-grid">
               <div>
                 <dt>Registration total</dt>
@@ -294,6 +297,7 @@ export default async function PublicManagePage({
                 <dd translate="no">{money(view.payment.amountDueCents)}</dd>
               </div>
             </dl>
+            )}
             <PublicSquarePayment token={token} />
           </section>
         </div>

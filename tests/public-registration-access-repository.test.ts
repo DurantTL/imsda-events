@@ -584,6 +584,50 @@ describe("private registration access repository", () => {
     expect(view?.event.supportUrl).toBe("https://imsda.org/contact/");
   });
 
+  it("shows a church-billed registrant the per-person price and no total, paid, due or balance (#621)", async () => {
+    const token = createOpaqueToken();
+    const record = accessRecord();
+    (record.registration.event as unknown as { billingMode: string }).billingMode = "DEFERRED_ORGANIZATION_INVOICE";
+    record.registration.publicFormSubmission.pricingSnapshot = {
+      lineItems: [
+        { label: "Fee — A", amountCents: 2500, attendeeIndex: 0, attendeeLabel: "A" },
+        { label: "Fee — B", amountCents: 2500, attendeeIndex: 1, attendeeLabel: "B" },
+      ],
+      subtotalCents: 5000,
+      totalCents: 5000,
+    } as never;
+    const client = { registrationAccessToken: { findUnique: vi.fn().mockResolvedValue(record) } };
+
+    const view = await resolveRegistrationAccessToken(token, {
+      client: client as never,
+      now: new Date("2026-08-01T12:00:00.000Z"),
+    });
+
+    expect(view?.perPerson?.notice).toBe("$25 per person. Your church is billed after the event.");
+    expect(view?.order).toBeNull();
+    expect(view?.payment).toMatchObject({
+      state: "ORGANIZATION_BILLED",
+      totalCents: null,
+      paidCents: null,
+      refundedCents: null,
+      amountDueCents: null,
+    });
+    expect(JSON.stringify(view)).not.toMatch(/5000|25000|250\.00/);
+  });
+
+  it("keeps the total, paid and due amounts on a self-pay registration (#621)", async () => {
+    const token = createOpaqueToken();
+    const record = accessRecord();
+    (record.registration.event as unknown as { billingMode: string }).billingMode = "ATTENDEE_PAY";
+    const client = { registrationAccessToken: { findUnique: vi.fn().mockResolvedValue(record) } };
+    const view = await resolveRegistrationAccessToken(token, {
+      client: client as never,
+      now: new Date("2026-08-01T12:00:00.000Z"),
+    });
+    expect(view?.perPerson).toBeNull();
+    expect(view?.payment.totalCents).toBe(25000);
+  });
+
   it("rejects malformed, expired, and revoked links with the same null result", async () => {
     const token = createOpaqueToken();
     const findUnique = vi.fn();

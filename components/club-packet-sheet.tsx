@@ -161,7 +161,9 @@ export function ClubPacketSheet({ packet, qrSrc }: { packet: ClubPacket; qrSrc: 
 
             <h3>Billing</h3>
             <p className="club-packet-owed">
-              Estimated amount billed to the church: <strong translate="no">{money(packet.amountOwedCents)}</strong>
+              {packet.amountOwedCents === null
+                ? <strong translate="no">{packet.perPersonNotice ?? "Your church is billed after the event."}</strong>
+                : <>Estimated amount billed to the church: <strong translate="no">{money(packet.amountOwedCents)}</strong></>}
             </p>
           </section>
 

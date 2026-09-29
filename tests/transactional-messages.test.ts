@@ -601,7 +601,8 @@ describe("church-billed (deferred-organization) lifecycle messages", () => {
     });
     const body = queuedMessage(upsert).create.bodyTextSnapshot;
     expectNoPaymentRequest(body);
-    expect(body).toContain("Balance token: $0.00");
+    expect(body).toContain("Balance token: Nothing is due online.");
+    expect(body).not.toContain("$0.00");
   });
 
   it("still shows the balance and pay link on an attendee-pay event", async () => {

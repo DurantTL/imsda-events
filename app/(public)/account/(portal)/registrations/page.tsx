@@ -14,6 +14,7 @@ import {
 import { AttendeeRegistrationContactForm } from "@/components/attendee-registration-contact-form";
 import { AttendeeRegistrationAnswersForm } from "@/components/attendee-registration-answers-form";
 import { PublicSquarePayment } from "@/components/public-square-payment";
+import { PerPersonPriceNotice } from "@/components/per-person-price-notice";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { requireAttendeeSecondStep } from "@/modules/attendee-accounts/portal-second-step";
 import {
@@ -94,15 +95,15 @@ function RegistrationCard({
           </dd>
         </div>
         <div>
-          <dt><CircleDollarSign size={17} aria-hidden="true" /> {registration.churchBilling ? "Estimated amount owed by your church" : "Balance"}</dt>
+          <dt><CircleDollarSign size={17} aria-hidden="true" /> {registration.churchBilling ? "Price" : "Balance"}</dt>
           <dd>
             {registration.churchBilling
               ? registration.churchBilling.billed
-                ? `${money(registration.churchBilling.amountOwedCents)} · ${registration.churchBilling.label}`
+                ? <PerPersonPriceNotice price={registration.churchBilling.perPerson} />
                 : registration.churchBilling.label
               : registration.balanceCents > 0
-                ? `${money(registration.balanceCents)} due of ${money(registration.totalCents)}`
-                : `Paid in full · ${money(registration.totalCents)}`}
+                ? `${money(registration.balanceCents)} due of ${money(registration.totalCents ?? 0)}`
+                : `Paid in full · ${money(registration.totalCents ?? 0)}`}
           </dd>
         </div>
       </dl>

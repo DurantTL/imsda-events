@@ -133,6 +133,32 @@ function fixture({ billingMode = "DEFERRED_ORGANIZATION_INVOICE", audience = "CL
   return tx;
 }
 
+function pricedClubForm() {
+return registrationFormDefinitionSchema.parse({
+  title: "Priced club form",
+  description: "",
+  confirmationMessage: "Registered.",
+  attendeeRoster: { enabled: true, minAttendees: 1, maxAttendees: 50, attendeeLabel: "Club member", addButtonLabel: "Add" },
+  sections: [
+    { id: "contact", title: "Contact", description: "", fields: [
+      field("c_first", "primary_contact_first_name", "First name", "TEXT", "REGISTRATION", true),
+      field("c_last", "primary_contact_last_name", "Last name", "TEXT", "REGISTRATION", true),
+      field("c_email", "email", "Email", "EMAIL", "REGISTRATION", true),
+    ] },
+    { id: "meals", title: "Meals", description: "", fields: [
+      { ...field("s_count", "meal_sponsorship_count", "People sponsored", "NUMBER", "REGISTRATION"), creditCentsPerUnit: -500, capUnitsAtAttendeeCount: true },
+    ] },
+    { id: "roster", title: "Roster", description: "", fields: [
+      field("a_first", "first_name", "First name", "TEXT", "ATTENDEE", true),
+      field("a_last", "last_name", "Last name", "TEXT", "ATTENDEE", true),
+      field("a_age", "attendee_age", "Age", "NUMBER", "ATTENDEE", true),
+      field("a_diet", "dietary_needs", "Dietary needs", "LONG_TEXT", "ATTENDEE"),
+      { ...field("a_fee", "registration_fee", "Registration fee", "CALCULATED", "ATTENDEE"), priceCents: 900 },
+    ] },
+  ],
+});
+}
+
 const club = (organizationId = "club-1"): ClubSubmissionContext => ({
   organizationId,
   submittedByAccountId: "director-1",
@@ -258,35 +284,38 @@ describe("club registration submit", () => {
   });
 
   it("prices a club registration like any other registration, instead of saving $0 (#409)", async () => {
-    const pricedForm = registrationFormDefinitionSchema.parse({
-      title: "Priced club form",
-      description: "",
-      confirmationMessage: "Registered.",
-      attendeeRoster: { enabled: true, minAttendees: 1, maxAttendees: 50, attendeeLabel: "Club member", addButtonLabel: "Add" },
-      sections: [
-        { id: "contact", title: "Contact", description: "", fields: [
-          field("c_first", "primary_contact_first_name", "First name", "TEXT", "REGISTRATION", true),
-          field("c_last", "primary_contact_last_name", "Last name", "TEXT", "REGISTRATION", true),
-          field("c_email", "email", "Email", "EMAIL", "REGISTRATION", true),
-        ] },
-        { id: "meals", title: "Meals", description: "", fields: [
-          { ...field("s_count", "meal_sponsorship_count", "People sponsored", "NUMBER", "REGISTRATION"), creditCentsPerUnit: -500, capUnitsAtAttendeeCount: true },
-        ] },
-        { id: "roster", title: "Roster", description: "", fields: [
-          field("a_first", "first_name", "First name", "TEXT", "ATTENDEE", true),
-          field("a_last", "last_name", "Last name", "TEXT", "ATTENDEE", true),
-          field("a_age", "attendee_age", "Age", "NUMBER", "ATTENDEE", true),
-          field("a_diet", "dietary_needs", "Dietary needs", "LONG_TEXT", "ATTENDEE"),
-          { ...field("a_fee", "registration_fee", "Registration fee", "CALCULATED", "ATTENDEE"), priceCents: 900 },
-        ] },
-      ],
-    });
+    const pricedForm = pricedClubForm();
     const tx = fixture({ form: pricedForm });
     await submit({ ...baseInput, responses: { ...baseInput.responses, meal_sponsorship_count: 1 } });
 
     // 2 people × $9 − 1 person fed × $5 = $13, not $0: this is what the
     // church owes, never an attendee balance or a card payment.
     expect(tx.registration.create.mock.calls[0][0].data).toMatchObject({ totalAmount: 13 });
+  });
+
+  it("returns the director per-person lines only, never a total, subtotal or fee sum (#621)", async () => {
+    fixture({ form: pricedClubForm() });
+    const confirmation = await submit({ ...baseInput, responses: { ...baseInput.responses, meal_sponsorship_count: 1 } });
+    expect(confirmation).not.toHaveProperty("totalCents");
+    expect(confirmation).not.toHaveProperty("subtotalCents");
+    expect(confirmation).not.toHaveProperty("preDiscountSubtotalCents");
+    expect(confirmation).not.toHaveProperty("processingFeeCents");
+    expect(confirmation.lineItems.filter((item) => item.attendeeIndex !== undefined).map((item) => item.amountCents)).toEqual([900, 900]);
+  });
+
+  it("returns the same total-free confirmation on a repeated church-billed submit (#621)", async () => {
+    const tx = fixture({ form: pricedClubForm() });
+    await submit();
+    const stored = tx.publicRegistrationSubmission.create.mock.calls[0][0].data;
+    tx.publicRegistrationSubmission.findUnique.mockResolvedValue({
+      ...stored,
+      registrationId: "registration-1",
+      registration: { confirmationCode: "REG-EXISTING", status: "SUBMITTED", waitlistEntry: null },
+    });
+    tx.clubEventRegistration.findUnique.mockResolvedValue({ id: "cer-1" });
+    const replay = await submit();
+    expect(replay).not.toHaveProperty("totalCents");
+    expect(replay.lineItems.length).toBeGreaterThan(0);
   });
 
   it("prices a club submitted after the late date at the late fee, through the real submit path (#409)", async () => {
