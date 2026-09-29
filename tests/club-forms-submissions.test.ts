@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   templateFindFirst: vi.fn(),
   templateFindUnique: vi.fn(),
   queryRaw: vi.fn(),
+  executeRaw: vi.fn(),
   submissionCreate: vi.fn(),
   submissionFindFirst: vi.fn(),
   submissionFindMany: vi.fn(),
@@ -18,6 +19,7 @@ const mocks = vi.hoisted(() => ({
 const client = {
   clubFormTemplate: { findFirst: mocks.templateFindFirst, findUnique: mocks.templateFindUnique },
   $queryRaw: mocks.queryRaw,
+  $executeRaw: mocks.executeRaw,
   clubFormSubmission: {
     create: mocks.submissionCreate,
     findFirst: mocks.submissionFindFirst,
@@ -100,11 +102,55 @@ beforeEach(() => {
   mocks.templateFindFirst.mockResolvedValue(slipTemplateRow());
   mocks.templateFindUnique.mockReset();
   mocks.templateFindUnique.mockResolvedValue(slipTemplateRow());
+  mocks.executeRaw.mockReset();
+  mocks.executeRaw.mockResolvedValue(0);
   mocks.queryRaw.mockReset();
   mocks.queryRaw.mockResolvedValue([]);
   mocks.submissionCreate.mockResolvedValue({});
   mocks.submissionUpdateMany.mockResolvedValue({ count: 1 });
   mocks.rosterFindFirst.mockResolvedValue({ id: "member-1", person: { firstName: "Riley", lastName: "Sample" } });
+});
+
+describe("a save that cannot get the template lock (#610)", () => {
+  const save = () => saveClubFormSubmission(director, {
+    organizationId: "club-a", templateKey: "off_premises_permission_slip", rosterMemberId: "member-1", answers: slipAnswers, submit: true,
+  }, now);
+
+  it("sets a lock timeout before it takes the share lock", async () => {
+    await save();
+    const order = [mocks.executeRaw.mock.invocationCallOrder[0], mocks.queryRaw.mock.invocationCallOrder[0]];
+    expect(mocks.executeRaw.mock.calls[0][0].join("?")).toMatch(/SET LOCAL lock_timeout/);
+    expect(order[0]).toBeLessThan(order[1]);
+  });
+
+  it.each([
+    ["a Postgres lock timeout", { code: "P2010", meta: { code: "55P03" }, message: "Raw query failed. Code: `55P03`" }],
+    ["a Prisma transaction error", { code: "P2028", message: "Transaction API error" }],
+  ])("answers FORM_BUSY and writes nothing on %s", async (_name, failure) => {
+    mocks.queryRaw.mockRejectedValue(failure);
+    await expect(save()).rejects.toMatchObject({ code: "FORM_BUSY", message: "This form is being updated. Please try again in a minute." });
+    expect(mocks.submissionCreate).not.toHaveBeenCalled();
+    expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("does not turn other database errors into FORM_BUSY", async () => {
+    mocks.queryRaw.mockRejectedValue(new Error("connection lost"));
+    await expect(save()).rejects.toThrow("connection lost");
+  });
+
+  it("refuses when the template changed version while it waited (never validates against a stale definition)", async () => {
+    mocks.templateFindUnique.mockResolvedValue({ ...slipTemplateRow(), version: slipTemplateRow().version + 1 });
+    await expect(save()).rejects.toMatchObject({ code: "FORM_BUSY" });
+    expect(mocks.submissionCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the stored template is behind the code's version, before the first sync", async () => {
+    const behind = { ...slipTemplateRow(), version: slipTemplateRow().version - 1 };
+    mocks.templateFindFirst.mockResolvedValue(behind);
+    mocks.templateFindUnique.mockResolvedValue(behind);
+    await expect(save()).rejects.toMatchObject({ code: "FORM_BUSY" });
+    expect(mocks.submissionCreate).not.toHaveBeenCalled();
+  });
 });
 
 describe("saving a club form (#610)", () => {
@@ -325,6 +371,34 @@ describe("opening a submission (#610)", () => {
     expect(view.answers).not.toHaveProperty("emergency_contact_phone");
     expect(JSON.stringify(view)).not.toContain(SECRET_PHYSICIAN);
     expect(mocks.writeAuditLog.mock.calls[0][0]).toMatchObject({ metadata: expect.objectContaining({ viewerKind: "AREA_COORDINATOR", sensitiveRevealed: false }) });
+  });
+
+  it("audits the view when a sensitive answer is sitting in the plain column, even with the flag off", async () => {
+    mocks.submissionFindFirst.mockImplementation(async () => row({
+      hasSensitiveAnswers: false,
+      sealedSensitiveAnswers: null,
+      answers: { child_name: "Riley Sample", physician_name: "Dr. Plain Legacy" },
+    }));
+    await getSubmissionForViewer(director, submissionId);
+    expect(mocks.writeAuditLog).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(mocks.writeAuditLog.mock.calls)).not.toContain("Dr. Plain Legacy");
+  });
+
+  it("does not audit a form with nothing sensitive in it", async () => {
+    mocks.submissionFindFirst.mockImplementation(async () => row({
+      hasSensitiveAnswers: false, sealedSensitiveAnswers: null, answers: { child_name: "Riley Sample" },
+    }));
+    await getSubmissionForViewer(director, submissionId);
+    expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("restricts what the code marks sensitive even when the stored template lags", async () => {
+    mocks.submissionFindFirst.mockImplementation(async () => row({
+      template: { ...slipTemplateRow(), sensitiveFieldKeys: [], birthDateFieldKeys: [] },
+    }));
+    const view = await getSubmissionForViewer(areaCoordinator, submissionId);
+    expect(new Set(view.restrictedKeys)).toEqual(new Set(slipTemplateRow().sensitiveFieldKeys));
+    expect(view.answers).not.toHaveProperty("physician_name");
   });
 
   it("drops a restricted key from the plain answers too, in case one was stored there", async () => {

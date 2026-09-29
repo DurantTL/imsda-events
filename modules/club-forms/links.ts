@@ -294,7 +294,7 @@ export async function submitClubFormViaLink(token: string, rawAnswers: Record<st
 
   return getPrisma().$transaction(async (tx) => {
     // Which answers are sensitive is decided under a share lock on the template row, so a concurrent re-seal cannot leave this save in plaintext.
-    const keys = await lockClubFormTemplateForWrite(tx, link.template.id);
+    const keys = await lockClubFormTemplateForWrite(tx, template);
     const { plain, sensitive } = splitAnswers({ sensitiveFieldKeys: keys.sensitiveFieldKeys }, answers);
     const hasSensitive = Object.keys(sensitive).length > 0;
     if (hasSensitive && !isSecretEncryptionConfigured()) {

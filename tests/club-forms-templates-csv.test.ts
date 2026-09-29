@@ -39,10 +39,12 @@ import { clubFormTemplateSeeds } from "@/modules/club-forms/definitions";
 import type { ClubFormsViewer } from "@/modules/club-forms/domain";
 import { openSensitiveAnswers, sealSensitiveAnswers } from "@/modules/club-forms/sealed-answers";
 import {
+  getClubFormTemplateForStaff,
   getEnabledClubFormTemplate,
   listEnabledClubFormTemplates,
   setClubFormTemplateEnabled,
   syncClubFormTemplates,
+  listClubFormTemplatesForAdmin,
 } from "@/modules/club-forms/templates";
 
 const staffPlain: ClubFormsViewer = { kind: "STAFF", userId: "staff-2", systemAdmin: false };
@@ -191,13 +193,13 @@ describe("club form templates are off until a system administrator turns them on
 
   it("turns a template on and records who and when, then off again", async () => {
     mocks.templateFindMany.mockResolvedValue(clubFormTemplateSeeds.map((seed) => ({ key: seed.key, version: seed.version })));
-    mocks.templateFindUnique.mockResolvedValue({ id: "template-slip", enabled: false });
+    mocks.templateFindUnique.mockResolvedValue({ id: "template-slip", enabled: false, version: slip.version });
     const now = new Date("2026-10-05T15:00:00Z");
     await setClubFormTemplateEnabled(slip.key, true, "admin-1", now);
     expect(mocks.templateUpdate).toHaveBeenCalledWith({ where: { id: "template-slip" }, data: { enabled: true, enabledAt: now, enabledByUserId: "admin-1" } });
     expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "CLUB_FORM_TEMPLATE_ENABLED", actorUserId: "admin-1", metadata: { templateKey: slip.key } }), client);
 
-    mocks.templateFindUnique.mockResolvedValue({ id: "template-slip", enabled: true });
+    mocks.templateFindUnique.mockResolvedValue({ id: "template-slip", enabled: true, version: slip.version });
     await setClubFormTemplateEnabled(slip.key, false, "admin-1", now);
     expect(mocks.templateUpdate).toHaveBeenLastCalledWith({ where: { id: "template-slip" }, data: { enabled: false, enabledAt: null, enabledByUserId: null } });
     expect(mocks.writeAuditLog).toHaveBeenLastCalledWith(expect.objectContaining({ action: "CLUB_FORM_TEMPLATE_DISABLED" }), client);
@@ -205,16 +207,59 @@ describe("club form templates are off until a system administrator turns them on
 
   it("changes and audits nothing when the switch is already where it was asked to be", async () => {
     mocks.templateFindMany.mockResolvedValue(clubFormTemplateSeeds.map((seed) => ({ key: seed.key, version: seed.version })));
-    mocks.templateFindUnique.mockResolvedValue({ id: "template-slip", enabled: true });
+    mocks.templateFindUnique.mockResolvedValue({ id: "template-slip", enabled: true, version: slip.version });
     await setClubFormTemplateEnabled(slip.key, true, "admin-1");
     expect(mocks.templateUpdate).not.toHaveBeenCalled();
     expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("lists templates for the admin page without syncing or re-sealing, and flags one that is behind", async () => {
+    mocks.templateFindMany.mockResolvedValue([
+      { key: slip.key, name: slip.name, description: slip.description, enabled: true, enabledAt: null, version: slip.version - 1, _count: { submissions: 3 } },
+    ]);
+    const listed = await listClubFormTemplatesForAdmin();
+    expect(listed.find((row) => row.key === slip.key)).toMatchObject({ needsSync: true, submissionCount: 3 });
+    // Seeded forms with no row yet are shown too, and need a sync as well.
+    expect(listed.filter((row) => row.needsSync).length).toBe(clubFormTemplateSeeds.length);
+    expect(mocks.templateUpsert).not.toHaveBeenCalled();
+    expect(mocks.templateUpdate).not.toHaveBeenCalled();
+    expect(mocks.submissionFindMany).not.toHaveBeenCalled();
+    expect(mocks.queryRaw).not.toHaveBeenCalled();
+  });
+
+  it("will not turn a form on while its stored version is behind the code, but will turn it off", async () => {
+    mocks.templateFindUnique.mockResolvedValue({ id: "template-slip", enabled: false, version: slip.version - 1 });
+    await expect(setClubFormTemplateEnabled(slip.key, true, "admin-1")).rejects.toMatchObject({ code: "TEMPLATE_NEEDS_SYNC" });
+    expect(mocks.templateUpdate).not.toHaveBeenCalled();
+    expect(mocks.templateUpsert).not.toHaveBeenCalled();
+    mocks.templateFindUnique.mockResolvedValue({ id: "template-slip", enabled: true, version: slip.version - 1 });
+    await setClubFormTemplateEnabled(slip.key, false, "admin-1");
+    expect(mocks.templateUpdate).toHaveBeenCalledTimes(1);
   });
 
   it("says a form that does not exist is not found", async () => {
     mocks.templateFindMany.mockResolvedValue(clubFormTemplateSeeds.map((seed) => ({ key: seed.key, version: seed.version })));
     mocks.templateFindUnique.mockResolvedValue(null);
     await expect(setClubFormTemplateEnabled("nope", true, "admin-1")).rejects.toMatchObject({ code: "TEMPLATE_NOT_FOUND" });
+  });
+});
+
+describe("a stored template that lags the code restricts at least what the code restricts (#610)", () => {
+  it("unions the seed's sensitive keys into what readers and the CSV see", async () => {
+    mocks.templateFindUnique.mockResolvedValue({ ...slipRow, sensitiveFieldKeys: [], birthDateFieldKeys: [] });
+    const template = await getClubFormTemplateForStaff(slip.key);
+    expect(new Set(template.sensitiveFieldKeys)).toEqual(new Set(slip.sensitiveFieldKeys));
+  });
+
+  it("keeps a sensitive key out of the CSV even when the stored template lags", async () => {
+    mocks.templateFindUnique.mockResolvedValue({ ...slipRow, sensitiveFieldKeys: [], birthDateFieldKeys: [] });
+    mocks.submissionFindMany.mockResolvedValue([{
+      clubYear: "2026-27", subjectName: "Riley Sample", status: "SUBMITTED", submittedAt: new Date("2026-10-30T12:00:00Z"), enteredVia: "LINK",
+      answers: { child_name: "Riley Sample", physician_name: "Dr. Lagging Plain" }, organization: { name: "Example Pathfinders" },
+    }]);
+    const { csv } = await buildClubFormsCsv(staffSensitive, { templateKey: slip.key });
+    expect(csv).not.toContain("Dr. Lagging Plain");
+    expect(csv).not.toMatch(/physician/i);
   });
 });
 

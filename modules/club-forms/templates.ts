@@ -119,13 +119,19 @@ export type ClubFormTemplateSummary = {
   enabledAt: string | null;
   version: number;
   submissionCount: number;
+  /** Stored version is behind the code (or the form was never synced): run `npm run club-forms:sync`. */
+  needsSync: boolean;
 };
 
-/** For the system administrator's page: every template, on or off. */
+/**
+ * For the system administrator's page: every template, on or off. Read-only:
+ * it never syncs or re-seals (that can touch thousands of rows and belongs to
+ * the operator step `npm run club-forms:sync`, run after migrations). A
+ * template whose stored version is behind the code, or that has never been
+ * synced, is flagged `needsSync`.
+ */
 export async function listClubFormTemplatesForAdmin(): Promise<ClubFormTemplateSummary[]> {
-  const prisma = getPrisma();
-  await syncClubFormTemplates(prisma);
-  const rows = await prisma.clubFormTemplate.findMany({
+  const rows = await getPrisma().clubFormTemplate.findMany({
     orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
     select: {
       key: true,
@@ -137,24 +143,42 @@ export async function listClubFormTemplatesForAdmin(): Promise<ClubFormTemplateS
       _count: { select: { submissions: true } },
     },
   });
-  return rows.map((row) => ({
-    key: row.key,
-    name: row.name,
-    description: row.description,
-    enabled: row.enabled,
-    enabledAt: row.enabledAt?.toISOString() ?? null,
-    version: row.version,
-    submissionCount: row._count.submissions,
-  }));
+  const stored = new Map(rows.map((row) => [row.key, row]));
+  const listed: ClubFormTemplateSummary[] = rows.map((row) => {
+    const seed = clubFormTemplateSeeds.find((candidate) => candidate.key === row.key);
+    return {
+      key: row.key,
+      name: row.name,
+      description: row.description,
+      enabled: row.enabled,
+      enabledAt: row.enabledAt?.toISOString() ?? null,
+      version: row.version,
+      submissionCount: row._count.submissions,
+      needsSync: Boolean(seed && row.version < seed.version),
+    };
+  });
+  for (const seed of clubFormTemplateSeeds) {
+    if (stored.has(seed.key)) continue;
+    listed.push({ key: seed.key, name: seed.name, description: seed.description, enabled: false, enabledAt: null, version: 0, submissionCount: 0, needsSync: true });
+  }
+  return listed;
+}
+
+function needsSync() {
+  return new ClubFormError("TEMPLATE_NEEDS_SYNC", "This form needs to be synced before it can be turned on. Run npm run club-forms:sync, then try again.");
 }
 
 /** Turns one template on or off. The caller has already checked for a system administrator. */
 export async function setClubFormTemplateEnabled(key: string, enabled: boolean, actorUserId: string, now = new Date()) {
-  // Synced first, in its own transaction: a re-seal can outlast an ordinary transaction's timeout.
-  await syncClubFormTemplates(getPrisma());
   return getPrisma().$transaction(async (tx) => {
-    const template = await tx.clubFormTemplate.findUnique({ where: { key }, select: { id: true, enabled: true } });
-    if (!template) throw new ClubFormError("TEMPLATE_NOT_FOUND", "That form could not be found.");
+    const template = await tx.clubFormTemplate.findUnique({ where: { key }, select: { id: true, enabled: true, version: true } });
+    const seed = clubFormTemplateSeeds.find((candidate) => candidate.key === key);
+    if (!template) {
+      if (seed) throw needsSync();
+      throw new ClubFormError("TEMPLATE_NOT_FOUND", "That form could not be found.");
+    }
+    // Turning a form on needs its stored definition to be current (and its answers re-sealed). Turning one off never waits.
+    if (enabled && seed && template.version < seed.version) throw needsSync();
     if (template.enabled !== enabled) {
       await tx.clubFormTemplate.update({
         where: { id: template.id },

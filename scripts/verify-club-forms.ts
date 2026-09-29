@@ -571,7 +571,7 @@ async function main() {
   let releaseWriter!: () => void;
   const writerMayCommit = new Promise<void>((resolve) => { releaseWriter = resolve; });
   const writer = prisma.$transaction(async (tx) => {
-    await lockModule.lockClubFormTemplateForWrite(tx, slipRow.id);
+    await lockModule.lockClubFormTemplateForWrite(tx, slipRow);
     raceLocked();
     await tx.clubFormSubmission.create({
       data: {
@@ -609,7 +609,7 @@ async function main() {
   await resealHoldsLock;
   let keysRead: string[] | null = null;
   const laterWriter = prisma.$transaction(async (tx) => {
-    keysRead = (await lockModule.lockClubFormTemplateForWrite(tx, slipRow.id)).sensitiveFieldKeys;
+    keysRead = (await lockModule.lockClubFormTemplateForWrite(tx, slipRow)).sensitiveFieldKeys;
   }, { timeout: 30_000 });
   await sleep(1000);
   assert(keysRead === null, "a save started during a re-seal waits for it");
@@ -618,6 +618,31 @@ async function main() {
   await laterWriter;
   assert((keysRead as string[] | null)?.includes("activity"), "the waiting save reads the new sensitive keys");
   await prisma.clubFormTemplate.update({ where: { id: slipRow.id }, data: { sensitiveFieldKeys: slipKeys } });
+
+  // A save blocked by a held FOR UPDATE gives up after the lock timeout (3 s) with FORM_BUSY, writing nothing,
+  // instead of holding a pool connection for the whole re-seal.
+  let releaseHeld!: () => void;
+  const heldMayCommit = new Promise<void>((resolve) => { releaseHeld = resolve; });
+  let heldLocked!: () => void;
+  const heldHoldsLock = new Promise<void>((resolve) => { heldLocked = resolve; });
+  const holder = prisma.$transaction(async (tx) => {
+    await lockModule.lockClubFormTemplateForReseal(tx, slipRow.id);
+    heldLocked();
+    await heldMayCommit;
+  }, { timeout: 60_000 });
+  await heldHoldsLock;
+  const draftsBefore = await prisma.clubFormSubmission.count({ where: { templateId: slipRow.id } });
+  const startedAt = Date.now();
+  await expectCode(
+    submissions.saveClubFormSubmission(directorA, { organizationId: clubs.a, templateKey: SLIP, answers: slipAnswers, submit: true }),
+    "FORM_BUSY",
+    "a save blocked by a held FOR UPDATE fails fast",
+  );
+  const waited = Date.now() - startedAt;
+  assert(waited >= 2000 && waited < 8000, `the blocked save gave up at the lock timeout, not after the whole hold (${waited} ms)`);
+  assert(await prisma.clubFormSubmission.count({ where: { templateId: slipRow.id } }) === draftsBefore, "the refused save wrote nothing");
+  releaseHeld();
+  await holder;
 
   // Club forms and links block deleting a club.
   const deletion = await orgRepository.getOrganizationDeletionCheck(clubs.a);

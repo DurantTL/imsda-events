@@ -438,6 +438,23 @@ clean deployment is still being rebuilt.
    configured — development only, since production requires it — the link is
    shown to you once instead, to pass on yourself.)
 6. Confirm `APP_BASE_URL` is the final `https` domain before sending any real links.
+7. Sync the club form templates (#610). This is a step after migrations on the
+   first deploy and on **every deploy that changes a club form's version**
+   (`modules/club-forms/definitions.ts`):
+
+   ```bash
+   docker compose exec app npm run club-forms:sync
+   ```
+
+   It creates missing forms (off), brings changed ones to the code's version, and
+   re-seals existing answers for any field that became sensitive, in one
+   transaction per form. It is not done by the admin page or by a web request,
+   because a large re-seal takes a while. Until it runs, saves to a form whose
+   version is behind are refused with "This form is being updated" (nothing is
+   written), the admin page shows "Needs sync", and readers and the CSV already
+   treat the new code's sensitive keys as restricted. It is safe to run again, and
+   it refuses (changing nothing for that form) a version that would make a
+   sensitive answer or a birth date readable again; that needs a reviewed change.
 
 **There is no seed step, and `RUN_DB_SEED` is no longer supported.** `prisma/seed.ts`
 writes fictitious events, people, registrations, payments and a refund, and gives

@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   templateFindFirst: vi.fn(),
   templateFindUnique: vi.fn(),
   queryRaw: vi.fn(),
+  executeRaw: vi.fn(),
   linkCreate: vi.fn(),
   linkUpdate: vi.fn(),
   linkUpdateMany: vi.fn(),
@@ -23,6 +24,7 @@ const mocks = vi.hoisted(() => ({
 const client = {
   clubFormTemplate: { findFirst: mocks.templateFindFirst, findUnique: mocks.templateFindUnique },
   $queryRaw: mocks.queryRaw,
+  $executeRaw: mocks.executeRaw,
   clubFormLink: {
     create: mocks.linkCreate,
     update: mocks.linkUpdate,
@@ -132,6 +134,8 @@ beforeEach(() => {
   mocks.templateFindFirst.mockResolvedValue(templateRow("off_premises_permission_slip"));
   mocks.templateFindUnique.mockReset();
   mocks.templateFindUnique.mockResolvedValue(templateRow("off_premises_permission_slip"));
+  mocks.executeRaw.mockReset();
+  mocks.executeRaw.mockResolvedValue(0);
   mocks.queryRaw.mockReset();
   mocks.queryRaw.mockResolvedValue([]);
   mocks.linkCreate.mockResolvedValue({ id: "link-1" });
@@ -308,6 +312,22 @@ describe("opening a private link (#610)", () => {
       await expect(resolveClubFormLinkForFill(token, now)).rejects.toMatchObject({ code: "LINK_UNAVAILABLE" });
     }
     expect(mocks.linkFindUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("a link submit that cannot get the template lock (#610)", () => {
+  it("answers FORM_BUSY and leaves the link unspent, since the lock comes before the spend", async () => {
+    mocks.queryRaw.mockRejectedValue({ code: "P2010", meta: { code: "55P03" }, message: "Raw query failed. Code: `55P03`" });
+    await expect(submitClubFormViaLink(TOKEN, slipAnswers, now)).rejects.toMatchObject({ code: "FORM_BUSY" });
+    expect(mocks.linkUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.submissionCreate).not.toHaveBeenCalled();
+    expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("refuses, link unspent, when the template changed version while it waited", async () => {
+    mocks.templateFindUnique.mockResolvedValue({ ...templateRow("off_premises_permission_slip"), version: templateRow("off_premises_permission_slip").version + 1 });
+    await expect(submitClubFormViaLink(TOKEN, slipAnswers, now)).rejects.toMatchObject({ code: "FORM_BUSY" });
+    expect(mocks.linkUpdateMany).not.toHaveBeenCalled();
   });
 });
 

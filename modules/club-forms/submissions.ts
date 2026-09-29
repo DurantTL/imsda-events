@@ -116,7 +116,7 @@ export async function saveClubFormSubmission(viewer: ClubFormsViewer, input: Sav
 
   return prisma.$transaction(async (tx) => {
     // Which answers are sensitive is decided under a share lock on the template row, so a concurrent re-seal cannot leave this save in plaintext.
-    const keys = await lockClubFormTemplateForWrite(tx, template.id);
+    const keys = await lockClubFormTemplateForWrite(tx, template);
     const { plain, sensitive } = splitAnswers({ sensitiveFieldKeys: keys.sensitiveFieldKeys }, answers);
     const hasSensitive = Object.keys(sensitive).length > 0;
     if (hasSensitive && !isSecretEncryptionConfigured()) {
@@ -281,7 +281,11 @@ export async function getSubmissionForViewer(
   const reveal = viewerCanRevealSensitive(viewer, row.organizationId);
   const revealBirthDates = viewerCanRevealBirthDates(viewer, row.organizationId);
 
-  if (row.hasSensitiveAnswers) {
+  // A plain answer under a sensitive key (stored before that key became sensitive) counts too: never an unaudited view.
+  const sensitiveKeys = new Set(template.sensitiveFieldKeys);
+  const holdsSensitive = row.hasSensitiveAnswers
+    || Object.keys(row.answers as Record<string, unknown>).some((key) => sensitiveKeys.has(key));
+  if (holdsSensitive) {
     const who = viewerAuditFields(viewer);
     await writeAuditLog({
       actorUserId: who.actorUserId,

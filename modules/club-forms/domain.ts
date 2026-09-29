@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { clubFormTemplateSeeds } from "@/modules/club-forms/definitions";
 import { formatAddressDisplay, isPlainAddressObject, sanitizeAddressInput } from "@/modules/forms/address";
 import {
   isFieldVisible,
@@ -98,6 +99,7 @@ export function parseClubFormTemplate(row: {
   printLayout: string;
   enabled: boolean;
 }): ClubFormTemplateRecord {
+  const seed = clubFormTemplateSeeds.find((candidate) => candidate.key === row.key);
   return {
     id: row.id,
     key: row.key,
@@ -106,8 +108,10 @@ export function parseClubFormTemplate(row: {
     version: row.version,
     definition: registrationFormDefinitionSchema.parse(row.definition),
     sectionNotes: sectionNotesSchema.parse(row.sectionNotes ?? {}),
-    sensitiveFieldKeys: row.sensitiveFieldKeys,
-    birthDateFieldKeys: row.birthDateFieldKeys,
+    // Whichever of the stored row and the code's seed says a key is sensitive wins, so a deploy that
+    // has not been synced yet can only ever restrict more, never less.
+    sensitiveFieldKeys: unionKeys(row.sensitiveFieldKeys, seed?.sensitiveFieldKeys),
+    birthDateFieldKeys: unionKeys(row.birthDateFieldKeys, seed?.birthDateFieldKeys),
     staffOnlyFieldKeys: row.staffOnlyFieldKeys,
     printLayout: row.printLayout === "PASSENGER_LIST" ? "PASSENGER_LIST" : "STANDARD",
     enabled: row.enabled,
@@ -343,4 +347,8 @@ export function viewerAuditFields(viewer: ClubFormsViewer): {
   return actor.kind === "ATTENDEE"
     ? { metadata: { viewerKind: viewer.kind, actorAttendeeAccountId: actor.accountId } }
     : { actorUserId: actor.userId, metadata: { viewerKind: viewer.kind, actAsId: actor.actAsId } };
+}
+
+function unionKeys(stored: readonly string[], seed: readonly string[] = []) {
+  return [...new Set([...stored, ...seed])];
 }
