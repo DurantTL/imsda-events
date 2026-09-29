@@ -1,5 +1,6 @@
 "use client";
 
+import { PUBLIC_DRAFT_STAFF_HELP } from "@/modules/forms/public-draft";
 import { useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -926,6 +927,8 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
             </div>
           </>}
         </section>
+
+        <p className="builder-draft-note"><small>{PUBLIC_DRAFT_STAFF_HELP}</small></p>
 
         {definition.sections.map((section, sectionIndex) => <section
           className={dragging?.kind === "section" && dragging.sectionIndex === sectionIndex ? "panel builder-section dragging" : "panel builder-section"}

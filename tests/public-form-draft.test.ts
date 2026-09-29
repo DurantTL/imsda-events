@@ -8,7 +8,10 @@ import {
   PUBLIC_DRAFT_TTL_MS,
   PUBLIC_DRAFT_VERSION_CHANGED_NOTICE,
   clearPublicDraft,
+  draftsAllowed,
   isDraftExcludedField,
+  mergeDraftAttendees,
+  shouldPersistDraft,
   loadPublicDraft,
   publicDraftKey,
   savePublicDraft,
@@ -159,5 +162,122 @@ describe("public form browser drafts (#574)", () => {
     }));
     expect(html).toContain("Contact name");
     expect(html).not.toContain(PUBLIC_DRAFT_RESTORED_NOTICE);
+  });
+});
+
+describe("draft exclusion rule (#574 review)", () => {
+  type T = "TEXT" | "LONG_TEXT" | "SELECT" | "RADIO" | "CHECKBOX" | "ADDRESS" | "DATE" | "NUMBER" | "CALCULATED" | "MULTISELECT";
+  const excluded = (key: string, label: string, type: T, scope: "REGISTRATION" | "ATTENDEE", required = false) =>
+    isDraftExcludedField({ key, label, type, scope, required }, definition);
+
+  it("blocks health, insurance and note style fields even when they are short text or choices", () => {
+    expect(excluded("accommodations", "Accommodations", "TEXT", "REGISTRATION")).toBe(true);
+    expect(excluded("current_meds", "Current medications", "TEXT", "REGISTRATION")).toBe(true);
+    expect(excluded("provider", "Healthcare provider", "TEXT", "REGISTRATION")).toBe(true);
+    expect(excluded("insurer", "Insurer", "TEXT", "REGISTRATION")).toBe(true);
+    expect(excluded("medicalNotes", "Notes", "TEXT", "REGISTRATION")).toBe(true);
+    expect(excluded("epipen", "Carries an EpiPen", "RADIO", "REGISTRATION")).toBe(true);
+    expect(excluded("pickup_person", "Authorized pickup", "TEXT", "REGISTRATION")).toBe(true);
+    expect(excluded("extra", "Anything we should know?", "TEXT", "REGISTRATION")).toBe(true);
+    expect(excluded("session_health", "Health screening session", "SELECT", "ATTENDEE")).toBe(true);
+  });
+
+  it("blocks long text, address, consent checkboxes and required checkboxes", () => {
+    expect(excluded("attendee_notes", "Attendee notes", "LONG_TEXT", "ATTENDEE")).toBe(true);
+    expect(excluded("comments", "Comments", "LONG_TEXT", "REGISTRATION")).toBe(true);
+    expect(excluded("home", "Home", "ADDRESS", "REGISTRATION")).toBe(true);
+    expect(excluded("photo_consent", "Photo consent", "CHECKBOX", "REGISTRATION")).toBe(true);
+    expect(excluded("ack", "I understand", "CHECKBOX", "REGISTRATION", true)).toBe(true);
+    expect(excluded("newsletter", "Send me news", "CHECKBOX", "REGISTRATION")).toBe(false);
+  });
+
+  it("allows only name, type, shirt and non-health choice fields for attendees", () => {
+    expect(excluded("first_name", "First name", "TEXT", "ATTENDEE")).toBe(false);
+    expect(excluded("attendee_type", "Type", "SELECT", "ATTENDEE")).toBe(false);
+    expect(excluded("shirt_size", "Shirt size", "SELECT", "ATTENDEE")).toBe(false);
+    expect(excluded("workshop", "Workshop session", "SELECT", "ATTENDEE")).toBe(false);
+    expect(excluded("nickname", "Nickname", "TEXT", "ATTENDEE")).toBe(true);
+    expect(excluded("attendee_age", "Age", "NUMBER", "ATTENDEE")).toBe(true);
+    expect(excluded("gender", "Gender", "SELECT", "ATTENDEE")).toBe(true);
+    expect(excluded("phone", "Phone", "TEXT", "ATTENDEE")).toBe(true);
+  });
+
+  it("keeps registration contact answers", () => {
+    expect(excluded("contact_name", "Contact name", "TEXT", "REGISTRATION")).toBe(false);
+    expect(excluded("email", "Email", "TEXT", "REGISTRATION")).toBe(false);
+  });
+});
+
+describe("draft gating (#574 review)", () => {
+  it("does not save before an edit, after submit, or before restore has run", () => {
+    const on = { enabled: true, ready: true, dirty: true, submitted: false };
+    expect(shouldPersistDraft(on)).toBe(true);
+    expect(shouldPersistDraft({ ...on, dirty: false })).toBe(false);
+    expect(shouldPersistDraft({ ...on, ready: false })).toBe(false);
+    expect(shouldPersistDraft({ ...on, submitted: true })).toBe(false);
+    expect(shouldPersistDraft({ ...on, enabled: false })).toBe(false);
+  });
+
+  it("has no drafts when signed in or any prefill is present", () => {
+    expect(draftsAllowed({ prefill: [{}, {}] })).toBe(true);
+    expect(draftsAllowed({ prefill: [{ email: "guest@example.test" }, {}] })).toBe(false);
+    expect(draftsAllowed({ prefill: [{}, { first_name: "Avery" }] })).toBe(false);
+    expect(draftsAllowed({ signedIn: true, prefill: [{}, {}] })).toBe(false);
+  });
+
+  it("renders no draft notice in club mode or with prefill", () => {
+    const common = {
+      event: { name: "Synthetic Retreat", slug: "synthetic-retreat", startsAt: "2026-10-09T00:00:00.000Z", endsAt: "2026-10-11T00:00:00.000Z", timezone: "America/Chicago", location: null, capacity: null, billingMode: "ATTENDEE_PAY" as const },
+      form: { slug: "main", versionId: "version-1", versionNumber: 1, definition },
+      choiceUsage: {},
+      pricingDate: "2026-09-29",
+      lifecycle: { phase: "OPEN" as const, capacityDecision: "REGISTER" as const, remainingSpots: null, waitingRegistrations: 0 },
+    };
+    const club = renderToStaticMarkup(createElement(PublicRegistrationForm, {
+      ...common,
+      club: { initialAttendees: [{ clientId: "c1", responses: { first_name: "Blake" } }], lockedAttendeeFieldKeys: [], submitUrl: "/api/club/test" },
+    }));
+    expect(club).not.toContain(PUBLIC_DRAFT_RESTORED_NOTICE);
+    expect(club).not.toContain("public-registration-draft-notice");
+    const prefilled = renderToStaticMarkup(createElement(PublicRegistrationForm, {
+      ...common, initialResponses: { email: "guest@example.test" },
+    }));
+    expect(prefilled).not.toContain("public-registration-draft-notice");
+  });
+});
+
+describe("restore details (#574 review)", () => {
+  it("merges draft attendees over the initial roster", () => {
+    const initial = [{ clientId: "initial-attendee-1", responses: { first_name: "Seed", last_name: "Prefill" } }];
+    const merged = mergeDraftAttendees(initial, [
+      { clientId: "initial-attendee-1", responses: { first_name: "Blake" } },
+      { clientId: "extra-1", responses: { first_name: "Casey" } },
+    ]);
+    expect(merged).toEqual([
+      { clientId: "initial-attendee-1", responses: { first_name: "Blake", last_name: "Prefill" } },
+      { clientId: "extra-1", responses: { first_name: "Casey" } },
+    ]);
+    expect(mergeDraftAttendees(initial, [])).toBe(initial);
+  });
+
+  it("keeps the idempotency key so a retried submit reuses it", () => {
+    const storage = new FakeStorage();
+    const key = "9f8f0f3a-4c73-4d7e-89a4-f54d4fe0c388";
+    savePublicDraft(storage, identity, definition, { ...content, idempotencyKey: key }, now);
+    const result = loadPublicDraft(storage, identity, definition, now);
+    expect(result.status === "restored" && result.draft.idempotencyKey).toBe(key);
+    savePublicDraft(storage, identity, definition, { ...content, idempotencyKey: "not-a-uuid" }, now);
+    const bad = loadPublicDraft(storage, identity, definition, now);
+    expect(bad.status === "restored" && bad.draft.idempotencyKey).toBeNull();
+  });
+
+  it("only announces a version change when a valid, unexpired draft was dropped", () => {
+    const storage = new FakeStorage();
+    savePublicDraft(storage, { ...identity, versionId: "version-0" }, definition, content, now);
+    const later = new Date(now.getTime() + PUBLIC_DRAFT_TTL_MS + 1000);
+    expect(loadPublicDraft(storage, identity, definition, later).status).toBe("none");
+    expect(storage.length).toBe(0);
+    storage.setItem(publicDraftKey({ ...identity, versionId: "version-0" }), "{corrupt");
+    expect(loadPublicDraft(storage, identity, definition, now).status).toBe("none");
   });
 });

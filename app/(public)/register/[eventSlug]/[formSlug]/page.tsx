@@ -79,6 +79,7 @@ export default async function PublicRegistrationPage({
       lifecycle={experience.lifecycle}
       initialResponses={scopedPrefill("REGISTRATION")}
       initialAttendeeResponses={scopedPrefill("ATTENDEE")}
+      disableDrafts={Boolean(account)}
     />
   );
 }
