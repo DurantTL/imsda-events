@@ -227,6 +227,19 @@ export async function deleteEventLocation(eventId: string, locationId: string, a
           `${current.name} is used by ${used} registration${used === 1 ? "" : "s"}, so it can't be deleted. Deactivate it instead.`,
         );
       }
+      // Honors Weekend sessions and all-sessions classes at this site block the delete too (#589).
+      const [sessions, classes] = await Promise.all([
+        tx.honorSession.count({ where: { locationId } }),
+        tx.honorOffering.count({ where: { locationId } }),
+      ]);
+      if (sessions + classes > 0) {
+        throw new EventLocationError(
+          "LOCATION_IN_USE",
+          classes === 0
+            ? `${sessions} honors session${sessions === 1 ? " is" : "s are"} at this site. Move or remove ${sessions === 1 ? "it" : "them"} first.`
+            : `${sessions + classes} honors sessions and all-sessions classes are at this site. Move or remove them first.`,
+        );
+      }
       await tx.eventLocation.delete({ where: { id: locationId } });
       await tx.auditLog.create({ data: {
         eventId, actorUserId, action: "EVENT_LOCATION_DELETED", entityType: "EventLocation", entityId: locationId,
@@ -235,7 +248,7 @@ export async function deleteEventLocation(eventId: string, locationId: string, a
     }, { timeout: locationTransactionTimeoutMs });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003") {
-      throw new EventLocationError("LOCATION_IN_USE", "A registration uses this location, so it can't be deleted. Deactivate it instead.");
+      throw new EventLocationError("LOCATION_IN_USE", "Registrations or honors sessions use this location, so it can't be deleted. Deactivate it instead.");
     }
     throw error;
   }

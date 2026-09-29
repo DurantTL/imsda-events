@@ -1,4 +1,5 @@
 import { checkLocationSeats } from "@/modules/event-locations/admission";
+import { crossSitePickCount } from "@/modules/honors/locations";
 import { EventLocationError, locationTransactionTimeoutMs } from "@/modules/event-locations/errors";
 import "server-only";
 
@@ -1259,6 +1260,10 @@ async function describeMove(client: Client, move: StoredMove, options: { lockLoc
   const locationFull = move.status === "PENDING" && destination
     ? await locationHasNoRoom(client, move.eventId, move.fromRegistration, destination, options.lockLocation === true)
     : false;
+  // The move carries the person's class picks to the new club's registration; picks at another site would be stranded (#589).
+  const classPicksAtOtherSite = move.status === "PENDING" && destination && move.attendee && move.fromRegistrationId
+    ? (await crossSitePickCount(client, move.attendee.id, move.fromRegistrationId, destination.locationId)) > 0
+    : false;
   const blocker = move.status === "PENDING"
     ? registrationMoveBlocker({
       attendeeOnSource: Boolean(move.attendee && move.attendee.registrationId === move.fromRegistrationId),
@@ -1269,6 +1274,7 @@ async function describeMove(client: Client, move: StoredMove, options: { lockLoc
         : null,
       classLimitExceeded,
       locationFull,
+      classPicksAtOtherSite,
       money: move.fromRegistration && destination
         ? {
           fromTotalCents: cents(move.fromRegistration.totalAmount),
