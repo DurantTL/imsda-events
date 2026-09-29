@@ -21,6 +21,7 @@ vi.mock("@/modules/club-rosters/repository", async () => {
 });
 vi.mock("@/modules/background-checks/refresh-after-write", () => ({ refreshBackgroundCheckMatchesSafely: mocks.refreshBackgroundCheckMatchesSafely }));
 
+import { Prisma } from "@prisma/client";
 import { DELETE, PATCH } from "@/app/api/attendee/clubs/[organizationId]/roster/[memberId]/route";
 import { RosterOperationError } from "@/modules/club-rosters/repository";
 
@@ -101,6 +102,16 @@ describe("malformed bodies (#566)", () => {
     expect(mocks.removeRosterMember).not.toHaveBeenCalled();
   });
 
+  it("answers a malformed non-empty body with 400 INVALID_JSON_BODY", async () => {
+    const response = await DELETE(new Request("https://events.imsda.test/api/attendee/clubs/club-1/roster/member-1", {
+      method: "DELETE",
+      headers: { origin: "https://events.imsda.test", "content-type": "application/json" },
+      body: "{",
+    }), ctx);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "INVALID_JSON_BODY" });
+  });
+
   it("answers an empty PATCH body with 400 INVALID_JSON_BODY", async () => {
     const response = await PATCH(empty("PATCH"), ctx);
     expect(response.status).toBe(400);
@@ -108,7 +119,7 @@ describe("malformed bodies (#566)", () => {
   });
 
   it("asks to retry when the club's order lock wait gives up", async () => {
-    mocks.removeRosterMember.mockRejectedValueOnce(Object.assign(new Error("lock"), { code: "55P03" }));
+    mocks.removeRosterMember.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError("Raw query failed. Code: `55P03`", { code: "P2010", clientVersion: "test", meta: { code: "55P03" } }));
     const response = await DELETE(request("DELETE", { confirm: true }), ctx);
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({ error: "ROSTER_BUSY" });

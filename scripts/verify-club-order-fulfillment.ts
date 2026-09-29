@@ -592,6 +592,34 @@ async function main() {
   assert((await prisma.clubOrderNeed.findFirstOrThrow({ where: { personId: olga } })).status === "ORDERED", "her ordered need stays as it was");
   const olgaRow = await prisma.clubRosterMember.findUniqueOrThrow({ where: { id: olgaMember.id } });
   assert(olgaRow.status === "REMOVED" && olgaRow.personId === null, "the roster membership still ends");
+  // Erasure (ADR 0005 §6): an ordered need keeps only the name; a class completion doesn't keep the Person.
+  const ellaId = await addPerson("ella", "Ella", "Erased");
+  await prisma.person.update({ where: { id: ellaId }, data: { normalizedEmail: "ella.erased@example.test", phone: "555-0101" } });
+  const ellaMember = await addMember(clubs.link, ellaId);
+  await prisma.clubOrderNeed.create({
+    data: { organizationId: clubs.link, sourceType: "HONOR", sourceId: `${ellaId}:${honors.cooking}`, personId: ellaId, itemId: items.cooking, status: "RECEIVED" },
+  });
+  await prisma.memberClassCompletion.create({ data: { organizationId: clubs.link, personId: ellaId, classLevel: "FRIEND", completedOn: "2026-05-01" } });
+  const ellaResult = await removeRosterMember(clubs.link, ellaMember.id, actor);
+  const ella = await prisma.person.findUniqueOrThrow({ where: { id: ellaId } });
+  assert(ellaResult.nameKept && ella.firstName === "Ella" && ella.normalizedEmail === null && ella.phone === null, "a Person kept for a received item keeps only the name");
+  assert(await prisma.memberClassCompletion.count({ where: { personId: ellaId } }) === 0, "this club's class completion is deleted with the removal");
+
+  const cleoId = await addPerson("cleo", "Cleo", "Completion");
+  const cleoMember = await addMember(clubs.link, cleoId);
+  await prisma.memberClassCompletion.create({ data: { organizationId: clubs.link, personId: cleoId, classLevel: "FRIEND", completedOn: "2026-05-01" } });
+  await removeRosterMember(clubs.link, cleoMember.id, actor);
+  assert(await prisma.person.count({ where: { id: cleoId } }) === 0, "a class completion no longer keeps the Person");
+  // Sync and removal at once: no foreign-key failure, and no need left for a removed member.
+  const raceIds: string[] = [];
+  for (const key of ["r1", "r2", "r3"]) {
+    const id = await addPerson(`race_${key}`, "Race", key);
+    const member = await addMember(clubs.link, id);
+    await complete(id, honors.late, clubs.link);
+    raceIds.push(id);
+    await Promise.all([syncHonorOrderNeeds(clubs.link), removeRosterMember(clubs.link, member.id, actor)]);
+    assert(await prisma.clubOrderNeed.count({ where: { personId: id } }) === 0, `race ${key}: no need survives the removal`);
+  }
   console.log("ok  removing a member cancels an open need (audited); an ordered need keeps the Person, and removal never fails on it");
 }
 

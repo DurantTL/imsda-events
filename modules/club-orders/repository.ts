@@ -141,8 +141,20 @@ export type NeedCandidate = { sourceId: string; personId: string; itemId: string
  */
 export async function syncOrderNeeds(organizationId: string, sourceType: "HONOR", candidates: readonly NeedCandidate[]) {
   if (candidates.length === 0) return { count: 0 };
-  return getPrisma().clubOrderNeed.createMany({
-    data: candidates.map((candidate) => ({
+  // Under the club's lock, and only for people still ACTIVE on this club's
+  // roster: a removal (#566) holds the same lock, so a need can't be created
+  // for a Person the removal is deleting (a foreign-key failure).
+  return getPrisma().$transaction(async (tx) => {
+    await lockClubOrders(tx, organizationId);
+    const active = await tx.clubRosterMember.findMany({
+      where: { organizationId, status: "ACTIVE", personId: { in: [...new Set(candidates.map((candidate) => candidate.personId))] } },
+      select: { personId: true },
+    });
+    const stillActive = new Set(active.map((member) => member.personId));
+    const current = candidates.filter((candidate) => stillActive.has(candidate.personId));
+    if (current.length === 0) return { count: 0 };
+    return tx.clubOrderNeed.createMany({
+    data: current.map((candidate) => ({
       organizationId,
       sourceType,
       sourceId: candidate.sourceId,
@@ -152,6 +164,7 @@ export async function syncOrderNeeds(organizationId: string, sourceType: "HONOR"
       sourceDate: candidate.sourceDate ?? "",
     })),
     skipDuplicates: true,
+    });
   });
 }
 

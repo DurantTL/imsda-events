@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { ZodError } from "zod";
 import { logError } from "@/lib/logger";
 import { isLockTimeoutError } from "@/lib/prisma-errors";
@@ -74,7 +75,8 @@ export function rosterApiError(error: unknown, action: string) {
     );
   }
   // A club-order lock wait that gave up (nothing was written): ask to retry.
-  if (isLockTimeoutError(error)) {
+  // P2028: the interactive transaction ran past its limit while waiting.
+  if (isLockTimeoutError(error) || (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2028")) {
     return Response.json(
       { error: "ROSTER_BUSY", message: "The club's orders are busy right now. Try again in a moment." },
       { status: 503 },

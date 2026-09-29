@@ -33,7 +33,7 @@ const youth = {
 
 function fakeDatabase() {
   let sequence = 0;
-  const db = { people: [] as Row[], members: [] as Row[], otherReferences: new Set<string>(), honorEntries: [] as Row[], needs: [] as Row[], classCompletions: new Set<string>(), transferBlanks: [] as unknown[] };
+  const db = { people: [] as Row[], members: [] as Row[], otherReferences: new Set<string>(), honorEntries: [] as Row[], needs: [] as Row[], classCompletions: [] as Row[], calls: [] as string[], transferBlanks: [] as unknown[] };
   const matches = (row: Row, where: Record<string, unknown> = {}) => Object.entries(where).every(([key, value]) => {
     if (value === undefined) return true;
     if (value && typeof value === "object" && "not" in value) return row[key] !== (value as { not: unknown }).not;
@@ -45,7 +45,8 @@ function fakeDatabase() {
     person: member.personId ? db.people.find((person) => person.id === member.personId) ?? null : null,
   });
   const client = {
-    $executeRaw: async () => 0,
+    $executeRaw: async () => { db.calls.push("lock"); return 0; },
+    $queryRaw: async () => { db.calls.push("person-row-lock"); return []; },
     $executeRawUnsafe: async () => 0,
     person: {
       create: async ({ data }: { data: Row }) => { const row = { ...data, id: `person-${++sequence}` }; db.people.push(row); return row; },
@@ -59,8 +60,7 @@ function fakeDatabase() {
           _count: {
             householdMembers: 0, heldRegistrations: 0, registrationEvents: referenced, externalIdentities: 0,
             notes: 0, attendeeAccountLinks: 0, userLinks: 0,
-            clubOrderNeeds: db.needs.filter((need) => need.personId === person.id).length,
-            memberClassCompletions: db.classCompletions.has(person.id) ? 1 : 0,
+            memberClassCompletions: db.classCompletions.filter((row) => row.personId === person.id).length,
             clubRosterMemberships: db.members.filter((member) => member.personId === person.id).length,
           },
         };
@@ -77,7 +77,16 @@ function fakeDatabase() {
     memberTransferRegistrationMove: {
       updateMany: async (args: unknown) => { db.transferBlanks.push(args); return { count: 0 }; },
     },
+    memberClassCompletion: {
+      deleteMany: async ({ where }: { where: Row }) => {
+        db.calls.push("erase-completions");
+        const before = db.classCompletions.length;
+        db.classCompletions = db.classCompletions.filter((row) => !(row.organizationId === where.organizationId && row.personId === where.personId));
+        return { count: before - db.classCompletions.length };
+      },
+    },
     clubOrderNeed: {
+      count: async ({ where }: { where: Row }) => db.needs.filter((need) => matches(need, where)).length,
       deleteMany: async ({ where }: { where: Row }) => {
         const before = db.needs.length;
         db.needs = db.needs.filter((need) => !(need.organizationId === where.organizationId && need.personId === where.personId && need.status === where.status));
@@ -93,8 +102,9 @@ function fakeDatabase() {
     },
     clubRosterMember: {
       create: async ({ data }: { data: Row }) => { const row = { status: "ACTIVE", ...data, id: `member-${++sequence}` }; db.members.push(row); return row; },
-      update: async ({ where, data }: { where: Row; data: Row }) => Object.assign(db.members.find((member) => member.id === where.id)!, data),
+      update: async ({ where, data }: { where: Row; data: Row }) => { db.calls.push("erase-row"); return Object.assign(db.members.find((member) => member.id === where.id)!, data); },
       findFirst: async ({ where }: { where: Record<string, unknown> }) => {
+        db.calls.push("find-member");
         const member = db.members.find((row) => matches(row, where));
         return member ? withPerson(member) : null;
       },
@@ -249,12 +259,14 @@ describe("club roster storage", () => {
       expect(member).toMatchObject({ status: "REMOVED", sealedBirthDate: null, personId: null, gender: null, role: "", removedAt: now });
     }
     expect(db.people.map((person) => person.firstName)).toEqual(["Other"]);
-    // A deleted person's transfer records (#489) keep no name; the kept person's are untouched.
-    expect(db.transferBlanks).toEqual([
+    // Transfer records (#489) keep no free text for a deleted person, and (#566) none for a kept, registered one either.
+    const blanked = [
       { where: { id: { in: ["transfer-1"] } }, data: { requestedFirstName: "", requestedLastName: "", reason: "", staffNote: "" } },
       { where: { transferId: { in: ["transfer-1"] } }, data: { note: "" } },
       { where: { transferId: { in: ["transfer-1"] } }, data: { note: "" } },
-    ]);
+    ];
+    expect(db.transferBlanks).toEqual([...blanked, ...blanked]);
+    expect(db.people[0]).toMatchObject({ firstName: "Other", normalizedEmail: null, phone: null });
     expect(await listRoster("club-1", "2026-27", now)).toEqual([]);
     await expect(updateRosterMember("club-1", lone, { role: "Back" }, actor, now)).rejects.toMatchObject({ code: "MEMBER_REMOVED" });
   });
@@ -332,13 +344,61 @@ describe("club roster storage", () => {
     expect(removal.metadata).toMatchObject({ personDeleted: false, ordersCancelled: 1 });
   });
 
-  it("keeps the person who has a class completion (#566)", async () => {
+  it("deletes this club's class completion with the person (#566)", async () => {
     const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
     const personId = db.members[0].personId as string;
-    db.classCompletions.add(personId);
+    db.classCompletions.push({ id: "c1", organizationId: "club-1", personId });
+
+    await removeRosterMember("club-1", id, actor, now);
+
+    expect(db.classCompletions).toEqual([]);
+    expect(db.people.some((person) => person.id === personId)).toBe(false);
+  });
+
+  it("keeps the person when another club has a class completion for them (#566)", async () => {
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const personId = db.members[0].personId as string;
+    db.classCompletions.push({ id: "c2", organizationId: "club-2", personId });
 
     await removeRosterMember("club-1", id, actor, now);
 
     expect(db.people.some((person) => person.id === personId)).toBe(true);
+    expect(db.classCompletions).toHaveLength(1);
+  });
+
+  it("keeps only the name when an ordered need remains: email and phone erased (#566)", async () => {
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const personId = db.members[0].personId as string;
+    Object.assign(db.people.find((person) => person.id === personId)!, { normalizedEmail: "test.youth@example.test", phone: "555-0100" });
+    db.needs.push({ id: "need-ordered", organizationId: "club-1", personId, status: "ORDERED" });
+
+    const removed = await removeRosterMember("club-1", id, actor, now);
+
+    expect(removed).toEqual({ personId, nameKept: true });
+    expect(db.people.find((person) => person.id === personId)).toMatchObject({ firstName: "Test", lastName: "Youth", normalizedEmail: null, phone: null });
+    expect(db.transferBlanks.length).toBeGreaterThan(0);
+    expect(db.members[0]).toMatchObject({ status: "REMOVED", personId: null, sealedBirthDate: null });
+  });
+
+  it("leaves another club's open need alone and keeps the person whole (#566)", async () => {
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const personId = db.members[0].personId as string;
+    Object.assign(db.people.find((person) => person.id === personId)!, { normalizedEmail: "test.youth@example.test" });
+    db.needs.push({ id: "need-mine", organizationId: "club-1", personId, status: "NEEDED" }, { id: "need-other", organizationId: "club-2", personId, status: "NEEDED" });
+
+    const removed = await removeRosterMember("club-1", id, actor, now);
+
+    expect(db.needs.map((need) => need.id)).toEqual(["need-other"]);
+    expect(removed.nameKept).toBe(false);
+    expect(db.people.find((person) => person.id === personId)).toMatchObject({ normalizedEmail: "test.youth@example.test" });
+  });
+
+  it("takes the club lock before reading the member or erasing anything (#566)", async () => {
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    db.calls.length = 0;
+
+    await removeRosterMember("club-1", id, actor, now);
+
+    expect(db.calls.slice(0, 4)).toEqual(["lock", "find-member", "person-row-lock", "erase-row"]);
   });
 });

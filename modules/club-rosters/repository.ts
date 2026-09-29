@@ -308,33 +308,64 @@ export async function eraseRosterRow(tx: Prisma.TransactionClient, memberId: str
 }
 
 /**
- * The club takes someone off its roster: birth date, role, gender, and the
- * person link are erased. The Person record itself is deleted when nothing
- * else (a registration, another roster, an account) still refers to it
- * (ADR 0005 Addendum A §6).
- *
- * Honor history (#486) is not a reason to keep the Person: when the Person is
- * deleted, their `MemberHonorEntry` rows are deleted first in this same
- * transaction. This is the one, deliberate exception to honor entries being
- * append-only — removal erases the person's details, and honors are among
- * them. The foreign key stays `onDelete: Restrict`, so no other path can
- * drop honor history silently. When the Person is kept (still on another
- * roster, registered, linked to an account), their honor history is kept
- * with them.
+ * A transfer record (#489) never keeps a person alive, and keeps no free text
+ * about them once they're erased: the typed names, the reason, staff's note,
+ * and every note on its history and its registration moves are blanked. The
+ * person links fall to null when the Person is deleted (onDelete: SetNull).
  */
-export async function removeRosterMember(organizationId: string, memberId: string, actor: Actor, now = new Date()): Promise<{ personId: string | null }> {
+async function blankTransferText(tx: Prisma.TransactionClient, personId: string) {
+  const transfers = await tx.memberTransfer.findMany({
+    where: { OR: [{ personId }, { pendingPersonId: personId }] },
+    select: { id: true },
+  });
+  if (transfers.length === 0) return;
+  const transferIds = transfers.map((transfer) => transfer.id);
+  await tx.memberTransfer.updateMany({
+    where: { id: { in: transferIds } },
+    data: { requestedFirstName: "", requestedLastName: "", reason: "", staffNote: "" },
+  });
+  await tx.memberTransferEvent.updateMany({ where: { transferId: { in: transferIds } }, data: { note: "" } });
+  await tx.memberTransferRegistrationMove.updateMany({ where: { transferId: { in: transferIds } }, data: { note: "" } });
+}
+
+/**
+ * The club takes someone off its roster: birth date, role, gender, and the
+ * person link are erased (ADR 0005 Addendum A §6), and the Person record is
+ * deleted when nothing else still refers to it.
+ *
+ * Under the club's order lock (#487, #566) this also:
+ *   - cancels the club's not-yet-ordered (`NEEDED`) order needs, audited;
+ *   - deletes the club's class completions and honor entries: that history
+ *     belongs to the membership being erased, so it never keeps a Person.
+ *     (The honor-entry foreign key stays `onDelete: Restrict`, so no other
+ *     path drops honor history silently.)
+ *
+ * The Person is kept when something outside this membership still needs it: a
+ * registration, an account link, another roster or club's records, or an item
+ * already ordered, received or awarded. Then only what those uses need
+ * stays. When the only reasons are ordered items and registrations, the
+ * Person's email, phone and transfer free text are erased too and just the
+ * name remains (`nameKept`), so pick lists and awards can still hand out what
+ * was ordered. A Person kept for any other reason keeps their record whole.
+ */
+export async function removeRosterMember(organizationId: string, memberId: string, actor: Actor, now = new Date()): Promise<{ personId: string | null; nameKept: boolean }> {
   return getPrisma().$transaction(async (tx) => {
-    // The club's order lock (#487) serializes this with placing, receiving or
-    // awarding an order, so a need can't move to ORDERED between the cancel
-    // below and the keep-the-Person check. Only the lock wait is bounded.
+    // The club's order lock serializes this with placing, receiving or
+    // awarding an order and with the order-need sync, so a need can't appear
+    // or move to ORDERED between the cancel below and the keep-the-Person
+    // check. Only the lock wait is bounded.
     await tx.$executeRawUnsafe("SET LOCAL lock_timeout = '5s'");
     await lockClubOrders(tx, organizationId);
     await tx.$executeRawUnsafe("SET LOCAL lock_timeout = 0");
     const member = await findMember(tx, organizationId, memberId);
+    if (member.personId) {
+      await tx.$queryRaw`SELECT "id" FROM "Person" WHERE "id" = ${member.personId} FOR UPDATE`;
+    }
     await eraseRosterRow(tx, memberId, now);
     // A need this club has not ordered yet has no reason to outlive the
     // membership (#566). ORDERED, RECEIVED and AWARDED needs are history and stay.
     let ordersCancelled = 0;
+    let classCompletionsErased = 0;
     if (member.personId) {
       ordersCancelled = (await tx.clubOrderNeed.deleteMany({
         where: { organizationId, personId: member.personId, status: "NEEDED" },
@@ -344,8 +375,12 @@ export async function removeRosterMember(organizationId: string, memberId: strin
           `Cancelled ${ordersCancelled} not-yet-ordered order need${ordersCancelled === 1 ? "" : "s"} for a person removed from the roster.`,
           { needCount: ordersCancelled });
       }
+      classCompletionsErased = (await tx.memberClassCompletion.deleteMany({
+        where: { organizationId, personId: member.personId },
+      })).count;
     }
     let personDeleted = false;
+    let nameKept = false;
     let honorEntriesErased = 0;
     if (member.personId) {
       const person = await tx.person.findUnique({
@@ -361,48 +396,46 @@ export async function removeRosterMember(organizationId: string, memberId: strin
               attendeeAccountLinks: true,
               userLinks: true,
               clubRosterMemberships: true,
-              // These foreign keys are `onDelete: Restrict`: deleting the
-              // Person under them fails (#566). Ordered/received needs and
-              // class completions are history the club keeps.
-              clubOrderNeeds: true,
+              // Other clubs' class completions keep the Person (#566): the
+              // foreign key is `onDelete: Restrict`.
               memberClassCompletions: true,
             },
           },
         },
       });
-      if (person && Object.values(person._count).every((count) => count === 0)) {
-        // A transfer record (#489) never keeps a person alive, and keeps no
-        // free text about them once they're erased: the typed names, the
-        // reason, staff's note, and every note on its history and its
-        // registration moves are blanked here, and the person links fall to
-        // null with the delete (onDelete: SetNull).
-        const transfers = await tx.memberTransfer.findMany({
-          where: { OR: [{ personId: member.personId }, { pendingPersonId: member.personId }] },
-          select: { id: true },
-        });
-        if (transfers.length > 0) {
-          const transferIds = transfers.map((transfer) => transfer.id);
-          await tx.memberTransfer.updateMany({
-            where: { id: { in: transferIds } },
-            data: { requestedFirstName: "", requestedLastName: "", reason: "", staffNote: "" },
-          });
-          await tx.memberTransferEvent.updateMany({ where: { transferId: { in: transferIds } }, data: { note: "" } });
-          await tx.memberTransferRegistrationMove.updateMany({ where: { transferId: { in: transferIds } }, data: { note: "" } });
+      // Items already ordered (any club) and another club's open needs both
+      // block deleting the Person (`onDelete: Restrict`).
+      const orderedNeeds = await tx.clubOrderNeed.count({ where: { personId: member.personId, status: { not: "NEEDED" } } });
+      const openElsewhere = await tx.clubOrderNeed.count({ where: { personId: member.personId, status: "NEEDED" } });
+      if (person) {
+        const { heldRegistrations, registrationEvents, ...others } = person._count;
+        const otherUses = Object.values(others).reduce((sum, count) => sum + count, 0) + openElsewhere;
+        if (otherUses === 0 && heldRegistrations === 0 && registrationEvents === 0 && orderedNeeds === 0) {
+          await blankTransferText(tx, member.personId);
+          const erased = await tx.memberHonorEntry.deleteMany({ where: { personId: member.personId } });
+          honorEntriesErased = erased.count;
+          await tx.person.delete({ where: { id: member.personId } });
+          personDeleted = true;
+        } else if (otherUses === 0) {
+          // Only ordered items and registrations remain: erase every personal
+          // field but the name (§6), and the free text on transfer records.
+          await blankTransferText(tx, member.personId);
+          await tx.person.update({ where: { id: member.personId }, data: { normalizedEmail: null, phone: null } });
+          nameKept = true;
         }
-        const erased = await tx.memberHonorEntry.deleteMany({ where: { personId: member.personId } });
-        honorEntriesErased = erased.count;
-        await tx.person.delete({ where: { id: member.personId } });
-        personDeleted = true;
       }
     }
     await audit(tx, actor, "CLUB_ROSTER_MEMBER_REMOVED", organizationId, memberId, "Removed a person from a club roster and erased their details.", {
       personDeleted,
       honorEntriesErased,
       ordersCancelled,
+      classCompletionsErased,
+      nameKept,
     });
     // The person kept (still registered, on another roster…) is refreshed by the caller (#527).
-    return { personId: personDeleted ? null : member.personId };
-  });
+    return { personId: personDeleted ? null : member.personId, nameKept };
+    // The lock wait can take up to 5 s, past Prisma's default 5 s transaction limit.
+  }, { timeout: 10_000 });
 }
 
 /** Full birth dates for the roster, for an authorized director. Audited without the dates. */

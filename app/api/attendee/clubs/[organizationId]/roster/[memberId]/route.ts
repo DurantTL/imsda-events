@@ -42,7 +42,7 @@ async function deleteHandler(request: Request, context: RouteContext) {
     const removed = await removeRosterMember(organizationId, memberId, actorAttribution(access.actor));
     // #527: leaving a roster can change who a background-check entry matches.
     await refreshBackgroundCheckMatchesSafely([removed?.personId]);
-    return Response.json(await roster(organizationId));
+    return Response.json({ ...(await roster(organizationId)), nameKept: removed?.nameKept ?? false });
   } catch (error) {
     return rosterApiError(error, "Removing a person from the roster");
   }
