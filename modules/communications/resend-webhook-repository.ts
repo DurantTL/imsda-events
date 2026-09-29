@@ -3,6 +3,7 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 import type { ResendWebhookEvent } from "@/integrations/email/resend-webhook";
 import { getPrisma } from "@/lib/prisma";
+import { retireClubFormLinkForMessage } from "@/modules/club-forms/link-email";
 import {
   mapResendDeliveryEvent,
   providerTransitionUpdate,
@@ -73,6 +74,11 @@ export async function recordResendWebhookEvent(
           },
           data: providerTransitionUpdate(transition),
         });
+        // A bounce, complaint or suppression means a club form link never reached its person (#610):
+        // withdraw it. A message that carries no link matches nothing.
+        if (["BOUNCED", "FAILED", "COMPLAINED", "SUPPRESSED"].includes(transition.status)) {
+          await retireClubFormLinkForMessage(tx, message.id, occurredAt);
+        }
       }
       return {
         duplicate: false,

@@ -5,6 +5,7 @@ import { Activity } from "lucide-react";
 import { SessionManager } from "@/components/session-manager";
 import { buildMoreDirectoryCards, moreDirectoryGroupLabels, moreDirectoryGroupOrder } from "@/components/staff-navigation";
 import { listUserSessions, SESSION_COOKIE_NAME, SESSION_IDLE_TIMEOUT_SECONDS } from "@/modules/access/session-store";
+import { resolveStaffViewer } from "@/modules/club-forms/access";
 import { listRecentAuditActivity } from "@/modules/audit/audit-service";
 import { resolveEventContext } from "@/modules/events/selection";
 import { resolveClubOversight } from "@/modules/club-rosters/event-oversight";
@@ -29,6 +30,7 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
     clubOversight,
     clubEvent,
     isSystemAdmin,
+    clubFormsAccess: Boolean(await resolveStaffViewer()),
     eventQuery: `?event=${event.id}`,
   });
   const visibleGroups = moreDirectoryGroupOrder

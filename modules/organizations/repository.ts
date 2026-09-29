@@ -407,6 +407,8 @@ export async function getOrganizationDeletionCheck(
           monthlyReports: true,
           externalIdentities: true,
           sponsoredPromoCodes: true,
+          clubFormSubmissions: true,
+          clubFormLinks: true,
         },
       },
     },
@@ -427,6 +429,10 @@ export async function getOrganizationDeletionCheck(
   }
   if (counts.sponsoredPromoCodes > 0) {
     blockers.push(`This church sponsors ${counts.sponsoredPromoCodes} promo code${counts.sponsoredPromoCodes === 1 ? "" : "s"}, and what it owes for them is kept. Deactivate the church instead, or unlink it from unused codes first.`);
+  }
+  const clubForms = (counts.clubFormSubmissions ?? 0) + (counts.clubFormLinks ?? 0);
+  if (clubForms > 0) {
+    blockers.push(`This club has ${counts.clubFormSubmissions ?? 0} filled club form${(counts.clubFormSubmissions ?? 0) === 1 ? "" : "s"} and ${counts.clubFormLinks ?? 0} private link${(counts.clubFormLinks ?? 0) === 1 ? "" : "s"}. Those are the club's files and may hold health and contact details, so they are kept. Deactivate the club instead.`);
   }
   if (counts.honorEnrollments > 0) {
     blockers.push(`This club has ${counts.honorEnrollments} honor enrollment${counts.honorEnrollments === 1 ? "" : "s"}. Deactivate the club instead.`);

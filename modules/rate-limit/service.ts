@@ -724,3 +724,95 @@ export async function checkClubTransferRequestRateLimit(
     },
   ], configuration);
 }
+
+/**
+ * Per-operation budgets for a club form's private link (#610), per 15
+ * minutes. The token is a 256-bit secret, so these exist to stop scripted
+ * guessing and hammering, not to slow a parent filling in a form: `read` is
+ * opening the page, `submit` is sending the answers.
+ */
+const clubFormLinkBudgets = {
+  read: { client: 60, token: 60, clientToken: 30 },
+  submit: { client: 20, token: 10, clientToken: 6 },
+} as const;
+
+export async function checkClubFormLinkRateLimit(
+  request: Request,
+  token: string,
+  operation: keyof typeof clubFormLinkBudgets,
+) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  const tokenHash = hashRateLimitIdentifier("club-form-link-token", token, configuration);
+  const budget = clubFormLinkBudgets[operation];
+  return evaluate([
+    {
+      policy: `club-form.link.${operation}.client`,
+      limit: budget.client,
+      windowSeconds: fifteenMinutes,
+      identifierHashes: [client],
+    },
+    {
+      policy: `club-form.link.${operation}.token`,
+      limit: budget.token,
+      windowSeconds: fifteenMinutes,
+      identifierHashes: [tokenHash],
+    },
+    {
+      policy: `club-form.link.${operation}.client-token`,
+      limit: budget.clientToken,
+      windowSeconds: fifteenMinutes,
+      identifierHashes: [client, tokenHash],
+    },
+  ], configuration);
+}
+
+/**
+ * Sending a club form link (#610) emails an address a director typed, so an
+ * unlimited one is a way to mail a stranger repeatedly. Held per acting
+ * director, per club, per client, and, tightest, per recipient address.
+ */
+export async function checkClubFormLinkCreateRateLimit(
+  request: Request,
+  actorKey: string,
+  organizationId: string,
+  recipientEmail: string,
+) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  const actor = hashRateLimitIdentifier("club-form-link-actor", actorKey, configuration);
+  const club = hashRateLimitIdentifier("club-form-link-club", organizationId, configuration);
+  const recipient = hashRateLimitIdentifier("club-form-link-recipient", recipientEmail.trim().toLowerCase(), configuration);
+  return evaluate([
+    {
+      policy: "club-form.link-create.client",
+      limit: 30,
+      windowSeconds: oneHour,
+      identifierHashes: [client],
+    },
+    {
+      policy: "club-form.link-create.actor",
+      limit: 20,
+      windowSeconds: oneHour,
+      identifierHashes: [actor],
+    },
+    {
+      policy: "club-form.link-create.club",
+      limit: 60,
+      windowSeconds: oneDay,
+      identifierHashes: [club],
+    },
+    {
+      policy: "club-form.link-create.recipient",
+      limit: 3,
+      windowSeconds: oneHour,
+      identifierHashes: [recipient],
+    },
+    {
+      policy: "club-form.link-create.club-recipient",
+      limit: 2,
+      windowSeconds: oneHour,
+      identifierHashes: [club, recipient],
+    },
+  ], configuration);
+}
