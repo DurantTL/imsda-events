@@ -118,7 +118,8 @@ export function MfaManager({
           {status.confirmedAt ? ` since ${new Date(status.confirmedAt).toLocaleDateString()}` : ""}.
           {" "}{status.unusedRecoveryCodes} recovery code{status.unusedRecoveryCodes === 1 ? "" : "s"} remain unused.
         </p>
-      ) : (
+      ) : !offer && (
+        // Only before setup starts: once the key is on screen its own help text takes over (#568).
         <p className="quiet-copy">
           {status.required
             ? "This account administers events, so a second factor is required. You will be asked to set one up the next time you sign in."

@@ -18,6 +18,8 @@ import {
 import { AttendeeCommunityBoard } from "@/components/attendee-community-board";
 import { BrandMark } from "@/components/brand-mark";
 import { getCurrentSession } from "@/modules/access/current-session";
+import { requireAttendeeSecondStep } from "@/modules/attendee-accounts/portal-second-step";
+import { attendeeSignInRedirectPath } from "@/modules/attendee-accounts/return-redirect";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import {
   getAttendeeRetreatHub,
@@ -95,7 +97,9 @@ export default async function AttendeeEventHubPage({
     staffPreviewEventId = preview.eventId;
     staffCommunity = await getStaffCommunity(preview.eventId);
   } else {
-    if (!attendeeSession.account) redirect("/account/sign-in");
+    if (!attendeeSession.account) redirect(await attendeeSignInRedirectPath());
+    // Same second-step gate as the rest of the portal (#568).
+    await requireAttendeeSecondStep();
     const attendeeHub = await getAttendeeRetreatHub(
       attendeeSession.account.verifiedEmail,
       eventSlug,

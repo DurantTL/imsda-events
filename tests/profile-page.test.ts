@@ -30,6 +30,10 @@ vi.mock("@/modules/attendee-accounts/portal-second-step", () => ({
   requireAttendeeSecondStep: mocks.requireAttendeeSecondStep,
 }));
 vi.mock("@/modules/organizations/director-access", () => ({ listDirectedClubs: mocks.listDirectedClubs }));
+const attendeeMfaStatus = vi.hoisted(() => vi.fn());
+const attendeePasskeys = vi.hoisted(() => vi.fn());
+vi.mock("@/modules/attendee-accounts/passkeys", () => ({ getPasskeySettings: attendeePasskeys }));
+vi.mock("@/modules/attendee-accounts/mfa-service", () => ({ getAttendeeMfaStatus: attendeeMfaStatus }));
 vi.mock("@/modules/access/mfa-service", () => ({ getMfaStatus: mocks.getMfaStatus }));
 vi.mock("@/modules/access/passkeys", () => ({ getPasskeySettings: mocks.getPasskeySettings }));
 vi.mock("@/components/mfa-manager", () => ({
@@ -68,8 +72,8 @@ function signedIn(input: { staff?: typeof staff | typeof admin | null; attendee?
     : { account: null, via: null, sessionId: null });
 }
 
-async function render() {
-  return renderToStaticMarkup(await ProfilePage());
+async function render(query: { twoStep?: string } = {}) {
+  return renderToStaticMarkup(await ProfilePage({ searchParams: Promise.resolve(query) }));
 }
 
 beforeEach(() => {
@@ -106,6 +110,21 @@ describe("/profile", () => {
     const markup = await render();
     expect(markup).toContain("System management");
     expect(markup).toContain('href="/admin"');
+  });
+
+  it("confirms two-step verification is on only when an authenticator is really active (#568)", async () => {
+    signedIn({ attendee: true });
+    attendeePasskeys.mockResolvedValue({ available: true, passkeys: [] });
+    attendeeMfaStatus.mockResolvedValue({ status: "ACTIVE" });
+    expect(await render({ twoStep: "on" })).toContain("Two-step verification is on.");
+    expect(await render()).not.toContain("Two-step verification is on.");
+    attendeeMfaStatus.mockResolvedValue({ status: "NONE" });
+    expect(await render({ twoStep: "on" })).not.toContain("Two-step verification is on.");
+    attendeeMfaStatus.mockResolvedValue({ status: "PENDING" });
+    expect(await render({ twoStep: "on" })).not.toContain("Two-step verification is on.");
+    // A registered passkey counts too.
+    attendeePasskeys.mockResolvedValue({ available: true, passkeys: [{ id: "pk1" }] });
+    expect(await render({ twoStep: "on" })).toContain("Two-step verification is on.");
   });
 
   it("renders only the registration account for an attendee", async () => {

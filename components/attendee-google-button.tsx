@@ -9,9 +9,12 @@
  * own glyph, and pulling it from a CDN would tell Google that this page was
  * loaded before anyone chose to sign in with them.
  */
-export function AttendeeGoogleButton({ label }: { label: string }) {
+export function AttendeeGoogleButton({ label, next }: { label: string; next?: string }) {
+  const href = next
+    ? `/api/attendee/oauth/google/start?next=${encodeURIComponent(next)}`
+    : "/api/attendee/oauth/google/start";
   return (
-    <a className="google-button" href="/api/attendee/oauth/google/start">
+    <a className="google-button" href={href}>
       <svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">
         <path
           fill="#4285F4"

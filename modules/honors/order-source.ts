@@ -90,7 +90,7 @@ async function honorCompletionsForClub(organizationId: string, now: Date) {
  */
 export async function syncHonorOrderNeeds(organizationId: string, now = new Date()) {
   const { candidates, withdrawnSourceIds } = await honorCompletionsForClub(organizationId, now);
-  const created = await syncOrderNeeds(organizationId, "HONOR", candidates);
+  const created = await syncOrderNeeds(organizationId, "HONOR", candidates, now);
   const elsewhere = await listNeededNeedsElsewhere(organizationId, "HONOR", candidates.map((candidate) => candidate.sourceId));
   let moved = 0;
   if (elsewhere.length > 0) {

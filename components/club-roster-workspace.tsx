@@ -23,6 +23,7 @@ import type { CurrentMemberHonor } from "@/modules/honors/member-honor-domain";
 type RosterResponse = {
   members?: RosterMemberRecord[];
   birthDates?: Record<string, string>;
+  nameKept?: boolean;
   message?: string;
   issues?: Array<{ message?: string }>;
 };
@@ -197,7 +198,8 @@ export function ClubRosterWorkspace({
       `Remove ${member.firstName} ${member.lastName} from the roster? Their birth date and details are erased. This can't be undone. To keep them on file, mark them inactive instead.`,
     );
     if (!confirmed) return;
-    await call(`${base}/${encodeURIComponent(member.id)}`, "DELETE", { confirm: true }, "Removed and erased.");
+    const result = await call(`${base}/${encodeURIComponent(member.id)}`, "DELETE", { confirm: true }, "Removed and erased.");
+    if (result?.nameKept) setNotice("Removed and erased. Their name stays on items already ordered.");
   }
 
   async function revealBirthDates() {

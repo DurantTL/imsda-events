@@ -33,7 +33,7 @@ const youth = {
 
 function fakeDatabase() {
   let sequence = 0;
-  const db = { people: [] as Row[], members: [] as Row[], otherReferences: new Set<string>(), honorEntries: [] as Row[], transferBlanks: [] as unknown[] };
+  const db = { people: [] as Row[], members: [] as Row[], otherReferences: new Set<string>(), honorEntries: [] as Row[], needs: [] as Row[], blankedTransferWhere: [] as unknown[], classCompletions: [] as Row[], calls: [] as string[], transferBlanks: [] as unknown[] };
   const matches = (row: Row, where: Record<string, unknown> = {}) => Object.entries(where).every(([key, value]) => {
     if (value === undefined) return true;
     if (value && typeof value === "object" && "not" in value) return row[key] !== (value as { not: unknown }).not;
@@ -45,6 +45,9 @@ function fakeDatabase() {
     person: member.personId ? db.people.find((person) => person.id === member.personId) ?? null : null,
   });
   const client = {
+    $executeRaw: async () => { db.calls.push("lock"); return 0; },
+    $queryRaw: async () => { db.calls.push("person-row-lock"); return []; },
+    $executeRawUnsafe: async () => 0,
     person: {
       create: async ({ data }: { data: Row }) => { const row = { ...data, id: `person-${++sequence}` }; db.people.push(row); return row; },
       update: async ({ where, data }: { where: Row; data: Row }) => Object.assign(db.people.find((person) => person.id === where.id)!, data),
@@ -57,6 +60,7 @@ function fakeDatabase() {
           _count: {
             householdMembers: 0, heldRegistrations: 0, registrationEvents: referenced, externalIdentities: 0,
             notes: 0, attendeeAccountLinks: 0, userLinks: 0,
+            memberClassCompletions: db.classCompletions.filter((row) => row.personId === person.id).length,
             clubRosterMemberships: db.members.filter((member) => member.personId === person.id).length,
           },
         };
@@ -64,7 +68,7 @@ function fakeDatabase() {
     },
     // Transfer records (#489) are blanked, never counted, when a person is erased.
     memberTransfer: {
-      findMany: async () => [{ id: "transfer-1" }],
+      findMany: async ({ where }: { where: { status?: unknown } }) => { if (where.status) db.blankedTransferWhere.push({ status: where.status }); return [{ id: "transfer-1" }]; },
       updateMany: async (args: unknown) => { db.transferBlanks.push(args); return { count: 1 }; },
     },
     memberTransferEvent: {
@@ -72,6 +76,22 @@ function fakeDatabase() {
     },
     memberTransferRegistrationMove: {
       updateMany: async (args: unknown) => { db.transferBlanks.push(args); return { count: 0 }; },
+    },
+    memberClassCompletion: {
+      deleteMany: async ({ where }: { where: Row }) => {
+        db.calls.push("erase-completions");
+        const before = db.classCompletions.length;
+        db.classCompletions = db.classCompletions.filter((row) => !(row.organizationId === where.organizationId && row.personId === where.personId));
+        return { count: before - db.classCompletions.length };
+      },
+    },
+    clubOrderNeed: {
+      count: async ({ where }: { where: Row }) => db.needs.filter((need) => matches(need, where)).length,
+      deleteMany: async ({ where }: { where: Row }) => {
+        const before = db.needs.length;
+        db.needs = db.needs.filter((need) => !(need.organizationId === where.organizationId && need.personId === where.personId && need.status === where.status));
+        return { count: before - db.needs.length };
+      },
     },
     memberHonorEntry: {
       deleteMany: async ({ where }: { where: { personId: string } }) => {
@@ -82,8 +102,9 @@ function fakeDatabase() {
     },
     clubRosterMember: {
       create: async ({ data }: { data: Row }) => { const row = { status: "ACTIVE", ...data, id: `member-${++sequence}` }; db.members.push(row); return row; },
-      update: async ({ where, data }: { where: Row; data: Row }) => Object.assign(db.members.find((member) => member.id === where.id)!, data),
+      update: async ({ where, data }: { where: Row; data: Row }) => { db.calls.push("erase-row"); return Object.assign(db.members.find((member) => member.id === where.id)!, data); },
       findFirst: async ({ where }: { where: Record<string, unknown> }) => {
+        db.calls.push("find-member");
         const member = db.members.find((row) => matches(row, where));
         return member ? withPerson(member) : null;
       },
@@ -230,6 +251,7 @@ describe("club roster storage", () => {
     const { memberId: lone } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
     const { memberId: registered } = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Other" }, actor, { now });
     db.otherReferences.add(db.members[1].personId as string);
+    Object.assign(db.people[1], { normalizedEmail: "other@example.test", phone: "555-0103" });
 
     await removeRosterMember("club-1", lone, actor, now);
     await removeRosterMember("club-1", registered, actor, now);
@@ -238,7 +260,9 @@ describe("club roster storage", () => {
       expect(member).toMatchObject({ status: "REMOVED", sealedBirthDate: null, personId: null, gender: null, role: "", removedAt: now });
     }
     expect(db.people.map((person) => person.firstName)).toEqual(["Other"]);
-    // A deleted person's transfer records (#489) keep no name; the kept person's are untouched.
+    // Contact fields are registration data (claiming, dedupe, matching): a registered person keeps them.
+    expect(db.people[0]).toMatchObject({ normalizedEmail: "other@example.test", phone: "555-0103" });
+    // A deleted person's transfer records (#489) keep no free text; a kept, registered person's are untouched.
     expect(db.transferBlanks).toEqual([
       { where: { id: { in: ["transfer-1"] } }, data: { requestedFirstName: "", requestedLastName: "", reason: "", staffNote: "" } },
       { where: { transferId: { in: ["transfer-1"] } }, data: { note: "" } },
@@ -288,5 +312,116 @@ describe("club roster storage", () => {
     expect(db.honorEntries).toHaveLength(1);
     const removal = mocks.writeAuditLog.mock.calls.map(([entry]) => entry).find((entry) => entry.action === "CLUB_ROSTER_MEMBER_REMOVED");
     expect(removal.metadata).toMatchObject({ personDeleted: false, honorEntriesErased: 0 });
+  });
+
+  it("cancels an open order need, deletes the person, and audits the count (#566)", async () => {
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const personId = db.members[0].personId as string;
+    db.needs.push({ id: "need-1", organizationId: "club-1", personId, status: "NEEDED" });
+
+    await removeRosterMember("club-1", id, actor, now);
+
+    expect(db.needs).toEqual([]);
+    expect(db.people.some((person) => person.id === personId)).toBe(false);
+    const audits = mocks.writeAuditLog.mock.calls.map(([entry]) => entry);
+    expect(audits.find((entry) => entry.action === "CLUB_ORDER_NEEDS_CANCELLED_ON_REMOVAL").metadata).toMatchObject({ needCount: 1 });
+    expect(audits.find((entry) => entry.action === "CLUB_ROSTER_MEMBER_REMOVED").metadata).toMatchObject({ personDeleted: true, ordersCancelled: 1 });
+  });
+
+  it("keeps the person and an already-ordered need, ending only the membership (#566)", async () => {
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const personId = db.members[0].personId as string;
+    db.needs.push(
+      { id: "need-open", organizationId: "club-1", personId, status: "NEEDED" },
+      { id: "need-ordered", organizationId: "club-1", personId, status: "ORDERED" },
+    );
+
+    await removeRosterMember("club-1", id, actor, now);
+
+    expect(db.needs.map((need) => need.id)).toEqual(["need-ordered"]);
+    expect(db.people.some((person) => person.id === personId)).toBe(true);
+    expect(db.members[0]).toMatchObject({ status: "REMOVED", personId: null });
+    const removal = mocks.writeAuditLog.mock.calls.map(([entry]) => entry).find((entry) => entry.action === "CLUB_ROSTER_MEMBER_REMOVED");
+    expect(removal.metadata).toMatchObject({ personDeleted: false, ordersCancelled: 1 });
+  });
+
+  it("deletes this club's class completion with the person (#566)", async () => {
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const personId = db.members[0].personId as string;
+    db.classCompletions.push({ id: "c1", organizationId: "club-1", personId });
+
+    await removeRosterMember("club-1", id, actor, now);
+
+    expect(db.classCompletions).toEqual([]);
+    expect(db.people.some((person) => person.id === personId)).toBe(false);
+  });
+
+  it("keeps the person when another club has a class completion for them (#566)", async () => {
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const personId = db.members[0].personId as string;
+    db.classCompletions.push({ id: "c2", organizationId: "club-2", personId });
+
+    await removeRosterMember("club-1", id, actor, now);
+
+    expect(db.people.some((person) => person.id === personId)).toBe(true);
+    expect(db.classCompletions).toHaveLength(1);
+  });
+
+  it("keeps only the name when an ordered need remains: email and phone erased (#566)", async () => {
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const personId = db.members[0].personId as string;
+    Object.assign(db.people.find((person) => person.id === personId)!, { normalizedEmail: "test.youth@example.test", phone: "555-0100" });
+    db.needs.push({ id: "need-ordered", organizationId: "club-1", personId, status: "ORDERED" });
+
+    const removed = await removeRosterMember("club-1", id, actor, now);
+
+    expect(removed).toEqual({ personId, nameKept: true });
+    expect(db.blankedTransferWhere).toEqual([{ status: { not: "PENDING" } }]);
+    expect(db.people.find((person) => person.id === personId)).toMatchObject({ firstName: "Test", lastName: "Youth", normalizedEmail: null, phone: null });
+    expect(db.transferBlanks.length).toBeGreaterThan(0);
+    expect(db.members[0]).toMatchObject({ status: "REMOVED", personId: null, sealedBirthDate: null });
+  });
+
+  it("leaves another club's open need alone and keeps the person whole (#566)", async () => {
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const personId = db.members[0].personId as string;
+    Object.assign(db.people.find((person) => person.id === personId)!, { normalizedEmail: "test.youth@example.test" });
+    db.needs.push({ id: "need-mine", organizationId: "club-1", personId, status: "NEEDED" }, { id: "need-other", organizationId: "club-2", personId, status: "NEEDED" });
+
+    const removed = await removeRosterMember("club-1", id, actor, now);
+
+    expect(db.needs.map((need) => need.id)).toEqual(["need-other"]);
+    expect(removed.nameKept).toBe(false);
+    expect(db.people.find((person) => person.id === personId)).toMatchObject({ normalizedEmail: "test.youth@example.test" });
+  });
+
+  it("takes the club lock before reading the member or erasing anything (#566)", async () => {
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    db.calls.length = 0;
+
+    await removeRosterMember("club-1", id, actor, now);
+
+    expect(db.calls.slice(0, 4)).toEqual(["lock", "find-member", "person-row-lock", "erase-row"]);
+  });
+
+  it("keeps a registered person's email and phone even with an ordered need, and says the name stays (#566)", async () => {
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const personId = db.members[0].personId as string;
+    Object.assign(db.people.find((person) => person.id === personId)!, { normalizedEmail: "reg@example.test", phone: "555-0104" });
+    db.otherReferences.add(personId);
+    db.needs.push({ id: "need-ordered", organizationId: "club-1", personId, status: "ORDERED" });
+
+    const removed = await removeRosterMember("club-1", id, actor, now);
+
+    expect(removed.nameKept).toBe(true);
+    expect(db.people.find((person) => person.id === personId)).toMatchObject({ normalizedEmail: "reg@example.test", phone: "555-0104" });
+    expect(db.blankedTransferWhere).toEqual([]);
+  });
+
+  it("does not say the name stays when the person was kept for another reason (#566)", async () => {
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    db.otherReferences.add(db.members[0].personId as string);
+
+    expect((await removeRosterMember("club-1", id, actor, now)).nameKept).toBe(false);
   });
 });

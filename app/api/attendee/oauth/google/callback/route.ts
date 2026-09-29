@@ -12,6 +12,10 @@ import {
   parseOAuthHandoff,
   stateMatches,
 } from "@/modules/attendee-accounts/oauth-handoff";
+import {
+  ATTENDEE_OAUTH_NEXT_COOKIE_NAME,
+  attendeeReturnDestination,
+} from "@/modules/attendee-accounts/return-destination";
 import { attendeePublicUrl } from "@/modules/attendee-accounts/public-navigation";
 import {
   ATTENDEE_OAUTH_COOKIE_NAME,
@@ -48,6 +52,16 @@ async function getHandler(request: Request) {
   // Single use, whatever happens next. Leaving it live would let a failed or
   // intercepted attempt be retried against the same state and verifier.
   cookieStore.set(ATTENDEE_OAUTH_COOKIE_NAME, "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/api/attendee/oauth",
+    maxAge: 0,
+  });
+
+  // Single use too (#568); validated again before it is followed.
+  const next = attendeeReturnDestination(cookieStore.get(ATTENDEE_OAUTH_NEXT_COOKIE_NAME)?.value, "");
+  cookieStore.set(ATTENDEE_OAUTH_NEXT_COOKIE_NAME, "", {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
@@ -99,7 +113,7 @@ async function getHandler(request: Request) {
 
     logInfo("An attendee signed in with Google.", { linkage: result.linkage });
     return applyRateLimitHeaders(
-      mutableRedirect(attendeePublicUrl("/account")),
+      mutableRedirect(attendeePublicUrl((next || "/account") as `/${string}`)),
       rateLimit,
     );
   } catch (error) {
