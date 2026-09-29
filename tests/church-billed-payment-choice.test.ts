@@ -159,6 +159,30 @@ describe("church-billed payment-choice endpoints (#621)", () => {
     expect(tx.registration.update).not.toHaveBeenCalled();
   });
 
+  it("refuses before replaying a stored result, so no stored quote comes back either", async () => {
+    const tx = useRegistration("DEFERRED_ORGANIZATION_INVOICE");
+    tx.registrationPaymentChoiceOperation.findUnique.mockResolvedValue({
+      requestFingerprint: "anything",
+      responseSnapshot: {
+        operationId: "67fcf012-8a2f-42ed-b316-2e9e4c370ce8",
+        choice: "CARD",
+        baseSubtotalCents: 8000,
+        processingFeeCents: 270,
+        totalCents: 8270,
+        currency: "USD",
+      },
+    });
+    const response = await PUBLIC_POST(
+      request(`https://events.imsda.test/api/public/manage/${token}/payment-choice`),
+      { params: Promise.resolve({ token }) },
+    );
+    const text = await response.text();
+    expect(response.status).toBe(422);
+    expect(text).not.toMatch(/8000|8270|totalCents|baseSubtotalCents/);
+    // The refusal comes before the stored result is even looked up.
+    expect(tx.registrationPaymentChoiceOperation.findUnique).not.toHaveBeenCalled();
+  });
+
   it("still returns the quote on a self-pay promoted registration", async () => {
     useRegistration("ATTENDEE_PAY");
     const response = await PUBLIC_POST(

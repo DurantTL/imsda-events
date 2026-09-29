@@ -603,7 +603,14 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
           : null,
         // The director sees the per-person price only, never what the church
         // owes (#621); the amount stays on the staff finance views (#409).
-        perPerson: perPersonPriceFromSnapshot(currentPricingSnapshot(clubRegistration.registration), true),
+        perPerson: perPersonPriceFromSnapshot(
+          currentPricingSnapshot(clubRegistration.registration),
+          true,
+          clubRegistration.registration.attendees.map(({ profileSnapshot }) => {
+            const snapshot = recordFromJson(profileSnapshot);
+            return `${typeof snapshot.firstName === "string" ? snapshot.firstName : ""} ${typeof snapshot.lastName === "string" ? snapshot.lastName : ""}`.trim();
+          }),
+        ),
         // The registration-scope answers as they stand now, so a reopened
         // edit can evaluate attendee questions that depend on them. The
         // edit never changes these.

@@ -472,7 +472,7 @@ export async function listRegistrationsForVerifiedEmail(
         ? {
           billed: isChurchBilledStatus(registration.status),
           // The per-person price only (#621); the amount the church owes is never shown to a registrant.
-          perPerson: perPersonPriceFromSnapshot(currentPricingSnapshot(registration), parsedDefinition?.success ? getAttendeeRosterConfig(parsedDefinition.data).enabled : undefined),
+          perPerson: perPersonPriceFromSnapshot(currentPricingSnapshot(registration), parsedDefinition?.success ? getAttendeeRosterConfig(parsedDefinition.data).enabled : undefined, registration.attendees.map((attendee) => publicAttendeeName(attendee.profileSnapshot, attendee.person))),
           label: isChurchBilledStatus(registration.status)
             ? "billed to your church after the event, not paid online"
             : notBilledLabel(registration.status),

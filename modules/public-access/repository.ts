@@ -444,6 +444,7 @@ function serializeRegistrationAccess(
     ? perPersonPriceFromSnapshot(
         currentPricingSnapshot(registration),
         parsedDefinition?.success ? getAttendeeRosterConfig(parsedDefinition.data).enabled : undefined,
+        registration.attendees.map((attendee) => publicAttendeeName(attendee.profileSnapshot, attendee.person)),
       )
     : null;
   const order = submission && !churchBilled ? {

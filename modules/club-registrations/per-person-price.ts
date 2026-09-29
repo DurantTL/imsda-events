@@ -147,7 +147,12 @@ export function lineItemsFromPricingSnapshot(value: unknown): PerPersonLineItem[
  * The per-person price from a stored pricing snapshot. `roster` comes from the form definition when the
  * caller has it; otherwise from the flag saved with the snapshot, then from whether any line names an attendee.
  */
-export function perPersonPriceFromSnapshot(snapshot: unknown, roster?: boolean): PerPersonPrice {
+export function perPersonPriceFromSnapshot(
+  snapshot: unknown,
+  roster?: boolean,
+  /** The registration's current attendees, in order. Preferred over the snapshot's names, which a substitution leaves stale. */
+  currentAttendeeNames?: readonly string[],
+): PerPersonPrice {
   const record = snapshot && typeof snapshot === "object" && !Array.isArray(snapshot) ? snapshot as Record<string, unknown> : {};
   const lineItems = lineItemsFromPricingSnapshot(record);
   const rosterEnabled = roster
@@ -157,8 +162,12 @@ export function perPersonPriceFromSnapshot(snapshot: unknown, roster?: boolean):
   return perPersonPrice({
     lineItems,
     roster: rosterEnabled,
-    attendeeNames: Array.isArray(record.attendeeNames) ? record.attendeeNames.filter((name): name is string => typeof name === "string") : undefined,
-    attendeeCount: typeof record.attendeeCount === "number" ? record.attendeeCount : undefined,
+    attendeeNames: currentAttendeeNames && currentAttendeeNames.length > 0
+      ? currentAttendeeNames
+      : Array.isArray(record.attendeeNames) ? record.attendeeNames.filter((name): name is string => typeof name === "string") : undefined,
+    attendeeCount: currentAttendeeNames && currentAttendeeNames.length > 0
+      ? currentAttendeeNames.length
+      : typeof record.attendeeCount === "number" ? record.attendeeCount : undefined,
   });
 }
 

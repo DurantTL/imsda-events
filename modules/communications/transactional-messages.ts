@@ -71,6 +71,11 @@ type TransactionalMessageInput = {
   announcementTitle?: string;
   announcementBody?: string;
   changeCategory?: RegistrationUpdateCategory;
+  /**
+   * The pricing snapshot to show a church-billed registrant when it is not stored yet: an amendment
+   * queues its notice before the AMENDMENT operation that holds the new snapshot exists (#621).
+   */
+  pricingSnapshot?: Record<string, unknown>;
   seminarPreferences?: Array<{
     attendeeName: string;
     seminarLabels: string[];
@@ -428,7 +433,11 @@ async function enqueueTransactionalMessage(
   );
   // A church-billed registrant sees the per-person price only, never a total or balance (#621).
   const perPersonNotice = isDeferredOrganizationBilling
-    ? perPersonPriceInline(perPersonPriceFromSnapshot(currentPricingSnapshot(registration)))
+    ? perPersonPriceInline(perPersonPriceFromSnapshot(
+        input.pricingSnapshot ?? currentPricingSnapshot(registration),
+        undefined,
+        registration.attendees.map((attendee) => attendeeName(attendee)),
+      ))
     : null;
   // A waitlist email for a club at a location says which location, even when
   // the template (a customized one, or one of the defaults) has no location

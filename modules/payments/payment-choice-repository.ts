@@ -43,7 +43,6 @@ const choiceRegistrationSelect = {
   confirmationCode: true,
   status: true,
   totalAmount: true,
-  event: { select: { billingMode: true } },
   waitlistEntry: {
     select: { status: true },
   },
@@ -137,6 +136,19 @@ async function choosePromotedWaitlistPaymentInTransaction(
     access.registrationId,
     input,
   );
+  // A church-billed event has no card or pay-later choice, so this is refused before anything else,
+  // including the idempotent replay of a stored result. Nothing about a quote, subtotal or total is
+  // returned to the registrant (#621).
+  const billing = await tx.registration.findUnique({
+    where: { id: access.registrationId },
+    select: { event: { select: { billingMode: true } } },
+  });
+  if (billing?.event?.billingMode === "DEFERRED_ORGANIZATION_INVOICE") {
+    throw new PaymentChoiceOperationError(
+      "PAYMENT_CHOICE_NOT_ELIGIBLE",
+      "This event bills the responsible organization directly, so there is no payment choice to make.",
+    );
+  }
   const existing = await tx.registrationPaymentChoiceOperation.findUnique({
     where: {
       registrationId_clientRequestId: {
@@ -167,14 +179,6 @@ async function choosePromotedWaitlistPaymentInTransaction(
     throw new PaymentChoiceOperationError(
       "REGISTRATION_ACCESS_UNAVAILABLE",
       "This private registration link is invalid or no longer active.",
-    );
-  }
-  if (registration.event?.billingMode === "DEFERRED_ORGANIZATION_INVOICE") {
-    // A church-billed event has no card or pay-later choice: the church is billed after the event.
-    // Nothing about a quote, subtotal or total is returned to the registrant (#621).
-    throw new PaymentChoiceOperationError(
-      "PAYMENT_CHOICE_NOT_ELIGIBLE",
-      "This event bills the responsible organization directly, so there is no payment choice to make.",
     );
   }
   if (
