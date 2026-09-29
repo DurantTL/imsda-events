@@ -1,3 +1,4 @@
+import { sortHonorSessions } from "./session-order";
 import { toCsv } from "@/modules/reporting/csv";
 
 /**
@@ -33,7 +34,7 @@ export type RosterAttendee = {
   dietary: string | null;
 };
 
-export type RosterSession = { id: string; name: string; sortOrder: number };
+export type RosterSession = { id: string; name: string; sortOrder: number; createdAt?: Date | string | null };
 
 export type RosterOffering = {
   id: string;
@@ -65,7 +66,7 @@ export function buildClassRosters(
   attendees: readonly RosterAttendee[],
 ) {
   const attendeesById = new Map(attendees.map((attendee) => [attendee.id, attendee]));
-  const order = new Map(sessions.map((session) => [session.id, session.sortOrder]));
+  const order = new Map(sortHonorSessions(sessions).map((session, position) => [session.id, position]));
   const sortKey = (offering: RosterOffering) => (offering.span === "ALL_SESSIONS" ? -1 : order.get(offering.sessionId ?? "") ?? 999);
   return [...offerings]
     .sort((a, b) => sortKey(a) - sortKey(b) || a.honorName.localeCompare(b.honorName))
@@ -109,7 +110,7 @@ export function buildClubSchedule(
   attendees: readonly RosterAttendee[],
 ) {
   const offeringsById = new Map(offerings.map((offering) => [offering.id, offering]));
-  const orderedSessions = [...sessions].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+  const orderedSessions = sortHonorSessions(sessions);
   const people = attendees.filter((attendee) => attendee.clubId === clubId).sort(byName);
   return {
     sessions: orderedSessions,

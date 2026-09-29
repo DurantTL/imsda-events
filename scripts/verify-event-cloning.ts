@@ -145,6 +145,8 @@ async function buildPopulatedSource(): Promise<Fixture> {
   const honor = await prisma.honor.create({ data: { code: `${P}-honor-1`, name: "Evtclone Knots", normalizedName: `${P} knots` } });
   const honor2 = await prisma.honor.create({ data: { code: `${P}-honor-2`, name: "Evtclone Birds", normalizedName: `${P} birds` } });
   const session = await prisma.honorSession.create({ data: { eventId, name: "Friday", normalizedName: "friday" } });
+  // Tied sortOrder (both 0); Friday was created first but "Afternoon" sorts first by name (#570).
+  await prisma.honorSession.create({ data: { eventId, name: "Afternoon", normalizedName: "afternoon", createdAt: new Date(Date.now() + 60_000) } });
   const offeringA = await prisma.honorOffering.create({ data: { eventId, honorId: honor.id, sessionId: session.id, span: "SINGLE_SESSION", capacity: 30, perClubLimit: 4, minimumAge: 10, teacherName: "Synthetic Teacher" } });
   const offeringB = await prisma.honorOffering.create({ data: { eventId, honorId: honor2.id, span: "ALL_SESSIONS", capacity: 20, isActive: false } });
 
@@ -392,7 +394,9 @@ async function run() {
   assert(cloned.summary?.pricingMessage?.startsWith("Prices copied, review before publishing") && cloned.summary.pricing.promoCodes === 2, "the result says prices were copied and must be reviewed");
   assert(promos.every((promo) => promo.discountValue > 0) && promos.some((promo) => promo.maximumUses === 100), "prices and promo rules are copied as they are (reviewed on the inactive code)");
   const cloneSessionIds = (await prisma.honorSession.findMany({ where: { eventId: cloneId } })).map((entry) => entry.id);
-  assert(cloneSessionIds.length === 1 && offerings.filter((offering) => offering.sessionId).every((offering) => cloneSessionIds.includes(offering.sessionId!)), "offerings point at the clone's own session");
+  const cloneSessions = await prisma.honorSession.findMany({ where: { eventId: cloneId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { name: "asc" }] });
+  assert(cloneSessions.map((entry) => `${entry.name}:${entry.sortOrder}`).join(",") === "Friday:0,Afternoon:1", `a tied source keeps its display order in the clone, got ${cloneSessions.map((entry) => `${entry.name}:${entry.sortOrder}`).join(",")}`);
+  assert(cloneSessionIds.length === 2 && offerings.filter((offering) => offering.sessionId).every((offering) => cloneSessionIds.includes(offering.sessionId!)), "offerings point at the clone's own session");
 
   const record = await prisma.eventCloneRecord.findUniqueOrThrow({ where: { resultEventId: cloneId } });
   assert(record.sourceEventId === sourceId && record.actorUserId === adminId && record.sourceFingerprint === plan.fingerprint, "provenance records the source, actor, and fingerprint");

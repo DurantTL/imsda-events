@@ -2,9 +2,10 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Award, CalendarRange, ClipboardList, Copy, Pencil, Plus, Power, Save, Trash2, X } from "lucide-react";
+import { Award, CalendarRange, ClipboardList, Copy, Pencil, Plus, Power, Save, Trash2, TriangleAlert, X } from "lucide-react";
 import { honorOfferingSpanLabels } from "@/modules/honors/domain";
 import type { HonorCopyPlan } from "@/modules/honors/copy";
+import { nextSessionOrder, sessionClassWarning, sortHonorSessions } from "@/modules/honors/session-order";
 import type { EventHonorSetup } from "@/modules/honors/repository";
 
 type Offering = EventHonorSetup["offerings"][number];
@@ -43,14 +44,16 @@ export function HonorsSetupWorkspace({
   const [notice, setNotice] = useState("");
   const base = `/api/events/${encodeURIComponent(eventId)}/honors`;
 
+  const sessions = useMemo(() => sortHonorSessions(setup.sessions), [setup.sessions]);
+
   const groups = useMemo(() => [
     { key: "all", title: "All sessions", offerings: setup.offerings.filter((offering) => offering.span === "ALL_SESSIONS") },
-    ...setup.sessions.map((session) => ({
+    ...sessions.map((session) => ({
       key: session.id,
       title: session.name,
       offerings: setup.offerings.filter((offering) => offering.sessionId === session.id),
     })),
-  ], [setup]);
+  ], [setup, sessions]);
 
   const totalSeats = setup.offerings
     .filter((offering) => offering.isActive)
@@ -195,11 +198,16 @@ export function HonorsSetupWorkspace({
         </div>
         {setup.sessions.length > 0 && (
           <ul className="honor-session-list">
-            {setup.sessions.map((session) => (
+            {sessions.map((session) => (
               <li key={session.id}>
                 <CalendarRange aria-hidden="true" size={16} />
                 <strong>{session.name}</strong>
                 <small>{session.offeringCount} classes</small>
+                {sessionClassWarning(session) && (
+                  <p className="honor-session-warning" role="status">
+                    <TriangleAlert aria-hidden="true" size={14} /> {sessionClassWarning(session)}
+                  </p>
+                )}
                 <button className="text-button" disabled={saving} onClick={() => renameSession(session.id, session.name)} type="button">
                   <Pencil aria-hidden="true" size={13} /> Rename
                 </button>
@@ -219,7 +227,7 @@ export function HonorsSetupWorkspace({
           </label>
           <label>
             Order
-            <input defaultValue={setup.sessions.length} max={99} min={0} name="sortOrder" type="number" />
+            <input defaultValue={nextSessionOrder(sessions)} max={99} min={0} name="sortOrder" type="number" />
           </label>
           <button className="secondary-button" disabled={saving} type="submit">
             <Plus aria-hidden="true" size={14} /> Add session
@@ -262,7 +270,7 @@ export function HonorsSetupWorkspace({
                 Session
                 <select name="sessionId" required>
                   <option value="">Choose a session</option>
-                  {setup.sessions.map((session) => (
+                  {sessions.map((session) => (
                     <option key={session.id} value={session.id}>{session.name}</option>
                   ))}
                 </select>
@@ -318,7 +326,7 @@ export function HonorsSetupWorkspace({
             <p>Add sessions and classes above, or copy them from another site below.</p>
           </div>
         ) : groups.filter((group) => group.offerings.length > 0).map((group) => (
-          <div className="report-table-wrap" key={group.key}>
+          <div className="report-table-wrap honor-table-wrap" key={group.key}>
             <h3 className="honor-group-heading">{group.title}</h3>
             <table className="report-table">
               <thead>
