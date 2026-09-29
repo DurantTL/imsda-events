@@ -43,6 +43,7 @@ function makeFakeDb() {
   const reviews = new Map<string, Row>();
   const identities = new Map<string, Row>();
   const rosterMembers: Row[] = [];
+  const extraOrganizations: string[] = [];
   const attendees: Row[] = [];
   const events = new Map<string, Row>();
   const lock = { held: false };
@@ -319,6 +320,18 @@ function makeFakeDb() {
         return { ...row };
       },
     },
+    organization: {
+      // The directory: the seeded extra organizations plus every roster member's club and church.
+      findMany: async () => {
+        const names = new Set<string>(extraOrganizations);
+        for (const member of rosterMembers) {
+          const organization = member.organization as { name: string; parentOrganization: { name: string } | null };
+          names.add(organization.name);
+          if (organization.parentOrganization) names.add(organization.parentOrganization.name);
+        }
+        return [...names].map((name) => ({ name }));
+      },
+    },
     clubRosterMember: {
       findMany: async ({ where }: { where: Row }) => rosterMembers.filter((member) => rosterWhere(member, where)).map((member) => ({ ...member })),
     },
@@ -357,7 +370,7 @@ function makeFakeDb() {
   };
   (client as { $transaction?: unknown }).$transaction = async (work: (tx: typeof client) => Promise<unknown>) => work(client);
 
-  return { client, lock, seed: { persons, uploads, entries, matches, reviews, identities, rosterMembers, attendees, events } };
+  return { client, lock, seed: { persons, uploads, entries, matches, reviews, identities, rosterMembers, attendees, events, extraOrganizations } };
 }
 
 // --- Wiring: getPrisma() returns whichever fake is current for the test. ---
@@ -382,6 +395,8 @@ import {
   backgroundCheckState,
   dedupeListRows,
   isRememberedIdentityKey,
+  candidateSiteStems,
+  directorySiteStems,
   matchesSite,
   siteStems,
   backgroundFlagsCsv,
@@ -899,9 +914,38 @@ describe("site matching against the real export's shapes (#572)", () => {
 
   it("reads only one trailing parenthetical as the export's city suffix", () => {
     expect(siteStems("Kansas City SDA Church (Central)")).toEqual(new Set(["kansas city central", "kansas city"]));
+    // With no "Kansas City (Central)" church in the directory, the suffix-stripped key is the fallback.
     expect(matchesSite("Kansas City SDA Church (Central)", ["Kansas City SDA Church"])).toBe(true);
+    expect(matchesSite("Kansas City SDA Church (Central)", ["Kansas City SDA Church"], directorySiteStems(["Kansas City SDA Church"]))).toBe(true);
     expect(matchesSite("Kansas City SDA Church", ["Kansas City SDA Church (Central)"])).toBe(false);
     expect(siteStems("Nevada (IA) SDA Church (Nevada)")).toEqual(new Set(["nevada ia nevada", "nevada ia"]));
+  });
+
+  it("uses the suffix-stripped key only when the full stem is no directory site", () => {
+    const directory = directorySiteStems(["Kansas City SDA Church", "Kansas City (Central) SDA Church"]);
+    // A church literally named "Kansas City (Central)" exists: the row is that church, not plain Kansas City.
+    expect(siteStems("Kansas City (Central)", directory)).toEqual(new Set(["kansas city central"]));
+    expect(matchesSite("Kansas City (Central)", ["Kansas City SDA Church"], directory)).toBe(false);
+    expect(matchesSite("Kansas City (Central)", ["Kansas City (Central) SDA Church"], directory)).toBe(true);
+    // No such church in the directory: the fallback applies.
+    const plainOnly = directorySiteStems(["Kansas City SDA Church"]);
+    expect(matchesSite("Kansas City (Central)", ["Kansas City SDA Church"], plainOnly)).toBe(true);
+    expect(siteStems("Kansas City (Central)", plainOnly)).toEqual(new Set(["kansas city central", "kansas city"]));
+  });
+
+  it("also reads a merged state code's site without it, as a row key only", () => {
+    expect(siteStems("Springfield, MO SDA Church")).toEqual(new Set(["springfield mo", "springfield"]));
+    expect(siteStems("Springfield SDA Church, MO")).toEqual(new Set(["springfield mo", "springfield"]));
+    expect(matchesSite("Springfield, MO SDA Church", ["Springfield SDA Church"])).toBe(true);
+    expect(matchesSite("Springfield SDA Church", ["Springfield, MO SDA Church"])).toBe(false);
+    // A directory church that is exactly "Springfield, MO" keeps the row on it.
+    expect(matchesSite("Springfield, MO SDA Church", ["Springfield SDA Church"], directorySiteStems(["Springfield, MO SDA Church"]))).toBe(false);
+  });
+
+  it("never splits a directory name", () => {
+    expect(candidateSiteStems("Maple, Oak SDA Church")).toEqual(new Set(["maple oak"]));
+    expect(matchesSite("Maple SDA Church", ["Maple, Oak SDA Church"])).toBe(false);
+    expect(matchesSite("Oak SDA Church", ["Maple, Oak SDA Church"])).toBe(false);
   });
 
   it("drops short and generic stems so they never match", () => {
@@ -916,8 +960,6 @@ describe("site matching against the real export's shapes (#572)", () => {
   });
 
   it("does not split on a comma before a state code", () => {
-    expect(siteStems("Springfield, MO SDA Church")).toEqual(new Set(["springfield mo"]));
-    expect(siteStems("Springfield SDA Church, MO")).toEqual(new Set(["springfield mo"]));
     expect(siteStems("Springfield SDA Church, Lakeside Adventist School")).toEqual(new Set(["springfield", "lakeside adventist school"]));
   });
 
