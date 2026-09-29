@@ -1823,6 +1823,7 @@ export function CommunicationsWorkspace({
               <label>Title<input name="title" minLength={3} maxLength={120} required placeholder="Friday arrival information" defaultValue={draftPrefill?.title ?? ""} /></label>
               <label>Message<textarea name="body" minLength={5} maxLength={2000} required rows={6} placeholder="Share the details attendees need…" defaultValue={draftPrefill?.body ?? ""} /></label>
               <label>Priority<select name="priority" defaultValue={draftPrefill?.priority ?? "NORMAL"}><option value="NORMAL">Normal</option><option value="IMPORTANT">Important</option><option value="URGENT">Urgent</option></select></label>
+              <p className="field-help">Shown on the event page and as a banner on attendees&apos; accounts.</p>
               <div className="form-actions"><button className="secondary-button" type="button" onClick={() => { setDraftOpen(false); setDraftPrefill(null); }}>Cancel</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving…" : draftPrefill?.editId ? "Save changes" : "Save draft"}</button></div>
             </form>
           </section>

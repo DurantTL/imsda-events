@@ -20,6 +20,7 @@ vi.mock("@/components/account-section-nav", () => ({
   },
 }));
 vi.mock("@/components/act-as-banner", () => ({ ActAsBanner: () => null }));
+vi.mock("@/modules/communications/account-banner", () => ({ listAccountBannerAnnouncements: async () => [] }));
 vi.mock("@/components/attendee-sign-in-form", () => ({ AttendeeAuthReturn: () => null }));
 vi.mock("@/components/attendee-sign-out-button", () => ({ AttendeeSignOutButton: () => null }));
 vi.mock("@/modules/access/current-session", () => ({ getCurrentSession: async () => ({ user: null }) }));
