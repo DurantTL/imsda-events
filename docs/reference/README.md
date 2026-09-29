@@ -118,3 +118,81 @@ it. Every import, edit, activation and deactivation is audited.
 - **Attended.** A person checked in to the event (an active check-in), which is
   what the Honors Weekend write-back already treats as attendance. An ended
   event with no check-ins at all falls back to who was registered.
+
+## Ready-to-import files (`imports/`, #622)
+
+Upload-ready files, one per staff import that exists. They are built by
+`scripts/build-import-files.ts` from the two reference files above, so rebuild
+them with `npm run imports:build` (never edit them by hand).
+`npm run imports:build -- --check` reports a stale file, and
+`tests/import-files.test.ts` fails when a committed file differs from the
+generator's output or when the real import parser reports any error.
+
+| File | Rows | Upload on | Import |
+|---|---|---|---|
+| `imports/honors.csv` | 546 honors (531 honors and 15 Master Awards) | Admin → Honors (`app/(workspace)/admin/honors/page.tsx`) | `POST /api/admin/honors/import`, columns `Code,Name,Description,Active,Catalog Number,Category` |
+| `imports/club-supply-catalog.csv` | 850 items | Admin → Club supply catalog (`app/(workspace)/admin/club-supplies/page.tsx`) | `POST /api/admin/club-supplies/import`, columns `Section,Item,Catalog Number,Active` |
+| `imports/master-award-rules.json` | 15 rules (412 honor names) | Admin → Master Award rules (`app/(workspace)/admin/master-award-rules/page.tsx`) | `POST /api/admin/master-award-rules/import` |
+
+All three pages are for system administrators only, and each shows a dry-run
+preview before anything is saved.
+
+**Club supply file.** One row per source row, in the source's order, with the
+header the template route produces. `section` is rewritten to the import's own
+section label (`Reacreation` becomes `Recreation`, `Health And Science` becomes
+`Health and Science`, and so on); the item names and catalog numbers are
+byte-for-byte the source's. A blank catalog number stays blank, and `Active` is
+left blank so every item takes the import's default (active). The sized-item
+rows, the repeated numbers, and the repeated PBE pins stay as they are. On a
+clean catalog the preview shows 843 added and 7 skipped as repeats, no
+problems, and 10 repeated-number warnings (expected: see the quirks above).
+The 120 uniform rows (Class A Dress Apparel 93, Class A Uniform Accessories 16,
+Other Apparel 11) are in this file.
+
+**Master award file.** The same 15 rules as `master-award-rules.json`, checked
+with the real rules parser. All 412 honor names in it are rows of the club
+supply file, so once honors exist they match by name.
+
+### Order to import
+
+1. **Honors** (`imports/honors.csv`). Honors must exist before the two files
+   below, or nothing links. **Check the preview against any honors staff
+   already created by hand first.** The honor import matches by code only, so
+   a hand-made honor saved under a different code would be added again as a
+   second honor with the same name. Remove or rename the hand-made ones (or
+   drop their rows from the file) before confirming.
+2. **Club supply catalog.** Honor-section rows link to the honors whose names
+   match and set each honor's catalog number and category. Without honors they
+   import as unlinked items, and a later re-import links them (an import
+   matches items by section plus name, so re-running it is safe).
+3. **Master Award rules.** They match honors by name; every rule arrives as a
+   DRAFT for an administrator to review and activate.
+
+### Uniforms
+
+There is no separate uniform import, and none was built. A uniform is a sized
+club supply item (`modules/uniforms/`, #497), so the uniform catalog is the
+Class A Dress Apparel, Class A Uniform Accessories and Other Apparel rows of
+`imports/club-supply-catalog.csv`.
+
+### Known gaps
+
+- **Honor codes are derived, not official.** No honor code exists in the
+  repository, and the honor import requires a unique `Code`. The codes in
+  `imports/honors.csv` are system identifiers derived from the names (uppercase
+  ASCII, each run of other characters as `-`, at most 40 characters cut at a
+  whole word, and a long "X - Advanced" name keeps its `-ADVANCED` ending), for
+  example "Basic Rescue" becomes `BASIC-RESCUE`. A honor that appears on
+  several rows (such as "Video" and "Video (GC)") goes by the name without
+  "(GC)", so the file doesn't depend on row order. The committed
+  `imports/honors.csv` is the ledger: the generator reads it, an honor already
+  in it keeps its code, and only a new honor whose code would collide gets its
+  category added (a collision after that fails the build; none collide today).
+  The codes are not General Conference numbers. **Renaming an honor later must
+  keep its code**, because the honor import matches by code.
+- **No descriptions or prices.** The sources have neither, so they are blank.
+- **89 supply rows have no catalog number** (conference-made patches and most
+  PBE pins), as in the source.
+- **Family, Origins, and Heritage** is still a partial rule (see above).
+- **Club-made honors and the club's own patch** are not in the source, so not
+  in the files.
