@@ -67,6 +67,17 @@ import {
   startsCollapsed,
 } from "@/modules/forms/roster-cards";
 import { summarizeRosterAttendees } from "@/modules/forms/roster-summary";
+import {
+  draftsAllowed,
+  mergeDraftAttendees,
+  shouldPersistDraft,
+  PUBLIC_DRAFT_RESTORED_NOTICE,
+  PUBLIC_DRAFT_VERSION_CHANGED_NOTICE,
+  clearPublicDraft,
+  getBrowserDraftStorage,
+  loadPublicDraft,
+  savePublicDraft,
+} from "@/modules/forms/public-draft";
 
 declare global {
   interface Window {
@@ -177,6 +188,8 @@ export type PublicRegistrationFormProps = {
   initialResponses?: FormResponses;
   initialAttendeeResponses?: FormResponses;
   embedded?: boolean;
+  /** True for a signed-in visitor: no browser draft is read or written (#574). */
+  disableDrafts?: boolean;
   /**
    * Club registration (#358): the people come from the club roster, so the
    * party is fixed (no add, remove, or CSV) and their roster-owned fields are
@@ -354,6 +367,7 @@ export function PublicRegistrationForm({
   initialResponses = {},
   initialAttendeeResponses = {},
   embedded = false,
+  disableDrafts = false,
   club,
 }: PublicRegistrationFormProps) {
   const { definition } = form;
@@ -374,7 +388,7 @@ export function PublicRegistrationForm({
   );
   const [responses, setResponses] = useState<FormResponses>(initialResponses);
   const [registrationResponses, setRegistrationResponses] = useState<FormResponses>(initialResponses);
-  const [attendees, setAttendees] = useState<RosterAttendee[]>(() => {
+  function buildInitialAttendees(): RosterAttendee[] {
     if (club) return club.initialAttendees;
     const initial = initialRoster(roster.minAttendees);
     if (initial.length > 0) {
@@ -398,7 +412,8 @@ export function PublicRegistrationForm({
       initial[0] = { ...initial[0], responses: firstAttendeeResponses };
     }
     return initial;
-  });
+  }
+  const [attendees, setAttendees] = useState<RosterAttendee[]>(buildInitialAttendees);
   // Compact attendee cards (#483): a complete card carried over from the
   // roster starts collapsed; one with a carryover prompt or a missing answer,
   // and every other card (freshly added, or from CSV import), starts open.
@@ -444,6 +459,72 @@ export function PublicRegistrationForm({
   useEffect(() => {
     onClubDraftChange?.({ responses: rosterEnabled ? registrationResponses : responses, attendees });
   }, [onClubDraftChange, rosterEnabled, registrationResponses, responses, attendees]);
+  // Browser draft (#574): kept only in this visitor's localStorage. Off for
+  // club registrations (own server-side draft), signed-in visitors and any
+  // page with profile prefill, so a shared computer never leaks a profile.
+  // Saved only after a real edit (draftDirty), never because of prefill alone.
+  // Restored after mount so server and first client render match; saving
+  // waits until the restore attempt has run.
+  const draftsEnabled = !club && draftsAllowed({
+    signedIn: disableDrafts,
+    prefill: [initialResponses, initialAttendeeResponses],
+  });
+  const draftIdentity = useMemo(
+    () => ({ eventSlug: event.slug, formSlug: form.slug, versionId: form.versionId }),
+    [event.slug, form.slug, form.versionId],
+  );
+  const [draftNotice, setDraftNotice] = useState<"restored" | "version-changed" | null>(null);
+  const [draftReady, setDraftReady] = useState(false);
+  const [draftDirty, setDraftDirty] = useState(false);
+  useEffect(() => {
+    if (!draftsEnabled) {
+      // Signed in or prefilled: also drop any older signed-out draft.
+      if (!club) clearPublicDraft(getBrowserDraftStorage(), draftIdentity);
+      return;
+    }
+    // Deferred a tick so the restore is an external-storage sync, not a
+    // synchronous state cascade inside the effect.
+    const timer = window.setTimeout(restoreDraft, 0);
+    return () => window.clearTimeout(timer);
+    function restoreDraft() {
+      const result = loadPublicDraft(getBrowserDraftStorage(), draftIdentity, definition);
+      if (result.status === "restored") {
+        const { draft } = result;
+        if (rosterEnabled) {
+          setRegistrationResponses((current) => ({ ...current, ...draft.responses } as FormResponses));
+          setAttendees((current) => mergeDraftAttendees(current, draft.attendees.map((attendee) => ({
+            clientId: attendee.clientId,
+            responses: attendee.responses,
+          }))) as RosterAttendee[]);
+        } else {
+          setResponses((current) => ({ ...current, ...draft.responses } as FormResponses));
+        }
+        setDraftNotice("restored");
+      } else if (result.status === "version-changed") {
+        setDraftNotice("version-changed");
+      }
+      setDraftReady(true);
+    }
+    // Runs once per form identity; the definition is fixed for a given version.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftIdentity, draftsEnabled]);
+  useEffect(() => {
+    if (!shouldPersistDraft({ enabled: draftsEnabled, ready: draftReady, dirty: draftDirty, submitted: Boolean(confirmation) })) return;
+    const timer = window.setTimeout(() => {
+      savePublicDraft(
+        getBrowserDraftStorage(),
+        draftIdentity,
+        definition,
+        {
+          responses: rosterEnabled ? registrationResponses : responses,
+          attendees: rosterEnabled
+            ? attendees.map((attendee) => ({ clientId: attendee.clientId, responses: attendee.responses }))
+            : [],
+        },
+      );
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [draftsEnabled, draftReady, draftDirty, confirmation, draftIdentity, definition, rosterEnabled, registrationResponses, responses, attendees]);
   const errorSummaryRef = useRef<HTMLDivElement>(null);
   const stepHeadingRef = useRef<HTMLHeadingElement>(null);
   const rosterCsvInputRef = useRef<HTMLInputElement>(null);
@@ -537,6 +618,27 @@ export function PublicRegistrationForm({
   const [currentStepId, setCurrentStepId] = useState<PublicRegistrationStepId>(
     () => registrationSteps[0]?.id ?? "__review",
   );
+  function discardDraft() {
+    setDraftDirty(false);
+    clearPublicDraft(getBrowserDraftStorage(), draftIdentity);
+    // Rebuild exactly what the first render started from.
+    setResponses(initialResponses);
+    setRegistrationResponses(initialResponses);
+    setAttendees(buildInitialAttendees());
+    setCollapsedAttendeeIds(new Set());
+    setWebsite("");
+    setIssues([]);
+    setError("");
+    setRosterAnnouncement("");
+    setPromoCodeQuote(null);
+    setPromoCodeApplying(false);
+    setAttendeePromo(null);
+    setPromoCodeNotice("");
+    setIdempotencyKey(null);
+    setAccountChoice("without");
+    setCurrentStepId(registrationSteps[0]?.id ?? "__review");
+    setDraftNotice(null);
+  }
   const currentStepIndex = Math.max(
     registrationSteps.findIndex((step) => step.id === currentStepId),
     0,
@@ -855,6 +957,7 @@ export function PublicRegistrationForm({
   }
 
   function setFieldValue(key: string, value: ResponseValue) {
+    setDraftDirty(true);
     setResponses((current) => {
       const next: FormResponses = { ...current, [key]: value };
       for (let pass = 0; pass < allFields.length; pass += 1) {
@@ -908,6 +1011,7 @@ export function PublicRegistrationForm({
   }
 
   function setRegistrationFieldValue(key: string, value: ResponseValue) {
+    setDraftDirty(true);
     const nextRegistration = pruneScopedResponses(
       { ...registrationResponses, [key]: value },
       "REGISTRATION",
@@ -937,6 +1041,9 @@ export function PublicRegistrationForm({
   }
 
   function setAttendeeFieldValue(attendeeIndex: number, key: string, value: ResponseValue) {
+    setDraftDirty(true);
+    // Changed answers are a different submission, so never reuse the old key.
+    setIdempotencyKey(null);
     setAttendees((current) => current.map((attendee, index) => index === attendeeIndex ? {
       ...attendee,
       responses: pruneScopedResponses(
@@ -993,6 +1100,7 @@ export function PublicRegistrationForm({
   }
 
   function addAttendee() {
+    setDraftDirty(true);
     if (attendees.length >= roster.maxAttendees) return;
     const clientId = crypto.randomUUID();
     const nextNumber = attendees.length + 1;
@@ -1017,6 +1125,7 @@ export function PublicRegistrationForm({
   }
 
   async function importRosterCsv(event: React.ChangeEvent<HTMLInputElement>) {
+    setDraftDirty(true);
     const file = event.target.files?.[0];
     if (!file) return;
     setError("");
@@ -1060,6 +1169,7 @@ export function PublicRegistrationForm({
   // window.confirm(), which iOS Safari can silently fail to show. Cancel
   // leaves every answer untouched.
   function removeAttendee(index: number) {
+    setDraftDirty(true);
     const target = attendees[index];
     if (!target) return;
     const plan = planAttendeeRemoval(attendees, target.clientId, roster.minAttendees, (attendee) => hasResponses(attendee.responses));
@@ -1072,6 +1182,7 @@ export function PublicRegistrationForm({
   }
 
   function confirmRemoveAttendee() {
+    setDraftDirty(true);
     const pendingId = pendingRemoveClientId;
     setPendingRemoveClientId(null);
     if (pendingId === null) return;
@@ -1101,6 +1212,7 @@ export function PublicRegistrationForm({
   }
 
   function moveAttendee(index: number, direction: -1 | 1) {
+    setDraftDirty(true);
     const nextIndex = index + direction;
     if (nextIndex < 0 || nextIndex >= attendees.length) return;
     const clientId = attendees[index].clientId;
@@ -2355,6 +2467,7 @@ export function PublicRegistrationForm({
         return;
       }
       setConfirmation(result.confirmation);
+      if (!club) clearPublicDraft(getBrowserDraftStorage(), draftIdentity);
       club?.onSubmitted?.();
       window.imsdaEmbedScrollTop?.();
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -2368,9 +2481,12 @@ export function PublicRegistrationForm({
   }
 
   function startAnotherRegistration() {
-    setResponses({});
-    setRegistrationResponses({});
-    setAttendees(initialRoster(roster.minAttendees));
+    setDraftDirty(false);
+    setDraftNotice(null);
+    setResponses(initialResponses);
+    setRegistrationResponses(initialResponses);
+    setAttendees(buildInitialAttendees());
+    setCollapsedAttendeeIds(new Set());
     setWebsite("");
     setIssues([]);
     setError("");
@@ -2550,6 +2666,18 @@ export function PublicRegistrationForm({
                 <strong>This is a waitlist request, not a confirmed registration.</strong>
                 <small>No payment will be collected. The event team will contact you if space becomes available.</small>
               </span>
+            </section>
+          )}
+          {draftNotice === "restored" && (
+            <section className="public-registration-draft-notice" role="status">
+              <span>{PUBLIC_DRAFT_RESTORED_NOTICE}</span>
+              <button type="button" onClick={discardDraft}>Discard</button>
+            </section>
+          )}
+          {draftNotice === "version-changed" && (
+            <section className="public-registration-draft-notice" role="status">
+              <span>{PUBLIC_DRAFT_VERSION_CHANGED_NOTICE}</span>
+              <button type="button" onClick={() => setDraftNotice(null)}>Dismiss</button>
             </section>
           )}
           <section className="public-registration-intro">

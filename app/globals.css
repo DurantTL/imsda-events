@@ -2972,6 +2972,28 @@ select:focus-visible {
 }
 
 .public-registration-form-column { display: grid; min-width: 0; gap: 16px; }
+.public-registration-draft-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: white;
+  color: var(--imsda-navy);
+  padding: 12px 16px;
+  font-size: 0.8rem;
+}
+.public-registration-draft-notice button {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+  color: var(--imsda-navy);
+  padding: 6px 12px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
 .public-registration-waitlist-banner,
 .public-registration-waitlist-payment {
   display: flex;
