@@ -152,6 +152,8 @@ export type EventReadinessWarning = {
   id: string;
   label: string;
   detail: string;
+  /** Where to fix it, when the warning points at one place (#617). */
+  href?: string;
 };
 
 /** A location saved within this long of its creation counts as never edited. */
@@ -186,30 +188,67 @@ export function getLocationDateWarnings(
 }
 
 type FeeFieldShape = {
+  id?: string;
   type: string;
   scope?: string;
   label: string;
   priceCents?: number;
 };
 
+/** The label the registration builder puts on a fee field's amount input. */
+export const REGISTRATION_FEE_INPUT_LABEL = "Registration fee (standard price)";
+
+/** A per-attendee fee field with no amount, and where to find it in the builder. */
+export type UnpricedFeeField = { label: string; fieldId?: string; formId?: string };
+
 /**
- * Labels of the per-attendee fee fields that have no amount: a CALCULATED
- * attendee field with no `priceCents`. The label is the field's own, so
- * "Fall Camporee fee" reads "Set the Fall Camporee fee".
+ * The per-attendee fee fields that have no amount: a CALCULATED attendee field
+ * with no `priceCents`. The label is the field's own, so "Fall Camporee fee"
+ * reads "Set the Fall Camporee fee". `fieldId` lets the warning link to it.
  */
-export function unpricedFeeFieldLabels(definition: { sections: ReadonlyArray<{ fields: ReadonlyArray<FeeFieldShape> }> }) {
+export function unpricedFeeFields(
+  definition: { sections: ReadonlyArray<{ fields: ReadonlyArray<FeeFieldShape> }> },
+  formId?: string,
+): UnpricedFeeField[] {
   return definition.sections
     .flatMap((section) => section.fields)
     .filter((field) => field.type === "CALCULATED" && field.scope === "ATTENDEE" && field.priceCents === undefined)
-    .map((field) => field.label);
+    .map((field) => ({ label: field.label, fieldId: field.id, formId }));
 }
 
-export function getFeeWarnings(unpricedLabels: readonly string[]): EventReadinessWarning[] {
-  return [...new Set(unpricedLabels)].map((label) => ({
-    id: `fee:${label}`,
-    label: `Set the ${label}`,
-    detail: "No amount is set. Choose the fee in the registration builder before publishing.",
-  }));
+/** Labels of the unpriced fee fields (see `unpricedFeeFields`). */
+export function unpricedFeeFieldLabels(definition: { sections: ReadonlyArray<{ fields: ReadonlyArray<FeeFieldShape> }> }) {
+  return unpricedFeeFields(definition).map((field) => field.label);
+}
+
+/** The builder URL for one form's field; the builder opens that form and focuses the field's amount. */
+export function registrationBuilderFieldHref(eventId: string, formId?: string, fieldId?: string) {
+  const query = new URLSearchParams({ event: eventId });
+  if (formId && fieldId) {
+    query.set("form", formId);
+    query.set("field", fieldId);
+  }
+  return `/registration-builder?${query.toString()}`;
+}
+
+/**
+ * One warning per unpriced fee field, naming the exact place to set it (#617).
+ * Plain strings (labels only) are accepted for callers with no builder context;
+ * with an `eventId` the warning also links straight to the field.
+ */
+export function getFeeWarnings(unpriced: ReadonlyArray<string | UnpricedFeeField>, eventId?: string): EventReadinessWarning[] {
+  const fields = unpriced.map((entry) => (typeof entry === "string" ? { label: entry } : entry));
+  const seen = new Set<string>();
+  return fields.flatMap((field) => {
+    if (seen.has(field.label)) return [];
+    seen.add(field.label);
+    return [{
+      id: `fee:${field.label}`,
+      label: `Set the ${field.label}`,
+      detail: `No amount is set. Open the registration builder \u2192 ${field.label} \u2192 set the amount in "${REGISTRATION_FEE_INPUT_LABEL}" before publishing.`,
+      ...(eventId ? { href: registrationBuilderFieldHref(eventId, field.formId, field.fieldId) } : {}),
+    }];
+  });
 }
 
 /**

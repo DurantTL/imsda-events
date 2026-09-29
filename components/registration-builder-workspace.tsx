@@ -1,7 +1,7 @@
 "use client";
 
 import { PUBLIC_DRAFT_STAFF_HELP } from "@/modules/forms/public-draft";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowDown,
@@ -153,9 +153,11 @@ const conditionLabels = {
   NOT_EMPTY: "Has any answer",
 } as const;
 
-export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, eventAudience, eventBillingMode, initialForms, templates }: { eventId: string; eventSlug: string; eventName: string; eventAudience?: string; eventBillingMode?: string; initialForms: FormView[]; templates: TemplateView[] }) {
+export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, eventAudience, eventBillingMode, initialForms, templates, focusTarget = null }: { eventId: string; eventSlug: string; eventName: string; eventAudience?: string; eventBillingMode?: string; initialForms: FormView[]; templates: TemplateView[]; focusTarget?: { formId: string; fieldId: string } | null }) {
   const [forms, setForms] = useState(initialForms);
-  const [selectedFormId, setSelectedFormId] = useState(initialForms[0]?.id ?? "");
+  // A setup warning (#617) links here with the form and field to fix: open that form.
+  const focusedForm = focusTarget ? initialForms.find((form) => form.id === focusTarget.formId) : undefined;
+  const [selectedFormId, setSelectedFormId] = useState(focusedForm?.id ?? initialForms[0]?.id ?? "");
   const selectedForm = forms.find((form) => form.id === selectedFormId) ?? null;
   const [selectedVersionId, setSelectedVersionId] = useState(selectedForm?.activeVersion.id ?? "");
   const selectedVersion = selectedForm?.versions.find((version) => version.id === selectedVersionId) ?? selectedForm?.activeVersion ?? null;
@@ -198,7 +200,16 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, ev
   // lookup (the dialog was closed or reopened for another field) is ignored.
   const removalAnswerRequestId = useRef(0);
   const [dragging, setDragging] = useState<DragState>(null);
-  const [expandedFieldId, setExpandedFieldId] = useState<string | null>(null);
+  const focusedFieldId = focusedForm && focusTarget && focusedForm.activeVersion.definition.sections.some((section) => section.fields.some((field) => field.id === focusTarget.fieldId)) ? focusTarget.fieldId : null;
+  const [expandedFieldId, setExpandedFieldId] = useState<string | null>(focusedFieldId);
+  // Scroll the linked field's fee input into view and focus it, once, after the first paint.
+  useEffect(() => {
+    if (!focusedFieldId) return;
+    const input = document.getElementById(`registration-fee-${focusedFieldId}`);
+    if (!input) return;
+    input.scrollIntoView({ block: "center" });
+    input.focus();
+  }, [focusedFieldId]);
   const [openModuleSection, setOpenModuleSection] = useState<number | null>(null);
   const [moduleQuery, setModuleQuery] = useState("");
   const [moduleCategory, setModuleCategory] = useState<typeof moduleCategories[number]>("All");
@@ -1036,7 +1047,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, ev
               <details className="field-advanced"><summary><Settings2 size={14} /> Advanced options</summary><div className="field-settings">
                 <label>Field key<input disabled={!canEdit} value={field.key} maxLength={60} onChange={(event) => updateField(sectionIndex, fieldIndex, { key: fieldKey(event.target.value) })} /></label>
                 {hasCredit(field) && <div className="field-full inline-notice" data-testid={`credit-${field.key}`}><span>{creditSummary(field)}. Set by the form template; it comes off the registration total, never below $0.</span>{canEdit && <button className="text-button" type="button" aria-label={`Remove credit from ${field.label}`} onClick={() => updateField(sectionIndex, fieldIndex, removeCreditPatch())}>Remove credit</button>}</div>}
-                {!hasCredit(field) && !isChoiceFieldType(field.type) && field.type !== "ADDRESS" && <label>{field.type === "NUMBER" ? "Price per item" : field.type === "CALCULATED" ? "Standard price" : "Price when selected"}<span className="money-input"><b>$</b><input aria-label={`Price for ${field.label}`} disabled={!canEdit} type="number" min={0} max={100000} step="0.01" placeholder="0.00" value={field.priceCents === undefined ? "" : field.priceCents / 100} onChange={(event) => updateField(sectionIndex, fieldIndex, { priceCents: event.target.value === "" ? undefined : Math.round(Number(event.target.value) * 100), latePricing: event.target.value === "" ? undefined : field.latePricing })} /></span></label>}
+                {!hasCredit(field) && !isChoiceFieldType(field.type) && field.type !== "ADDRESS" && <label>{field.type === "NUMBER" ? "Price per item" : field.type === "CALCULATED" ? "Registration fee (standard price)" : "Price when selected"}<span className="money-input"><b>$</b><input id={`registration-fee-${field.id}`} aria-label={`Price for ${field.label}`} disabled={!canEdit} type="number" min={0} max={100000} step="0.01" placeholder="0.00" value={field.priceCents === undefined ? "" : field.priceCents / 100} onChange={(event) => updateField(sectionIndex, fieldIndex, { priceCents: event.target.value === "" ? undefined : Math.round(Number(event.target.value) * 100), latePricing: event.target.value === "" ? undefined : field.latePricing })} /></span></label>}
                 {field.type === "NUMBER" && <div className="field-full" data-testid={`number-bounds-${field.key}`}><label>Minimum value<input aria-label={`Minimum value for ${field.label}`} disabled={!canEdit} type="number" min={0} max={100000} step={1} value={field.ageBounds?.minimumAge ?? ""} placeholder={String(numberFieldBounds(field)?.minimumAge ?? 0)} onChange={(event) => updateNumberBounds(sectionIndex, fieldIndex, field, "minimumAge", event.target.value)} /></label><label>Maximum value<input aria-label={`Maximum value for ${field.label}`} disabled={!canEdit} type="number" min={0} max={100000} step={1} value={field.ageBounds?.maximumAge ?? ""} placeholder={String(numberFieldBounds(field)?.maximumAge ?? 100000)} onChange={(event) => updateNumberBounds(sectionIndex, fieldIndex, field, "maximumAge", event.target.value)} /></label>{field.ageBounds && field.ageBounds.minimumAge !== null && field.ageBounds.maximumAge !== null && field.ageBounds.minimumAge > field.ageBounds.maximumAge && <small role="alert" className="field-error">Minimum value cannot exceed maximum value.</small>}<small>Whole numbers only. Registrants cannot enter a value outside this range. Leave blank for no extra limit.</small></div>}
                 <label className="field-wide">Help text<input disabled={!canEdit} value={field.helpText} maxLength={240} placeholder="Optional guidance shown below the field" onChange={(event) => updateField(sectionIndex, fieldIndex, { helpText: event.target.value })} /></label>
                 {!Array.from(["SELECT", "RADIO", "MULTISELECT", "RANKED_CHOICE", "DATE", "CALCULATED", "ADDRESS"]).includes(field.type) && <label className="field-wide">{field.type === "CHECKBOX" ? "Agreement text" : "Placeholder"}<input disabled={!canEdit} value={field.placeholder ?? ""} maxLength={120} placeholder={field.type === "CHECKBOX" ? "Yes, I understand and agree" : "Example or short instruction"} onChange={(event) => updateField(sectionIndex, fieldIndex, { placeholder: event.target.value })} /></label>}

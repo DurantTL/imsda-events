@@ -51,7 +51,12 @@ export function eventCloneApiError(
   // A source lock wait past `lock_timeout` (SQLSTATE 55P03), a wait past the
   // transaction timeout (P2028), or a serialization failure (P2034) is a busy
   // source, not a fault: nothing was written.
-  if (isLockTimeoutError(error) || (error instanceof Prisma.PrismaClientKnownRequestError && (error.code === "P2028" || error.code === "P2034"))) {
+  // A wait past the transaction timeout means the copy itself ran long: say so, so nobody waits on a
+  // spinner or blames the source (#617). Nothing was written either way.
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2028") {
+    return Response.json({ error: "SOURCE_BUSY", message: "The copy took too long and was cancelled, so nothing was created. Try again in a moment." }, { status: 409 });
+  }
+  if (isLockTimeoutError(error) || (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034")) {
     return Response.json({ error: "SOURCE_BUSY", message: "The source event is busy right now. Try again in a moment." }, { status: 409 });
   }
   logError(options.logMessage, error);
