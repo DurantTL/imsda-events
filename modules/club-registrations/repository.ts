@@ -188,6 +188,8 @@ function clubLocationView(event: ClubEvent, location: ClubLocation, occupied: nu
     capacity: location.capacity,
     remaining,
     full: remaining !== null && remaining <= 0,
+    // A full location can still be picked by a new registration when the event has a waitlist (#599).
+    waitlistOnFull: event.waitlistEnabled,
     phase,
     open: phase === "OPEN",
     isActive: location.isActive,

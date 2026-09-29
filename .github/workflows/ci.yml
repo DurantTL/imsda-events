@@ -113,6 +113,8 @@ jobs:
       # timing out as a retryable busy, the location filters and CSV columns,
       # and cloning with shifted dates (#413).
       - run: npm run test:event-locations
+      # Real-database check of location waitlists: a full location waitlists the club there in per-location order, a freed seat promotes the next club at that location only and never overfills it under races, a busy location is skipped, and the daily digest reaches the active coordinator and event administrators once a day while an email failure changes nothing (#599).
+      - run: npm run test:location-waitlist
 
       # Real-database check of Honors Weekend sessions at sites: per-site names beside the
       # no-site rule, copying and cloning by site name with the no-match warning (#589).

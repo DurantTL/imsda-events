@@ -210,7 +210,12 @@ function statusTone(record: RegistrationRecord) {
 
 function statusLabel(record: RegistrationRecord) {
   if (record.status === "CANCELLED") return "Cancelled";
-  if (record.status === "WAITLISTED") return "Waitlisted";
+  if (record.status === "WAITLISTED") {
+    // A club waitlisted at a location: "Waitlisted at <location> (#N)" (#599).
+    return record.location
+      ? `Waitlisted at ${record.location.name}${record.locationWaitlistPlace ? ` (#${record.locationWaitlistPlace})` : ""}`
+      : "Waitlisted";
+  }
   if (record.status === "DRAFT") return "Draft";
   if (record.isDeferredOrganizationBilling) return "Billed to church";
   if (record.totalAmountCents === 0) return "No charge";

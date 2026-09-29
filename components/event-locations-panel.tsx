@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, MapPin, Pencil, Plus, Power, Trash2, X } from "lucide-react";
-import type { EventLocationRecord } from "@/modules/event-locations/repository";
+import type { ActiveAreaCoordinator, EventLocationRecord } from "@/modules/event-locations/repository";
 import { getLocationDateWarnings } from "@/modules/events/readiness";
 
 type Draft = {
@@ -12,9 +12,10 @@ type Draft = {
   lastDay: string;
   registrationClosesOn: string;
   capacity: string;
+  coordinatorAccountId: string;
 };
 
-const emptyDraft: Draft = { name: "", address: "", firstDay: "", lastDay: "", registrationClosesOn: "", capacity: "" };
+const emptyDraft: Draft = { name: "", address: "", firstDay: "", lastDay: "", registrationClosesOn: "", capacity: "", coordinatorAccountId: "" };
 
 function draftFrom(location: EventLocationRecord): Draft {
   return {
@@ -24,10 +25,23 @@ function draftFrom(location: EventLocationRecord): Draft {
     lastDay: location.lastDay ?? "",
     registrationClosesOn: location.registrationClosesOn ?? "",
     capacity: location.capacity === null ? "" : String(location.capacity),
+    // The stored coordinator stays selected even when no longer active (shown as "inactive"), so choosing
+    // "No coordinator" is a real change that clears them, and an unrelated edit leaves them alone.
+    coordinatorAccountId: location.coordinatorAccountId ?? "",
   };
 }
 
-function bodyFrom(draft: Draft) {
+function coordinatorAtEditStart(location: EventLocationRecord | undefined) {
+  return location ? draftFrom(location).coordinatorAccountId : undefined;
+}
+
+/**
+ * The save body. On an edit the coordinator is sent only when the picker
+ * changed, so an unrelated edit never clears a coordinator who is no longer
+ * active (`unchangedCoordinator` is what the picker started with).
+ */
+function bodyFrom(draft: Draft, unchangedCoordinator?: string) {
+  const coordinatorChanged = unchangedCoordinator === undefined || draft.coordinatorAccountId !== unchangedCoordinator;
   return {
     name: draft.name,
     address: draft.address.trim() || null,
@@ -35,6 +49,7 @@ function bodyFrom(draft: Draft) {
     lastDay: draft.lastDay || null,
     registrationClosesOn: draft.registrationClosesOn || null,
     capacity: draft.capacity.trim() ? Number(draft.capacity) : null,
+    ...(coordinatorChanged ? { coordinatorAccountId: draft.coordinatorAccountId || null } : {}),
   };
 }
 
@@ -47,9 +62,11 @@ function bodyFrom(draft: Draft) {
 export function EventLocationsPanel({
   eventId,
   initialLocations,
+  areaCoordinators,
 }: {
   eventId: string;
   initialLocations: EventLocationRecord[];
+  areaCoordinators: ActiveAreaCoordinator[];
 }) {
   const [locations, setLocations] = useState(initialLocations);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
@@ -89,7 +106,7 @@ export function EventLocationsPanel({
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const saved = editingId
-      ? await call(`${base}/${encodeURIComponent(editingId)}`, "PATCH", bodyFrom(draft), "Location saved.")
+      ? await call(`${base}/${encodeURIComponent(editingId)}`, "PATCH", bodyFrom(draft, coordinatorAtEditStart(locations.find((row) => row.id === editingId))), "Location saved.")
       : await call(base, "POST", bodyFrom(draft), "Location added.");
     if (saved) {
       setAdding(false);
@@ -107,6 +124,9 @@ export function EventLocationsPanel({
   }
 
   const formOpen = adding || editingId !== null;
+  // The location being edited has a stored coordinator who is no longer an active Area Coordinator.
+  const editedLocation = editingId ? locations.find((row) => row.id === editingId) : undefined;
+  const inactiveCoordinator = editedLocation?.coordinator && !editedLocation.coordinatorActive ? editedLocation.coordinator : null;
 
   return (
     <section aria-labelledby="event-locations-title" className="panel form-stack event-settings-panel" id="event-locations">
@@ -140,6 +160,12 @@ export function EventLocationsPanel({
                     ? `${location.firstDay ?? "event start"} to ${location.lastDay ?? "event end"}`
                     : "Event dates"}
                   {location.registrationClosesOn ? ` · Registration closes ${location.registrationClosesOn}` : ""}
+                </small>
+                <small>
+                  Area Coordinator:{" "}
+                  {location.coordinatorActive && location.coordinator
+                    ? <span translate="no">{location.coordinator.name}</span>
+                    : "No active coordinator"}
                 </small>
                 <small>
                   {location.occupied} registered{location.capacity !== null ? ` of ${location.capacity}` : " (no limit)"}
@@ -189,6 +215,20 @@ export function EventLocationsPanel({
               Capacity (people, optional)
               <input inputMode="numeric" min={1} onChange={(event) => setDraft({ ...draft, capacity: event.target.value })} type="number" value={draft.capacity} />
               <small className="field-help">Counted like the event capacity. Blank means no limit.</small>
+            </label>
+            <label>
+              Area Coordinator (optional)
+              <select onChange={(event) => setDraft({ ...draft, coordinatorAccountId: event.target.value })} value={draft.coordinatorAccountId}>
+                <option value="">No coordinator</option>
+                {inactiveCoordinator && <option value={inactiveCoordinator.accountId}>{inactiveCoordinator.name} (inactive)</option>}
+                {areaCoordinators.map((coordinator) => (
+                  <option key={coordinator.accountId} value={coordinator.accountId}>{coordinator.name} ({coordinator.email})</option>
+                ))}
+              </select>
+              <small className="field-help">
+                Told by email when a club joins, leaves or is promoted from this location&apos;s waitlist.
+                Only active Area Coordinators can be chosen.
+              </small>
             </label>
           </div>
           <div className="club-registration-toolbar">

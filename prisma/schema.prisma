@@ -395,6 +395,9 @@ enum MessageTemplateKey {
   ACCOUNT_LOCKOUT
   /// The attendee/club-leader equivalent of ACCOUNT_LOCKOUT.
   ATTENDEE_LOCKOUT
+  /// The daily digest of location waitlist changes to Area Coordinators and
+  /// event staff (#599). Sent without an event, one email per person.
+  LOCATION_WAITLIST_DIGEST
   /// A club member transfer (#489) was started: sent to the sending club.
   MEMBER_TRANSFER_STARTED
   /// A club member transfer (#489) was resolved (acknowledged, staff-finished,
@@ -796,6 +799,7 @@ model AttendeeAccount {
   /// Clubs this account directs. Explicit staff grants only — never inferred.
   clubDirectorGrants                ClubDirectorGrant[]
   areaCoordinatorGrant              AreaCoordinatorGrant?
+  coordinatedLocations              EventLocation[]                  @relation("EventLocationCoordinator")
   grantedClubRoles                  ClubDirectorGrant[]              @relation("ClubDirectorGrantGrantedByAccount")
   acceptedClubInvites               ClubInvite[]                     @relation("ClubInviteAcceptedAccount")
   createdClubInvites                ClubInvite[]                     @relation("ClubInviteCreatedByAccount")
@@ -1255,6 +1259,7 @@ model Event {
   cloneRecord                         EventCloneRecord?            @relation("EventCloneResult")
   clonedInto                          EventCloneRecord[]           @relation("EventCloneSource")
   locations                           EventLocation[]
+  locationWaitlistChanges             LocationWaitlistChange[]
 
   @@index([badgeBackgroundAssetId])
 }
@@ -1279,16 +1284,59 @@ model EventLocation {
   registrationClosesOn String?
   sortOrder            Int      @default(0)
   isActive             Boolean  @default(true)
+  /// The Area Coordinator for this location (#599): an attendee account that
+  /// holds an active `AreaCoordinatorGrant`. Optional. Whether the person is
+  /// still active is decided when it matters (emails, the portal), so a revoked
+  /// or expired coordinator simply stops being notified.
+  coordinatorAccountId String?
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
-  event         Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  registrations Registration[]
-  honorSessions HonorSession[]
-  honorOfferings HonorOffering[]
+  event           Event                    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  coordinator     AttendeeAccount?         @relation("EventLocationCoordinator", fields: [coordinatorAccountId], references: [id], onDelete: SetNull)
+  registrations   Registration[]
+  waitlistChanges LocationWaitlistChange[]
+  honorSessions   HonorSession[]
+  honorOfferings  HonorOffering[]
 
   @@unique([eventId, normalizedName])
   @@index([eventId, isActive, sortOrder])
+  @@index([coordinatorAccountId])
+}
+
+enum LocationWaitlistChangeKind {
+  JOINED
+  PROMOTED
+  REMOVED
+}
+
+/// One change to a location's waitlist (#599): a club joined, was promoted, or
+/// was removed. Written in the same transaction as the registration change and
+/// read by the daily digest to Area Coordinators and event staff. `digestedAt`
+/// is set once a digest covering the row has been queued. The club, location
+/// and counts are snapshots, so the digest reads as things were when they
+/// happened. `place` is the club's place in line at that location (joined:
+/// after joining; removed: where it stood; promoted: where it had stood).
+model LocationWaitlistChange {
+  id             String                     @id @default(cuid())
+  eventId        String
+  locationId     String
+  registrationId String
+  kind           LocationWaitlistChangeKind
+  clubName       String
+  locationName   String
+  attendeeCount  Int
+  place          Int?
+  occurredAt     DateTime                   @default(now())
+  digestedAt     DateTime?
+
+  event        Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  location     EventLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  registration Registration  @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+
+  @@index([digestedAt, occurredAt])
+  @@index([locationId, occurredAt])
+  @@index([registrationId])
 }
 
 /// Event-owned identity used by registration, pricing, capacity, and restriction
@@ -2037,6 +2085,7 @@ model Registration {
 
   event                   Event                                @relation(fields: [eventId], references: [id], onDelete: Cascade)
   location                EventLocation?                       @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  locationWaitlistChanges LocationWaitlistChange[]
   accountHolderPerson     Person                               @relation(fields: [accountHolderPersonId], references: [id])
   household               Household?                           @relation(fields: [householdId], references: [id])
   attendees               RegistrationAttendee[]
