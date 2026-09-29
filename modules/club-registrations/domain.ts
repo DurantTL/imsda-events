@@ -61,6 +61,8 @@ export const clubRegistrationEditInputSchema = z.object({
   keptOffRosterAttendeeIds: z.array(z.string().trim().min(1).max(100)).max(500),
   newGuests: clubGuestsSchema,
   attendeeResponses: z.record(z.string(), z.record(z.string(), z.unknown())),
+  /** Move the registration to another location of the event (#413); omitted leaves it where it is. */
+  locationId: z.string().trim().min(1).max(100).optional(),
 }).strict();
 
 export type ClubRegistrationEditInput = z.infer<typeof clubRegistrationEditInputSchema>;

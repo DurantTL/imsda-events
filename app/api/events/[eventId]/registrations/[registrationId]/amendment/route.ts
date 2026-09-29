@@ -3,6 +3,8 @@ import { AccessDeniedError, requirePermission } from "@/modules/access/authoriza
 import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { processQueuedMessageIdsAfterCommit } from "@/modules/communications/messaging-repository";
+import { isBusyDatabaseError } from "@/modules/event-locations/api-errors";
+import { EventLocationError, eventLocationErrorStatus, locationBusyMessage } from "@/modules/event-locations/errors";
 import { findActiveMembership } from "@/modules/events/repository";
 import {
   amendRegistration,
@@ -48,6 +50,19 @@ function errorResponse(error: unknown) {
         details: error.details,
       },
       { status, headers: noStoreHeaders },
+    );
+  }
+  if (error instanceof EventLocationError) {
+    return Response.json(
+      { error: error.code, message: error.message },
+      { status: eventLocationErrorStatus(error.code), headers: noStoreHeaders },
+    );
+  }
+  // A location lock wait that gave up, or a transaction that timed out: nothing was saved (#413).
+  if (isBusyDatabaseError(error)) {
+    return Response.json(
+      { error: "LOCATION_BUSY", message: locationBusyMessage },
+      { status: 503, headers: noStoreHeaders },
     );
   }
   logError("Registration amendment failed", error);

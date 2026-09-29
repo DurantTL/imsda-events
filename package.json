@@ -24,6 +24,8 @@
     "test:earned-awards": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-earned-awards.ts",
     "test:event-templates": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-event-templates.ts",
     "test:church-promo-codes": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-church-promo-codes.ts",
+    "test:honor-sites": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-honor-sites.ts",
+    "test:event-locations": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-event-locations.ts",
     "test:event-cloning": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-event-cloning.ts",
     "test:form-revisions": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-form-revisions.ts",
     "test:watch": "vitest",

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check, Pencil, Trash2, UserPlus, X } from "lucide-react";
+import { ClubLocationPicker } from "@/components/club-location-picker";
 import {
   PublicRegistrationForm,
   type FormIssue,
@@ -69,6 +70,18 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
   const registeredByMemberId = useMemo(() => new Map(
     registered.flatMap((attendee) => attendee.clubRosterMemberId && !attendee.offRoster ? [[attendee.clubRosterMemberId, attendee] as const] : []),
   ), [registered]);
+
+  // Changing location (#413): allowed while the registration is editable and the new location
+  // has room. The registration's own location is always listed, even if since deactivated.
+  const currentLocationId = workspace.registration.location?.id ?? null;
+  const [locationId, setLocationId] = useState<string | null>(currentLocationId);
+  const locationChoices = useMemo(() => {
+    const registeredLocation = workspace.registration.location;
+    const active = workspace.locations;
+    return registeredLocation && !active.some((location) => location.id === registeredLocation.id)
+      ? [registeredLocation, ...active]
+      : active;
+  }, [workspace.locations, workspace.registration.location]);
 
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>(() => (
     workspace.roster.map((person) => person.memberId).filter((memberId) => registeredByMemberId.has(memberId))
@@ -171,6 +184,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
           keptGuestIds,
           newGuests,
           attendeeResponses: Object.fromEntries(attendees.map((attendee) => [attendee.clientId, attendee.responses])),
+          ...(locationId && locationId !== currentLocationId ? { locationId } : {}),
         }),
       },
     );
@@ -187,7 +201,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
         : { key: issue.key, message: issue.message, attendeeIndex: null }];
     });
     return { ok: false as const, message: result.message ?? "That change couldn't be saved. Refresh and try again.", issues };
-  }, [organizationId, workspace.event.id, workspace.registration.updatedAt, selectedMemberIds, keptOffRosterIds, keptGuestIds, newGuests]);
+  }, [organizationId, workspace.event.id, workspace.registration.updatedAt, selectedMemberIds, keptOffRosterIds, keptGuestIds, newGuests, locationId, currentLocationId]);
 
   const club = useMemo(() => ({
     initialAttendees,
@@ -263,6 +277,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
         <span className="count-badge">{goingCount} chosen</span>
       </div>
       {error && <div className="inline-notice error" role="alert">{error}</div>}
+      <ClubLocationPicker currentId={currentLocationId} locations={locationChoices} onChange={setLocationId} value={locationId} />
       <ul className="club-going-list">
         {workspace.roster.map((person) => (
           <li key={person.memberId}>

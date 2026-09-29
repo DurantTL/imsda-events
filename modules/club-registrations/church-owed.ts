@@ -61,6 +61,8 @@ export type ChurchAmountOwedRow = {
   isBilled: boolean;
   /** Estimated amount owed by the church; $0 unless `isBilled`. */
   amountOwedCents: number;
+  /** The event location the club registered at (#413); absent when the event has none. */
+  locationName?: string | null;
 };
 
 export type ChurchSubtotal = {
@@ -136,7 +138,8 @@ export function churchAmountsOwedCsvRows(
     "Church estimated total",
     "Note",
   ]];
-  for (const row of sortChurchAmountsOwed(rows)) {
+  const sortedRows = sortChurchAmountsOwed(rows);
+  for (const row of sortedRows) {
     table.push([
       row.churchName ?? NO_CHURCH_ON_FILE,
       row.organizationName,
@@ -164,5 +167,12 @@ export function churchAmountsOwedCsvRows(
       SPONSORED_PROMO_NOTE,
     ]);
   }
-  return table;
+  // A Location column (#413), only when some club registered at one, so an
+  // event without locations exports the columns it always did.
+  if (!sortedRows.some((row) => row.locationName)) return table;
+  return table.map((row, position) => [
+    ...row.slice(0, 2),
+    position === 0 ? "Location" : sortedRows[position - 1]?.locationName ?? "",
+    ...row.slice(2),
+  ]);
 }

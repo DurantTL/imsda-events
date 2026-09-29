@@ -13,6 +13,7 @@ import {
   type ApplyEventTemplateInput,
   type EventTemplatePayload,
 } from "@/modules/event-templates/domain";
+import { normalizeLocationName, shiftCalendarDate } from "@/modules/event-locations/domain";
 import { createRegistrationFormFromTemplateInTransaction } from "@/modules/forms/repository";
 import { getEventSettings } from "@/modules/events/repository";
 export class EventTemplateOperationError extends Error {
@@ -406,6 +407,26 @@ export async function applyEventTemplate(
         });
       }
 
+      const templateLocations = payload.locations ?? [];
+      if (templateLocations.length > 0) {
+        // Dates count from the new event's first day, so they move with it (#413).
+        await tx.eventLocation.createMany({
+          data: templateLocations.map((location, position) => ({
+            eventId: event.id,
+            name: location.name,
+            normalizedName: normalizeLocationName(location.name),
+            address: location.address,
+            capacity: location.capacity,
+            sortOrder: position,
+            firstDay: location.firstDayOffset === null ? null : shiftCalendarDate(input.startsOn, location.firstDayOffset),
+            lastDay: location.lastDayOffset === null ? null : shiftCalendarDate(input.startsOn, location.lastDayOffset),
+            registrationClosesOn: location.registrationClosesOffset === null
+              ? null
+              : shiftCalendarDate(input.startsOn, location.registrationClosesOffset),
+          })),
+        });
+      }
+
       for (const templateKey of payload.formTemplateKeys) {
         await createRegistrationFormFromTemplateInTransaction(tx, event.id, actorUserId, templateKey);
       }
@@ -461,6 +482,7 @@ export async function applyEventTemplate(
             billingMode: event.billingMode,
             formTemplateCount: payload.formTemplateKeys.length,
             attendeeTypeCount: payload.attendeeTypes.length,
+            locationCount: templateLocations.length,
           },
         },
       });

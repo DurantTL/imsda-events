@@ -19,6 +19,7 @@ import { privateLinkReasonLabels, privateLinkValue, stripPrivateLinks, type Priv
  * explicit include/exclude choice; none is implied by another. */
 export const cloneDomainKeys = [
   "eventDetails",
+  "locations",
   "moduleToggles",
   "contentSections",
   "registrationForms",
@@ -36,6 +37,10 @@ export const cloneDomainLabels: Record<CloneDomainKey, { label: string; descript
   eventDetails: {
     label: "Branding and event details",
     description: "Location, time zone, public info link, support contact, calendar category and whether it shows on the calendar, lodging, audience, and billing mode.",
+  },
+  locations: {
+    label: "Locations",
+    description: "Each active location's name, address, capacity, and order. Its dates (first and last day, registration closing) move by the same number of days as the event's start date.",
   },
   moduleToggles: {
     label: "Module settings",
@@ -211,6 +216,16 @@ export type SourceConfiguration = {
     minimumSubtotalCents: number | null;
     maximumUses: number | null;
     maximumDiscountCents: number | null;
+  }>;
+  /** Active locations of a multi-location event (#413); their dates move with the new event's start date. */
+  locations: Array<{
+    name: string;
+    address: string | null;
+    capacity: number | null;
+    sortOrder: number;
+    firstDay: string | null;
+    lastDay: string | null;
+    registrationClosesOn: string | null;
   }>;
   honorSessions: Array<{
     id: string;
@@ -629,6 +644,9 @@ export function buildClonePlan(rawConfig: SourceConfiguration, fingerprint: stri
         ? ["Sessions follow their site by name. A session whose site has no same-named site in the new event is copied with no site, and the result says so."]
         : []),
     ],
+    locations: config.locations.length > 0
+      ? ["Name, address, capacity, and order are copied. Dates move by the same number of days as the event's start date; review them on the new event."]
+      : [],
   };
 
   const counts: Record<CloneDomainKey, number> = {
@@ -642,10 +660,11 @@ export function buildClonePlan(rawConfig: SourceConfiguration, fingerprint: stri
     tags: config.tags.length,
     promoCodes: config.promoCodes.length,
     honors: config.honorOfferings.length,
+    locations: config.locations.length,
   };
   const skipped: Record<CloneDomainKey, ClonePlanDomain["skipped"]> = {
     eventDetails: [], moduleToggles: [], contentSections: [], registrationForms: skippedForms, attendeeTypes: [],
-    attendeeClassifications: [], messageTemplates: skippedMessages, tags: [], promoCodes: [], honors: [],
+    attendeeClassifications: [], messageTemplates: skippedMessages, tags: [], promoCodes: [], honors: [], locations: [],
   };
 
   const supportCounts: Record<CloneUnsupportedKey, number> = {
@@ -700,7 +719,11 @@ export const previewEventCloneInputSchema = z.object({
   sourceEventId: z.string().trim().min(1).max(100),
 }).strict();
 
-const includeShape = Object.fromEntries(cloneDomainKeys.map((key) => [key, z.boolean()])) as Record<CloneDomainKey, z.ZodBoolean>;
+const includeShape = Object.fromEntries(cloneDomainKeys.map((key) => [
+  key,
+  // `locations` (#413) is newer than the confirm bodies already in flight, so an absent value means "not selected".
+  key === "locations" ? z.boolean().default(false) : z.boolean(),
+])) as Record<CloneDomainKey, z.ZodBoolean>;
 
 /**
  * A reviewed value that may be "none" (#157): either `{ value }` or the

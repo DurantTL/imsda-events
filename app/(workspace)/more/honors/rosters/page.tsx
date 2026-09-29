@@ -3,7 +3,9 @@ import Link from "next/link";
 import { Award, Download, ShieldCheck, UsersRound } from "lucide-react";
 import { AccessRestricted } from "@/components/access-restricted";
 import { BackgroundCheckBadge } from "@/components/background-check-flags";
+import { LocationFilter } from "@/components/location-filter";
 import { PrintReportButton } from "@/components/print-report-button";
+import { resolveLocationFilter } from "@/modules/event-locations/filter";
 import { resolveEventContext } from "@/modules/events/selection";
 import {
   buildClassRosters,
@@ -30,7 +32,7 @@ function ageText(age: number | null) {
 export default async function HonorRostersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ event?: string; view?: string; club?: string; site?: string }>;
+  searchParams: Promise<{ event?: string; view?: string; club?: string; location?: string }>;
 }) {
   const query = await searchParams;
   const { event, permissions } = await resolveEventContext(query.event);
@@ -38,18 +40,18 @@ export default async function HonorRostersPage({
     return <AccessRestricted title="Honors rosters are restricted" detail="Ask an event administrator for report access." />;
   }
   const includeDietary = permissions.includes("VIEW_SENSITIVE_DATA");
+  // "All sites" plus each location, from the filter the other staff views share (#413).
+  const { locations, locationId, selected: site } = await resolveLocationFilter(event.id, query.location);
   const [data, flagged] = await Promise.all([
-    getHonorRosterData(event.id, { includeDietary, ...(query.site ? { locationId: query.site } : {}) }),
+    getHonorRosterData(event.id, { includeDietary, ...(locationId ? { locationId } : {}) }),
     backgroundFlaggedAttendeeIds(event.id),
   ]);
   if (!data) return <AccessRestricted title="Event unavailable" detail="The selected event could not be loaded." />;
 
   const view: View = query.view === "site" || query.view === "clubs" ? query.view : "classes";
-  // "All sites" plus each site (#589); an unknown site in the address falls back to all.
-  const site = data.locations.find((location) => location.id === query.site) ?? null;
-  const eventQuery = `event=${encodeURIComponent(event.id)}${site ? `&site=${encodeURIComponent(site.id)}` : ""}`;
+  const eventQuery = `event=${encodeURIComponent(event.id)}${site ? `&location=${encodeURIComponent(site.id)}` : ""}`;
   const csv = (kind: string, club?: string) =>
-    `/api/events/${encodeURIComponent(event.id)}/honors/rosters?view=${kind}${club ? `&club=${encodeURIComponent(club)}` : ""}${site ? `&site=${encodeURIComponent(site.id)}` : ""}`;
+    `/api/events/${encodeURIComponent(event.id)}/honors/rosters?view=${kind}${club ? `&club=${encodeURIComponent(club)}` : ""}${site ? `&location=${encodeURIComponent(site.id)}` : ""}`;
   const classRosters = buildClassRosters(data.sessions, data.offerings, data.enrollments, data.attendees, data.locations);
   const siteRoster = buildSiteRoster(data.attendees);
   const selectedClubs = query.club ? data.clubs.filter((club) => club.id === query.club) : data.clubs;
@@ -87,20 +89,12 @@ export default async function HonorRostersPage({
         <Link className={view === "clubs" ? "active" : ""} href={`/more/honors/rosters?${eventQuery}&view=clubs`}>Club schedules ({data.clubs.length})</Link>
       </nav>
 
-      {data.locations.length > 0 && (
-        <nav className="retreat-packet-selector" aria-label="Site filter">
-          <Link className={!site ? "active" : ""} href={`/more/honors/rosters?event=${encodeURIComponent(event.id)}${view === "classes" ? "" : `&view=${view}`}`}>All sites</Link>
-          {data.locations.map((location) => (
-            <Link
-              className={site?.id === location.id ? "active" : ""}
-              href={`/more/honors/rosters?event=${encodeURIComponent(event.id)}&site=${encodeURIComponent(location.id)}${view === "classes" ? "" : `&view=${view}`}`}
-              key={location.id}
-            >
-              {location.name}
-            </Link>
-          ))}
-        </nav>
-      )}
+      <LocationFilter
+        basePath="/more/honors/rosters"
+        locations={locations}
+        params={{ event: event.id, view: view === "classes" ? undefined : view, club: query.club }}
+        selectedId={locationId}
+      />
 
       {view === "classes" && (
         <>

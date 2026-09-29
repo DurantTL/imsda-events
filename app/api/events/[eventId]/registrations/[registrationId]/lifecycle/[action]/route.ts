@@ -1,3 +1,5 @@
+import { isBusyDatabaseError } from "@/modules/event-locations/api-errors";
+import { EventLocationError, eventLocationErrorStatus, locationBusyMessage } from "@/modules/event-locations/errors";
 import { z } from "zod";
 import { AccessDeniedError, requirePermission } from "@/modules/access/authorization";
 import { getCurrentSession } from "@/modules/access/current-session";
@@ -51,6 +53,19 @@ function errorResponse(error: unknown) {
         status: error.code === "REGISTRATION_NOT_FOUND" ? 404 : 409,
         headers: noStoreHeaders,
       }
+    );
+  }
+  if (error instanceof EventLocationError) {
+    return Response.json(
+      { error: error.code, message: error.message },
+      { status: eventLocationErrorStatus(error.code), headers: noStoreHeaders },
+    );
+  }
+  // A location lock wait that gave up, or a transaction that timed out: nothing was changed (#413).
+  if (isBusyDatabaseError(error)) {
+    return Response.json(
+      { error: "LOCATION_BUSY", message: locationBusyMessage },
+      { status: 503, headers: noStoreHeaders },
     );
   }
   logError("Registration lifecycle action failed", error);

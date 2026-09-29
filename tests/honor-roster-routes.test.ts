@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   getCurrentSession: vi.fn(),
   requirePermission: vi.fn(),
   getHonorRosterData: vi.fn(),
+  resolveLocationFilter: vi.fn(),
   requireRosterAccess: vi.fn(),
 }));
 
@@ -15,6 +16,10 @@ vi.mock("@/modules/access/authorization", async () => {
   return { ...actual, requirePermission: mocks.requirePermission };
 });
 vi.mock("@/modules/honors/roster-repository", () => ({ getHonorRosterData: mocks.getHonorRosterData }));
+vi.mock("@/modules/event-locations/filter", async () => {
+  const actual = await vi.importActual<typeof import("@/modules/event-locations/filter")>("@/modules/event-locations/filter");
+  return { ...actual, resolveLocationFilter: mocks.resolveLocationFilter };
+});
 vi.mock("@/modules/club-rosters/access", async () => {
   const actual = await vi.importActual<typeof import("@/modules/club-rosters/access")>("@/modules/club-rosters/access");
   return { ...actual, requireRosterAccess: mocks.requireRosterAccess };
@@ -42,6 +47,8 @@ beforeEach(() => {
   mocks.getCurrentSession.mockResolvedValue({ user: { id: "u1" } });
   mocks.requirePermission.mockResolvedValue(member("REGISTRATION_MANAGER"));
   mocks.getHonorRosterData.mockResolvedValue(data);
+  // An event with no locations, unless a test says otherwise; an unknown ?location= falls back to all.
+  mocks.resolveLocationFilter.mockImplementation(async (_eventId: string, requested: string | null) => ({ locations: [], locationId: null, selected: requested && null }));
   mocks.requireRosterAccess.mockResolvedValue({ accountId: "director-1" });
 });
 
@@ -93,20 +100,22 @@ describe("staff roster CSV with sites (#589)", () => {
 
   it("filters by site and names the site on every row", async () => {
     mocks.getHonorRosterData.mockResolvedValue(siteData);
-    const response = await STAFF_GET(staffRequest("view=classes&site=loc-hr"), staffCtx);
+    mocks.resolveLocationFilter.mockResolvedValue({ locations: siteData.locations, locationId: "loc-hr", selected: siteData.locations[0] });
+    const response = await STAFF_GET(staffRequest("view=classes&location=loc-hr"), staffCtx);
     expect(mocks.getHonorRosterData).toHaveBeenLastCalledWith("event-1", { includeDietary: false, locationId: "loc-hr" });
     const csv = await response.text();
     expect(csv.split("\r\n")[0]).toMatch(/^"?Site"?,/);
     expect(csv).toContain('"Camp Heritage 1","Sabbath"');
   });
 
-  it("uses all sites when no site is given, and refuses a site the event doesn't have", async () => {
+  it("uses all sites when no site is given, or one the event doesn't have", async () => {
     mocks.getHonorRosterData.mockResolvedValue(siteData);
+    mocks.resolveLocationFilter.mockResolvedValue({ locations: siteData.locations, locationId: null, selected: null });
     await STAFF_GET(staffRequest("view=site"), staffCtx);
     expect(mocks.getHonorRosterData).toHaveBeenLastCalledWith("event-1", { includeDietary: true });
-    const missing = await STAFF_GET(staffRequest("view=site&site=loc-nope"), staffCtx);
-    expect(missing.status).toBe(404);
-    await expect(missing.json()).resolves.toMatchObject({ error: "SITE_NOT_FOUND" });
+    const stale = await STAFF_GET(staffRequest("view=site&location=loc-nope"), staffCtx);
+    expect(stale.status).toBe(200);
+    expect(mocks.getHonorRosterData).toHaveBeenLastCalledWith("event-1", { includeDietary: true });
   });
 
   it("leaves the columns as they were for an event without sites", async () => {

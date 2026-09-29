@@ -101,6 +101,7 @@ function fixture({ billingMode = "DEFERRED_ORGANIZATION_INVOICE", audience = "CL
     }) },
     clubRosterMember: { findMany: vi.fn(async ({ where }: { where: { organizationId: string } }) => (where.organizationId === "club-1" ? members : [])) },
     clubEventRegistration: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: "cer-1" }) },
+    eventLocation: { count: vi.fn().mockResolvedValue(0) },
     clubRegistrationDraft: { findUnique: vi.fn().mockResolvedValue(null), deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
     publicRegistrationSubmission: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: "submission-1" }) },
     registrationCapacityReservation: { findMany: vi.fn().mockResolvedValue([]), createMany: vi.fn() },
@@ -414,5 +415,126 @@ describe("club registration submit", () => {
     }), now);
     const submission = tx.publicRegistrationSubmission.create.mock.calls[0]![0].data;
     expect(submission.responses).toMatchObject({ club_name: "Not listed", club_name_other: "Test Trailblazers" });
+  });
+});
+
+describe("club registration submit at an event location (#413)", () => {
+  type LocationRow = {
+    id: string; eventId: string; name: string; address: string | null; firstDay: string | null; lastDay: string | null;
+    capacity: number | null; registrationClosesOn: string | null; isActive: boolean;
+  };
+  const row = (overrides: Partial<LocationRow> = {}): LocationRow => ({
+    id: "loc-1", eventId: "event-1", name: "Camp Heritage", address: "1 Synthetic Rd", firstDay: null, lastDay: null,
+    capacity: null, registrationClosesOn: null, isActive: true, ...overrides,
+  });
+
+  /** The club fixture with the location lock and seat count wired the way Postgres answers them. */
+  function located(options: { rows?: LocationRow[]; seatsAtLocation?: number; activeLocations?: number; fixtureOptions?: Parameters<typeof fixture>[0] } = {}) {
+    const tx = fixture(options.fixtureOptions);
+    const rows = options.rows ?? [row()];
+    const queryRaw = vi.fn(async (_strings: TemplateStringsArray, ...values: unknown[]) => rows.filter((candidate) => candidate.id === values[0]));
+    const executeRaw = vi.fn().mockResolvedValue(0);
+    tx.eventLocation.count.mockResolvedValue(options.activeLocations ?? rows.filter((candidate) => candidate.isActive).length);
+    tx.registrationAttendee.count.mockImplementation(async ({ where }: { where: { registration?: { locationId?: string } } }) => (
+      where.registration?.locationId ? options.seatsAtLocation ?? 0 : 0
+    ));
+    Object.assign(tx, { $queryRaw: queryRaw, $executeRawUnsafe: executeRaw });
+    return { tx, queryRaw, executeRaw };
+  }
+  const at = (locationId: string | null, when = now) => submit(baseInput, { ...club(), locationId }, when);
+
+  it("requires a pick when the event has active locations, and creates nothing without one", async () => {
+    const { tx, queryRaw } = located({ activeLocations: 2 });
+    await expect(at(null)).rejects.toMatchObject({ code: "LOCATION_REQUIRED" });
+    expect(tx.registration.create).not.toHaveBeenCalled();
+    expect(queryRaw).not.toHaveBeenCalled();
+  });
+
+  it("needs no pick, no lock, and records no location on an event without locations", async () => {
+    const { tx, queryRaw, executeRaw } = located({ rows: [], activeLocations: 0 });
+    await at(null);
+    expect(queryRaw).not.toHaveBeenCalled();
+    expect(executeRaw).not.toHaveBeenCalled();
+    expect(tx.registration.create.mock.calls[0]![0].data.locationId).toBeNull();
+    expect(dependencies.enqueuePublicRegistrationMessages.mock.calls[0]![1].location).toBeNull();
+  });
+
+  it("locks the location row (5s wait only), records it on the registration, and names it in the confirmation", async () => {
+    const { tx, queryRaw, executeRaw } = located({ rows: [row({ capacity: 10 })], seatsAtLocation: 3 });
+    await at("loc-1");
+    expect(executeRaw.mock.calls.map(([sql]) => sql)).toEqual(["SET LOCAL lock_timeout = '5s'", "SET LOCAL lock_timeout = 0"]);
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(String(queryRaw.mock.calls[0]![0].join(" "))).toContain("FOR UPDATE");
+    expect(tx.registration.create.mock.calls[0]![0].data.locationId).toBe("loc-1");
+    expect(tx.auditLog.create.mock.calls.map(([call]) => call.data).find((data) => data.action === "CLUB_REGISTRATION_SUBMITTED")?.metadata)
+      .toMatchObject({ clubOrganizationId: "club-1", locationId: "loc-1" });
+    // The event's own dates fill in what the location leaves unset.
+    expect(dependencies.enqueuePublicRegistrationMessages.mock.calls[0]![1].location)
+      .toEqual({ name: "Camp Heritage", address: "1 Synthetic Rd", firstDay: "2026-12-05", lastDay: "2026-12-06" });
+  });
+
+  it("refuses more people than the location has room for, counting people like the event capacity", async () => {
+    const { tx } = located({ rows: [row({ capacity: 3 })], seatsAtLocation: 2 });
+    // Two people are going and one seat is left.
+    await expect(at("loc-1")).rejects.toMatchObject({ code: "LOCATION_FULL", message: "Only 1 spot remains at Camp Heritage." });
+    expect(tx.registration.create).not.toHaveBeenCalled();
+    located({ rows: [row({ capacity: 4 })], seatsAtLocation: 2 });
+    await expect(at("loc-1")).resolves.toMatchObject({ registrationStatus: "SUBMITTED" });
+  });
+
+  it("refuses an unknown, another event's, or inactive location", async () => {
+    located({ rows: [row()] });
+    await expect(at("elsewhere")).rejects.toMatchObject({ code: "LOCATION_INVALID" });
+    const inactive = located({ rows: [row({ isActive: false })], activeLocations: 1 });
+    await expect(at("loc-1")).rejects.toMatchObject({ code: "LOCATION_INVALID" });
+    expect(inactive.tx.registration.create).not.toHaveBeenCalled();
+  });
+
+  it("closes only the location past its own closing date", async () => {
+    located({ rows: [row({ id: "early", registrationClosesOn: "2026-10-10" }), row({ id: "open" })] });
+    await expect(at("early")).rejects.toMatchObject({ code: "REGISTRATION_CLOSED" });
+    await expect(at("open")).resolves.toMatchObject({ registrationStatus: "SUBMITTED" });
+    // Before its closing date the same location takes the registration.
+    located({ rows: [row({ id: "early", registrationClosesOn: "2026-10-10" })] });
+    await expect(at("early", new Date("2026-10-05T15:00:00Z"))).resolves.toMatchObject({ registrationStatus: "SUBMITTED" });
+  });
+
+  it("closes a location after its own last day, and lets one run later than the event", async () => {
+    // The event closed registration on Oct 10; this location closes Dec 15 and ends Dec 20.
+    const laterRow = row({ firstDay: "2026-12-19", lastDay: "2026-12-20", registrationClosesOn: "2026-12-15" });
+    located({ rows: [laterRow], fixtureOptions: { registrationClosesOn: "2026-10-10" } });
+    await expect(at("loc-1", new Date("2026-12-10T15:00:00Z"))).resolves.toMatchObject({ registrationStatus: "SUBMITTED" });
+    located({ rows: [{ ...laterRow, registrationClosesOn: null }], fixtureOptions: { registrationClosesOn: "2026-10-10" } });
+    await expect(at("loc-1", new Date("2026-12-21T15:00:00Z"))).rejects.toMatchObject({ code: "REGISTRATION_CLOSED" });
+    // The event's own dates still close a location that has none of its own.
+    located({ rows: [row()], fixtureOptions: { registrationClosesOn: "2026-10-10" } });
+    await expect(at("loc-1")).rejects.toMatchObject({ code: "REGISTRATION_CLOSED" });
+  });
+
+  it("reports a closed location before a full one", async () => {
+    located({ rows: [row({ capacity: 1, registrationClosesOn: "2026-10-10" })], seatsAtLocation: 1 });
+    await expect(at("loc-1")).rejects.toMatchObject({ code: "REGISTRATION_CLOSED" });
+  });
+
+  it("gives up on a held location lock as a retryable busy, once, and writes nothing", async () => {
+    const { tx, queryRaw } = located();
+    queryRaw.mockRejectedValue(Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" }));
+    await expect(at("loc-1")).rejects.toMatchObject({ name: "EventLocationError", code: "LOCATION_BUSY" });
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.registration.create).not.toHaveBeenCalled();
+  });
+
+  it("takes no location lock for a club that is already registered", async () => {
+    const { tx, queryRaw } = located();
+    tx.clubEventRegistration.findUnique.mockResolvedValue({ id: "cer-existing" });
+    await expect(at("loc-1")).rejects.toMatchObject({ code: "CLUB_ALREADY_REGISTERED" });
+    expect(queryRaw).not.toHaveBeenCalled();
+  });
+
+  it("gives the submit transaction room for the lock wait", async () => {
+    located();
+    await at("loc-1");
+    const prisma = dependencies.getPrisma() as { $transaction: ReturnType<typeof vi.fn> };
+    expect(prisma.$transaction.mock.calls[0]![1]).toMatchObject({ isolationLevel: "Serializable", timeout: 20_000 });
   });
 });

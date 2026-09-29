@@ -1,5 +1,9 @@
 import "server-only";
 
+import { countLocationSeats, lockEventLocation } from "@/modules/event-locations/admission";
+import { locationHasRoom, remainingLocationSeats } from "@/modules/event-locations/domain";
+import { locationTransactionTimeoutMs } from "@/modules/event-locations/errors";
+
 import { Prisma, type RegistrationStatus } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
@@ -257,13 +261,32 @@ async function checkEventCapacity(
     waitlistEnabled: false,
   });
   const remaining = remainingEventCapacity(event.capacity, occupied);
-  return decision === "REGISTER"
-    ? { fits: true, reason: null, details: { occupied, requested, remaining } }
-    : {
-        fits: false,
-        reason: `The event has ${remaining ?? 0} remaining spot${remaining === 1 ? "" : "s"}, but this registration needs ${requested}.`,
-        details: { occupied, requested, remaining },
-      };
+  if (decision !== "REGISTER") {
+    return {
+      fits: false,
+      reason: `The event has ${remaining ?? 0} remaining spot${remaining === 1 ? "" : "s"}, but this registration needs ${requested}.`,
+      details: { occupied, requested, remaining },
+    };
+  }
+  // A registration at a location of a multi-location event also needs room
+  // there (#413): the location row is locked and its seats counted like the
+  // event's, so promoting or restoring can't overfill a location.
+  const locationId = (registration as { locationId?: string | null }).locationId;
+  if (locationId) {
+    const location = await lockEventLocation(tx, event.id, locationId);
+    if (location) {
+      const locationOccupied = await countLocationSeats(tx, location.id, registration.id);
+      if (!locationHasRoom(location.capacity, locationOccupied, requested)) {
+        const locationRemaining = remainingLocationSeats(location.capacity, locationOccupied);
+        return {
+          fits: false,
+          reason: `${location.name} has ${locationRemaining ?? 0} remaining spot${locationRemaining === 1 ? "" : "s"}, but this registration needs ${requested}.`,
+          details: { occupied: locationOccupied, requested, remaining: locationRemaining, locationId: location.id },
+        };
+      }
+    }
+  }
+  return { fits: true, reason: null, details: { occupied, requested, remaining } };
 }
 
 async function checkOptionCapacity(
@@ -595,6 +618,8 @@ async function runSerializable<T>(
     try {
       return await prisma.$transaction(operation, {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        // Promoting or restoring may wait up to 5s on a location's row lock (#413).
+        timeout: locationTransactionTimeoutMs,
       });
     } catch (error) {
       if (!retryableTransactionError(error)) throw error;

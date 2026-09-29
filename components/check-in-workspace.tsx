@@ -543,6 +543,7 @@ export function CheckInWorkspace({
               attendeeIds,
             )}
             organizationName={club.organizationName}
+            locationName={club.locationName ?? null}
           />
         );
       })}

@@ -119,6 +119,7 @@ function fixture() {
     clubRegistrationDraft: { findUnique: vi.fn().mockResolvedValue(null), deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
     publicRegistrationSubmission: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: "submission-1" }) },
     registrationCapacityReservation: { findMany: vi.fn().mockResolvedValue([]), createMany: vi.fn() },
+    eventLocation: { count: vi.fn().mockResolvedValue(0) },
     registrationAttendee: {
       count: vi.fn().mockResolvedValue(0),
       create: vi.fn(async ({ data }: { data: { personId: string; attendeeType: string; formResponses: Record<string, unknown>; profileSnapshot: Record<string, unknown> } }) => {
@@ -147,8 +148,6 @@ function fixture() {
       honor: { name: "Knot Tying", code: "HW-DEMO-1" }, session: { name: "Sabbath afternoon", sortOrder: 1 },
     }]) },
     honorSession: { findMany: vi.fn().mockResolvedValue([{ id: "sabbath", name: "Sabbath afternoon", locationId: null }]) },
-    // This event has no locations (#589): classes work exactly as before.
-    eventLocation: { count: vi.fn().mockResolvedValue(0), findMany: vi.fn().mockResolvedValue([]) },
     honorEnrollment: {
       findMany: vi.fn(async () => enrollments.map(({ id, registrationAttendeeId, offeringId }) => ({ id, registrationAttendeeId, offeringId }))),
       deleteMany: vi.fn(),

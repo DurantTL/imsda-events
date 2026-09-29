@@ -743,3 +743,139 @@ describe("club registration edit keeps the club directory field locked (#482)", 
     expect(audit.summary).not.toContain("by the system");
   });
 });
+
+describe("club registration edit at an event location (#413)", () => {
+  type LocationRow = {
+    id: string; eventId: string; name: string; address: string | null; firstDay: string | null; lastDay: string | null;
+    capacity: number | null; registrationClosesOn: string | null; isActive: boolean; sortOrder: number;
+  };
+  const row = (overrides: Partial<LocationRow> = {}): LocationRow => ({
+    id: "loc-1", eventId: "event-1", name: "Camp Heritage", address: null, firstDay: null, lastDay: null,
+    capacity: null, registrationClosesOn: null, isActive: true, sortOrder: 0, ...overrides,
+  });
+
+  /** The club edit fixture with this registration at `current`, and the lock and seat count the engine reads. */
+  function atLocation(options: { current?: LocationRow; others?: LocationRow[]; seatsElsewhere?: number; classPicks?: number } = {}) {
+    const current = options.current ?? row();
+    const known = [current, ...(options.others ?? [])];
+    const { registration, prisma } = fixture();
+    (registration as unknown as { locationId: string }).locationId = current.id;
+    const queryRaw = vi.fn(async (_strings: TemplateStringsArray, ...values: unknown[]) => known.filter((candidate) => candidate.id === values[0]));
+    const executeRaw = vi.fn().mockResolvedValue(0);
+    const findFirst = vi.fn(async ({ where }: { where: { id: string; isActive?: boolean } }) => (
+      known.find((candidate) => candidate.id === where.id && (where.isActive === undefined || candidate.isActive === where.isActive)) ?? null
+    ));
+    const clubRegistrationFindUnique = vi.fn(async () => ({ registrationId: "registration-1", registration: { location: current } }));
+    const seatCount = prisma.registrationAttendee.count as unknown as ReturnType<typeof vi.fn>;
+    seatCount.mockImplementation(async ({ where }: { where: { registration?: { locationId?: string } } }) => (
+      where.registration?.locationId ? options.seatsElsewhere ?? 0 : 0
+    ));
+    // Honors class picks the club holds at its current location (#589).
+    const classPickCount = vi.fn().mockResolvedValue(options.classPicks ?? 0);
+    const extra = {
+      $queryRaw: queryRaw,
+      $executeRawUnsafe: executeRaw,
+      eventLocation: { findFirst, findUnique: vi.fn(async () => ({ name: current.name })), count: vi.fn().mockResolvedValue(known.length) },
+      honorEnrollment: { count: classPickCount },
+    };
+    Object.assign(prisma, extra, { clubEventRegistration: { findUnique: clubRegistrationFindUnique } });
+    const client = dependencies.getPrisma() as Record<string, unknown>;
+    Object.assign(client, extra, { clubEventRegistration: { findUnique: clubRegistrationFindUnique } });
+    return { registration, prisma, queryRaw, executeRaw, seatCount, classPickCount };
+  }
+  const director = { accountId: "director-1" };
+
+  it("closes edits with the registration's own location dates, not the event's", async () => {
+    // The event is open through Nov 30, but this location closed on Oct 10.
+    const { prisma } = atLocation({ current: row({ registrationClosesOn: "2026-10-10" }) });
+    await expect(amendClubRegistration("club-1", "event-1", director, baseEdit(), beforeDeadline))
+      .rejects.toMatchObject({ code: "REGISTRATION_CLOSED" });
+    expect(prisma.registrationOperation.create).not.toHaveBeenCalled();
+  });
+
+  it("keeps a location's edits open on its own last day and closes them after it, whatever the event's dates say", async () => {
+    // The event ended Dec 6; this location runs to Dec 20, closing registration Dec 15.
+    const later = row({ firstDay: "2026-12-19", lastDay: "2026-12-20", registrationClosesOn: "2026-12-15" });
+    atLocation({ current: later });
+    await expect(amendClubRegistration("club-1", "event-1", director, { ...baseEdit(), selectedMemberIds: ["m1", "m3"] }, new Date("2026-12-10T15:00:00Z")))
+      .resolves.toMatchObject({ result: { confirmationCode: "REG-CLUB" } });
+    atLocation({ current: later });
+    await expect(amendClubRegistration("club-1", "event-1", director, baseEdit(), new Date("2026-12-16T15:00:00Z")))
+      .rejects.toMatchObject({ code: "REGISTRATION_CLOSED" });
+  });
+
+  it("counts the registration's location capacity when people are added, leaving out its own seats, under the location lock", async () => {
+    const full = atLocation({ current: row({ capacity: 3 }), seatsElsewhere: 2 });
+    // Two people would be going and one seat is left.
+    await expect(amendClubRegistration("club-1", "event-1", director, { ...baseEdit(), selectedMemberIds: ["m1", "m3"] }, beforeDeadline))
+      .rejects.toMatchObject({ code: "LOCATION_CAPACITY_UNAVAILABLE" });
+    expect(full.prisma.registrationOperation.create).not.toHaveBeenCalled();
+    const seatQueries = full.seatCount.mock.calls.map(([call]) => call as { where: { registration?: { locationId?: string; id?: { not?: string } } } });
+    expect(seatQueries.some((call) => call.where.registration?.locationId === "loc-1" && call.where.registration.id?.not === "registration-1")).toBe(true);
+
+    const roomy = atLocation({ current: row({ capacity: 4 }), seatsElsewhere: 2 });
+    await amendClubRegistration("club-1", "event-1", director, { ...baseEdit(), selectedMemberIds: ["m1", "m3"] }, beforeDeadline);
+    // Locked once, when the amendment commits; the preview only reads.
+    expect(roomy.queryRaw).toHaveBeenCalledTimes(1);
+    expect(String(roomy.queryRaw.mock.calls[0]![0].join(" "))).toContain("FOR UPDATE");
+    expect(roomy.executeRaw.mock.calls.map(([sql]) => sql)).toEqual(["SET LOCAL lock_timeout = '5s'", "SET LOCAL lock_timeout = 0"]);
+    expect(roomy.prisma.registration.update.mock.calls[0]![0].data).not.toHaveProperty("locationId");
+  });
+
+  it("moves the registration to another location that is open and has room, and audits ids only", async () => {
+    const { prisma, queryRaw } = atLocation({ others: [row({ id: "loc-2", name: "Des Moines", capacity: 5 })], seatsElsewhere: 1 });
+    await amendClubRegistration("club-1", "event-1", director, { ...baseEdit(), locationId: "loc-2" }, beforeDeadline);
+    expect(queryRaw.mock.calls.map(([, ...values]) => values[0])).toEqual(["loc-2"]);
+    expect(prisma.registration.update.mock.calls[0]![0].data).toMatchObject({ locationId: "loc-2" });
+    const audit = prisma.auditLog.create.mock.calls[0]![0].data as { metadata: Record<string, unknown> };
+    expect(audit.metadata).toMatchObject({ locationChangedFrom: "loc-1", locationChangedTo: "loc-2" });
+    expect(JSON.stringify(audit.metadata)).not.toContain("Des Moines");
+  });
+
+  it("refuses a move while the club has class picks at the old site, with the plain message, and removes nothing (#589)", async () => {
+    const { prisma, classPickCount, queryRaw } = atLocation({ others: [row({ id: "loc-2", name: "Des Moines", capacity: 5 })], classPicks: 2 });
+    await expect(amendClubRegistration("club-1", "event-1", director, { ...baseEdit(), locationId: "loc-2" }, beforeDeadline))
+      .rejects.toMatchObject({
+        code: "LOCATION_HAS_CLASS_PICKS",
+        message: "Remove this club's class picks at Camp Heritage before changing location.",
+      });
+    expect(classPickCount).toHaveBeenCalledWith({
+      where: { registrationId: "registration-1", offering: { session: { locationId: "loc-1" } } },
+    });
+    expect(prisma.registration.update).not.toHaveBeenCalled();
+    expect(queryRaw).not.toHaveBeenCalled();
+  });
+
+  it("only checks class picks when the location actually changes (#589)", async () => {
+    const { classPickCount } = atLocation({ classPicks: 2 });
+    await amendClubRegistration("club-1", "event-1", director, baseEdit(), beforeDeadline);
+    expect(classPickCount).not.toHaveBeenCalled();
+  });
+
+  it("refuses a move to a full, closed, inactive, or unknown location, and changes nothing", async () => {
+    const full = atLocation({ others: [row({ id: "loc-2", capacity: 1 })], seatsElsewhere: 1 });
+    await expect(amendClubRegistration("club-1", "event-1", director, { ...baseEdit(), locationId: "loc-2" }, beforeDeadline))
+      .rejects.toMatchObject({ code: "LOCATION_CAPACITY_UNAVAILABLE" });
+    expect(full.prisma.registration.update).not.toHaveBeenCalled();
+
+    const closed = atLocation({ others: [row({ id: "loc-2", registrationClosesOn: "2026-10-10" })] });
+    await expect(amendClubRegistration("club-1", "event-1", director, { ...baseEdit(), locationId: "loc-2" }, beforeDeadline))
+      .rejects.toMatchObject({ code: "REGISTRATION_CLOSED" });
+    expect(closed.queryRaw).not.toHaveBeenCalled();
+
+    atLocation({ others: [row({ id: "loc-2", isActive: false })] });
+    await expect(amendClubRegistration("club-1", "event-1", director, { ...baseEdit(), locationId: "loc-2" }, beforeDeadline))
+      .rejects.toMatchObject({ code: "LOCATION_INVALID" });
+    atLocation({});
+    await expect(amendClubRegistration("club-1", "event-1", director, { ...baseEdit(), locationId: "nowhere" }, beforeDeadline))
+      .rejects.toMatchObject({ code: "LOCATION_INVALID" });
+  });
+
+  it("gives the amendment transaction room for the lock wait", async () => {
+    atLocation();
+    await amendClubRegistration("club-1", "event-1", director, baseEdit(), beforeDeadline);
+    const client = dependencies.getPrisma() as { $transaction: ReturnType<typeof vi.fn> };
+    const options = client.$transaction.mock.calls.map(([, opts]) => opts).find((opts) => opts?.isolationLevel === "Serializable");
+    expect(options).toMatchObject({ timeout: 20_000 });
+  });
+});

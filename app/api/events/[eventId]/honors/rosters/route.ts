@@ -1,5 +1,6 @@
 import { AccessDeniedError, effectivePermissions, requirePermission } from "@/modules/access/authorization";
 import { getCurrentSession } from "@/modules/access/current-session";
+import { locationParam, resolveLocationFilter } from "@/modules/event-locations/filter";
 import { findActiveMembership } from "@/modules/events/repository";
 import {
   buildClassRosters,
@@ -36,13 +37,10 @@ async function getHandler(request: Request, context: { params: Promise<{ eventId
     const session = await getCurrentSession();
     const access = await requirePermission(session, eventId, "VIEW_REPORTS", findActiveMembership);
     const includeDietary = view === "site" && effectivePermissions(access.user, access.membership).includes("VIEW_SENSITIVE_DATA");
-    // "All sites" is no `site` parameter; otherwise one of the event's locations (#589).
-    const siteId = url.searchParams.get("site") || undefined;
-    const data = await getHonorRosterData(eventId, { includeDietary, ...(siteId ? { locationId: siteId } : {}) });
+    // "All sites" is no `location` parameter; a value that isn't one of this event's locations means all (#413's filter, #589).
+    const { locationId } = await resolveLocationFilter(eventId, locationParam(request));
+    const data = await getHonorRosterData(eventId, { includeDietary, ...(locationId ? { locationId } : {}) });
     if (!data) return Response.json({ error: "EVENT_NOT_FOUND" }, { status: 404 });
-    if (siteId && !data.locations.some((location) => location.id === siteId)) {
-      return Response.json({ error: "SITE_NOT_FOUND", message: "That site isn't part of this event." }, { status: 404 });
-    }
     const safeEventId = eventId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 100) || "event";
 
     if (view === "classes") {

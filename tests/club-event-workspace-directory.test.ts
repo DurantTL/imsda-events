@@ -48,6 +48,7 @@ function mockPrisma(parentOrganization: { name: string; isActive: boolean } | nu
       waitlistEnabled: false, capacity: null,
     }) },
     registrationForm: { findFirst: vi.fn().mockResolvedValue({ slug: "clubs", versions: [{ definition }] }) },
+    eventLocation: { findMany: vi.fn().mockResolvedValue([]) },
     clubRosterMember: { findMany: vi.fn().mockResolvedValue([]) },
     clubEventRegistration: { findUnique: vi.fn().mockResolvedValue(null) },
     clubRegistrationDraft: { findUnique: vi.fn().mockResolvedValue(draftResponses ? {
@@ -109,5 +110,85 @@ describe("club event workspace directory prefill (#482)", () => {
     expect(attendeeProfilePrefill({
       firstName: "Avery", lastName: "Director", phone: "555-0100", shirtSize: "", dietaryNeeds: "", accessibilityNeeds: "",
     }, "director@example.test")).toMatchObject({ director_name: "Avery Director", email: "director@example.test", phone: "555-0100" });
+  });
+});
+
+describe("club event workspace locations (#413)", () => {
+  const now = new Date("2026-10-15T15:00:00Z");
+  const location = (overrides: Record<string, unknown> = {}) => ({
+    id: "loc-1", name: "Camp Heritage", address: "1 Synthetic Rd", firstDay: null, lastDay: null, capacity: null,
+    registrationClosesOn: null, isActive: true, sortOrder: 0, ...overrides,
+  });
+
+  function withLocations(locations: ReturnType<typeof location>[], seats: Record<string, number> = {}, registered: { location: ReturnType<typeof location> } | null = null) {
+    const prisma = mockPrisma(null);
+    prisma.eventLocation.findMany.mockResolvedValue(locations);
+    Object.assign(prisma, {
+      registration: {
+        findMany: vi.fn().mockResolvedValue(Object.entries(seats).map(([locationId, count]) => ({ locationId, _count: { attendees: count } }))),
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
+    });
+    if (registered) {
+      prisma.clubEventRegistration.findUnique.mockResolvedValue({
+        createdAt: new Date("2026-10-10T12:00:00Z"), registrationId: "registration-1",
+        registration: {
+          confirmationCode: "REG-CLUB", status: "SUBMITTED", updatedAt: new Date("2026-10-10T12:00:00Z"), totalAmount: 0,
+          location: registered.location, attendees: [],
+        },
+      });
+    }
+    return prisma;
+  }
+
+  it("has no locations for an event without them, and reads no seat counts", async () => {
+    const prisma = mockPrisma(null);
+    const workspace = await getClubEventWorkspace("club-1", "event-1", now);
+    expect(workspace.locations).toEqual([]);
+    expect(workspace.event.phase).toBe("OPEN");
+    expect(prisma.eventLocation.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { eventId: "event-1", isActive: true } }));
+  });
+
+  it("lists active locations with the event's dates filled in, seats left, and Full for a location with none", async () => {
+    withLocations([
+      location({ id: "loc-1", capacity: 3 }),
+      location({ id: "loc-2", name: "Des Moines", capacity: 10, firstDay: "2026-12-12", lastDay: "2026-12-13" }),
+      location({ id: "loc-3", name: "Kansas City" }),
+    ], { "loc-1": 3, "loc-2": 4 });
+    const { locations } = await getClubEventWorkspace("club-1", "event-1", now);
+    expect(locations.map((entry) => [entry.name, entry.firstDay, entry.lastDay, entry.remaining, entry.full, entry.open])).toEqual([
+      ["Camp Heritage", "2026-12-05", "2026-12-06", 0, true, true],
+      ["Des Moines", "2026-12-12", "2026-12-13", 6, false, true],
+      ["Kansas City", "2026-12-05", "2026-12-06", null, false, true],
+    ]);
+  });
+
+  it("shows a location past its own closing date as closed while another is open, and the event open while any location is", async () => {
+    withLocations([location({ id: "early", name: "Early", registrationClosesOn: "2026-10-10" }), location({ id: "open", name: "Open" })]);
+    const workspace = await getClubEventWorkspace("club-1", "event-1", now);
+    expect(workspace.locations.map((entry) => [entry.name, entry.phase, entry.open])).toEqual([["Early", "CLOSED", false], ["Open", "OPEN", true]]);
+    expect(workspace.event.phase).toBe("OPEN");
+    withLocations([location({ id: "early", name: "Early", registrationClosesOn: "2026-10-10" })]);
+    expect((await getClubEventWorkspace("club-1", "event-1", now)).event.phase).toBe("CLOSED");
+  });
+
+  it("follows a registered club's own location for the phase, edit window, and dates, and never counts its own seats against it", async () => {
+    const early = location({ id: "early", name: "Early", capacity: 5, registrationClosesOn: "2026-10-10" });
+    const prisma = withLocations([location({ id: "open", name: "Open" })], { early: 2 }, { location: early });
+    const workspace = await getClubEventWorkspace("club-1", "event-1", now);
+    expect(workspace.registration?.location).toMatchObject({ id: "early", name: "Early", phase: "CLOSED", registrationClosesOn: "2026-10-10", remaining: 3 });
+    expect(workspace.event.edit).toMatchObject({ open: false });
+    expect(workspace.event.registrationClosesOn).toBe("2026-10-10");
+    // Seats are counted with this club's own registration left out.
+    const seatQuery = (prisma as unknown as { registration: { findMany: ReturnType<typeof vi.fn> } }).registration.findMany.mock.calls[0]![0];
+    expect(seatQuery.where).toMatchObject({ eventId: "event-1", id: { not: "registration-1" } });
+  });
+
+  it("keeps a registered club's deactivated location on its page", async () => {
+    const retired = location({ id: "retired", name: "Retired", isActive: false });
+    withLocations([], {}, { location: retired });
+    const workspace = await getClubEventWorkspace("club-1", "event-1", now);
+    expect(workspace.locations).toEqual([]);
+    expect(workspace.registration?.location).toMatchObject({ id: "retired", isActive: false });
   });
 });
