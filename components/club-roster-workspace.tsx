@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import Link from "next/link";
 import { Award, Eye, Pencil, Plus, Power, Save, Trash2, UsersRound, X } from "lucide-react";
 import { BirthDateField } from "@/components/birth-date-field";
+import { validateRosterForm, rosterFormFieldOrder, type RosterFormErrors, type RosterFormField } from "@/modules/club-rosters/form-validation";
 import { RosterCsvImport } from "@/components/roster-csv-import";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { complianceFilterLabels, complianceFilterState, type ComplianceFilterValue } from "@/modules/background-checks/display";
@@ -91,6 +92,7 @@ export function ClubRosterWorkspace({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<RosterFormErrors>({});
   const base = `/api/attendee/clubs/${encodeURIComponent(organizationId)}/roster`;
   const closeDialog = useCallback(() => {
     setDialogOpen(false);
@@ -104,6 +106,7 @@ export function ClubRosterWorkspace({
     setFormType(member?.attendeeType ?? "YOUTH");
     setNotice("");
     setError("");
+    setFieldErrors({});
     setDialogOpen(true);
   }
 
@@ -157,6 +160,22 @@ export function ClubRosterWorkspace({
     const form = new FormData(formElement);
     const birthDate = String(form.get("birthDate") ?? "");
     const attendeeType = String(form.get("attendeeType") ?? "YOUTH");
+    // Inline, per-field errors (#571 F-26) instead of only the browser tooltip.
+    const errors = validateRosterForm({
+      firstName: String(form.get("firstName") ?? ""),
+      lastName: String(form.get("lastName") ?? ""),
+      birthDate,
+      birthDateText: String(form.get("birthDateText") ?? ""),
+      gender: String(form.get("gender") ?? ""),
+      editing: Boolean(editing),
+    });
+    setFieldErrors(errors);
+    const firstInvalid = rosterFormFieldOrder.find((field) => errors[field]);
+    if (firstInvalid) {
+      const target = firstInvalid === "birthDate" ? "birthDateText" : firstInvalid;
+      (formElement.elements.namedItem(target) as HTMLElement | null)?.focus();
+      return;
+    }
     const details = {
       firstName: String(form.get("firstName") ?? ""),
       lastName: String(form.get("lastName") ?? ""),
@@ -407,7 +426,17 @@ export function ClubRosterWorkspace({
       {dialogOpen && (
         <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) closeDialog(); }} role="presentation">
       <section aria-labelledby="roster-dialog-title" aria-modal="true" className="modal-card roster-dialog" ref={dialogRef} role="dialog" tabIndex={-1}>
-      <form className="form-stack" key={editing?.id ?? "new"} onSubmit={save}>
+      <form
+        className="form-stack"
+        key={editing?.id ?? "new"}
+        noValidate
+        onInput={(event) => {
+          const name = (event.target as HTMLInputElement).name;
+          const field = (name === "birthDateText" ? "birthDate" : name) as RosterFormField;
+          setFieldErrors((current) => (current[field] ? { ...current, [field]: undefined } : current));
+        }}
+        onSubmit={save}
+      >
         <div className="modal-head">
           <div>
             <p className="public-registration-eyebrow">{editing ? "Edit" : "Add someone"}</p>
@@ -421,15 +450,18 @@ export function ClubRosterWorkspace({
         <div className="form-grid two-column">
           <label>
             First name
-            <input autoComplete="off" defaultValue={editing?.firstName ?? ""} maxLength={80} name="firstName" required />
+            <input aria-describedby={fieldErrors.firstName ? "roster-firstName-error" : undefined} aria-invalid={fieldErrors.firstName ? true : undefined} autoComplete="off" defaultValue={editing?.firstName ?? ""} maxLength={80} name="firstName" required />
+            {fieldErrors.firstName && <span className="roster-field-error" id="roster-firstName-error" role="alert">{fieldErrors.firstName}</span>}
           </label>
           <label>
             Last name
-            <input autoComplete="off" defaultValue={editing?.lastName ?? ""} maxLength={80} name="lastName" required />
+            <input aria-describedby={fieldErrors.lastName ? "roster-lastName-error" : undefined} aria-invalid={fieldErrors.lastName ? true : undefined} autoComplete="off" defaultValue={editing?.lastName ?? ""} maxLength={80} name="lastName" required />
+            {fieldErrors.lastName && <span className="roster-field-error" id="roster-lastName-error" role="alert">{fieldErrors.lastName}</span>}
           </label>
           <BirthDateField
             defaultValue={editing && birthDates ? birthDates[editing.id] ?? "" : ""}
             label={editing && !editing.birthDateNeeded ? "Birth date (leave blank to keep)" : "Birth date"}
+            error={fieldErrors.birthDate}
             name="birthDate"
             required={!editing}
           />
@@ -457,12 +489,13 @@ export function ClubRosterWorkspace({
           </label>
           <label>
             Gender
-            <select defaultValue={editing?.gender ?? ""} name="gender" required>
+            <select aria-describedby={fieldErrors.gender ? "roster-gender-error" : undefined} aria-invalid={fieldErrors.gender ? true : undefined} defaultValue={editing?.gender ?? ""} name="gender" required>
               <option disabled value="">Choose one</option>
               {Object.entries(clubRosterGenderLabels).map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
+            {fieldErrors.gender && <span className="roster-field-error" id="roster-gender-error" role="alert">{fieldErrors.gender}</span>}
           </label>
         </div>
         <p className="field-help">
