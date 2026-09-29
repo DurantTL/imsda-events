@@ -566,6 +566,7 @@ model User {
   createdRosterExportFormats         ClubRosterExportFormat[]     @relation("ClubRosterExportFormatCreatedByUser")
 
   recordedMemberHonorEntries         MemberHonorEntry[]           @relation("MemberHonorEntryRecordedByUser")
+  voidedMemberHonorEntries           MemberHonorEntryVoid[]       @relation("MemberHonorEntryVoidedByUser")
   initiatedMemberTransfers           MemberTransfer[]             @relation("MemberTransferInitiatedByUser")
   resolvedMemberTransfers            MemberTransfer[]             @relation("MemberTransferResolvedByUser")
   memberTransferEvents               MemberTransferEvent[]        @relation("MemberTransferEventActorUser")
@@ -803,6 +804,7 @@ model AttendeeAccount {
   createdRosterExportFormats        ClubRosterExportFormat[]    @relation("ClubRosterExportFormatCreatedBy")
 
   recordedMemberHonorEntries        MemberHonorEntry[]          @relation("MemberHonorEntryRecordedBy")
+  voidedMemberHonorEntries          MemberHonorEntryVoid[]      @relation("MemberHonorEntryVoidedBy")
   initiatedMemberTransfers          MemberTransfer[]            @relation("MemberTransferInitiatedByAccount")
   resolvedMemberTransfers           MemberTransfer[]            @relation("MemberTransferResolvedByAccount")
   memberTransferEvents              MemberTransferEvent[]       @relation("MemberTransferEventActorAccount")
@@ -3920,10 +3922,36 @@ model MemberHonorEntry {
   recordedByAccount AttendeeAccount? @relation("MemberHonorEntryRecordedBy", fields: [recordedByAccountId], references: [id], onDelete: SetNull)
   recordedByUser    User?            @relation("MemberHonorEntryRecordedByUser", fields: [recordedByUserId], references: [id], onDelete: SetNull)
   weekendCompletionLinks HonorWeekendCompletionLink[]
+  /// Set when the entry was voided (#591); the entry row itself is never changed.
+  void                   MemberHonorEntryVoid?
 
   @@index([personId, honorId, seq])
   @@index([organizationId, createdAt])
   @@index([honorId])
+}
+
+/// An audited void of one `MemberHonorEntry` (#591): its own append-only
+/// record, so the entry row is never edited or deleted. Current status is the
+/// highest non-voided `seq` per (personId, honorId), so every current-status
+/// reader skips an entry that has a void row; when all of a person's entries
+/// for an honor are voided, they have no status for it. Unique on `entryId`
+/// (a second void of the same entry is refused) and there is no un-void: to
+/// restore, record a new entry. Exactly one of `voidedByAccountId` /
+/// `voidedByUserId` is set when written (a staff "act as" director uses the
+/// user); the FK is SET NULL so deleting the actor's account keeps the void,
+/// so the migration's CHECK allows at most one, never both.
+model MemberHonorEntryVoid {
+  id                String   @id @default(cuid())
+  entryId           String   @unique
+  /// 3 to 500 characters, enforced in the app and by a CHECK.
+  reason            String
+  voidedByAccountId String?
+  voidedByUserId    String?
+  createdAt         DateTime @default(now())
+
+  entry           MemberHonorEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  voidedByAccount AttendeeAccount? @relation("MemberHonorEntryVoidedBy", fields: [voidedByAccountId], references: [id], onDelete: SetNull)
+  voidedByUser    User?            @relation("MemberHonorEntryVoidedByUser", fields: [voidedByUserId], references: [id], onDelete: SetNull)
 }
 
 /// Marks one Honors Weekend class enrollment (#357–#360) as already written
