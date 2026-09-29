@@ -7674,6 +7674,16 @@ select:focus-visible {
 .profile-account-heading { margin: 8px 0 0; color: var(--imsda-navy); font-size: 1.25rem; }
 .profile-back-links .text-button { display: inline-flex; align-items: center; gap: 6px; }
 
+
+/* #576: one-line definitions under the roster Type control and in the CSV help. */
+.roster-type-definitions { margin: 0; padding-left: 0; list-style: none; }
+.roster-type-help { grid-column: 1 / -1; margin-top: -6px; }
+.roster-type-help .roster-type-definitions { display: grid; gap: 2px; margin: 0; }
+.roster-type-help { display: grid; gap: 4px; }
+.roster-type-help > .field-help { margin: 0; }
+.roster-type-help > .roster-type-hint { color: var(--ink); font-size: 0.7rem; font-weight: 600; }
+.roster-type-help > .roster-type-hint:empty { display: none; }
+
 /* "Reopen to add or remove people" (#571 F-23): brief highlight on the roster section. */
 .club-roster-highlight {
   outline: 3px solid var(--green, #2f7d5b);

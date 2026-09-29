@@ -32,12 +32,15 @@ export function BirthDateField({
   label,
   defaultValue = "",
   required = false,
+  onParsedChange,
   error = "",
 }: {
   name: string;
   label: string;
   defaultValue?: string;
   required?: boolean;
+  /** Called with `YYYY-MM-DD` (or "" until the text is a real date) whenever it changes (#576). */
+  onParsedChange?: (isoDate: string) => void;
   /** An inline error from the form's own validation (#571), shown under the field. */
   error?: string;
 }) {
@@ -45,6 +48,10 @@ export function BirthDateField({
   const parsed = useMemo(() => (text.trim() ? parseRosterBirthDateInput(text) : null), [text]);
   const invalid = text.trim().length > 0 && parsed === null;
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    onParsedChange?.(parsed ?? "");
+  }, [parsed, onParsedChange]);
 
   // A typed date that isn't real (or, if required, isn't there at all) blocks
   // submission the same way a required dropdown once did.

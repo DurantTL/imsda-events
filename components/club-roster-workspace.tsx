@@ -1,15 +1,17 @@
 "use client";
-
 import { useCallback, useState } from "react";
 import Link from "next/link";
 import { Award, Eye, Pencil, Plus, Power, Save, Trash2, UsersRound, X } from "lucide-react";
 import { BirthDateField } from "@/components/birth-date-field";
+import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
+import { RosterTypeDefinitions } from "@/components/roster-type-definitions";
 import { validateRosterForm, rosterFormFieldOrder, type RosterFormErrors, type RosterFormField } from "@/modules/club-rosters/form-validation";
 import { RosterCsvImport } from "@/components/roster-csv-import";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { complianceFilterLabels, complianceFilterState, type ComplianceFilterValue } from "@/modules/background-checks/display";
 import {
   clubClassLevelLabels,
+  attendeeTypeAgeHint,
   clubRosterAttendeeTypeLabels,
   clubRosterGenderLabels,
   clubRosterStatusLabels,
@@ -18,7 +20,6 @@ import {
   rosterSectionOf,
 } from "@/modules/club-rosters/domain";
 import type { RosterMemberRecord } from "@/modules/club-rosters/repository";
-
 import type { CurrentMemberHonor } from "@/modules/honors/member-honor-domain";
 
 type RosterResponse = {
@@ -85,6 +86,7 @@ export function ClubRosterWorkspace({
   const [editing, setEditing] = useState<RosterMemberRecord | null>(null);
   /** The type picked in the dialog, so the Role placeholder shows the blank-role default (#424). */
   const [formType, setFormType] = useState<string>("YOUTH");
+  const [formBirthDate, setFormBirthDate] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [birthDates, setBirthDates] = useState<Record<string, string> | null>(null);
   const [showInactive, setShowInactive] = useState(false);
@@ -104,12 +106,16 @@ export function ClubRosterWorkspace({
   function openDialog(member: RosterMemberRecord | null) {
     setEditing(member);
     setFormType(member?.attendeeType ?? "YOUTH");
+    setFormBirthDate("");
     setNotice("");
     setError("");
     setFieldErrors({});
     setDialogOpen(true);
   }
 
+  const typeHint = formBirthDate
+    ? attendeeTypeAgeHint(formType as keyof typeof clubRosterAttendeeTypeLabels, formBirthDate, calendarDateInEventTimeZone(new Date(), "America/Chicago"))
+    : null;
   const active = members.filter((member) => member.status === "ACTIVE");
   const needBirthDates = active.filter((member) => member.birthDateNeeded).length;
   const notInCompliance = complianceStatuses
@@ -463,16 +469,21 @@ export function ClubRosterWorkspace({
             label={editing && !editing.birthDateNeeded ? "Birth date (leave blank to keep)" : "Birth date"}
             error={fieldErrors.birthDate}
             name="birthDate"
+            onParsedChange={setFormBirthDate}
             required={!editing}
           />
           <label>
             Type
-            <select defaultValue={editing?.attendeeType ?? "YOUTH"} name="attendeeType" onChange={(event) => setFormType(event.target.value)}>
+            <select aria-describedby="roster-type-hint roster-type-definitions" defaultValue={editing?.attendeeType ?? "YOUTH"} name="attendeeType" onChange={(event) => setFormType(event.target.value)}>
               {Object.entries(clubRosterAttendeeTypeLabels).map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
           </label>
+          <div className="roster-type-help">
+            <RosterTypeDefinitions className="field-help" id="roster-type-definitions" />
+            <p className="field-help roster-type-hint" id="roster-type-hint" role="status">{typeHint ?? ""}</p>
+          </div>
           <label>
             Current class
             <select defaultValue={editing?.classLevel ?? ""} name="classLevel">
