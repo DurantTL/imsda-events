@@ -91,8 +91,8 @@ export function getEventPublishReadiness(
   if (event.audience === "CLUB") {
     items.push({
       id: "club-billing",
-      label: CLUB_EVENT_BILLING_MESSAGE,
-      detail: "Churches register club events through director routes, and those only list events billed to the church. Set the billing mode to church invoice in event settings.",
+      label: "Church billing for club registration",
+      detail: `${CLUB_EVENT_BILLING_MESSAGE} Directors only see club events billed to the church, so set billing mode to church invoice in event settings.`,
       complete: event.billingMode === "DEFERRED_ORGANIZATION_INVOICE",
     });
   }

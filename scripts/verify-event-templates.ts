@@ -21,7 +21,9 @@ import {
   validateEventTemplatePayloadReferences,
 } from "../modules/event-templates/domain";
 import { addStarterEventTemplates } from "../modules/event-templates/starter-repository";
-import { starterEventTemplates } from "../modules/event-templates/starters";
+import { starterEventTemplates, starterPayload } from "../modules/event-templates/starters";
+import { listClubEvents } from "../modules/club-registrations/repository";
+import { publishEvent } from "../modules/events/repository";
 import {
   applyEventTemplate,
   archiveEventTemplate,
@@ -56,6 +58,7 @@ async function cleanup() {
   await prisma.eventTemplateApplication.deleteMany({ where: { actorUserId: { in: actors } } });
   await prisma.event.deleteMany({ where: { slug: { startsWith: `${P}-` } } });
   await prisma.eventTemplate.deleteMany({ where: { createdByUserId: { in: actors } } });
+  await prisma.organization.deleteMany({ where: { name: { startsWith: "Evttpl " } } });
   await prisma.user.deleteMany({ where: { id: { in: actors } } });
 }
 
@@ -475,6 +478,32 @@ async function verifyStarters() {
     assert(resave.success, `${starter.name} event re-saves in settings`);
   }
   console.log(`ok  ${own.length} starters publish and apply to complete unpublished draft events (form, switches, no capacity)`);
+
+  // 5b. An Honors Weekend payload stored before billingMode existed still applies church billing,
+  // so the event publishes and reaches the director list with a usable form (#565).
+  const honors = starterEventTemplates.find((entry) => entry.starterKey === "honors_weekend")!;
+  // starterKey is dropped too so this stored copy is not mistaken for a real starter by the later starter checks.
+  const oldHonorsPayload: Record<string, unknown> = { ...starterPayload(honors) };
+  delete oldHonorsPayload.billingMode;
+  delete oldHonorsPayload.starterKey;
+  assert(!("billingMode" in oldHonorsPayload) && parseEventTemplatePayload(oldHonorsPayload).billingMode === undefined, "the old payload carries no billingMode");
+  const oldHonors = await createEventTemplate(adminId, { name: "Evttpl Old Honors", description: "", audience: "CLUB" });
+  const oldVersion = await prisma.eventTemplateVersion.findFirstOrThrow({ where: { templateId: oldHonors.id } });
+  await prisma.eventTemplateVersion.update({ where: { id: oldVersion.id }, data: { status: "PUBLISHED", publishedAt: new Date(), payload: oldHonorsPayload as Prisma.InputJsonValue } });
+  await prisma.eventTemplate.update({ where: { id: oldHonors.id }, data: { status: "PUBLISHED" } });
+  const oldApplied = await applyEventTemplate(oldHonors.id, adminId, { name: "Evttpl Old Honors 2027", slug: `${P}-old-honors`, startsOn: "2027-06-01", endsOn: "2027-06-03", requestKey: `${P}-key-old-honors` });
+  const oldEvent = oldApplied.event!;
+  assert(oldEvent.billingMode === "DEFERRED_ORGANIZATION_INVOICE" && oldEvent.audience === "CLUB", "an old Honors Weekend payload applies church billing");
+  await prisma.event.update({ where: { id: oldEvent.id }, data: { location: "Synthetic Camp", supportContact: "help@example.test" } });
+  const oldForm = await prisma.registrationForm.findFirstOrThrow({ where: { eventId: oldEvent.id }, include: { versions: true } });
+  await prisma.registrationFormVersion.update({ where: { id: oldForm.versions[0]!.id }, data: { status: "PUBLISHED", publishedAt: new Date() } });
+  await prisma.registrationForm.update({ where: { id: oldForm.id }, data: { status: "PUBLISHED" } });
+  await publishEvent(oldEvent.id, adminId);
+  const directorOrg = await prisma.organization.create({ data: { type: "CLUB", name: "Evttpl Synthetic Club", normalizedName: "evttpl synthetic club" } });
+  const listed = (await listClubEvents(directorOrg.id)).find((entry) => entry.id === oldEvent.id);
+  assert(listed, "the published old-payload Honors Weekend event is in the director list");
+  assert(listed.problem === null && listed.available, `it shows no form problem, got ${String(listed.problem)}`);
+  console.log("ok  an old Honors Weekend payload without billingMode applies, publishes, and reaches the director list");
 
   // 6. Edited and archived starters are left alone by a re-run, and the key is server-owned on save.
   assert(own.length >= 2, "at least two starters of this run are available to edit and archive");

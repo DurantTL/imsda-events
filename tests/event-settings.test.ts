@@ -214,7 +214,8 @@ describe("club event billing readiness (#565)", () => {
     const flagged = getEventPublishReadiness({ ...base, audience: "CLUB", billingMode: "ATTENDEE_PAY" }, 1);
     expect(flagged.ready).toBe(false);
     expect(flagged.items.find((item) => item.id === "club-billing")).toMatchObject({
-      label: "Club registration uses church billing — choose it before publishing.",
+      label: "Church billing for club registration",
+      detail: expect.stringContaining("Club registration uses church billing — choose it before publishing."),
       complete: false,
     });
     expect(getEventPublishReadiness({ ...base, audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE" }, 1).ready).toBe(true);

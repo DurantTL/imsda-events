@@ -341,12 +341,42 @@ describe("unpublishEvent (#471)", () => {
   });
 });
 
+describe("switching a published event into CLUB + attendee-pay (#565)", () => {
+  const message = "Club registration uses church billing — choose it before publishing.";
+
+  it("refuses to move a published CLUB event to attendee-pay", async () => {
+    const { prisma, eventUpdate } = mockPrisma({ isPublished: true, audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE" }, 1, true);
+    dependencies.getPrisma.mockReturnValue(prisma);
+    await expect(updateEventSettings("event-1", { ...baseInput, audience: "CLUB", billingMode: "ATTENDEE_PAY" }, "usr_1")).rejects.toMatchObject({ code: "EVENT_NOT_READY", message });
+    expect(eventUpdate).not.toHaveBeenCalled();
+  });
+
+  it("refuses to move a published attendee-pay event to CLUB", async () => {
+    const { prisma, eventUpdate } = mockPrisma({ isPublished: true, audience: "GENERAL", billingMode: "ATTENDEE_PAY" }, 1, true);
+    dependencies.getPrisma.mockReturnValue(prisma);
+    await expect(updateEventSettings("event-1", { ...baseInput, audience: "CLUB", billingMode: "ATTENDEE_PAY" }, "usr_1")).rejects.toMatchObject({ code: "EVENT_NOT_READY", message });
+    expect(eventUpdate).not.toHaveBeenCalled();
+  });
+
+  it("saves an unpublished event with the mix, and leaves a published legacy mismatch editable", async () => {
+    const draft = mockPrisma({ isPublished: false, audience: "GENERAL", billingMode: "ATTENDEE_PAY" }, 0);
+    dependencies.getPrisma.mockReturnValue(draft.prisma);
+    await updateEventSettings("event-1", { ...baseInput, audience: "CLUB", billingMode: "ATTENDEE_PAY" }, "usr_1");
+    expect(draft.eventUpdate).toHaveBeenCalled();
+
+    const legacy = mockPrisma({ isPublished: true, audience: "CLUB", billingMode: "ATTENDEE_PAY" }, 1, true);
+    dependencies.getPrisma.mockReturnValue(legacy.prisma);
+    await updateEventSettings("event-1", { ...baseInput, audience: "CLUB", billingMode: "ATTENDEE_PAY", capacity: 10 }, "usr_1");
+    expect(legacy.eventUpdate).toHaveBeenCalled();
+  });
+});
+
 describe("event audience (#481)", () => {
   it("writes an audience change and audits it like any other event setting", async () => {
     const { prisma, eventUpdate, auditLogCreate } = mockPrisma({ isPublished: true }, 1, true);
     dependencies.getPrisma.mockReturnValue(prisma);
 
-    await updateEventSettings("event-1", { ...baseInput, audience: "CLUB" }, "usr_1");
+    await updateEventSettings("event-1", { ...baseInput, audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE" }, "usr_1");
 
     expect(eventUpdate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ audience: "CLUB" }),
@@ -405,7 +435,8 @@ describe("sponsored promo codes pin the event to a general, attendee-paid event 
   });
 
   it("allows the change once no code has a sponsor, and never checks while the event stays general and attendee-paid", async () => {
-    const unlinked = await save({ audience: "CLUB" }, 0);
+    // A published event moves to CLUB together with church billing (#565).
+    const unlinked = await save({ audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE" }, 0);
     expect(unlinked.outcome).toBeNull();
     expect(unlinked.eventUpdate).toHaveBeenCalledTimes(1);
     const staying = await save({}, 3);

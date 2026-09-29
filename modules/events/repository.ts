@@ -379,6 +379,17 @@ export async function updateEventSettings(
         );
       }
     }
+    // A published event can't be switched into CLUB + attendee-pay (#565):
+    // directors would lose it. Legacy mismatches are left as they are, and an
+    // unpublished event may be saved with the mix (publishing is what blocks).
+    if (
+      current.isPublished &&
+      audience === "CLUB" &&
+      input.billingMode === "ATTENDEE_PAY" &&
+      (audience !== current.audience || input.billingMode !== current.billingMode)
+    ) {
+      throw new EventOperationError("EVENT_NOT_READY", CLUB_EVENT_BILLING_MESSAGE);
+    }
     await tx.event.update({
       where: { id: eventId },
       data: {
@@ -501,11 +512,11 @@ export async function publishEvent(eventId: string, actorUserId: string) {
     );
     if (!readiness.ready) {
       const incomplete = readiness.items.filter((item) => !item.complete);
-      if (incomplete.some((item) => item.id === "club-billing") && incomplete.length === 1) {
+      if (incomplete.length === 1 && incomplete[0]!.id === "club-billing") {
         throw new EventOperationError("EVENT_NOT_READY", CLUB_EVENT_BILLING_MESSAGE);
       }
       const missing = incomplete.map((item) =>
-        item.id === "club-billing" ? CLUB_EVENT_BILLING_MESSAGE.replace(/\.$/, "") : item.label.toLowerCase(),
+        item.label.toLowerCase(),
       );
       throw new EventOperationError(
         "EVENT_NOT_READY",
