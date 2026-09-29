@@ -1,4 +1,5 @@
 import { ZodError } from "zod";
+import { AccessDeniedError } from "@/modules/access/authorization";
 import { logError } from "@/lib/logger";
 import { RosterAccessError } from "@/modules/club-rosters/access";
 import { MemberHonorError } from "@/modules/honors/member-honor-repository";
@@ -18,6 +19,9 @@ export function memberHonorApiError(error: unknown, action: string) {
       { error: "INVALID_HONOR_ENTRY_REQUEST", message: error.issues[0]?.message, issues: error.issues },
       { status: 400 },
     );
+  }
+  if (error instanceof AccessDeniedError) {
+    return Response.json({ error: error.code, message: error.message }, { status: error.status });
   }
   if (error instanceof RosterAccessError) {
     return Response.json({ error: error.code, message: error.message }, { status: error.status });

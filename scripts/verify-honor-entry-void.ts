@@ -100,18 +100,23 @@ async function main() {
       { id: items.master, section: "MASTER_AWARDS", name: "Void Check Master Award", normalizedName: `${P} master award`, catalogNumber: "004035" },
     ],
   });
-  await prisma.masterAwardRule.create({
+  const rule = await prisma.masterAwardRule.create({
     data: {
       name: "Void Check Master", normalizedName: `${P} master`, itemId: items.master, status: "ACTIVE",
       groups: { create: [{ position: 1, minimum: 1, honors: { create: [{ honorId: honors.a }, { honorId: honors.b }] } }] },
     },
+    select: { id: true },
   });
 
   // ---------------------------------------------------------------- status, awards and needs follow a void
   const ada = await addPerson("ada", clubs.main);
   const started = await entry(ada.personId, honors.a, "IN_PROGRESS");
   const mistaken = await entry(ada.personId, honors.a, "COMPLETED");
-  const eligible = async () => (await loadMasterAwardProgress(clubs.main))[0].eligible.map((person) => person.personId);
+  const eligible = async () => {
+    const row = (await loadMasterAwardProgress(clubs.main)).find((progress) => progress.ruleId === rule.id);
+    assert(row, "the Master Award rule this script created is in the progress list");
+    return row.eligible.map((person) => person.personId);
+  };
   assert((await eligible()).includes(ada.personId), "a COMPLETED honor makes Ada eligible for the Master Award");
   await syncHonorOrderNeeds(clubs.main);
   assert(await prisma.clubOrderNeed.count({ where: { organizationId: clubs.main, personId: ada.personId, itemId: items.patch, status: "NEEDED" } }) === 1, "the completion creates a NEEDED patch need");
@@ -165,6 +170,33 @@ async function main() {
   assert(await rejected({ reason: "Two actors", voidedByUserId: staffUserId, voidedByAccountId: account.id }), "the database refuses two actors");
   await prisma.attendeeAccount.delete({ where: { id: account.id } });
   console.log("ok  double and racing voids, another club's entry, and bad reasons are refused; the database enforces the reason and actor rules");
+
+  // ---------------------------------------------------------------- erasing a person removes their voids too
+  const { removeRosterMember } = await import("../modules/club-rosters/repository");
+  const dee = await addPerson("dee", clubs.main);
+  const deesMistake = await entry(dee.personId, honors.a, "COMPLETED");
+  await entry(dee.personId, honors.b, "IN_PROGRESS");
+  await voidMemberHonorEntry(clubs.main, dee.memberId, deesMistake.id, "Recorded for the wrong person", actor);
+  assert(await prisma.memberHonorEntryVoid.count({ where: { entryId: deesMistake.id } }) === 1, "Dee's void exists before erasure");
+  await removeRosterMember(clubs.main, dee.memberId, actor);
+  assert(await prisma.person.count({ where: { id: dee.personId } }) === 0, "erasing Dee deletes the person");
+  assert(await prisma.memberHonorEntry.count({ where: { personId: dee.personId } }) === 0, "and every entry");
+  assert(await prisma.memberHonorEntryVoid.count({ where: { entryId: deesMistake.id } }) === 0, "and the void row goes with its entry");
+  console.log("ok  erasing a person who has a voided entry succeeds and removes the void row too");
+
+  // ---------------------------------------------------------------- staff void
+  const { voidMemberHonorEntryAsStaff } = await import("../modules/honors/member-honor-repository");
+  const fay = await addPerson("fay", clubs.other);
+  const faysMistake = await entry(fay.personId, honors.a, "COMPLETED", clubs.other);
+  await prisma.organization.update({ where: { id: clubs.other }, data: { isActive: false } });
+  await prisma.clubRosterMember.update({ where: { id: fay.memberId }, data: { status: "INACTIVE" } });
+  await voidMemberHonorEntryAsStaff(faysMistake.id, "Entered for the wrong honor", staffUserId);
+  const staffVoid = await prisma.memberHonorEntryVoid.findUniqueOrThrow({ where: { entryId: faysMistake.id } });
+  assert(staffVoid.voidedByUserId === staffUserId && staffVoid.voidedByAccountId === null, "a staff void is attributed to the staff user");
+  assert(await prisma.auditLog.count({ where: { action: "MEMBER_HONOR_VOIDED", entityId: faysMistake.id, actorUserId: staffUserId } }) === 1, "and audited");
+  await expectCode(voidMemberHonorEntryAsStaff(faysMistake.id, "Second time", staffUserId), "ENTRY_ALREADY_VOIDED", "a staff double void");
+  await expectCode(voidMemberHonorEntryAsStaff(`${P}_nope`, "No such entry", staffUserId), "ENTRY_NOT_FOUND", "a staff void of a missing entry");
+  console.log("ok  staff can void an entry of a deactivated club with no roster check; a double void is refused");
 
   // ---------------------------------------------------------------- Honors Weekend write-back
   const sam = await addPerson("sam", clubs.main);

@@ -13,6 +13,7 @@ import {
   listMemberHonorHistory,
   recordMemberHonorEntries,
   voidMemberHonorEntry,
+  voidMemberHonorEntryAsStaff,
 } from "@/modules/honors/member-honor-repository";
 
 type Row = Record<string, unknown> & { id: string };
@@ -98,6 +99,10 @@ function fakeDatabase() {
         const row = { ...data, id: id("entry"), seq: ++seq, createdAt: now };
         db.entries.push(row);
         return { id: row.id };
+      },
+      findUnique: async ({ where }: { where: { id: string } }) => {
+        const row = db.entries.find((entry) => entry.id === where.id);
+        return row ? { ...row, honor: db.honors.find((honor) => honor.id === row.honorId), void: db.voids.some((v) => v.entryId === row.id) ? { id: "void" } : null } : null;
       },
       findFirst: async ({ where }: { where: { id: string; personId: string } }) => {
         const row = db.entries.find((entry) => entry.id === where.id && entry.personId === where.personId);
@@ -320,6 +325,49 @@ describe("voidMemberHonorEntry (#591)", () => {
         .rejects.toMatchObject({ code: "ENTRY_INVALID" });
     }
     expect(db.voids).toHaveLength(0);
+  });
+});
+
+describe("voidMemberHonorEntryAsStaff (#591)", () => {
+  it("voids an entry recorded by a deactivated club that no longer has the member, with no roster or club check", async () => {
+    // Club 2 is gone from the roster fake entirely: no member rows, no organization row.
+    db.entries.push({ id: "entry-old", seq: 5, personId: "person-gone", honorId: "honor-1", status: "COMPLETED", completionDate: "2026-05-01", organizationId: "club-2-deactivated" });
+    await voidMemberHonorEntryAsStaff("entry-old", "  Entered for the wrong honor  ", "staff-1");
+    expect(db.entries).toHaveLength(1);
+    expect(db.voids).toEqual([expect.objectContaining({ entryId: "entry-old", reason: "Entered for the wrong honor", voidedByUserId: "staff-1" })]);
+    expect(db.voids[0]).not.toHaveProperty("voidedByAccountId");
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      actorUserId: "staff-1",
+      action: "MEMBER_HONOR_VOIDED",
+      entityId: "entry-old",
+      metadata: expect.objectContaining({ organizationId: "club-2-deactivated", staffVoid: true }),
+    }), db.client);
+  });
+
+  it("refuses a double void and writes no second row", async () => {
+    db.entries.push({ id: "entry-old", seq: 5, personId: "person-gone", honorId: "honor-1", status: "COMPLETED", organizationId: "club-2" });
+    await voidMemberHonorEntryAsStaff("entry-old", "Wrong honor", "staff-1");
+    await expect(voidMemberHonorEntryAsStaff("entry-old", "Again", "staff-2")).rejects.toMatchObject({ code: "ENTRY_ALREADY_VOIDED" });
+    expect(db.voids).toHaveLength(1);
+  });
+
+  it("refuses a missing entry and a reason outside 3 to 500 characters", async () => {
+    db.entries.push({ id: "entry-old", seq: 5, personId: "person-gone", honorId: "honor-1", status: "COMPLETED", organizationId: "club-2" });
+    await expect(voidMemberHonorEntryAsStaff("missing", "No such entry", "staff-1")).rejects.toMatchObject({ code: "ENTRY_NOT_FOUND" });
+    for (const reason of ["", "ab", "x".repeat(501)]) {
+      await expect(voidMemberHonorEntryAsStaff("entry-old", reason, "staff-1")).rejects.toMatchObject({ code: "ENTRY_INVALID" });
+    }
+    expect(db.voids).toHaveLength(0);
+  });
+
+  it("turns a racing duplicate (unique entryId violation) into already voided", async () => {
+    db.entries.push({ id: "entry-old", seq: 5, personId: "person-gone", honorId: "honor-1", status: "COMPLETED", organizationId: "club-2" });
+    db.voids.push({ id: "void-race", entryId: "entry-old", reason: "Racer" });
+    const entries = db.client.memberHonorEntry as unknown as { findUnique: (args: never) => Promise<unknown> };
+    const real = entries.findUnique;
+    entries.findUnique = async (args: never) => ({ ...(await real(args) as object), void: null });
+    await expect(voidMemberHonorEntryAsStaff("entry-old", "Wrong honor", "staff-1")).rejects.toMatchObject({ code: "ENTRY_ALREADY_VOIDED" });
+    entries.findUnique = real;
   });
 });
 

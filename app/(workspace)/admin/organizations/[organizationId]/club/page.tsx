@@ -2,7 +2,7 @@ import { staffLoginRedirectPath } from "@/modules/access/login-redirect";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { Eye, IdCard, UserCog } from "lucide-react";
+import { Award, Eye, IdCard, UserCog } from "lucide-react";
 import { ActAsButton } from "@/components/act-as-button";
 import { BackLink } from "@/components/back-link";
 import { ClubImportYearMove } from "@/components/club-import-year-move";
@@ -53,6 +53,9 @@ export default async function StaffOpenClubPage({
         </Link>
         <Link className="secondary-button" href={`/admin/organizations/${organizationId}/profile${fromHere}`}>
           <IdCard aria-hidden="true" size={14} /> Club profile
+        </Link>
+        <Link className="secondary-button" href={`/admin/organizations/${organizationId}/club/honors`}>
+          <Award aria-hidden="true" size={14} /> Honors
         </Link>
         <ActAsButton
           access="Full director powers, attributed to you"

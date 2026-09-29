@@ -62,7 +62,10 @@ describe("the staff club page's club year (#541)", () => {
     const tree = await open("2025-26");
     const all = elements(tree);
     expect(all.find((element) => element.type === ClubOverview)?.props).toMatchObject({ rosterYear: "2025-26" });
-    const links = all.filter((element) => typeof element.props.href === "string" && String(element.props.href).startsWith("/admin/organizations/club-1/club"));
+    const clubLinks = all.filter((element) => typeof element.props.href === "string" && String(element.props.href).startsWith("/admin/organizations/club-1/club"));
+    // The staff Honors screen (#591) is its own link, not one of the year choices.
+    expect(clubLinks.some((link) => link.props.href === "/admin/organizations/club-1/club/honors")).toBe(true);
+    const links = clubLinks.filter((link) => link.props.href !== "/admin/organizations/club-1/club/honors");
     expect(links.map((link) => [link.props.href, link.props["aria-current"]])).toEqual([
       ["/admin/organizations/club-1/club?year=2025-26", "page"],
       ["/admin/organizations/club-1/club", undefined],

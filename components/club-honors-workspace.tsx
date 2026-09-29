@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { Download, History, UsersRound } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
+import { calendarDateIn } from "@/modules/calendar/domain";
 import { clubClassLevelLabels } from "@/modules/club-rosters/domain";
 import {
   type ClubHonorsRow,
@@ -31,6 +32,9 @@ const statusTone = { IN_PROGRESS: "gold", COMPLETED: "green" } as const;
  * mark one honor in one action; open one person for their full history and a
  * single-member edit. Area Coordinators get this same view with `readOnly`
  * (their own mechanism, not a club role, so no edit endpoint is ever called).
+ * `canVoid` shows the Void action to a director or deputy (the server checks
+ * again); `staff` is the conference staff's read-only view with a Void action
+ * on every entry, through the staff endpoints (#591).
  */
 export function ClubHonorsWorkspace({
   organizationId,
@@ -38,12 +42,16 @@ export function ClubHonorsWorkspace({
   initialRows,
   honorOptions,
   readOnly = false,
+  canVoid = false,
+  staff = false,
 }: {
   organizationId: string;
   clubYear: string;
   initialRows: ClubHonorsRow[];
   honorOptions: HonorOption[];
   readOnly?: boolean;
+  canVoid?: boolean;
+  staff?: boolean;
 }) {
   const [rows, setRows] = useState(initialRows);
   const [honorFilter, setHonorFilter] = useState("");
@@ -67,7 +75,9 @@ export function ClubHonorsWorkspace({
   const closeVoid = () => { setVoidTarget(null); setVoidReason(""); };
   const voidDialogRef = useAccessibleDialog<HTMLElement>(Boolean(voidTarget), closeVoid);
 
-  const base = `/api/attendee/clubs/${encodeURIComponent(organizationId)}`;
+  const base = staff
+    ? `/api/admin/organizations/${encodeURIComponent(organizationId)}`
+    : `/api/attendee/clubs/${encodeURIComponent(organizationId)}`;
   const visible = useMemo(
     () => filterClubHonorsRows(rows, {
       honorId: honorFilter || undefined,
@@ -169,13 +179,24 @@ export function ClubHonorsWorkspace({
     setSaving(true);
     setVoidError("");
     try {
-      const response = await fetch(
-        `${base}/roster/${encodeURIComponent(historyFor.memberId)}/honors/${encodeURIComponent(voidTarget.id)}/void`,
-        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: voidReason }) },
-      );
+      const voidUrl = staff
+        ? `/api/admin/honor-entries/${encodeURIComponent(voidTarget.id)}/void`
+        : `${base}/roster/${encodeURIComponent(historyFor.memberId)}/honors/${encodeURIComponent(voidTarget.id)}/void`;
+      const response = await fetch(voidUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: voidReason }),
+      });
       const result = await response.json().catch(() => ({})) as HistoryResponse;
       if (!response.ok) throw new Error(result.message ?? result.issues?.[0]?.message ?? "That entry could not be voided.");
-      setHistory(result);
+      if (staff) {
+        // The staff void answers with no history; load it again.
+        const reloaded = await fetch(`${base}/roster/${encodeURIComponent(historyFor.memberId)}/honors`);
+        const reloadedBody = await reloaded.json().catch(() => null) as HistoryResponse | null;
+        setHistory(reloaded.ok ? reloadedBody : null);
+      } else {
+        setHistory(result);
+      }
       closeVoid();
       const refreshed = await fetch(`${base}/honors`);
       const refreshedBody = await refreshed.json().catch(() => ({})) as { rows?: ClubHonorsRow[] };
@@ -199,9 +220,11 @@ export function ClubHonorsWorkspace({
             <p className="public-registration-eyebrow">Club year {clubYear}</p>
             <h2 id="club-honors-heading">Honors</h2>
           </div>
-          <a className="secondary-button" href={`${base}/honors/csv`}>
-            <Download aria-hidden="true" size={14} /> Export CSV
-          </a>
+          {!staff && (
+            <a className="secondary-button" href={`${base}/honors/csv`}>
+              <Download aria-hidden="true" size={14} /> Export CSV
+            </a>
+          )}
         </div>
 
         <div className="club-roster-tools">
@@ -364,11 +387,11 @@ export function ClubHonorsWorkspace({
                       </small>
                       {entry.voided && (
                         <small>
-                          Voided by <span translate="no">{entry.voided.voidedByName}</span> on {entry.voided.voidedAt.slice(0, 10)}: {entry.voided.reason}
+                          Voided by <span translate="no">{entry.voided.voidedByName}</span> on {calendarDateIn(new Date(entry.voided.voidedAt))}: {entry.voided.reason}
                         </small>
                       )}
                     </span>
-                    {!readOnly && !entry.voided && entry.recordedAtOrganizationId === organizationId && (
+                    {!entry.voided && (staff || (!readOnly && canVoid && entry.recordedAtOrganizationId === organizationId)) && (
                       <button
                         aria-label={`Void ${entry.honorName} entry`}
                         className="text-button"

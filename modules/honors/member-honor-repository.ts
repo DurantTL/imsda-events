@@ -303,6 +303,56 @@ export async function listClubHonorsPage(organizationId: string, clubYear: strin
     .sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName));
 }
 
+/** Voids one entry inside `tx`: the reason rules, the double-void check, the void row and its audit row. */
+async function writeVoid(
+  tx: Prisma.TransactionClient,
+  entry: { id: string; honorId: string; organizationId: string; honor: { name: string }; void: { id: string } | null },
+  reason: string,
+  attribution: { voidedByAccountId: string } | { voidedByUserId: string },
+  audit: { actorUserId?: string; metadata: Prisma.InputJsonObject },
+) {
+  if (entry.void) throw new MemberHonorError("ENTRY_ALREADY_VOIDED", "This entry has already been voided.");
+  const created = await tx.memberHonorEntryVoid.create({
+    data: { entryId: entry.id, reason, ...attribution },
+    select: { id: true },
+  });
+  // `tx`: the audit row commits or rolls back with the void it describes.
+  await writeAuditLog({
+    ...(audit.actorUserId ? { actorUserId: audit.actorUserId } : {}),
+    action: "MEMBER_HONOR_VOIDED",
+    entityType: "MemberHonorEntry",
+    entityId: entry.id,
+    summary: `Voided a ${entry.honor.name} honor entry for a club roster member.`,
+    metadata: { organizationId: entry.organizationId, honorId: entry.honorId, voidId: created.id, ...audit.metadata },
+  }, tx);
+}
+
+function validVoidReason(reason: string) {
+  const trimmed = reason.trim();
+  if (trimmed.length < VOID_REASON_MIN || trimmed.length > VOID_REASON_MAX) {
+    throw new MemberHonorError("ENTRY_INVALID", `The reason must be ${VOID_REASON_MIN} to ${VOID_REASON_MAX} characters.`);
+  }
+  return trimmed;
+}
+
+/** The unique `entryId` catches two voids racing past the pre-check: also "already voided". */
+async function runVoid(work: () => Promise<void>) {
+  try {
+    await work();
+  } catch (error) {
+    if (error instanceof Error && "code" in error && (error as { code?: string }).code === "P2002") {
+      throw new MemberHonorError("ENTRY_ALREADY_VOIDED", "This entry has already been voided.");
+    }
+    throw error;
+  }
+}
+
+const voidableEntrySelect = {
+  id: true, honorId: true, organizationId: true, personId: true,
+  honor: { select: { name: true } },
+  void: { select: { id: true } },
+} as const;
+
 /**
  * Voids one honor entry (#591), for the club that recorded it. The void is its
  * own append-only row (`MemberHonorEntryVoid`); the entry is never changed or
@@ -319,51 +369,46 @@ export async function voidMemberHonorEntry(
   reason: string,
   actor: MemberHonorActor,
 ) {
-  const trimmed = reason.trim();
-  if (trimmed.length < VOID_REASON_MIN || trimmed.length > VOID_REASON_MAX) {
-    throw new MemberHonorError("ENTRY_INVALID", `The reason must be ${VOID_REASON_MIN} to ${VOID_REASON_MAX} characters.`);
-  }
-  try {
-    await getPrisma().$transaction(async (tx) => {
-      const member = await tx.clubRosterMember.findFirst({
-        where: { id: memberId, organizationId, status: { not: "REMOVED" } },
-        select: { personId: true },
-      });
-      if (!member?.personId) throw new MemberHonorError("MEMBER_NOT_FOUND", "That person isn't on this club's roster.");
-      const entry = await tx.memberHonorEntry.findFirst({
-        where: { id: entryId, personId: member.personId },
-        select: { id: true, honorId: true, organizationId: true, honor: { select: { name: true } }, void: { select: { id: true } } },
-      });
-      if (!entry) throw new MemberHonorError("ENTRY_NOT_FOUND", "That honor entry could not be found.");
-      if (entry.organizationId !== organizationId) {
-        throw new MemberHonorError("VOID_NOT_ALLOWED", "Only the club that recorded this entry can void it.");
-      }
-      if (entry.void) throw new MemberHonorError("ENTRY_ALREADY_VOIDED", "This entry has already been voided.");
-      const attribution = "accountId" in actor
-        ? { voidedByAccountId: actor.accountId }
-        : { voidedByUserId: actor.userId };
-      const created = await tx.memberHonorEntryVoid.create({
-        data: { entryId, reason: trimmed, ...attribution },
-        select: { id: true },
-      });
-      const who = actorAuditFields(actor);
-      // `tx`: the audit row commits or rolls back with the void it describes.
-      await writeAuditLog({
-        ...who.actorFields,
-        action: "MEMBER_HONOR_VOIDED",
-        entityType: "MemberHonorEntry",
-        entityId: entryId,
-        summary: `Voided a ${entry.honor.name} honor entry for a club roster member.`,
-        metadata: { organizationId, memberId, honorId: entry.honorId, voidId: created.id, ...who.metadata },
-      }, tx);
+  const trimmed = validVoidReason(reason);
+  await runVoid(() => getPrisma().$transaction(async (tx) => {
+    const member = await tx.clubRosterMember.findFirst({
+      where: { id: memberId, organizationId, status: { not: "REMOVED" } },
+      select: { personId: true },
     });
-  } catch (error) {
-    // The unique `entryId` catches two voids racing past the check above.
-    if (error instanceof Error && "code" in error && (error as { code?: string }).code === "P2002") {
-      throw new MemberHonorError("ENTRY_ALREADY_VOIDED", "This entry has already been voided.");
+    if (!member?.personId) throw new MemberHonorError("MEMBER_NOT_FOUND", "That person isn't on this club's roster.");
+    const entry = await tx.memberHonorEntry.findFirst({
+      where: { id: entryId, personId: member.personId },
+      select: voidableEntrySelect,
+    });
+    if (!entry) throw new MemberHonorError("ENTRY_NOT_FOUND", "That honor entry could not be found.");
+    if (entry.organizationId !== organizationId) {
+      throw new MemberHonorError("VOID_NOT_ALLOWED", "Only the club that recorded this entry can void it.");
     }
-    throw error;
-  }
+    const who = actorAuditFields(actor);
+    await writeVoid(
+      tx,
+      entry,
+      trimmed,
+      "accountId" in actor ? { voidedByAccountId: actor.accountId } : { voidedByUserId: actor.userId },
+      { actorUserId: "userId" in actor ? actor.userId : undefined, metadata: { memberId, ...who.metadata } },
+    );
+  }));
+}
+
+/**
+ * Staff void (#591): a system administrator voids any honor entry by id, with
+ * no recording-club or roster check, so an entry stays fixable after its club
+ * is deactivated or no longer has the member. The caller has checked the
+ * permission. Same transaction, audit row, reason rules and 409 on a double
+ * void; attributed to `voidedByUserId`.
+ */
+export async function voidMemberHonorEntryAsStaff(entryId: string, reason: string, staffUserId: string) {
+  const trimmed = validVoidReason(reason);
+  await runVoid(() => getPrisma().$transaction(async (tx) => {
+    const entry = await tx.memberHonorEntry.findUnique({ where: { id: entryId }, select: voidableEntrySelect });
+    if (!entry) throw new MemberHonorError("ENTRY_NOT_FOUND", "That honor entry could not be found.");
+    await writeVoid(tx, entry, trimmed, { voidedByUserId: staffUserId }, { actorUserId: staffUserId, metadata: { staffVoid: true } });
+  }));
 }
 
 /** Every active honor in the catalog, for the Honors page's picker and filter. */
