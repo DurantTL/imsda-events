@@ -25,6 +25,7 @@ export default async function ClubHonorsPage({ params }: { params: Promise<{ org
     <>
       <BackLink href={`/account/clubs/${organizationId}`}>Back to {access.club.name}</BackLink>
       <ClubHonorsWorkspace
+        canVoid={access.capabilities.manageTeam}
         clubYear={clubYear}
         honorOptions={honors}
         initialRows={rows}

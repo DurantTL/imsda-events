@@ -35,6 +35,13 @@ export function memberHonorEntryProblem(
   return null;
 }
 
+/** Who voided an entry, when, and why (#591). Shown struck through in history. */
+export type MemberHonorEntryVoidRecord = {
+  reason: string;
+  voidedByName: string;
+  voidedAt: string;
+};
+
 export type MemberHonorEntryRecord = {
   id: string;
   honorId: string;
@@ -44,8 +51,12 @@ export type MemberHonorEntryRecord = {
   completionDate: string;
   note: string;
   recordedByName: string;
+  /** The club that recorded the entry: only that club may void it (#591). */
+  recordedAtOrganizationId: string;
   recordedAtOrganizationName: string;
   createdAt: string;
+  /** Null unless the entry was voided; the entry itself is never changed. */
+  voided: MemberHonorEntryVoidRecord | null;
 };
 
 export type CurrentMemberHonor = {
@@ -58,18 +69,20 @@ export type CurrentMemberHonor = {
 };
 
 /**
- * The current status per honor, from append-only history: the latest entry
- * (highest `seq`) for each honor wins. History itself is never edited or
- * removed; a correction is simply a later entry (kept alongside, not in place
- * of, the ones before it).
+ * The current status per honor, from append-only history: the latest
+ * non-voided entry (highest `seq`) for each honor wins (#591). History itself
+ * is never edited or removed; a correction is simply a later entry, and a
+ * voided entry is skipped, so voiding the latest makes the previous
+ * non-voided one current, or leaves no status when none is left.
  */
 export function currentHonorsFromHistory(
   entries: readonly MemberHonorEntryRecord[],
 ): CurrentMemberHonor[] {
   const latest = new Map<string, MemberHonorEntryRecord>();
-  // Entries arrive newest-first from the repository; the first one seen per
-  // honor is already the latest, so later (older) rows are skipped.
+  // Entries arrive newest-first from the repository; the first non-voided one
+  // seen per honor is already the latest, so later (older) rows are skipped.
   for (const entry of entries) {
+    if (entry.voided) continue;
     if (!latest.has(entry.honorId)) latest.set(entry.honorId, entry);
   }
   return [...latest.values()]
@@ -155,3 +168,7 @@ export function clubHonorsCsv(rows: readonly ClubHonorsRow[]) {
   }
   return toCsv(out);
 }
+
+/** The reason must be 3 to 500 characters once trimmed (#591). */
+export const VOID_REASON_MIN = 3;
+export const VOID_REASON_MAX = 500;
