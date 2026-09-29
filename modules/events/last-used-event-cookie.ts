@@ -9,10 +9,12 @@
  * dependency-free module so the route, the reader, and tests share one
  * definition.
  *
- * The cookie is only ever a hint: it never grants access on its own.
- * `resolveLoginDestination` uses it only when it matches one of the signed-in
- * account's real active event memberships, and every workspace page still
- * authorizes the chosen event through `resolveEventContext`.
+ * The cookie is the staff member's current event when a page has no
+ * `?event=` (#616), and the sign-in default. It never grants access on its
+ * own: `resolveEventContext` and `loadWorkspaceEventContext` use it only when
+ * it matches one of the account's real events, `resolveLoginDestination` only
+ * for a real active membership, and every workspace page still authorizes the
+ * chosen event through `resolveEventContext`.
  */
 export const LAST_USED_EVENT_COOKIE_NAME = "imsda-last-event";
 

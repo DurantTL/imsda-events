@@ -18,12 +18,13 @@ const lastEventSchema = z.object({
 
 /**
  * Remembers the event a staff member just picked — in the workspace event
- * switcher or on `/select-event` — so a multi-event account lands back on it
- * at its next sign-in (#108 queue 1).
+ * switcher or on `/select-event` — so it stays the current event across pages
+ * without `?event=` (#616) and a multi-event account lands back on it at its
+ * next sign-in (#108 queue 1).
  *
  * Written only here, and only after the signed-in account is confirmed to be
- * able to open the event. It stays a hint: `resolveLoginDestination`
- * re-checks it against the account's active memberships at sign-in.
+ * able to open the event. Readers re-check it against the account's real events (and
+ * `resolveLoginDestination` against active memberships) before using it.
  */
 async function postHandler(request: Request) {
   const originError = rejectCrossOriginRequest(request);
@@ -51,9 +52,8 @@ async function postHandler(request: Request) {
     }
 
     await requireEventMembership(session, parsed.data.eventId, findActiveMembership);
-    // Sign-in routing ignores the hint for system administrators, so there's nothing to record.
-    if (session.user.globalRole === "SYSTEM_ADMIN") return Response.json({ ok: true });
-
+    // System administrators are recorded too (#616): sign-in routing still
+    // ignores the hint for them, but /admin pages use it as the current event.
     (await cookies()).set(LAST_USED_EVENT_COOKIE_NAME, parsed.data.eventId, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",

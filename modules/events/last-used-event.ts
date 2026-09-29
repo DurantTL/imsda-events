@@ -8,9 +8,9 @@ import {
 
 /**
  * Reads the event id remembered from a previous visit, if any. A value that is
- * not shaped like an event id is ignored. Used only to pick a default in
- * `resolveLoginDestination` — never to authorize anything on its own (see
- * `last-used-event-cookie.ts`).
+ * not shaped like an event id is ignored. Used to pick the current event
+ * when a page has no `?event=` and the default at sign-in — never to
+ * authorize anything on its own (see `last-used-event-cookie.ts`).
  */
 export async function readLastUsedEventId(): Promise<string | null> {
   const value = (await cookies()).get(LAST_USED_EVENT_COOKIE_NAME)?.value;
