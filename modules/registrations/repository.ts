@@ -45,6 +45,7 @@ function getRegistrationQuery(
     include: {
       accountHolderPerson: true,
       location: { select: { id: true, name: true } },
+      waitlistEntry: { select: { status: true } },
       attendees: {
         orderBy: [{ position: "asc" }, { createdAt: "asc" }],
         include: {
@@ -153,7 +154,33 @@ function directoryForRegistrations(client: RegistrationReadClient, registrations
   );
 }
 
-function serializeRegistration(registration: RegistrationWithRelations, directory: OrganizationDirectory) {
+/**
+ * Each waiting club's place in line at its location (#599): how many waiting
+ * clubs at that location are at or ahead of it, first come first served. Only
+ * registrations that are waitlisted at a location are looked up.
+ */
+async function waitlistPlacesFor(client: RegistrationReadClient, registrations: readonly RegistrationWithRelations[]) {
+  const places = new Map<string, number>();
+  const locationIds = [...new Set(registrations
+    .filter((registration) => registration.status === "WAITLISTED" && registration.locationId && registration.waitlistEntry?.status === "WAITING")
+    .map((registration) => registration.locationId as string))];
+  if (locationIds.length === 0) return places;
+  const queue = await client.registrationWaitlistEntry.findMany({
+    where: { status: "WAITING", registration: { locationId: { in: locationIds }, status: "WAITLISTED" } },
+    orderBy: { position: "asc" },
+    select: { registrationId: true, registration: { select: { locationId: true } } },
+  });
+  const counts = new Map<string, number>();
+  for (const entry of queue) {
+    const locationId = entry.registration.locationId as string;
+    const place = (counts.get(locationId) ?? 0) + 1;
+    counts.set(locationId, place);
+    places.set(entry.registrationId, place);
+  }
+  return places;
+}
+
+function serializeRegistration(registration: RegistrationWithRelations, directory: OrganizationDirectory, waitlistPlaces?: ReadonlyMap<string, number>) {
   const paidCents = registration.payments.reduce((total, payment) => {
     const refundedCents = payment.refunds.reduce(
       (refundTotal, refund) => refundTotal + moneyToCents(refund.amount),
@@ -225,6 +252,8 @@ function serializeRegistration(registration: RegistrationWithRelations, director
     onlinePaymentUnavailable,
     // The event location this registration is at (#413); null when the event has none.
     location: registration.location ? { id: registration.location.id, name: registration.location.name } : null,
+    /** Place in line at the registration's location while it is waitlisted there (#599): "Waitlisted at <location> (#N)". */
+    locationWaitlistPlace: waitlistPlaces?.get(registration.id) ?? null,
     // The recorded amount is what the church owes, billed directly, never
     // an attendee balance to collect online (#409). Staff finance screens
     // must say so wherever the amount is shown.
@@ -338,9 +367,11 @@ function serializeRegistration(registration: RegistrationWithRelations, director
 }
 
 type SerializedRegistration = ReturnType<typeof serializeRegistration>;
-export type RegistrationRecord = Omit<SerializedRegistration, "attendees" | "publicSubmission" | "location"> & {
+export type RegistrationRecord = Omit<SerializedRegistration, "attendees" | "publicSubmission" | "location" | "locationWaitlistPlace"> & {
   /** Optional so records built before locations existed (#413) still type-check. */
   location?: { id: string; name: string } | null;
+  /** Optional like `location`: the place in line at the location while waitlisted there (#599). */
+  locationWaitlistPlace?: number | null;
   attendees: Array<Omit<SerializedRegistration["attendees"][number], "attendeeTypeDefinitionCode"> & { attendeeTypeDefinitionCode?: string | null }>;
   publicSubmission: SerializedRegistration["publicSubmission"] extends infer Submission
     ? Submission extends null ? null : Omit<Submission, "attendeeTypeOptions"> & { attendeeTypeOptions?: AttendeeTypeOption[] }
@@ -378,7 +409,8 @@ export async function listRegistrations(
     options?.locationId,
   );
   const directory = await directoryForRegistrations(getPrisma(), registrations);
-  return registrations.map((registration) => serializeRegistration(registration, directory));
+  const waitlistPlaces = await waitlistPlacesFor(getPrisma(), registrations);
+  return registrations.map((registration) => serializeRegistration(registration, directory, waitlistPlaces));
 }
 
 export async function createRegistration(eventId: string, input: RegistrationInput, actorUserId: string) {
@@ -566,7 +598,7 @@ export async function getRegistrationByIdWithClient(
   const registrations = await getRegistrationQuery(client, eventId);
   const registration = registrations.find((candidate) => candidate.id === registrationId);
   return registration
-    ? serializeRegistration(registration, await directoryForRegistrations(client, [registration]))
+    ? serializeRegistration(registration, await directoryForRegistrations(client, [registration]), await waitlistPlacesFor(client, [registration]))
     : null;
 }
 

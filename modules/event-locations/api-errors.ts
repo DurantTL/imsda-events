@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { logError } from "@/lib/logger";
-import { isLockTimeoutError } from "@/lib/prisma-errors";
+import { isLockTimeoutError, isSerializationFailure } from "@/lib/prisma-errors";
 import { AccessDeniedError } from "@/modules/access/authorization";
 import { EventLocationError, eventLocationErrorStatus, locationBusyMessage } from "@/modules/event-locations/errors";
 
@@ -39,7 +39,8 @@ export function eventLocationApiError(error: unknown, action: string) {
     logExpiredTransaction(error, action);
     return Response.json({ error: "LOCATION_BUSY", message: locationBusyMessage }, { status: 503, headers: noStore });
   }
-  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
+  // A serialization failure or deadlock that outlasted its retries: nothing was saved, and a second try will go through.
+  if (isSerializationFailure(error)) {
     return Response.json(
       { error: "LOCATION_CONFLICT", message: "Another change landed at the same time. Refresh and try again." },
       { status: 409, headers: noStore },

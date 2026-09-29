@@ -35,6 +35,8 @@ const locationFields = {
   capacity: z.number().int().min(1, "Capacity must be at least 1, or leave it blank for no limit.").max(100_000).nullish().transform((value) => value ?? null),
   registrationClosesOn: calendarDateSchema.nullish().transform((value) => value ?? null),
   isActive: z.boolean().default(true),
+  /** The location's Area Coordinator (#599): an attendee account with an active grant. Checked against the database on save. */
+  coordinatorAccountId: z.string().trim().min(1).max(100).nullish().transform((value) => value ?? null),
 };
 
 type DateRuleValue = { firstDay?: string | null; lastDay?: string | null; registrationClosesOn?: string | null };
@@ -54,6 +56,19 @@ function validateLocationDates(value: DateRuleValue, context: z.RefinementCtx) {
   if (problem) context.addIssue({ code: "custom", path: [problem.path], message: problem.message });
 }
 
+/**
+ * Whether an Area Coordinator grant is in force at `now`: not removed, and not
+ * past a temporary "act as" end. The same rule as `areaGrantActive` in the
+ * organizations module, kept here so this module stays free of that one's
+ * sign-in imports.
+ */
+export function coordinatorGrantActive(
+  grant: { revokedAt: Date | null; expiresAt: Date | null } | null | undefined,
+  now = new Date(),
+) {
+  return Boolean(grant && !grant.revokedAt && (!grant.expiresAt || grant.expiresAt > now));
+}
+
 export const eventLocationInputSchema = z.object(locationFields).strict().superRefine(validateLocationDates);
 export type EventLocationInput = z.infer<typeof eventLocationInputSchema>;
 
@@ -66,6 +81,7 @@ export const eventLocationUpdateSchema = z.object({
   capacity: z.number().int().min(1, "Capacity must be at least 1, or leave it blank for no limit.").max(100_000).nullable().optional(),
   registrationClosesOn: calendarDateSchema.nullable().optional(),
   isActive: z.boolean().optional(),
+  coordinatorAccountId: z.string().trim().min(1).max(100).nullable().optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, "Nothing to change.");
 export type EventLocationUpdate = z.infer<typeof eventLocationUpdateSchema>;
 

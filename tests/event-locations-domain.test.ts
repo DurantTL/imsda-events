@@ -47,7 +47,7 @@ describe("location names and input", () => {
 
   it("accepts a bare name and fills the optional fields with null", () => {
     expect(eventLocationInputSchema.parse({ name: " Des Moines " })).toEqual({
-      name: "Des Moines", address: null, firstDay: null, lastDay: null, capacity: null, registrationClosesOn: null, isActive: true,
+      name: "Des Moines", address: null, firstDay: null, lastDay: null, capacity: null, registrationClosesOn: null, isActive: true, coordinatorAccountId: null,
     });
   });
 

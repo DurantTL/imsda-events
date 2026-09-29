@@ -3,6 +3,7 @@ import {
   isAuthorizedSweepRequest,
   sweepOutbox,
 } from "@/modules/communications/outbox-sweep";
+import { sendDueLocationWaitlistDigests } from "@/modules/event-locations/waitlist-digest";
 import { pruneExpiredCommunityContent } from "@/modules/community/repository";
 import { runAlertScan } from "@/modules/operations/alert-scan";
 import { recordSweepHeartbeat } from "@/modules/operations/sweep-heartbeat-repository";
@@ -43,6 +44,14 @@ async function postHandler(request: Request) {
       logError("Community retention sweep failed after a successful outbox sweep", error);
       return null;
     });
+    // The daily location waitlist digest to Area Coordinators and event staff
+    // (#599). It waits for its morning send time (Central) and sends at most one
+    // email per person per date, so running it on every sweep is safe. Its
+    // failure must not make a successful sweep look failed.
+    const locationWaitlistDigest = await sendDueLocationWaitlistDigests().catch((error) => {
+      logError("The location waitlist digest failed after a successful outbox sweep", error);
+      return null;
+    });
     return Response.json({
       sweptEventCount: result.sweptEventIds.length,
       sweptAccountMessages: result.sweptAccountMessages,
@@ -55,6 +64,12 @@ async function postHandler(request: Request) {
         cleared: alerts.cleared,
       },
       communityRetention,
+      locationWaitlistDigest: locationWaitlistDigest && {
+        status: locationWaitlistDigest.status,
+        changesCovered: locationWaitlistDigest.changesCovered,
+        recipients: locationWaitlistDigest.recipients,
+        delivered: locationWaitlistDigest.delivered,
+      },
     });
   } catch (error) {
     logError("Outbox sweep failed", error);

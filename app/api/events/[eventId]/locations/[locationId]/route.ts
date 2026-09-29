@@ -5,6 +5,8 @@ import { eventLocationApiError } from "@/modules/event-locations/api-errors";
 import { deleteEventLocation, listEventLocations, updateEventLocation } from "@/modules/event-locations/repository";
 import { findActiveMembership } from "@/modules/events/repository";
 import { withRequestContext } from "@/lib/request-context";
+import { logError } from "@/lib/logger";
+import { processQueuedMessageIdsAfterCommit } from "@/modules/communications/messaging-repository";
 
 type Context = { params: Promise<{ eventId: string; locationId: string }> };
 
@@ -14,7 +16,16 @@ async function patchHandler(request: Request, context: Context) {
   try {
     const { eventId, locationId } = await context.params;
     const access = await requirePermission(await getCurrentSession(), eventId, "CONFIGURE_EVENT", findActiveMembership);
-    const location = await updateEventLocation(eventId, locationId, access.user.id, await request.json());
+    const { pendingMessageIds = [], ...location } = await updateEventLocation(eventId, locationId, access.user.id, await request.json());
+    // A raised capacity may have promoted waiting clubs (#599): their emails go out after the commit,
+    // and a delivery problem never undoes the change.
+    if (pendingMessageIds.length > 0) {
+      try {
+        await processQueuedMessageIdsAfterCommit(pendingMessageIds);
+      } catch (error) {
+        logError("Waitlist promotion email delivery failed after a location capacity change", error);
+      }
+    }
     return Response.json({ location, locations: await listEventLocations(eventId) }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return eventLocationApiError(error, "Updating the location");

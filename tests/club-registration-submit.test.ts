@@ -5,6 +5,7 @@ const dependencies = vi.hoisted(() => ({
   getServerEnv: vi.fn(),
   processQueuedMessageIdsAfterCommit: vi.fn(),
   enqueuePublicRegistrationMessages: vi.fn(),
+  enqueueWaitlistJoinedMessage: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -14,7 +15,7 @@ vi.mock("@/modules/communications/messaging-repository", () => ({
   processQueuedMessageIdsAfterCommit: dependencies.processQueuedMessageIdsAfterCommit,
   enqueuePublicRegistrationMessages: dependencies.enqueuePublicRegistrationMessages,
 }));
-vi.mock("@/modules/communications/transactional-messages", () => ({ enqueueWaitlistJoinedMessage: vi.fn() }));
+vi.mock("@/modules/communications/transactional-messages", () => ({ enqueueWaitlistJoinedMessage: dependencies.enqueueWaitlistJoinedMessage }));
 
 import { sealSecret } from "@/lib/secret-box";
 import { clubAttendeePreparer, clubSubmissionAttribution } from "@/modules/club-registrations/repository";
@@ -77,7 +78,7 @@ const baseInput: {
   website: "",
 };
 
-function fixture({ billingMode = "DEFERRED_ORGANIZATION_INVOICE", audience = "CLUB", form = definition(), registrationClosesOn = "2026-11-30" } = {}) {
+function fixture({ billingMode = "DEFERRED_ORGANIZATION_INVOICE", audience = "CLUB", form = definition(), registrationClosesOn = "2026-11-30", waitlistEnabled = false } = {}) {
   const members = [
     { id: "m1", personId: "person-m1", attendeeType: "YOUTH", role: "Pathfinder", gender: "FEMALE", sealedBirthDate: sealSecret("2014-12-06", "club-roster:birth-date"), person: { firstName: "Alex", lastName: "Sample" } },
     { id: "m2", personId: "person-m2", attendeeType: "STAFF", role: "Counselor", gender: null, sealedBirthDate: sealSecret("1988-03-02", "club-roster:birth-date"), person: { firstName: "Jordan", lastName: "Example" } },
@@ -95,7 +96,7 @@ function fixture({ billingMode = "DEFERRED_ORGANIZATION_INVOICE", audience = "CL
         id: "event-1", name: "Honors Weekend", slug: "honors-weekend",
         startsAt: new Date("2026-12-05T15:00:00.000Z"), endsAt: new Date("2026-12-06T20:00:00.000Z"),
         timezone: "America/Chicago", location: "Camp", capacity: null, isPublished: true,
-        registrationOpensOn: "2026-10-01", registrationClosesOn, waitlistEnabled: false, billingMode, audience, attendeeTypes: [],
+        registrationOpensOn: "2026-10-01", registrationClosesOn, waitlistEnabled, billingMode, audience, attendeeTypes: [],
       },
       versions: [{ id: "version-1", versionNumber: 1, definition: form, publishedAt: new Date("2026-09-01T00:00:00Z") }],
     }) },
@@ -116,7 +117,8 @@ function fixture({ billingMode = "DEFERRED_ORGANIZATION_INVOICE", audience = "CL
       findUnique: vi.fn().mockResolvedValue({ eventId: "event-1", confirmationCode: "REG-CLUB", event: { endsAt: new Date("2026-12-06T20:00:00Z") } }),
     },
     registrationAccessToken: { create: vi.fn().mockResolvedValue({ id: "access-1" }) },
-    registrationWaitlistEntry: { aggregate: vi.fn(), create: vi.fn() },
+    registrationWaitlistEntry: { aggregate: vi.fn(), create: vi.fn(), findUnique: vi.fn().mockResolvedValue(null), count: vi.fn().mockResolvedValue(0) },
+    locationWaitlistChange: { create: vi.fn().mockResolvedValue({ id: "change-1" }) },
     messageOutbox: { findMany: vi.fn().mockResolvedValue([]) },
     auditLog: { create: vi.fn().mockResolvedValue({ id: "audit-1" }) },
   };
@@ -145,6 +147,7 @@ beforeEach(() => {
   dependencies.getServerEnv.mockReturnValue({ SECRET_ENCRYPTION_KEY: "a-secret-encryption-key-of-adequate-length" });
   dependencies.processQueuedMessageIdsAfterCommit.mockResolvedValue({ capturedIds: [], sentIds: [], failedIds: [], rescheduledIds: [], skippedIds: [] });
   dependencies.enqueuePublicRegistrationMessages.mockResolvedValue({ messageIds: ["m"], pendingMessageIds: ["m"], registrantMessageIds: ["m"], deliveryMode: "LOCAL_CAPTURE" });
+  dependencies.enqueueWaitlistJoinedMessage.mockResolvedValue({ messageIds: ["w"], pendingMessageIds: ["w"], deliveryMode: "LOCAL_CAPTURE", skippedReason: null });
 });
 
 describe("club registration submit", () => {
@@ -480,6 +483,80 @@ describe("club registration submit at an event location (#413)", () => {
     expect(tx.registration.create).not.toHaveBeenCalled();
     located({ rows: [row({ capacity: 4 })], seatsAtLocation: 2 });
     await expect(at("loc-1")).resolves.toMatchObject({ registrationStatus: "SUBMITTED" });
+  });
+
+  describe("when the location is full and the event has a waitlist (#599)", () => {
+    /** The club link exists by the time the change is recorded, which reads it back. */
+    const waitlistedAt = (options: Parameters<typeof located>[0] = {}) => {
+      const built = located({ rows: [row({ capacity: 3 })], seatsAtLocation: 2, ...options, fixtureOptions: { waitlistEnabled: true, ...options.fixtureOptions } });
+      built.tx.registrationWaitlistEntry.aggregate.mockResolvedValue({ _max: { position: 6 } });
+      // The club is second in line at its own location, though event-wide position 7 follows six others.
+      built.tx.registrationWaitlistEntry.findUnique.mockResolvedValue({ position: 7, status: "WAITING" });
+      built.tx.registrationWaitlistEntry.count.mockResolvedValue(2);
+      built.tx.registration.findUnique.mockResolvedValue({
+        eventId: "event-1", confirmationCode: "REG-CLUB", event: { endsAt: new Date("2026-12-06T20:00:00Z") },
+        locationId: "loc-1", location: { name: "Camp Heritage" }, _count: { attendees: 2 }, clubRegistration: { organization: { name: "Test Pathfinders" } },
+      });
+      return built;
+    };
+
+    it("waitlists the registration at that location instead of refusing it, and takes no seats", async () => {
+      const { tx } = waitlistedAt();
+      // Two people are going and one seat is left: the location can't take them, so they wait for it.
+      const confirmation = await at("loc-1");
+      expect(confirmation).toMatchObject({ registrationStatus: "WAITLISTED", capacityDecision: "WAITLIST", paymentEligible: false });
+      expect(tx.registration.create.mock.calls[0]![0].data).toMatchObject({ status: "WAITLISTED", locationId: "loc-1" });
+      expect(tx.registrationWaitlistEntry.create).toHaveBeenCalledWith({ data: expect.objectContaining({ eventId: "event-1", registrationId: "registration-1", position: 7, attendeeCount: 2 }) });
+      expect(tx.registrationCapacityReservation.createMany).not.toHaveBeenCalled();
+    });
+
+    it("says the club's place in line at its location, not the event-wide position", async () => {
+      const { tx } = waitlistedAt();
+      const confirmation = await at("loc-1");
+      expect(confirmation.waitlistPosition).toBe(2);
+      expect(tx.registrationWaitlistEntry.count).toHaveBeenCalledWith({ where: { status: "WAITING", position: { lte: 7 }, registration: { locationId: "loc-1", status: "WAITLISTED" } } });
+      expect(dependencies.enqueueWaitlistJoinedMessage).toHaveBeenCalledWith(tx, expect.objectContaining({ registrationId: "registration-1", recipientEmail: "director@example.test", waitlistPosition: 2 }));
+      expect(dependencies.enqueuePublicRegistrationMessages).not.toHaveBeenCalled();
+    });
+
+    it("records the join for the coordinator and staff digest, with the club, the people and the place", async () => {
+      const { tx } = waitlistedAt();
+      await at("loc-1");
+      expect(tx.locationWaitlistChange.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          kind: "JOINED", eventId: "event-1", locationId: "loc-1", registrationId: "registration-1",
+          clubName: "Test Pathfinders", locationName: "Camp Heritage", attendeeCount: 2, place: 2,
+        }),
+      }));
+    });
+
+    it("still locks the location under the same admission path, and refuses a closed location before waitlisting", async () => {
+      const { queryRaw } = waitlistedAt();
+      await at("loc-1");
+      expect(queryRaw).toHaveBeenCalledTimes(1);
+      waitlistedAt({ rows: [row({ capacity: 3, registrationClosesOn: "2026-10-10" })] });
+      await expect(at("loc-1")).rejects.toMatchObject({ code: "REGISTRATION_CLOSED" });
+    });
+
+    it("does not waitlist a club that fits: it registers and takes its seats", async () => {
+      const { tx } = located({ rows: [row({ capacity: 4 })], seatsAtLocation: 2, fixtureOptions: { waitlistEnabled: true } });
+      await expect(at("loc-1")).resolves.toMatchObject({ registrationStatus: "SUBMITTED" });
+      expect(tx.registrationWaitlistEntry.create).not.toHaveBeenCalled();
+      expect(tx.locationWaitlistChange.create).not.toHaveBeenCalled();
+    });
+
+    it("keeps refusing with LOCATION_FULL when the event has no waitlist", async () => {
+      const { tx } = located({ rows: [row({ capacity: 3 })], seatsAtLocation: 2 });
+      await expect(at("loc-1")).rejects.toMatchObject({ code: "LOCATION_FULL" });
+      expect(tx.registration.create).not.toHaveBeenCalled();
+      expect(tx.registrationWaitlistEntry.create).not.toHaveBeenCalled();
+      expect(tx.locationWaitlistChange.create).not.toHaveBeenCalled();
+    });
+
+    it("can still be refused for a reason other than being full, waitlist or not", async () => {
+      located({ rows: [row({ isActive: false })], activeLocations: 1, fixtureOptions: { waitlistEnabled: true } });
+      await expect(at("loc-1")).rejects.toMatchObject({ code: "LOCATION_INVALID" });
+    });
   });
 
   it("refuses an unknown, another event's, or inactive location", async () => {

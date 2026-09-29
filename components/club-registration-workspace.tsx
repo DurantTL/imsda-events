@@ -55,7 +55,7 @@ export function ClubRegistrationWorkspace({
   // The event's locations (#413): a location is required before continuing when there are any.
   // Kept in this page's state; the server locks it and counts its seats when the registration is saved.
   const locations = workspace.locations;
-  const pickableLocations = locations.filter((location) => location.open && !location.full);
+  const pickableLocations = locations.filter((location) => location.open && (!location.full || location.waitlistOnFull));
   const [locationId, setLocationId] = useState<string | null>(() => (pickableLocations.length === 1 ? pickableLocations[0]!.id : null));
   const chosenLocation = locations.find((location) => location.id === locationId) ?? null;
   const needsLocation = locations.length > 0 && !chosenLocation;
@@ -243,7 +243,7 @@ export function ClubRegistrationWorkspace({
         </div>
         <span className="count-badge">{goingCount} chosen</span>
       </div>
-      <ClubLocationPicker locations={locations} onChange={setLocationId} value={locationId} />
+      <ClubLocationPicker allowWaitlist locations={locations} onChange={setLocationId} value={locationId} />
       <p>
         Tap everyone from your roster who is attending. Ages are as of the first day of the
         event, {formatCalendarDate(chosenLocation?.firstDay ?? workspace.event.eventDate)}. Your choices save automatically.
