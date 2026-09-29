@@ -24,6 +24,10 @@
  *     the cache (AUTO). While an upload holds the list, a save isn't delayed.
  *  8. An entry two people in two clubs could be is matched to neither — at
  *     read time, and after staff dismiss its review.
+ *  9. (#572) Site matching against the real export's shapes: a location
+ *     suffix, several sites in one cell, ALL-CAPS, and a school that must not
+ *     match a church; an adult on the previous club year's roster is matched;
+ *     stored entries re-match through a refresh with no new upload.
  */
 import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -32,7 +36,7 @@ import { loadEnvConfig } from "@next/env";
 import { PrismaClient } from "@prisma/client";
 import { clubComplianceState, matchableName, parseRosterBackgroundCsv, parseSterlingCsv, rosterRowToListRow, sterlingRowToListRow } from "../modules/background-checks/domain";
 import { describeIssues } from "../modules/background-checks/issues";
-import { clubYearFor } from "../modules/club-rosters/domain";
+import { clubYearChoices, clubYearFor } from "../modules/club-rosters/domain";
 import { calendarDateInEventTimeZone } from "../modules/events/lifecycle";
 
 loadEnvConfig(process.cwd());
@@ -365,6 +369,56 @@ async function main() {
   assert((await db.backgroundCheckReview.count()) === 1, "the dismissal is kept, and no second review is created");
   assert((await repository.listBackgroundCheckReviews()).length === 0, "a dismissed review is off the staff review list");
   console.log("ok  one entry two people could be is never matched to either, before or after staff dismiss it");
+  // 9. #572: the export's site shapes, and the previous club year's roster.
+  const previousYear = clubYearChoices(now)[0]!;
+  const siteCases = [
+    { key: "robin", first: "Robin", last: "Vale", userId: "81001", sites: "VERIFY CHURCH (Springfield),Lakeside Adventist School", year: previousYear, matches: true },
+    { key: "wren", first: "Wren", last: "Moss", userId: "81002", sites: "Verify Church (Springfield)", year: clubYear, matches: true },
+    { key: "tara", first: "Tara", last: "Finch", userId: "81003", sites: "Verify Adventist School", year: clubYear, matches: false },
+  ];
+  for (const item of siteCases) {
+    await db.person.create({ data: { id: ids.person(item.key), firstName: item.first, lastName: item.last } });
+    await db.clubRosterMember.create({ data: { id: ids.member(item.key), organizationId: ids.club, clubYear: item.year, personId: ids.person(item.key), attendeeType: "ADULT", source: "DIRECTOR" } });
+  }
+  const siteCsv = ["user_id,user_last,user_first,sites,compliance", ...siteCases.map((item) => `${item.userId},${item.last},${item.first},"${item.sites}",y`)].join("\n");
+  const siteRows = parseRosterBackgroundCsv(siteCsv).map(rosterRowToListRow);
+  const sitePreview = await repository.planBackgroundCheckUpload(siteRows);
+  await repository.applyBackgroundCheckUpload(siteRows, "ROSTER", ids.user, new Date(), { expectedFingerprint: sitePreview.fingerprint });
+  for (const item of siteCases) {
+    const matched = await db.backgroundCheckMatch.findUnique({ where: { personId: ids.person(item.key) } });
+    assert(Boolean(matched) === item.matches, `${item.key} ${item.matches ? "matches" : "does not match"} by site`);
+    if (matched) assert(matched.matchedBy === "AUTO", `${item.key} matched by name and site`);
+  }
+  // Stored entries re-match under the rule with no new upload: drop the matches, then refresh.
+  await db.backgroundCheckMatch.deleteMany({ where: { personId: { in: siteCases.map((item) => ids.person(item.key)) } } });
+  for (const item of siteCases) await repository.refreshBackgroundCheckMatchForPerson(ids.person(item.key));
+  for (const item of siteCases) {
+    assert(Boolean(await db.backgroundCheckMatch.findUnique({ where: { personId: ids.person(item.key) } })) === item.matches, `${item.key} re-matches through a refresh, with no new upload`);
+  }
+  console.log("ok  site suffixes, multi-site cells, ALL-CAPS, and the previous club year match; a school does not match a church");
+  // 10. #572 review: Nevada (IA) and Nevada (MO) are different churches. Two
+  // people share a name; only one is on the IA roster, and the row lists the MO church.
+  const iaChurch = `${P}_church_ia`;
+  const iaClub = `${P}_club_ia`;
+  await db.organization.create({ data: { id: iaChurch, type: "CHURCH", name: "Nevada (IA) SDA Church", normalizedName: "nevada ia sda church" } });
+  await db.organization.create({ data: { id: iaClub, type: "CLUB", name: "Nevada (IA) Pathfinders", normalizedName: "nevada ia pathfinders", parentOrganizationId: iaChurch } });
+  await db.person.create({ data: { id: ids.person("nell-ia"), firstName: "Nell", lastName: "Hart" } });
+  await db.clubRosterMember.create({ data: { id: ids.member("nell-ia"), organizationId: iaClub, clubYear, personId: ids.person("nell-ia"), attendeeType: "ADULT", source: "DIRECTOR" } });
+  await db.person.create({ data: { id: ids.person("nell-mo"), firstName: "Nell", lastName: "Hart" } });
+  await db.person.create({ data: { id: ids.person("otto-ia"), firstName: "Otto", lastName: "Hart" } });
+  await db.clubRosterMember.create({ data: { id: ids.member("otto-ia"), organizationId: iaClub, clubYear, personId: ids.person("otto-ia"), attendeeType: "ADULT", source: "DIRECTOR" } });
+  const nevadaCsv = [
+    "user_id,user_last,user_first,sites,compliance",
+    '82001,Hart,Nell,"Nevada (MO) SDA Church (Nevada)",y',
+    '82002,Hart,Otto,"Nevada (IA) SDA Church (Nevada)",y',
+  ].join("\n");
+  const nevadaRows = parseRosterBackgroundCsv(nevadaCsv).map(rosterRowToListRow);
+  const nevadaPreview = await repository.planBackgroundCheckUpload(nevadaRows);
+  await repository.applyBackgroundCheckUpload(nevadaRows, "ROSTER", ids.user, new Date(), { expectedFingerprint: nevadaPreview.fingerprint });
+  assert(!(await db.backgroundCheckMatch.findUnique({ where: { personId: ids.person("nell-ia") } })), "the IA person is not auto-matched to the MO row");
+  assert(!(await db.backgroundCheckMatch.findUnique({ where: { personId: ids.person("nell-mo") } })), "the MO person, on no roster, is not guessed either");
+  assert((await db.backgroundCheckMatch.findUnique({ where: { personId: ids.person("otto-ia") } }))?.matchedBy === "AUTO", "an IA row still matches the IA roster through its city suffix");
+  console.log("ok  Nevada (IA) never auto-matches a Nevada (MO) row");
 }
 
 main()

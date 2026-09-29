@@ -115,7 +115,9 @@ function makeFakeDb() {
 
   function rosterWhere(member: Row, where: Row): boolean {
     if (where.organizationId && member.organizationId !== where.organizationId) return false;
-    if (where.clubYear && member.clubYear !== where.clubYear) return false;
+    const clubYearWhere = where.clubYear as string | { in: string[] } | undefined;
+    if (typeof clubYearWhere === "string" && member.clubYear !== clubYearWhere) return false;
+    if (clubYearWhere && typeof clubYearWhere === "object" && !clubYearWhere.in.includes(member.clubYear as string)) return false;
     if (where.status && member.status !== where.status) return false;
     if (where.id && !valueMatches(member.id, where.id)) return false;
     if (where.personId !== undefined && !valueMatches(member.personId, where.personId)) return false;
@@ -380,6 +382,8 @@ import {
   backgroundCheckState,
   dedupeListRows,
   isRememberedIdentityKey,
+  matchesSite,
+  siteStems,
   backgroundFlagsCsv,
   clubComplianceState,
   complianceReminders,
@@ -739,12 +743,12 @@ describe("applyBackgroundCheckUpload: replace and match (#527)", () => {
   });
 });
 
-function rosterAdult(seed: ReturnType<typeof makeFakeDb>["seed"], personId: string, firstName: string, lastName: string, extra: { email?: string; clubName?: string; sealedBirthDate?: string | null } = {}) {
+function rosterAdult(seed: ReturnType<typeof makeFakeDb>["seed"], personId: string, firstName: string, lastName: string, extra: { email?: string; clubName?: string; parentName?: string; clubYear?: string; sealedBirthDate?: string | null } = {}) {
   seed.persons.set(personId, { id: personId, firstName, lastName, normalizedEmail: extra.email ?? null });
   seed.rosterMembers.push({
-    id: `rm-${personId}`, personId, organizationId: "org-1", clubYear: "2026-27", status: "ACTIVE", attendeeType: "ADULT", sealedBirthDate: extra.sealedBirthDate ?? null,
+    id: `rm-${personId}`, personId, organizationId: "org-1", clubYear: extra.clubYear ?? "2026-27", status: "ACTIVE", attendeeType: "ADULT", sealedBirthDate: extra.sealedBirthDate ?? null,
     person: { firstName, lastName, normalizedEmail: extra.email ?? null, attendeeAccountLinks: [] },
-    organization: { name: extra.clubName ?? "Test Pathfinders", parentOrganization: null },
+    organization: { name: extra.clubName ?? "Test Pathfinders", parentOrganization: extra.parentName ? { name: extra.parentName } : null },
   });
 }
 
@@ -853,6 +857,153 @@ describe("refreshBackgroundCheckMatchForPerson: matched without a re-upload (#52
     rosterAdult(seed, "p-ana", "Ana", "Rivera");
     await expect(refreshBackgroundCheckMatchForPerson("p-ana")).resolves.toBeUndefined();
     expect(seed.matches.size).toBe(0);
+  });
+});
+
+describe("site matching against the real export's shapes (#572)", () => {
+  it("strips a location suffix and the church, club, and denomination words", () => {
+    expect(matchesSite("Maple Grove SDA Church (Springfield)", ["Maple Grove SDA Church"])).toBe(true);
+    expect(matchesSite("Maple Grove SDA Church (Springfield)", ["Maple Grove Pathfinders"])).toBe(true);
+    expect(matchesSite("Maple Grove Seventh-day Adventist Church", ["Maple Grove SDA Church"])).toBe(true);
+    expect(matchesSite("Maple Grove SDA Church", ["Cedar Hill SDA Church"])).toBe(false);
+  });
+
+  it("matches when any one site in a comma-separated cell matches", () => {
+    expect(matchesSite("Maple Grove SDA Church (Springfield),Lakeside Adventist School", ["Maple Grove SDA Church"])).toBe(true);
+    expect(matchesSite("Maple Grove SDA Church (Springfield),Lakeside Adventist School", ["Lakeside Adventist School"])).toBe(true);
+    expect(siteStems("Nevada (IA) SDA Church, Other Place")).toEqual(new Set(["nevada ia", "other place"]));
+  });
+
+  it("ignores case, so ALL-CAPS names match", () => {
+    expect(matchesSite("MAPLE GROVE SDA CHURCH (SPRINGFIELD)", ["Maple Grove SDA Church"])).toBe(true);
+    expect(matchesSite("maple grove sda church", ["MAPLE GROVE PATHFINDERS"])).toBe(true);
+  });
+
+  it("does not match a school to a church unless the stems are equal", () => {
+    expect(matchesSite("Maple Grove Adventist School", ["Maple Grove SDA Church"])).toBe(false);
+    expect(matchesSite("Maple Grove SDA Church", ["Maple Grove Adventist School"])).toBe(false);
+    expect(matchesSite("Maple Grove Adventist School", ["Maple Grove Adventist School"])).toBe(true);
+  });
+
+  it("matches a directory name with its own parenthetical, with or without it", () => {
+    expect(matchesSite("Reedville (IA) SDA Church", ["Reedville (IA) SDA Church"])).toBe(true);
+    expect(matchesSite("Reedville (IA) SDA Church (Reedville)", ["Reedville (IA) SDA Church"])).toBe(true);
+    expect(matchesSite("Reedville SDA Church", ["Reedville (IA) SDA Church"])).toBe(false);
+  });
+
+  it("never treats two different parentheticals as the same church (MO vs IA)", () => {
+    expect(matchesSite("Nevada (MO) SDA Church", ["Nevada (IA) SDA Church"])).toBe(false);
+    expect(matchesSite("Nevada (MO) SDA Church (Nevada)", ["Nevada (IA) SDA Church"])).toBe(false);
+    expect(matchesSite("Nevada (IA) SDA Church (Nevada)", ["Nevada (IA) SDA Church"])).toBe(true);
+  });
+
+  it("reads only one trailing parenthetical as the export's city suffix", () => {
+    expect(siteStems("Kansas City SDA Church (Central)")).toEqual(new Set(["kansas city central", "kansas city"]));
+    expect(matchesSite("Kansas City SDA Church (Central)", ["Kansas City SDA Church"])).toBe(true);
+    expect(matchesSite("Kansas City SDA Church", ["Kansas City SDA Church (Central)"])).toBe(false);
+    expect(siteStems("Nevada (IA) SDA Church (Nevada)")).toEqual(new Set(["nevada ia nevada", "nevada ia"]));
+  });
+
+  it("drops short and generic stems so they never match", () => {
+    expect(siteStems("SDA Church")).toEqual(new Set());
+    expect(siteStems("First SDA Church")).toEqual(new Set());
+    expect(siteStems("Central Church, MO, Ab")).toEqual(new Set());
+    expect(siteStems("Seventh-day Adventist Church")).toEqual(new Set());
+    expect(matchesSite("First SDA Church", ["First SDA Church"])).toBe(false);
+    expect(matchesSite("Ab Church", ["Ab Church"])).toBe(false);
+    expect(matchesSite("SDA Church (Springfield)", ["Springfield SDA Church"])).toBe(true);
+    expect(siteStems("SDA Church (Springfield)")).toEqual(new Set(["springfield"]));
+  });
+
+  it("does not split on a comma before a state code", () => {
+    expect(siteStems("Springfield, MO SDA Church")).toEqual(new Set(["springfield mo"]));
+    expect(siteStems("Springfield SDA Church, MO")).toEqual(new Set(["springfield mo"]));
+    expect(siteStems("Springfield SDA Church, Lakeside Adventist School")).toEqual(new Set(["springfield", "lakeside adventist school"]));
+  });
+
+  it("handles nested and unbalanced parentheses", () => {
+    expect(siteStems("Lake (North (Old)) SDA Church (Lake (Town))")).toEqual(new Set(["lake north old lake town", "lake north old"]));
+    expect(siteStems("Elm SDA Church (Elm,Oak SDA Church")).toEqual(new Set(["elm elm", "oak"]));
+    expect(siteStems("Pine SDA Church),Ash SDA Church")).toEqual(new Set(["pine", "ash"]));
+  });
+
+  it("returns false for an empty or noise-only site", () => {
+    expect(matchesSite("", ["Maple Grove SDA Church"])).toBe(false);
+    expect(matchesSite("SDA Church", ["Church"])).toBe(false);
+  });
+});
+
+describe("site matching through the upload and refresh path (#572)", () => {
+  const now = new Date("2026-09-29T12:00:00Z");
+  function rosterRow(userId: string, last: string, first: string, sites: string) {
+    const csv = `user_id,user_last,user_first,sites,compliance\n${userId},${last},${first},"${sites}",y`;
+    return rosterRowToListRow(parseRosterBackgroundCsv(csv)[0]!);
+  }
+  function secondLee(seed: ReturnType<typeof makeFakeDb>["seed"]) {
+    seed.persons.set("p-lee-2", { id: "p-lee-2", firstName: "Lee", lastName: "Park" });
+    seed.rosterMembers.push({
+      id: "rm-p-lee-2", personId: "p-lee-2", organizationId: "org-2", clubYear: "2026-27", status: "ACTIVE", attendeeType: "ADULT", sealedBirthDate: null,
+      person: { firstName: "Lee", lastName: "Park", normalizedEmail: null, attendeeAccountLinks: [] },
+      organization: { name: "Cedar Hill Pathfinders", parentOrganization: { name: "Cedar Hill SDA Church" } },
+    });
+  }
+
+  it("re-matches stored entries under the new rule with no new upload", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    seed.uploads.set("u-1", { id: "u-1", createdAt: new Date("2026-09-01") });
+    // Stored earlier, when a suffixed site never matched.
+    seedEntry(seed, "e-1", {
+      identityKey: "user:7001", sourceUserId: "7001", firstName: "Mina", lastName: "Osei", normalizedName: matchableName("Mina Osei"),
+      site: "Maple Grove SDA Church (Springfield),Lakeside Adventist School", complianceStatus: "CLEAR",
+    });
+    rosterAdult(seed, "p-mina", "Mina", "Osei", { clubName: "Maple Grove Pathfinders", parentName: "Maple Grove SDA Church" });
+    expect(seed.matches.size).toBe(0);
+    await refreshBackgroundCheckMatchForPerson("p-mina", now);
+    expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-mina", entryId: "e-1", matchedBy: "AUTO" })]);
+  });
+
+  it("keeps two same-name people at different churches separate", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    rosterAdult(seed, "p-lee-1", "Lee", "Park", { clubName: "Maple Grove Pathfinders", parentName: "Maple Grove SDA Church" });
+    secondLee(seed);
+    await applyBackgroundCheckUpload([rosterRow("8001", "Park", "Lee", "CEDAR HILL SDA CHURCH (Riverton)")], "ROSTER", "admin-1", now);
+    expect([...seed.matches.values()].map((match) => match.personId)).toEqual(["p-lee-2"]);
+    expect(seed.reviews.size).toBe(0);
+  });
+
+  it("goes to review, matching neither, when one cell names both people's churches", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    rosterAdult(seed, "p-lee-1", "Lee", "Park", { clubName: "Maple Grove Pathfinders", parentName: "Maple Grove SDA Church" });
+    secondLee(seed);
+    await applyBackgroundCheckUpload([rosterRow("8002", "Park", "Lee", "Maple Grove SDA Church (Springfield),Cedar Hill SDA Church (Riverton)")], "ROSTER", "admin-1", now);
+    expect(seed.matches.size).toBe(0);
+    expect(seed.reviews.size).toBe(1);
+  });
+
+  it("matches an adult on the previous club year's roster while today is in 2026-27, and merges one person's two years", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    rosterAdult(seed, "p-ivo", "Ivo", "Brandt", { clubName: "Old Mill Pathfinders", parentName: "Old Mill SDA Church", clubYear: "2025-26" });
+    // Two years ago is outside the pool.
+    rosterAdult(seed, "p-ola", "Ola", "Brandt", { clubName: "Old Mill Pathfinders", clubYear: "2024-25" });
+    await applyBackgroundCheckUpload([
+      rosterRow("9001", "Brandt", "Ivo", "Old Mill SDA Church (Millton)"),
+      rosterRow("9002", "Brandt", "Ola", "Old Mill SDA Church (Millton)"),
+    ], "ROSTER", "admin-1", now);
+    expect([...seed.matches.values()].map((match) => match.personId)).toEqual(["p-ivo"]);
+
+    // The same person on both years is one candidate, not an ambiguity.
+    seed.rosterMembers.push({
+      id: "rm-p-ivo-2", personId: "p-ivo", organizationId: "org-1", clubYear: "2026-27", status: "ACTIVE", attendeeType: "ADULT", sealedBirthDate: null,
+      person: { firstName: "Ivo", lastName: "Brandt", normalizedEmail: null, attendeeAccountLinks: [] },
+      organization: { name: "Old Mill Pathfinders", parentOrganization: { name: "Old Mill SDA Church" } },
+    });
+    await applyBackgroundCheckUpload([rosterRow("9001", "Brandt", "Ivo", "Old Mill SDA Church (Millton)")], "ROSTER", "admin-1", now);
+    expect([...seed.matches.values()].map((match) => match.personId)).toEqual(["p-ivo"]);
+    expect(seed.reviews.size).toBe(0);
   });
 });
 
