@@ -88,6 +88,7 @@ export function clubCheckInProgressLabel(progress: ClubCheckInProgress | null | 
 
 export function ClubCheckInPanel({
   organizationName,
+  locationName = null,
   confirmationCode,
   amountOwedCents,
   attendees,
@@ -101,6 +102,8 @@ export function ClubCheckInPanel({
   onCheckInScanned,
 }: {
   organizationName: string;
+  /** The event location this club registered at (#413), when the event has locations. */
+  locationName?: string | null;
   confirmationCode: string;
   /** Estimated amount billed to the church (#409), read-only; null when this event doesn't bill churches. */
   amountOwedCents: number | null;
@@ -238,6 +241,7 @@ export function ClubCheckInPanel({
           <Heading translate="no">{organizationName}</Heading>
           <p>
             <span translate="no">{confirmationCode}</span> ·{" "}
+            {locationName && <><span translate="no">{locationName}</span> · </>}
             {attendees.length} {attendees.length === 1 ? "attendee" : "attendees"}
             {flaggedCount > 0 && (
               <> · {flaggedCount} {flaggedCount === 1 ? "flag" : "flags"}</>

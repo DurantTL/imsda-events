@@ -4,6 +4,7 @@ import { AccessDeniedError, requirePermission } from "@/modules/access/authoriza
 import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { findActiveMembership } from "@/modules/events/repository";
+import { locationParam, resolveLocationFilter } from "@/modules/event-locations/filter";
 import { createRegistration, listRegistrations } from "@/modules/registrations/repository";
 import { registrationInputSchema } from "@/modules/registrations/schemas";
 import { logError } from "@/lib/logger";
@@ -27,11 +28,13 @@ function apiError(error: unknown) {
   return Response.json({ error: "REGISTRATION_REQUEST_FAILED" }, { status: 500 });
 }
 
-async function getHandler(_request: Request, context: { params: Promise<{ eventId: string }> }) {
+async function getHandler(request: Request, context: { params: Promise<{ eventId: string }> }) {
   try {
     const { eventId } = await context.params;
     await authorize(eventId, "VIEW_SENSITIVE_DATA");
-    return Response.json({ registrations: await listRegistrations(eventId) });
+    // ?location= lists one location's registrations; without it, every location (#413).
+    const { locationId } = await resolveLocationFilter(eventId, locationParam(request));
+    return Response.json({ registrations: await listRegistrations(eventId, { locationId }) });
   } catch (error) {
     return apiError(error);
   }

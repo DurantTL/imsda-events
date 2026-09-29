@@ -31,6 +31,8 @@ function event(overrides: Partial<ClubEventSummary> & { id: string }): ClubEvent
     problem: null,
     registration: null,
     draft: null,
+    registeredLocation: null,
+    hasLocations: false,
     ...overrides,
   };
 }

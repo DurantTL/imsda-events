@@ -75,6 +75,9 @@ export type ClubEventRecord = {
   amountOwedCents: number;
   /** Whether any attendee's registration fee line item used the form's late-pricing label. */
   lateRateApplied: boolean;
+  /** The event location the club registered at (#413); null when the event has none. */
+  locationId?: string | null;
+  locationName?: string | null;
 };
 
 export type ClubHeadcounts = {
@@ -153,7 +156,27 @@ export type BuildClubEventRecordInput = {
   amountOwedCents: number;
   pricingSnapshot: Record<string, unknown>;
   lateRateLabel: string | null;
+  locationId?: string | null;
+  locationName?: string | null;
 };
+
+/**
+ * A "Location" column for a report CSV (#413), placed at `index`. Left out
+ * entirely when no row names a location, so an event without locations
+ * exports exactly the columns it always did.
+ */
+export function withLocationColumn(
+  table: Array<Array<string | number>>,
+  names: ReadonlyArray<string | null | undefined>,
+  index: number,
+): Array<Array<string | number>> {
+  if (!names.some(Boolean)) return table;
+  return table.map((row, position) => [
+    ...row.slice(0, index),
+    position === 0 ? "Location" : names[position - 1] ?? "",
+    ...row.slice(index),
+  ]);
+}
 
 export function buildClubEventRecord(input: BuildClubEventRecordInput): ClubEventRecord {
   const responses = input.registrationResponses;
@@ -204,6 +227,8 @@ export function buildClubEventRecord(input: BuildClubEventRecordInput): ClubEven
     })),
     amountOwedCents: input.amountOwedCents,
     lateRateApplied: lateRateFromPricingSnapshot(input.pricingSnapshot, input.lateRateLabel),
+    locationId: input.locationId ?? null,
+    locationName: input.locationName ?? null,
   };
 }
 
@@ -216,6 +241,7 @@ export type CampingReportRow = {
   organizationName: string;
   sponsoringChurch: string | null;
   confirmationCode: string;
+  locationName?: string | null;
   camping: ClubEventRecord["camping"];
   headcounts: ClubHeadcounts;
 };
@@ -227,6 +253,7 @@ export function buildCampingReport(clubs: ClubEventRecord[]): CampingReportRow[]
       organizationName: club.organizationName,
       sponsoringChurch: club.sponsoringChurch,
       confirmationCode: club.confirmationCode,
+      locationName: club.locationName ?? null,
       camping: club.camping,
       headcounts: clubHeadcounts(club.attendees),
     }))
@@ -255,7 +282,7 @@ export function campingReportCsv(rows: CampingReportRow[]) {
       row.headcounts.total,
     ]);
   }
-  return toCsv(table);
+  return toCsv(withLocationColumn(table, rows.map((row) => row.locationName), 3));
 }
 
 /* ---------------------------------------------------------------------- */
@@ -269,6 +296,7 @@ export type DutiesActivitiesReportRow = {
   organizationName: string;
   sponsoringChurch: string | null;
   confirmationCode: string;
+  locationName?: string | null;
   dutyAreas: string[];
   flagSlots: string[];
   bathroomDays: string[];
@@ -289,6 +317,7 @@ export function buildDutiesActivitiesReport(
       organizationName: club.organizationName,
       sponsoringChurch: club.sponsoringChurch,
       confirmationCode: club.confirmationCode,
+      locationName: club.locationName ?? null,
       dutyAreas: club.dutyAreas,
       flagSlots: club.flagSlots,
       bathroomDays: club.bathroomDays,
@@ -327,7 +356,7 @@ export function dutiesActivitiesReportCsv(rows: DutiesActivitiesReportRow[]) {
       row.assignment?.notes ?? "",
     ]);
   }
-  return toCsv(table);
+  return toCsv(withLocationColumn(table, rows.map((row) => row.locationName), 3));
 }
 
 /* ---------------------------------------------------------------------- */
@@ -339,6 +368,7 @@ export type MilestonesReportRow = {
   organizationName: string;
   sponsoringChurch: string | null;
   confirmationCode: string;
+  locationName?: string | null;
   baptismNames: string;
   bibleNames: string;
 };
@@ -351,6 +381,7 @@ export function buildSpiritualMilestonesReport(clubs: ClubEventRecord[]): Milest
       organizationName: club.organizationName,
       sponsoringChurch: club.sponsoringChurch,
       confirmationCode: club.confirmationCode,
+      locationName: club.locationName ?? null,
       baptismNames: club.baptismNames,
       bibleNames: club.bibleNames,
     }))
@@ -364,7 +395,7 @@ export function spiritualMilestonesReportCsv(rows: MilestonesReportRow[]) {
   for (const row of rows) {
     table.push([row.organizationName, row.sponsoringChurch ?? "", row.confirmationCode, row.baptismNames, row.bibleNames]);
   }
-  return toCsv(table);
+  return toCsv(withLocationColumn(table, rows.map((row) => row.locationName), 3));
 }
 
 /* ---------------------------------------------------------------------- */
@@ -378,6 +409,7 @@ export type SpecialRoleReportRow = {
   organizationName: string;
   sponsoringChurch: string | null;
   confirmationCode: string;
+  locationName?: string | null;
 };
 
 export function buildSpecialRolesReport(clubs: ClubEventRecord[]): SpecialRoleReportRow[] {
@@ -393,6 +425,7 @@ export function buildSpecialRolesReport(clubs: ClubEventRecord[]): SpecialRoleRe
           organizationName: club.organizationName,
           sponsoringChurch: club.sponsoringChurch,
           confirmationCode: club.confirmationCode,
+          locationName: club.locationName ?? null,
         });
       }
       if (attendee.masterGuideInvestiture) {
@@ -403,6 +436,7 @@ export function buildSpecialRolesReport(clubs: ClubEventRecord[]): SpecialRoleRe
           organizationName: club.organizationName,
           sponsoringChurch: club.sponsoringChurch,
           confirmationCode: club.confirmationCode,
+          locationName: club.locationName ?? null,
         });
       }
     }
@@ -419,7 +453,7 @@ export function specialRolesReportCsv(rows: SpecialRoleReportRow[]) {
   for (const row of rows) {
     table.push([row.role, row.name, row.organizationName, row.sponsoringChurch ?? "", row.confirmationCode]);
   }
-  return toCsv(table);
+  return toCsv(withLocationColumn(table, rows.map((row) => row.locationName), 5));
 }
 
 export const clubReportKinds = ["camping", "duties-activities", "milestones", "special-roles"] as const;

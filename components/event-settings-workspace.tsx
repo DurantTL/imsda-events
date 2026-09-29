@@ -14,6 +14,8 @@ import {
   ShieldCheck,
   UsersRound,
 } from "lucide-react";
+import { EventLocationsPanel } from "@/components/event-locations-panel";
+import type { EventLocationRecord } from "@/modules/event-locations/repository";
 import type { EventSettingsRecord } from "@/modules/events/repository";
 import { getEventPublishReadiness, getEventPublishWarnings } from "@/modules/events/readiness";
 import {
@@ -29,6 +31,8 @@ import { DraftCreatedGuideBanner } from "@/components/draft-created-guide-banner
 type EventSettingsWorkspaceProps = {
   mode: "create" | "edit";
   initialEvent: EventSettingsRecord | null;
+  /** The event's locations (#413), edited in their own panel below the form. */
+  initialLocations?: EventLocationRecord[];
 };
 
 type EventApiResult = {
@@ -98,6 +102,7 @@ function draftFromEvent(event: EventSettingsRecord | null): EventSettingsInput {
 export function EventSettingsWorkspace({
   mode,
   initialEvent,
+  initialLocations,
 }: EventSettingsWorkspaceProps) {
   const [draft, setDraft] = useState<EventSettingsInput>(() => draftFromEvent(initialEvent));
   const [savedDraft, setSavedDraft] = useState<EventSettingsInput>(() => draftFromEvent(initialEvent));
@@ -707,6 +712,9 @@ export function EventSettingsWorkspace({
           </section>
         </aside>
       </form>
+      {mode === "edit" && initialEvent && (
+        <EventLocationsPanel eventId={initialEvent.id} initialLocations={initialLocations ?? []} />
+      )}
       {mode === "edit" && (
         <PublishEventDialog
           busy={publishing}

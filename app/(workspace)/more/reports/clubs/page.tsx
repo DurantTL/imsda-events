@@ -3,22 +3,24 @@ import Link from "next/link";
 import { Download, PackageOpen, ShieldCheck, Tent } from "lucide-react";
 import { AccessRestricted } from "@/components/access-restricted";
 import { PrintReportButton } from "@/components/print-report-button";
+import { LocationFilter } from "@/components/location-filter";
+import { resolveLocationFilter } from "@/modules/event-locations/filter";
 import { getClubEventReports } from "@/modules/reporting/club-event-reports-repository";
 import { resolveClubReportsAccess } from "@/modules/reporting/club-reports-access";
 
 export const metadata: Metadata = { title: "Camporee club reports" };
 export const dynamic = "force-dynamic";
 
-function reportDownloadHref(eventId: string, kind: string) {
-  return `/api/events/${encodeURIComponent(eventId)}/club-reports?report=${kind}`;
+function reportDownloadHref(eventId: string, kind: string, locationId: string | null) {
+  return `/api/events/${encodeURIComponent(eventId)}/club-reports?report=${kind}${locationId ? `&location=${encodeURIComponent(locationId)}` : ""}`;
 }
 
 export default async function ClubEventReportsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ event?: string }>;
+  searchParams: Promise<{ event?: string; location?: string }>;
 }) {
-  const { event: requested } = await searchParams;
+  const { event: requested, location: requestedLocation } = await searchParams;
   const { event, allowed, readOnly } = await resolveClubReportsAccess(requested);
   if (!allowed) {
     return (
@@ -29,7 +31,10 @@ export default async function ClubEventReportsPage({
     );
   }
   const eventQuery = `event=${encodeURIComponent(event.id)}`;
-  const reports = await getClubEventReports(event.id);
+  // Each location on its own, or all of them combined with the location named (#413).
+  const { locations, locationId } = await resolveLocationFilter(event.id, requestedLocation);
+  const reports = await getClubEventReports(event.id, { locationId });
+  const showLocation = locations.length > 0;
 
   return (
     <section className="page-stack reports-workspace">
@@ -45,6 +50,8 @@ export default async function ClubEventReportsPage({
         </div>
       </div>
 
+      <LocationFilter basePath="/more/reports/clubs" locations={locations} params={{ event: event.id }} selectedId={locationId} />
+
       <div className="report-safety-note">
         <ShieldCheck aria-hidden="true" size={19} />
         <p><strong>No birth dates or protected free text.</strong> Only submitted and confirmed club registrations count. Waitlisted and cancelled clubs are excluded.</p>
@@ -56,7 +63,7 @@ export default async function ClubEventReportsPage({
             <span className="report-icon navy"><Tent aria-hidden="true" size={19} /></span>
             <div><p className="eyebrow">Camping coordinator</p><h2>Camping summary</h2><p>Campsite footprint and headcounts by role, one row per club.</p></div>
           </div>
-          <a className="secondary-button report-download" href={reportDownloadHref(event.id, "camping")}><Download aria-hidden="true" size={15} /> Download CSV</a>
+          <a className="secondary-button report-download" href={reportDownloadHref(event.id, "camping", locationId)}><Download aria-hidden="true" size={15} /> Download CSV</a>
         </div>
         {reports.camping.length === 0 ? <p className="report-empty">No active club registrations yet.</p> : (
           <div className="report-table-wrap">
@@ -64,7 +71,7 @@ export default async function ClubEventReportsPage({
               <caption className="sr-only">Club camping summary</caption>
               <thead>
                 <tr>
-                  <th scope="col">Club</th><th scope="col">Tents</th><th scope="col">Trailers</th>
+                  <th scope="col">Club</th>{showLocation && <th scope="col">Location</th>}<th scope="col">Tents</th><th scope="col">Trailers</th>
                   <th scope="col">Kitchen canopy</th><th scope="col">Total sq ft</th><th scope="col">Camp next to</th>
                   <th scope="col">PF</th><th scope="col">TLT</th><th scope="col">Staff</th><th scope="col">Child</th><th scope="col">Total</th>
                   <th scope="col"><span className="sr-only">Print packet</span></th>
@@ -74,6 +81,7 @@ export default async function ClubEventReportsPage({
                 {reports.camping.map((row) => (
                   <tr key={row.organizationId}>
                     <th scope="row" translate="no">{row.organizationName}{row.sponsoringChurch && <small> · {row.sponsoringChurch}</small>}</th>
+                    {showLocation && <td translate="no">{row.locationName ?? "—"}</td>}
                     <td>{row.camping.tents}</td>
                     <td>{row.camping.trailers}</td>
                     <td>{row.camping.kitchenCanopy}</td>
@@ -98,19 +106,20 @@ export default async function ClubEventReportsPage({
           <div className="report-title">
             <div><p className="eyebrow">Program planning</p><h2>Duties and activities</h2><p>Each club&apos;s preferences, and staff&apos;s assignment (#410) once it exists.</p></div>
           </div>
-          <a className="secondary-button report-download" href={reportDownloadHref(event.id, "duties-activities")}><Download aria-hidden="true" size={15} /> Download CSV</a>
+          <a className="secondary-button report-download" href={reportDownloadHref(event.id, "duties-activities", locationId)}><Download aria-hidden="true" size={15} /> Download CSV</a>
         </div>
         {reports.dutiesActivities.length === 0 ? <p className="report-empty">No active club registrations yet.</p> : (
           <div className="report-table-wrap">
             <table className="report-table">
               <caption className="sr-only">Club duties and activities</caption>
               <thead>
-                <tr><th scope="col">Club</th><th scope="col">Duty areas</th><th scope="col">Activities</th><th scope="col">Assigned campsite</th><th scope="col">Assigned duty</th><th scope="col">Assigned activity</th></tr>
+                <tr><th scope="col">Club</th>{showLocation && <th scope="col">Location</th>}<th scope="col">Duty areas</th><th scope="col">Activities</th><th scope="col">Assigned campsite</th><th scope="col">Assigned duty</th><th scope="col">Assigned activity</th></tr>
               </thead>
               <tbody>
                 {reports.dutiesActivities.map((row) => (
                   <tr key={row.organizationId}>
                     <th scope="row" translate="no">{row.organizationName}</th>
+                    {showLocation && <td translate="no">{row.locationName ?? "—"}</td>}
                     <td>{row.dutyAreas.join(", ") || "—"}</td>
                     <td>{row.specialActivities.join(", ") || "—"}</td>
                     <td>{row.assignment?.campsiteLocation || "Not assigned"}</td>
@@ -129,17 +138,18 @@ export default async function ClubEventReportsPage({
           <div className="report-title">
             <div><p className="eyebrow">Pastoral follow-up</p><h2>Spiritual milestones</h2><p>Baptism interest and Bible read-through names, per club.</p></div>
           </div>
-          <a className="secondary-button report-download" href={reportDownloadHref(event.id, "milestones")}><Download aria-hidden="true" size={15} /> Download CSV</a>
+          <a className="secondary-button report-download" href={reportDownloadHref(event.id, "milestones", locationId)}><Download aria-hidden="true" size={15} /> Download CSV</a>
         </div>
         {reports.milestones.length === 0 ? <p className="report-empty">No club has submitted a baptism or Bible read-through name yet.</p> : (
           <div className="report-table-wrap">
             <table className="report-table">
               <caption className="sr-only">Club spiritual milestones</caption>
-              <thead><tr><th scope="col">Club</th><th scope="col">Baptism interest</th><th scope="col">Bible read-through</th></tr></thead>
+              <thead><tr><th scope="col">Club</th>{showLocation && <th scope="col">Location</th>}<th scope="col">Baptism interest</th><th scope="col">Bible read-through</th></tr></thead>
               <tbody>
                 {reports.milestones.map((row) => (
                   <tr key={row.organizationId}>
                     <th scope="row" translate="no">{row.organizationName}</th>
+                    {showLocation && <td translate="no">{row.locationName ?? "—"}</td>}
                     <td>{row.baptismNames || "—"}</td>
                     <td>{row.bibleNames || "—"}</td>
                   </tr>
@@ -155,19 +165,20 @@ export default async function ClubEventReportsPage({
           <div className="report-title">
             <div><p className="eyebrow">Staffing</p><h2>Special roles</h2><p>Medical personnel and Master Guide investiture candidates, across every club.</p></div>
           </div>
-          <a className="secondary-button report-download" href={reportDownloadHref(event.id, "special-roles")}><Download aria-hidden="true" size={15} /> Download CSV</a>
+          <a className="secondary-button report-download" href={reportDownloadHref(event.id, "special-roles", locationId)}><Download aria-hidden="true" size={15} /> Download CSV</a>
         </div>
         {reports.specialRoles.length === 0 ? <p className="report-empty">No club has flagged medical personnel or a Master Guide candidate yet.</p> : (
           <div className="report-table-wrap">
             <table className="report-table">
               <caption className="sr-only">Special roles</caption>
-              <thead><tr><th scope="col">Role</th><th scope="col">Name</th><th scope="col">Club</th></tr></thead>
+              <thead><tr><th scope="col">Role</th><th scope="col">Name</th><th scope="col">Club</th>{showLocation && <th scope="col">Location</th>}</tr></thead>
               <tbody>
                 {reports.specialRoles.map((row) => (
                   <tr key={`${row.role}-${row.attendeeId}`}>
                     <td>{row.role}</td>
                     <th scope="row" translate="no">{row.name}</th>
                     <td translate="no">{row.organizationName}</td>
+                    {showLocation && <td translate="no">{row.locationName ?? "—"}</td>}
                   </tr>
                 ))}
               </tbody>

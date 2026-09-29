@@ -145,6 +145,12 @@ export type RegistrationMessageInput = {
   responses: Record<string, unknown>;
   attendeeResponses?: Array<Record<string, unknown>>;
   calculation: FormCalculation;
+  /**
+   * The event location the registration is at (#413), with its dates already
+   * filled from the event's when it sets none. The confirmation then names
+   * this location's name, address and dates in place of the event's.
+   */
+  location?: { name: string; address: string | null; firstDay: string; lastDay: string } | null;
 };
 
 export type QueuedRegistrationMessages = {
@@ -3220,8 +3226,16 @@ export async function enqueuePublicRegistrationMessages(
   const commonContext: MessageTemplateContext = {
     registrant_name: registrantName,
     event_name: input.event.name,
-    event_dates: formatMessageDateRange(input.event.startsAt, input.event.endsAt, { timeZone: input.event.timezone }),
-    event_location: input.event.location || "Location to be announced",
+    event_dates: input.location
+      ? formatMessageDateRange(
+        new Date(`${input.location.firstDay}T12:00:00.000Z`),
+        new Date(`${input.location.lastDay}T12:00:00.000Z`),
+        { timeZone: input.event.timezone },
+      )
+      : formatMessageDateRange(input.event.startsAt, input.event.endsAt, { timeZone: input.event.timezone }),
+    event_location: input.location
+      ? [input.location.name, input.location.address].filter(Boolean).join(", ")
+      : input.event.location || "Location to be announced",
     confirmation_code: input.registration.confirmationCode,
     attendee_summary: attendeeSummary,
     total_amount: formatMessageMoney(input.calculation.totalCents),

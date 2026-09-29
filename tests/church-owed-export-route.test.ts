@@ -37,6 +37,11 @@ vi.mock("@/modules/access/current-session", () => ({
 vi.mock("@/modules/events/repository", () => ({
   findActiveMembership: dependencies.findActiveMembership,
 }));
+// No locations on the event under test (#413): the export reads and names none.
+vi.mock("@/modules/event-locations/filter", () => ({
+  resolveLocationFilter: vi.fn(async () => ({ locations: [], locationId: null, selected: null })),
+  locationParam: () => null,
+}));
 vi.mock("@/modules/club-registrations/repository", () => ({
   listChurchAmountsOwed: dependencies.listChurchAmountsOwed,
 }));
@@ -98,7 +103,7 @@ describe("church-owed CSV export (#409)", () => {
       { params: Promise.resolve({ eventId: "event_a" }) },
     );
     expect(allowed.status).toBe(200);
-    expect(dependencies.listChurchAmountsOwed).toHaveBeenCalledWith("event_a");
+    expect(dependencies.listChurchAmountsOwed).toHaveBeenCalledWith("event_a", { locationId: null });
   });
 
   it("requires MANAGE_FINANCE", async () => {

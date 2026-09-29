@@ -3,6 +3,8 @@ import { ZodError } from "zod";
 import { logError } from "@/lib/logger";
 import { AccessDeniedError } from "@/modules/access/authorization";
 import { RosterAccessError } from "@/modules/club-rosters/access";
+import { isBusyDatabaseError, logExpiredTransaction } from "@/modules/event-locations/api-errors";
+import { EventLocationError, eventLocationErrorStatus, locationBusyMessage } from "@/modules/event-locations/errors";
 import { MemberTransferError } from "@/modules/club-transfers/repository";
 
 /**
@@ -28,6 +30,15 @@ export function memberTransferApiError(error: unknown, action: string) {
     return Response.json(
       { error: error.code, message: error.message, ...(error.blocker ? { blocker: error.blocker } : {}) },
       { status: error.status },
+    );
+  }
+  // A location lock wait that gave up, or an expired transaction: nothing moved (#413).
+  if (error instanceof EventLocationError || isBusyDatabaseError(error)) {
+    const code = error instanceof EventLocationError ? error.code : "LOCATION_BUSY";
+    if (!(error instanceof EventLocationError)) logExpiredTransaction(error, action);
+    return Response.json(
+      { error: code, message: error instanceof EventLocationError ? error.message : locationBusyMessage },
+      { status: eventLocationErrorStatus(code) },
     );
   }
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {

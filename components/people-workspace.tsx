@@ -229,6 +229,7 @@ export function PeopleWorkspace({
   initialFilter = "ALL",
   initialRegistrationId,
   backgroundFlaggedAttendeeIds = [],
+  locationId = null,
 }: {
   eventId: string;
   eventSlug: string;
@@ -241,6 +242,8 @@ export function PeopleWorkspace({
   initialRegistrationId?: string;
   /** Adults at a youth or children's event without a current check (#388). */
   backgroundFlaggedAttendeeIds?: string[];
+  /** The location filter (#413) the CSV export follows; null exports every location. */
+  locationId?: string | null;
 }) {
   const initialSelected = initialRegistrations.find((registration) => registration.id === initialRegistrationId) ?? null;
   const [registrations, setRegistrations] = useState(initialRegistrations);
@@ -640,7 +643,7 @@ export function PeopleWorkspace({
           <a className="secondary-button" href={`/people/duplicates?event=${encodeURIComponent(eventId)}`}><CopyCheck aria-hidden="true" size={17} /> Find duplicates</a>
           {/* Same permission the review page itself requires (MANAGE_REGISTRATION). */}
           {canEdit && <a className="secondary-button" href={`/people/directory-review?event=${encodeURIComponent(eventId)}`}>Directory review</a>}
-          <a className="secondary-button" href={`/api/events/${eventId}/exports/registrations`}><Download aria-hidden="true" size={17} /> Export CSV</a>
+          <a className="secondary-button" href={`/api/events/${eventId}/exports/registrations${locationId ? `?location=${encodeURIComponent(locationId)}` : ""}`}><Download aria-hidden="true" size={17} /> Export CSV</a>
           {canEdit && <a className="primary-button" href={`/events/${eventSlug}`} target="_blank" rel="noreferrer"><ExternalLink aria-hidden="true" size={17} /> Start registration</a>}
         </div>
       </div>
@@ -676,7 +679,7 @@ export function PeopleWorkspace({
           )}
           <button className="record-card interactive-record" type="button" onClick={() => openDetail(registration)}>
             <span className={`person-avatar large ${statusTone(registration)}`}>{initials(registration)}</span>
-            <span className="record-copy"><strong>{registration.accountHolder.firstName} {registration.accountHolder.lastName}</strong><small>{registration.confirmationCode} · {registration.attendeeCount} {registration.attendeeCount === 1 ? "person" : "people"}</small><small>{registration.attendeeCount > 1 ? registration.attendees.slice(0, 2).map((attendee) => `${attendee.firstName} ${attendee.lastName}`).join(", ") + (registration.attendeeCount > 2 ? ` +${registration.attendeeCount - 2} more` : "") : registration.accountHolder.email || "No email on file"} · {submittedDateTime(registration.submittedAt, eventTimezone)}</small></span>
+            <span className="record-copy"><strong>{registration.accountHolder.firstName} {registration.accountHolder.lastName}</strong><small>{registration.confirmationCode} · {registration.attendeeCount} {registration.attendeeCount === 1 ? "person" : "people"}{registration.location ? ` · ${registration.location.name}` : ""}</small><small>{registration.attendeeCount > 1 ? registration.attendees.slice(0, 2).map((attendee) => `${attendee.firstName} ${attendee.lastName}`).join(", ") + (registration.attendeeCount > 2 ? ` +${registration.attendeeCount - 2} more` : "") : registration.accountHolder.email || "No email on file"} · {submittedDateTime(registration.submittedAt, eventTimezone)}</small></span>
             {registration.attendees.some((attendee) => backgroundFlaggedAttendeeIds.includes(attendee.id)) && <BackgroundCheckBadge />}
             <span className={`status-chip ${statusTone(registration)}`}>{statusLabel(registration)}</span>
           </button>
@@ -811,7 +814,7 @@ export function PeopleWorkspace({
                   )
                 ) : (
                   <>
-                <div className="detail-grid"><span><small>Confirmation</small><strong>{selected.confirmationCode}</strong></span><span><small>Status</small><strong>{selected.status.toLowerCase()}</strong></span><span><small>Submitted</small><strong>{submittedDateTime(selected.submittedAt, eventTimezone)}</strong></span><span><small>Last updated</small><strong>{dateTime(selected.updatedAt, eventTimezone)}</strong></span><span><small>Total</small><strong>{money(selected.totalAmountCents)}</strong></span><span><small>Balance</small><strong>{money(selected.balanceCents)}</strong></span></div>
+                <div className="detail-grid"><span><small>Confirmation</small><strong>{selected.confirmationCode}</strong></span>{selected.location && <span><small>Location</small><strong>{selected.location.name}</strong></span>}<span><small>Status</small><strong>{selected.status.toLowerCase()}</strong></span><span><small>Submitted</small><strong>{submittedDateTime(selected.submittedAt, eventTimezone)}</strong></span><span><small>Last updated</small><strong>{dateTime(selected.updatedAt, eventTimezone)}</strong></span><span><small>Total</small><strong>{money(selected.totalAmountCents)}</strong></span><span><small>Balance</small><strong>{money(selected.balanceCents)}</strong></span></div>
                 <div className="contact-card"><strong>Contact</strong><p>{selected.accountHolder.email || "No email"}</p><p>{selected.accountHolder.phone || "No phone"}</p></div>
                 {selected.publicSubmission && <div className="public-submission-detail">
                   <div><span className="status-chip green">Public form</span><strong>{selected.publicSubmission.formName}</strong><small>Version {selected.publicSubmission.versionNumber} · original submission retained{selected.publicSubmission.amendedAt ? ` · last amended ${dateTime(selected.publicSubmission.amendedAt, eventTimezone)}` : ""}</small></div>

@@ -12,6 +12,7 @@ import {
   normalizeTransferName,
   receivingClubStatusLabel,
   registrationMoveBlocker,
+  registrationMoveBlockerLabels,
   sameTransferName,
   sendingClubStatusLabel,
   transferOrganizationsProblem,
@@ -121,5 +122,23 @@ describe("club member transfer rules (#489)", () => {
     expect(moveMoneyBlocker({ ...base, shiftCents: -20000 })).toBe("TOTAL_BELOW_ZERO");
     expect(moveMoneyBlocker({ ...base, shiftCents: 6000 })).toBe("TOTAL_BELOW_PAID");
     expect(moveMoneyBlocker({ ...base, toPaidCents: 14000, shiftCents: -2500 })).toBe("TOTAL_BELOW_PAID");
+  });
+});
+
+describe("a full receiving location blocks a registration move (#413)", () => {
+  const destination = { status: "SUBMITTED", waitlisted: false, personAlreadyThere: false };
+  const open = { attendeeOnSource: true, sourceStatus: "SUBMITTED", destination };
+
+  it("reports LOCATION_FULL with a message staff can act on", () => {
+    expect(registrationMoveBlocker({ ...open, locationFull: true })).toBe("LOCATION_FULL");
+    expect(registrationMoveBlockerLabels.LOCATION_FULL).toContain("no room for one more person");
+    expect(registrationMoveBlocker({ ...open, locationFull: false })).toBeNull();
+  });
+
+  it("ranks it after the class limit and before the money guards, like the other capacity block", () => {
+    expect(registrationMoveBlocker({ ...open, classLimitExceeded: true, locationFull: true })).toBe("CLUB_CLASS_LIMIT");
+    expect(registrationMoveBlocker({
+      ...open, locationFull: true, money: { fromTotalCents: 0, fromPaidCents: 0, toTotalCents: 100, toPaidCents: 0, shiftCents: 50 },
+    })).toBe("LOCATION_FULL");
   });
 });

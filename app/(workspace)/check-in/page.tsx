@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { AccessRestricted } from "@/components/access-restricted";
 import { CheckInWorkspace } from "@/components/check-in-workspace";
+import { LocationFilter } from "@/components/location-filter";
+import { resolveLocationFilter } from "@/modules/event-locations/filter";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { findDefaultCheckInEventId } from "@/modules/checkin/default-event";
 import { activeRegistrationStatuses } from "@/modules/events/lifecycle";
@@ -19,8 +21,8 @@ export const metadata: Metadata = {
   },
 };
 
-export default async function CheckInPage({ searchParams }: { searchParams: Promise<{ event?: string }> }) {
-  const { event: requested } = await searchParams;
+export default async function CheckInPage({ searchParams }: { searchParams: Promise<{ event?: string; location?: string }> }) {
+  const { event: requested, location: requestedLocation } = await searchParams;
   // #470: a signed-out visitor goes to staff sign-in and comes straight back
   // here (the login page validates `next` as a same-site path).
   const { user } = await getCurrentSession();
@@ -39,10 +41,15 @@ export default async function CheckInPage({ searchParams }: { searchParams: Prom
   if (!permissions.includes("MANAGE_CHECK_IN")) {
     return <AccessRestricted title="Staff access required" detail="Check-in is for event administrators and check-in staff. Your account doesn't have check-in access for this event. If you're helping at arrival, ask the event administrator to add check-in access to your account." />;
   }
+  // A check-in desk can work one location, or all of them at once (#413).
+  const { locations, locationId } = await resolveLocationFilter(event.id, requestedLocation);
   const [registrations, flagged, clubs] = await Promise.all([
-    listRegistrations(event.id, { statuses: activeRegistrationStatuses }),
+    listRegistrations(event.id, { statuses: activeRegistrationStatuses, locationId }),
     backgroundFlaggedAttendeeIds(event.id),
-    listClubCheckInInfo(event.id),
+    listClubCheckInInfo(event.id, { locationId }),
   ]);
-  return <CheckInWorkspace key={event.id} eventName={event.name} eventId={event.id} initialRegistrations={registrations} canCheckIn={permissions.includes("MANAGE_CHECK_IN")} showBalances={event.billingMode !== "DEFERRED_ORGANIZATION_INVOICE"} backgroundFlaggedAttendeeIds={[...flagged]} clubs={clubs} />;
+  return <>
+    <LocationFilter basePath="/check-in" locations={locations} params={{ event: event.id }} selectedId={locationId} />
+    <CheckInWorkspace key={event.id} eventName={event.name} eventId={event.id} initialRegistrations={registrations} canCheckIn={permissions.includes("MANAGE_CHECK_IN")} showBalances={event.billingMode !== "DEFERRED_ORGANIZATION_INVOICE"} backgroundFlaggedAttendeeIds={[...flagged]} clubs={clubs} />
+  </>;
 }

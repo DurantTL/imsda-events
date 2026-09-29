@@ -1,3 +1,5 @@
+import { checkLocationSeats } from "@/modules/event-locations/admission";
+import { EventLocationError, locationTransactionTimeoutMs } from "@/modules/event-locations/errors";
 import "server-only";
 
 import { Prisma, type PrismaClient } from "@prisma/client";
@@ -1108,6 +1110,9 @@ const registrationMoneySelect = {
   id: true,
   status: true,
   totalAmount: true,
+  // The event location this registration is at (#413), for the capacity check and the review label.
+  locationId: true,
+  location: { select: { name: true } },
   payments: {
     where: { status: "SUCCEEDED" as const },
     select: { amount: true, refunds: { where: { status: "SUCCEEDED" as const }, select: { amount: true } } },
@@ -1124,6 +1129,7 @@ const destinationSelect = {
   ...registrationMoneySelect,
   confirmationCode: true,
   waitlistEntry: { select: { status: true } },
+  _count: { select: { attendees: true } },
 } satisfies Prisma.RegistrationSelect;
 
 const moveSelect = {
@@ -1196,7 +1202,38 @@ async function exceedsClubClassLimit(
   return false;
 }
 
-async function describeMove(client: Client, move: StoredMove) {
+/**
+ * Whether one more person fits at the receiving registration's location
+ * (#413), counted like the event capacity and with this registration's own
+ * seats left out. A move between two registrations at the same location adds
+ * no seat there. With `lock` the location row is locked first (the approval
+ * transaction), the same lock club submit and amend take.
+ */
+async function locationHasNoRoom(
+  client: Client,
+  eventId: string,
+  from: { locationId: string | null } | null,
+  to: { id: string; locationId: string | null; _count: { attendees: number } },
+  lock: boolean,
+) {
+  if (!to.locationId || from?.locationId === to.locationId) return false;
+  try {
+    await checkLocationSeats(client as Prisma.TransactionClient, {
+      eventId,
+      locationId: to.locationId,
+      requestedSeats: to._count.attendees + 1,
+      requirePick: false,
+      excludeRegistrationId: to.id,
+      lock,
+    });
+    return false;
+  } catch (error) {
+    if (error instanceof EventLocationError && error.code === "LOCATION_FULL") return true;
+    throw error;
+  }
+}
+
+async function describeMove(client: Client, move: StoredMove, options: { lockLocation?: boolean } = {}) {
   const destination = move.status === "APPROVED" && move.toRegistrationId
     ? await client.registration.findUnique({
       where: { id: move.toRegistrationId },
@@ -1219,6 +1256,9 @@ async function describeMove(client: Client, move: StoredMove) {
   const classLimitExceeded = move.status === "PENDING" && move.attendee
     ? await exceedsClubClassLimit(client, move.eventId, move.transfer.toOrganizationId, move.attendee.honorEnrollments)
     : false;
+  const locationFull = move.status === "PENDING" && destination
+    ? await locationHasNoRoom(client, move.eventId, move.fromRegistration, destination, options.lockLocation === true)
+    : false;
   const blocker = move.status === "PENDING"
     ? registrationMoveBlocker({
       attendeeOnSource: Boolean(move.attendee && move.attendee.registrationId === move.fromRegistrationId),
@@ -1228,6 +1268,7 @@ async function describeMove(client: Client, move: StoredMove) {
         ? { status: destination.status, waitlisted: destination.waitlistEntry?.status === "WAITING", personAlreadyThere }
         : null,
       classLimitExceeded,
+      locationFull,
       money: move.fromRegistration && destination
         ? {
           fromTotalCents: cents(move.fromRegistration.totalAmount),
@@ -1256,6 +1297,7 @@ async function describeMove(client: Client, move: StoredMove) {
         status: move.fromRegistration.status,
         totalCents: cents(move.fromRegistration.totalAmount),
         paidCents: fromPaidCents,
+        locationName: move.fromRegistration.location?.name ?? null,
       }
       : null,
     toRegistration: destination
@@ -1266,6 +1308,7 @@ async function describeMove(client: Client, move: StoredMove) {
         waitlisted: destination.waitlistEntry?.status === "WAITING",
         totalCents: cents(destination.totalAmount),
         paidCents: toPaidCents,
+        locationName: destination.location?.name ?? null,
       }
       : null,
     /** This person's own adjustment lines (scholarships, corrections): they move with them. */
@@ -1322,7 +1365,8 @@ export async function approveRegistrationMove(moveId: string, note: string, acto
     try {
       return await getPrisma().$transaction(
         (tx) => approveRegistrationMoveOnce(tx, moveId, note, actor, now),
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        // The receiving location's row lock may be waited on for up to 5s (#413).
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: locationTransactionTimeoutMs },
       );
     } catch (error) {
       if (!isRetryableTransaction(error)) throw error;
@@ -1350,7 +1394,7 @@ async function approveRegistrationMoveOnce(tx: Prisma.TransactionClient, moveId:
   }
   const move = await tx.memberTransferRegistrationMove.findUniqueOrThrow({ where: { id: moveId }, select: moveSelect });
   // Described as still pending, so the same blocker rules the list shows apply here.
-  const described = await describeMove(tx, { ...move, status: "PENDING" });
+  const described = await describeMove(tx, { ...move, status: "PENDING" }, { lockLocation: true });
   if (described.blocker || !move.attendee || !described.toRegistration || !move.fromRegistration) {
     const blocker = described.blocker ?? "ATTENDEE_GONE";
     throw new MemberTransferError("MOVE_BLOCKED", registrationMoveBlockerLabels[blocker], blocker);
