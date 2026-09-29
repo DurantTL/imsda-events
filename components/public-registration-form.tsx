@@ -22,12 +22,14 @@ import {
 } from "lucide-react";
 import { AddressFieldGroup } from "@/components/address-field-group";
 import { BrandMark } from "@/components/brand-mark";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { RegistrationAccountPrompt } from "@/components/registration-account-prompt";
 import { SearchableSelect } from "@/components/searchable-select";
 import { TranslateHint } from "@/components/translate-hint";
 import { hasAddressValue, isPlainAddressObject, type AddressValue } from "@/modules/forms/address";
 import {
   calculateFormTotal,
+  dateFieldBounds,
   calculateRosterTotal,
   getAttendeeRosterConfig,
   getAvailabilityMode,
@@ -418,6 +420,7 @@ export function PublicRegistrationForm({
   const [rosterAnnouncement, setRosterAnnouncement] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  const [pendingRemoveClientId, setPendingRemoveClientId] = useState<string | null>(null);
   const [promoCodeQuote, setPromoCodeQuote] = useState<PromoCodeQuote | null>(null);
   /** The price the quote was made for; the quote holds while the price does. */
   const [promoQuoteBasis, setPromoQuoteBasis] = useState("");
@@ -1051,13 +1054,30 @@ export function PublicRegistrationForm({
     }
   }
 
+  // F-13 (#569): removal is confirmed in the shared in-page dialog, not
+  // window.confirm(), which iOS Safari can silently fail to show. Cancel
+  // leaves every answer untouched.
   function removeAttendee(index: number) {
     if (attendees.length <= roster.minAttendees) return;
+    if (!hasResponses(attendees[index].responses)) {
+      performRemoveAttendee(index);
+      return;
+    }
+    setPendingRemoveClientId(attendees[index].clientId);
+  }
+
+  function confirmRemoveAttendee() {
+    const pendingId = pendingRemoveClientId;
+    setPendingRemoveClientId(null);
+    if (pendingId === null) return;
+    const index = attendees.findIndex((candidate) => candidate.clientId === pendingId);
+    if (index === -1) return;
+    performRemoveAttendee(index);
+  }
+
+  function performRemoveAttendee(index: number) {
+    if (attendees.length <= roster.minAttendees) return;
     const attendee = attendees[index];
-    if (
-      hasResponses(attendee.responses)
-      && !window.confirm(`Remove ${attendeeName(attendee, index, roster.attendeeLabel)} and their answers?`)
-    ) return;
     const focusId = attendees[index - 1]?.clientId ?? attendees[index + 1]?.clientId;
     setAttendees((current) => current.filter((_, attendeeIndex) => attendeeIndex !== index));
     setCollapsedAttendeeIds((current) => {
@@ -1479,6 +1499,8 @@ export function PublicRegistrationForm({
             <input
               id={id}
               type="checkbox"
+              required={field.required && !excused}
+              aria-required={field.required && !excused}
               checked={context.values[field.key] === true}
               onChange={(inputEvent) => context.setValue(field.key, inputEvent.target.checked)}
             />
@@ -1588,8 +1610,8 @@ export function PublicRegistrationForm({
             id={id}
             value={value}
             type={field.type === "EMAIL" ? "email" : field.type === "PHONE" ? "tel" : field.type === "DATE" ? "date" : field.type === "NUMBER" ? "number" : "text"}
-            min={field.type === "NUMBER" ? numberFieldBounds(field)?.minimumAge ?? 0 : undefined}
-            max={field.type === "NUMBER" ? numberFieldBounds(field)?.maximumAge : undefined}
+            min={field.type === "NUMBER" ? numberFieldBounds(field)?.minimumAge ?? 0 : field.type === "DATE" ? dateFieldBounds(field).min : undefined}
+            max={field.type === "NUMBER" ? numberFieldBounds(field)?.maximumAge : field.type === "DATE" ? dateFieldBounds(field).max : undefined}
             inputMode={field.type === "PHONE" ? "tel" : field.type === "NUMBER" ? "numeric" : undefined}
             autoComplete={autoComplete}
             required={field.required && !excused}
@@ -2679,6 +2701,26 @@ export function PublicRegistrationForm({
           <div className="public-registration-summary-note">{joiningWaitlist ? <Clock3 size={15} aria-hidden="true" /> : <LockKeyhole size={15} aria-hidden="true" />}<span>{joiningWaitlist ? "This estimate is not charged while you are on the waitlist." : deferredOrganizationBilling ? "No payment is due online. Your organization will be billed later based on final attendance." : "Final pricing and availability are confirmed securely on submission."}</span></div>
         </aside>
       </form>
+      {(() => {
+        const pendingIndex = pendingRemoveClientId === null
+          ? -1
+          : attendees.findIndex((candidate) => candidate.clientId === pendingRemoveClientId);
+        const pendingName = pendingIndex >= 0
+          ? attendeeName(attendees[pendingIndex], pendingIndex, roster.attendeeLabel)
+          : roster.attendeeLabel;
+        return (
+          <ConfirmDialog
+            confirmLabel={`Remove ${roster.attendeeLabel.toLowerCase()}`}
+            destructive
+            onCancel={() => setPendingRemoveClientId(null)}
+            onConfirm={confirmRemoveAttendee}
+            open={pendingIndex >= 0}
+            title={`Remove ${pendingName} and their answers?`}
+          >
+            <p>Everything entered for {pendingName} will be cleared. Cancel keeps every answer.</p>
+          </ConfirmDialog>
+        );
+      })()}
     </Shell>
   );
 }

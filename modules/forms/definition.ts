@@ -58,6 +58,9 @@ export function isAgeFieldKey(key: string) {
  * no more specific `ageBounds` (#483). */
 export const DEFAULT_AGE_BOUNDS = { minimumAge: 0, maximumAge: 120 } as const;
 
+/** The general cap on a NUMBER field that has no age-specific bound. */
+export const GENERAL_NUMBER_MAXIMUM = 100000;
+
 /** The allowed numeric range for a NUMBER field: its own `ageBounds` when
  * configured, else the default age range for a recognized age field key, else
  * null (no age-specific bound — the general 0–100,000 numeric check applies). */
@@ -67,7 +70,8 @@ export function numberFieldBounds(
   if (field.ageBounds) {
     return {
       minimumAge: field.ageBounds.minimumAge ?? DEFAULT_AGE_BOUNDS.minimumAge,
-      maximumAge: field.ageBounds.maximumAge ?? DEFAULT_AGE_BOUNDS.maximumAge,
+      // An unset maximum on a non-age number falls back to the general numeric cap.
+      maximumAge: field.ageBounds.maximumAge ?? (isAgeFieldKey(field.key) ? DEFAULT_AGE_BOUNDS.maximumAge : GENERAL_NUMBER_MAXIMUM),
     };
   }
   return isAgeFieldKey(field.key) ? { ...DEFAULT_AGE_BOUNDS } : null;
@@ -122,8 +126,8 @@ export const formFieldSchema = z.object({
    * `DEFAULT_AGE_BOUNDS` rather than accepting any number.
    */
   ageBounds: z.object({
-    minimumAge: z.number().int().min(0).max(130).nullable(),
-    maximumAge: z.number().int().min(0).max(130).nullable(),
+    minimumAge: z.number().int().min(0).max(GENERAL_NUMBER_MAXIMUM).nullable(),
+    maximumAge: z.number().int().min(0).max(GENERAL_NUMBER_MAXIMUM).nullable(),
   }).refine(
     (bounds) => bounds.minimumAge === null || bounds.maximumAge === null || bounds.minimumAge <= bounds.maximumAge,
     { message: "Minimum age cannot exceed maximum age." },
@@ -1125,6 +1129,39 @@ export function summarizeChoiceUsage(definition: RegistrationFormDefinition, res
   return usage;
 }
 
+/** FB-5 (#569): no date answer may fall before this year. */
+export const EARLIEST_DATE_YEAR = 1900;
+export const EARLIEST_DATE_VALUE = `${EARLIEST_DATE_YEAR}-01-01`;
+
+const BIRTH_DATE_FIELD_PATTERN = /birth|\bdob\b/i;
+
+/** True for a DATE field that collects a birth date (by key or label). */
+export function isBirthDateField(field: Pick<RegistrationFormField, "type" | "key" | "label">) {
+  return field.type === "DATE"
+    && (BIRTH_DATE_FIELD_PATTERN.test(field.key.replaceAll("_", " ")) || BIRTH_DATE_FIELD_PATTERN.test(field.label));
+}
+
+/** Today as YYYY-MM-DD in UTC, the latest a birth date may be. */
+export function todayDateValue(now: Date = new Date()) {
+  return now.toISOString().slice(0, 10);
+}
+
+/** The `min`/`max` attributes a DATE input should carry. */
+export function dateFieldBounds(field: Pick<RegistrationFormField, "type" | "key" | "label">, now: Date = new Date()) {
+  return { min: EARLIEST_DATE_VALUE, max: isBirthDateField(field) ? todayDateValue(now) : undefined };
+}
+
+/** Null when the (already well-formed) date is acceptable, else the reason. */
+export function dateFieldProblem(
+  field: Pick<RegistrationFormField, "type" | "key" | "label">,
+  date: string,
+  now: Date = new Date(),
+) {
+  if (date < EARLIEST_DATE_VALUE) return `${field.label} can't be before ${EARLIEST_DATE_YEAR}.`;
+  if (isBirthDateField(field) && date > todayDateValue(now)) return `${field.label} can't be in the future.`;
+  return null;
+}
+
 export function validateTestResponses(
   definition: RegistrationFormDefinition,
   responses: Record<string, unknown>,
@@ -1164,6 +1201,10 @@ export function validateTestResponses(
         const date = String(value);
         const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00Z`) : null;
         if (!parsed || Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== date) issues.push({ fieldId: field.id, key: field.key, message: `${field.label} must be a valid date.` });
+        else {
+          const problem = dateFieldProblem(field, date);
+          if (problem) issues.push({ fieldId: field.id, key: field.key, message: problem });
+        }
       }
       if (field.type === "NUMBER") {
         const numeric = typeof value === "number" || typeof value === "string" ? Number(value) : Number.NaN;
