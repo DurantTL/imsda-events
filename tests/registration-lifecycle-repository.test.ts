@@ -8,7 +8,13 @@ const dependencies = vi.hoisted(() => ({
   enqueueWaitlistJoinedMessage: vi.fn(),
   enqueueWaitlistPromotedMessage: vi.fn(),
   enqueueWaitlistRemovedMessage: vi.fn(),
+  logWarn: vi.fn(),
 }));
+
+vi.mock("@/lib/logger", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/logger")>("@/lib/logger");
+  return { ...actual, logWarn: dependencies.logWarn };
+});
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: dependencies.getPrisma }));
@@ -737,7 +743,7 @@ describe("location waitlists (#599)", () => {
       kind: "PROMOTED", eventId: event.id, locationId: "loc-1", registrationId: "w1", clubName: "Test Pathfinders",
       locationName: "Des Moines", attendeeCount: 2, place: 2, occurredAt: when,
     })]);
-    expect(tx.registrationWaitlistEntry.count).toHaveBeenCalledWith({ where: { status: "WAITING", position: { lte: 7 }, registration: { locationId: "loc-1" } } });
+    expect(tx.registrationWaitlistEntry.count).toHaveBeenCalledWith({ where: { status: "WAITING", position: { lte: 7 }, registration: { locationId: "loc-1", status: "WAITLISTED" } } });
     expect(dependencies.enqueueWaitlistPromotedMessage).toHaveBeenCalledWith(tx, expect.objectContaining({ waitlistPosition: 2 }));
   });
 
@@ -832,6 +838,42 @@ describe("location waitlists (#599)", () => {
       const all = await promoteWaitlistAfterSeatsFreed(many as never, { eventId: event.id, actorUserId: "user-1", trigger, now: when, repeat: true });
       expect(all.promotedRegistrationIds).toEqual(["a", "b"]);
       expect(all.pendingMessageIds).toEqual(["message-1", "message-1"]);
+    });
+
+    it("waits on a busy location once, not again in every round of a repeating pass", async () => {
+      const queue = [
+        { id: "entry-busy-1", registrationId: "busy-1", position: 1, locationId: "loc-busy" },
+        { id: "entry-busy-2", registrationId: "busy-2", position: 2, locationId: "loc-busy" },
+        { id: "entry-ok", registrationId: "ok", position: 3, locationId: "loc-ok" },
+      ];
+      const candidates = [waiting("busy-1", "loc-busy", 1), waiting("busy-2", "loc-busy", 2), waiting("ok", "loc-ok", 3)];
+      const tx = locationFixture(candidates, queue);
+      const raw = vi.fn(async (_strings: TemplateStringsArray, ...values: unknown[]) => {
+        if (values[0] === "loc-busy") throw Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" });
+        return [locationRow(String(values[0]))];
+      });
+      Object.assign(tx, { $queryRaw: raw });
+      const rows = (entries: typeof queue) => entries.map((entry) => ({ ...entry, registration: { locationId: entry.locationId } }));
+      tx.registrationWaitlistEntry.findMany.mockResolvedValueOnce(rows(queue)).mockResolvedValueOnce(rows(queue.slice(0, 2))).mockResolvedValue([]);
+      const result = await promoteWaitlistAfterSeatsFreed(tx as never, { eventId: event.id, actorUserId: "user-1", trigger: { locationId: "loc-busy", reason: "Raised." }, now: when, repeat: true });
+      expect(result.promotedRegistrationIds).toEqual(["ok"]);
+      // One wait on the busy location for the whole pass, though two clubs wait there and the pass ran twice.
+      expect(raw.mock.calls.filter(([, ...values]) => values[0] === "loc-busy")).toHaveLength(1);
+    });
+
+    it("warns when a repeating pass reaches its round limit", async () => {
+      const queue = [{ id: "entry-a", registrationId: "a", position: 1, locationId: "loc-1" }];
+      // The read model never shows the club leaving the queue, so the pass keeps promoting until the cap.
+      const tx = locationFixture([waiting("a", "loc-1", 1)], queue);
+      const result = await promoteWaitlistAfterSeatsFreed(tx as never, { eventId: event.id, actorUserId: "user-1", trigger, now: when, repeat: true });
+      expect(result.promotedRegistrationIds).toHaveLength(50);
+      expect(dependencies.logWarn).toHaveBeenCalledWith(expect.stringContaining("round limit"), expect.objectContaining({ eventId: event.id }));
+    });
+
+    it("does not warn when the pass ends on its own", async () => {
+      const tx = locationFixture([waiting("a", "loc-1", 1)], [{ id: "entry-a", registrationId: "a", position: 1, locationId: "loc-1" }]);
+      await promoteWaitlistAfterSeatsFreed(tx as never, { eventId: event.id, actorUserId: "user-1", trigger, now: when });
+      expect(dependencies.logWarn).not.toHaveBeenCalled();
     });
 
     it("gives the promotion the trigger's reason and accepts no actor, as an amendment by a club director has none", async () => {

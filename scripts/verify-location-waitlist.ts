@@ -43,7 +43,9 @@ const plainEventId = `${P}_plain_event`;
 const formSlug = `${P}-club-form`;
 const formVersionId = `${P}_formver_1`;
 const plainFormVersionId = `${P}_formver_plain`;
-const clubKeys = ["a1", "a2", "a3", "a4", "b1", "b2", "b3", "c1", "c2", "c3", "c4", "c5", "d1", "d2", "e1", "e2", "e3", "f1", "f2", "g1", "g2", "h1", "p1", "p2"] as const;
+const raceRounds = 4;
+const raceKeys = Array.from({ length: raceRounds * 4 }, (_, index) => `r${index + 1}`);
+const clubKeys = [...raceKeys, "a1", "a2", "a3", "a4", "b1", "b2", "b3", "c1", "c2", "c3", "c4", "c5", "d1", "d2", "e1", "e2", "e3", "f1", "f2", "g1", "g2", "h1", "p1", "p2"] as const;
 const clubOf = (key: string) => `${P}_club_${key}`;
 const actor = { userId: staffUserId, actAsId: `${P}_actas` };
 const coordinatorAccountId = `${P}_coordinator`;
@@ -404,7 +406,7 @@ async function main() {
   assert(coordinatorMail.bodyTextSnapshot.includes("Camp Heritage 1") && !coordinatorMail.bodyTextSnapshot.includes("Des Moines") && !coordinatorMail.bodyTextSnapshot.includes("Kansas City"),
     "the coordinator's digest covers only their own location");
   assert(coordinatorMail.bodyTextSnapshot.includes("Joined the waitlist: Wl Club a2 (2 people, place #1 in line)")
-    && coordinatorMail.bodyTextSnapshot.includes("Promoted to a registration: Wl Club a2")
+    && coordinatorMail.bodyTextSnapshot.includes("Promoted to a registration: Wl Club a2 (2 people, was place #1 in line)")
     && coordinatorMail.bodyTextSnapshot.includes("Removed from the waitlist: Wl Club a3"),
     "the digest lists who joined (with place), who was promoted, and who was removed");
   assert(["Camp Heritage 1", "Des Moines", "Kansas City", "Camp Two", "Camp Three", "Busy Site"].every((name) => adminMail.bodyTextSnapshot.includes(name)), "the event administrator's digest covers every location of the event, in one email");
@@ -440,6 +442,29 @@ async function main() {
   const emptyDay = await sendDueLocationWaitlistDigests(new Date("2026-10-08T14:00:00Z"), { deliver: deliverOk });
   assert(emptyDay.status === "NO_CHANGES" && emptyDay.messageIds.length === 0, "a day with no changes sends no email");
   console.log("ok  the next morning carries only what changed since, and an empty day sends nothing");
+
+  // 8b. Opposite triggers at once: a capacity raise at X (which locks X, then offers seats to clubs waiting at Y)
+  // and an amendment removing people at Y (which locks Y, then offers seats to clubs waiting at X) take the
+  // two location locks in opposite orders. A deadlock must not fail either change: both commit, and neither
+  // location is ever over capacity. Repeated, since the collision depends on timing.
+  for (let round = 0; round < raceRounds; round += 1) {
+    const [holderX, holderY, waiterX, waiterY] = raceKeys.slice(round * 4, round * 4 + 4) as [string, string, string, string];
+    const siteX = await locations.createEventLocation(eventId, staffUserId, { name: `Race X ${round}`, capacity: 1 });
+    const siteY = await locations.createEventLocation(eventId, staffUserId, { name: `Race Y ${round}`, capacity: 2 });
+    await submit(holderX, siteX.id, 1);
+    await submit(holderY, siteY.id, 2);
+    assert((await submit(waiterX, siteX.id, 1)).registrationStatus === "WAITLISTED", `round ${round}: a waiter at X`);
+    assert((await submit(waiterY, siteY.id, 1)).registrationStatus === "WAITLISTED", `round ${round}: a waiter at Y`);
+    const holderYRow = await regOf(holderY);
+    const outcomes = await Promise.allSettled([
+      locations.updateEventLocation(eventId, siteX.id, staffUserId, { capacity: 2 }),
+      club.amendClubRegistration(clubOf(holderY), eventId, actor, { ...editInput(holderY), expectedUpdatedAt: holderYRow.updatedAt.toISOString() }, october),
+    ]);
+    assert(outcomes.every((outcome) => outcome.status === "fulfilled"), `round ${round}: both opposite triggers commit, got ${outcomes.map((outcome) => (outcome.status === "rejected" ? String(outcome.reason) : "ok")).join(" | ")}`);
+    assert(await statusOf(waiterX) === "SUBMITTED" && await statusOf(waiterY) === "SUBMITTED", `round ${round}: each location's waiting club got its seat`);
+    assert(await seats(siteX.id) === 2 && await seats(siteY.id) === 2, `round ${round}: neither location is over capacity, got ${await seats(siteX.id)} and ${await seats(siteY.id)}`);
+  }
+  console.log("ok  opposite triggers (a capacity raise and an amendment at two locations) both commit and never overfill");
 
   // 10. The coordinator portal lists the clubs waiting at the locations they coordinate, and a revoked coordinator sees none.
   const portalWaiter = await submit("a4", locA.id, 2);
@@ -485,7 +510,7 @@ async function main() {
   const coordinatorOf = (name: string) => clonedLocations.find((row) => row.name === name)?.coordinatorAccountId ?? null;
   assert(coordinatorOf("Camp Heritage 1") === coordinatorAccountId, "an active coordinator is carried to the copy");
   assert(coordinatorOf("Des Moines") === null, "a revoked coordinator is not carried to the copy");
-  assert(clonedLocations.length === 7, `every location is copied, got ${clonedLocations.length}`);
+  assert(clonedLocations.length === 7 + raceRounds * 2, `every location is copied, got ${clonedLocations.length}`);
   console.log("ok  cloning carries an active coordinator and drops a revoked one");
 
   // Location errors still carry their codes.

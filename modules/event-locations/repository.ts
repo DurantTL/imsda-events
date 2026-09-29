@@ -3,7 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
-import { isLockTimeoutError, isSerializationFailure } from "@/lib/prisma-errors";
+import { isLockTimeoutError, isSerializationFailure, pauseBeforeRetry } from "@/lib/prisma-errors";
 import {
   countLocationSeats,
   lockEventLocation,
@@ -201,7 +201,8 @@ export async function updateEventLocation(eventId: string, locationId: string, a
     try {
       return await updateEventLocationOnce(eventId, locationId, actorUserId, input);
     } catch (error) {
-      if (!isSerializationFailure(error) || attempt >= 3) throw error;
+      if (!isSerializationFailure(error) || attempt >= 6) throw error;
+      await pauseBeforeRetry(attempt);
     }
   }
 }

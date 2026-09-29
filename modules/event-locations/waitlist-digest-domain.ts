@@ -72,6 +72,8 @@ export function digestIdempotencyKey(dateKey: string, recipientEmail: string) {
 }
 
 export type DigestChange = {
+  /** The change's row id, so the digest can stamp exactly the changes every recipient received. */
+  id?: string;
   kind: "JOINED" | "PROMOTED" | "REMOVED";
   clubName: string;
   attendeeCount: number;

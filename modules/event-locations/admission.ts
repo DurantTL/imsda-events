@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { Prisma } from "@prisma/client";
-import { isLockTimeoutError } from "@/lib/prisma-errors";
+import { isDeadlockError, isLockTimeoutError } from "@/lib/prisma-errors";
 import {
   EventLocationError,
   locationBusyMessage,
@@ -60,7 +60,9 @@ export async function lockEventLocation(tx: Tx, eventId: string, locationId: str
       WHERE "id" = ${locationId} AND "eventId" = ${eventId}
       FOR UPDATE`;
   } catch (error) {
-    if (isLockTimeoutError(error)) throw new EventLocationError("LOCATION_BUSY", locationBusyMessage);
+    // A deadlock (two requests taking locations in opposite orders) is busy too: nothing was written here,
+    // and the auto-promotion loop's savepoint skips the candidate (#599).
+    if (isLockTimeoutError(error) || isDeadlockError(error)) throw new EventLocationError("LOCATION_BUSY", locationBusyMessage);
     throw error;
   }
   await tx.$executeRawUnsafe("SET LOCAL lock_timeout = 0");

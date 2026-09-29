@@ -514,7 +514,7 @@ describe("club registration submit at an event location (#413)", () => {
       const { tx } = waitlistedAt();
       const confirmation = await at("loc-1");
       expect(confirmation.waitlistPosition).toBe(2);
-      expect(tx.registrationWaitlistEntry.count).toHaveBeenCalledWith({ where: { status: "WAITING", position: { lte: 7 }, registration: { locationId: "loc-1" } } });
+      expect(tx.registrationWaitlistEntry.count).toHaveBeenCalledWith({ where: { status: "WAITING", position: { lte: 7 }, registration: { locationId: "loc-1", status: "WAITLISTED" } } });
       expect(dependencies.enqueueWaitlistJoinedMessage).toHaveBeenCalledWith(tx, expect.objectContaining({ registrationId: "registration-1", recipientEmail: "director@example.test", waitlistPosition: 2 }));
       expect(dependencies.enqueuePublicRegistrationMessages).not.toHaveBeenCalled();
     });

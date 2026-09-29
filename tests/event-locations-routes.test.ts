@@ -175,6 +175,16 @@ describe("staff location routes (#413)", () => {
     expect(mocks.logError).toHaveBeenCalledTimes(1);
   });
 
+  it("answers a serialization failure or deadlock from a raw query that outlasted its retries with a retryable 409, not a 500", async () => {
+    for (const state of ["40001", "40P01"]) {
+      mocks.updateEventLocation.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError(`Raw query failed. Code: \`${state}\`.`, { code: "P2010", clientVersion: "test", meta: { code: state } }));
+      const response = await PATCH(request("PATCH", { capacity: 3 }), locationContext);
+      expect(response.status).toBe(409);
+      expect((await response.json()).error).toBe("LOCATION_CONFLICT");
+    }
+    expect(mocks.logError).not.toHaveBeenCalled();
+  });
+
   it("answers invalid JSON and invalid input with 400, and logs an unexpected fault as a 500 without details", async () => {
     expect((await POST(request("POST", "{not json"), eventContext)).status).toBe(400);
     mocks.createEventLocation.mockRejectedValueOnce(eventLocationInputSchema.safeParse({ name: "" }).error);

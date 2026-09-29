@@ -196,6 +196,33 @@ describe("the daily location waitlist digest", () => {
     expect(dependencies.processAccountEmailQueue).not.toHaveBeenCalled();
   });
 
+  it("stamps only the changes every recipient received: a change whose recipient already had today's digest waits for tomorrow", async () => {
+    // loc-a has the active coordinator plus the administrator; loc-b has only the administrator.
+    // The coordinator already has today's digest, so the loc-a change was not sent to them in this run.
+    const { created, tx } = fixture({
+      changes: [
+        change({ id: "for-both", locationId: "loc-a", locationName: "Camp Heritage 1", clubName: "River City Pathfinders" }),
+        change({ id: "admin-only", locationId: "loc-b", locationName: "Des Moines", clubName: "Lakeside Guides" }),
+      ],
+      locations: [{ id: "loc-a", coordinator: coordinator() }, { id: "loc-b", coordinator: null }],
+      existingKeys: ["location-waitlist-digest:2026-10-06:pat.coordinator@example.test"],
+    });
+    const result = await sendDueLocationWaitlistDigests(MORNING);
+    // Only the administrator got a message, and it carried both changes.
+    expect(created.map(({ data }) => data.recipientEmail)).toEqual(["staff.admin@example.test"]);
+    expect(String(created[0]!.data.bodyTextSnapshot)).toContain("River City Pathfinders");
+    // The change the coordinator did not get stays unstamped for the next digest; the one nobody held back is stamped.
+    expect(tx.locationWaitlistChange.updateMany).toHaveBeenCalledWith({ where: { id: { in: ["admin-only"] }, digestedAt: null }, data: { digestedAt: MORNING } });
+    expect(result.changesCovered).toBe(1);
+  });
+
+  it("stamps everything when no recipient was held back", async () => {
+    const { tx } = fixture({ changes: [change({ id: "c1" }), change({ id: "c2", clubName: "Other Club" })] });
+    const result = await sendDueLocationWaitlistDigests(MORNING);
+    expect(tx.locationWaitlistChange.updateMany).toHaveBeenCalledWith({ where: { id: { in: ["c1", "c2"] }, digestedAt: null }, data: { digestedAt: MORNING } });
+    expect(result.changesCovered).toBe(2);
+  });
+
   it("stamps changes nobody is responsible for, so they do not pile up", async () => {
     const { created, tx } = fixture({ locations: [{ id: "loc-a", coordinator: null }], memberships: [] });
     const result = await sendDueLocationWaitlistDigests(MORNING);

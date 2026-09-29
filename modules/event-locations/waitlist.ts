@@ -27,7 +27,8 @@ export async function locationWaitlistPlace(tx: Tx, registrationId: string, loca
     where: {
       status: "WAITING",
       position: { lte: entry.position },
-      registration: { locationId },
+      // Waiting clubs only, as the staff list and the portal show them, so "#N" agrees with both.
+      registration: { locationId, status: "WAITLISTED" },
     },
   });
 }

@@ -8,7 +8,7 @@ import { locationChangeBlock } from "@/modules/honors/locations";
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
-import { isSerializationFailure } from "@/lib/prisma-errors";
+import { isSerializationFailure, pauseBeforeRetry } from "@/lib/prisma-errors";
 import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
 import { isSeminarPreferenceField } from "@/modules/attendee-accounts/registration-answer-policy";
 import { enqueueRegistrationUpdatedMessage } from "@/modules/communications/transactional-messages";
@@ -1268,7 +1268,7 @@ export async function amendRegistration(
     },
   });
   const prisma = getPrisma();
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
     try {
       const amended = await prisma.$transaction(async (tx) => {
         const existing = await tx.registrationOperation.findUnique({
@@ -1670,6 +1670,7 @@ export async function amendRegistration(
       return amended;
     } catch (error) {
       if (!retryable(error)) throw error;
+      await pauseBeforeRetry(attempt);
     }
   }
   throw new RegistrationAmendmentError(

@@ -7,7 +7,8 @@ import { locationWaitlistPlace, recordLocationWaitlistChange } from "@/modules/e
 
 import { Prisma, type RegistrationStatus } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
-import { isSerializationFailure } from "@/lib/prisma-errors";
+import { logWarn } from "@/lib/logger";
+import { isSerializationFailure, pauseBeforeRetry } from "@/lib/prisma-errors";
 import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
 import {
   enqueueRegistrationCancelledMessage,
@@ -485,6 +486,8 @@ async function promoteWithinTransaction(
       optionCapacity.details,
     );
   }
+  // Where the club stood at its location, read while it is still waitlisted and waiting (#599).
+  const locationPlace = await locationWaitlistPlace(tx, registration.id, registration.locationId);
   const activatedReservations = await activateOptionReservations(tx, registration, claims, now);
   await tx.registration.update({
     where: { id: registration.id },
@@ -496,8 +499,6 @@ async function promoteWithinTransaction(
       "The waitlisted registration does not have a queue entry.",
     );
   }
-  // Where the club stood at its location, read before the entry leaves the queue (#599).
-  const locationPlace = await locationWaitlistPlace(tx, registration.id, registration.locationId);
   await tx.registrationWaitlistEntry.update({
     where: { id: registration.waitlistEntry.id },
     data: {
@@ -544,6 +545,8 @@ async function promoteWithinTransaction(
   });
 }
 
+const maximumPromotionRounds = 50;
+
 /** What freed seats: the location they were at (if any) decides who is offered them first. */
 export type SeatsFreedTrigger = { locationId: string | null; reason: string };
 
@@ -554,6 +557,8 @@ async function autoPromoteEarliestFitting(
   trigger: SeatsFreedTrigger,
   now: Date,
   correlationId: string,
+  /** Locations found busy earlier in this transaction: skipped, so a repeating pass does not wait on them again. */
+  busyLocationIds: Set<string> = new Set(),
 ) {
   const queued = await tx.registrationWaitlistEntry.findMany({
     where: { eventId: event.id, status: "WAITING" },
@@ -571,6 +576,8 @@ async function autoPromoteEarliestFitting(
     : queued;
 
   for (const entry of waiting) {
+    const entryLocationId = entry.registration?.locationId;
+    if (entryLocationId && busyLocationIds.has(entryLocationId)) continue;
     const candidate = await loadRegistration(tx, event.id, entry.registrationId);
     if (candidate.status !== "WAITLISTED" || candidate.waitlistEntry?.status !== "WAITING") {
       await tx.registrationWaitlistEntry.update({
@@ -594,6 +601,7 @@ async function autoPromoteEarliestFitting(
     } catch (error) {
       if (!locationSavepoint || !(error instanceof EventLocationError && error.code === "LOCATION_BUSY")) throw error;
       await tx.$executeRawUnsafe("ROLLBACK TO SAVEPOINT auto_promote_candidate");
+      busyLocationIds.add(locationSavepoint);
       await tx.registrationWaitlistEntry.update({
         where: { id: entry.id },
         data: { lastBlockedReason: "The registration's location was busy, so it was not promoted automatically. Promote it by hand." },
@@ -678,12 +686,16 @@ export async function promoteWaitlistAfterSeatsFreed(
   const now = input.now ?? new Date();
   const correlationId = input.correlationId ?? crypto.randomUUID();
   // A promotion needs a waiting club; the bound only guards a runaway loop.
-  for (let round = 0; round < 50; round += 1) {
-    const promoted = await autoPromoteEarliestFitting(tx, event, input.actorUserId, input.trigger, now, `${correlationId}:${round}`);
+  const busyLocationIds = new Set<string>();
+  for (let round = 0; round < maximumPromotionRounds; round += 1) {
+    const promoted = await autoPromoteEarliestFitting(tx, event, input.actorUserId, input.trigger, now, `${correlationId}:${round}`, busyLocationIds);
     if (!promoted) break;
     promotedRegistrationIds.push(promoted.registrationId);
     pendingMessageIds.push(...promoted.pendingMessageIds);
     if (!input.repeat) break;
+    if (round === maximumPromotionRounds - 1) {
+      logWarn("Waitlist promotion stopped at its round limit with clubs possibly still waiting.", { eventId: input.eventId, rounds: maximumPromotionRounds });
+    }
   }
   return { promotedRegistrationIds, pendingMessageIds };
 }
@@ -698,7 +710,7 @@ async function runSerializable<T>(
   operation: (tx: Prisma.TransactionClient) => Promise<T>,
 ) {
   const prisma = getPrisma();
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
     try {
       return await prisma.$transaction(operation, {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -707,6 +719,7 @@ async function runSerializable<T>(
       });
     } catch (error) {
       if (!retryableTransactionError(error)) throw error;
+      await pauseBeforeRetry(attempt);
     }
   }
   throw new RegistrationLifecycleError(

@@ -69,6 +69,7 @@ function addChange(recipient: Recipient, eventId: string, locationId: string, ch
 async function collectRecipients(
   tx: Db,
   changes: Array<{
+    id: string;
     eventId: string;
     locationId: string;
     kind: DigestChange["kind"];
@@ -130,6 +131,7 @@ async function collectRecipients(
 
   for (const change of changes) {
     const digestChange: DigestChange = {
+      id: change.id,
       kind: change.kind,
       clubName: change.clubName,
       attendeeCount: change.attendeeCount,
@@ -196,12 +198,18 @@ export async function sendDueLocationWaitlistDigests(
     const locationNames = new Map(changes.map((change) => [change.locationId, change.locationName]));
 
     const messageIds: string[] = [];
-    let createdAny = false;
+    // Changes a recipient did not get in this run, because they already had today's digest.
+    const heldBack = new Set<string>();
     for (const recipient of recipients.values()) {
       const idempotencyKey = digestIdempotencyKey(window.dateKey, recipient.email);
       const existing = await tx.messageOutbox.findUnique({ where: { idempotencyKey }, select: { id: true } });
       // Today's digest already went to this person: their changes wait for tomorrow's.
-      if (existing) continue;
+      if (existing) {
+        for (const perLocation of recipient.changes.values()) {
+          for (const list of perLocation.values()) for (const held of list) if (held.id) heldBack.add(held.id);
+        }
+        continue;
+      }
       const sections: DigestEventSection[] = [...recipient.changes.entries()].map(([eventId, perLocation]) => ({
         eventName: eventNames.get(eventId) ?? "Event",
         locations: [...perLocation.entries()].map(([locationId, list]) => ({
@@ -245,19 +253,21 @@ export async function sendDueLocationWaitlistDigests(
         select: { id: true },
       });
       messageIds.push(message.id);
-      createdAny = true;
     }
 
-    // Stamped in the same transaction that queued the emails. Changes nobody
-    // is responsible for are stamped too, so they do not pile up. Changes
-    // whose recipients all already had today's digest stay for tomorrow's.
-    if (createdAny || recipients.size === 0) {
+    // Stamped in the same transaction that queued the emails, and only the
+    // changes every one of whose recipients got a message in this run. A change
+    // with a recipient who already had today's digest stays for tomorrow's, so
+    // nobody misses it. Changes nobody is responsible for are stamped too, so
+    // they do not pile up.
+    const stampable = changes.filter((change) => !heldBack.has(change.id)).map((change) => change.id);
+    if (stampable.length > 0) {
       await tx.locationWaitlistChange.updateMany({
-        where: { id: { in: changes.map((change) => change.id) }, digestedAt: null },
+        where: { id: { in: stampable }, digestedAt: null },
         data: { digestedAt: now },
       });
     }
-    return { changesCovered: createdAny || recipients.size === 0 ? changes.length : 0, messageIds, recipients: recipients.size };
+    return { changesCovered: stampable.length, messageIds, recipients: recipients.size };
   });
 
   const outcome: LocationWaitlistDigestResult = {

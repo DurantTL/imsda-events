@@ -6,7 +6,8 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: dependencies.getPrisma }));
 vi.mock("@/modules/registrations/lifecycle-repository", () => ({ promoteWaitlistAfterSeatsFreed: vi.fn() }));
 
-import { checkLocationSeats, admitToLocation } from "@/modules/event-locations/admission";
+import { Prisma } from "@prisma/client";
+import { checkLocationSeats, admitToLocation, lockEventLocation } from "@/modules/event-locations/admission";
 import { activeCoordinatorAccountIds } from "@/modules/event-locations/coordinators";
 import { coordinatorGrantActive } from "@/modules/event-locations/domain";
 import { createEventLocation, listActiveAreaCoordinators, locationCoordinatorActive, updateEventLocation } from "@/modules/event-locations/repository";
@@ -87,6 +88,22 @@ describe("admission to a full location (#599)", () => {
   });
 });
 
+describe("a deadlock on a location's row lock (#599)", () => {
+  const deadlock = () => new Prisma.PrismaClientKnownRequestError("Raw query failed. Code: `40P01`. Message: `deadlock detected`", { code: "P2010", clientVersion: "test", meta: { code: "40P01" } });
+
+  it("is reported as a busy location, which the auto-promotion savepoint skips", async () => {
+    const tx = admissionTx({ capacity: 3, occupied: 0 });
+    tx.$queryRaw.mockRejectedValue(deadlock());
+    await expect(lockEventLocation(tx as never, "event-1", "loc-1")).rejects.toMatchObject({ name: "EventLocationError", code: "LOCATION_BUSY" });
+  });
+
+  it("does not hide other database faults", async () => {
+    const tx = admissionTx({ capacity: 3, occupied: 0 });
+    tx.$queryRaw.mockRejectedValue(new Error("connection reset"));
+    await expect(lockEventLocation(tx as never, "event-1", "loc-1")).rejects.toThrow("connection reset");
+  });
+});
+
 describe("a club's place in line at its location", () => {
   it("counts the waiting clubs at that location at or ahead of it, whatever the event-wide positions are", async () => {
     const tx = {
@@ -96,7 +113,7 @@ describe("a club's place in line at its location", () => {
       },
     };
     await expect(locationWaitlistPlace(tx as never, "registration-1", "loc-1")).resolves.toBe(3);
-    expect(tx.registrationWaitlistEntry.count).toHaveBeenCalledWith({ where: { status: "WAITING", position: { lte: 11 }, registration: { locationId: "loc-1" } } });
+    expect(tx.registrationWaitlistEntry.count).toHaveBeenCalledWith({ where: { status: "WAITING", position: { lte: 11 }, registration: { locationId: "loc-1", status: "WAITLISTED" } } });
   });
 
   it("has none without a location, without touching the database, or when the club is not waiting", async () => {

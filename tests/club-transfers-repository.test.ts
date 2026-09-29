@@ -393,6 +393,9 @@ describe("registration moves (staff approve each one)", () => {
     });
 
     it("lets the move through when no pick is at another site", async () => {
+      // The old registration is at a location, so the seat it frees is offered to that waitlist (#599); this event has none.
+      (db as unknown as { event: { findUnique: ReturnType<typeof vi.fn> } }).event.findUnique
+        .mockResolvedValue({ id: "event-1", name: "Camporee", capacity: null, waitlistEnabled: false, autoPromoteWaitlist: false });
       receivingAtDesMoines();
       countPicks({ perClub: 1, otherSite: 0 });
       await expect(approveRegistrationMove("move-1", "", staff, now)).resolves.toBeDefined();

@@ -29,7 +29,17 @@ function draftFrom(location: EventLocationRecord): Draft {
   };
 }
 
-function bodyFrom(draft: Draft) {
+function coordinatorAtEditStart(location: EventLocationRecord | undefined) {
+  return location ? draftFrom(location).coordinatorAccountId : undefined;
+}
+
+/**
+ * The save body. On an edit the coordinator is sent only when the picker
+ * changed, so an unrelated edit never clears a coordinator who is no longer
+ * active (`unchangedCoordinator` is what the picker started with).
+ */
+function bodyFrom(draft: Draft, unchangedCoordinator?: string) {
+  const coordinatorChanged = unchangedCoordinator === undefined || draft.coordinatorAccountId !== unchangedCoordinator;
   return {
     name: draft.name,
     address: draft.address.trim() || null,
@@ -37,7 +47,7 @@ function bodyFrom(draft: Draft) {
     lastDay: draft.lastDay || null,
     registrationClosesOn: draft.registrationClosesOn || null,
     capacity: draft.capacity.trim() ? Number(draft.capacity) : null,
-    coordinatorAccountId: draft.coordinatorAccountId || null,
+    ...(coordinatorChanged ? { coordinatorAccountId: draft.coordinatorAccountId || null } : {}),
   };
 }
 
@@ -94,7 +104,7 @@ export function EventLocationsPanel({
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const saved = editingId
-      ? await call(`${base}/${encodeURIComponent(editingId)}`, "PATCH", bodyFrom(draft), "Location saved.")
+      ? await call(`${base}/${encodeURIComponent(editingId)}`, "PATCH", bodyFrom(draft, coordinatorAtEditStart(locations.find((row) => row.id === editingId))), "Location saved.")
       : await call(base, "POST", bodyFrom(draft), "Location added.");
     if (saved) {
       setAdding(false);
