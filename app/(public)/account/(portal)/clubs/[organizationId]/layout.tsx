@@ -6,6 +6,7 @@ import { ClubAccessGate } from "@/components/club-access-gate";
 import { ClubGateSlot } from "@/components/club-gate-slot";
 import { attendeeSignInRedirectPath } from "@/modules/attendee-accounts/return-redirect";
 import { requireAttendeeSecondStep } from "@/modules/attendee-accounts/portal-second-step";
+import { isClubFormsRole } from "@/modules/club-forms/domain";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import { clubCapabilities, clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
@@ -67,6 +68,8 @@ export default async function ClubLayout({
                 { href: `${base}/notes`, label: "Meeting notes", matchChildren: true },
                 { href: `${base}/reports`, label: "Monthly reports", matchChildren: true },
               ] : []),
+              // Club forms (#610) hold health and conduct answers: the club's director and deputy only.
+              ...(isClubFormsRole(access.club.role) ? [{ href: `${base}/forms`, label: "Forms", matchChildren: true }] : []),
               ...(access.capabilities.manageTeam ? [{ href: `${base}/team`, label: "Club admins" }] : []),
               ...(access.capabilities.editProfile ? [{ href: `${base}/profile`, label: "Club profile" }] : []),
             ]}

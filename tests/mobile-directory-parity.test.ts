@@ -46,6 +46,8 @@ type Scenario = {
   isSystemAdmin: boolean;
   clubOversight: boolean;
   clubEvent: boolean;
+  /** System administrator, or Event Admin of a current event (#610). */
+  clubFormsAccess: boolean;
 };
 
 const roleScenarios: Scenario[] = eventRoles.map((role) => ({
@@ -54,6 +56,7 @@ const roleScenarios: Scenario[] = eventRoles.map((role) => ({
   isSystemAdmin: false,
   clubOversight: false,
   clubEvent: false,
+  clubFormsAccess: role === "EVENT_ADMIN",
 }));
 
 // `clubOversight` is only ever true on a CLUB-audience event (#481) for a
@@ -67,6 +70,7 @@ const specialScenarios: Scenario[] = [
     isSystemAdmin: true,
     clubOversight: false,
     clubEvent: false,
+    clubFormsAccess: true,
   },
   {
     name: "SYSTEM_ADMIN with club oversight on a CLUB-audience event",
@@ -74,6 +78,7 @@ const specialScenarios: Scenario[] = [
     isSystemAdmin: true,
     clubOversight: true,
     clubEvent: true,
+    clubFormsAccess: true,
   },
   {
     name: "EVENT_ADMIN with club oversight on a CLUB-audience event",
@@ -81,6 +86,7 @@ const specialScenarios: Scenario[] = [
     isSystemAdmin: false,
     clubOversight: true,
     clubEvent: true,
+    clubFormsAccess: true,
   },
   {
     name: "REGISTRATION_MANAGER on a CLUB-audience event (no oversight)",
@@ -88,6 +94,7 @@ const specialScenarios: Scenario[] = [
     isSystemAdmin: false,
     clubOversight: false,
     clubEvent: true,
+    clubFormsAccess: false,
   },
   {
     name: "custom: CHECK_IN_STAFF plus CONFIGURE_EVENT",
@@ -95,6 +102,7 @@ const specialScenarios: Scenario[] = [
     isSystemAdmin: false,
     clubOversight: false,
     clubEvent: false,
+    clubFormsAccess: false,
   },
   {
     name: "custom: READ_ONLY_STAFF plus VIEW_REPORTS",
@@ -102,6 +110,7 @@ const specialScenarios: Scenario[] = [
     isSystemAdmin: false,
     clubOversight: false,
     clubEvent: false,
+    clubFormsAccess: false,
   },
   {
     name: "custom: CHECK_IN_STAFF plus MANAGE_REGISTRATION on a CLUB-audience event",
@@ -109,6 +118,7 @@ const specialScenarios: Scenario[] = [
     isSystemAdmin: false,
     clubOversight: false,
     clubEvent: true,
+    clubFormsAccess: false,
   },
   {
     // MANAGE_REGISTRATION without VIEW_SENSITIVE_DATA: seminar assignments need both.
@@ -117,6 +127,7 @@ const specialScenarios: Scenario[] = [
     isSystemAdmin: false,
     clubOversight: false,
     clubEvent: false,
+    clubFormsAccess: false,
   },
 ];
 
@@ -149,6 +160,8 @@ const moreOnlyPages: Record<string, (scenario: Scenario) => boolean> = {
   "/more/reports": (scenario) => has(scenario, "VIEW_REPORTS"),
   // app/(workspace)/more/health/page.tsx
   "/more/health": (scenario) => canAccessOperationalHealth(scenario.permissions),
+  // app/(workspace)/more/club-forms/page.tsx (#610): system administrators and Event Admins of a current event (`resolveStaffViewer`).
+  "/more/club-forms": (scenario) => scenario.clubFormsAccess,
   // app/(workspace)/more/clubs/page.tsx (`resolveClubOversight().allowed`).
   // The sidebar links a system admin to the directory instead, so for them
   // this event view is reached only from "More".
@@ -164,6 +177,7 @@ function allowedMoreCardHrefs(scenario: Scenario): string[] {
     clubOversight: scenario.clubOversight,
     clubEvent: scenario.clubEvent,
     isSystemAdmin: scenario.isSystemAdmin,
+    clubFormsAccess: scenario.clubFormsAccess,
     eventQuery: "",
   })
     .filter((card) => card.allowed)
@@ -279,6 +293,7 @@ describe("phone navigation reaches every page the desktop sidebar reaches (#475)
       isSystemAdmin: true,
       clubOversight: false,
       clubEvent: false,
+      clubFormsAccess: true,
     };
     const phone = phoneDestinations(scenario);
     expect(phone.has("/admin/organizations")).toBe(false);
@@ -294,6 +309,7 @@ describe("phone navigation reaches every page the desktop sidebar reaches (#475)
       isSystemAdmin: true,
       clubOversight: true,
       clubEvent: true,
+      clubFormsAccess: true,
     });
     expect(hrefs).toContain("/more/clubs");
     expect(hrefs).toContain("/admin/organizations");
