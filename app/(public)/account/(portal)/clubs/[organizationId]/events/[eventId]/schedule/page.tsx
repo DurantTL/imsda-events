@@ -32,7 +32,7 @@ export default async function ClubSchedulePage({
       </section>
     );
   }
-  const schedule = buildClubSchedule(organizationId, data.sessions, data.offerings, data.enrollments, data.attendees);
+  const schedule = buildClubSchedule(organizationId, data.sessions, data.offerings, data.enrollments, data.attendees, data.locations);
 
   return (
     <section className="public-manage-card club-schedule">
@@ -48,6 +48,7 @@ export default async function ClubSchedulePage({
       <div className="public-manage-card-heading">
         <p className="public-registration-eyebrow">Class schedule</p>
         <h2>{data.event.name}</h2>
+        {schedule.siteName && <p><strong>Site:</strong> <span translate="no">{schedule.siteName}</span></p>}
       </div>
       <p className="field-help">Ages are on the first day of the event. Anyone without a class in a session shows a dash.</p>
       {schedule.people.length === 0 ? (

@@ -12,6 +12,7 @@ import {
   type RosterOffering,
   type RosterSession,
 } from "@/modules/honors/roster-domain";
+import { groupSessionsBySite } from "@/modules/honors/session-order";
 
 const sessions: RosterSession[] = [
   { id: "s2", name: "Sunday morning", sortOrder: 2 },
@@ -120,5 +121,69 @@ describe("CSV safety", () => {
     expect(csv).toContain(`"'+SUM(1)"`);
     expect(csv).toContain(`"'@club"`);
     expect(csv).not.toMatch(/birth/i);
+  });
+});
+
+describe("rosters at sites (#589)", () => {
+  const locations = [{ id: "dm", name: "Des Moines", sortOrder: 0 }, { id: "hr", name: "Camp Heritage 1", sortOrder: 1 }];
+  const siteSessions: RosterSession[] = [
+    { id: "hr-sab", name: "Sabbath Morning", sortOrder: 0, locationId: "hr" },
+    { id: "dm-sab", name: "Sabbath Morning", sortOrder: 0, locationId: "dm" },
+    { id: "shared", name: "Sunday", sortOrder: 5, locationId: null },
+  ];
+  const siteOfferings = [
+    offering({ id: "hr-knots", honorName: "Knots", sessionId: "hr-sab", siteName: "Camp Heritage 1" }),
+    offering({ id: "dm-birds", honorName: "Birds", sessionId: "dm-sab", siteName: "Des Moines" }),
+    offering({ id: "shared-fire", honorName: "Fire", sessionId: "shared", siteName: null }),
+  ];
+  const siteAttendees = [
+    person({ id: "dm1", firstName: "Dee", lastName: "Em", clubId: "cd", clubName: "Iowa Club", locationId: "dm", locationName: "Des Moines" }),
+    person({ id: "hr1", firstName: "Hal", lastName: "Are", clubId: "ch", clubName: "Heritage Club", locationId: "hr", locationName: "Camp Heritage 1" }),
+  ];
+  const siteEnrollments: RosterEnrollment[] = [
+    { offeringId: "dm-birds", attendeeId: "dm1", consumesSeat: true },
+    { offeringId: "hr-knots", attendeeId: "hr1", consumesSeat: true },
+  ];
+
+  it("orders class rosters by site, then session, and names the site on each", () => {
+    const rosters = buildClassRosters(siteSessions, siteOfferings, siteEnrollments, siteAttendees, locations);
+    expect(rosters.map((roster) => [roster.siteName, roster.offering.id])).toEqual([
+      ["Des Moines", "dm-birds"], ["Camp Heritage 1", "hr-knots"], [null, "shared-fire"],
+    ]);
+  });
+
+  it("names the site in every CSV when the event has sites, and only then", () => {
+    const rosters = buildClassRosters(siteSessions, siteOfferings, siteEnrollments, siteAttendees, locations);
+    const withSite = classRostersCsv(rosters, true).split("\r\n");
+    expect(withSite[0]).toContain('"Site","Session"');
+    expect(withSite[1]).toMatch(/^"Des Moines","Sabbath Morning"/);
+    expect(withSite.filter(Boolean).at(-1)).toContain('"All sites"');
+    expect(classRostersCsv(rosters)).not.toContain('"Site"');
+
+    expect(siteRosterCsv(buildSiteRoster(siteAttendees), false, true)).toContain('"Des Moines","Iowa Club"');
+    expect(siteRosterCsv(buildSiteRoster(siteAttendees), false)).not.toContain("Des Moines");
+  });
+
+  it("shows a club only its own site's sessions and names the site on its schedule", () => {
+    const schedule = buildClubSchedule("cd", siteSessions, siteOfferings, siteEnrollments, siteAttendees, locations);
+    expect(schedule.siteName).toBe("Des Moines");
+    expect(schedule.sessions.map((session) => session.id)).toEqual(["dm-sab", "shared"]);
+    expect(clubScheduleCsv(schedule, true).split("\r\n")[1]).toMatch(/^"Des Moines","Em","Dee"/);
+    expect(clubScheduleCsv(schedule)).not.toContain("Des Moines");
+  });
+
+  it("orders sessions per site, so each site's order applies within it", () => {
+    const groups = groupSessionsBySite(
+      [{ id: "b", sortOrder: 0, locationId: "hr" }, { id: "a", sortOrder: 3, locationId: "dm" }, { id: "c", sortOrder: 1, locationId: "dm" }, { id: "x", sortOrder: 0, locationId: null }],
+      locations,
+    );
+    expect(groups.map((group) => [group.location?.id ?? null, group.sessions.map((session) => session.id)])).toEqual([
+      ["dm", ["c", "a"]], ["hr", ["b"]], [null, ["x"]],
+    ]);
+  });
+
+  it("is a single group with no site for an event without locations", () => {
+    const groups = groupSessionsBySite([{ id: "b", sortOrder: 1 }, { id: "a", sortOrder: 0 }], []);
+    expect(groups).toEqual([{ location: null, sessions: [{ id: "a", sortOrder: 0 }, { id: "b", sortOrder: 1 }] }]);
   });
 });

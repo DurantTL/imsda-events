@@ -26,6 +26,7 @@ import {
   type ConfirmEventCloneInput,
   type SourceConfiguration,
 } from "@/modules/event-clones/domain";
+import { normalizeHonorText, offeringSlotConflict } from "@/modules/honors/domain";
 import { calendarDayDifference, normalizeLocationName, shiftLocationsForClone } from "@/modules/event-locations/domain";
 import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { getEventSettings } from "@/modules/events/repository";
@@ -92,10 +93,13 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
     }),
     await db.eventTag.findMany({ where: { eventId }, orderBy: { normalizedName: "asc" } }),
     await db.promoCode.findMany({ where: { eventId }, orderBy: { normalizedCode: "asc" } }),
-    await db.honorSession.findMany({ where: { eventId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { normalizedName: "asc" }] }),
+    await db.honorSession.findMany({
+      where: { eventId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { normalizedName: "asc" }],
+      include: { location: { select: { name: true, normalizedName: true } } },
+    }),
     await db.honorOffering.findMany({
       where: { eventId }, orderBy: [{ sessionId: "asc" }, { honorId: "asc" }],
-      include: { honor: { select: { name: true } }, session: { select: { name: true } } },
+      include: { honor: { select: { name: true } }, session: { select: { name: true } }, site: { select: { name: true, normalizedName: true } } },
     }),
     await db.merchandiseProduct.count({ where: { eventId } }),
     await db.eventPaymentInstructionVersion.count({ where: { eventId } }),
@@ -167,12 +171,17 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
       name: location.name, address: location.address, capacity: location.capacity, sortOrder: location.sortOrder,
       firstDay: location.firstDay, lastDay: location.lastDay, registrationClosesOn: location.registrationClosesOn,
     })),
-    honorSessions: honorSessions.map((session) => ({ id: session.id, name: session.name, normalizedName: session.normalizedName, sortOrder: session.sortOrder })),
+    honorSessions: honorSessions.map((session) => ({
+      id: session.id, name: session.name, normalizedName: session.normalizedName, sortOrder: session.sortOrder,
+      locationName: session.location?.name ?? null, locationNormalizedName: session.location?.normalizedName ?? null,
+    })),
     honorOfferings: honorOfferings.map((offering) => ({
       id: offering.id, honorId: offering.honorId, honorName: offering.honor.name, sessionId: offering.sessionId,
       sessionName: offering.session?.name ?? null, span: offering.span, capacity: offering.capacity,
       minimumAge: offering.minimumAge, perClubLimit: offering.perClubLimit, teacherName: offering.teacherName,
       location: offering.location, isActive: offering.isActive,
+      // An all-sessions class's own site (#589), matched by name in the new event.
+      locationName: offering.site?.name ?? null, locationNormalizedName: offering.site?.normalizedName ?? null,
     })),
     unsupported: { merchandiseProducts, paymentInstructionVersions, messageDeliverySettings, uploadedFiles },
   };
@@ -226,7 +235,7 @@ async function resolveExistingClone(actorUserId: string, input: ConfirmEventClon
 /** What the result screen shows after a clone (#157), kept in the clone record's snapshot. */
 export type CloneResultSummary = {
   copiedCounts: Record<string, number>;
-  skipped: { forms: number; messageTemplates: number; assetLinks: number; privateLinks: number };
+  skipped: { forms: number; messageTemplates: number; assetLinks: number; privateLinks: number; honorSessionsWithoutSite?: number; honorOfferingsDuplicate?: number };
   pricing: ClonePricingSummary;
   pricingMessage: string | null;
 };
@@ -323,7 +332,7 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
 
       const copied: Record<string, number> = Object.fromEntries(cloneDomainKeys.map((key) => [key, 0]));
       const sourceVersions: { forms: Array<{ sourceFormId: string; versionId: string; versionNumber: number; newFormId: string }>; messageTemplates: Array<{ key: string; versionId: string; versionNumber: number }> } = { forms: [], messageTemplates: [] };
-      const skipped = { forms: 0, messageTemplates: 0, assetLinks: 0, privateLinks: strippedPrivateLinks };
+      const skipped: CloneResultSummary["skipped"] = { forms: 0, messageTemplates: 0, assetLinks: 0, privateLinks: strippedPrivateLinks };
 
       if (include.eventDetails) copied.eventDetails = 1;
       if (include.moduleToggles) {
@@ -431,34 +440,7 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
         copied.promoCodes = config.promoCodes.length;
       }
 
-      if (include.honors) {
-        const sessionIds = new Map<string, string>();
-        // Renumbered 0..n in the source's display order: the rows are created
-        // in one transaction, so they share a createdAt and a copied tie
-        // would fall back to alphabetical (#570).
-        for (const [position, session] of config.honorSessions.entries()) {
-          const created = await tx.honorSession.create({
-            data: { eventId: event.id, name: session.name, normalizedName: session.normalizedName, sortOrder: position },
-          });
-          sessionIds.set(session.id, created.id);
-        }
-        const reviewedOfferings = new Map(input.honorOfferingCapacities.map((entry) => [entry.offeringId, entry]));
-        for (const offering of config.honorOfferings) {
-          await tx.honorOffering.create({
-            data: {
-              eventId: event.id, honorId: offering.honorId,
-              sessionId: offering.sessionId ? sessionIds.get(offering.sessionId) ?? null : null,
-              span: offering.span, capacity: reviewedOfferings.get(offering.id)!.capacity,
-              perClubLimit: reviewedOfferings.get(offering.id)!.perClubLimit,
-              // Carried over as it is; shown in the preview.
-              minimumAge: offering.minimumAge,
-              teacherName: offering.teacherName, location: offering.location, isActive: offering.isActive,
-            },
-          });
-        }
-        copied.honors = config.honorOfferings.length;
-      }
-
+      // Before the honors block: its sessions follow their site by name (#589).
       if (include.locations && config.locations.length > 0) {
         // Dates move by the same number of days as the event's start date (#413).
         const days = calendarDayDifference(config.event.startsOn, input.startsOn);
@@ -467,6 +449,79 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
           data: shifted.map((location) => ({ eventId: event.id, ...location, normalizedName: normalizeLocationName(location.name) })),
         });
         copied.locations = shifted.length;
+      }
+
+      if (include.honors) {
+        const sessionIds = new Map<string, string>();
+        // Sessions and all-sessions classes follow their site by name (#589):
+        // "Sabbath Morning" at Des Moines goes to the new event's Des Moines.
+        // The locations are created just above, so they exist by now (a clone
+        // without locations has none). A site with no same-named match leaves
+        // the session with no site and named "<Session> (<site>)", so sessions
+        // from different sites are never merged; it is counted in the result.
+        const newLocations = new Map(
+          (await tx.eventLocation.findMany({ where: { eventId: event.id }, select: { id: true, normalizedName: true } }))
+            .map((location) => [location.normalizedName, location.id]),
+        );
+        const usedNames = new Set<string>();
+        const sessionSites = new Map<string, string | null>();
+        let sessionsWithoutSite = 0;
+        // Renumbered 0..n in the source's display order: the rows are created
+        // in one transaction, so they share a createdAt and a copied tie
+        // would fall back to alphabetical (#570).
+        for (const [position, session] of config.honorSessions.entries()) {
+          const locationId = session.locationNormalizedName ? newLocations.get(session.locationNormalizedName) ?? null : null;
+          const lost = Boolean(session.locationNormalizedName) && !locationId;
+          if (lost) sessionsWithoutSite += 1;
+          let name = lost ? `${session.name} (${session.locationName})`.slice(0, 80) : session.name;
+          // A renamed session can still meet a same-named one with no site: number it rather than fail the clone.
+          for (let attempt = 2; usedNames.has(`${locationId ?? ""}|${normalizeHonorText(name)}`); attempt += 1) {
+            name = `${(lost ? `${session.name} (${session.locationName})` : session.name).slice(0, 74)} ${attempt}`;
+          }
+          const normalizedName = normalizeHonorText(name);
+          usedNames.add(`${locationId ?? ""}|${normalizedName}`);
+          const created = await tx.honorSession.create({
+            data: { eventId: event.id, locationId, name, normalizedName, sortOrder: position },
+          });
+          sessionIds.set(session.id, created.id);
+          sessionSites.set(session.id, locationId);
+        }
+        const reviewedOfferings = new Map(input.honorOfferingCapacities.map((entry) => [entry.offeringId, entry]));
+        // The same slot rules as setup and copy, per site; a true duplicate is skipped and counted, never thrown.
+        const slots: Array<{ honorId: string; span: "SINGLE_SESSION" | "ALL_SESSIONS"; sessionId: string | null; locationId: string | null }> = [];
+        let offeringsCopied = 0;
+        let offeringsSkipped = 0;
+        for (const offering of config.honorOfferings) {
+          const sessionId = offering.sessionId ? sessionIds.get(offering.sessionId) ?? null : null;
+          let locationId: string | null = null;
+          if (offering.span === "ALL_SESSIONS") {
+            locationId = offering.locationNormalizedName ? newLocations.get(offering.locationNormalizedName) ?? null : null;
+            if (offering.locationNormalizedName && !locationId) sessionsWithoutSite += 1;
+          }
+          const slot = {
+            honorId: offering.honorId,
+            span: offering.span,
+            sessionId,
+            locationId: offering.span === "ALL_SESSIONS" ? locationId : offering.sessionId ? sessionSites.get(offering.sessionId) ?? null : null,
+          };
+          if (offeringSlotConflict(slot, slots)) { offeringsSkipped += 1; continue; }
+          slots.push(slot);
+          await tx.honorOffering.create({
+            data: {
+              eventId: event.id, honorId: offering.honorId,
+              sessionId, locationId,
+              span: offering.span, capacity: reviewedOfferings.get(offering.id)!.capacity,
+              perClubLimit: reviewedOfferings.get(offering.id)!.perClubLimit,
+              // Carried over as it is; shown in the preview.
+              minimumAge: offering.minimumAge,
+              teacherName: offering.teacherName, location: offering.location, isActive: offering.isActive,
+            },
+          });
+          offeringsCopied += 1;
+        }
+        if (sessionsWithoutSite > 0) skipped.honorSessionsWithoutSite = sessionsWithoutSite;
+        if (offeringsSkipped > 0) skipped.honorOfferingsDuplicate = offeringsSkipped;
+        copied.honors = offeringsCopied;
       }
 
       const excluded = excludedDomains(include);

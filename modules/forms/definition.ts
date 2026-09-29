@@ -904,7 +904,7 @@ export const formTemplates: FormTemplate[] = [
   {
     key: "honors_weekend",
     name: "Honors Weekend",
-    description: "Club contact and a complete roster for church-billed honor class registration. One event covers every site: add each site as a location in event settings; set fees per event.",
+    description: "Club contact and a complete roster for church-billed honor class registration. Add each site under Event settings → Locations; clubs pick a site when they register, and each site has its own sessions and classes.",
     audience: "Club / group",
     definition: {
       title: "Honors Weekend registration",

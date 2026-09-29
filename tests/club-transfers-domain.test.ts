@@ -142,3 +142,21 @@ describe("a full receiving location blocks a registration move (#413)", () => {
     })).toBe("LOCATION_FULL");
   });
 });
+
+describe("class picks at another site block a registration move (#589)", () => {
+  const destination = { status: "SUBMITTED", waitlisted: false, personAlreadyThere: false };
+  const open = { attendeeOnSource: true, sourceStatus: "SUBMITTED", destination };
+
+  it("reports CLASS_PICKS_OTHER_SITE with a message staff can act on", () => {
+    expect(registrationMoveBlocker({ ...open, classPicksAtOtherSite: true })).toBe("CLASS_PICKS_OTHER_SITE");
+    expect(registrationMoveBlockerLabels.CLASS_PICKS_OTHER_SITE).toContain("different site");
+    expect(registrationMoveBlocker({ ...open, classPicksAtOtherSite: false })).toBeNull();
+  });
+
+  it("ranks it after the location capacity check and before the money guards", () => {
+    expect(registrationMoveBlocker({ ...open, locationFull: true, classPicksAtOtherSite: true })).toBe("LOCATION_FULL");
+    expect(registrationMoveBlocker({
+      ...open, classPicksAtOtherSite: true, money: { fromTotalCents: 0, fromPaidCents: 0, toTotalCents: 100, toPaidCents: 0, shiftCents: 50 },
+    })).toBe("CLASS_PICKS_OTHER_SITE");
+  });
+});

@@ -294,13 +294,18 @@ describe("registration moves (staff approve each one)", () => {
     registration: { id: "reg-b", confirmationCode: "B-1", status: "SUBMITTED", totalAmount: 150, waitlistEntry: null, payments: [], ...overrides },
   });
 
+  /** Two different counts share `honorEnrollment.count`: seats taken in a class (per-club limit) and picks at another site (#589). */
+  const countPicks = ({ perClub, otherSite = 0 }: { perClub: number; otherSite?: number }) => db.honorEnrollment.count.mockImplementation(
+    async (args: { where: Record<string, unknown> }) => ("OR" in args.where ? otherSite : perClub),
+  );
+
   beforeEach(() => {
     db.memberTransferRegistrationMove.updateMany.mockResolvedValue({ count: 1 });
     db.memberTransferRegistrationMove.findUniqueOrThrow.mockResolvedValue(storedMove);
     db.clubEventRegistration.findUnique.mockResolvedValue(destination());
     db.registrationAttendee.findUnique.mockResolvedValue(null);
     db.registrationAttendee.findFirst.mockResolvedValue({ position: 3 });
-    db.honorEnrollment.count.mockResolvedValue(1);
+    countPicks({ perClub: 1 });
     for (const name of ["registrationAdjustment", "honorEnrollment", "registrationCapacityReservation"]) {
       db[name]!.updateMany!.mockResolvedValue({ count: 1 });
     }
@@ -339,7 +344,8 @@ describe("registration moves (staff approve each one)", () => {
       ["MEMBER_LEFT_RECEIVING_CLUB", () => db.memberTransferRegistrationMove.findUniqueOrThrow.mockResolvedValue({
         ...storedMove, transfer: { ...storedMove.transfer, toRosterMember: { status: "REMOVED", personId: null } },
       })],
-      ["CLUB_CLASS_LIMIT", () => db.honorEnrollment.count.mockResolvedValue(2)],
+      ["CLUB_CLASS_LIMIT", () => countPicks({ perClub: 2 })],
+      ["CLASS_PICKS_OTHER_SITE", () => countPicks({ perClub: 1, otherSite: 2 })],
       ["TOTAL_CLAMPED", () => db.clubEventRegistration.findUnique.mockResolvedValue(destination({ totalAmount: 0 }))],
       // Moving a +$200 correction off a $75 registration would leave it at -$125.
       ["TOTAL_BELOW_ZERO", () => db.memberTransferRegistrationMove.findUniqueOrThrow.mockResolvedValue({
@@ -351,12 +357,46 @@ describe("registration moves (staff approve each one)", () => {
     for (const [blocker, arrange] of cases) {
       db.memberTransferRegistrationMove.findUniqueOrThrow.mockResolvedValue(storedMove);
       db.clubEventRegistration.findUnique.mockResolvedValue(destination());
-      db.honorEnrollment.count.mockResolvedValue(1);
+      countPicks({ perClub: 1 });
       arrange();
       await expect(approveRegistrationMove("move-1", "", staff, now)).rejects.toMatchObject({ code: "MOVE_BLOCKED", blocker });
     }
     expect(db.registrationAttendee.update).not.toHaveBeenCalled();
     expect(db.registration.update).not.toHaveBeenCalled();
+  });
+
+  describe("class picks at another site (#589)", () => {
+    /** The new club is at Des Moines with room; the old club was at Kansas City. */
+    const receivingAtDesMoines = () => {
+      db.memberTransferRegistrationMove.findUniqueOrThrow.mockResolvedValue({
+        ...storedMove, fromRegistration: { ...storedMove.fromRegistration, locationId: "loc-2", location: { name: "Kansas City" } },
+      });
+      db.clubEventRegistration.findUnique.mockResolvedValue(destination({ locationId: "loc-1", location: { name: "Des Moines" }, _count: { attendees: 2 } }));
+      (db as unknown as Record<string, ReturnType<typeof vi.fn>>).$queryRaw!.mockResolvedValue([
+        { id: "loc-1", eventId: "event-1", name: "Des Moines", address: null, firstDay: null, lastDay: null, capacity: null, registrationClosesOn: null, isActive: true },
+      ]);
+      db.registrationAttendee.count.mockResolvedValue(0);
+    };
+
+    it("refuses a move that would carry class picks to a registration at a different site, checked against the receiver's site", async () => {
+      receivingAtDesMoines();
+      countPicks({ perClub: 1, otherSite: 1 });
+      await expect(approveRegistrationMove("move-1", "", staff, now)).rejects.toMatchObject({ code: "MOVE_BLOCKED", blocker: "CLASS_PICKS_OTHER_SITE" });
+      const query = db.honorEnrollment.count.mock.calls.map(([args]) => (args as { where: Record<string, unknown> }).where).find((where) => "OR" in where)!;
+      expect(query).toEqual({
+        registrationAttendeeId: "att-1",
+        registrationId: "reg-a",
+        OR: [{ offering: { session: { locationId: { not: "loc-1" } } } }, { offering: { locationId: { not: "loc-1" } } }],
+      });
+      expect(db.registrationAttendee.update).not.toHaveBeenCalled();
+      expect(db.honorEnrollment.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("lets the move through when no pick is at another site", async () => {
+      receivingAtDesMoines();
+      countPicks({ perClub: 1, otherSite: 0 });
+      await expect(approveRegistrationMove("move-1", "", staff, now)).resolves.toBeDefined();
+    });
   });
 
   describe("at an event location (#413)", () => {
