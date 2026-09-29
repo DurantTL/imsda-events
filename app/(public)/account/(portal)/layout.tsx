@@ -8,6 +8,7 @@ import { BrandMark } from "@/components/brand-mark";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { otherWorkspaceContextsForAttendee } from "@/modules/access/workspace-contexts";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { attendeeSignInRedirectPath, twoStepRedirectPath } from "@/modules/attendee-accounts/return-redirect";
 import { accountNeedsSecondStep } from "@/modules/attendee-accounts/sign-in-gate";
 import { isAreaCoordinator } from "@/modules/organizations/area-coordinators";
 import { listDirectedClubs } from "@/modules/organizations/director-access";
@@ -32,7 +33,7 @@ export default async function AccountPortalLayout({ children }: { children: Reac
     getCurrentSession(),
     currentStaffActingContext(),
   ]);
-  if (!account && !acting) redirect("/account/sign-in");
+  if (!account && !acting) redirect(await attendeeSignInRedirectPath());
   // Club roles pass a second step before any account page (staff viewing an account use their own).
   const secondStepPending = Boolean(account && via === "attendee" && (await accountNeedsSecondStep(account.id, sessionId)) !== "OK");
   // While a staff "act as" is active (#442), act-as pages resolve purely from
@@ -40,7 +41,7 @@ export default async function AccountPortalLayout({ children }: { children: Reac
   // hasn't passed its second step doesn't send them to /account/two-step.
   // Its account chrome is left out instead, and each page that shows the
   // attendee account checks the second step itself.
-  if (secondStepPending && !acting) redirect("/account/two-step");
+  if (secondStepPending && !acting) redirect(await twoStepRedirectPath());
   const chromeAccount = secondStepPending ? null : account;
   // The one other workspace this attendee identity may switch into (#108):
   // the staff workspace, only when this browser also carries a live staff

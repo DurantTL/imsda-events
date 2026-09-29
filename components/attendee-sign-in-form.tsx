@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Eye, EyeOff, LogIn, UserPlus } from "lucide-react";
+import { attendeeReturnDestination } from "@/modules/attendee-accounts/return-destination";
 import {
   attendeeAuthReturnPathFromHash,
   attendeeSignUpEmailPrefill,
@@ -12,7 +13,7 @@ import {
 } from "@/modules/attendee-accounts/sign-up-prefill";
 
 /** Password sign-in for a registrant. Staff sign in at `/login` instead. */
-export function AttendeeSignInForm() {
+export function AttendeeSignInForm({ next }: { next?: string }) {
   const router = useRouter();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -41,7 +42,7 @@ export function AttendeeSignInForm() {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message ?? "Unable to sign in.");
-      router.replace(takeAttendeeAuthReturnPath() ?? "/account");
+      router.replace(takeAttendeeAuthReturnPath() ?? attendeeReturnDestination(next, "/account"));
       router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to sign in.");

@@ -68,8 +68,8 @@ function signedIn(input: { staff?: typeof staff | typeof admin | null; attendee?
     : { account: null, via: null, sessionId: null });
 }
 
-async function render() {
-  return renderToStaticMarkup(await ProfilePage());
+async function render(query: { twoStep?: string } = {}) {
+  return renderToStaticMarkup(await ProfilePage({ searchParams: Promise.resolve(query) }));
 }
 
 beforeEach(() => {
@@ -106,6 +106,12 @@ describe("/profile", () => {
     const markup = await render();
     expect(markup).toContain("System management");
     expect(markup).toContain('href="/admin"');
+  });
+
+  it("confirms two-step verification is on after first-time setup, and only then (#568)", async () => {
+    signedIn({ attendee: true });
+    expect(await render({ twoStep: "on" })).toContain("Two-step verification is on.");
+    expect(await render()).not.toContain("Two-step verification is on.");
   });
 
   it("renders only the registration account for an attendee", async () => {

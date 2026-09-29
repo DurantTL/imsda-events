@@ -8,6 +8,7 @@ import { passkeysConfigured } from "@/modules/attendee-accounts/passkeys";
 import { currentStaffActingContext } from "@/modules/organizations/staff-act-as";
 import { listDirectedClubs, type DirectedClub } from "@/modules/organizations/director-access";
 import { clubCapabilities, type ClubCapabilities } from "@/modules/organizations/director-grants-domain";
+import { twoStepRedirectPath } from "@/modules/attendee-accounts/return-redirect";
 
 /**
  * Who may open a club roster (ADR 0005 Addendum A): only someone whose
@@ -229,13 +230,13 @@ export async function requireClubCapability(organizationId: string, need: keyof 
 /** For club pages: `getRosterAccessState`, sending a pending second step to /account/two-step. */
 export async function getRosterAccessStateForPage(organizationId: string, now = new Date()) {
   const access = await getRosterAccessState(organizationId, now);
-  if (access.state === "SECOND_STEP_REQUIRED") redirect("/account/two-step");
+  if (access.state === "SECOND_STEP_REQUIRED") redirect(await twoStepRedirectPath());
   return access;
 }
 
 /** For club pages: `getClubRoleAccess`, sending a pending second step to /account/two-step. */
 export async function getClubRoleAccessForPage(organizationId: string, now = new Date()) {
   const access = await getClubRoleAccess(organizationId, now);
-  if (access.state === "SECOND_STEP_REQUIRED") redirect("/account/two-step");
+  if (access.state === "SECOND_STEP_REQUIRED") redirect(await twoStepRedirectPath());
   return access;
 }

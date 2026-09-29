@@ -16,7 +16,10 @@ import type { PasskeySummary } from "@/modules/attendee-accounts/passkeys";
 export function TwoStepSetup({
   mfaStatus,
   passkeySettings,
+  next,
 }: {
+  /** A validated page to continue to; without one, setup ends on the security page. */
+  next?: string;
   mfaStatus: MfaStatus;
   passkeySettings: {
     available: boolean;
@@ -33,7 +36,9 @@ export function TwoStepSetup({
         <strong>You&apos;re all set</strong>
         <p>Your account now has a second step for signing in. You can add a backup method any time from Sign-in &amp; security.</p>
         <div className="two-step-finish-actions">
-          <Link className="primary-button" href="/account">Continue to your account</Link>
+          <Link className="primary-button" href={next ?? "/profile?twoStep=on"}>
+            {next ? "Continue" : "Continue to Sign-in & security"}
+          </Link>
           <a className="secondary-button" href="https://imsda.org/">Go home</a>
         </div>
       </section>
