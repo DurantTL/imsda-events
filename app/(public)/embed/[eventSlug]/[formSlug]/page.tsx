@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { BrandMark } from "@/components/brand-mark";
+import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { PublicRegistrationForm } from "@/components/public-registration-form";
 import { getPublicRegistrationExperience } from "@/modules/forms/public-repository";
 
@@ -48,6 +49,8 @@ export default async function EmbeddedRegistrationPage({
     );
   }
 
+  const { account } = await getCurrentAttendee();
+
   return (
     <div className="public-registration-embed">
       <PublicRegistrationForm
@@ -61,6 +64,7 @@ export default async function EmbeddedRegistrationPage({
         pricingDate={experience.pricingDate}
         lifecycle={experience.lifecycle}
         embedded
+        disableDrafts={Boolean(account)}
       />
     </div>
   );

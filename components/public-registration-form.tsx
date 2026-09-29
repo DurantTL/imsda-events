@@ -495,7 +495,6 @@ export function PublicRegistrationForm({
         } else {
           setResponses((current) => ({ ...current, ...draft.responses } as FormResponses));
         }
-        if (draft.idempotencyKey) setIdempotencyKey(draft.idempotencyKey);
         setDraftNotice("restored");
       } else if (result.status === "version-changed") {
         setDraftNotice("version-changed");
@@ -517,12 +516,11 @@ export function PublicRegistrationForm({
           attendees: rosterEnabled
             ? attendees.map((attendee) => ({ clientId: attendee.clientId, responses: attendee.responses }))
             : [],
-          idempotencyKey,
         },
       );
     }, 400);
     return () => window.clearTimeout(timer);
-  }, [draftsEnabled, draftReady, draftDirty, confirmation, draftIdentity, definition, rosterEnabled, registrationResponses, responses, attendees, idempotencyKey]);
+  }, [draftsEnabled, draftReady, draftDirty, confirmation, draftIdentity, definition, rosterEnabled, registrationResponses, responses, attendees]);
   const errorSummaryRef = useRef<HTMLDivElement>(null);
   const stepHeadingRef = useRef<HTMLHeadingElement>(null);
   const rosterCsvInputRef = useRef<HTMLInputElement>(null);
@@ -1040,6 +1038,8 @@ export function PublicRegistrationForm({
 
   function setAttendeeFieldValue(attendeeIndex: number, key: string, value: ResponseValue) {
     setDraftDirty(true);
+    // Changed answers are a different submission, so never reuse the old key.
+    setIdempotencyKey(null);
     setAttendees((current) => current.map((attendee, index) => index === attendeeIndex ? {
       ...attendee,
       responses: pruneScopedResponses(
@@ -2477,9 +2477,11 @@ export function PublicRegistrationForm({
   }
 
   function startAnotherRegistration() {
-    setResponses({});
-    setRegistrationResponses({});
-    setAttendees(initialRoster(roster.minAttendees));
+    setDraftDirty(false);
+    setResponses(initialResponses);
+    setRegistrationResponses(initialResponses);
+    setAttendees(buildInitialAttendees());
+    setCollapsedAttendeeIds(new Set());
     setWebsite("");
     setIssues([]);
     setError("");

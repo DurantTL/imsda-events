@@ -166,9 +166,9 @@ describe("public form browser drafts (#574)", () => {
 });
 
 describe("draft exclusion rule (#574 review)", () => {
-  type T = "TEXT" | "LONG_TEXT" | "SELECT" | "RADIO" | "CHECKBOX" | "ADDRESS" | "DATE" | "NUMBER" | "CALCULATED" | "MULTISELECT";
-  const excluded = (key: string, label: string, type: T, scope: "REGISTRATION" | "ATTENDEE", required = false) =>
-    isDraftExcludedField({ key, label, type, scope, required }, definition);
+  type T = "TEXT" | "EMAIL" | "LONG_TEXT" | "SELECT" | "RADIO" | "CHECKBOX" | "ADDRESS" | "DATE" | "NUMBER" | "CALCULATED" | "MULTISELECT";
+  const excluded = (key: string, label: string, type: T, scope: "REGISTRATION" | "ATTENDEE", required = false, extra: Record<string, unknown> = {}) =>
+    isDraftExcludedField({ key, label, type, scope, required, ...extra }, definition);
 
   it("blocks health, insurance and note style fields even when they are short text or choices", () => {
     expect(excluded("accommodations", "Accommodations", "TEXT", "REGISTRATION")).toBe(true);
@@ -195,11 +195,27 @@ describe("draft exclusion rule (#574 review)", () => {
     expect(excluded("first_name", "First name", "TEXT", "ATTENDEE")).toBe(false);
     expect(excluded("attendee_type", "Type", "SELECT", "ATTENDEE")).toBe(false);
     expect(excluded("shirt_size", "Shirt size", "SELECT", "ATTENDEE")).toBe(false);
-    expect(excluded("workshop", "Workshop session", "SELECT", "ATTENDEE")).toBe(false);
+    expect(excluded("workshop", "Workshop session", "SELECT", "ATTENDEE", false, { choiceLimits: { A: 10 } })).toBe(false);
+    expect(excluded("lodging", "Lodging", "RADIO", "ATTENDEE", false, { choicePricesCents: { Dorm: 5000 } })).toBe(false);
+    expect(excluded("kind", "Kind", "SELECT", "ATTENDEE", false, { optionSource: "ATTENDEE_TYPES" })).toBe(false);
+    expect(excluded("workshop", "Workshop session", "SELECT", "ATTENDEE")).toBe(true);
+    expect(excluded("t_pref", "Preference", "RADIO", "ATTENDEE")).toBe(true);
     expect(excluded("nickname", "Nickname", "TEXT", "ATTENDEE")).toBe(true);
     expect(excluded("attendee_age", "Age", "NUMBER", "ATTENDEE")).toBe(true);
     expect(excluded("gender", "Gender", "SELECT", "ATTENDEE")).toBe(true);
     expect(excluded("phone", "Phone", "TEXT", "ATTENDEE")).toBe(true);
+  });
+
+  it("blocks the reviewed labels and plain-text address parts", () => {
+    expect(excluded("diabetic", "Diabetic?", "RADIO", "REGISTRATION")).toBe(true);
+    expect(excluded("limits", "Physical limitations", "TEXT", "REGISTRATION")).toBe(true);
+    expect(excluded("ec", "Emergency contact", "TEXT", "REGISTRATION")).toBe(true);
+    expect(excluded("pp", "Parent phone", "TEXT", "REGISTRATION")).toBe(true);
+    expect(excluded("veg", "Vegetarian", "CHECKBOX", "REGISTRATION")).toBe(true);
+    expect(excluded("more", "Is there anything else we should know", "TEXT", "REGISTRATION")).toBe(true);
+    expect(excluded("street_line", "Street", "TEXT", "REGISTRATION")).toBe(true);
+    expect(excluded("zip_code", "ZIP", "TEXT", "REGISTRATION")).toBe(true);
+    expect(excluded("email", "Email address", "EMAIL", "REGISTRATION")).toBe(false);
   });
 
   it("keeps registration contact answers", () => {
@@ -260,15 +276,27 @@ describe("restore details (#574 review)", () => {
     expect(mergeDraftAttendees(initial, [])).toBe(initial);
   });
 
-  it("keeps the idempotency key so a retried submit reuses it", () => {
+  it("never persists an idempotency key, so a later page load starts a fresh submission", () => {
     const storage = new FakeStorage();
     const key = "9f8f0f3a-4c73-4d7e-89a4-f54d4fe0c388";
-    savePublicDraft(storage, identity, definition, { ...content, idempotencyKey: key }, now);
+    savePublicDraft(storage, identity, definition, { ...content, idempotencyKey: key } as typeof content, now);
+    expect(storage.getItem(publicDraftKey(identity)) ?? "").not.toContain(key);
     const result = loadPublicDraft(storage, identity, definition, now);
-    expect(result.status === "restored" && result.draft.idempotencyKey).toBe(key);
-    savePublicDraft(storage, identity, definition, { ...content, idempotencyKey: "not-a-uuid" }, now);
-    const bad = loadPublicDraft(storage, identity, definition, now);
-    expect(bad.status === "restored" && bad.draft.idempotencyKey).toBeNull();
+    expect(result.status === "restored" && "idempotencyKey" in result.draft).toBe(false);
+  });
+
+  it("drops excluded attendee keys from a tampered draft on restore", () => {
+    const storage = new FakeStorage();
+    storage.setItem(publicDraftKey(identity), JSON.stringify({
+      format: 1, versionId: "version-1", savedAt: now.getTime(),
+      responses: { contact_name: "Avery", insurance_carrier: "Synthetic Mutual" },
+      attendees: [{ clientId: "a1", responses: { first_name: "Blake", birth_date: "1990-01-01", medical_notes: "synthetic note", shirt_size: "M" } }],
+    }));
+    const result = loadPublicDraft(storage, identity, definition, now);
+    expect(result.status).toBe("restored");
+    if (result.status !== "restored") return;
+    expect(result.draft.responses).toEqual({ contact_name: "Avery" });
+    expect(result.draft.attendees).toEqual([{ clientId: "a1", responses: { first_name: "Blake", shirt_size: "M" } }]);
   });
 
   it("only announces a version change when a valid, unexpired draft was dropped", () => {

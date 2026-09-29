@@ -29,9 +29,13 @@ import { isBirthDateField, type RegistrationFormDefinition, type RegistrationFor
  *     needs, diagnosis, and payment or card details.
  *  5. Attendee rows hold other people's details, often minors', so ATTENDEE
  *     answers are saved only from an allowlist: name fields, attendee type,
- *     shirt size, and session or choice fields (SELECT, RADIO, MULTISELECT,
- *     RANKED_CHOICE) that also pass rule 4 and are not age, gender, sex,
- *     grade or minor fields.
+ *     shirt size, and real session or product choices (SELECT, RADIO,
+ *     MULTISELECT, RANKED_CHOICE) that use the attendee-type option list or
+ *     carry pricing or availability limits, pass rule 4 and are not age,
+ *     gender, sex, grade or minor fields. Plain-TEXT address parts (street,
+ *     city, zip, postal, address) are excluded too, except EMAIL fields.
+ *  6. The submit idempotency key is never written to storage; it lives only
+ *     in the page session, for the network-retry case.
  * Registration-level contact answers (name, email, phone, plain choices) are
  * saved. Anything not in the form definition (the spam trap, promo quotes)
  * is never saved. The form definition has no explicit "sensitive" flag, so
@@ -42,17 +46,18 @@ export const PUBLIC_DRAFT_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 export const PUBLIC_DRAFT_RESTORED_NOTICE = "We restored your answers from earlier.";
 export const PUBLIC_DRAFT_VERSION_CHANGED_NOTICE = "The form changed since you started. Please re-enter your answers.";
 export const PUBLIC_DRAFT_STAFF_HELP =
-  "Visitors' unfinished answers are kept only in their own browser for 14 days, and only after they edit the form. Never kept: long-text, address and calculated fields; consent or acknowledgment checkboxes; payment and birth-date fields; anything that looks medical, health, insurance, dietary, accommodation, guardian, custody, pickup, or notes; and every attendee answer except name, attendee type, shirt size, and non-health choice fields. Nothing is kept for signed-in visitors.";
+  "Visitors' unfinished answers are kept only in their own browser for 14 days, and only after they edit the form. Never kept: long-text, address and calculated fields; consent or acknowledgment checkboxes; payment and birth-date fields; anything that looks medical, health, insurance, dietary, accommodation, guardian, custody, pickup, or notes; and every attendee answer except name, attendee type, shirt size, and paid or limited session choices. Nothing is kept for signed-in visitors.";
 
 const KEY_PREFIX = "imsda-events:draft:v1";
 const FORMAT = 1;
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Stems are matched without a trailing word boundary on purpose.
 const excludedFieldPattern = new RegExp(
-  "\\b(?:medic|health|insur|condition|accommod|restrict|allerg|dietar|diet\\b|physician|doctor|prescri|meds?\\b|epi\\W?pen|inhaler|asthma|seizure|immuni[sz]|vaccin|tetanus|mental|background|guardian|custody|pick\\s?up|notes?\\b|anything\\s+we\\s+should\\s+know|diagnos|disab|accessib|special\\s*needs?|policy\\s*(?:number|holder)|birth|dob\\b|payment|pay\\s*method|card|cvv|cvc|bank|routing|ssn|social\\s*security|password)",
+  "\\b(?:medic|health|insur|condition|accommod|restrict|allerg|dietar|diet\\b|physician|doctor|prescri|meds?\\b|epi\\W?pen|inhaler|asthma|seizure|immuni[sz]|vaccin|tetanus|mental|background|guardian|custody|pick\\s?up|notes?\\b|anything\\b.*\\bknow|wheelchair|mobility|diabet|epilep|pregnan|therap|counsel|behavio|limitation|sensitiv|vegetarian|vegan|gluten|pediatric|hospital|clinic|blood|emergency|parent|bday|diagnos|disab|accessib|special\\s*needs?|policy\\s*(?:number|holder)|birth|dob\\b|payment|pay\\s*method|card|cvv|cvc|bank|routing|ssn|social\\s*security|password)",
   "i",
 );
+// Plain-TEXT address parts; an EMAIL field's "Email address" label is not one.
+const addressPartPattern = /\b(?:street|city|zip|postal|address)/i;
 const consentPattern = /\b(?:acknowledg|consent|agree|waiver|release|terms)/i;
 const demographicPattern = /\b(?:age|gender|sex|grade|minor|dob)\b/i;
 const attendeeNameKeys = new Set(["first_name", "last_name", "middle_name", "preferred_name", "full_name", "name", "attendee_name", "guest_name"]);
@@ -60,7 +65,7 @@ const choiceTypes = new Set(["SELECT", "RADIO", "MULTISELECT", "RANKED_CHOICE"])
 
 export type DraftResponses = Record<string, unknown>;
 export type DraftAttendee = { clientId: string; responses: DraftResponses };
-export type PublicDraftContent = { responses: DraftResponses; attendees: DraftAttendee[]; idempotencyKey?: string | null };
+export type PublicDraftContent = { responses: DraftResponses; attendees: DraftAttendee[] };
 export type PublicDraftIdentity = { eventSlug: string; formSlug: string; versionId: string };
 
 /** The subset of `Storage` the drafts use, so tests can supply a fake. */
@@ -68,7 +73,7 @@ export type DraftStorage = Pick<Storage, "getItem" | "setItem" | "removeItem" | 
 
 export type PublicDraftLoad =
   | { status: "none" }
-  | { status: "restored"; draft: PublicDraftContent & { idempotencyKey: string | null } }
+  | { status: "restored"; draft: PublicDraftContent }
   | { status: "version-changed" };
 
 function fieldText(field: Pick<RegistrationFormField, "key" | "label">) {
@@ -88,8 +93,20 @@ export function shouldPersistDraft(state: { enabled: boolean; ready: boolean; di
   return state.enabled && state.ready && state.dirty && !state.submitted;
 }
 
+type DraftFieldShape = Pick<RegistrationFormField, "key" | "label" | "type">
+  & Partial<Pick<RegistrationFormField, "scope" | "required" | "optionSource" | "priceCents" | "choicePricesCents" | "choiceLimits" | "availabilityMode" | "latePricing">>;
+
+function isSessionOrProductChoice(field: DraftFieldShape) {
+  return field.optionSource === "ATTENDEE_TYPES"
+    || field.priceCents !== undefined
+    || field.choicePricesCents !== undefined
+    || field.choiceLimits !== undefined
+    || (field.availabilityMode !== undefined && field.availabilityMode !== "NONE")
+    || field.latePricing !== undefined;
+}
+
 export function isDraftExcludedField(
-  field: Pick<RegistrationFormField, "key" | "label" | "type"> & Partial<Pick<RegistrationFormField, "scope" | "required">>,
+  field: DraftFieldShape,
   definition: Pick<RegistrationFormDefinition, "payment">,
 ) {
   if (field.type === "CALCULATED" || field.type === "LONG_TEXT" || field.type === "ADDRESS") return true;
@@ -97,11 +114,14 @@ export function isDraftExcludedField(
   if (isBirthDateField(field)) return true;
   const text = fieldText(field);
   if (excludedFieldPattern.test(text)) return true;
+  if (field.type !== "EMAIL" && addressPartPattern.test(text)) return true;
   if (field.type === "CHECKBOX" && (field.required || consentPattern.test(text))) return true;
   if (field.scope === "ATTENDEE") {
     if (attendeeNameKeys.has(field.key) || field.key === "attendee_type") return false;
     if (/shirt/i.test(field.key)) return false;
-    if (choiceTypes.has(field.type) && !demographicPattern.test(text)) return false;
+    // Only real session or product choices: attendee-type option lists, or
+    // choices that carry pricing or availability limits.
+    if (choiceTypes.has(field.type) && !demographicPattern.test(text) && isSessionOrProductChoice(field)) return false;
     return true;
   }
   return false;
@@ -138,8 +158,8 @@ function pickAllowed(responses: unknown, allowed: Map<string, unknown>): DraftRe
 /** Keeps only answers to saveable fields; also used on restore so a tampered draft cannot inject keys. */
 export function sanitizeDraftContent(
   definition: RegistrationFormDefinition,
-  content: { responses?: unknown; attendees?: unknown; idempotencyKey?: unknown },
-): PublicDraftContent & { idempotencyKey: string | null } {
+  content: { responses?: unknown; attendees?: unknown },
+): PublicDraftContent {
   const registrationFields = draftFields(definition, "REGISTRATION");
   const attendeeFields = draftFields(definition, "ATTENDEE");
   const attendees = Array.isArray(content.attendees)
@@ -153,9 +173,6 @@ export function sanitizeDraftContent(
   return {
     responses: pickAllowed(content.responses, registrationFields),
     attendees,
-    idempotencyKey: typeof content.idempotencyKey === "string" && UUID_PATTERN.test(content.idempotencyKey)
-      ? content.idempotencyKey
-      : null,
   };
 }
 
@@ -200,7 +217,7 @@ export function clearPublicDraft(storage: DraftStorage | null, identity: PublicD
 function parseStored(raw: string | null) {
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw) as { format?: unknown; versionId?: unknown; savedAt?: unknown; responses?: unknown; attendees?: unknown; idempotencyKey?: unknown } | null;
+    const parsed = JSON.parse(raw) as { format?: unknown; versionId?: unknown; savedAt?: unknown; responses?: unknown; attendees?: unknown } | null;
     return parsed && typeof parsed === "object" ? parsed : null;
   } catch {
     return null;
