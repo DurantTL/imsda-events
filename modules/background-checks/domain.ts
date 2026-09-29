@@ -383,12 +383,58 @@ export function parseRosterBackgroundCsv(text: string): RosterBackgroundCsvRow[]
   });
 }
 
+const siteNoiseWords = /\b(?:seventh day adventist|sda|church|company|group|pathfinders?|adventurers?|club)\b/g;
+
+function siteStem(value: string) {
+  return matchableName(value.replace(/[-\u2010-\u2015]/g, " ")).replace(siteNoiseWords, " ").replace(/\s+/g, " ").trim();
+}
+
+/** Splits on commas that are outside parentheses. */
+function splitSiteList(value: string) {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const char of value) {
+    if (char === "(") depth += 1;
+    else if (char === ")") depth = Math.max(0, depth - 1);
+    if (char === "," && depth === 0) {
+      parts.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  parts.push(current);
+  return parts;
+}
+
+/**
+ * The loose comparison keys for a `sites` cell or a club/church name (#572).
+ * A cell may hold several comma-separated sites, and each site gets a stem
+ * with and without its parenthetical (a city suffix, or part of the name).
+ * The stem ignores case, accents, punctuation, "Seventh-day Adventist",
+ * "SDA", "Church", "Company", "Group", and club words. School and academy
+ * words stay, so a school never equals a church.
+ */
+export function siteStems(value: string): Set<string> {
+  const stems = new Set<string>();
+  for (const part of splitSiteList(value)) {
+    const withParens = siteStem(part.replace(/[()]/g, " "));
+    const withoutParens = siteStem(part.replace(/\([^)]*\)/g, " "));
+    if (withParens) stems.add(withParens);
+    if (withoutParens) stems.add(withoutParens);
+  }
+  return stems;
+}
+
 /** A club's own name or its sponsoring church's name, for the `sites` location check. */
 export function matchesSite(site: string, candidateSites: Iterable<string>) {
-  const target = matchableName(site);
-  if (!target) return false;
+  const targets = siteStems(site);
+  if (targets.size === 0) return false;
   for (const candidate of candidateSites) {
-    if (matchableName(candidate) === target) return true;
+    for (const stem of siteStems(candidate)) {
+      if (targets.has(stem)) return true;
+    }
   }
   return false;
 }
