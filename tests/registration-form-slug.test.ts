@@ -79,8 +79,10 @@ beforeEach(() => {
  * `getRegistrationForm` does after a successful call.
  */
 function prismaFor(tx: Record<string, unknown>, readBack: unknown = null) {
+  const lock = { $executeRaw: vi.fn().mockResolvedValue(0), $queryRaw: vi.fn().mockResolvedValue([]) };
   return {
-    $transaction: vi.fn(async (operation: (client: typeof tx) => unknown) => operation(tx)),
+    ...lock,
+    $transaction: vi.fn(async (operation: (client: typeof tx) => unknown) => operation({ ...lock, ...tx })),
     registrationForm: { findFirst: vi.fn().mockResolvedValue(readBack) },
   };
 }
@@ -192,6 +194,21 @@ describe("form slug sync before first publish (#476)", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it("takes the form-row lock, scoped to the event, before it reads the form (#564)", async () => {
+    const findFirst = vi.fn().mockResolvedValue(neverPublishedPrecheck());
+    const tx = { registrationForm: { findFirst, findUnique: vi.fn().mockResolvedValue(null), update: vi.fn().mockResolvedValue({}) }, auditLog: { create: vi.fn().mockResolvedValue({}) } };
+    const prisma = prismaFor(tx, fullFormRow("womens-retreat-registration"));
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await updateRegistrationFormSlug("event-1", "form-1", "user-1", "womens-retreat-registration");
+
+    const [strings, lockedFormId, lockedEventId] = prisma.$queryRaw.mock.calls[0] as [TemplateStringsArray, string, string];
+    expect(strings.join("?")).toContain('FOR UPDATE');
+    expect(strings.join("?")).toContain('"eventId"');
+    expect([lockedFormId, lockedEventId]).toEqual(["form-1", "event-1"]);
+    expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(findFirst.mock.invocationCallOrder[0]!);
+  });
+
   it("raises FORM_NOT_FOUND for a form outside the event", async () => {
     const tx = { registrationForm: { findFirst: vi.fn().mockResolvedValue(null), findUnique: vi.fn(), update: vi.fn() }, auditLog: { create: vi.fn() } };
     dependencies.getPrisma.mockReturnValue(prismaFor(tx));
@@ -256,6 +273,8 @@ describe("the address offered before a first publish (#476)", () => {
 describe("a published form's slug never changes on its own", () => {
   function transactionClient(previouslyPublishedCount: number, validTests: number) {
     return {
+      $executeRaw: vi.fn().mockResolvedValue(0),
+      $queryRaw: vi.fn().mockResolvedValue([]),
       registrationForm: {
         findFirst: vi.fn().mockResolvedValue({
           id: "form-1",
@@ -267,7 +286,7 @@ describe("a published form's slug never changes on its own", () => {
       },
       registrationFormVersion: {
         count: vi.fn().mockResolvedValue(previouslyPublishedCount),
-        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
         update: vi.fn().mockResolvedValue({}),
       },
       formTestSubmission: { count: vi.fn().mockResolvedValue(validTests) },
@@ -285,7 +304,8 @@ describe("a published form's slug never changes on its own", () => {
     await publishRegistrationForm("event-1", "form-1", "user-1");
 
     const [formUpdateArgs] = tx.registrationForm.update.mock.calls[0] as [{ data: Record<string, unknown> }];
-    const [versionUpdateArgs] = tx.registrationFormVersion.update.mock.calls[0] as [{ data: Record<string, unknown> }];
+    const promoteCall = tx.registrationFormVersion.updateMany.mock.calls.at(-1) as [{ data: Record<string, unknown> }];
+    const [versionUpdateArgs] = promoteCall;
     expect(formUpdateArgs.data).not.toHaveProperty("slug");
     expect(versionUpdateArgs.data).not.toHaveProperty("slug");
   });

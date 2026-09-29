@@ -46,6 +46,22 @@ export function orderExportHref(base: string, view: "adventsource" | "readable" 
   return `${base}/csv?${params.toString()}`;
 }
 
+/**
+ * Which "to order" CSV exports have something to download (#571 F-24). An
+ * export with nothing in it is a headers-only file, so it is disabled instead.
+ * The AdventSource file needs a line with a catalog number; the order list needs
+ * a line to order; the pick list covers what is to order and what is ready to
+ * hand out, so it stays available while anything is waiting to be handed out.
+ */
+export function orderExportAvailability(lines: readonly OrderLine[], readyToHandOutCount: number) {
+  const ordering = lines.filter((line) => line.toOrder > 0);
+  return {
+    adventsource: ordering.some((line) => Boolean(line.item.catalogNumber)),
+    readable: ordering.length > 0,
+    picklist: ordering.length > 0 || readyToHandOutCount > 0,
+  };
+}
+
 function formatDate(value: string) {
   return new Date(value).toLocaleDateString("en-US", { dateStyle: "medium", timeZone: "America/Chicago" });
 }
@@ -84,6 +100,8 @@ export function ClubOrderWorkspace({
   const uniformsBase = `/api/attendee/clubs/${encodeURIComponent(organizationId)}/uniforms`;
 
   const lines = useMemo(() => applyExtras(data.lines, extras), [data.lines, extras]);
+  const exportAvailability = orderExportAvailability(lines, data.awardable.length);
+  const nothingToOrderId = "club-order-nothing-to-order";
   const totalToOrder = lines.reduce((sum, line) => sum + line.toOrder, 0);
   const awardGroups = useMemo(() => {
     const groups = new Map<string, { itemName: string; needs: AwardableNeed[] }>();
@@ -344,10 +362,27 @@ export function ClubOrderWorkspace({
               <ShoppingCart aria-hidden="true" size={16} /> {busy ? "Working…" : "Place order"}
             </button>
           )}
-          <a className="secondary-button" href={orderExportHref(base, "adventsource", lines)}><Download aria-hidden="true" size={14} /> AdventSource file</a>
-          <a className="secondary-button" href={orderExportHref(base, "readable", lines)}><Download aria-hidden="true" size={14} /> Order list</a>
-          <a className="secondary-button" href={orderExportHref(base, "picklist", lines)}><Download aria-hidden="true" size={14} /> Pick list (to order and ready)</a>
+          {exportAvailability.adventsource ? (
+            <a className="secondary-button" href={orderExportHref(base, "adventsource", lines)}><Download aria-hidden="true" size={14} /> AdventSource file</a>
+          ) : (
+            <button aria-describedby={nothingToOrderId} className="secondary-button" disabled type="button"><Download aria-hidden="true" size={14} /> AdventSource file</button>
+          )}
+          {exportAvailability.readable ? (
+            <a className="secondary-button" href={orderExportHref(base, "readable", lines)}><Download aria-hidden="true" size={14} /> Order list</a>
+          ) : (
+            <button aria-describedby={nothingToOrderId} className="secondary-button" disabled type="button"><Download aria-hidden="true" size={14} /> Order list</button>
+          )}
+          {exportAvailability.picklist ? (
+            <a className="secondary-button" href={orderExportHref(base, "picklist", lines)}><Download aria-hidden="true" size={14} /> Pick list (to order and ready)</a>
+          ) : (
+            <button aria-describedby={nothingToOrderId} className="secondary-button" disabled type="button"><Download aria-hidden="true" size={14} /> Pick list (to order and ready)</button>
+          )}
         </div>
+        {!(exportAvailability.adventsource && exportAvailability.readable && exportAvailability.picklist) && (
+          <p className="field-help" id={nothingToOrderId}>
+            {exportAvailability.readable ? "No item has an AdventSource number yet, so there is nothing for the AdventSource file." : "Nothing to order yet."}
+          </p>
+        )}
       </section>
 
       <section className={styles.block}>

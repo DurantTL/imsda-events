@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { Award, Save } from "lucide-react";
 import { formatCalendarDate } from "@/modules/club-registrations/domain";
+import { sortHonorSessions } from "@/modules/honors/session-order";
 import type { ClassSelectionWorkspace } from "@/modules/honors/enrollment-repository";
 
 type Offering = ClassSelectionWorkspace["offerings"][number];
@@ -65,6 +66,7 @@ export function ClubClassPicker({
     }
     return groups;
   }, [workspace.offerings]);
+  const sessions = useMemo(() => sortHonorSessions(workspace.sessions), [workspace.sessions]);
   const allSessionOfferings = workspace.offerings.filter((offering) => offering.span === "ALL_SESSIONS");
   const offeringById = useMemo(() => new Map(workspace.offerings.map((offering) => [offering.id, offering])), [workspace.offerings]);
 
@@ -157,7 +159,7 @@ export function ClubClassPicker({
                   </select>
                 </label>
               )}
-              {workspace.sessions.map((session) => {
+              {sessions.map((session) => {
                 const offerings = bySession.get(session.id) ?? [];
                 if (offerings.length === 0) return null;
                 const value = chosen.find((id) => offeringById.get(id)?.sessionId === session.id) ?? "";

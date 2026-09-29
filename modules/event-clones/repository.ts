@@ -91,7 +91,7 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
     }),
     await db.eventTag.findMany({ where: { eventId }, orderBy: { normalizedName: "asc" } }),
     await db.promoCode.findMany({ where: { eventId }, orderBy: { normalizedCode: "asc" } }),
-    await db.honorSession.findMany({ where: { eventId }, orderBy: [{ sortOrder: "asc" }, { normalizedName: "asc" }] }),
+    await db.honorSession.findMany({ where: { eventId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { normalizedName: "asc" }] }),
     await db.honorOffering.findMany({
       where: { eventId }, orderBy: [{ sessionId: "asc" }, { honorId: "asc" }],
       include: { honor: { select: { name: true } }, session: { select: { name: true } } },
@@ -423,9 +423,12 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
 
       if (include.honors) {
         const sessionIds = new Map<string, string>();
-        for (const session of config.honorSessions) {
+        // Renumbered 0..n in the source's display order: the rows are created
+        // in one transaction, so they share a createdAt and a copied tie
+        // would fall back to alphabetical (#570).
+        for (const [position, session] of config.honorSessions.entries()) {
           const created = await tx.honorSession.create({
-            data: { eventId: event.id, name: session.name, normalizedName: session.normalizedName, sortOrder: session.sortOrder },
+            data: { eventId: event.id, name: session.name, normalizedName: session.normalizedName, sortOrder: position },
           });
           sessionIds.set(session.id, created.id);
         }

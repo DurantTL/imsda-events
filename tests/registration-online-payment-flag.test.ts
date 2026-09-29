@@ -107,7 +107,7 @@ describe("registration.onlinePaymentUnavailable", () => {
           versionNumber: 1,
           status: "PUBLISHED",
           definition: paymentDefinition,
-          form: { name: "Women's Retreat", slug: "womens-retreat", status: "PUBLISHED" },
+          form: { name: "Women's Retreat", slug: "womens-retreat", status: "PUBLISHED", versions: [{ id: "live-version" }] },
         },
       },
     })]);
@@ -127,7 +127,27 @@ describe("registration.onlinePaymentUnavailable", () => {
           versionNumber: 1,
           status: "ARCHIVED",
           definition: paymentDefinition,
-          form: { name: "Women's Retreat", slug: "womens-retreat", status: "PUBLISHED" },
+          form: { name: "Women's Retreat", slug: "womens-retreat", status: "PUBLISHED", versions: [{ id: "live-version" }] },
+        },
+      },
+    })]);
+
+    const [registration] = await listRegistrations("evt_1");
+
+    expect(registration!.onlinePaymentUnavailable).toBe(false);
+  });
+
+  it("does not flag a registration when the form has a draft beside its live version (form-level status DRAFT, #564)", async () => {
+    mocks.findMany.mockResolvedValue([baseRegistration({
+      publicFormSubmission: {
+        responses: { payment_method: "Credit / debit card" },
+        pricingSnapshot: {},
+        createdAt: new Date("2026-06-01T00:00:00.000Z"),
+        formVersion: {
+          versionNumber: 1,
+          status: "PUBLISHED",
+          definition: paymentDefinition,
+          form: { name: "Women's Retreat", slug: "womens-retreat", status: "DRAFT", versions: [{ id: "live-version" }] },
         },
       },
     })]);
@@ -147,7 +167,7 @@ describe("registration.onlinePaymentUnavailable", () => {
           versionNumber: 1,
           status: "PUBLISHED",
           definition: paymentDefinition,
-          form: { name: "Women's Retreat", slug: "womens-retreat", status: "ARCHIVED" },
+          form: { name: "Women's Retreat", slug: "womens-retreat", status: "ARCHIVED", versions: [] },
         },
       },
     })]);

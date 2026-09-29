@@ -241,7 +241,10 @@ export function CommunicationsWorkspace({
   const [announcements, setAnnouncements] = useState(initialAnnouncements);
   const [messaging, setMessaging] = useState(initialMessaging);
   const [draftOpen, setDraftOpen] = useState(openNew && canManage);
-  const [draftPrefill, setDraftPrefill] = useState<{ title: string; body: string; priority: string } | null>(null);
+  const [draftPrefill, setDraftPrefill] = useState<{ title: string; body: string; priority: string; editId?: string } | null>(null);
+  const [discardTarget, setDiscardTarget] = useState<AnnouncementRecord | null>(null);
+  const [discarding, setDiscarding] = useState(false);
+  const [discardError, setDiscardError] = useState("");
   const draftDialogRef = useAccessibleDialog<HTMLElement>(
     draftOpen,
     () => {
@@ -422,9 +425,10 @@ export function CommunicationsWorkspace({
     setError("");
     setNotice("");
     const form = new FormData(submitEvent.currentTarget);
+    const editId = draftPrefill?.editId;
     try {
-      const response = await fetch(`/api/events/${eventId}/announcements`, {
-        method: "POST",
+      const response = await fetch(editId ? `/api/events/${eventId}/announcements/${editId}` : `/api/events/${eventId}/announcements`, {
+        method: editId ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: form.get("title"),
@@ -434,16 +438,62 @@ export function CommunicationsWorkspace({
       });
       const result = await response.json().catch(() => ({})) as ApiResult;
       if (!response.ok || !result.announcement) {
-        throw new Error(result.message ?? result.issues?.[0]?.message ?? "Unable to create the draft.");
+        throw new Error(result.message ?? result.issues?.[0]?.message ?? (editId ? "Unable to save the draft." : "Unable to create the draft."));
       }
-      setAnnouncements((current) => [result.announcement!, ...current]);
+      if (editId) {
+        setAnnouncements((current) => current.map((row) => row.id === editId ? { ...row, ...result.announcement! } : row));
+      } else {
+        setAnnouncements((current) => [result.announcement!, ...current]);
+      }
       setDraftOpen(false);
       setDraftPrefill(null);
-      setNotice("Announcement draft created.");
+      setNotice(editId ? "Announcement draft saved. Nothing was sent." : "Announcement draft created.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to create the draft.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  /**
+   * Edit a draft (#571 F-9): reopens the composer with the draft's own text.
+   * Saving updates the draft in place; it never publishes or sends anything.
+   */
+  function startDraftEdit(announcement: AnnouncementRecord) {
+    setError("");
+    setNotice("");
+    setDraftPrefill({
+      title: announcement.title,
+      body: announcement.body,
+      priority: announcement.priority,
+      editId: announcement.id,
+    });
+    setDraftOpen(true);
+  }
+
+  function cancelDiscard() {
+    if (discarding) return;
+    setDiscardTarget(null);
+    setDiscardError("");
+  }
+
+  /** Discard a draft (#571 F-9), after confirmation. Audited; nothing is sent. */
+  async function confirmDiscard() {
+    if (!discardTarget || discarding) return;
+    setDiscarding(true);
+    setDiscardError("");
+    try {
+      const response = await fetch(`/api/events/${eventId}/announcements/${discardTarget.id}`, { method: "DELETE" });
+      const result = await response.json().catch(() => ({})) as ApiResult;
+      if (!response.ok) throw new Error(result.message ?? "Unable to discard the draft.");
+      const id = discardTarget.id;
+      setAnnouncements((current) => current.filter((row) => row.id !== id));
+      setDiscardTarget(null);
+      setNotice("Announcement draft discarded. Nothing was sent.");
+    } catch (caught) {
+      setDiscardError(caught instanceof Error ? caught.message : "Unable to discard the draft.");
+    } finally {
+      setDiscarding(false);
     }
   }
 
@@ -1032,9 +1082,17 @@ export function CommunicationsWorkspace({
                   <span>{announcement.publishedAt ? new Date(announcement.publishedAt).toLocaleDateString() : "Not published"}</span>
                 </footer>
                 {canManage && announcement.status === "DRAFT" && (
-                  <button className="secondary-button publish-button" type="button" disabled={saving} onClick={() => publishAnnouncement(announcement.id)}>
-                    <Send aria-hidden="true" size={16} /> Publish to event feed
-                  </button>
+                  <>
+                    <button className="secondary-button publish-button" type="button" disabled={saving} onClick={() => publishAnnouncement(announcement.id)}>
+                      <Send aria-hidden="true" size={16} /> Publish to event feed
+                    </button>
+                    <button className="text-button" type="button" disabled={saving} onClick={() => startDraftEdit(announcement)}>
+                      Edit draft
+                    </button>
+                    <button className="text-button" type="button" disabled={saving} onClick={() => { setDiscardError(""); setDiscardTarget(announcement); }}>
+                      Discard draft
+                    </button>
+                  </>
                 )}
                 {canManage && announcement.status === "PUBLISHED" && (
                   <>
@@ -1752,21 +1810,41 @@ export function CommunicationsWorkspace({
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) { setDraftOpen(false); setDraftPrefill(null); } }}>
           <section className="modal-card" ref={draftDialogRef} role="dialog" aria-modal="true" aria-labelledby="draft-title" tabIndex={-1}>
             <div className="modal-head">
-              <div><p className="eyebrow">Attendee event feed</p><h2 id="draft-title">{draftPrefill ? "Send a correction" : "Create an announcement"}</h2></div>
+              <div><p className="eyebrow">Attendee event feed</p><h2 id="draft-title">{draftPrefill?.editId ? "Edit announcement draft" : draftPrefill ? "Send a correction" : "Create an announcement"}</h2></div>
               <button className="icon-button modal-close-button" type="button" onClick={() => { setDraftOpen(false); setDraftPrefill(null); }} aria-label="Close dialog"><X aria-hidden="true" size={18} /></button>
             </div>
-            {draftPrefill && (
+            {draftPrefill?.editId && (
+              <p className="quiet-copy">Saving updates this draft only. Nothing is published or sent.</p>
+            )}
+            {draftPrefill && !draftPrefill.editId && (
               <p className="quiet-copy">This creates a new draft for the same audience — all attendees. Nothing is sent yet: publish the draft, then review and send it like any announcement. The original announcement stays unchanged.</p>
             )}
-            <form className="form-stack" onSubmit={createDraft} key={draftPrefill ? "correction" : "new"}>
+            <form className="form-stack" onSubmit={createDraft} key={draftPrefill?.editId ? `edit-${draftPrefill.editId}` : draftPrefill ? "correction" : "new"}>
               <label>Title<input name="title" minLength={3} maxLength={120} required placeholder="Friday arrival information" defaultValue={draftPrefill?.title ?? ""} /></label>
               <label>Message<textarea name="body" minLength={5} maxLength={2000} required rows={6} placeholder="Share the details attendees need…" defaultValue={draftPrefill?.body ?? ""} /></label>
               <label>Priority<select name="priority" defaultValue={draftPrefill?.priority ?? "NORMAL"}><option value="NORMAL">Normal</option><option value="IMPORTANT">Important</option><option value="URGENT">Urgent</option></select></label>
-              <div className="form-actions"><button className="secondary-button" type="button" onClick={() => { setDraftOpen(false); setDraftPrefill(null); }}>Cancel</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving…" : "Save draft"}</button></div>
+              <div className="form-actions"><button className="secondary-button" type="button" onClick={() => { setDraftOpen(false); setDraftPrefill(null); }}>Cancel</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving…" : draftPrefill?.editId ? "Save changes" : "Save draft"}</button></div>
             </form>
           </section>
         </div>
       )}
+
+      <ConfirmDialog
+        busy={discarding}
+        busyLabel="Discarding…"
+        confirmLabel="Discard draft"
+        destructive
+        error={discardError}
+        onCancel={cancelDiscard}
+        onConfirm={() => void confirmDiscard()}
+        open={Boolean(discardTarget)}
+        title="Discard this draft?"
+      >
+        <p>
+          The draft <strong translate="no">{discardTarget?.title}</strong> will be deleted. It was never
+          published, and discarding it does not send anything to anyone. The discard is recorded in the audit log.
+        </p>
+      </ConfirmDialog>
 
       <ConfirmDialog
         busy={broadcasting}
