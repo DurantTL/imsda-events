@@ -5,6 +5,7 @@ import type { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { normalizeHonorText, offeringSlotConflict } from "@/modules/honors/domain";
+import { offeringSiteId } from "@/modules/honors/locations";
 import { HonorConfigurationError, getEventHonorSetup, serializable } from "@/modules/honors/repository";
 
 /**
@@ -35,6 +36,8 @@ export type HonorCopyPlan = {
     honorName: string;
     honorCode: string;
     sessionName: string | null;
+    /** The site an all-sessions class lands at (#589); null for a single-session class or none. */
+    siteName: string | null;
     capacity: number;
     action: "CREATE" | "SKIP";
     reason: string | null;
@@ -75,6 +78,8 @@ async function buildPlan(client: CopyClient, sourceEventId: string, targetEventI
         id: true,
         honorId: true,
         sessionId: true,
+        locationId: true,
+        site: { select: { name: true, normalizedName: true } },
         span: true,
         capacity: true,
         minimumAge: true,
@@ -87,39 +92,35 @@ async function buildPlan(client: CopyClient, sourceEventId: string, targetEventI
     }),
     client.honorOffering.findMany({
       where: { eventId: targetEventId },
-      select: { id: true, honorId: true, span: true, sessionId: true },
+      select: { id: true, honorId: true, span: true, sessionId: true, locationId: true, session: { select: { locationId: true } } },
     }),
     client.eventLocation.findMany({ where: { eventId: targetEventId }, select: { id: true, name: true, normalizedName: true } }),
   ]);
 
   // Sessions are matched by site name, then session name (#589): "Sabbath
   // Morning" at Des Moines lands at the target's Des Moines. A source site with
-  // no same-named target site leaves the session with no site, with a warning.
+  // no same-named target site leaves the session with no site, with a warning,
+  // and the session is named "<Session> (<site>)" so sessions from different
+  // sites are never merged into one.
   const targetLocationByName = new Map(targetLocations.map((location) => [location.normalizedName, location]));
   const sessionKey = (locationId: string | null, normalizedName: string) => `${locationId ?? ""}|${normalizedName}`;
   const targetSessionByKey = new Map(targetSessions.map((session) => [sessionKey(session.locationId, session.normalizedName), session.id]));
   const sourceSessionById = new Map(sourceSessions.map((session) => [session.id, session]));
   const placements = new Map(sourceSessions.map((session) => {
     const match = session.location ? targetLocationByName.get(session.location.normalizedName) ?? null : null;
+    const renamed = session.location && !match ? `${session.name} (${session.location.name})`.slice(0, 80) : session.name;
+    const normalizedName = renamed === session.name ? session.normalizedName : normalizeHonorText(renamed);
     return [session.id, {
       locationId: match?.id ?? null,
       siteName: match?.name ?? null,
-      key: sessionKey(match?.id ?? null, session.normalizedName),
+      name: renamed,
+      normalizedName,
+      key: sessionKey(match?.id ?? null, normalizedName),
       warning: session.location && !match
-        ? `${session.name}: ${targetEvent.name} has no site named "${session.location.name}", so this session gets no site.`
+        ? `${session.name}: ${targetEvent.name} has no site named "${session.location.name}", so this session gets no site and is named "${renamed}".`
         : null,
     }];
   }));
-  // Two source sessions that both fall to "no site" with the same name would
-  // collide on the unique name; the second one is treated as already there.
-  const plannedKeys = new Set(targetSessionByKey.keys());
-  const duplicateCollapsed = new Set<string>();
-  for (const session of sourceSessions) {
-    const placement = placements.get(session.id)!;
-    if (targetSessionByKey.has(placement.key)) continue;
-    if (plannedKeys.has(placement.key)) duplicateCollapsed.add(session.id);
-    plannedKeys.add(placement.key);
-  }
 
   // New rows are renumbered 0..n in the source's display order: they are all
   // created in one transaction (same createdAt), so a copied tie would fall
@@ -127,14 +128,15 @@ async function buildPlan(client: CopyClient, sourceEventId: string, targetEventI
   const sessions = sourceSessions.map((session, position) => {
     const placement = placements.get(session.id)!;
     return {
-      name: session.name,
+      name: placement.name,
       sortOrder: position,
-      action: targetSessionByKey.has(placement.key) || duplicateCollapsed.has(session.id) ? "EXISTS" as const : "CREATE" as const,
+      action: targetSessionByKey.has(placement.key) ? "EXISTS" as const : "CREATE" as const,
       siteName: placement.siteName,
       siteWarning: placement.warning,
     };
   });
   const warnings = sessions.flatMap((session) => (session.siteWarning ? [session.siteWarning] : []));
+  const targetLocationIds = new Set(targetLocations.map((location) => location.id));
 
   // Sessions that don't exist yet get a placeholder key, so conflicts between
   // offerings being copied are still caught before anything is written.
@@ -142,11 +144,14 @@ async function buildPlan(client: CopyClient, sourceEventId: string, targetEventI
     honorId: offering.honorId,
     span: offering.span,
     sessionId: offering.sessionId,
+    locationId: offeringSiteId(offering),
   }));
   const offerings: HonorCopyPlan["offerings"] = [];
   const toCreate: Array<{
     offering: (typeof sourceOfferings)[number];
     sessionKey: string | null;
+    /** The all-sessions class's site in the target (#589). */
+    locationId: string | null;
   }> = [];
 
   for (const offering of sourceOfferings) {
@@ -159,20 +164,42 @@ async function buildPlan(client: CopyClient, sourceEventId: string, targetEventI
       honorName: offering.honor.name,
       honorCode: offering.honor.code,
       sessionName: sourceSession?.name ?? null,
+      siteName: null as string | null,
       capacity: offering.capacity,
     };
+    // An all-sessions class follows its site by name, like a session; no match leaves it with no site (#589).
+    const siteMatch = offering.span === "ALL_SESSIONS" && offering.site ? targetLocationByName.get(offering.site.normalizedName) ?? null : null;
+    const siteLost = offering.span === "ALL_SESSIONS" && Boolean(offering.site) && !siteMatch;
+    const classSite = siteMatch && targetLocationIds.has(siteMatch.id) ? siteMatch.id : null;
+    base.siteName = siteMatch?.name ?? null;
+    if (siteLost) {
+      warnings.push(`${offering.honor.name} (all sessions): ${targetEvent.name} has no site named "${offering.site!.name}", so this class gets no site.`);
+    }
     if (!offering.honor.isActive) {
       offerings.push({ ...base, action: "SKIP", reason: "The honor is inactive in the catalog." });
       continue;
     }
-    const slot = { honorId: offering.honorId, span: offering.span, sessionId: sessionRef };
+    const slot = {
+      honorId: offering.honorId,
+      span: offering.span,
+      sessionId: sessionRef,
+      locationId: offering.span === "ALL_SESSIONS" ? classSite : sourceSession ? placements.get(sourceSession.id)!.locationId : null,
+    };
     const conflict = offeringSlotConflict(slot, plannedSlots);
     if (conflict) {
-      offerings.push({ ...base, action: "SKIP", reason: `Already set up at the target. ${conflict}` });
+      // Two sites' classes for one honor that both lost their site are the same slot: say so, rather than "already set up".
+      const merged = siteLost || (sourceSession?.location && !placements.get(sourceSession.id)!.locationId);
+      offerings.push({
+        ...base,
+        action: "SKIP",
+        reason: merged
+          ? "This class's site has no match at the target, so it would sit beside another class for the same honor with no site. Add the site to the target and copy again."
+          : `Already set up at the target. ${conflict}`,
+      });
       continue;
     }
     plannedSlots.push(slot);
-    toCreate.push({ offering, sessionKey: sessionRef });
+    toCreate.push({ offering, sessionKey: sessionRef, locationId: classSite });
     offerings.push({ ...base, action: "CREATE", reason: null });
   }
 
@@ -227,8 +254,8 @@ export async function applyHonorCopy(
         data: {
           eventId: targetEventId,
           locationId: placement.locationId,
-          name: session.name,
-          normalizedName: normalizeHonorText(session.name),
+          name: placement.name,
+          normalizedName: placement.normalizedName,
           sortOrder: position,
         },
         select: { id: true },
@@ -236,7 +263,7 @@ export async function applyHonorCopy(
       sessionIds.set(placement.key, created.id);
     }
 
-    for (const { offering, sessionKey } of built.toCreate) {
+    for (const { offering, sessionKey, locationId } of built.toCreate) {
       const sessionId = sessionKey?.startsWith("new:")
         ? sessionIds.get(sessionKey.slice("new:".length)) ?? null
         : sessionKey;
@@ -245,6 +272,7 @@ export async function applyHonorCopy(
           eventId: targetEventId,
           honorId: offering.honorId,
           sessionId,
+          locationId,
           span: offering.span,
           capacity: offering.capacity,
           minimumAge: offering.minimumAge,

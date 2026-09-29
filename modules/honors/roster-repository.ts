@@ -52,7 +52,8 @@ export async function getHonorRosterData(
     prisma.honorOffering.findMany({
       where: { eventId },
       select: {
-        id: true, span: true, sessionId: true, capacity: true, teacherName: true, location: true, isActive: true,
+        id: true, span: true, sessionId: true, locationId: true, site: { select: { name: true } },
+        capacity: true, teacherName: true, location: true, isActive: true,
         honor: { select: { name: true, code: true } },
       },
     }),
@@ -89,7 +90,11 @@ export async function getHonorRosterData(
   const sessions = allSessions.map((session) => ({ id: session.id, name: session.name, locationId: session.locationId, sortOrder: session.sortOrder, createdAt: session.createdAt }));
   const siteBySession = new Map(allSessions.map((session) => [session.id, session.location?.name ?? null]));
   // A class rides on its session's site; with a site filter, classes of other sites drop out.
-  const offerings = allOfferings.filter((offering) => !offering.sessionId || siteBySession.has(offering.sessionId));
+  // With a site filter: single-session classes of other sites' sessions drop out (their session isn't loaded),
+  // and so do all-sessions classes at another site. Classes with no site stay.
+  const offerings = allOfferings.filter((offering) => (offering.sessionId
+    ? siteBySession.has(offering.sessionId)
+    : !options.locationId || !offering.locationId || offering.locationId === options.locationId));
 
   const memberIds = clubRegistrations.flatMap((club) => club.registration.attendees
     .map((attendee) => (attendee.profileSnapshot as Snapshot).clubRosterMemberId)
@@ -150,7 +155,7 @@ export async function getHonorRosterData(
       teacherName: offering.teacherName,
       location: offering.location,
       isActive: offering.isActive,
-      siteName: offering.sessionId ? siteBySession.get(offering.sessionId) ?? null : null,
+      siteName: offering.sessionId ? siteBySession.get(offering.sessionId) ?? null : offering.site?.name ?? null,
     })),
     enrollments,
     attendees,

@@ -67,15 +67,22 @@ export function resolveHonorCategory(text: string): HonorCategory | null {
   return honorCategoryByText.get(normalizeHonorCategoryText(text)) ?? null;
 }
 
-type OfferingSlot = { honorId: string; span: HonorOfferingSpan; sessionId: string | null };
+/**
+ * `locationId` is the class's site (#589): a single-session class takes its
+ * session's site, an all-sessions class its own. Conflicts are per site, so two
+ * sites can both teach the same honor; without sites every slot is null and
+ * nothing changes.
+ */
+type OfferingSlot = { honorId: string; span: HonorOfferingSpan; sessionId: string | null; locationId?: string | null };
 
 /**
  * Why a new offering can't sit beside the event's existing ones, or null.
  * An honor taught across all sessions can't also be in a single session, and
- * no honor is offered twice in the same session.
+ * no honor is offered twice in the same session, each within one site.
  */
 export function offeringSlotConflict(candidate: OfferingSlot, existing: readonly OfferingSlot[]) {
-  const sameHonor = existing.filter((offering) => offering.honorId === candidate.honorId);
+  const sameHonor = existing.filter((offering) => offering.honorId === candidate.honorId
+    && (offering.locationId ?? null) === (candidate.locationId ?? null));
   if (candidate.span === "ALL_SESSIONS") {
     if (sameHonor.some((offering) => offering.span === "ALL_SESSIONS")) {
       return "This honor is already offered across all sessions at this site.";

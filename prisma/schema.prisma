@@ -1283,6 +1283,7 @@ model EventLocation {
   event         Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
   registrations Registration[]
   honorSessions HonorSession[]
+  honorOfferings HonorOffering[]
 
   @@unique([eventId, normalizedName])
   @@index([eventId, isActive, sortOrder])
@@ -3546,6 +3547,10 @@ model HonorOffering {
   eventId      String
   honorId      String
   sessionId    String?
+  /// Site of an ALL_SESSIONS class (#589); a single-session class takes its
+  /// site from its session, so this stays null for it (a CHECK enforces that).
+  /// `location` below is the room; this is the site.
+  locationId   String?
   span         HonorOfferingSpan
   capacity     Int
   minimumAge   Int?
@@ -3559,10 +3564,14 @@ model HonorOffering {
   event       Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
   honor       Honor             @relation(fields: [honorId], references: [id], onDelete: Restrict)
   session     HonorSession?     @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  site        EventLocation?    @relation(fields: [locationId], references: [id], onDelete: Restrict)
   enrollments HonorEnrollment[]
 
+  // The all-sessions uniqueness is two partial unique indexes the migration
+  // maintains (one per honor per site; one per honor with no site).
   @@unique([sessionId, honorId])
   @@index([eventId, isActive])
+  @@index([locationId])
   @@index([honorId])
 }
 

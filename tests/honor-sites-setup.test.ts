@@ -58,7 +58,9 @@ describe("honors setup at sites (#589)", () => {
   it("gives each session and the new-session form a site picker", () => {
     const html = render(setup());
     expect(html).toContain("Site for Sabbath Morning");
-    expect(html).toContain("No site (shown to every site)");
+    // With active sites, a new session must name one.
+    expect(html).toContain("Choose a site");
+    expect(html).toContain("Site for Sabbath Morning");
     expect(html).toContain('value="loc-dm"');
   });
 
@@ -91,7 +93,7 @@ describe("Honors Weekend template wording (#589)", () => {
 });
 
 describe("the sessions migration (#589)", () => {
-  const sql = readFileSync(path.join(process.cwd(), "prisma/migrations/20260929110000_honor_session_locations/migration.sql"), "utf8");
+  const sql = readFileSync(path.join(process.cwd(), "prisma/migrations/20260929191000_honor_session_locations/migration.sql"), "utf8");
 
   it("is additive: one nullable column, no dropped table or column", () => {
     expect(sql).toContain('ALTER TABLE "HonorSession" ADD COLUMN     "locationId" TEXT;');
@@ -102,5 +104,21 @@ describe("the sessions migration (#589)", () => {
     expect(sql).toContain('DROP INDEX "HonorSession_eventId_normalizedName_key";');
     expect(sql).toMatch(/UNIQUE INDEX "HonorSession_eventId_normalizedName_no_location_key"\s+ON "HonorSession"\("eventId", "normalizedName"\) WHERE "locationId" IS NULL/);
     expect(sql).toMatch(/UNIQUE INDEX "HonorSession_eventId_locationId_normalizedName_key"\s+ON "HonorSession"\("eventId", "locationId", "normalizedName"\) WHERE "locationId" IS NOT NULL/);
+  });
+});
+
+describe("the offering sites migration (#589)", () => {
+  const sql = readFileSync(path.join(process.cwd(), "prisma/migrations/20260929191100_honor_offering_locations/migration.sql"), "utf8");
+
+  it("is additive: one nullable column, no dropped table or column", () => {
+    expect(sql).toContain('ALTER TABLE "HonorOffering" ADD COLUMN     "locationId" TEXT;');
+    expect(sql).not.toMatch(/DROP (TABLE|COLUMN)|ADD COLUMN[^;]*NOT NULL/i);
+  });
+
+  it("limits the column to all-sessions classes and makes their uniqueness per site", () => {
+    expect(sql).toMatch(/CHECK \("locationId" IS NULL OR "span" = 'ALL_SESSIONS'\)/);
+    expect(sql).toContain('DROP INDEX "HonorOffering_eventId_honorId_all_sessions_key";');
+    expect(sql).toMatch(/"HonorOffering"\("eventId", "honorId"\) WHERE "sessionId" IS NULL AND "locationId" IS NULL/);
+    expect(sql).toMatch(/"HonorOffering"\("eventId", "honorId", "locationId"\) WHERE "sessionId" IS NULL AND "locationId" IS NOT NULL/);
   });
 });

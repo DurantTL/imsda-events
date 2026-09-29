@@ -119,7 +119,12 @@ export default async function HonorRostersPage({
                     </p>
                   </div>
                 </div>
-                <span className="count-badge">{roster.youthSeats} / {roster.offering.capacity} youth seats</span>
+                <span className="count-badge">
+                  {/* A class no site owns is shared: with a site filter on, the count is only this site's clubs. */}
+                  {site && !roster.siteName
+                    ? `${roster.youthSeats} at this site / ${roster.offering.capacity} youth seats (all sites)`
+                    : `${roster.youthSeats} / ${roster.offering.capacity} youth seats`}
+                </span>
               </div>
               {roster.people.length === 0 ? (
                 <p className="report-empty">No one has chosen this class yet.</p>

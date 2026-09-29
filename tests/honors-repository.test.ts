@@ -39,6 +39,8 @@ function fakeDatabase() {
   const withOfferingRelations = (offering: Row) => ({
     ...offering,
     honor: db.honors.find((honor) => honor.id === offering.honorId),
+    session: db.sessions.find((session) => session.id === offering.sessionId) ?? null,
+    site: db.locations.find((location) => location.id === offering.locationId) ?? null,
   });
   const withSessionCount = (session: Row) => ({
     ...session,
@@ -50,12 +52,15 @@ function fakeDatabase() {
   const client = {
     honorEnrollment: {
       groupBy: async () => [],
-      count: async ({ where }: { where: { offering: { sessionId: string } } }) => db.pickedOfferingIds
-        .filter((offeringId) => db.offerings.find((offering) => offering.id === offeringId)?.sessionId === where.offering.sessionId).length,
+      count: async ({ where }: { where: { offeringId?: string; offering?: { sessionId: string } } }) => db.pickedOfferingIds
+        .filter((offeringId) => (where.offeringId
+          ? offeringId === where.offeringId
+          : db.offerings.find((offering) => offering.id === offeringId)?.sessionId === where.offering?.sessionId)).length,
     },
     eventLocation: {
       findMany: async ({ where }: { where: Record<string, unknown> }) => db.locations.filter((location) => matches(location, where)),
       findFirst: async ({ where }: { where: Record<string, unknown> }) => db.locations.find((location) => matches(location, where)) ?? null,
+      count: async ({ where }: { where: Record<string, unknown> }) => db.locations.filter((location) => matches({ isActive: true, ...location }, where)).length,
     },
     event: { findUnique: async ({ where }: { where: Row }) => db.events.find((event) => event.id === where.id) ?? null },
     honor: {
@@ -143,6 +148,7 @@ const offeringInput = (overrides: Record<string, unknown> = {}) => ({
   honorId: "honor-knots",
   span: "SINGLE_SESSION" as const,
   sessionId: "sab-a",
+  locationId: null,
   capacity: 20,
   minimumAge: null,
   perClubLimit: null,
@@ -331,11 +337,23 @@ describe("honors sessions at sites (#589)", () => {
       .toEqual(["loc-hr", "loc-dm"]);
   });
 
-  it("keeps today's uniqueness for sessions with no site", async () => {
+  it("keeps today's uniqueness for sessions with no site, in an event without sites", async () => {
+    fake.db.events.push({ id: "site-c", name: "Honors Weekend C" });
+    await createHonorSession("site-c", sessionInput(), "staff-1");
+    await expect(createHonorSession("site-c", sessionInput(), "staff-1")).rejects.toMatchObject({ code: "SESSION_NAME_CONFLICT" });
+  });
+
+  it("requires a site for a new session once the event has an active site", async () => {
+    await expect(createHonorSession("site-a", sessionInput(), "staff-1")).rejects.toMatchObject({ code: "LOCATION_REQUIRED" });
+    fake.db.locations.forEach((location) => { location.isActive = false; });
     await createHonorSession("site-a", sessionInput(), "staff-1");
-    await expect(createHonorSession("site-a", sessionInput(), "staff-1")).rejects.toMatchObject({ code: "SESSION_NAME_CONFLICT" });
-    // A site's session of the same name is a different session.
+    expect(fake.db.sessions.some((session) => session.name === "Sabbath Morning" && !session.locationId)).toBe(true);
+  });
+
+  it("won't take a session's site away while the event has active sites", async () => {
     await createHonorSession("site-a", sessionInput({ locationId: "loc-hr" }), "staff-1");
+    const session = fake.db.sessions.find((row) => row.name === "Sabbath Morning")!;
+    await expect(updateHonorSession("site-a", session.id, { locationId: null }, "staff-1")).rejects.toMatchObject({ code: "LOCATION_REQUIRED" });
   });
 
   it("refuses a site that belongs to another event", async () => {
@@ -383,7 +401,7 @@ describe("copying sessions between events with sites (#589)", () => {
   it("maps each session to the same-named site and warns when a site has no match", async () => {
     const plan = await previewHonorCopy("site-b", "site-a");
     expect(plan.sessions.map((session) => [session.name, session.siteName, session.action])).toEqual([
-      ["Sabbath Morning", null, "CREATE"],
+      ["Sabbath Morning (Camp Heritage 1)", null, "CREATE"],
       ["Sabbath Morning", "DES MOINES", "CREATE"],
       ["Sunday", null, "CREATE"],
     ]);
@@ -395,20 +413,102 @@ describe("copying sessions between events with sites (#589)", () => {
     await applyHonorCopy("site-b", "site-a", plan.fingerprint, "staff-1");
     const copied = fake.db.sessions.filter((session) => session.eventId === "site-b");
     expect(copied.map((session) => [session.name, session.locationId ?? null])).toEqual([
-      ["Sabbath Morning", null],
+      ["Sabbath Morning (Camp Heritage 1)", null],
       ["Sabbath Morning", "b-dm"],
       ["Sunday", null],
     ]);
     expect(mocks.writeAuditLog.mock.calls.at(-1)![0]).toMatchObject({ metadata: expect.objectContaining({ sessionsWithoutSite: 1 }) });
   });
 
-  it("copies into an event with no sites exactly as before, and warns per site-less target", async () => {
+  it("never merges same-named sessions of different sites when neither site matches", async () => {
     fake.db.events.push({ id: "site-c", name: "Honors Weekend C" });
     const plan = await previewHonorCopy("site-c", "site-a");
     expect(plan.warnings).toHaveLength(2);
-    // Two sessions of the same name that both lose their site collapse into one, rather than breaking the unique name.
-    expect(plan.sessions.map((session) => session.action)).toEqual(["CREATE", "EXISTS", "CREATE"]);
+    // Each keeps its own row, named after its old site, so their classes stay apart.
+    expect(plan.sessions.map((session) => [session.name, session.action])).toEqual([
+      ["Sabbath Morning (Camp Heritage 1)", "CREATE"], ["Sabbath Morning (Des Moines)", "CREATE"], ["Sunday", "CREATE"],
+    ]);
     await applyHonorCopy("site-c", "site-a", plan.fingerprint, "staff-1");
-    expect(fake.db.sessions.filter((session) => session.eventId === "site-c")).toHaveLength(2);
+    expect(fake.db.sessions.filter((session) => session.eventId === "site-c").map((session) => session.name))
+      .toEqual(["Sabbath Morning (Camp Heritage 1)", "Sabbath Morning (Des Moines)", "Sunday"]);
+  });
+});
+
+describe("all-sessions classes at sites (#589)", () => {
+  const allSessions = (overrides: Record<string, unknown> = {}) => offeringInput({ span: "ALL_SESSIONS", sessionId: null, ...overrides });
+
+  beforeEach(() => {
+    fake.db.locations.push(
+      { id: "loc-hr", eventId: "site-a", name: "Camp Heritage 1", normalizedName: "camp heritage 1", sortOrder: 0 },
+      { id: "loc-dm", eventId: "site-a", name: "Des Moines", normalizedName: "des moines", sortOrder: 1 },
+      { id: "loc-other", eventId: "site-b", name: "Des Moines", normalizedName: "des moines", sortOrder: 0 },
+    );
+    fake.db.sessions.find((session) => session.id === "sab-a")!.locationId = "loc-hr";
+  });
+
+  it("requires a site when the event has active sites, and refuses another event's site", async () => {
+    await expect(createHonorOffering("site-a", allSessions(), "staff-1")).rejects.toMatchObject({ code: "LOCATION_REQUIRED" });
+    await expect(createHonorOffering("site-a", allSessions({ locationId: "loc-other" }), "staff-1")).rejects.toMatchObject({ code: "LOCATION_NOT_FOUND" });
+    await createHonorOffering("site-a", allSessions({ locationId: "loc-dm" }), "staff-1");
+    expect(fake.db.offerings.at(-1)).toMatchObject({ span: "ALL_SESSIONS", locationId: "loc-dm" });
+  });
+
+  it("lets two sites run the same honor across all sessions, but not one site twice", async () => {
+    await createHonorOffering("site-a", allSessions({ locationId: "loc-dm" }), "staff-1");
+    await createHonorOffering("site-a", allSessions({ locationId: "loc-hr" }), "staff-1");
+    await expect(createHonorOffering("site-a", allSessions({ locationId: "loc-dm" }), "staff-1")).rejects.toMatchObject({ code: "OFFERING_CONFLICT" });
+  });
+
+  it("checks the all-sessions clash within a site: a single session at another site is fine", async () => {
+    await createHonorOffering("site-a", allSessions({ locationId: "loc-dm" }), "staff-1");
+    // sab-a is at Camp Heritage: the same honor there in one session doesn't clash with Des Moines' all-sessions class.
+    await createHonorOffering("site-a", offeringInput(), "staff-1");
+    // But at Camp Heritage an all-sessions class now clashes with it.
+    await expect(createHonorOffering("site-a", allSessions({ locationId: "loc-hr" }), "staff-1")).rejects.toMatchObject({ code: "OFFERING_CONFLICT" });
+  });
+
+  it("rejects a site on a single-session class, and takes that class's site from its session", async () => {
+    const { honorOfferingInputSchema } = await import("@/modules/honors/schemas");
+    expect(honorOfferingInputSchema.safeParse(offeringInput({ locationId: "loc-hr" })).success).toBe(false);
+    await createHonorOffering("site-a", offeringInput(), "staff-1");
+    expect(fake.db.offerings.at(-1)).toMatchObject({ locationId: null });
+  });
+
+  it("won't move an all-sessions class to another site once clubs picked it", async () => {
+    await createHonorOffering("site-a", allSessions({ locationId: "loc-dm" }), "staff-1");
+    const offeringId = fake.db.offerings.at(-1)!.id;
+    fake.db.pickedOfferingIds.push(offeringId);
+    await expect(updateHonorOffering("site-a", offeringId, { locationId: "loc-hr" }, "staff-1")).rejects.toMatchObject({ code: "OFFERING_HAS_PICKS" });
+    fake.db.pickedOfferingIds.length = 0;
+    await updateHonorOffering("site-a", offeringId, { locationId: "loc-hr" }, "staff-1");
+    expect(fake.db.offerings.at(-1)).toMatchObject({ locationId: "loc-hr" });
+  });
+
+  it("copies an all-sessions class to the same-named site, and warns and drops its site when there is no match", async () => {
+    fake.db.locations.push({ id: "b-dm", eventId: "site-b", name: "DES MOINES", normalizedName: "des moines", sortOrder: 0 });
+    fake.db.sessions.length = 0;
+    await createHonorOffering("site-a", allSessions({ locationId: "loc-dm" }), "staff-1");
+    await createHonorOffering("site-a", allSessions({ honorId: "honor-birds", locationId: "loc-hr" }), "staff-1");
+    const plan = await previewHonorCopy("site-b", "site-a");
+    expect(plan.offerings.map((row) => [row.honorName, row.siteName])).toEqual([["Knot Tying", "DES MOINES"], ["Birds", null]]);
+    expect(plan.warnings).toEqual([expect.stringContaining("Camp Heritage 1")]);
+    await applyHonorCopy("site-b", "site-a", plan.fingerprint, "staff-1");
+    const copied = fake.db.offerings.filter((offering) => offering.eventId === "site-b");
+    expect(copied.map((offering) => [offering.honorId, offering.locationId ?? null]).sort())
+      .toEqual([["honor-birds", null], ["honor-knots", "b-dm"]]);
+  });
+
+  it("gives an offering skipped because its site merged with another its own reason", async () => {
+    // Two sites' all-sessions Knot Tying, neither matching the target (site-c has no sites).
+    fake.db.events.push({ id: "site-c", name: "Honors Weekend C" });
+    fake.db.sessions.length = 0;
+    await createHonorOffering("site-a", allSessions({ locationId: "loc-dm" }), "staff-1");
+    await createHonorOffering("site-a", allSessions({ locationId: "loc-hr" }), "staff-1");
+    const plan = await previewHonorCopy("site-c", "site-a");
+    const actions = plan.offerings.map((row) => [row.action, row.reason ?? ""]);
+    expect(actions[0]).toEqual(["CREATE", ""]);
+    expect(actions[1][0]).toBe("SKIP");
+    expect(actions[1][1]).toContain("site has no match");
+    expect(actions[1][1]).not.toContain("Already set up");
   });
 });

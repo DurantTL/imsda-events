@@ -16,9 +16,11 @@ function database() {
     { id: "s-shared", name: "Sunday", locationId: null, sortOrder: 1, createdAt: at, location: null },
   ];
   const offerings = [
-    { id: "o-dm", span: "SINGLE_SESSION", sessionId: "s-dm", capacity: 5, teacherName: "", location: "", isActive: true, honor: { name: "Birds", code: "B" } },
-    { id: "o-hr", span: "SINGLE_SESSION", sessionId: "s-hr", capacity: 5, teacherName: "", location: "", isActive: true, honor: { name: "Knots at Heritage", code: "K" } },
-    { id: "o-all", span: "ALL_SESSIONS", sessionId: null, capacity: 5, teacherName: "", location: "", isActive: true, honor: { name: "Camping", code: "C" } },
+    { id: "o-dm", span: "SINGLE_SESSION", sessionId: "s-dm", locationId: null, site: null, capacity: 5, teacherName: "", location: "", isActive: true, honor: { name: "Birds", code: "B" } },
+    { id: "o-hr", span: "SINGLE_SESSION", sessionId: "s-hr", locationId: null, site: null, capacity: 5, teacherName: "", location: "", isActive: true, honor: { name: "Knots at Heritage", code: "K" } },
+    { id: "o-all", span: "ALL_SESSIONS", sessionId: null, locationId: null, site: null, capacity: 5, teacherName: "", location: "", isActive: true, honor: { name: "Camping", code: "C" } },
+    { id: "o-all-dm", span: "ALL_SESSIONS", sessionId: null, locationId: "loc-dm", site: { name: "Des Moines" }, capacity: 5, teacherName: "", location: "", isActive: true, honor: { name: "Fire", code: "F" } },
+    { id: "o-all-hr", span: "ALL_SESSIONS", sessionId: null, locationId: "loc-hr", site: { name: "Camp Heritage 1" }, capacity: 5, teacherName: "", location: "", isActive: true, honor: { name: "Stars", code: "S" } },
   ];
   const db = {
     event: { findUnique: vi.fn().mockResolvedValue({ id: "e1", name: "Honors", startsAt: at, endsAt: at, timezone: "America/Chicago", location: null }) },
@@ -60,6 +62,7 @@ describe("honors rosters filtered by site (#589)", () => {
   it("asks for everything with no site, and reports the event's sites", async () => {
     const db = database();
     const data = (await getHonorRosterData("e1", { includeDietary: false }))!;
+    expect(data.offerings.map((offering) => offering.id)).toEqual(["o-dm", "o-all", "o-all-dm", "o-all-hr"]);
     expect(db.honorSession.findMany.mock.calls[0][0].where).toEqual({ eventId: "e1" });
     expect(db.clubEventRegistration.findMany.mock.calls[0][0].where.registration).toEqual({ status: { in: ["SUBMITTED", "CONFIRMED"] } });
     expect(data.hasLocations).toBe(true);
@@ -69,7 +72,8 @@ describe("honors rosters filtered by site (#589)", () => {
   it("names the site on classes, people, and clubs, and drops classes of sessions outside the filter", async () => {
     database();
     const data = (await getHonorRosterData("e1", { includeDietary: false, locationId: "loc-dm" }))!;
-    expect(data.offerings.map((offering) => [offering.id, offering.siteName])).toEqual([["o-dm", "Des Moines"], ["o-all", null]]);
+    // Another site's single-session and all-sessions classes drop out; classes with no site stay.
+    expect(data.offerings.map((offering) => [offering.id, offering.siteName])).toEqual([["o-dm", "Des Moines"], ["o-all", null], ["o-all-dm", "Des Moines"]]);
     expect(data.attendees[0]).toMatchObject({ locationId: "loc-dm", locationName: "Des Moines" });
     expect(data.clubs).toEqual([{ id: "club-1", name: "Iowa Club", siteName: "Des Moines" }]);
   });

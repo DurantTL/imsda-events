@@ -7,6 +7,8 @@ import { evaluateEventRegistrationPhase, hasEventEnded, registrationClosedMessag
 import {
   chooseLocationFirstMessage,
   differentLocationMessage,
+  eventHasActiveLocations,
+  offeringSiteId,
   sessionVisibleAtLocation,
 } from "@/modules/honors/locations";
 import {
@@ -83,8 +85,8 @@ async function loadClubRegistration(client: Prisma.TransactionClient, organizati
       consumesSeat: consumesClassSeat(attendeeType),
     };
   });
-  // With locations on the event, classes are per site, so the club must have picked one (#589).
-  const eventHasLocations = (await client.eventLocation.count({ where: { eventId } })) > 0;
+  // With active locations on the event, classes are per site, so the club must have picked one (#589).
+  const eventHasLocations = await eventHasActiveLocations(client, eventId);
   return {
     event: clubRegistration.event,
     registrationId: clubRegistration.registration.id,
@@ -101,6 +103,8 @@ async function loadOfferings(client: Prisma.TransactionClient, eventId: string) 
       id: true,
       span: true,
       sessionId: true,
+      locationId: true,
+      site: { select: { name: true } },
       capacity: true,
       minimumAge: true,
       perClubLimit: true,
@@ -113,9 +117,9 @@ async function loadOfferings(client: Prisma.TransactionClient, eventId: string) 
     orderBy: [{ honor: { name: "asc" } }],
   });
   return offerings.map((offering) => ({
-    // The site comes from the session; an all-sessions class has none (#589).
-    sessionLocationId: offering.session?.locationId ?? null,
-    sessionLocationName: offering.session?.location?.name ?? null,
+    // The site comes from the session; an all-sessions class has its own (#589).
+    siteId: offeringSiteId(offering),
+    siteName: offering.span === "ALL_SESSIONS" ? offering.site?.name ?? null : offering.session?.location?.name ?? null,
     id: offering.id,
     honorName: offering.honor.name,
     honorCode: offering.honor.code,
@@ -163,9 +167,12 @@ export async function getClassSelectionWorkspace(organizationId: string, eventId
   // Directors see only their site's sessions and classes, plus any with no site.
   // Before a site is picked they see none (#589).
   const sessions = registration.locationRequired ? [] : allSessions.filter((session) => sessionVisibleAtLocation(session.locationId, locationId));
-  const offerings = registration.locationRequired ? [] : allOfferings.filter((offering) => sessionVisibleAtLocation(offering.sessionLocationId, locationId));
+  const offerings = registration.locationRequired ? [] : allOfferings.filter((offering) => sessionVisibleAtLocation(offering.siteId, locationId));
+  // Picks at a class the club can't see (moved with a member transfer, say) stay out of the picker and out of the save.
+  const visibleIds = new Set(offerings.map((offering) => offering.id));
   const selections: Record<string, string[]> = {};
   for (const enrollment of enrollments) {
+    if (!visibleIds.has(enrollment.offeringId)) continue;
     (selections[enrollment.registrationAttendeeId] ??= []).push(enrollment.offeringId);
   }
   return {
@@ -226,7 +233,7 @@ export async function setClassSelections(
         const allOfferings = await loadOfferings(tx, eventId);
         const registrationLocationId = registration.location?.id ?? null;
         // The server, not the screen, keeps a club to its own site's classes (#589).
-        const offerings = allOfferings.filter((offering) => sessionVisibleAtLocation(offering.sessionLocationId, registrationLocationId));
+        const offerings = allOfferings.filter((offering) => sessionVisibleAtLocation(offering.siteId, registrationLocationId));
         const otherSite = new Map(allOfferings.filter((offering) => !offerings.includes(offering)).map((offering) => [offering.id, offering]));
         const offeringsById = new Map<string, SelectableOffering & (typeof offerings)[number]>(offerings.map((offering) => [offering.id, offering]));
         const existing = await tx.honorEnrollment.findMany({
@@ -239,7 +246,8 @@ export async function setClassSelections(
         for (const [attendeeId, offeringIds] of Object.entries(selections)) {
           const attendee = attendeesById.get(attendeeId);
           if (!attendee) throw new ClassSelectionError("ATTENDEE_NOT_FOUND", "That person isn't on your club's registration.");
-          const current = existing.filter((enrollment) => enrollment.registrationAttendeeId === attendeeId);
+          // Only picks the club can see are replaced; a hidden pick is left as it is.
+          const current = existing.filter((enrollment) => enrollment.registrationAttendeeId === attendeeId && offeringsById.has(enrollment.offeringId));
           const currentIds = new Set(current.map((enrollment) => enrollment.offeringId));
           const wrongSite = offeringIds.map((id) => otherSite.get(id)).find(Boolean);
           if (wrongSite) {

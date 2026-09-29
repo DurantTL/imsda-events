@@ -63,3 +63,26 @@ describe("honor input validation", () => {
     expect(honorInputSchema.parse({ code: "AR-011", name: "Knot Tying" })).toMatchObject({ description: "", isActive: true });
   });
 });
+
+describe("offering slots per site (#589)", () => {
+  const knots = (locationId: string | null, over: Record<string, unknown> = {}) => ({
+    honorId: "knots", span: "ALL_SESSIONS" as const, sessionId: null, locationId, ...over,
+  });
+
+  it("lets two sites both teach an honor across all sessions, but not one site twice", () => {
+    expect(offeringSlotConflict(knots("dm"), [knots("kc")])).toBeNull();
+    expect(offeringSlotConflict(knots("dm"), [knots("dm")])).toMatch(/already offered across all sessions/);
+  });
+
+  it("scopes the all-sessions versus single-session clash to one site", () => {
+    const single = { honorId: "knots", span: "SINGLE_SESSION" as const, sessionId: "s1", locationId: "kc" };
+    expect(offeringSlotConflict(knots("dm"), [single])).toBeNull();
+    expect(offeringSlotConflict(knots("kc"), [single])).toMatch(/single session/);
+    expect(offeringSlotConflict({ ...single, locationId: "dm", sessionId: "s2" }, [knots("kc")])).toBeNull();
+  });
+
+  it("behaves as before when no slot has a site", () => {
+    expect(offeringSlotConflict(knots(null), [knots(null)])).not.toBeNull();
+    expect(offeringSlotConflict({ honorId: "knots", span: "ALL_SESSIONS", sessionId: null }, [])).toBeNull();
+  });
+});

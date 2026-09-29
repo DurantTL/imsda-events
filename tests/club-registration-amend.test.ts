@@ -840,7 +840,10 @@ describe("club registration edit at an event location (#413)", () => {
         message: "Remove this club's class picks at Camp Heritage before changing location.",
       });
     expect(classPickCount).toHaveBeenCalledWith({
-      where: { registrationId: "registration-1", offering: { session: { locationId: "loc-1" } } },
+      where: {
+        registrationId: "registration-1",
+        offering: { OR: [{ session: { locationId: "loc-1" } }, { locationId: "loc-1" }] },
+      },
     });
     expect(prisma.registration.update).not.toHaveBeenCalled();
     expect(queryRaw).not.toHaveBeenCalled();

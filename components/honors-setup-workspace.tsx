@@ -54,13 +54,19 @@ export function HonorsSetupWorkspace({
   const sessionSiteSuffix = (locationId: string | null) => (hasSites ? ` — ${siteName(locationId) ?? "No site"}` : "");
 
   const groups = useMemo(() => [
-    { key: "all", title: "All sessions", offerings: setup.offerings.filter((offering) => offering.span === "ALL_SESSIONS") },
+    // An all-sessions class is at its own site (#589): one "All sessions" group per site, in the sites' order.
+    ...siteGroups.map((group) => ({
+      key: `all-${group.location?.id ?? "none"}`,
+      title: hasSites ? `All sessions — ${group.location?.name ?? "No site"}` : "All sessions",
+      offerings: setup.offerings.filter((offering) => offering.span === "ALL_SESSIONS" && (offering.locationId ?? null) === (group.location?.id ?? null)),
+    })),
     ...sessions.map((session) => ({
       key: session.id,
       title: `${session.name}${hasSites ? ` — ${setup.locations.find((location) => location.id === session.locationId)?.name ?? "No site"}` : ""}`,
       offerings: setup.offerings.filter((offering) => offering.sessionId === session.id),
     })),
-  ], [setup, sessions, hasSites]);
+  ], [setup, sessions, hasSites, siteGroups]);
+  const hasActiveSites = setup.locations.some((location) => location.isActive !== false);
 
   const totalSeats = setup.offerings
     .filter((offering) => offering.isActive)
@@ -129,6 +135,8 @@ export function HonorsSetupWorkspace({
       perClubLimit: optionalNumber(form.get("perClubLimit")),
       teacherName: String(form.get("teacherName") ?? ""),
       location: String(form.get("location") ?? ""),
+      // Only an all-sessions class has its own site; a single-session class is at its session's.
+      ...((editing ? editing.span === "ALL_SESSIONS" : span === "ALL_SESSIONS") && hasSites ? { locationId: String(form.get("locationId") ?? "") || null } : {}),
     };
     const result = editing
       ? await call(`${base}/offerings/${encodeURIComponent(editing.id)}`, "PATCH", details, "Class updated.")
@@ -255,8 +263,8 @@ export function HonorsSetupWorkspace({
           {hasSites && (
             <label>
               Site
-              <select name="locationId" onChange={(event) => setNewSessionSite(event.target.value)} value={newSessionSite}>
-                <option value="">No site (shown to every site)</option>
+              <select name="locationId" onChange={(event) => setNewSessionSite(event.target.value)} required={hasActiveSites} value={newSessionSite}>
+                <option value="">{hasActiveSites ? "Choose a site" : "No site (shown to every site)"}</option>
                 {setup.locations.map((location) => (
                   <option key={location.id} value={location.id}>{location.name}{location.isActive ? "" : " (inactive)"}</option>
                 ))}
@@ -314,6 +322,17 @@ export function HonorsSetupWorkspace({
                 <option value="ALL_SESSIONS">{honorOfferingSpanLabels.ALL_SESSIONS} (fills every session)</option>
               </select>
             </label>
+            {span === "ALL_SESSIONS" && hasSites && (
+              <label>
+                Site
+                <select name="locationId" required={hasActiveSites}>
+                  <option value="">{hasActiveSites ? "Choose a site" : "No site"}</option>
+                  {setup.locations.map((location) => (
+                    <option key={location.id} value={location.id}>{location.name}{location.isActive === false ? " (inactive)" : ""}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             {span === "SINGLE_SESSION" && (
               <label>
                 Session
@@ -328,6 +347,17 @@ export function HonorsSetupWorkspace({
           </div>
         )}
         <div className="form-grid two-column">
+          {editing && editing.span === "ALL_SESSIONS" && hasSites && (
+            <label>
+              Site
+              <select defaultValue={editing.locationId ?? ""} name="locationId" required={hasActiveSites}>
+                <option value="">{hasActiveSites ? "Choose a site" : "No site"}</option>
+                {setup.locations.map((location) => (
+                  <option key={location.id} value={location.id}>{location.name}{location.isActive === false ? " (inactive)" : ""}</option>
+                ))}
+              </select>
+            </label>
+          )}
           <label>
             Youth seats
             <input defaultValue={editing?.capacity ?? ""} max={10000} min={0} name="capacity" required type="number" />

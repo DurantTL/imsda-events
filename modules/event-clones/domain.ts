@@ -249,6 +249,8 @@ export type SourceConfiguration = {
     teacherName: string;
     location: string;
     isActive: boolean;
+    locationName: string | null;
+    locationNormalizedName: string | null;
   }>;
   /** Counts of source rows in domains a clone does not support (for the preview only). */
   unsupported: { merchandiseProducts: number; paymentInstructionVersions: number; messageDeliverySettings: number; uploadedFiles: number };
