@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { RegistrationStatus } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import {
   clubAssignmentStatus,
@@ -64,24 +65,30 @@ function toClubAssignmentSummary(fields: ClubAssignmentFields): ClubAssignmentSu
 /**
  * Every active (submitted/confirmed) club registration for a club event,
  * built into the reports' shared `ClubEventRecord` shape, plus each club's
- * campsite/duty/activity assignment (#410). Waitlisted and cancelled club
+ * campsite/duty/activity assignment (#410). By default waitlisted and cancelled club
  * registrations are excluded — they owe nothing and never appear here.
  */
-export async function getClubEventRecords(eventId: string): Promise<{
+export async function getClubEventRecords(
+  eventId: string,
+  options?: { statuses?: readonly RegistrationStatus[] },
+): Promise<{
   clubs: ClubEventRecord[];
   assignments: Map<string, ClubAssignmentSummary>;
   earlyBirdDeadline: string | null;
+  /** The registrations the clubs were built from, for callers that need raw attendee answers. */
+  registrations: RegistrationRecord[];
 }> {
+  const statuses = options?.statuses ?? activeRegistrationStatuses;
   const [clubRegistrations, registrations, assignmentRows] = await Promise.all([
     getPrisma().clubEventRegistration.findMany({
-      where: { eventId, registration: { status: { in: [...activeRegistrationStatuses] } } },
+      where: { eventId, registration: { status: { in: [...statuses] } } },
       select: {
         organizationId: true,
         registrationId: true,
         organization: { select: { name: true, parentOrganization: { select: { name: true } } } },
       },
     }),
-    listRegistrations(eventId, { statuses: activeRegistrationStatuses }),
+    listRegistrations(eventId, { statuses }),
     listClubAssignments(eventId),
   ]);
 
@@ -117,7 +124,7 @@ export async function getClubEventRecords(eventId: string): Promise<{
     }));
   }
 
-  return { clubs, assignments, earlyBirdDeadline };
+  return { clubs, assignments, earlyBirdDeadline, registrations };
 }
 
 export async function getClubEventReports(eventId: string) {
