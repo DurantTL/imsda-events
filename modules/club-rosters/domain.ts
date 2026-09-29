@@ -11,6 +11,50 @@ export const clubRosterAttendeeTypeLabels = {
   UNDERAGE: "Underage",
 } as const;
 
+/** One-line definitions shown wherever a director picks a member type (#576). */
+export const clubRosterAttendeeTypeDefinitions = {
+  YOUTH: "A Pathfinder or Adventurer member.",
+  STAFF: "Registered club staff (director, deputy, counselor, instructor).",
+  ADULT: "A parent, helper, or driver aged 18 or over who isn't registered staff.",
+  UNDERAGE: "A child who isn't old enough to be a club member (e.g. a staff member's young child).",
+} as const;
+
+const youngestClubMemberAge = 4;
+const oldestYouthAge = 18;
+const youngestStaffAge = 16;
+const youngestAdultAge = 18;
+
+/**
+ * A soft hint (#576) when a birth date and the chosen type disagree, for
+ * example a 19-year-old marked Youth. Hint only: it never blocks saving, and
+ * it returns null when the age can't be worked out or fits the type.
+ */
+export function attendeeTypeAgeHint(
+  attendeeType: keyof typeof clubRosterAttendeeTypeLabels,
+  birthDate: string,
+  today: string,
+) {
+  const age = ageOn(birthDate, today);
+  if (age === null || age < 0 || age > 120) return null;
+  const type = clubRosterAttendeeTypeLabels[attendeeType];
+  if (attendeeType === "YOUTH" && age > oldestYouthAge) {
+    return `This person is ${age}, which is older than most youth members. Is ${type} right? Adult or Staff may fit better.`;
+  }
+  if (attendeeType === "YOUTH" && age < youngestClubMemberAge) {
+    return `This person is ${age}, which is younger than club members usually are. Is ${type} right? Underage may fit better.`;
+  }
+  if (attendeeType === "ADULT" && age < youngestAdultAge) {
+    return `This person is ${age}, which is under 18. Is ${type} right? Youth or Underage may fit better.`;
+  }
+  if (attendeeType === "STAFF" && age < youngestStaffAge) {
+    return `This person is ${age}, which is young for registered staff. Is ${type} right? Youth may fit better.`;
+  }
+  if (attendeeType === "UNDERAGE" && age >= youngestClubMemberAge) {
+    return `This person is ${age}, which is old enough to be a club member. Is ${type} right? Youth may fit better.`;
+  }
+  return null;
+}
+
 /** Pathfinder class levels (#375), in the order a Pathfinder moves through them. */
 export const clubClassLevelLabels = {
   FRIEND: "Friend",
