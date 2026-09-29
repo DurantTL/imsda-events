@@ -74,10 +74,10 @@ export async function recordResendWebhookEvent(
           },
           data: providerTransitionUpdate(transition),
         });
-        // A bounce or failure means a club form link never reached its person (#610): withdraw it, but only
+        // A bounce, failure or suppression means a club form link never reached its person (#610): withdraw it, but only
         // when this event actually applied (not an out-of-order one). A spam complaint arrives after delivery,
         // so it must not kill the parent's link. A message that carries no link matches nothing.
-        if (applied.count > 0 && ["BOUNCED", "FAILED"].includes(transition.status)) {
+        if (applied.count > 0 && ["BOUNCED", "FAILED", "SUPPRESSED"].includes(transition.status)) {
           await retireClubFormLinkForMessage(tx, message.id, occurredAt);
         }
       }
