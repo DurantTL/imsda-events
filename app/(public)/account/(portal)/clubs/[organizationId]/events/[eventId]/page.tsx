@@ -185,7 +185,11 @@ export default async function ClubEventRegistrationPage({
       {!workspace.registration && !workspace.problem && workspace.event.phase !== "OPEN" && (
         <section className="public-manage-card">
           <p className="public-manage-empty">
-            {workspace.event.phase === "CLOSED" && workspace.event.ended
+            {workspace.locations.length > 0
+              ? workspace.event.phase === "CLOSED"
+                ? "Registration has closed at every location."
+                : "Registration isn't open yet at any location."
+              : workspace.event.phase === "CLOSED" && workspace.event.ended
               ? registrationClosedMessage
               : workspace.event.phase === "CLOSED"
               ? `Registration closed${workspace.event.registrationClosesOn ? ` after ${workspace.event.registrationClosesOn}` : ""}.`

@@ -624,7 +624,8 @@ async function createPublicRegistrationTransaction(
   // Whether registration is open for `source`: the event's own lifecycle, or,
   // for a club at a location, that location's closing date and last day in
   // their place (#413).
-  const assertRegistrationOpen = (source: typeof form.event) => {
+  const assertRegistrationOpen = (source: typeof form.event, locationName?: string) => {
+    const subject = locationName ?? "this event";
     const sourcePhase = evaluateEventRegistrationPhase(source, now);
     if (sourcePhase === "UPCOMING") {
       const opening = form.event.registrationOpensOn
@@ -632,13 +633,13 @@ async function createPublicRegistrationTransaction(
         : "";
       throw new PublicRegistrationError(
         "REGISTRATION_NOT_OPEN",
-        `Registration for this event is not open yet.${opening}`
+        `Registration for ${subject} is not open yet.${opening}`
       );
     }
     if (sourcePhase === "CLOSED" && hasEventEnded(source, now)) {
       throw new PublicRegistrationError(
         "REGISTRATION_CLOSED",
-        registrationClosedMessage,
+        locationName ? `Registration for ${locationName} has closed.` : registrationClosedMessage,
       );
     }
     if (sourcePhase === "CLOSED") {
@@ -647,7 +648,7 @@ async function createPublicRegistrationTransaction(
         : "";
       throw new PublicRegistrationError(
         "REGISTRATION_CLOSED",
-        `Registration for this event is closed.${closing}`
+        `Registration for ${subject} is closed.${closing}`
       );
     }
     if (sourcePhase !== "OPEN") {
@@ -670,7 +671,7 @@ async function createPublicRegistrationTransaction(
       locationId: club.locationId,
       requestedSeats: clubRoster.enabled ? input.attendees?.length ?? 0 : 1,
       requirePick: true,
-      beforeSeatCheck: (source) => assertRegistrationOpen(source),
+      beforeSeatCheck: (source, location) => assertRegistrationOpen(source, location.name),
     });
     lifecycle = admittedToLocation.lifecycle;
     registrationLocationId = admittedToLocation.locationId;

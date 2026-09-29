@@ -42,6 +42,9 @@ type Db = Record<string, Record<string, Fn>> & { touchedModels: Set<string> };
 function scriptedDatabase(): Db {
   const models = new Map<string, Record<string, Fn>>();
   const touchedModels = new Set<string>();
+  const transactionOptions: unknown[] = [];
+  // Raw SQL helpers (`$queryRaw`, `$executeRawUnsafe`) are plain functions on a client, not models.
+  const rawFns = new Map<string, Fn>();
   const model = (name: string) => {
     if (!models.has(name)) {
       models.set(name, new Proxy({} as Record<string, Fn>, {
@@ -56,8 +59,13 @@ function scriptedDatabase(): Db {
   const db = new Proxy({} as Db, {
     get(_target, name: string) {
       if (name === "touchedModels") return touchedModels;
-      if (name === "$transaction") return async (work: (tx: unknown) => unknown) => work(db);
+      if (name === "transactionOptions") return transactionOptions;
+      if (name === "$transaction") return async (work: (tx: unknown) => unknown, options?: unknown) => { transactionOptions.push(options); return work(db); };
       if (name === "then") return undefined;
+      if (name.startsWith("$")) {
+        if (!rawFns.has(name)) rawFns.set(name, vi.fn(async () => []));
+        return rawFns.get(name);
+      }
       touchedModels.add(name);
       return model(name);
     },
@@ -349,6 +357,50 @@ describe("registration moves (staff approve each one)", () => {
     }
     expect(db.registrationAttendee.update).not.toHaveBeenCalled();
     expect(db.registration.update).not.toHaveBeenCalled();
+  });
+
+  describe("at an event location (#413)", () => {
+    const raw = (name: string) => (db as unknown as Record<string, ReturnType<typeof vi.fn>>)[name]!;
+    const location = (capacity: number | null) => [{ id: "loc-1", eventId: "event-1", name: "Des Moines", address: null, firstDay: null, lastDay: null, capacity, registrationClosesOn: null, isActive: true }];
+    const at = (capacity: number | null, seatsElsewhere: number) => {
+      db.memberTransferRegistrationMove.findUniqueOrThrow.mockResolvedValue({
+        ...storedMove, fromRegistration: { ...storedMove.fromRegistration, locationId: "loc-2", location: { name: "Kansas City" } },
+      });
+      // The receiving registration already has two people; the move adds a third.
+      db.clubEventRegistration.findUnique.mockResolvedValue(destination({ locationId: "loc-1", location: { name: "Des Moines" }, _count: { attendees: 2 } }));
+      raw("$queryRaw").mockResolvedValue(location(capacity));
+      db.registrationAttendee.count.mockResolvedValue(seatsElsewhere);
+    };
+
+    it("refuses a move into a full location, under the location lock, and moves nothing", async () => {
+      at(4, 2);
+      await expect(approveRegistrationMove("move-1", "", staff, now)).rejects.toMatchObject({ code: "MOVE_BLOCKED", blocker: "LOCATION_FULL" });
+      expect(raw("$queryRaw")).toHaveBeenCalledTimes(1);
+      expect(raw("$executeRawUnsafe").mock.calls.map((call) => call[0])).toEqual(["SET LOCAL lock_timeout = '5s'", "SET LOCAL lock_timeout = 0"]);
+      expect(db.registrationAttendee.count).toHaveBeenCalledWith({ where: { registration: expect.objectContaining({ locationId: "loc-1", id: { not: "reg-b" } }) } });
+      expect(db.registrationAttendee.update).not.toHaveBeenCalled();
+    });
+
+    it("moves the person when the location has room, and names the crossing in the review", async () => {
+      at(5, 2);
+      await approveRegistrationMove("move-1", "ok", staff, now);
+      expect(db.registrationAttendee.update).toHaveBeenCalled();
+    });
+
+    it("adds no seat, so takes no location lock, when both registrations are at the same location", async () => {
+      db.memberTransferRegistrationMove.findUniqueOrThrow.mockResolvedValue({
+        ...storedMove, fromRegistration: { ...storedMove.fromRegistration, locationId: "loc-1", location: { name: "Des Moines" } },
+      });
+      db.clubEventRegistration.findUnique.mockResolvedValue(destination({ locationId: "loc-1", location: { name: "Des Moines" }, _count: { attendees: 2 } }));
+      await approveRegistrationMove("move-1", "ok", staff, now);
+      expect(raw("$queryRaw")).not.toHaveBeenCalled();
+    });
+
+    it("gives the approval transaction room for the lock wait", async () => {
+      at(5, 0);
+      await approveRegistrationMove("move-1", "ok", staff, now);
+      expect((db as unknown as { transactionOptions: unknown[] }).transactionOptions[0]).toMatchObject({ isolationLevel: "Serializable", timeout: 20_000 });
+    });
   });
 
   it("maps a unique collision that outlasts the retries to a clear 409", async () => {

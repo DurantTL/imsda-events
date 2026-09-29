@@ -127,11 +127,14 @@ describe("staff location routes (#413)", () => {
     const busy = await PATCH(request("PATCH", { capacity: 3 }), locationContext);
     expect(busy.status).toBe(503);
     expect((await busy.json()).error).toBe("LOCATION_BUSY");
+    // A plain lock wait is just busy; an expired transaction is real slowness, so it is logged too.
+    expect(mocks.logError).not.toHaveBeenCalled();
     mocks.updateEventLocation.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError("expired", { code: "P2028", clientVersion: "test" }));
     expect((await PATCH(request("PATCH", { capacity: 3 }), locationContext)).status).toBe(503);
+    expect(mocks.logError).toHaveBeenCalledTimes(1);
     mocks.updateEventLocation.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError("conflict", { code: "P2034", clientVersion: "test" }));
     expect((await PATCH(request("PATCH", { capacity: 3 }), locationContext)).status).toBe(409);
-    expect(mocks.logError).not.toHaveBeenCalled();
+    expect(mocks.logError).toHaveBeenCalledTimes(1);
   });
 
   it("answers invalid JSON and invalid input with 400, and logs an unexpected fault as a 500 without details", async () => {

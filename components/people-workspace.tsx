@@ -229,6 +229,7 @@ export function PeopleWorkspace({
   initialFilter = "ALL",
   initialRegistrationId,
   backgroundFlaggedAttendeeIds = [],
+  locationId = null,
 }: {
   eventId: string;
   eventSlug: string;
@@ -241,6 +242,8 @@ export function PeopleWorkspace({
   initialRegistrationId?: string;
   /** Adults at a youth or children's event without a current check (#388). */
   backgroundFlaggedAttendeeIds?: string[];
+  /** The location filter (#413) the CSV export follows; null exports every location. */
+  locationId?: string | null;
 }) {
   const initialSelected = initialRegistrations.find((registration) => registration.id === initialRegistrationId) ?? null;
   const [registrations, setRegistrations] = useState(initialRegistrations);
@@ -640,7 +643,7 @@ export function PeopleWorkspace({
           <a className="secondary-button" href={`/people/duplicates?event=${encodeURIComponent(eventId)}`}><CopyCheck aria-hidden="true" size={17} /> Find duplicates</a>
           {/* Same permission the review page itself requires (MANAGE_REGISTRATION). */}
           {canEdit && <a className="secondary-button" href={`/people/directory-review?event=${encodeURIComponent(eventId)}`}>Directory review</a>}
-          <a className="secondary-button" href={`/api/events/${eventId}/exports/registrations`}><Download aria-hidden="true" size={17} /> Export CSV</a>
+          <a className="secondary-button" href={`/api/events/${eventId}/exports/registrations${locationId ? `?location=${encodeURIComponent(locationId)}` : ""}`}><Download aria-hidden="true" size={17} /> Export CSV</a>
           {canEdit && <a className="primary-button" href={`/events/${eventSlug}`} target="_blank" rel="noreferrer"><ExternalLink aria-hidden="true" size={17} /> Start registration</a>}
         </div>
       </div>

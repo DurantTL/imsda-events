@@ -10,6 +10,8 @@ export type ClubPickableLocation = {
   firstDay: string;
   lastDay: string;
   registrationClosesOn: string | null;
+  /** Set only when the location closes on a date other than the event's. */
+  ownClosingDate?: string | null;
   remaining: number | null;
   full: boolean;
   phase: "DRAFT" | "UPCOMING" | "OPEN" | "CLOSED";
@@ -78,7 +80,7 @@ export function ClubLocationPicker({
                       : location.remaining !== null && location.remaining <= 10
                         ? ` · ${location.remaining} ${location.remaining === 1 ? "spot" : "spots"} left`
                         : ""}
-                    {!unavailable && location.registrationClosesOn ? ` · Register by ${formatCalendarDate(location.registrationClosesOn)}` : ""}
+                    {!unavailable && location.ownClosingDate ? ` · Register by ${formatCalendarDate(location.ownClosingDate)}` : ""}
                   </small>
                 </span>
               </label>

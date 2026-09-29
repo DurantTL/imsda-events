@@ -13,6 +13,11 @@ export function isBusyDatabaseError(error: unknown) {
     || (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2028");
 }
 
+/** An expired transaction (P2028) is real slowness, not just a busy lock, so it is logged even though the answer is a retryable 503 (#413). */
+export function logExpiredTransaction(error: unknown, action: string) {
+  if (!isLockTimeoutError(error)) logError(`${action} timed out`, error);
+}
+
 export function eventLocationApiError(error: unknown, action: string) {
   if (error instanceof AccessDeniedError) {
     return Response.json({ error: error.code, message: error.message }, { status: error.status, headers: noStore });
@@ -30,6 +35,8 @@ export function eventLocationApiError(error: unknown, action: string) {
     return Response.json({ error: error.code, message: error.message }, { status: eventLocationErrorStatus(error.code), headers: noStore });
   }
   if (isBusyDatabaseError(error)) {
+    // Still a retryable 503, but logged: an expired transaction (P2028) is real slowness, not just a busy lock.
+    logExpiredTransaction(error, action);
     return Response.json({ error: "LOCATION_BUSY", message: locationBusyMessage }, { status: 503, headers: noStore });
   }
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {

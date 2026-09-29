@@ -181,6 +181,10 @@ function clubLocationView(event: ClubEvent, location: ClubLocation, occupied: nu
     firstDay: dates.firstDay,
     lastDay: dates.lastDay,
     registrationClosesOn: dates.registrationClosesOn,
+    // Only when this location closes on its own date, so the picker doesn't repeat the event's (#413).
+    ownClosingDate: location.registrationClosesOn !== null && location.registrationClosesOn !== event.registrationClosesOn
+      ? location.registrationClosesOn
+      : null,
     capacity: location.capacity,
     remaining,
     full: remaining !== null && remaining <= 0,
@@ -437,7 +441,7 @@ async function activeRosterFor(client: Prisma.TransactionClient, organizationId:
 }
 
 /** The director edit window (#366) for a registration, on its location's dates when it has one (#413). */
-function clubEditWindow(event: ClubEvent, location: LocationDateSource | null, now: Date) {
+function clubEditWindow(event: ClubEvent, location: (LocationDateSource & { name?: string }) | null, now: Date) {
   const dates = effectiveLocationDates(event, location);
   return clubRegistrationEditWindow({
     phase: evaluateLocationPhase(event, location, now),
@@ -445,6 +449,7 @@ function clubEditWindow(event: ClubEvent, location: LocationDateSource | null, n
     today: calendarDateInEventTimeZone(now, event.timezone),
     eventDate: dates.firstDay,
     ended: hasLocationEnded(event, location, now),
+    locationName: location?.name ?? null,
   });
 }
 

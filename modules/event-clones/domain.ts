@@ -546,6 +546,8 @@ export type ClonePlan = {
 /**
  * How the clone treats what it copies (#157), shown in every preview. Dates,
  * capacities, and limits are never copied or shifted: each is entered anew.
+ * The one exception is locations (#413): their capacity is copied, and their
+ * dates move by the same number of days as the event's start date.
  * Message templates are the one thing copied live: their published text is
  * copied as a PUBLISHED version and each keeps its `isEnabled` switch.
  */
