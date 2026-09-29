@@ -147,10 +147,14 @@ type PromoCodeQuote = FormCalculation & {
   preDiscountSubtotalCents: number;
   discountAmountCents: number;
   promoCode: string;
+  /** The church sponsoring the code the attendee entered (#545); nothing else about it is shown. */
+  sponsoredBy?: string | null;
 };
 
 /** Per-person codes (#397): every attendee's code, checked together. */
 type AttendeePromoQuote = PromoCodeQuote & {
+  /** Sponsoring church by normalized code (#545). */
+  sponsors?: Record<string, string>;
   attendeeDiscounts: Array<{ attendeeIndex: number; code: string; discountAmountCents: number }>;
   attendeeIssues: Array<{ attendeeIndex: number; fieldId: string; key: string; path: string; message: string }>;
 };
@@ -711,7 +715,7 @@ export function PublicRegistrationForm({
       setPromoCodeQuote(quote);
       setPromoQuoteBasis(requestBasis);
       setPromoCodeNotice(
-        `${quote.promoCode} applied — ${money(quote.discountAmountCents)} off.`,
+        `${quote.promoCode} applied — ${money(quote.discountAmountCents)} off.${quote.sponsoredBy ? ` Sponsored by ${quote.sponsoredBy}.` : ""}`,
       );
       setIdempotencyKey(null);
     } catch {
@@ -779,7 +783,8 @@ export function PublicRegistrationForm({
     const issue = activeAttendeePromo.attendeeIssues.find((candidate) => candidate.attendeeIndex === attendeeIndex);
     if (issue) return { ok: false, text: issue.message };
     const applied = activeAttendeePromo.attendeeDiscounts.find((candidate) => candidate.attendeeIndex === attendeeIndex);
-    return applied ? { ok: true, text: `${applied.code} applied — ${money(applied.discountAmountCents)} off for this person.` } : null;
+    const sponsor = applied ? activeAttendeePromo.sponsors?.[applied.code.normalize("NFKC").trim().toUpperCase()] : undefined;
+    return applied ? { ok: true, text: `${applied.code} applied — ${money(applied.discountAmountCents)} off for this person.${sponsor ? ` Sponsored by ${sponsor}.` : ""}` } : null;
   }
 
   // Price changed under checked codes: check them again (debounced).

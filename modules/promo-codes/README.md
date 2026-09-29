@@ -43,3 +43,49 @@ The local seed and `npm run db:refresh-demo` upsert the fictitious `LOCAL10`
 code for Women’s Retreat (`10%` off, `$50` maximum, `$100` minimum). A refresh
 extends the local-only ceiling so at least 25 test uses remain without deleting
 any immutable redemption history. It must not be treated as a live event offer.
+
+## Church-sponsored codes (#545)
+
+On a GENERAL event, staff with `MANAGE_FINANCE` may link a code to a sponsoring
+church (an active CHURCH organization) in the same editor. The attendee gets the
+normal discount; the church is billed that discount after the event, not paid
+online. Nothing is stored per redemption: like church-billed club registrations
+(#409), what a church owes is computed from `PromoCodeRedemption.discountAmountCents`
+when someone looks.
+
+- One line per redeemed registration, counted only while the registration is
+  SUBMITTED or CONFIRMED (the statuses `churchOwedCents` bills). Cancelled,
+  waitlisted, and draft registrations drop out on their own.
+- Lines appear on `/finance/church-owed` and its CSV grouped under the church,
+  by confirmation code and amount only, and count in the overview
+  "Billed to churches" figure. Each surface keeps its existing permission.
+- A church is never billed twice: an event that is a CLUB event, or already
+  bills organizations (`DEFERRED_ORGANIZATION_INVOICE`), bills no sponsored
+  lines even if a code there names a church.
+- The church's exposure is the code's own `maximumUses` and
+  `maximumDiscountCents`; there is no separate cap.
+- Linking and unlinking are audited with ids only. A used code cannot change or
+  lose its sponsor (deactivate it and create a new one), and cloning an event
+  never copies a sponsor.
+- Attendees see only "Sponsored by <church>" on the code they entered.
+
+### Which redemptions become church lines
+
+- A code entered for the whole registration is one line (its `PromoCodeRedemption`).
+- A per-person code (#397) or a code a staff member applies is one line per
+  person: a `RegistrationAdjustment` of kind PROMO_CODE, billed at the
+  discount (its negative amount, made positive). An adjustment that a later
+  adjustment reverses, and the reversal row itself, are both left out.
+- Each source is counted once; a registration may hold both kinds.
+- Linking is allowed only while the event is GENERAL and attendee-paid, and the
+  event's settings save refuses to leave that (club audience, or billing
+  organizations) while any code on it has a sponsor: unlink them first. Events
+  made by cloning or from a template start with no sponsors.
+
+### Ordering of unlink and claim
+
+Unlinking (or moving) a sponsor is allowed only while `redeemedCount` is 0, and
+the write is guarded on that count. If a claim commits first, the unlink is
+refused; if the unlink commits first, the claim redeems an unsponsored code and
+no church is billed. Either order is consistent, and a church is never billed
+for a use it could not have been linked to.

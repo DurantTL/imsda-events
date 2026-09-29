@@ -7,6 +7,10 @@ import {
   NO_CHURCH_ON_FILE,
   type ChurchAmountOwedRow,
 } from "@/modules/club-registrations/church-owed";
+import {
+  summarizeSponsoredLines,
+  type ChurchSponsoredPromoLine,
+} from "@/modules/promo-codes/church-sponsored";
 
 function money(cents: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
@@ -17,19 +21,28 @@ function money(cents: number) {
  * engine, billed to the church after the event and never paid online.
  * Read-only: no card payment and no attendee balance ever come from this
  * screen. Only submitted or confirmed clubs are billed; waitlisted and
- * cancelled clubs are listed separately at $0. Invoicing and recording the
+ * cancelled clubs are listed separately at $0. Church-sponsored promo code
+ * lines (#545) are grouped under their church and show a confirmation code
+ * and amount only, never an attendee name. Invoicing and recording the
  * church's payment are #165–#168, out of scope here.
  */
 export function ChurchAmountsOwed({
   eventId,
   isDeferredOrganizationBilling,
   rows,
+  sponsoredLines = [],
 }: {
   eventId: string;
   isDeferredOrganizationBilling: boolean;
   rows: ChurchAmountOwedRow[];
+  sponsoredLines?: ChurchSponsoredPromoLine[];
 }) {
   const summary = summarizeChurchAmountsOwed(rows);
+  const sponsored = summarizeSponsoredLines(sponsoredLines);
+  const churchesBilled = new Set([
+    ...summary.churches.filter((church) => church.churchKey !== "none").map((church) => church.churchKey),
+    ...sponsored.churches.map((church) => church.churchId),
+  ]).size;
   const sorted = sortChurchAmountsOwed(rows);
   const billed = sorted.filter((row) => row.isBilled);
   const notBilled = sorted.filter((row) => !row.isBilled);
@@ -41,7 +54,9 @@ export function ChurchAmountsOwed({
           <h2>Owed by churches</h2>
           <p>
             Estimated amount each church owes for its clubs at this event — billed to the church after the event, not paid online.
-            {!isDeferredOrganizationBilling && " This event does not bill churches, so no club registrations are billed here."}
+            {!isDeferredOrganizationBilling && (sponsored.lineCount > 0
+              ? " This event does not bill churches for club registrations; the amounts below are church-sponsored promo codes."
+              : " This event does not bill churches, so no club registrations are billed here.")}
           </p>
         </div>
         <div className="page-intro-actions">
@@ -54,17 +69,24 @@ export function ChurchAmountsOwed({
         <article className="finance-stat">
           <span><Building2 aria-hidden="true" size={18} /></span>
           <small>Churches billed</small>
-          <strong>{summary.churchCount}</strong>
+          <strong>{churchesBilled}</strong>
         </article>
         <article className="finance-stat">
           <span><Building2 aria-hidden="true" size={18} /></span>
           <small>Clubs billed</small>
           <strong>{summary.billedClubCount}</strong>
         </article>
+        {sponsored.lineCount > 0 && (
+          <article className="finance-stat">
+            <span><Building2 aria-hidden="true" size={18} /></span>
+            <small>Sponsored promo codes</small>
+            <strong>{sponsored.lineCount}</strong>
+          </article>
+        )}
         <article className="finance-stat warning">
           <span><Building2 aria-hidden="true" size={18} /></span>
           <small>Estimated amount owed</small>
-          <strong>{money(summary.totalOwedCents)}</strong>
+          <strong>{money(summary.totalOwedCents + sponsored.totalCents)}</strong>
         </article>
       </section>
       {summary.churches.length > 0 && (
@@ -93,11 +115,36 @@ export function ChurchAmountsOwed({
         {billed.length === 0 && (
           <div className="empty-state">
             <Building2 aria-hidden="true" size={24} />
-            <h3>No church-billed registrations</h3>
-            <p>No club has a submitted registration for this event yet, or this event does not bill churches.</p>
+            <h3>{sponsored.lineCount > 0 ? "No church-billed club registrations" : "No church-billed registrations"}</h3>
+            <p>{sponsored.lineCount > 0
+              ? "No club is billed for this event. Church-sponsored promo codes are listed below."
+              : "No club has a submitted registration for this event yet, or this event does not bill churches."}</p>
           </div>
         )}
       </section>
+      {sponsored.churches.length > 0 && (
+        <section className="panel finance-list" aria-label="Church-sponsored promo codes">
+          <div className="finance-row finance-head"><span>Church-sponsored promo codes</span><span>Confirmation</span><span>Status</span><span>Discount owed</span></div>
+          {sponsored.churches.map((church) => (
+            <div key={church.churchId} className="finance-group">
+              <div className="finance-row">
+                <span><strong>{church.churchName}</strong><small>{church.lineCount} {church.lineCount === 1 ? "registration" : "registrations"} used a code this church sponsors</small></span>
+                <span />
+                <span />
+                <span><strong>{money(church.amountCents)}</strong></span>
+              </div>
+              {church.lines.map((line) => (
+                <div className="finance-row" key={line.lineId}>
+                  <span><small>Promo code {line.promoCode}</small></span>
+                  <span>{line.confirmationCode}</span>
+                  <span>{line.status.toLowerCase()}</span>
+                  <span>{money(line.amountCents)}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </section>
+      )}
       {notBilled.length > 0 && (
         <section className="panel finance-list" aria-label="Waitlisted and cancelled clubs">
           <div className="finance-row finance-head"><span>Waitlisted or cancelled club</span><span>Confirmation</span><span>Attendees</span><span>Owed</span></div>

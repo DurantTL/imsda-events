@@ -3,6 +3,8 @@ import { getCurrentSession } from "@/modules/access/current-session";
 import { findActiveMembership } from "@/modules/events/repository";
 import { listChurchAmountsOwed } from "@/modules/club-registrations/repository";
 import { churchAmountsOwedCsvRows } from "@/modules/club-registrations/church-owed";
+import { billedSponsoredLines } from "@/modules/promo-codes/church-sponsored";
+import { listChurchSponsoredPromoLines } from "@/modules/promo-codes/church-sponsored-repository";
 import { toCsv } from "@/modules/reporting/csv";
 import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
@@ -13,7 +15,9 @@ import { withRequestContext } from "@/lib/request-context";
  * birth dates, medical answers, or other attendee detail, only what a church
  * invoice needs — the church, the club, the confirmation, the status, the
  * headcount, and the amount already priced by the normal pricing engine.
- * Waitlisted and cancelled clubs appear with $0 owed.
+ * Waitlisted and cancelled clubs appear with $0 owed. Church-sponsored promo
+ * code lines (#545) follow, one per active redeemed registration, by
+ * confirmation code and amount only.
  */
 async function getHandler(
   _request: Request,
@@ -22,8 +26,11 @@ async function getHandler(
   try {
     const { eventId } = await context.params;
     await requirePermission(await getCurrentSession(), eventId, "MANAGE_FINANCE", findActiveMembership);
-    const owed = await listChurchAmountsOwed(eventId);
-    const rows = churchAmountsOwedCsvRows(owed);
+    const [owed, sponsored] = await Promise.all([
+      listChurchAmountsOwed(eventId),
+      listChurchSponsoredPromoLines(eventId),
+    ]);
+    const rows = churchAmountsOwedCsvRows(owed, billedSponsoredLines(sponsored));
     return new Response(toCsv(rows), {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",

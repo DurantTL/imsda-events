@@ -157,6 +157,49 @@ describe("staff promo-code routes", () => {
     );
   });
 
+  it("passes a sponsoring church only through the finance-gated routes (#545)", async () => {
+    dependencies.createPromoCode.mockResolvedValue([{ id: "promo_1" }]);
+    dependencies.updatePromoCode.mockResolvedValue([{ id: "promo_1" }]);
+    await CREATE_PROMO(
+      staffRequest("/api/events/event_1/promo-codes", "POST", { ...promoInput, sponsoringOrganizationId: "church_1" }),
+      staffContext,
+    );
+    expect(dependencies.createPromoCode).toHaveBeenCalledWith(
+      "event_1",
+      expect.objectContaining({ sponsoringOrganizationId: "church_1" }),
+      "user_1",
+    );
+    await UPDATE_PROMO(
+      staffRequest("/api/events/event_1/promo-codes/promo_1", "PATCH", {
+        ...promoInput,
+        sponsoringOrganizationId: null,
+        expectedUpdatedAt: "2026-07-23T12:00:00.000Z",
+      }),
+      updateContext,
+    );
+    expect(dependencies.updatePromoCode).toHaveBeenCalledWith(
+      "event_1",
+      "promo_1",
+      expect.objectContaining({ sponsoringOrganizationId: null }),
+      "user_1",
+    );
+    expect(dependencies.requirePermission).toHaveBeenCalledWith(
+      expect.anything(),
+      "event_1",
+      "MANAGE_FINANCE",
+      dependencies.findActiveMembership,
+    );
+  });
+
+  it("does not link a church when the caller lacks finance permission (#545)", async () => {
+    dependencies.requirePermission.mockRejectedValueOnce(new Error("denied"));
+    await CREATE_PROMO(
+      staffRequest("/api/events/event_1/promo-codes", "POST", { ...promoInput, sponsoringOrganizationId: "church_1" }),
+      staffContext,
+    );
+    expect(dependencies.createPromoCode).not.toHaveBeenCalled();
+  });
+
   it("passes an optimistic timestamp when updating or deactivating", async () => {
     dependencies.updatePromoCode.mockResolvedValue([{ id: "promo_1" }]);
     const response = await UPDATE_PROMO(

@@ -406,6 +406,7 @@ export async function getOrganizationDeletionCheck(
           clubInvites: true,
           monthlyReports: true,
           externalIdentities: true,
+          sponsoredPromoCodes: true,
         },
       },
     },
@@ -423,6 +424,9 @@ export async function getOrganizationDeletionCheck(
   }
   if (counts.eventRegistrations > 0) {
     blockers.push(`This club has registered for ${counts.eventRegistrations} event${counts.eventRegistrations === 1 ? "" : "s"}. Those registrations and payments are kept, so deactivate the club instead.`);
+  }
+  if (counts.sponsoredPromoCodes > 0) {
+    blockers.push(`This church sponsors ${counts.sponsoredPromoCodes} promo code${counts.sponsoredPromoCodes === 1 ? "" : "s"}, and what it owes for them is kept. Deactivate the church instead, or unlink it from unused codes first.`);
   }
   if (counts.honorEnrollments > 0) {
     blockers.push(`This club has ${counts.honorEnrollments} honor enrollment${counts.honorEnrollments === 1 ? "" : "s"}. Deactivate the club instead.`);

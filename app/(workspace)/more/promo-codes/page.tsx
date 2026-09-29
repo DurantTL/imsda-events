@@ -3,7 +3,8 @@ import Link from "next/link";
 import { AccessRestricted } from "@/components/access-restricted";
 import { PromoCodeWorkspace } from "@/components/promo-code-workspace";
 import { resolveEventContext } from "@/modules/events/selection";
-import { listPromoCodes } from "@/modules/promo-codes/repository";
+import { eventBillsSponsoredPromoCodes } from "@/modules/promo-codes/church-sponsored";
+import { listPromoCodes, listSponsorChurchOptions } from "@/modules/promo-codes/repository";
 
 export const metadata: Metadata = { title: "Promo codes" };
 
@@ -22,7 +23,11 @@ export default async function PromoCodesPage({
       />
     );
   }
-  const promoCodes = await listPromoCodes(event.id);
+  const canSponsorByChurch = eventBillsSponsoredPromoCodes(event);
+  const [promoCodes, sponsorChurches] = await Promise.all([
+    listPromoCodes(event.id),
+    canSponsorByChurch ? listSponsorChurchOptions() : Promise.resolve([]),
+  ]);
   return (
     <>
       <Link className="secondary-button more-back-link" href={`/more?event=${encodeURIComponent(event.id)}`}>
@@ -31,6 +36,8 @@ export default async function PromoCodesPage({
       <PromoCodeWorkspace
         eventId={event.id}
         initialPromoCodes={promoCodes}
+        canSponsorByChurch={canSponsorByChurch}
+        sponsorChurches={sponsorChurches}
       />
     </>
   );

@@ -38,6 +38,7 @@ function counts(overrides: Record<string, number> = {}) {
     clubInvites: 1,
     monthlyReports: 3,
     externalIdentities: 0,
+    sponsoredPromoCodes: 0,
     ...overrides,
   };
 }
@@ -72,6 +73,18 @@ describe("deleting Clubs and churches (#386)", () => {
 
     mocks.orgFindUnique.mockResolvedValueOnce(club({ eventRegistrations: 1 }));
     await expect(deleteOrganization("club-1", "Test Pathfinders", "admin-1")).rejects.toMatchObject({ code: "ORGANIZATION_DELETE_BLOCKED" });
+    expect(mocks.orgDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it("keeps a church that sponsors promo codes, with a readable message instead of a database error (#545)", async () => {
+    mocks.orgFindUnique.mockResolvedValueOnce({ id: "church-1", type: "CHURCH", name: "Test Church", _count: counts({ sponsoredPromoCodes: 2 }) });
+    const check = await getOrganizationDeletionCheck("church-1");
+    expect(check.blockers).toHaveLength(1);
+    expect(check.blockers[0]).toMatch(/sponsors 2 promo codes/);
+    expect(check.blockers[0]).toMatch(/Deactivate the church instead/);
+
+    mocks.orgFindUnique.mockResolvedValueOnce({ id: "church-1", type: "CHURCH", name: "Test Church", _count: counts({ sponsoredPromoCodes: 1 }) });
+    await expect(deleteOrganization("church-1", "Test Church", "admin-1")).rejects.toMatchObject({ code: "ORGANIZATION_DELETE_BLOCKED" });
     expect(mocks.orgDeleteMany).not.toHaveBeenCalled();
   });
 
