@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { hasUnsavedTemplateEdits, publishDisabledReason, saveDisabledReason, UNSAVED_PUBLISH_MESSAGE } from "@/modules/event-templates/editor-guards";
 import type { EventTemplateRecord } from "@/modules/event-templates/repository";
 
 type EventTemplateEditorProps = {
@@ -36,6 +37,13 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
+  const hasUnsavedEdits = hasUnsavedTemplateEdits(
+    { name, description, payloadText },
+    { name: template.name, description: template.description, payload: version?.payload ?? {} },
+  );
+  const saveReason = saveDisabledReason({ isArchived, saving });
+  const publishReason = publishDisabledReason({ isArchived, isDraft, publishing });
+
   async function saveDraft() {
     setSaving(true);
     setError("");
@@ -62,6 +70,8 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
       const body = await response.json();
       if (!response.ok) throw new Error(body.message ?? "The draft could not be saved.");
       setTemplate(body.template);
+      const savedVersion = currentVersion(body.template as EventTemplateRecord);
+      if (savedVersion) setPayloadText(JSON.stringify(savedVersion.payload ?? {}, null, 2));
       setNotice("Draft saved.");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "The draft could not be saved.");
@@ -71,9 +81,14 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
   }
 
   async function publish() {
-    setPublishing(true);
     setError("");
     setNotice("");
+    // The publish route publishes what is stored, not what is in this editor.
+    if (hasUnsavedEdits) {
+      setError(UNSAVED_PUBLISH_MESSAGE);
+      return;
+    }
+    setPublishing(true);
     try {
       const response = await fetch(`/api/event-templates/${template.id}/publish`, { method: "POST" });
       const body = await response.json();
@@ -103,6 +118,7 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
 
   return (
     <div className="page-stack event-settings-workspace">
+      <p className="muted">For administrators comfortable editing JSON.</p>
       {error ? <div className="inline-notice error" role="alert">{error}</div> : null}
       {notice ? <div className="inline-notice success" role="status">{notice}</div> : null}
 
@@ -138,11 +154,18 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
             events already created from this template are unaffected.
           </p>
         ) : null}
+        {saveReason || publishReason ? (
+          <ul id="template-action-hints" className="muted">
+            {saveReason ? <li>{isDraft ? "Save draft" : "Save as new draft"}: {saveReason}</li> : null}
+            {publishReason ? <li>Publish: {publishReason}</li> : null}
+          </ul>
+        ) : null}
+        {hasUnsavedEdits && !isArchived ? <p className="muted">You have unsaved changes. Save them before publishing.</p> : null}
         <p>
-          <button type="button" className="secondary-button" disabled={saving || isArchived} onClick={saveDraft}>
+          <button type="button" className="secondary-button" disabled={Boolean(saveReason)} title={saveReason || undefined} aria-describedby={saveReason ? "template-action-hints" : undefined} onClick={saveDraft}>
             {saving ? "Saving…" : isDraft ? "Save draft" : "Save as new draft"}
           </button>{" "}
-          <button type="button" className="primary-button" disabled={publishing || !isDraft || isArchived} onClick={publish}>
+          <button type="button" className="primary-button" disabled={Boolean(publishReason)} title={publishReason || undefined} aria-describedby={publishReason ? "template-action-hints" : undefined} onClick={publish}>
             {publishing ? "Publishing…" : "Publish"}
           </button>{" "}
           {template.status !== "ARCHIVED" ? (

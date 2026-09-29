@@ -13,7 +13,7 @@ import {
 } from "@/modules/event-templates/starters";
 import { formTemplates, getFormTemplate } from "@/modules/forms/definition";
 
-const wantedNames = ["Women's Retreat", "Man Camp", "Spring Camporee", "Camp Meeting", "Honors Weekend"];
+const wantedNames = ["Blank event", "Blank club event", "Women's Retreat", "Man Camp", "Spring Camporee", "Camp Meeting", "Honors Weekend"];
 
 function fieldsOf(formKey: string) {
   const definition = getFormTemplate(formKey)!.definition;
@@ -21,7 +21,7 @@ function fieldsOf(formKey: string) {
 }
 
 describe("starter event templates (#546)", () => {
-  it("covers exactly the five events with a form, with unique stable keys", () => {
+  it("covers the two blank starters and the five events with a form, with unique stable keys", () => {
     expect(starterEventTemplates.map((starter) => starter.name)).toEqual(wantedNames);
     expect(new Set(starterEventTemplates.map((starter) => starter.starterKey)).size).toBe(starterEventTemplates.length);
   });
@@ -73,6 +73,8 @@ describe("starter event templates (#546)", () => {
   it("uses the CLUB audience for the club events and GENERAL for the rest", () => {
     const audiences = Object.fromEntries(starterEventTemplates.map((starter) => [starter.name, starter.audience]));
     expect(audiences).toEqual({
+      "Blank event": "GENERAL",
+      "Blank club event": "CLUB",
       "Women's Retreat": "GENERAL",
       "Man Camp": "GENERAL",
       "Spring Camporee": "CLUB",
