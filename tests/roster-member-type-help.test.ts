@@ -45,4 +45,20 @@ describe("roster member type help (#576)", () => {
     expect(attendeeTypeAgeHint("UNDERAGE", "2024-01-01", today)).toBeNull();
     expect(attendeeTypeAgeHint("YOUTH", "not-a-date", today)).toBeNull();
   });
+
+  it("switches at the age boundaries", () => {
+    const today = "2026-09-29";
+    expect(attendeeTypeAgeHint("YOUTH", "2008-09-29", today)).toBeNull(); // 18
+    expect(attendeeTypeAgeHint("YOUTH", "2007-09-29", today)).not.toBeNull(); // 19
+    expect(attendeeTypeAgeHint("STAFF", "2010-09-29", today)).toBeNull(); // 16
+    expect(attendeeTypeAgeHint("STAFF", "2011-09-29", today)).not.toBeNull(); // 15
+    expect(attendeeTypeAgeHint("ADULT", "2008-09-29", today)).toBeNull(); // 18
+    expect(attendeeTypeAgeHint("ADULT", "2009-09-29", today)).not.toBeNull(); // 17
+    expect(attendeeTypeAgeHint("UNDERAGE", "2023-09-29", today)).toBeNull(); // 3
+    expect(attendeeTypeAgeHint("UNDERAGE", "2022-09-29", today)).not.toBeNull(); // 4
+  });
+
+  it("gives no hint for a future birth date", () => {
+    expect(attendeeTypeAgeHint("YOUTH", "2027-01-01", "2026-09-29")).toBeNull();
+  });
 });

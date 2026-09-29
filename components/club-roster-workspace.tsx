@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import Link from "next/link";
 import { Award, Eye, Pencil, Plus, Power, Save, Trash2, UsersRound, X } from "lucide-react";
 import { BirthDateField } from "@/components/birth-date-field";
+import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { RosterTypeDefinitions } from "@/components/roster-type-definitions";
 import { RosterCsvImport } from "@/components/roster-csv-import";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
@@ -11,7 +12,6 @@ import { complianceFilterLabels, complianceFilterState, type ComplianceFilterVal
 import {
   clubClassLevelLabels,
   attendeeTypeAgeHint,
-  calendarDateOf,
   clubRosterAttendeeTypeLabels,
   clubRosterGenderLabels,
   clubRosterStatusLabels,
@@ -105,13 +105,14 @@ export function ClubRosterWorkspace({
   function openDialog(member: RosterMemberRecord | null) {
     setEditing(member);
     setFormType(member?.attendeeType ?? "YOUTH");
+    setFormBirthDate("");
     setNotice("");
     setError("");
     setDialogOpen(true);
   }
 
   const typeHint = formBirthDate
-    ? attendeeTypeAgeHint(formType as keyof typeof clubRosterAttendeeTypeLabels, formBirthDate, calendarDateOf(new Date()))
+    ? attendeeTypeAgeHint(formType as keyof typeof clubRosterAttendeeTypeLabels, formBirthDate, calendarDateInEventTimeZone(new Date(), "America/Chicago"))
     : null;
   const active = members.filter((member) => member.status === "ACTIVE");
   const needBirthDates = active.filter((member) => member.birthDateNeeded).length;
@@ -441,15 +442,15 @@ export function ClubRosterWorkspace({
           />
           <label>
             Type
-            <select aria-describedby="roster-type-help" defaultValue={editing?.attendeeType ?? "YOUTH"} name="attendeeType" onChange={(event) => setFormType(event.target.value)}>
+            <select aria-describedby="roster-type-hint roster-type-definitions" defaultValue={editing?.attendeeType ?? "YOUTH"} name="attendeeType" onChange={(event) => setFormType(event.target.value)}>
               {Object.entries(clubRosterAttendeeTypeLabels).map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
           </label>
-          <div className="roster-type-help" id="roster-type-help">
-            <RosterTypeDefinitions className="field-help" />
-            {typeHint && <p className="field-help" role="status">{typeHint}</p>}
+          <div className="roster-type-help">
+            <RosterTypeDefinitions className="field-help" id="roster-type-definitions" />
+            <p className="field-help roster-type-hint" id="roster-type-hint" role="status">{typeHint ?? ""}</p>
           </div>
           <label>
             Current class

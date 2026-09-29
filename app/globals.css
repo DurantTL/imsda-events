@@ -7665,3 +7665,7 @@ select:focus-visible {
 .roster-type-definitions { margin: 0; padding-left: 0; list-style: none; }
 .roster-type-help { grid-column: 1 / -1; margin-top: -6px; }
 .roster-type-help .roster-type-definitions { display: grid; gap: 2px; margin: 0; }
+.roster-type-help { display: grid; gap: 4px; }
+.roster-type-help > .field-help { margin: 0; }
+.roster-type-help > .roster-type-hint { color: var(--ink); font-size: 0.7rem; font-weight: 600; }
+.roster-type-help > .roster-type-hint:empty { display: none; }
