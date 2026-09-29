@@ -401,7 +401,7 @@ async function verifyStarters() {
   const missing = starterEventTemplates.filter((starter) => !remainingKeys.has(starter.starterKey));
   console.log(`ok  ${remaining.length} seeded starter(s) with applications left in place; ${missing.length} are missing`);
 
-  // 1. One click creates every missing starter as a valid, priceless DRAFT named for its source form.
+  // 1. One click creates every missing starter as a valid, priceless PUBLISHED template named for its source form (#617).
   const first = await addStarterEventTemplates(adminId);
   assert(first.added.length === missing.length && first.skipped.length === remaining.length, `one click adds the ${missing.length} missing starters, added ${first.added.length}`);
   assert(first.added.map((entry) => entry.starterKey).sort().join() === missing.map((starter) => starter.starterKey).sort().join(), "exactly the missing starters were added");
@@ -411,7 +411,7 @@ async function verifyStarters() {
   assert(created.length === missing.length, "the missing starters now exist");
   for (const template of created) {
     const starter = starterEventTemplates.find((entry) => entry.starterKey === keyOf(template))!;
-    assert(template.status === "DRAFT" && template.versions.length === 1 && template.versions[0]!.status === "DRAFT", `${starter.name} is a DRAFT`);
+    assert(template.status === "PUBLISHED" && template.versions.length === 1 && template.versions[0]!.status === "PUBLISHED" && template.versions[0]!.publishedAt !== null, `${starter.name} is PUBLISHED at once`);
     assert(template.name === starter.name && template.description.includes("Starter set") && template.description.includes(starter.formTemplateKey), `${starter.name} names its source form`);
     const payload = parseEventTemplatePayload(template.versions[0]!.payload);
     validateEventTemplatePayloadReferences(payload);
@@ -424,7 +424,30 @@ async function verifyStarters() {
   }
   assert(await prisma.auditLog.count({ where: { actorUserId: adminId, action: "EVENT_TEMPLATE_CREATED", summary: { startsWith: "Created starter event template" } } }) === missing.length, "each starter creation is audited");
   assert((await starterTemplates()).length === starterEventTemplates.length, "every starter exists in total");
-  console.log("ok  one click creates the missing starters as valid DRAFTs (no pricing or capacity)");
+  console.log("ok  one click creates the missing starters as valid PUBLISHED templates (no pricing or capacity)");
+
+  // 1b. Starters added as drafts by an earlier version are published by a re-run, unless edited (#617).
+  const legacyUnchanged = created.find((template) => keyOf(template) === "blank_event") ?? created[0]!;
+  const legacyEdited = created.find((template) => template.id !== legacyUnchanged.id)!;
+  for (const template of [legacyUnchanged, legacyEdited]) {
+    await prisma.eventTemplateVersion.updateMany({ where: { templateId: template.id }, data: { status: "DRAFT", publishedAt: null } });
+    await prisma.eventTemplate.update({ where: { id: template.id }, data: { status: "DRAFT" } });
+  }
+  const editedPayload = { ...(legacyEdited.versions[0]!.payload as Record<string, unknown>), audience: legacyEdited.versions[0]!.payload && (legacyEdited.versions[0]!.payload as { audience?: string }).audience === "CLUB" ? "GENERAL" : "CLUB" };
+  await prisma.eventTemplateVersion.updateMany({ where: { templateId: legacyEdited.id }, data: { payload: editedPayload as Prisma.InputJsonValue } });
+  const republished = await addStarterEventTemplates(adminId);
+  assert(republished.added.length === 0 && republished.published.map((entry) => entry.templateId).join() === legacyUnchanged.id, `only the unchanged draft is published, got ${republished.published.map((entry) => entry.name).join()}`);
+  const nowPublished = await getEventTemplate(legacyUnchanged.id);
+  assert(nowPublished.status === "PUBLISHED" && nowPublished.canApply, "the unchanged starter draft is published and appliable");
+  const stillDraft = await getEventTemplate(legacyEdited.id);
+  assert(stillDraft.status === "DRAFT" && !stillDraft.canApply && (stillDraft.versions[0]!.payload as { audience?: string }).audience === (editedPayload as { audience: string }).audience, "the edited starter draft is left alone and stays unpublished");
+  assert(await prisma.auditLog.count({ where: { actorUserId: adminId, action: "EVENT_TEMPLATE_PUBLISHED", entityId: legacyUnchanged.id } }) === 1, "the publish is audited");
+  const again = await addStarterEventTemplates(adminId);
+  assert(again.published.length === 0, "a further re-run publishes nothing more");
+  // Put the edited one back to its published starter definition so later steps see a normal starter.
+  await prisma.eventTemplateVersion.updateMany({ where: { templateId: legacyEdited.id }, data: { status: "PUBLISHED", publishedAt: new Date(), payload: legacyEdited.versions[0]!.payload as Prisma.InputJsonValue } });
+  await prisma.eventTemplate.update({ where: { id: legacyEdited.id }, data: { status: "PUBLISHED" } });
+  console.log("ok  an unchanged starter draft is published by a re-run; an edited one is left alone");
 
   // 2. Re-running adds nothing.
   const second = await addStarterEventTemplates(adminId);
@@ -465,8 +488,8 @@ async function verifyStarters() {
   const own = (await starterTemplates()).filter(isOwn);
   for (const template of own) {
     const starter = starterEventTemplates.find((entry) => entry.starterKey === keyOf(template))!;
-    const published = await publishEventTemplateVersion(template.id, adminId);
-    assert(published.status === "PUBLISHED" && published.canApply, `${starter.name} publishes and is appliable`);
+    const published = await getEventTemplate(template.id);
+    assert(published.status === "PUBLISHED" && published.canApply, `${starter.name} is published and appliable`);
     const slug = `${P}-starter-${starter.starterKey.replace(/_/g, "-")}`;
     const result = await applyEventTemplate(template.id, adminId, { name: `${starter.name} 2027`, slug, startsOn: "2027-06-01", endsOn: "2027-06-03", requestKey: `${P}-key-starter-${starter.starterKey}` });
     const event = result.event;

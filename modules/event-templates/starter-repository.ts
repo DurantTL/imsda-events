@@ -3,17 +3,20 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
-import { validateEventTemplatePayloadReferences } from "@/modules/event-templates/domain";
+import { canonicalJson } from "@/modules/event-clones/domain";
+import { parseEventTemplatePayload, validateEventTemplatePayloadReferences } from "@/modules/event-templates/domain";
 import { pendingStarterEvents, starterDescription, starterEventTemplates, starterPayload } from "@/modules/event-templates/starters";
 
 export type StarterTemplatesResult = {
   added: { starterKey: string; name: string; templateId: string }[];
+  /** Unchanged starter drafts from an earlier run, published now (#617). */
+  published: { starterKey: string; name: string; templateId: string }[];
   skipped: { starterKey: string; name: string; reason: "ALREADY_EXISTS" | "ARCHIVED"; templateId: string }[];
   stillNeeded: { starterKey: string; name: string; note: string }[];
 };
 
 /**
- * "Add starter templates" (#546): creates one DRAFT template per starter that
+ * "Add starter templates" (#546): creates one PUBLISHED template per starter that
  * is not there yet. A starter is recognised by the `starterKey` in any of a
  * template's version payloads, so renaming, editing, publishing, or archiving
  * one never makes a re-run add a duplicate, and nothing existing is ever
@@ -23,6 +26,7 @@ export type StarterTemplatesResult = {
 export async function addStarterEventTemplates(actorUserId: string): Promise<StarterTemplatesResult> {
   const result: StarterTemplatesResult = {
     added: [],
+    published: [],
     skipped: [],
     stillNeeded: pendingStarterEvents.map(({ starterKey, name, note }) => ({ starterKey, name, note })),
   };
@@ -35,10 +39,32 @@ export async function addStarterEventTemplates(actorUserId: string): Promise<Sta
     for (const starter of starterEventTemplates) {
       const existing = await tx.eventTemplate.findFirst({
         where: { versions: { some: { payload: { path: ["starterKey"], equals: starter.starterKey } } } },
-        select: { id: true, status: true },
+        select: { id: true, status: true, versions: { select: { id: true, status: true, payload: true, versionNumber: true, updatedAt: true } } },
         orderBy: { createdAt: "asc" },
       });
       if (existing) {
+        // A starter added as a draft before starters were published on creation (#617): publish it now,
+        // but only when it was never published and its one draft still equals the starter definition.
+        // An edited draft is somebody's work in progress and is left alone.
+        const [only] = existing.versions;
+        if (existing.status === "DRAFT" && existing.versions.length === 1 && only!.status === "DRAFT"
+          && canonicalJson(only!.payload) === canonicalJson(starterPayload(starter))) {
+          validateEventTemplatePayloadReferences(parseEventTemplatePayload(only!.payload));
+          const { count } = await tx.eventTemplateVersion.updateMany({
+            where: { id: only!.id, status: "DRAFT", updatedAt: only!.updatedAt },
+            data: { status: "PUBLISHED", publishedAt: new Date() },
+          });
+          if (count === 1) {
+            await tx.eventTemplate.update({ where: { id: existing.id }, data: { status: "PUBLISHED" } });
+            await tx.auditLog.create({ data: {
+              actorUserId, action: "EVENT_TEMPLATE_PUBLISHED", entityType: "EventTemplate", entityId: existing.id,
+              correlationId: randomUUID(), summary: `Published starter event template ${starter.name} version ${only!.versionNumber}.`,
+              metadata: { versionId: only!.id, versionNumber: only!.versionNumber, starterKey: starter.starterKey },
+            } });
+            result.published.push({ starterKey: starter.starterKey, name: starter.name, templateId: existing.id });
+            continue;
+          }
+        }
         result.skipped.push({
           starterKey: starter.starterKey,
           name: starter.name,
@@ -54,13 +80,15 @@ export async function addStarterEventTemplates(actorUserId: string): Promise<Sta
           name: starter.name,
           description: starterDescription(starter),
           createdByUserId: actorUserId,
-          versions: { create: { createdByUserId: actorUserId, versionNumber: 1, payload: payload as unknown as Prisma.InputJsonValue } },
+          // Starters are conference-authored, so they are usable at once (#617); custom templates still publish by hand.
+          status: "PUBLISHED",
+          versions: { create: { createdByUserId: actorUserId, versionNumber: 1, status: "PUBLISHED", publishedAt: new Date(), payload: payload as unknown as Prisma.InputJsonValue } },
         },
       });
       await tx.auditLog.create({ data: {
         actorUserId, action: "EVENT_TEMPLATE_CREATED", entityType: "EventTemplate", entityId: template.id,
         correlationId: randomUUID(), summary: `Created starter event template ${template.name}.`,
-        metadata: { audience: starter.audience, starterKey: starter.starterKey },
+        metadata: { audience: starter.audience, starterKey: starter.starterKey, published: true },
       } });
       result.added.push({ starterKey: starter.starterKey, name: starter.name, templateId: template.id });
     }
