@@ -6,7 +6,7 @@ import { getPrisma } from "@/lib/prisma";
 import { logError, logInfo } from "@/lib/logger";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { openBirthDate, sealBirthDate } from "@/modules/club-rosters/birth-dates";
-import { ageOn, clubYearFor } from "@/modules/club-rosters/domain";
+import { ageOn, clubYearChoices, clubYearFor } from "@/modules/club-rosters/domain";
 import type { ClubCapabilities } from "@/modules/organizations/director-grants-domain";
 import { activeRegistrationStatuses, calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { BackgroundCheckOperationError } from "@/modules/background-checks/errors";
@@ -271,7 +271,7 @@ function formBirthDate(responses: Record<string, unknown>) {
 }
 
 /**
- * Every adult on a current club roster, or registered for an event upcoming
+ * Every adult on a current or previous-year club roster, or registered for an event upcoming
  * or ended in the last 12 months, with their known emails, birth dates, and
  * club/church names — the candidate pool matching draws from. Built once for
  * a full pass over the whole list, or scoped to the people who share a name
@@ -279,14 +279,17 @@ function formBirthDate(responses: Record<string, unknown>) {
  */
 async function buildCandidateIndex(tx: PrismaLike, now: Date, scope?: { personIds: string[] }): Promise<NameIndex> {
   if (scope && scope.personIds.length === 0) return { byName: new Map(), byPerson: new Map() };
+  // The current club year and the one before it: rosters imported before the
+  // September rollover (#541) still describe the same adults (#572).
   const clubYear = clubYearFor(now);
+  const previousClubYear = clubYearChoices(now)[0]!;
   const cutoff = new Date(now);
   cutoff.setUTCMonth(cutoff.getUTCMonth() - REGISTRATION_LOOKBACK_MONTHS);
   const today = calendarDateInEventTimeZone(now, "America/Chicago");
 
   const [rosterMembers, attendees] = await Promise.all([
     tx.clubRosterMember.findMany({
-      where: { clubYear, status: "ACTIVE", attendeeType: { in: ["ADULT", "STAFF"] }, personId: scope ? { in: scope.personIds } : { not: null } },
+      where: { clubYear: { in: [previousClubYear, clubYear] }, status: "ACTIVE", attendeeType: { in: ["ADULT", "STAFF"] }, personId: scope ? { in: scope.personIds } : { not: null } },
       select: {
         personId: true,
         sealedBirthDate: true,

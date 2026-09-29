@@ -26,7 +26,7 @@ export default async function BackgroundChecksPage() {
     { label: "Current checks", value: summary.current, detail: "Clear or expiring soon, or a Sterling check good through today", tone: "green" },
     { label: "Expiring soon", value: summary.expiringSoon, detail: "Marked \"!\" on the roster, or a Sterling check ending within 60 days", tone: "gold" },
     { label: "Not current", value: summary.notCurrent, detail: "Not in compliance or expired; flagged at youth events", tone: "purple" },
-    { label: "Needs a look", value: summary.reviewCount + summary.unmatchedCount, detail: "Rows to review by hand, plus rows not matched to anyone yet", tone: "coral" },
+    { label: "Needs a look", value: summary.reviewCount, detail: `Rows waiting on a staff decision. ${summary.unmatchedCount} more match no club roster or registration yet; that isn't work to do.`, tone: "coral" },
   ];
   return (
     <section className="page-stack">
