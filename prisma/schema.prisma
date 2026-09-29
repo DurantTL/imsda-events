@@ -3909,6 +3909,24 @@ model BackgroundCheckRejectedPairing {
   @@unique([identityKey, personId])
 }
 
+/// A name-only or first-name-variant match (#619) of a list row with no roster
+/// `user_id`, remembered by the row's `identityKey` so a later upload matches
+/// it again (as `IDENTITY`, so it isn't listed as new). Rows with a `user_id`
+/// use `ExternalIdentity` instead. `matchedName` is the row's normalized name
+/// when it was made; a later upload uses the memory only while that name, the
+/// person, and the row's email and birth date still fit, and no staff
+/// rejection exists. Deleted by "not the same person" and by a match by hand.
+/// No foreign keys, like `BackgroundCheckRejectedPairing`: a deleted person
+/// just leaves an inert row. Any future person merge must re-point `personId`.
+model BackgroundCheckRememberedMatch {
+  id          String   @id @default(cuid())
+  identityKey String   @unique
+  personId    String
+  matchedName String
+  matchedBy   String
+  createdAt   DateTime @default(now())
+}
+
 /// A background check's compliance mark from a roster import (#427): the
 /// CSV's `compliance` column, y/yes → `CLEAR`, "!" → `FLAGGED` (expiring soon;
 /// still current at events, and `issuesNote` gives the dates), n/no →
