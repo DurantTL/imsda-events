@@ -7783,3 +7783,50 @@ select:focus-visible {
   .check-in-book-page thead th { background: white; }
 }
 .check-in-book-cover .check-in-book-location { color: var(--ink); font-size: 1.1rem; text-transform: none; }
+
+/* Club forms (#610) */
+.club-form-fill { display: grid; gap: 16px; }
+.club-form-fill fieldset { min-width: 0; border: 0; }
+.club-form-fill legend { padding: 0; margin-bottom: 8px; }
+.club-form-note { margin: 0; color: var(--ink); font-size: 0.78rem; line-height: 1.5; }
+.club-form-field-wide { grid-column: 1 / -1; }
+.club-form-choice { display: grid; gap: 6px; border: 0; padding: 0; margin: 0; min-width: 0; }
+.club-form-choice legend { font-size: 0.7rem; font-weight: 700; }
+.club-form-choice-row { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.club-form-private { display: inline-flex; align-items: center; gap: 3px; margin-left: 8px; color: var(--muted); font-weight: 600; }
+.club-form-done { display: grid; gap: 4px; }
+.club-form-template { display: grid; gap: 12px; }
+.club-form-template-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
+.club-form-send { display: grid; gap: 10px; }
+.club-form-filter { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 12px; }
+.club-form-filter label { display: grid; gap: 4px; font-size: 0.7rem; font-weight: 700; }
+.club-form-public { max-width: 820px; margin: 0 auto; padding: 0 16px 48px; }
+.club-form-page { display: grid; gap: 14px; }
+.club-form-sheet { display: grid; gap: 14px; border: 1px solid var(--line); border-radius: 14px; background: #fff; padding: 22px; }
+.club-form-sheet-header h2 { margin: 2px 0 6px; font-size: 1.25rem; }
+.club-form-sheet-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 6px 0 0; color: var(--muted); font-size: 0.72rem; }
+.club-form-restricted-note { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; color: var(--muted); font-size: 0.72rem; }
+.club-form-sheet-section { display: grid; gap: 8px; break-inside: avoid; }
+.club-form-sheet-section h3 { margin: 0; font-size: 0.95rem; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.club-form-answers { display: grid; gap: 6px 18px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; }
+.club-form-answers > div { display: grid; gap: 1px; }
+.club-form-answers dt { color: var(--muted); font-size: 0.68rem; font-weight: 700; }
+.club-form-answers dd { margin: 0; font-size: 0.8rem; overflow-wrap: anywhere; }
+.club-form-restricted { display: inline-block; border: 1px dashed var(--line); border-radius: 6px; padding: 0 6px; color: var(--muted); font-style: italic; }
+.club-form-blank { color: var(--muted); }
+.club-form-roll-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.club-form-roll-table th, .club-form-roll-table td { border: 1px solid #999; padding: 6px 8px; text-align: left; }
+.club-form-roll-cell { width: 34px; text-align: center !important; }
+.club-form-roll-box { display: inline-block; width: 14px; height: 14px; border: 1px solid #333; }
+@media (max-width: 640px) {
+  .club-form-answers { grid-template-columns: minmax(0, 1fr); }
+}
+@media print {
+  .sidebar, .workspace-header, .mobile-nav, .account-nav, .club-form-page-actions, .club-form-print-button,
+  .club-roster-layout > nav, .account-portal .public-registration-header, .account-portal .account-page-hero,
+  .act-as-banner { display: none !important; }
+  .club-form-sheet { border: 0; padding: 0; border-radius: 0; }
+  .club-form-sheet-section { break-inside: avoid; }
+  .club-form-answers dd, .club-form-answers dt { color: #111; }
+  .club-form-restricted { border-color: #555; color: #333; }
+}

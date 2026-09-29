@@ -116,6 +116,9 @@ jobs:
       # Real-database check of location waitlists: a full location waitlists the club there in per-location order, a freed seat promotes the next club at that location only and never overfills it under races, a busy location is skipped, and the daily digest reaches the active coordinator and event administrators once a day while an email failure changes nothing (#599).
       - run: npm run test:location-waitlist
 
+      # Real-database check of club forms: templates start off and stay invisible to clubs until enabled, sensitive answers are sealed at rest and in no audit, outbox or CSV row, role visibility (director, other club, Area Coordinator, staff with and without VIEW_SENSITIVE_DATA), one audit row per view, and a single-use private link that stores only a token hash, submits exactly once when many submits race, expires, can be withdrawn, and is rate limited (#610).
+      - run: npm run test:club-forms
+
       # Real-database check of Honors Weekend sessions at sites: per-site names beside the
       # no-site rule, copying and cloning by site name with the no-match warning (#589).
       - run: npm run test:honor-sites

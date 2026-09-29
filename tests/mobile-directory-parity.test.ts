@@ -149,6 +149,8 @@ const moreOnlyPages: Record<string, (scenario: Scenario) => boolean> = {
   "/more/reports": (scenario) => has(scenario, "VIEW_REPORTS"),
   // app/(workspace)/more/health/page.tsx
   "/more/health": (scenario) => canAccessOperationalHealth(scenario.permissions),
+  // app/(workspace)/more/club-forms/page.tsx (#610): any conference staff member; the page guards each form.
+  "/more/club-forms": () => true,
   // app/(workspace)/more/clubs/page.tsx (`resolveClubOversight().allowed`).
   // The sidebar links a system admin to the directory instead, so for them
   // this event view is reached only from "More".

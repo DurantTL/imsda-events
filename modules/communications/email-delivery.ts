@@ -26,6 +26,10 @@ import {
   prepareAccountEmailBodyForDelivery,
 } from "@/modules/communications/account-email";
 import { prepareAttendeeEmailBodyForDelivery } from "@/modules/attendee-accounts/attendee-email";
+import {
+  CLUB_FORM_LINK_TEMPLATE_KEY,
+  prepareClubFormLinkBodyForDelivery,
+} from "@/modules/club-forms/link-email";
 import { logError } from "@/lib/logger";
 import {
   createStableRegistrationAccessToken,
@@ -624,6 +628,14 @@ async function runDeliveryLoop(
 async function prepareAccountEmailBody(
   input: EmailBodyPreparationInput,
 ): Promise<PreparedEmailBody> {
+  // A club form's private link (#610): the token is minted here, at delivery.
+  if (input.templateKey === CLUB_FORM_LINK_TEMPLATE_KEY) {
+    return prepareClubFormLinkBodyForDelivery({
+      messageId: input.messageId,
+      bodyText: input.bodyText,
+      now: input.now,
+    });
+  }
   if (input.templateKey?.startsWith("ATTENDEE_")) {
     return prepareAttendeeEmailBodyForDelivery({
       messageId: input.messageId,

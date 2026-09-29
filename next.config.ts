@@ -177,6 +177,15 @@ const nextConfig: NextConfig = {
         headers: privateRegistrationHeaders,
       },
       {
+        // A club form's single-use private link (#610): never cached, never indexed, no referrer.
+        source: "/club-forms/:path*",
+        headers: privateRegistrationHeaders,
+      },
+      {
+        source: "/api/public/club-forms/:path*",
+        headers: privateRegistrationHeaders,
+      },
+      {
         source: "/check-in",
         headers: [
           {
