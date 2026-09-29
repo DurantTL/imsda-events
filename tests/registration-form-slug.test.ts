@@ -267,7 +267,7 @@ describe("a published form's slug never changes on its own", () => {
       },
       registrationFormVersion: {
         count: vi.fn().mockResolvedValue(previouslyPublishedCount),
-        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
         update: vi.fn().mockResolvedValue({}),
       },
       formTestSubmission: { count: vi.fn().mockResolvedValue(validTests) },
@@ -285,7 +285,8 @@ describe("a published form's slug never changes on its own", () => {
     await publishRegistrationForm("event-1", "form-1", "user-1");
 
     const [formUpdateArgs] = tx.registrationForm.update.mock.calls[0] as [{ data: Record<string, unknown> }];
-    const [versionUpdateArgs] = tx.registrationFormVersion.update.mock.calls[0] as [{ data: Record<string, unknown> }];
+    const promoteCall = tx.registrationFormVersion.updateMany.mock.calls.at(-1) as [{ data: Record<string, unknown> }];
+    const [versionUpdateArgs] = promoteCall;
     expect(formUpdateArgs.data).not.toHaveProperty("slug");
     expect(versionUpdateArgs.data).not.toHaveProperty("slug");
   });

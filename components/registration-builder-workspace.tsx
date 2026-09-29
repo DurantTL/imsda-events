@@ -432,7 +432,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
       const response = await fetch(`/api/events/${eventId}/forms/${selectedForm.id}/unpublish`, { method: "POST" });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message ?? "Unable to withdraw this form.");
-      syncForm(result.form, "This form is withdrawn: it is no longer offered on the public event page and registration is closed. Registrations already taken keep the exact questions and prices they were submitted under.");
+      syncForm(result.form, "This form is withdrawn: it is no longer offered on the public event page and registration is closed. Registrations already taken keep the exact questions and prices they were submitted under. To offer it again, save a new draft, run a fresh test submission against it, then publish.");
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Unable to withdraw this form."); }
     finally { setBusy(null); }
   }

@@ -65,7 +65,7 @@ export async function getSystemAdminDashboard(now = new Date()) {
             select: { id: true },
           },
           registrationForms: {
-            where: { status: "PUBLISHED" },
+            where: { versions: { some: { status: "PUBLISHED" } } },
             select: { id: true },
           },
           waitlistEntries: {

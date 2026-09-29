@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const dependencies = vi.hoisted(() => ({
@@ -118,6 +119,38 @@ describe("revising a published registration form (#564)", () => {
     expect(tx.registrationFormVersion.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ versionNumber: 2, status: "DRAFT" }),
     });
+  });
+});
+
+describe("keeping the live form open while a draft exists (#564)", () => {
+  it("keeps the form-level status PUBLISHED when a draft is created beside a live version", async () => {
+    const published = version();
+    const tx = txFor([published]);
+    dependencies.getPrisma.mockReturnValue(prismaFor(tx, [version({ id: "version-2", versionNumber: 2, status: "DRAFT", publishedAt: null }), published]));
+
+    await updateRegistrationForm("event-1", "form-1", "user-1", { definition: individualDefinition, expectedUpdatedAt: updatedAt.toISOString() });
+
+    expect(tx.registrationForm.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "PUBLISHED" }) }));
+  });
+
+  it("falls back to DRAFT when no version is live", async () => {
+    const archived = version({ status: "ARCHIVED" });
+    const tx = txFor([archived]);
+    dependencies.getPrisma.mockReturnValue(prismaFor(tx, [version({ id: "version-2", versionNumber: 2, status: "DRAFT", publishedAt: null }), archived]));
+
+    await updateRegistrationForm("event-1", "form-1", "user-1", { definition: individualDefinition, expectedUpdatedAt: updatedAt.toISOString() });
+
+    expect(tx.registrationForm.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "DRAFT" }) }));
+  });
+
+  it("maps a concurrent draft creation (unique violation) to EDIT_CONFLICT", async () => {
+    const tx = txFor([version()]);
+    tx.registrationFormVersion.create.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "test" }));
+    dependencies.getPrisma.mockReturnValue(prismaFor(tx, []));
+
+    await expect(
+      updateRegistrationForm("event-1", "form-1", "user-1", { definition: individualDefinition, expectedUpdatedAt: updatedAt.toISOString() }),
+    ).rejects.toMatchObject({ code: "EDIT_CONFLICT" });
   });
 });
 

@@ -53,6 +53,8 @@ jobs:
       - run: npm run verify
       # Real-database check that Honors Weekend class seats hold under concurrent saves (#359).
       - run: npm run test:honor-capacity
+      # Real-database check of revising a published form: a draft beside the live version keeps public and club registration open, withdraw closes both, edits delete tests, and each version needs its own test (#564).
+      - run: npm run test:form-revisions
       # Real-database check of the one-active-act-as-per-session index and racing starts (#442).
       - run: npm run test:staff-act-as
       # Real-database check of club member transfers: unique indexes, transfer back, duplicate recipients, removal orders (#489).

@@ -11,7 +11,7 @@ import { withRequestContext } from "@/lib/request-context";
 function apiError(error: unknown) {
   if (error instanceof z.ZodError) return Response.json({ error: "INVALID_TEST_SUBMISSION", message: error.issues[0]?.message, issues: error.issues }, { status: 400 });
   if (error instanceof AccessDeniedError) return Response.json({ error: error.code, message: error.message }, { status: error.status });
-  if (error instanceof FormOperationError) return Response.json({ error: error.code, message: error.message }, { status: 404 });
+  if (error instanceof FormOperationError) return Response.json({ error: error.code, message: error.message }, { status: error.code === "EDIT_CONFLICT" ? 409 : 404 });
   logError("Registration form test submission failed", error);
   return Response.json({ error: "TEST_SUBMISSION_FAILED", message: "The test submission could not be saved." }, { status: 500 });
 }

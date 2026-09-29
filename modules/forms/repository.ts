@@ -243,6 +243,7 @@ export async function updateRegistrationForm(
 ) {
   const definition = registrationFormDefinitionSchema.parse(input.definition);
   const storedDefinition = stripDirectoryOptions(stripAttendeeTypeOptions(definition));
+  try {
   await getPrisma().$transaction(async (tx) => {
     let invalidatedTestCount = 0;
     const form = await tx.registrationForm.findFirst({ where: { id: formId, eventId }, include: { versions: { orderBy: { versionNumber: "desc" } } } });
@@ -261,12 +262,23 @@ export async function updateRegistrationForm(
         status: RegistrationFormStatus.DRAFT, definition: storedDefinition as Prisma.InputJsonValue,
       } });
     }
-    await tx.registrationForm.update({ where: { id: formId }, data: { name: definition.title, status: RegistrationFormStatus.DRAFT } });
+    // A live version keeps the form itself PUBLISHED: a new draft must not
+    // close public or club registration (#564). Only a form with no live
+    // version falls back to DRAFT.
+    const hasLiveVersion = form.versions.some((version) => version.status === RegistrationFormStatus.PUBLISHED);
+    await tx.registrationForm.update({ where: { id: formId }, data: { name: definition.title, status: hasLiveVersion ? RegistrationFormStatus.PUBLISHED : RegistrationFormStatus.DRAFT } });
     await tx.auditLog.create({ data: {
       eventId, actorUserId, action: "REGISTRATION_FORM_DRAFT_SAVED", entityType: "RegistrationForm", entityId: formId,
       correlationId: randomUUID(), summary: `Saved a draft of ${definition.title}.`, metadata: { sectionCount: definition.sections.length, invalidatedTestCount, productionWrite: false },
     } });
   });
+  } catch (error) {
+    // Two staff creating the next draft at once collide on (formId, versionNumber).
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      throw new FormOperationError("EDIT_CONFLICT", "This form was just changed in another session. Reload it before saving again.");
+    }
+    throw error;
+  }
   return (await getRegistrationForm(eventId, formId))!;
 }
 
@@ -363,7 +375,14 @@ export async function publishRegistrationForm(eventId: string, formId: string, a
     const validTests = await tx.formTestSubmission.count({ where: { formVersionId: draft.id, isValid: true } });
     if (validTests === 0) throw new FormOperationError("TEST_REQUIRED", "Run at least one valid test submission against this version before publishing it.");
     await tx.registrationFormVersion.updateMany({ where: { formId, status: RegistrationFormStatus.PUBLISHED }, data: { status: RegistrationFormStatus.ARCHIVED } });
-    await tx.registrationFormVersion.update({ where: { id: draft.id }, data: { status: RegistrationFormStatus.PUBLISHED, publishedAt: new Date() } });
+    // Conditional on the draft being exactly what was tested: a save that
+    // landed after the test count changes updatedAt (and deletes the tests),
+    // so this matches nothing and the whole publish rolls back.
+    const promoted = await tx.registrationFormVersion.updateMany({
+      where: { id: draft.id, status: RegistrationFormStatus.DRAFT, updatedAt: draft.updatedAt },
+      data: { status: RegistrationFormStatus.PUBLISHED, publishedAt: new Date() },
+    });
+    if (promoted.count !== 1) throw new FormOperationError("EDIT_CONFLICT", "This draft changed while it was being published. Reload it, run a fresh test submission, and publish again.");
     await tx.registrationForm.update({ where: { id: formId }, data: { name: definition.title, status: RegistrationFormStatus.PUBLISHED } });
     await tx.auditLog.create({ data: {
       eventId, actorUserId, action: "REGISTRATION_FORM_PUBLISHED", entityType: "RegistrationForm", entityId: formId,
@@ -458,6 +477,14 @@ export async function createTestSubmission(
       }
     : prepared.responses;
   const submission = await getPrisma().$transaction(async (tx) => {
+    // Share-lock the version row (a concurrent save waits for us) and re-read
+    // it: a test computed against an older definition must never be stored
+    // as valid for a draft that has since changed.
+    await tx.$queryRaw`SELECT "id" FROM "RegistrationFormVersion" WHERE "id" = ${version.id} FOR SHARE`;
+    const current = await tx.registrationFormVersion.findUnique({ where: { id: version.id }, select: { updatedAt: true, status: true } });
+    if (!current || current.updatedAt.getTime() !== version.updatedAt.getTime() || current.status !== version.status) {
+      throw new FormOperationError("EDIT_CONFLICT", "This version changed while the test ran. Reload it and run the test again.");
+    }
     const created = await tx.formTestSubmission.create({ data: {
       eventId, formVersionId: version.id, submittedByUserId: actorUserId,
       responses: storedResponses as Prisma.InputJsonValue, validation: validation as Prisma.InputJsonValue, isValid: validation.isValid,
