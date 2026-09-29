@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
+import { AccountAnnouncementBanner } from "@/components/account-announcement-banner";
 import { AttendeeAccountSettings } from "@/components/attendee-account-settings";
 import { ActAsBanner } from "@/components/act-as-banner";
 import { AttendeeSignOutButton } from "@/components/attendee-sign-out-button";
@@ -18,6 +19,7 @@ import {
   otherWorkspaceContextsForAttendee,
   otherWorkspaceContextsForStaff,
 } from "@/modules/access/workspace-contexts";
+import { listAccountBannerAnnouncements } from "@/modules/communications/account-banner";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { attendeeSecondStepPending } from "@/modules/attendee-accounts/portal-second-step";
 import { listDirectedClubs } from "@/modules/organizations/director-access";
@@ -66,6 +68,11 @@ export default async function ProfilePage({
     showTwoStepOn = authenticator.status === "ACTIVE" || passkeys.passkeys.length > 0;
   }
   const clubs = attendeeAccount && !secondStepPending ? await listDirectedClubs(attendeeAccount.id) : [];
+  // The same announcement banner as the account portal, for an attendee
+  // session past its second step only; staff-only sessions get none.
+  const bannerAnnouncements = attendeeAccount && !secondStepPending
+    ? await listAccountBannerAnnouncements(attendeeAccount, clubs)
+    : [];
 
   // The same banner the workspace and portal layouts show while a system
   // administrator is acting as a club role (#442); staff sessions only.
@@ -90,6 +97,9 @@ export default async function ProfilePage({
         </div>
       </header>
       <ActAsBanner acting={acting} />
+      {attendeeAccount && !secondStepPending && (
+        <AccountAnnouncementBanner accountId={attendeeAccount.id} announcements={bannerAnnouncements} />
+      )}
 
       <section className="public-registration-hero public-manage-hero account-page-hero">
         <div>

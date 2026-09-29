@@ -19,8 +19,10 @@ const entry = (overrides: Partial<MemberHonorEntryRecord>): MemberHonorEntryReco
   completionDate: "",
   note: "",
   recordedByName: "A Director",
+  recordedAtOrganizationId: "club-1",
   recordedAtOrganizationName: "Test Club",
   createdAt: "2026-09-01T00:00:00.000Z",
+  voided: null,
   ...overrides,
 });
 
@@ -53,6 +55,21 @@ describe("memberHonorEntryProblem", () => {
 });
 
 describe("currentHonorsFromHistory", () => {
+  const voided = { reason: "Wrong person", voidedByName: "A Director", voidedAt: "2026-09-25T00:00:00.000Z" };
+
+  it("ignores a voided latest entry, so the previous non-voided entry is current (#591)", () => {
+    const history = [
+      entry({ id: "e3", status: "COMPLETED", completionDate: "2026-09-20", voided }),
+      entry({ id: "e2", status: "IN_PROGRESS" }),
+    ];
+    expect(currentHonorsFromHistory(history)).toEqual([expect.objectContaining({ status: "IN_PROGRESS" })]);
+  });
+
+  it("leaves no status for an honor when every entry is voided (#591)", () => {
+    const history = [entry({ id: "e2", status: "COMPLETED", completionDate: "2026-09-20", voided }), entry({ id: "e1", voided })];
+    expect(currentHonorsFromHistory(history)).toEqual([]);
+  });
+
   it("keeps only the newest entry per honor, from newest-first history", () => {
     const history = [
       entry({ id: "e3", honorId: "h1", status: "COMPLETED", completionDate: "2026-09-20", createdAt: "2026-09-20" }),

@@ -12,6 +12,8 @@ import {
   listClubHonorsPage,
   listMemberHonorHistory,
   recordMemberHonorEntries,
+  voidMemberHonorEntry,
+  voidMemberHonorEntryAsStaff,
 } from "@/modules/honors/member-honor-repository";
 
 type Row = Record<string, unknown> & { id: string };
@@ -28,6 +30,7 @@ function fakeDatabase() {
     members: [] as Row[],
     honors: [{ id: "honor-1", code: "AR-011", name: "Basic Rescue", isActive: true }] as Row[],
     entries: [] as Row[],
+    voids: [] as Row[],
     accounts: [{ id: "account-director", displayName: "Dana Director" }] as Row[],
   };
   const id = (prefix: string) => `${prefix}-${++sequence}`;
@@ -38,8 +41,30 @@ function fakeDatabase() {
     recordedByAccount: entry.recordedByAccountId ? db.accounts.find((account) => account.id === entry.recordedByAccountId) ?? null : null,
     recordedByUser: null,
     organization: { name: `Club ${entry.organizationId}` },
+    void: withVoid(entry.id),
   });
+  const withVoid = (entryId: string) => {
+    const row = db.voids.find((voidRow) => voidRow.entryId === entryId);
+    return row
+      ? {
+        reason: row.reason,
+        createdAt: row.createdAt,
+        voidedByAccount: row.voidedByAccountId ? db.accounts.find((account) => account.id === row.voidedByAccountId) ?? null : null,
+        voidedByUser: null,
+      }
+      : null;
+  };
   const client = {
+    memberHonorEntryVoid: {
+      create: async ({ data }: { data: Row }) => {
+        if (db.voids.some((row) => row.entryId === data.entryId)) {
+          throw Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+        }
+        const row = { ...data, id: id("void"), createdAt: now };
+        db.voids.push(row);
+        return { id: row.id };
+      },
+    },
     honor: {
       findUnique: async ({ where }: { where: Row }) => db.honors.find((honor) => honor.id === where.id) ?? null,
       findMany: async () => db.honors
@@ -74,6 +99,14 @@ function fakeDatabase() {
         const row = { ...data, id: id("entry"), seq: ++seq, createdAt: now };
         db.entries.push(row);
         return { id: row.id };
+      },
+      findUnique: async ({ where }: { where: { id: string } }) => {
+        const row = db.entries.find((entry) => entry.id === where.id);
+        return row ? { ...row, honor: db.honors.find((honor) => honor.id === row.honorId), void: db.voids.some((v) => v.entryId === row.id) ? { id: "void" } : null } : null;
+      },
+      findFirst: async ({ where }: { where: { id: string; personId: string } }) => {
+        const row = db.entries.find((entry) => entry.id === where.id && entry.personId === where.personId);
+        return row ? { ...row, honor: db.honors.find((honor) => honor.id === row.honorId), void: db.voids.some((v) => v.entryId === row.id) ? { id: "void" } : null } : null;
       },
       findMany: async ({ where }: { where: { personId: string | { in: string[] } } }) => {
         const personId = where.personId;
@@ -199,6 +232,142 @@ describe("recordMemberHonorEntries", () => {
     expect(history.history[1]).toMatchObject({ status: "COMPLETED", note: "First pass" });
     // The current status (what the roster card and Honors page show) is the latest entry only.
     expect(history.current).toEqual([expect.objectContaining({ status: "IN_PROGRESS" })]);
+  });
+});
+
+describe("voidMemberHonorEntry (#591)", () => {
+  const record = (member: Row, status: "IN_PROGRESS" | "COMPLETED", note = "") => recordMemberHonorEntries("club-1", [member.id as string], {
+    honorId: "honor-1", status, completionDate: status === "COMPLETED" ? "2026-09-01" : "", note,
+  }, actor, now);
+
+  it("voiding the latest entry makes the previous non-voided entry current, keeping every row", async () => {
+    const member = addMember(db);
+    await record(member, "IN_PROGRESS", "Started");
+    await record(member, "COMPLETED", "Marked by mistake");
+    const mistaken = db.entries[1];
+
+    await voidMemberHonorEntry("club-1", member.id as string, mistaken.id, "  Marked completed by mistake  ", actor);
+
+    expect(db.entries).toHaveLength(2);
+    expect(db.voids).toEqual([expect.objectContaining({ entryId: mistaken.id, reason: "Marked completed by mistake", voidedByAccountId: "account-director" })]);
+    const history = await listMemberHonorHistory("club-1", member.id as string);
+    expect(history.history).toHaveLength(2);
+    expect(history.history[0]).toMatchObject({
+      id: mistaken.id,
+      voided: { reason: "Marked completed by mistake", voidedByName: "Dana Director" },
+    });
+    expect(history.current).toEqual([expect.objectContaining({ status: "IN_PROGRESS" })]);
+    const rows = await listClubHonorsPage("club-1", "2026-27");
+    expect(rows[0].honors).toEqual([expect.objectContaining({ status: "IN_PROGRESS" })]);
+  });
+
+  it("leaves no status when every entry is voided, and audits each void inside the transaction", async () => {
+    const member = addMember(db);
+    await record(member, "COMPLETED");
+    await voidMemberHonorEntry("club-1", member.id as string, db.entries[0].id, "Wrong person", actor);
+    expect((await listMemberHonorHistory("club-1", member.id as string)).current).toEqual([]);
+    expect((await listClubHonorsPage("club-1", "2026-27"))[0].honors).toEqual([]);
+    expect(mocks.writeAuditLog).toHaveBeenLastCalledWith(expect.objectContaining({
+      action: "MEMBER_HONOR_VOIDED",
+      entityId: db.entries[0].id,
+      metadata: expect.objectContaining({ organizationId: "club-1", voidId: db.voids[0].id }),
+    }), db.client);
+  });
+
+  it("attributes a staff act-as void to the staff user", async () => {
+    const member = addMember(db);
+    await record(member, "COMPLETED");
+    await voidMemberHonorEntry("club-1", member.id as string, db.entries[0].id, "Wrong honor", { userId: "user-9", actAsId: "actas-1" });
+    expect(db.voids[0]).toMatchObject({ voidedByUserId: "user-9" });
+    expect(db.voids[0]).not.toHaveProperty("voidedByAccountId");
+  });
+
+  it("refuses a second void of the same entry (409 path), writing no second row", async () => {
+    const member = addMember(db);
+    await record(member, "COMPLETED");
+    await voidMemberHonorEntry("club-1", member.id as string, db.entries[0].id, "Wrong person", actor);
+    await expect(voidMemberHonorEntry("club-1", member.id as string, db.entries[0].id, "Again", actor))
+      .rejects.toMatchObject({ code: "ENTRY_ALREADY_VOIDED" });
+    expect(db.voids).toHaveLength(1);
+  });
+
+  it("turns a racing duplicate (unique entryId violation) into the same already-voided error", async () => {
+    const member = addMember(db);
+    await record(member, "COMPLETED");
+    db.voids.push({ id: "void-race", entryId: db.entries[0].id, reason: "Racer" });
+    // The pre-check reads the entry as not yet voided; the unique key still catches it.
+    const original = db.client.memberHonorEntry as unknown as { findFirst: (args: never) => Promise<unknown> };
+    const realFindFirst = original.findFirst;
+    original.findFirst = async (args: never) => ({ ...(await realFindFirst(args) as object), void: null });
+    await expect(voidMemberHonorEntry("club-1", member.id as string, db.entries[0].id, "Wrong person", actor))
+      .rejects.toMatchObject({ code: "ENTRY_ALREADY_VOIDED" });
+    original.findFirst = realFindFirst;
+  });
+
+  it("refuses an entry another club recorded, and an entry that isn't this person's", async () => {
+    const member = addMember(db);
+    const other = addMember(db, { organizationId: "club-2" });
+    db.entries.push({ id: "entry-other", seq: 99, personId: member.personId, honorId: "honor-1", status: "COMPLETED", organizationId: "club-2" });
+    await expect(voidMemberHonorEntry("club-1", member.id as string, "entry-other", "Not ours to void", actor))
+      .rejects.toMatchObject({ code: "VOID_NOT_ALLOWED" });
+    await expect(voidMemberHonorEntry("club-1", member.id as string, "missing", "No such entry", actor))
+      .rejects.toMatchObject({ code: "ENTRY_NOT_FOUND" });
+    await expect(voidMemberHonorEntry("club-1", other.id as string, "entry-other", "Other club's member", actor))
+      .rejects.toMatchObject({ code: "MEMBER_NOT_FOUND" });
+    expect(db.voids).toHaveLength(0);
+  });
+
+  it("requires a 3 to 500 character reason", async () => {
+    const member = addMember(db);
+    await record(member, "COMPLETED");
+    for (const reason of ["", "  ok ", "x".repeat(501)]) {
+      await expect(voidMemberHonorEntry("club-1", member.id as string, db.entries[0].id, reason, actor))
+        .rejects.toMatchObject({ code: "ENTRY_INVALID" });
+    }
+    expect(db.voids).toHaveLength(0);
+  });
+});
+
+describe("voidMemberHonorEntryAsStaff (#591)", () => {
+  it("voids an entry recorded by a deactivated club that no longer has the member, with no roster or club check", async () => {
+    // Club 2 is gone from the roster fake entirely: no member rows, no organization row.
+    db.entries.push({ id: "entry-old", seq: 5, personId: "person-gone", honorId: "honor-1", status: "COMPLETED", completionDate: "2026-05-01", organizationId: "club-2-deactivated" });
+    await voidMemberHonorEntryAsStaff("entry-old", "  Entered for the wrong honor  ", "staff-1");
+    expect(db.entries).toHaveLength(1);
+    expect(db.voids).toEqual([expect.objectContaining({ entryId: "entry-old", reason: "Entered for the wrong honor", voidedByUserId: "staff-1" })]);
+    expect(db.voids[0]).not.toHaveProperty("voidedByAccountId");
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      actorUserId: "staff-1",
+      action: "MEMBER_HONOR_VOIDED",
+      entityId: "entry-old",
+      metadata: expect.objectContaining({ organizationId: "club-2-deactivated", staffVoid: true }),
+    }), db.client);
+  });
+
+  it("refuses a double void and writes no second row", async () => {
+    db.entries.push({ id: "entry-old", seq: 5, personId: "person-gone", honorId: "honor-1", status: "COMPLETED", organizationId: "club-2" });
+    await voidMemberHonorEntryAsStaff("entry-old", "Wrong honor", "staff-1");
+    await expect(voidMemberHonorEntryAsStaff("entry-old", "Again", "staff-2")).rejects.toMatchObject({ code: "ENTRY_ALREADY_VOIDED" });
+    expect(db.voids).toHaveLength(1);
+  });
+
+  it("refuses a missing entry and a reason outside 3 to 500 characters", async () => {
+    db.entries.push({ id: "entry-old", seq: 5, personId: "person-gone", honorId: "honor-1", status: "COMPLETED", organizationId: "club-2" });
+    await expect(voidMemberHonorEntryAsStaff("missing", "No such entry", "staff-1")).rejects.toMatchObject({ code: "ENTRY_NOT_FOUND" });
+    for (const reason of ["", "ab", "x".repeat(501)]) {
+      await expect(voidMemberHonorEntryAsStaff("entry-old", reason, "staff-1")).rejects.toMatchObject({ code: "ENTRY_INVALID" });
+    }
+    expect(db.voids).toHaveLength(0);
+  });
+
+  it("turns a racing duplicate (unique entryId violation) into already voided", async () => {
+    db.entries.push({ id: "entry-old", seq: 5, personId: "person-gone", honorId: "honor-1", status: "COMPLETED", organizationId: "club-2" });
+    db.voids.push({ id: "void-race", entryId: "entry-old", reason: "Racer" });
+    const entries = db.client.memberHonorEntry as unknown as { findUnique: (args: never) => Promise<unknown> };
+    const real = entries.findUnique;
+    entries.findUnique = async (args: never) => ({ ...(await real(args) as object), void: null });
+    await expect(voidMemberHonorEntryAsStaff("entry-old", "Wrong honor", "staff-1")).rejects.toMatchObject({ code: "ENTRY_ALREADY_VOIDED" });
+    entries.findUnique = real;
   });
 });
 

@@ -7727,3 +7727,13 @@ select:focus-visible {
   font-size: 0.85rem;
   margin: 2px 0 0;
 }
+
+/* Account portal announcement banner (#590). */
+.account-announcements { display: grid; gap: 8px; margin: 0 0 12px; }
+.account-announcement { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: start; padding: 10px 12px; border: 1px solid var(--line, #d9d4e3); border-left: 4px solid var(--imsda-navy); border-radius: 8px; background: #fff; }
+.account-announcement.is-important { border-left-color: var(--imsda-purple); background: #fbf8fe; }
+.account-announcement.is-urgent { border-left-color: #b42318; background: #fff7f5; }
+.account-announcement h2 { margin: 0; font-size: 0.95rem; }
+.account-announcement p { margin: 2px 0 0; overflow-wrap: anywhere; }
+.account-announcement .account-announcement-event { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--imsda-navy); }
+.account-announcements > .text-button { justify-self: start; }

@@ -620,7 +620,7 @@ async function completedHonorsByPerson(db: Db, personIds: readonly string[], hon
   const completed = new Map<string, Set<string>>();
   if (personIds.length === 0 || honorIds.length === 0) return completed;
   const entries = await db.memberHonorEntry.findMany({
-    where: { personId: { in: [...personIds] }, honorId: { in: [...honorIds] } },
+    where: { personId: { in: [...personIds] }, honorId: { in: [...honorIds] }, void: null },
     orderBy: { seq: "desc" },
     select: { personId: true, honorId: true, status: true },
   });

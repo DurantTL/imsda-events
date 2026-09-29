@@ -6,6 +6,8 @@ import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
   type ClubHonorsRow,
   type MemberHonorEntryRecord,
+  VOID_REASON_MAX,
+  VOID_REASON_MIN,
   currentHonorsFromHistory,
   memberHonorEntryProblem,
 } from "@/modules/honors/member-honor-domain";
@@ -26,6 +28,9 @@ import { CONFERENCE_TIME_ZONE } from "@/modules/calendar/domain";
  * club (past or present) made each entry, matching #489's "honor history
  * follows the member" requirement.
  *
+ * A mistaken entry is voided, never deleted (#591): `MemberHonorEntryVoid` is
+ * its own append-only row, and current status ignores voided entries.
+ *
  * The one exception to append-only is removal: when a club removes someone
  * and their `Person` is deleted (`removeRosterMember`, ADR 0005 Addendum A
  * §6), that person's entries are deleted with it, in the same transaction.
@@ -33,7 +38,13 @@ import { CONFERENCE_TIME_ZONE } from "@/modules/calendar/domain";
 
 export type MemberHonorActor = { accountId: string } | { userId: string; actAsId: string };
 
-export type MemberHonorErrorCode = "MEMBER_NOT_FOUND" | "HONOR_NOT_FOUND" | "ENTRY_INVALID";
+export type MemberHonorErrorCode =
+  | "MEMBER_NOT_FOUND"
+  | "HONOR_NOT_FOUND"
+  | "ENTRY_INVALID"
+  | "ENTRY_NOT_FOUND"
+  | "VOID_NOT_ALLOWED"
+  | "ENTRY_ALREADY_VOIDED";
 
 export class MemberHonorError extends Error {
   constructor(public readonly code: MemberHonorErrorCode, message: string) {
@@ -162,10 +173,19 @@ function serializeHistoryEntry(
       completionDate: true;
       note: true;
       createdAt: true;
+      organizationId: true;
       honor: { select: { code: true; name: true } };
       recordedByAccount: { select: { displayName: true } };
       recordedByUser: { select: { displayName: true } };
       organization: { select: { name: true } };
+      void: {
+        select: {
+          reason: true;
+          createdAt: true;
+          voidedByAccount: { select: { displayName: true } };
+          voidedByUser: { select: { displayName: true } };
+        };
+      };
     };
   }>,
 ): MemberHonorEntryRecord {
@@ -178,12 +198,20 @@ function serializeHistoryEntry(
     completionDate: entry.completionDate,
     note: entry.note,
     recordedByName: entry.recordedByAccount?.displayName ?? entry.recordedByUser?.displayName ?? "Someone no longer on file",
+    recordedAtOrganizationId: entry.organizationId,
     recordedAtOrganizationName: entry.organization.name,
     createdAt: entry.createdAt.toISOString(),
+    voided: entry.void
+      ? {
+        reason: entry.void.reason,
+        voidedByName: entry.void.voidedByAccount?.displayName ?? entry.void.voidedByUser?.displayName ?? "Someone no longer on file",
+        voidedAt: entry.void.createdAt.toISOString(),
+      }
+      : null,
   };
 }
 
-/** Every entry ever recorded for this person, newest first — the append-only history behind the current status. */
+/** Every entry ever recorded for this person, newest first, voided ones included (#591) — the append-only history behind the current status. */
 export async function listMemberHonorHistory(organizationId: string, memberId: string) {
   const member = await getPrisma().clubRosterMember.findFirst({
     where: { id: memberId, organizationId, status: { not: "REMOVED" } },
@@ -195,10 +223,19 @@ export async function listMemberHonorHistory(organizationId: string, memberId: s
     orderBy: { seq: "desc" },
     select: {
       id: true, honorId: true, status: true, completionDate: true, note: true, createdAt: true,
+      organizationId: true,
       honor: { select: { code: true, name: true } },
       recordedByAccount: { select: { displayName: true } },
       recordedByUser: { select: { displayName: true } },
       organization: { select: { name: true } },
+      void: {
+        select: {
+          reason: true,
+          createdAt: true,
+          voidedByAccount: { select: { displayName: true } },
+          voidedByUser: { select: { displayName: true } },
+        },
+      },
     },
   });
   const history = entries.map(serializeHistoryEntry);
@@ -231,10 +268,19 @@ export async function listClubHonorsPage(organizationId: string, clubYear: strin
     orderBy: { seq: "desc" },
     select: {
       personId: true, id: true, honorId: true, status: true, completionDate: true, note: true, createdAt: true,
+      organizationId: true,
       honor: { select: { code: true, name: true } },
       recordedByAccount: { select: { displayName: true } },
       recordedByUser: { select: { displayName: true } },
       organization: { select: { name: true } },
+      void: {
+        select: {
+          reason: true,
+          createdAt: true,
+          voidedByAccount: { select: { displayName: true } },
+          voidedByUser: { select: { displayName: true } },
+        },
+      },
     },
   });
   const byPerson = new Map<string, typeof entries>();
@@ -255,6 +301,114 @@ export async function listClubHonorsPage(organizationId: string, clubYear: strin
       };
     })
     .sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName));
+}
+
+/** Voids one entry inside `tx`: the reason rules, the double-void check, the void row and its audit row. */
+async function writeVoid(
+  tx: Prisma.TransactionClient,
+  entry: { id: string; honorId: string; organizationId: string; honor: { name: string }; void: { id: string } | null },
+  reason: string,
+  attribution: { voidedByAccountId: string } | { voidedByUserId: string },
+  audit: { actorUserId?: string; metadata: Prisma.InputJsonObject },
+) {
+  if (entry.void) throw new MemberHonorError("ENTRY_ALREADY_VOIDED", "This entry has already been voided.");
+  const created = await tx.memberHonorEntryVoid.create({
+    data: { entryId: entry.id, reason, ...attribution },
+    select: { id: true },
+  });
+  // `tx`: the audit row commits or rolls back with the void it describes.
+  await writeAuditLog({
+    ...(audit.actorUserId ? { actorUserId: audit.actorUserId } : {}),
+    action: "MEMBER_HONOR_VOIDED",
+    entityType: "MemberHonorEntry",
+    entityId: entry.id,
+    summary: `Voided a ${entry.honor.name} honor entry for a club roster member.`,
+    metadata: { organizationId: entry.organizationId, honorId: entry.honorId, voidId: created.id, ...audit.metadata },
+  }, tx);
+}
+
+function validVoidReason(reason: string) {
+  const trimmed = reason.trim();
+  if (trimmed.length < VOID_REASON_MIN || trimmed.length > VOID_REASON_MAX) {
+    throw new MemberHonorError("ENTRY_INVALID", `The reason must be ${VOID_REASON_MIN} to ${VOID_REASON_MAX} characters.`);
+  }
+  return trimmed;
+}
+
+/** The unique `entryId` catches two voids racing past the pre-check: also "already voided". */
+async function runVoid(work: () => Promise<void>) {
+  try {
+    await work();
+  } catch (error) {
+    if (error instanceof Error && "code" in error && (error as { code?: string }).code === "P2002") {
+      throw new MemberHonorError("ENTRY_ALREADY_VOIDED", "This entry has already been voided.");
+    }
+    throw error;
+  }
+}
+
+const voidableEntrySelect = {
+  id: true, honorId: true, organizationId: true, personId: true,
+  honor: { select: { name: true } },
+  void: { select: { id: true } },
+} as const;
+
+/**
+ * Voids one honor entry (#591), for the club that recorded it. The void is its
+ * own append-only row (`MemberHonorEntryVoid`); the entry is never changed or
+ * deleted, and there is no un-void (record a new entry instead). The caller
+ * has already checked the actor is a director or deputy of `organizationId`
+ * (or staff acting as one); this re-checks the entry really is that club's,
+ * for that club's member. A second void, including a racing one caught by the
+ * unique `entryId`, is `ENTRY_ALREADY_VOIDED` (409).
+ */
+export async function voidMemberHonorEntry(
+  organizationId: string,
+  memberId: string,
+  entryId: string,
+  reason: string,
+  actor: MemberHonorActor,
+) {
+  const trimmed = validVoidReason(reason);
+  await runVoid(() => getPrisma().$transaction(async (tx) => {
+    const member = await tx.clubRosterMember.findFirst({
+      where: { id: memberId, organizationId, status: { not: "REMOVED" } },
+      select: { personId: true },
+    });
+    if (!member?.personId) throw new MemberHonorError("MEMBER_NOT_FOUND", "That person isn't on this club's roster.");
+    const entry = await tx.memberHonorEntry.findFirst({
+      where: { id: entryId, personId: member.personId },
+      select: voidableEntrySelect,
+    });
+    if (!entry) throw new MemberHonorError("ENTRY_NOT_FOUND", "That honor entry could not be found.");
+    if (entry.organizationId !== organizationId) {
+      throw new MemberHonorError("VOID_NOT_ALLOWED", "Only the club that recorded this entry can void it.");
+    }
+    const who = actorAuditFields(actor);
+    await writeVoid(
+      tx,
+      entry,
+      trimmed,
+      "accountId" in actor ? { voidedByAccountId: actor.accountId } : { voidedByUserId: actor.userId },
+      { actorUserId: "userId" in actor ? actor.userId : undefined, metadata: { memberId, ...who.metadata } },
+    );
+  }));
+}
+
+/**
+ * Staff void (#591): a system administrator voids any honor entry by id, with
+ * no recording-club or roster check, so an entry stays fixable after its club
+ * is deactivated or no longer has the member. The caller has checked the
+ * permission. Same transaction, audit row, reason rules and 409 on a double
+ * void; attributed to `voidedByUserId`.
+ */
+export async function voidMemberHonorEntryAsStaff(entryId: string, reason: string, staffUserId: string) {
+  const trimmed = validVoidReason(reason);
+  await runVoid(() => getPrisma().$transaction(async (tx) => {
+    const entry = await tx.memberHonorEntry.findUnique({ where: { id: entryId }, select: voidableEntrySelect });
+    if (!entry) throw new MemberHonorError("ENTRY_NOT_FOUND", "That honor entry could not be found.");
+    await writeVoid(tx, entry, trimmed, { voidedByUserId: staffUserId }, { actorUserId: staffUserId, metadata: { staffVoid: true } });
+  }));
 }
 
 /** Every active honor in the catalog, for the Honors page's picker and filter. */

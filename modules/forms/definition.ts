@@ -580,6 +580,30 @@ function wr26DescriptionsFor(options: string[]) {
   );
 }
 
+export const BLANK_FORM_KEY = "blank_form";
+export const BLANK_CLUB_FORM_KEY = "blank_club_form";
+
+/** The blank form for an event audience (#592): the club variant for CLUB events, the general one otherwise. */
+export function blankFormTemplateKey(audience: string | null | undefined) {
+  return audience === "CLUB" ? BLANK_CLUB_FORM_KEY : BLANK_FORM_KEY;
+}
+
+export function isBlankFormTemplateKey(key: string) {
+  return key === BLANK_FORM_KEY || key === BLANK_CLUB_FORM_KEY;
+}
+
+/**
+ * The template picker's list for one event (#592): the blank form that fits
+ * the event's audience first (shown as "Blank form"), the other audience's
+ * blank form left out, then the remaining templates in their given order.
+ */
+export function templatesForPicker<T extends { key: string; name: string }>(templates: T[], eventAudience: string | null | undefined): T[] {
+  const blankKey = blankFormTemplateKey(eventAudience);
+  const blank = templates.find((template) => template.key === blankKey);
+  const rest = templates.filter((template) => !isBlankFormTemplateKey(template.key));
+  return blank ? [{ ...blank, name: "Blank form" }, ...rest] : rest;
+}
+
 export const formTemplates: FormTemplate[] = [
   {
     key: "simple_rsvp",
@@ -906,6 +930,52 @@ export const formTemplates: FormTemplate[] = [
           templateField("hw_member_dietary", "dietary_needs", "Dietary restrictions", "LONG_TEXT", false, [], { scope: "ATTENDEE" }),
           templateField("hw_member_medical_flag", "medical_or_accessibility_need", "Has a medical or accessibility need the club director knows about", "RADIO", false, ["No", "Yes"], { scope: "ATTENDEE", helpText: "No details here — talk with your club director about any support the attendee needs." }),
           templateField("hw_member_fee", "registration_fee", "Registration fee", "CALCULATED", false, [], { scope: "ATTENDEE" }),
+        ] },
+      ],
+    },
+  },
+  {
+    key: BLANK_FORM_KEY,
+    name: "Blank form",
+    description: "Just a Contact section (first name, last name, email, phone). Add your own questions. No fees.",
+    audience: "Blank form",
+    definition: {
+      title: "Event registration",
+      description: "",
+      confirmationMessage: "Thank you. Your registration has been received.",
+      sections: [{ id: "section_contact", title: "Contact", description: "", fields: [
+        { id: "field_first_name", key: "first_name", label: "First name", helpText: "", type: "TEXT", scope: "ATTENDEE", required: true, options: [] },
+        { id: "field_last_name", key: "last_name", label: "Last name", helpText: "", type: "TEXT", scope: "ATTENDEE", required: true, options: [] },
+        { id: "field_email", key: "email", label: "Email address", helpText: "", type: "EMAIL", scope: "REGISTRATION", required: true, options: [] },
+        { id: "field_phone", key: "phone", label: "Phone", helpText: "", type: "PHONE", scope: "REGISTRATION", required: false, options: [] },
+      ] }],
+    },
+  },
+  {
+    key: BLANK_CLUB_FORM_KEY,
+    name: "Blank form (club event)",
+    description: "Club and contact section plus an empty club roster with name and role fields. Add your own questions. No fees.",
+    audience: "Blank form",
+    definition: {
+      title: "Club event registration",
+      description: "Register the club once and add every attendee who is going.",
+      confirmationMessage: "Thank you. Your club registration has been received.",
+      attendeeRoster: { enabled: true, minAttendees: 1, maxAttendees: 50, attendeeLabel: "Club member", addButtonLabel: "Add another club member" },
+      sections: [
+        { id: "blank_club", title: "Club & contact", description: "Select the Pathfinder club and enter the director’s contact information.", fields: [
+          templateField("blank_club_name", "club_name", "Pathfinder club", "SELECT", true, [], { optionSource: "CLUBS_DIRECTORY" }),
+          templateField("blank_club_other", "club_name_other", "Club name — not listed", "TEXT", true, [], { conditional: { fieldKey: "club_name", operator: "EQUALS", value: DIRECTORY_NOT_LISTED_VALUE } }),
+          templateField("blank_director", "director_name", "Club director", "TEXT", true),
+          templateField("blank_church", "church_name", "Church", "SELECT", false, [], { optionSource: "CHURCHES_DIRECTORY" }),
+          templateField("blank_church_other", "church_name_other", "Church — not listed", "TEXT", true, [], { conditional: { fieldKey: "church_name", operator: "EQUALS", value: DIRECTORY_NOT_LISTED_VALUE } }),
+          templateField("blank_email", "email", "Email", "EMAIL", true),
+          templateField("blank_phone", "phone", "Mobile phone", "PHONE", true),
+        ] },
+        { id: "blank_roster", title: "Club roster", description: "Add each attendee using their full first and last name.", fields: [
+          templateField("blank_member_first", "first_name", "First name", "TEXT", true, [], { scope: "ATTENDEE" }),
+          templateField("blank_member_last", "last_name", "Last name", "TEXT", true, [], { scope: "ATTENDEE" }),
+          templateField("blank_member_age", "attendee_age", "Age", "NUMBER", false, [], { scope: "ATTENDEE" }),
+          templateField("blank_member_role", "attendee_type", "Roster role", "RADIO", true, ["Pathfinder", "TLT", "Staff", "Child"], { scope: "ATTENDEE" }),
         ] },
       ],
     },

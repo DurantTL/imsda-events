@@ -22,6 +22,7 @@
     "test:club-orders": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-club-order-fulfillment.ts",
     "test:uniform-orders": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-uniform-orders.ts",
     "test:earned-awards": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-earned-awards.ts",
+    "test:honor-entry-void": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-honor-entry-void.ts",
     "test:event-templates": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-event-templates.ts",
     "test:church-promo-codes": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-church-promo-codes.ts",
     "test:event-locations": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-event-locations.ts",

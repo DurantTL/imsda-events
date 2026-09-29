@@ -58,7 +58,7 @@ type PublicEventLifecycleInput = {
   endsAt?: Date | null;
 };
 
-const publicAnnouncementPriorityRank: Record<
+export const publicAnnouncementPriorityRank: Record<
   PublicAnnouncementPriority,
   number
 > = {
@@ -67,7 +67,7 @@ const publicAnnouncementPriorityRank: Record<
   NORMAL: 2,
 };
 
-function isExactAllAttendeesAudience(value: unknown) {
+export function isExactAllAttendeesAudience(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const audience = value as Record<string, unknown>;
   return Object.keys(audience).length === 1

@@ -32,7 +32,7 @@ import { SearchableSelect } from "@/components/searchable-select";
 import type { AddressValue } from "@/modules/forms/address";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
-import { calculateFormTotal, calculateRosterTotal, conditionOperators, formFieldScopes, formFieldTypes, getAttendeeRosterConfig, getAvailabilityMode, isChoiceFieldType, isDirectoryOptionSource, isFieldVisible, isAgeFieldKey, isLatePricingActive, localCalendarDate, numberFieldBounds, type ChoiceUsage, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
+import { calculateFormTotal, calculateRosterTotal, conditionOperators, formFieldScopes, formFieldTypes, getAttendeeRosterConfig, getAvailabilityMode, isChoiceFieldType, isDirectoryOptionSource, isFieldVisible, isAgeFieldKey, isLatePricingActive, localCalendarDate, templatesForPicker, numberFieldBounds, type ChoiceUsage, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
 import {
   builderFieldModules,
   moduleAlreadyPresentNotice,
@@ -153,7 +153,7 @@ const conditionLabels = {
   NOT_EMPTY: "Has any answer",
 } as const;
 
-export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, initialForms, templates }: { eventId: string; eventSlug: string; eventName: string; initialForms: FormView[]; templates: TemplateView[] }) {
+export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, eventAudience, initialForms, templates }: { eventId: string; eventSlug: string; eventName: string; eventAudience?: string; initialForms: FormView[]; templates: TemplateView[] }) {
   const [forms, setForms] = useState(initialForms);
   const [selectedFormId, setSelectedFormId] = useState(initialForms[0]?.id ?? "");
   const selectedForm = forms.find((form) => form.id === selectedFormId) ?? null;
@@ -884,12 +884,12 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
   return <section className="page-stack builder-workspace">
     <div className="page-intro"><div><p className="eyebrow">Public registration setup</p><h2>Registration builder</h2><p>Create, arrange, preview, test, and publish versioned registration forms for {eventName} without code.</p></div><div className="intro-actions"><span className="count-badge"><ShieldCheck size={16} /> Safe draft editing</span>{definition && <button className="secondary-button" type="button" onClick={showPreview}><Eye size={16} /> Preview &amp; test</button>}<button className="primary-button" type="button" onClick={() => setShowTemplates((value) => !value)}><CopyPlus size={16} /> New from template</button></div></div>
 
-    {showTemplates && <section className="panel builder-template-panel"><div className="section-heading"><div><p className="eyebrow">Start with a safe foundation</p><h2>Choose a template</h2></div><button className="icon-button" aria-label="Close templates" type="button" onClick={() => setShowTemplates(false)}><X size={18} /></button></div><div className="template-card-grid">{templates.map((template) => <article className="template-card" key={template.key}><span><Layers3 size={20} /></span><small>{template.audience}</small><h3>{template.name}</h3><p>{template.description}</p><div>{template.sectionCount} sections · {template.fieldCount} fields</div><button className="secondary-button" type="button" disabled={busy !== null} onClick={() => createFromTemplate(template.key)}>Use template <ChevronRight size={15} /></button></article>)}</div></section>}
+    {showTemplates && <section className="panel builder-template-panel"><div className="section-heading"><div><p className="eyebrow">Start with a safe foundation</p><h2>Choose a template</h2></div><button className="icon-button" aria-label="Close templates" type="button" onClick={() => setShowTemplates(false)}><X size={18} /></button></div><div className="template-card-grid">{templatesForPicker(templates, eventAudience).map((template) => <article className="template-card" key={template.key}><span><Layers3 size={20} /></span><small>{template.audience}</small><h3>{template.name}</h3><p>{template.description}</p><div>{template.sectionCount} sections · {template.fieldCount} fields</div><button className="secondary-button" type="button" disabled={busy !== null} onClick={() => createFromTemplate(template.key)}>Use template <ChevronRight size={15} /></button></article>)}</div></section>}
 
     {error && <div className="inline-notice error" role="alert">{error}</div>}
     {notice && <div className="inline-notice" role="status">{notice}</div>}
 
-    {forms.length === 0 ? <section className="panel builder-empty"><CopyPlus size={32} /><h2>Create the first registration form</h2><p>Choose a tested local template to begin. Nothing will be published publicly or sent to an external service.</p></section> : <div className="builder-layout">
+    {forms.length === 0 ? <section className="panel builder-empty"><CopyPlus size={32} /><h2>Create the first registration form</h2><p>Choose “Blank form” or a tested local template to begin. Nothing will be published publicly or sent to an external service.</p></section> : <div className="builder-layout">
       <aside className="panel builder-form-list"><div className="section-heading"><div><p className="eyebrow">Event forms</p><h2>{forms.length} form{forms.length === 1 ? "" : "s"}</h2></div></div><div className="builder-form-buttons">{forms.map((form) => <button aria-pressed={form.id === selectedFormId} className={form.id === selectedFormId ? "selected" : ""} type="button" key={form.id} onClick={() => chooseForm(form)}><span><strong>{form.name}</strong><small>Version {form.activeVersion.versionNumber} · {statusLabel(form.activeVersion.status)}</small></span><ChevronRight size={16} /></button>)}</div>{selectedForm && <div className="version-history"><p className="eyebrow">Version history</p>{selectedForm.versions.map((version) => <button aria-pressed={version.id === selectedVersion?.id} className={version.id === selectedVersion?.id ? "selected" : ""} type="button" key={version.id} onClick={() => chooseVersion(version)}><FileClock size={15} /><span><strong>Version {version.versionNumber}</strong><small>{statusLabel(version.status)} · {version.testSubmissionCount} tests</small></span></button>)}</div>}</aside>
 
 	      {selectedForm && selectedVersion && definition && <>

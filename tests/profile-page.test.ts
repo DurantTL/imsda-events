@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   getMfaStatus: vi.fn(),
   getPasskeySettings: vi.fn(),
   currentStaffActingContext: vi.fn(),
+  listAccountBannerAnnouncements: vi.fn(),
   redirect: vi.fn((path: string) => {
     throw new Error(`REDIRECT ${path}`);
   }),
@@ -54,6 +55,7 @@ vi.mock("@/components/sign-out-button", () => ({
 vi.mock("@/components/act-as-banner", () => ({
   ActAsBanner: (props: { acting: unknown }) => (props.acting ? createElement("aside", null, "ACT-AS-BANNER") : null),
 }));
+vi.mock("@/modules/communications/account-banner", () => ({ listAccountBannerAnnouncements: mocks.listAccountBannerAnnouncements }));
 vi.mock("@/modules/organizations/staff-act-as", () => ({ currentStaffActingContext: mocks.currentStaffActingContext }));
 
 import ProfilePage from "@/app/profile/page";
@@ -82,6 +84,7 @@ beforeEach(() => {
   mocks.requireAttendeeSecondStep.mockResolvedValue(undefined);
   mocks.listDirectedClubs.mockResolvedValue([]);
   mocks.currentStaffActingContext.mockResolvedValue(null);
+  mocks.listAccountBannerAnnouncements.mockResolvedValue([]);
   mocks.getMfaStatus.mockResolvedValue({ status: "NONE", required: false });
   mocks.getPasskeySettings.mockResolvedValue({ available: true, passkeys: [], verification: [] });
 });
@@ -139,6 +142,28 @@ describe("/profile", () => {
     expect(markup).not.toContain('data-manager="staff-mfa"');
     expect(markup).not.toContain("Back to staff workspace");
     expect(mocks.getMfaStatus).not.toHaveBeenCalled();
+  });
+
+  it("shows the announcement banner to an attendee session past its second step (#590)", async () => {
+    signedIn({ attendee: true });
+    mocks.listAccountBannerAnnouncements.mockResolvedValue([{
+      id: "ann-1", title: "Synthetic arrival notice", body: "Use the south entrance.", priority: "NORMAL",
+      pinned: false, eventName: "Synthetic Retreat", href: "/account/events/synthetic-retreat",
+    }]);
+    const markup = await render();
+    expect(markup).toContain("Synthetic arrival notice");
+    expect(mocks.listAccountBannerAnnouncements).toHaveBeenCalledWith(attendee, []);
+  });
+
+  it("shows no banner, and reads no announcements, for a staff-only session or a pending second step (#590)", async () => {
+    signedIn({ staff });
+    expect(await render()).not.toContain("Announcements");
+    signedIn({ staff, attendee: true, sessionVia: "staff" });
+    expect(await render()).not.toContain("Announcements");
+    signedIn({ staff, attendee: true });
+    mocks.attendeeSecondStepPending.mockResolvedValue(true);
+    expect(await render()).not.toContain("Announcements");
+    expect(mocks.listAccountBannerAnnouncements).not.toHaveBeenCalled();
   });
 
   it("links a club director to their club", async () => {
