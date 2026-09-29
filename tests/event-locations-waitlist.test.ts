@@ -21,7 +21,7 @@ import { ZodError } from "zod";
 
 const eventRow = {
   startsAt: new Date("2026-12-05T15:00:00Z"), endsAt: new Date("2026-12-06T22:00:00Z"), timezone: "America/Chicago",
-  registrationOpensOn: null, registrationClosesOn: null, isPublished: true, lastDay: null,
+  registrationOpensOn: null, registrationClosesOn: null, isPublished: true, lastDay: null, waitlistEnabled: true,
 };
 
 function admissionTx(options: { capacity: number | null; occupied: number; isActive?: boolean }) {
