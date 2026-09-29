@@ -1,24 +1,18 @@
 /**
- * Driver verification (Q1, #491). Background checks already cover driver
- * clearance (`modules/background-checks`: y/n/! plus an issue note such as
- * "can't drive") — this module adds only what's missing:
+ * Driver verification rules (#491, reworked by #544). Driver clearance comes
+ * from the background-check list, not a staff review: see `clearance.ts` for
+ * how it is derived, and `repository.ts` for the staff exceptions queue, the
+ * club's labels, and staff overrides. This file keeps what is left of #491:
  *
- * - A "Willing to drive" checkbox on a staff or volunteer roster profile
- *   (`ClubRosterMember.willingToDrive`). Checking it never grants clearance
- *   by itself; it only puts the person in the verification queue below.
- * - A verification queue listing every willing driver together with their
- *   current background-check status and note, for a reviewer to work from.
- * - The reviewer's own decision (`DriverVerification`): confirmation that the
- *   license, insurance, and background-check clearance were checked
- *   elsewhere, plus an outcome (cleared to transport youth or not) and a
- *   note. Only the reviewer, the date, and the outcome are stored — never a
- *   license or insurance number or file.
+ * - A "Willing to drive" checkbox on a staff or adult roster profile
+ *   (`ClubRosterMember.willingToDrive`). Checking it never grants clearance;
+ *   it only makes the person's clearance visible (to the club as a label, to
+ *   staff when it is an exception).
+ * - Self-nomination: a staff reviewer can't override their own record.
  *
  * Kept pure: no database access, no server-only import, so every rule here
  * is unit-testable without a database.
  */
-
-import type { BackgroundCheckState } from "@/modules/background-checks/domain";
 
 /** Only staff and adult roster rows can be marked willing to drive (#491). */
 export type DriverEligibleAttendeeType = "STAFF" | "ADULT";
@@ -39,34 +33,11 @@ export function willingToDriveAllowed(attendeeType: string, willingToDrive: bool
   return !willingToDrive || canBeWillingDriver(attendeeType);
 }
 
-export type DriverVerificationOutcome = {
-  clearedToTransport: boolean;
-  note: string;
-  reviewedAt: string;
-  reviewerName: string;
-} | null;
-
-export type DriverQueueRow = {
-  personId: string;
-  rosterMemberId: string;
-  firstName: string;
-  lastName: string;
-  attendeeType: DriverEligibleAttendeeType;
-  organizationId: string;
-  organizationName: string;
-  /** The background check compliance state and note already on file (#427/#388); never re-derived here. */
-  backgroundCheck: { state: Exclude<BackgroundCheckState, never>; note: string | null };
-  /** Null until a reviewer has recorded a decision; a later review replaces it, never stacks. */
-  verification: DriverVerificationOutcome;
-};
-
 /**
- * Whether reviewing this person would be self-nomination: the actor
- * confirming their own license, insurance, and background check. Checked
- * regardless of role — a club director or a system administrator reviewing
- * their own roster row is still self-nomination. `reviewerPersonId` is null
- * when the actor has no `Person` record linked at all, which can never equal
- * a real `targetPersonId` and so is never self-review.
+ * Whether overriding this person would be self-nomination: the actor
+ * overriding their own record. Checked regardless of role. `reviewerPersonId`
+ * is null when the actor has no `Person` record linked at all, which can
+ * never equal a real `targetPersonId` and so is never self-review.
  */
 export function isSelfNomination(reviewerPersonId: string | null, targetPersonId: string) {
   return reviewerPersonId !== null && reviewerPersonId === targetPersonId;

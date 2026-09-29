@@ -134,19 +134,19 @@ async function main() {
 
   // 3. Someone added after the upload is matched at read time, with no refresh.
   const late = await addDriver("late");
-  const lateLabels = await drivers.clubDriverLabels(clubId, clubYear, now);
-  assert(lateLabels[`${late}_roster`]?.label === "Cleared to drive", "a person added after the list must be cleared from the list");
+  const lateLabel = (await drivers.clubDriverEntries(clubId, clubYear, now)).find((entry) => entry.rosterMemberId === `${late}_roster`)?.label;
+  assert(lateLabel === "Cleared to drive", "a person added after the list must be cleared from the list");
 
   // 4. A staff override is shown, audited, and decides the club's label; the derived result stays visible to staff.
-  await drivers.recordDriverClearance(people.notCleared, { clearedToTransport: true, note: "Confirmed by phone." }, { userId: staffUserId }, now);
+  await drivers.recordDriverClearance(people.notCleared, { clearedToTransport: true, note: "Confirmed by phone." }, { userId: staffUserId });
   const afterOverride = (await drivers.listDriverExceptions(now)).find((entry) => entry.personId === people.notCleared);
   assert(afterOverride?.override?.clearedToTransport === true && afterOverride.override.note === "Confirmed by phone.", "the override must be shown on the staff row");
   assert(afterOverride.clearance.status === "NOT_CLEARED", "the derived result must stay visible beside an override");
   const audit = await prisma.auditLog.findFirst({ where: { actorUserId: staffUserId, action: "DRIVER_VERIFICATION_REVIEWED", entityId: people.notCleared } });
   assert(audit, "an override must be audited");
   assert(!JSON.stringify(audit.metadata).includes("BGC"), "the audit entry must not carry the issues text");
-  const overridden = await drivers.clubDriverLabels(clubId, clubYear, now);
-  assert(overridden[`${people.notCleared}_roster`]?.label === "Cleared to drive", "an override decides the club's label");
+  const overriddenLabel = (await drivers.clubDriverEntries(clubId, clubYear, now)).find((entry) => entry.rosterMemberId === `${people.notCleared}_roster`)?.label;
+  assert(overriddenLabel === "Cleared to drive", "an override decides the club's label");
 
   // 5. A newer list re-derives with no staff action: the Non-Driver note is removed and that driver leaves the queue.
   await upload([
@@ -163,6 +163,12 @@ async function main() {
   const refreshed = await drivers.listDriverExceptions(now);
   assert(!refreshed.some((entry) => entry.personId === people.nonDriver), "a newer upload must clear a driver with no staff action");
   assert(refreshed.length === 5, `expected 5 exceptions after the newer upload, got ${refreshed.length}`);
+
+  // 6. The override made before that upload is stale now: the list decides again, for staff and for the club.
+  const staleRow = refreshed.find((entry) => entry.personId === people.notCleared);
+  assert(staleRow && staleRow.override === null && staleRow.clearance.status === "NOT_CLEARED", "an override older than the newest list must be ignored");
+  const staleLabel = (await drivers.clubDriverEntries(clubId, clubYear, now)).find((entry) => entry.rosterMemberId === `${people.notCleared}_roster`)?.label;
+  assert(staleLabel === "Not cleared", `a stale override must not clear the driver for the club, got ${staleLabel}`);
 
   console.log("Driver clearance verified against PostgreSQL.");
 }

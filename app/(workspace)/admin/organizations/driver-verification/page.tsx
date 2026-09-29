@@ -9,8 +9,9 @@ export const metadata: Metadata = { title: "Driver verification" };
 export const dynamic = "force-dynamic";
 
 /**
- * The conference-wide driver verification queue (Q1, #491): every club's
- * willing drivers, for a system administrator to review.
+ * The conference-wide driver exceptions (#544): willing drivers whom the
+ * background-check list doesn't clear, for a system administrator to see
+ * and override with a note. Cleared drivers are not listed.
  */
 export default async function DriverVerificationPage() {
   const { user } = await getCurrentSession();

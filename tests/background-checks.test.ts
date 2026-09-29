@@ -1220,13 +1220,19 @@ describe("club page compliance (#427, #527)", () => {
     seed.attendees.push(
       attendee("roster-clear", { complianceStatus: "CLEAR", expiresOn: null }),
       attendee("roster-soon", { complianceStatus: "FLAGGED", expiresOn: null }),
-      attendee("roster-no", { complianceStatus: "NOT_COMPLIANT", expiresOn: null }),
+      attendee("roster-no", { complianceStatus: "NOT_COMPLIANT", expiresOn: null, issuesNote: "Synthetic BGC issue" }),
       attendee("none", null),
     );
     const flags = await listEventBackgroundFlags("event-1");
     expect(flags?.adults).toBe(4);
     expect(flags?.people.map((flag) => [flag.attendeeId, flag.state])).toEqual([["roster-no", "NOT_COMPLIANT"], ["none", "MISSING"]]);
     expect(backgroundFlagsCsv(flags!.people)).toContain("Not in compliance");
+    // The issues text is for system administrators only (#427, #544): the caller decides with `includeNotes`.
+    expect(flags!.people.every((flag) => flag.issuesNote === null)).toBe(true);
+    expect(JSON.stringify(flags)).not.toContain("Synthetic");
+    const withNotes = await listEventBackgroundFlags("event-1", { includeNotes: true });
+    expect(withNotes!.people.map((flag) => [flag.attendeeId, flag.issuesNote])).toEqual([["roster-no", "Synthetic BGC issue"], ["none", null]]);
+    expect(backgroundFlagsCsv(withNotes!.people)).not.toContain("Synthetic");
   });
 });
 

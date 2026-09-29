@@ -21,7 +21,6 @@ vi.mock("@/modules/driver-verification/access", async () => {
 
 import {
   clubDriverEntries,
-  clubDriverLabels,
   listDriverExceptions,
   recordDriverClearance,
   type DriverVerificationError,
@@ -61,7 +60,12 @@ function matches(row: Row, where: Row) {
 
 type Entry = { complianceStatus: string | null; expiresOn: string | null; issuesNote: string | null };
 
-function member(overrides: Row = {}, entry: Entry | null = { complianceStatus: "CLEAR", expiresOn: null, issuesNote: null }, verification: Row | null = null): Row {
+function member(
+  overrides: Row = {},
+  entry: Entry | null = { complianceStatus: "CLEAR", expiresOn: null, issuesNote: null },
+  verification: Row | null = null,
+  uploadedAt = new Date("2026-09-01T00:00:00Z"),
+): Row {
   return {
     id: "member-1",
     personId: "person-1",
@@ -74,8 +78,8 @@ function member(overrides: Row = {}, entry: Entry | null = { complianceStatus: "
     person: {
       firstName: "Dana",
       lastName: "Driver",
-      backgroundCheckMatch: entry ? { entry } : null,
-      driverVerification: verification,
+      backgroundCheckMatch: entry ? { entry: { ...entry, upload: { createdAt: uploadedAt } } } : null,
+      driverVerification: verification && { reviewedByUserId: "admin-1", ...verification },
     },
     ...overrides,
   };
@@ -141,7 +145,7 @@ describe("the staff driver exceptions (#544)", () => {
     const row = member({}, { complianceStatus: "NOT_COMPLIANT", expiresOn: null, issuesNote: "BGC" });
     db.members.push(row);
     expect(await listDriverExceptions(now)).toHaveLength(1);
-    (row.person as Row).backgroundCheckMatch = { entry: { complianceStatus: "CLEAR", expiresOn: null, issuesNote: null } };
+    (row.person as Row).backgroundCheckMatch = { entry: { complianceStatus: "CLEAR", expiresOn: null, issuesNote: null, upload: { createdAt: new Date("2026-09-02T00:00:00Z") } } };
     expect(await listDriverExceptions(now)).toEqual([]);
   });
 
@@ -215,11 +219,81 @@ describe("what a club sees of its drivers (#427, #544)", () => {
     expect(JSON.stringify(entry)).not.toContain("Synthetic");
   });
 
-  it("keys the roster chip labels by roster member id", async () => {
-    db.members.push(member());
-    await expect(clubDriverLabels("club-1", "2026-27", now)).resolves.toEqual({
-      "member-1": { status: "CLEARED", label: "Cleared to drive" },
-    });
+  it("ignores a #491-era decision a club director saved: cleared over a Non-Driver still reads Not cleared", async () => {
+    const clubWritten = {
+      clearedToTransport: true,
+      note: "Synthetic club note.",
+      reviewedAt: new Date("2026-09-30T12:00:00Z"),
+      reviewedByUserId: null,
+      reviewedByUser: null,
+    };
+    db.members.push(member({}, { complianceStatus: "CLEAR", expiresOn: null, issuesNote: "Non-Driver" }, clubWritten));
+    const [entry] = await clubDriverEntries("club-1", "2026-27", now);
+    expect(entry!.label).toBe("Not cleared");
+    const [staff] = await listDriverExceptions(now);
+    expect(staff).toMatchObject({ clearance: { status: "NOT_CLEARED" }, override: null });
+  });
+});
+
+describe("staff overrides against the list (#544)", () => {
+  const override = (clearedToTransport: boolean, reviewedAt = "2026-09-30T12:00:00Z") => ({
+    clearedToTransport,
+    note: "Confirmed by phone.",
+    reviewedAt: new Date(reviewedAt),
+    reviewedByUserId: "admin-1",
+    reviewedByUser: { displayName: "Test Admin" },
+  });
+  const notCompliant: Entry = { complianceStatus: "NOT_COMPLIANT", expiresOn: null, issuesNote: "BGC" };
+  const clean: Entry = { complianceStatus: "CLEAR", expiresOn: null, issuesNote: null };
+
+  it("a cleared override, then a newer upload saying n, reads Not cleared", async () => {
+    const row = member({}, clean, override(true));
+    db.members.push(row);
+    // The override stands against the list it was made on: cleared, and nothing to do.
+    expect(await listDriverExceptions(now)).toEqual([]);
+    expect((await clubDriverEntries("club-1", "2026-27", now))[0]!.label).toBe("Cleared to drive");
+    // A newer upload arrives (after the override) saying n.
+    (row.person as Row).backgroundCheckMatch = { entry: { ...notCompliant, upload: { createdAt: new Date("2026-10-01T09:00:00Z") } } };
+    const [entry] = await listDriverExceptions(now);
+    expect(entry).toMatchObject({ clearance: { status: "NOT_CLEARED" }, override: null });
+    expect((await clubDriverEntries("club-1", "2026-27", now))[0]!.label).toBe("Not cleared");
+  });
+
+  it("an override made after the list still stands", async () => {
+    db.members.push(member({}, notCompliant, override(true, "2026-09-30T12:00:00Z"), new Date("2026-09-30T11:00:00Z")));
+    const [entry] = await listDriverExceptions(now);
+    expect(entry!.override).toMatchObject({ clearedToTransport: true });
+  });
+
+  it("a Not cleared override on a clean y is shown in the queue, so staff can undo it", async () => {
+    db.members.push(member({}, clean, override(false)));
+    const [entry] = await listDriverExceptions(now);
+    expect(entry).toMatchObject({ personId: "person-1", clearance: { status: "CLEARED" }, override: { clearedToTransport: false } });
+    expect((await clubDriverEntries("club-1", "2026-27", now))[0]!.label).toBe("Not cleared");
+  });
+
+  it("an override that agrees with the list leaves the queue", async () => {
+    db.members.push(member({}, notCompliant, override(false)));
+    expect(await listDriverExceptions(now)).toEqual([]);
+  });
+
+  it("a cleared override over a Not cleared list stays in the queue", async () => {
+    db.members.push(member({}, notCompliant, override(true)));
+    expect(await listDriverExceptions(now)).toHaveLength(1);
+  });
+});
+
+describe("today is the Chicago calendar date (#544)", () => {
+  const expiring: Entry = { complianceStatus: "CLEAR", expiresOn: null, issuesNote: "BGC (10/01/26)" };
+
+  it("still lasts through 10/01 at 11:30 pm Chicago, and has passed at 12:30 am the next day", async () => {
+    db.members.push(member({}, expiring));
+    // 04:30 UTC on Oct 2 is 11:30 pm CDT on Oct 1.
+    const [before] = await listDriverExceptions(new Date("2026-10-02T04:30:00Z"));
+    expect(before!.clearance).toMatchObject({ status: "EXPIRING", expiresOn: "2026-10-01" });
+    // 05:30 UTC on Oct 2 is 12:30 am CDT on Oct 2.
+    const [after] = await listDriverExceptions(new Date("2026-10-02T05:30:00Z"));
+    expect(after!.clearance).toMatchObject({ status: "NOT_CLEARED", reasons: ["ISSUE_DATE_PASSED"] });
   });
 });
 
@@ -259,11 +333,12 @@ describe("a staff override (#544)", () => {
         action: "DRIVER_VERIFICATION_REVIEWED",
         entityType: "DriverVerification",
         entityId: "person-1",
-        metadata: { personId: "person-1", clearedToTransport: true, derivedStatus: "NOT_CLEARED", hasNote: true },
+        metadata: { personId: "person-1", clearedToTransport: true, derivedStatus: "NOT_CLEARED" },
       }),
       expect.anything(),
     );
-    // No issues text, and nothing about a license or insurance, in what is stored or audited.
+    // Never the note text or the issues text, and nothing about a license or insurance, in what is audited.
+    expect(JSON.stringify(mocks.writeAuditLog.mock.calls[0]![0])).not.toContain("Confirmed by phone");
     expect(JSON.stringify(mocks.writeAuditLog.mock.calls[0]![0])).not.toContain("Synthetic");
     for (const forbidden of ["licenseNumber", "insuranceNumber", "license", "insurance"]) {
       expect(Object.keys(db.client.driverVerification.upsert.mock.calls[0]![0].create)).not.toContain(forbidden);

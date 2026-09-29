@@ -607,10 +607,9 @@ export function backgroundFlagsCsv(people: Array<{
   confirmationCode: string;
   state: Exclude<BackgroundCheckState, "CURRENT">;
   expiresOn: string | null;
-  issuesNote?: string | null;
 }>) {
   return toCsv([
-    ["Last name", "First name", "Attendee type", "Club", "Confirmation code", "Background check", "Expired on", "Issues"],
+    ["Last name", "First name", "Attendee type", "Club", "Confirmation code", "Background check", "Expired on"],
     ...people.map((person) => [
       person.lastName,
       person.firstName,
@@ -619,7 +618,6 @@ export function backgroundFlagsCsv(people: Array<{
       person.confirmationCode,
       backgroundFlagLabels[person.state],
       person.state === "EXPIRED" ? person.expiresOn ?? "" : "",
-      person.issuesNote ?? "",
     ]),
   ]);
 }

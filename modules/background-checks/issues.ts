@@ -80,6 +80,8 @@ export type IssuesAssessment = {
   nonDriver: boolean;
   /** `BGC` / `Training` items that are undated or already past their date on `today`, once each. */
   expired: Array<"BGC" | "TRAINING">;
+  /** The subset of `expired` that carries a date now in the past (the date passing means it expired). */
+  pastDue: Array<"BGC" | "TRAINING">;
   /** The soonest `BGC` / `Training` date still ahead (today counts), or null. */
   soonest: string | null;
   unrecognised: string[];
@@ -89,6 +91,7 @@ export type IssuesAssessment = {
 export function assessIssues(text: string | null | undefined, today: string): IssuesAssessment {
   const { items, unrecognised } = parseIssues(text);
   const expired: Array<"BGC" | "TRAINING"> = [];
+  const pastDue: Array<"BGC" | "TRAINING"> = [];
   let nonDriver = false;
   let soonest: string | null = null;
   for (const item of items) {
@@ -96,11 +99,12 @@ export function assessIssues(text: string | null | undefined, today: string): Is
       nonDriver = true;
     } else if (item.date === null || item.date < today) {
       if (!expired.includes(item.kind)) expired.push(item.kind);
+      if (item.date !== null && !pastDue.includes(item.kind)) pastDue.push(item.kind);
     } else if (soonest === null || item.date < soonest) {
       soonest = item.date;
     }
   }
-  return { nonDriver, expired, soonest, unrecognised };
+  return { nonDriver, expired, pastDue, soonest, unrecognised };
 }
 
 /** "2026-10-04" as "10/04/2026", without a time zone shift. */

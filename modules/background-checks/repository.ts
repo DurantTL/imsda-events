@@ -977,7 +977,13 @@ export async function listUnmatchedBackgroundCheckEntries() {
 
 // --- Read path: everywhere a person's compliance is looked up ---
 
-type StoredCheck = { expiresOn: string | null; complianceStatus?: BackgroundComplianceStatus | null; issuesNote?: string | null };
+type StoredCheck = {
+  expiresOn: string | null;
+  complianceStatus?: BackgroundComplianceStatus | null;
+  issuesNote?: string | null;
+  /** When the list upload this check came from was made (#544: an older staff override is stale against it). */
+  uploadedAt?: Date | null;
+};
 
 type LookupSubject = {
   personId: string;
@@ -1062,7 +1068,7 @@ async function lookupUncachedChecks(prisma: PrismaLike, subjects: LookupSubject[
   for (const [personId, list] of entriesByPerson) {
     if (list.length !== 1) continue;
     const entry = list[0]!;
-    found.set(personId, { complianceStatus: entry.complianceStatus, expiresOn: entry.expiresOn, issuesNote: entry.issuesNote });
+    found.set(personId, { complianceStatus: entry.complianceStatus, expiresOn: entry.expiresOn, issuesNote: entry.issuesNote, uploadedAt: entry.upload.createdAt });
   }
   return found;
 }
@@ -1124,16 +1130,17 @@ export type BackgroundFlag = {
   registrationId: string;
   state: Exclude<BackgroundCheckState, "CURRENT">;
   expiresOn: string | null;
-  /** The list's issues column exactly as written (#544). Staff and event managers only, like the whole flag list. */
+  /** The list's issues column as stored (#544): only when the caller asked for notes (`includeNotes`, system administrators only, #427); otherwise null. */
   issuesNote: string | null;
 };
 
 /**
  * Every adult registered for a youth or children's event who has no current
  * check through the event's last day. Null when the event doesn't check.
- * Staff and event managers only; never shown to clubs.
+ * Staff and event managers only; never shown to clubs. `includeNotes` adds each
+ * person's issues text, and must be decided by the caller from who is asking.
  */
-export async function listEventBackgroundFlags(eventId: string, options: { organizationId?: string } = {}) {
+export async function listEventBackgroundFlags(eventId: string, options: { organizationId?: string; includeNotes?: boolean } = {}) {
   const prisma = getPrisma();
   const event = await prisma.event.findUnique({
     where: { id: eventId },
@@ -1226,7 +1233,7 @@ export async function listEventBackgroundFlags(eventId: string, options: { organ
       registrationId: attendee.registration.id,
       state,
       expiresOn: check?.expiresOn ?? null,
-      issuesNote: check?.issuesNote?.trim() || null,
+      issuesNote: options.includeNotes ? check?.issuesNote?.trim() || null : null,
     });
   }
   return { adults: adultAttendees.length, people, lastDay };

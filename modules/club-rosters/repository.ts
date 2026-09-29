@@ -216,8 +216,8 @@ export async function addRosterMember(
       attendeeType: input.attendeeType,
       source: options.source ?? "DIRECTOR",
     });
-    // A follow-up item (#491): added straight to the driver verification
-    // queue, never cleared by this alone — see `modules/driver-verification`.
+    // A willing driver's clearance is derived from the background-check list
+    // (#544), never granted by this alone — see `modules/driver-verification`.
     if (input.willingToDrive) {
       await audit(tx, actor, "CLUB_ROSTER_WILLING_TO_DRIVE_SET", organizationId, member.id, "Marked a roster member willing to drive.");
     }
@@ -293,10 +293,10 @@ export async function updateRosterMember(
     await audit(tx, actor, action, organizationId, memberId, "Updated a person on a club roster.", {
       fields: Object.keys(input),
     });
-    // A follow-up item (#491), never clearance: checking the box for the
-    // first time puts the person in the driver verification queue. Recorded
-    // as its own entry only on the flip from not-willing to willing, so the
-    // audit trail shows exactly when someone was newly added to the queue.
+    // Never clearance (#544 derives that from the background-check list):
+    // checking the box for the first time makes the person a willing driver.
+    // Recorded as its own entry only on the flip from not-willing to willing,
+    // so the audit trail shows exactly when someone was newly marked willing.
     if (input.willingToDrive === true && member.willingToDrive !== true) {
       await audit(tx, actor, "CLUB_ROSTER_WILLING_TO_DRIVE_SET", organizationId, memberId, "Marked a roster member willing to drive.");
     }

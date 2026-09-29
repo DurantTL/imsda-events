@@ -15,7 +15,8 @@ import { personIdForActor, type GlobalReviewerActor } from "@/modules/driver-ver
 import {
   clubDriverLabel,
   deriveDriverClearance,
-  isDriverException,
+  needsStaffAction,
+  overrideIsStale,
   type DriverClearance,
   type DriverClearanceStatus,
 } from "@/modules/driver-verification/clearance";
@@ -57,13 +58,13 @@ const willingDriverSelect = {
       firstName: true,
       lastName: true,
       ...personCheckEvidenceSelect,
-      backgroundCheckMatch: { select: { entry: { select: { complianceStatus: true, expiresOn: true, issuesNote: true } } } },
+      backgroundCheckMatch: { select: { entry: { select: { complianceStatus: true, expiresOn: true, issuesNote: true, upload: { select: { createdAt: true } } } } } },
       driverVerification: {
         select: {
           clearedToTransport: true,
           note: true,
           reviewedAt: true,
-          reviewedBy: { select: { displayName: true } },
+          reviewedByUserId: true,
           reviewedByUser: { select: { displayName: true } },
         },
       },
@@ -109,14 +110,23 @@ export type ClubDriverEntry = {
 
 type Evidence = Awaited<ReturnType<typeof uncachedChecksForRosterMembers>>;
 
-function overrideOf(member: WillingDriverRow): DriverOverride | null {
+/**
+ * The staff override that currently stands for this person, if any. Two
+ * kinds of saved decision are ignored (never deleted, so this is reversible):
+ * - one written by a club director or deputy under #491 (no
+ *   `reviewedByUserId`): only staff overrides count (#544);
+ * - one older than the list it was made against: once a newer upload arrives
+ *   the check it judged has been replaced, so the derived result stands.
+ */
+function overrideOf(member: WillingDriverRow, listUploadedAt: Date | null | undefined): DriverOverride | null {
   const verification = member.person?.driverVerification;
-  if (!verification) return null;
+  if (!verification?.reviewedByUserId) return null;
+  if (overrideIsStale(verification.reviewedAt, listUploadedAt)) return null;
   return {
     clearedToTransport: verification.clearedToTransport,
     note: verification.note,
     reviewedAt: verification.reviewedAt.toISOString(),
-    reviewerName: verification.reviewedByUser?.displayName ?? verification.reviewedBy?.displayName ?? "A staff member",
+    reviewerName: verification.reviewedByUser?.displayName ?? "A staff member",
   };
 }
 
@@ -131,22 +141,32 @@ async function loadWillingDrivers(where: Prisma.ClubRosterMemberWhereInput, now:
   return members.flatMap((member) => {
     if (!member.personId || !member.person) return [];
     // The cached match, or the same read-time lookup the club roster uses (#527).
-    const check = member.person.backgroundCheckMatch?.entry ?? uncached.get(member.personId) ?? null;
-    return [{ member, check, clearance: deriveDriverClearance(check, today) }];
+    const matched = member.person.backgroundCheckMatch?.entry;
+    const check = matched ?? uncached.get(member.personId) ?? null;
+    const listUploadedAt = matched ? matched.upload.createdAt : uncached.get(member.personId)?.uploadedAt;
+    return [{
+      member,
+      check,
+      clearance: deriveDriverClearance(check, today),
+      override: overrideOf(member, listUploadedAt),
+    }];
   });
 }
 
 /**
  * The staff queue (#544): only the willing drivers who need a look, across
  * every club: needs review, not cleared, or expiring within
- * `DRIVER_EXPIRY_WARNING_DAYS`. Cleared drivers are not listed. Any staff
- * override is shown on the row.
+ * `DRIVER_EXPIRY_WARNING_DAYS`. Cleared drivers are not listed. A current
+ * staff override is shown on the row; one that agrees with the list (or
+ * resolves a needs-review) takes the person out of the queue, and one that
+ * disagrees with the list keeps them in, so staff can see and undo it
+ * (`needsStaffAction`).
  */
 export async function listDriverExceptions(now = new Date()): Promise<StaffDriverEntry[]> {
   const loaded = await loadWillingDrivers({ clubYear: clubYearFor(now) }, now);
   return loaded
-    .filter(({ clearance }) => isDriverException(clearance))
-    .map(({ member, check, clearance }) => ({
+    .filter(({ clearance, override }) => needsStaffAction(clearance, override))
+    .map(({ member, check, clearance, override }) => ({
       personId: member.personId!,
       rosterMemberId: member.id,
       firstName: member.person!.firstName,
@@ -156,7 +176,7 @@ export async function listDriverExceptions(now = new Date()): Promise<StaffDrive
       organizationName: member.organization.name,
       clearance,
       issuesText: check?.issuesNote ?? null,
-      override: overrideOf(member),
+      override,
     }));
 }
 
@@ -168,8 +188,7 @@ export async function listDriverExceptions(now = new Date()): Promise<StaffDrive
  */
 export async function clubDriverEntries(organizationId: string, clubYear: string, now = new Date()): Promise<ClubDriverEntry[]> {
   const loaded = await loadWillingDrivers({ organizationId, clubYear }, now);
-  return loaded.map(({ member, clearance }) => {
-    const override = overrideOf(member);
+  return loaded.map(({ member, clearance, override }) => {
     const status: DriverClearanceStatus = override ? (override.clearedToTransport ? "CLEARED" : "NOT_CLEARED") : clearance.status;
     return {
       rosterMemberId: member.id,
@@ -182,18 +201,13 @@ export async function clubDriverEntries(organizationId: string, clubYear: string
   });
 }
 
-/** `clubDriverEntries` keyed by roster member id, for the roster's chip. */
-export async function clubDriverLabels(organizationId: string, clubYear: string, now = new Date()) {
-  const entries = await clubDriverEntries(organizationId, clubYear, now);
-  return Object.fromEntries(entries.map((entry) => [entry.rosterMemberId, { status: entry.status, label: entry.label }]));
-}
-
 /**
  * Records a staff override of the derived clearance, with a note (#544).
  * Refuses self-nomination outright (checked before anything else) and a
  * person who isn't currently a willing driver. The previous override, if
- * any, is replaced; the history lives in the audit log, which also records
- * what the background-check list said at the time (never the issues text).
+ * any, is replaced; the history lives in the audit log: who, when, the outcome,
+ * and what the list said at the time (the derived status). Never the note text
+ * or the issues text.
  */
 export async function recordDriverClearance(
   personId: string,
@@ -239,7 +253,6 @@ export async function recordDriverClearance(
         personId,
         clearedToTransport: input.clearedToTransport,
         derivedStatus: current.clearance.status,
-        hasNote: input.note.length > 0,
       },
     }, tx);
   });

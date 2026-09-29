@@ -62,6 +62,11 @@ describe("assessing issues on a day (#544)", () => {
     expect(assessIssues("Training (10/02/26)", "2026-10-03")).toMatchObject({ expired: ["TRAINING"], soonest: null });
   });
 
+  it("tells a passed date from an undated item", () => {
+    expect(assessIssues("BGC (09/30/26), Training", today)).toMatchObject({ expired: ["BGC", "TRAINING"], pastDue: ["BGC"] });
+    expect(assessIssues("Training", today).pastDue).toEqual([]);
+  });
+
   it("lasts through the date itself", () => {
     expect(assessIssues("BGC (10/01/26)", today)).toMatchObject({ expired: [], soonest: "2026-10-01" });
   });
@@ -70,6 +75,7 @@ describe("assessing issues on a day (#544)", () => {
     expect(assessIssues("BGC (12/01/26), Training (10/15/26), Non-Driver", today)).toEqual({
       nonDriver: true,
       expired: [],
+      pastDue: [],
       soonest: "2026-10-15",
       unrecognised: [],
     });
@@ -82,13 +88,13 @@ describe("assessing issues on a day (#544)", () => {
   });
 });
 
-describe("staff see the issues text where status is shown (#544)", () => {
-  it("puts the issues text, as written, in the background-check-needed CSV", () => {
+describe("the event background-check CSV never carries the issues text (#427, #544)", () => {
+  it("has no issues column, so the download can go to any event workspace role", () => {
     const csv = backgroundFlagsCsv([{
       lastName: "Driver", firstName: "Dana", attendeeType: "ADULT", clubName: "Test Club", confirmationCode: "TEST-1",
-      state: "NOT_COMPLIANT", expiresOn: null, issuesNote: "Training (10/04/26),  bgc",
+      state: "NOT_COMPLIANT", expiresOn: null,
     }]);
-    expect(csv).toContain("Issues");
-    expect(csv).toContain("Training (10/04/26),  bgc");
+    expect(csv).not.toContain("Issues");
+    expect(csv.split(/\r?\n/)[0]).toBe(["Last name", "First name", "Attendee type", "Club", "Confirmation code", "Background check", "Expired on"].map((name) => `"${name}"`).join(","));
   });
 });

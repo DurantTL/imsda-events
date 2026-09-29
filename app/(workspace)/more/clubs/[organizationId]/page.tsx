@@ -4,6 +4,8 @@ import { Eye } from "lucide-react";
 import { AccessRestricted } from "@/components/access-restricted";
 import { BackLink } from "@/components/back-link";
 import { BackgroundCheckList } from "@/components/background-check-flags";
+import { getCurrentSession } from "@/modules/access/current-session";
+import { canSeeIssuesText } from "@/modules/background-checks/notes-access";
 import { listEventBackgroundFlags } from "@/modules/background-checks/repository";
 import { ClubOverview } from "@/components/club-overview";
 import { getPrisma } from "@/lib/prisma";
@@ -31,7 +33,9 @@ export default async function EventClubPage({
   const query = `?event=${event.id}`;
   const selfHref = `/more/clubs/${organizationId}${query}`;
   const fromHere = `${query}&from=${encodeURIComponent(selfHref)}`;
-  const backgroundFlags = await listEventBackgroundFlags(event.id, { organizationId });
+  // The issues text is for system administrators only (#427, #544).
+  const { user } = await getCurrentSession();
+  const backgroundFlags = await listEventBackgroundFlags(event.id, { organizationId, includeNotes: canSeeIssuesText(user) });
   const assignment = await getClubAssignmentForClub(event.id, organizationId);
   return (
     <section className="page-stack">

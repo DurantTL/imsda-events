@@ -8,9 +8,9 @@ import { withRequestContext } from "@/lib/request-context";
 type RouteContext = { params: Promise<{ personId: string }> };
 
 /**
- * A system administrator's decision on a willing driver, from anywhere in
- * the conference (#491). Self-nomination and a person outside the queue are
- * refused by `recordDriverClearance` itself.
+ * A system administrator's override of a willing driver's derived clearance (#544),
+ * from anywhere in the conference, with a required note. Self-nomination and a person not currently a willing driver are
+ * refused by `recordDriverClearance` itself. Audited.
  */
 async function postHandler(request: Request, context: RouteContext) {
   const originError = rejectCrossOriginRequest(request);

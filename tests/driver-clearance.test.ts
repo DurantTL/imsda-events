@@ -5,6 +5,8 @@ import {
   deriveDriverClearance,
   DRIVER_EXPIRY_WARNING_DAYS,
   isDriverException,
+  needsStaffAction,
+  overrideIsStale,
   type DriverCheckEvidence,
   type DriverClearanceStatus,
 } from "@/modules/driver-verification/clearance";
@@ -34,7 +36,8 @@ describe("automatic driver clearance (#544)", () => {
     ["non driver, odd case", "  NON  driver ", { y: "NOT_CLEARED", n: "NOT_CLEARED", "!": "NOT_CLEARED" }],
     ["undated BGC", "BGC", { y: "NEEDS_REVIEW", n: "NOT_CLEARED", "!": "NEEDS_REVIEW" }],
     ["undated Training", "Training", { y: "NEEDS_REVIEW", n: "NOT_CLEARED", "!": "NEEDS_REVIEW" }],
-    ["past-dated BGC", "BGC (09/30/26)", { y: "NEEDS_REVIEW", n: "NOT_CLEARED", "!": "NEEDS_REVIEW" }],
+    ["past-dated BGC", "BGC (09/30/26)", { y: "NOT_CLEARED", n: "NOT_CLEARED", "!": "NEEDS_REVIEW" }],
+    ["past-dated Training beside a future BGC", "Training (09/01/26), BGC (10/04/26)", { y: "NOT_CLEARED", n: "NOT_CLEARED", "!": "NEEDS_REVIEW" }],
     ["future-dated Training", "Training (10/04/26)", { y: "EXPIRING", n: "NOT_CLEARED", "!": "NEEDS_REVIEW" }],
     ["two future dates", "Training (10/04/26),BGC (10/04/26)", { y: "EXPIRING", n: "NOT_CLEARED", "!": "NEEDS_REVIEW" }],
     ["future date beside an undated one", "Training (10/04/26), BGC", { y: "NEEDS_REVIEW", n: "NOT_CLEARED", "!": "NEEDS_REVIEW" }],
@@ -72,7 +75,7 @@ describe("automatic driver clearance (#544)", () => {
 
   it("lasts through the date, and is expired the day after (injected today)", () => {
     expect(deriveDriverClearance(check(y, "BGC (10/01/26)"), "2026-10-01").status).toBe("EXPIRING");
-    expect(deriveDriverClearance(check(y, "BGC (10/01/26)"), "2026-10-02").status).toBe("NEEDS_REVIEW");
+    expect(deriveDriverClearance(check(y, "BGC (10/01/26)"), "2026-10-02")).toMatchObject({ status: "NOT_CLEARED", reasons: ["ISSUE_DATE_PASSED"] });
   });
 
   it("shows staff a future date even when the mark isn't y", () => {
@@ -86,12 +89,58 @@ describe("automatic driver clearance (#544)", () => {
     expect(deriveDriverClearance({ expiresOn: "2027-01-01", issuesNote: "Non-Driver" }, today).status).toBe("NOT_CLEARED");
   });
 
+  it("uses a Sterling row's own expiry as the expiring date inside the 30-day window (N3)", () => {
+    expect(deriveDriverClearance({ expiresOn: "2026-10-31" }, today)).toMatchObject({ status: "EXPIRING", expiresOn: "2026-10-31", warnStaff: true });
+    expect(deriveDriverClearance({ expiresOn: "2026-10-01" }, today)).toMatchObject({ status: "EXPIRING", expiresOn: "2026-10-01", warnStaff: true });
+    expect(deriveDriverClearance({ expiresOn: "2026-11-01" }, today)).toMatchObject({ status: "CLEARED", expiresOn: null });
+    // The soonest of an issues date and the row's own expiry is shown.
+    expect(deriveDriverClearance({ expiresOn: "2026-10-20", issuesNote: "BGC (10/10/26)" }, today).expiresOn).toBe("2026-10-10");
+  });
+
   it("puts only exceptions in the staff queue", () => {
     const exception = (status: DriverClearanceStatus) => isDriverException({ status, reasons: [], expiresOn: null, warnStaff: false });
     expect(exception("CLEARED")).toBe(false);
     expect(exception("EXPIRING")).toBe(false);
     expect(exception("NOT_CLEARED")).toBe(true);
     expect(exception("NEEDS_REVIEW")).toBe(true);
+  });
+});
+
+describe("staff overrides against the list (#544)", () => {
+  const derived = (status: DriverClearanceStatus, warnStaff = false) => ({ status, reasons: [], expiresOn: null, warnStaff });
+  const cleared = { clearedToTransport: true };
+  const refused = { clearedToTransport: false };
+
+  it("goes stale once a newer list arrives, and not before", () => {
+    const reviewedAt = new Date("2026-10-01T12:00:00Z");
+    expect(overrideIsStale(reviewedAt, new Date("2026-10-01T12:00:01Z"))).toBe(true);
+    expect(overrideIsStale(reviewedAt, new Date("2026-10-01T12:00:00Z"))).toBe(false);
+    expect(overrideIsStale(reviewedAt, new Date("2026-09-30T12:00:00Z"))).toBe(false);
+    // Nothing matched, so no list to compare with: it stands.
+    expect(overrideIsStale(reviewedAt, null)).toBe(false);
+    expect(overrideIsStale(reviewedAt, undefined)).toBe(false);
+  });
+
+  it("without an override, only exceptions need action", () => {
+    expect(needsStaffAction(derived("CLEARED"), null)).toBe(false);
+    expect(needsStaffAction(derived("EXPIRING"), null)).toBe(false);
+    expect(needsStaffAction(derived("EXPIRING", true), null)).toBe(true);
+    expect(needsStaffAction(derived("NOT_CLEARED"), null)).toBe(true);
+    expect(needsStaffAction(derived("NEEDS_REVIEW"), null)).toBe(true);
+  });
+
+  it("an override that agrees with the list, or resolves a needs-review, leaves the queue", () => {
+    expect(needsStaffAction(derived("NOT_CLEARED"), refused)).toBe(false);
+    expect(needsStaffAction(derived("CLEARED"), cleared)).toBe(false);
+    expect(needsStaffAction(derived("EXPIRING", true), cleared)).toBe(false);
+    expect(needsStaffAction(derived("NEEDS_REVIEW"), cleared)).toBe(false);
+    expect(needsStaffAction(derived("NEEDS_REVIEW"), refused)).toBe(false);
+  });
+
+  it("an override that disagrees with the list stays in the queue, so staff can undo it", () => {
+    expect(needsStaffAction(derived("NOT_CLEARED"), cleared)).toBe(true);
+    expect(needsStaffAction(derived("CLEARED"), refused)).toBe(true);
+    expect(needsStaffAction(derived("EXPIRING"), refused)).toBe(true);
   });
 });
 
