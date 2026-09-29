@@ -27,6 +27,7 @@
     "test:church-promo-codes": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-church-promo-codes.ts",
     "test:honor-sites": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-honor-sites.ts",
     "test:event-locations": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-event-locations.ts",
+    "test:club-forms": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-club-forms.ts",
     "test:location-waitlist": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-location-waitlist.ts",
     "test:event-cloning": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-event-cloning.ts",
     "test:form-revisions": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-form-revisions.ts",
