@@ -59,8 +59,13 @@ export function ClubHonorsWorkspace({
   const [notice, setNotice] = useState("");
   const [historyFor, setHistoryFor] = useState<ClubHonorsRow | null>(null);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
+  const [voidTarget, setVoidTarget] = useState<MemberHonorEntryRecord | null>(null);
+  const [voidReason, setVoidReason] = useState("");
+  const [voidError, setVoidError] = useState("");
   const closeHistory = () => setHistoryFor(null);
-  const dialogRef = useAccessibleDialog<HTMLElement>(Boolean(historyFor), closeHistory);
+  const dialogRef = useAccessibleDialog<HTMLElement>(Boolean(historyFor) && !voidTarget, closeHistory);
+  const closeVoid = () => { setVoidTarget(null); setVoidReason(""); };
+  const voidDialogRef = useAccessibleDialog<HTMLElement>(Boolean(voidTarget), closeVoid);
 
   const base = `/api/attendee/clubs/${encodeURIComponent(organizationId)}`;
   const visible = useMemo(
@@ -153,6 +158,31 @@ export function ClubHonorsWorkspace({
       event.currentTarget.reset();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "That honor could not be recorded.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitVoid(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!historyFor || !voidTarget) return;
+    setSaving(true);
+    setVoidError("");
+    try {
+      const response = await fetch(
+        `${base}/roster/${encodeURIComponent(historyFor.memberId)}/honors/${encodeURIComponent(voidTarget.id)}/void`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: voidReason }) },
+      );
+      const result = await response.json().catch(() => ({})) as HistoryResponse;
+      if (!response.ok) throw new Error(result.message ?? result.issues?.[0]?.message ?? "That entry could not be voided.");
+      setHistory(result);
+      closeVoid();
+      const refreshed = await fetch(`${base}/honors`);
+      const refreshedBody = await refreshed.json().catch(() => ({})) as { rows?: ClubHonorsRow[] };
+      if (refreshedBody.rows) setRows(refreshedBody.rows);
+      setNotice("Entry voided. It stays in the history.");
+    } catch (caught) {
+      setVoidError(caught instanceof Error ? caught.message : "That entry could not be voided.");
     } finally {
       setSaving(false);
     }
@@ -326,13 +356,28 @@ export function ClubHonorsWorkspace({
                 {history.history.map((entry) => (
                   <li key={entry.id}>
                     <span>
-                      <strong>{entry.honorName}</strong>
-                      <small>
+                      <strong style={entry.voided ? { textDecoration: "line-through" } : undefined}>{entry.honorName}</strong>
+                      <small style={entry.voided ? { textDecoration: "line-through" } : undefined}>
                         {memberHonorStatusLabels[entry.status]}{entry.completionDate ? ` · ${entry.completionDate}` : ""}
                         {" · "}{entry.recordedByName}, {entry.recordedAtOrganizationName}
                         {entry.note ? ` · ${entry.note}` : ""}
                       </small>
+                      {entry.voided && (
+                        <small>
+                          Voided by <span translate="no">{entry.voided.voidedByName}</span> on {entry.voided.voidedAt.slice(0, 10)}: {entry.voided.reason}
+                        </small>
+                      )}
                     </span>
+                    {!readOnly && !entry.voided && entry.recordedAtOrganizationId === organizationId && (
+                      <button
+                        aria-label={`Void ${entry.honorName} entry`}
+                        className="text-button"
+                        onClick={() => { setVoidError(""); setVoidReason(""); setVoidTarget(entry); }}
+                        type="button"
+                      >
+                        Void
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -373,6 +418,36 @@ export function ClubHonorsWorkspace({
                 </div>
               </form>
             )}
+          </section>
+        </div>
+      )}
+
+      {historyFor && voidTarget && (
+        <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeVoid(); }} role="presentation">
+          <section aria-labelledby="honor-void-title" aria-modal="true" className="modal-card" ref={voidDialogRef} role="dialog" tabIndex={-1}>
+            <div className="modal-head">
+              <div>
+                <p className="public-registration-eyebrow">Void honor entry</p>
+                <h2 id="honor-void-title">{voidTarget.honorName} · {memberHonorStatusLabels[voidTarget.status]}</h2>
+              </div>
+              <button aria-label="Close" className="icon-button modal-close-button" onClick={closeVoid} type="button">×</button>
+            </div>
+            <form className="form-stack" onSubmit={submitVoid}>
+              <p>
+                The entry stays in the history, struck through, with your name, the date and this reason. It no longer counts
+                toward the member&apos;s current honors, awards or reports. A void can&apos;t be undone; to restore it, record a new entry.
+              </p>
+              {voidError && <div className="inline-notice error" role="alert">{voidError}</div>}
+              <label>
+                Reason (required)
+                <textarea maxLength={500} minLength={3} onChange={(event) => setVoidReason(event.target.value)} required rows={3} value={voidReason} />
+                <small className="field-help">3 to 500 characters. No health details.</small>
+              </label>
+              <div className="form-actions">
+                <button className="secondary-button" onClick={closeVoid} type="button">Cancel</button>
+                <button className="primary-button" disabled={saving || voidReason.trim().length < 3} type="submit">Void entry</button>
+              </div>
+            </form>
           </section>
         </div>
       )}

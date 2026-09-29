@@ -3,6 +3,15 @@ import { logError } from "@/lib/logger";
 import { RosterAccessError } from "@/modules/club-rosters/access";
 import { MemberHonorError } from "@/modules/honors/member-honor-repository";
 
+const memberHonorErrorStatus = {
+  MEMBER_NOT_FOUND: 404,
+  HONOR_NOT_FOUND: 404,
+  ENTRY_NOT_FOUND: 404,
+  VOID_NOT_ALLOWED: 403,
+  ENTRY_ALREADY_VOIDED: 409,
+  ENTRY_INVALID: 400,
+} as const;
+
 export function memberHonorApiError(error: unknown, action: string) {
   if (error instanceof ZodError) {
     return Response.json(
@@ -16,7 +25,7 @@ export function memberHonorApiError(error: unknown, action: string) {
   if (error instanceof MemberHonorError) {
     return Response.json(
       { error: error.code, message: error.message },
-      { status: error.code === "MEMBER_NOT_FOUND" || error.code === "HONOR_NOT_FOUND" ? 404 : 400 },
+      { status: memberHonorErrorStatus[error.code] },
     );
   }
   logError(`${action} failed`, error);

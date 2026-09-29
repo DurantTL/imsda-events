@@ -126,7 +126,8 @@ async function writeBackOnce(eventId: string, completionDate: string, actorUserI
     for (const row of toWrite) {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-honor-entry:${personHonorKey(row)}`}))`;
       const latest = await tx.memberHonorEntry.findFirst({
-        where: { personId: row.personId, honorId: row.honorId },
+        // A voided entry (#591) is never the "already completed" one.
+        where: { personId: row.personId, honorId: row.honorId, void: null },
         orderBy: { seq: "desc" },
         select: { id: true, status: true },
       });
