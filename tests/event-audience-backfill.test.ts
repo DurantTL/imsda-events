@@ -133,5 +133,31 @@ describe("GENERAL church-billed starter events (#606)", () => {
     const report = await backfillEventAudience(true);
     expect(report.rows.map((row) => row.id)).toEqual(["camporee", "unformed"]);
     expect(update.mock.calls.map((call) => call[0].where.id)).toEqual(["camporee", "unformed"]);
+    // The skipped events are reported, not silently dropped.
+    expect(report.skipped.map((entry) => entry.id)).toEqual(["leadership", "school"]);
+    expect(report.skipped[0]!.reason).toContain("deliberately GENERAL");
+  });
+
+  it("finds the club selector by its directory source, not its key, and reads the published version over a newer draft", async () => {
+    const renamed = structuredClone(getFormTemplate("spring_camporee_export")!.definition);
+    for (const section of renamed.sections) for (const field of section.fields) if (field.key === "club_name") field.key = "our_pathfinder_club";
+    expect(hasClubRegistrationShape(renamed)).toBe(true);
+    const noSelector = structuredClone(getFormTemplate("spring_camporee_export")!.definition);
+    for (const section of noSelector.sections) for (const field of section.fields) if (field.optionSource === "CLUBS_DIRECTORY") delete field.optionSource;
+    expect(hasClubRegistrationShape(noSelector)).toBe(false);
+    const events = [{ id: "mixed", name: "mixed", billingMode: "DEFERRED_ORGANIZATION_INVOICE" as const, audience: "GENERAL" as const }];
+    mocks.getPrisma.mockReturnValue({
+      event: {
+        findMany: vi.fn(async () => events.map((event) => ({ ...event, registrationForms: [{ versions: [
+          { status: "DRAFT", definition: getFormTemplate("leadership_weekend")!.definition },
+          { status: "PUBLISHED", definition: getFormTemplate("spring_camporee_export")!.definition },
+        ] }] }))),
+        update: vi.fn(),
+      },
+      $transaction: vi.fn(),
+    });
+    const report = await backfillEventAudience(false);
+    expect(report.rows.map((row) => row.id)).toEqual(["mixed"]);
+    expect(report.skipped).toEqual([]);
   });
 });

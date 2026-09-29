@@ -32,7 +32,7 @@ import { SearchableSelect } from "@/components/searchable-select";
 import type { AddressValue } from "@/modules/forms/address";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
-import { calculateFormTotal, calculateRosterTotal, conditionOperators, formFieldScopes, formFieldTypes, getAttendeeRosterConfig, getAvailabilityMode, isChoiceFieldType, isDirectoryOptionSource, isFieldVisible, isAgeFieldKey, isLatePricingActive, localCalendarDate, templatesForPicker, numberFieldBounds, type ChoiceUsage, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
+import { calculateFormTotal, calculateRosterTotal, conditionOperators, formFieldScopes, formFieldTypes, getAttendeeRosterConfig, getAvailabilityMode, isChoiceFieldType, isDirectoryOptionSource, isFieldVisible, isAgeFieldKey, isLatePricingActive, localCalendarDate, templatesForPicker, pruneRequireAtLeastOne, numberFieldBounds, type ChoiceUsage, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
 import {
   builderFieldModules,
   moduleAlreadyPresentNotice,
@@ -302,7 +302,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, ev
   );
 
   function replaceDefinition(next: RegistrationFormDefinition) {
-    setDefinition(next); setDirty(true); setNotice(""); setError(""); setTestIssues([]);
+    setDefinition(pruneRequireAtLeastOne(next)); setDirty(true); setNotice(""); setError(""); setTestIssues([]);
   }
 
   function syncForm(form: FormView, message?: string, preserveTestResponses = false) {

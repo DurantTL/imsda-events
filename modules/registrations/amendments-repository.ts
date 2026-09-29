@@ -295,7 +295,14 @@ function storedPricingSnapshot(registration: AmendmentRegistration) {
     : recordFromJson(registration.publicFormSubmission?.pricingSnapshot);
 }
 
-function storedRegistrationResponses(registration: AmendmentRegistration) {
+/**
+ * A registration's current registration-level answers: the latest amendment's snapshot, else the original
+ * submission's. Exported so the church-owed report (#606) reads the same source the amendment engine does.
+ */
+export function storedRegistrationResponses(registration: {
+  operations: ReadonlyArray<{ afterSnapshot: unknown }>;
+  publicFormSubmission: { responses: unknown } | null;
+}) {
   const latest = recordFromJson(registration.operations[0]?.afterSnapshot);
   const current = recordFromJson(latest.registrationResponses);
   return Object.keys(current).length > 0

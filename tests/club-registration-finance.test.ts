@@ -54,7 +54,7 @@ describe("what each church owes (#409)", () => {
   it("lists each club with its church, billing only submitted and confirmed registrations", async () => {
     dependencies.getPrisma.mockReturnValue({
       clubEventRegistration: { findMany: vi.fn().mockResolvedValue(churchRows) },
-      event: { findUnique: vi.fn().mockResolvedValue({ billingMode: "DEFERRED_ORGANIZATION_INVOICE" }) },
+      event: { findUnique: vi.fn().mockResolvedValue({ billingMode: "DEFERRED_ORGANIZATION_INVOICE", audience: "CLUB" }) },
       registration: { findMany: vi.fn().mockResolvedValue([]) },
     });
 
@@ -95,7 +95,7 @@ describe("what each church owes (#409)", () => {
   it("shows the estimate per church and lists waitlisted and cancelled clubs separately at $0", async () => {
     dependencies.getPrisma.mockReturnValue({
       clubEventRegistration: { findMany: vi.fn().mockResolvedValue(churchRows) },
-      event: { findUnique: vi.fn().mockResolvedValue({ billingMode: "DEFERRED_ORGANIZATION_INVOICE" }) },
+      event: { findUnique: vi.fn().mockResolvedValue({ billingMode: "DEFERRED_ORGANIZATION_INVOICE", audience: "CLUB" }) },
       registration: { findMany: vi.fn().mockResolvedValue([]) },
     });
     const markup = renderToStaticMarkup(ChurchAmountsOwed({
@@ -121,7 +121,7 @@ describe("what each church owes (#409)", () => {
   it("returns nothing for an event with no church-billed registrations", async () => {
     dependencies.getPrisma.mockReturnValue({
       clubEventRegistration: { findMany: vi.fn().mockResolvedValue([]) },
-      event: { findUnique: vi.fn().mockResolvedValue({ billingMode: "DEFERRED_ORGANIZATION_INVOICE" }) },
+      event: { findUnique: vi.fn().mockResolvedValue({ billingMode: "DEFERRED_ORGANIZATION_INVOICE", audience: "CLUB" }) },
       registration: { findMany: vi.fn().mockResolvedValue([]) },
     });
     expect(await listChurchAmountsOwed("event-1")).toEqual([]);
@@ -132,10 +132,11 @@ describe("what each church owes (#409)", () => {
  * Church-billed events with no club registrations (#606): Leadership Weekend (individuals, church billed)
  * and Outdoor School (a school billed). Synthetic data only.
  */
-function individual(id: string, code: string, status: string, total: string, people: number, first: string, responses: Record<string, unknown>) {
+function individual(id: string, code: string, status: string, total: string, people: number, first: string, responses: Record<string, unknown>, amended?: Record<string, unknown>) {
   return {
     id, confirmationCode: code, status, totalAmount: { toString: () => total }, location: null,
     accountHolderPerson: { firstName: first, lastName: "Sample" }, publicFormSubmission: { responses }, _count: { attendees: people },
+    operations: amended ? [{ afterSnapshot: { registrationResponses: amended } }] : [],
   };
 }
 
@@ -149,11 +150,11 @@ describe("what each church or organization owes on an event with no club registr
     individual("r6", "LW-5", "WAITLISTED", "35", 1, "Kim", {}),
   ];
 
-  function mockEvent(billingMode: string) {
+  function mockEvent(billingMode: string, audience = "GENERAL") {
     const registrationFindMany = vi.fn().mockResolvedValue(registrations);
     dependencies.getPrisma.mockReturnValue({
       clubEventRegistration: { findMany: vi.fn().mockResolvedValue([]) },
-      event: { findUnique: vi.fn().mockResolvedValue({ billingMode }) },
+      event: { findUnique: vi.fn().mockResolvedValue({ billingMode, audience }) },
       registration: { findMany: registrationFindMany },
     });
     return registrationFindMany;
@@ -207,6 +208,50 @@ describe("what each church or organization owes on an event with no club registr
     expect(markup).toContain("Sample Elementary School");
     expect(markup).toContain("$405.00");
     expect(markup).not.toContain("Clubs billed");
+  });
+
+  it("bills the church an amendment changed it to, not the one first submitted", async () => {
+    const amended = [
+      individual("r1", "LW-1", "CONFIRMED", "35", 1, "Sam", { church_name: "Church A" }, { church_name: "Church B" }),
+      individual("r2", "LW-2", "CONFIRMED", "45", 1, "Pat", { church_name: "Church A" }),
+    ];
+    dependencies.getPrisma.mockReturnValue({
+      clubEventRegistration: { findMany: vi.fn().mockResolvedValue([]) },
+      event: { findUnique: vi.fn().mockResolvedValue({ billingMode: "DEFERRED_ORGANIZATION_INVOICE", audience: "GENERAL" }) },
+      registration: { findMany: vi.fn().mockResolvedValue(amended) },
+    });
+    const owed = await listChurchAmountsOwed("event-1");
+    expect(owed.find((row) => row.confirmationCode === "LW-1")!.churchName).toBe("Church B");
+    expect(summarizeChurchAmountsOwed(owed).churches.map((church) => [church.churchName, church.amountOwedCents])).toEqual([["Church A", 4500], ["Church B", 3500]]);
+  });
+
+  it("leaves a CLUB event exactly as it was: club rows only, no relabeled columns, whatever else is registered", async () => {
+    const clubRows = [{
+      organization: { id: "org-a", name: "Ankeny Son-Seekers", parentOrganization: { id: "church-a", name: "Ankeny SDA Church" } },
+      registration: registration("REG-A1", "CONFIRMED", "13", 2),
+    }];
+    const findMany = mockEvent("DEFERRED_ORGANIZATION_INVOICE", "CLUB");
+    dependencies.getPrisma.mockReturnValue({
+      clubEventRegistration: { findMany: vi.fn().mockResolvedValue(clubRows) },
+      event: { findUnique: vi.fn().mockResolvedValue({ billingMode: "DEFERRED_ORGANIZATION_INVOICE", audience: "CLUB" }) },
+      // A single-person registration and a TLT Opportunities sign-up on the same CLUB event.
+      registration: { findMany: findMany.mockResolvedValue([
+        individual("r1", "IND-1", "CONFIRMED", "10", 1, "Sam", { church_name: "Ankeny SDA Church" }),
+        individual("r2", "TLT-1", "CONFIRMED", "0", 1, "Jo", { club_name: "Sample Creek Pathfinders" }),
+      ]) },
+    });
+    const owed = await listChurchAmountsOwed("event-1");
+    expect(findMany).not.toHaveBeenCalled();
+    expect(owed.map((row) => row.confirmationCode)).toEqual(["REG-A1"]);
+    expect(owed.some((row) => row.kind)).toBe(false);
+    const summary = summarizeChurchAmountsOwed(owed);
+    expect(summary.churches.map((church) => [church.churchName, church.clubCount, church.amountOwedCents])).toEqual([["Ankeny SDA Church", 1, 1300]]);
+    const table = churchAmountsOwedCsvRows(owed);
+    expect(table[0]!.slice(0, 2)).toEqual(["Church", "Club"]);
+    expect(table).toHaveLength(2);
+    const markup = renderToStaticMarkup(ChurchAmountsOwed({ eventId: "event-1", isDeferredOrganizationBilling: true, rows: owed }));
+    expect(markup).toContain("Clubs billed");
+    expect(markup).not.toContain("Registrations billed");
   });
 
   it("reads nothing extra for an attendee-pay event, and keeps the club export columns", async () => {

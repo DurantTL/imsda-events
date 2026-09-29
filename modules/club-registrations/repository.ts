@@ -55,6 +55,7 @@ import {
   amendRegistration,
   currentRegistrationAnswers,
   previewRegistrationAmendment,
+  storedRegistrationResponses,
   RegistrationAmendmentError,
   type AmendmentAttendeeServerOptions,
   type AmendmentServerOptions,
@@ -348,8 +349,9 @@ export async function listChurchAmountsOwed(eventId: string, options: { location
   }));
   // A church-billed event whose registrations are not club registrations (#606: Leadership Weekend, Outdoor
   // School) is reported by the organization each form names. Club events keep exactly the rows above.
-  const event = await getPrisma().event.findUnique({ where: { id: eventId }, select: { billingMode: true } });
-  if (event?.billingMode !== "DEFERRED_ORGANIZATION_INVOICE") return sortChurchAmountsOwed(clubRows);
+  // Only a GENERAL event: a CLUB event (Spring Camporee) keeps club rows only, whatever else is registered on it.
+  const event = await getPrisma().event.findUnique({ where: { id: eventId }, select: { billingMode: true, audience: true } });
+  if (event?.billingMode !== "DEFERRED_ORGANIZATION_INVOICE" || event.audience !== "GENERAL") return sortChurchAmountsOwed(clubRows);
   const individuals = await getPrisma().registration.findMany({
     where: {
       eventId,
@@ -365,6 +367,8 @@ export async function listChurchAmountsOwed(eventId: string, options: { location
       location: { select: { name: true } },
       accountHolderPerson: { select: { firstName: true, lastName: true } },
       publicFormSubmission: { select: { responses: true } },
+      // The latest amendment's snapshot wins over the original answers, as in the amendment engine.
+      operations: { where: { type: "AMENDMENT" }, orderBy: { createdAt: "desc" }, take: 1, select: { afterSnapshot: true } },
       _count: { select: { attendees: true } },
     },
   });
@@ -375,9 +379,7 @@ export async function listChurchAmountsOwed(eventId: string, options: { location
     totalAmountCents: moneyToCents(registration.totalAmount),
     attendeeCount: registration._count.attendees,
     registrantName: `${registration.accountHolderPerson.firstName} ${registration.accountHolderPerson.lastName}`.trim(),
-    responses: registration.publicFormSubmission?.responses && typeof registration.publicFormSubmission.responses === "object" && !Array.isArray(registration.publicFormSubmission.responses)
-      ? registration.publicFormSubmission.responses as Record<string, unknown>
-      : {},
+    responses: storedRegistrationResponses(registration),
     locationName: registration.location?.name ?? null,
   })))]);
 }

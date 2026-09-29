@@ -300,8 +300,17 @@ export const registrationFormDefinitionSchema = z.object({
   if (allFields.filter((field) => field.optionSource === "ATTENDEE_TYPES").length > 1) {
     context.addIssue({ code: "custom", path: ["sections"], message: "A form can designate only one attendee-type selector." });
   }
-  for (const key of definition.requireAtLeastOne?.fieldKeys ?? []) {
+  const requiredKeys = definition.requireAtLeastOne?.fieldKeys ?? [];
+  for (const key of requiredKeys) {
     if (!fieldKeys.has(key)) context.addIssue({ code: "custom", path: ["requireAtLeastOne", "fieldKeys"], message: `Field ${key} is not configured.` });
+  }
+  // One scope only: a registration-level and an attendee-level answer are checked in different places.
+  const requiredScopes = new Set(requiredKeys.flatMap((key) => {
+    const found = definition.sections.flatMap((section) => section.fields).find((field) => field.key === key);
+    return found ? [found.scope] : [];
+  }));
+  if (requiredScopes.size > 1) {
+    context.addIssue({ code: "custom", path: ["requireAtLeastOne", "fieldKeys"], message: "The fields in an \"at least one\" rule must all apply to the registration, or all to each attendee." });
   }
   const paymentField = definition.payment ? allFields.find((field) => field.key === definition.payment?.paymentMethodFieldKey) : null;
   if (definition.payment && !paymentField) context.addIssue({ code: "custom", path: ["payment", "paymentMethodFieldKey"], message: "Payment settings must reference a configured payment-method field." });
@@ -1444,6 +1453,22 @@ formTemplates.splice(
   tltApplicationTemplate,
   conferencePatchesTemplate,
 );
+
+/**
+ * Drops keys from the "at least one" rule (#606) that no longer name a field, and the rule itself once fewer
+ * than two remain, so removing or renaming a referenced field never leaves a definition that cannot be saved.
+ */
+export function pruneRequireAtLeastOne<T extends { requireAtLeastOne?: { fieldKeys: string[]; message: string }; sections: ReadonlyArray<{ fields: ReadonlyArray<{ key: string }> }> }>(definition: T): T {
+  const rule = definition.requireAtLeastOne;
+  if (!rule) return definition;
+  const existing = new Set(definition.sections.flatMap((section) => section.fields.map((field) => field.key)));
+  const fieldKeys = rule.fieldKeys.filter((key) => existing.has(key));
+  if (fieldKeys.length === rule.fieldKeys.length) return definition;
+  if (fieldKeys.length >= 2) return { ...definition, requireAtLeastOne: { ...rule, fieldKeys } };
+  const rest = { ...definition };
+  delete rest.requireAtLeastOne;
+  return rest;
+}
 
 export function getFormTemplate(key: string) {
   return formTemplates.find((template) => template.key === key) ?? null;

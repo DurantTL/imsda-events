@@ -14,6 +14,7 @@ import {
   calculateFormTotal,
   formTemplates,
   getFormTemplate,
+  pruneRequireAtLeastOne,
   registrationFormDefinitionSchema,
   resolveResponsibleOrganization,
   templatesForPicker,
@@ -519,6 +520,25 @@ describe("number checks (#606)", () => {
     const broken = structuredClone(definitionOf(key));
     broken.requireAtLeastOne = { fieldKeys: ["no_such_field", "pathfinder_conference_pin_quantity"], message: "Order at least one item." };
     expect(registrationFormDefinitionSchema.safeParse(broken).success).toBe(false);
+  });
+
+  it("rejects an at-least-one rule that mixes registration and attendee fields, and prunes stale keys so the form stays savable", () => {
+    const mixed = structuredClone(definitionOf("tlt_opportunities"));
+    mixed.requireAtLeastOne = { fieldKeys: ["leadership_opportunities", "need_tlt_shirt"], message: "Choose something." };
+    expect(registrationFormDefinitionSchema.safeParse(mixed).success).toBe(false);
+    const order = structuredClone(definitionOf("conference_patches_pins"));
+    const removed = structuredClone(order);
+    for (const section of removed.sections) section.fields = section.fields.filter((field) => field.key !== "adventurer_shoulder_patch_quantity");
+    expect(registrationFormDefinitionSchema.safeParse(removed).success).toBe(false);
+    const pruned = pruneRequireAtLeastOne(removed);
+    expect(pruned.requireAtLeastOne?.fieldKeys).toEqual(["pathfinder_shoulder_patch_quantity", "pathfinder_conference_pin_quantity"]);
+    expect(registrationFormDefinitionSchema.safeParse(pruned).success).toBe(true);
+    // Down to one field the rule goes away entirely; an untouched definition is returned as is.
+    const renamedTwo = structuredClone(pruned);
+    for (const section of renamedTwo.sections) for (const field of section.fields) if (field.key === "pathfinder_conference_pin_quantity") field.key = "conference_pin_quantity";
+    expect(pruneRequireAtLeastOne(renamedTwo).requireAtLeastOne).toBeUndefined();
+    expect(registrationFormDefinitionSchema.safeParse(pruneRequireAtLeastOne(renamedTwo)).success).toBe(true);
+    expect(pruneRequireAtLeastOne(order)).toBe(order);
   });
 });
 

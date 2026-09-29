@@ -15,6 +15,8 @@ export type EventAudienceBackfillReport = {
   totalCandidates: number;
   updatedCount: number;
   rows: EventAudienceBackfillRow[];
+  /** Deferred-billed GENERAL events left alone on purpose (#606): none of their forms has the club shape. */
+  skipped: Array<{ id: string; name: string; reason: string }>;
 };
 
 /**
@@ -53,16 +55,16 @@ export function resolveEventAudienceBackfillMode(argv: readonly string[]): "repo
 }
 
 /**
- * Whether a stored form definition has the shape club registration needs (#606): a `club_name` field, the
- * club chosen from the directory, on a form with a repeatable roster. Leadership Weekend has no roster and
- * Outdoor School has no club selector, so neither has it.
+ * Whether a stored form definition has the shape club registration needs (#606): a club chosen from the
+ * directory (any field with `optionSource: "CLUBS_DIRECTORY"`, whatever its key) on a form with a repeatable
+ * roster. Leadership Weekend has no roster and Outdoor School has no club selector, so neither has it.
  */
 export function hasClubRegistrationShape(definition: unknown): boolean {
   if (!definition || typeof definition !== "object") return false;
   const { sections, attendeeRoster } = definition as { sections?: unknown; attendeeRoster?: { enabled?: unknown } };
   if (attendeeRoster?.enabled !== true || !Array.isArray(sections)) return false;
   return sections.some((section) => Array.isArray((section as { fields?: unknown })?.fields)
-    && (section as { fields: Array<{ key?: unknown }> }).fields.some((field) => field?.key === "club_name"));
+    && (section as { fields: Array<{ optionSource?: unknown }> }).fields.some((field) => field?.optionSource === "CLUBS_DIRECTORY"));
 }
 
 export async function backfillEventAudience(apply = false): Promise<EventAudienceBackfillReport> {
@@ -74,15 +76,23 @@ export async function backfillEventAudience(apply = false): Promise<EventAudienc
       name: true,
       billingMode: true,
       audience: true,
-      registrationForms: { select: { versions: { take: 1, orderBy: { versionNumber: "desc" }, select: { definition: true } } } },
+      registrationForms: {
+        select: {
+          // The published version when there is one, else the newest of any status.
+          versions: { orderBy: { versionNumber: "desc" }, take: 10, select: { definition: true, status: true } },
+        },
+      },
     },
     orderBy: { startsAt: "asc" },
   });
 
   // An event with forms, none of which has the club shape, is a deliberate GENERAL church-billed event (#606).
+  const skipped: EventAudienceBackfillReport["skipped"] = [];
   const clubShaped = events.filter((event) => {
     const forms = event.registrationForms ?? [];
-    return forms.length === 0 || forms.some((form) => hasClubRegistrationShape(form.versions[0]?.definition));
+    const keep = forms.length === 0 || forms.some((form) => hasClubRegistrationShape((form.versions.find((version) => version.status === "PUBLISHED") ?? form.versions[0])?.definition));
+    if (!keep) skipped.push({ id: event.id, name: event.name, reason: "No form has a club selector and a roster, so this church-billed event is deliberately GENERAL." });
+    return keep;
   });
   const candidates = clubShaped.map((event) => ({
     id: event.id,
@@ -110,5 +120,6 @@ export async function backfillEventAudience(apply = false): Promise<EventAudienc
     totalCandidates: candidates.length,
     updatedCount,
     rows: candidates,
+    skipped,
   };
 }
