@@ -1,6 +1,6 @@
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { actorAttribution, requireRosterAccess } from "@/modules/club-rosters/access";
-import { rosterApiError } from "@/modules/club-rosters/api-errors";
+import { readRosterJson, rosterApiError } from "@/modules/club-rosters/api-errors";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import { listRoster, removeRosterMember, updateRosterMember } from "@/modules/club-rosters/repository";
 import { rosterMemberUpdateSchema, rosterRemoveSchema } from "@/modules/club-rosters/schemas";
@@ -20,7 +20,7 @@ async function patchHandler(request: Request, context: RouteContext) {
   try {
     const { organizationId, memberId } = await context.params;
     const access = await requireRosterAccess(organizationId);
-    const input = rosterMemberUpdateSchema.parse(await request.json());
+    const input = rosterMemberUpdateSchema.parse(await readRosterJson(request));
     // A details edit must leave the person with a gender (#424); status-only edits are exempt.
     const { personId } = await updateRosterMember(organizationId, memberId, input, actorAttribution(access.actor), undefined, { requireGender: true });
     // #527: a name change or other edit is matched against the background
@@ -38,7 +38,7 @@ async function deleteHandler(request: Request, context: RouteContext) {
   try {
     const { organizationId, memberId } = await context.params;
     const access = await requireRosterAccess(organizationId);
-    rosterRemoveSchema.parse(await request.json());
+    rosterRemoveSchema.parse(await readRosterJson(request));
     const removed = await removeRosterMember(organizationId, memberId, actorAttribution(access.actor));
     // #527: leaving a roster can change who a background-check entry matches.
     await refreshBackgroundCheckMatchesSafely([removed?.personId]);

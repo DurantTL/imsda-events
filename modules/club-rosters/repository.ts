@@ -3,6 +3,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
+import { lockClubOrders } from "@/modules/club-orders/repository";
 import { openBirthDate, sealBirthDate } from "@/modules/club-rosters/birth-dates";
 import { ageOn, birthDateProblem, calendarDateOf, defaultRosterRole } from "@/modules/club-rosters/domain";
 import type { RosterMemberInput, RosterMemberUpdate } from "@/modules/club-rosters/schemas";
@@ -323,8 +324,27 @@ export async function eraseRosterRow(tx: Prisma.TransactionClient, memberId: str
  */
 export async function removeRosterMember(organizationId: string, memberId: string, actor: Actor, now = new Date()): Promise<{ personId: string | null }> {
   return getPrisma().$transaction(async (tx) => {
+    // The club's order lock (#487) serializes this with placing, receiving or
+    // awarding an order, so a need can't move to ORDERED between the cancel
+    // below and the keep-the-Person check. Only the lock wait is bounded.
+    await tx.$executeRawUnsafe("SET LOCAL lock_timeout = '5s'");
+    await lockClubOrders(tx, organizationId);
+    await tx.$executeRawUnsafe("SET LOCAL lock_timeout = 0");
     const member = await findMember(tx, organizationId, memberId);
     await eraseRosterRow(tx, memberId, now);
+    // A need this club has not ordered yet has no reason to outlive the
+    // membership (#566). ORDERED, RECEIVED and AWARDED needs are history and stay.
+    let ordersCancelled = 0;
+    if (member.personId) {
+      ordersCancelled = (await tx.clubOrderNeed.deleteMany({
+        where: { organizationId, personId: member.personId, status: "NEEDED" },
+      })).count;
+      if (ordersCancelled > 0) {
+        await audit(tx, actor, "CLUB_ORDER_NEEDS_CANCELLED_ON_REMOVAL", organizationId, memberId,
+          `Cancelled ${ordersCancelled} not-yet-ordered order need${ordersCancelled === 1 ? "" : "s"} for a person removed from the roster.`,
+          { needCount: ordersCancelled });
+      }
+    }
     let personDeleted = false;
     let honorEntriesErased = 0;
     if (member.personId) {
@@ -341,6 +361,11 @@ export async function removeRosterMember(organizationId: string, memberId: strin
               attendeeAccountLinks: true,
               userLinks: true,
               clubRosterMemberships: true,
+              // These foreign keys are `onDelete: Restrict`: deleting the
+              // Person under them fails (#566). Ordered/received needs and
+              // class completions are history the club keeps.
+              clubOrderNeeds: true,
+              memberClassCompletions: true,
             },
           },
         },
@@ -373,6 +398,7 @@ export async function removeRosterMember(organizationId: string, memberId: strin
     await audit(tx, actor, "CLUB_ROSTER_MEMBER_REMOVED", organizationId, memberId, "Removed a person from a club roster and erased their details.", {
       personDeleted,
       honorEntriesErased,
+      ordersCancelled,
     });
     // The person kept (still registered, on another roster…) is refreshed by the caller (#527).
     return { personId: personDeleted ? null : member.personId };

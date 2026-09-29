@@ -33,7 +33,7 @@ const youth = {
 
 function fakeDatabase() {
   let sequence = 0;
-  const db = { people: [] as Row[], members: [] as Row[], otherReferences: new Set<string>(), honorEntries: [] as Row[], transferBlanks: [] as unknown[] };
+  const db = { people: [] as Row[], members: [] as Row[], otherReferences: new Set<string>(), honorEntries: [] as Row[], needs: [] as Row[], classCompletions: new Set<string>(), transferBlanks: [] as unknown[] };
   const matches = (row: Row, where: Record<string, unknown> = {}) => Object.entries(where).every(([key, value]) => {
     if (value === undefined) return true;
     if (value && typeof value === "object" && "not" in value) return row[key] !== (value as { not: unknown }).not;
@@ -45,6 +45,8 @@ function fakeDatabase() {
     person: member.personId ? db.people.find((person) => person.id === member.personId) ?? null : null,
   });
   const client = {
+    $executeRaw: async () => 0,
+    $executeRawUnsafe: async () => 0,
     person: {
       create: async ({ data }: { data: Row }) => { const row = { ...data, id: `person-${++sequence}` }; db.people.push(row); return row; },
       update: async ({ where, data }: { where: Row; data: Row }) => Object.assign(db.people.find((person) => person.id === where.id)!, data),
@@ -57,6 +59,8 @@ function fakeDatabase() {
           _count: {
             householdMembers: 0, heldRegistrations: 0, registrationEvents: referenced, externalIdentities: 0,
             notes: 0, attendeeAccountLinks: 0, userLinks: 0,
+            clubOrderNeeds: db.needs.filter((need) => need.personId === person.id).length,
+            memberClassCompletions: db.classCompletions.has(person.id) ? 1 : 0,
             clubRosterMemberships: db.members.filter((member) => member.personId === person.id).length,
           },
         };
@@ -72,6 +76,13 @@ function fakeDatabase() {
     },
     memberTransferRegistrationMove: {
       updateMany: async (args: unknown) => { db.transferBlanks.push(args); return { count: 0 }; },
+    },
+    clubOrderNeed: {
+      deleteMany: async ({ where }: { where: Row }) => {
+        const before = db.needs.length;
+        db.needs = db.needs.filter((need) => !(need.organizationId === where.organizationId && need.personId === where.personId && need.status === where.status));
+        return { count: before - db.needs.length };
+      },
     },
     memberHonorEntry: {
       deleteMany: async ({ where }: { where: { personId: string } }) => {
@@ -288,5 +299,46 @@ describe("club roster storage", () => {
     expect(db.honorEntries).toHaveLength(1);
     const removal = mocks.writeAuditLog.mock.calls.map(([entry]) => entry).find((entry) => entry.action === "CLUB_ROSTER_MEMBER_REMOVED");
     expect(removal.metadata).toMatchObject({ personDeleted: false, honorEntriesErased: 0 });
+  });
+
+  it("cancels an open order need, deletes the person, and audits the count (#566)", async () => {
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const personId = db.members[0].personId as string;
+    db.needs.push({ id: "need-1", organizationId: "club-1", personId, status: "NEEDED" });
+
+    await removeRosterMember("club-1", id, actor, now);
+
+    expect(db.needs).toEqual([]);
+    expect(db.people.some((person) => person.id === personId)).toBe(false);
+    const audits = mocks.writeAuditLog.mock.calls.map(([entry]) => entry);
+    expect(audits.find((entry) => entry.action === "CLUB_ORDER_NEEDS_CANCELLED_ON_REMOVAL").metadata).toMatchObject({ needCount: 1 });
+    expect(audits.find((entry) => entry.action === "CLUB_ROSTER_MEMBER_REMOVED").metadata).toMatchObject({ personDeleted: true, ordersCancelled: 1 });
+  });
+
+  it("keeps the person and an already-ordered need, ending only the membership (#566)", async () => {
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const personId = db.members[0].personId as string;
+    db.needs.push(
+      { id: "need-open", organizationId: "club-1", personId, status: "NEEDED" },
+      { id: "need-ordered", organizationId: "club-1", personId, status: "ORDERED" },
+    );
+
+    await removeRosterMember("club-1", id, actor, now);
+
+    expect(db.needs.map((need) => need.id)).toEqual(["need-ordered"]);
+    expect(db.people.some((person) => person.id === personId)).toBe(true);
+    expect(db.members[0]).toMatchObject({ status: "REMOVED", personId: null });
+    const removal = mocks.writeAuditLog.mock.calls.map(([entry]) => entry).find((entry) => entry.action === "CLUB_ROSTER_MEMBER_REMOVED");
+    expect(removal.metadata).toMatchObject({ personDeleted: false, ordersCancelled: 1 });
+  });
+
+  it("keeps the person who has a class completion (#566)", async () => {
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const personId = db.members[0].personId as string;
+    db.classCompletions.add(personId);
+
+    await removeRosterMember("club-1", id, actor, now);
+
+    expect(db.people.some((person) => person.id === personId)).toBe(true);
   });
 });

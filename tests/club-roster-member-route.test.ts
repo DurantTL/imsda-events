@@ -87,3 +87,30 @@ describe("editing a roster member (#424)", () => {
     expect(mocks.removeRosterMember).toHaveBeenCalledWith("club-1", "member-1", { accountId: "director-1" });
   });
 });
+
+describe("malformed bodies (#566)", () => {
+  const empty = (method: string) => new Request("https://events.imsda.test/api/attendee/clubs/club-1/roster/member-1", {
+    method,
+    headers: { origin: "https://events.imsda.test", "content-type": "application/json" },
+  });
+
+  it("answers an empty DELETE body with 400 INVALID_JSON_BODY, not a 500", async () => {
+    const response = await DELETE(empty("DELETE"), ctx);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "INVALID_JSON_BODY" });
+    expect(mocks.removeRosterMember).not.toHaveBeenCalled();
+  });
+
+  it("answers an empty PATCH body with 400 INVALID_JSON_BODY", async () => {
+    const response = await PATCH(empty("PATCH"), ctx);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "INVALID_JSON_BODY" });
+  });
+
+  it("asks to retry when the club's order lock wait gives up", async () => {
+    mocks.removeRosterMember.mockRejectedValueOnce(Object.assign(new Error("lock"), { code: "55P03" }));
+    const response = await DELETE(request("DELETE", { confirm: true }), ctx);
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ error: "ROSTER_BUSY" });
+  });
+});
