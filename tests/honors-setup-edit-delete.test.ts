@@ -7,11 +7,14 @@ const mocks = vi.hoisted(() => ({
   deleteHonorSession: vi.fn(),
   updateHonorOffering: vi.fn(),
   deleteHonorOffering: vi.fn(),
+  updateHonor: vi.fn(),
+  requireSystemAdministrator: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/modules/access/request-security", () => ({ rejectCrossOriginRequest: mocks.rejectCrossOriginRequest }));
 vi.mock("@/modules/honors/access", () => ({ requireHonorPermission: mocks.requireHonorPermission }));
+vi.mock("@/modules/organizations/access", () => ({ requireSystemAdministrator: mocks.requireSystemAdministrator }));
 vi.mock("@/modules/honors/repository", async () => {
   const actual = await vi.importActual<typeof import("@/modules/honors/repository")>("@/modules/honors/repository");
   return {
@@ -20,15 +23,17 @@ vi.mock("@/modules/honors/repository", async () => {
     deleteHonorSession: mocks.deleteHonorSession,
     updateHonorOffering: mocks.updateHonorOffering,
     deleteHonorOffering: mocks.deleteHonorOffering,
+    updateHonor: mocks.updateHonor,
   };
 });
 
+import { PATCH as PATCH_HONOR } from "@/app/api/admin/honors/[honorId]/route";
 import { DELETE as DELETE_OFFERING, PATCH as PATCH_OFFERING } from "@/app/api/events/[eventId]/honors/offerings/[offeringId]/route";
 import { DELETE as DELETE_SESSION, PATCH as PATCH_SESSION } from "@/app/api/events/[eventId]/honors/sessions/[sessionId]/route";
 import { AccessDeniedError } from "@/modules/access/authorization";
 import { offeringPlacementPatch, sessionEditPatch } from "@/modules/honors/domain";
 import { HonorConfigurationError } from "@/modules/honors/repository";
-import { honorOfferingUpdateSchema, honorSessionUpdateSchema } from "@/modules/honors/schemas";
+import { honorOfferingUpdateSchema, honorSessionUpdateSchema, honorUpdateSchema } from "@/modules/honors/schemas";
 
 const sessionContext = { params: Promise.resolve({ eventId: "site-b", sessionId: "s1" }) };
 const offeringContext = { params: Promise.resolve({ eventId: "site-b", offeringId: "o1" }) };
@@ -50,6 +55,8 @@ beforeEach(() => {
   mocks.deleteHonorSession.mockResolvedValue(setup);
   mocks.updateHonorOffering.mockResolvedValue(setup);
   mocks.deleteHonorOffering.mockResolvedValue(setup);
+  mocks.updateHonor.mockResolvedValue([]);
+  mocks.requireSystemAdministrator.mockResolvedValue({ id: "admin-1" });
 });
 
 describe("renaming a session keeps its site (#615)", () => {
@@ -155,5 +162,21 @@ describe("edit and delete routes", () => {
     const response = await PATCH_OFFERING(request("PATCH", { locationId: "loc-2" }), offeringContext);
     expect(response.status).toBe(409);
     expect((await response.json()).message).toContain("already picked");
+  });
+});
+
+describe("catalog honor update keeps unsent fields (#615)", () => {
+  it("parses a one-field update to just that field", () => {
+    // Same Zod 4 `.partial()` default bug as the session rename: it used to add description "" and isActive true.
+    expect(honorUpdateSchema.parse({ name: "Knot Tying II" })).toEqual({ name: "Knot Tying II" });
+    expect(honorUpdateSchema.parse({ isActive: false })).toEqual({ isActive: false });
+    expect(honorUpdateSchema.parse({ description: "" })).toEqual({ description: "" });
+    expect(honorUpdateSchema.safeParse({ code: "" }).success).toBe(false);
+  });
+
+  it("PATCHes one field without sending the others to the repository", async () => {
+    const response = await PATCH_HONOR(request("PATCH", { name: "Renamed" }), { params: Promise.resolve({ honorId: "h1" }) });
+    expect(response.status).toBe(200);
+    expect(mocks.updateHonor).toHaveBeenCalledWith("h1", { name: "Renamed" }, "admin-1");
   });
 });

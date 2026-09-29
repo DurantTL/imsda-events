@@ -33,6 +33,10 @@ function fakeDatabase() {
     locations: [] as Row[],
     /** Enrollments by offering, for the "clubs already picked" guard (#589). */
     pickedOfferingIds: [] as string[],
+    /** The club (organization) behind the picks of an offering; "org-a" when unset. */
+    pickOrganizations: {} as Record<string, string>,
+    /** Makes the next class update hit the (sessionId, honorId) unique index, as a concurrent save would. */
+    failNextOfferingUpdateWithUnique: false,
     /** Offerings whose picks were already written back into members' honor records. */
     writtenBackOfferingIds: [] as string[],
   };
@@ -65,6 +69,9 @@ function fakeDatabase() {
           if (where.offeringId) return where.offeringId.in.includes(offeringId);
           return db.offerings.find((offering) => offering.id === offeringId)?.sessionId === where.offering?.sessionId;
         }).length,
+      findMany: async ({ where }: { where: { offeringId: { in: string[] } } }) => db.pickedOfferingIds
+        .filter((offeringId) => where.offeringId.in.includes(offeringId))
+        .map((offeringId) => ({ offeringId, organizationId: db.pickOrganizations[offeringId] ?? "org-a" })),
       deleteMany: async ({ where }: { where: { offeringId: { in: string[] } } }) => {
         db.pickedOfferingIds = db.pickedOfferingIds.filter((offeringId) => !where.offeringId.in.includes(offeringId));
       },
@@ -149,6 +156,10 @@ function fakeDatabase() {
         return row;
       },
       update: async ({ where, data }: { where: Row; data: Row }) => {
+        if (db.failNextOfferingUpdateWithUnique) {
+          db.failNextOfferingUpdateWithUnique = false;
+          throw new Prisma.PrismaClientKnownRequestError("unique", { code: "P2002", clientVersion: "test" });
+        }
         const row = db.offerings.find((offering) => offering.id === where.id)!;
         Object.assign(row, data);
         return row;
@@ -300,6 +311,64 @@ describe("honor offerings", () => {
     expect(fake.db.sessions.map((session) => session.id)).toEqual(["sun-a"]);
     expect(fake.db.offerings).toHaveLength(0);
     expect(fake.db.pickedOfferingIds).toHaveLength(0);
+  });
+
+  it("audits a delete with ids and counts only: each class's picks and each club's picks (#615)", async () => {
+    await createHonorOffering("site-a", offeringInput(), "staff-1");
+    await createHonorOffering("site-a", offeringInput({ honorId: "honor-birds" }), "staff-1");
+    const [knots, birds] = fake.db.offerings.map((offering) => offering.id);
+    fake.db.pickedOfferingIds.push(knots, birds, birds);
+    fake.db.pickOrganizations[birds] = "org-b";
+    await deleteHonorSession("site-a", "sab-a", "staff-1", 3);
+    const audit = mocks.writeAuditLog.mock.calls.at(-1)![0];
+    expect(audit.metadata).toEqual({
+      classes: 2,
+      picksRemoved: 3,
+      offerings: [
+        { id: knots, honorId: "honor-knots", picks: 1 },
+        { id: birds, honorId: "honor-birds", picks: 2 },
+      ],
+      organizations: [
+        { organizationId: "org-a", picks: 1 },
+        { organizationId: "org-b", picks: 2 },
+      ],
+    });
+    // No names in the summary or metadata beyond the session's own.
+    expect(JSON.stringify(audit.metadata)).not.toMatch(/Knot|Birds/);
+    await createHonorOffering("site-a", offeringInput({ sessionId: "sun-a" }), "staff-1");
+    const single = fake.db.offerings.at(-1)!.id;
+    fake.db.pickedOfferingIds.push(single);
+    await deleteHonorOffering("site-a", single, "staff-1", 1);
+    expect(mocks.writeAuditLog.mock.calls.at(-1)![0].metadata).toEqual({
+      picksRemoved: 1,
+      offerings: [{ id: single, honorId: "honor-knots", picks: 1 }],
+      organizations: [{ organizationId: "org-a", picks: 1 }],
+    });
+  });
+
+  it("words a written-back refusal for what to deactivate", async () => {
+    await createHonorOffering("site-a", offeringInput(), "staff-1");
+    const offeringId = fake.db.offerings[0].id;
+    fake.db.pickedOfferingIds.push(offeringId);
+    fake.db.writtenBackOfferingIds.push(offeringId);
+    await expect(deleteHonorSession("site-a", "sab-a", "staff-1", 1)).rejects.toThrow("Deactivate its classes instead.");
+    await expect(deleteHonorOffering("site-a", offeringId, "staff-1", 1)).rejects.toThrow("Deactivate it instead.");
+  });
+
+  it("names the new honor in the audit summary when a class changes honor", async () => {
+    await createHonorOffering("site-a", offeringInput(), "staff-1");
+    const offeringId = fake.db.offerings[0].id;
+    await updateHonorOffering("site-a", offeringId, { honorId: "honor-birds" }, "staff-1");
+    expect(mocks.writeAuditLog.mock.calls.at(-1)![0].summary).toBe("Updated the Knot Tying offering and changed its honor to Birds.");
+    await updateHonorOffering("site-a", offeringId, { capacity: 3 }, "staff-1");
+    expect(mocks.writeAuditLog.mock.calls.at(-1)![0].summary).toBe("Updated the Birds offering.");
+  });
+
+  it("maps the unique index on a class edit to OFFERING_CONFLICT, as create does", async () => {
+    await createHonorOffering("site-a", offeringInput(), "staff-1");
+    fake.db.failNextOfferingUpdateWithUnique = true;
+    await expect(updateHonorOffering("site-a", fake.db.offerings[0].id, { sessionId: "sun-a" }, "staff-1"))
+      .rejects.toMatchObject({ code: "OFFERING_CONFLICT" });
   });
 
   it("edits every field of a class: honor, session, span, seats and details", async () => {

@@ -122,7 +122,9 @@ export function HonorsSetupWorkspace({
     const form = new FormData(formElement);
     const result = await call(`${base}/sessions`, "POST", {
       name: String(form.get("name") ?? ""),
-      sortOrder: Number(form.get("sortOrder") ?? 0),
+      // An empty Order takes the suggested next order for the site, never 0.
+      sortOrder: optionalNumber(form.get("sortOrder"))
+        ?? nextSessionOrder(setup.sessions.filter((session) => (session.locationId ?? "") === newSessionSite)),
       locationId: hasSites ? String(form.get("locationId") ?? "") || null : null,
     }, "Session added.");
     if (result) formElement.reset();
@@ -135,7 +137,8 @@ export function HonorsSetupWorkspace({
     // Only what changed is sent, so a rename never carries (or clears) the site.
     const patch = sessionEditPatch(editingSession, {
       name: String(form.get("name") ?? ""),
-      sortOrder: Number(form.get("sortOrder") ?? editingSession.sortOrder),
+      // An empty Order means unchanged, not 0.
+      sortOrder: optionalNumber(form.get("sortOrder")) ?? editingSession.sortOrder,
       locationId: hasSites ? String(form.get("locationId") ?? "") || null : editingSession.locationId,
     });
     if (Object.keys(patch).length === 0) {
@@ -155,15 +158,30 @@ export function HonorsSetupWorkspace({
   async function confirmedDelete(url: string, label: string, success: string) {
     if (!window.confirm(`Delete ${label}? This can't be undone.`)) return;
     const pending: { picks: number | null } = { picks: null };
-    const first = await call(url, "DELETE", undefined, success, (result) => {
+    const needsConfirmation = (result: ApiResult) => {
       if (result.error !== "PICKS_NEED_CONFIRMATION" || typeof result.picks !== "number") return false;
       pending.picks = result.picks;
       return true;
-    });
-    const picksToConfirm = pending.picks;
-    if (first || picksToConfirm === null) return first;
-    if (!window.confirm(`${picksToConfirm} class pick${picksToConfirm === 1 ? "" : "s"} by clubs will be removed from their registrations. Delete ${label} anyway?`)) return null;
-    return call(`${url}?confirmPicks=${picksToConfirm}`, "DELETE", undefined, success);
+    };
+    let confirmed: number | null = null;
+    // The count can change between asking and deleting (a club saved picks):
+    // every time the server reports a different count, ask again with it.
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      pending.picks = null;
+      const result = await call(
+        confirmed === null ? url : `${url}?confirmPicks=${confirmed}`,
+        "DELETE",
+        undefined,
+        success,
+        needsConfirmation,
+      );
+      if (result || pending.picks === null) return result;
+      const picks: number = pending.picks;
+      if (!window.confirm(`${picks} class pick${picks === 1 ? "" : "s"} by clubs will be removed from their registrations. Delete ${label} anyway?`)) return null;
+      confirmed = picks;
+    }
+    setError("The number of class picks kept changing, so nothing was deleted. Try again.");
+    return null;
   }
 
   async function removeSession(session: SetupSession) {
@@ -194,7 +212,10 @@ export function HonorsSetupWorkspace({
           ...offeringPlacementPatch(editing, {
             honorId: String(form.get("honorId") ?? editing.honorId),
             span: editSpan,
-            sessionId: String(form.get("sessionId") ?? "") || null,
+            // A disabled select (a class clubs picked) isn't submitted: fall back to the current session so it isn't read as a change.
+            sessionId: editSpan === "SINGLE_SESSION" && !form.has("sessionId")
+              ? editing.sessionId
+              : String(form.get("sessionId") ?? "") || null,
           }),
           ...siteChangePatch(editing.locationId ?? null, form.get("locationId")),
         }
@@ -399,7 +420,7 @@ export function HonorsSetupWorkspace({
           <div className="form-grid two-column">
             <label>
               Honor
-              <select defaultValue={editing.honorId} name="honorId" required>
+              <select defaultValue={editing.honorId} disabled={editing.enrolled > 0} name="honorId" required>
                 {!catalog.some((honor) => honor.id === editing.honorId) && (
                   <option value={editing.honorId}>{editing.honorName} ({editing.honorCode})</option>
                 )}
@@ -410,7 +431,7 @@ export function HonorsSetupWorkspace({
             </label>
             <label>
               Taught in
-              <select name="span" onChange={(event) => setEditSpan(event.target.value as typeof editSpan)} value={editSpan}>
+              <select disabled={editing.enrolled > 0} name="span" onChange={(event) => setEditSpan(event.target.value as typeof editSpan)} value={editSpan}>
                 <option value="SINGLE_SESSION">{honorOfferingSpanLabels.SINGLE_SESSION}</option>
                 <option value="ALL_SESSIONS">{honorOfferingSpanLabels.ALL_SESSIONS} (fills every session)</option>
               </select>
@@ -418,7 +439,7 @@ export function HonorsSetupWorkspace({
             {editSpan === "SINGLE_SESSION" && (
               <label>
                 Session
-                <select defaultValue={editing.sessionId ?? ""} name="sessionId" required>
+                <select defaultValue={editing.sessionId ?? ""} disabled={editing.enrolled > 0} name="sessionId" required>
                   <option value="">Choose a session</option>
                   {sessions.map((session) => (
                     <option key={session.id} value={session.id}>{session.name}{sessionSiteSuffix(session.locationId)}</option>

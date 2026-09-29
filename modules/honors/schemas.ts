@@ -11,7 +11,17 @@ export const honorInputSchema = z.object({
   isActive: z.boolean().default(true),
 }).strict();
 
-export const honorUpdateSchema = honorInputSchema.partial().strict();
+/**
+ * Bare fields, not `honorInputSchema.partial()`: Zod 4 applies `.default()`
+ * inside `.partial()`, so a one-field PATCH would reset the description and
+ * the active flag (the same bug as the #615 session rename).
+ */
+export const honorUpdateSchema = z.object({
+  code: text(40).min(1, "Enter the honor code."),
+  name: text(120).min(1, "Enter the honor name."),
+  description: text(2000),
+  isActive: z.boolean(),
+}).partial().strict();
 
 export const honorSessionInputSchema = z.object({
   name: text(80).min(1, "Enter the session name."),

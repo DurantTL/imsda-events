@@ -375,18 +375,36 @@ const plural = (count: number, word: string) => `${count} ${word}${count === 1 ?
  */
 async function removeOfferings(
   tx: Prisma.TransactionClient,
-  offeringIds: string[],
+  offerings: Array<{ id: string; honorId: string }>,
   confirmPicks: number | undefined,
   what: string,
+  /** What to deactivate instead when written-back picks block the delete. */
+  instead: string,
 ) {
-  if (offeringIds.length === 0) return 0;
-  const picks = await tx.honorEnrollment.count({ where: { offeringId: { in: offeringIds } } });
+  const offeringIds = offerings.map((offering) => offering.id);
+  if (offeringIds.length === 0) return { picks: 0, snapshot: emptyDeleteSnapshot };
+  // Read before anything is deleted: ids and counts only, for the audit trail.
+  const pickRows = await tx.honorEnrollment.findMany({
+    where: { offeringId: { in: offeringIds } },
+    select: { offeringId: true, organizationId: true },
+  });
+  const picks = pickRows.length;
+  const perOffering = new Map<string, number>();
+  const perOrganization = new Map<string, number>();
+  for (const row of pickRows) {
+    perOffering.set(row.offeringId, (perOffering.get(row.offeringId) ?? 0) + 1);
+    perOrganization.set(row.organizationId, (perOrganization.get(row.organizationId) ?? 0) + 1);
+  }
+  const snapshot = {
+    offerings: offerings.map((offering) => ({ id: offering.id, honorId: offering.honorId, picks: perOffering.get(offering.id) ?? 0 })),
+    organizations: [...perOrganization].map(([organizationId, count]) => ({ organizationId, picks: count })),
+  };
   if (picks > 0) {
     const writtenBack = await tx.honorWeekendCompletionLink.count({ where: { enrollment: { offeringId: { in: offeringIds } } } });
     if (writtenBack > 0) {
       throw new HonorConfigurationError(
         "HAS_WRITTEN_BACK_COMPLETIONS",
-        `${what} can't be deleted: ${plural(writtenBack, "pick")} already ${writtenBack === 1 ? "was" : "were"} written back into members' honor records. Deactivate it instead.`,
+        `${what} can't be deleted: ${plural(writtenBack, "pick")} already ${writtenBack === 1 ? "was" : "were"} written back into members' honor records. Deactivate ${instead} instead.`,
         picks,
       );
     }
@@ -400,8 +418,10 @@ async function removeOfferings(
     await tx.honorEnrollment.deleteMany({ where: { offeringId: { in: offeringIds } } });
   }
   await tx.honorOffering.deleteMany({ where: { id: { in: offeringIds } } });
-  return picks;
+  return { picks, snapshot };
 }
+
+const emptyDeleteSnapshot = { offerings: [] as Array<{ id: string; honorId: string; picks: number }>, organizations: [] as Array<{ organizationId: string; picks: number }> };
 
 export async function deleteHonorSession(eventId: string, sessionId: string, actorUserId: string, confirmPicks?: number) {
   await serializable(async (tx) => {
@@ -410,12 +430,13 @@ export async function deleteHonorSession(eventId: string, sessionId: string, act
       select: { id: true, name: true },
     });
     if (!session) throw new HonorConfigurationError("SESSION_NOT_FOUND", "That session could not be found.");
-    const offerings = await tx.honorOffering.findMany({ where: { sessionId, eventId }, select: { id: true } });
-    const removedPicks = await removeOfferings(
+    const offerings = await tx.honorOffering.findMany({ where: { sessionId, eventId }, select: { id: true, honorId: true } });
+    const { picks: removedPicks, snapshot } = await removeOfferings(
       tx,
-      offerings.map((offering) => offering.id),
+      offerings,
       confirmPicks,
       `the session "${session.name}" and its ${plural(offerings.length, "class")}`,
+      "its classes",
     );
     await tx.honorSession.delete({ where: { id: sessionId } });
     await writeAuditLog({
@@ -425,7 +446,7 @@ export async function deleteHonorSession(eventId: string, sessionId: string, act
       entityType: "HonorSession",
       entityId: sessionId,
       summary: `Removed honors session ${session.name} with ${plural(offerings.length, "class")} and ${plural(removedPicks, "pick")}.`,
-      metadata: { classes: offerings.length, picksRemoved: removedPicks },
+      metadata: { classes: offerings.length, picksRemoved: removedPicks, ...snapshot },
     }, tx);
   });
   return getEventHonorSetup(eventId);
@@ -435,10 +456,10 @@ export async function deleteHonorOffering(eventId: string, offeringId: string, a
   await serializable(async (tx) => {
     const offering = await tx.honorOffering.findFirst({
       where: { id: offeringId, eventId },
-      select: { id: true, honor: { select: { name: true } } },
+      select: { id: true, honorId: true, honor: { select: { name: true } } },
     });
     if (!offering) throw new HonorConfigurationError("OFFERING_NOT_FOUND", "That honor offering could not be found.");
-    const removedPicks = await removeOfferings(tx, [offeringId], confirmPicks, `the ${offering.honor.name} class`);
+    const { picks: removedPicks, snapshot } = await removeOfferings(tx, [offering], confirmPicks, `the ${offering.honor.name} class`, "it");
     await writeAuditLog({
       eventId,
       actorUserId,
@@ -446,7 +467,7 @@ export async function deleteHonorOffering(eventId: string, offeringId: string, a
       entityType: "HonorOffering",
       entityId: offeringId,
       summary: `Removed the ${offering.honor.name} offering and ${plural(removedPicks, "pick")}.`,
-      metadata: { picksRemoved: removedPicks },
+      metadata: { picksRemoved: removedPicks, ...snapshot },
     }, tx);
   });
   return getEventHonorSetup(eventId);
@@ -538,7 +559,8 @@ export async function updateHonorOffering(
   actorUserId: string,
 ) {
   // Serializable, so a class pick saved at the same moment can't slip past the pick count on a site move (#589).
-  await serializable(async (tx) => {
+  try {
+    await serializable(async (tx) => {
     const existing = await tx.honorOffering.findFirst({
       where: { id: offeringId, eventId },
       select: { id: true, honorId: true, sessionId: true, span: true, locationId: true, honor: { select: { name: true } } },
@@ -572,10 +594,12 @@ export async function updateHonorOffering(
     const sessionChanged = sessionId !== existing.sessionId;
     const siteChanged = locationId !== existing.locationId;
 
+    let newHonorName: string | null = null;
     if (honorChanged) {
-      const honor = await tx.honor.findUnique({ where: { id: honorId }, select: { id: true, isActive: true } });
+      const honor = await tx.honor.findUnique({ where: { id: honorId }, select: { id: true, name: true, isActive: true } });
       if (!honor) throw new HonorConfigurationError("HONOR_NOT_FOUND", "That honor could not be found.");
       if (!honor.isActive) throw new HonorConfigurationError("HONOR_INACTIVE", "That honor is inactive in the catalog.");
+      newHonorName = honor.name;
     }
     if (span === "ALL_SESSIONS" && (siteChanged || spanChanged)) {
       await requireSessionLocation(tx, eventId, locationId);
@@ -619,10 +643,19 @@ export async function updateHonorOffering(
       action: "HONOR_OFFERING_UPDATED",
       entityType: "HonorOffering",
       entityId: offeringId,
-      summary: `Updated the ${existing.honor.name} offering.`,
+      summary: newHonorName
+        ? `Updated the ${existing.honor.name} offering and changed its honor to ${newHonorName}.`
+        : `Updated the ${existing.honor.name} offering.`,
       metadata: { changes: input },
     }, tx);
-  });
+    });
+  } catch (error) {
+    // Two classes can't be the same honor in the same session (the (sessionId, honorId) unique index).
+    if (isUniqueConstraint(error)) {
+      throw new HonorConfigurationError("OFFERING_CONFLICT", "This honor is already offered in that session.");
+    }
+    throw error;
+  }
   return getEventHonorSetup(eventId);
 }
 
