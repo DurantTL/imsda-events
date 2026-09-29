@@ -13,7 +13,7 @@ import {
 } from "@/modules/event-templates/starters";
 import { formTemplates, getFormTemplate } from "@/modules/forms/definition";
 
-const wantedNames = ["Blank event", "Blank club event", "Women's Retreat", "Man Camp", "Spring Camporee", "Camp Meeting", "Honors Weekend"];
+const wantedNames = ["Blank event", "Blank club event", "Women's Retreat", "Man Camp", "Spring Camporee", "Fall Camporee", "Camp Meeting", "Honors Weekend"];
 
 function fieldsOf(formKey: string) {
   const definition = getFormTemplate(formKey)!.definition;
@@ -21,14 +21,14 @@ function fieldsOf(formKey: string) {
 }
 
 describe("starter event templates (#546)", () => {
-  it("covers the two blank starters and the five events with a form, with unique stable keys", () => {
+  it("covers the two blank starters and the six events with a form, with unique stable keys", () => {
     expect(starterEventTemplates.map((starter) => starter.name)).toEqual(wantedNames);
     expect(new Set(starterEventTemplates.map((starter) => starter.starterKey)).size).toBe(starterEventTemplates.length);
   });
 
-  it("lists Fall Camporee as needing a form and does not create it", () => {
-    expect(pendingStarterEvents).toEqual([{ starterKey: "fall_camporee", name: "Fall Camporee", note: "form still needed" }]);
-    expect(starterEventTemplates.some((starter) => starter.starterKey === "fall_camporee")).toBe(false);
+  it("creates Fall Camporee as a starter and no longer lists it as pending (#593)", () => {
+    expect(pendingStarterEvents).toEqual([]);
+    expect(starterEventTemplates.some((starter) => starter.starterKey === "fall_camporee")).toBe(true);
   });
 
   it.each(starterEventTemplates.map((starter) => [starter.name, starter] as const))("%s passes validation", (_name, starter) => {
@@ -41,16 +41,19 @@ describe("starter event templates (#546)", () => {
 
   it.each(starterEventTemplates.map((starter) => [starter.name, starter] as const))("%s carries no pricing, capacity, waitlist or message defaults", (_name, starter) => {
     const payload = starterPayload(starter);
-    const json = JSON.stringify(payload);
+    // Locations carry a null capacity and null date offsets: only a set value would be a capacity.
+    const json = JSON.stringify({ ...payload, locations: undefined });
+    expect(payload.locations?.every((location) => location.capacity === null)).not.toBe(false);
     expect(json).not.toMatch(/price|pricing|capacity|cents|limit/i);
     expect(payload.moduleEnablement.waitlistEnabled).toBe(false);
     expect(payload.moduleEnablement.autoPromoteWaitlist).toBe(false);
     expect(payload.messageTemplateDefaults).toEqual([]);
     expect(payload.attendeeTypes).toEqual([]);
-    expect(Object.keys(payload).sort()).toEqual([
+    expect(Object.keys(payload).filter((key) => key !== "locations").sort()).toEqual([
       "attendeeClassifications", "attendeeTypes", "audience", "billingMode", "brandingDefaults", "formTemplateKeys",
       "messageTemplateDefaults", "moduleEnablement", "reportSelections", "starterKey",
     ]);
+    expect("locations" in payload).toBe(starter.starterKey === "fall_camporee");
   });
 
   it("bills every CLUB starter to the church so directors can see the event (#565)", () => {
@@ -78,6 +81,7 @@ describe("starter event templates (#546)", () => {
       "Women's Retreat": "GENERAL",
       "Man Camp": "GENERAL",
       "Spring Camporee": "CLUB",
+      "Fall Camporee": "CLUB",
       "Camp Meeting": "GENERAL",
       "Honors Weekend": "CLUB",
     });

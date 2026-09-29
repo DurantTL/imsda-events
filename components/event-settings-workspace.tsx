@@ -108,6 +108,7 @@ export function EventSettingsWorkspace({
 }: EventSettingsWorkspaceProps) {
   const [draft, setDraft] = useState<EventSettingsInput>(() => draftFromEvent(initialEvent));
   const [savedDraft, setSavedDraft] = useState<EventSettingsInput>(() => draftFromEvent(initialEvent));
+  const [setupWarnings, setSetupWarnings] = useState(initialEvent?.warnings ?? []);
   const [publishedFormCount, setPublishedFormCount] = useState(initialEvent?.publishedFormCount ?? 0);
   // Publishing and unpublishing are their own actions (#471), never a side
   // effect of saving this form: tracked separately from `draft` so nothing
@@ -206,6 +207,7 @@ export function EventSettingsWorkspace({
       setSavedDraft(nextDraft);
       setPublishedFormCount(result.event.publishedFormCount);
       setPublished(result.event.isPublished);
+      setSetupWarnings(result.event.warnings ?? []);
       setNotice("Event settings saved.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The event could not be saved.");
@@ -239,6 +241,7 @@ export function EventSettingsWorkspace({
         throw new Error(result.message ?? "The event could not be published.");
       }
       setPublished(result.event.isPublished);
+      setSetupWarnings(result.event.warnings ?? []);
       setPublishDialogOpen(false);
       const warnings = result.warnings ?? [];
       setNotice(
@@ -274,6 +277,7 @@ export function EventSettingsWorkspace({
         throw new Error(result.message ?? "The event could not be unpublished.");
       }
       setPublished(result.event.isPublished);
+      setSetupWarnings(result.event.warnings ?? []);
       setUnpublishDialogOpen(false);
       setNotice("Event unpublished. Every public registration form is now closed.");
     } catch (caught) {
@@ -619,6 +623,10 @@ export function EventSettingsWorkspace({
             {/* Never blocks publish (#575): a warning only. */}
             {!published && publishWarnings.map((warning) => (
               <div className="inline-notice clone-warning" key={warning} role="status"><AlertTriangle size={17} aria-hidden="true" /> {warning}</div>
+            ))}
+            {/* Never blocks publish (#593): dates and fees staff still need to set. */}
+            {setupWarnings.map((warning) => (
+              <div className="inline-notice clone-warning" key={warning.id} role="status"><AlertTriangle size={17} aria-hidden="true" /> <span><strong>{warning.label}.</strong> {warning.detail}</span></div>
             ))}
             {/* Never blocks publish (#467): shown for visibility only. */}
             <p className="event-readiness-optional-heading">Optional</p>

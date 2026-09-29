@@ -21,7 +21,7 @@ import {
   validateEventTemplatePayloadReferences,
 } from "../modules/event-templates/domain";
 import { addStarterEventTemplates } from "../modules/event-templates/starter-repository";
-import { starterEventTemplates, starterPayload } from "../modules/event-templates/starters";
+import { pendingStarterEvents, starterEventTemplates, starterPayload } from "../modules/event-templates/starters";
 import { listClubEvents } from "../modules/club-registrations/repository";
 import { publishEvent } from "../modules/events/repository";
 import {
@@ -404,7 +404,7 @@ async function verifyStarters() {
   assert(first.added.length === missing.length && first.skipped.length === remaining.length, `one click adds the ${missing.length} missing starters, added ${first.added.length}`);
   assert(first.added.map((entry) => entry.starterKey).sort().join() === missing.map((starter) => starter.starterKey).sort().join(), "exactly the missing starters were added");
   if (remaining.length === 0) assert(first.added.length === starterEventTemplates.length, `on a database with no starters one click adds ${starterEventTemplates.length}`);
-  assert(first.stillNeeded.length === 1 && first.stillNeeded[0]!.name === "Fall Camporee", "Fall Camporee is listed as still needing a form");
+  assert(first.stillNeeded.length === pendingStarterEvents.length, "the still-needed list matches the pending starters");
   const created = (await starterTemplates()).filter(isOwn);
   assert(created.length === missing.length, "the missing starters now exist");
   for (const template of created) {
@@ -414,11 +414,15 @@ async function verifyStarters() {
     const payload = parseEventTemplatePayload(template.versions[0]!.payload);
     validateEventTemplatePayloadReferences(payload);
     assert(payload.audience === starter.audience, `${starter.name} audience`);
-    assert(!/price|capacity|cents/i.test(JSON.stringify(template.versions[0]!.payload)), `${starter.name} carries no pricing or capacity`);
+    // A starter's locations carry null capacity and date offsets; only a set value counts as pricing or capacity.
+    assert(!/price|capacity|cents/i.test(JSON.stringify(template.versions[0]!.payload).replaceAll('"capacity":null', "")), `${starter.name} carries no pricing or capacity`);
+    if (starter.starterKey === "fall_camporee") {
+      assert(payload.locations?.map((location) => location.name).join() === "Iowa,Missouri" && payload.locations.every((location) => location.firstDayOffset === null && location.lastDayOffset === null && location.capacity === null), "Fall Camporee carries two undated locations, Iowa and Missouri");
+    }
   }
   assert(await prisma.auditLog.count({ where: { actorUserId: adminId, action: "EVENT_TEMPLATE_CREATED", summary: { startsWith: "Created starter event template" } } }) === missing.length, "each starter creation is audited");
   assert((await starterTemplates()).length === starterEventTemplates.length, "every starter exists in total");
-  console.log("ok  one click creates the missing starters as valid DRAFTs (no pricing or capacity); Fall Camporee is listed as form still needed");
+  console.log("ok  one click creates the missing starters as valid DRAFTs (no pricing or capacity)");
 
   // 2. Re-running adds nothing.
   const second = await addStarterEventTemplates(adminId);
@@ -474,6 +478,14 @@ async function verifyStarters() {
     assert(forms.length === 1 && forms[0]!.versions.length === 1 && forms[0]!.versions[0]!.definition !== null, `${starter.name} created its registration form draft`);
     assert(await prisma.eventMembership.count({ where: { eventId: event.id, userId: adminId, role: "EVENT_ADMIN" } }) === 1, `${starter.name} made the applier its event admin`);
     assert(await prisma.eventTemplateApplication.count({ where: { templateId: template.id, eventId: event.id } }) === 1, `${starter.name} recorded its application`);
+    const locations = await prisma.eventLocation.findMany({ where: { eventId: event.id }, orderBy: { sortOrder: "asc" } });
+    const wantLocations = starter.locations ?? [];
+    assert(locations.map((location) => location.name).join() === wantLocations.map((location) => location.name).join(), `${starter.name} created its ${wantLocations.length} location(s) in order`);
+    assert(locations.every((location) => location.isActive && location.firstDay === null && location.lastDay === null && location.capacity === null), `${starter.name} locations are active with no dates or capacity`);
+    if (starter.starterKey === "fall_camporee") {
+      const labels = event.warnings.map((warning) => warning.label);
+      assert(labels.join() === "Check the dates for Iowa,Check the dates for Missouri,Set the Fall Camporee fee", `Fall Camporee warns about both location dates and the fee, got ${labels.join(" | ")}`);
+    }
     const resave = eventSettingsInputSchema.safeParse({ ...(await getEventSettings(event.id)), approvedPaymentInstructions: null });
     assert(resave.success, `${starter.name} event re-saves in settings`);
   }
