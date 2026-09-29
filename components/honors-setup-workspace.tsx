@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Award, CalendarRange, ClipboardList, Copy, Pencil, Plus, Power, Save, Trash2, TriangleAlert, X } from "lucide-react";
 import { honorOfferingSpanLabels } from "@/modules/honors/domain";
+import { siteChangePatch } from "@/modules/honors/locations";
 import type { HonorCopyPlan } from "@/modules/honors/copy";
 import { groupSessionsBySite, nextSessionOrder, sessionClassWarning, sharedSessionsLabel } from "@/modules/honors/session-order";
 import type { EventHonorSetup } from "@/modules/honors/repository";
@@ -136,7 +137,10 @@ export function HonorsSetupWorkspace({
       teacherName: String(form.get("teacherName") ?? ""),
       location: String(form.get("location") ?? ""),
       // Only an all-sessions class has its own site; a single-session class is at its session's.
-      ...((editing ? editing.span === "ALL_SESSIONS" : span === "ALL_SESSIONS") && hasSites ? { locationId: String(form.get("locationId") ?? "") || null } : {}),
+      // Editing sends the site only when it changed (a legacy no-site class, or one with picks, keeps editing its other fields).
+      ...(editing
+        ? siteChangePatch(editing.locationId ?? null, form.get("locationId"))
+        : span === "ALL_SESSIONS" && hasSites ? { locationId: String(form.get("locationId") ?? "") || null } : {}),
     };
     const result = editing
       ? await call(`${base}/offerings/${encodeURIComponent(editing.id)}`, "PATCH", details, "Class updated.")
@@ -348,15 +352,22 @@ export function HonorsSetupWorkspace({
         )}
         <div className="form-grid two-column">
           {editing && editing.span === "ALL_SESSIONS" && hasSites && (
-            <label>
-              Site
-              <select defaultValue={editing.locationId ?? ""} name="locationId" required={hasActiveSites}>
-                <option value="">{hasActiveSites ? "Choose a site" : "No site"}</option>
-                {setup.locations.map((location) => (
-                  <option key={location.id} value={location.id}>{location.name}{location.isActive === false ? " (inactive)" : ""}</option>
-                ))}
-              </select>
-            </label>
+            editing.enrolled > 0 ? (
+              // Clubs have picked this class, so it can't move: show the site, don't ask for one.
+              <p className="field-help" data-testid="class-site-readonly">
+                Site: <strong translate="no">{siteName(editing.locationId) ?? "No site"}</strong> (fixed once clubs have picked this class)
+              </p>
+            ) : (
+              <label>
+                Site
+                <select defaultValue={editing.locationId ?? ""} name="locationId" required={hasActiveSites && editing.locationId !== null}>
+                  <option value="">{hasActiveSites ? "Choose a site" : "No site"}</option>
+                  {setup.locations.map((location) => (
+                    <option key={location.id} value={location.id}>{location.name}{location.isActive === false ? " (inactive)" : ""}</option>
+                  ))}
+                </select>
+              </label>
+            )
           )}
           <label>
             Youth seats

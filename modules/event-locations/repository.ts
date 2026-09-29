@@ -233,11 +233,14 @@ export async function deleteEventLocation(eventId: string, locationId: string, a
         tx.honorOffering.count({ where: { locationId } }),
       ]);
       if (sessions + classes > 0) {
+        const parts = [
+          ...(sessions > 0 ? [`${sessions} honors session${sessions === 1 ? "" : "s"}`] : []),
+          ...(classes > 0 ? [`${classes} all-sessions class${classes === 1 ? "" : "es"}`] : []),
+        ];
+        const single = parts.length === 1 && sessions + classes === 1;
         throw new EventLocationError(
           "LOCATION_IN_USE",
-          classes === 0
-            ? `${sessions} honors session${sessions === 1 ? " is" : "s are"} at this site. Move or remove ${sessions === 1 ? "it" : "them"} first.`
-            : `${sessions + classes} honors sessions and all-sessions classes are at this site. Move or remove them first.`,
+          `${parts.join(" and ")} ${single ? "is" : "are"} at this site. Move or remove ${single ? "it" : "them"} first.`,
         );
       }
       await tx.eventLocation.delete({ where: { id: locationId } });

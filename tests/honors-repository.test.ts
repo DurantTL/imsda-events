@@ -139,7 +139,10 @@ function fakeDatabase() {
       },
     },
   };
-  const transaction = vi.fn(async (work: (tx: typeof client) => unknown) => work(client));
+  const transaction = vi.fn(async (work: (tx: typeof client) => unknown, options?: { isolationLevel?: string }) => {
+    void options;
+    return work(client);
+  });
   mocks.getPrisma.mockReturnValue({ ...client, $transaction: transaction });
   return { db, transaction, sessionQueries };
 }
@@ -510,5 +513,39 @@ describe("all-sessions classes at sites (#589)", () => {
     expect(actions[1][0]).toBe("SKIP");
     expect(actions[1][1]).toContain("site has no match");
     expect(actions[1][1]).not.toContain("Already set up");
+  });
+});
+
+describe("site moves run serializable, so a concurrent pick can't be missed (#589)", () => {
+  beforeEach(() => {
+    fake.db.locations.push(
+      { id: "loc-hr", eventId: "site-a", name: "Camp Heritage 1", normalizedName: "camp heritage 1", sortOrder: 0 },
+      { id: "loc-dm", eventId: "site-a", name: "Des Moines", normalizedName: "des moines", sortOrder: 1 },
+    );
+  });
+
+  it("moves a session and an all-sessions class inside a serializable transaction", async () => {
+    await updateHonorSession("site-a", "sab-a", { locationId: "loc-dm" }, "staff-1");
+    await createHonorOffering("site-a", offeringInput({ span: "ALL_SESSIONS", sessionId: null, locationId: "loc-dm" }), "staff-1");
+    const offeringId = fake.db.offerings.at(-1)!.id;
+    await updateHonorOffering("site-a", offeringId, { locationId: "loc-hr" }, "staff-1");
+    const serializableCalls = fake.transaction.mock.calls.filter(([, options]) => options?.isolationLevel === Prisma.TransactionIsolationLevel.Serializable);
+    // create offering + update session + update offering
+    expect(serializableCalls.length).toBeGreaterThanOrEqual(3);
+    expect(fake.transaction.mock.calls.at(-1)![1]).toEqual({ isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  });
+
+  it("retries a serialization failure instead of missing the pick", async () => {
+    let first = true;
+    const original = fake.transaction.getMockImplementation()!;
+    fake.transaction.mockImplementation(async (work, options) => {
+      if (first) {
+        first = false;
+        throw new Prisma.PrismaClientKnownRequestError("conflict", { code: "P2034", clientVersion: "test" });
+      }
+      return original(work, options);
+    });
+    await updateHonorSession("site-a", "sab-a", { locationId: "loc-dm" }, "staff-1");
+    expect(fake.db.sessions.find((session) => session.id === "sab-a")!.locationId).toBe("loc-dm");
   });
 });

@@ -314,7 +314,8 @@ export async function updateHonorSession(
   actorUserId: string,
 ) {
   try {
-    await getPrisma().$transaction(async (tx) => {
+    // Serializable, so a class pick saved at the same moment can't slip past the count below (#589).
+    await serializable(async (tx) => {
       const existing = await tx.honorSession.findFirst({ where: { id: sessionId, eventId }, select: { id: true, locationId: true } });
       if (!existing) throw new HonorConfigurationError("SESSION_NOT_FOUND", "That session could not be found.");
       if (input.locationId !== undefined && input.locationId !== existing.locationId) {
@@ -465,7 +466,8 @@ export async function updateHonorOffering(
   input: HonorOfferingUpdate,
   actorUserId: string,
 ) {
-  await getPrisma().$transaction(async (tx) => {
+  // Serializable, so a class pick saved at the same moment can't slip past the pick count on a site move (#589).
+  await serializable(async (tx) => {
     const existing = await tx.honorOffering.findFirst({
       where: { id: offeringId, eventId },
       select: { id: true, honorId: true, span: true, locationId: true, honor: { select: { name: true } } },

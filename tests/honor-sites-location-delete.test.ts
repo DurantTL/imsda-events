@@ -44,9 +44,17 @@ describe("deleting a location with honors sessions (#589)", () => {
     await expect(deleteEventLocation("event-1", "loc-1", "usr_admin")).rejects.toMatchObject({
       message: "1 honors session is at this site. Move or remove it first.",
     });
+    database({ classes: 1 });
+    await expect(deleteEventLocation("event-1", "loc-1", "usr_admin")).rejects.toMatchObject({
+      message: "1 all-sessions class is at this site. Move or remove it first.",
+    });
+    database({ sessions: 2, classes: 1 });
+    await expect(deleteEventLocation("event-1", "loc-1", "usr_admin")).rejects.toMatchObject({
+      message: "2 honors sessions and 1 all-sessions class are at this site. Move or remove them first.",
+    });
     database({ sessions: 1, classes: 2 });
     await expect(deleteEventLocation("event-1", "loc-1", "usr_admin")).rejects.toMatchObject({
-      message: "3 honors sessions and all-sessions classes are at this site. Move or remove them first.",
+      message: "1 honors session and 2 all-sessions classes are at this site. Move or remove them first.",
     });
   });
 

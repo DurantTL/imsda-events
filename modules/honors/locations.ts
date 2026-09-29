@@ -27,6 +27,17 @@ export function offeringSiteId(offering: {
   return offering.span === "ALL_SESSIONS" ? offering.locationId ?? null : offering.session?.locationId ?? null;
 }
 
+/**
+ * What the class edit form sends for the site: nothing unless it changed, so a
+ * legacy class with no site, or one clubs have picked (its site select isn't
+ * shown), can still have its seats, teacher and room edited.
+ */
+export function siteChangePatch(currentLocationId: string | null, formValue: FormDataEntryValue | null): { locationId?: string | null } {
+  if (formValue === null) return {};
+  const next = String(formValue) || null;
+  return next === currentLocationId ? {} : { locationId: next };
+}
+
 export const chooseLocationFirstMessage = "Choose your location first.";
 
 export function differentLocationMessage(className: string, siteName: string | null) {

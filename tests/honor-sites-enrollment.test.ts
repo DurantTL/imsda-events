@@ -7,7 +7,7 @@ vi.mock("@/lib/prisma", () => ({ getPrisma: mocks.getPrisma }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: mocks.writeAuditLog }));
 
 import { ClassSelectionError, getClassSelectionWorkspace, setClassSelections } from "@/modules/honors/enrollment-repository";
-import { locationChangeBlock, sessionVisibleAtLocation } from "@/modules/honors/locations";
+import { locationChangeBlock, sessionVisibleAtLocation, siteChangePatch } from "@/modules/honors/locations";
 
 const now = new Date("2026-10-15T15:00:00.000Z");
 const event = {
@@ -196,5 +196,20 @@ describe("changing a club's location with class picks (#589)", () => {
     const tx = client(5);
     expect(await locationChangeBlock(tx as never, "registration-1", null)).toBeNull();
     expect(tx.honorEnrollment.count).not.toHaveBeenCalled();
+  });
+});
+
+describe("editing a class's other fields without touching its site (#589)", () => {
+  it("sends the site only when it changed", () => {
+    expect(siteChangePatch("loc-hr", "loc-hr")).toEqual({});
+    expect(siteChangePatch(null, "")).toEqual({});
+    expect(siteChangePatch("loc-hr", "loc-dm")).toEqual({ locationId: "loc-dm" });
+    expect(siteChangePatch(null, "loc-dm")).toEqual({ locationId: "loc-dm" });
+    expect(siteChangePatch("loc-hr", "")).toEqual({ locationId: null });
+  });
+
+  it("sends nothing when there is no site field, as for a class clubs have picked", () => {
+    expect(siteChangePatch(null, null)).toEqual({});
+    expect(siteChangePatch("loc-hr", null)).toEqual({});
   });
 });
