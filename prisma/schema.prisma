@@ -3745,7 +3745,8 @@ model BackgroundCheckReview {
 /// the decision survives every upload; matching never offers that person for
 /// that row (name-only, automatic, or variant) until staff match them by
 /// hand, which clears it. No foreign keys: a row's key outlives any one
-/// upload, and a deleted person just leaves an inert pair.
+/// upload, and a deleted person just leaves an inert pair. Any future person
+/// merge must re-point `personId` here (there is no foreign key to do it).
 model BackgroundCheckRejectedPairing {
   id               String   @id @default(cuid())
   identityKey      String

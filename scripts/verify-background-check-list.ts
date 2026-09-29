@@ -525,7 +525,7 @@ async function main() {
     assert((await concurrentRefresh) === "LIST_BUSY", "a second Refresh is refused while one runs");
     await repository.rejectNameOnlyBackgroundCheckMatch(beaMatch!.id, ids.user).then(
       () => { throw new Error("FAILED: a reject ran during a Refresh"); },
-      (error: { code?: string }) => assert(error.code === "UPLOAD_IN_PROGRESS", "a reject is refused while the list is held exclusively"),
+      (error: { code?: string }) => assert(error.code === "LIST_BUSY", "a reject is refused while the list is held exclusively"),
     );
   });
   assert((await matchOf("bea"))?.matchedBy === "NAME_ONLY", "the refused reject changed nothing");

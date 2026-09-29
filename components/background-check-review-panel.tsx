@@ -13,6 +13,7 @@ type LookupResult = {
   rows: Array<{ id: string; name: string; site: string | null; status: string }>;
   people: Array<{ personId: string; name: string; sites: string[]; status: string }>;
   pairs: Array<{ entryId: string; personId: string; rowName: string; personName: string; reason: string }>;
+  rejected: Array<{ entryId: string; personId: string; rowName: string; personName: string }>;
   truncated: boolean;
 };
 type UnmatchedEntry = { id: string; name: string; site: string | null; complianceStatus: string | null; checkedOn: string | null; expiresOn: string | null };
@@ -110,6 +111,32 @@ export function BackgroundCheckReviewPanel() {
       await load();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "That match couldn't be undone.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  /** "Match them anyway": a staff match of a person staff earlier rejected for the row; clears the rejection. */
+  async function matchAnyway(entryId: string, personId: string) {
+    const busyKey = `${entryId}:${personId}`;
+    setBusyId(busyKey);
+    setError("");
+    try {
+      const response = await fetch("/api/admin/background-checks/rejected-matches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entryId, personId }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message ?? "That match couldn't be saved.");
+      await load();
+      if (lookupName.trim()) {
+        const again = await fetch(`/api/admin/background-checks/lookup?name=${encodeURIComponent(lookupName.trim())}`);
+        const next = await again.json().catch(() => ({}));
+        if (again.ok) setLookup(next.lookup ?? null);
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "That match couldn't be saved.");
     } finally {
       setBusyId(null);
     }
@@ -322,6 +349,21 @@ export function BackgroundCheckReviewPanel() {
                 </tbody>
               </table>
             </div>
+          )}
+          {(lookup.rejected ?? []).length > 0 && (
+            <>
+              <h4>Marked &quot;not the same person&quot; ({lookup.rejected.length})</h4>
+              <ul className="background-check-candidates">
+                {lookup.rejected.map((item) => (
+                  <li key={`${item.entryId}:${item.personId}`}>
+                    <span translate="no">{item.rowName}</span> is not <span translate="no">{item.personName}</span>{" "}
+                    <button className="text-button" disabled={busyId === `${item.entryId}:${item.personId}`} onClick={() => void matchAnyway(item.entryId, item.personId)} type="button">
+                      <UserCheck aria-hidden="true" size={14} /> Match them anyway
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
           {lookup.truncated && <p className="quiet-copy">Only the first {lookup.rows.length} rows and {lookup.people.length} people are shown. Type a first name to narrow it down.</p>}
         </div>

@@ -395,7 +395,7 @@ function makeFakeDb() {
         if (locked) lock.exclusive = true;
         return [{ locked }];
       }
-      if (strings.join("?").includes("FOR UPDATE")) return [];
+      if (strings.join("?").includes("FOR NO KEY UPDATE")) return [];
       // The lookup's coarse last-name filter.
       if (strings.join("?").includes('normalize("lastName"')) {
         const wanted = values[0] as string;
@@ -479,6 +479,7 @@ import {
   listUnmatchedBackgroundCheckEntries,
   lookupBackgroundCheckName,
   planBackgroundCheckUpload,
+  matchRejectedBackgroundCheckPairing,
   refreshBackgroundCheckMatchForPerson,
   rejectNameOnlyBackgroundCheckMatch,
   rematchBackgroundCheckList,
@@ -1850,6 +1851,55 @@ describe("name-only matches, variants, adults by age, and the lookup (#598)", ()
     await expect(resolveBackgroundCheckReview("r-2", { type: "match", personId: "p-mina" }, "admin-1")).rejects.toMatchObject({ code: "NOT_A_CANDIDATE" });
   });
 
+  it("sends a row to review, not to its remembered id, when staff rejected that person for it", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    rosterAdult(seed, "p-mina", "Mina", "Osei", mapleGrove);
+    seed.identities.set("id-1", { id: "id-1", provider: "ROSTER_IMPORT", providerScope: "", externalId: "userId:7001", personId: "p-mina" });
+    seed.rejectedPairings.set("userId:7001|p-mina", { id: "rj", identityKey: "userId:7001", personId: "p-mina", rejectedByUserId: "admin-1" });
+    await applyBackgroundCheckUpload(rosterRows({ userId: "7001", last: "Osei", first: "Mina", sites: otherChurch }), "ROSTER", "admin-1", now);
+    expect(seed.matches.size).toBe(0);
+    const [review] = [...seed.reviews.values()];
+    expect(review).toMatchObject({ candidatePersonIds: ["p-mina"] });
+    expect(String(review!.reason)).toMatch(/staff said it is not/i);
+    // The review's candidate can still be matched by hand, which clears the rejection.
+    await resolveBackgroundCheckReview(review!.id as string, { type: "match", personId: "p-mina" }, "admin-1");
+    expect(seed.rejectedPairings.size).toBe(0);
+  });
+
+  it("'Match them anyway' matches a rejected pair by hand and clears the rejection; a pair never rejected is refused", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    rosterAdult(seed, "p-mina", "Mina", "Osei", mapleGrove);
+    await applyBackgroundCheckUpload(rosterRows({ userId: "7001", last: "Osei", first: "Mina", sites: otherChurch }), "ROSTER", "admin-1", now);
+    await rejectNameOnlyBackgroundCheckMatch([...seed.matches.values()][0]!.id as string, "admin-1");
+    const lookup = await lookupBackgroundCheckName("Mina Osei", now);
+    expect(lookup.rejected).toEqual([expect.objectContaining({ rowName: "Mina Osei", personName: "Mina Osei" })]);
+    const { entryId, personId } = lookup.rejected[0]!;
+    await matchRejectedBackgroundCheckPairing(entryId, personId, "admin-2");
+    expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-mina", matchedBy: "MANUAL" })]);
+    expect(seed.rejectedPairings.size).toBe(0);
+    expect((await lookupBackgroundCheckName("Mina Osei", now)).rejected).toEqual([]);
+    expect(auditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "BACKGROUND_CHECK_REJECTION_OVERRIDDEN", actorUserId: "admin-2" }), expect.anything());
+    await expect(matchRejectedBackgroundCheckPairing(entryId, personId, "admin-2")).rejects.toMatchObject({ code: "NOT_A_CANDIDATE", status: 400 });
+    await expect(matchRejectedBackgroundCheckPairing("missing", personId, "admin-2")).rejects.toMatchObject({ code: "REVIEW_NOT_FOUND", status: 404 });
+  });
+
+  it("turns a deadlock or transaction conflict into 'refresh and try again', not a 500", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    rosterAdult(seed, "p-mina", "Mina", "Osei", mapleGrove);
+    await applyBackgroundCheckUpload(rosterRows({ userId: "7001", last: "Osei", first: "Mina", sites: otherChurch }), "ROSTER", "admin-1", now);
+    const match = [...seed.matches.values()][0]!;
+    const original = (client as unknown as { $transaction: unknown }).$transaction;
+    (client as unknown as { $transaction: unknown }).$transaction = async () => { throw Object.assign(new Error("Transaction failed due to a write conflict or a deadlock"), { code: "P2034" }); };
+    await expect(rejectNameOnlyBackgroundCheckMatch(match.id as string, "admin-1")).rejects.toMatchObject({ code: "LIST_CHANGED", status: 409 });
+    await expect(resolveBackgroundCheckReview("r-any", { type: "dismiss" }, "admin-1")).rejects.toMatchObject({ code: "LIST_CHANGED", status: 409 });
+    (client as unknown as { $transaction: unknown }).$transaction = async () => { throw Object.assign(new Error("deadlock detected"), { code: "P2010", meta: { code: "40P01" } }); };
+    await expect(rejectNameOnlyBackgroundCheckMatch(match.id as string, "admin-1")).rejects.toMatchObject({ code: "LIST_CHANGED" });
+    (client as unknown as { $transaction: unknown }).$transaction = original;
+  });
+
   it("only undoes a name-only match, and a missing match is a 404", async () => {
     const { client, seed } = makeFakeDb();
     currentClient = client;
@@ -1943,7 +1993,7 @@ describe("name-only matches, variants, adults by age, and the lookup (#598)", ()
       interleaved = true;
       await refreshBackgroundCheckMatchForPerson("p-mina", now); // try-locks shared, so it is skipped
       await expect(rematchBackgroundCheckList(now)).rejects.toMatchObject({ code: "LIST_BUSY", status: 409 });
-      await expect(rejectNameOnlyBackgroundCheckMatch("m-1", "admin-1")).rejects.toMatchObject({ code: "UPLOAD_IN_PROGRESS" });
+      await expect(rejectNameOnlyBackgroundCheckMatch("m-1", "admin-1")).rejects.toMatchObject({ code: "LIST_BUSY" });
     };
     await rematchBackgroundCheckList(now);
     expect(interleaved).toBe(true);

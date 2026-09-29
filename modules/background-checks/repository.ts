@@ -552,7 +552,14 @@ function matchEntries(
     if (!entry.normalizedName) continue; // Not normalized yet; the next refresh fills it in first.
     const identity = identityByKey.get(entry.identityKey);
     if (identity) {
-      if (matchableName(identity.name) !== entry.normalizedName) {
+      if (matchableName(identity.name) === entry.normalizedName && context.rejected?.get(entry.identityKey)?.has(identity.personId)) {
+        // Staff said this row is not this person: a remembered id doesn't override that (#598).
+        reviews.push({
+          entryId: entry.id,
+          reason: "The remembered match for this row is a person staff said it is not. Nothing was guessed; match it by hand if that is wrong.",
+          candidatePersonIds: [identity.personId],
+        });
+      } else if (matchableName(identity.name) !== entry.normalizedName) {
         reviews.push({
           entryId: entry.id,
           reason: `The remembered match for this row belongs to ${identity.name}, but this row's name is different. Check it and match by hand.`,
@@ -834,12 +841,18 @@ async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: stri
   await saveMatchResults(tx, matches, reviews, now);
 }
 
-/** Row-locks the entries in the given name groups until the transaction ends (#598). */
+/**
+ * Row-locks the entries in the given name groups until the transaction ends
+ * (#598). `FOR NO KEY UPDATE`, not `FOR UPDATE`: inserting a match or review
+ * takes `FOR KEY SHARE` on its entry, which `FOR UPDATE` would conflict with
+ * (a staff hand match could then deadlock with a scoped refresh); this
+ * still excludes other writers of the same entry.
+ */
 async function lockEntriesNamed(tx: PrismaLike, uploadId: string, names: string[]) {
   await tx.$queryRaw`
     SELECT "id" FROM "BackgroundCheckEntry"
     WHERE "uploadId" = ${uploadId} AND "normalizedName" = ANY(${names}::text[])
-    ORDER BY "id" FOR UPDATE
+    ORDER BY "id" FOR NO KEY UPDATE
   `;
 }
 
@@ -1054,6 +1067,32 @@ export async function listBackgroundCheckReviews(): Promise<BackgroundCheckRevie
 }
 
 /**
+ * A staff match: a remembered `user_id` for the row, the `MANUAL` match itself
+ * (replacing whatever either side held), and the end of any earlier "not the
+ * same person" for this pair (#598). The caller holds the list lock.
+ */
+async function applyManualMatch(tx: PrismaLike, entry: { id: string; identityKey: string }, personId: string) {
+  if (!(await tx.person.findUnique({ where: { id: personId }, select: { id: true } }))) {
+    throw new BackgroundCheckOperationError("NOT_A_CANDIDATE", "That person is no longer on file.");
+  }
+  if (isRememberedIdentityKey(entry.identityKey)) {
+    const now = new Date();
+    await tx.externalIdentity.deleteMany({
+      where: { provider: ROSTER_IMPORT_PROVIDER, providerScope: "", personId, NOT: { externalId: entry.identityKey } },
+    });
+    await tx.externalIdentity.upsert({
+      where: { provider_providerScope_externalId: { provider: ROSTER_IMPORT_PROVIDER, providerScope: "", externalId: entry.identityKey } },
+      create: { provider: ROSTER_IMPORT_PROVIDER, providerScope: "", externalId: entry.identityKey, personId, lastVerifiedAt: now },
+      update: { personId, lastVerifiedAt: now },
+    });
+  }
+  await tx.backgroundCheckMatch.deleteMany({ where: { OR: [{ personId }, { entryId: entry.id }] } });
+  await tx.backgroundCheckMatch.create({ data: { personId, entryId: entry.id, matchedBy: "MANUAL" } });
+  await tx.backgroundCheckRejectedPairing.deleteMany({ where: { identityKey: entry.identityKey, personId } });
+  await tx.backgroundCheckReview.deleteMany({ where: { entryId: entry.id } });
+}
+
+/**
  * Staff pick a person by hand, or say none of the candidates is right
  * (#527). A pick is a `MANUAL` match: a staff decision that holds across
  * refreshes and uploads, even if the names differ, until staff undo it (N2).
@@ -1086,25 +1125,7 @@ export async function resolveBackgroundCheckReview(
       if (!candidateIds.includes(decision.personId) && !(rejectedByStaff && rejectedByStaff.length > 0)) {
         throw new BackgroundCheckOperationError("NOT_A_CANDIDATE", "That person isn't one of this row's candidates.");
       }
-      if (!(await tx.person.findUnique({ where: { id: decision.personId }, select: { id: true } }))) {
-        throw new BackgroundCheckOperationError("NOT_A_CANDIDATE", "That person is no longer on file.");
-      }
-      if (isRememberedIdentityKey(review.entry.identityKey)) {
-        const now = new Date();
-        await tx.externalIdentity.deleteMany({
-          where: { provider: ROSTER_IMPORT_PROVIDER, providerScope: "", personId: decision.personId, NOT: { externalId: review.entry.identityKey } },
-        });
-        await tx.externalIdentity.upsert({
-          where: { provider_providerScope_externalId: { provider: ROSTER_IMPORT_PROVIDER, providerScope: "", externalId: review.entry.identityKey } },
-          create: { provider: ROSTER_IMPORT_PROVIDER, providerScope: "", externalId: review.entry.identityKey, personId: decision.personId, lastVerifiedAt: now },
-          update: { personId: decision.personId, lastVerifiedAt: now },
-        });
-      }
-      await tx.backgroundCheckMatch.deleteMany({ where: { OR: [{ personId: decision.personId }, { entryId: review.entryId }] } });
-      await tx.backgroundCheckMatch.create({ data: { personId: decision.personId, entryId: review.entryId, matchedBy: "MANUAL" } });
-      // A hand match overrides an earlier "not the same person" (#598).
-      await tx.backgroundCheckRejectedPairing.deleteMany({ where: { identityKey: review.entry.identityKey, personId: decision.personId } });
-      await tx.backgroundCheckReview.deleteMany({ where: { entryId: review.entryId } });
+      await applyManualMatch(tx, { id: review.entryId, identityKey: review.entry.identityKey }, decision.personId);
     } else {
       await tx.backgroundCheckReview.update({ where: { id: review.id }, data: { dismissedAt: new Date() } });
     }
@@ -1120,9 +1141,19 @@ export async function resolveBackgroundCheckReview(
     // The entry or person vanished mid-way (a foreign key or missing row): a 404, not a 500.
     const code = (error as { code?: unknown } | null)?.code;
     if (code === "P2003" || code === "P2025") throw notFound();
-    if (code === "P2002") throw listChanged();
+    if (code === "P2002" || isWriteConflict(error)) throw listChanged();
     throw error;
   });
+}
+
+function listBusy() {
+  return new BackgroundCheckOperationError("LIST_BUSY", "Busy, try again in a moment: an upload, a staff decision, or a refresh is running.");
+}
+
+/** A serialization failure or deadlock between two writers of the same row (P2034 / 40P01): retry, not a 500. */
+function isWriteConflict(error: unknown) {
+  const e = error as { code?: unknown; meta?: { code?: unknown } | null; message?: unknown } | null;
+  return e?.code === "P2034" || e?.meta?.code === "40P01" || (typeof e?.message === "string" && e.message.includes("40P01"));
 }
 
 /** A concurrent refresh or staff decision wrote the same match or identity first (a unique clash): a 409, not a 500. */
@@ -1207,7 +1238,7 @@ export async function undoManualBackgroundCheckMatch(matchId: string, actorUserI
 export async function rematchBackgroundCheckList(now = new Date()) {
   await getPrisma().$transaction(async (tx) => {
     if (!(await tryExclusiveListLock(tx))) {
-      throw new BackgroundCheckOperationError("LIST_BUSY", "Busy, try again in a moment: an upload, a staff decision, or another refresh is running.");
+      throw listBusy();
     }
     const current = await latestUpload(tx);
     if (!current) return;
@@ -1265,7 +1296,8 @@ export async function listNameOnlyBackgroundCheckMatches(now = new Date()): Prom
  */
 export async function rejectNameOnlyBackgroundCheckMatch(matchId: string, actorUserId: string) {
   await getPrisma().$transaction(async (tx) => {
-    await requireListLock(tx);
+    // An upload, a Refresh, or another decision may hold the list: say so plainly.
+    if (!(await tryListLock(tx))) throw listBusy();
     const found = await tx.backgroundCheckMatch.findUnique({
       where: { id: matchId },
       select: { entryId: true },
@@ -1273,7 +1305,7 @@ export async function rejectNameOnlyBackgroundCheckMatch(matchId: string, actorU
     if (!found) throw new BackgroundCheckOperationError("MATCH_NOT_FOUND", "That match no longer exists. Refresh the list.");
     // Row-lock the entry, then read it again: a per-person refresh that has
     // this row locked finishes first, and one that starts later waits for us.
-    await tx.$queryRaw`SELECT "id" FROM "BackgroundCheckEntry" WHERE "id" = ${found.entryId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT "id" FROM "BackgroundCheckEntry" WHERE "id" = ${found.entryId} FOR NO KEY UPDATE`;
     const match = await tx.backgroundCheckMatch.findUnique({
       where: { id: matchId },
       select: { id: true, personId: true, entryId: true, matchedBy: true, entry: { select: { identityKey: true } } },
@@ -1297,7 +1329,39 @@ export async function rejectNameOnlyBackgroundCheckMatch(matchId: string, actorU
     }, tx);
   }).catch((error: unknown) => {
     const code = (error as { code?: unknown } | null)?.code;
-    if (code === "P2002") throw listChanged();
+    if (code === "P2002" || isWriteConflict(error)) throw listChanged();
+    throw error;
+  });
+}
+
+/**
+ * "Match them anyway" (#598): staff undo their own "not the same person" by
+ * matching the rejected person to the row by hand. A `MANUAL` match like any
+ * other (it holds across refreshes and uploads until staff undo it), and the
+ * rejection is cleared. Only for a pair staff actually rejected. Takes the
+ * list lock shared, without waiting; audited, without names.
+ */
+export async function matchRejectedBackgroundCheckPairing(entryId: string, personId: string, actorUserId: string) {
+  await getPrisma().$transaction(async (tx) => {
+    if (!(await tryListLock(tx))) throw listBusy();
+    await tx.$queryRaw`SELECT "id" FROM "BackgroundCheckEntry" WHERE "id" = ${entryId} FOR NO KEY UPDATE`;
+    const [entry] = await tx.backgroundCheckEntry.findMany({ where: { id: entryId }, select: { id: true, identityKey: true } });
+    if (!entry) throw new BackgroundCheckOperationError("REVIEW_NOT_FOUND", "That row is no longer on the list. Refresh the list.");
+    const rejected = await tx.backgroundCheckRejectedPairing.findMany({ where: { identityKey: entry.identityKey, personId }, select: { id: true } });
+    if (rejected.length === 0) throw new BackgroundCheckOperationError("NOT_A_CANDIDATE", "Staff haven't rejected that person for this row.");
+    await applyManualMatch(tx, entry, personId);
+    await writeAuditLog({
+      actorUserId,
+      action: "BACKGROUND_CHECK_REJECTION_OVERRIDDEN",
+      entityType: "BackgroundCheckEntry",
+      entityId: entry.id,
+      summary: "Staff matched a background-check row by hand to a person they had earlier said it was not.",
+      metadata: { entryId: entry.id },
+    }, tx);
+  }).catch((error: unknown) => {
+    const code = (error as { code?: unknown } | null)?.code;
+    if (code === "P2003" || code === "P2025") throw new BackgroundCheckOperationError("REVIEW_NOT_FOUND", "That row or person is no longer on file. Refresh the list.");
+    if (code === "P2002" || isWriteConflict(error)) throw listChanged();
     throw error;
   });
 }
@@ -1319,6 +1383,8 @@ export type BackgroundCheckLookup = {
   rows: Array<{ id: string; name: string; site: string | null; status: string }>;
   people: Array<{ personId: string; name: string; sites: string[]; status: string }>;
   pairs: BackgroundCheckLookupPair[];
+  /** Pairs staff said are not the same person, with the ids "Match them anyway" needs. */
+  rejected: Array<{ entryId: string; personId: string; rowName: string; personName: string }>;
   truncated: boolean;
 };
 
@@ -1362,7 +1428,7 @@ async function personsWithLastName(tx: PrismaLike, lastName: string) {
 export async function lookupBackgroundCheckName(rawQuery: string, now = new Date()): Promise<BackgroundCheckLookup> {
   const prisma = getPrisma();
   const query = rawQuery.replace(/\s+/g, " ").trim().slice(0, 100);
-  const empty: BackgroundCheckLookup = { query, hasList: false, rows: [], people: [], pairs: [], truncated: false };
+  const empty: BackgroundCheckLookup = { query, hasList: false, rows: [], people: [], pairs: [], rejected: [], truncated: false };
   // A multi-word last name ("Van Buren") can split several ways; search the union.
   const splits = lookupNameSplits(query).filter((split) => matchableName(split.lastName));
   if (splits.length === 0) return empty;
@@ -1508,7 +1574,10 @@ export async function lookupBackgroundCheckName(rawQuery: string, now = new Date
       pairs.push({ entryId: row.id, personId: person.id, rowName: fullName(row), personName: fullName(person), reason: reasons.join(" ") });
     }
   }
-  return { query, hasList: true, rows: rowsOut, people: peopleOut, pairs, truncated };
+  const rejectedOut = rows.flatMap((row) => people
+    .filter((person) => rejected.get(row.identityKey)?.has(person.id))
+    .map((person) => ({ entryId: row.id, personId: person.id, rowName: fullName(row), personName: fullName(person) })));
+  return { query, hasList: true, rows: rowsOut, people: peopleOut, pairs, rejected: rejectedOut, truncated };
 }
 
 /** No review waiting on staff: none at all, or one staff dismissed ("none of these"). */
