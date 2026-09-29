@@ -594,7 +594,7 @@ export function EventSettingsWorkspace({
             </ul>
             {/* Never blocks publish (#575): a warning only. */}
             {!published && publishWarnings.map((warning) => (
-              <div className="inline-notice error" key={warning} role="status"><AlertTriangle size={17} aria-hidden="true" /> {warning}</div>
+              <div className="inline-notice clone-warning" key={warning} role="status"><AlertTriangle size={17} aria-hidden="true" /> {warning}</div>
             ))}
             {/* Never blocks publish (#467): shown for visibility only. */}
             <p className="event-readiness-optional-heading">Optional</p>

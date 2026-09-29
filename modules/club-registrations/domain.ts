@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { DIRECTORY_NOT_LISTED_VALUE, isAgeFieldKey, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
+import { registrationClosedMessage } from "@/modules/events/lifecycle";
 import { normalizeOrganizationName } from "@/modules/organizations/domain";
 import { fullNameKeys, splitNameKeyPairs } from "@/modules/forms/public-domain";
 
@@ -423,9 +424,14 @@ export function clubRegistrationEditWindow(input: {
   registrationClosesOn: string | null;
   today: string;
   eventDate: string;
+  /** The event's last day has passed (#575): say so rather than quote a later closing date. */
+  ended?: boolean;
 }): { open: true } | { open: false; message: string } {
   if (input.phase === "UPCOMING" || input.phase === "DRAFT") {
     return { open: false, message: "Registration for this event isn't open, so your registration can't be changed right now. Contact the event team." };
+  }
+  if (input.phase === "CLOSED" && input.ended) {
+    return { open: false, message: `${registrationClosedMessage} Contact the event team to add or remove someone.` };
   }
   if (input.phase === "CLOSED") {
     const closing = input.registrationClosesOn ? ` after ${formatCalendarDate(input.registrationClosesOn)}` : "";

@@ -163,6 +163,8 @@ function repositoryFixture() {
       id: "event-1",
       name: "Test Event",
       timezone: "America/Chicago",
+      startsAt: new Date("2026-10-09T14:00:00.000Z"),
+      endsAt: new Date("2026-10-11T22:00:00.000Z"),
       capacity: 50,
     },
     accountHolderPerson: {
@@ -447,6 +449,19 @@ describe("registration amendments repository", () => {
       .not.toContain("taylor@example.test");
     expect(JSON.stringify(dependencies.enqueueRegistrationUpdatedMessage.mock.calls))
       .not.toContain("Avery");
+  });
+
+  it("lets staff amend a registration after the event's last day (#575)", async () => {
+    repositoryFixture();
+    const amended = await commitAmendment(
+      "5b1f0c7e-7a55-4a52-a2c5-5f0d9d3b3a11",
+      initialUpdatedAt.toISOString(),
+      { ...attendeeResponses, notes: "Corrected after the event" },
+      // Well after 2026-10-11, the event's last day in America/Chicago.
+      new Date("2026-11-15T13:00:00.000Z"),
+    );
+    expect(amended.result.pendingMessageIds).toEqual(["message-1"]);
+    expect(dependencies.enqueueRegistrationUpdatedMessage).toHaveBeenCalledOnce();
   });
 
   it("does not enqueue an update for an unchanged amendment", async () => {

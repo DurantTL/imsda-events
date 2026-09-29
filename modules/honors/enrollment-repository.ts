@@ -3,7 +3,7 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
-import { evaluateEventRegistrationPhase } from "@/modules/events/lifecycle";
+import { evaluateEventRegistrationPhase, hasEventEnded, registrationClosedMessage } from "@/modules/events/lifecycle";
 import {
   consumesClassSeat,
   selectionProblem,
@@ -39,7 +39,7 @@ async function loadClubRegistration(client: Prisma.TransactionClient, organizati
   const clubRegistration = await client.clubEventRegistration.findUnique({
     where: { eventId_organizationId: { eventId, organizationId } },
     select: {
-      event: { select: { id: true, isPublished: true, timezone: true, registrationOpensOn: true, registrationClosesOn: true, waitlistEnabled: true } },
+      event: { select: { id: true, isPublished: true, endsAt: true, timezone: true, registrationOpensOn: true, registrationClosesOn: true, waitlistEnabled: true } },
       registration: {
         select: {
           id: true,
@@ -187,7 +187,9 @@ export async function setClassSelections(
         if (evaluateEventRegistrationPhase(registration.event, now) !== "OPEN") {
           throw new ClassSelectionError(
             "DEADLINE_PASSED",
-            `Class choices closed${registration.event.registrationClosesOn ? ` after ${registration.event.registrationClosesOn}` : ""}.`,
+            hasEventEnded(registration.event, now)
+              ? registrationClosedMessage
+              : `Class choices closed${registration.event.registrationClosesOn ? ` after ${registration.event.registrationClosesOn}` : ""}.`,
           );
         }
         const attendeesById = new Map(registration.attendees.map((attendee) => [attendee.id, attendee]));
