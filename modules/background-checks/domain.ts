@@ -511,6 +511,34 @@ export function directorySiteStems(names: Iterable<string>): Set<string> {
   return stems;
 }
 
+/** The shortest first name a variant suggestion compares (#598): "Al" would suggest half the list. */
+export const MIN_FIRST_NAME_VARIANT_LENGTH = 3;
+
+/**
+ * Whether two first names are forms of one name (#598): "Jon"/"Jonathan",
+ * "Nessa"/"Vanessa". One is a prefix of the other, or contained in it, and
+ * the shorter is at least 3 characters. Equal names are not variants (they
+ * are the same name), and this only ever suggests: it never decides a match.
+ */
+export function firstNameVariant(a: string, b: string) {
+  const left = matchableName(a).replace(/ /g, "");
+  const right = matchableName(b).replace(/ /g, "");
+  if (!left || !right || left === right) return false;
+  const [short, long] = left.length <= right.length ? [left, right] : [right, left];
+  return short.length >= MIN_FIRST_NAME_VARIANT_LENGTH && long.includes(short);
+}
+
+/** "First Last" or "Last, First" typed into the lookup box, as first and last names. */
+export function parseLookupName(value: string) {
+  const trimmed = value.replace(/\s+/g, " ").trim();
+  if (trimmed.includes(",")) {
+    const [last, ...rest] = trimmed.split(",");
+    return { firstName: rest.join(" ").trim(), lastName: (last ?? "").trim() };
+  }
+  const parts = trimmed.split(" ").filter(Boolean);
+  return { firstName: parts.slice(0, -1).join(" "), lastName: parts.at(-1) ?? "" };
+}
+
 /** A club's own name or its sponsoring church's name, for the `sites` location check. */
 export function matchesSite(site: string, candidateSites: Iterable<string>, directoryStems: ReadonlySet<string> = new Set()) {
   const targets = siteStems(site, directoryStems);

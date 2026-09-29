@@ -103,3 +103,13 @@ write path fills; that a save during an upload isn't held up (the refresh
 only try-locks and is skipped); and that an entry two people in different
 clubs could be is matched to neither, at read time or after staff dismiss
 its review.
+
+## Name-only matches and the lookup (#598)
+
+The roster export has no email or birth date, so the row's site used to be the only second check. Now:
+
+- A row whose name is the only one on the list, and the only person on file with that name (a roster or registration adult, and no other person at all), is matched even when its site differs. It is stored as `NAME_ONLY` (an additive enum value; `20260929100000_background_check_name_only_match`), listed under "Matched by name only" for a spot check, and never remembered as a `user_id`. An email or birth date that disagrees stops it. "Not the same person" removes the match and keeps a dismissed review on the row, so a Refresh never re-matches it (the next upload replaces the list).
+- Several same-name candidates with nothing to separate them, or several rows for one candidate, go to review.
+- With no exact-name candidate, a same-last-name candidate whose first name is a prefix of, contains, or is contained in the row's (3 characters or more) goes to review, never to a match. Variants are looked for by the staff Refresh and the upload, not by the per-person refresh.
+- Roster members count as candidates when their type is ADULT or STAFF, or their sealed birth date makes them 18 or older today.
+- The staff **Refresh** button re-runs matching for the whole list under the current rules (no new upload, no migration to run by hand); staff decisions are kept. The **Why isn't this person matched?** lookup is read-only and shows no birth dates.

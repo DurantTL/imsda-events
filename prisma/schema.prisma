@@ -3709,11 +3709,15 @@ model BackgroundCheckMatch {
 /// next upload's entry with the same `identityKey`) until staff undo it.
 /// `MIGRATED`: carried over from the old per-person `BackgroundCheck` row
 /// when this list replaced it (#527), so nobody's status changed that day.
+/// `NAME_ONLY` (#598): the name is the only person and only row with it and
+/// nothing contradicts it, but the row's site didn't match; recomputed like
+/// `AUTO`, and shown to staff for a spot check.
 enum BackgroundCheckMatchSource {
   IDENTITY
   AUTO
   MANUAL
   MIGRATED
+  NAME_ONLY
 }
 
 /// A list entry that could match more than one person, or whose only
