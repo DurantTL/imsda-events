@@ -33,7 +33,9 @@
  *     (NAME_ONLY, the additive enum migration); a first-name variant and two
  *     same-name candidates go to review; a roster member 18 or older is a
  *     candidate whatever the roster type; "not the same person" holds through
- *     a Refresh; the lookup explains non-matches and shows no birth dates.
+ *     a Refresh and a new upload, and a hand match clears it; Refresh, reject
+ *     and per-person refresh exclude each other on the list lock; the lookup
+ *     explains non-matches and shows no birth dates.
  */
 import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -49,7 +51,7 @@ loadEnvConfig(process.cwd());
 
 const BEFORE_527 = "20260928200000";
 const MIGRATION_527 = "20260928240000_background_check_list";
-const MIGRATION_598 = "20260929100000_background_check_name_only_match";
+const MIGRATION_598 = "20260929192000_background_check_name_only_match";
 const P = "bgverify";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -382,9 +384,11 @@ async function main() {
   const siteCases = [
     { key: "robin", first: "Robin", last: "Vale", userId: "81001", sites: "VERIFY CHURCH (Springfield),Lakeside Adventist School", year: previousYear, matches: true },
     { key: "wren", first: "Wren", last: "Moss", userId: "81002", sites: "Verify Church (Springfield)", year: clubYear, matches: true },
-    // A school never matches a church by site (#572); with the site out, the only Tara Finch on file is matched by name alone (#598).
-    { key: "tara", first: "Tara", last: "Finch", userId: "81003", sites: "Verify Adventist School", year: clubYear, matches: true, by: "NAME_ONLY" },
+    // A school never matches a church by site (#572). A second Tara Finch (on no roster) is on file, so the site is the only
+    // difference: the row is never AUTO-matched by school-vs-church, and never guessed by name alone (#598); it goes to review.
+    { key: "tara", first: "Tara", last: "Finch", userId: "81003", sites: "Verify Adventist School", year: clubYear, matches: false },
   ];
+  await db.person.create({ data: { id: ids.person("tara-twin"), firstName: "Tara", lastName: "Finch" } });
   for (const item of siteCases) {
     await db.person.create({ data: { id: ids.person(item.key), firstName: item.first, lastName: item.last } });
     await db.clubRosterMember.create({ data: { id: ids.member(item.key), organizationId: ids.club, clubYear: item.year, personId: ids.person(item.key), attendeeType: "ADULT", source: "DIRECTOR" } });
@@ -396,14 +400,18 @@ async function main() {
   for (const item of siteCases) {
     const matched = await db.backgroundCheckMatch.findUnique({ where: { personId: ids.person(item.key) } });
     assert(Boolean(matched) === item.matches, `${item.key} ${item.matches ? "matches" : "does not match"} by site`);
-    if (matched) assert(matched.matchedBy === (item.by ?? "AUTO"), `${item.key} matched ${item.by === "NAME_ONLY" ? "by name only" : "by name and site"}`);
+    if (matched) assert(matched.matchedBy === "AUTO", `${item.key} matched by name and site`);
   }
   // Stored entries re-match under the rule with no new upload: drop the matches, then refresh.
   await db.backgroundCheckMatch.deleteMany({ where: { personId: { in: siteCases.map((item) => ids.person(item.key)) } } });
   for (const item of siteCases) await repository.refreshBackgroundCheckMatchForPerson(ids.person(item.key));
   for (const item of siteCases) {
-    assert(Boolean(await db.backgroundCheckMatch.findUnique({ where: { personId: ids.person(item.key) } })) === item.matches, `${item.key} re-matches through a refresh, with no new upload`);
+    const again = await db.backgroundCheckMatch.findUnique({ where: { personId: ids.person(item.key) } });
+    assert(Boolean(again) === item.matches, `${item.key} re-matches through a refresh, with no new upload`);
+    // The first upload remembered the user_id, so the re-match is by that identity (never name-only).
+    if (again) assert(again.matchedBy === "IDENTITY", `${item.key} re-matches by its remembered user_id`);
   }
+  assert((await repository.listBackgroundCheckReviews()).some((review) => review.name === "Tara Finch"), "the school-vs-church row with a same-name twin goes to review");
   console.log("ok  site suffixes, multi-site cells, ALL-CAPS, and the previous club year match; a school does not match a church");
   // 10. #572 review: Nevada (IA) and Nevada (MO) are different churches. Two
   // people share a name; only one is on the IA roster, and the row lists the MO church.
@@ -474,15 +482,54 @@ async function main() {
   assert(nameOnly.length === 2 && nameOnly.some((item) => item.personName === "Ines Varga" && item.site === otherSite), "the name-only matches are listed with the row's site");
   console.log("ok  name-only matches, variant reviews, and adults by age");
 
-  // "Not the same person": unmatched now, and unmatched after a Refresh.
+  // "Not the same person": unmatched now, after a Refresh, and after a new upload with the same user_id.
   const inesMatch = await matchOf("ines");
   await repository.rejectNameOnlyBackgroundCheckMatch(inesMatch!.id, ids.user);
   assert(!(await matchOf("ines")), "not the same person unmatches the row");
+  assert((await db.backgroundCheckRejectedPairing.count({ where: { identityKey: "userId:83001", personId: ids.person("ines") } })) === 1, "the rejection is stored by the row's identity key");
   await repository.rematchBackgroundCheckList();
   await repository.refreshBackgroundCheckMatchForPerson(ids.person("ines"));
   assert(!(await matchOf("ines")), "a rejected name-only match stays unmatched through a Refresh");
   assert((await matchOf("bea"))?.matchedBy === "NAME_ONLY", "Refresh re-derives the other name-only match");
-  console.log("ok  not the same person holds through a Refresh");
+  const reuploadPreview = await repository.planBackgroundCheckUpload(nameOnlyRows);
+  await repository.applyBackgroundCheckUpload(nameOnlyRows, "ROSTER", ids.user, new Date(), { expectedFingerprint: reuploadPreview.fingerprint });
+  assert(!(await matchOf("ines")), "a rejected name-only match stays unmatched after a new upload with the same user_id");
+  assert((await matchOf("bea"))?.matchedBy === "NAME_ONLY", "the new upload still matches the other name-only row");
+  // A match by hand clears the rejection.
+  const inesEntry = await db.backgroundCheckEntry.findFirst({ where: { identityKey: "userId:83001" }, select: { id: true } });
+  const handReview = await db.backgroundCheckReview.create({ data: { entryId: inesEntry!.id, reason: "Check it.", candidatePersonIds: [ids.person("ines")] } });
+  await repository.resolveBackgroundCheckReview(handReview.id, { type: "match", personId: ids.person("ines") }, ids.user);
+  assert((await matchOf("ines"))?.matchedBy === "MANUAL", "staff can still match the rejected person by hand");
+  assert((await db.backgroundCheckRejectedPairing.count({ where: { identityKey: "userId:83001" } })) === 0, "a match by hand clears the rejection");
+  console.log("ok  not the same person holds through a Refresh and a new upload; a match by hand clears it");
+
+  // The whole-list Refresh and staff decisions exclude each other on the list lock.
+  const holdLockWhile = async (work: () => Promise<void>) => {
+    await db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${repository.BACKGROUND_CHECK_LOCK_KEY}::bigint)`;
+      await work();
+    });
+  };
+  await holdLockWhile(async () => {
+    await repository.rematchBackgroundCheckList().then(
+      () => { throw new Error("FAILED: a Refresh ran while another writer held the list"); },
+      (error: { code?: string }) => assert(error.code === "LIST_BUSY", "a Refresh is refused with LIST_BUSY while the list is held"),
+    );
+  });
+  const beaMatch = await matchOf("bea");
+  let concurrentRefresh: Promise<unknown> | null = null;
+  await db.$transaction(async (tx) => {
+    // Hold the lock exclusively the way a Refresh does, and try every other writer.
+    await tx.$queryRaw`SELECT pg_try_advisory_xact_lock(${repository.BACKGROUND_CHECK_LOCK_KEY}::bigint)`;
+    concurrentRefresh = repository.rematchBackgroundCheckList().catch((error: { code?: string }) => error.code);
+    assert((await concurrentRefresh) === "LIST_BUSY", "a second Refresh is refused while one runs");
+    await repository.rejectNameOnlyBackgroundCheckMatch(beaMatch!.id, ids.user).then(
+      () => { throw new Error("FAILED: a reject ran during a Refresh"); },
+      (error: { code?: string }) => assert(error.code === "UPLOAD_IN_PROGRESS", "a reject is refused while the list is held exclusively"),
+    );
+  });
+  assert((await matchOf("bea"))?.matchedBy === "NAME_ONLY", "the refused reject changed nothing");
+  console.log("ok  Refresh, reject, and per-person refresh exclude each other on the list lock");
 
   // Stored entries re-match through the staff Refresh with no new upload.
   await db.backgroundCheckMatch.deleteMany({ where: { matchedBy: "NAME_ONLY" } });

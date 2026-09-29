@@ -20,7 +20,7 @@ import {
   dedupeListRows,
   firstNameVariant,
   isRememberedIdentityKey,
-  parseLookupName,
+  lookupNameSplits,
   matchableName,
   directorySiteStems,
   matchesSite,
@@ -470,10 +470,10 @@ function contradictsEntry(entry: Pick<EntryForMatch, "email" | "sealedBirthDate"
 const MAX_VARIANT_CANDIDATES = 5;
 
 /** Same last name, a first name that is a form of the row's (#598). Only ever suggested for review. */
-function firstNameVariantCandidates(entry: EntryForMatch, index: NameIndex, unavailable: ReadonlySet<string>) {
+function firstNameVariantCandidates(entry: EntryForMatch, index: NameIndex, unavailable: ReadonlySet<string>, rejected: ReadonlySet<string>) {
   const sameLast = index.byLastName.get(matchableName(entry.lastName)) ?? [];
   return sameLast
-    .filter((candidate) => !unavailable.has(candidate.personId) && firstNameVariant(entry.firstName, candidate.firstName) && !contradictsEntry(entry, candidate))
+    .filter((candidate) => !unavailable.has(candidate.personId) && !rejected.has(candidate.personId) && firstNameVariant(entry.firstName, candidate.firstName) && !contradictsEntry(entry, candidate))
     .slice(0, MAX_VARIANT_CANDIDATES);
 }
 
@@ -482,7 +482,26 @@ type MatchContext = {
   namesakes?: ReadonlyMap<string, number>;
   /** Rows on the whole list per matchable name. Defaults to the entries passed in. */
   rowCounts?: ReadonlyMap<string, number>;
+  /** People staff said a row is not, by the row's identity key (#598): never offered for that row. */
+  rejected?: ReadonlyMap<string, ReadonlySet<string>>;
 };
+
+/** The reason text of a first-name variant review: the one review a scoped refresh can't rebuild (#598). */
+const VARIANT_REVIEW_REASON = "No one has exactly this name, but a roster or registration has the same last name and a similar first name. Check whether it is the same person; it is never matched automatically.";
+
+/** The people staff said each row (by identity key) is not (#598). */
+async function rejectedPairingsFor(tx: PrismaLike, identityKeys: string[]): Promise<Map<string, Set<string>>> {
+  const rejected = new Map<string, Set<string>>();
+  const keys = [...new Set(identityKeys)];
+  if (keys.length === 0) return rejected;
+  const rows = await tx.backgroundCheckRejectedPairing.findMany({ where: { identityKey: { in: keys } }, select: { identityKey: true, personId: true } });
+  for (const row of rows) {
+    const set = rejected.get(row.identityKey) ?? new Set<string>();
+    set.add(row.personId);
+    rejected.set(row.identityKey, set);
+  }
+  return rejected;
+}
 
 function countRowsByName(entries: Array<Pick<EntryForMatch, "normalizedName">>) {
   const counts = new Map<string, number>();
@@ -551,7 +570,8 @@ function matchEntries(
       continue;
     }
     const sameName = index.byName.get(entry.normalizedName) ?? [];
-    const pool = sameName.filter((candidate) => !unavailable.has(candidate.personId));
+    const rejectedHere = context.rejected?.get(entry.identityKey) ?? new Set<string>();
+    const pool = sameName.filter((candidate) => !unavailable.has(candidate.personId) && !rejectedHere.has(candidate.personId));
     const candidates = candidatesForEntry(entry, pool, index.directoryStems);
     if (candidates.length > 1) {
       reviews.push({
@@ -585,12 +605,12 @@ function matchEntries(
       });
       continue;
     }
-    if (sameName.length > 0) continue; // Only someone already matched to another row: nothing left to suggest.
-    const variants = firstNameVariantCandidates(entry, index, unavailable);
+    if (sameName.length > 0) continue; // Only someone already matched to another row, or one staff rejected: nothing left to suggest.
+    const variants = firstNameVariantCandidates(entry, index, unavailable, rejectedHere);
     if (variants.length > 0) {
       reviews.push({
         entryId: entry.id,
-        reason: "No one has exactly this name, but a roster or registration has the same last name and a similar first name. Check whether it is the same person; it is never matched automatically.",
+        reason: VARIANT_REVIEW_REASON,
         candidatePersonIds: variants.map((candidate) => candidate.personId),
       });
     }
@@ -705,14 +725,16 @@ async function runFullMatchPass(
   const everyEntry = await tx.backgroundCheckEntry.findMany({ where: { uploadId }, select: entryForMatchSelect });
   const entries = everyEntry.filter((entry) => !kept.entryIds.has(entry.id));
   if (entries.length === 0) return;
-  const [index, identityByKey, named] = await Promise.all([
+  const [index, identityByKey, rejected, named] = await Promise.all([
     buildCandidateIndex(tx, now),
     identitiesByKeys(tx, [...new Set(entries.map((entry) => entry.identityKey))]),
+    rejectedPairingsFor(tx, entries.map((entry) => entry.identityKey)),
     peopleNamed(tx, [...new Set(entries.map((entry) => entry.normalizedName).filter((name): name is string => Boolean(name)))]),
   ]);
   const { matches, reviews } = matchEntries(entries, index, identityByKey, kept.personIds, {
     namesakes: namesakeCounts(named),
     rowCounts: countRowsByName(everyEntry),
+    rejected,
   });
   await saveMatchResults(tx, matches, reviews, now);
 }
@@ -730,12 +752,17 @@ async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: stri
   const whole = names === null;
   const groupNames = [...new Set((names ?? []).filter(Boolean))];
   if (!whole && groupNames.length === 0) return;
+  // A scoped refresh locks its entry rows first, so a staff "not the same
+  // person" on one of them (which locks the row too) either lands before this
+  // reads or waits for it: the refresh never re-inserts over a rejection
+  // (#598). The whole-list Refresh holds the list lock exclusively instead.
+  if (!whole) await lockEntriesNamed(tx, uploadId, groupNames);
   const entries = await tx.backgroundCheckEntry.findMany({
     where: whole ? { uploadId } : { uploadId, normalizedName: { in: groupNames } },
     select: {
       ...entryForMatchSelect,
       match: { select: { personId: true, matchedBy: true } },
-      review: { select: { dismissedAt: true, candidatePersonIds: true } },
+      review: { select: { dismissedAt: true, candidatePersonIds: true, reason: true } },
     },
   });
   const named = await peopleNamed(tx, whole ? [...new Set(entries.map((entry) => entry.normalizedName).filter((name): name is string => Boolean(name)))] : groupNames);
@@ -757,16 +784,29 @@ async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: stri
   if (derivedEntryIds.length > 0) {
     await tx.backgroundCheckMatch.deleteMany({ where: { entryId: { in: derivedEntryIds }, matchedBy: { in: [...DERIVED_SOURCES] } } });
   }
-  const reopenedEntryIds = entries.filter((entry) => !heldOpenReview(entry)).map((entry) => entry.id);
-  if (reopenedEntryIds.length > 0) await tx.backgroundCheckReview.deleteMany({ where: { entryId: { in: reopenedEntryIds }, dismissedAt: null } });
+  const reopened = entries.filter((entry) => !heldOpenReview(entry));
+  // Open reviews are cleared and rebuilt, except (scoped passes only) a
+  // first-name variant review this pass can't rebuild, because its candidate
+  // index holds one name group, not everyone with that last name (#598). It
+  // stays unless the entry now has a match or a new review of its own.
+  const clearOpenReviews = async (rebuiltEntryIds: Set<string>) => {
+    const ids = reopened
+      .filter((entry) => whole || entry.review?.reason !== VARIANT_REVIEW_REASON || rebuiltEntryIds.has(entry.id))
+      .map((entry) => entry.id);
+    if (ids.length > 0) await tx.backgroundCheckReview.deleteMany({ where: { entryId: { in: ids }, dismissedAt: null } });
+  };
 
   const toMatch = entries.filter((entry) => (
     !(entry.match && LOCKED_SOURCES.has(entry.match.matchedBy)) && !dismissed(entry) && !heldOpenReview(entry)
   ));
-  if (toMatch.length === 0) return;
-  const [index, identityByKey, stillMatched] = await Promise.all([
+  if (toMatch.length === 0) {
+    await clearOpenReviews(new Set());
+    return;
+  }
+  const [index, identityByKey, rejected, stillMatched] = await Promise.all([
     buildCandidateIndex(tx, now, whole ? undefined : { personIds }),
     identitiesByKeys(tx, [...new Set(toMatch.map((entry) => entry.identityKey))]),
+    rejectedPairingsFor(tx, toMatch.map((entry) => entry.identityKey)),
     whole
       ? tx.backgroundCheckMatch.findMany({ select: { personId: true } })
       : personIds.length > 0
@@ -779,6 +819,7 @@ async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: stri
   const result = matchEntries(toMatch, index, identityByKey, unavailable, {
     namesakes: namesakeCounts(named),
     rowCounts: countRowsByName(entries),
+    rejected,
   });
   const matches = result.matches.filter((match) => !held.has(match.personId));
   const reviews = [
@@ -789,7 +830,17 @@ async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: stri
       candidatePersonIds: [match.personId],
     })),
   ];
+  await clearOpenReviews(new Set([...matches.map((match) => match.entryId), ...reviews.map((review) => review.entryId)]));
   await saveMatchResults(tx, matches, reviews, now);
+}
+
+/** Row-locks the entries in the given name groups until the transaction ends (#598). */
+async function lockEntriesNamed(tx: PrismaLike, uploadId: string, names: string[]) {
+  await tx.$queryRaw`
+    SELECT "id" FROM "BackgroundCheckEntry"
+    WHERE "uploadId" = ${uploadId} AND "normalizedName" = ANY(${names}::text[])
+    ORDER BY "id" FOR UPDATE
+  `;
 }
 
 const REFRESH_CHUNK = 100;
@@ -843,6 +894,18 @@ export async function refreshBackgroundCheckMatches(personIds: Iterable<string>,
  */
 async function tryListLock(tx: PrismaLike) {
   const [row] = await tx.$queryRaw<Array<{ locked: boolean }>>`SELECT pg_try_advisory_xact_lock_shared(${BACKGROUND_CHECK_LOCK_KEY}::bigint) AS locked`;
+  return Boolean(row?.locked);
+}
+
+/**
+ * The list lock, exclusive, without waiting (#598): false while an upload, a
+ * per-person refresh, a staff decision, or another Refresh holds it. Holding it
+ * keeps every shared-lock writer (per-person refresh, review and reject
+ * decisions) out for the length of a whole-list Refresh, and stops two Refreshes
+ * from running at once.
+ */
+async function tryExclusiveListLock(tx: PrismaLike) {
+  const [row] = await tx.$queryRaw<Array<{ locked: boolean }>>`SELECT pg_try_advisory_xact_lock(${BACKGROUND_CHECK_LOCK_KEY}::bigint) AS locked`;
   return Boolean(row?.locked);
 }
 
@@ -1016,7 +1079,11 @@ export async function resolveBackgroundCheckReview(
     if (!review || review.dismissedAt || !review.entry) throw notFound();
     if (decision.type === "match") {
       const candidateIds = Array.isArray(review.candidatePersonIds) ? review.candidatePersonIds as string[] : [];
-      if (!candidateIds.includes(decision.personId)) {
+      const rejectedByStaff = candidateIds.includes(decision.personId)
+        ? null
+        : await tx.backgroundCheckRejectedPairing.findMany({ where: { identityKey: review.entry.identityKey, personId: decision.personId }, select: { id: true } });
+      // A person staff rejected for this row is never offered, but staff may still pick them by hand.
+      if (!candidateIds.includes(decision.personId) && !(rejectedByStaff && rejectedByStaff.length > 0)) {
         throw new BackgroundCheckOperationError("NOT_A_CANDIDATE", "That person isn't one of this row's candidates.");
       }
       if (!(await tx.person.findUnique({ where: { id: decision.personId }, select: { id: true } }))) {
@@ -1035,6 +1102,8 @@ export async function resolveBackgroundCheckReview(
       }
       await tx.backgroundCheckMatch.deleteMany({ where: { OR: [{ personId: decision.personId }, { entryId: review.entryId }] } });
       await tx.backgroundCheckMatch.create({ data: { personId: decision.personId, entryId: review.entryId, matchedBy: "MANUAL" } });
+      // A hand match overrides an earlier "not the same person" (#598).
+      await tx.backgroundCheckRejectedPairing.deleteMany({ where: { identityKey: review.entry.identityKey, personId: decision.personId } });
       await tx.backgroundCheckReview.deleteMany({ where: { entryId: review.entryId } });
     } else {
       await tx.backgroundCheckReview.update({ where: { id: review.id }, data: { dismissedAt: new Date() } });
@@ -1129,13 +1198,17 @@ export async function undoManualBackgroundCheckMatch(matchId: string, actorUserI
 /**
  * Staff Refresh (#598): re-runs matching for the whole current list under the
  * current rules, so rows already stored are re-matched without a new upload.
- * `MANUAL` and `MIGRATED` matches and staff dismissals are kept exactly as
- * they are. Takes the list lock shared, without waiting: during an upload it
- * is refused (`UPLOAD_IN_PROGRESS`, 409).
+ * `MANUAL` and `MIGRATED` matches, staff dismissals, and "not the same
+ * person" decisions are kept exactly as they are. Takes the list lock
+ * exclusively, without waiting: while an upload, a staff decision, a
+ * per-person refresh, or another Refresh holds it, it is refused (`LIST_BUSY`,
+ * 409) and nothing changes.
  */
 export async function rematchBackgroundCheckList(now = new Date()) {
   await getPrisma().$transaction(async (tx) => {
-    await requireListLock(tx);
+    if (!(await tryExclusiveListLock(tx))) {
+      throw new BackgroundCheckOperationError("LIST_BUSY", "Busy, try again in a moment: an upload, a staff decision, or another refresh is running.");
+    }
     const current = await latestUpload(tx);
     if (!current) return;
     await backfillNormalizedNames(tx);
@@ -1184,24 +1257,34 @@ export async function listNameOnlyBackgroundCheckMatches(now = new Date()): Prom
 
 /**
  * "Not the same person" (#598): undoes a name-only match. The row goes back
- * to unmatched and staff's decision is remembered the way a "none of these"
- * review is (a dismissed review on the row), so a refresh never re-matches
- * it; the next upload replaces the list. The dismissal names no person, so
- * it holds nobody else back from a row of their own. Audited, without names.
+ * to unmatched and staff's decision is remembered as a durable
+ * (row identity key, person) pair, so no refresh and no later upload offers
+ * that person for that row again (name-only, automatic, or variant). Staff can
+ * still match them by hand, which clears the pair. The decision holds nobody
+ * else back. Audited, without names.
  */
 export async function rejectNameOnlyBackgroundCheckMatch(matchId: string, actorUserId: string) {
   await getPrisma().$transaction(async (tx) => {
     await requireListLock(tx);
+    const found = await tx.backgroundCheckMatch.findUnique({
+      where: { id: matchId },
+      select: { entryId: true },
+    });
+    if (!found) throw new BackgroundCheckOperationError("MATCH_NOT_FOUND", "That match no longer exists. Refresh the list.");
+    // Row-lock the entry, then read it again: a per-person refresh that has
+    // this row locked finishes first, and one that starts later waits for us.
+    await tx.$queryRaw`SELECT "id" FROM "BackgroundCheckEntry" WHERE "id" = ${found.entryId} FOR UPDATE`;
     const match = await tx.backgroundCheckMatch.findUnique({
       where: { id: matchId },
-      select: { id: true, personId: true, entryId: true, matchedBy: true },
+      select: { id: true, personId: true, entryId: true, matchedBy: true, entry: { select: { identityKey: true } } },
     });
     if (!match) throw new BackgroundCheckOperationError("MATCH_NOT_FOUND", "That match no longer exists. Refresh the list.");
     if (match.matchedBy !== "NAME_ONLY") throw new BackgroundCheckOperationError("NOT_A_NAME_ONLY_MATCH", "Only a match made on the name alone can be undone here.");
-    await tx.backgroundCheckMatch.deleteMany({ where: { id: match.id } });
-    await tx.backgroundCheckReview.deleteMany({ where: { entryId: match.entryId } });
-    await tx.backgroundCheckReview.createMany({
-      data: [{ entryId: match.entryId, reason: "Staff said this row is not the same person as the name-only match.", candidatePersonIds: [], dismissedAt: new Date() }],
+    const deleted = await tx.backgroundCheckMatch.deleteMany({ where: { entryId: match.entryId, matchedBy: "NAME_ONLY" } });
+    if (deleted.count !== 1) throw listChanged();
+    // Remembered by the row's identity key, so it holds across every upload.
+    await tx.backgroundCheckRejectedPairing.createMany({
+      data: [{ identityKey: match.entry.identityKey, personId: match.personId, rejectedByUserId: actorUserId }],
       skipDuplicates: true,
     });
     await writeAuditLog({
@@ -1254,6 +1337,11 @@ function similarName(query: { firstName: string; lastName: string }, other: { fi
   return matchableName(other.firstName) === matchableName(query.firstName) || firstNameVariant(query.firstName, other.firstName);
 }
 
+/** Similar to the typed name under any of its first/last splits ("Mary Van Buren" reads two ways). */
+function similarToAnySplit(splits: Array<{ firstName: string; lastName: string }>, other: { firstName: string; lastName: string }) {
+  return splits.some((split) => similarName(split, other));
+}
+
 async function personsWithLastName(tx: PrismaLike, lastName: string) {
   const compact = matchableName(lastName).replace(/ /g, "");
   if (!compact) return [];
@@ -1275,24 +1363,27 @@ export async function lookupBackgroundCheckName(rawQuery: string, now = new Date
   const prisma = getPrisma();
   const query = rawQuery.replace(/\s+/g, " ").trim().slice(0, 100);
   const empty: BackgroundCheckLookup = { query, hasList: false, rows: [], people: [], pairs: [], truncated: false };
-  const parsed = parseLookupName(query);
-  const lastKey = matchableName(parsed.lastName);
-  if (!lastKey) return empty;
+  // A multi-word last name ("Van Buren") can split several ways; search the union.
+  const splits = lookupNameSplits(query).filter((split) => matchableName(split.lastName));
+  if (splits.length === 0) return empty;
+  const lastKeys = new Set(splits.map((split) => matchableName(split.lastName)));
   const latest = await latestUpload(prisma);
-  const [rowCandidates, personCandidates] = await Promise.all([
-    latest
+  const [rowLists, personLists] = await Promise.all([
+    Promise.all([...lastKeys].map((lastKey) => (latest
       ? prisma.backgroundCheckEntry.findMany({
         where: { uploadId: latest.id, normalizedName: { endsWith: lastKey } },
         select: { id: true, identityKey: true, firstName: true, lastName: true, normalizedName: true, email: true, sealedBirthDate: true, site: true },
       })
-      : Promise.resolve([]),
-    personsWithLastName(prisma, parsed.lastName),
+      : Promise.resolve([])))),
+    Promise.all(splits.map((split) => personsWithLastName(prisma, split.lastName))),
   ]);
-  const sameLast = rowCandidates.filter((row) => matchableName(row.lastName) === lastKey);
+  const rowCandidates = [...new Map(rowLists.flat().map((row) => [row.id, row])).values()];
+  const personCandidates = [...new Map(personLists.flat().map((person) => [person.id, person])).values()];
+  const sameLast = rowCandidates.filter((row) => lastKeys.has(matchableName(row.lastName)));
   const rowCounts = countRowsByName(sameLast);
   const namesakes = namesakeCounts(personCandidates);
-  const allRows = sameLast.filter((row) => similarName(parsed, row)).sort((a, b) => a.firstName.localeCompare(b.firstName));
-  const allPeople = personCandidates.filter((person) => similarName(parsed, person)).sort((a, b) => a.firstName.localeCompare(b.firstName));
+  const allRows = sameLast.filter((row) => similarToAnySplit(splits, row)).sort((a, b) => a.firstName.localeCompare(b.firstName));
+  const allPeople = personCandidates.filter((person) => similarToAnySplit(splits, person)).sort((a, b) => a.firstName.localeCompare(b.firstName));
   const rows = allRows.slice(0, MAX_LOOKUP_ROWS);
   const people = allPeople.slice(0, MAX_LOOKUP_PEOPLE);
   const truncated = allRows.length > rows.length || allPeople.length > people.length;
@@ -1300,7 +1391,7 @@ export async function lookupBackgroundCheckName(rawQuery: string, now = new Date
 
   const personIds = people.map((person) => person.id);
   const entryIds = rows.map((row) => row.id);
-  const [index, rosterMemberships, matches, reviews] = await Promise.all([
+  const [index, rosterMemberships, matches, reviews, rejected] = await Promise.all([
     buildCandidateIndex(prisma, now, { personIds }),
     personIds.length > 0
       ? prisma.clubRosterMember.findMany({
@@ -1318,6 +1409,7 @@ export async function lookupBackgroundCheckName(rawQuery: string, now = new Date
         select: { entryId: true, reason: true, candidatePersonIds: true, dismissedAt: true },
       })
       : Promise.resolve([]),
+    rejectedPairingsFor(prisma, rows.map((row) => row.identityKey)),
   ]);
   const matchByEntry = new Map(matches.map((match) => [match.entryId, match]));
   const matchByPerson = new Map(matches.map((match) => [match.personId, match]));
@@ -1382,6 +1474,8 @@ export async function lookupBackgroundCheckName(rawQuery: string, now = new Date
         reasons.push(`Matched ${matchLabel(match.matchedBy)}.`);
       } else if (match) {
         reasons.push("This row is already matched to someone else.");
+      } else if (rejected.get(row.identityKey)?.has(person.id)) {
+        reasons.push("Staff said this row is not the same person as this one, so they are not matched. That holds across uploads until staff match them by hand.");
       } else if (review?.dismissedAt) {
         reasons.push("Staff already said this row is not the same person (or none of the candidates is right), so it stays unmatched until the next upload.");
       } else if (!sameFirst) {
@@ -1482,7 +1576,7 @@ async function lookupUncachedChecks(prisma: PrismaLike, subjects: LookupSubject[
   const fetched = await prisma.backgroundCheckEntry.findMany({
     where: { normalizedName: { in: pageNames }, match: null, review: null },
     select: {
-      id: true, uploadId: true, normalizedName: true, email: true, sealedBirthDate: true, site: true,
+      id: true, uploadId: true, identityKey: true, normalizedName: true, email: true, sealedBirthDate: true, site: true,
       complianceStatus: true, expiresOn: true, issuesNote: true, upload: { select: { createdAt: true } },
     },
   });
@@ -1512,9 +1606,12 @@ async function lookupUncachedChecks(prisma: PrismaLike, subjects: LookupSubject[
   // evidence can't be a candidate by the rules, so isn't one here either.
   const byName = groupByName(everyone);
 
+  // People staff said a row is not never match it here either (#598).
+  const rejected = await rejectedPairingsFor(prisma, entries.map((entry) => entry.identityKey));
   const entriesByPerson = new Map<string, Array<(typeof entries)[number]>>();
   for (const entry of entries) {
-    const candidates = candidatesForEntry(entry, byName.get(entry.normalizedName!) ?? [], index.directoryStems);
+    const rejectedHere = rejected.get(entry.identityKey);
+    const candidates = candidatesForEntry(entry, (byName.get(entry.normalizedName!) ?? []).filter((candidate) => !rejectedHere?.has(candidate.personId)), index.directoryStems);
     if (candidates.length !== 1 || !pagePeople.has(candidates[0]!.personId)) continue;
     const list = entriesByPerson.get(candidates[0]!.personId) ?? [];
     list.push(entry);

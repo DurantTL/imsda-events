@@ -528,6 +528,23 @@ export function firstNameVariant(a: string, b: string) {
   return short.length >= MIN_FIRST_NAME_VARIANT_LENGTH && long.includes(short);
 }
 
+/**
+ * Every way a typed name can split into first and last names (#598): "Last,
+ * First" is one; otherwise each split point, so "Mary Van Buren" reads as
+ * Mary Van / Buren and as Mary / Van Buren. The lookup uses the union.
+ */
+export function lookupNameSplits(value: string): Array<{ firstName: string; lastName: string }> {
+  const trimmed = value.replace(/\s+/g, " ").trim();
+  if (trimmed.includes(",")) return [parseLookupName(trimmed)];
+  const parts = trimmed.split(" ").filter(Boolean);
+  if (parts.length <= 1) return [{ firstName: "", lastName: parts[0] ?? "" }];
+  const splits: Array<{ firstName: string; lastName: string }> = [];
+  for (let index = parts.length - 1; index >= 1; index -= 1) {
+    splits.push({ firstName: parts.slice(0, index).join(" "), lastName: parts.slice(index).join(" ") });
+  }
+  return splits;
+}
+
 /** "First Last" or "Last, First" typed into the lookup box, as first and last names. */
 export function parseLookupName(value: string) {
   const trimmed = value.replace(/\s+/g, " ").trim();

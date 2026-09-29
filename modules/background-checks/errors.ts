@@ -11,6 +11,7 @@ export type BackgroundCheckOperationErrorCode =
   | "NOT_A_MANUAL_MATCH"
   | "NOT_A_NAME_ONLY_MATCH"
   | "UPLOAD_IN_PROGRESS"
+  | "LIST_BUSY"
   | "LIST_CHANGED";
 
 const statusByCode: Record<BackgroundCheckOperationErrorCode, number> = {
@@ -21,6 +22,7 @@ const statusByCode: Record<BackgroundCheckOperationErrorCode, number> = {
   NOT_A_MANUAL_MATCH: 400,
   NOT_A_NAME_ONLY_MATCH: 400,
   UPLOAD_IN_PROGRESS: 409,
+  LIST_BUSY: 409,
   LIST_CHANGED: 409,
 };
 

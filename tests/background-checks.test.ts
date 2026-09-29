@@ -47,7 +47,10 @@ function makeFakeDb() {
   const extraOrganizations: string[] = [];
   const attendees: Row[] = [];
   const events = new Map<string, Row>();
-  const lock = { held: false };
+  const rejectedPairings = new Map<string, Row>();
+  // `held`: a pretend upload holds the list. `exclusive`: a whole-list Refresh does, until its transaction ends.
+  // `onEntryRead`: runs inside a Refresh, once it holds the lock, to try to interleave another writer.
+  const lock: { held: boolean; exclusive: boolean; onEntryRead: null | (() => Promise<void>) } = { held: false, exclusive: false, onEntryRead: null };
 
   const matchForEntry = (entryId: unknown) => [...matches.values()].find((match) => match.entryId === entryId) ?? null;
   const matchForPerson = (personId: unknown) => [...matches.values()].find((match) => match.personId === personId) ?? null;
@@ -150,9 +153,14 @@ function makeFakeDb() {
     return true;
   }
 
-  const entryFindMany = async ({ where }: { where?: Row } = {}) => [...entries.values()]
-    .filter((entry) => entryWhere(entry, where))
-    .map(withEntryRelations);
+  const entryFindMany = async ({ where }: { where?: Row } = {}) => {
+    if (lock.exclusive && lock.onEntryRead) {
+      const hook = lock.onEntryRead;
+      lock.onEntryRead = null;
+      await hook();
+    }
+    return [...entries.values()].filter((entry) => entryWhere(entry, where)).map(withEntryRelations);
+  };
 
   const client = {
     person: {
@@ -275,6 +283,23 @@ function makeFakeDb() {
       count: async ({ where }: { where?: Row } = {}) => [...reviews.values()]
         .filter((review) => Object.entries(where ?? {}).every(([field, condition]) => valueMatches(review[field], condition))).length,
     },
+    backgroundCheckRejectedPairing: {
+      findMany: async ({ where }: { where: { identityKey: string | { in: string[] }; personId?: string } }) => [...rejectedPairings.values()]
+        .filter((row) => (typeof where.identityKey === "string" ? row.identityKey === where.identityKey : where.identityKey.in.includes(row.identityKey as string))
+          && (where.personId === undefined || row.personId === where.personId))
+        .map((row) => ({ ...row })),
+      createMany: async ({ data }: { data: Row[] }) => {
+        for (const row of data) {
+          const key = `${row.identityKey}|${row.personId}`;
+          if (!rejectedPairings.has(key)) rejectedPairings.set(key, { id: nextId("rejected"), createdAt: new Date(), ...row });
+        }
+        return { count: data.length };
+      },
+      deleteMany: async ({ where }: { where: { identityKey: string; personId: string } }) => {
+        const removed = rejectedPairings.delete(`${where.identityKey}|${where.personId}`);
+        return { count: removed ? 1 : 0 };
+      },
+    },
     externalIdentity: {
       findMany: async ({ where }: { where: Row }) => [...identities.values()]
         .filter((identity) => identityWhere(identity, where))
@@ -364,7 +389,13 @@ function makeFakeDb() {
     // The list lock's try-lock (held by a pretend upload when `lock.held`),
     // and the refresh's coarse name filter: people whose compacted name is one asked for.
     $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
-      if (strings.join("?").includes("pg_try_advisory_xact_lock_shared")) return [{ locked: !lock.held }];
+      if (strings.join("?").includes("pg_try_advisory_xact_lock_shared")) return [{ locked: !lock.held && !lock.exclusive }];
+      if (strings.join("?").includes("pg_try_advisory_xact_lock(")) {
+        const locked = !lock.held && !lock.exclusive;
+        if (locked) lock.exclusive = true;
+        return [{ locked }];
+      }
+      if (strings.join("?").includes("FOR UPDATE")) return [];
       // The lookup's coarse last-name filter.
       if (strings.join("?").includes('normalize("lastName"')) {
         const wanted = values[0] as string;
@@ -378,9 +409,16 @@ function makeFakeDb() {
         .map((person) => ({ id: person.id, firstName: person.firstName, lastName: person.lastName }));
     },
   };
-  (client as { $transaction?: unknown }).$transaction = async (work: (tx: typeof client) => Promise<unknown>) => work(client);
+  (client as { $transaction?: unknown }).$transaction = async (work: (tx: typeof client) => Promise<unknown>) => {
+    const outer = lock.exclusive;
+    try {
+      return await work(client);
+    } finally {
+      lock.exclusive = outer; // an exclusive lock lasts as long as the transaction that took it
+    }
+  };
 
-  return { client, lock, seed: { persons, uploads, entries, matches, reviews, identities, rosterMembers, attendees, events, extraOrganizations } };
+  return { client, lock, seed: { rejectedPairings, persons, uploads, entries, matches, reviews, identities, rosterMembers, attendees, events, extraOrganizations } };
 }
 
 // --- Wiring: getPrisma() returns whichever fake is current for the test. ---
@@ -408,6 +446,7 @@ import {
   candidateSiteStems,
   directorySiteStems,
   firstNameVariant,
+  lookupNameSplits,
   matchesSite,
   parseLookupName,
   siteStems,
@@ -1489,6 +1528,19 @@ describe("read-time matching for people the cache hasn't matched yet (#527 B5)",
     expect(flags?.people.map((flag) => [flag.attendeeId, flag.state, flag.expiresOn])).toEqual([["att-p-ana", "EXPIRED", "2026-10-01"]]);
   });
 
+  it("never matches a person staff rejected for that row at read time (#598)", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    youthEvent(seed);
+    const rows = [sterlingRowToListRow(parseSterlingCsv("First name,Last name,Email,Expiration date\nAna,Rivera,ana@example.test,2029-01-01")[0]!)];
+    await applyBackgroundCheckUpload(rows, "STERLING", "admin-1", new Date("2026-09-28T12:00:00Z"));
+    seed.attendees.push(registeredAdult("p-ana", "Ana", "Rivera", { email: "ana@example.test" }));
+    expect((await listEventBackgroundFlags("event-1"))?.people).toEqual([]); // read-time match: checked
+    const [entry] = [...seed.entries.values()];
+    seed.rejectedPairings.set(`${entry!.identityKey}|p-ana`, { id: "rj", identityKey: entry!.identityKey, personId: "p-ana", rejectedByUserId: "admin-1" });
+    expect((await listEventBackgroundFlags("event-1"))?.people.map((flag) => flag.attendeeId)).toEqual(["att-p-ana"]);
+  });
+
   it("leaves an ambiguous read-time match unmatched, never guessed", async () => {
     const { client, seed } = makeFakeDb();
     currentClient = client;
@@ -1653,6 +1705,12 @@ describe("first-name variants (#598)", () => {
     expect(parseLookupName("Mina  Osei")).toEqual({ firstName: "Mina", lastName: "Osei" });
     expect(parseLookupName("Osei, Mina")).toEqual({ firstName: "Mina", lastName: "Osei" });
     expect(parseLookupName("Osei")).toEqual({ firstName: "", lastName: "Osei" });
+    expect(lookupNameSplits("Mary Van Buren")).toEqual([
+      { firstName: "Mary Van", lastName: "Buren" },
+      { firstName: "Mary", lastName: "Van Buren" },
+    ]);
+    expect(lookupNameSplits("Osei, Mina")).toEqual([{ firstName: "Mina", lastName: "Osei" }]);
+    expect(lookupNameSplits("Osei")).toEqual([{ firstName: "", lastName: "Osei" }]);
   });
 });
 
@@ -1732,16 +1790,17 @@ describe("name-only matches, variants, adults by age, and the lookup (#598)", ()
     expect(seed.reviews.size).toBe(0);
   });
 
-  it("'Not the same person' unmatches the row and keeps it unmatched on later refreshes", async () => {
+  it("'Not the same person' unmatches the row and keeps it unmatched on refreshes, Refresh, and a new upload with the same user_id", async () => {
     const { client, seed } = makeFakeDb();
     currentClient = client;
     rosterAdult(seed, "p-mina", "Mina", "Osei", mapleGrove);
-    await applyBackgroundCheckUpload(rosterRows({ userId: "7001", last: "Osei", first: "Mina", sites: otherChurch }), "ROSTER", "admin-1", now);
+    const rows = rosterRows({ userId: "7001", last: "Osei", first: "Mina", sites: otherChurch });
+    await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
     const [match] = [...seed.matches.values()];
     await rejectNameOnlyBackgroundCheckMatch(match!.id as string, "admin-1");
     expect(seed.matches.size).toBe(0);
     expect(await listBackgroundCheckReviews()).toEqual([]); // not waiting on anyone
-    expect([...seed.reviews.values()]).toEqual([expect.objectContaining({ dismissedAt: expect.any(Date), candidatePersonIds: [] })]);
+    expect([...seed.rejectedPairings.values()]).toEqual([expect.objectContaining({ identityKey: "userId:7001", personId: "p-mina", rejectedByUserId: "admin-1" })]);
     expect(auditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "BACKGROUND_CHECK_NAME_ONLY_MATCH_REJECTED", metadata: { entryId: expect.any(String) } }), expect.anything());
     expect(JSON.stringify(auditLog.mock.calls.at(-1))).not.toContain("Osei");
 
@@ -1749,7 +1808,46 @@ describe("name-only matches, variants, adults by age, and the lookup (#598)", ()
     expect(seed.matches.size).toBe(0);
     await rematchBackgroundCheckList(now);
     expect(seed.matches.size).toBe(0);
+    // A new upload replaces every entry, but the row's identity key is the same.
+    await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
+    expect(seed.matches.size).toBe(0);
+    expect(seed.reviews.size).toBe(0);
     expect((await listUnmatchedBackgroundCheckEntries()).map((entry) => entry.firstName)).toEqual(["Mina"]);
+    // The rejected person is not offered as an automatic (site) match either.
+    const [siteRow] = rosterRows({ userId: "7001", last: "Osei", first: "Mina", sites: "Maple Grove SDA Church (Springfield)" });
+    await applyBackgroundCheckUpload([siteRow!], "ROSTER", "admin-1", now);
+    expect(seed.matches.size).toBe(0);
+  });
+
+  it("a rejection holds nobody else back: the same person still matches a different row", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    rosterAdult(seed, "p-mina", "Mina", "Osei", mapleGrove);
+    await applyBackgroundCheckUpload(rosterRows({ userId: "7001", last: "Osei", first: "Mina", sites: otherChurch }), "ROSTER", "admin-1", now);
+    await rejectNameOnlyBackgroundCheckMatch([...seed.matches.values()][0]!.id as string, "admin-1");
+    await applyBackgroundCheckUpload(rosterRows({ userId: "7002", last: "Osei", first: "Mina", sites: "Maple Grove SDA Church (Springfield)" }), "ROSTER", "admin-1", now);
+    expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-mina", matchedBy: "AUTO" })]);
+  });
+
+  it("a match by hand clears the rejection, and the rejected person is still pickable by hand", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    rosterAdult(seed, "p-mina", "Mina", "Osei", mapleGrove);
+    rosterAdult(seed, "p-nora", "Nora", "Osei", mapleGrove);
+    const rows = rosterRows({ userId: "7001", last: "Osei", first: "Mina", sites: otherChurch });
+    await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
+    await rejectNameOnlyBackgroundCheckMatch([...seed.matches.values()][0]!.id as string, "admin-1");
+    expect(seed.rejectedPairings.size).toBe(1);
+    // Give the (unmatched) row a review that lists someone else, so staff have a review to decide.
+    const [entry] = [...seed.entries.values()];
+    seed.reviews.set("r-1", { id: "r-1", entryId: entry!.id, reason: "Check it.", candidatePersonIds: ["p-nora"], dismissedAt: null, createdAt: new Date() });
+    await resolveBackgroundCheckReview("r-1", { type: "match", personId: "p-mina" }, "admin-1");
+    expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-mina", matchedBy: "MANUAL" })]);
+    expect(seed.rejectedPairings.size).toBe(0);
+    // A person who was neither a candidate nor rejected is still refused.
+    seed.matches.clear();
+    seed.reviews.set("r-2", { id: "r-2", entryId: entry!.id, reason: "Check it.", candidatePersonIds: ["p-nora"], dismissedAt: null, createdAt: new Date() });
+    await expect(resolveBackgroundCheckReview("r-2", { type: "match", personId: "p-mina" }, "admin-1")).rejects.toMatchObject({ code: "NOT_A_CANDIDATE" });
   });
 
   it("only undoes a name-only match, and a missing match is a 404", async () => {
@@ -1830,7 +1928,55 @@ describe("name-only matches, variants, adults by age, and the lookup (#598)", ()
     const { client, lock } = makeFakeDb();
     currentClient = client;
     lock.held = true;
-    await expect(rematchBackgroundCheckList(now)).rejects.toMatchObject({ code: "UPLOAD_IN_PROGRESS", status: 409 });
+    await expect(rematchBackgroundCheckList(now)).rejects.toMatchObject({ code: "LIST_BUSY", status: 409 });
+  });
+
+  it("holds the list exclusively while it runs: a per-person refresh, a reject, and a second Refresh are all kept out", async () => {
+    const { client, seed, lock } = makeFakeDb();
+    currentClient = client;
+    seed.uploads.set("u-1", { id: "u-1", createdAt: new Date("2026-09-01") });
+    rosterAdult(seed, "p-mina", "Mina", "Osei", mapleGrove);
+    seedEntry(seed, "e-mina", { identityKey: "userId:7001", firstName: "Mina", lastName: "Osei", normalizedName: "mina osei", site: otherChurch });
+    seed.matches.set("m-1", { id: "m-1", personId: "p-mina", entryId: "e-mina", matchedBy: "NAME_ONLY", createdAt: new Date(), updatedAt: new Date() });
+    let interleaved = false;
+    lock.onEntryRead = async () => {
+      interleaved = true;
+      await refreshBackgroundCheckMatchForPerson("p-mina", now); // try-locks shared, so it is skipped
+      await expect(rematchBackgroundCheckList(now)).rejects.toMatchObject({ code: "LIST_BUSY", status: 409 });
+      await expect(rejectNameOnlyBackgroundCheckMatch("m-1", "admin-1")).rejects.toMatchObject({ code: "UPLOAD_IN_PROGRESS" });
+    };
+    await rematchBackgroundCheckList(now);
+    expect(interleaved).toBe(true);
+    expect(seed.rejectedPairings.size).toBe(0);
+    expect(lock.exclusive).toBe(false); // released with the transaction
+    expect([...seed.matches.values()].map((match) => match.matchedBy)).toEqual(["NAME_ONLY"]);
+    // With the lock free again, the reject goes through and a later refresh keeps it.
+    await rejectNameOnlyBackgroundCheckMatch([...seed.matches.values()][0]!.id as string, "admin-1");
+    await refreshBackgroundCheckMatchForPerson("p-mina", now);
+    expect(seed.matches.size).toBe(0);
+  });
+
+  it("keeps a first-name variant review through a per-person refresh that can't rebuild it", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    seed.uploads.set("u-1", { id: "u-1", createdAt: new Date("2026-09-01") });
+    rosterAdult(seed, "p-jonathan", "Jonathan", "Quill", mapleGrove);
+    seedEntry(seed, "e-jon", { identityKey: "userId:7002", firstName: "Jon", lastName: "Quill", normalizedName: "jon quill", site: otherChurch });
+    await rematchBackgroundCheckList(now);
+    expect([...seed.reviews.values()].map((review) => review.candidatePersonIds)).toEqual([["p-jonathan"]]);
+    // Someone named exactly Jon Quill (on no roster) is added: the entry's name group is refreshed.
+    seed.persons.set("p-jon-plain", { id: "p-jon-plain", firstName: "Jon", lastName: "Quill" });
+    await refreshBackgroundCheckMatchForPerson("p-jon-plain", now);
+    expect([...seed.reviews.values()].map((review) => review.candidatePersonIds)).toEqual([["p-jonathan"]]);
+    // The full Refresh rebuilds it (Jon Quill still has no exact candidate).
+    await rematchBackgroundCheckList(now);
+    expect(seed.reviews.size).toBe(1);
+    // But it goes when the entry gets its own exact-name match.
+    rosterAdult(seed, "p-jon-real", "Jon", "Quill", mapleGrove);
+    seed.persons.delete("p-jon-plain");
+    await refreshBackgroundCheckMatchForPerson("p-jon-real", now);
+    expect(seed.reviews.size).toBe(0);
+    expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-jon-real", matchedBy: "NAME_ONLY" })]);
   });
 
   describe("the 'why isn't this person matched' lookup", () => {
@@ -1889,6 +2035,28 @@ describe("name-only matches, variants, adults by age, and the lookup (#598)", ()
       const mina = await lookupBackgroundCheckName("mina osei", now);
       expect(reasonFor(mina, "Mina Osei", "Mina Osei")).toMatch(/matched by name only/i);
       expect(mina.rows[0]!.status).toMatch(/matched by name only to Mina Osei/i);
+    });
+
+    it("explains a durable 'not the same person' rejection", async () => {
+      const seed = await seededLookup();
+      seed.matches.clear();
+      seed.rejectedPairings.set("userId:8|p-sam", { id: "rj", identityKey: "userId:8", personId: "p-sam", rejectedByUserId: "admin-1" });
+      const sam = await lookupBackgroundCheckName("Sam Yoon", now);
+      expect(reasonFor(sam, "Sam Yoon", "Sam Yoon")).toMatch(/not the same person.*holds across uploads/i);
+    });
+
+    it("searches a multi-word last name under every split", async () => {
+      const seed = await seededLookup();
+      rosterAdult(seed, "p-mary", "Mary", "Van Buren", mapleGrove);
+      rosterAdult(seed, "p-mary-ann", "Mary Ann", "Sato", mapleGrove);
+      seedEntry(seed, "e-mary", { identityKey: "userId:9", firstName: "Mary", lastName: "Van Buren", normalizedName: "mary van buren", site: otherChurch });
+      seedEntry(seed, "e-mary-ann", { identityKey: "userId:10", firstName: "Mary Ann", lastName: "Sato", normalizedName: "mary ann sato", site: otherChurch });
+      const vanBuren = await lookupBackgroundCheckName("Mary Van Buren", now);
+      expect(vanBuren.rows.map((row) => row.name)).toEqual(["Mary Van Buren"]);
+      expect(vanBuren.people.map((person) => person.name)).toEqual(["Mary Van Buren"]);
+      const sato = await lookupBackgroundCheckName("Mary Ann Sato", now);
+      expect(sato.rows.map((row) => row.name)).toEqual(["Mary Ann Sato"]);
+      expect(sato.pairs).toHaveLength(1);
     });
 
     it("explains a site difference that a Refresh has not resolved yet", async () => {

@@ -3740,6 +3740,22 @@ model BackgroundCheckReview {
   entry BackgroundCheckEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
 }
 
+/// Staff said a list row is not a given person (#598, "Not the same person" on
+/// a name-only match). Keyed by the row's `identityKey`, not its entry id, so
+/// the decision survives every upload; matching never offers that person for
+/// that row (name-only, automatic, or variant) until staff match them by
+/// hand, which clears it. No foreign keys: a row's key outlives any one
+/// upload, and a deleted person just leaves an inert pair.
+model BackgroundCheckRejectedPairing {
+  id               String   @id @default(cuid())
+  identityKey      String
+  personId         String
+  rejectedByUserId String
+  createdAt        DateTime @default(now())
+
+  @@unique([identityKey, personId])
+}
+
 /// A background check's compliance mark from a roster import (#427): the
 /// CSV's `compliance` column, y/yes → `CLEAR`, "!" → `FLAGGED` (expiring soon;
 /// still current at events, and `issuesNote` gives the dates), n/no →
