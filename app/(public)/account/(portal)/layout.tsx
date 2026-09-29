@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { AccountAnnouncementBanner } from "@/components/account-announcement-banner";
 import { AccountSectionNav, type AccountNavItem } from "@/components/account-section-nav";
 import { ActAsBanner } from "@/components/act-as-banner";
 import { AttendeeAuthReturn } from "@/components/attendee-sign-in-form";
@@ -7,6 +8,7 @@ import { AttendeeSignOutButton } from "@/components/attendee-sign-out-button";
 import { BrandMark } from "@/components/brand-mark";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { otherWorkspaceContextsForAttendee } from "@/modules/access/workspace-contexts";
+import { listAccountBannerAnnouncements } from "@/modules/communications/account-banner";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { attendeeSignInRedirectPath, twoStepRedirectPath } from "@/modules/attendee-accounts/return-redirect";
 import { accountNeedsSecondStep } from "@/modules/attendee-accounts/sign-in-gate";
@@ -51,6 +53,10 @@ export default async function AccountPortalLayout({ children }: { children: Reac
     ? await Promise.all([listDirectedClubs(chromeAccount.id), isAreaCoordinator(chromeAccount.id)])
     : [[], false];
 
+  // Banner announcements are account-session only: a staff "act as" with no
+  // attendee account (or a second step still pending) gets none.
+  const bannerAnnouncements = chromeAccount ? await listAccountBannerAnnouncements(chromeAccount) : [];
+
   const actingAsAreaCoordinator = acting?.role === "AREA_COORDINATOR";
   const actingAsDirector = acting?.role === "CLUB_DIRECTOR";
 
@@ -81,6 +87,7 @@ export default async function AccountPortalLayout({ children }: { children: Reac
       </header>
       <ActAsBanner acting={acting} />
       <AccountSectionNav items={items} label="Your account" />
+      <AccountAnnouncementBanner announcements={bannerAnnouncements} />
       {children}
     </main>
   );
