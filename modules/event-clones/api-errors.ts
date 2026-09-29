@@ -54,7 +54,14 @@ export function eventCloneApiError(
   // A wait past the transaction timeout means the copy itself ran long: say so, so nobody waits on a
   // spinner or blames the source (#617). Nothing was written either way.
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2028") {
-    return Response.json({ error: "SOURCE_BUSY", message: "The copy took too long and was cancelled, so nothing was created. Try again in a moment." }, { status: 409 });
+    // Prisma words a queue wait ("Unable to start a transaction in the given time") differently from a
+    // transaction that ran past its limit ("Transaction already closed ... timeout"). Anything else is neutral.
+    const message = /unable to start/i.test(error.message)
+      ? "The system is busy, so the copy could not start and nothing was created. Try again in a moment."
+      : /transaction already closed|timeout/i.test(error.message)
+        ? "The copy took too long and was cancelled, so nothing was created. Try again in a moment."
+        : "The copy couldn't finish, so nothing was created. Try again.";
+    return Response.json({ error: "SOURCE_BUSY", message }, { status: 409 });
   }
   if (isLockTimeoutError(error) || (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034")) {
     return Response.json({ error: "SOURCE_BUSY", message: "The source event is busy right now. Try again in a moment." }, { status: 409 });

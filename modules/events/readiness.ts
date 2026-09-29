@@ -245,7 +245,7 @@ export function getFeeWarnings(unpriced: ReadonlyArray<string | UnpricedFeeField
     return [{
       id: `fee:${field.label}`,
       label: `Set the ${field.label}`,
-      detail: `No amount is set. Open the registration builder \u2192 ${field.label} \u2192 set the amount in "${REGISTRATION_FEE_INPUT_LABEL}" before publishing.`,
+      detail: `No amount is set. Open the registration builder \u2192 ${field.label} \u2192 set the amount in the "${REGISTRATION_FEE_INPUT_LABEL}" box, shown as soon as the field is open, before publishing.`,
       ...(eventId ? { href: registrationBuilderFieldHref(eventId, field.formId, field.fieldId) } : {}),
     }];
   });

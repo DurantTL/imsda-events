@@ -24,6 +24,7 @@ vi.mock("next/link", () => ({
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
+import { RegistrationBuilderWorkspace } from "@/components/registration-builder-workspace";
 import { StartFromTemplate } from "@/components/start-from-template";
 import { postJson } from "@/lib/post-json";
 import { eventCloneApiError } from "@/modules/event-clones/api-errors";
@@ -35,7 +36,7 @@ import {
   unpricedFeeFields,
 } from "@/modules/events/readiness";
 import { collectEventReadinessWarnings } from "@/modules/events/readiness-warnings";
-import { getFormTemplate } from "@/modules/forms/definition";
+import { getFormTemplate, registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import type { EventTemplateRecord } from "@/modules/event-templates/repository";
 
 function template(overrides: Partial<EventTemplateRecord> = {}): EventTemplateRecord {
@@ -131,6 +132,39 @@ describe("Fee warning names and links to the field (#617)", () => {
   });
 });
 
+describe("The registration fee input is always visible (#617)", () => {
+  const feeField = { id: "f_fee_1", key: "fall_fee", label: "Fall Camporee fee", helpText: "", type: "CALCULATED", scope: "ATTENDEE", required: false, options: [] };
+
+  function renderBuilder(focusFieldId: string | null) {
+    const definition = registrationFormDefinitionSchema.parse({
+      title: "Fall Camporee", description: "", confirmationMessage: "Saved.",
+      sections: [{ id: "s_fees", title: "Fees", description: "", fields: [feeField] }],
+    });
+    const version = { id: "ver_1", versionNumber: 1, status: "DRAFT", definition, updatedAt: "2026-09-01T00:00:00.000Z", createdAt: "2026-09-01T00:00:00.000Z", publishedAt: null, createdBy: "Synthetic Admin", testSubmissionCount: 0, choiceUsage: {}, testSubmissions: [] };
+    const form = { id: "form_1", eventId: "evt_1", createdBy: "Synthetic Admin", createdAt: "2026-09-01T00:00:00.000Z", name: "Fall Camporee", slug: "fall", status: "DRAFT", updatedAt: "2026-09-01T00:00:00.000Z", activeVersion: version, versions: [version] };
+    return renderToStaticMarkup(createElement(RegistrationBuilderWorkspace, {
+      eventId: "evt_1", eventSlug: "fall", eventName: "Fall", initialForms: [form] as never, templates: [],
+      focusTarget: focusFieldId ? { formId: "form_1", fieldId: focusFieldId } : null,
+    }));
+  }
+
+  it("puts the fee input, labeled as the registration fee, outside the collapsed Advanced options", () => {
+    const markup = renderBuilder("f_fee_1");
+    const input = markup.indexOf('id="registration-fee-f_fee_1"');
+    expect(input).toBeGreaterThan(0);
+    expect(markup).toContain("Registration fee (standard price)");
+    const advanced = markup.indexOf('<details class="field-advanced"');
+    expect(advanced).toBeGreaterThan(0);
+    // The input comes before the details element and appears once, so it is not inside one.
+    expect(input).toBeLessThan(advanced);
+    expect(markup.match(/id="registration-fee-f_fee_1"/g)).toHaveLength(1);
+  });
+
+  it("keeps the field editor closed when there is no deep link", () => {
+    expect(renderBuilder(null)).not.toContain('id="registration-fee-');
+  });
+});
+
 describe("postJson never leaves a spinner (#617)", () => {
   afterEach(() => vi.unstubAllGlobals());
 
@@ -167,12 +201,17 @@ describe("postJson never leaves a spinner (#617)", () => {
     expect(source).not.toContain("await fetch(");
   });
 
-  it("a transaction timeout on the route reads as a timeout, not a busy source", async () => {
-    const response = eventCloneApiError(new PrismaErrors.PrismaClientKnownRequestError("timeout", { code: "P2028", clientVersion: "test" }), {
+  it.each([
+    ["Transaction API error: Transaction already closed: A commit cannot be executed on an expired transaction. The timeout for this transaction was 30000 ms.", "took too long"],
+    ["Transaction API error: Unable to start a transaction in the given time.", "could not start"],
+    ["Transaction API error: something else", "couldn't finish"],
+  ])("a transaction error on the route says what happened (%#)", async (message, expected) => {
+    const response = eventCloneApiError(new PrismaErrors.PrismaClientKnownRequestError(message, { code: "P2028", clientVersion: "test" }), {
       failureMessage: "The event could not be copied.", logMessage: "Event clone failed", invalidInputCode: "INVALID_EVENT_CLONE",
     });
     expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ error: "SOURCE_BUSY", message: expect.stringContaining("took too long") });
+    expect(await response.json()).toMatchObject({ error: "SOURCE_BUSY", message: expect.stringContaining(expected) });
+    expect(mocks.logError).not.toHaveBeenCalled();
   });
 });
 
@@ -241,7 +280,9 @@ describe("Copy from a previous event with a realistic source (#617)", () => {
         findMany: () => [{ id: "form_1", name: "Camporee", slug: "camporee", status: "PUBLISHED", versions: [{ id: "ver_1", versionNumber: 1, definition: feeDefinition }] }],
         create: () => ({ id: "form_new", name: "Camporee" }),
       },
-      eventLocation: { findMany: () => locations },
+      eventLocation: { findMany: (args: { where: { eventId: string } }) => (args.where.eventId === "evt_new"
+        ? locations.map((location) => ({ id: `newloc_${location.normalizedName}`, normalizedName: location.normalizedName }))
+        : locations) },
       honorSession: { findMany: () => sessions },
       honorOffering: { findMany: () => offerings },
       platformSettings: { upsert: () => ({ defaultAttendeeEditPolicy: "VERIFY_EVERY_EDIT" }) },
@@ -278,6 +319,12 @@ describe("Copy from a previous event with a realistic source (#617)", () => {
     expect(offeringRows).toHaveLength(offerings.length);
     // Every copied offering points at a session created in this same copy.
     const sessionIds = new Set(sessionRows.map((row) => row.id));
+    // Each session follows its site by name onto the new event's location id, never a source id.
+    const wantedSite = new Map(sessions.map((session) => [`${session.name}|${session.location.normalizedName}`, `newloc_${session.location.normalizedName}`]));
+    const copiedSites = sessionRows.map((row) => `${(row as unknown as { name: string }).name}|${row.locationId}`).sort();
+    const expectedSites = sessions.map((session) => `${session.name}|${wantedSite.get(`${session.name}|${session.location.normalizedName}`)}`).sort();
+    expect(copiedSites).toEqual(expectedSites);
+    expect(sessionRows.every((row) => row.locationId?.startsWith("newloc_"))).toBe(true);
     expect(offeringRows.every((row) => sessionIds.has(row.sessionId))).toBe(true);
     expect(calls.some((call) => call.model === "registrationForm" && call.method === "create")).toBe(true);
   });

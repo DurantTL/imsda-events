@@ -11,19 +11,21 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: mocks.getPrisma }));
 
 import { addStarterEventTemplates } from "@/modules/event-templates/starter-repository";
-import { starterEventTemplates, starterPayload } from "@/modules/event-templates/starters";
+import { starterDescription, starterEventTemplates, starterPayload } from "@/modules/event-templates/starters";
 
-type Existing = { id: string; status: string; versions: Array<{ id: string; status: string; payload: unknown; versionNumber: number; updatedAt: Date }> };
+type Existing = { id: string; name: string; description: string; status: string; versions: Array<{ id: string; status: string; payload: unknown; versionNumber: number; updatedAt: Date }> };
 
-function fakePrisma(existingByKey: Record<string, Existing>) {
+function fakePrisma(existingByKey: Record<string, Existing>, lockedStatus?: string) {
   const writes = { created: [] as Array<Record<string, unknown>>, versionUpdates: [] as Array<Record<string, unknown>>, templateUpdates: [] as Array<Record<string, unknown>>, audits: [] as Array<Record<string, unknown>> };
   const tx = {
     $executeRawUnsafe: async () => 0,
     $executeRaw: async () => 0,
+    // The `FOR UPDATE` re-read: what the row is at lock time (an archive can land after the first read).
+    $queryRaw: async () => [{ status: lockedStatus ?? "DRAFT" }],
     eventTemplate: {
       findFirst: async (args: { where: { versions: { some: { payload: { equals: string } } } } }) => existingByKey[args.where.versions.some.payload.equals] ?? null,
       create: async ({ data }: { data: Record<string, unknown> }) => { writes.created.push(data); return { id: `new_${writes.created.length}`, name: data.name }; },
-      update: async (args: Record<string, unknown>) => { writes.templateUpdates.push(args); return {}; },
+      updateMany: async (args: Record<string, unknown>) => { writes.templateUpdates.push(args); return { count: 1 }; },
     },
     eventTemplateVersion: { updateMany: async (args: Record<string, unknown>) => { writes.versionUpdates.push(args); return { count: 1 }; } },
     auditLog: { create: async ({ data }: { data: Record<string, unknown> }) => { writes.audits.push(data); return {}; } },
@@ -33,11 +35,11 @@ function fakePrisma(existingByKey: Record<string, Existing>) {
 }
 
 const starter = starterEventTemplates[0]!;
-const draftOf = (payload: unknown): Existing => ({
-  id: "tpl_existing", status: "DRAFT",
+const draftOf = (payload: unknown, overrides: Partial<Existing> = {}): Existing => ({
+  id: "tpl_existing", name: starter.name, description: starterDescription(starter), status: "DRAFT", ...overrides,
   versions: [{ id: "ver_1", status: "DRAFT", payload, versionNumber: 1, updatedAt: new Date("2026-09-01T00:00:00Z") }],
 });
-const others = Object.fromEntries(starterEventTemplates.slice(1).map((entry) => [entry.starterKey, { id: `tpl_${entry.starterKey}`, status: "PUBLISHED", versions: [] } as Existing]));
+const others = Object.fromEntries(starterEventTemplates.slice(1).map((entry) => [entry.starterKey, { id: `tpl_${entry.starterKey}`, name: entry.name, description: "", status: "PUBLISHED", versions: [] } as Existing]));
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -62,7 +64,7 @@ describe("Add starter templates publishes (#617)", () => {
     const result = await addStarterEventTemplates("usr_admin");
     expect(result.published.map((entry) => entry.starterKey)).toEqual([starter.starterKey]);
     expect(writes.versionUpdates[0]).toMatchObject({ where: { id: "ver_1", status: "DRAFT" }, data: { status: "PUBLISHED" } });
-    expect(writes.templateUpdates[0]).toMatchObject({ where: { id: "tpl_existing" }, data: { status: "PUBLISHED" } });
+    expect(writes.templateUpdates[0]).toMatchObject({ where: { id: "tpl_existing", status: "DRAFT" }, data: { status: "PUBLISHED" } });
     expect(writes.audits.some((entry) => entry.action === "EVENT_TEMPLATE_PUBLISHED" && entry.entityId === "tpl_existing")).toBe(true);
   });
 
@@ -78,7 +80,7 @@ describe("Add starter templates publishes (#617)", () => {
 
   it("leaves an archived or ever-published template alone", async () => {
     const archived = { ...draftOf(starterPayload(starter)), status: "ARCHIVED" };
-    const everPublished: Existing = { id: "tpl_old", status: "DRAFT", versions: [
+    const everPublished: Existing = { id: "tpl_old", name: starter.name, description: starterDescription(starter), status: "DRAFT", versions: [
       { id: "ver_2", status: "DRAFT", payload: starterPayload(starter), versionNumber: 2, updatedAt: new Date() },
       { id: "ver_1", status: "ARCHIVED", payload: starterPayload(starter), versionNumber: 1, updatedAt: new Date() },
     ] };
@@ -88,6 +90,34 @@ describe("Add starter templates publishes (#617)", () => {
       expect(result.published).toEqual([]);
       expect(writes.versionUpdates).toEqual([]);
     }
+  });
+});
+
+describe("Renames and races (#617)", () => {
+  it.each([
+    ["renamed", { name: "Our own retreat" }],
+    ["re-described", { description: "Edited by staff." }],
+  ])("leaves a %s draft alone even when its payload is unchanged", async (_label, overrides) => {
+    const writes = fakePrisma({ [starter.starterKey]: draftOf(starterPayload(starter), overrides), ...others });
+    const result = await addStarterEventTemplates("usr_admin");
+    expect(result.published).toEqual([]);
+    expect(writes.versionUpdates).toEqual([]);
+    expect(writes.templateUpdates).toEqual([]);
+  });
+
+  it("does not undo an archive that lands between the read and the row lock", async () => {
+    const writes = fakePrisma({ [starter.starterKey]: draftOf(starterPayload(starter)), ...others }, "ARCHIVED");
+    const result = await addStarterEventTemplates("usr_admin");
+    expect(result.published).toEqual([]);
+    expect(result.skipped.find((entry) => entry.starterKey === starter.starterKey)?.reason).toBe("ARCHIVED");
+    expect(writes.versionUpdates).toEqual([]);
+    expect(writes.templateUpdates).toEqual([]);
+  });
+
+  it("publishes only under a row lock and with a conditional update", () => {
+    const source = readFileSync("modules/event-templates/starter-repository.ts", "utf8");
+    expect(source).toContain('FOR UPDATE');
+    expect(source).toContain('where: { id: existing.id, status: "DRAFT" }');
   });
 });
 

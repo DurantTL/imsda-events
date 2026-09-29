@@ -39,15 +39,21 @@ export async function addStarterEventTemplates(actorUserId: string): Promise<Sta
     for (const starter of starterEventTemplates) {
       const existing = await tx.eventTemplate.findFirst({
         where: { versions: { some: { payload: { path: ["starterKey"], equals: starter.starterKey } } } },
-        select: { id: true, status: true, versions: { select: { id: true, status: true, payload: true, versionNumber: true, updatedAt: true } } },
+        select: { id: true, name: true, description: true, status: true, versions: { select: { id: true, status: true, payload: true, versionNumber: true, updatedAt: true } } },
         orderBy: { createdAt: "asc" },
       });
       if (existing) {
         // A starter added as a draft before starters were published on creation (#617): publish it now,
-        // but only when it was never published and its one draft still equals the starter definition.
-        // An edited draft is somebody's work in progress and is left alone.
+        // but only when it was never published and it still equals the starter definition: name,
+        // description and payload. A renamed, re-described or edited draft is somebody's work in
+        // progress and is left alone.
         const [only] = existing.versions;
-        if (existing.status === "DRAFT" && existing.versions.length === 1 && only!.status === "DRAFT"
+        // The row lock and a re-read of its status make a concurrent archive win: it can never be undone here.
+        const lockedStatus = existing.status === "DRAFT"
+          ? (await tx.$queryRaw<{ status: string }[]>`SELECT "status"::text AS "status" FROM "EventTemplate" WHERE "id" = ${existing.id} FOR UPDATE`)[0]?.status
+          : existing.status;
+        if (lockedStatus === "DRAFT" && existing.versions.length === 1 && only!.status === "DRAFT"
+          && existing.name === starter.name && existing.description === starterDescription(starter)
           && canonicalJson(only!.payload) === canonicalJson(starterPayload(starter))) {
           validateEventTemplatePayloadReferences(parseEventTemplatePayload(only!.payload));
           const { count } = await tx.eventTemplateVersion.updateMany({
@@ -55,7 +61,7 @@ export async function addStarterEventTemplates(actorUserId: string): Promise<Sta
             data: { status: "PUBLISHED", publishedAt: new Date() },
           });
           if (count === 1) {
-            await tx.eventTemplate.update({ where: { id: existing.id }, data: { status: "PUBLISHED" } });
+            await tx.eventTemplate.updateMany({ where: { id: existing.id, status: "DRAFT" }, data: { status: "PUBLISHED" } });
             await tx.auditLog.create({ data: {
               actorUserId, action: "EVENT_TEMPLATE_PUBLISHED", entityType: "EventTemplate", entityId: existing.id,
               correlationId: randomUUID(), summary: `Published starter event template ${starter.name} version ${only!.versionNumber}.`,
@@ -68,7 +74,7 @@ export async function addStarterEventTemplates(actorUserId: string): Promise<Sta
         result.skipped.push({
           starterKey: starter.starterKey,
           name: starter.name,
-          reason: existing.status === "ARCHIVED" ? "ARCHIVED" : "ALREADY_EXISTS",
+          reason: existing.status === "ARCHIVED" || lockedStatus === "ARCHIVED" ? "ARCHIVED" : "ALREADY_EXISTS",
           templateId: existing.id,
         });
         continue;
