@@ -52,5 +52,27 @@ describe("promo-code inputs", () => {
       maximumDiscountCents: null,
     }).success).toBe(false);
   });
+
+  it("rejects an edit that omits a field which defaults on create", () => {
+    const full = {
+      code: "SALE",
+      isActive: true,
+      discountType: "PERCENT_BPS",
+      discountValue: 1000,
+      startsOn: null,
+      endsOn: null,
+      minimumSubtotalCents: 500,
+      maximumUses: 10,
+      maximumDiscountCents: 2000,
+      expectedUpdatedAt: "2026-09-29T00:00:00.000Z",
+    };
+    expect(updatePromoCodeInputSchema.parse(full)).toMatchObject(full);
+    for (const key of ["isActive", "startsOn", "endsOn", "minimumSubtotalCents", "maximumUses", "maximumDiscountCents"]) {
+      const partial: Record<string, unknown> = { ...full };
+      delete partial[key];
+      expect(updatePromoCodeInputSchema.safeParse(partial).success, key).toBe(false);
+    }
+    expect(updatePromoCodeInputSchema.safeParse({ isActive: false, expectedUpdatedAt: full.expectedUpdatedAt }).success).toBe(false);
+  });
 });
 
