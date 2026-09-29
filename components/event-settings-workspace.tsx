@@ -25,6 +25,7 @@ import {
 import { buildRegistrationEmbedCode } from "@/modules/forms/embed";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import { PublishEventDialog } from "@/components/publish-event-dialog";
+import { DeleteEventDialog } from "@/components/delete-event-dialog";
 import { UnpublishEventDialog } from "@/components/unpublish-event-dialog";
 import { DraftCreatedGuideBanner } from "@/components/draft-created-guide-banner";
 
@@ -118,6 +119,7 @@ export function EventSettingsWorkspace({
   const [publishing, setPublishing] = useState(false);
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
   const [publishError, setPublishError] = useState("");
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [unpublishDialogOpen, setUnpublishDialogOpen] = useState(false);
   const [unpublishing, setUnpublishing] = useState(false);
   const [unpublishError, setUnpublishError] = useState("");
@@ -712,6 +714,17 @@ export function EventSettingsWorkspace({
             </section>
           )}
 
+          {mode === "edit" && initialEvent && (
+            <section className="panel event-delete-panel">
+              <p className="eyebrow">Danger zone</p>
+              <h2>Delete this event</h2>
+              <p>Permanently removes the event and everything it owns, whatever its state. You will see exactly what is removed before you confirm.</p>
+              <button className="secondary-button full-button lifecycle-danger-button" onClick={() => setDeleteDialogOpen(true)} type="button">
+                Delete event…
+              </button>
+            </section>
+          )}
+
           <section className="panel event-save-panel">
             <p>{mode === "create" ? "Nothing is public when this draft is created." : "Saving never changes whether this event is published — use Publish or Unpublish above for that."}</p>
             {dirty && <span className="unsaved-dot" role="status">Unsaved changes</span>}
@@ -734,6 +747,14 @@ export function EventSettingsWorkspace({
           onCancel={cancelPublish}
           onConfirm={() => void publish()}
           open={publishDialogOpen}
+        />
+      )}
+      {mode === "edit" && initialEvent && (
+        <DeleteEventDialog
+          eventId={initialEvent.id}
+          eventName={initialEvent.name}
+          onCancel={() => setDeleteDialogOpen(false)}
+          open={deleteDialogOpen}
         />
       )}
       {mode === "edit" && (
