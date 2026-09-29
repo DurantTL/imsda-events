@@ -4,7 +4,8 @@ vi.mock("server-only", () => ({}));
 const mocks = vi.hoisted(() => ({ getPrisma: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({ getPrisma: mocks.getPrisma }));
 
-import { backfillEventAudience, resolveEventAudienceBackfillMode } from "@/modules/events/audience-backfill";
+import { backfillEventAudience, hasClubRegistrationShape, resolveEventAudienceBackfillMode } from "@/modules/events/audience-backfill";
+import { getFormTemplate } from "@/modules/forms/definition";
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -97,5 +98,66 @@ describe("event audience backfill CLI mode (#481 review)", () => {
   it("writes only with --apply --force", () => {
     expect(resolveEventAudienceBackfillMode(["--apply", "--force"])).toBe("apply");
     expect(resolveEventAudienceBackfillMode(["--force"])).toBe("report");
+  });
+});
+
+describe("GENERAL church-billed starter events (#606)", () => {
+  function withForms(forms: Record<string, unknown[]>) {
+    const events = Object.keys(forms).map((id) => ({ id, name: id, billingMode: "DEFERRED_ORGANIZATION_INVOICE" as const, audience: "GENERAL" as const }));
+    const update = vi.fn(async (args: { where: { id: string } }) => args);
+    mocks.getPrisma.mockReturnValue({
+      event: {
+        findMany: vi.fn(async () => events.map((event) => ({ ...event, registrationForms: forms[event.id]!.map((definition) => ({ versions: [{ definition }] })) }))),
+        update,
+      },
+      $transaction: vi.fn(async (operations: Promise<unknown>[]) => Promise.all(operations)),
+    });
+    return update;
+  }
+
+  it("recognises the club shape only on a roster form with a club selector", () => {
+    expect(hasClubRegistrationShape(getFormTemplate("spring_camporee_export")!.definition)).toBe(true);
+    expect(hasClubRegistrationShape(getFormTemplate("honors_weekend")!.definition)).toBe(true);
+    expect(hasClubRegistrationShape(getFormTemplate("leadership_weekend")!.definition)).toBe(false);
+    expect(hasClubRegistrationShape(getFormTemplate("outdoor_school")!.definition)).toBe(false);
+    expect(hasClubRegistrationShape(null)).toBe(false);
+  });
+
+  it("neither reports nor flips Leadership Weekend or Outdoor School, but still lists a club-shaped event and one with no forms", async () => {
+    const update = withForms({
+      leadership: [getFormTemplate("leadership_weekend")!.definition],
+      school: [getFormTemplate("outdoor_school")!.definition],
+      camporee: [getFormTemplate("spring_camporee_export")!.definition],
+      unformed: [],
+    });
+    const report = await backfillEventAudience(true);
+    expect(report.rows.map((row) => row.id)).toEqual(["camporee", "unformed"]);
+    expect(update.mock.calls.map((call) => call[0].where.id)).toEqual(["camporee", "unformed"]);
+    // The skipped events are reported, not silently dropped.
+    expect(report.skipped.map((entry) => entry.id)).toEqual(["leadership", "school"]);
+    expect(report.skipped[0]!.reason).toContain("deliberately GENERAL");
+  });
+
+  it("finds the club selector by its directory source, not its key, and reads the published version over a newer draft", async () => {
+    const renamed = structuredClone(getFormTemplate("spring_camporee_export")!.definition);
+    for (const section of renamed.sections) for (const field of section.fields) if (field.key === "club_name") field.key = "our_pathfinder_club";
+    expect(hasClubRegistrationShape(renamed)).toBe(true);
+    const noSelector = structuredClone(getFormTemplate("spring_camporee_export")!.definition);
+    for (const section of noSelector.sections) for (const field of section.fields) if (field.optionSource === "CLUBS_DIRECTORY") delete field.optionSource;
+    expect(hasClubRegistrationShape(noSelector)).toBe(false);
+    const events = [{ id: "mixed", name: "mixed", billingMode: "DEFERRED_ORGANIZATION_INVOICE" as const, audience: "GENERAL" as const }];
+    mocks.getPrisma.mockReturnValue({
+      event: {
+        findMany: vi.fn(async () => events.map((event) => ({ ...event, registrationForms: [{ versions: [
+          { status: "DRAFT", definition: getFormTemplate("leadership_weekend")!.definition },
+          { status: "PUBLISHED", definition: getFormTemplate("spring_camporee_export")!.definition },
+        ] }] }))),
+        update: vi.fn(),
+      },
+      $transaction: vi.fn(),
+    });
+    const report = await backfillEventAudience(false);
+    expect(report.rows.map((row) => row.id)).toEqual(["mixed"]);
+    expect(report.skipped).toEqual([]);
   });
 });

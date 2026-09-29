@@ -9,6 +9,8 @@
  * club owes nothing while it stays that way.
  */
 
+import { resolveResponsibleOrganization } from "@/modules/forms/definition";
+
 export type ClubRegistrationStatus = "DRAFT" | "SUBMITTED" | "CONFIRMED" | "WAITLISTED" | "CANCELLED";
 
 export const CHURCH_BILLED_STATUSES: readonly ClubRegistrationStatus[] = ["SUBMITTED", "CONFIRMED"];
@@ -50,6 +52,12 @@ export type SponsoredCsvLine = {
 export const SPONSORED_PROMO_NOTE = "Church-sponsored promo code; billed to the church after the event, not paid online";
 
 export type ChurchAmountOwedRow = {
+  /**
+   * "INDIVIDUAL" for a registration on a church-billed event that has no club registration (#606: Leadership
+   * Weekend, Outdoor School). Its organization is the answer the form names (`resolveResponsibleOrganization`),
+   * `organizationName` is the registrant, and `churchId` is a key made from the organization's name. Absent for clubs.
+   */
+  kind?: "INDIVIDUAL";
   organizationId: string;
   organizationName: string;
   churchId: string | null;
@@ -71,6 +79,48 @@ export type ChurchSubtotal = {
   clubCount: number;
   amountOwedCents: number;
 };
+
+/** A registration that is not a club's, with what the church-owed report needs from it (#606). */
+export type IndividualOwedSource = {
+  id: string;
+  confirmationCode: string;
+  status: ClubRegistrationStatus;
+  totalAmountCents: number;
+  attendeeCount: number;
+  registrantName: string;
+  /** The registration-level answers, read only for the responsible organization. */
+  responses: Record<string, unknown>;
+  locationName?: string | null;
+};
+
+/** One report key per organization, whatever the capitalization or spacing the registrant typed. */
+export function organizationKey(name: string) {
+  return `named:${name.normalize("NFKC").replace(/\s+/g, " ").trim().toLocaleLowerCase("en-US")}`;
+}
+
+/**
+ * Report rows for the registrations of a church-billed event that has no club registrations (#606),
+ * grouped by the organization the form names: the church for Leadership Weekend (a "Not listed" church
+ * uses the text typed beside it), the school for Outdoor School. Same statuses and amounts as club rows.
+ */
+export function individualOwedRows(sources: readonly IndividualOwedSource[]): ChurchAmountOwedRow[] {
+  return sources.map((source) => {
+    const organization = resolveResponsibleOrganization(source.responses);
+    return {
+      kind: "INDIVIDUAL" as const,
+      organizationId: source.id,
+      organizationName: source.registrantName,
+      churchId: organization ? organizationKey(organization) : null,
+      churchName: organization,
+      confirmationCode: source.confirmationCode,
+      status: source.status,
+      attendeeCount: source.attendeeCount,
+      isBilled: isChurchBilledStatus(source.status),
+      amountOwedCents: churchOwedCents(source.status, source.totalAmountCents),
+      ...(source.locationName ? { locationName: source.locationName } : {}),
+    };
+  });
+}
 
 export function sortChurchAmountsOwed(rows: ChurchAmountOwedRow[]) {
   return [...rows].sort((left, right) => {
@@ -127,9 +177,11 @@ export function churchAmountsOwedCsvRows(
     subtotalByChurch.set(line.churchId, (subtotalByChurch.get(line.churchId) ?? 0) + line.amountCents);
   }
   const money = (cents: number) => (cents / 100).toFixed(2);
+  // Organization columns (#606) are relabeled only when some row is an individual registration, so a club event exports what it always did.
+  const hasIndividuals = rows.some((row) => row.kind === "INDIVIDUAL");
   const table: Array<Array<string | number>> = [[
-    "Church",
-    "Club",
+    hasIndividuals ? "Church or organization" : "Church",
+    hasIndividuals ? "Club or registrant" : "Club",
     "Confirmation code",
     "Status",
     "Billed to church",

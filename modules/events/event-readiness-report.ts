@@ -89,7 +89,7 @@ export async function collectEventReadinessReport(
     if (Number(registration.totalAmount) - paid > 0) registrationsWithBalanceDue += 1;
   }
 
-  const setupWarnings = await collectEventReadinessWarnings(prisma, event.id);
+  const setupWarnings = await collectEventReadinessWarnings(prisma, event.id, event.billingMode);
   const publishReadiness = getEventPublishReadiness({
     ...event,
     startsOn: event.startsAt.toISOString(),

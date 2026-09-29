@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { formTemplates as allFormTemplates, isBlankFormTemplateKey } from "@/modules/forms/definition";
 
-// The blank forms (#592) have no registrations to audit: this audit covers the eight fixture-backed templates.
-const formTemplates = allFormTemplates.filter((template) => !isBlankFormTemplateKey(template.key));
+// The blank forms (#592) and the #606 forms have no registrations to audit: this audit covers the fixture-backed templates.
+// The #606 forms send the same confirmation messages the audited forms do; they are excluded rather than given fixtures.
+const excludedFromAudit = ["leadership_weekend", "tlt_retreat", "outdoor_school", "hispanic_institute", "tlt_opportunities", "pathfinder_of_the_year", "tlt_of_the_year", "tlt_application", "conference_patches_pins"];
+const formTemplates = allFormTemplates.filter((template) => !isBlankFormTemplateKey(template.key) && !excludedFromAudit.includes(template.key));
 import {
   DEFAULT_MESSAGE_TEMPLATE_LIST,
   renderMessageTemplate,

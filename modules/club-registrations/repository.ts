@@ -55,6 +55,7 @@ import {
   amendRegistration,
   currentRegistrationAnswers,
   previewRegistrationAmendment,
+  storedRegistrationResponses,
   RegistrationAmendmentError,
   type AmendmentAttendeeServerOptions,
   type AmendmentServerOptions,
@@ -66,6 +67,7 @@ import {
   churchOwedCents,
   isChurchBilledStatus,
   sortChurchAmountsOwed,
+  individualOwedRows,
   type ChurchAmountOwedRow,
 } from "@/modules/club-registrations/church-owed";
 
@@ -333,7 +335,7 @@ export async function listChurchAmountsOwed(eventId: string, options: { location
       },
     },
   });
-  return sortChurchAmountsOwed(rows.map((row) => ({
+  const clubRows: ChurchAmountOwedRow[] = rows.map((row) => ({
     organizationId: row.organization.id,
     organizationName: row.organization.name,
     churchId: row.organization.parentOrganization?.id ?? null,
@@ -344,7 +346,42 @@ export async function listChurchAmountsOwed(eventId: string, options: { location
     isBilled: isChurchBilledStatus(row.registration.status),
     amountOwedCents: churchOwedCents(row.registration.status, moneyToCents(row.registration.totalAmount)),
     ...(row.registration.location ? { locationName: row.registration.location.name } : {}),
-  })));
+  }));
+  // A church-billed event whose registrations are not club registrations (#606: Leadership Weekend, Outdoor
+  // School) is reported by the organization each form names. Club events keep exactly the rows above.
+  // Only a GENERAL event: a CLUB event (Spring Camporee) keeps club rows only, whatever else is registered on it.
+  const event = await getPrisma().event.findUnique({ where: { id: eventId }, select: { billingMode: true, audience: true } });
+  if (event?.billingMode !== "DEFERRED_ORGANIZATION_INVOICE" || event.audience !== "GENERAL") return sortChurchAmountsOwed(clubRows);
+  const individuals = await getPrisma().registration.findMany({
+    where: {
+      eventId,
+      clubRegistration: null,
+      status: { in: ["SUBMITTED", "CONFIRMED", "WAITLISTED", "CANCELLED"] },
+      ...(options.locationId ? { locationId: options.locationId } : {}),
+    },
+    select: {
+      id: true,
+      confirmationCode: true,
+      status: true,
+      totalAmount: true,
+      location: { select: { name: true } },
+      accountHolderPerson: { select: { firstName: true, lastName: true } },
+      publicFormSubmission: { select: { responses: true } },
+      // The latest amendment's snapshot wins over the original answers, as in the amendment engine.
+      operations: { where: { type: "AMENDMENT" }, orderBy: { createdAt: "desc" }, take: 1, select: { afterSnapshot: true } },
+      _count: { select: { attendees: true } },
+    },
+  });
+  return sortChurchAmountsOwed([...clubRows, ...individualOwedRows(individuals.map((registration) => ({
+    id: registration.id,
+    confirmationCode: registration.confirmationCode,
+    status: registration.status,
+    totalAmountCents: moneyToCents(registration.totalAmount),
+    attendeeCount: registration._count.attendees,
+    registrantName: `${registration.accountHolderPerson.firstName} ${registration.accountHolderPerson.lastName}`.trim(),
+    responses: storedRegistrationResponses(registration),
+    locationName: registration.location?.name ?? null,
+  })))]);
 }
 
 export type ChurchAmountOwed = ChurchAmountOwedRow;

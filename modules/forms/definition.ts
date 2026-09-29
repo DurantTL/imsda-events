@@ -217,6 +217,14 @@ export const registrationFormDefinitionSchema = z.object({
     attendeeLabel: z.string().trim().min(2).max(40).default("Attendee"),
     addButtonLabel: z.string().trim().min(2).max(80).default("Add another attendee"),
   }).optional(),
+  /**
+   * At least one of these fields must be answered with something (#606): a positive number for a NUMBER
+   * field, any answer otherwise. For an order form whose every quantity may be left at 0 individually.
+   */
+  requireAtLeastOne: z.object({
+    fieldKeys: z.array(z.string().trim().min(2).max(60)).min(2).max(10),
+    message: z.string().trim().min(3).max(120),
+  }).optional(),
   payment: z.object({
     enabled: z.boolean(),
     currency: z.literal("USD").default("USD"),
@@ -291,6 +299,18 @@ export const registrationFormDefinitionSchema = z.object({
   const allFields = definition.sections.flatMap((section) => section.fields);
   if (allFields.filter((field) => field.optionSource === "ATTENDEE_TYPES").length > 1) {
     context.addIssue({ code: "custom", path: ["sections"], message: "A form can designate only one attendee-type selector." });
+  }
+  const requiredKeys = definition.requireAtLeastOne?.fieldKeys ?? [];
+  for (const key of requiredKeys) {
+    if (!fieldKeys.has(key)) context.addIssue({ code: "custom", path: ["requireAtLeastOne", "fieldKeys"], message: `Field ${key} is not configured.` });
+  }
+  // One scope only: a registration-level and an attendee-level answer are checked in different places.
+  const requiredScopes = new Set(requiredKeys.flatMap((key) => {
+    const found = definition.sections.flatMap((section) => section.fields).find((field) => field.key === key);
+    return found ? [found.scope] : [];
+  }));
+  if (requiredScopes.size > 1) {
+    context.addIssue({ code: "custom", path: ["requireAtLeastOne", "fieldKeys"], message: "The fields in an \"at least one\" rule must all apply to the registration, or all to each attendee." });
   }
   const paymentField = definition.payment ? allFields.find((field) => field.key === definition.payment?.paymentMethodFieldKey) : null;
   if (definition.payment && !paymentField) context.addIssue({ code: "custom", path: ["payment", "paymentMethodFieldKey"], message: "Payment settings must reference a configured payment-method field." });
@@ -596,11 +616,18 @@ export function isBlankFormTemplateKey(key: string) {
  * The template picker's list for one event (#592): the blank form that fits
  * the event's audience first (shown as "Blank form"), the other audience's
  * blank form left out, then the remaining templates in their given order.
+ * On a church-billed event (#606) a template that collects card payment is
+ * left out too: a deferred-billing event refuses a form with payment enabled.
  */
-export function templatesForPicker<T extends { key: string; name: string }>(templates: T[], eventAudience: string | null | undefined): T[] {
+export function templatesForPicker<T extends { key: string; name: string; collectsPayment?: boolean }>(
+  templates: T[],
+  eventAudience: string | null | undefined,
+  billingMode?: string | null,
+): T[] {
   const blankKey = blankFormTemplateKey(eventAudience);
   const blank = templates.find((template) => template.key === blankKey);
-  const rest = templates.filter((template) => !isBlankFormTemplateKey(template.key));
+  const churchBilled = billingMode === "DEFERRED_ORGANIZATION_INVOICE";
+  const rest = templates.filter((template) => !isBlankFormTemplateKey(template.key) && !(churchBilled && template.collectsPayment));
   return blank ? [{ ...blank, name: "Blank form" }, ...rest] : rest;
 }
 
@@ -1039,6 +1066,410 @@ function buildFallCamporeeTemplate(spring: FormTemplate): FormTemplate {
   if (springIndex >= 0) formTemplates.splice(springIndex + 1, 0, buildFallCamporeeTemplate(formTemplates[springIndex]!));
 }
 
+/**
+ * The 2026 Fluent Forms turned into templates (#606). Four are the forms of
+ * event starters (Leadership Weekend, TLT Retreat, Outdoor School, Hispanic
+ * Institute of Evangelism); three are add-on forms picked from the builder's
+ * template list (TLT Opportunities and the two "of the Year" nominations).
+ *
+ * Conventions: club and church answers come from the directories (with the
+ * "Not listed" fallback and a text field), names are first/last name or the
+ * `contact_name` full-name key, email and phone use the ordinary `email` and
+ * `phone` keys. Nothing asks about driving, and nothing collects medical
+ * details. Prices are the 2026 amounts, only where the pricing features express
+ * them; a fee with no known amount is left unset so readiness flags it.
+ */
+const directoryClub = (prefix: string, key: string, label: string, extra: Partial<RegistrationFormField> = {}) => [
+  templateField(`${prefix}_club`, key, label, "SELECT", true, [], { optionSource: "CLUBS_DIRECTORY", ...extra }),
+  templateField(`${prefix}_club_other`, `${key}_other`, `${label} — not listed`, "TEXT", true, [], { conditional: { fieldKey: key, operator: "EQUALS", value: DIRECTORY_NOT_LISTED_VALUE } }),
+];
+
+const directoryChurch = (prefix: string) => [
+  templateField(`${prefix}_church`, "church_name", "Home church", "SELECT", true, [], { optionSource: "CHURCHES_DIRECTORY" }),
+  templateField(`${prefix}_church_other`, "church_name_other", "Home church — not listed", "TEXT", true, [], { conditional: { fieldKey: "church_name", operator: "EQUALS", value: DIRECTORY_NOT_LISTED_VALUE } }),
+];
+
+const attendeeName = (prefix: string) => [
+  templateField(`${prefix}_first`, "first_name", "First name", "TEXT", true, [], { scope: "ATTENDEE" }),
+  templateField(`${prefix}_last`, "last_name", "Last name", "TEXT", true, [], { scope: "ATTENDEE" }),
+];
+
+const leadershipTracks = ["Basic Staff Training Certification", "Spanish Basic Staff Training", "Master Guide", "New Directors", "Pathfinder Directors", "Pathfinder Counselor Jumpstart", "TLT Class for Directors", "N/A"];
+
+const leadershipWeekendTemplate: FormTemplate = {
+  key: "leadership_weekend",
+  name: "Pathfinder Leadership Weekend",
+  description: "Leader information, training track, lodging and meals with early-bird pricing, and the church-billing agreement. Individuals register; their church is billed after the event.",
+  audience: "Individual",
+  definition: {
+    title: "Pathfinder Leadership Weekend registration",
+    description: "Location: Camp Heritage. Due September 1; early bird discount until August 24.",
+    confirmationMessage: "Your Leadership Weekend registration has been received. Your church will be billed for lodging and meals after the event.",
+    sections: [
+      { id: "lw_info", title: "Your information", description: "Tell us who is attending and which club and church you serve with.", fields: [
+        ...attendeeName("lw"),
+        templateField("lw_gender", "gender", "Gender", "RADIO", true, ["Male", "Female"], { scope: "ATTENDEE" }),
+        templateField("lw_email", "email", "Email", "EMAIL", true),
+        templateField("lw_position", "club_position", "Club position", "TEXT", true),
+        templateField("lw_phone", "phone", "Mobile phone", "PHONE", true),
+        templateField("lw_years", "years_as_leader", "Years as a leader", "NUMBER", true, [], { ageBounds: { minimumAge: 0, maximumAge: 100 } }),
+        ...directoryClub("lw", "pathfinder_club", "Pathfinder club"),
+        ...directoryChurch("lw"),
+        templateField("lw_address", "mailing_address", "Mailing address", "ADDRESS", false),
+      ] },
+      { id: "lw_training", title: "Training track", description: "Choose the class track you will attend.", fields: [
+        templateField("lw_track", "training_track", "Track", "RADIO", true, leadershipTracks, { scope: "ATTENDEE", helpText: "Duplicate leadership classes in two different tracks attended within a 3-year period only have to be attended one time. You must show proof of attendance to an Area Coordinator." }),
+        templateField("lw_inducted", "induction", "Would you like to be inducted?", "RADIO", true, ["Yes", "No"], { scope: "ATTENDEE" }),
+        templateField("lw_teaching", "teaching_class", "Will you be teaching a class?", "RADIO", true, ["Yes", "No"], { scope: "ATTENDEE" }),
+      ] },
+      { id: "lw_lodging", title: "Lodging & meals", description: "Classes start Friday 7:00 p.m.; Vespers 8:15 p.m. Camping has bathhouse facilities and RV hookups. Youth cabins have A/C and heat. Bring your own bedding and towels. No pets are allowed at Camp Heritage. Please bring your manuals for updates.", fields: [
+        templateField("lw_lodging_choice", "lodging", "Lodging", "RADIO", true, ["Tent or Camper", "Youth Cabin", "Child under 10"], {
+          scope: "ATTENDEE",
+          helpText: "Early-bird prices apply until August 24; regular prices start August 24.",
+          choicePricesCents: { "Tent or Camper": 2500, "Youth Cabin": 3500, "Child under 10": 2500 },
+          latePricing: { startsOn: "2026-08-24", label: "Regular pricing", choicePricesCents: { "Tent or Camper": 3500, "Youth Cabin": 4500 } },
+        }),
+        templateField("lw_room_with", "room_with", "I would like to room with", "TEXT", false, [], { scope: "ATTENDEE" }),
+        templateField("lw_meals", "meals", "Meals", "MULTISELECT", false, ["Friday Supper", "Sabbath Breakfast", "Sabbath Lunch", "Sabbath Supper", "Sunday Breakfast"], { scope: "ATTENDEE", helpText: "All meals are vegetarian." }),
+        templateField("lw_dietary", "dietary_needs", "Dietary needs", "MULTISELECT", false, ["Vegan", "Gluten Free"], { scope: "ATTENDEE" }),
+      ] },
+      { id: "lw_agreement", title: "Agreement", description: "Confirm before submitting.", fields: [
+        templateField("lw_billing_ack", "church_billing_acknowledgment", "Church billing", "CHECKBOX", true, [], { placeholder: "I understand my church will be billed for lodging and meals after the event." }),
+      ] },
+    ],
+  },
+};
+
+const areaCoordinatorExcused = { fieldKey: "tlt_year", operator: "EQUALS", value: "Area Coordinator/Teacher" } as const;
+
+const tltRetreatTemplate: FormTemplate = {
+  key: "tlt_retreat",
+  name: "TLT Retreat",
+  description: "Participant, TLT year, club and director, dietary choice, and the retreat acknowledgments. No fees. One form for both the spring and fall retreats.",
+  audience: "Individual",
+  definition: {
+    title: "TLT Retreat registration",
+    description: "Register once for the TLT Retreat. There is no registration fee.",
+    confirmationMessage: "Your TLT Retreat registration has been received. Check your email for details.",
+    sections: [
+      { id: "tr_participant", title: "Participant", description: "", fields: [
+        ...attendeeName("tr"),
+        templateField("tr_email", "email", "Participant email", "EMAIL", true),
+        templateField("tr_year", "tlt_year", "TLT year", "RADIO", true, ["Year 1", "Year 2", "Year 3", "Year 4", "Staff/Chaperone", "Area Coordinator/Teacher"]),
+      ] },
+      { id: "tr_club", title: "Club & director", description: "Area Coordinators and teachers may leave the club and director questions blank.", fields: [
+        ...directoryClub("tr", "club_name", "Pathfinder club", { optionalWhen: areaCoordinatorExcused }),
+        templateField("tr_director", "club_director_name", "Club director name", "TEXT", true, [], { optionalWhen: areaCoordinatorExcused }),
+        templateField("tr_director_email", "club_director_email", "Club director email", "EMAIL", true, [], { optionalWhen: areaCoordinatorExcused }),
+      ] },
+      { id: "tr_dietary", title: "Dietary needs", description: "", fields: [
+        templateField("tr_diet", "dietary_needs", "Dietary needs", "RADIO", true, ["Vegan", "Gluten Free", "Both", "Neither"], { scope: "ATTENDEE" }),
+      ] },
+      { id: "tr_acknowledgments", title: "Acknowledgments", description: "Each participant confirms these before submitting.", fields: [
+        templateField("tr_recommendations", "recommendation_forms", "I have registered and submitted three recommendation forms.", "RADIO", false, ["Yes", "N/A"], { helpText: "Spring retreat only. Leave blank at the fall retreat." }),
+        templateField("tr_application_ack", "application_approved_acknowledgment", "Application approved", "CHECKBOX", true, [], { placeholder: "I understand that to attend the retreat I need to have completed my application and been approved." }),
+        templateField("tr_health_ack", "health_record_acknowledgment", "Health record on file", "CHECKBOX", true, [], { placeholder: "I have a health record on file with my club and will bring a copy with me." }),
+        templateField("tr_chaperone_ack", "chaperone_acknowledgment", "Attending with a chaperone", "CHECKBOX", true, [], { placeholder: "I will be attending with a staff member or chaperone from my club." }),
+      ] },
+    ],
+  },
+};
+
+const outdoorSchoolTemplate: FormTemplate = {
+  key: "outdoor_school",
+  name: "Outdoor School",
+  description: "School and contact, sponsors, a student roster, food and logistics, and the What to Bring reminder. The school is billed after the event; the fee has no amount set.",
+  audience: "School group",
+  definition: {
+    title: "Outdoor School registration",
+    description: "Location: Camp Heritage. The school will be billed for fees after the event. Please submit this registration by the deadline.",
+    confirmationMessage: "Your Outdoor School registration has been received. The school will be billed for fees after the event.",
+    attendeeRoster: { enabled: true, minAttendees: 1, maxAttendees: 50, attendeeLabel: "Student", addButtonLabel: "Add another student" },
+    sections: [
+      { id: "os_school", title: "School & contact", description: "The school named here is the one billed after the event.", fields: [
+        templateField("os_school_name", "responsible_organization", "School name", "TEXT", true),
+        templateField("os_contact", "contact_name", "Registering teacher or contact name", "TEXT", true, [], { helpText: "First and last name." }),
+        templateField("os_email", "email", "Contact email", "EMAIL", true),
+        templateField("os_phone", "phone", "Contact phone", "PHONE", true),
+      ] },
+      { id: "os_sponsors", title: "Sponsors", description: "Your school must provide both a male and a female sponsor if you have both boys and girls. If that isn't possible, you may ask another school whether their sponsor will be responsible for your students in the boys' or girls' cabins.", fields: [
+        templateField("os_male_1", "male_sponsor_1", "Male Sponsor 1", "TEXT"),
+        templateField("os_male_2", "male_sponsor_2", "Male Sponsor 2", "TEXT"),
+        templateField("os_female_1", "female_sponsor_1", "Female Sponsor 1", "TEXT"),
+        templateField("os_female_2", "female_sponsor_2", "Female Sponsor 2", "TEXT"),
+      ] },
+      { id: "os_students", title: "Students", description: "Add each student once, using full first and last names.", fields: [
+        ...attendeeName("os"),
+        templateField("os_age", "attendee_age", "Age", "NUMBER", true, [], { scope: "ATTENDEE" }),
+        templateField("os_gender", "gender", "Gender", "RADIO", true, ["Male", "Female"], { scope: "ATTENDEE" }),
+        templateField("os_fee", "registration_fee", "Outdoor School fee", "CALCULATED", false, [], { scope: "ATTENDEE" }),
+      ] },
+      { id: "os_food", title: "Food & logistics", description: "", fields: [
+        templateField("os_dietary", "dietary_needs", "Dietary needs", "LONG_TEXT", false, [], { helpText: "Vegetarian meals will be provided." }),
+        templateField("os_sack_lunches", "sack_lunches_thursday", "Number of sack lunches needed for Thursday", "NUMBER", false),
+      ] },
+      { id: "os_before", title: "Before you come", description: "Please review the What to Bring list.", fields: [
+        templateField("os_bring_ack", "what_to_bring_reviewed", "What to Bring list", "CHECKBOX", false, [], { placeholder: "I have reviewed the What to Bring list." }),
+      ] },
+    ],
+  },
+};
+
+const hispanicInstituteTemplate: FormTemplate = {
+  key: "hispanic_institute",
+  name: "Hispanic Institute of Evangelism",
+  description: "Attendee and church, the $50 semester registration (2026 price), and card payment with the platform's card fee. Use on an attendee-pay event.",
+  audience: "Individual",
+  definition: {
+    title: "Hispanic Institute of Evangelism registration",
+    description: "Register for the semester, January to June.",
+    confirmationMessage: "Your Hispanic Institute of Evangelism registration has been received. Check your email for payment details.",
+    payment: { enabled: true, currency: "USD", paymentMethodFieldKey: "payment_method", cardOptionValue: "Credit / debit card", percentageBasisPoints: 290, fixedFeeCents: 30, passFeeToRegistrant: true },
+    sections: [
+      { id: "hi_attendee", title: "Attendee", description: "", fields: [
+        ...attendeeName("hi"),
+        ...directoryChurch("hi"),
+        templateField("hi_position", "church_position", "Position in church", "TEXT", true),
+        templateField("hi_phone", "phone", "Phone", "PHONE", true),
+        templateField("hi_email", "email", "Email", "EMAIL", true),
+      ] },
+      { id: "hi_semester", title: "Semester registration", description: "", fields: [
+        templateField("hi_fee", "registration_fee", "Semester registration, January to June", "CALCULATED", false, [], { scope: "ATTENDEE", priceCents: 5000 }),
+      ] },
+      { id: "hi_payment", title: "Payment & comments", description: "Card payments include the configured processing fee.", stepLabel: "Payment", isReviewStep: true, fields: [
+        templateField("hi_pay", "payment_method", "Payment option", "RADIO", true, ["Pay later", "Credit / debit card"]),
+        templateField("hi_comments", "comments", "Comments", "LONG_TEXT", false),
+      ] },
+    ],
+  },
+};
+
+const tltSetupOpportunity = "Come early to set up campsites, fire rings, decorations, chairs/pavilion and trash barrels";
+const tltOfficeOpportunity = "Help in the office for 1 hour with registration (Thu 3–6 PM)";
+const tltPraiseTeamOpportunity = "Be on the praise team";
+const tltLeadershipOpportunities = [
+  tltSetupOpportunity,
+  "Take pictures during camporee (bring your own camera)",
+  tltOfficeOpportunity,
+  "Call Pathfinders to attention and give and receive the flag for flag raising/lowering",
+  "Lead the Pathfinder Song (English or Spanish)",
+  "Play drums and lead the clubs to the flag at flag raising/lowering",
+  "Play taps or reveille at flag raising/lowering",
+  "Give out prizes after the flag ceremony",
+  "Direct clubs where to stand for flag raising/lowering",
+  "Ring the bell 10 minutes before each activity",
+  "Read a cool fact about the flag at Saturday flag lowering",
+  "Be MC at vespers, Sabbath School, Sabbath afternoon skits and worship",
+  tltPraiseTeamOpportunity,
+  "Score events in the office (Friday 4 PM)",
+  "Be on the campsite inspection team (Friday 5 PM)",
+  "Friday night trash removal before sunset",
+  "Be on the uniform inspection team Saturday morning",
+  "Pass out awards and trophies Saturday night",
+  "Help with games Saturday night",
+  "Town Crier",
+  "Clean up Sunday morning",
+];
+const tltFridayMorningEvents = ["Lest We Forget matching game", "Marching out west blindfolded", "Canoe or duct tape boat races", "Build a fire without matches", "Which way is West", "Two-man saw", "Surprise"];
+const tltOregonTrailStations = [
+  "Bank and General Store",
+  "Newspaper Office (need someone with a camera)",
+  "Robber",
+  "Archery",
+  "Worship (say memory verses)",
+  "Log in the road",
+  "Injured family member (patch up a broken arm)",
+  "Trade with the Native Americans",
+  "Old-fashioned hoop game",
+  "Fishing at the gaga ball pit",
+  "Panning for gold",
+  "Meet at the flag pole to add up scores",
+];
+const tltShirtTypes = ["Polo", "T-Shirt"];
+const tltShirtSizes = ["Adult S", "Adult M", "Adult L", "Adult XL", "Adult 2XL"];
+const tltMeetingNote = "There will be a meeting Thursday night in the Lodge right after activities to go over the schedule.";
+
+const tltOpportunitiesTemplate: FormTemplate = {
+  key: "tlt_opportunities",
+  name: "TLT Opportunities",
+  description: "Add-on form for Spring Camporee: TLT sign-up for leadership opportunities, Friday events and the Oregon Trail, and TLT shirts. No fees.",
+  audience: "Individual",
+  definition: {
+    title: "TLT Opportunities",
+    description: "Dear TLT, we need your help to make this the best camporee ever. Please sign up for any areas that interest you, and get approval from your director before submitting.",
+    confirmationMessage: `Thank you for signing up. ${tltMeetingNote}`,
+    sections: [
+      { id: "to_details", title: "TLT details", description: "", fields: [
+        ...attendeeName("to"),
+        ...directoryClub("to", "club_name", "Pathfinder club"),
+        templateField("to_email", "email", "Email", "EMAIL", true),
+        templateField("to_phone", "phone", "Phone", "PHONE", true),
+      ] },
+      { id: "to_leadership", title: "Leadership opportunities", description: "Choose every area you would like to help with.", fields: [
+        templateField("to_opportunities", "leadership_opportunities", "Leadership opportunities", "MULTISELECT", false, tltLeadershipOpportunities, {
+          optionDescriptions: { [tltSetupOpportunity]: "Thursday breakfast and lunch are provided; you can sleep in the cabins Wednesday night." },
+        }),
+        templateField("to_office_arrival", "office_arrival_time", "If helping in the office, arrival time?", "TEXT", true, [], { conditional: { fieldKey: "leadership_opportunities", operator: "INCLUDES", value: tltOfficeOpportunity } }),
+        templateField("to_praise_role", "praise_team_role", "Praise team role", "TEXT", true, [], { conditional: { fieldKey: "leadership_opportunities", operator: "INCLUDES", value: tltPraiseTeamOpportunity } }),
+      ] },
+      { id: "to_friday", title: "Friday events", description: "Optional. Choose the events you would like to help with.", fields: [
+        templateField("to_friday_morning", "friday_morning_events", "Friday morning events (9–12)", "MULTISELECT", false, tltFridayMorningEvents),
+        templateField("to_oregon_trail", "oregon_trail_stations", "Friday afternoon Oregon Trail (2–4)", "MULTISELECT", false, tltOregonTrailStations),
+      ] },
+      { id: "to_shirt", title: "Shirt & meeting", description: tltMeetingNote, fields: [
+        templateField("to_need_shirt", "need_tlt_shirt", "Need a TLT shirt?", "RADIO", true, ["Yes", "No"], { scope: "ATTENDEE" }),
+        templateField("to_shirt_type", "shirt_type", "Shirt type", "RADIO", true, tltShirtTypes, { scope: "ATTENDEE", conditional: { fieldKey: "need_tlt_shirt", operator: "EQUALS", value: "Yes" } }),
+        templateField("to_shirt_size", "shirt_size", "Shirt size", "SELECT", true, tltShirtSizes, { scope: "ATTENDEE", conditional: { fieldKey: "need_tlt_shirt", operator: "EQUALS", value: "Yes" } }),
+        templateField("to_trade_in", "trading_in_old_shirt", "Trading in an old shirt?", "RADIO", true, ["Yes", "No"], { scope: "ATTENDEE" }),
+        templateField("to_trade_type", "trade_in_shirt_type", "Old shirt type", "RADIO", true, tltShirtTypes, { scope: "ATTENDEE", conditional: { fieldKey: "trading_in_old_shirt", operator: "EQUALS", value: "Yes" } }),
+        templateField("to_trade_size", "trade_in_shirt_size", "Old shirt size", "SELECT", true, tltShirtSizes, { scope: "ATTENDEE", conditional: { fieldKey: "trading_in_old_shirt", operator: "EQUALS", value: "Yes" } }),
+      ] },
+    ],
+  },
+};
+
+/** The Pathfinder of the Year and TLT of the Year nominations share one shape (#606). */
+function buildYearNominationTemplate(kind: "Pathfinder" | "TLT"): FormTemplate {
+  const prefix = kind === "Pathfinder" ? "poy" : "toy";
+  const classes = ["Friend", "Friend Adv", "Companion", "Companion Adv", "Explorer", "Explorer Adv", ...(kind === "Pathfinder" ? ["Ranger", "Ranger Adv"] : [])];
+  const essay = (id: string, key: string, label: string) => templateField(`${prefix}_${id}`, key, label, "LONG_TEXT", true);
+  return {
+    key: kind === "Pathfinder" ? "pathfinder_of_the_year" : "tlt_of_the_year",
+    name: `${kind} of the Year nomination`,
+    description: `Nominee, attendance, classes, Good Conduct Award, and five essay questions for the ${kind} of the Year award. No fees.`,
+    audience: "Individual",
+    definition: {
+      title: `${kind} of the Year nomination`,
+      description: `Nominate a ${kind} for ${kind} of the Year.`,
+      confirmationMessage: `Your ${kind} of the Year nomination has been received. Thank you.`,
+      sections: [
+        { id: `${prefix}_nominee`, title: "Nominee", description: "", fields: [
+          templateField(`${prefix}_nominee_name`, "nominee_name", `Name of the ${kind} nominated`, "TEXT", true),
+          ...directoryClub(prefix, "club_name", "Pathfinder club"),
+          templateField(`${prefix}_nominated_by`, "contact_name", "Nominated by", "TEXT", true, [], { helpText: "First and last name." }),
+          templateField(`${prefix}_email`, "email", "Your email", "EMAIL", true, [], { helpText: "A confirmation is sent here." }),
+          templateField(`${prefix}_age`, "nominee_age", "Age as of May 1 of the current year", "NUMBER", true, [], { ageBounds: { minimumAge: 0, maximumAge: 120 } }),
+        ] },
+        { id: `${prefix}_record`, title: "Attendance, classes & conduct", description: "", fields: [
+          templateField(`${prefix}_attendance`, "meeting_attendance", "Attendance at Pathfinder meetings", "SELECT", true, ["80%", "85%", "90%", "95%", "100%"]),
+          templateField(`${prefix}_classes`, "classes_completed", "Classes completed", "MULTISELECT", false, classes),
+          templateField(`${prefix}_conduct`, "good_conduct_award", "Good Conduct Award", "RADIO", true, ["Yes", "No"]),
+          templateField(`${prefix}_conduct_years`, "good_conduct_years", "How many years?", "NUMBER", true, [], { conditional: { fieldKey: "good_conduct_award", operator: "EQUALS", value: "Yes" } }),
+        ] },
+        { id: `${prefix}_essays`, title: "Essay questions", description: "Answer each question in your own words.", fields: [
+          essay("essay_a", "essay_honor", "A. Honor completed and how the knowledge was applied"),
+          essay("essay_b", "essay_service", "B. Community service projects and responsibilities"),
+          essay("essay_c", "essay_talents", `C. How is this ${kind} using God-given talents?`),
+          essay("essay_d", "essay_serving", `D. How is this ${kind} serving their club or church?`),
+          essay("essay_e", "essay_why", `E. Why should this ${kind} be ${kind} of the Year?`),
+        ] },
+      ],
+    },
+  };
+}
+
+const tltApplicationTemplate: FormTemplate = {
+  key: "tlt_application",
+  name: "TLT Application",
+  description: "Add-on form: the Conference TLT application with personal and club information, three application questions, and two required acknowledgments. No fees.",
+  audience: "Individual",
+  definition: {
+    title: "TLT Application",
+    description: "Iowa-Missouri Conference Pathfinders. Apply for the Conference TLT Program.",
+    confirmationMessage: "Your TLT application has been received. Thank you.",
+    sections: [
+      { id: "ta_personal", title: "Personal information", description: "", fields: [
+        templateField("ta_full_name", "full_name", "Full name", "TEXT", true, [], { helpText: "First and last name." }),
+        templateField("ta_email", "email", "Email", "EMAIL", true),
+        templateField("ta_grade", "grade_coming_school_year", "Grade in the coming school year", "TEXT", true),
+        templateField("ta_address", "mailing_address", "Address", "ADDRESS", true),
+        templateField("ta_gender", "gender", "Gender", "RADIO", true, ["Male", "Female"]),
+      ] },
+      { id: "ta_club", title: "Club information", description: "", fields: [
+        ...directoryClub("ta", "club_name", "Pathfinder club"),
+        templateField("ta_years_in_club", "years_in_club", "Number of years in the club", "NUMBER", true, [], { ageBounds: { minimumAge: 0, maximumAge: 100 } }),
+        templateField("ta_director", "club_director_name", "Director's name", "TEXT", true),
+        templateField("ta_director_email", "club_director_email", "Director's email", "EMAIL", true),
+        templateField("ta_meal", "meal_preference", "Meal preferences", "SELECT", true, ["Vegan", "Gluten Free", "Both", "Neither"]),
+        templateField("ta_previous_years", "previous_conference_tlt_years", "How many years previous have you been a Conference TLT?", "NUMBER", true, [], { ageBounds: { minimumAge: 0, maximumAge: 100 } }),
+      ] },
+      { id: "ta_questions", title: "Application questions", description: "Please answer each question thoughtfully and in your own words.", fields: [
+        templateField("ta_why", "why_conference_tlt", "Why do you wish to be a part of the Conference TLT Program?", "LONG_TEXT", true),
+        templateField("ta_purpose_pathfinders", "purpose_of_pathfinders", "In your opinion, what is the purpose of Pathfinders?", "LONG_TEXT", true),
+        templateField("ta_purpose_tlt", "purpose_of_tlt_program", "In your opinion, what is the purpose of the TLT Program?", "LONG_TEXT", true),
+      ] },
+      { id: "ta_acknowledgments", title: "Acknowledgments", description: "Both are required before submitting.", fields: [
+        templateField("ta_accuracy_ack", "accuracy_acknowledgment", "Accuracy and commitment", "CHECKBOX", true, [], { placeholder: "I affirm that the information above is accurate and I am committed to participating in the TLT Program." }),
+        templateField("ta_approval_ack", "application_approved_acknowledgment", "Application approval", "CHECKBOX", true, [], { placeholder: "I understand that to attend the retreat, I need to have completed my application and have been approved." }),
+      ] },
+    ],
+  },
+};
+
+// Quantity times unit price is expressible: a NUMBER field with `priceCents` charges quantity x price, and the
+// registration total is the sum of the lines, so the three prices below are set (2026 sheet) and no total field is needed.
+const quantityBounds = { minimumAge: 0, maximumAge: 1000 };
+const conferencePatchesTemplate: FormTemplate = {
+  key: "conference_patches_pins",
+  name: "Conference shoulder patches and pins order",
+  description: "Add-on form: an order for Pathfinder and Adventurer shoulder patches and the Conference pin at the 2026 unit prices, with card payment. Postage not included. Use on an attendee-pay event.",
+  audience: "Individual",
+  definition: {
+    title: "Conference shoulder patches and pins order",
+    description: "Postage not included.",
+    confirmationMessage: "Your order has been received. Postage is not included. Check your email for payment details.",
+    payment: { enabled: true, currency: "USD", paymentMethodFieldKey: "payment_method", cardOptionValue: "Credit / debit card", percentageBasisPoints: 290, fixedFeeCents: 30, passFeeToRegistrant: true },
+    requireAtLeastOne: { fieldKeys: ["pathfinder_shoulder_patch_quantity", "pathfinder_conference_pin_quantity", "adventurer_shoulder_patch_quantity"], message: "Order at least one item." },
+    sections: [
+      { id: "cp_orderer", title: "Orderer", description: "", fields: [
+        templateField("cp_name", "contact_name", "Name", "TEXT", true, [], { helpText: "First and last name." }),
+        templateField("cp_email", "email", "Email", "EMAIL", true),
+        ...directoryClub("cp", "club_name", "Club name"),
+        templateField("cp_address", "mailing_address", "Mailing address", "ADDRESS", true),
+      ] },
+      { id: "cp_order", title: "Order", description: "Enter how many of each you want. The total is worked out for you. Postage not included.", fields: [
+        templateField("cp_exchange", "patches_to_exchange", "Pathfinder shoulder patch to exchange", "NUMBER", false, [], { ageBounds: quantityBounds }),
+        templateField("cp_pf_patch", "pathfinder_shoulder_patch_quantity", "Pathfinder Shoulder Patch", "NUMBER", false, [], { ageBounds: quantityBounds, priceCents: 125, helpText: "$1.25 each. 2 3/8 in H × 3 1/2 in W" }),
+        templateField("cp_pin", "pathfinder_conference_pin_quantity", "Pathfinder Conference Pin", "NUMBER", false, [], { ageBounds: quantityBounds, priceCents: 275, helpText: "$2.75 each. Colorful 1½ inch epoxy pin on gold metal" }),
+        templateField("cp_adv_patch", "adventurer_shoulder_patch_quantity", "Adventurer Shoulder Patch", "NUMBER", false, [], { ageBounds: quantityBounds, priceCents: 225, helpText: "$2.25 each. 2 in H × 3.13 in W" }),
+      ] },
+      { id: "cp_payment", title: "Payment", description: "Card payments include the configured processing fee. Postage not included.", stepLabel: "Payment", isReviewStep: true, fields: [
+        templateField("cp_pay", "payment_method", "Payment option", "RADIO", true, ["Pay later", "Credit / debit card"]),
+      ] },
+    ],
+  },
+};
+
+formTemplates.splice(
+  formTemplates.findIndex((template) => template.key === "honors_weekend") + 1,
+  0,
+  leadershipWeekendTemplate,
+  tltRetreatTemplate,
+  outdoorSchoolTemplate,
+  hispanicInstituteTemplate,
+  tltOpportunitiesTemplate,
+  buildYearNominationTemplate("Pathfinder"),
+  buildYearNominationTemplate("TLT"),
+  tltApplicationTemplate,
+  conferencePatchesTemplate,
+);
+
+/**
+ * Drops keys from the "at least one" rule (#606) that no longer name a field, and the rule itself once fewer
+ * than two remain, so removing or renaming a referenced field never leaves a definition that cannot be saved.
+ */
+export function pruneRequireAtLeastOne<T extends { requireAtLeastOne?: { fieldKeys: string[]; message: string }; sections: ReadonlyArray<{ fields: ReadonlyArray<{ key: string }> }> }>(definition: T): T {
+  const rule = definition.requireAtLeastOne;
+  if (!rule) return definition;
+  const existing = new Set(definition.sections.flatMap((section) => section.fields.map((field) => field.key)));
+  const fieldKeys = rule.fieldKeys.filter((key) => existing.has(key));
+  if (fieldKeys.length === rule.fieldKeys.length) return definition;
+  if (fieldKeys.length >= 2) return { ...definition, requireAtLeastOne: { ...rule, fieldKeys } };
+  const rest = { ...definition };
+  delete rest.requireAtLeastOne;
+  return rest;
+}
+
 export function getFormTemplate(key: string) {
   return formTemplates.find((template) => template.key === key) ?? null;
 }
@@ -1388,6 +1819,15 @@ export function validateTestResponses(
           if (limit && current >= limit) issues.push({ fieldId: field.id, key: field.key, message: `${selection} has reached its limit of ${limit}.` });
         }
       }
+    }
+  }
+  const atLeastOne = definition.requireAtLeastOne;
+  if (atLeastOne) {
+    const referenced = definition.sections.flatMap((section) => section.fields).filter((field) => atLeastOne.fieldKeys.includes(field.key));
+    const inScope = referenced.filter((field) => (!scope || field.scope === scope) && !ignoredFieldKeys.has(field.key));
+    const answered = inScope.some((field) => (field.type === "NUMBER" ? Number(responses[field.key]) > 0 : hasValue(responses[field.key])));
+    if (inScope.length > 0 && inScope.length === referenced.length && !answered) {
+      issues.push({ fieldId: inScope[0]!.id, key: inScope[0]!.key, message: atLeastOne.message });
     }
   }
   return { isValid: issues.length === 0, issues };

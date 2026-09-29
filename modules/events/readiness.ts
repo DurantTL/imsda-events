@@ -211,3 +211,19 @@ export function getFeeWarnings(unpricedLabels: readonly string[]): EventReadines
     detail: "No amount is set. Choose the fee in the registration builder before publishing.",
   }));
 }
+
+/**
+ * A form that takes card payment on a church-billed event (#606): the public form refuses to submit
+ * there, so say why up front. `formTitles` are the titles of the attached forms with payment enabled.
+ */
+export function getPaymentOnChurchBilledWarnings(
+  billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE" | null | undefined,
+  formTitles: readonly string[],
+): EventReadinessWarning[] {
+  if (billingMode !== "DEFERRED_ORGANIZATION_INVOICE") return [];
+  return [...new Set(formTitles)].map((title) => ({
+    id: `payment-on-church-billed:${title}`,
+    label: `${title} collects payment on a church-billed event`,
+    detail: "This event bills the church or organization later, so a form with card payment cannot be submitted. Turn payment off on the form, or change the event to attendee pay.",
+  }));
+}
