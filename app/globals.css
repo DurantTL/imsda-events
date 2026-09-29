@@ -7738,12 +7738,12 @@ select:focus-visible {
 .check-in-book-filters fieldset label { display: flex; align-items: center; gap: 5px; }
 .check-in-book-page { break-after: page; border: 1px solid #cfdde4; border-radius: 16px; background: white; padding: 22px; box-shadow: 0 8px 24px rgba(27, 55, 68, .06); }
 .check-in-book-page:last-child { break-after: auto; }
-.check-in-book-header { border-bottom: 3px solid var(--imsda-purple); padding-bottom: 8px; margin-bottom: 10px; }
-.check-in-book-header h3 { margin: 0 0 2px; font-size: 1.1rem; }
-.check-in-book-header p { margin: 0; font-size: 0.72rem; }
-.check-in-book-camping { display: flex; flex-wrap: wrap; gap: 4px 22px; margin-top: 4px !important; font-size: 0.8rem !important; }
 .check-in-book-page table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
 .check-in-book-page thead { display: table-header-group; }
+.check-in-book-page thead .check-in-book-header th { border: 0; border-bottom: 3px solid var(--imsda-purple); background: white; padding: 0 0 8px; font-weight: 400; }
+.check-in-book-title { display: block; font-size: 1.1rem; font-weight: 800; }
+.check-in-book-contact { display: block; font-size: 0.72rem; }
+.check-in-book-camping { display: flex; flex-wrap: wrap; gap: 4px 22px; margin-top: 2px; font-size: 0.8rem; }
 .check-in-book-page tr { break-inside: avoid; }
 .check-in-book-page th,
 .check-in-book-page td { border: 1px solid #b9c8d0; padding: 5px 8px; text-align: left; }
@@ -7762,14 +7762,13 @@ select:focus-visible {
 .check-in-book-cover .check-in-book-key { color: var(--ink); text-transform: none; }
 
 @media print {
-  @page { size: letter portrait; margin: 0.6in 0.5in 0.5in 0.85in; }
   .check-in-book-intro,
   .check-in-book-filters,
   .check-in-book-workspace > .report-safety-note { display: none !important; }
   .check-in-book-workspace { display: block; padding: 0; }
-  .check-in-book { gap: 0; }
+  .check-in-book { display: block; }
   .check-in-book-page { border: 0; border-radius: 0; box-shadow: none; padding: 0; }
-  .check-in-book-header { border-color: #333; }
+  .check-in-book-page thead .check-in-book-header th { border-bottom-color: #333; }
   .check-in-book-page table { font-size: 9.5pt; }
   .check-in-book-page thead th { background: white; }
 }

@@ -30,20 +30,23 @@ export function CheckInBookSheets({ book }: { book: CheckInBook }) {
       {book.pages.length === 0 && <p className="report-empty">No {unit} match these filters.</p>}
       {book.pages.map((page) => (
         <section className="check-in-book-page" key={page.id}>
-          <header className="check-in-book-header">
-            <h3 translate="no">{page.title}</h3>
-            <p translate="no">
-              {[page.church, page.contactName, page.phone, page.email].filter(Boolean).join(" · ") || "—"}
-            </p>
-            {page.camping && (
-              <p className="check-in-book-camping">
-                <span><strong>Kitchen:</strong> {page.camping.kitchen}</span>
-                <span><strong>Tents:</strong> {page.camping.tents}</span>
-              </p>
-            )}
-          </header>
           <table>
             <thead>
+              {/* The header sits in the thead so it repeats on every sheet when a long roster overflows. */}
+              <tr className="check-in-book-header">
+                <th colSpan={book.extraColumn ? 5 : 4} scope="colgroup">
+                  <span className="check-in-book-title" translate="no">{page.title}</span>
+                  <span className="check-in-book-contact" translate="no">
+                    {[page.church, page.contactName, page.phone, page.email].filter(Boolean).join(" · ") || "—"}
+                  </span>
+                  {page.camping && (
+                    <span className="check-in-book-camping">
+                      <span><strong>Kitchen:</strong> {page.camping.kitchen}</span>
+                      <span><strong>Tents:</strong> {page.camping.tents}</span>
+                    </span>
+                  )}
+                </th>
+              </tr>
               <tr>
                 <th scope="col" className="check-in-book-check">Check In</th>
                 <th scope="col">Attendee</th>
@@ -64,7 +67,7 @@ export function CheckInBookSheets({ book }: { book: CheckInBook }) {
               ))}
             </tbody>
           </table>
-          <footer>✓ here · ✗ didn&apos;t come{book.mode === "CLUB" ? " · PF Pathfinder · Stf Staff · Ch Child" : ""}</footer>
+          <footer>✓ here · ✗ didn&apos;t come</footer>
         </section>
       ))}
     </div>

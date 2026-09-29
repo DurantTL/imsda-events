@@ -1,3 +1,4 @@
+import { sensitiveFieldPattern } from "@/modules/forms/sensitive-fields";
 import { isBirthDateField, isFieldVisible, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
 
 /**
@@ -55,10 +56,10 @@ const KEY_PREFIX = "imsda-events:draft:v1";
 const FORMAT = 1;
 
 // Stems are matched without a trailing word boundary on purpose.
-const excludedFieldPattern = new RegExp(
-  "\\b(?:medic|health|insur|condition|accommod|restrict|allerg|dietar|diet\\b|physician|doctor|prescri|meds?\\b|epi\\W?pen|inhaler|asthma|seizure|immuni[sz]|vaccin|tetanus|mental|background|guardian|custody|pick\\s?up|notes?\\b|anything\\b.*\\bknow|wheelchair|mobility|diabet|epilep|pregnan|therap|counsel|behavio|limitation|sensitiv|vegetarian|vegan|gluten|pediatric|hospital|clinic|blood|emergency|parent|bday|diagnos|disab|accessib|special\\s*needs?|policy\\s*(?:number|holder)|birth|d\\W?o\\W?b\\b|meal|food|payment|pay\\s*method|card|cvv|cvc|bank|routing|ssn|social\\s*security|password)",
-  "i",
-);
+const excludedFieldPattern = sensitiveFieldPattern([
+  "notes?\\b", "anything\\b.*\\bknow", "meal", "food", "payment", "pay\\s*method", "card", "cvv", "cvc",
+  "bank", "routing", "password",
+]);
 // Plain-TEXT address parts; an EMAIL field's "Email address" label is not one.
 const addressPartPattern = /\b(?:street|city|zip|postal|address)/i;
 const consentPattern = /\b(?:acknowledg|consent|agree|waiver|release|terms)/i;

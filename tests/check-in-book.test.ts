@@ -9,8 +9,28 @@ import {
 import { buildClubEventRecord } from "@/modules/reporting/club-event-reports";
 
 // Synthetic data only.
-function field(key: string, label: string, type: string, scope: "ATTENDEE" | "REGISTRATION" = "ATTENDEE") {
-  return { id: `field_${key}`, key, label, helpText: "", type, scope, required: false, options: type === "SELECT" ? ["Option A", "Option B"] : [] };
+function field(
+  key: string,
+  label: string,
+  type: string,
+  scope: "ATTENDEE" | "REGISTRATION" = "ATTENDEE",
+  extra: Record<string, unknown> = {},
+) {
+  const isChoice = ["SELECT", "RADIO", "MULTISELECT"].includes(type);
+  return { id: `field_${key}`, key, label, helpText: "", type, scope, required: false, options: isChoice ? ["Option A", "Option B"] : [], ...extra };
+}
+
+function definitionWith(...fields: Array<ReturnType<typeof field>>) {
+  return {
+    title: "Synthetic Form",
+    description: "",
+    confirmationMessage: "Thanks",
+    sections: [{ id: "sec_one", title: "Section", description: "", fields }],
+  };
+}
+
+function optionKeys(...fields: Array<ReturnType<typeof field>>) {
+  return checkInBookExtraOptions([registration({ id: "reg-x", publicSubmission: { definition: definitionWith(...fields) } })]).map((option) => option.key);
 }
 
 const definition = {
@@ -105,7 +125,7 @@ describe("buildCheckInBook (club events)", () => {
   it("sorts attendees by last then first name and uses the roster's role abbreviations and age", () => {
     const rows = book.pages[0].attendees;
     expect(rows.map((row) => row.name)).toEqual(["Al Adler", "Cy Adler", "Bea Young"]);
-    expect(rows.map((row) => row.role)).toEqual(["Ch", "TLT", "PF"]);
+    expect(rows.map((row) => row.role)).toEqual(["Child", "TLT", "Pathfinder"]);
     expect(rows.map((row) => row.age)).toEqual([null, 16, 12]);
   });
 
@@ -161,7 +181,8 @@ describe("buildCheckInBook (events without clubs)", () => {
       registration({
         id: "reg-2",
         accountHolder: { firstName: "Zoe", lastName: "Baker", email: "zoe@example.test", phone: "555-0102" },
-        attendees: [{ id: "p1", firstName: "Pat", lastName: "Baker", attendeeType: "ADULT", responses: { age: 30, skill_induction: true } }],
+        publicSubmission: { definition: definitionWith(field("guest_age", "Age", "NUMBER"), field("skill_induction", "Camping Skill Induction", "CHECKBOX")) },
+        attendees: [{ id: "p1", firstName: "Pat", lastName: "Baker", attendeeType: "ADULT", responses: { guest_age: 30, skill_induction: true } }],
       }),
       registration({
         id: "reg-1",
@@ -181,9 +202,89 @@ describe("buildCheckInBook (events without clubs)", () => {
     ]);
   });
 
-  it("sorts attendees by name and reads role and age from the registration", () => {
+  it("sorts attendees by name and reads role and the definition's age key (guest_age)", () => {
     expect(book.pages[0].attendees.map((row) => [row.name, row.role])).toEqual([["Amy Able", "Guest"], ["Zip Able", "ADULT"]]);
     expect(book.pages[1].attendees[0]).toMatchObject({ age: 30, extra: "Yes" });
+  });
+
+  it("leaves the registrant's email out of the page data and the CSV", () => {
+    expect(book.pages.every((page) => page.email === "")).toBe(true);
+    const csv = checkInBookCsv(book);
+    expect(csv).not.toContain("example.test");
+    expect(csv.split("\r\n")[0]).toBe('"Registrant","Phone","Check In","Attendee","Role","Age","Camping Skill Induction"');
+  });
+});
+
+describe("extra column sensitive-field rules", () => {
+  it.each([
+    ["current_medications", "Current medications"],
+    ["insurer", "Insurer"],
+    ["physician", "Physician"],
+    ["seizures", "Seizures"],
+    ["epipen", "EpiPen"],
+    ["authorized_pickup", "Authorized pickup"],
+    ["doctor_name", "Doctor"],
+    ["asthma_flag", "Asthma"],
+    ["inhaler_flag", "Inhaler"],
+    ["accommodations", "Accommodations needed"],
+    ["parent_contact", "Parent"],
+    ["custody_note", "Custody"],
+    ["emergency_contact", "Emergency contact"],
+    ["background_check", "Background check"],
+    ["disability", "Disability"],
+    ["prescription", "Prescription"],
+    ["health_form", "Health form"],
+    ["dob_flag", "DOB"],
+  ])("does not offer %s (%s) even as a checkbox or choice", (key, label) => {
+    expect(optionKeys(field(key, label, "CHECKBOX"))).toEqual([]);
+    expect(optionKeys(field(key, label, "SELECT"))).toEqual([]);
+  });
+
+  it("does not offer free text or long text at all", () => {
+    expect(optionKeys(field("favorite_color", "Favorite color", "TEXT"), field("nickname", "Nickname", "LONG_TEXT"))).toEqual([]);
+  });
+
+  it("checks the help text and the choice labels, not just the label", () => {
+    expect(optionKeys(field("group_a", "Group", "SELECT", "ATTENDEE", { helpText: "Tell us about any medication" }))).toEqual([]);
+    expect(optionKeys(field("group_b", "Group", "SELECT", "ATTENDEE", { options: ["Has EpiPen", "None"] }))).toEqual([]);
+    expect(optionKeys(field("group_c", "Group", "SELECT", "ATTENDEE", { options: ["Red", "Blue"], optionLabels: { Red: "Seizure watch" } }))).toEqual([]);
+    expect(optionKeys(field("group_d", "Team color", "SELECT"))).toEqual(["group_d"]);
+  });
+
+  it("rules a field out when anything up its conditional or optionalWhen chain is sensitive", () => {
+    const sensitive = field("has_medication", "Takes medication?", "CHECKBOX");
+    const middle = field("middle_step", "Extra detail", "SELECT", "ATTENDEE", { conditional: { fieldKey: "has_medication", operator: "EQUALS", value: "true" } });
+    const leaf = field("leaf_choice", "Leaf choice", "SELECT", "ATTENDEE", { optionalWhen: { fieldKey: "middle_step", operator: "NOT_EMPTY", value: "" } });
+    const clean = field("clean_choice", "Clean choice", "SELECT");
+    expect(optionKeys(sensitive, middle, leaf, clean)).toEqual(["clean_choice"]);
+  });
+
+  it("rules a field out when its controller is a blocked key such as gender", () => {
+    const gender = field("gender", "Gender", "SELECT");
+    const dependent = field("dance_group", "Dance group", "SELECT", "ATTENDEE", { conditional: { fieldKey: "gender", operator: "EQUALS", value: "Option A" } });
+    expect(optionKeys(gender, dependent)).toEqual([]);
+  });
+
+  it("still offers a field that depends only on the attendee type", () => {
+    const type = field("attendee_type", "Roster role", "SELECT");
+    const dependent = field("skill_group", "Skill group", "SELECT", "ATTENDEE", { conditional: { fieldKey: "attendee_type", operator: "EQUALS", value: "Option A" } });
+    expect(optionKeys(type, dependent)).toEqual(["skill_group"]);
+  });
+
+  it("terminates on a conditional cycle", () => {
+    const one = field("cycle_one", "Cycle one", "SELECT", "ATTENDEE", { conditional: { fieldKey: "cycle_two", operator: "NOT_EMPTY", value: "" } });
+    const two = field("cycle_two", "Cycle two", "SELECT", "ATTENDEE", { conditional: { fieldKey: "cycle_one", operator: "NOT_EMPTY", value: "" } });
+    expect(optionKeys(one, two).sort()).toEqual(["cycle_one", "cycle_two"]);
+  });
+
+  it("drops a key that is ineligible in any form version", () => {
+    const clean = definitionWith(field("skill_induction", "Camping Skill Induction", "CHECKBOX"), field("team_color", "Team color", "SELECT"));
+    const older = definitionWith(field("skill_induction", "Camping Skill Induction", "CHECKBOX", "ATTENDEE", { helpText: "Note any medical needs" }), field("team_color", "Team color", "SELECT"));
+    const keys = checkInBookExtraOptions([
+      registration({ id: "v1", publicSubmission: { definition: clean } }),
+      registration({ id: "v2", publicSubmission: { definition: older } }),
+    ]).map((option) => option.key);
+    expect(keys).toEqual(["team_color"]);
   });
 });
 

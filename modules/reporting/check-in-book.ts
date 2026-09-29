@@ -2,10 +2,9 @@ import {
   registrationFormDefinitionSchema,
   type RegistrationFormField,
 } from "@/modules/forms/definition";
-import {
-  roleAbbreviation,
-  type ClubEventRecord,
-} from "@/modules/reporting/club-event-reports";
+import { attendeeAgeKey } from "@/modules/club-registrations/domain";
+import type { ClubEventRecord } from "@/modules/reporting/club-event-reports";
+import { isSensitiveField } from "@/modules/forms/sensitive-fields";
 import { toCsv } from "@/modules/reporting/csv";
 
 /**
@@ -36,22 +35,48 @@ export function parseCheckInBookStatuses(raw: string | string[] | undefined): Ch
 /* Extra column: which answers may be chosen                              */
 /* ---------------------------------------------------------------------- */
 
-const extraColumnFieldTypes = new Set(["TEXT", "SELECT", "RADIO", "MULTISELECT", "CHECKBOX", "NUMBER"]);
+// Choice, checkbox and number answers only: free text can hold anything.
+const extraColumnFieldTypes = new Set(["SELECT", "RADIO", "MULTISELECT", "CHECKBOX", "NUMBER"]);
 
-// Already shown in the book, or never printable: identity, age, fees.
-const excludedExtraKeys = new Set([
+// Already shown in the book, so not offered as the extra column.
+const displayedKeys = new Set([
   "first_name", "last_name", "full_name", "name", "attendee_name", "guest_name",
-  "attendee_type", "attendee_age", "age", "gender", "registration_fee",
-  "birth_date", "birthdate", "date_of_birth", "dob", "dietary_needs",
+  "attendee_type", "attendee_age", "age",
 ]);
 
-const sensitiveExtraPattern =
-  /\b(?:medical|medication|medicine|health|allerg\w*|diet\w*|food|meal|accessib\w*|disabil\w*|special\s*needs?|emergency|insurance|policy|birth\w*|dob|guardian|minor|injur\w*|diagnos\w*|condition|gender|sex|age|ssn|social\s*security)\b/i;
+// Never offered, and a field controlled by one of these is never offered either.
+const blockedKeys = new Set([
+  "gender", "registration_fee", "birth_date", "birthdate", "date_of_birth", "dob", "dietary_needs",
+]);
 
-export function isCheckInBookExtraField(field: RegistrationFormField) {
+function isBlockedByItself(field: RegistrationFormField) {
+  return blockedKeys.has(field.key) || isSensitiveField(field);
+}
+
+/**
+ * Whether a field may be the extra column. A field is also ruled out when
+ * anything up its `conditional` / `optionalWhen` controller chain is sensitive
+ * or blocked, since showing the answer would reveal the answer it depends on.
+ */
+export function isCheckInBookExtraField(field: RegistrationFormField, allFields: readonly RegistrationFormField[] = []) {
   if (field.scope !== "ATTENDEE" || !extraColumnFieldTypes.has(field.type)) return false;
-  if (excludedExtraKeys.has(field.key)) return false;
-  return !sensitiveExtraPattern.test(`${field.key.replaceAll("_", " ")} ${field.label}`);
+  if (displayedKeys.has(field.key) || isBlockedByItself(field)) return false;
+
+  const byKey = new Map(allFields.map((candidate) => [candidate.key, candidate]));
+  const visited = new Set<string>([field.key]);
+  const pending = [field];
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    for (const controllerKey of [current.conditional?.fieldKey, current.optionalWhen?.fieldKey]) {
+      if (!controllerKey || visited.has(controllerKey)) continue;
+      visited.add(controllerKey);
+      const controller = byKey.get(controllerKey);
+      if (!controller) continue;
+      if (isBlockedByItself(controller)) return false;
+      pending.push(controller);
+    }
+  }
+  return true;
 }
 
 export type CheckInBookExtraOption = { key: string; label: string };
@@ -72,16 +97,25 @@ export type CheckInBookRegistration = {
 
 function eligibleExtraFields(registrations: CheckInBookRegistration[]) {
   const fields = new Map<string, RegistrationFormField>();
+  const banned = new Set<string>();
+  const seenDefinitions = new Set<unknown>();
   for (const registration of registrations) {
-    if (!registration.publicSubmission) continue;
-    const parsed = registrationFormDefinitionSchema.safeParse(registration.publicSubmission.definition);
+    const raw = registration.publicSubmission?.definition;
+    if (!raw || seenDefinitions.has(raw)) continue;
+    seenDefinitions.add(raw);
+    const parsed = registrationFormDefinitionSchema.safeParse(raw);
     if (!parsed.success) continue;
-    for (const section of parsed.data.sections) {
-      for (const field of section.fields) {
-        if (isCheckInBookExtraField(field) && !fields.has(field.key)) fields.set(field.key, field);
+    const allFields = parsed.data.sections.flatMap((section) => section.fields);
+    for (const field of allFields) {
+      // A key that is ineligible in any form version stays out for all of them.
+      if (!isCheckInBookExtraField(field, allFields)) {
+        banned.add(field.key);
+        continue;
       }
+      if (!fields.has(field.key)) fields.set(field.key, field);
     }
   }
+  for (const key of banned) fields.delete(key);
   return fields;
 }
 
@@ -114,8 +148,24 @@ function extraValue(field: RegistrationFormField | undefined, responses: Record<
   return textOf(raw);
 }
 
-function ageOf(responses: Record<string, unknown>): number | null {
-  for (const key of ["attendee_age", "age"]) {
+/** Each registration's age answer key, read from its own form definition (e.g. `guest_age`). */
+function ageKeysByRegistration(registrations: CheckInBookRegistration[]) {
+  const keys = new Map<string, string>();
+  for (const registration of registrations) {
+    const parsed = registrationFormDefinitionSchema.safeParse(registration.publicSubmission?.definition);
+    if (!parsed.success) continue;
+    // The club form's age key first, then any attendee number field asking for an age (Camp Meeting's `guest_age`).
+    const key = attendeeAgeKey(parsed.data)
+      ?? parsed.data.sections.flatMap((section) => section.fields)
+        .find((field) => field.scope === "ATTENDEE" && field.type === "NUMBER" && (/_age$/.test(field.key) || /^(?:guest\s+)?age$/i.test(field.label.trim())))?.key;
+    if (key) keys.set(registration.id, key);
+  }
+  return keys;
+}
+
+function ageOf(responses: Record<string, unknown>, definitionKey?: string): number | null {
+  for (const key of [definitionKey, "attendee_age", "age"]) {
+    if (!key) continue;
     const value = responses[key];
     if (typeof value === "number" && Number.isFinite(value)) return value;
     if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
@@ -132,10 +182,8 @@ export type CheckInBookRow = {
   firstName: string;
   lastName: string;
   name: string;
-  /** Club roster abbreviation (PF, TLT, Stf, Ch), or the attendee type on non-club events. */
+  /** The roster role (Pathfinder, TLT, Staff, Child), or the attendee type on non-club events. */
   role: string;
-  /** Full role, used by the CSV. */
-  roleLabel: string;
   age: number | null;
   extra: string;
 };
@@ -177,10 +225,13 @@ function byName(left: { lastName: string; firstName: string }, right: { lastName
   return left.lastName.localeCompare(right.lastName) || left.firstName.localeCompare(right.firstName);
 }
 
+// A `?location=` filter (Iowa and Missouri printed separately) follows once
+// #413 (event locations, PR #601) merges; it is intentionally not built here.
 export function buildCheckInBook(input: BuildCheckInBookInput): CheckInBook {
   const eligible = eligibleExtraFields(input.registrations);
   // A key that is not an eligible attendee field (unknown, or sensitive) is ignored.
   const extraField = input.extraFieldKey ? eligible.get(input.extraFieldKey) : undefined;
+  const ageKeys = ageKeysByRegistration(input.registrations);
   const registrationsById = new Map(input.registrations.map((registration) => [registration.id, registration]));
 
   const pages: CheckInBookPage[] = [];
@@ -203,8 +254,7 @@ export function buildCheckInBook(input: BuildCheckInBookInput): CheckInBook {
           firstName: attendee.firstName,
           lastName: attendee.lastName,
           name: `${attendee.firstName} ${attendee.lastName}`.trim(),
-          role: roleAbbreviation(attendee.role),
-          roleLabel: attendee.role ?? "",
+          role: attendee.role ?? "",
           age: attendee.ageOnEventDate,
           extra: extraValue(extraField, responsesById.get(attendee.id) ?? {}),
         })),
@@ -221,7 +271,8 @@ export function buildCheckInBook(input: BuildCheckInBookInput): CheckInBook {
         church: "",
         contactName: holderName,
         phone: holder.phone,
-        email: holder.email,
+        // The registrant's email is deliberately not carried into the book.
+        email: "",
         camping: null,
         confirmationCode: registration.confirmationCode,
         attendees: [...registration.attendees].sort(byName).map((attendee) => {
@@ -232,8 +283,7 @@ export function buildCheckInBook(input: BuildCheckInBookInput): CheckInBook {
             lastName: attendee.lastName,
             name: `${attendee.firstName} ${attendee.lastName}`.trim(),
             role,
-            roleLabel: role,
-            age: ageOf(attendee.responses),
+            age: ageOf(attendee.responses, ageKeys.get(registration.id)),
             extra: extraValue(extraField, attendee.responses),
           };
         }),
@@ -258,37 +308,20 @@ export function buildCheckInBook(input: BuildCheckInBookInput): CheckInBook {
 }
 
 export function checkInBookCsv(book: CheckInBook) {
-  const table: Array<Array<string | number>> = [[
-    book.mode === "CLUB" ? "Club" : "Registration",
-    "Church",
-    book.mode === "CLUB" ? "Director" : "Registrant",
-    "Phone",
-    "Email",
-    "Kitchen",
-    "Tents",
-    "Check In",
-    "Attendee",
-    "Role",
-    "Age",
-    book.extraColumn?.label ?? "Extra",
-  ]];
+  const extraHeader = book.extraColumn?.label ?? "Extra";
+  const isClub = book.mode === "CLUB";
+  // Registration groups carry the registrant's name and phone only: no email, church or camping.
+  const table: Array<Array<string | number>> = [isClub
+    ? ["Club", "Church", "Director", "Phone", "Email", "Kitchen", "Tents", "Check In", "Attendee", "Role", "Age", extraHeader]
+    : ["Registrant", "Phone", "Check In", "Attendee", "Role", "Age", extraHeader]];
   for (const page of book.pages) {
     for (const attendee of page.attendees) {
-      table.push([
-        page.title,
-        page.church,
-        page.contactName,
-        page.phone,
-        page.email,
-        page.camping?.kitchen ?? "",
-        page.camping?.tents ?? "",
-        "",
-        attendee.name,
-        attendee.roleLabel,
-        attendee.age ?? "",
-        attendee.extra,
-      ]);
+      const person = [attendee.name, attendee.role, attendee.age ?? "", attendee.extra];
+      table.push(isClub
+        ? [page.title, page.church, page.contactName, page.phone, page.email, page.camping?.kitchen ?? "", page.camping?.tents ?? "", "", ...person]
+        : [page.title, page.phone, "", ...person]);
     }
   }
   return toCsv(table);
 }
+

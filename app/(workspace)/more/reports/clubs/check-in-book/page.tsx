@@ -81,6 +81,8 @@ export default async function CheckInBookPage({
         <button className="secondary-button" type="submit">Apply</button>
       </form>
 
+      {/* Scoped to this page, so club packets and other reports keep the global margins. */}
+      <style>{"@page { size: letter portrait; margin: 0.6in 0.5in 0.5in 0.85in; }"}</style>
       <CheckInBookSheets book={data.book} />
     </section>
   );
