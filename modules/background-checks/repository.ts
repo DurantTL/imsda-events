@@ -75,15 +75,6 @@ async function latestUpload(prisma: PrismaLike) {
 }
 
 /**
- * When the newest list upload was made, or null before any upload (#544).
- * Read once per request by callers that ask whether something was decided
- * before the list last changed, whether or not a given person is on the list.
- */
-export async function latestBackgroundCheckUploadAt() {
-  return (await latestUpload(getPrisma()))?.createdAt ?? null;
-}
-
-/**
  * Fills in `normalizedName` for entries the #527 migration carried over
  * (#527 B3): names are only ever normalized here, in TypeScript, never
  * approximated in SQL. One bounded statement; a no-op once filled.
@@ -1344,7 +1335,7 @@ export async function clubRosterComplianceStatuses(
     if (state === "NO_RECORD") missing += 1;
     statuses[member.id] = {
       state,
-      note: options.includeNotes ? check?.issuesNote ?? null : null,
+      note: options.includeNotes ? check?.issuesNote?.trim() || null : null,
       reasons: options.includeNotes ? describeIssues(check?.issuesNote, today) : [],
     };
   }

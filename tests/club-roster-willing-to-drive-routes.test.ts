@@ -118,6 +118,17 @@ describe("the roster routes ignore 'willingToDrive' from an older client (#544)"
     expect(JSON.stringify(mocks.writeAuditLog.mock.calls)).not.toMatch(/WILLING_TO_DRIVE|willingToDrive/);
   });
 
+  it("an edit with nothing left after stripping it returns the roster without writing or auditing", async () => {
+    const response = await editMember(
+      jsonRequest("PATCH", "https://events.imsda.test/api/attendee/clubs/club-1/roster/member-1", { willingToDrive: true }),
+      { params: Promise.resolve({ organizationId: "club-1", memberId: "member-1" }) },
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ clubYear: expect.any(String), members: expect.any(Array) });
+    expect(mocks.memberUpdate).not.toHaveBeenCalled();
+    expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+  });
+
   it("still rejects any other unknown field", async () => {
     const response = await editMember(
       jsonRequest("PATCH", "https://events.imsda.test/api/attendee/clubs/club-1/roster/member-1", { somethingElse: true }),

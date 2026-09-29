@@ -223,6 +223,9 @@ export async function updateRosterMember(
   if (input.birthDate !== undefined) assertBirthDate(input.birthDate, now);
   return getPrisma().$transaction(async (tx) => {
     const member = await findMember(tx, organizationId, memberId);
+    // Nothing to change (an older client sending only `willingToDrive`, which
+    // the schema strips, or an empty edit): no write, no audit entry.
+    if (Object.keys(input).length === 0) return { personId: member.personId };
     // A details edit from the roster form (#424) must leave the person with a
     // gender, sent or already on file. Marking someone active or inactive
     // doesn't touch their details, so it stays exempt.

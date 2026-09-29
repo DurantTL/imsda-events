@@ -3539,7 +3539,7 @@ model ClubRosterMember {
   /// Unused since #544: the app no longer has any driving feature, and roster
   /// writes ignore this field. The column stays until a human-approved
   /// migration removes it.
-  willingToDrive      Boolean                @default(false)
+  willingToDrive       Boolean                @default(false)
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
 

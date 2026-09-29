@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { backgroundFlagsCsv } from "@/modules/background-checks/domain";
-import { assessIssues, daysUntil, describeIssues, formatIssueDate, parseIssues } from "@/modules/background-checks/issues";
+import { describeIssues, formatIssueDate, parseIssues } from "@/modules/background-checks/issues";
 
 describe("parsing the background-check issues column (#544)", () => {
   it("reads blank as good standing", () => {
@@ -48,48 +48,12 @@ describe("parsing the background-check issues column (#544)", () => {
   });
 });
 
-describe("assessing issues on a day (#544)", () => {
-  const today = "2026-10-01";
-
-  it("treats an undated BGC or Training as expired", () => {
-    expect(assessIssues("BGC", today).expired).toEqual(["BGC"]);
-    expect(assessIssues("Training", today).expired).toEqual(["TRAINING"]);
-  });
-
-  it("treats a past date as expired and a future date as ahead, with an injected day", () => {
-    expect(assessIssues("Training (09/30/26)", today)).toMatchObject({ expired: ["TRAINING"], soonest: null });
-    expect(assessIssues("Training (10/02/26)", today)).toMatchObject({ expired: [], soonest: "2026-10-02" });
-    expect(assessIssues("Training (10/02/26)", "2026-10-03")).toMatchObject({ expired: ["TRAINING"], soonest: null });
-  });
-
-  it("tells a passed date from an undated item", () => {
-    expect(assessIssues("BGC (09/30/26), Training", today)).toMatchObject({ expired: ["BGC", "TRAINING"], pastDue: ["BGC"] });
-    expect(assessIssues("Training", today).pastDue).toEqual([]);
-  });
-
-  it("lasts through the date itself", () => {
-    expect(assessIssues("BGC (10/01/26)", today)).toMatchObject({ expired: [], soonest: "2026-10-01" });
-  });
-
-  it("finds the soonest of several future dates and flags Non-Driver on its own", () => {
-    expect(assessIssues("BGC (12/01/26), Training (10/15/26), Non-Driver", today)).toEqual({
-      nonDriver: true,
-      expired: [],
-      pastDue: [],
-      soonest: "2026-10-15",
-      unrecognised: [],
-    });
-  });
-
-  it("formats and counts dates without a time zone shift", () => {
-    expect(formatIssueDate("2026-10-04")).toBe("10/04/2026");
-    expect(daysUntil("2026-10-01", "2026-10-31")).toBe(30);
-    expect(daysUntil("2026-10-31", "2026-10-01")).toBe(-30);
-  });
-});
-
 describe("readable reasons for staff (#544)", () => {
   const today = "2026-10-01";
+
+  it("formats a date without a time zone shift", () => {
+    expect(formatIssueDate("2026-10-04")).toBe("10/04/2026");
+  });
 
   it("says what each item means, in the order written", () => {
     expect(describeIssues("Non-Driver", today)).toEqual(["Marked Non-Driver"]);
@@ -100,6 +64,11 @@ describe("readable reasons for staff (#544)", () => {
       "Background check expired (09/30/2026)",
       "Marked Non-Driver",
     ]);
+  });
+
+  it("reads a date against an injected today: the same item expires the day after", () => {
+    expect(describeIssues("Training (10/02/26)", "2026-10-02")).toEqual(["Child-protection training expiring (10/02/2026)"]);
+    expect(describeIssues("Training (10/02/26)", "2026-10-03")).toEqual(["Child-protection training expired (10/02/2026)"]);
   });
 
   it("is empty for blank text and leaves unrecognised items to the text shown beside it", () => {

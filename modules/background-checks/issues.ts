@@ -75,37 +75,6 @@ export function parseIssues(text: string | null | undefined): ParsedIssues {
   return { items, unrecognised };
 }
 
-export type IssuesAssessment = {
-  nonDriver: boolean;
-  /** `BGC` / `Training` items that are undated or already past their date on `today`, once each. */
-  expired: Array<"BGC" | "TRAINING">;
-  /** The subset of `expired` that carries a date now in the past (the date passing means it expired). */
-  pastDue: Array<"BGC" | "TRAINING">;
-  /** The soonest `BGC` / `Training` date still ahead (today counts), or null. */
-  soonest: string | null;
-  unrecognised: string[];
-};
-
-/** Reads the issues text as of `today` (a calendar date, "YYYY-MM-DD"). */
-export function assessIssues(text: string | null | undefined, today: string): IssuesAssessment {
-  const { items, unrecognised } = parseIssues(text);
-  const expired: Array<"BGC" | "TRAINING"> = [];
-  const pastDue: Array<"BGC" | "TRAINING"> = [];
-  let nonDriver = false;
-  let soonest: string | null = null;
-  for (const item of items) {
-    if (item.kind === "NON_DRIVER") {
-      nonDriver = true;
-    } else if (item.date === null || item.date < today) {
-      if (!expired.includes(item.kind)) expired.push(item.kind);
-      if (item.date !== null && !pastDue.includes(item.kind)) pastDue.push(item.kind);
-    } else if (soonest === null || item.date < soonest) {
-      soonest = item.date;
-    }
-  }
-  return { nonDriver, expired, pastDue, soonest, unrecognised };
-}
-
 /**
  * The parsed items as readable reasons for staff, in the order written, as of
  * `today`: "Marked Non-Driver", "Background check expired", "Background check
@@ -125,9 +94,4 @@ export function describeIssues(text: string | null | undefined, today: string): 
 export function formatIssueDate(date: string) {
   const [year, month, day] = date.split("-");
   return `${month}/${day}/${year}`;
-}
-
-/** Whole days from one calendar date to another. */
-export function daysUntil(fromDate: string, toDate: string) {
-  return Math.round((Date.parse(`${toDate}T00:00:00Z`) - Date.parse(`${fromDate}T00:00:00Z`)) / 86_400_000);
 }
