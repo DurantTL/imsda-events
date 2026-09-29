@@ -33,6 +33,7 @@ export function BirthDateField({
   defaultValue = "",
   required = false,
   onParsedChange,
+  error = "",
 }: {
   name: string;
   label: string;
@@ -40,6 +41,8 @@ export function BirthDateField({
   required?: boolean;
   /** Called with `YYYY-MM-DD` (or "" until the text is a real date) whenever it changes (#576). */
   onParsedChange?: (isoDate: string) => void;
+  /** An inline error from the form's own validation (#571), shown under the field. */
+  error?: string;
 }) {
   const [text, setText] = useState(() => typedFrom(defaultValue));
   const parsed = useMemo(() => (text.trim() ? parseRosterBirthDateInput(text) : null), [text]);
@@ -62,10 +65,11 @@ export function BirthDateField({
     <label className="birth-date-field">
       {label}
       <input
-        aria-describedby={`${name}-parsed`}
-        aria-invalid={invalid}
+        aria-describedby={error ? `${name}-parsed ${name}-error` : `${name}-parsed`}
+        aria-invalid={invalid || Boolean(error)}
         autoComplete="off"
         inputMode="numeric"
+        name={`${name}Text`}
         onChange={(event) => setText(event.target.value)}
         placeholder="M/D/YYYY"
         ref={inputRef}
@@ -75,6 +79,7 @@ export function BirthDateField({
       <span className="field-help birth-date-parsed" id={`${name}-parsed`}>
         {parsed ? `Reads as ${describe(parsed)}.` : invalid ? "Enter a date like 4/17/2014, or 4/17/14." : "Month/day/year, e.g. 4/17/2014."}
       </span>
+      {error && <span className="roster-field-error" id={`${name}-error`} role="alert">{error}</span>}
       <input name={name} type="hidden" value={parsed ?? ""} />
     </label>
   );

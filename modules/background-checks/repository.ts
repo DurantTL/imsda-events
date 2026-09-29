@@ -19,6 +19,7 @@ import {
   dedupeListRows,
   isRememberedIdentityKey,
   matchableName,
+  directorySiteStems,
   matchesSite,
   normalizeCheckDate,
   type BackgroundCheckListRow,
@@ -203,7 +204,7 @@ export async function planBackgroundCheckUpload(rows: BackgroundCheckListRow[]):
 // --- Matching engine: candidates, ambiguity, and the derived cache ---
 
 type NameCandidate = { personId: string; name: string; emails: Set<string>; birthDates: Set<string>; siteNames: Set<string> };
-type NameIndex = { byName: Map<string, NameCandidate[]>; byPerson: Map<string, NameCandidate> };
+type NameIndex = { byName: Map<string, NameCandidate[]>; byPerson: Map<string, NameCandidate>; directoryStems: Set<string> };
 
 /** Registered adults are matched only for events upcoming or ended within this many months. */
 const REGISTRATION_LOOKBACK_MONTHS = 12;
@@ -278,7 +279,7 @@ function formBirthDate(responses: Record<string, unknown>) {
  * group for a targeted refresh, so neither path scans more than it needs.
  */
 async function buildCandidateIndex(tx: PrismaLike, now: Date, scope?: { personIds: string[] }): Promise<NameIndex> {
-  if (scope && scope.personIds.length === 0) return { byName: new Map(), byPerson: new Map() };
+  if (scope && scope.personIds.length === 0) return { byName: new Map(), byPerson: new Map(), directoryStems: new Set() };
   // The current club year and the one before it: rosters imported before the
   // September rollover (#541) still describe the same adults (#572).
   const clubYear = clubYearFor(now);
@@ -287,7 +288,7 @@ async function buildCandidateIndex(tx: PrismaLike, now: Date, scope?: { personId
   cutoff.setUTCMonth(cutoff.getUTCMonth() - REGISTRATION_LOOKBACK_MONTHS);
   const today = calendarDateInEventTimeZone(now, "America/Chicago");
 
-  const [rosterMembers, attendees] = await Promise.all([
+  const [rosterMembers, attendees, directoryNames] = await Promise.all([
     tx.clubRosterMember.findMany({
       where: { clubYear: { in: [previousClubYear, clubYear] }, status: "ACTIVE", attendeeType: { in: ["ADULT", "STAFF"] }, personId: scope ? { in: scope.personIds } : { not: null } },
       select: {
@@ -312,6 +313,9 @@ async function buildCandidateIndex(tx: PrismaLike, now: Date, scope?: { personId
         registration: { select: { clubRegistration: { select: { organization: clubSelect } } } },
       },
     }),
+    // Every club and church name, active or not: a row that names one of them
+    // exactly never falls back to its suffix-stripped key (#572).
+    tx.organization.findMany({ where: { type: { in: ["CLUB", "CHURCH"] } }, select: { name: true } }),
   ]);
 
   const byPerson = new Map<string, NameCandidate>();
@@ -340,7 +344,7 @@ async function buildCandidateIndex(tx: PrismaLike, now: Date, scope?: { personId
       sites: [club?.name, club?.parentOrganization?.name],
     });
   }
-  return { byName: groupByName(byPerson), byPerson };
+  return { byName: groupByName(byPerson), byPerson, directoryStems: directorySiteStems(directoryNames.map((organization) => organization.name)) };
 }
 
 /**
@@ -377,13 +381,13 @@ type ReviewResult = { entryId: string; reason: string; candidatePersonIds: strin
 const entryForMatchSelect = { id: true, identityKey: true, normalizedName: true, email: true, sealedBirthDate: true, site: true } as const;
 
 /** Candidates for one entry from its name group: name plus one of email, birth date, or site. */
-function candidatesForEntry(entry: Pick<EntryForMatch, "email" | "sealedBirthDate" | "site">, pool: NameCandidate[]): NameCandidate[] {
+function candidatesForEntry(entry: Pick<EntryForMatch, "email" | "sealedBirthDate" | "site">, pool: NameCandidate[], directoryStems: ReadonlySet<string>): NameCandidate[] {
   const birthDate = openEntryBirthDate(entry.sealedBirthDate);
   const email = entry.email?.toLowerCase() ?? null;
   return pool.filter((candidate) => (
     (email && candidate.emails.has(email))
     || (birthDate && candidate.birthDates.has(birthDate))
-    || (entry.site && matchesSite(entry.site, candidate.siteNames))
+    || (entry.site && matchesSite(entry.site, candidate.siteNames, directoryStems))
   ));
 }
 
@@ -438,7 +442,7 @@ function matchEntries(
       continue;
     }
     const pool = (index.byName.get(entry.normalizedName) ?? []).filter((candidate) => !unavailable.has(candidate.personId));
-    const candidates = candidatesForEntry(entry, pool);
+    const candidates = candidatesForEntry(entry, pool, index.directoryStems);
     if (candidates.length === 0) continue; // Stays on the list, unmatched — not a review.
     if (candidates.length > 1) {
       reviews.push({
@@ -1061,7 +1065,7 @@ async function lookupUncachedChecks(prisma: PrismaLike, subjects: LookupSubject[
 
   const entriesByPerson = new Map<string, Array<(typeof entries)[number]>>();
   for (const entry of entries) {
-    const candidates = candidatesForEntry(entry, byName.get(entry.normalizedName!) ?? []);
+    const candidates = candidatesForEntry(entry, byName.get(entry.normalizedName!) ?? [], index.directoryStems);
     if (candidates.length !== 1 || !pagePeople.has(candidates[0]!.personId)) continue;
     const list = entriesByPerson.get(candidates[0]!.personId) ?? [];
     list.push(entry);
