@@ -124,7 +124,7 @@ export function EventLocationsPanel({
       {error && <div className="inline-notice error" role="alert"><AlertTriangle size={17} aria-hidden="true" /> {error}</div>}
       {notice && <div className="inline-notice success" role="status"><CheckCircle2 size={17} aria-hidden="true" /> {notice}</div>}
       {getLocationDateWarnings(locations).map((warning) => (
-        <div className="inline-notice clone-warning" key={warning.id} role="status"><AlertTriangle size={17} aria-hidden="true" /> <span><strong>{warning.label}</strong> Add its first and last day. This does not block publishing.</span></div>
+        <div className="inline-notice clone-warning" key={warning.id} role="status"><AlertTriangle size={17} aria-hidden="true" /> <span><strong>{warning.label}.</strong> {warning.detail}</span></div>
       ))}
       {locations.length === 0 && !formOpen && <p className="field-help">No locations yet.</p>}
       {locations.length > 0 && (

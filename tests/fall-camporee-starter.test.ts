@@ -123,7 +123,6 @@ describe("Fall Camporee starter", () => {
       registrationForm: { findMany: vi.fn().mockResolvedValue([]) },
       eventPaymentInstructionVersion: { findFirst: vi.fn().mockResolvedValue(null) },
       eventLocation: { findMany: vi.fn().mockResolvedValue([]) },
-      registrationFormVersion: { findMany: vi.fn().mockResolvedValue([]) },
     });
     await applyEventTemplate("template-1", "usr_actor", { name: "Fall Camporee 2027", slug: "fall-camporee-2027", startsOn: "2027-10-08", endsOn: "2027-10-10", requestKey: "idempotency-key-0593" });
     const rows = locationCreateMany.mock.calls[0]![0].data as Array<Record<string, unknown>>;
@@ -131,6 +130,19 @@ describe("Fall Camporee starter", () => {
     expect(rows.every((row) => row.firstDay === null && row.lastDay === null && row.registrationClosesOn === null && row.capacity === null)).toBe(true);
     expect(rows.some((row) => "isActive" in row && row.isActive === false)).toBe(false);
     expect(tx.registrationForm.create).toHaveBeenCalled();
+  });
+});
+
+describe("starter descriptions tell the truth about prices", () => {
+  it("mentions last year's prices only for starters whose form carries prices", () => {
+    for (const entry of starterEventTemplates) {
+      const description = starterDescription(entry);
+      const carries = /"(priceCents|choicePricesCents|creditCentsPerUnit|latePricing|choiceLimits)"/.test(JSON.stringify(getFormTemplate(entry.formTemplateKey)!.definition));
+      expect(/keeps last year's prices/.test(description), entry.name).toBe(carries && !entry.locations && !/^blank_/.test(entry.starterKey));
+    }
+    const byKey = (key: string) => starterDescription(starterEventTemplates.find((entry) => entry.starterKey === key)!);
+    expect(byKey("spring_camporee")).toContain("keeps last year's prices");
+    expect(byKey("honors_weekend")).not.toContain("last year's prices");
   });
 });
 
@@ -143,26 +155,44 @@ describe("Fall Camporee readiness warnings", () => {
     expect(unpricedFeeFieldLabels(priced)).toEqual([]);
   });
 
-  it("warns for each active location until it has both dates", () => {
-    const locations = [
-      { name: "Iowa", firstDay: null, lastDay: null, isActive: true },
-      { name: "Missouri", firstDay: "2027-10-15", lastDay: null, isActive: true },
-      { name: "Kansas", firstDay: null, lastDay: null, isActive: false },
-      { name: "Nebraska", firstDay: "2027-10-15", lastDay: "2027-10-17", isActive: true },
-    ];
-    expect(getLocationDateWarnings(locations).map((warning) => warning.label)).toEqual(["Set the dates for Iowa", "Set the dates for Missouri"]);
+  const created = "2027-01-01T12:00:00.000Z";
+  const location = (overrides: Partial<{ name: string; firstDay: string | null; lastDay: string | null; isActive: boolean; updatedAt: string }> = {}) => ({
+    name: "Iowa", firstDay: null, lastDay: null, isActive: true, createdAt: created, updatedAt: created, ...overrides,
   });
 
-  it("collects both from the database reads for a freshly applied Fall Camporee", async () => {
+  it("warns for an active, never-edited location with no dates, in the 'until edited' wording", () => {
+    const [warning] = getLocationDateWarnings([location()]);
+    expect(warning).toMatchObject({ label: "Check the dates for Iowa", detail: "It uses the event's dates until you set its own." });
+    // A save within a second of creation still counts as never edited.
+    expect(getLocationDateWarnings([location({ updatedAt: "2027-01-01T12:00:00.800Z" })])).toHaveLength(1);
+  });
+
+  it("does not warn once staff have saved the location, even with no dates", () => {
+    expect(getLocationDateWarnings([location({ updatedAt: "2027-01-02T09:30:00.000Z" })])).toEqual([]);
+  });
+
+  it("does not warn when only one date is set, or the location is inactive", () => {
+    expect(getLocationDateWarnings([location({ firstDay: "2027-10-15" }), location({ name: "Missouri", lastDay: "2027-10-17" })])).toEqual([]);
+    expect(getLocationDateWarnings([location({ isActive: false })])).toEqual([]);
+  });
+
+  it("gives no location warning for an event with no locations", () => {
+    expect(getLocationDateWarnings([])).toEqual([]);
+  });
+
+  it("collects the location and fee warnings, reading the published version over a newer draft", async () => {
+    const priced = structuredClone(form.definition);
+    for (const section of priced.sections) for (const field of section.fields) if (field.key === "registration_fee") field.priceCents = 2500;
     const prisma = {
-      eventLocation: { findMany: vi.fn().mockResolvedValue([
-        { name: "Iowa", firstDay: null, lastDay: null, isActive: true },
-        { name: "Missouri", firstDay: null, lastDay: null, isActive: true },
-      ]) },
-      registrationFormVersion: { findMany: vi.fn().mockResolvedValue([{ definition: form.definition }]) },
+      eventLocation: { findMany: vi.fn().mockResolvedValue([location(), location({ name: "Missouri" })]) },
+      registrationForm: { findMany: vi.fn()
+        .mockResolvedValueOnce([{ id: "form-1", versions: [{ definition: priced }] }, { id: "form-2", versions: [] }])
+        .mockResolvedValueOnce([{ id: "form-1", versions: [{ definition: form.definition }] }, { id: "form-2", versions: [{ definition: form.definition }] }]) },
     };
     const warnings = await collectEventReadinessWarnings(prisma as never, "event-1");
-    expect(warnings.map((warning) => warning.label)).toEqual(["Set the dates for Iowa", "Set the dates for Missouri", "Set the Fall Camporee fee"]);
+    // form-1's published version is priced (its newer draft is ignored); form-2 has only a draft, which is unpriced.
+    expect(warnings.map((warning) => warning.label)).toEqual(["Check the dates for Iowa", "Check the dates for Missouri", "Set the Fall Camporee fee"]);
+    expect(prisma.registrationForm.findMany).toHaveBeenCalledTimes(2);
   });
 });
 

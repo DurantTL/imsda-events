@@ -156,7 +156,6 @@ describe("applying the blank starters through the create-from-template flow (#59
       registrationForm: { findMany: vi.fn().mockResolvedValue([]) },
       eventPaymentInstructionVersion: { findFirst: vi.fn().mockResolvedValue(null) },
       eventLocation: { findMany: vi.fn().mockResolvedValue([]) },
-      registrationFormVersion: { findMany: vi.fn().mockResolvedValue([]) },
     };
     dependencies.getPrisma.mockReturnValue(prisma);
     return { eventCreate, membershipCreate, registrationFormCreate };

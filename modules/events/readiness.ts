@@ -144,7 +144,7 @@ export function getEventPublishReadiness(
 
 /**
  * Setup reminders that never block publishing (#593). Directors and staff
- * still see them until the work is done: a location with no dates, and a fee
+ * still see them until the work is done: a location never edited, and a fee
  * field with no amount (pricing is a human decision, so nothing sets it for
  * them).
  */
@@ -154,16 +154,34 @@ export type EventReadinessWarning = {
   detail: string;
 };
 
-/** One warning for each active location that is missing its first or last day. */
+/** A location saved within this long of its creation counts as never edited. */
+const NEVER_EDITED_WINDOW_MS = 1000;
+
+/**
+ * A location with no dates of its own uses the event's dates, so blank dates
+ * are valid. Warn only "until edited": an active location with neither a first
+ * nor a last day that nobody has saved since it was created (for example one a
+ * starter made). One date set, or any save by staff, never warns.
+ */
 export function getLocationDateWarnings(
-  locations: ReadonlyArray<{ name: string; firstDay: string | null; lastDay: string | null; isActive: boolean }>,
+  locations: ReadonlyArray<{
+    name: string;
+    firstDay: string | null;
+    lastDay: string | null;
+    isActive: boolean;
+    createdAt: string | Date;
+    updatedAt: string | Date;
+  }>,
 ): EventReadinessWarning[] {
   return locations
-    .filter((location) => location.isActive && !(location.firstDay && location.lastDay))
+    .filter((location) => location.isActive
+      && !location.firstDay
+      && !location.lastDay
+      && Math.abs(new Date(location.updatedAt).getTime() - new Date(location.createdAt).getTime()) <= NEVER_EDITED_WINDOW_MS)
     .map((location) => ({
       id: `location-dates:${location.name}`,
-      label: `Set the dates for ${location.name}`,
-      detail: "Add this location's first and last day under Event settings, Locations.",
+      label: `Check the dates for ${location.name}`,
+      detail: "It uses the event's dates until you set its own.",
     }));
 }
 

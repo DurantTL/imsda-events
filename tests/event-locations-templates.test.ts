@@ -54,7 +54,6 @@ function mockApply(payload: unknown) {
     registrationForm: { findMany: vi.fn().mockResolvedValue([]) },
     eventPaymentInstructionVersion: { findFirst: vi.fn().mockResolvedValue(null) },
     eventLocation: { findMany: vi.fn().mockResolvedValue([]) },
-    registrationFormVersion: { findMany: vi.fn().mockResolvedValue([]) },
   });
   return { tx, locationCreateMany, auditLogCreate };
 }

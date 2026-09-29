@@ -484,7 +484,7 @@ async function verifyStarters() {
     assert(locations.every((location) => location.isActive && location.firstDay === null && location.lastDay === null && location.capacity === null), `${starter.name} locations are active with no dates or capacity`);
     if (starter.starterKey === "fall_camporee") {
       const labels = event.warnings.map((warning) => warning.label);
-      assert(labels.join() === "Set the dates for Iowa,Set the dates for Missouri,Set the Fall Camporee fee", `Fall Camporee warns about both location dates and the fee, got ${labels.join(" | ")}`);
+      assert(labels.join() === "Check the dates for Iowa,Check the dates for Missouri,Set the Fall Camporee fee", `Fall Camporee warns about both location dates and the fee, got ${labels.join(" | ")}`);
     }
     const resave = eventSettingsInputSchema.safeParse({ ...(await getEventSettings(event.id)), approvedPaymentInstructions: null });
     assert(resave.success, `${starter.name} event re-saves in settings`);

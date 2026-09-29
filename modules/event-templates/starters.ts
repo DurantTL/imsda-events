@@ -54,6 +54,12 @@ export const starterEventTemplates: readonly StarterEventTemplate[] = [
 /** Real events with no form template yet: listed, never created. None are pending now that Fall Camporee has a starter (#593). */
 export const pendingStarterEvents: readonly { starterKey: string; name: string; note: string }[] = [];
 
+/** Whether a built-in form template carries prices, late pricing or choice limits of its own. */
+function formCarriesPrices(formTemplateKey: string) {
+  const form = getFormTemplate(formTemplateKey);
+  return form ? /"(priceCents|choicePricesCents|creditCentsPerUnit|latePricing|choiceLimits)"/.test(JSON.stringify(form.definition)) : false;
+}
+
 export function starterDescription(starter: StarterEventTemplate) {
   const form = getFormTemplate(starter.formTemplateKey);
   if (isBlankFormTemplateKey(starter.formTemplateKey)) {
@@ -64,7 +70,10 @@ export function starterDescription(starter: StarterEventTemplate) {
     return `Starter set: created from the built-in "${form?.name ?? starter.name}" form (${starter.formTemplateKey}) with church billing and adult background checks on. It creates two locations, ${names}, with no dates. Fill in the sites and dates under Event settings > Locations. This template sets no prices or capacity: set the Fall Camporee fee on the draft event before publishing.`;
   }
   const source = form ? `the built-in "${form.name}" form (${starter.formTemplateKey})` : `the ${starter.formTemplateKey} form`;
-  return `Starter set: created from ${source}. This template sets no prices or capacity. The form keeps last year's prices, late-price dates and choice limits. Review them on the draft event before publishing.`;
+  const priceNote = formCarriesPrices(starter.formTemplateKey)
+    ? "The form keeps last year's prices, late-price dates and choice limits. Review them on the draft event before publishing."
+    : "The form has no prices set. Set any fee on the draft event before publishing.";
+  return `Starter set: created from ${source}. This template sets no prices or capacity. ${priceNote}`;
 }
 
 export function starterPayload(starter: StarterEventTemplate): EventTemplatePayload {
