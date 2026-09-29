@@ -26,10 +26,12 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { RegistrationAccountPrompt } from "@/components/registration-account-prompt";
 import { SearchableSelect } from "@/components/searchable-select";
 import { TranslateHint } from "@/components/translate-hint";
+import { planAttendeeRemoval, withoutAttendee } from "@/modules/forms/attendee-removal";
 import { hasAddressValue, isPlainAddressObject, type AddressValue } from "@/modules/forms/address";
 import {
   calculateFormTotal,
   dateFieldBounds,
+  isBirthDateField,
   calculateRosterTotal,
   getAttendeeRosterConfig,
   getAvailabilityMode,
@@ -1058,12 +1060,15 @@ export function PublicRegistrationForm({
   // window.confirm(), which iOS Safari can silently fail to show. Cancel
   // leaves every answer untouched.
   function removeAttendee(index: number) {
-    if (attendees.length <= roster.minAttendees) return;
-    if (!hasResponses(attendees[index].responses)) {
+    const target = attendees[index];
+    if (!target) return;
+    const plan = planAttendeeRemoval(attendees, target.clientId, roster.minAttendees, (attendee) => hasResponses(attendee.responses));
+    if (plan === "blocked") return;
+    if (plan === "remove") {
       performRemoveAttendee(index);
       return;
     }
-    setPendingRemoveClientId(attendees[index].clientId);
+    setPendingRemoveClientId(target.clientId);
   }
 
   function confirmRemoveAttendee() {
@@ -1079,7 +1084,7 @@ export function PublicRegistrationForm({
     if (attendees.length <= roster.minAttendees) return;
     const attendee = attendees[index];
     const focusId = attendees[index - 1]?.clientId ?? attendees[index + 1]?.clientId;
-    setAttendees((current) => current.filter((_, attendeeIndex) => attendeeIndex !== index));
+    setAttendees((current) => withoutAttendee(current, attendee.clientId));
     setCollapsedAttendeeIds((current) => {
       const next = new Set(current);
       next.delete(attendee.clientId);
@@ -1611,7 +1616,7 @@ export function PublicRegistrationForm({
             value={value}
             type={field.type === "EMAIL" ? "email" : field.type === "PHONE" ? "tel" : field.type === "DATE" ? "date" : field.type === "NUMBER" ? "number" : "text"}
             min={field.type === "NUMBER" ? numberFieldBounds(field)?.minimumAge ?? 0 : field.type === "DATE" ? dateFieldBounds(field).min : undefined}
-            max={field.type === "NUMBER" ? numberFieldBounds(field)?.maximumAge : field.type === "DATE" ? dateFieldBounds(field).max : undefined}
+            max={field.type === "NUMBER" ? numberFieldBounds(field)?.maximumAge : field.type === "DATE" ? (isBirthDateField(field) ? pricingDate : undefined) : undefined}
             inputMode={field.type === "PHONE" ? "tel" : field.type === "NUMBER" ? "numeric" : undefined}
             autoComplete={autoComplete}
             required={field.required && !excused}

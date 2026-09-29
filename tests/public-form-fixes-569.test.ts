@@ -13,9 +13,14 @@ import {
   type RegistrationFormField,
 } from "@/modules/forms/definition";
 import { readFileSync } from "node:fs";
+import { preparePublicRegistration } from "@/modules/forms/public-domain";
+import { planAttendeeRemoval, withoutAttendee } from "@/modules/forms/attendee-removal";
+import { PublicRegistrationForm } from "@/components/public-registration-form";
+import { prepareTieredAttendeeAnswerUpdate } from "@/modules/attendee-accounts/registration-answer-policy";
 
 const now = new Date("2026-09-29T12:00:00Z");
 const dateField = { type: "DATE", key: "birth_date", label: "Birth date" } as const;
+const idempotencyKey = "9f8f0f3a-4c73-4d7e-89a4-f54d4fe0c388";
 
 describe("FB-5 date bounds (#569)", () => {
   it("rejects years before 1900 for any date field", () => {
@@ -68,18 +73,6 @@ describe("FB-9 new choice fields (#569)", () => {
   });
 });
 
-describe("F-13 / F-18 public form markup (#569)", () => {
-  const src = readFileSync("components/public-registration-form.tsx", "utf8");
-  it("confirms attendee removal by name and lets Cancel keep answers", () => {
-    expect(src).toContain("Remove ${pendingName} and their answers?");
-    expect(src).toContain("onCancel={() => setPendingRemoveClientId(null)}");
-    expect(src).not.toContain("window.confirm(\n          `Remove");
-  });
-  it("marks required checkboxes required and aria-required", () => {
-    expect(src).toMatch(/type="checkbox"\s+required=\{field\.required && !excused\}\s+aria-required=\{field\.required && !excused\}/);
-  });
-});
-
 describe("unknown event slug page (#569)", () => {
   it("names the slug and links to the public event list", () => {
     const html = renderToStaticMarkup(createElement(PublicEventSlugNotFound, { slug: "no-such-event" }));
@@ -87,5 +80,121 @@ describe("unknown event slug page (#569)", () => {
     expect(html).toContain("no-such-event");
     expect(html).toContain("https://imsda.org/events/");
     expect(html).toContain("IMSDA");
+  });
+});
+
+describe("birth date detection uses keys, never labels (#569)", () => {
+  it("does not treat an 'Expected birth date' due-date field as a birth date", () => {
+    const due = { type: "DATE", key: "due_date", label: "Expected birth date" } as const;
+    expect(isBirthDateField(due)).toBe(false);
+    expect(dateFieldProblem(due, "2027-01-15", now)).toBeNull();
+    expect(dateFieldBounds(due, now).max).toBeUndefined();
+  });
+  it("recognizes the explicit birth-date keys", () => {
+    for (const key of ["birth_date", "date_of_birth", "dob", "birthdate"]) {
+      expect(isBirthDateField({ type: "DATE", key })).toBe(true);
+    }
+  });
+  it("uses the Chicago calendar date, not UTC", () => {
+    expect(dateFieldBounds(dateField, new Date("2026-09-30T02:00:00Z")).max).toBe("2026-09-29");
+  });
+});
+
+function testDefinition(fields: unknown[]) {
+  return registrationFormDefinitionSchema.parse({
+    title: "Synthetic retreat form", description: "Synthetic.", confirmationMessage: "Received.",
+    sections: [{ id: "details", title: "Details", description: "", fields }],
+  });
+}
+const base = { helpText: "", options: [] as string[] };
+
+describe("FB-5 through preparePublicRegistration (#569)", () => {
+  const definition = testDefinition([
+    { ...base, id: "name_field", key: "contact_name", label: "Contact name", type: "TEXT", scope: "REGISTRATION", required: true },
+    { ...base, id: "email_field", key: "email", label: "Email", type: "EMAIL", scope: "REGISTRATION", required: true },
+    { ...base, id: "birth_field", key: "birth_date", label: "Birth date", type: "DATE", scope: "REGISTRATION", required: true },
+  ]);
+  const run = (birth: string) => preparePublicRegistration(
+    definition,
+    { versionId: "version-1", idempotencyKey, responses: { contact_name: "Avery Guest", email: "guest@example.test", birth_date: birth }, attendees: [], website: "" },
+    { timeZone: "America/Chicago", now },
+  );
+  it("rejects a pre-1900 and a future birth date, accepts a normal one", () => {
+    expect(run("1850-03-04").isValid).toBe(false);
+    expect(run("2027-03-04").isValid).toBe(false);
+    expect(run("1990-03-04").issues).toEqual([]);
+  });
+});
+
+describe("FB-9 leaves loaded fields alone (#569)", () => {
+  it("keeps a published SELECT with few choices as SELECT", () => {
+    const definition = testDefinition([
+      { ...base, id: "shirt_field", key: "shirt", label: "Shirt", type: "SELECT", scope: "REGISTRATION", required: false, options: ["S", "M", "L"] },
+    ]);
+    expect(definition.sections[0].fields[0].type).toBe("SELECT");
+  });
+});
+
+describe("attendee removal plan (F-13, #569)", () => {
+  const people = [
+    { clientId: "a", name: "Avery", answers: true },
+    { clientId: "b", name: "Blake", answers: true },
+    { clientId: "c", name: "Casey", answers: false },
+  ];
+  const has = (person: (typeof people)[number]) => person.answers;
+  it("asks before discarding answers, and skips the prompt for an empty attendee", () => {
+    expect(planAttendeeRemoval(people, "a", 1, has)).toBe("confirm");
+    expect(planAttendeeRemoval(people, "c", 1, has)).toBe("remove");
+  });
+  it("never goes below the minimum", () => {
+    expect(planAttendeeRemoval(people.slice(0, 1), "a", 1, has)).toBe("blocked");
+  });
+  it("Cancel keeps everyone: nothing changes until the plan is carried out", () => {
+    const before = [...people];
+    planAttendeeRemoval(people, "a", 1, has);
+    expect(people).toEqual(before);
+  });
+  it("removes the confirmed attendee by id even after a reorder", () => {
+    const reordered = [people[2], people[1], people[0]];
+    expect(withoutAttendee(reordered, "b").map((p) => p.clientId)).toEqual(["c", "a"]);
+  });
+});
+
+describe("required checkbox markup (F-18, #569)", () => {
+  const definition = testDefinition([
+    { ...base, id: "ack_field", key: "deposit_ack", label: "I acknowledge the deposit", type: "CHECKBOX", scope: "REGISTRATION", required: true },
+    { ...base, id: "opt_field", key: "newsletter", label: "Send me news", type: "CHECKBOX", scope: "REGISTRATION", required: false },
+  ]);
+  const html = renderToStaticMarkup(createElement(PublicRegistrationForm, {
+    event: { name: "Synthetic Retreat", slug: "synthetic-retreat", startsAt: "2026-10-09T00:00:00.000Z", endsAt: "2026-10-11T00:00:00.000Z", timezone: "America/Chicago", location: null, capacity: null, billingMode: "ATTENDEE_PAY" },
+    form: { slug: "main", versionId: "version-1", versionNumber: 1, definition },
+    choiceUsage: {},
+    pricingDate: "2026-09-29",
+    lifecycle: { phase: "OPEN", capacityDecision: "REGISTER", remainingSpots: null, waitingRegistrations: 0 },
+  }));
+  it("marks only the required checkbox required and aria-required", () => {
+    const checkboxes = html.match(/<input[^>]*type="checkbox"[^>]*>/g) ?? [];
+    expect(checkboxes.length).toBeGreaterThanOrEqual(2);
+    const required = checkboxes.filter((tag) => /\brequired=""/.test(tag));
+    expect(required).toHaveLength(1);
+    expect(required[0]).toContain('aria-required="true"');
+  });
+});
+
+describe("self-service edits with an old bad date (#569)", () => {
+  const definition = testDefinition([
+    { ...base, id: "first_field", key: "first_name", label: "First name", type: "TEXT", scope: "ATTENDEE", required: true },
+    { ...base, id: "birth_field", key: "birth_date", label: "Birth date", type: "DATE", scope: "ATTENDEE", required: false },
+    { ...base, id: "shirt_field", key: "shirt_size", label: "Shirt size", type: "SELECT", scope: "ATTENDEE", required: true, options: ["S", "M", "L"] },
+  ]);
+  it("still lets the attendee change another field", () => {
+    const result = prepareTieredAttendeeAnswerUpdate({
+      definition,
+      policy: "TIERED",
+      registrationResponses: {},
+      currentResponses: { first_name: "Avery", birth_date: "1850-01-01", shirt_size: "M" },
+      changes: { shirt_size: "L" },
+    });
+    expect(result.responses.shirt_size).toBe("L");
   });
 });

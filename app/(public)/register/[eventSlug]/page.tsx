@@ -15,7 +15,9 @@ export const metadata: Metadata = {
 /**
  * /register/<eventSlug> (#569). A real event goes on to its public event page,
  * which lists its open forms; an unknown slug gets a branded page that names
- * it, instead of the generic site 404.
+ * it, instead of the generic site 404. The unknown-slug response is
+ * deliberately 200 + noindex, not `notFound()`: Next's `not-found.tsx` receives
+ * no params, so it cannot show the slug.
  */
 export default async function RegisterEventPage({ params }: RegisterEventPageProps) {
   const { eventSlug } = await params;
