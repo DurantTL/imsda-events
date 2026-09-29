@@ -67,6 +67,14 @@ import {
   startsCollapsed,
 } from "@/modules/forms/roster-cards";
 import { summarizeRosterAttendees } from "@/modules/forms/roster-summary";
+import {
+  PUBLIC_DRAFT_RESTORED_NOTICE,
+  PUBLIC_DRAFT_VERSION_CHANGED_NOTICE,
+  clearPublicDraft,
+  getBrowserDraftStorage,
+  loadPublicDraft,
+  savePublicDraft,
+} from "@/modules/forms/public-draft";
 
 declare global {
   interface Window {
@@ -444,6 +452,76 @@ export function PublicRegistrationForm({
   useEffect(() => {
     onClubDraftChange?.({ responses: rosterEnabled ? registrationResponses : responses, attendees });
   }, [onClubDraftChange, rosterEnabled, registrationResponses, responses, attendees]);
+  // Browser draft (#574): kept only in this visitor's localStorage, never for
+  // club registrations (they have their own server-side draft). Restored after
+  // mount so server and first client render match; saving waits until the
+  // restore attempt has run so an empty first render can't overwrite a draft.
+  const draftIdentity = useMemo(
+    () => ({ eventSlug: event.slug, formSlug: form.slug, versionId: form.versionId }),
+    [event.slug, form.slug, form.versionId],
+  );
+  const [draftNotice, setDraftNotice] = useState<"restored" | "version-changed" | null>(null);
+  const [draftReady, setDraftReady] = useState(false);
+  useEffect(() => {
+    if (club) return;
+    // Deferred a tick so the restore is an external-storage sync, not a
+    // synchronous state cascade inside the effect.
+    const timer = window.setTimeout(restoreDraft, 0);
+    return () => window.clearTimeout(timer);
+    function restoreDraft() {
+      const result = loadPublicDraft(getBrowserDraftStorage(), draftIdentity, definition);
+      if (result.status === "restored") {
+        const { draft } = result;
+        if (rosterEnabled) {
+          setRegistrationResponses((current) => ({ ...current, ...draft.responses } as FormResponses));
+          if (draft.attendees.length > 0) {
+            setAttendees(draft.attendees.map((attendee) => ({
+              clientId: attendee.clientId,
+              responses: attendee.responses as FormResponses,
+            })));
+          }
+        } else {
+          setResponses((current) => ({ ...current, ...draft.responses } as FormResponses));
+        }
+        setDraftNotice("restored");
+      } else if (result.status === "version-changed") {
+        setDraftNotice("version-changed");
+    }
+    setDraftReady(true);
+    }
+    // Runs once per form identity; the definition is fixed for a given version.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftIdentity]);
+  useEffect(() => {
+    if (club || !draftReady || confirmation) return;
+    const timer = window.setTimeout(() => {
+      savePublicDraft(
+        getBrowserDraftStorage(),
+        draftIdentity,
+        definition,
+        {
+          responses: rosterEnabled ? registrationResponses : responses,
+          attendees: rosterEnabled
+            ? attendees.map((attendee) => ({ clientId: attendee.clientId, responses: attendee.responses }))
+            : [],
+        },
+      );
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [club, draftReady, confirmation, draftIdentity, definition, rosterEnabled, registrationResponses, responses, attendees]);
+  function discardDraft() {
+    clearPublicDraft(getBrowserDraftStorage(), draftIdentity);
+    setResponses(initialResponses);
+    setRegistrationResponses(initialResponses);
+    setAttendees(initialRoster(roster.minAttendees));
+    setCollapsedAttendeeIds(new Set());
+    setIssues([]);
+    setError("");
+    setPromoCodeQuote(null);
+    setAttendeePromo(null);
+    setPromoCodeNotice("");
+    setDraftNotice(null);
+  }
   const errorSummaryRef = useRef<HTMLDivElement>(null);
   const stepHeadingRef = useRef<HTMLHeadingElement>(null);
   const rosterCsvInputRef = useRef<HTMLInputElement>(null);
@@ -2355,6 +2433,7 @@ export function PublicRegistrationForm({
         return;
       }
       setConfirmation(result.confirmation);
+      if (!club) clearPublicDraft(getBrowserDraftStorage(), draftIdentity);
       club?.onSubmitted?.();
       window.imsdaEmbedScrollTop?.();
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -2550,6 +2629,18 @@ export function PublicRegistrationForm({
                 <strong>This is a waitlist request, not a confirmed registration.</strong>
                 <small>No payment will be collected. The event team will contact you if space becomes available.</small>
               </span>
+            </section>
+          )}
+          {draftNotice === "restored" && (
+            <section className="public-registration-draft-notice" role="status">
+              <span>{PUBLIC_DRAFT_RESTORED_NOTICE}</span>
+              <button type="button" onClick={discardDraft}>Discard</button>
+            </section>
+          )}
+          {draftNotice === "version-changed" && (
+            <section className="public-registration-draft-notice" role="status">
+              <span>{PUBLIC_DRAFT_VERSION_CHANGED_NOTICE}</span>
+              <button type="button" onClick={() => setDraftNotice(null)}>Dismiss</button>
             </section>
           )}
           <section className="public-registration-intro">
