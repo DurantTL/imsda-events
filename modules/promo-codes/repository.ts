@@ -7,6 +7,10 @@ import {
 } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { isLockTimeoutError } from "@/lib/prisma-errors";
+import {
+  evaluateEventRegistrationPhase,
+  registrationClosedMessage,
+} from "@/modules/events/lifecycle";
 import { calendarDateInTimeZone } from "@/modules/forms/public-domain";
 import { hydrateFormOptions } from "@/modules/forms/form-options-repository";
 import {
@@ -65,6 +69,7 @@ export class PublicPromoCodeError extends Error {
     public readonly reason:
       | PromoCodeFailureReason
       | "FORM_NOT_FOUND"
+      | "REGISTRATION_CLOSED"
       | "FORM_VERSION_CHANGED"
       | "PROMO_FIELD_NOT_CONFIGURED",
     message: string,
@@ -477,6 +482,11 @@ function publicFormQuery(eventSlug: string, formSlug: string) {
       event: {
         select: {
           timezone: true,
+          endsAt: true,
+          isPublished: true,
+          registrationOpensOn: true,
+          registrationClosesOn: true,
+          waitlistEnabled: true,
           attendeeTypes: {
             where: { isActive: true },
             orderBy: [{ sortOrder: "asc" as const }, { label: "asc" as const }],
@@ -635,6 +645,12 @@ export async function getPublicPromoCodeQuote(
     throw new PublicPromoCodeError(
       "FORM_NOT_FOUND",
       "That public registration form is not available.",
+    );
+  }
+  if (evaluateEventRegistrationPhase(form.event, now) === "CLOSED") {
+    throw new PublicPromoCodeError(
+      "REGISTRATION_CLOSED",
+      registrationClosedMessage,
     );
   }
   if (version.id !== input.versionId) {

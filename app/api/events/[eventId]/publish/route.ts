@@ -2,6 +2,7 @@ import { AccessDeniedError, requirePermission } from "@/modules/access/authoriza
 import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { EventOperationError, findActiveMembership, publishEvent } from "@/modules/events/repository";
+import { getEventPublishWarnings } from "@/modules/events/readiness";
 import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
 
@@ -25,7 +26,7 @@ async function postHandler(request: Request, context: { params: Promise<{ eventI
     const access = await requirePermission(await getCurrentSession(), eventId, "CONFIGURE_EVENT", findActiveMembership);
     const event = await publishEvent(eventId, access.user.id);
     return event
-      ? Response.json({ event })
+      ? Response.json({ event, warnings: getEventPublishWarnings(event) })
       : Response.json({ error: "EVENT_NOT_FOUND", message: "That event no longer exists." }, { status: 404 });
   } catch (error) { return apiError(error); }
 }

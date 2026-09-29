@@ -32,7 +32,9 @@ function promoQuoteError(error: unknown, rateLimit?: RateLimitOutcome) {
       { status: 400, headers: noStoreHeaders }
     );
   } else if (error instanceof PublicPromoCodeError) {
-    const status = error.reason === "FORM_NOT_FOUND" ? 404 : 422;
+    const status = error.reason === "FORM_NOT_FOUND"
+      ? 404
+      : error.reason === "REGISTRATION_CLOSED" ? 410 : 422;
     response = Response.json(
       {
         error: error.reason,
