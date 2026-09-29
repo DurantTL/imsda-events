@@ -55,12 +55,12 @@ describe("honors setup at sites (#589)", () => {
     expect(html.match(/<strong>Sabbath Morning<\/strong>/g)).toHaveLength(2);
   });
 
-  it("gives each session and the new-session form a site picker", () => {
+  it("gives each session edit and delete buttons and the new-session form a site picker", () => {
     const html = render(setup());
-    expect(html).toContain("Site for Sabbath Morning");
+    expect(html).toContain("Edit session Sabbath Morning");
+    expect(html).toContain("Delete session Sabbath Morning");
     // With active sites, a new session must name one.
     expect(html).toContain("Choose a site");
-    expect(html).toContain("Site for Sabbath Morning");
     expect(html).toContain('value="loc-dm"');
   });
 

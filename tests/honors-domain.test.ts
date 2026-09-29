@@ -52,9 +52,10 @@ describe("honor input validation", () => {
       .toMatchObject({ capacity: 0, minimumAge: 10, perClubLimit: 3 });
   });
 
-  it("never lets an update move a class to another honor or session", () => {
-    expect(() => honorOfferingUpdateSchema.parse({ honorId: "birds" })).toThrow();
-    expect(() => honorOfferingUpdateSchema.parse({ sessionId: "sunday" })).toThrow();
+  it("lets an update name a new honor or session (the repository refuses it once clubs picked the class, #615)", () => {
+    expect(honorOfferingUpdateSchema.parse({ honorId: "birds" })).toEqual({ honorId: "birds" });
+    expect(honorOfferingUpdateSchema.parse({ sessionId: "sunday" })).toEqual({ sessionId: "sunday" });
+    expect(() => honorOfferingUpdateSchema.parse({ honorId: "" })).toThrow();
     expect(honorOfferingUpdateSchema.parse({ capacity: 12, minimumAge: null })).toEqual({ capacity: 12, minimumAge: null });
   });
 
