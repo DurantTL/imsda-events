@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, MapPin, Pencil, Plus, Power, Trash2, X } from "lucide-react";
-import type { EventLocationRecord } from "@/modules/event-locations/repository";
+import type { ActiveAreaCoordinator, EventLocationRecord } from "@/modules/event-locations/repository";
 
 type Draft = {
   name: string;
@@ -11,9 +11,10 @@ type Draft = {
   lastDay: string;
   registrationClosesOn: string;
   capacity: string;
+  coordinatorAccountId: string;
 };
 
-const emptyDraft: Draft = { name: "", address: "", firstDay: "", lastDay: "", registrationClosesOn: "", capacity: "" };
+const emptyDraft: Draft = { name: "", address: "", firstDay: "", lastDay: "", registrationClosesOn: "", capacity: "", coordinatorAccountId: "" };
 
 function draftFrom(location: EventLocationRecord): Draft {
   return {
@@ -23,6 +24,8 @@ function draftFrom(location: EventLocationRecord): Draft {
     lastDay: location.lastDay ?? "",
     registrationClosesOn: location.registrationClosesOn ?? "",
     capacity: location.capacity === null ? "" : String(location.capacity),
+    // A coordinator who is no longer active is not carried into the form: saving without picking one clears them.
+    coordinatorAccountId: location.coordinatorActive ? location.coordinatorAccountId ?? "" : "",
   };
 }
 
@@ -34,6 +37,7 @@ function bodyFrom(draft: Draft) {
     lastDay: draft.lastDay || null,
     registrationClosesOn: draft.registrationClosesOn || null,
     capacity: draft.capacity.trim() ? Number(draft.capacity) : null,
+    coordinatorAccountId: draft.coordinatorAccountId || null,
   };
 }
 
@@ -46,9 +50,11 @@ function bodyFrom(draft: Draft) {
 export function EventLocationsPanel({
   eventId,
   initialLocations,
+  areaCoordinators,
 }: {
   eventId: string;
   initialLocations: EventLocationRecord[];
+  areaCoordinators: ActiveAreaCoordinator[];
 }) {
   const [locations, setLocations] = useState(initialLocations);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
@@ -138,6 +144,12 @@ export function EventLocationsPanel({
                   {location.registrationClosesOn ? ` · Registration closes ${location.registrationClosesOn}` : ""}
                 </small>
                 <small>
+                  Area Coordinator:{" "}
+                  {location.coordinatorActive && location.coordinator
+                    ? <span translate="no">{location.coordinator.name}</span>
+                    : "No active coordinator"}
+                </small>
+                <small>
                   {location.occupied} registered{location.capacity !== null ? ` of ${location.capacity}` : " (no limit)"}
                   {" · "}{location.registrations} {location.registrations === 1 ? "registration" : "registrations"}
                 </small>
@@ -185,6 +197,19 @@ export function EventLocationsPanel({
               Capacity (people, optional)
               <input inputMode="numeric" min={1} onChange={(event) => setDraft({ ...draft, capacity: event.target.value })} type="number" value={draft.capacity} />
               <small className="field-help">Counted like the event capacity. Blank means no limit.</small>
+            </label>
+            <label>
+              Area Coordinator (optional)
+              <select onChange={(event) => setDraft({ ...draft, coordinatorAccountId: event.target.value })} value={draft.coordinatorAccountId}>
+                <option value="">No coordinator</option>
+                {areaCoordinators.map((coordinator) => (
+                  <option key={coordinator.accountId} value={coordinator.accountId}>{coordinator.name} ({coordinator.email})</option>
+                ))}
+              </select>
+              <small className="field-help">
+                Told by email when a club joins, leaves or is promoted from this location&apos;s waitlist.
+                Only active Area Coordinators can be chosen.
+              </small>
             </label>
           </div>
           <div className="club-registration-toolbar">

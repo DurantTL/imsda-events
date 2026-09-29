@@ -1,11 +1,13 @@
 import "server-only";
 
 import { checkLocationSeats } from "@/modules/event-locations/admission";
+import { promoteWaitlistAfterSeatsFreed } from "@/modules/registrations/lifecycle-repository";
 import { EventLocationError, locationTransactionTimeoutMs } from "@/modules/event-locations/errors";
 
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { isSerializationFailure } from "@/lib/prisma-errors";
 import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
 import { isSeminarPreferenceField } from "@/modules/attendee-accounts/registration-answer-policy";
 import { enqueueRegistrationUpdatedMessage } from "@/modules/communications/transactional-messages";
@@ -1235,8 +1237,8 @@ export async function previewRegistrationAmendment(
 }
 
 function retryable(error: unknown) {
-  return error instanceof Prisma.PrismaClientKnownRequestError
-    && (error.code === "P2034" || error.code === "P2002");
+  return isSerializationFailure(error)
+    || (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002");
 }
 
 export async function amendRegistration(
@@ -1464,6 +1466,25 @@ export async function amendRegistration(
             ...(prepared.locationChange ? { locationId: prepared.locationChange.to } : {}),
           },
         });
+        // Seats this change opened at the registration's old location go to
+        // that location's waitlist (#599): people removed, or a club moved to
+        // another location. Inside this transaction, under the location locks,
+        // so a race can't overfill; the notices go out after commit.
+        const freedSeatsAtLocation = prepared.registration.locationId
+          && ["SUBMITTED", "CONFIRMED"].includes(prepared.registration.status)
+          && (prepared.prepared.attendees.length < prepared.registration.attendees.length || prepared.locationChange)
+          ? await promoteWaitlistAfterSeatsFreed(tx, {
+              eventId,
+              actorUserId: amendmentActorUserId(actor),
+              trigger: {
+                locationId: prepared.registration.locationId,
+                reason: `Automatically promoted after seats opened at the location when ${prepared.registration.confirmationCode} was amended.`,
+              },
+              now,
+              correlationId: input.clientRequestId,
+              repeat: true,
+            })
+          : null;
         if (prepared.registration.promoCodeRedemption) {
           const discountAmountCents = typeof (
             prepared.pricedCalculation as FormCalculation & {
@@ -1535,7 +1556,7 @@ export async function amendRegistration(
             createdAt: now.toISOString(),
             ...amendmentPreview(prepared),
           },
-          pendingMessageIds: [] as string[],
+          pendingMessageIds: [...(freedSeatsAtLocation?.pendingMessageIds ?? [])],
         };
         if (hasMeaningfulAttendeeVisibleChange(prepared, input)) {
           const queued = await enqueueRegistrationUpdatedMessage(tx, {
@@ -1567,7 +1588,7 @@ export async function amendRegistration(
                 }))
               : undefined,
           });
-          response.pendingMessageIds = queued.pendingMessageIds;
+          response.pendingMessageIds = [...response.pendingMessageIds, ...queued.pendingMessageIds];
         }
         await tx.registrationOperation.create({
           data: {

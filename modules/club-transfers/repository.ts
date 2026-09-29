@@ -1,4 +1,6 @@
+import { isSerializationFailure } from "@/lib/prisma-errors";
 import { checkLocationSeats } from "@/modules/event-locations/admission";
+import { promoteWaitlistAfterSeatsFreed } from "@/modules/registrations/lifecycle-repository";
 import { EventLocationError, locationTransactionTimeoutMs } from "@/modules/event-locations/errors";
 import "server-only";
 
@@ -102,7 +104,7 @@ function isUniqueViolation(error: unknown) {
 }
 
 function isRetryableTransaction(error: unknown) {
-  return error instanceof Prisma.PrismaClientKnownRequestError && (error.code === "P2034" || error.code === "P2002");
+  return isSerializationFailure(error) || (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002");
 }
 
 const rosterMemberSelect = {
@@ -1447,6 +1449,21 @@ async function approveRegistrationMoveOnce(tx: Prisma.TransactionClient, moveId:
   await tx.registration.update({ where: { id: toRegistrationId }, data: { totalAmount: toTotalAfter / 100, updatedAt: now } });
 
   await tx.memberTransferRegistrationMove.update({ where: { id: moveId }, data: { toRegistrationId } });
+  // The seat this person held at the old registration's location opens up
+  // there (#599): offered to that location's waitlist, in this transaction and
+  // under the location locks. The notices go out after commit.
+  const freedSeat = move.fromRegistration.locationId && ["SUBMITTED", "CONFIRMED"].includes(move.fromRegistration.status)
+    ? await promoteWaitlistAfterSeatsFreed(tx, {
+        eventId: move.eventId,
+        actorUserId: actor.userId,
+        trigger: {
+          locationId: move.fromRegistration.locationId,
+          reason: `Automatically promoted after a member moved out of registration ${move.fromRegistration.confirmationCode}.`,
+        },
+        now,
+        correlationId: `member-move:${moveId}`,
+      })
+    : null;
   const detail = {
     moveId,
     fromRegistrationId,
@@ -1470,7 +1487,7 @@ async function approveRegistrationMoveOnce(tx: Prisma.TransactionClient, moveId:
     { transferId: move.transfer.id, fromOrganizationId: move.transfer.fromOrganizationId, toOrganizationId: move.transfer.toOrganizationId, ...detail },
     { eventId: move.eventId, entityType: "RegistrationAttendee" },
   );
-  return detail;
+  return { ...detail, pendingMessageIds: freedSeat?.pendingMessageIds ?? [] };
 }
 
 /** Staff skip one registration move (#489 decision 2): the attendee stays where they are. Audited with the actor (N4). */

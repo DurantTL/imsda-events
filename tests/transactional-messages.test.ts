@@ -622,3 +622,77 @@ describe("church-billed (deferred-organization) lifecycle messages", () => {
     expect(updatedBody).toContain("Pay your balance");
   });
 });
+
+describe("waitlist messages for a club at an event location (#599)", () => {
+  function atLocation(location: { name: string; address: string | null } | null) {
+    const fixture = transactionFixture();
+    const base = fixture.tx.registration.findFirst.getMockImplementation()!;
+    fixture.tx.registration.findFirst.mockImplementation(async (...args: unknown[]) => ({
+      ...(await (base as (...inner: unknown[]) => Promise<Record<string, unknown>>)(...args)),
+      location,
+    }));
+    return fixture;
+  }
+
+  it("names the location, and its address, where the event's own place would be named", async () => {
+    const { tx, upsert } = atLocation({ name: "Des Moines", address: "1 Synthetic Rd" });
+    await enqueueWaitlistJoinedMessage(tx as never, {
+      eventId: "event-1", registrationId: "registration-1", correlationId: "c-1", transitionKey: "waitlist:loc", waitlistPosition: 3,
+    });
+    const body = queuedMessage(upsert).create.bodyTextSnapshot;
+    expect(body).toContain("Des Moines, 1 Synthetic Rd");
+    expect(body).not.toContain("Camp Heritage");
+    // The place in line the caller gives (per location) is the one said.
+    expect(body).toContain("You are number **3** on the waitlist.");
+  });
+
+  it("names the location in the promotion and removal emails, whose templates have no location line of their own", async () => {
+    for (const enqueue of [enqueueWaitlistPromotedMessage, enqueueWaitlistRemovedMessage]) {
+      const { tx, upsert } = atLocation({ name: "Des Moines", address: null });
+      await enqueue(tx as never, { eventId: "event-1", registrationId: "registration-1", correlationId: "c-2", transitionKey: `t:${enqueue.name}`, waitlistPosition: 2 });
+      const message = queuedMessage(upsert).create;
+      expect(message.bodyTextSnapshot).toContain("**Location:** Des Moines");
+      // Under the heading, ahead of the rest of the message.
+      expect(message.bodyTextSnapshot.indexOf("**Location:** Des Moines")).toBeLessThan(message.bodyTextSnapshot.indexOf("Hello"));
+      expect(message.bodyTextSnapshot + message.subjectSnapshot).not.toContain("{{");
+      expect(message.bodyHtmlSnapshot).toContain("Des Moines");
+    }
+  });
+
+  it("does not repeat the location where a template already shows it", async () => {
+    const { tx, upsert } = atLocation({ name: "Des Moines", address: null });
+    await enqueueWaitlistJoinedMessage(tx as never, { eventId: "event-1", registrationId: "registration-1", correlationId: "c-3", transitionKey: "waitlist:loc-2" });
+    const body = queuedMessage(upsert).create.bodyTextSnapshot;
+    expect(body).toContain("**Location:** Des Moines");
+    expect(body.match(/Des Moines/g)).toHaveLength(1);
+  });
+
+  it("puts the location line in a customized template that lacks one, and leaves one that has it alone", async () => {
+    for (const [bodyTemplate, expected] of [
+      ["# Custom heading\n\nHello {{recipient_name}}, you wait.", ["# Custom heading\n\n**Location:** Des Moines\n"]],
+      ["No heading. {{recipient_name}}", ["**Location:** Des Moines\n\nNo heading."]],
+      ["# Mine\n\nWe meet at {{event_location}}.", ["We meet at Des Moines."]],
+    ] as const) {
+      const { tx, upsert } = atLocation({ name: "Des Moines", address: null });
+      tx.eventMessageTemplate.findUnique.mockResolvedValue({
+        isEnabled: true, versions: [{ id: "version-1", subjectTemplate: "Waitlist {{event_name}}", bodyTemplate }],
+      });
+      await enqueueWaitlistPromotedMessage(tx as never, { eventId: "event-1", registrationId: "registration-1", correlationId: "c-5", transitionKey: `custom:${bodyTemplate}` });
+      const body = queuedMessage(upsert).create.bodyTextSnapshot;
+      for (const fragment of expected) expect(body).toContain(fragment);
+      expect(body.match(/Des Moines/g)).toHaveLength(1);
+    }
+  });
+
+  it("adds no location line to other messages, only the waitlist ones", async () => {
+    const { tx, upsert } = atLocation({ name: "Des Moines", address: null });
+    await enqueueRegistrationCancelledMessage(tx as never, { eventId: "event-1", registrationId: "registration-1", correlationId: "c-6", transitionKey: "cancel:loc" });
+    expect(queuedMessage(upsert).create.bodyTextSnapshot).not.toContain("Des Moines");
+  });
+
+  it("keeps the event's own location for a registration with none", async () => {
+    const { tx, upsert } = atLocation(null);
+    await enqueueWaitlistJoinedMessage(tx as never, { eventId: "event-1", registrationId: "registration-1", correlationId: "c-4", transitionKey: "waitlist:plain" });
+    expect(queuedMessage(upsert).create.bodyTextSnapshot).toContain("Camp Heritage");
+  });
+});

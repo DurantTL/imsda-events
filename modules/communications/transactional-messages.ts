@@ -99,6 +99,26 @@ const fallbackSettings = {
   replyToEmail: null,
 };
 
+const waitlistTemplateKeys: ReadonlySet<TransactionalTemplateKey> = new Set([
+  "WAITLIST_JOINED",
+  "WAITLIST_PROMOTED",
+  "WAITLIST_REMOVED",
+]);
+
+/**
+ * Puts a "Location" line under the message's heading when its template does
+ * not already show `{{event_location}}`. A template that does is left alone,
+ * so staff wording is never doubled.
+ */
+function withLocationLine(body: string) {
+  if (body.includes("{{event_location}}")) return body;
+  const line = "**Location:** {{event_location}}";
+  const heading = body.match(/^# .*(\r?\n|$)/);
+  return heading
+    ? `${heading[0].trimEnd()}\n\n${line}\n${body.slice(heading[0].length)}`
+    : `${line}\n\n${body}`;
+}
+
 function jsonRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -260,6 +280,7 @@ async function enqueueTransactionalMessage(
         status: true,
         totalAmount: true,
         contactSnapshot: true,
+        location: { select: { name: true, address: true } },
         accountHolderPerson: {
           select: {
             firstName: true,
@@ -393,10 +414,16 @@ async function enqueueTransactionalMessage(
     || settings.replyToEmail
     || settings.senderEmail
     || "the IMSDA event office";
-  const publishedBody = withChurchBilledLinkWording(
+  const churchWordedBody = withChurchBilledLinkWording(
     source?.bodyTemplate ?? fallback.body,
     isDeferredOrganizationBilling,
   );
+  // A waitlist email for a club at a location says which location, even when
+  // the template (a customized one, or one of the defaults) has no location
+  // line of its own (#599).
+  const publishedBody = registration.location && waitlistTemplateKeys.has(input.templateKey)
+    ? withLocationLine(churchWordedBody)
+    : churchWordedBody;
   const bodyTemplate = input.changeCategory === "SEMINAR_PREFERENCES"
     && input.seminarPreferences
     && !publishedBody.includes("{{seminar_preferences}}")
@@ -413,7 +440,10 @@ async function enqueueTransactionalMessage(
       registration.event.endsAt,
       { timeZone: registration.event.timezone },
     ),
-    event_location: registration.event.location || "Location to be announced",
+    // A club registration at a location names that location (#413, #599).
+    event_location: registration.location
+      ? [registration.location.name, registration.location.address].filter(Boolean).join(", ")
+      : registration.event.location || "Location to be announced",
     confirmation_code: registration.confirmationCode,
     attendee_summary: registration.attendees
       .map((attendee, index) => `${index + 1}. ${attendeeName(attendee)}`)

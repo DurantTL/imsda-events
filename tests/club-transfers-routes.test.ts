@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   listRegistrationMoves: vi.fn(),
   approveRegistrationMove: vi.fn(),
   skipRegistrationMove: vi.fn(),
+  processQueuedMessageIdsAfterCommit: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -30,6 +31,7 @@ vi.mock("next/server", async () => {
 });
 vi.mock("@/modules/access/request-security", () => ({ rejectCrossOriginRequest: mocks.rejectCrossOriginRequest }));
 vi.mock("@/modules/communications/email-delivery", () => ({ processAccountEmailQueue: mocks.processAccountEmailQueue }));
+vi.mock("@/modules/communications/messaging-repository", () => ({ processQueuedMessageIdsAfterCommit: mocks.processQueuedMessageIdsAfterCommit }));
 vi.mock("@/lib/logger", async () => {
   const actual = await vi.importActual<typeof import("@/lib/logger")>("@/lib/logger");
   return { ...actual, logError: mocks.logError };
@@ -276,6 +278,27 @@ describe("staff transfer routes: system administrators only", () => {
     mocks.staffFinishTransfer.mockRejectedValue(new MemberTransferError("NOT_OVERDUE", "Not overdue yet."));
     expect((await staffFinish(jsonRequest("/x", {}), staffCtx)).status).toBe(409);
     expect((await staffCancel(jsonRequest("/x", {}), staffCtx)).status).toBe(400);
+  });
+
+  it("approve sends the waitlist promotion emails a move opened, after the move, and never fails it (#599)", async () => {
+    mocks.requireStaffTransferAccess.mockResolvedValue({ userId: "staff-1" });
+    mocks.processQueuedMessageIdsAfterCommit.mockResolvedValue({});
+    mocks.approveRegistrationMove.mockResolvedValue({ moveId: "move-1", pendingMessageIds: ["message-1"] });
+    const approved = await moveApprove(jsonRequest("/x", { confirm: true }), moveCtx);
+    expect(approved.status).toBe(200);
+    expect(mocks.processQueuedMessageIdsAfterCommit).toHaveBeenCalledWith(["message-1"]);
+    // The emails are not part of the answer.
+    await expect(approved.json()).resolves.toEqual({ moveId: "move-1" });
+
+    mocks.processQueuedMessageIdsAfterCommit.mockRejectedValue(new Error("synthetic provider outage"));
+    const stillApproved = await moveApprove(jsonRequest("/x", { confirm: true }), moveCtx);
+    expect(stillApproved.status).toBe(200);
+    expect(mocks.logError).toHaveBeenCalledWith(expect.stringContaining("Waitlist promotion email delivery failed"), expect.any(Error));
+
+    mocks.processQueuedMessageIdsAfterCommit.mockClear();
+    mocks.approveRegistrationMove.mockResolvedValue({ moveId: "move-1", pendingMessageIds: [] });
+    await moveApprove(jsonRequest("/x", { confirm: true }), moveCtx);
+    expect(mocks.processQueuedMessageIdsAfterCommit).not.toHaveBeenCalled();
   });
 
   it("approve needs a confirmation; a blocked move is a 409 naming the blocker", async () => {

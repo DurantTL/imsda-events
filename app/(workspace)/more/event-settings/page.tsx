@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { AccessRestricted } from "@/components/access-restricted";
 import { EventSettingsWorkspace } from "@/components/event-settings-workspace";
-import { listEventLocations } from "@/modules/event-locations/repository";
+import { listActiveAreaCoordinators, listEventLocations } from "@/modules/event-locations/repository";
 import { getEventSettings } from "@/modules/events/repository";
 import { resolveEventContext } from "@/modules/events/selection";
 
@@ -18,7 +18,7 @@ export default async function EventSettingsPage({
   if (!permissions.includes("CONFIGURE_EVENT")) {
     return <AccessRestricted title="Event settings are restricted" detail="Only event administrators can change public details, capacity, registration dates, waitlist behavior, and publishing." />;
   }
-  const [settings, locations] = await Promise.all([getEventSettings(event.id), listEventLocations(event.id)]);
+  const [settings, locations, coordinators] = await Promise.all([getEventSettings(event.id), listEventLocations(event.id), listActiveAreaCoordinators()]);
   if (!settings) notFound();
-  return <EventSettingsWorkspace key={event.id} mode="edit" initialEvent={settings} initialLocations={locations} />;
+  return <EventSettingsWorkspace key={event.id} mode="edit" initialEvent={settings} initialLocations={locations} areaCoordinators={coordinators} />;
 }

@@ -70,7 +70,7 @@ describe("template locations (#413)", () => {
 
   it("validates a location: a name, a positive capacity, and a last day not before the first", () => {
     expect(templateLocationSchema.parse({ name: "Des Moines" })).toEqual({
-      name: "Des Moines", address: null, capacity: null, firstDayOffset: null, lastDayOffset: null, registrationClosesOffset: null,
+      name: "Des Moines", address: null, capacity: null, firstDayOffset: null, lastDayOffset: null, registrationClosesOffset: null, coordinatorAccountId: null,
     });
     expect(templateLocationSchema.safeParse({ name: "" }).success).toBe(false);
     expect(templateLocationSchema.safeParse({ name: "A", capacity: 0 }).success).toBe(false);
@@ -107,6 +107,41 @@ describe("template locations (#413)", () => {
     expect(rows[1]).toMatchObject({ firstDay: null, lastDay: null, registrationClosesOn: null, capacity: 80 });
     expect(rows[2]).toMatchObject({ firstDay: "2027-12-18", lastDay: "2027-12-19", registrationClosesOn: "2027-12-11" });
     expect(auditLogCreate.mock.calls[0]![0].data.metadata).toMatchObject({ locationCount: 3 });
+  });
+
+  it("carries a location's coordinator only while that account is still an active Area Coordinator (#599)", async () => {
+    const { tx, locationCreateMany } = mockApply(eventTemplatePayloadSchema.parse({
+      audience: "CLUB",
+      locations: [
+        { name: "Camp Heritage 1", coordinatorAccountId: "account-active" },
+        { name: "Des Moines", coordinatorAccountId: "account-revoked" },
+        { name: "Kansas City Multicultural" },
+      ],
+    }));
+    const now = new Date();
+    (tx as unknown as Record<string, unknown>).attendeeAccount = {
+      findMany: vi.fn().mockResolvedValue([
+        { id: "account-active", areaCoordinatorGrant: { revokedAt: null, expiresAt: null } },
+        { id: "account-revoked", areaCoordinatorGrant: { revokedAt: new Date(now.getTime() - 1000), expiresAt: null } },
+      ]),
+    };
+    await applyEventTemplate("template-1", "usr_actor", applyInput);
+    const rows = locationCreateMany.mock.calls[0]![0].data as Array<Record<string, unknown>>;
+    expect(rows.map((row) => row.coordinatorAccountId)).toEqual(["account-active", null, null]);
+  });
+
+  it("asks nobody about coordinators when no location names one", async () => {
+    const { tx } = mockApply(eventTemplatePayloadSchema.parse({ audience: "CLUB", locations: [{ name: "Des Moines" }] }));
+    const findMany = vi.fn();
+    (tx as unknown as Record<string, unknown>).attendeeAccount = { findMany };
+    await applyEventTemplate("template-1", "usr_actor", applyInput);
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it("accepts a coordinator on a template location, with none by default", () => {
+    expect(templateLocationSchema.parse({ name: "A", coordinatorAccountId: "account-1" }).coordinatorAccountId).toBe("account-1");
+    expect(templateLocationSchema.parse({ name: "A" }).coordinatorAccountId).toBeNull();
+    expect(templateLocationSchema.safeParse({ name: "A", coordinatorAccountId: "" }).success).toBe(false);
   });
 
   it("creates no location rows for a template without locations", async () => {

@@ -4,7 +4,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { Prisma, RegistrationFormStatus } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
+import { isSerializationFailure } from "@/lib/prisma-errors";
 import { admitToLocation } from "@/modules/event-locations/admission";
+import { locationWaitlistPlace, recordLocationWaitlistChange } from "@/modules/event-locations/waitlist";
 import { locationTransactionTimeoutMs } from "@/modules/event-locations/errors";
 import { effectiveLocationDates } from "@/modules/event-locations/domain";
 import {
@@ -662,6 +664,7 @@ async function createPublicRegistrationTransaction(
   // seats in, and closed is reported before full (#413).
   let lifecycle: typeof form.event = form.event;
   let registrationLocationId: string | null = null;
+  let locationWaitlisted = false;
   let registrationLocation: { name: string; address: string | null; firstDay: string; lastDay: string } | null = null;
   if (club) {
     const clubRoster = getAttendeeRosterConfig(definition);
@@ -671,8 +674,11 @@ async function createPublicRegistrationTransaction(
       locationId: club.locationId,
       requestedSeats: clubRoster.enabled ? input.attendees?.length ?? 0 : 1,
       requirePick: true,
+      // A full location joins its own waitlist when the event has one (#599).
+      waitlistIfFull: form.event.waitlistEnabled,
       beforeSeatCheck: (source, location) => assertRegistrationOpen(source, location.name),
     });
+    locationWaitlisted = admittedToLocation.waitlisted;
     lifecycle = admittedToLocation.lifecycle;
     registrationLocationId = admittedToLocation.locationId;
     if (admittedToLocation.location) {
@@ -702,7 +708,7 @@ async function createPublicRegistrationTransaction(
       `Only ${remaining} attendee spot${remaining === 1 ? "" : "s"} remain for this event, and its waitlist is not enabled.`
     );
   }
-  const isWaitlisted = admission.capacityDecision === "WAITLIST";
+  const isWaitlisted = admission.capacityDecision === "WAITLIST" || locationWaitlisted;
   const reservations = isWaitlisted
     ? []
     : await tx.registrationCapacityReservation.findMany({
@@ -975,6 +981,12 @@ async function createPublicRegistrationTransaction(
         attendeeCount: createdAttendees.length,
       },
     });
+    // At a location the place in line is per location (#599), and the joined
+    // notice to the coordinator and staff is recorded with it.
+    if (registrationLocationId) {
+      const place = await locationWaitlistPlace(tx, registration.id, registrationLocationId);
+      if (place !== null) waitlistPosition = place;
+    }
   }
 
   // Each per-person discount is kept as that person's promo-code line, so
@@ -1064,6 +1076,10 @@ async function createPublicRegistrationTransaction(
     await tx.clubRegistrationDraft.deleteMany({
       where: { eventId: form.eventId, organizationId: club.organizationId },
     });
+    if (isWaitlisted && registrationLocationId) {
+      // After the club link exists, so the record names the club.
+      await recordLocationWaitlistChange(tx, { registrationId: registration.id, locationId: registrationLocationId, kind: "JOINED", place: waitlistPosition });
+    }
   }
   const submissionCorrelationId = randomUUID();
   const queuedMessages = isWaitlisted
@@ -1165,8 +1181,8 @@ async function createPublicRegistrationTransaction(
 
 function retryableTransactionError(error: unknown) {
   return (
-    error instanceof Prisma.PrismaClientKnownRequestError
-    && (error.code === "P2034" || error.code === "P2002")
+    isSerializationFailure(error)
+    || (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002")
   ) || (
     error instanceof PromoCodeOperationError
     && error.code === "PROMO_CODE_CLAIM_CONFLICT"

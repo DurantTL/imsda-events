@@ -192,7 +192,8 @@ function fixture({
   ].filter((row) => activeMembers.includes(row.id));
   const operations = new Map<string, Record<string, unknown>>();
   const prisma = {
-    event: { findFirst: vi.fn(async () => ({
+    // Opening seats at a location looks at the event's waitlist settings (#599); this event has none.
+    event: { findUnique: vi.fn(async () => ({ id: "event-1", name: "Honors Weekend", capacity: null, waitlistEnabled: false, autoPromoteWaitlist: false })), findFirst: vi.fn(async () => ({
       id: "event-1", name: "Honors Weekend", startsAt: new Date("2026-12-05T15:00:00Z"), endsAt: new Date("2026-12-06T20:00:00Z"),
       timezone: "America/Chicago", location: "Camp", isPublished: true, registrationOpensOn, registrationClosesOn,
       waitlistEnabled: false, billingMode: "DEFERRED_ORGANIZATION_INVOICE", audience: "CLUB", capacity: null,
@@ -842,6 +843,49 @@ describe("club registration edit at an event location (#413)", () => {
     atLocation({});
     await expect(amendClubRegistration("club-1", "event-1", director, { ...baseEdit(), locationId: "nowhere" }, beforeDeadline))
       .rejects.toMatchObject({ code: "LOCATION_INVALID" });
+  });
+
+  describe("seats an edit opens at the location go to its waitlist (#599)", () => {
+    /** The event has a waitlist with nobody waiting: what matters is that the pass runs, in the edit's own transaction. */
+    function withWaitlist(built: ReturnType<typeof atLocation>, flags = { waitlistEnabled: true, autoPromoteWaitlist: true }) {
+      const findMany = vi.fn().mockResolvedValue([]);
+      (built.prisma as unknown as Record<string, unknown>).registrationWaitlistEntry = { findMany };
+      built.prisma.event.findUnique.mockResolvedValue({ id: "event-1", name: "Honors Weekend", capacity: null, ...flags });
+      return findMany;
+    }
+
+    it("offers the freed seats to the location's waitlist when a person is removed", async () => {
+      const built = atLocation();
+      const findMany = withWaitlist(built);
+      await amendClubRegistration("club-1", "event-1", director, baseEdit(), beforeDeadline);
+      expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { eventId: "event-1", status: "WAITING" } }));
+      // Inside the edit's own serializable transaction, after the registration is updated.
+      expect(built.prisma.registration.update.mock.invocationCallOrder[0]).toBeLessThan(findMany.mock.invocationCallOrder[0]!);
+    });
+
+    it("offers them when the registration moves to another location, which frees its old seats", async () => {
+      const built = atLocation({ others: [row({ id: "loc-2", name: "Des Moines", capacity: 5 })], seatsElsewhere: 1 });
+      const findMany = withWaitlist(built);
+      await amendClubRegistration("club-1", "event-1", director, { ...baseEdit(), selectedMemberIds: ["m1", "m2"].slice(0, 1), locationId: "loc-2" }, beforeDeadline);
+      expect(findMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not look at the waitlist when nobody is removed and the location does not change", async () => {
+      const built = atLocation({ current: row({ capacity: 10 }) });
+      const findMany = withWaitlist(built);
+      await amendClubRegistration("club-1", "event-1", director, { ...baseEdit(), selectedMemberIds: ["m1", "m3"] }, beforeDeadline);
+      expect(findMany).not.toHaveBeenCalled();
+      expect(built.prisma.event.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("offers nothing when the event has no waitlist, or does not auto-promote", async () => {
+      for (const flags of [{ waitlistEnabled: false, autoPromoteWaitlist: false }, { waitlistEnabled: true, autoPromoteWaitlist: false }]) {
+        const built = atLocation();
+        const findMany = withWaitlist(built, flags);
+        await amendClubRegistration("club-1", "event-1", director, baseEdit(), beforeDeadline);
+        expect(findMany).not.toHaveBeenCalled();
+      }
+    });
   });
 
   it("gives the amendment transaction room for the lock wait", async () => {

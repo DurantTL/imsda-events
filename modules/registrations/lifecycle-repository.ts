@@ -3,9 +3,11 @@ import "server-only";
 import { countLocationSeats, lockEventLocation } from "@/modules/event-locations/admission";
 import { locationHasRoom, remainingLocationSeats } from "@/modules/event-locations/domain";
 import { EventLocationError, locationTransactionTimeoutMs } from "@/modules/event-locations/errors";
+import { locationWaitlistPlace, recordLocationWaitlistChange } from "@/modules/event-locations/waitlist";
 
 import { Prisma, type RegistrationStatus } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { isSerializationFailure } from "@/lib/prisma-errors";
 import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
 import {
   enqueueRegistrationCancelledMessage,
@@ -434,7 +436,7 @@ async function auditTransition(
   tx: Prisma.TransactionClient,
   input: {
     eventId: string;
-    actorUserId: string;
+    actorUserId: string | null;
     registration: LifecycleRegistration;
     action: string;
     summary: string;
@@ -468,7 +470,7 @@ async function auditTransition(
 async function promoteWithinTransaction(
   tx: Prisma.TransactionClient,
   registration: LifecycleRegistration,
-  actorUserId: string,
+  actorUserId: string | null,
   reason: string,
   now: Date,
   action: "REGISTRATION_PROMOTED_FROM_WAITLIST" | "REGISTRATION_AUTO_PROMOTED_FROM_WAITLIST",
@@ -494,6 +496,8 @@ async function promoteWithinTransaction(
       "The waitlisted registration does not have a queue entry.",
     );
   }
+  // Where the club stood at its location, read before the entry leaves the queue (#599).
+  const locationPlace = await locationWaitlistPlace(tx, registration.id, registration.locationId);
   await tx.registrationWaitlistEntry.update({
     where: { id: registration.waitlistEntry.id },
     data: {
@@ -520,12 +524,19 @@ async function promoteWithinTransaction(
       paymentHistoryPreserved: true,
     },
   });
+  await recordLocationWaitlistChange(tx, {
+    registrationId: registration.id,
+    locationId: registration.locationId,
+    kind: "PROMOTED",
+    place: locationPlace,
+    now,
+  });
   return enqueueWaitlistPromotedMessage(tx, {
     eventId: registration.eventId,
     registrationId: registration.id,
     correlationId,
     transitionKey: `${action}:${correlationId}`,
-    waitlistPosition: registration.waitlistEntry.position,
+    waitlistPosition: locationPlace ?? registration.waitlistEntry.position,
     metadata: {
       source: action,
       autoPromoted: action === "REGISTRATION_AUTO_PROMOTED_FROM_WAITLIST",
@@ -533,19 +544,31 @@ async function promoteWithinTransaction(
   });
 }
 
+/** What freed seats: the location they were at (if any) decides who is offered them first. */
+export type SeatsFreedTrigger = { locationId: string | null; reason: string };
+
 async function autoPromoteEarliestFitting(
   tx: Prisma.TransactionClient,
   event: LifecycleEvent,
-  actorUserId: string,
-  cancelledRegistration: LifecycleRegistration,
+  actorUserId: string | null,
+  trigger: SeatsFreedTrigger,
   now: Date,
   correlationId: string,
 ) {
-  const waiting = await tx.registrationWaitlistEntry.findMany({
+  const queued = await tx.registrationWaitlistEntry.findMany({
     where: { eventId: event.id, status: "WAITING" },
     orderBy: { position: "asc" },
-    select: { id: true, registrationId: true, position: true },
+    select: { id: true, registrationId: true, position: true, registration: { select: { locationId: true } } },
   });
+  // Seats freed at a location go to the next club waiting at that location
+  // first, in its own first-come order (#599). Clubs at other locations, or
+  // with none, follow in event order: the freed event seat may help them too.
+  const waiting = trigger.locationId
+    ? [
+        ...queued.filter((entry) => entry.registration?.locationId === trigger.locationId),
+        ...queued.filter((entry) => entry.registration?.locationId !== trigger.locationId),
+      ]
+    : queued;
 
   for (const entry of waiting) {
     const candidate = await loadRegistration(tx, event.id, entry.registrationId);
@@ -610,7 +633,7 @@ async function autoPromoteEarliestFitting(
       tx,
       candidate,
       actorUserId,
-      `Automatically promoted after cancellation of ${cancelledRegistration.confirmationCode}.`,
+      trigger.reason,
       now,
       "REGISTRATION_AUTO_PROMOTED_FROM_WAITLIST",
       correlationId,
@@ -623,9 +646,52 @@ async function autoPromoteEarliestFitting(
   return null;
 }
 
+/**
+ * Offers seats that opened at a location to the waitlist, inside the caller's
+ * transaction (#599): an amendment that removed people or moved a club away, a
+ * club transfer out, or a raised capacity. It is the same loop a cancellation
+ * uses, so each candidate's location is locked inside it and a busy location
+ * is skipped rather than failing the change that freed the seats.
+ *
+ * Does nothing when the event has no waitlist or auto-promotion is off.
+ * `repeat` keeps promoting while the next club still fits (a raised capacity
+ * can open several seats at once); the default offers the seats to one club.
+ * The caller sends the returned `pendingMessageIds` after its commit.
+ */
+export async function promoteWaitlistAfterSeatsFreed(
+  tx: Prisma.TransactionClient,
+  input: {
+    eventId: string;
+    actorUserId: string | null;
+    trigger: SeatsFreedTrigger;
+    now?: Date;
+    correlationId?: string;
+    repeat?: boolean;
+  },
+) {
+  const promotedRegistrationIds: string[] = [];
+  const pendingMessageIds: string[] = [];
+  const event = await loadEvent(tx, input.eventId);
+  if (!event.waitlistEnabled || !event.autoPromoteWaitlist) {
+    return { promotedRegistrationIds, pendingMessageIds };
+  }
+  const now = input.now ?? new Date();
+  const correlationId = input.correlationId ?? crypto.randomUUID();
+  // A promotion needs a waiting club; the bound only guards a runaway loop.
+  for (let round = 0; round < 50; round += 1) {
+    const promoted = await autoPromoteEarliestFitting(tx, event, input.actorUserId, input.trigger, now, `${correlationId}:${round}`);
+    if (!promoted) break;
+    promotedRegistrationIds.push(promoted.registrationId);
+    pendingMessageIds.push(...promoted.pendingMessageIds);
+    if (!input.repeat) break;
+  }
+  return { promotedRegistrationIds, pendingMessageIds };
+}
+
 function retryableTransactionError(error: unknown) {
-  return error instanceof Prisma.PrismaClientKnownRequestError
-    && (error.code === "P2034" || error.code === "P2002");
+  // A location's row lock is a raw query, whose serialization failure is not P2034 (#599).
+  return isSerializationFailure(error)
+    || (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002");
 }
 
 async function runSerializable<T>(
@@ -687,8 +753,12 @@ export async function cancelRegistration(
     const correlationId = crypto.randomUUID();
     const wasActive = isActiveStatus(registration.status);
     const wasWaitlisted = registration.status === "WAITLISTED";
+    // At a location the place in line is per location (#599); read before the entry is removed.
+    const locationPlace = wasWaitlisted && registration.waitlistEntry?.status === "WAITING"
+      ? await locationWaitlistPlace(tx, registration.id, registration.locationId)
+      : null;
     const waitlistPosition = wasWaitlisted
-      ? registration.waitlistEntry?.position ?? null
+      ? locationPlace ?? registration.waitlistEntry?.position ?? null
       : null;
     const released = await releaseOptionReservations(tx, registration.id, now);
 
@@ -706,6 +776,15 @@ export async function cancelRegistration(
       where: { id: registration.id },
       data: { status: "CANCELLED", cancelledAt: now },
     });
+    if (wasWaitlisted && registration.waitlistEntry) {
+      await recordLocationWaitlistChange(tx, {
+        registrationId: registration.id,
+        locationId: registration.locationId,
+        kind: "REMOVED",
+        place: locationPlace,
+        now,
+      });
+    }
 
     const autoPromotion = wasActive
       && event.waitlistEnabled
@@ -714,7 +793,10 @@ export async function cancelRegistration(
           tx,
           event,
           actorUserId,
-          registration,
+          {
+            locationId: registration.locationId,
+            reason: `Automatically promoted after cancellation of ${registration.confirmationCode}.`,
+          },
           now,
           correlationId,
         )
@@ -792,11 +874,18 @@ export async function moveRegistrationToWaitlist(
     requireStatus(registration, ["SUBMITTED", "CONFIRMED"], "Moving to the waitlist");
     const correlationId = crypto.randomUUID();
     const released = await releaseOptionReservations(tx, registration.id, now);
-    const position = await placeAtEndOfWaitlist(tx, registration, now);
+    const eventPosition = await placeAtEndOfWaitlist(tx, registration, now);
     await tx.registration.update({
       where: { id: registration.id },
       data: { status: "WAITLISTED", cancelledAt: null },
     });
+    // At a location the place in line is per location, and the joined notice to
+    // the coordinator and staff is recorded (#599).
+    const locationPlace = await locationWaitlistPlace(tx, registration.id, registration.locationId);
+    const position = locationPlace ?? eventPosition;
+    if (locationPlace !== null) {
+      await recordLocationWaitlistChange(tx, { registrationId: registration.id, locationId: registration.locationId, kind: "JOINED", place: locationPlace, now });
+    }
     await auditTransition(tx, {
       eventId,
       actorUserId,

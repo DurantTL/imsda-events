@@ -29,6 +29,7 @@ import {
   cancelRegistration,
   moveRegistrationToWaitlist,
   promoteRegistrationFromWaitlist,
+  promoteWaitlistAfterSeatsFreed,
   reactivateRegistration,
 } from "@/modules/registrations/lifecycle-repository";
 
@@ -64,8 +65,10 @@ function transactionFixture() {
     event: { findUnique: vi.fn().mockResolvedValue(event) },
     registration: {
       findFirst: vi.fn(),
+      findUnique: vi.fn().mockResolvedValue(null),
       update: vi.fn().mockResolvedValue({}),
     },
+    locationWaitlistChange: { create: vi.fn().mockResolvedValue({ id: "change-1" }) },
     registrationAttendee: {
       count: vi.fn().mockResolvedValue(0),
     },
@@ -77,6 +80,8 @@ function transactionFixture() {
     },
     registrationWaitlistEntry: {
       findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue(null),
+      count: vi.fn().mockResolvedValue(0),
       aggregate: vi.fn().mockResolvedValue({ _max: { position: null } }),
       create: vi.fn().mockResolvedValue({}),
       update: vi.fn().mockResolvedValue({}),
@@ -692,5 +697,150 @@ describe("auto-promotion on cancel skips a candidate whose location is busy (#41
     expect(tx.registration.update).toHaveBeenCalledWith({ where: { id: cancelled.id }, data: expect.objectContaining({ status: "CANCELLED" }) });
     expect(tx.registration.update).toHaveBeenCalledWith({ where: { id: fitting.id }, data: { status: "SUBMITTED", cancelledAt: null } });
     expect(tx.registration.update).not.toHaveBeenCalledWith({ where: { id: busy.id }, data: expect.anything() });
+  });
+});
+
+describe("location waitlists (#599)", () => {
+  const when = new Date("2026-08-12T12:00:00.000Z");
+  const locationRow = (id: string) => ({ id, eventId: event.id, name: id === "loc-1" ? "Des Moines" : "Kansas City", capacity: null, isActive: true });
+
+  /** A transaction whose location locks succeed and whose reads answer for the given registrations. */
+  function locationFixture(registrations: Array<ReturnType<typeof registration>>, queue: Array<{ id: string; registrationId: string; position: number; locationId: string | null }> = []) {
+    const { prisma, tx } = transactionFixture();
+    Object.assign(tx, {
+      $queryRaw: vi.fn(async (_strings: TemplateStringsArray, ...values: unknown[]) => [locationRow(String(values[0]))]),
+      $executeRawUnsafe: vi.fn().mockResolvedValue(0),
+    });
+    tx.registration.findFirst.mockImplementation(async ({ where }: { where: { id: string } }) => registrations.find((candidate) => candidate.id === where.id) ?? null);
+    tx.registrationWaitlistEntry.findMany.mockResolvedValue(queue.map((entry) => ({
+      id: entry.id, registrationId: entry.registrationId, position: entry.position, registration: { locationId: entry.locationId },
+    })));
+    dependencies.getPrisma.mockReturnValue(prisma);
+    return tx;
+  }
+  const waiting = (id: string, locationId: string | null, position: number, people = 1) => registration({
+    id, confirmationCode: `REG-${id.toUpperCase()}`, status: "WAITLISTED", locationId,
+    attendees: Array.from({ length: people }, (_, index) => attendee(`${id}-${index}`)),
+    waitlistEntry: { id: `entry-${id}`, status: "WAITING", position },
+  });
+  const recordedChange = (tx: ReturnType<typeof transactionFixture>["tx"]) => tx.locationWaitlistChange.create.mock.calls.map(([call]) => call.data);
+  const club = { locationId: "loc-1", location: { name: "Des Moines" }, _count: { attendees: 2 }, clubRegistration: { organization: { name: "Test Pathfinders" } }, eventId: event.id, confirmationCode: "REG-CLUB" };
+
+  it("records a promotion at a location with the club, the people and its place in line, and tells the director that place", async () => {
+    const promoted = waiting("w1", "loc-1", 7, 2);
+    const tx = locationFixture([promoted]);
+    tx.registrationWaitlistEntry.findUnique.mockResolvedValue({ position: 7, status: "WAITING" });
+    tx.registrationWaitlistEntry.count.mockResolvedValue(2);
+    tx.registration.findUnique.mockResolvedValue(club);
+    await promoteRegistrationFromWaitlist(event.id, promoted.id, "user-1", "A place opened.", when);
+    expect(recordedChange(tx)).toEqual([expect.objectContaining({
+      kind: "PROMOTED", eventId: event.id, locationId: "loc-1", registrationId: "w1", clubName: "Test Pathfinders",
+      locationName: "Des Moines", attendeeCount: 2, place: 2, occurredAt: when,
+    })]);
+    expect(tx.registrationWaitlistEntry.count).toHaveBeenCalledWith({ where: { status: "WAITING", position: { lte: 7 }, registration: { locationId: "loc-1" } } });
+    expect(dependencies.enqueueWaitlistPromotedMessage).toHaveBeenCalledWith(tx, expect.objectContaining({ waitlistPosition: 2 }));
+  });
+
+  it("records a waitlisted club leaving the waitlist with the place it held, and tells the director that place", async () => {
+    const leaving = waiting("w2", "loc-1", 9);
+    const tx = locationFixture([leaving]);
+    tx.registrationWaitlistEntry.findUnique.mockResolvedValue({ position: 9, status: "WAITING" });
+    tx.registrationWaitlistEntry.count.mockResolvedValue(3);
+    tx.registration.findUnique.mockResolvedValue({ ...club, _count: { attendees: 1 } });
+    await cancelRegistration(event.id, leaving.id, "user-1", "Changed plans.", when);
+    expect(recordedChange(tx)).toEqual([expect.objectContaining({ kind: "REMOVED", registrationId: "w2", place: 3, attendeeCount: 1 })]);
+    expect(dependencies.enqueueWaitlistRemovedMessage).toHaveBeenCalledWith(tx, expect.objectContaining({ waitlistPosition: 3 }));
+  });
+
+  it("records a club moved onto the waitlist at its location, with its place", async () => {
+    const moving = registration({ id: "m1", locationId: "loc-1" });
+    const tx = locationFixture([moving]);
+    tx.registrationWaitlistEntry.aggregate.mockResolvedValue({ _max: { position: 4 } });
+    tx.registrationWaitlistEntry.findUnique.mockResolvedValue({ position: 5, status: "WAITING" });
+    tx.registrationWaitlistEntry.count.mockResolvedValue(1);
+    tx.registration.findUnique.mockResolvedValue(club);
+    await moveRegistrationToWaitlist(event.id, moving.id, "user-1", "Over capacity.", when);
+    expect(recordedChange(tx)).toEqual([expect.objectContaining({ kind: "JOINED", registrationId: "m1", place: 1 })]);
+    expect(dependencies.enqueueWaitlistJoinedMessage).toHaveBeenCalledWith(tx, expect.objectContaining({ waitlistPosition: 1 }));
+  });
+
+  it("looks up and records nothing for a registration with no location", async () => {
+    const plain = waiting("w3", null, 2);
+    const tx = locationFixture([plain]);
+    await promoteRegistrationFromWaitlist(event.id, plain.id, "user-1", "", when);
+    expect(tx.registrationWaitlistEntry.findUnique).not.toHaveBeenCalled();
+    expect(tx.registration.findUnique).not.toHaveBeenCalled();
+    expect(tx.locationWaitlistChange.create).not.toHaveBeenCalled();
+    expect(dependencies.enqueueWaitlistPromotedMessage).toHaveBeenCalledWith(tx, expect.objectContaining({ waitlistPosition: 2 }));
+  });
+
+  it("offers a freed seat to the next club at that location first, even when a club at another location is earlier in the event queue", async () => {
+    const cancelled = registration({ id: "cancelled", confirmationCode: "REG-CANCEL", locationId: "loc-1" });
+    const elsewhere = waiting("elsewhere", "loc-2", 1);
+    const here = waiting("here", "loc-1", 2);
+    const tx = locationFixture([cancelled, elsewhere, here], [
+      { id: "entry-elsewhere", registrationId: "elsewhere", position: 1, locationId: "loc-2" },
+      { id: "entry-here", registrationId: "here", position: 2, locationId: "loc-1" },
+    ]);
+    await cancelRegistration(event.id, cancelled.id, "user-1", "Cancelled.", when);
+    expect(tx.registration.update).toHaveBeenCalledWith({ where: { id: "here" }, data: { status: "SUBMITTED", cancelledAt: null } });
+    expect(tx.registration.update).not.toHaveBeenCalledWith({ where: { id: "elsewhere" }, data: expect.anything() });
+  });
+
+  it("offers a seat freed at a location to the event queue in order when nobody waits at that location", async () => {
+    const cancelled = registration({ id: "cancelled", confirmationCode: "REG-CANCEL", locationId: "loc-1" });
+    const first = waiting("first", "loc-2", 1);
+    const second = waiting("second", null, 2);
+    const tx = locationFixture([cancelled, first, second], [
+      { id: "entry-first", registrationId: "first", position: 1, locationId: "loc-2" },
+      { id: "entry-second", registrationId: "second", position: 2, locationId: null },
+    ]);
+    await cancelRegistration(event.id, cancelled.id, "user-1", "Cancelled.", when);
+    expect(tx.registration.update).toHaveBeenCalledWith({ where: { id: "first" }, data: { status: "SUBMITTED", cancelledAt: null } });
+    expect(tx.registration.update).not.toHaveBeenCalledWith({ where: { id: "second" }, data: expect.anything() });
+  });
+
+  describe("promoteWaitlistAfterSeatsFreed", () => {
+    const trigger = { locationId: "loc-1", reason: "Automatically promoted after the capacity was raised." };
+
+    it("does nothing, and reads no queue, when the event has no waitlist or auto-promotion is off", async () => {
+      for (const flags of [{ waitlistEnabled: false, autoPromoteWaitlist: false }, { waitlistEnabled: true, autoPromoteWaitlist: false }]) {
+        const tx = locationFixture([]);
+        tx.event.findUnique.mockResolvedValue({ ...event, ...flags });
+        const result = await promoteWaitlistAfterSeatsFreed(tx as never, { eventId: event.id, actorUserId: "user-1", trigger, now: when });
+        expect(result).toEqual({ promotedRegistrationIds: [], pendingMessageIds: [] });
+        expect(tx.registrationWaitlistEntry.findMany).not.toHaveBeenCalled();
+      }
+    });
+
+    it("promotes only one club by default and every club that fits, in order, when asked to repeat", async () => {
+      const queue = [
+        { id: "entry-a", registrationId: "a", position: 1, locationId: "loc-1" },
+        { id: "entry-b", registrationId: "b", position: 2, locationId: "loc-1" },
+      ];
+      const candidates = [waiting("a", "loc-1", 1), waiting("b", "loc-1", 2)];
+      const one = locationFixture(candidates, queue);
+      const single = await promoteWaitlistAfterSeatsFreed(one as never, { eventId: event.id, actorUserId: "user-1", trigger, now: when });
+      expect(single.promotedRegistrationIds).toEqual(["a"]);
+
+      // Once "a" is promoted it is no longer waiting, which the queue read reflects.
+      const many = locationFixture(candidates, queue);
+      many.registrationWaitlistEntry.findMany
+        .mockResolvedValueOnce(queue.map((entry) => ({ ...entry, registration: { locationId: entry.locationId } })))
+        .mockResolvedValueOnce(queue.slice(1).map((entry) => ({ ...entry, registration: { locationId: entry.locationId } })))
+        .mockResolvedValue([]);
+      const all = await promoteWaitlistAfterSeatsFreed(many as never, { eventId: event.id, actorUserId: "user-1", trigger, now: when, repeat: true });
+      expect(all.promotedRegistrationIds).toEqual(["a", "b"]);
+      expect(all.pendingMessageIds).toEqual(["message-1", "message-1"]);
+    });
+
+    it("gives the promotion the trigger's reason and accepts no actor, as an amendment by a club director has none", async () => {
+      const tx = locationFixture([waiting("a", "loc-1", 1)], [{ id: "entry-a", registrationId: "a", position: 1, locationId: "loc-1" }]);
+      await promoteWaitlistAfterSeatsFreed(tx as never, { eventId: event.id, actorUserId: null, trigger, now: when });
+      expect(tx.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+        action: "REGISTRATION_AUTO_PROMOTED_FROM_WAITLIST", actorUserId: null,
+        metadata: expect.objectContaining({ reason: trigger.reason }),
+      }) });
+    });
   });
 });

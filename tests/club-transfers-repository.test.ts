@@ -362,7 +362,10 @@ describe("registration moves (staff approve each one)", () => {
   describe("at an event location (#413)", () => {
     const raw = (name: string) => (db as unknown as Record<string, ReturnType<typeof vi.fn>>)[name]!;
     const location = (capacity: number | null) => [{ id: "loc-1", eventId: "event-1", name: "Des Moines", address: null, firstDay: null, lastDay: null, capacity, registrationClosesOn: null, isActive: true }];
+    const noWaitlist = () => (db as unknown as { event: { findUnique: ReturnType<typeof vi.fn> } }).event.findUnique
+      .mockResolvedValue({ id: "event-1", name: "Camporee", capacity: null, waitlistEnabled: false, autoPromoteWaitlist: false });
     const at = (capacity: number | null, seatsElsewhere: number) => {
+      noWaitlist();
       db.memberTransferRegistrationMove.findUniqueOrThrow.mockResolvedValue({
         ...storedMove, fromRegistration: { ...storedMove.fromRegistration, locationId: "loc-2", location: { name: "Kansas City" } },
       });
@@ -388,12 +391,38 @@ describe("registration moves (staff approve each one)", () => {
     });
 
     it("adds no seat, so takes no location lock, when both registrations are at the same location", async () => {
+      noWaitlist();
       db.memberTransferRegistrationMove.findUniqueOrThrow.mockResolvedValue({
         ...storedMove, fromRegistration: { ...storedMove.fromRegistration, locationId: "loc-1", location: { name: "Des Moines" } },
       });
       db.clubEventRegistration.findUnique.mockResolvedValue(destination({ locationId: "loc-1", location: { name: "Des Moines" }, _count: { attendees: 2 } }));
       await approveRegistrationMove("move-1", "ok", staff, now);
       expect(raw("$queryRaw")).not.toHaveBeenCalled();
+    });
+
+    it("offers the seat the person leaves at the old registration's location to that location's waitlist, in the same transaction (#599)", async () => {
+      at(5, 0);
+      const client = db as unknown as { event: { findUnique: ReturnType<typeof vi.fn> }; registrationWaitlistEntry: { findMany: ReturnType<typeof vi.fn> } };
+      client.event.findUnique.mockResolvedValue({ id: "event-1", name: "Camporee", capacity: null, waitlistEnabled: true, autoPromoteWaitlist: true });
+      client.registrationWaitlistEntry.findMany.mockResolvedValue([]);
+      const result = await approveRegistrationMove("move-1", "ok", staff, now);
+      expect(client.registrationWaitlistEntry.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { eventId: "event-1", status: "WAITING" } }));
+      expect(result.pendingMessageIds).toEqual([]);
+    });
+
+    it("offers nothing when the event has no waitlist", async () => {
+      at(5, 0);
+      const client = db as unknown as { registrationWaitlistEntry: { findMany: ReturnType<typeof vi.fn> } };
+      const result = await approveRegistrationMove("move-1", "ok", staff, now);
+      expect(client.registrationWaitlistEntry.findMany).not.toHaveBeenCalled();
+      expect(result.pendingMessageIds).toEqual([]);
+    });
+
+    it("offers nothing when the old registration has no location", async () => {
+      db.clubEventRegistration.findUnique.mockResolvedValue(destination());
+      const client = db as unknown as { event: { findUnique: ReturnType<typeof vi.fn> } };
+      await approveRegistrationMove("move-1", "ok", staff, now);
+      expect(client.event.findUnique).not.toHaveBeenCalled();
     });
 
     it("gives the approval transaction room for the lock wait", async () => {

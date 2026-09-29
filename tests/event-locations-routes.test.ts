@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   updateEventLocation: vi.fn(),
   deleteEventLocation: vi.fn(),
   reorderEventLocations: vi.fn(),
+  processQueuedMessageIdsAfterCommit: vi.fn(),
   logError: vi.fn(),
 }));
 
@@ -29,6 +30,9 @@ vi.mock("@/lib/logger", async () => {
   const actual = await vi.importActual<typeof import("@/lib/logger")>("@/lib/logger");
   return { ...actual, logError: mocks.logError };
 });
+vi.mock("@/modules/communications/messaging-repository", () => ({
+  processQueuedMessageIdsAfterCommit: mocks.processQueuedMessageIdsAfterCommit,
+}));
 vi.mock("@/modules/event-locations/repository", () => ({
   listEventLocations: mocks.listEventLocations,
   createEventLocation: mocks.createEventLocation,
@@ -65,6 +69,7 @@ beforeEach(() => {
   mocks.updateEventLocation.mockResolvedValue({ id: "loc-1", name: "Des Moines" });
   mocks.deleteEventLocation.mockResolvedValue([]);
   mocks.reorderEventLocations.mockResolvedValue([]);
+  mocks.processQueuedMessageIdsAfterCommit.mockResolvedValue({});
 });
 
 type Call = { label: string; call: (requestOrigin?: string) => Promise<Response>; repository: ReturnType<typeof vi.fn>; writes: boolean };
@@ -112,6 +117,7 @@ describe("staff location routes (#413)", () => {
     ["LOCATION_NOT_FOUND", 404],
     ["EVENT_NOT_FOUND", 404],
     ["LOCATION_ORDER_MISMATCH", 422],
+    ["LOCATION_COORDINATOR_INVALID", 422],
     ["LOCATION_BUSY", 503],
   ] as const)("maps a %s refusal to %i with its own message", async (code, status) => {
     mocks.deleteEventLocation.mockRejectedValue(new EventLocationError(code, "Readable message."));
@@ -119,6 +125,38 @@ describe("staff location routes (#413)", () => {
     expect(response.status).toBe(status);
     expect(await response.json()).toEqual({ error: code, message: "Readable message." });
     expect(mocks.logError).not.toHaveBeenCalled();
+  });
+
+  describe("a raised capacity that promotes waiting clubs (#599)", () => {
+    it("sends the promotion emails after the change is saved, and keeps them out of the response", async () => {
+      mocks.updateEventLocation.mockResolvedValue({ id: "loc-1", name: "Des Moines", capacity: 60, pendingMessageIds: ["message-1", "message-2"] });
+      const response = await PATCH(request("PATCH", { capacity: 60 }), locationContext);
+      expect(response.status).toBe(200);
+      expect(mocks.processQueuedMessageIdsAfterCommit).toHaveBeenCalledWith(["message-1", "message-2"]);
+      expect(mocks.updateEventLocation.mock.invocationCallOrder[0]).toBeLessThan(mocks.processQueuedMessageIdsAfterCommit.mock.invocationCallOrder[0]!);
+      const body = await response.json();
+      expect(body.location).toEqual({ id: "loc-1", name: "Des Moines", capacity: 60 });
+      expect(JSON.stringify(body)).not.toContain("pendingMessageIds");
+    });
+
+    it("saves the change even when an email cannot be sent: the failure is logged, never returned", async () => {
+      mocks.updateEventLocation.mockResolvedValue({ id: "loc-1", name: "Des Moines", pendingMessageIds: ["message-1"] });
+      mocks.processQueuedMessageIdsAfterCommit.mockRejectedValue(new Error("synthetic provider outage"));
+      const response = await PATCH(request("PATCH", { capacity: 60 }), locationContext);
+      expect(response.status).toBe(200);
+      expect(mocks.logError).toHaveBeenCalledWith(expect.stringContaining("Waitlist promotion email delivery failed"), expect.any(Error));
+    });
+
+    it("sends nothing when nobody was promoted", async () => {
+      mocks.updateEventLocation.mockResolvedValue({ id: "loc-1", name: "Des Moines", pendingMessageIds: [] });
+      await PATCH(request("PATCH", { address: "1 Synthetic Rd" }), locationContext);
+      expect(mocks.processQueuedMessageIdsAfterCommit).not.toHaveBeenCalled();
+    });
+
+    it("passes a coordinator pick through to the repository, which checks it", async () => {
+      await PATCH(request("PATCH", { coordinatorAccountId: "account-1" }), locationContext);
+      expect(mocks.updateEventLocation).toHaveBeenCalledWith("event-1", "loc-1", "usr_admin", { coordinatorAccountId: "account-1" });
+    });
   });
 
   it("maps a lock wait that gave up, or an expired transaction, to a retryable 503, and a serialization failure to 409", async () => {

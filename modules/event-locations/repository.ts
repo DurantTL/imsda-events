@@ -3,12 +3,14 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
-import { isLockTimeoutError } from "@/lib/prisma-errors";
+import { isLockTimeoutError, isSerializationFailure } from "@/lib/prisma-errors";
 import {
   countLocationSeats,
   lockEventLocation,
 } from "@/modules/event-locations/admission";
+import { promoteWaitlistAfterSeatsFreed } from "@/modules/registrations/lifecycle-repository";
 import {
+  coordinatorGrantActive,
   eventLocationInputSchema,
   eventLocationOrderSchema,
   eventLocationUpdateSchema,
@@ -24,8 +26,28 @@ type Db = Prisma.TransactionClient;
 
 const locationOrder = [{ sortOrder: "asc" as const }, { createdAt: "asc" as const }, { name: "asc" as const }];
 
+/** The coordinator's row and grant, to tell an active Area Coordinator from a revoked or expired one (#599). */
+const coordinatorInclude = {
+  coordinator: {
+    select: {
+      id: true,
+      displayName: true,
+      email: true,
+      disabledAt: true,
+      areaCoordinatorGrant: { select: { revokedAt: true, expiresAt: true } },
+    },
+  },
+} satisfies Prisma.EventLocationInclude;
+
+type LocationRow = Prisma.EventLocationGetPayload<{ include: typeof coordinatorInclude }>;
+
+/** Whether the location's coordinator can be told things: an enabled account with an active grant. */
+export function locationCoordinatorActive(coordinator: LocationRow["coordinator"], now = new Date()) {
+  return Boolean(coordinator && !coordinator.disabledAt && coordinatorGrantActive(coordinator.areaCoordinatorGrant, now));
+}
+
 function serialize(
-  location: Prisma.EventLocationGetPayload<object>,
+  location: LocationRow,
   usage: { occupied: number; registrations: number },
 ) {
   return {
@@ -38,6 +60,12 @@ function serialize(
     registrationClosesOn: location.registrationClosesOn,
     sortOrder: location.sortOrder,
     isActive: location.isActive,
+    coordinatorAccountId: location.coordinatorAccountId,
+    /** Who is set as coordinator, and whether they still are one: a revoked or expired coordinator shows as "No active coordinator" and gets no email (#599). */
+    coordinator: location.coordinator
+      ? { accountId: location.coordinator.id, name: location.coordinator.displayName, email: location.coordinator.email }
+      : null,
+    coordinatorActive: locationCoordinatorActive(location.coordinator),
     /** People at this location, counted like the event capacity. */
     occupied: usage.occupied,
     remaining: remainingLocationSeats(location.capacity, usage.occupied),
@@ -69,7 +97,7 @@ async function usageByLocation(db: Db | ReturnType<typeof getPrisma>, eventId: s
 /** Every location of the event, in the saved order, with its seat usage. */
 export async function listEventLocations(eventId: string, db: Db | ReturnType<typeof getPrisma> = getPrisma()) {
   const [locations, usage] = await Promise.all([
-    db.eventLocation.findMany({ where: { eventId }, orderBy: locationOrder }),
+    db.eventLocation.findMany({ where: { eventId }, orderBy: locationOrder, include: coordinatorInclude }),
     usageByLocation(db, eventId),
   ]);
   return locations.map((location) => serialize(location, usage.get(location.id) ?? { occupied: 0, registrations: 0 }));
@@ -91,6 +119,30 @@ async function lockEventForLocations(tx: Db, eventId: string) {
   if (rows.length === 0) throw new EventLocationError("EVENT_NOT_FOUND", "That event no longer exists.");
 }
 
+/** Refuses a coordinator who is not an enabled account holding an active Area Coordinator grant. */
+async function requireActiveCoordinator(tx: Db, accountId: string) {
+  const account = await tx.attendeeAccount.findUnique({
+    where: { id: accountId },
+    select: { disabledAt: true, areaCoordinatorGrant: { select: { revokedAt: true, expiresAt: true } } },
+  });
+  if (!account || account.disabledAt || !coordinatorGrantActive(account.areaCoordinatorGrant)) {
+    throw new EventLocationError("LOCATION_COORDINATOR_INVALID", "Choose one of the active Area Coordinators.");
+  }
+}
+
+/** Active Area Coordinators staff can pick from, by name. */
+export async function listActiveAreaCoordinators(now = new Date(), db: Db | ReturnType<typeof getPrisma> = getPrisma()) {
+  const grants = await db.areaCoordinatorGrant.findMany({
+    where: { revokedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: now } }], attendeeAccount: { disabledAt: null } },
+    select: { attendeeAccount: { select: { id: true, displayName: true, email: true } } },
+  });
+  return grants
+    .map((grant) => ({ accountId: grant.attendeeAccount.id, name: grant.attendeeAccount.displayName, email: grant.attendeeAccount.email }))
+    .sort((a, b) => a.name.localeCompare(b.name, "en-US"));
+}
+
+export type ActiveAreaCoordinator = Awaited<ReturnType<typeof listActiveAreaCoordinators>>[number];
+
 function nameTaken(error: unknown): never {
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
     throw new EventLocationError("LOCATION_NAME_TAKEN", "Another location in this event already has that name.");
@@ -107,9 +159,12 @@ export async function createEventLocation(eventId: string, actorUserId: string, 
       if (existing.length >= maximumLocationsPerEvent) {
         throw new EventLocationError("LOCATION_LIMIT_REACHED", `An event can have at most ${maximumLocationsPerEvent} locations.`);
       }
+      if (input.coordinatorAccountId) await requireActiveCoordinator(tx, input.coordinatorAccountId);
       const location = await tx.eventLocation.create({
+        include: coordinatorInclude,
         data: {
           eventId,
+          coordinatorAccountId: input.coordinatorAccountId,
           name: input.name,
           normalizedName: normalizeLocationName(input.name),
           address: input.address,
@@ -142,6 +197,16 @@ export async function createEventLocation(eventId: string, actorUserId: string, 
  */
 export async function updateEventLocation(eventId: string, locationId: string, actorUserId: string, rawInput: unknown) {
   const input = eventLocationUpdateSchema.parse(rawInput);
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await updateEventLocationOnce(eventId, locationId, actorUserId, input);
+    } catch (error) {
+      if (!isSerializationFailure(error) || attempt >= 3) throw error;
+    }
+  }
+}
+
+async function updateEventLocationOnce(eventId: string, locationId: string, actorUserId: string, input: ReturnType<typeof eventLocationUpdateSchema.parse>) {
   try {
     return await getPrisma().$transaction(async (tx) => {
       const current = await lockEventLocation(tx, eventId, locationId);
@@ -154,6 +219,13 @@ export async function updateEventLocation(eventId: string, locationId: string, a
       const dateProblem = locationDateProblem(next);
       if (dateProblem) throw new EventLocationError("LOCATION_INVALID", dateProblem.message);
       const occupied = await countLocationSeats(tx, locationId);
+      // Only a new pick is checked: an unchanged coordinator who has since been revoked stays on record, shown as inactive.
+      const previousCoordinatorId = input.coordinatorAccountId === undefined
+        ? null
+        : (await tx.eventLocation.findUnique({ where: { id: locationId }, select: { coordinatorAccountId: true } }))?.coordinatorAccountId ?? null;
+      if (input.coordinatorAccountId && input.coordinatorAccountId !== previousCoordinatorId) {
+        await requireActiveCoordinator(tx, input.coordinatorAccountId);
+      }
       if (input.capacity !== undefined && input.capacity !== null && input.capacity < occupied) {
         throw new EventLocationError(
           "LOCATION_CAPACITY_BELOW_USAGE",
@@ -162,7 +234,9 @@ export async function updateEventLocation(eventId: string, locationId: string, a
       }
       const updated = await tx.eventLocation.update({
         where: { id: locationId },
+        include: coordinatorInclude,
         data: {
+          ...(input.coordinatorAccountId === undefined ? {} : { coordinatorAccountId: input.coordinatorAccountId }),
           ...(input.name === undefined ? {} : { name: input.name, normalizedName: normalizeLocationName(input.name) }),
           ...(input.address === undefined ? {} : { address: input.address }),
           ...(input.firstDay === undefined ? {} : { firstDay: input.firstDay }),
@@ -179,11 +253,33 @@ export async function updateEventLocation(eventId: string, locationId: string, a
           fields: Object.keys(input),
           activeChanged: input.isActive !== undefined && input.isActive !== current.isActive,
           capacityChanged: input.capacity !== undefined && input.capacity !== current.capacity,
+          coordinatorChanged: input.coordinatorAccountId !== undefined && input.coordinatorAccountId !== previousCoordinatorId,
         },
       } });
+      // A raised (or removed) capacity opens seats: offer them to this
+      // location's waitlist in this transaction, under the lock held above
+      // (#599). Notices go out after commit, from the caller.
+      const capacityRaised = input.capacity !== undefined
+        && current.capacity !== null
+        && (input.capacity === null || input.capacity > current.capacity);
+      const freed = capacityRaised
+        ? await promoteWaitlistAfterSeatsFreed(tx, {
+            eventId,
+            actorUserId,
+            trigger: { locationId, reason: `Automatically promoted after the capacity of ${updated.name} was raised.` },
+            correlationId: randomUUID(),
+            repeat: true,
+          })
+        : null;
       const registrations = await tx.registration.count({ where: { locationId } });
-      return serialize(updated, { occupied, registrations });
-    }, { timeout: locationTransactionTimeoutMs });
+      const seats = freed && freed.promotedRegistrationIds.length > 0 ? await countLocationSeats(tx, locationId) : occupied;
+      return { ...serialize(updated, { occupied: seats, registrations }), pendingMessageIds: freed?.pendingMessageIds ?? [] };
+    }, {
+      // Serializable, like every path that promotes from the waitlist: a raised capacity offers seats
+      // to waiting clubs, counted against the event capacity too (#599). A collision is retried.
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      timeout: locationTransactionTimeoutMs,
+    });
   } catch (error) {
     return nameTaken(error);
   }

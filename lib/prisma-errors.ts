@@ -24,3 +24,24 @@ export function isLockTimeoutError(error: unknown): boolean {
   if (error && typeof error === "object" && "code" in error) return (error as { code: unknown }).code === lockNotAvailable;
   return false;
 }
+
+/** PostgreSQL `serialization_failure`: a SERIALIZABLE transaction lost a conflict and can simply be retried. */
+const serializationFailure = "40001";
+
+/**
+ * Whether `error` is a serialization failure (SQLSTATE 40001). Prisma reports
+ * the ones from its own queries as P2034, but a raw query, such as the row
+ * lock a location takes (#413), reports it as P2010 with `meta.code: "40001"`.
+ * Nothing was written, so a retry sees the winner's changes.
+ */
+export function isSerializationFailure(error: unknown): boolean {
+  if (error instanceof Prisma.PrismaClientUnknownRequestError) return error.message.includes(serializationFailure);
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === "P2034") return true;
+    const meta = error.meta as { code?: unknown } | undefined;
+    if (meta?.code === serializationFailure) return true;
+    return error.code === "P2010" && error.message.includes(serializationFailure);
+  }
+  if (error && typeof error === "object" && "code" in error) return (error as { code: unknown }).code === serializationFailure;
+  return false;
+}
