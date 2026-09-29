@@ -30,7 +30,7 @@
  *     stored entries re-match through a refresh with no new upload.
  */
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { loadEnvConfig } from "@next/env";
 import { PrismaClient } from "@prisma/client";
@@ -190,6 +190,10 @@ async function main() {
 
   // 4. The #527 migration.
   cpSync(path.join(migrationsDir, MIGRATION_527), path.join(workDir, "migrations", MIGRATION_527), { recursive: true });
+  // Then every later migration too, so the app code below (generated from the current schema) finds every column it selects.
+  for (const name of readdirSync(migrationsDir).filter((entry) => entry > MIGRATION_527 && !existsSync(path.join(workDir, "migrations", entry)))) {
+    cpSync(path.join(migrationsDir, name), path.join(workDir, "migrations", name), { recursive: true });
+  }
   deployWorkDirMigrations();
   process.env.DATABASE_URL = scratchUrl;
   process.env.SECRET_ENCRYPTION_KEY ??= "bgverify-synthetic-secret-encryption-key-0000";
