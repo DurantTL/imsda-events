@@ -226,7 +226,7 @@ describe("the system administrator's switch and the staff export (#610)", () => 
   });
 
   it("downloads the CSV the export builds, uncached, and passes the filters through", async () => {
-    mocks.requireStaffViewer.mockResolvedValue({ kind: "STAFF", userId: "staff-1", canViewSensitive: false });
+    mocks.requireStaffViewer.mockResolvedValue({ kind: "STAFF", userId: "staff-1", systemAdmin: false });
     mocks.buildClubFormsCsv.mockResolvedValue({ csv: "\"Form\"\r\n", filename: "form.csv", rowCount: 0 });
     const response = await EXPORT(new Request("https://events.imsda.test/api/staff/club-forms/export?form=off_premises_permission_slip&club=club-a"));
     expect(response.status).toBe(200);

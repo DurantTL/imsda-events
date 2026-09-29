@@ -31,6 +31,8 @@ export type ClubFormTemplateSeed = {
   definition: RegistrationFormDefinition;
   sectionNotes: Record<string, string[]>;
   sensitiveFieldKeys: string[];
+  /** Birth-date fields: sensitive, and readable only by the club's leaders and system administrators. */
+  birthDateFieldKeys: string[];
   staffOnlyFieldKeys: string[];
   printLayout: "STANDARD" | "PASSENGER_LIST";
 };
@@ -86,6 +88,7 @@ const membershipApplication: ClubFormTemplateSeed = {
   sortOrder: 10,
   printLayout: "STANDARD",
   sensitiveFieldKeys: ["birth_date"],
+  birthDateFieldKeys: ["birth_date"],
   staffOnlyFieldKeys: [],
   sectionNotes: {
     sec_applicant: [
@@ -198,6 +201,7 @@ const staffForm: ClubFormTemplateSeed = {
     "conduct_verifier_zip",
     "conduct_verifier_phone",
   ],
+  birthDateFieldKeys: ["birth_date", ...[1, 2, 3, 4, 5].map((n) => `child_${n}_birth_date`)],
   staffOnlyFieldKeys: ["office_date_received", "office_date_approved", "office_recommendation", "office_signature"],
   sectionNotes: {
     sec_office: ["For office use only. This form is for club files only."],
@@ -283,6 +287,7 @@ const permissionSlip: ClubFormTemplateSeed = {
   sortOrder: 30,
   printLayout: "STANDARD",
   sensitiveFieldKeys: ["physician_name", "physician_phone", "clinic_name", "clinic_phone", "emergency_contact_phone"],
+  birthDateFieldKeys: [],
   staffOnlyFieldKeys: [],
   sectionNotes: {
     sec_permission: [
@@ -351,6 +356,7 @@ const passengerList: ClubFormTemplateSeed = {
   sortOrder: 40,
   printLayout: "PASSENGER_LIST",
   sensitiveFieldKeys: Array.from({ length: 20 }, (_, index) => `passenger_${index + 1}_emergency_contact`),
+  birthDateFieldKeys: [],
   staffOnlyFieldKeys: [],
   sectionNotes: {
     sec_contacts: [

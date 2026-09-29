@@ -22,7 +22,7 @@ export default async function StaffClubFormPage({
   const [{ submissionId }, { event }] = await Promise.all([params, searchParams]);
   const viewer = await resolveStaffViewer();
   if (!viewer) {
-    return <AccessRestricted detail="Club forms are for conference staff." title="Club forms are restricted" />;
+    return <AccessRestricted detail="Club forms are for system administrators and Event Admins of a current event." title="Club forms are restricted" />;
   }
   const submission = await getSubmissionForViewer(viewer, submissionId).catch((error: unknown) => {
     if (error instanceof ClubFormError && error.code === "SUBMISSION_NOT_FOUND") return null;

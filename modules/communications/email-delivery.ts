@@ -29,6 +29,7 @@ import { prepareAttendeeEmailBodyForDelivery } from "@/modules/attendee-accounts
 import {
   CLUB_FORM_LINK_TEMPLATE_KEY,
   prepareClubFormLinkBodyForDelivery,
+  retireClubFormLinkForMessage,
 } from "@/modules/club-forms/link-email";
 import { logError } from "@/lib/logger";
 import {
@@ -612,7 +613,17 @@ async function runDeliveryLoop(
         now()
       );
       if (failure.rescheduled) result.rescheduledIds.push(message.id);
-      else if (failure.finalized) result.failedIds.push(message.id);
+      else if (failure.finalized) {
+        result.failedIds.push(message.id);
+        // Out of retries or non-retryable: a club form link that never arrived must not stay live (#610).
+        if (message.templateKey === CLUB_FORM_LINK_TEMPLATE_KEY) {
+          try {
+            await retireClubFormLinkForMessage(prisma as unknown as PrismaClient, message.id, now());
+          } catch (retireError) {
+            logError("Unable to withdraw a club form link after its email finally failed.", retireError);
+          }
+        }
+      }
     }
   }
   return result;

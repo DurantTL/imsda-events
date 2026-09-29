@@ -37,6 +37,13 @@ export type ClubFormTemplateRecord = {
   definition: RegistrationFormDefinition;
   sectionNotes: Record<string, string[]>;
   sensitiveFieldKeys: string[];
+  /**
+   * The birth-date class of sensitive field (ADR 0005 Addendum A): a subset of
+   * `sensitiveFieldKeys`. Only the club's own director and deputies and system
+   * administrators may read these; Event Admins and Area Coordinators see
+   * "Restricted" even though Event Admins may read the other sensitive answers.
+   */
+  birthDateFieldKeys: string[];
   staffOnlyFieldKeys: string[];
   printLayout: ClubFormPrintLayout;
   enabled: boolean;
@@ -44,7 +51,7 @@ export type ClubFormTemplateRecord = {
 
 export type ClubFormTemplateSpec = Pick<
   ClubFormTemplateRecord,
-  "definition" | "sectionNotes" | "sensitiveFieldKeys" | "staffOnlyFieldKeys"
+  "definition" | "sectionNotes" | "sensitiveFieldKeys" | "birthDateFieldKeys" | "staffOnlyFieldKeys"
 >;
 
 export function allFields(definition: RegistrationFormDefinition): RegistrationFormField[] {
@@ -61,6 +68,10 @@ export function templateSpecProblems(spec: ClubFormTemplateSpec): string[] {
   const sectionIds = new Set(spec.definition.sections.map((section) => section.id));
   for (const key of spec.sensitiveFieldKeys) {
     if (!keys.has(key)) problems.push(`Sensitive field ${key} is not in the form.`);
+  }
+  for (const key of spec.birthDateFieldKeys) {
+    if (!keys.has(key)) problems.push(`Birth-date field ${key} is not in the form.`);
+    if (!spec.sensitiveFieldKeys.includes(key)) problems.push(`Birth-date field ${key} must also be a sensitive field.`);
   }
   for (const key of spec.staffOnlyFieldKeys) {
     if (!keys.has(key)) problems.push(`Staff-only field ${key} is not in the form.`);
@@ -82,6 +93,7 @@ export function parseClubFormTemplate(row: {
   definition: unknown;
   sectionNotes: unknown;
   sensitiveFieldKeys: string[];
+  birthDateFieldKeys: string[];
   staffOnlyFieldKeys: string[];
   printLayout: string;
   enabled: boolean;
@@ -95,6 +107,7 @@ export function parseClubFormTemplate(row: {
     definition: registrationFormDefinitionSchema.parse(row.definition),
     sectionNotes: sectionNotesSchema.parse(row.sectionNotes ?? {}),
     sensitiveFieldKeys: row.sensitiveFieldKeys,
+    birthDateFieldKeys: row.birthDateFieldKeys,
     staffOnlyFieldKeys: row.staffOnlyFieldKeys,
     printLayout: row.printLayout === "PASSENGER_LIST" ? "PASSENGER_LIST" : "STANDARD",
     enabled: row.enabled,
@@ -222,7 +235,26 @@ export function clampLinkDays(days: number | undefined) {
   return Math.min(CLUB_FORM_LINK_MAX_DAYS, Math.max(CLUB_FORM_LINK_MIN_DAYS, Math.trunc(days)));
 }
 
-export type ClubFormLinkState = "OPEN" | "USED" | "REVOKED" | "EXPIRED";
+export type ClubFormEmailDelivery = "QUEUED" | "SENT" | "DELIVERED" | "NOT_DELIVERED" | "UNKNOWN";
+
+/**
+ * What a director sees for the link's email: still going out, on its way,
+ * delivered, or not delivered (out of retries, a bounce, a complaint or a
+ * suppressed address). Not delivered means the link was withdrawn; send a new one.
+ */
+export function clubFormEmailDelivery(message: {
+  status: string;
+  providerDeliveryStatus: string | null;
+}): ClubFormEmailDelivery {
+  if (["FAILED", "SUPPRESSED", "CANCELLED"].includes(message.status)) return "NOT_DELIVERED";
+  if (["BOUNCED", "FAILED", "COMPLAINED", "SUPPRESSED"].includes(message.providerDeliveryStatus ?? "")) return "NOT_DELIVERED";
+  if (message.providerDeliveryStatus === "DELIVERED") return "DELIVERED";
+  if (message.status === "SENT" || message.providerDeliveryStatus) return "SENT";
+  if (message.status === "PENDING" || message.status === "PROCESSING") return "QUEUED";
+  return "UNKNOWN";
+}
+
+export type ClubFormLinkState ="OPEN" | "USED" | "REVOKED" | "EXPIRED";
 
 export function clubFormLinkState(link: { status: "OPEN" | "USED" | "REVOKED"; expiresAt: Date }, now: Date): ClubFormLinkState {
   if (link.status === "OPEN" && link.expiresAt <= now) return "EXPIRED";
@@ -243,16 +275,18 @@ export type ClubFormActor =
  *
  * - CLUB_LEADER: a director or deputy of `organizationId` (or a system
  *   administrator acting as that club's director). Fills in, sends links, and
- *   sees the club's files, including sensitive answers.
- * - AREA_COORDINATOR: read-only over every club; sensitive answers are
+ *   sees the club's files, including sensitive answers and birth dates.
+ * - AREA_COORDINATOR: read-only over every club; every sensitive answer is
  *   "Restricted".
- * - STAFF: conference staff. Read-only; sensitive answers only when they hold
- *   VIEW_SENSITIVE_DATA (a system administrator always does).
+ * - STAFF: conference staff, which is only system administrators and Event
+ *   Admins of a current event (Caleb, 2026-09-29). Read-only. They read the
+ *   sensitive answers (health, conduct, physician, emergency contacts), but
+ *   only a system administrator reads full birth dates (ADR 0005 Addendum A).
  */
 export type ClubFormsViewer =
   | { kind: "CLUB_LEADER"; organizationId: string; actor: ClubFormActor }
   | { kind: "AREA_COORDINATOR"; actor: ClubFormActor }
-  | { kind: "STAFF"; userId: string; canViewSensitive: boolean };
+  | { kind: "STAFF"; userId: string; systemAdmin: boolean };
 
 export function viewerCanSeeClub(viewer: ClubFormsViewer, organizationId: string) {
   return viewer.kind !== "CLUB_LEADER" || viewer.organizationId === organizationId;
@@ -262,20 +296,36 @@ export function viewerCanWriteForClub(viewer: ClubFormsViewer, organizationId: s
   return viewer.kind === "CLUB_LEADER" && viewer.organizationId === organizationId;
 }
 
-/** Clubs and Area Coordinators never see a disabled template; conference staff do. */
-export function viewerSeesDisabledTemplates(viewer: ClubFormsViewer) {
-  return viewer.kind === "STAFF";
-}
-
 /** Only the club's own leaders see drafts; everyone else sees submitted forms. */
 export function viewerSeesDrafts(viewer: ClubFormsViewer) {
   return viewer.kind === "CLUB_LEADER";
 }
 
+/** Health, conduct, physician and emergency-contact answers (not birth dates). */
 export function viewerCanRevealSensitive(viewer: ClubFormsViewer, organizationId: string) {
   if (viewer.kind === "CLUB_LEADER") return viewer.organizationId === organizationId;
-  if (viewer.kind === "STAFF") return viewer.canViewSensitive;
-  return false;
+  return viewer.kind === "STAFF";
+}
+
+/** Full birth dates (ADR 0005 Addendum A): the club's own leaders and system administrators only. */
+export function viewerCanRevealBirthDates(viewer: ClubFormsViewer, organizationId: string) {
+  if (viewer.kind === "CLUB_LEADER") return viewer.organizationId === organizationId;
+  return viewer.kind === "STAFF" && viewer.systemAdmin;
+}
+
+/**
+ * The sensitive keys a viewer may not read, shown as "Restricted": every one,
+ * answered or not, so a blank tells nothing.
+ */
+export function restrictedFieldKeys(
+  viewer: ClubFormsViewer,
+  organizationId: string,
+  template: Pick<ClubFormTemplateRecord, "sensitiveFieldKeys" | "birthDateFieldKeys">,
+) {
+  const birth = new Set(template.birthDateFieldKeys);
+  const sensitive = viewerCanRevealSensitive(viewer, organizationId);
+  const birthDates = viewerCanRevealBirthDates(viewer, organizationId);
+  return template.sensitiveFieldKeys.filter((key) => (birth.has(key) ? !birthDates : !sensitive));
 }
 
 /** Only club directors and deputies use club forms; registrars and reporters do not. */

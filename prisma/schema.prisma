@@ -4580,6 +4580,11 @@ model ClubFormTemplate {
   /// Field keys whose answers are sealed with `lib/secret-box.ts`, redacted
   /// for Area Coordinators, and left out of CSVs, drafts and logs.
   sensitiveFieldKeys String[]  @default([])
+  /// The birth-date class of sensitive field, a subset of `sensitiveFieldKeys`:
+  /// readable only by the club's own director and deputies and system
+  /// administrators (ADR 0005 Addendum A); Event Admins and Area Coordinators
+  /// see "Restricted".
+  birthDateFieldKeys String[]  @default([])
   /// Field keys a private-link filler never sees (for example office use).
   staffOnlyFieldKeys String[]  @default([])
   /// "STANDARD", or "PASSENGER_LIST" for the roll-call print layout.

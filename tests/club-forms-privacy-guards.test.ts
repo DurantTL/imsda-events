@@ -39,18 +39,19 @@ describe("club forms stay apart from the places sensitive answers must never go 
     const readers = [...sourceFiles("modules"), ...sourceFiles("app"), ...sourceFiles("components")]
       .filter((file) => read(file).includes("sealedSensitiveAnswers"))
       .sort();
-    // The write paths (which only set it), the one audited read, and the sealing helpers.
+    // The write paths (which only set it), the one audited read, and the re-seal step a template version bump runs.
     expect(readers).toEqual([
       "modules/club-forms/links.ts",
+      "modules/club-forms/reseal.ts",
       "modules/club-forms/submissions.ts",
     ]);
   });
 
-  it("opens sealed answers in exactly one place", () => {
+  it("opens sealed answers only in the audited read and the re-seal step", () => {
     const openers = [...sourceFiles("modules"), ...sourceFiles("app"), ...sourceFiles("components")]
       .filter((file) => /openSensitiveAnswers\(/.test(read(file)) && !file.endsWith("sealed-answers.ts"))
       .sort();
-    expect(openers).toEqual(["modules/club-forms/submissions.ts"]);
+    expect(openers).toEqual(["modules/club-forms/reseal.ts", "modules/club-forms/submissions.ts"]);
   });
 
   it("never logs a request body, an answers object or a token", () => {

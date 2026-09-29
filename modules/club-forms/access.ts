@@ -1,12 +1,8 @@
 import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
-import {
-  AccessDeniedError,
-  effectivePermissions,
-  type AuthenticatedUser,
-  type MembershipRecord,
-} from "@/modules/access/authorization";
+import { AccessDeniedError, type AuthenticatedUser } from "@/modules/access/authorization";
+import { hasEventEnded } from "@/modules/events/lifecycle";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { requireRosterAccess, type ClubActor } from "@/modules/club-rosters/access";
 import { isClubFormsRole, type ClubFormActor, type ClubFormsViewer } from "@/modules/club-forms/domain";
@@ -63,36 +59,39 @@ export async function resolveAreaCoordinatorViewer(): Promise<Extract<ClubFormsV
 }
 
 /**
- * Whether a person counts as conference staff for club forms, and whether they
- * may read sensitive answers. Club forms belong to no event, so the existing
- * per-event permission is read across the person's active memberships: a
- * system administrator always may; anyone else needs VIEW_SENSITIVE_DATA on at
- * least one active membership to read sensitive answers, and any active
- * membership to see the non-sensitive list.
+ * Conference staff for club forms (Caleb, 2026-09-29): system administrators,
+ * and Event Admins of an event that has not ended. Nobody else, whatever other
+ * permissions they hold: not check-in, read-only, communications, registration
+ * or finance roles, even with VIEW_SENSITIVE_DATA. Conference staff read the
+ * sensitive answers; only a system administrator reads birth dates (the
+ * viewer's `systemAdmin` flag decides that). The event model has no archived
+ * state, so "current" is "has not ended" (`hasEventEnded`).
  */
 export function staffClubFormsAccess(
-  user: AuthenticatedUser,
-  memberships: readonly Pick<MembershipRecord, "role" | "permissions">[],
-): { isStaff: boolean; canViewSensitive: boolean } {
-  if (user.globalRole === "SYSTEM_ADMIN") return { isStaff: true, canViewSensitive: true };
-  const canViewSensitive = memberships.some((membership) => (
-    effectivePermissions(user, { eventId: "", userId: user.id, status: "ACTIVE", ...membership }).includes("VIEW_SENSITIVE_DATA")
-  ));
-  return { isStaff: memberships.length > 0, canViewSensitive };
+  user: Pick<AuthenticatedUser, "globalRole">,
+  memberships: ReadonlyArray<{
+    role: string;
+    event: { timezone: string; endsAt: Date };
+  }>,
+  now = new Date(),
+): { isStaff: boolean; systemAdmin: boolean } {
+  if (user.globalRole === "SYSTEM_ADMIN") return { isStaff: true, systemAdmin: true };
+  const isStaff = memberships.some((membership) => membership.role === "EVENT_ADMIN" && !hasEventEnded(membership.event, now));
+  return { isStaff, systemAdmin: false };
 }
 
 /** Conference staff, or null for anyone else (including a signed-out visitor). */
-export async function resolveStaffViewer(): Promise<Extract<ClubFormsViewer, { kind: "STAFF" }> | null> {
+export async function resolveStaffViewer(now = new Date()): Promise<Extract<ClubFormsViewer, { kind: "STAFF" }> | null> {
   const { user } = await getCurrentSession();
   if (!user) return null;
   const memberships = user.globalRole === "SYSTEM_ADMIN"
     ? []
     : await getPrisma().eventMembership.findMany({
-      where: { userId: user.id, status: "ACTIVE" },
-      select: { role: true, permissions: true },
+      where: { userId: user.id, status: "ACTIVE", role: "EVENT_ADMIN" },
+      select: { role: true, event: { select: { timezone: true, endsAt: true } } },
     });
-  const access = staffClubFormsAccess(user, memberships);
-  return access.isStaff ? { kind: "STAFF", userId: user.id, canViewSensitive: access.canViewSensitive } : null;
+  const access = staffClubFormsAccess(user, memberships, now);
+  return access.isStaff ? { kind: "STAFF", userId: user.id, systemAdmin: access.systemAdmin } : null;
 }
 
 /** For staff API routes: conference staff, or a 401 (signed out) / 403 (signed in, not staff). */

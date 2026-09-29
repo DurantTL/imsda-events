@@ -9,6 +9,7 @@ import { writeAuditLog } from "@/modules/audit/audit-service";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import {
   clampLinkDays,
+  clubFormEmailDelivery,
   clubFormLinkState,
   definitionForLink,
   deriveSubjectName,
@@ -141,12 +142,14 @@ export async function createClubFormLink(viewer: ClubFormsViewer, input: CreateC
 /** A club's own recent links: never a token, and never another club's. */
 export async function listClubFormLinks(viewer: ClubFormsViewer, organizationId: string, now = new Date()) {
   leaderOnly(viewer, organizationId);
-  const links = await getPrisma().clubFormLink.findMany({
-    where: { organizationId, template: { enabled: true } },
+  const prisma = getPrisma();
+  const links = await prisma.clubFormLink.findMany({
+    where: { organizationId },
     orderBy: { createdAt: "desc" },
     take: 50,
     select: {
       id: true,
+      messageId: true,
       recipientEmail: true,
       subjectName: true,
       status: true,
@@ -157,8 +160,17 @@ export async function listClubFormLinks(viewer: ClubFormsViewer, organizationId:
       submission: { select: { id: true } },
     },
   });
+  const messageIds = links.flatMap((link) => (link.messageId ? [link.messageId] : []));
+  const messages = messageIds.length === 0
+    ? []
+    : await prisma.messageOutbox.findMany({
+      where: { id: { in: messageIds } },
+      select: { id: true, status: true, providerDeliveryStatus: true },
+    });
+  const deliveryByMessage = new Map(messages.map((message) => [message.id, clubFormEmailDelivery(message)]));
   return links.map((link) => ({
     id: link.id,
+    delivery: link.messageId ? deliveryByMessage.get(link.messageId) ?? "UNKNOWN" : "UNKNOWN",
     templateKey: link.template.key,
     templateName: link.template.name,
     recipientEmail: link.recipientEmail,
@@ -217,7 +229,7 @@ const linkSelect = {
   template: {
     select: {
       id: true, key: true, name: true, description: true, version: true, definition: true, sectionNotes: true,
-      sensitiveFieldKeys: true, staffOnlyFieldKeys: true, printLayout: true, enabled: true,
+      sensitiveFieldKeys: true, birthDateFieldKeys: true, staffOnlyFieldKeys: true, printLayout: true, enabled: true,
     },
   },
 } satisfies Prisma.ClubFormLinkSelect;

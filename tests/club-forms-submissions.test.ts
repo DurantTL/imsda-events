@@ -47,8 +47,9 @@ const director: ClubFormsViewer = { kind: "CLUB_LEADER", organizationId: "club-a
 const otherDirector: ClubFormsViewer = { kind: "CLUB_LEADER", organizationId: "club-b", actor: { kind: "ATTENDEE", accountId: "acct-9" } };
 const actingDirector: ClubFormsViewer = { kind: "CLUB_LEADER", organizationId: "club-a", actor: { kind: "STAFF_ACTING", userId: "admin-1", actAsId: "act-1" } };
 const areaCoordinator: ClubFormsViewer = { kind: "AREA_COORDINATOR", actor: { kind: "ATTENDEE", accountId: "acct-2" } };
-const staffSensitive: ClubFormsViewer = { kind: "STAFF", userId: "staff-1", canViewSensitive: true };
-const staffPlain: ClubFormsViewer = { kind: "STAFF", userId: "staff-2", canViewSensitive: false };
+// Conference staff: a system administrator, and an Event Admin of a current event.
+const staffSensitive: ClubFormsViewer = { kind: "STAFF", userId: "staff-1", systemAdmin: true };
+const staffPlain: ClubFormsViewer = { kind: "STAFF", userId: "staff-2", systemAdmin: false };
 
 const SECRET_PHYSICIAN = "Dr. Synthetic Physician";
 const SECRET_PHONE = "555-0199";
@@ -65,6 +66,7 @@ function slipTemplateRow() {
     definition: seed.definition,
     sectionNotes: seed.sectionNotes,
     sensitiveFieldKeys: seed.sensitiveFieldKeys,
+    birthDateFieldKeys: seed.birthDateFieldKeys,
     staffOnlyFieldKeys: seed.staffOnlyFieldKeys,
     printLayout: seed.printLayout,
     enabled: true,
@@ -213,9 +215,9 @@ describe("saving a club form (#610)", () => {
 describe("listing submissions (#610)", () => {
   beforeEach(() => mocks.submissionFindMany.mockResolvedValue([]));
 
-  it("limits a club's leader to their own club, enabled forms, drafts included", async () => {
+  it("limits a club's leader to their own club, drafts included, and keeps forms since switched off", async () => {
     await listSubmissionsForViewer(director, {});
-    expect(mocks.submissionFindMany.mock.calls[0][0].where).toEqual({ organizationId: "club-a", template: { enabled: true } });
+    expect(mocks.submissionFindMany.mock.calls[0][0].where).toEqual({ organizationId: "club-a" });
   });
 
   it("does not let a leader ask for another club", async () => {
@@ -223,14 +225,14 @@ describe("listing submissions (#610)", () => {
     expect(mocks.submissionFindMany).not.toHaveBeenCalled();
   });
 
-  it("gives an Area Coordinator submitted forms of enabled templates only", async () => {
+  it("gives an Area Coordinator submitted forms only", async () => {
     await listSubmissionsForViewer(areaCoordinator, { organizationId: "club-b" });
-    expect(mocks.submissionFindMany.mock.calls[0][0].where).toEqual({ organizationId: "club-b", template: { enabled: true }, status: "SUBMITTED" });
+    expect(mocks.submissionFindMany.mock.calls[0][0].where).toEqual({ organizationId: "club-b", status: "SUBMITTED" });
   });
 
-  it("gives conference staff every template, submitted only", async () => {
+  it("gives conference staff every club's submitted forms", async () => {
     await listSubmissionsForViewer(staffPlain, {});
-    expect(mocks.submissionFindMany.mock.calls[0][0].where).toEqual({ template: {}, status: "SUBMITTED" });
+    expect(mocks.submissionFindMany.mock.calls[0][0].where).toEqual({ status: "SUBMITTED" });
   });
 
   it("never selects answers, sealed or plain", async () => {
@@ -298,13 +300,64 @@ describe("opening a submission (#610)", () => {
     expect(mocks.writeAuditLog.mock.calls[0][0]).toMatchObject({ metadata: expect.objectContaining({ viewerKind: "AREA_COORDINATOR", sensitiveRevealed: false }) });
   });
 
-  it("gives staff without VIEW_SENSITIVE_DATA Restricted and staff with it the answers", async () => {
-    const plain = await getSubmissionForViewer(staffPlain, submissionId);
-    expect(plain.sensitiveRevealed).toBe(false);
-    expect(JSON.stringify(plain)).not.toContain(SECRET_PHYSICIAN);
-    const full = await getSubmissionForViewer(staffSensitive, submissionId);
-    expect(full.answers).toMatchObject({ physician_name: SECRET_PHYSICIAN });
+  it("gives an Event Admin and a system administrator the health, physician and emergency answers", async () => {
+    for (const viewer of [staffPlain, staffSensitive]) {
+      const view = await getSubmissionForViewer(viewer, submissionId);
+      expect(view.sensitiveRevealed).toBe(true);
+      expect(view.answers).toMatchObject({ physician_name: SECRET_PHYSICIAN, emergency_contact_phone: SECRET_PHONE });
+      expect(view.restrictedKeys).toEqual([]);
+    }
     expect(mocks.writeAuditLog.mock.calls.map(([entry]) => entry.actorUserId)).toEqual(["staff-2", "staff-1"]);
+  });
+
+  describe("birth dates (ADR 0005 Addendum A)", () => {
+    const BIRTH = "2015-04-02";
+    const staffRow = () => {
+      const seed = clubFormTemplateSeeds.find((template) => template.key === "pathfinder_staff_service_information")!;
+      return {
+        id: "template-staff", key: seed.key, name: seed.name, description: seed.description, version: seed.version,
+        definition: seed.definition, sectionNotes: seed.sectionNotes, sensitiveFieldKeys: seed.sensitiveFieldKeys,
+        birthDateFieldKeys: seed.birthDateFieldKeys, staffOnlyFieldKeys: seed.staffOnlyFieldKeys, printLayout: seed.printLayout, enabled: true,
+      };
+    };
+    beforeEach(() => {
+      mocks.submissionFindFirst.mockResolvedValue(row({
+        template: staffRow(),
+        answers: { full_name: "Alex Sample" },
+        sealedSensitiveAnswers: sealSensitiveAnswers(submissionId, { birth_date: BIRTH, child_1_birth_date: "2018-01-01", health_limitation: "Yes", health_limitation_how: SECRET_PHYSICIAN }),
+      }));
+    });
+
+    it("shows them to the club's own director and to a system administrator", async () => {
+      for (const viewer of [director, staffSensitive, actingDirector]) {
+        const view = await getSubmissionForViewer(viewer, submissionId);
+        expect(view.answers).toMatchObject({ birth_date: BIRTH, child_1_birth_date: "2018-01-01", health_limitation: "Yes" });
+        expect(view.restrictedKeys).toEqual([]);
+      }
+    });
+
+    it("shows an Event Admin the health answers but Restricted for every birth date", async () => {
+      const view = await getSubmissionForViewer(staffPlain, submissionId);
+      expect(view.answers).toMatchObject({ health_limitation: "Yes", health_limitation_how: SECRET_PHYSICIAN });
+      expect(view.answers).not.toHaveProperty("birth_date");
+      expect(view.answers).not.toHaveProperty("child_1_birth_date");
+      expect(new Set(view.restrictedKeys)).toEqual(new Set(staffRow().birthDateFieldKeys));
+      expect(JSON.stringify(view)).not.toContain(BIRTH);
+      expect(mocks.writeAuditLog.mock.calls[0][0]).toMatchObject({ metadata: expect.objectContaining({ sensitiveRevealed: true, birthDatesRevealed: false }) });
+    });
+
+    it("shows an Area Coordinator Restricted for birth dates and every other sensitive field", async () => {
+      const view = await getSubmissionForViewer(areaCoordinator, submissionId);
+      expect(view.answers).toEqual({ full_name: "Alex Sample" });
+      expect(new Set(view.restrictedKeys)).toEqual(new Set(staffRow().sensitiveFieldKeys));
+      expect(JSON.stringify(view)).not.toContain(BIRTH);
+      expect(JSON.stringify(view)).not.toContain(SECRET_PHYSICIAN);
+    });
+
+    it("keeps birth dates out of the audit row", async () => {
+      await getSubmissionForViewer(director, submissionId);
+      expect(JSON.stringify(mocks.writeAuditLog.mock.calls)).not.toContain(BIRTH);
+    });
   });
 
   it("attributes an act-as director's view to the staff user", async () => {
@@ -336,12 +389,21 @@ describe("opening a submission (#610)", () => {
     await expect(getSubmissionForViewer(director, submissionId)).rejects.toMatchObject({ code: "SENSITIVE_UNREADABLE" });
   });
 
-  it("hides a disabled form from clubs and Area Coordinators but not from staff", async () => {
-    await getSubmissionForViewer(director, submissionId);
-    expect(mocks.submissionFindFirst.mock.calls[0][0].where).toMatchObject({ template: { enabled: true } });
-    await getSubmissionForViewer(areaCoordinator, submissionId);
-    expect(mocks.submissionFindFirst.mock.calls[1][0].where).toMatchObject({ template: { enabled: true }, status: "SUBMITTED" });
-    await getSubmissionForViewer(staffPlain, submissionId);
-    expect(mocks.submissionFindFirst.mock.calls[2][0].where.template).toEqual({});
+  it("keeps a switched-off form's past submissions readable to everyone who could read them, and says it is off", async () => {
+    mocks.submissionFindFirst.mockResolvedValue(row({ template: { ...slipTemplateRow(), enabled: false } }));
+    for (const viewer of [director, areaCoordinator, staffPlain]) {
+      const view = await getSubmissionForViewer(viewer, submissionId);
+      expect(view.template.enabled).toBe(false);
+    }
+    for (const [call] of mocks.submissionFindFirst.mock.calls) expect(call.where).not.toHaveProperty("template");
+  });
+
+  it("looks the form up inside the club named in the page's URL, before anything is audited", async () => {
+    await getSubmissionForViewer(areaCoordinator, submissionId, "VIEW", "club-a");
+    expect(mocks.submissionFindFirst.mock.calls[0][0].where).toMatchObject({ id: submissionId, organizationId: "club-a", status: "SUBMITTED" });
+    mocks.writeAuditLog.mockClear();
+    await expect(getSubmissionForViewer(areaCoordinator, submissionId, "VIEW", "club-b")).rejects.toMatchObject({ code: "SUBMISSION_NOT_FOUND" });
+    expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+    await expect(getSubmissionForViewer(director, submissionId, "VIEW", "club-b")).rejects.toMatchObject({ code: "CLUB_NOT_FOUND" });
   });
 });

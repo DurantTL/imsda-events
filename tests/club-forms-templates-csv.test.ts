@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   templateUpsert: vi.fn(),
   templateUpdate: vi.fn(),
   submissionFindMany: vi.fn(),
+  submissionUpdate: vi.fn(),
 }));
 
 const client = {
@@ -18,17 +19,19 @@ const client = {
     upsert: mocks.templateUpsert,
     update: mocks.templateUpdate,
   },
-  clubFormSubmission: { findMany: mocks.submissionFindMany },
+  clubFormSubmission: { findMany: mocks.submissionFindMany, update: mocks.submissionUpdate },
   $transaction: (work: (tx: unknown) => unknown) => work(client),
 };
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: () => client }));
+vi.mock("@/lib/env", () => ({ getServerEnv: () => ({ SECRET_ENCRYPTION_KEY: "a-synthetic-encryption-key-for-club-form-tests" }) }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: mocks.writeAuditLog }));
 
 import { buildClubFormsCsv } from "@/modules/club-forms/csv";
 import { clubFormTemplateSeeds } from "@/modules/club-forms/definitions";
 import type { ClubFormsViewer } from "@/modules/club-forms/domain";
+import { openSensitiveAnswers, sealSensitiveAnswers } from "@/modules/club-forms/sealed-answers";
 import {
   getEnabledClubFormTemplate,
   listEnabledClubFormTemplates,
@@ -36,15 +39,15 @@ import {
   syncClubFormTemplates,
 } from "@/modules/club-forms/templates";
 
-const staffPlain: ClubFormsViewer = { kind: "STAFF", userId: "staff-2", canViewSensitive: false };
-const staffSensitive: ClubFormsViewer = { kind: "STAFF", userId: "staff-1", canViewSensitive: true };
+const staffPlain: ClubFormsViewer = { kind: "STAFF", userId: "staff-2", systemAdmin: false };
+const staffSensitive: ClubFormsViewer = { kind: "STAFF", userId: "staff-1", systemAdmin: true };
 const director: ClubFormsViewer = { kind: "CLUB_LEADER", organizationId: "club-a", actor: { kind: "ATTENDEE", accountId: "acct-1" } };
 
 const slip = clubFormTemplateSeeds.find((seed) => seed.key === "off_premises_permission_slip")!;
 const slipRow = {
   id: "template-slip", key: slip.key, name: slip.name, description: slip.description, version: slip.version,
   definition: slip.definition, sectionNotes: slip.sectionNotes, sensitiveFieldKeys: slip.sensitiveFieldKeys,
-  staffOnlyFieldKeys: slip.staffOnlyFieldKeys, printLayout: slip.printLayout, enabled: true,
+  birthDateFieldKeys: slip.birthDateFieldKeys, staffOnlyFieldKeys: slip.staffOnlyFieldKeys, printLayout: slip.printLayout, enabled: true,
 };
 
 beforeEach(() => {
@@ -69,11 +72,55 @@ describe("club form templates are off until a system administrator turns them on
     expect(mocks.templateUpdate).not.toHaveBeenCalled();
   });
 
+  const storedRows = (overrides: Record<string, { version?: number; sensitiveFieldKeys?: string[] }> = {}) => clubFormTemplateSeeds.map((seed) => ({
+    id: `id-${seed.key}`,
+    key: seed.key,
+    version: seed.version - 1,
+    sensitiveFieldKeys: seed.sensitiveFieldKeys,
+    ...overrides[seed.key],
+  }));
+
   it("updates a definition when the seed version is newer, and never touches the switch", async () => {
-    mocks.templateFindMany.mockResolvedValue(clubFormTemplateSeeds.map((seed) => ({ key: seed.key, version: seed.version - 1 })));
+    mocks.templateFindMany.mockResolvedValue(storedRows());
     await syncClubFormTemplates(client as never);
     expect(mocks.templateUpdate).toHaveBeenCalledTimes(4);
-    for (const [call] of mocks.templateUpdate.mock.calls) expect(call.data).not.toHaveProperty("enabled");
+    for (const [call] of mocks.templateUpdate.mock.calls) {
+      expect(call.data).not.toHaveProperty("enabled");
+      expect(call.data).toHaveProperty("birthDateFieldKeys");
+    }
+    expect(mocks.submissionFindMany).not.toHaveBeenCalled();
+  });
+
+  it("re-seals existing submissions, in the same transaction, when a version makes a field newly sensitive", async () => {
+    // The stored template did not treat the physician's name as sensitive; the new version does.
+    const stored = slip.sensitiveFieldKeys.filter((key) => key !== "physician_name");
+    mocks.templateFindMany.mockResolvedValue(storedRows({ [slip.key]: { sensitiveFieldKeys: stored } }));
+    const existingSealed = sealSensitiveAnswers("sub-1", { emergency_contact_phone: "555-0111" });
+    mocks.submissionFindMany.mockResolvedValueOnce([
+      { id: "sub-1", answers: { child_name: "Riley Sample", physician_name: "Dr. Was Plain" }, sealedSensitiveAnswers: existingSealed },
+      { id: "sub-2", answers: { child_name: "No Physician Given" }, sealedSensitiveAnswers: null },
+    ]).mockResolvedValueOnce([]);
+    const order: string[] = [];
+    mocks.submissionUpdate.mockImplementation(async () => { order.push("reseal"); });
+    mocks.templateUpdate.mockImplementation(async ({ where }: { where: { key: string } }) => { order.push(`template:${where.key}`); });
+
+    await syncClubFormTemplates(client as never);
+
+    expect(mocks.submissionUpdate).toHaveBeenCalledTimes(1);
+    const update = mocks.submissionUpdate.mock.calls[0][0];
+    expect(update.where).toEqual({ id: "sub-1" });
+    expect(update.data.answers).toEqual({ child_name: "Riley Sample" });
+    expect(update.data.hasSensitiveAnswers).toBe(true);
+    expect(JSON.stringify(update)).not.toContain("Dr. Was Plain");
+    expect(openSensitiveAnswers("sub-1", update.data.sealedSensitiveAnswers)).toEqual({ emergency_contact_phone: "555-0111", physician_name: "Dr. Was Plain" });
+    // The re-seal happens before the template row changes, so no window exists where the field is sensitive but unsealed.
+    expect(order.indexOf("reseal")).toBeLessThan(order.indexOf(`template:${slip.key}`));
+  });
+
+  it("refuses a version that would make a sensitive field readable again", async () => {
+    mocks.templateFindMany.mockResolvedValue(storedRows({ [slip.key]: { sensitiveFieldKeys: [...slip.sensitiveFieldKeys, "activity"] } }));
+    await expect(syncClubFormTemplates(client as never)).rejects.toMatchObject({ code: "INVALID_TEMPLATE" });
+    expect(mocks.templateUpdate.mock.calls.map(([call]) => call.where.key)).not.toContain(slip.key);
   });
 
   it("offers a club only enabled templates, by name and description", async () => {

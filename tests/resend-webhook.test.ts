@@ -47,12 +47,13 @@ const database = vi.hoisted(() => {
       return { count: 1 };
     }),
   };
-  const tx = { messageProviderEvent, messageOutbox };
+  const clubFormLink = { updateMany: vi.fn(async () => ({ count: 1 })) };
+  const tx = { messageProviderEvent, messageOutbox, clubFormLink };
   const prisma = {
     messageProviderEvent,
     $transaction: vi.fn(async (operation: (client: typeof tx) => unknown) => operation(tx)),
   };
-  return { state, prisma };
+  return { state, prisma, clubFormLink };
 });
 
 vi.mock("server-only", () => ({}));
@@ -138,6 +139,24 @@ describe("Resend webhook verification and persistence", () => {
       deliveredAt: new Date("2026-07-23T12:00:00.000Z"),
       lastError: null,
     });
+  });
+
+  it.each(["email.bounced", "email.failed", "email.complained", "email.suppressed"])(
+    "withdraws a club form link when %s says its email never arrived (#610)",
+    async (type) => {
+      database.clubFormLink.updateMany.mockClear();
+      await recordResendWebhookEvent(`webhook-${type}`, event(type));
+      expect(database.clubFormLink.updateMany).toHaveBeenCalledWith({
+        where: { messageId: "message-1", status: "OPEN" },
+        data: { status: "REVOKED", revokedAt: new Date("2026-07-23T12:00:00.000Z"), tokenHash: null },
+      });
+    },
+  );
+
+  it.each(["email.sent", "email.delivered"])("leaves a club form link alone when %s (#610)", async (type) => {
+    database.clubFormLink.updateMany.mockClear();
+    await recordResendWebhookEvent(`webhook-${type}`, event(type));
+    expect(database.clubFormLink.updateMany).not.toHaveBeenCalled();
   });
 
   it.each([

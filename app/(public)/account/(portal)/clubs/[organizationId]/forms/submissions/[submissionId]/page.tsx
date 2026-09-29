@@ -33,14 +33,16 @@ export default async function ClubFormSubmissionPage({
   if (access.state !== "OPEN") return null;
   if (!isClubFormsRole(access.club.role)) notFound();
   const viewer = clubLeaderViewerFromAccess(access);
-  const submission = await getSubmissionForViewer(viewer, submissionId, edit ? "EDIT" : "VIEW").catch((error: unknown) => {
+  const submission = await getSubmissionForViewer(viewer, submissionId, edit ? "EDIT" : "VIEW", organizationId).catch((error: unknown) => {
     if (error instanceof ClubFormError && error.code === "SUBMISSION_NOT_FOUND") return null;
     throw error;
   });
   if (!submission) notFound();
   const base = `/account/clubs/${organizationId}/forms`;
 
-  if (edit && submission.status === "DRAFT") {
+  // A form that has been switched off is read-only: only new fills and links are blocked, so the past stays visible.
+  const editable = submission.status === "DRAFT" && submission.template.enabled;
+  if (edit && editable) {
     const [definition, rosterMembers] = await Promise.all([withLiveDirectory(submission.template.definition), listRosterChoices(organizationId)]);
     return (
       <>
@@ -68,7 +70,7 @@ export default async function ClubFormSubmissionPage({
       <div className="club-form-page-actions intro-actions">
         <BackLink href={base}>Back to club forms</BackLink>
         <PrintFormButton />
-        {submission.status === "DRAFT" && <Link className="primary-button" href={`${base}/submissions/${submissionId}?edit=1`}>Continue editing</Link>}
+        {editable && <Link className="primary-button" href={`${base}/submissions/${submissionId}?edit=1`}>Continue editing</Link>}
       </div>
       <ClubFormSubmissionView submission={submission} />
     </div>

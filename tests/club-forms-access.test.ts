@@ -28,10 +28,11 @@ import {
   clampLinkDays,
   isClubFormsRole,
   viewerAuditFields,
+  restrictedFieldKeys,
+  viewerCanRevealBirthDates,
   viewerCanRevealSensitive,
   viewerCanSeeClub,
   viewerCanWriteForClub,
-  viewerSeesDisabledTemplates,
   viewerSeesDrafts,
   type ClubFormsViewer,
 } from "@/modules/club-forms/domain";
@@ -39,8 +40,8 @@ import {
 const director: ClubFormsViewer = { kind: "CLUB_LEADER", organizationId: "club-a", actor: { kind: "ATTENDEE", accountId: "acct-1" } };
 const actingDirector: ClubFormsViewer = { kind: "CLUB_LEADER", organizationId: "club-a", actor: { kind: "STAFF_ACTING", userId: "admin-1", actAsId: "act-1" } };
 const areaCoordinator: ClubFormsViewer = { kind: "AREA_COORDINATOR", actor: { kind: "ATTENDEE", accountId: "acct-2" } };
-const staffWithSensitive: ClubFormsViewer = { kind: "STAFF", userId: "staff-1", canViewSensitive: true };
-const staffWithout: ClubFormsViewer = { kind: "STAFF", userId: "staff-2", canViewSensitive: false };
+const systemAdminStaff: ClubFormsViewer = { kind: "STAFF", userId: "staff-1", systemAdmin: true };
+const eventAdminStaff: ClubFormsViewer = { kind: "STAFF", userId: "staff-2", systemAdmin: false };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -51,7 +52,7 @@ describe("club forms role matrix (#610)", () => {
     expect(viewerCanWriteForClub(director, "club-a")).toBe(true);
     expect(viewerCanWriteForClub(actingDirector, "club-a")).toBe(true);
     expect(viewerCanWriteForClub(director, "club-b")).toBe(false);
-    for (const viewer of [areaCoordinator, staffWithSensitive, staffWithout]) {
+    for (const viewer of [areaCoordinator, systemAdminStaff, eventAdminStaff]) {
       expect(viewerCanWriteForClub(viewer, "club-a")).toBe(false);
     }
   });
@@ -59,25 +60,40 @@ describe("club forms role matrix (#610)", () => {
   it("keeps a club's director to their own club", () => {
     expect(viewerCanSeeClub(director, "club-a")).toBe(true);
     expect(viewerCanSeeClub(director, "club-b")).toBe(false);
-    for (const viewer of [areaCoordinator, staffWithSensitive, staffWithout]) expect(viewerCanSeeClub(viewer, "club-b")).toBe(true);
+    for (const viewer of [areaCoordinator, systemAdminStaff, eventAdminStaff]) expect(viewerCanSeeClub(viewer, "club-b")).toBe(true);
   });
 
-  it("shows sensitive answers to the club's leaders and to staff with VIEW_SENSITIVE_DATA only", () => {
+  it("shows health, conduct and emergency answers to the club's leaders and conference staff, never to an Area Coordinator", () => {
     expect(viewerCanRevealSensitive(director, "club-a")).toBe(true);
     expect(viewerCanRevealSensitive(director, "club-b")).toBe(false);
     expect(viewerCanRevealSensitive(actingDirector, "club-a")).toBe(true);
-    expect(viewerCanRevealSensitive(staffWithSensitive, "club-b")).toBe(true);
-    expect(viewerCanRevealSensitive(staffWithout, "club-b")).toBe(false);
+    expect(viewerCanRevealSensitive(systemAdminStaff, "club-b")).toBe(true);
+    expect(viewerCanRevealSensitive(eventAdminStaff, "club-b")).toBe(true);
     expect(viewerCanRevealSensitive(areaCoordinator, "club-a")).toBe(false);
   });
 
-  it("hides disabled templates from clubs and Area Coordinators, and drafts from everyone but the club", () => {
-    expect(viewerSeesDisabledTemplates(director)).toBe(false);
-    expect(viewerSeesDisabledTemplates(areaCoordinator)).toBe(false);
-    expect(viewerSeesDisabledTemplates(staffWithout)).toBe(true);
+  it("shows full birth dates only to the club's own leaders and system administrators (ADR 0005 Addendum A)", () => {
+    expect(viewerCanRevealBirthDates(director, "club-a")).toBe(true);
+    expect(viewerCanRevealBirthDates(director, "club-b")).toBe(false);
+    expect(viewerCanRevealBirthDates(actingDirector, "club-a")).toBe(true);
+    expect(viewerCanRevealBirthDates(systemAdminStaff, "club-b")).toBe(true);
+    expect(viewerCanRevealBirthDates(eventAdminStaff, "club-b")).toBe(false);
+    expect(viewerCanRevealBirthDates(areaCoordinator, "club-a")).toBe(false);
+  });
+
+  it("lists the fields each viewer sees as Restricted, birth dates separately from the other sensitive answers", () => {
+    const template = { sensitiveFieldKeys: ["birth_date", "health_limitation", "child_1_birth_date"], birthDateFieldKeys: ["birth_date", "child_1_birth_date"] };
+    expect(restrictedFieldKeys(director, "club-a", template)).toEqual([]);
+    expect(restrictedFieldKeys(systemAdminStaff, "club-a", template)).toEqual([]);
+    expect(restrictedFieldKeys(eventAdminStaff, "club-a", template)).toEqual(["birth_date", "child_1_birth_date"]);
+    expect(restrictedFieldKeys(areaCoordinator, "club-a", template)).toEqual(["birth_date", "health_limitation", "child_1_birth_date"]);
+    expect(restrictedFieldKeys(director, "club-b", template)).toEqual(["birth_date", "health_limitation", "child_1_birth_date"]);
+  });
+
+  it("shows drafts to the club only", () => {
     expect(viewerSeesDrafts(director)).toBe(true);
     expect(viewerSeesDrafts(areaCoordinator)).toBe(false);
-    expect(viewerSeesDrafts(staffWithSensitive)).toBe(false);
+    expect(viewerSeesDrafts(systemAdminStaff)).toBe(false);
   });
 
   it("only director and deputy roles use club forms", () => {
@@ -90,7 +106,7 @@ describe("club forms role matrix (#610)", () => {
   it("attributes audit rows to the right person and never to an attendee for a staff act-as", () => {
     expect(viewerAuditFields(director)).toEqual({ metadata: { viewerKind: "CLUB_LEADER", actorAttendeeAccountId: "acct-1" } });
     expect(viewerAuditFields(actingDirector)).toEqual({ actorUserId: "admin-1", metadata: { viewerKind: "CLUB_LEADER", actAsId: "act-1" } });
-    expect(viewerAuditFields(staffWithout)).toEqual({ actorUserId: "staff-2", metadata: { viewerKind: "STAFF" } });
+    expect(viewerAuditFields(eventAdminStaff)).toEqual({ actorUserId: "staff-2", metadata: { viewerKind: "STAFF" } });
   });
 });
 
@@ -165,42 +181,64 @@ describe("resolving a session into a viewer", () => {
   });
 });
 
-describe("conference staff and VIEW_SENSITIVE_DATA (#610)", () => {
+describe("conference staff: system administrators and Event Admins of a current event (#610)", () => {
   const user = (globalRole: "SYSTEM_ADMIN" | null = null) => ({ id: "u-1", email: "staff@example.test", displayName: "Staff", globalRole });
+  const now = new Date("2026-10-05T15:00:00Z");
+  const currentEvent = { timezone: "America/Chicago", endsAt: new Date("2026-10-10T20:00:00Z") };
+  const endedEvent = { timezone: "America/Chicago", endsAt: new Date("2026-10-01T20:00:00Z") };
+  const roles = ["CHECK_IN_STAFF", "READ_ONLY_STAFF", "COMMUNICATIONS_MANAGER", "REGISTRATION_MANAGER", "FINANCE_MANAGER"];
 
-  it("gives a system administrator everything without reading memberships", () => {
-    expect(staffClubFormsAccess(user("SYSTEM_ADMIN"), [])).toEqual({ isStaff: true, canViewSensitive: true });
+  it("gives a system administrator access, including birth dates, without reading memberships", () => {
+    expect(staffClubFormsAccess(user("SYSTEM_ADMIN"), [], now)).toEqual({ isStaff: true, systemAdmin: true });
   });
 
-  it("gives sensitive access to roles that hold VIEW_SENSITIVE_DATA and not to those that do not", () => {
-    expect(staffClubFormsAccess(user(), [{ role: "REGISTRATION_MANAGER", permissions: [] }])).toEqual({ isStaff: true, canViewSensitive: true });
-    expect(staffClubFormsAccess(user(), [{ role: "FINANCE_MANAGER", permissions: [] }]).canViewSensitive).toBe(true);
-    expect(staffClubFormsAccess(user(), [{ role: "READ_ONLY_STAFF", permissions: [] }])).toEqual({ isStaff: true, canViewSensitive: false });
-    expect(staffClubFormsAccess(user(), [{ role: "COMMUNICATIONS_MANAGER", permissions: [] }]).canViewSensitive).toBe(false);
+  it("gives an Event Admin of a current event access, without birth dates", () => {
+    expect(staffClubFormsAccess(user(), [{ role: "EVENT_ADMIN", event: currentEvent }], now)).toEqual({ isStaff: true, systemAdmin: false });
   });
 
-  it("honors an extra permission granted on the membership, on any active event", () => {
-    expect(staffClubFormsAccess(user(), [
-      { role: "READ_ONLY_STAFF", permissions: [] },
-      { role: "READ_ONLY_STAFF", permissions: ["VIEW_SENSITIVE_DATA"] },
-    ]).canViewSensitive).toBe(true);
+  it("counts an event through its last calendar day", () => {
+    const lastDay = { timezone: "America/Chicago", endsAt: new Date("2026-10-05T23:00:00Z") };
+    expect(staffClubFormsAccess(user(), [{ role: "EVENT_ADMIN", event: lastDay }], now).isStaff).toBe(true);
+    expect(staffClubFormsAccess(user(), [{ role: "EVENT_ADMIN", event: lastDay }], new Date("2026-10-06T15:00:00Z")).isStaff).toBe(false);
   });
 
-  it("is not staff without an active membership", () => {
-    expect(staffClubFormsAccess(user(), [])).toEqual({ isStaff: false, canViewSensitive: false });
+  it("gives an Event Admin of an ended event nothing", () => {
+    expect(staffClubFormsAccess(user(), [{ role: "EVENT_ADMIN", event: endedEvent }], now)).toEqual({ isStaff: false, systemAdmin: false });
   });
 
-  it("resolves a signed-in staff member, and nobody when signed out or not staff", async () => {
+  it("uses any current event when the person administers several", () => {
+    expect(staffClubFormsAccess(user(), [{ role: "EVENT_ADMIN", event: endedEvent }, { role: "EVENT_ADMIN", event: currentEvent }], now).isStaff).toBe(true);
+  });
+
+  it.each(roles)("gives %s nothing, even on a current event", (role) => {
+    expect(staffClubFormsAccess(user(), [{ role, event: currentEvent }], now)).toEqual({ isStaff: false, systemAdmin: false });
+  });
+
+  it("gives nothing without an active membership", () => {
+    expect(staffClubFormsAccess(user(), [], now)).toEqual({ isStaff: false, systemAdmin: false });
+  });
+
+  it("asks only for active Event Admin memberships, and resolves a current Event Admin", async () => {
     mocks.getCurrentSession.mockResolvedValue({ user: user() });
-    mocks.membershipFindMany.mockResolvedValue([{ role: "REGISTRATION_MANAGER", permissions: [] }]);
-    expect(await resolveStaffViewer()).toEqual({ kind: "STAFF", userId: "u-1", canViewSensitive: true });
-    expect(mocks.membershipFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: "u-1", status: "ACTIVE" } }));
+    mocks.membershipFindMany.mockResolvedValue([{ role: "EVENT_ADMIN", event: currentEvent }]);
+    expect(await resolveStaffViewer(now)).toEqual({ kind: "STAFF", userId: "u-1", systemAdmin: false });
+    expect(mocks.membershipFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: "u-1", status: "ACTIVE", role: "EVENT_ADMIN" } }));
+  });
 
+  it("resolves a system administrator without a membership query", async () => {
+    mocks.getCurrentSession.mockResolvedValue({ user: user("SYSTEM_ADMIN") });
+    expect(await resolveStaffViewer(now)).toEqual({ kind: "STAFF", userId: "u-1", systemAdmin: true });
+    expect(mocks.membershipFindMany).not.toHaveBeenCalled();
+  });
+
+  it("resolves nobody for an Event Admin of an ended event, or when signed out", async () => {
+    mocks.getCurrentSession.mockResolvedValue({ user: user() });
+    mocks.membershipFindMany.mockResolvedValue([{ role: "EVENT_ADMIN", event: endedEvent }]);
+    expect(await resolveStaffViewer(now)).toBeNull();
     mocks.membershipFindMany.mockResolvedValue([]);
-    expect(await resolveStaffViewer()).toBeNull();
-
+    expect(await resolveStaffViewer(now)).toBeNull();
     mocks.getCurrentSession.mockResolvedValue({ user: null });
-    expect(await resolveStaffViewer()).toBeNull();
+    expect(await resolveStaffViewer(now)).toBeNull();
   });
 
   it("refuses staff routes with 401 when signed out and 403 when not staff", async () => {

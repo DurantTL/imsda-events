@@ -18,6 +18,14 @@ function formatDate(value: string | null) {
   return new Date(value).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" });
 }
 
+const emailDeliveryLabel = {
+  QUEUED: "Sending",
+  SENT: "Sent",
+  DELIVERED: "Delivered",
+  NOT_DELIVERED: "Not delivered: link withdrawn, send a new one",
+  UNKNOWN: "",
+} as const;
+
 const linkStateLabel = { OPEN: "Waiting", USED: "Submitted", REVOKED: "Withdrawn", EXPIRED: "Expired" } as const;
 
 /**
@@ -142,7 +150,7 @@ export default async function ClubFormsPage({
             <table className="report-table">
               <caption className="sr-only">Private links</caption>
               <thead>
-                <tr><th scope="col">Form</th><th scope="col">Sent to</th><th scope="col">Status</th><th scope="col">Expires</th><th scope="col"><span className="sr-only">Actions</span></th></tr>
+                <tr><th scope="col">Form</th><th scope="col">Sent to</th><th scope="col">Status</th><th scope="col">Email</th><th scope="col">Expires</th><th scope="col"><span className="sr-only">Actions</span></th></tr>
               </thead>
               <tbody>
                 {links.map((link) => (
@@ -150,6 +158,7 @@ export default async function ClubFormsPage({
                     <th scope="row">{link.templateName}</th>
                     <td translate="no">{link.recipientEmail}{link.subjectName ? ` · ${link.subjectName}` : ""}</td>
                     <td>{linkStateLabel[link.state]}</td>
+                    <td>{emailDeliveryLabel[link.delivery]}</td>
                     <td>{formatDate(link.expiresAt)}</td>
                     <td>
                       {link.state === "OPEN" && <RevokeClubFormLinkButton linkId={link.id} organizationId={organizationId} />}

@@ -13,10 +13,11 @@ import {
   splitAnswers,
   validateClubFormAnswers,
   viewerAuditFields,
+  restrictedFieldKeys,
+  viewerCanRevealBirthDates,
   viewerCanRevealSensitive,
   viewerCanSeeClub,
   viewerCanWriteForClub,
-  viewerSeesDisabledTemplates,
   viewerSeesDrafts,
   parseClubFormTemplate,
   type ClubFormActor,
@@ -188,10 +189,8 @@ function visibleWhere(viewer: ClubFormsViewer, filter: ClubFormListFilter): Pris
   return {
     ...(organizationId ? { organizationId } : {}),
     ...(filter.rosterMemberId ? { rosterMemberId: filter.rosterMemberId } : {}),
-    template: {
-      ...(viewerSeesDisabledTemplates(viewer) ? {} : { enabled: true }),
-      ...(filter.templateKey ? { key: filter.templateKey } : {}),
-    },
+    // A form that has been switched off blocks new fills and links only: past submissions stay readable.
+    ...(filter.templateKey ? { template: { key: filter.templateKey } } : {}),
     ...(viewerSeesDrafts(viewer) ? {} : { status: "SUBMITTED" as const }),
   };
 }
@@ -247,10 +246,12 @@ export async function getSubmissionForViewer(
   viewer: ClubFormsViewer,
   submissionId: string,
   purpose: SubmissionViewPurpose = "VIEW",
+  /** The club named in the page's URL. A form of any other club is "not found", before anything is audited. */
+  expectedOrganizationId?: string,
 ) {
   const prisma = getPrisma();
   const row = await prisma.clubFormSubmission.findFirst({
-    where: { id: submissionId, ...visibleWhere(viewer, {}) },
+    where: { id: submissionId, ...visibleWhere(viewer, { organizationId: expectedOrganizationId }) },
     select: {
       id: true,
       organizationId: true,
@@ -267,14 +268,16 @@ export async function getSubmissionForViewer(
       template: {
         select: {
           id: true, key: true, name: true, description: true, version: true, definition: true, sectionNotes: true,
-          sensitiveFieldKeys: true, staffOnlyFieldKeys: true, printLayout: true, enabled: true,
+          sensitiveFieldKeys: true, birthDateFieldKeys: true, staffOnlyFieldKeys: true, printLayout: true, enabled: true,
         },
       },
     },
   });
   if (!row) throw new ClubFormError("SUBMISSION_NOT_FOUND", "That form could not be found.");
   const template = parseClubFormTemplate(row.template);
+  const restricted = new Set(restrictedFieldKeys(viewer, row.organizationId, template));
   const reveal = viewerCanRevealSensitive(viewer, row.organizationId);
+  const revealBirthDates = viewerCanRevealBirthDates(viewer, row.organizationId);
 
   if (row.hasSensitiveAnswers) {
     const who = viewerAuditFields(viewer);
@@ -290,14 +293,19 @@ export async function getSubmissionForViewer(
         templateKey: template.key,
         purpose,
         sensitiveRevealed: reveal,
+        birthDatesRevealed: revealBirthDates,
       },
     });
   }
 
   const answers: Record<string, unknown> = { ...(row.answers as Record<string, unknown>) };
-  if (reveal && row.sealedSensitiveAnswers) {
+  if ((reveal || revealBirthDates) && row.sealedSensitiveAnswers) {
     try {
-      Object.assign(answers, openSensitiveAnswers(row.id, row.sealedSensitiveAnswers));
+      const opened = openSensitiveAnswers(row.id, row.sealedSensitiveAnswers);
+      // Only the keys this viewer may read leave this function.
+      for (const [key, value] of Object.entries(opened)) {
+        if (!restricted.has(key)) answers[key] = value;
+      }
     } catch (error) {
       if (error instanceof SecretBoxError) {
         throw new ClubFormError("SENSITIVE_UNREADABLE", "The sensitive answers on this form can't be read on this server.");
@@ -316,6 +324,7 @@ export async function getSubmissionForViewer(
       sectionNotes: template.sectionNotes,
       sensitiveFieldKeys: template.sensitiveFieldKeys,
       staffOnlyFieldKeys: template.staffOnlyFieldKeys,
+      enabled: template.enabled,
     },
     organization: { id: row.organizationId, name: row.organization.name },
     clubYear: row.clubYear,
@@ -326,8 +335,8 @@ export async function getSubmissionForViewer(
     enteredVia: row.enteredVia,
     answers,
     sensitiveRevealed: reveal,
-    /** Fields shown as "Restricted": every sensitive field, answered or not, so a blank does not tell. */
-    restrictedKeys: reveal ? [] : template.sensitiveFieldKeys,
+    /** Fields shown as "Restricted": every sensitive field this viewer may not read, answered or not, so a blank does not tell. */
+    restrictedKeys: [...restricted],
   };
 }
 

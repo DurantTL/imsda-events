@@ -76,8 +76,9 @@ function PassengerList({ submission, restricted }: { submission: SubmissionView;
     return typeof value === "string" ? value : "";
   };
   const contacts = definition.sections[0];
+  // A row counts if anything was written on it: a passenger with an emergency contact but no name stays on the sheet.
   const passengers = Array.from({ length: 20 }, (_, index) => index + 1)
-    .filter((n) => answer(`passenger_${n}_name`));
+    .filter((n) => answer(`passenger_${n}_name`) || answer(`passenger_${n}_phone`) || answer(`passenger_${n}_emergency_contact`));
   return (
     <>
       <section className="club-form-sheet-section">
@@ -109,7 +110,7 @@ function PassengerList({ submission, restricted }: { submission: SubmissionView;
             {passengers.map((n, row) => (
               <tr key={n}>
                 <td>{row + 1}</td>
-                <td translate="no">{answer(`passenger_${n}_name`)}</td>
+                <td translate="no">{answer(`passenger_${n}_name`) || <span className="club-form-blank">(no name)</span>}</td>
                 <td translate="no">{answer(`passenger_${n}_phone`)}</td>
                 <td translate="no">
                   {restricted.has(`passenger_${n}_emergency_contact`)

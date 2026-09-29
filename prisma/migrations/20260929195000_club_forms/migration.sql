@@ -28,6 +28,7 @@ CREATE TABLE "ClubFormTemplate" (
     "definition" JSONB NOT NULL,
     "sectionNotes" JSONB NOT NULL DEFAULT '{}',
     "sensitiveFieldKeys" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "birthDateFieldKeys" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "staffOnlyFieldKeys" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "printLayout" TEXT NOT NULL DEFAULT 'STANDARD',
     "sortOrder" INTEGER NOT NULL DEFAULT 0,

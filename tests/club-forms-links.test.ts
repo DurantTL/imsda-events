@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   linkFindMany: vi.fn(),
   submissionCreate: vi.fn(),
   outboxCreate: vi.fn(),
+  outboxFindMany: vi.fn(),
   organizationFindUnique: vi.fn(),
   organizationFindMany: vi.fn(),
   rosterFindFirst: vi.fn(),
@@ -28,7 +29,7 @@ const client = {
     findMany: mocks.linkFindMany,
   },
   clubFormSubmission: { create: mocks.submissionCreate },
-  messageOutbox: { create: mocks.outboxCreate },
+  messageOutbox: { create: mocks.outboxCreate, findMany: mocks.outboxFindMany },
   organization: { findUnique: mocks.organizationFindUnique, findMany: mocks.organizationFindMany },
   clubRosterMember: { findFirst: mocks.rosterFindFirst },
   $transaction: (work: (tx: unknown) => unknown) => work(client),
@@ -48,7 +49,7 @@ vi.mock("@/modules/communications/account-email", () => ({
 import { hashOpaqueToken } from "@/modules/access/tokens";
 import { clubFormTemplateSeeds } from "@/modules/club-forms/definitions";
 import type { ClubFormsViewer } from "@/modules/club-forms/domain";
-import { CLUB_FORM_LINK_SENTINEL, prepareClubFormLinkBodyForDelivery } from "@/modules/club-forms/link-email";
+import { CLUB_FORM_LINK_SENTINEL, prepareClubFormLinkBodyForDelivery, retireClubFormLinkForMessage } from "@/modules/club-forms/link-email";
 import {
   createClubFormLink,
   listClubFormLinks,
@@ -62,7 +63,7 @@ const now = new Date("2026-10-05T15:00:00Z");
 const director: ClubFormsViewer = { kind: "CLUB_LEADER", organizationId: "club-a", actor: { kind: "ATTENDEE", accountId: "acct-1" } };
 const otherDirector: ClubFormsViewer = { kind: "CLUB_LEADER", organizationId: "club-b", actor: { kind: "ATTENDEE", accountId: "acct-9" } };
 const areaCoordinator: ClubFormsViewer = { kind: "AREA_COORDINATOR", actor: { kind: "ATTENDEE", accountId: "acct-2" } };
-const staff: ClubFormsViewer = { kind: "STAFF", userId: "staff-1", canViewSensitive: true };
+const staff: ClubFormsViewer = { kind: "STAFF", userId: "staff-1", systemAdmin: true };
 
 const TOKEN = "T".repeat(43);
 const SECRET_HEALTH = "Synthetic health detail";
@@ -79,6 +80,7 @@ function templateRow(key: string) {
     definition: seed.definition,
     sectionNotes: seed.sectionNotes,
     sensitiveFieldKeys: seed.sensitiveFieldKeys,
+    birthDateFieldKeys: seed.birthDateFieldKeys,
     staffOnlyFieldKeys: seed.staffOnlyFieldKeys,
     printLayout: seed.printLayout,
     enabled: true,
@@ -382,10 +384,11 @@ describe("submitting through a private link (#610)", () => {
 
 describe("a club's own links (#610)", () => {
   it("lists only the club's links, with state and no token", async () => {
+    mocks.outboxFindMany.mockResolvedValue([]);
     mocks.linkFindMany.mockResolvedValue([
-      { id: "l1", recipientEmail: "a@example.test", subjectName: "", status: "OPEN", expiresAt: new Date("2026-10-19T00:00:00Z"), usedAt: null, createdAt: now, template: { key: "k", name: "Form" }, submission: null },
-      { id: "l2", recipientEmail: "b@example.test", subjectName: "", status: "OPEN", expiresAt: new Date("2026-10-01T00:00:00Z"), usedAt: null, createdAt: now, template: { key: "k", name: "Form" }, submission: null },
-      { id: "l3", recipientEmail: "c@example.test", subjectName: "", status: "USED", expiresAt: new Date("2026-10-19T00:00:00Z"), usedAt: now, createdAt: now, template: { key: "k", name: "Form" }, submission: { id: "s1" } },
+      { id: "l1", messageId: null, recipientEmail: "a@example.test", subjectName: "", status: "OPEN", expiresAt: new Date("2026-10-19T00:00:00Z"), usedAt: null, createdAt: now, template: { key: "k", name: "Form" }, submission: null },
+      { id: "l2", messageId: null, recipientEmail: "b@example.test", subjectName: "", status: "OPEN", expiresAt: new Date("2026-10-01T00:00:00Z"), usedAt: null, createdAt: now, template: { key: "k", name: "Form" }, submission: null },
+      { id: "l3", messageId: null, recipientEmail: "c@example.test", subjectName: "", status: "USED", expiresAt: new Date("2026-10-19T00:00:00Z"), usedAt: now, createdAt: now, template: { key: "k", name: "Form" }, submission: { id: "s1" } },
     ]);
     const rows = await listClubFormLinks(director, "club-a", now);
     expect(rows.map((row) => row.state)).toEqual(["OPEN", "EXPIRED", "USED"]);
@@ -393,6 +396,32 @@ describe("a club's own links (#610)", () => {
     expect(mocks.linkFindMany.mock.calls[0][0].where).toMatchObject({ organizationId: "club-a" });
     expect(JSON.stringify(rows)).not.toContain("tokenHash");
     await expect(listClubFormLinks(otherDirector, "club-a", now)).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("shows each link's email delivery, and keeps links of a form since switched off", async () => {
+    const base = { recipientEmail: "a@example.test", subjectName: "", status: "OPEN", expiresAt: new Date("2026-10-19T00:00:00Z"), usedAt: null, createdAt: now, template: { key: "k", name: "Form" }, submission: null };
+    mocks.linkFindMany.mockResolvedValue([
+      { ...base, id: "l1", messageId: "m1" }, { ...base, id: "l2", messageId: "m2" }, { ...base, id: "l3", messageId: "m3" },
+      { ...base, id: "l4", messageId: "m4" }, { ...base, id: "l5", messageId: "m5" },
+    ]);
+    mocks.outboxFindMany.mockResolvedValue([
+      { id: "m1", status: "PENDING", providerDeliveryStatus: null },
+      { id: "m2", status: "SENT", providerDeliveryStatus: "DELIVERED" },
+      { id: "m3", status: "SENT", providerDeliveryStatus: "BOUNCED" },
+      { id: "m4", status: "FAILED", providerDeliveryStatus: "FAILED" },
+      { id: "m5", status: "SENT", providerDeliveryStatus: "ACCEPTED" },
+    ]);
+    const rows = await listClubFormLinks(director, "club-a", now);
+    expect(rows.map((row) => row.delivery)).toEqual(["QUEUED", "DELIVERED", "NOT_DELIVERED", "NOT_DELIVERED", "SENT"]);
+    expect(mocks.linkFindMany.mock.calls[0][0].where).toEqual({ organizationId: "club-a" });
+  });
+
+  it("retires a link whose email finally failed, and leaves a used or withdrawn one alone", async () => {
+    await retireClubFormLinkForMessage(client as never, "message-1", now);
+    expect(mocks.linkUpdateMany).toHaveBeenCalledWith({
+      where: { messageId: "message-1", status: "OPEN" },
+      data: { status: "REVOKED", revokedAt: now, tokenHash: null },
+    });
   });
 
   it("withdraws an open link of its own club and audits it", async () => {

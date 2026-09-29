@@ -109,12 +109,29 @@ describe("seeded club form templates", () => {
     expect(templateSpecProblems({ ...base, sensitiveFieldKeys: ["nope"] })).toHaveLength(1);
     expect(templateSpecProblems({ ...base, staffOnlyFieldKeys: ["physician_name"], sensitiveFieldKeys: ["physician_name"] })).toContain("Field physician_name cannot be both staff-only and sensitive.");
     expect(templateSpecProblems({ ...base, sectionNotes: { missing: ["x"] } })).toHaveLength(1);
+    expect(templateSpecProblems({ ...base, birthDateFieldKeys: ["nope"], sensitiveFieldKeys: [...base.sensitiveFieldKeys, "nope"] })).toContain("Birth-date field nope is not in the form.");
+    expect(templateSpecProblems({ ...base, birthDateFieldKeys: ["activity_date"] })).toContain("Birth-date field activity_date must also be a sensitive field.");
+  });
+
+  it("marks every birth-date field with the birth-date class, and only those", () => {
+    expect(membership().birthDateFieldKeys).toEqual(["birth_date"]);
+    expect(new Set(staff().birthDateFieldKeys)).toEqual(new Set(["birth_date", "child_1_birth_date", "child_2_birth_date", "child_3_birth_date", "child_4_birth_date", "child_5_birth_date"]));
+    expect(slip().birthDateFieldKeys).toEqual([]);
+    expect(passengers().birthDateFieldKeys).toEqual([]);
+    for (const template of clubFormTemplateSeeds) {
+      // Every birth-date class field is also sensitive (sealed), and every field that asks for a birth date is in the class.
+      for (const key of template.birthDateFieldKeys) expect(template.sensitiveFieldKeys, `${template.key} ${key}`).toContain(key);
+      const birthLabelled = allFields(registrationFormDefinitionSchema.parse(template.definition))
+        .filter((field) => field.type === "DATE" && /birth|born/i.test(`${field.key} ${field.label}`))
+        .map((field) => field.key);
+      expect(new Set(birthLabelled), template.key).toEqual(new Set(template.birthDateFieldKeys));
+    }
   });
 });
 
 function permissionSlipSpec() {
   const template = slip();
-  return { definition: template.definition, sectionNotes: template.sectionNotes, sensitiveFieldKeys: template.sensitiveFieldKeys, staffOnlyFieldKeys: template.staffOnlyFieldKeys };
+  return { definition: template.definition, sectionNotes: template.sectionNotes, sensitiveFieldKeys: template.sensitiveFieldKeys, birthDateFieldKeys: template.birthDateFieldKeys, staffOnlyFieldKeys: template.staffOnlyFieldKeys };
 }
 
 const membershipAnswers = {

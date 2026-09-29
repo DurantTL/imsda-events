@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Prisma } from "@prisma/client";
 import { getServerEnv } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
 import { createOpaqueToken, hashOpaqueToken } from "@/modules/access/tokens";
@@ -38,6 +39,25 @@ export function clubFormLinkEmailContent(input: { clubName: string; formName: st
       "IMSDA Events",
     ].join("\n"),
   };
+}
+
+/**
+ * Withdraws the link a message carried, whenever that message's email finally
+ * fails: out of retries, a non-retryable error, or a bounce, complaint or
+ * suppression from the provider. An undelivered link must not stay live. A link
+ * already used or withdrawn is left alone. Safe to call for any message: one
+ * that carries no link matches nothing.
+ */
+export async function retireClubFormLinkForMessage(
+  client: Pick<Prisma.TransactionClient, "clubFormLink">,
+  messageId: string,
+  now: Date,
+) {
+  const retired = await client.clubFormLink.updateMany({
+    where: { messageId, status: "OPEN" },
+    data: { status: "REVOKED", revokedAt: now, tokenHash: null },
+  });
+  return retired.count;
 }
 
 /**

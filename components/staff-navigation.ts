@@ -211,6 +211,12 @@ export type MoreDirectoryContext = {
   /** Whether the selected event has a CLUB audience (#481), from the same `resolveClubOversight` result. */
   clubEvent: boolean;
   isSystemAdmin: boolean;
+  /**
+   * Club forms (#610) belong to no event: only system administrators and Event
+   * Admins of a current event may open them (`resolveStaffViewer`), so the card
+   * follows that rule rather than any event permission.
+   */
+  clubFormsAccess: boolean;
   /** `?event=<id>` (or `""` when nothing is selected), appended to every event-scoped href. */
   eventQuery: string;
 };
@@ -220,6 +226,7 @@ export function buildMoreDirectoryCards({
   clubOversight,
   clubEvent,
   isSystemAdmin,
+  clubFormsAccess,
   eventQuery,
 }: MoreDirectoryContext): readonly MoreDirectoryCard[] {
   const granted = new Set(permissions);
@@ -267,9 +274,8 @@ export function buildMoreDirectoryCards({
     },
     { key: "club-assignments", group: "people-access", allowed: clubEvent && canManageClubAssignments(permissions), href: `/more/club-assignments${eventQuery}`, icon: Tent, title: "Club assignments", description: "Set each registered club's campsite, duty, and activity, then email directors after review.", cta: "Assign clubs" },
     { key: "event-patches", group: "setup", allowed: clubEvent && has("CONFIGURE_EVENT"), href: `/more/event-patches${eventQuery}`, icon: Trophy, title: "Event patches", description: "Link the patch or pin a club event gives, so directors are suggested it for every member who attended.", cta: "Link patches" },
-    // Club forms (#610) belong to no event. Anyone who reaches More is conference staff, and the page
-    // itself decides what each person may open (sensitive answers need VIEW_SENSITIVE_DATA).
-    { key: "club-forms", group: "people-access", allowed: true, href: `/more/club-forms${eventQuery}`, icon: FileText, title: "Club forms", description: "Membership applications, staff service forms, permission slips, and passenger lists clubs have filled in.", cta: "Open club forms" },
+    // Club forms (#610) belong to no event: system administrators and Event Admins of a current event only.
+    { key: "club-forms", group: "people-access", allowed: clubFormsAccess, href: `/more/club-forms${eventQuery}`, icon: FileText, title: "Club forms", description: "Membership applications, staff service forms, permission slips, and passenger lists clubs have filled in.", cta: "Open club forms" },
     { key: "imports", group: "people-access", allowed: has("MANAGE_IMPORTS"), href: `/imports${eventQuery}`, icon: FileUp, title: "Import registrations", description: "Preview a CSV, review every change, then import approved records.", cta: "Open imports" },
     { key: "reports", group: "reports", allowed: has("VIEW_REPORTS"), href: `/more/reports${eventQuery}`, icon: ChartNoAxesCombined, title: "Operational reports", description: "Print active attendee rosters and review meal, housing, and ranked seminar totals.", cta: "Open reports" },
     { key: "health", group: "reports", allowed: canAccessOperationalHealth(permissions), href: `/more/health${eventQuery}`, icon: HeartPulse, title: "Operational health", description: "Review failed or delayed work, open balances, import exceptions, and capacity warnings.", cta: "Review exceptions" },

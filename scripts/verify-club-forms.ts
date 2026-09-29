@@ -10,7 +10,11 @@
  *   and the database CHECK constraints hold;
  * - role visibility on real rows: the club's director (drafts included), another
  *   club's director (nothing), an Area Coordinator ("Restricted", submitted
- *   forms only), staff without and with VIEW_SENSITIVE_DATA, disabled forms;
+ *   forms only), an Event Admin (health and conduct answers, birth dates
+ *   Restricted) and a system administrator (everything), and forms switched
+ *   off (past submissions stay readable);
+ * - a template version that makes a field newly sensitive re-seals existing
+ *   submissions, and the club deletion check counts club forms;
  * - every view of a submission with sensitive answers writes one audit row that
  *   carries no answer text;
  * - a private link: the emailed token is minted at delivery and stored only as a
@@ -39,7 +43,7 @@ const prisma = new PrismaClient();
 const P = "cf610";
 const clubs = { a: `${P}_club_a`, b: `${P}_club_b` };
 const clubIds = Object.values(clubs);
-const users = { admin: `${P}_admin`, staffPlain: `${P}_staff_plain`, staffSensitive: `${P}_staff_sens` };
+const users = { admin: `${P}_admin`, eventAdmin: `${P}_event_admin`, sysAdmin: `${P}_sys_admin` };
 const accounts = { a: `${P}_acct_a`, b: `${P}_acct_b`, area: `${P}_acct_area` };
 const SLIP = "off_premises_permission_slip";
 const STAFF_FORM = "pathfinder_staff_service_information";
@@ -115,13 +119,18 @@ async function main() {
   const sealed = await import("../modules/club-forms/sealed-answers");
   const csv = await import("../modules/club-forms/csv");
   const rateLimits = await import("../modules/rate-limit/service");
+  const deliveryQueue = await import("../modules/communications/email-delivery");
+  const webhooks = await import("../modules/communications/resend-webhook-repository");
+  const reseal = await import("../modules/club-forms/reseal");
+  const orgRepository = await import("../modules/organizations/repository");
   type Viewer = import("../modules/club-forms/domain").ClubFormsViewer;
 
   const directorA: Viewer = { kind: "CLUB_LEADER", organizationId: clubs.a, actor: { kind: "ATTENDEE", accountId: accounts.a } };
   const directorB: Viewer = { kind: "CLUB_LEADER", organizationId: clubs.b, actor: { kind: "ATTENDEE", accountId: accounts.b } };
   const area: Viewer = { kind: "AREA_COORDINATOR", actor: { kind: "ATTENDEE", accountId: accounts.area } };
-  const staffPlain: Viewer = { kind: "STAFF", userId: users.staffPlain, canViewSensitive: false };
-  const staffSensitive: Viewer = { kind: "STAFF", userId: users.staffSensitive, canViewSensitive: true };
+  // Conference staff is only an Event Admin of a current event, or a system administrator.
+  const eventAdmin: Viewer = { kind: "STAFF", userId: users.eventAdmin, systemAdmin: false };
+  const sysAdmin: Viewer = { kind: "STAFF", userId: users.sysAdmin, systemAdmin: true };
 
   await cleanup();
   await prisma.organization.createMany({
@@ -132,7 +141,7 @@ async function main() {
     ],
   });
   for (const [key, id] of Object.entries(users)) {
-    await prisma.user.create({ data: { id, email: `${key}@${emailDomain}`, displayName: `Verify ${key}`, globalRole: key === "admin" ? "SYSTEM_ADMIN" : null } });
+    await prisma.user.create({ data: { id, email: `${key}@${emailDomain}`, displayName: `Verify ${key}`, globalRole: key === "admin" || key === "sysAdmin" ? "SYSTEM_ADMIN" : null } });
   }
   for (const [key, id] of Object.entries(accounts)) {
     await prisma.attendeeAccount.create({ data: { id, email: `account-${key}@${emailDomain}`, displayName: `Verify ${key}`, status: "ACTIVE" } });
@@ -229,7 +238,7 @@ async function main() {
     "MEMBER_NOT_FOUND",
     "another club's roster member can't be used",
   );
-  for (const viewer of [area, staffPlain, staffSensitive]) {
+  for (const viewer of [area, eventAdmin, sysAdmin]) {
     await expectCode(
       submissions.saveClubFormSubmission(viewer, { organizationId: clubs.a, templateKey: SLIP, answers: slipAnswers, submit: true }),
       "FORBIDDEN",
@@ -250,23 +259,23 @@ async function main() {
   const areaView = await submissions.getSubmissionForViewer(area, submitted.id);
   assert(!areaView.sensitiveRevealed && areaView.restrictedKeys.length === slipRow.sensitiveFieldKeys.length, "an Area Coordinator gets Restricted for every sensitive field");
   assert(!("physician_name" in areaView.answers) && !JSON.stringify(areaView).includes(SECRET_PHYSICIAN) && !JSON.stringify(areaView).includes(SECRET_PHONE), "an Area Coordinator's view holds no sensitive text");
-  const plainView = await submissions.getSubmissionForViewer(staffPlain, submitted.id);
-  assert(!plainView.sensitiveRevealed && !JSON.stringify(plainView).includes(SECRET_PHYSICIAN), "staff without VIEW_SENSITIVE_DATA get Restricted");
-  const sensitiveView = await submissions.getSubmissionForViewer(staffSensitive, submitted.id);
-  assert(sensitiveView.answers.physician_name === SECRET_PHYSICIAN, "staff with VIEW_SENSITIVE_DATA read the answers");
+  const eventAdminView = await submissions.getSubmissionForViewer(eventAdmin, submitted.id);
+  assert(eventAdminView.sensitiveRevealed && eventAdminView.answers.physician_name === SECRET_PHYSICIAN, "an Event Admin reads the physician and emergency answers");
+  const sysAdminView = await submissions.getSubmissionForViewer(sysAdmin, submitted.id);
+  assert(sysAdminView.answers.physician_name === SECRET_PHYSICIAN, "a system administrator reads the answers");
 
   // 4. Audit: one row per view, who and what, never the answers ------------
   const viewRows = await prisma.auditLog.findMany({ where: { action: "CLUB_FORM_SUBMISSION_VIEWED", entityId: submitted.id }, orderBy: { createdAt: "asc" } });
   assert(viewRows.length === auditBefore + 3, "each view of a form with sensitive answers wrote one audit row");
   const newRows = viewRows.slice(auditBefore);
   assert(newRows.map((row) => (row.metadata as { viewerKind: string }).viewerKind).join() === "AREA_COORDINATOR,STAFF,STAFF", "audit rows say who viewed");
-  assert(newRows.map((row) => (row.metadata as { sensitiveRevealed: boolean }).sensitiveRevealed).join() === "false,false,true", "audit rows say whether answers were revealed");
-  assert(newRows[1].actorUserId === users.staffPlain && newRows[2].actorUserId === users.staffSensitive, "staff views are attributed to the staff user");
+  assert(newRows.map((row) => (row.metadata as { sensitiveRevealed: boolean }).sensitiveRevealed).join() === "false,true,true", "audit rows say whether answers were revealed");
+  assert(newRows[1].actorUserId === users.eventAdmin && newRows[2].actorUserId === users.sysAdmin, "staff views are attributed to the staff user");
   assert((newRows[0].metadata as { actorAttendeeAccountId?: string }).actorAttendeeAccountId === accounts.area, "an attendee's view is attributed to their account");
   const everyClubFormAudit = await prisma.$queryRaw<Array<{ text: string }>>`
     SELECT a::text AS text FROM "AuditLog" a
     WHERE a."entityType" IN ('ClubFormSubmission', 'ClubFormLink', 'ClubFormTemplate')
-      AND (a."actorUserId" IN (${users.admin}, ${users.staffPlain}, ${users.staffSensitive}) OR a."entityId" = ${submitted.id} OR a."entityId" = ${draft.id})`;
+      AND (a."actorUserId" IN (${users.admin}, ${users.eventAdmin}, ${users.sysAdmin}) OR a."entityId" = ${submitted.id} OR a."entityId" = ${draft.id})`;
   for (const secret of [SECRET_PHYSICIAN, SECRET_PHONE, SECRET_HEALTH, "Riley"]) {
     assert(everyClubFormAudit.every((row) => !row.text.includes(secret)), "no answer text in any audit row");
   }
@@ -277,12 +286,63 @@ async function main() {
   await submissions.getSubmissionForViewer(directorA, plainOnly.id);
   assert(await prisma.auditLog.count({ where: { action: "CLUB_FORM_SUBMISSION_VIEWED", entityId: plainOnly.id } }) === 0, "a form with no sensitive answers is not audited on view");
 
-  // Disabled forms disappear for clubs and Area Coordinators, not for staff.
+  // Birth dates follow ADR 0005 Addendum A: the club's leaders and system administrators only.
+  const BIRTH = "1985-06-15";
+  const birthForm = await submissions.saveClubFormSubmission(directorA, {
+    organizationId: clubs.a, templateKey: STAFF_FORM, answers: {
+      full_name: "Birth Verify", birth_date: BIRTH, child_1_name: "Kid Verify", child_1_birth_date: "2018-02-03", street: "2 Example Road", city: "Exampleville",
+      state: "MO", zip: "64000", email: `birth@${emailDomain}`, church: "Verify Forms Church", club: "Verify Forms Club A",
+      health_limitation: "Yes", health_limitation_how: SECRET_HEALTH, conduct_accused: "No",
+      reference_1_name: "A", reference_1_address: "B", reference_1_phone: "C", reference_2_name: "A", reference_2_address: "B", reference_2_phone: "C",
+      reference_3_name: "A", reference_3_address: "B", reference_3_phone: "C",
+      signature: "Birth Verify", signature_date: "2026-10-02", signature_acknowledgment: true,
+    }, submit: true,
+  });
+  const staffTemplate = await prisma.clubFormTemplate.findUniqueOrThrow({ where: { key: STAFF_FORM } });
+  assert(staffTemplate.birthDateFieldKeys.length === 6, "the staff template marks its six birth-date fields");
+  const birthFor = async (viewer: Viewer) => submissions.getSubmissionForViewer(viewer, birthForm.id);
+  for (const viewer of [directorA, sysAdmin]) {
+    const view = await birthFor(viewer);
+    assert(view.answers.birth_date === BIRTH && view.answers.child_1_birth_date === "2018-02-03" && view.answers.health_limitation === "Yes", "the club's director and a system administrator read birth dates");
+  }
+  const eventAdminBirth = await birthFor(eventAdmin);
+  assert(eventAdminBirth.answers.health_limitation_how === SECRET_HEALTH, "an Event Admin reads the health answers");
+  assert(!("birth_date" in eventAdminBirth.answers) && !JSON.stringify(eventAdminBirth).includes(BIRTH) && !JSON.stringify(eventAdminBirth).includes("2018-02-03"), "an Event Admin never receives a birth date");
+  assert(staffTemplate.birthDateFieldKeys.every((key) => eventAdminBirth.restrictedKeys.includes(key)), "an Event Admin sees every birth date as Restricted");
+  const areaBirth = await birthFor(area);
+  assert(!JSON.stringify(areaBirth).includes(BIRTH) && !JSON.stringify(areaBirth).includes(SECRET_HEALTH), "an Area Coordinator receives no birth date and no health answer");
+  assert(staffTemplate.sensitiveFieldKeys.every((key) => areaBirth.restrictedKeys.includes(key)), "an Area Coordinator sees every sensitive field as Restricted");
+  const birthRow = await prisma.$queryRaw<Array<{ text: string }>>`SELECT s::text AS text FROM "ClubFormSubmission" s WHERE s.id = ${birthForm.id}`;
+  assert(!birthRow[0].text.includes(BIRTH) && !birthRow[0].text.includes("2018-02-03"), "birth dates are sealed at rest");
+
+  // The URL's club is checked before a view is audited.
+  const viewedBefore = await prisma.auditLog.count({ where: { action: "CLUB_FORM_SUBMISSION_VIEWED", entityId: birthForm.id } });
+  await expectCode(submissions.getSubmissionForViewer(area, birthForm.id, "VIEW", clubs.b), "SUBMISSION_NOT_FOUND", "a form is not opened through another club's path");
+  assert(await prisma.auditLog.count({ where: { action: "CLUB_FORM_SUBMISSION_VIEWED", entityId: birthForm.id } }) === viewedBefore, "a wrong-club view writes no audit row");
+
+  // A form that is switched off blocks new fills and links only: past submissions stay readable.
   await templates.setClubFormTemplateEnabled(SLIP, false, users.admin);
-  assert((await submissions.listSubmissionsForViewer(directorA, {})).every((row) => row.templateKey !== SLIP), "a club no longer sees a disabled form's submissions");
-  await expectCode(submissions.getSubmissionForViewer(directorA, submitted.id), "SUBMISSION_NOT_FOUND", "a club can't open a disabled form's submission");
-  await expectCode(submissions.getSubmissionForViewer(area, submitted.id), "SUBMISSION_NOT_FOUND", "an Area Coordinator can't either");
-  assert((await submissions.getSubmissionForViewer(staffPlain, submitted.id)).id === submitted.id, "staff still see it");
+  for (const viewer of [directorA, area, eventAdmin, sysAdmin]) {
+    const view = await submissions.getSubmissionForViewer(viewer, submitted.id);
+    assert(view.id === submitted.id && view.template.enabled === false, "a switched-off form's past submission stays readable");
+  }
+  assert((await submissions.listSubmissionsForViewer(directorA, {})).some((row) => row.templateKey === SLIP), "a club still lists a switched-off form's submissions");
+  assert((await submissions.listSubmissionsForViewer(area, { organizationId: clubs.a })).some((row) => row.templateKey === SLIP), "an Area Coordinator still lists them");
+  await expectCode(
+    submissions.saveClubFormSubmission(directorA, { organizationId: clubs.a, templateKey: SLIP, answers: slipAnswers, submit: true }),
+    "TEMPLATE_NOT_FOUND",
+    "a switched-off form takes no new fills",
+  );
+  await expectCode(
+    submissions.saveClubFormSubmission(directorA, { organizationId: clubs.a, templateKey: SLIP, submissionId: draft.id, answers: slipAnswers, submit: true }),
+    "TEMPLATE_NOT_FOUND",
+    "a switched-off form's draft can't be finished",
+  );
+  await expectCode(
+    links.createClubFormLink(directorA, { organizationId: clubs.a, templateKey: SLIP, recipientEmail: `off@${emailDomain}` }),
+    "TEMPLATE_NOT_FOUND",
+    "a switched-off form sends no new links",
+  );
   await templates.setClubFormTemplateEnabled(SLIP, true, users.admin);
 
   // 5. Private links ---------------------------------------------------------
@@ -406,6 +466,56 @@ async function main() {
   }
   assert(createOutcomes.join() === "true,true,false,false", `sending to one address is limited to two an hour per club (${createOutcomes.join()})`);
 
+  // Email that finally fails withdraws the link, and the director sees the delivery status.
+  type Sender = NonNullable<NonNullable<Parameters<typeof deliveryQueue.processAccountEmailQueue>[0]>["dependencies"]>["sendEmail"];
+  const failingSender = (retryable: boolean) => (async () => {
+    const { EmailProviderRequestError } = await import("../integrations/email/resend");
+    throw new EmailProviderRequestError("The provider refused the message.", "PROVIDER_REJECTED", retryable, retryable ? 503 : 422);
+  }) as unknown as Sender;
+  const startAt = new Date();
+  async function freshLink(email: string) {
+    const created = await links.createClubFormLink(directorA, { organizationId: clubs.a, templateKey: SLIP, recipientEmail: `${email}@${emailDomain}` });
+    return created;
+  }
+  const rejected = await freshLink("rejected");
+  await deliveryQueue.processAccountEmailQueue({ messageIds: [rejected.messageId], dependencies: { sendEmail: failingSender(false) } });
+  assert((await prisma.clubFormLink.findUniqueOrThrow({ where: { id: rejected.linkId } })).status === "REVOKED", "a non-retryable delivery failure withdraws the link");
+  assert((await links.listClubFormLinks(directorA, clubs.a)).find((row) => row.id === rejected.linkId)?.delivery === "NOT_DELIVERED", "the director's list says the email was not delivered");
+
+  const exhausted = await freshLink("exhausted");
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const before = (await prisma.clubFormLink.findUniqueOrThrow({ where: { id: exhausted.linkId } })).status;
+    assert(before === "OPEN", `a link stays open while its email can still be retried (attempt ${attempt})`);
+    await deliveryQueue.processAccountEmailQueue({
+      messageIds: [exhausted.messageId],
+      dependencies: { sendEmail: failingSender(true), now: () => new Date(startAt.getTime() + (attempt + 1) * 3 * 3_600_000) },
+    });
+  }
+  assert((await prisma.messageOutbox.findUniqueOrThrow({ where: { id: exhausted.messageId } })).status === "FAILED", "the email is out of retries");
+  assert((await prisma.clubFormLink.findUniqueOrThrow({ where: { id: exhausted.linkId } })).status === "REVOKED", "a link whose email ran out of retries is withdrawn");
+
+  const bounced = await freshLink("bounced");
+  const bouncedOutbox = await prisma.messageOutbox.findUniqueOrThrow({ where: { id: bounced.messageId } });
+  await linkEmail.prepareClubFormLinkBodyForDelivery({ messageId: bounced.messageId, bodyText: bouncedOutbox.bodyTextSnapshot, now: new Date() });
+  await prisma.messageOutbox.update({ where: { id: bounced.messageId }, data: { status: "SENT", providerMessageId: `${P}_provider_bounce`, providerDeliveryStatus: "ACCEPTED", providerStatusAt: new Date(startAt.getTime() - 1000) } });
+  await webhooks.recordResendWebhookEvent(`${P}_bounce_event`, { type: "email.bounced", created_at: new Date().toISOString(), data: { email_id: `${P}_provider_bounce`, to: [`bounced@${emailDomain}`] } } as never);
+  const bouncedLink = await prisma.clubFormLink.findUniqueOrThrow({ where: { id: bounced.linkId } });
+  assert(bouncedLink.status === "REVOKED" && bouncedLink.tokenHash === null, "a bounce withdraws the link");
+  assert((await links.listClubFormLinks(directorA, clubs.a)).find((row) => row.id === bounced.linkId)?.delivery === "NOT_DELIVERED", "a bounced email shows as not delivered");
+  await prisma.messageProviderEvent.deleteMany({ where: { providerEventId: `${P}_bounce_event` } });
+
+  const delivered = await freshLink("delivered");
+  let sentBody = "";
+  await deliveryQueue.processAccountEmailQueue({
+    messageIds: [delivered.messageId],
+    dependencies: { sendEmail: (async (input: { bodyText: string }) => { sentBody = input.bodyText; return { providerMessageId: `${P}_provider_ok` }; }) as unknown as Sender },
+  });
+  const deliveredToken = /\/club-forms\/([A-Za-z0-9_-]+)/.exec(sentBody)?.[1];
+  assert(deliveredToken, "a delivered email carries the link");
+  assert((await prisma.clubFormLink.findUniqueOrThrow({ where: { id: delivered.linkId } })).status === "OPEN", "a delivered link stays open");
+  assert((await links.listClubFormLinks(directorA, clubs.a)).find((row) => row.id === delivered.linkId)?.delivery === "SENT", "a sent email shows as sent");
+  await links.submitClubFormViaLink(deliveredToken, slipAnswers);
+
   // 6. Staff-only fields on the staff form, and the CSV ----------------------------
   const staffAnswers = {
     full_name: "Alex Verify", birth_date: "1985-06-15", street: "2 Example Road", city: "Exampleville", state: "MO", zip: "64000",
@@ -426,14 +536,30 @@ async function main() {
   assert(!JSON.stringify(staffRow).includes("Forged office signature") && !JSON.stringify(staffRow).includes(SECRET_HEALTH), "office-use answers are dropped and health answers are sealed");
   assert(staffRow.subjectName === "Alex Verify", "a non-member form is labeled from its answers");
 
-  const exported = await csv.buildClubFormsCsv(staffPlain, { templateKey: STAFF_FORM });
-  assert(exported.rowCount === 1, "the CSV has the submitted staff form");
+  const exported = await csv.buildClubFormsCsv(eventAdmin, { templateKey: STAFF_FORM });
+  assert(exported.rowCount === 2, "the CSV has both submitted staff forms");
   for (const secret of [SECRET_HEALTH, "1985-06-15", "Health"]) {
     assert(!exported.csv.includes(secret), `the CSV holds no sensitive column or text (${secret})`);
   }
   assert(exported.csv.includes("Alex Verify") && exported.csv.includes("Verify Forms Club A"), "the CSV holds the non-sensitive columns");
-  const slipCsv = await csv.buildClubFormsCsv(staffSensitive, { templateKey: SLIP, organizationId: clubs.a });
+  const slipCsv = await csv.buildClubFormsCsv(sysAdmin, { templateKey: SLIP, organizationId: clubs.a });
   assert(!slipCsv.csv.includes(SECRET_PHYSICIAN) && !slipCsv.csv.includes(SECRET_PHONE), "even staff who may read sensitive answers get none in the CSV");
+
+  // A template version that makes a field newly sensitive re-seals existing submissions.
+  const marker = "Resealed activity marker";
+  const plainFirst = await submissions.saveClubFormSubmission(directorA, {
+    organizationId: clubs.a, templateKey: SLIP, answers: { ...slipAnswers, activity: marker }, submit: true,
+  });
+  assert((await prisma.$queryRaw<Array<{ text: string }>>`SELECT s::text AS text FROM "ClubFormSubmission" s WHERE s.id = ${plainFirst.id}`)[0].text.includes(marker), "before re-sealing, the answer is plain");
+  await prisma.$transaction((tx) => reseal.resealClubFormSubmissions(tx, slipRow.id, ["activity"]));
+  const afterReseal = (await prisma.$queryRaw<Array<{ text: string }>>`SELECT s::text AS text FROM "ClubFormSubmission" s WHERE s.id = ${plainFirst.id}`)[0].text;
+  assert(!afterReseal.includes(marker), "after re-sealing, the answer is in no plain column");
+  assert(sealed.openSensitiveAnswers(plainFirst.id, (await prisma.clubFormSubmission.findUniqueOrThrow({ where: { id: plainFirst.id } })).sealedSensitiveAnswers!).activity === marker, "the re-sealed answer opens");
+  assert(await prisma.clubFormSubmission.count({ where: { id: plainFirst.id, hasSensitiveAnswers: true } }) === 1, "the sensitive flag follows the re-seal");
+
+  // Club forms and links block deleting a club.
+  const deletion = await orgRepository.getOrganizationDeletionCheck(clubs.a);
+  assert(deletion.blockers.some((blocker) => /club form/i.test(blocker) && /private link/i.test(blocker)), "the club deletion check counts club forms and links");
 
   console.log("Club forms verification passed.");
 }

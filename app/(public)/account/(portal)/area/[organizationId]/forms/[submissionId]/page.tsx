@@ -15,12 +15,12 @@ export default async function AreaClubFormPage({ params }: { params: Promise<{ o
   const viewer = await resolveAreaCoordinatorViewer();
   if (!viewer) notFound();
   const { organizationId, submissionId } = await params;
-  const submission = await getSubmissionForViewer(viewer, submissionId).catch((error: unknown) => {
+  // The URL's club is part of the lookup, so a form is never opened, or audited as opened, through another club's path.
+  const submission = await getSubmissionForViewer(viewer, submissionId, "VIEW", organizationId).catch((error: unknown) => {
     if (error instanceof ClubFormError && error.code === "SUBMISSION_NOT_FOUND") return null;
     throw error;
   });
-  // The URL's club must be the form's club: a form is never reachable through another club's path.
-  if (!submission || submission.organization.id !== organizationId) notFound();
+  if (!submission) notFound();
 
   return (
     <div className="club-form-page">
