@@ -60,6 +60,9 @@ export function ClubPacketSheet({ packet, qrSrc }: { packet: ClubPacket; qrSrc: 
           <h3>Registration summary</h3>
           <dl>
             <div><dt>Club</dt><dd translate="no">{packet.club.organizationName}</dd></div>
+            {packet.club.location && (
+              <div><dt>Location</dt><dd translate="no">{packet.club.location.name}{packet.club.location.address ? ` · ${packet.club.location.address}` : ""}</dd></div>
+            )}
             <div><dt>Sponsoring church</dt><dd translate="no">{packet.club.sponsoringChurch ?? "—"}</dd></div>
             <div><dt>Director</dt><dd translate="no">{packet.club.directorName}</dd></div>
             <div><dt>Director email / phone</dt><dd translate="no">{packet.club.email} · {packet.club.phone}</dd></div>

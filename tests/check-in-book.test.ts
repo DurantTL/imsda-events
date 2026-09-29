@@ -329,6 +329,45 @@ describe("extra column sensitive-field rules", () => {
   });
 });
 
+describe("event locations (#413)", () => {
+  const iowa = { ...ants, locationId: "loc-ia", locationName: "Iowa" };
+  const missouri = { ...zebra, locationId: "loc-mo", locationName: "Missouri" };
+
+  it("shows each club's location on its page and the selection on the cover", () => {
+    const book = buildCheckInBook({ event, mode: "CLUB", clubs: [missouri, iowa], registrations: clubRegistrations, locationLabel: "All locations" });
+    expect(book.locationLabel).toBe("All locations");
+    expect(book.pages.map((page) => [page.title, page.locationName])).toEqual([["Ants", "Iowa"], ["Zebras", "Missouri"]]);
+    const single = buildCheckInBook({ event, mode: "CLUB", clubs: [iowa], registrations: clubRegistrations, locationLabel: "Iowa" });
+    expect(single.locationLabel).toBe("Iowa");
+  });
+
+  it("adds a Location column to the CSV right after the club name", () => {
+    const book = buildCheckInBook({ event, mode: "CLUB", clubs: [missouri, iowa], registrations: clubRegistrations, locationLabel: "All locations" });
+    const lines = checkInBookCsv(book).trim().split("\r\n");
+    expect(lines[0].startsWith('"Club","Location","Church"')).toBe(true);
+    expect(lines[1].startsWith('"Ants","Iowa"')).toBe(true);
+    expect(lines[4].startsWith('"Zebras","Missouri"')).toBe(true);
+  });
+
+  it("leaves the cover and the CSV exactly as before when the event has no locations", () => {
+    const book = buildCheckInBook({ event, mode: "CLUB", clubs: [ants], registrations: clubRegistrations });
+    expect(book.locationLabel).toBeNull();
+    expect(checkInBookCsv(book)).not.toContain("Location");
+  });
+
+  it("reads the location from a registration group on non-club events", () => {
+    const book = buildCheckInBook({
+      event,
+      mode: "REGISTRATION",
+      clubs: [],
+      locationLabel: "All locations",
+      registrations: [registration({ id: "reg-loc", location: { id: "loc-ia", name: "Iowa" }, attendees: [{ id: "q1", firstName: "Quin", lastName: "Lee", attendeeType: "ADULT", responses: {} }] })],
+    });
+    expect(book.pages[0].locationName).toBe("Iowa");
+    expect(checkInBookCsv(book).split("\r\n")[0]).toBe('"Registrant","Location","Phone","Check In","Attendee","Role","Age","Extra"');
+  });
+});
+
 describe("checkInBookCsv", () => {
   it("writes the same columns as the printed book, one row per attendee", () => {
     const book = buildCheckInBook({ event, mode: "CLUB", clubs: [zebra, ants], registrations: clubRegistrations, extraFieldKey: "skill_induction" });

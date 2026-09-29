@@ -70,7 +70,7 @@ function toClubAssignmentSummary(fields: ClubAssignmentFields): ClubAssignmentSu
  */
 export async function getClubEventRecords(
   eventId: string,
-  options?: { statuses?: readonly RegistrationStatus[] },
+  options: { locationId?: string | null; statuses?: readonly RegistrationStatus[] } = {},
 ): Promise<{
   clubs: ClubEventRecord[];
   assignments: Map<string, ClubAssignmentSummary>;
@@ -78,17 +78,23 @@ export async function getClubEventRecords(
   /** The registrations the clubs were built from, for callers that need raw attendee answers. */
   registrations: RegistrationRecord[];
 }> {
-  const statuses = options?.statuses ?? activeRegistrationStatuses;
+  const statuses = options.statuses ?? activeRegistrationStatuses;
   const [clubRegistrations, registrations, assignmentRows] = await Promise.all([
     getPrisma().clubEventRegistration.findMany({
-      where: { eventId, registration: { status: { in: [...statuses] } } },
+      where: {
+        eventId,
+        registration: {
+          status: { in: [...statuses] },
+          ...(options.locationId ? { locationId: options.locationId } : {}),
+        },
+      },
       select: {
         organizationId: true,
         registrationId: true,
         organization: { select: { name: true, parentOrganization: { select: { name: true } } } },
       },
     }),
-    listRegistrations(eventId, { statuses }),
+    listRegistrations(eventId, { statuses, locationId: options.locationId }),
     listClubAssignments(eventId),
   ]);
 
@@ -121,14 +127,16 @@ export async function getClubEventRecords(
       amountOwedCents: churchOwedCents(registration.status as ClubRegistrationStatus, registration.totalAmountCents),
       pricingSnapshot: registration.publicSubmission?.pricingSnapshot ?? {},
       lateRateLabel: lateRateLabelFromRegistration(registration),
+      locationId: registration.location?.id ?? null,
+      locationName: registration.location?.name ?? null,
     }));
   }
 
   return { clubs, assignments, earlyBirdDeadline, registrations };
 }
 
-export async function getClubEventReports(eventId: string) {
-  const { clubs, assignments } = await getClubEventRecords(eventId);
+export async function getClubEventReports(eventId: string, options: { locationId?: string | null } = {}) {
+  const { clubs, assignments } = await getClubEventRecords(eventId, options);
   return {
     camping: buildCampingReport(clubs),
     dutiesActivities: buildDutiesActivitiesReport(clubs, assignments),

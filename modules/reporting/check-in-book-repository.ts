@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
+import { resolveLocationFilter, type LocationFilterOption } from "@/modules/event-locations/filter";
 import { listRegistrations } from "@/modules/registrations/repository";
 import {
   buildCheckInBook,
@@ -15,6 +16,10 @@ export type CheckInBookData = {
   book: CheckInBook;
   /** Attendee answers staff may pick for the extra column (never sensitive ones). */
   extraOptions: CheckInBookExtraOption[];
+  /** The event's locations for the filter; empty when it has none (#413). */
+  locations: LocationFilterOption[];
+  /** The location the book is narrowed to, or null for all. */
+  locationId: string | null;
 };
 
 /**
@@ -24,7 +29,7 @@ export type CheckInBookData = {
  */
 export async function getCheckInBookData(
   eventId: string,
-  options: { statuses: readonly CheckInBookStatus[]; extraFieldKey?: string | null },
+  options: { statuses: readonly CheckInBookStatus[]; extraFieldKey?: string | null; location?: string | null },
 ): Promise<CheckInBookData | null> {
   const prisma = getPrisma();
   const [event, clubRegistrationCount] = await Promise.all([
@@ -36,6 +41,9 @@ export async function getCheckInBookData(
   ]);
   if (!event) return null;
 
+  // An unknown or stale `location` falls back to every location (#413).
+  const { locations, locationId, selected } = await resolveLocationFilter(eventId, options.location);
+  const locationLabel = locations.length === 0 ? null : selected?.name ?? "All locations";
   const mode = clubRegistrationCount > 0 ? "CLUB" as const : "REGISTRATION" as const;
   const bookEvent = {
     name: event.name,
@@ -45,16 +53,20 @@ export async function getCheckInBookData(
   };
 
   if (mode === "CLUB") {
-    const { clubs, registrations } = await getClubEventRecords(eventId, { statuses: options.statuses });
+    const { clubs, registrations } = await getClubEventRecords(eventId, { statuses: options.statuses, locationId });
     return {
-      book: buildCheckInBook({ event: bookEvent, mode, clubs, registrations, extraFieldKey: options.extraFieldKey }),
+      book: buildCheckInBook({ event: bookEvent, mode, clubs, registrations, extraFieldKey: options.extraFieldKey, locationLabel }),
       extraOptions: checkInBookExtraOptions(registrations),
+      locations,
+      locationId,
     };
   }
 
-  const registrations = await listRegistrations(eventId, { statuses: options.statuses });
+  const registrations = await listRegistrations(eventId, { statuses: options.statuses, locationId });
   return {
-    book: buildCheckInBook({ event: bookEvent, mode, clubs: [], registrations, extraFieldKey: options.extraFieldKey }),
+    book: buildCheckInBook({ event: bookEvent, mode, clubs: [], registrations, extraFieldKey: options.extraFieldKey, locationLabel }),
     extraOptions: checkInBookExtraOptions(registrations),
+    locations,
+    locationId,
   };
 }

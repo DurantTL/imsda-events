@@ -3,6 +3,7 @@ import { getCurrentSession } from "@/modules/access/current-session";
 import { findActiveMembership } from "@/modules/events/repository";
 import { checkInBookCsv, parseCheckInBookStatuses } from "@/modules/reporting/check-in-book";
 import { getCheckInBookData } from "@/modules/reporting/check-in-book-repository";
+import { locationParam } from "@/modules/event-locations/filter";
 import { requireClubReportsAccess } from "@/modules/reporting/club-reports-access";
 import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
@@ -18,6 +19,8 @@ async function getHandler(
     const data = await getCheckInBookData(eventId, {
       statuses: parseCheckInBookStatuses(params.getAll("status")),
       extraFieldKey: params.get("extra"),
+      // ?location= narrows the book to one location; without it every location is combined (#413).
+      location: locationParam(request),
     });
     if (!data) return Response.json({ error: "EVENT_NOT_FOUND" }, { status: 404 });
     const safeEventId = eventId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 100) || "event";

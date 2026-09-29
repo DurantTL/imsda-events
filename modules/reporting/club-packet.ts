@@ -54,6 +54,8 @@ export type ClubPacket = {
     phone: string;
     submittedAt: string | null;
     confirmationCode: string;
+    /** The event location the club registered at (#413); null when the event has none. */
+    location?: { name: string; address: string | null; firstDay: string; lastDay: string } | null;
   };
   headcounts: ClubHeadcounts;
   /** Attendees marked "First time at Camporee?" on the form. */

@@ -119,6 +119,7 @@ function fixture() {
     clubRegistrationDraft: { findUnique: vi.fn().mockResolvedValue(null), deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
     publicRegistrationSubmission: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: "submission-1" }) },
     registrationCapacityReservation: { findMany: vi.fn().mockResolvedValue([]), createMany: vi.fn() },
+    eventLocation: { count: vi.fn().mockResolvedValue(0) },
     registrationAttendee: {
       count: vi.fn().mockResolvedValue(0),
       create: vi.fn(async ({ data }: { data: { personId: string; attendeeType: string; formResponses: Record<string, unknown>; profileSnapshot: Record<string, unknown> } }) => {

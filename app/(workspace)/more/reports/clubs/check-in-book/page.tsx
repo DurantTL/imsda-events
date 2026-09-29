@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Download } from "lucide-react";
 import { AccessRestricted } from "@/components/access-restricted";
 import { CheckInBookSheets } from "@/components/check-in-book";
+import { LocationFilter } from "@/components/location-filter";
 import { PrintReportButton } from "@/components/print-report-button";
 import { checkInBookStatuses, parseCheckInBookStatuses } from "@/modules/reporting/check-in-book";
 import { getCheckInBookData } from "@/modules/reporting/check-in-book-repository";
@@ -22,9 +23,9 @@ const statusLabels: Record<(typeof checkInBookStatuses)[number], string> = {
 export default async function CheckInBookPage({
   searchParams,
 }: {
-  searchParams: Promise<{ event?: string; status?: string | string[]; extra?: string }>;
+  searchParams: Promise<{ event?: string; status?: string | string[]; extra?: string; location?: string }>;
 }) {
-  const { event: requested, status, extra } = await searchParams;
+  const { event: requested, status, extra, location } = await searchParams;
   const { event, allowed } = await resolveClubReportsAccess(requested);
   if (!allowed) {
     return (
@@ -35,13 +36,14 @@ export default async function CheckInBookPage({
     );
   }
   const statuses = parseCheckInBookStatuses(status);
-  const data = await getCheckInBookData(event.id, { statuses, extraFieldKey: extra });
+  const data = await getCheckInBookData(event.id, { statuses, extraFieldKey: extra, location });
   if (!data) return <AccessRestricted title="Event not found" detail="This event could not be loaded." />;
 
   const eventQuery = `event=${encodeURIComponent(event.id)}`;
   const downloadParams = new URLSearchParams();
   for (const value of statuses) downloadParams.append("status", value);
   if (data.book.extraColumn) downloadParams.set("extra", data.book.extraColumn.key);
+  if (data.locationId) downloadParams.set("location", data.locationId);
 
   return (
     <section className="page-stack reports-workspace check-in-book-workspace">
@@ -58,8 +60,18 @@ export default async function CheckInBookPage({
         </div>
       </div>
 
+      <div className="check-in-book-location-filter">
+        <LocationFilter
+          basePath="/more/reports/clubs/check-in-book"
+          locations={data.locations}
+          params={{ event: event.id, status: statuses.join(","), extra: data.book.extraColumn?.key }}
+          selectedId={data.locationId}
+        />
+      </div>
+
       <form className="panel check-in-book-filters" method="get">
         <input type="hidden" name="event" value={event.id} />
+        {data.locationId && <input type="hidden" name="location" value={data.locationId} />}
         <fieldset>
           <legend>Registration status</legend>
           {checkInBookStatuses.map((value) => (

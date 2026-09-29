@@ -14,6 +14,7 @@ import {
   type ClubReportKind,
 } from "@/modules/reporting/club-event-reports";
 import { getClubEventRecords } from "@/modules/reporting/club-event-reports-repository";
+import { locationParam, resolveLocationFilter } from "@/modules/event-locations/filter";
 import { requireClubReportsAccess } from "@/modules/reporting/club-reports-access";
 import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
@@ -50,7 +51,9 @@ async function getHandler(
     }
 
     await requireClubReportsAccess(await getCurrentSession(), eventId, findActiveMembership);
-    const data = await getClubEventRecords(eventId);
+    // ?location= narrows the export to one location; without it every location is combined (#413).
+    const { locationId } = await resolveLocationFilter(eventId, locationParam(request));
+    const data = await getClubEventRecords(eventId, { locationId });
     const safeEventId = eventId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 100) || "event";
     return new Response(csvForKind(kind, data), {
       headers: {

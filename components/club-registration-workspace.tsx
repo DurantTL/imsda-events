@@ -9,6 +9,7 @@ import {
   type FormResponses,
   type RosterAttendee,
 } from "@/components/public-registration-form";
+import { ClubLocationPicker } from "@/components/club-location-picker";
 import { clubRosterAttendeeTypeLabels } from "@/modules/club-rosters/domain";
 import {
   clubGuestClientId,
@@ -51,6 +52,13 @@ export function ClubRegistrationWorkspace({
     attendeeResponses: (workspace.draft?.attendeeResponses as Record<string, FormResponses> | undefined) ?? {},
   }));
   const [step, setStep] = useState<"who" | "form">("who");
+  // The event's locations (#413): a location is required before continuing when there are any.
+  // Kept in this page's state; the server locks it and counts its seats when the registration is saved.
+  const locations = workspace.locations;
+  const pickableLocations = locations.filter((location) => location.open && !location.full);
+  const [locationId, setLocationId] = useState<string | null>(() => (pickableLocations.length === 1 ? pickableLocations[0]!.id : null));
+  const chosenLocation = locations.find((location) => location.id === locationId) ?? null;
+  const needsLocation = locations.length > 0 && !chosenLocation;
   const [addingGuest, setAddingGuest] = useState(false);
   const [guestError, setGuestError] = useState("");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">(workspace.draft ? "saved" : "idle");
@@ -190,6 +198,7 @@ export function ClubRegistrationWorkspace({
     initialAttendees,
     lockedAttendeeFieldKeys: workspace.lockedAttendeeFieldKeys,
     lockedRegistrationFieldKeys: workspace.directory.lockedFieldKeys,
+    locationId,
     submitUrl: `${base}/registration`,
     onDraftChange,
     onSubmitted: () => {
@@ -197,7 +206,7 @@ export function ClubRegistrationWorkspace({
       pending.current = null;
       router.refresh();
     },
-  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, base, onDraftChange, router]);
+  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, base, onDraftChange, router]);
 
   const saveLabel = saveState === "saving" ? "Saving draft…" : saveState === "saved" ? "Draft saved" : saveState === "error" ? "Draft not saved. Check your connection." : "";
 
@@ -209,7 +218,7 @@ export function ClubRegistrationWorkspace({
           <button className="secondary-button" onClick={() => { void flush(); setStep("who"); }} type="button">
             <ArrowLeft aria-hidden="true" size={15} /> Change who&apos;s going
           </button>
-          <span className="public-registration-eyebrow">Step 2 of 3 · Event form</span>
+          <span className="public-registration-eyebrow">Step 2 of 3 · Event form{chosenLocation ? ` · ${chosenLocation.name}` : ""}</span>
           <span className="field-help" role="status">{saveLabel}</span>
         </div>
         <PublicRegistrationForm
@@ -234,9 +243,10 @@ export function ClubRegistrationWorkspace({
         </div>
         <span className="count-badge">{goingCount} chosen</span>
       </div>
+      <ClubLocationPicker locations={locations} onChange={setLocationId} value={locationId} />
       <p>
         Tap everyone from your roster who is attending. Ages are as of the first day of the
-        event, {formatCalendarDate(workspace.event.eventDate)}. Your choices save automatically.
+        event, {formatCalendarDate(chosenLocation?.firstDay ?? workspace.event.eventDate)}. Your choices save automatically.
       </p>
       {workspace.roster.length === 0 ? (
         <p className="public-manage-empty">
@@ -332,8 +342,9 @@ export function ClubRegistrationWorkspace({
         </Link>
         <button
           className="primary-button"
-          disabled={goingCount === 0}
+          disabled={goingCount === 0 || needsLocation}
           onClick={() => { void flush(); setStep("form"); }}
+          title={needsLocation ? "Choose a location first" : undefined}
           type="button"
         >
           Continue with {goingCount} {goingCount === 1 ? "person" : "people"} <ArrowRight aria-hidden="true" size={15} />

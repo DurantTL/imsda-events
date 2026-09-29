@@ -5,6 +5,7 @@ import { listChurchAmountsOwed } from "@/modules/club-registrations/repository";
 import { churchAmountsOwedCsvRows } from "@/modules/club-registrations/church-owed";
 import { billedSponsoredLines } from "@/modules/promo-codes/church-sponsored";
 import { listChurchSponsoredPromoLines } from "@/modules/promo-codes/church-sponsored-repository";
+import { locationParam, resolveLocationFilter } from "@/modules/event-locations/filter";
 import { toCsv } from "@/modules/reporting/csv";
 import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
@@ -20,14 +21,15 @@ import { withRequestContext } from "@/lib/request-context";
  * confirmation code and amount only.
  */
 async function getHandler(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ eventId: string }> },
 ) {
   try {
     const { eventId } = await context.params;
     await requirePermission(await getCurrentSession(), eventId, "MANAGE_FINANCE", findActiveMembership);
+    const { locationId } = await resolveLocationFilter(eventId, locationParam(request));
     const [owed, sponsored] = await Promise.all([
-      listChurchAmountsOwed(eventId),
+      listChurchAmountsOwed(eventId, { locationId }),
       listChurchSponsoredPromoLines(eventId),
     ]);
     const rows = churchAmountsOwedCsvRows(owed, billedSponsoredLines(sponsored));

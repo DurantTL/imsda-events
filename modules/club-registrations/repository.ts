@@ -40,9 +40,16 @@ import {
 import {
   activeRegistrationStatuses,
   calendarDateInEventTimeZone,
-  evaluateEventRegistrationPhase,
-  hasEventEnded,
 } from "@/modules/events/lifecycle";
+import { locationOpenProblem } from "@/modules/event-locations/admission";
+import {
+  effectiveLocationDates,
+  evaluateLocationPhase,
+  hasLocationEnded,
+  remainingLocationSeats,
+  type LocationDateSource,
+} from "@/modules/event-locations/domain";
+import { EventLocationError } from "@/modules/event-locations/errors";
 import { isSeminarPreferenceField } from "@/modules/attendee-accounts/registration-answer-policy";
 import {
   amendRegistration,
@@ -131,6 +138,85 @@ const clubEventSelect = {
 
 type ClubEvent = Prisma.EventGetPayload<{ select: typeof clubEventSelect }>;
 
+const clubLocationSelect = {
+  id: true,
+  name: true,
+  address: true,
+  firstDay: true,
+  lastDay: true,
+  capacity: true,
+  registrationClosesOn: true,
+  isActive: true,
+  sortOrder: true,
+} satisfies Prisma.EventLocationSelect;
+
+type ClubLocation = Prisma.EventLocationGetPayload<{ select: typeof clubLocationSelect }>;
+
+/**
+ * The registration phase a club sees (#413). With no location it is the
+ * event's. With locations, a registration at a location follows that
+ * location's dates, and a club that hasn't registered yet sees the event as
+ * open while any active location still is (else upcoming, else closed).
+ */
+function clubPhase(
+  event: ClubEvent,
+  locations: readonly ClubLocation[],
+  registered: LocationDateSource | null,
+  now: Date,
+) {
+  if (registered || locations.length === 0) return evaluateLocationPhase(event, registered, now);
+  const phases = locations.map((location) => evaluateLocationPhase(event, location, now));
+  return phases.includes("OPEN") ? "OPEN" as const : phases.includes("UPCOMING") ? "UPCOMING" as const : "CLOSED" as const;
+}
+
+/** What a director sees for one location: its own dates (the event's when unset), seats, and whether it can be picked. */
+function clubLocationView(event: ClubEvent, location: ClubLocation, occupied: number, now: Date) {
+  const dates = effectiveLocationDates(event, location);
+  const remaining = remainingLocationSeats(location.capacity, occupied);
+  const phase = evaluateLocationPhase(event, location, now);
+  return {
+    id: location.id,
+    name: location.name,
+    address: location.address,
+    firstDay: dates.firstDay,
+    lastDay: dates.lastDay,
+    registrationClosesOn: dates.registrationClosesOn,
+    // Only when this location closes on its own date, so the picker doesn't repeat the event's (#413).
+    ownClosingDate: location.registrationClosesOn !== null && location.registrationClosesOn !== event.registrationClosesOn
+      ? location.registrationClosesOn
+      : null,
+    capacity: location.capacity,
+    remaining,
+    full: remaining !== null && remaining <= 0,
+    phase,
+    open: phase === "OPEN",
+    isActive: location.isActive,
+  };
+}
+
+function pickDays(event: ClubEvent, location: LocationDateSource) {
+  const { firstDay, lastDay } = effectiveLocationDates(event, location);
+  return { firstDay, lastDay };
+}
+
+/** People registered at each of the event's locations, counted like the event capacity. */
+async function locationSeatCounts(client: Pick<Prisma.TransactionClient, "registration">, eventId: string, excludeRegistrationId?: string) {
+  const rows = await client.registration.findMany({
+    where: {
+      eventId,
+      locationId: { not: null },
+      status: { in: [...activeRegistrationStatuses] },
+      ...(excludeRegistrationId ? { id: { not: excludeRegistrationId } } : {}),
+    },
+    select: { locationId: true, _count: { select: { attendees: true } } },
+  });
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    if (row.locationId) counts.set(row.locationId, (counts.get(row.locationId) ?? 0) + row._count.attendees);
+  }
+  return counts;
+}
+
 /**
  * Events a club can register for: published, a CLUB audience (#481), billed to
  * the church, with a usable published form. Bulk club registration needs both:
@@ -147,11 +233,18 @@ export async function listClubEvents(organizationId: string, now = new Date()) {
         where: { organizationId },
         select: {
           registration: {
-            select: { confirmationCode: true, status: true, totalAmount: true, _count: { select: { attendees: true } } },
+            select: {
+              confirmationCode: true,
+              status: true,
+              totalAmount: true,
+              _count: { select: { attendees: true } },
+              location: { select: clubLocationSelect },
+            },
           },
         },
       },
       clubRegistrationDrafts: { where: { organizationId }, select: { updatedAt: true, selectedMemberIds: true } },
+      locations: { where: { isActive: true }, select: clubLocationSelect },
     },
   });
   const results = [];
@@ -160,6 +253,7 @@ export async function listClubEvents(organizationId: string, now = new Date()) {
     const problem = form ? clubFormProblem(form.definition) : "The event has no published registration form yet.";
     const registration = event.clubRegistrations[0]?.registration ?? null;
     const draft = event.clubRegistrationDrafts[0] ?? null;
+    const registeredLocation = registration?.location ?? null;
     results.push({
       id: event.id,
       name: event.name,
@@ -167,8 +261,13 @@ export async function listClubEvents(organizationId: string, now = new Date()) {
       endsAt: event.endsAt.toISOString(),
       timezone: event.timezone,
       location: event.location,
-      phase: evaluateEventRegistrationPhase(event, now),
-      registrationClosesOn: event.registrationClosesOn,
+      phase: clubPhase(event, event.locations, registeredLocation, now),
+      registrationClosesOn: effectiveLocationDates(event, registeredLocation).registrationClosesOn,
+      // The location this club registered at (#413), with its own dates.
+      registeredLocation: registeredLocation
+        ? { id: registeredLocation.id, name: registeredLocation.name, address: registeredLocation.address, ...pickDays(event, registeredLocation) }
+        : null,
+      hasLocations: event.locations.length > 0,
       available: !problem,
       problem,
       registration: registration
@@ -214,9 +313,9 @@ export function clubEventRegistrationSteps(events: ClubEventSummary[], base: str
  * (`Registration.totalAmount`), and only a submitted or confirmed
  * registration is billed. Waitlisted and cancelled clubs stay listed, owing $0.
  */
-export async function listChurchAmountsOwed(eventId: string): Promise<ChurchAmountOwedRow[]> {
+export async function listChurchAmountsOwed(eventId: string, options: { locationId?: string | null } = {}): Promise<ChurchAmountOwedRow[]> {
   const rows = await getPrisma().clubEventRegistration.findMany({
-    where: { eventId },
+    where: { eventId, ...(options.locationId ? { registration: { locationId: options.locationId } } : {}) },
     select: {
       organization: {
         select: { id: true, name: true, parentOrganization: { select: { id: true, name: true } } },
@@ -226,6 +325,7 @@ export async function listChurchAmountsOwed(eventId: string): Promise<ChurchAmou
           confirmationCode: true,
           status: true,
           totalAmount: true,
+          location: { select: { name: true } },
           _count: { select: { attendees: true } },
         },
       },
@@ -241,6 +341,7 @@ export async function listChurchAmountsOwed(eventId: string): Promise<ChurchAmou
     attendeeCount: row.registration._count.attendees,
     isBilled: isChurchBilledStatus(row.registration.status),
     amountOwedCents: churchOwedCents(row.registration.status, moneyToCents(row.registration.totalAmount)),
+    ...(row.registration.location ? { locationName: row.registration.location.name } : {}),
   })));
 }
 
@@ -252,6 +353,8 @@ export type ClubCheckInInfo = {
   confirmationCode: string;
   /** Read-only estimate billed to the church (#409); never an attendee balance or a door payment. */
   amountOwedCents: number;
+  /** The event location the club registered at (#413); null when the event has none. */
+  locationName?: string | null;
 };
 
 /**
@@ -261,12 +364,18 @@ export type ClubCheckInInfo = {
  * whole club by confirmation code or club name and see what its church owes,
  * without exposing an attendee balance or a payment action.
  */
-export async function listClubCheckInInfo(eventId: string): Promise<ClubCheckInInfo[]> {
+export async function listClubCheckInInfo(eventId: string, options: { locationId?: string | null } = {}): Promise<ClubCheckInInfo[]> {
   const rows = await getPrisma().clubEventRegistration.findMany({
-    where: { eventId, registration: { status: { in: [...activeRegistrationStatuses] } } },
+    where: {
+      eventId,
+      registration: {
+        status: { in: [...activeRegistrationStatuses] },
+        ...(options.locationId ? { locationId: options.locationId } : {}),
+      },
+    },
     select: {
       organization: { select: { id: true, name: true } },
-      registration: { select: { confirmationCode: true, status: true, totalAmount: true } },
+      registration: { select: { confirmationCode: true, status: true, totalAmount: true, location: { select: { name: true } } } },
     },
   });
   return rows.map((row) => ({
@@ -274,6 +383,8 @@ export async function listClubCheckInInfo(eventId: string): Promise<ClubCheckInI
     organizationName: row.organization.name,
     confirmationCode: row.registration.confirmationCode,
     amountOwedCents: churchOwedCents(row.registration.status, moneyToCents(row.registration.totalAmount)),
+    // Only when the club registered at a location, so an event without locations returns what it always did (#413).
+    ...(row.registration.location ? { locationName: row.registration.location.name } : {}),
   }));
 }
 
@@ -329,13 +440,16 @@ async function activeRosterFor(client: Prisma.TransactionClient, organizationId:
   });
 }
 
-function clubEditWindow(event: ClubEvent, now: Date) {
+/** The director edit window (#366) for a registration, on its location's dates when it has one (#413). */
+function clubEditWindow(event: ClubEvent, location: (LocationDateSource & { name?: string }) | null, now: Date) {
+  const dates = effectiveLocationDates(event, location);
   return clubRegistrationEditWindow({
-    phase: evaluateEventRegistrationPhase(event, now),
-    registrationClosesOn: event.registrationClosesOn,
+    phase: evaluateLocationPhase(event, location, now),
+    registrationClosesOn: dates.registrationClosesOn,
     today: calendarDateInEventTimeZone(now, event.timezone),
-    eventDate: calendarDateInEventTimeZone(event.startsAt, event.timezone),
-    ended: hasEventEnded(event, now),
+    eventDate: dates.firstDay,
+    ended: hasLocationEnded(event, location, now),
+    locationName: location?.name ?? null,
   });
 }
 
@@ -343,7 +457,7 @@ function clubEditWindow(event: ClubEvent, now: Date) {
 export async function getClubEventWorkspace(organizationId: string, eventId: string, now = new Date()) {
   const event = await requireClubEvent(eventId);
   const eventDate = calendarDateInEventTimeZone(event.startsAt, event.timezone);
-  const [form, members, clubRegistration, draft, identity] = await Promise.all([
+  const [form, members, clubRegistration, draft, identity, eventLocations] = await Promise.all([
     publishedClubForm(event.id),
     activeRosterFor(getPrisma(), organizationId, event),
     getPrisma().clubEventRegistration.findUnique({
@@ -357,6 +471,7 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
             status: true,
             updatedAt: true,
             totalAmount: true,
+            location: { select: clubLocationSelect },
             attendees: { orderBy: { position: "asc" }, select: { id: true, profileSnapshot: true, formResponses: true } },
           },
         },
@@ -364,7 +479,18 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
     }),
     getPrisma().clubRegistrationDraft.findUnique({ where: { eventId_organizationId: { eventId, organizationId } } }),
     clubDirectoryIdentity(getPrisma(), organizationId),
+    getPrisma().eventLocation.findMany({
+      where: { eventId, isActive: true },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { name: "asc" }],
+      select: clubLocationSelect,
+    }),
   ]);
+  // Locations (#413): seats are counted like the event capacity, leaving out
+  // this club's own registration so it never sees its own seats as taken.
+  const registeredLocation = clubRegistration?.registration.location ?? null;
+  const seatCounts = eventLocations.length > 0
+    ? await locationSeatCounts(getPrisma(), eventId, clubRegistration?.registrationId)
+    : new Map<string, number>();
   const problem = form ? clubFormProblem(form.definition) : "The event has no published registration form yet.";
   const experience = form && !problem ? await getPublicRegistrationExperience(event.slug, form.slug) : null;
   const activeMemberIds = new Set(members.map((member) => member.id));
@@ -405,12 +531,15 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
       endsAt: event.endsAt.toISOString(),
       timezone: event.timezone,
       eventDate,
-      phase: evaluateEventRegistrationPhase(event, now),
-      ended: hasEventEnded(event, now),
-      registrationClosesOn: event.registrationClosesOn,
-      // Whether a submitted registration may still be reopened (H3b, #366).
-      edit: clubEditWindow(event, now),
+      phase: clubPhase(event, eventLocations, registeredLocation, now),
+      ended: hasLocationEnded(event, registeredLocation, now),
+      registrationClosesOn: effectiveLocationDates(event, registeredLocation).registrationClosesOn,
+      // Whether a submitted registration may still be reopened (H3b, #366),
+      // on its location's dates when it has one (#413).
+      edit: clubEditWindow(event, registeredLocation, now),
     },
+    // The event's active locations (#413). Empty: the event works as always.
+    locations: eventLocations.map((location) => clubLocationView(event, location, seatCounts.get(location.id) ?? 0, now)),
     problem,
     experience,
     lockedAttendeeFieldKeys: experience ? lockedAttendeeFieldKeys(experience.form.definition) : [],
@@ -428,6 +557,10 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
         status: clubRegistration.registration.status,
         submittedAt: clubRegistration.createdAt.toISOString(),
         updatedAt: clubRegistration.registration.updatedAt.toISOString(),
+        // Where this club registered (#413), even if the location was deactivated since.
+        location: registeredLocation
+          ? clubLocationView(event, registeredLocation, seatCounts.get(registeredLocation.id) ?? 0, now)
+          : null,
         // What the church owes for this registration (#409): priced by the
         // same engine as any other registration, never an attendee balance
         // or a card payment — this event bills the church directly.
@@ -625,6 +758,7 @@ export async function submitClubRegistration(
   actor: ClubRegistrationActor,
   input: PublicRegistrationInput,
   now = new Date(),
+  options: { locationId?: string | null } = {},
 ) {
   const event = await requireClubEvent(eventId);
   const form = await publishedClubForm(event.id);
@@ -632,6 +766,8 @@ export async function submitClubRegistration(
   return submitPublicRegistration(event.slug, form.slug, input, now, {
     organizationId,
     ...clubSubmissionAttribution(actor),
+    // Picked, locked, and capacity-checked inside the submit transaction (#413).
+    locationId: options.locationId ?? null,
     prepareAttendees: clubAttendeePreparer(organizationId),
   });
 }
@@ -713,21 +849,34 @@ export async function amendClubRegistration(
   now = new Date(),
 ) {
   const event = await requireClubEvent(eventId);
-  const window = clubEditWindow(event, now);
+  const clubRegistration = await getPrisma().clubEventRegistration.findUnique({
+    where: { eventId_organizationId: { eventId, organizationId } },
+    select: { registrationId: true, registration: { select: { location: { select: clubLocationSelect } } } },
+  });
+  // The edit window follows the registration's own location when it has one (#413).
+  const currentLocation = clubRegistration?.registration?.location ?? null;
+  const window = clubEditWindow(event, currentLocation, now);
   if (!window.open) throw new ClubRegistrationError("REGISTRATION_CLOSED", window.message);
   const form = await publishedClubForm(event.id);
   if (!form) throw new ClubRegistrationError("FORM_UNAVAILABLE", "The event has no published registration form yet.");
   const problem = clubFormProblem(form.definition);
   if (problem) throw new ClubRegistrationError("FORM_UNAVAILABLE", problem);
 
-  const clubRegistration = await getPrisma().clubEventRegistration.findUnique({
-    where: { eventId_organizationId: { eventId, organizationId } },
-    select: { registrationId: true },
-  });
   if (!clubRegistration) {
     throw new ClubRegistrationError("REGISTRATION_NOT_FOUND", "Your club hasn't registered for this event yet.");
   }
   const registrationId = clubRegistration.registrationId;
+  // A switch to another location needs that location to still be open; its
+  // seats are counted under its lock in the amendment transaction (#413).
+  if (input.locationId && input.locationId !== currentLocation?.id) {
+    const target = await getPrisma().eventLocation.findFirst({
+      where: { id: input.locationId, eventId, isActive: true },
+      select: clubLocationSelect,
+    });
+    if (!target) throw new EventLocationError("LOCATION_INVALID", "That location isn't available. Refresh the page and choose again.");
+    const closed = locationOpenProblem(event, target, now);
+    if (closed) throw new ClubRegistrationError("REGISTRATION_CLOSED", `${closed} Choose another location.`);
+  }
 
   // A retried save (same request id and same content) returns what the first
   // one did, even though the registration has moved on since. The same id
@@ -960,6 +1109,7 @@ export async function amendClubRegistration(
   const engineOptions: AmendmentServerOptions = {
     attendees: serverOptions,
     requestFingerprint,
+    ...(input.locationId ? { locationId: input.locationId } : {}),
     ownedRegistrationResponses: async (hydrated, tx) => (
       clubDirectoryOwnedResponses(hydrated, await clubDirectoryIdentity(tx, organizationId))
     ),

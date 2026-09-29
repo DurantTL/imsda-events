@@ -206,6 +206,8 @@ export type PublicRegistrationFormProps = {
      * church is prefilled but stays editable, so it is never listed here.
      */
     lockedRegistrationFieldKeys?: string[];
+    /** The event location the club picked (#413), sent beside the answers; the server checks it again. */
+    locationId?: string | null;
     submitUrl: string;
     onDraftChange?: (draft: { responses: FormResponses; attendees: RosterAttendee[] }) => void;
     onSubmitted?: () => void;
@@ -2441,6 +2443,7 @@ export function PublicRegistrationForm({
               responses: attendee.responses,
             })),
           } : {}),
+          ...(club?.locationId ? { locationId: club.locationId } : {}),
           website,
         }),
       });

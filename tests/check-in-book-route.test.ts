@@ -51,13 +51,20 @@ describe("GET /api/events/[eventId]/check-in-book", () => {
     expect(mocks.getCheckInBookData).toHaveBeenCalledWith("event-1", {
       statuses: ["CONFIRMED", "WAITLISTED"],
       extraFieldKey: "skill_induction",
+      location: null,
     });
   });
 
   it("defaults to submitted and confirmed registrations", async () => {
     mocks.findActiveMembership.mockResolvedValue(membership("EVENT_ADMIN"));
     await GET(request(), context);
-    expect(mocks.getCheckInBookData).toHaveBeenCalledWith("event-1", { statuses: ["SUBMITTED", "CONFIRMED"], extraFieldKey: null });
+    expect(mocks.getCheckInBookData).toHaveBeenCalledWith("event-1", { statuses: ["SUBMITTED", "CONFIRMED"], extraFieldKey: null, location: null });
+  });
+
+  it("passes ?location= through to narrow the book (#413)", async () => {
+    mocks.findActiveMembership.mockResolvedValue(membership("EVENT_ADMIN"));
+    await GET(request("?location=loc-mo"), context);
+    expect(mocks.getCheckInBookData).toHaveBeenCalledWith("event-1", expect.objectContaining({ location: "loc-mo" }));
   });
 
   it("denies staff without report access", async () => {

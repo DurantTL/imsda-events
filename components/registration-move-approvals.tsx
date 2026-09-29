@@ -50,6 +50,11 @@ export function RegistrationMoveCard({ move, onDecide }: { move: RegistrationMov
           <dd>{money(move.adjustmentCents)}</dd>
         </div>
       </dl>
+      {move.fromRegistration?.locationName !== move.toRegistration?.locationName && (move.fromRegistration?.locationName || move.toRegistration?.locationName) && (
+        <p className="quiet-copy">
+          Moves between locations: <span translate="no">{move.fromRegistration?.locationName ?? "no location"}</span> to <span translate="no">{move.toRegistration?.locationName ?? "no location"}</span>.
+        </p>
+      )}
       {blocker && <p className="form-error">{registrationMoveBlockerLabels[blocker]}</p>}
       {move.status !== "PENDING" && move.decidedAt && (
         <p className="quiet-copy">

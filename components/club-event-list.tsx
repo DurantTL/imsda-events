@@ -38,7 +38,8 @@ export function ClubEventList({ events, organizationId }: { events: ClubEventSum
                   <strong>{event.name}</strong>
                   <small>
                     {formatDate(event.startsAt, event.timezone)}
-                    {event.location ? ` · ${event.location}` : ""}
+                    {event.registeredLocation ? ` · ${event.registeredLocation.name}` : event.location ? ` · ${event.location}` : ""}
+                    {event.hasLocations && !event.registeredLocation && !event.registration ? " · Choose a location when you register" : ""}
                   </small>
                   <span className={`status-chip ${status.tone}`}>{status.label}</span>
                 </span>

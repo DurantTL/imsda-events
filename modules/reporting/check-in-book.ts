@@ -3,7 +3,7 @@ import {
   type RegistrationFormField,
 } from "@/modules/forms/definition";
 import { attendeeAgeKey } from "@/modules/club-registrations/domain";
-import type { ClubEventRecord } from "@/modules/reporting/club-event-reports";
+import { withLocationColumn, type ClubEventRecord } from "@/modules/reporting/club-event-reports";
 import { isSensitiveField, sensitiveFieldPattern } from "@/modules/forms/sensitive-fields";
 import { toCsv } from "@/modules/reporting/csv";
 
@@ -113,6 +113,7 @@ export type CheckInBookRegistration = {
     responses: Record<string, unknown>;
   }>;
   publicSubmission: { definition: unknown } | null;
+  location?: { id: string; name: string } | null;
 };
 
 function eligibleExtraFields(registrations: CheckInBookRegistration[]) {
@@ -214,6 +215,8 @@ export type CheckInBookPage = {
   title: string;
   /** Church, director, phone and email for a club; registrant name and phone for a registration group. */
   church: string;
+  /** The event location this club or registration is at (#413); null when the event has none. */
+  locationName: string | null;
   contactName: string;
   phone: string;
   email: string;
@@ -226,6 +229,8 @@ export type CheckInBookPage = {
 export type CheckInBook = {
   event: { name: string; startsOn: string; endsOn: string; timezone: string };
   mode: "CLUB" | "REGISTRATION";
+  /** The selected location's name, or "All locations"; null when the event has no locations (#413). */
+  locationLabel: string | null;
   extraColumn: CheckInBookExtraOption | null;
   cover: { pageCount: number; peopleCount: number };
   pages: CheckInBookPage[];
@@ -237,6 +242,7 @@ export type BuildCheckInBookInput = {
   clubs: ClubEventRecord[];
   registrations: CheckInBookRegistration[];
   extraFieldKey?: string | null;
+  locationLabel?: string | null;
 };
 
 const dash = "—";
@@ -245,8 +251,6 @@ function byName(left: { lastName: string; firstName: string }, right: { lastName
   return left.lastName.localeCompare(right.lastName) || left.firstName.localeCompare(right.firstName);
 }
 
-// A `?location=` filter (Iowa and Missouri printed separately) follows once
-// #413 (event locations, PR #601) merges; it is intentionally not built here.
 export function buildCheckInBook(input: BuildCheckInBookInput): CheckInBook {
   const eligible = eligibleExtraFields(input.registrations);
   // A key that is not an eligible attendee field (unknown, or sensitive) is ignored.
@@ -264,6 +268,7 @@ export function buildCheckInBook(input: BuildCheckInBookInput): CheckInBook {
         kind: "CLUB",
         title: club.organizationName,
         church: club.sponsoringChurch ?? "",
+        locationName: club.locationName ?? null,
         contactName: club.directorName,
         phone: club.phone,
         email: club.email,
@@ -289,6 +294,7 @@ export function buildCheckInBook(input: BuildCheckInBookInput): CheckInBook {
         kind: "REGISTRATION",
         title: holderName || registration.confirmationCode,
         church: "",
+        locationName: registration.location?.name ?? null,
         contactName: holderName,
         phone: holder.phone,
         // The registrant's email is deliberately not carried into the book.
@@ -318,6 +324,7 @@ export function buildCheckInBook(input: BuildCheckInBookInput): CheckInBook {
   return {
     event: input.event,
     mode: input.mode,
+    locationLabel: input.locationLabel ?? null,
     extraColumn: extraField ? { key: extraField.key, label: extraField.label } : null,
     cover: {
       pageCount: pages.length,
@@ -334,14 +341,16 @@ export function checkInBookCsv(book: CheckInBook) {
   const table: Array<Array<string | number>> = [isClub
     ? ["Club", "Church", "Director", "Phone", "Email", "Kitchen", "Tents", "Check In", "Attendee", "Role", "Age", extraHeader]
     : ["Registrant", "Phone", "Check In", "Attendee", "Role", "Age", extraHeader]];
+  const locations: Array<string | null> = [];
   for (const page of book.pages) {
     for (const attendee of page.attendees) {
       const person = [attendee.name, attendee.role, attendee.age ?? "", attendee.extra];
       table.push(isClub
         ? [page.title, page.church, page.contactName, page.phone, page.email, page.camping?.kitchen ?? "", page.camping?.tents ?? "", "", ...person]
         : [page.title, page.phone, "", ...person]);
+      locations.push(page.locationName);
     }
   }
-  return toCsv(table);
+  // A Location column only when the event has locations (#413), right after the club or registrant name.
+  return toCsv(withLocationColumn(table, locations, 1));
 }
-

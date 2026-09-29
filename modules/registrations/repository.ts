@@ -23,10 +23,13 @@ function getRegistrationQuery(
   eventId: string,
   statuses?: readonly RegistrationStatus[],
   tagIds?: readonly string[],
+  locationId?: string | null,
 ) {
   return client.registration.findMany({
     where: {
       eventId,
+      // One location of a multi-location event (#413); none means every location.
+      ...(locationId ? { locationId } : {}),
       ...(statuses ? { status: { in: [...statuses] } } : {}),
       // Tags are a filter dimension alongside status, not a second filter
       // mechanism: an active (not removed) assignment to any listed tag.
@@ -41,6 +44,7 @@ function getRegistrationQuery(
     ],
     include: {
       accountHolderPerson: true,
+      location: { select: { id: true, name: true } },
       attendees: {
         orderBy: [{ position: "asc" }, { createdAt: "asc" }],
         include: {
@@ -219,6 +223,8 @@ function serializeRegistration(registration: RegistrationWithRelations, director
     paidCents,
     balanceCents,
     onlinePaymentUnavailable,
+    // The event location this registration is at (#413); null when the event has none.
+    location: registration.location ? { id: registration.location.id, name: registration.location.name } : null,
     // The recorded amount is what the church owes, billed directly, never
     // an attendee balance to collect online (#409). Staff finance screens
     // must say so wherever the amount is shown.
@@ -332,7 +338,9 @@ function serializeRegistration(registration: RegistrationWithRelations, director
 }
 
 type SerializedRegistration = ReturnType<typeof serializeRegistration>;
-export type RegistrationRecord = Omit<SerializedRegistration, "attendees" | "publicSubmission"> & {
+export type RegistrationRecord = Omit<SerializedRegistration, "attendees" | "publicSubmission" | "location"> & {
+  /** Optional so records built before locations existed (#413) still type-check. */
+  location?: { id: string; name: string } | null;
   attendees: Array<Omit<SerializedRegistration["attendees"][number], "attendeeTypeDefinitionCode"> & { attendeeTypeDefinitionCode?: string | null }>;
   publicSubmission: SerializedRegistration["publicSubmission"] extends infer Submission
     ? Submission extends null ? null : Omit<Submission, "attendeeTypeOptions"> & { attendeeTypeOptions?: AttendeeTypeOption[] }
@@ -360,13 +368,14 @@ export class RegistrationAttendeeOperationError extends Error {
 
 export async function listRegistrations(
   eventId: string,
-  options?: { statuses?: readonly RegistrationStatus[]; tagIds?: readonly string[] },
+  options?: { statuses?: readonly RegistrationStatus[]; tagIds?: readonly string[]; locationId?: string | null },
 ) {
   const registrations = await getRegistrationQuery(
     getPrisma(),
     eventId,
     options?.statuses,
     options?.tagIds,
+    options?.locationId,
   );
   const directory = await directoryForRegistrations(getPrisma(), registrations);
   return registrations.map((registration) => serializeRegistration(registration, directory));

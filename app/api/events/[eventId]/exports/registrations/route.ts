@@ -1,6 +1,7 @@
 import { AccessDeniedError, effectivePermissions, requirePermission } from "@/modules/access/authorization";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { findActiveMembership } from "@/modules/events/repository";
+import { locationParam, resolveLocationFilter } from "@/modules/event-locations/filter";
 import { listRegistrations } from "@/modules/registrations/repository";
 import { computeRegistrationFlags } from "@/modules/registrations/flags";
 import { listNotesForRegistration } from "@/modules/notes/repository";
@@ -9,7 +10,7 @@ import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
 
 async function getHandler(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ eventId: string }> },
 ) {
   try {
@@ -19,11 +20,16 @@ async function getHandler(
     // permissions: a note restricted to a permission this user does not hold
     // must not surface here even though the export otherwise covers everyone.
     const actorPermissions = new Set(effectivePermissions(access.user, access.membership));
-    const registrations = await listRegistrations(eventId);
+    // ?location= narrows the export to one location; without it every location is combined,
+    // each row naming its location (#413). The column exists only for events with locations.
+    const { locationId, locations } = await resolveLocationFilter(eventId, locationParam(request));
+    const registrations = await listRegistrations(eventId, { locationId });
+    const showLocation = locations.length > 0;
     const rows: Array<Array<string | number>> = [[
       "Confirmation code",
       "Account holder",
       "Email",
+      ...(showLocation ? ["Location"] : []),
       "Status",
       "Submitted at (ISO 8601)",
       "Attendees",
@@ -40,6 +46,7 @@ async function getHandler(
         registration.confirmationCode,
         `${registration.accountHolder.firstName} ${registration.accountHolder.lastName}`,
         registration.accountHolder.email,
+        ...(showLocation ? [registration.location?.name ?? ""] : []),
         registration.status,
         registration.submittedAt ?? "",
         registration.attendeeCount,

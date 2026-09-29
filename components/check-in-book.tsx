@@ -25,6 +25,7 @@ export function CheckInBookSheets({ book }: { book: CheckInBook }) {
           <div><dt>{book.mode === "CLUB" ? "Clubs" : "Registrations"}</dt><dd>{book.cover.pageCount}</dd></div>
           <div><dt>People</dt><dd>{book.cover.peopleCount}</dd></div>
         </dl>
+        {book.locationLabel && <p className="check-in-book-location" translate="no">{book.locationLabel}</p>}
         <p className="check-in-book-key">✓ here · ✗ didn&apos;t come</p>
       </section>
       {book.pages.length === 0 && <p className="report-empty">No {unit} match these filters.</p>}
@@ -37,7 +38,7 @@ export function CheckInBookSheets({ book }: { book: CheckInBook }) {
                 <th colSpan={book.extraColumn ? 5 : 4} scope="colgroup">
                   <span className="check-in-book-title" translate="no">{page.title}</span>
                   <span className="check-in-book-contact" translate="no">
-                    {[page.church, page.contactName, page.phone, page.email].filter(Boolean).join(" · ") || "—"}
+                    {[page.locationName, page.church, page.contactName, page.phone, page.email].filter(Boolean).join(" · ") || "—"}
                   </span>
                   {page.camping && (
                     <span className="check-in-book-camping">

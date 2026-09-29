@@ -61,6 +61,8 @@ export const clubRegistrationEditInputSchema = z.object({
   keptOffRosterAttendeeIds: z.array(z.string().trim().min(1).max(100)).max(500),
   newGuests: clubGuestsSchema,
   attendeeResponses: z.record(z.string(), z.record(z.string(), z.unknown())),
+  /** Move the registration to another location of the event (#413); omitted leaves it where it is. */
+  locationId: z.string().trim().min(1).max(100).optional(),
 }).strict();
 
 export type ClubRegistrationEditInput = z.infer<typeof clubRegistrationEditInputSchema>;
@@ -426,16 +428,20 @@ export function clubRegistrationEditWindow(input: {
   eventDate: string;
   /** The event's last day has passed (#575): say so rather than quote a later closing date. */
   ended?: boolean;
+  /** The registration's location (#413): the messages name it instead of the whole event. */
+  locationName?: string | null;
 }): { open: true } | { open: false; message: string } {
+  const subject = input.locationName ? input.locationName : null;
   if (input.phase === "UPCOMING" || input.phase === "DRAFT") {
-    return { open: false, message: "Registration for this event isn't open, so your registration can't be changed right now. Contact the event team." };
+    return { open: false, message: `Registration for ${subject ?? "this event"} isn't open, so your registration can't be changed right now. Contact the event team.` };
   }
   if (input.phase === "CLOSED" && input.ended) {
-    return { open: false, message: `${registrationClosedMessage} Contact the event team to add or remove someone.` };
+    const closed = subject ? `Registration for ${subject} has closed.` : registrationClosedMessage;
+    return { open: false, message: `${closed} Contact the event team to add or remove someone.` };
   }
   if (input.phase === "CLOSED") {
     const closing = input.registrationClosesOn ? ` after ${formatCalendarDate(input.registrationClosesOn)}` : "";
-    return { open: false, message: `Registration closed${closing}. Contact the event team to add or remove someone.` };
+    return { open: false, message: `${subject ? `Registration for ${subject} closed` : "Registration closed"}${closing}. Contact the event team to add or remove someone.` };
   }
   if (!input.registrationClosesOn && input.today > input.eventDate) {
     return { open: false, message: "This event is under way, so your registration can't be changed here. Contact the event team to add or remove someone." };
