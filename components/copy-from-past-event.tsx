@@ -32,7 +32,7 @@ type CloneResult = {
   alreadyCloned: boolean;
   summary: {
     copiedCounts: Record<string, number>;
-    skipped: { forms: number; messageTemplates: number; assetLinks: number; privateLinks: number };
+    skipped: { forms: number; messageTemplates: number; assetLinks: number; privateLinks: number; honorSessionsWithoutSite?: number; honorOfferingsDuplicate?: number };
     pricingMessage: string | null;
   } | null;
 };
@@ -235,6 +235,8 @@ export function CopyFromPastEvent({ sources }: CopyFromPastEventProps) {
               {summary.skipped.assetLinks > 0 ? <li><strong>Links to uploaded files skipped</strong>: {summary.skipped.assetLinks}</li> : null}
               {summary.skipped.forms > 0 ? <li><strong>Forms not copied</strong>: {summary.skipped.forms}</li> : null}
               {summary.skipped.messageTemplates > 0 ? <li><strong>Message templates not copied</strong>: {summary.skipped.messageTemplates}</li> : null}
+              {(summary.skipped.honorSessionsWithoutSite ?? 0) > 0 ? <li><strong>Honors sessions and classes copied with no site</strong>: {summary.skipped.honorSessionsWithoutSite} (the new event has no site with the same name; each is named after its old site)</li> : null}
+              {(summary.skipped.honorOfferingsDuplicate ?? 0) > 0 ? <li><strong>Honors classes skipped as duplicates</strong>: {summary.skipped.honorOfferingsDuplicate}</li> : null}
             </ul>
           ) : null}
           <Link className="primary-button clone-confirm" href={`/more/event-settings?event=${result.event.id}`}>Open the new event&apos;s settings</Link>

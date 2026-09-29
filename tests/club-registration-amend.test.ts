@@ -756,7 +756,7 @@ describe("club registration edit at an event location (#413)", () => {
   });
 
   /** The club edit fixture with this registration at `current`, and the lock and seat count the engine reads. */
-  function atLocation(options: { current?: LocationRow; others?: LocationRow[]; seatsElsewhere?: number } = {}) {
+  function atLocation(options: { current?: LocationRow; others?: LocationRow[]; seatsElsewhere?: number; classPicks?: number } = {}) {
     const current = options.current ?? row();
     const known = [current, ...(options.others ?? [])];
     const { registration, prisma } = fixture();
@@ -771,11 +771,18 @@ describe("club registration edit at an event location (#413)", () => {
     seatCount.mockImplementation(async ({ where }: { where: { registration?: { locationId?: string } } }) => (
       where.registration?.locationId ? options.seatsElsewhere ?? 0 : 0
     ));
-    const extra = { $queryRaw: queryRaw, $executeRawUnsafe: executeRaw, eventLocation: { findFirst, count: vi.fn().mockResolvedValue(known.length) } };
+    // Honors class picks the club holds at its current location (#589).
+    const classPickCount = vi.fn().mockResolvedValue(options.classPicks ?? 0);
+    const extra = {
+      $queryRaw: queryRaw,
+      $executeRawUnsafe: executeRaw,
+      eventLocation: { findFirst, findUnique: vi.fn(async () => ({ name: current.name })), count: vi.fn().mockResolvedValue(known.length) },
+      honorEnrollment: { count: classPickCount },
+    };
     Object.assign(prisma, extra, { clubEventRegistration: { findUnique: clubRegistrationFindUnique } });
     const client = dependencies.getPrisma() as Record<string, unknown>;
     Object.assign(client, extra, { clubEventRegistration: { findUnique: clubRegistrationFindUnique } });
-    return { registration, prisma, queryRaw, executeRaw, seatCount };
+    return { registration, prisma, queryRaw, executeRaw, seatCount, classPickCount };
   }
   const director = { accountId: "director-1" };
 
@@ -824,6 +831,29 @@ describe("club registration edit at an event location (#413)", () => {
     const audit = prisma.auditLog.create.mock.calls[0]![0].data as { metadata: Record<string, unknown> };
     expect(audit.metadata).toMatchObject({ locationChangedFrom: "loc-1", locationChangedTo: "loc-2" });
     expect(JSON.stringify(audit.metadata)).not.toContain("Des Moines");
+  });
+
+  it("refuses a move while the club has class picks at the old site, with the plain message, and removes nothing (#589)", async () => {
+    const { prisma, classPickCount, queryRaw } = atLocation({ others: [row({ id: "loc-2", name: "Des Moines", capacity: 5 })], classPicks: 2 });
+    await expect(amendClubRegistration("club-1", "event-1", director, { ...baseEdit(), locationId: "loc-2" }, beforeDeadline))
+      .rejects.toMatchObject({
+        code: "LOCATION_HAS_CLASS_PICKS",
+        message: "Remove this club's class picks at Camp Heritage before changing location.",
+      });
+    expect(classPickCount).toHaveBeenCalledWith({
+      where: {
+        registrationId: "registration-1",
+        offering: { OR: [{ session: { locationId: "loc-1" } }, { locationId: "loc-1" }] },
+      },
+    });
+    expect(prisma.registration.update).not.toHaveBeenCalled();
+    expect(queryRaw).not.toHaveBeenCalled();
+  });
+
+  it("only checks class picks when the location actually changes (#589)", async () => {
+    const { classPickCount } = atLocation({ classPicks: 2 });
+    await amendClubRegistration("club-1", "event-1", director, baseEdit(), beforeDeadline);
+    expect(classPickCount).not.toHaveBeenCalled();
   });
 
   it("refuses a move to a full, closed, inactive, or unknown location, and changes nothing", async () => {

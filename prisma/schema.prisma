@@ -1296,6 +1296,8 @@ model EventLocation {
   coordinator     AttendeeAccount?         @relation("EventLocationCoordinator", fields: [coordinatorAccountId], references: [id], onDelete: SetNull)
   registrations   Registration[]
   waitlistChanges LocationWaitlistChange[]
+  honorSessions   HonorSession[]
+  honorOfferings  HonorOffering[]
 
   @@unique([eventId, normalizedName])
   @@index([eventId, isActive, sortOrder])
@@ -3567,6 +3569,9 @@ model ClubSupplyOrderLine {
 model HonorSession {
   id             String   @id @default(cuid())
   eventId        String
+  /// Site of a multi-location event (#589); null when the event has none, or
+  /// for a session every site shares.
+  locationId     String?
   name           String
   normalizedName String
   sortOrder      Int      @default(0)
@@ -3574,10 +3579,15 @@ model HonorSession {
   updatedAt      DateTime @updatedAt
 
   event     Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  location  EventLocation?  @relation(fields: [locationId], references: [id], onDelete: Restrict)
   offerings HonorOffering[]
 
-  @@unique([eventId, normalizedName])
+  // Name uniqueness is two partial unique indexes the migration adds (Prisma
+  // can't model them, and `migrate diff` leaves them alone): (eventId,
+  // normalizedName) WHERE locationId IS NULL, and (eventId, locationId,
+  // normalizedName) WHERE locationId IS NOT NULL.
   @@index([eventId, sortOrder])
+  @@index([locationId])
 }
 
 /// An honor taught at a site: in one session, or across all sessions.
@@ -3588,6 +3598,10 @@ model HonorOffering {
   eventId      String
   honorId      String
   sessionId    String?
+  /// Site of an ALL_SESSIONS class (#589); a single-session class takes its
+  /// site from its session, so this stays null for it (a CHECK enforces that).
+  /// `location` below is the room; this is the site.
+  locationId   String?
   span         HonorOfferingSpan
   capacity     Int
   minimumAge   Int?
@@ -3601,10 +3615,14 @@ model HonorOffering {
   event       Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
   honor       Honor             @relation(fields: [honorId], references: [id], onDelete: Restrict)
   session     HonorSession?     @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  site        EventLocation?    @relation(fields: [locationId], references: [id], onDelete: Restrict)
   enrollments HonorEnrollment[]
 
+  // The all-sessions uniqueness is two partial unique indexes the migration
+  // maintains (one per honor per site; one per honor with no site).
   @@unique([sessionId, honorId])
   @@index([eventId, isActive])
+  @@index([locationId])
   @@index([honorId])
 }
 
@@ -3795,11 +3813,15 @@ model BackgroundCheckMatch {
 /// next upload's entry with the same `identityKey`) until staff undo it.
 /// `MIGRATED`: carried over from the old per-person `BackgroundCheck` row
 /// when this list replaced it (#527), so nobody's status changed that day.
+/// `NAME_ONLY` (#598): the name is the only person and only row with it and
+/// nothing contradicts it, but the row's site didn't match; recomputed like
+/// `AUTO`, and shown to staff for a spot check.
 enum BackgroundCheckMatchSource {
   IDENTITY
   AUTO
   MANUAL
   MIGRATED
+  NAME_ONLY
 }
 
 /// A list entry that could match more than one person, or whose only
@@ -3818,6 +3840,23 @@ model BackgroundCheckReview {
   createdAt          DateTime  @default(now())
 
   entry BackgroundCheckEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+}
+
+/// Staff said a list row is not a given person (#598, "Not the same person" on
+/// a name-only match). Keyed by the row's `identityKey`, not its entry id, so
+/// the decision survives every upload; matching never offers that person for
+/// that row (name-only, automatic, or variant) until staff match them by
+/// hand, which clears it. No foreign keys: a row's key outlives any one
+/// upload, and a deleted person just leaves an inert pair. Any future person
+/// merge must re-point `personId` here (there is no foreign key to do it).
+model BackgroundCheckRejectedPairing {
+  id               String   @id @default(cuid())
+  identityKey      String
+  personId         String
+  rejectedByUserId String
+  createdAt        DateTime @default(now())
+
+  @@unique([identityKey, personId])
 }
 
 /// A background check's compliance mark from a roster import (#427): the

@@ -52,9 +52,10 @@ describe("honors session order (#570 F-10)", () => {
       eventName: "Synthetic Honors Weekend",
       otherEvents: [],
       initialSetup: {
+        locations: [],
         sessions: [
-          { id: "s2", name: "Sabbath Afternoon", sortOrder: 2, createdAt: new Date("2026-10-01T09:00:00Z"), offeringCount: 1, activeOfferingCount: 1 },
-          { id: "s1", name: "Sabbath Morning", sortOrder: 1, createdAt: new Date("2026-10-01T09:00:00Z"), offeringCount: 1, activeOfferingCount: 1 },
+          { id: "s2", name: "Sabbath Afternoon", locationId: null, sortOrder: 2, createdAt: new Date("2026-10-01T09:00:00Z"), offeringCount: 1, activeOfferingCount: 1 },
+          { id: "s1", name: "Sabbath Morning", locationId: null, sortOrder: 1, createdAt: new Date("2026-10-01T09:00:00Z"), offeringCount: 1, activeOfferingCount: 1 },
         ],
         offerings: [],
       },
@@ -110,7 +111,8 @@ describe("new-session default order and rosters (#570)", () => {
 
 describe("honors admin empty-session warning (#570 F-25)", () => {
   const setup = (offeringCount: number, activeOfferingCount = offeringCount) => ({
-    sessions: [{ id: "s1", name: "Sunday", sortOrder: 0, createdAt: new Date("2026-10-01T09:00:00Z"), offeringCount, activeOfferingCount }],
+    locations: [],
+    sessions: [{ id: "s1", name: "Sunday", locationId: null, sortOrder: 0, createdAt: new Date("2026-10-01T09:00:00Z"), offeringCount, activeOfferingCount }],
     offerings: [],
   });
   const render = (offeringCount: number, activeOfferingCount = offeringCount) => renderToStaticMarkup(createElement(HonorsSetupWorkspace, {

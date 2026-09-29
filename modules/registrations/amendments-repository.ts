@@ -3,6 +3,7 @@ import "server-only";
 import { checkLocationSeats } from "@/modules/event-locations/admission";
 import { promoteWaitlistAfterSeatsFreed } from "@/modules/registrations/lifecycle-repository";
 import { EventLocationError, locationTransactionTimeoutMs } from "@/modules/event-locations/errors";
+import { locationChangeBlock } from "@/modules/honors/locations";
 
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
@@ -165,6 +166,7 @@ export type RegistrationAmendmentErrorCode =
   | "ATTENDEE_HAS_HISTORY"
   | "EVENT_CAPACITY_UNAVAILABLE"
   | "LOCATION_CAPACITY_UNAVAILABLE"
+  | "LOCATION_HAS_CLASS_PICKS"
   | "PAYMENT_ADJUSTMENT_REQUIRED"
   | "QUOTE_CHANGED"
   | "IDEMPOTENCY_KEY_REUSED"
@@ -1071,6 +1073,11 @@ async function prepareAmendment(
     throw new EventLocationError("LOCATION_REQUIRED", "A registration at a location can't be moved to no location.");
   }
   const targetLocationId = serverOptions.locationId === undefined ? registration.locationId : serverOptions.locationId;
+  if (locationChanged) {
+    // Honors class picks belong to the site they are at; nothing is removed silently (#589).
+    const blocked = await locationChangeBlock(tx, registration.id, registration.locationId);
+    if (blocked) throw new RegistrationAmendmentError("LOCATION_HAS_CLASS_PICKS", blocked);
+  }
   try {
     await checkLocationSeats(tx, {
       eventId,

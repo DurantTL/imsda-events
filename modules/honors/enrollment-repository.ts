@@ -5,6 +5,13 @@ import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { evaluateEventRegistrationPhase, hasEventEnded, registrationClosedMessage } from "@/modules/events/lifecycle";
 import {
+  chooseLocationFirstMessage,
+  differentLocationMessage,
+  eventHasActiveLocations,
+  offeringSiteId,
+  sessionVisibleAtLocation,
+} from "@/modules/honors/locations";
+import {
   consumesClassSeat,
   selectionProblem,
   type SelectableOffering,
@@ -23,6 +30,7 @@ export class ClassSelectionError extends Error {
       | "DEADLINE_PASSED"
       | "ATTENDEE_NOT_FOUND"
       | "SELECTION_INVALID"
+      | "LOCATION_REQUIRED"
       | "CLASS_FULL"
       | "CLUB_LIMIT_REACHED"
       | "SELECTION_CONFLICT",
@@ -44,6 +52,8 @@ async function loadClubRegistration(client: Prisma.TransactionClient, organizati
         select: {
           id: true,
           status: true,
+          locationId: true,
+          location: { select: { id: true, name: true } },
           attendees: {
             orderBy: { position: "asc" },
             select: { id: true, profileSnapshot: true },
@@ -75,7 +85,15 @@ async function loadClubRegistration(client: Prisma.TransactionClient, organizati
       consumesSeat: consumesClassSeat(attendeeType),
     };
   });
-  return { event: clubRegistration.event, registrationId: clubRegistration.registration.id, attendees };
+  // With active locations on the event, classes are per site, so the club must have picked one (#589).
+  const eventHasLocations = await eventHasActiveLocations(client, eventId);
+  return {
+    event: clubRegistration.event,
+    registrationId: clubRegistration.registration.id,
+    location: clubRegistration.registration.location,
+    locationRequired: eventHasLocations && !clubRegistration.registration.locationId,
+    attendees,
+  };
 }
 
 async function loadOfferings(client: Prisma.TransactionClient, eventId: string) {
@@ -85,6 +103,8 @@ async function loadOfferings(client: Prisma.TransactionClient, eventId: string) 
       id: true,
       span: true,
       sessionId: true,
+      locationId: true,
+      site: { select: { name: true } },
       capacity: true,
       minimumAge: true,
       perClubLimit: true,
@@ -92,11 +112,14 @@ async function loadOfferings(client: Prisma.TransactionClient, eventId: string) 
       location: true,
       isActive: true,
       honor: { select: { name: true, code: true } },
-      session: { select: { name: true, sortOrder: true } },
+      session: { select: { name: true, sortOrder: true, locationId: true, location: { select: { name: true } } } },
     },
     orderBy: [{ honor: { name: "asc" } }],
   });
   return offerings.map((offering) => ({
+    // The site comes from the session; an all-sessions class has its own (#589).
+    siteId: offeringSiteId(offering),
+    siteName: offering.span === "ALL_SESSIONS" ? offering.site?.name ?? null : offering.session?.location?.name ?? null,
     id: offering.id,
     honorName: offering.honor.name,
     honorCode: offering.honor.code,
@@ -131,22 +154,33 @@ async function seatCounts(client: Prisma.TransactionClient, eventId: string, org
 export async function getClassSelectionWorkspace(organizationId: string, eventId: string, now = new Date()) {
   const prisma = getPrisma();
   const registration = await loadClubRegistration(prisma, organizationId, eventId);
-  const [offerings, counts, enrollments, sessions] = await Promise.all([
+  const locationId = registration.location?.id ?? null;
+  const [allOfferings, counts, enrollments, allSessions] = await Promise.all([
     loadOfferings(prisma, eventId),
     seatCounts(prisma, eventId, organizationId),
     prisma.honorEnrollment.findMany({
       where: { registrationId: registration.registrationId },
       select: { registrationAttendeeId: true, offeringId: true },
     }),
-    prisma.honorSession.findMany({ where: { eventId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { name: "asc" }], select: { id: true, name: true, sortOrder: true, createdAt: true } }),
+    prisma.honorSession.findMany({ where: { eventId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { name: "asc" }], select: { id: true, name: true, locationId: true, sortOrder: true, createdAt: true } }),
   ]);
+  // Directors see only their site's sessions and classes, plus any with no site.
+  // Before a site is picked they see none (#589).
+  const sessions = registration.locationRequired ? [] : allSessions.filter((session) => sessionVisibleAtLocation(session.locationId, locationId));
+  const offerings = registration.locationRequired ? [] : allOfferings.filter((offering) => sessionVisibleAtLocation(offering.siteId, locationId));
+  // Picks at a class the club can't see (moved with a member transfer, say) stay out of the picker and out of the save.
+  const visibleIds = new Set(offerings.map((offering) => offering.id));
   const selections: Record<string, string[]> = {};
   for (const enrollment of enrollments) {
+    if (!visibleIds.has(enrollment.offeringId)) continue;
     (selections[enrollment.registrationAttendeeId] ??= []).push(enrollment.offeringId);
   }
   return {
     open: evaluateEventRegistrationPhase(registration.event, now) === "OPEN",
     registrationClosesOn: registration.event.registrationClosesOn,
+    location: registration.location,
+    locationRequired: registration.locationRequired,
+    locationMessage: registration.locationRequired ? chooseLocationFirstMessage : null,
     sessions,
     attendees: registration.attendees,
     offerings: offerings.map((offering) => ({
@@ -192,8 +226,15 @@ export async function setClassSelections(
               : `Class choices closed${registration.event.registrationClosesOn ? ` after ${registration.event.registrationClosesOn}` : ""}.`,
           );
         }
+        if (registration.locationRequired) {
+          throw new ClassSelectionError("LOCATION_REQUIRED", chooseLocationFirstMessage);
+        }
         const attendeesById = new Map(registration.attendees.map((attendee) => [attendee.id, attendee]));
-        const offerings = await loadOfferings(tx, eventId);
+        const allOfferings = await loadOfferings(tx, eventId);
+        const registrationLocationId = registration.location?.id ?? null;
+        // The server, not the screen, keeps a club to its own site's classes (#589).
+        const offerings = allOfferings.filter((offering) => sessionVisibleAtLocation(offering.siteId, registrationLocationId));
+        const otherSite = new Map(allOfferings.filter((offering) => !offerings.includes(offering)).map((offering) => [offering.id, offering]));
         const offeringsById = new Map<string, SelectableOffering & (typeof offerings)[number]>(offerings.map((offering) => [offering.id, offering]));
         const existing = await tx.honorEnrollment.findMany({
           where: { registrationId: registration.registrationId },
@@ -205,8 +246,16 @@ export async function setClassSelections(
         for (const [attendeeId, offeringIds] of Object.entries(selections)) {
           const attendee = attendeesById.get(attendeeId);
           if (!attendee) throw new ClassSelectionError("ATTENDEE_NOT_FOUND", "That person isn't on your club's registration.");
-          const current = existing.filter((enrollment) => enrollment.registrationAttendeeId === attendeeId);
+          // Only picks the club can see are replaced; a hidden pick is left as it is.
+          const current = existing.filter((enrollment) => enrollment.registrationAttendeeId === attendeeId && offeringsById.has(enrollment.offeringId));
           const currentIds = new Set(current.map((enrollment) => enrollment.offeringId));
+          const wrongSite = offeringIds.map((id) => otherSite.get(id)).find(Boolean);
+          if (wrongSite) {
+            throw new ClassSelectionError(
+              "SELECTION_INVALID",
+              `${attendee.firstName} ${attendee.lastName}: ${differentLocationMessage(wrongSite.honorName, registration.location?.name ?? null)}`.trim(),
+            );
+          }
           const problem = selectionProblem(attendee, offeringIds, offeringsById, currentIds);
           if (problem) {
             throw new ClassSelectionError("SELECTION_INVALID", `${attendee.firstName} ${attendee.lastName}: ${problem}`.trim());

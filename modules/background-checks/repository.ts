@@ -16,8 +16,11 @@ import {
   attendeeIsAdult,
   backgroundCheckState,
   clubComplianceState,
+  ADULT_AGE,
   dedupeListRows,
+  firstNameVariant,
   isRememberedIdentityKey,
+  lookupNameSplits,
   matchableName,
   directorySiteStems,
   matchesSite,
@@ -58,7 +61,7 @@ type PrismaLike = PrismaClient | Prisma.TransactionClient;
 export const BACKGROUND_CHECK_LOCK_KEY = 5_270_527;
 
 /** Matches a refresh can recompute from the list and the people on file. */
-const DERIVED_SOURCES = ["AUTO", "IDENTITY"] as const;
+const DERIVED_SOURCES = ["AUTO", "IDENTITY", "NAME_ONLY"] as const;
 /** Matches a refresh can't reproduce, so it never touches them. */
 const LOCKED_SOURCES = new Set(["MANUAL", "MIGRATED"]);
 
@@ -203,8 +206,14 @@ export async function planBackgroundCheckUpload(rows: BackgroundCheckListRow[]):
 
 // --- Matching engine: candidates, ambiguity, and the derived cache ---
 
-type NameCandidate = { personId: string; name: string; emails: Set<string>; birthDates: Set<string>; siteNames: Set<string> };
-type NameIndex = { byName: Map<string, NameCandidate[]>; byPerson: Map<string, NameCandidate>; directoryStems: Set<string> };
+type NameCandidate = { personId: string; name: string; firstName: string; lastName: string; emails: Set<string>; birthDates: Set<string>; siteNames: Set<string> };
+type NameIndex = {
+  byName: Map<string, NameCandidate[]>;
+  /** Candidates by `matchableName(lastName)`, for first-name variant suggestions (#598). */
+  byLastName: Map<string, NameCandidate[]>;
+  byPerson: Map<string, NameCandidate>;
+  directoryStems: Set<string>;
+};
 
 /** Registered adults are matched only for events upcoming or ended within this many months. */
 const REGISTRATION_LOOKBACK_MONTHS = 12;
@@ -233,7 +242,7 @@ function rememberCandidate(
 ) {
   let entry = byPerson.get(personId);
   if (!entry) {
-    entry = { personId, name: `${firstName} ${lastName}`.trim(), emails: new Set(), birthDates: new Set(), siteNames: new Set() };
+    entry = { personId, name: `${firstName} ${lastName}`.trim(), firstName, lastName, emails: new Set(), birthDates: new Set(), siteNames: new Set() };
     byPerson.set(personId, entry);
   }
   for (const email of options.emails ?? []) entry.emails.add(email);
@@ -251,6 +260,25 @@ function groupByName(byPerson: Map<string, NameCandidate>): Map<string, NameCand
     byName.set(key, list);
   }
   return byName;
+}
+
+function groupByLastName(byPerson: Map<string, NameCandidate>): Map<string, NameCandidate[]> {
+  const byLastName = new Map<string, NameCandidate[]>();
+  for (const candidate of byPerson.values()) {
+    const key = matchableName(candidate.lastName);
+    if (!key) continue;
+    const list = byLastName.get(key) ?? [];
+    list.push(candidate);
+    byLastName.set(key, list);
+  }
+  return byLastName;
+}
+
+/** A roster member is a candidate when their type is ADULT or STAFF, or their birth date makes them 18 or older today (#598). */
+function rosterMemberIsAdult(attendeeType: string, birthDate: string | null, today: string) {
+  if (attendeeType === "ADULT" || attendeeType === "STAFF") return true;
+  const age = birthDate ? ageOn(birthDate, today) : null;
+  return age !== null && age >= ADULT_AGE;
 }
 
 function attendeeAge(
@@ -279,7 +307,7 @@ function formBirthDate(responses: Record<string, unknown>) {
  * group for a targeted refresh, so neither path scans more than it needs.
  */
 async function buildCandidateIndex(tx: PrismaLike, now: Date, scope?: { personIds: string[] }): Promise<NameIndex> {
-  if (scope && scope.personIds.length === 0) return { byName: new Map(), byPerson: new Map(), directoryStems: new Set() };
+  if (scope && scope.personIds.length === 0) return { byName: new Map(), byLastName: new Map(), byPerson: new Map(), directoryStems: new Set() };
   // The current club year and the one before it: rosters imported before the
   // September rollover (#541) still describe the same adults (#572).
   const clubYear = clubYearFor(now);
@@ -290,9 +318,18 @@ async function buildCandidateIndex(tx: PrismaLike, now: Date, scope?: { personId
 
   const [rosterMembers, attendees, directoryNames] = await Promise.all([
     tx.clubRosterMember.findMany({
-      where: { clubYear: { in: [previousClubYear, clubYear] }, status: "ACTIVE", attendeeType: { in: ["ADULT", "STAFF"] }, personId: scope ? { in: scope.personIds } : { not: null } },
+      // Adults by type, or by age (#598): a member with a sealed birth date is
+      // fetched and its age checked below, so a non-adult type on someone 18 or
+      // older doesn't hide them from matching.
+      where: {
+        clubYear: { in: [previousClubYear, clubYear] },
+        status: "ACTIVE",
+        OR: [{ attendeeType: { in: ["ADULT", "STAFF"] } }, { sealedBirthDate: { not: null } }],
+        personId: scope ? { in: scope.personIds } : { not: null },
+      },
       select: {
         personId: true,
+        attendeeType: true,
         sealedBirthDate: true,
         person: { select: { firstName: true, lastName: true, ...personEmailSelect } },
         organization: clubSelect,
@@ -322,6 +359,7 @@ async function buildCandidateIndex(tx: PrismaLike, now: Date, scope?: { personId
   for (const member of rosterMembers) {
     if (!member.personId || !member.person) continue;
     const birthDate = openEntryBirthDate(member.sealedBirthDate);
+    if (!rosterMemberIsAdult(member.attendeeType, birthDate, today)) continue;
     rememberCandidate(byPerson, member.personId, member.person.firstName, member.person.lastName, {
       emails: personEmails(member.person),
       birthDates: birthDate ? [birthDate] : [],
@@ -344,7 +382,7 @@ async function buildCandidateIndex(tx: PrismaLike, now: Date, scope?: { personId
       sites: [club?.name, club?.parentOrganization?.name],
     });
   }
-  return { byName: groupByName(byPerson), byPerson, directoryStems: directorySiteStems(directoryNames.map((organization) => organization.name)) };
+  return { byName: groupByName(byPerson), byLastName: groupByLastName(byPerson), byPerson, directoryStems: directorySiteStems(directoryNames.map((organization) => organization.name)) };
 }
 
 /**
@@ -363,7 +401,7 @@ export const PERSON_COMPACT_NAME_SQL = `regexp_replace(lower(normalize("firstNam
  * NFKD), served by `Person_matchable_compact_idx`; the exact rule is
  * `matchableName`, applied here in TypeScript.
  */
-async function personIdsNamed(tx: PrismaLike, names: string[]) {
+async function peopleNamed(tx: PrismaLike, names: string[]) {
   const compacts = [...new Set(names.map((name) => name.replace(/ /g, "")).filter(Boolean))];
   if (compacts.length === 0) return [];
   const rows = await tx.$queryRaw<Array<{ id: string; firstName: string; lastName: string }>>`
@@ -371,14 +409,38 @@ async function personIdsNamed(tx: PrismaLike, names: string[]) {
     WHERE ${Prisma.raw(PERSON_COMPACT_NAME_SQL)} = ANY(${compacts}::text[])
   `;
   const wanted = new Set(names);
-  return rows.filter((row) => wanted.has(matchableName(`${row.firstName} ${row.lastName}`))).map((row) => row.id);
+  return rows.filter((row) => wanted.has(matchableName(`${row.firstName} ${row.lastName}`)));
 }
 
-type EntryForMatch = { id: string; identityKey: string; normalizedName: string | null; email: string | null; sealedBirthDate: string | null; site: string | null };
-type MatchResult = { entryId: string; personId: string; identityKey: string; matchedBy: "IDENTITY" | "AUTO" };
+async function personIdsNamed(tx: PrismaLike, names: string[]) {
+  return (await peopleNamed(tx, names)).map((row) => row.id);
+}
+
+/** How many people on file (roster or not) share each matchable name, for the name-only rule (#598). */
+function namesakeCounts(people: Array<{ firstName: string; lastName: string }>) {
+  const counts = new Map<string, number>();
+  for (const person of people) {
+    const key = matchableName(`${person.firstName} ${person.lastName}`);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+type EntryForMatch = {
+  id: string;
+  identityKey: string;
+  firstName: string;
+  lastName: string;
+  normalizedName: string | null;
+  email: string | null;
+  sealedBirthDate: string | null;
+  site: string | null;
+};
+type MatchedBy = "IDENTITY" | "AUTO" | "NAME_ONLY";
+type MatchResult = { entryId: string; personId: string; identityKey: string; matchedBy: MatchedBy };
 type ReviewResult = { entryId: string; reason: string; candidatePersonIds: string[] };
 
-const entryForMatchSelect = { id: true, identityKey: true, normalizedName: true, email: true, sealedBirthDate: true, site: true } as const;
+const entryForMatchSelect = { id: true, identityKey: true, firstName: true, lastName: true, normalizedName: true, email: true, sealedBirthDate: true, site: true } as const;
 
 /** Candidates for one entry from its name group: name plus one of email, birth date, or site. */
 function candidatesForEntry(entry: Pick<EntryForMatch, "email" | "sealedBirthDate" | "site">, pool: NameCandidate[], directoryStems: ReadonlySet<string>): NameCandidate[] {
@@ -392,14 +454,78 @@ function candidatesForEntry(entry: Pick<EntryForMatch, "email" | "sealedBirthDat
 }
 
 /**
- * Matches a set of entries against people, the same rules every time (#527):
+ * Whether the row's own email or birth date rules the candidate out (#598): the
+ * row has one and the candidate is known to have a different one. A candidate
+ * with none on file is not contradicted; a matching one is not either.
+ */
+function contradictsEntry(entry: Pick<EntryForMatch, "email" | "sealedBirthDate">, candidate: NameCandidate) {
+  const birthDate = openEntryBirthDate(entry.sealedBirthDate);
+  const email = entry.email?.toLowerCase() ?? null;
+  if (email && candidate.emails.size > 0 && !candidate.emails.has(email)) return true;
+  if (birthDate && candidate.birthDates.size > 0 && !candidate.birthDates.has(birthDate)) return true;
+  return false;
+}
+
+/** The most first-name variants a review lists. */
+const MAX_VARIANT_CANDIDATES = 5;
+
+/** Same last name, a first name that is a form of the row's (#598). Only ever suggested for review. */
+function firstNameVariantCandidates(entry: EntryForMatch, index: NameIndex, unavailable: ReadonlySet<string>, rejected: ReadonlySet<string>) {
+  const sameLast = index.byLastName.get(matchableName(entry.lastName)) ?? [];
+  return sameLast
+    .filter((candidate) => !unavailable.has(candidate.personId) && !rejected.has(candidate.personId) && firstNameVariant(entry.firstName, candidate.firstName) && !contradictsEntry(entry, candidate))
+    .slice(0, MAX_VARIANT_CANDIDATES);
+}
+
+type MatchContext = {
+  /** People on file per matchable name, roster or not. Defaults to the candidate pool alone. */
+  namesakes?: ReadonlyMap<string, number>;
+  /** Rows on the whole list per matchable name. Defaults to the entries passed in. */
+  rowCounts?: ReadonlyMap<string, number>;
+  /** People staff said a row is not, by the row's identity key (#598): never offered for that row. */
+  rejected?: ReadonlyMap<string, ReadonlySet<string>>;
+};
+
+/** The reason text of a first-name variant review: the one review a scoped refresh can't rebuild (#598). */
+const VARIANT_REVIEW_REASON = "No one has exactly this name, but a roster or registration has the same last name and a similar first name. Check whether it is the same person; it is never matched automatically.";
+
+/** The people staff said each row (by identity key) is not (#598). */
+async function rejectedPairingsFor(tx: PrismaLike, identityKeys: string[]): Promise<Map<string, Set<string>>> {
+  const rejected = new Map<string, Set<string>>();
+  const keys = [...new Set(identityKeys)];
+  if (keys.length === 0) return rejected;
+  const rows = await tx.backgroundCheckRejectedPairing.findMany({ where: { identityKey: { in: keys } }, select: { identityKey: true, personId: true } });
+  for (const row of rows) {
+    const set = rejected.get(row.identityKey) ?? new Set<string>();
+    set.add(row.personId);
+    rejected.set(row.identityKey, set);
+  }
+  return rejected;
+}
+
+function countRowsByName(entries: Array<Pick<EntryForMatch, "normalizedName">>) {
+  const counts = new Map<string, number>();
+  for (const entry of entries) if (entry.normalizedName) counts.set(entry.normalizedName, (counts.get(entry.normalizedName) ?? 0) + 1);
+  return counts;
+}
+
+/**
+ * Matches a set of entries against people, the same rules every time (#527, #598):
  *
  * - A remembered `user_id` wins, but only when the names agree; a mismatch
  *   goes to review naming who the id actually belongs to.
  * - Otherwise, normalized name plus exactly one candidate matching on email,
- *   birth date, or site is a confident match. Zero candidates leaves the
- *   entry unmatched (not a review — it just isn't anyone yet). More than one
+ *   birth date, or site is a confident match (`AUTO`). More than one
  *   candidate is a review.
+ * - When no candidate matches on those, the name alone can decide (`NAME_ONLY`,
+ *   #598) but only when nothing else could be right: one candidate is the
+ *   only person on file with the name, the row is the only row with it, and
+ *   no email or birth date on the row contradicts them. Several same-name
+ *   candidates, or several rows for one candidate, go to review; a
+ *   contradiction leaves the row unmatched.
+ * - With no exact-name candidate at all, a candidate with the same last name
+ *   and a first name that is a form of the row's (Jon/Jonathan) goes to
+ *   review, never to a match.
  * - A person matched by more than one entry is also a review, for every
  *   entry that matched them — never guessed which one is right.
  * - `unavailable` people already hold a match that isn't being recomputed
@@ -411,10 +537,12 @@ function matchEntries(
   index: NameIndex,
   identityByKey: Map<string, { personId: string; name: string }>,
   unavailable: Set<string> = new Set(),
+  context: MatchContext = {},
 ): { matches: MatchResult[]; reviews: ReviewResult[] } {
   const reviews: ReviewResult[] = [];
-  const tentativeByPerson = new Map<string, Array<{ entryId: string; identityKey: string; matchedBy: "IDENTITY" | "AUTO" }>>();
-  const pushTentative = (entry: EntryForMatch, personId: string, matchedBy: "IDENTITY" | "AUTO") => {
+  const rowCounts = context.rowCounts ?? countRowsByName(entries);
+  const tentativeByPerson = new Map<string, Array<{ entryId: string; identityKey: string; matchedBy: MatchedBy }>>();
+  const pushTentative = (entry: EntryForMatch, personId: string, matchedBy: MatchedBy) => {
     const list = tentativeByPerson.get(personId) ?? [];
     list.push({ entryId: entry.id, identityKey: entry.identityKey, matchedBy });
     tentativeByPerson.set(personId, list);
@@ -424,7 +552,14 @@ function matchEntries(
     if (!entry.normalizedName) continue; // Not normalized yet; the next refresh fills it in first.
     const identity = identityByKey.get(entry.identityKey);
     if (identity) {
-      if (matchableName(identity.name) !== entry.normalizedName) {
+      if (matchableName(identity.name) === entry.normalizedName && context.rejected?.get(entry.identityKey)?.has(identity.personId)) {
+        // Staff said this row is not this person: a remembered id doesn't override that (#598).
+        reviews.push({
+          entryId: entry.id,
+          reason: "The remembered match for this row is a person staff said it is not. Nothing was guessed; match it by hand if that is wrong.",
+          candidatePersonIds: [identity.personId],
+        });
+      } else if (matchableName(identity.name) !== entry.normalizedName) {
         reviews.push({
           entryId: entry.id,
           reason: `The remembered match for this row belongs to ${identity.name}, but this row's name is different. Check it and match by hand.`,
@@ -441,9 +576,10 @@ function matchEntries(
       }
       continue;
     }
-    const pool = (index.byName.get(entry.normalizedName) ?? []).filter((candidate) => !unavailable.has(candidate.personId));
+    const sameName = index.byName.get(entry.normalizedName) ?? [];
+    const rejectedHere = context.rejected?.get(entry.identityKey) ?? new Set<string>();
+    const pool = sameName.filter((candidate) => !unavailable.has(candidate.personId) && !rejectedHere.has(candidate.personId));
     const candidates = candidatesForEntry(entry, pool, index.directoryStems);
-    if (candidates.length === 0) continue; // Stays on the list, unmatched — not a review.
     if (candidates.length > 1) {
       reviews.push({
         entryId: entry.id,
@@ -452,7 +588,40 @@ function matchEntries(
       });
       continue;
     }
-    pushTentative(entry, candidates[0]!.personId, "AUTO");
+    if (candidates.length === 1) {
+      pushTentative(entry, candidates[0]!.personId, "AUTO");
+      continue;
+    }
+    if (pool.length > 0) {
+      // The name is right but nothing else agrees (usually the site): the name alone may decide.
+      const possible = pool.filter((candidate) => !contradictsEntry(entry, candidate));
+      if (possible.length === 0) continue; // Their email or birth date disagrees: not this person.
+      const namesakes = context.namesakes?.get(entry.normalizedName) ?? possible.length;
+      if (possible.length === 1 && namesakes <= 1 && (rowCounts.get(entry.normalizedName) ?? 1) <= 1) {
+        pushTentative(entry, possible[0]!.personId, "NAME_ONLY");
+        continue;
+      }
+      reviews.push({
+        entryId: entry.id,
+        reason: possible.length > 1
+          ? "More than one person has this row's name, and nothing on the row tells them apart. Nothing was guessed; match it by hand."
+          : (rowCounts.get(entry.normalizedName) ?? 1) > 1
+            ? "More than one row on this list has this name, and the site doesn't match. Nothing was guessed; match it by hand."
+            : "This row's name matches someone, but the site doesn't and another person on file has the same name. Nothing was guessed; match it by hand.",
+        candidatePersonIds: possible.map((candidate) => candidate.personId),
+      });
+      continue;
+    }
+    if (sameName.length > 0) continue; // Only someone already matched to another row, or one staff rejected: nothing left to suggest.
+    const variants = firstNameVariantCandidates(entry, index, unavailable, rejectedHere);
+    if (variants.length > 0) {
+      reviews.push({
+        entryId: entry.id,
+        reason: VARIANT_REVIEW_REASON,
+        candidatePersonIds: variants.map((candidate) => candidate.personId),
+      });
+    }
+    // Otherwise it stays on the list, unmatched: not a review, it just isn't anyone yet.
   }
 
   const matches: MatchResult[] = [];
@@ -548,7 +717,9 @@ async function saveMatchResults(tx: PrismaLike, matches: MatchResult[], reviews:
       skipDuplicates: true,
     });
   }
-  await rememberUserIdIdentities(tx, matches, now);
+  // A name-only match is a guess staff spot-check (#598): it never becomes a
+  // remembered id, which would win over the name on every later upload.
+  await rememberUserIdIdentities(tx, matches.filter((match) => match.matchedBy !== "NAME_ONLY"), now);
 }
 
 /** Every entry in a fresh upload, matched once, in one bounded pass (#527). */
@@ -558,37 +729,51 @@ async function runFullMatchPass(
   now: Date,
   kept: { entryIds: Set<string>; personIds: Set<string> },
 ) {
-  const entries = (await tx.backgroundCheckEntry.findMany({ where: { uploadId }, select: entryForMatchSelect }))
-    .filter((entry) => !kept.entryIds.has(entry.id));
+  const everyEntry = await tx.backgroundCheckEntry.findMany({ where: { uploadId }, select: entryForMatchSelect });
+  const entries = everyEntry.filter((entry) => !kept.entryIds.has(entry.id));
   if (entries.length === 0) return;
-  const [index, identityByKey] = await Promise.all([
+  const [index, identityByKey, rejected, named] = await Promise.all([
     buildCandidateIndex(tx, now),
     identitiesByKeys(tx, [...new Set(entries.map((entry) => entry.identityKey))]),
+    rejectedPairingsFor(tx, entries.map((entry) => entry.identityKey)),
+    peopleNamed(tx, [...new Set(entries.map((entry) => entry.normalizedName).filter((name): name is string => Boolean(name)))]),
   ]);
-  const { matches, reviews } = matchEntries(entries, index, identityByKey, kept.personIds);
+  const { matches, reviews } = matchEntries(entries, index, identityByKey, kept.personIds, {
+    namesakes: namesakeCounts(named),
+    rowCounts: countRowsByName(everyEntry),
+    rejected,
+  });
   await saveMatchResults(tx, matches, reviews, now);
 }
 
 /**
  * Recomputes every derived match for the entries and people in the given
- * name groups (#527). Only `AUTO`/`IDENTITY` matches are cleared and
+ * name groups (#527), or for the whole list when `names` is null (the staff
+ * Refresh, #598: the only path that also looks for first-name variants,
+ * because it sees every roster and registration adult, not just one name
+ * group). Only `AUTO`/`IDENTITY`/`NAME_ONLY` matches are cleared and
  * recomputed (B1): a `MANUAL` or `MIGRATED` match stays exactly as it is,
  * and its entry and person sit this pass out.
  */
-async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: string[], now: Date) {
-  const groupNames = [...new Set(names.filter(Boolean))];
-  if (groupNames.length === 0) return;
-  const [entries, personIds] = await Promise.all([
-    tx.backgroundCheckEntry.findMany({
-      where: { uploadId, normalizedName: { in: groupNames } },
-      select: {
-        ...entryForMatchSelect,
-        match: { select: { personId: true, matchedBy: true } },
-        review: { select: { dismissedAt: true, candidatePersonIds: true } },
-      },
-    }),
-    personIdsNamed(tx, groupNames),
-  ]);
+async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: string[] | null, now: Date) {
+  const whole = names === null;
+  const groupNames = [...new Set((names ?? []).filter(Boolean))];
+  if (!whole && groupNames.length === 0) return;
+  // A scoped refresh locks its entry rows first, so a staff "not the same
+  // person" on one of them (which locks the row too) either lands before this
+  // reads or waits for it: the refresh never re-inserts over a rejection
+  // (#598). The whole-list Refresh holds the list lock exclusively instead.
+  if (!whole) await lockEntriesNamed(tx, uploadId, groupNames);
+  const entries = await tx.backgroundCheckEntry.findMany({
+    where: whole ? { uploadId } : { uploadId, normalizedName: { in: groupNames } },
+    select: {
+      ...entryForMatchSelect,
+      match: { select: { personId: true, matchedBy: true } },
+      review: { select: { dismissedAt: true, candidatePersonIds: true, reason: true } },
+    },
+  });
+  const named = await peopleNamed(tx, whole ? [...new Set(entries.map((entry) => entry.normalizedName).filter((name): name is string => Boolean(name)))] : groupNames);
+  const personIds = named.map((row) => row.id);
   // Staff said none of the candidates is right: that entry matches no one until the next upload.
   const dismissed = (entry: (typeof entries)[number]) => Boolean(entry.review?.dismissedAt);
   const reviewCandidates = (entry: (typeof entries)[number]) => (
@@ -606,24 +791,43 @@ async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: stri
   if (derivedEntryIds.length > 0) {
     await tx.backgroundCheckMatch.deleteMany({ where: { entryId: { in: derivedEntryIds }, matchedBy: { in: [...DERIVED_SOURCES] } } });
   }
-  const reopenedEntryIds = entries.filter((entry) => !heldOpenReview(entry)).map((entry) => entry.id);
-  if (reopenedEntryIds.length > 0) await tx.backgroundCheckReview.deleteMany({ where: { entryId: { in: reopenedEntryIds }, dismissedAt: null } });
+  const reopened = entries.filter((entry) => !heldOpenReview(entry));
+  // Open reviews are cleared and rebuilt, except (scoped passes only) a
+  // first-name variant review this pass can't rebuild, because its candidate
+  // index holds one name group, not everyone with that last name (#598). It
+  // stays unless the entry now has a match or a new review of its own.
+  const clearOpenReviews = async (rebuiltEntryIds: Set<string>) => {
+    const ids = reopened
+      .filter((entry) => whole || entry.review?.reason !== VARIANT_REVIEW_REASON || rebuiltEntryIds.has(entry.id))
+      .map((entry) => entry.id);
+    if (ids.length > 0) await tx.backgroundCheckReview.deleteMany({ where: { entryId: { in: ids }, dismissedAt: null } });
+  };
 
   const toMatch = entries.filter((entry) => (
     !(entry.match && LOCKED_SOURCES.has(entry.match.matchedBy)) && !dismissed(entry) && !heldOpenReview(entry)
   ));
-  if (toMatch.length === 0) return;
-  const [index, identityByKey, stillMatched] = await Promise.all([
-    buildCandidateIndex(tx, now, { personIds }),
+  if (toMatch.length === 0) {
+    await clearOpenReviews(new Set());
+    return;
+  }
+  const [index, identityByKey, rejected, stillMatched] = await Promise.all([
+    buildCandidateIndex(tx, now, whole ? undefined : { personIds }),
     identitiesByKeys(tx, [...new Set(toMatch.map((entry) => entry.identityKey))]),
-    personIds.length > 0
-      ? tx.backgroundCheckMatch.findMany({ where: { personId: { in: personIds } }, select: { personId: true } })
-      : Promise.resolve([] as Array<{ personId: string }>),
+    rejectedPairingsFor(tx, toMatch.map((entry) => entry.identityKey)),
+    whole
+      ? tx.backgroundCheckMatch.findMany({ select: { personId: true } })
+      : personIds.length > 0
+        ? tx.backgroundCheckMatch.findMany({ where: { personId: { in: personIds } }, select: { personId: true } })
+        : Promise.resolve([] as Array<{ personId: string }>),
   ]);
   const unavailable = new Set(stillMatched.map((match) => match.personId));
   // A remembered id can point at someone outside the name group only when
   // the names disagree (a review, never a match), so this covers everyone.
-  const result = matchEntries(toMatch, index, identityByKey, unavailable);
+  const result = matchEntries(toMatch, index, identityByKey, unavailable, {
+    namesakes: namesakeCounts(named),
+    rowCounts: countRowsByName(entries),
+    rejected,
+  });
   const matches = result.matches.filter((match) => !held.has(match.personId));
   const reviews = [
     ...result.reviews,
@@ -633,7 +837,23 @@ async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: stri
       candidatePersonIds: [match.personId],
     })),
   ];
+  await clearOpenReviews(new Set([...matches.map((match) => match.entryId), ...reviews.map((review) => review.entryId)]));
   await saveMatchResults(tx, matches, reviews, now);
+}
+
+/**
+ * Row-locks the entries in the given name groups until the transaction ends
+ * (#598). `FOR NO KEY UPDATE`, not `FOR UPDATE`: inserting a match or review
+ * takes `FOR KEY SHARE` on its entry, which `FOR UPDATE` would conflict with
+ * (a staff hand match could then deadlock with a scoped refresh); this
+ * still excludes other writers of the same entry.
+ */
+async function lockEntriesNamed(tx: PrismaLike, uploadId: string, names: string[]) {
+  await tx.$queryRaw`
+    SELECT "id" FROM "BackgroundCheckEntry"
+    WHERE "uploadId" = ${uploadId} AND "normalizedName" = ANY(${names}::text[])
+    ORDER BY "id" FOR NO KEY UPDATE
+  `;
 }
 
 const REFRESH_CHUNK = 100;
@@ -687,6 +907,18 @@ export async function refreshBackgroundCheckMatches(personIds: Iterable<string>,
  */
 async function tryListLock(tx: PrismaLike) {
   const [row] = await tx.$queryRaw<Array<{ locked: boolean }>>`SELECT pg_try_advisory_xact_lock_shared(${BACKGROUND_CHECK_LOCK_KEY}::bigint) AS locked`;
+  return Boolean(row?.locked);
+}
+
+/**
+ * The list lock, exclusive, without waiting (#598): false while an upload, a
+ * per-person refresh, a staff decision, or another Refresh holds it. Holding it
+ * keeps every shared-lock writer (per-person refresh, review and reject
+ * decisions) out for the length of a whole-list Refresh, and stops two Refreshes
+ * from running at once.
+ */
+async function tryExclusiveListLock(tx: PrismaLike) {
+  const [row] = await tx.$queryRaw<Array<{ locked: boolean }>>`SELECT pg_try_advisory_xact_lock(${BACKGROUND_CHECK_LOCK_KEY}::bigint) AS locked`;
   return Boolean(row?.locked);
 }
 
@@ -835,6 +1067,32 @@ export async function listBackgroundCheckReviews(): Promise<BackgroundCheckRevie
 }
 
 /**
+ * A staff match: a remembered `user_id` for the row, the `MANUAL` match itself
+ * (replacing whatever either side held), and the end of any earlier "not the
+ * same person" for this pair (#598). The caller holds the list lock.
+ */
+async function applyManualMatch(tx: PrismaLike, entry: { id: string; identityKey: string }, personId: string) {
+  if (!(await tx.person.findUnique({ where: { id: personId }, select: { id: true } }))) {
+    throw new BackgroundCheckOperationError("NOT_A_CANDIDATE", "That person is no longer on file.");
+  }
+  if (isRememberedIdentityKey(entry.identityKey)) {
+    const now = new Date();
+    await tx.externalIdentity.deleteMany({
+      where: { provider: ROSTER_IMPORT_PROVIDER, providerScope: "", personId, NOT: { externalId: entry.identityKey } },
+    });
+    await tx.externalIdentity.upsert({
+      where: { provider_providerScope_externalId: { provider: ROSTER_IMPORT_PROVIDER, providerScope: "", externalId: entry.identityKey } },
+      create: { provider: ROSTER_IMPORT_PROVIDER, providerScope: "", externalId: entry.identityKey, personId, lastVerifiedAt: now },
+      update: { personId, lastVerifiedAt: now },
+    });
+  }
+  await tx.backgroundCheckMatch.deleteMany({ where: { OR: [{ personId }, { entryId: entry.id }] } });
+  await tx.backgroundCheckMatch.create({ data: { personId, entryId: entry.id, matchedBy: "MANUAL" } });
+  await tx.backgroundCheckRejectedPairing.deleteMany({ where: { identityKey: entry.identityKey, personId } });
+  await tx.backgroundCheckReview.deleteMany({ where: { entryId: entry.id } });
+}
+
+/**
  * Staff pick a person by hand, or say none of the candidates is right
  * (#527). A pick is a `MANUAL` match: a staff decision that holds across
  * refreshes and uploads, even if the names differ, until staff undo it (N2).
@@ -860,26 +1118,14 @@ export async function resolveBackgroundCheckReview(
     if (!review || review.dismissedAt || !review.entry) throw notFound();
     if (decision.type === "match") {
       const candidateIds = Array.isArray(review.candidatePersonIds) ? review.candidatePersonIds as string[] : [];
-      if (!candidateIds.includes(decision.personId)) {
+      const rejectedByStaff = candidateIds.includes(decision.personId)
+        ? null
+        : await tx.backgroundCheckRejectedPairing.findMany({ where: { identityKey: review.entry.identityKey, personId: decision.personId }, select: { id: true } });
+      // A person staff rejected for this row is never offered, but staff may still pick them by hand.
+      if (!candidateIds.includes(decision.personId) && !(rejectedByStaff && rejectedByStaff.length > 0)) {
         throw new BackgroundCheckOperationError("NOT_A_CANDIDATE", "That person isn't one of this row's candidates.");
       }
-      if (!(await tx.person.findUnique({ where: { id: decision.personId }, select: { id: true } }))) {
-        throw new BackgroundCheckOperationError("NOT_A_CANDIDATE", "That person is no longer on file.");
-      }
-      if (isRememberedIdentityKey(review.entry.identityKey)) {
-        const now = new Date();
-        await tx.externalIdentity.deleteMany({
-          where: { provider: ROSTER_IMPORT_PROVIDER, providerScope: "", personId: decision.personId, NOT: { externalId: review.entry.identityKey } },
-        });
-        await tx.externalIdentity.upsert({
-          where: { provider_providerScope_externalId: { provider: ROSTER_IMPORT_PROVIDER, providerScope: "", externalId: review.entry.identityKey } },
-          create: { provider: ROSTER_IMPORT_PROVIDER, providerScope: "", externalId: review.entry.identityKey, personId: decision.personId, lastVerifiedAt: now },
-          update: { personId: decision.personId, lastVerifiedAt: now },
-        });
-      }
-      await tx.backgroundCheckMatch.deleteMany({ where: { OR: [{ personId: decision.personId }, { entryId: review.entryId }] } });
-      await tx.backgroundCheckMatch.create({ data: { personId: decision.personId, entryId: review.entryId, matchedBy: "MANUAL" } });
-      await tx.backgroundCheckReview.deleteMany({ where: { entryId: review.entryId } });
+      await applyManualMatch(tx, { id: review.entryId, identityKey: review.entry.identityKey }, decision.personId);
     } else {
       await tx.backgroundCheckReview.update({ where: { id: review.id }, data: { dismissedAt: new Date() } });
     }
@@ -895,9 +1141,19 @@ export async function resolveBackgroundCheckReview(
     // The entry or person vanished mid-way (a foreign key or missing row): a 404, not a 500.
     const code = (error as { code?: unknown } | null)?.code;
     if (code === "P2003" || code === "P2025") throw notFound();
-    if (code === "P2002") throw listChanged();
+    if (code === "P2002" || isWriteConflict(error)) throw listChanged();
     throw error;
   });
+}
+
+function listBusy() {
+  return new BackgroundCheckOperationError("LIST_BUSY", "Busy, try again in a moment: an upload, a staff decision, or a refresh is running.");
+}
+
+/** A serialization failure or deadlock between two writers of the same row (P2034 / 40P01): retry, not a 500. */
+function isWriteConflict(error: unknown) {
+  const e = error as { code?: unknown; meta?: { code?: unknown } | null; message?: unknown } | null;
+  return e?.code === "P2034" || e?.meta?.code === "40P01" || (typeof e?.message === "string" && e.message.includes("40P01"));
 }
 
 /** A concurrent refresh or staff decision wrote the same match or identity first (a unique clash): a 409, not a 500. */
@@ -968,6 +1224,362 @@ export async function undoManualBackgroundCheckMatch(matchId: string, actorUserI
   }
 }
 
+// --- Name-only matches, the staff Refresh, and the "why isn't this person matched?" lookup (#598) ---
+
+/**
+ * Staff Refresh (#598): re-runs matching for the whole current list under the
+ * current rules, so rows already stored are re-matched without a new upload.
+ * `MANUAL` and `MIGRATED` matches, staff dismissals, and "not the same
+ * person" decisions are kept exactly as they are. Takes the list lock
+ * exclusively, without waiting: while an upload, a staff decision, a
+ * per-person refresh, or another Refresh holds it, it is refused (`LIST_BUSY`,
+ * 409) and nothing changes.
+ */
+export async function rematchBackgroundCheckList(now = new Date()) {
+  await getPrisma().$transaction(async (tx) => {
+    if (!(await tryExclusiveListLock(tx))) {
+      throw listBusy();
+    }
+    const current = await latestUpload(tx);
+    if (!current) return;
+    await backfillNormalizedNames(tx);
+    await recomputeNameGroups(tx, current.id, null, now);
+  }, { timeout: 120_000, maxWait: 10_000 }).catch((error: unknown) => {
+    if ((error as { code?: unknown } | null)?.code === "P2002") throw listChanged();
+    throw error;
+  });
+}
+
+export type NameOnlyBackgroundCheckMatch = {
+  id: string;
+  personId: string;
+  personName: string;
+  /** The person's clubs and churches on file, for the spot check. */
+  personSites: string[];
+  entryName: string;
+  /** The row's own site, which didn't match. */
+  site: string | null;
+};
+
+/** Every match decided on the name alone (site didn't match), for a staff spot check (#598). Staff-only. */
+export async function listNameOnlyBackgroundCheckMatches(now = new Date()): Promise<NameOnlyBackgroundCheckMatch[]> {
+  const prisma = getPrisma();
+  const matches = await prisma.backgroundCheckMatch.findMany({
+    where: { matchedBy: "NAME_ONLY" },
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      personId: true,
+      person: { select: { firstName: true, lastName: true } },
+      entry: { select: { firstName: true, lastName: true, site: true } },
+    },
+  });
+  if (matches.length === 0) return [];
+  const index = await buildCandidateIndex(prisma, now, { personIds: matches.map((match) => match.personId) });
+  return matches.map((match) => ({
+    id: match.id,
+    personId: match.personId,
+    personName: `${match.person.firstName} ${match.person.lastName}`.trim(),
+    personSites: [...(index.byPerson.get(match.personId)?.siteNames ?? [])].sort(),
+    entryName: `${match.entry.firstName} ${match.entry.lastName}`.trim(),
+    site: match.entry.site,
+  }));
+}
+
+/**
+ * "Not the same person" (#598): undoes a name-only match. The row goes back
+ * to unmatched and staff's decision is remembered as a durable
+ * (row identity key, person) pair, so no refresh and no later upload offers
+ * that person for that row again (name-only, automatic, or variant). Staff can
+ * still match them by hand, which clears the pair. The decision holds nobody
+ * else back. Audited, without names.
+ */
+export async function rejectNameOnlyBackgroundCheckMatch(matchId: string, actorUserId: string) {
+  await getPrisma().$transaction(async (tx) => {
+    // An upload, a Refresh, or another decision may hold the list: say so plainly.
+    if (!(await tryListLock(tx))) throw listBusy();
+    const found = await tx.backgroundCheckMatch.findUnique({
+      where: { id: matchId },
+      select: { entryId: true },
+    });
+    if (!found) throw new BackgroundCheckOperationError("MATCH_NOT_FOUND", "That match no longer exists. Refresh the list.");
+    // Row-lock the entry, then read it again: a per-person refresh that has
+    // this row locked finishes first, and one that starts later waits for us.
+    await tx.$queryRaw`SELECT "id" FROM "BackgroundCheckEntry" WHERE "id" = ${found.entryId} FOR NO KEY UPDATE`;
+    const match = await tx.backgroundCheckMatch.findUnique({
+      where: { id: matchId },
+      select: { id: true, personId: true, entryId: true, matchedBy: true, entry: { select: { identityKey: true } } },
+    });
+    if (!match) throw new BackgroundCheckOperationError("MATCH_NOT_FOUND", "That match no longer exists. Refresh the list.");
+    if (match.matchedBy !== "NAME_ONLY") throw new BackgroundCheckOperationError("NOT_A_NAME_ONLY_MATCH", "Only a match made on the name alone can be undone here.");
+    const deleted = await tx.backgroundCheckMatch.deleteMany({ where: { entryId: match.entryId, matchedBy: "NAME_ONLY" } });
+    if (deleted.count !== 1) throw listChanged();
+    // Remembered by the row's identity key, so it holds across every upload.
+    await tx.backgroundCheckRejectedPairing.createMany({
+      data: [{ identityKey: match.entry.identityKey, personId: match.personId, rejectedByUserId: actorUserId }],
+      skipDuplicates: true,
+    });
+    await writeAuditLog({
+      actorUserId,
+      action: "BACKGROUND_CHECK_NAME_ONLY_MATCH_REJECTED",
+      entityType: "BackgroundCheckMatch",
+      entityId: match.id,
+      summary: "Staff said a background-check row matched on the name alone is not the same person.",
+      metadata: { entryId: match.entryId },
+    }, tx);
+  }).catch((error: unknown) => {
+    const code = (error as { code?: unknown } | null)?.code;
+    if (code === "P2002" || isWriteConflict(error)) throw listChanged();
+    throw error;
+  });
+}
+
+/**
+ * "Match them anyway" (#598): staff undo their own "not the same person" by
+ * matching the rejected person to the row by hand. A `MANUAL` match like any
+ * other (it holds across refreshes and uploads until staff undo it), and the
+ * rejection is cleared. Only for a pair staff actually rejected. Takes the
+ * list lock shared, without waiting; audited, without names.
+ */
+export async function matchRejectedBackgroundCheckPairing(entryId: string, personId: string, actorUserId: string) {
+  await getPrisma().$transaction(async (tx) => {
+    if (!(await tryListLock(tx))) throw listBusy();
+    await tx.$queryRaw`SELECT "id" FROM "BackgroundCheckEntry" WHERE "id" = ${entryId} FOR NO KEY UPDATE`;
+    const [entry] = await tx.backgroundCheckEntry.findMany({ where: { id: entryId }, select: { id: true, identityKey: true } });
+    if (!entry) throw new BackgroundCheckOperationError("REVIEW_NOT_FOUND", "That row is no longer on the list. Refresh the list.");
+    const rejected = await tx.backgroundCheckRejectedPairing.findMany({ where: { identityKey: entry.identityKey, personId }, select: { id: true } });
+    if (rejected.length === 0) throw new BackgroundCheckOperationError("NOT_A_CANDIDATE", "Staff haven't rejected that person for this row.");
+    await applyManualMatch(tx, entry, personId);
+    await writeAuditLog({
+      actorUserId,
+      action: "BACKGROUND_CHECK_REJECTION_OVERRIDDEN",
+      entityType: "BackgroundCheckEntry",
+      entityId: entry.id,
+      summary: "Staff matched a background-check row by hand to a person they had earlier said it was not.",
+      metadata: { entryId: entry.id },
+    }, tx);
+  }).catch((error: unknown) => {
+    const code = (error as { code?: unknown } | null)?.code;
+    if (code === "P2003" || code === "P2025") throw new BackgroundCheckOperationError("REVIEW_NOT_FOUND", "That row or person is no longer on file. Refresh the list.");
+    if (code === "P2002" || isWriteConflict(error)) throw listChanged();
+    throw error;
+  });
+}
+
+const MAX_LOOKUP_ROWS = 25;
+const MAX_LOOKUP_PEOPLE = 25;
+
+export type BackgroundCheckLookupPair = {
+  entryId: string;
+  personId: string;
+  rowName: string;
+  personName: string;
+  /** A plain-language reason the two are, or are not, matched. Never a birth date. */
+  reason: string;
+};
+export type BackgroundCheckLookup = {
+  query: string;
+  hasList: boolean;
+  rows: Array<{ id: string; name: string; site: string | null; status: string }>;
+  people: Array<{ personId: string; name: string; sites: string[]; status: string }>;
+  pairs: BackgroundCheckLookupPair[];
+  /** Pairs staff said are not the same person, with the ids "Match them anyway" needs. */
+  rejected: Array<{ entryId: string; personId: string; rowName: string; personName: string }>;
+  truncated: boolean;
+};
+
+const MATCH_SOURCE_LABEL: Record<string, string> = {
+  IDENTITY: "by a remembered id",
+  AUTO: "by name and site, email, or birth date",
+  NAME_ONLY: "by name only",
+  MANUAL: "by hand",
+  MIGRATED: "from before the list",
+};
+
+/** The same or a similar name: the same last name, and the same or a similar first name (or none typed). */
+function similarName(query: { firstName: string; lastName: string }, other: { firstName: string; lastName: string }) {
+  if (matchableName(other.lastName) !== matchableName(query.lastName)) return false;
+  if (!query.firstName) return true;
+  return matchableName(other.firstName) === matchableName(query.firstName) || firstNameVariant(query.firstName, other.firstName);
+}
+
+/** Similar to the typed name under any of its first/last splits ("Mary Van Buren" reads two ways). */
+function similarToAnySplit(splits: Array<{ firstName: string; lastName: string }>, other: { firstName: string; lastName: string }) {
+  return splits.some((split) => similarName(split, other));
+}
+
+async function personsWithLastName(tx: PrismaLike, lastName: string) {
+  const compact = matchableName(lastName).replace(/ /g, "");
+  if (!compact) return [];
+  const rows = await tx.$queryRaw<Array<{ id: string; firstName: string; lastName: string }>>`
+    SELECT "id", "firstName", "lastName" FROM "Person"
+    WHERE regexp_replace(lower(normalize("lastName", NFKD)), '[^a-z0-9]+', '', 'g') = ${compact}
+  `;
+  return rows.filter((row) => matchableName(row.lastName) === matchableName(lastName));
+}
+
+/**
+ * "Why isn't this person matched?" (#598): staff type a name and see the list
+ * rows and the roster or registration people with the same or a similar
+ * name, and for each pair the reason it did or didn't match. Read-only and
+ * staff-only; it reads the same rules matching uses and never returns a
+ * birth date (or an email).
+ */
+export async function lookupBackgroundCheckName(rawQuery: string, now = new Date()): Promise<BackgroundCheckLookup> {
+  const prisma = getPrisma();
+  const query = rawQuery.replace(/\s+/g, " ").trim().slice(0, 100);
+  const empty: BackgroundCheckLookup = { query, hasList: false, rows: [], people: [], pairs: [], rejected: [], truncated: false };
+  // A multi-word last name ("Van Buren") can split several ways; search the union.
+  const splits = lookupNameSplits(query).filter((split) => matchableName(split.lastName));
+  if (splits.length === 0) return empty;
+  const lastKeys = new Set(splits.map((split) => matchableName(split.lastName)));
+  const latest = await latestUpload(prisma);
+  const [rowLists, personLists] = await Promise.all([
+    Promise.all([...lastKeys].map((lastKey) => (latest
+      ? prisma.backgroundCheckEntry.findMany({
+        where: { uploadId: latest.id, normalizedName: { endsWith: lastKey } },
+        select: { id: true, identityKey: true, firstName: true, lastName: true, normalizedName: true, email: true, sealedBirthDate: true, site: true },
+      })
+      : Promise.resolve([])))),
+    Promise.all(splits.map((split) => personsWithLastName(prisma, split.lastName))),
+  ]);
+  const rowCandidates = [...new Map(rowLists.flat().map((row) => [row.id, row])).values()];
+  const personCandidates = [...new Map(personLists.flat().map((person) => [person.id, person])).values()];
+  const sameLast = rowCandidates.filter((row) => lastKeys.has(matchableName(row.lastName)));
+  const rowCounts = countRowsByName(sameLast);
+  const namesakes = namesakeCounts(personCandidates);
+  const allRows = sameLast.filter((row) => similarToAnySplit(splits, row)).sort((a, b) => a.firstName.localeCompare(b.firstName));
+  const allPeople = personCandidates.filter((person) => similarToAnySplit(splits, person)).sort((a, b) => a.firstName.localeCompare(b.firstName));
+  const rows = allRows.slice(0, MAX_LOOKUP_ROWS);
+  const people = allPeople.slice(0, MAX_LOOKUP_PEOPLE);
+  const truncated = allRows.length > rows.length || allPeople.length > people.length;
+  if (rows.length === 0 && people.length === 0) return { ...empty, hasList: Boolean(latest) };
+
+  const personIds = people.map((person) => person.id);
+  const entryIds = rows.map((row) => row.id);
+  const [index, rosterMemberships, matches, reviews, rejected] = await Promise.all([
+    buildCandidateIndex(prisma, now, { personIds }),
+    personIds.length > 0
+      ? prisma.clubRosterMember.findMany({
+        where: { personId: { in: personIds }, status: "ACTIVE", clubYear: { in: [clubYearChoices(now)[0]!, clubYearFor(now)] } },
+        select: { personId: true, attendeeType: true, organization: { select: { name: true } } },
+      })
+      : Promise.resolve([]),
+    prisma.backgroundCheckMatch.findMany({
+      where: { OR: [{ entryId: { in: entryIds } }, { personId: { in: personIds } }] },
+      select: { id: true, personId: true, entryId: true, matchedBy: true },
+    }),
+    entryIds.length > 0
+      ? prisma.backgroundCheckReview.findMany({
+        where: { entryId: { in: entryIds } },
+        select: { entryId: true, reason: true, candidatePersonIds: true, dismissedAt: true },
+      })
+      : Promise.resolve([]),
+    rejectedPairingsFor(prisma, rows.map((row) => row.identityKey)),
+  ]);
+  const matchByEntry = new Map(matches.map((match) => [match.entryId, match]));
+  const matchByPerson = new Map(matches.map((match) => [match.personId, match]));
+  const reviewByEntry = new Map(reviews.map((review) => [review.entryId, review]));
+  const rosterByPerson = new Map<string, Array<{ attendeeType: string; club: string }>>();
+  for (const member of rosterMemberships) {
+    if (!member.personId) continue;
+    const list = rosterByPerson.get(member.personId) ?? [];
+    list.push({ attendeeType: member.attendeeType, club: member.organization.name });
+    rosterByPerson.set(member.personId, list);
+  }
+  const fullName = (person: { firstName: string; lastName: string }) => `${person.firstName} ${person.lastName}`.trim();
+  const entryById = new Map(rows.map((row) => [row.id, row]));
+  const personById = new Map(people.map((person) => [person.id, person]));
+  const sitesOf = (personId: string) => [...(index.byPerson.get(personId)?.siteNames ?? [])].sort();
+  const matchLabel = (source: string) => MATCH_SOURCE_LABEL[source] ?? source.toLowerCase();
+
+  const rowsOut = rows.map((row) => {
+    const match = matchByEntry.get(row.id);
+    const review = reviewByEntry.get(row.id);
+    const matchedTo = match ? personById.get(match.personId) : undefined;
+    return {
+      id: row.id,
+      name: fullName(row),
+      site: row.site,
+      status: match
+        ? `Matched ${matchLabel(match.matchedBy)}${matchedTo ? ` to ${fullName(matchedTo)}` : " to someone"}`
+        : review?.dismissedAt ? "Left unmatched: staff said none of the candidates is right"
+          : review ? "Waiting on a staff decision"
+            : "Not matched",
+    };
+  });
+  const peopleOut = people.map((person) => {
+    const match = matchByPerson.get(person.id);
+    const candidate = index.byPerson.has(person.id);
+    const roster = rosterByPerson.get(person.id) ?? [];
+    const matchedRow = match ? entryById.get(match.entryId) : undefined;
+    return {
+      personId: person.id,
+      name: fullName(person),
+      sites: candidate ? sitesOf(person.id) : [...new Set(roster.map((member) => member.club))].sort(),
+      status: match
+        ? `Matched ${matchLabel(match.matchedBy)} to ${matchedRow ? fullName(matchedRow) : "a row"}`
+        : candidate ? "An adult on a roster or registration, not matched"
+          : "Not an adult on a current or previous-year club roster or a recent registration",
+    };
+  });
+
+  const pairs: BackgroundCheckLookupPair[] = [];
+  for (const row of rows) {
+    for (const person of people) {
+      if (matchableName(row.lastName) !== matchableName(person.lastName)) continue;
+      const sameFirst = matchableName(row.firstName) === matchableName(person.firstName);
+      if (!sameFirst && !firstNameVariant(row.firstName, person.firstName)) continue;
+      const reasons: string[] = [];
+      const match = matchByEntry.get(row.id);
+      const review = reviewByEntry.get(row.id);
+      const candidate = index.byPerson.get(person.id);
+      const roster = rosterByPerson.get(person.id) ?? [];
+      const reviewNamesPerson = Boolean(review && !review.dismissedAt && Array.isArray(review.candidatePersonIds) && (review.candidatePersonIds as string[]).includes(person.id));
+      if (match?.personId === person.id) {
+        reasons.push(`Matched ${matchLabel(match.matchedBy)}.`);
+      } else if (match) {
+        reasons.push("This row is already matched to someone else.");
+      } else if (rejected.get(row.identityKey)?.has(person.id)) {
+        reasons.push("Staff said this row is not the same person as this one, so they are not matched. That holds across uploads until staff match them by hand.");
+      } else if (review?.dismissedAt) {
+        reasons.push("Staff already said this row is not the same person (or none of the candidates is right), so it stays unmatched until the next upload.");
+      } else if (!sameFirst) {
+        reasons.push(`The first name differs (row: ${row.firstName}, person: ${person.firstName}).`);
+        if (reviewNamesPerson) reasons.push("It is a similar first name, so it was sent to review.");
+        else if (candidate) reasons.push("It is a similar first name, so Refresh suggests it for review; it is never matched automatically.");
+        else reasons.push("This person is also not an adult on a current or previous-year club roster or a recent registration.");
+      } else if (!candidate) {
+        const onRoster = roster.length > 0 ? ` (on the ${roster.map((member) => member.club).join(", ")} roster as ${roster.map((member) => member.attendeeType.toLowerCase()).join(", ")})` : "";
+        reasons.push(`This person is not an adult on a current or previous-year club roster or a recent registration${onRoster}.`);
+      } else if (matchByPerson.has(person.id)) {
+        reasons.push("This person is already matched to another row.");
+      } else if (reviewNamesPerson) {
+        reasons.push(`Sent to review: ${review!.reason}`);
+      } else {
+        const rowName = row.normalizedName ?? matchableName(fullName(row));
+        if (candidatesForEntry(row, [candidate], index.directoryStems).length > 0) {
+          reasons.push("The name and site agree; it matches on the next Refresh.");
+        } else if (contradictsEntry(row, candidate)) {
+          reasons.push("The email or birth date on the row disagrees with this person's, so they are not matched.");
+        } else {
+          const sites = sitesOf(person.id);
+          reasons.push(`The site differs (row: ${row.site ?? "none listed"}; person: ${sites.length > 0 ? sites.join(", ") : "none on file"}).`);
+          if ((index.byName.get(rowName) ?? []).length > 1) reasons.push("More than one candidate has this name, and nothing separates them.");
+          else if ((rowCounts.get(rowName) ?? 1) > 1) reasons.push("More than one row on the list has this name.");
+          else if ((namesakes.get(rowName) ?? 1) > 1) reasons.push("Another person on file has the same name.");
+          else reasons.push("The name is unique, so it matches by name only on the next Refresh.");
+        }
+      }
+      pairs.push({ entryId: row.id, personId: person.id, rowName: fullName(row), personName: fullName(person), reason: reasons.join(" ") });
+    }
+  }
+  const rejectedOut = rows.flatMap((row) => people
+    .filter((person) => rejected.get(row.identityKey)?.has(person.id))
+    .map((person) => ({ entryId: row.id, personId: person.id, rowName: fullName(row), personName: fullName(person) })));
+  return { query, hasList: true, rows: rowsOut, people: peopleOut, pairs, rejected: rejectedOut, truncated };
+}
+
 /** No review waiting on staff: none at all, or one staff dismissed ("none of these"). */
 const NO_OPEN_REVIEW = { OR: [{ review: null }, { review: { dismissedAt: { not: null } } }] } satisfies Prisma.BackgroundCheckEntryWhereInput;
 
@@ -1033,7 +1645,7 @@ async function lookupUncachedChecks(prisma: PrismaLike, subjects: LookupSubject[
   const fetched = await prisma.backgroundCheckEntry.findMany({
     where: { normalizedName: { in: pageNames }, match: null, review: null },
     select: {
-      id: true, uploadId: true, normalizedName: true, email: true, sealedBirthDate: true, site: true,
+      id: true, uploadId: true, identityKey: true, normalizedName: true, email: true, sealedBirthDate: true, site: true,
       complianceStatus: true, expiresOn: true, issuesNote: true, upload: { select: { createdAt: true } },
     },
   });
@@ -1063,9 +1675,12 @@ async function lookupUncachedChecks(prisma: PrismaLike, subjects: LookupSubject[
   // evidence can't be a candidate by the rules, so isn't one here either.
   const byName = groupByName(everyone);
 
+  // People staff said a row is not never match it here either (#598).
+  const rejected = await rejectedPairingsFor(prisma, entries.map((entry) => entry.identityKey));
   const entriesByPerson = new Map<string, Array<(typeof entries)[number]>>();
   for (const entry of entries) {
-    const candidates = candidatesForEntry(entry, byName.get(entry.normalizedName!) ?? [], index.directoryStems);
+    const rejectedHere = rejected.get(entry.identityKey);
+    const candidates = candidatesForEntry(entry, (byName.get(entry.normalizedName!) ?? []).filter((candidate) => !rejectedHere?.has(candidate.personId)), index.directoryStems);
     if (candidates.length !== 1 || !pagePeople.has(candidates[0]!.personId)) continue;
     const list = entriesByPerson.get(candidates[0]!.personId) ?? [];
     list.push(entry);

@@ -25,6 +25,7 @@
     "test:honor-entry-void": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-honor-entry-void.ts",
     "test:event-templates": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-event-templates.ts",
     "test:church-promo-codes": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-church-promo-codes.ts",
+    "test:honor-sites": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-honor-sites.ts",
     "test:event-locations": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-event-locations.ts",
     "test:location-waitlist": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-location-waitlist.ts",
     "test:event-cloning": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-event-cloning.ts",

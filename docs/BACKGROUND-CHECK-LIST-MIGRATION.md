@@ -103,3 +103,13 @@ write path fills; that a save during an upload isn't held up (the refresh
 only try-locks and is skipped); and that an entry two people in different
 clubs could be is matched to neither, at read time or after staff dismiss
 its review.
+
+## Name-only matches and the lookup (#598)
+
+The roster export has no email or birth date, so the row's site used to be the only second check. Now:
+
+- A row whose name is the only one on the list, and the only person on file with that name (a roster or registration adult, and no other person at all), is matched even when its site differs. It is stored as `NAME_ONLY` (an additive enum value; `20260929192000_background_check_name_only_match`), listed under "Matched by name only" for a spot check, and never remembered as a `user_id`. An email or birth date that disagrees stops it. "Not the same person" removes the match and stores a durable (row identity key, person) pair in `BackgroundCheckRejectedPairing` (same migration, additive), so no refresh and no later upload offers that person for that row again, whether by name only, automatically, or as a first-name variant. Staff can still match them by hand, which clears the pair.
+- Several same-name candidates with nothing to separate them, or several rows for one candidate, go to review.
+- With no exact-name candidate, a same-last-name candidate whose first name is a prefix of, contains, or is contained in the row's (3 characters or more) goes to review, never to a match. Variants are looked for by the staff Refresh and the upload, not by the per-person refresh.
+- Roster members count as candidates when their type is ADULT or STAFF, or their sealed birth date makes them 18 or older today.
+- The staff **Refresh** button re-runs matching for the whole list under the current rules (no new upload, no migration to run by hand); staff decisions are kept. It takes the list lock exclusively and answers 409 "Busy, try again" while an upload, a staff decision or another Refresh runs. Per-person refreshes keep open first-name variant reviews they cannot rebuild. The **Why isn't this person matched?** lookup is read-only and shows no birth dates.

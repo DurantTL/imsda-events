@@ -16,6 +16,8 @@ export const honorUpdateSchema = honorInputSchema.partial().strict();
 export const honorSessionInputSchema = z.object({
   name: text(80).min(1, "Enter the session name."),
   sortOrder: wholeNumber("Order", 0, 99).default(0),
+  /** The site (#589). Null is allowed here; the repository requires one when the event has active locations. */
+  locationId: z.string().min(1).max(64).nullable().default(null),
 }).strict();
 
 export const honorSessionUpdateSchema = honorSessionInputSchema.partial().strict();
@@ -33,8 +35,13 @@ export const honorOfferingInputSchema = z.object({
   honorId: z.string().min(1, "Choose an honor."),
   span: z.enum(["SINGLE_SESSION", "ALL_SESSIONS"]),
   sessionId: z.string().min(1).nullable().default(null),
+  /** The site of an all-sessions class (#589). A single-session class takes its session's site. */
+  locationId: z.string().min(1).max(64).nullable().default(null),
   ...offeringDetails,
 }).strict().superRefine((input, context) => {
+  if (input.span === "SINGLE_SESSION" && input.locationId) {
+    context.addIssue({ code: "custom", path: ["locationId"], message: "A single-session class is at its session's site." });
+  }
   if (input.span === "SINGLE_SESSION" && !input.sessionId) {
     context.addIssue({ code: "custom", path: ["sessionId"], message: "Choose the session for this honor." });
   }
@@ -51,6 +58,8 @@ export const honorOfferingUpdateSchema = z.object({
   teacherName: text(120),
   location: text(120),
   isActive: z.boolean(),
+  /** Only for an all-sessions class (#589). */
+  locationId: z.string().min(1).max(64).nullable(),
 }).partial().strict();
 
 export const honorCopyInputSchema = z.object({
