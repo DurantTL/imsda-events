@@ -38,6 +38,8 @@ function version(overrides: Record<string, unknown> = {}) {
 
 function transactionClient(previouslyPublishedCount: number, validTests: number) {
   return {
+    $executeRaw: vi.fn().mockResolvedValue(0),
+    $queryRaw: vi.fn().mockResolvedValue([]),
     registrationForm: {
       findFirst: vi.fn().mockResolvedValue({
         id: "form-1",
@@ -49,7 +51,7 @@ function transactionClient(previouslyPublishedCount: number, validTests: number)
     },
     registrationFormVersion: {
       count: vi.fn().mockResolvedValue(previouslyPublishedCount),
-      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       update: vi.fn().mockResolvedValue({}),
     },
     formTestSubmission: {
@@ -91,7 +93,7 @@ describe("registration form publish gate", () => {
     await expect(
       publishRegistrationForm("event-1", "form-1", "user-1"),
     ).rejects.toMatchObject({ code: "TEST_REQUIRED" });
-    expect(tx.registrationFormVersion.update).not.toHaveBeenCalled();
+    expect(tx.registrationFormVersion.updateMany).not.toHaveBeenCalled();
   });
 
   it("publishes the first version once a valid test exists", async () => {
@@ -100,32 +102,49 @@ describe("registration form publish gate", () => {
 
     await publishRegistrationForm("event-1", "form-1", "user-1");
 
-    expect(tx.registrationFormVersion.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "version-2" } }),
+    expect(tx.registrationFormVersion.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: "version-2", status: "DRAFT" }) }),
     );
   });
 
-  it("publishes a later version without a test once the form has been published before", async () => {
+  it("gates a later version on its own valid test even after an earlier version was published (#564)", async () => {
     const tx = transactionClient(1, 0);
     dependencies.getPrisma.mockReturnValue(prismaFor(tx));
 
-    await publishRegistrationForm("event-1", "form-1", "user-1");
-
-    expect(tx.formTestSubmission.count).not.toHaveBeenCalled();
-    expect(tx.registrationFormVersion.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "version-2" } }),
-    );
-  });
-
-  it("counts prior publications by publishedAt so an archived version still counts", async () => {
-    const tx = transactionClient(1, 0);
-    dependencies.getPrisma.mockReturnValue(prismaFor(tx));
-
-    await publishRegistrationForm("event-1", "form-1", "user-1");
-
-    expect(tx.registrationFormVersion.count).toHaveBeenCalledWith({
-      where: { formId: "form-1", publishedAt: { not: null } },
+    await expect(
+      publishRegistrationForm("event-1", "form-1", "user-1"),
+    ).rejects.toMatchObject({ code: "TEST_REQUIRED" });
+    expect(tx.formTestSubmission.count).toHaveBeenCalledWith({
+      where: { formVersionId: "version-2", isValid: true },
     });
+    expect(tx.registrationFormVersion.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("publishes a later version once that version has a valid test", async () => {
+    const tx = transactionClient(1, 1);
+    dependencies.getPrisma.mockReturnValue(prismaFor(tx));
+
+    await publishRegistrationForm("event-1", "form-1", "user-1");
+
+    expect(tx.registrationFormVersion.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: "ARCHIVED" } }),
+    );
+    expect(tx.registrationFormVersion.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: "version-2", status: "DRAFT" }) }),
+    );
+  });
+
+  it("refuses to publish when the draft changed after the test count (stale test)", async () => {
+    const tx = transactionClient(1, 1);
+    tx.registrationFormVersion.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+    dependencies.getPrisma.mockReturnValue(prismaFor(tx));
+
+    await expect(
+      publishRegistrationForm("event-1", "form-1", "user-1"),
+    ).rejects.toMatchObject({ code: "EDIT_CONFLICT" });
+    expect(tx.registrationForm.update).not.toHaveBeenCalled();
   });
 
   it("still refuses a form with no draft version", async () => {

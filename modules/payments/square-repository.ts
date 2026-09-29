@@ -136,7 +136,7 @@ const checkoutRegistrationSelect = {
         select: {
           status: true,
           definition: true,
-          form: { select: { status: true } },
+          form: { select: { versions: { where: { status: "PUBLISHED" }, select: { id: true }, take: 1 } } },
         },
       },
     },
@@ -246,7 +246,7 @@ function checkoutFromRegistration(
     ? selectedCardPayment({
         definition: submission.formVersion.definition,
         responses: submission.responses,
-        formStatus: submission.formVersion.form.status,
+        formHasPublishedVersion: submission.formVersion.form.versions.length > 0,
       })
     : { configured: false, cardSelected: false };
   const balanceCents = registrationBalanceCents(registration);
