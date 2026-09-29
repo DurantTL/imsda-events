@@ -46,6 +46,7 @@ export default async function ClubEventReportsPage({
         </div>
         <div className="intro-actions report-actions">
           <Link className="secondary-button" href={`/more/reports?${eventQuery}`}>Back to reports</Link>
+          <Link className="secondary-button" href={`/more/reports/clubs/check-in-book?${eventQuery}`}>Check-in book</Link>
           <PrintReportButton />
         </div>
       </div>

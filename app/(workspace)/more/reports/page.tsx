@@ -5,6 +5,7 @@ import {
   BedDouble,
   Baby,
   CalendarCheck2,
+  ClipboardCheck,
   Download,
   HandHeart,
   ListOrdered,
@@ -209,6 +210,7 @@ export default async function OperationalReportsPage({
           <Link className="secondary-button" href={`/more${peopleQuery}`}>Back to More</Link>
           <Link className="secondary-button" href={`/more/reports/packets${peopleQuery}`}><PackageOpen aria-hidden="true" size={15} /> Group packets</Link>
           <Link className="secondary-button" href={`/more/reports/clubs${peopleQuery}`}><Tent aria-hidden="true" size={15} /> Camporee club reports</Link>
+          <Link className="secondary-button" href={`/more/reports/clubs/check-in-book${peopleQuery}`}><ClipboardCheck aria-hidden="true" size={15} /> Check-in book</Link>
           <Link className="secondary-button" href={`/more/honors/rosters${peopleQuery}`}><Award aria-hidden="true" size={15} /> Honors rosters</Link>
           <PrintReportButton />
         </div>
