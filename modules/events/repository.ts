@@ -10,7 +10,7 @@ import {
   evaluateEventRegistrationPhase,
   remainingEventCapacity,
 } from "@/modules/events/lifecycle";
-import { getEventPublishReadiness } from "@/modules/events/readiness";
+import { CLUB_EVENT_BILLING_MESSAGE, getEventPublishReadiness } from "@/modules/events/readiness";
 import type { EventSettingsInput } from "@/modules/events/schemas";
 
 export class EventOperationError extends Error {
@@ -472,6 +472,8 @@ export async function publishEvent(eventId: string, actorUserId: string) {
           publicInfoUrl: true,
           supportContact: true,
           isPublished: true,
+          audience: true,
+          billingMode: true,
         },
       }),
       tx.registrationFormVersion.count({
@@ -492,13 +494,19 @@ export async function publishEvent(eventId: string, actorUserId: string) {
         location: current.location,
         publicInfoUrl: current.publicInfoUrl,
         supportContact: current.supportContact,
+        audience: current.audience,
+        billingMode: current.billingMode,
       },
       publishedFormCount,
     );
     if (!readiness.ready) {
-      const missing = readiness.items
-        .filter((item) => !item.complete)
-        .map((item) => item.label.toLowerCase());
+      const incomplete = readiness.items.filter((item) => !item.complete);
+      if (incomplete.some((item) => item.id === "club-billing") && incomplete.length === 1) {
+        throw new EventOperationError("EVENT_NOT_READY", CLUB_EVENT_BILLING_MESSAGE);
+      }
+      const missing = incomplete.map((item) =>
+        item.id === "club-billing" ? CLUB_EVENT_BILLING_MESSAGE.replace(/\.$/, "") : item.label.toLowerCase(),
+      );
       throw new EventOperationError(
         "EVENT_NOT_READY",
         `Finish the publish checklist first: ${missing.join(", ")}.`,

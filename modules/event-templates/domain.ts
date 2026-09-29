@@ -77,6 +77,11 @@ export const eventTemplatePayloadSchema = z.object({
    * template is applied. Optional, so no migration is involved. */
   starterKey: z.string().trim().min(1).max(60).optional(),
   audience: z.enum(["GENERAL", "CLUB"]).default("GENERAL"),
+  /** Optional (#565), so no stored payload changes shape. When absent, a CLUB
+   * template applies church billing (director routes only show
+   * DEFERRED_ORGANIZATION_INVOICE club events) and a GENERAL one attendee-pay:
+   * see `templateBillingMode`. */
+  billingMode: z.enum(["ATTENDEE_PAY", "DEFERRED_ORGANIZATION_INVOICE"]).optional(),
   formTemplateKeys: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
   attendeeTypes: z.array(templateAttendeeTypeSchema).max(60).default([]),
   attendeeClassifications: z.array(templateAttendeeClassificationSchema).max(60).default([]),
@@ -236,3 +241,8 @@ export const applyEventTemplateInputSchema = z.object({
 });
 
 export type ApplyEventTemplateInput = z.infer<typeof applyEventTemplateInputSchema>;
+
+/** The billing mode a template applies to the new event (#565). */
+export function templateBillingMode(payload: Pick<EventTemplatePayload, "audience" | "billingMode">) {
+  return payload.billingMode ?? (payload.audience === "CLUB" ? "DEFERRED_ORGANIZATION_INVOICE" : "ATTENDEE_PAY");
+}

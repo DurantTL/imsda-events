@@ -49,6 +49,7 @@ type RowOverrides = Partial<{
   location: string | null;
   supportContact: string | null;
   audience: "GENERAL" | "CLUB";
+  billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE";
 }>;
 
 const eventRow = (overrides: RowOverrides = {}) => ({
@@ -74,7 +75,7 @@ const eventRow = (overrides: RowOverrides = {}) => ({
   collectsShirtSizes: false,
   checksAdultBackgrounds: false,
   attendeeEditPolicy: "VERIFY_EVERY_EDIT",
-  billingMode: "ATTENDEE_PAY",
+  billingMode: overrides.billingMode ?? "ATTENDEE_PAY",
   audience: overrides.audience ?? ("GENERAL" as const),
   seminarPreferenceClosesOn: null,
   seminarPreferenceSelfServiceLocked: false,
@@ -216,6 +217,27 @@ describe("publishEvent (#467, #471)", () => {
       message: expect.stringContaining("published registration form"),
     });
     expect(eventUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("blocks publishing a CLUB event billed to attendees with the church-billing message (#565)", async () => {
+    const { prisma, eventUpdateMany, auditLogCreate } = mockPrisma({ isPublished: false, audience: "CLUB", billingMode: "ATTENDEE_PAY" }, 1);
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await expect(publishEvent("event-1", "usr_1")).rejects.toMatchObject({
+      code: "EVENT_NOT_READY",
+      message: "Club registration uses church billing — choose it before publishing.",
+    });
+    expect(eventUpdateMany).not.toHaveBeenCalled();
+    expect(auditLogCreate).not.toHaveBeenCalled();
+  });
+
+  it("publishes a CLUB event once it is church-billed, and an attendee-paid GENERAL event as before (#565)", async () => {
+    for (const row of [{ audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE" }, { audience: "GENERAL", billingMode: "ATTENDEE_PAY" }] as const) {
+      const { prisma, eventUpdateMany } = mockPrisma({ isPublished: false, ...row }, 1, true);
+      dependencies.getPrisma.mockReturnValue(prisma);
+      await publishEvent("event-1", "usr_1");
+      expect(eventUpdateMany).toHaveBeenCalled();
+    }
   });
 
   it("blocks publish when the saved event has no location", async () => {

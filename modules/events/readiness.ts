@@ -7,10 +7,15 @@ export type EventReadinessSource = {
   location?: string | null;
   publicInfoUrl?: string | null;
   supportContact?: string | null;
+  audience?: "GENERAL" | "CLUB" | null;
+  billingMode?: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE" | null;
 };
 
+/** Shown as the publish blocker and the settings/readiness flag (#565). */
+export const CLUB_EVENT_BILLING_MESSAGE = "Club registration uses church billing — choose it before publishing.";
+
 export type EventReadinessItem = {
-  id: "basics" | "location" | "support" | "registration-form";
+  id: "basics" | "location" | "support" | "registration-form" | "club-billing";
   label: string;
   detail: string;
   complete: boolean;
@@ -79,6 +84,18 @@ export function getEventPublishReadiness(
       complete: publishedFormCount > 0,
     },
   ];
+
+  // Directors only see CLUB events billed to the church (#565), so a CLUB
+  // event set to attendee-pay would 404 for them. Listed only for CLUB
+  // events, and never auto-corrected: a billing change is a human decision.
+  if (event.audience === "CLUB") {
+    items.push({
+      id: "club-billing",
+      label: CLUB_EVENT_BILLING_MESSAGE,
+      detail: "Churches register club events through director routes, and those only list events billed to the church. Set the billing mode to church invoice in event settings.",
+      complete: event.billingMode === "DEFERRED_ORGANIZATION_INVOICE",
+    });
+  }
 
   // Complete when nothing is set (there is nothing to fix) or when the
   // configured value is a valid web address. Never a blocker either way.

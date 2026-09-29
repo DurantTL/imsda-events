@@ -206,3 +206,23 @@ describe("event settings", () => {
     }).id).toBe("usr_system");
   });
 });
+
+describe("club event billing readiness (#565)", () => {
+  const base = { name: "Synthetic Camporee", slug: "synthetic-camporee", startsOn: "2027-04-01", endsOn: "2027-04-03", timezone: "America/Chicago", location: "Camp", supportContact: "help@example.test" };
+
+  it("flags a CLUB event billed to attendees and clears it under church billing", () => {
+    const flagged = getEventPublishReadiness({ ...base, audience: "CLUB", billingMode: "ATTENDEE_PAY" }, 1);
+    expect(flagged.ready).toBe(false);
+    expect(flagged.items.find((item) => item.id === "club-billing")).toMatchObject({
+      label: "Club registration uses church billing — choose it before publishing.",
+      complete: false,
+    });
+    expect(getEventPublishReadiness({ ...base, audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE" }, 1).ready).toBe(true);
+  });
+
+  it("adds no item for GENERAL events", () => {
+    const result = getEventPublishReadiness({ ...base, audience: "GENERAL", billingMode: "ATTENDEE_PAY" }, 1);
+    expect(result.items.some((item) => item.id === "club-billing")).toBe(false);
+    expect(result.ready).toBe(true);
+  });
+});

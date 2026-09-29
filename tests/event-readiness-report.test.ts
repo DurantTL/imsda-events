@@ -85,6 +85,13 @@ describe("collectEventReadinessReport", () => {
     expect(check(await collectEventReadinessReport(prisma, "synthetic-retreat", env), code)?.severity).toBe("BLOCKER");
   });
 
+  it("flags an existing CLUB event set to attendee-pay, and only that (#565)", async () => {
+    const mismatched = await collectEventReadinessReport(dataSource({ event: { audience: "CLUB", billingMode: "ATTENDEE_PAY" } }).prisma, "synthetic-retreat", readyEnv);
+    expect(check(mismatched, "PUBLISH_CLUB_BILLING")).toMatchObject({ severity: "BLOCKER", label: "Club registration uses church billing — choose it before publishing." });
+    const general = await collectEventReadinessReport(dataSource({ event: { audience: "GENERAL", billingMode: "ATTENDEE_PAY" } }).prisma, "synthetic-retreat", readyEnv);
+    expect(check(general, "PUBLISH_CLUB_BILLING")).toBeUndefined();
+  });
+
   it("never blocks publish on the optional IMSDA.org information page (#467)", async () => {
     const { prisma } = dataSource({ event: { publicInfoUrl: null } });
     const withoutUrl = await collectEventReadinessReport(prisma, "synthetic-retreat", readyEnv);

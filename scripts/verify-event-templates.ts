@@ -464,6 +464,7 @@ async function verifyStarters() {
     assert(!result.alreadyApplied && !event.isPublished && event.audience === starter.audience, `${starter.name} applies to an unpublished ${starter.audience} draft event`);
     assert(event.collectsShirtSizes === starter.collectsShirtSizes && event.checksAdultBackgrounds === starter.checksAdultBackgrounds, `${starter.name} carries its module switches`);
     assert(!event.waitlistEnabled, `${starter.name} leaves the waitlist off`);
+    assert(event.billingMode === starter.billingMode, `${starter.name} applies ${starter.billingMode} billing so directors can see CLUB events (#565)`);
     const stored = await prisma.event.findUniqueOrThrow({ where: { id: event.id }, select: { capacity: true } });
     assert(stored.capacity === null, `${starter.name} sets no capacity`);
     const forms = await prisma.registrationForm.findMany({ where: { eventId: event.id }, include: { versions: true } });

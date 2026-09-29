@@ -19,16 +19,18 @@ export type StarterEventTemplate = {
   name: string;
   formTemplateKey: string;
   audience: "GENERAL" | "CLUB";
+  /** CLUB starters are church-billed (#565): the director routes only show deferred-billing club events. */
+  billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE";
   collectsShirtSizes: boolean;
   checksAdultBackgrounds: boolean;
 };
 
 export const starterEventTemplates: readonly StarterEventTemplate[] = [
-  { starterKey: "womens_retreat", name: "Women's Retreat", formTemplateKey: "womens_retreat_export", audience: "GENERAL", collectsShirtSizes: true, checksAdultBackgrounds: false },
-  { starterKey: "man_camp", name: "Man Camp", formTemplateKey: "man_camp_export", audience: "GENERAL", collectsShirtSizes: true, checksAdultBackgrounds: false },
-  { starterKey: "spring_camporee", name: "Spring Camporee", formTemplateKey: "spring_camporee_export", audience: "CLUB", collectsShirtSizes: false, checksAdultBackgrounds: true },
-  { starterKey: "camp_meeting", name: "Camp Meeting", formTemplateKey: "camp_meeting_export", audience: "GENERAL", collectsShirtSizes: false, checksAdultBackgrounds: false },
-  { starterKey: "honors_weekend", name: "Honors Weekend", formTemplateKey: "honors_weekend", audience: "CLUB", collectsShirtSizes: false, checksAdultBackgrounds: true },
+  { starterKey: "womens_retreat", name: "Women's Retreat", formTemplateKey: "womens_retreat_export", audience: "GENERAL", billingMode: "ATTENDEE_PAY", collectsShirtSizes: true, checksAdultBackgrounds: false },
+  { starterKey: "man_camp", name: "Man Camp", formTemplateKey: "man_camp_export", audience: "GENERAL", billingMode: "ATTENDEE_PAY", collectsShirtSizes: true, checksAdultBackgrounds: false },
+  { starterKey: "spring_camporee", name: "Spring Camporee", formTemplateKey: "spring_camporee_export", audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE", collectsShirtSizes: false, checksAdultBackgrounds: true },
+  { starterKey: "camp_meeting", name: "Camp Meeting", formTemplateKey: "camp_meeting_export", audience: "GENERAL", billingMode: "ATTENDEE_PAY", collectsShirtSizes: false, checksAdultBackgrounds: false },
+  { starterKey: "honors_weekend", name: "Honors Weekend", formTemplateKey: "honors_weekend", audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE", collectsShirtSizes: false, checksAdultBackgrounds: true },
 ];
 
 /** Real events with no form template yet: listed, never created. */
@@ -46,6 +48,7 @@ export function starterPayload(starter: StarterEventTemplate): EventTemplatePayl
   return eventTemplatePayloadSchema.parse({
     starterKey: starter.starterKey,
     audience: starter.audience,
+    billingMode: starter.billingMode,
     formTemplateKeys: [starter.formTemplateKey],
     moduleEnablement: {
       collectsShirtSizes: starter.collectsShirtSizes,
