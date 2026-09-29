@@ -7648,3 +7648,16 @@ select:focus-visible {
 .profile-account-section { display: grid; gap: 16px; }
 .profile-account-heading { margin: 8px 0 0; color: var(--imsda-navy); font-size: 1.25rem; }
 .profile-back-links .text-button { display: inline-flex; align-items: center; gap: 6px; }
+
+/* "Reopen to add or remove people" (#571 F-23): brief highlight on the roster section. */
+.club-roster-highlight {
+  outline: 3px solid var(--green, #2f7d5b);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 6px rgba(47, 125, 91, 0.15);
+}
+
+.roster-field-error {
+  color: #a12a1f;
+  font-size: 0.85rem;
+  margin: 2px 0 0;
+}

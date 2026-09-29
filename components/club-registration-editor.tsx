@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, Pencil, Trash2, UserPlus, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Pencil, Trash2, UserPlus, X } from "lucide-react";
 import {
   PublicRegistrationForm,
   type FormIssue,
@@ -23,6 +23,25 @@ import type { ClubEventWorkspace } from "@/modules/club-registrations/repository
 
 type Workspace = ClubEventWorkspace & { registration: NonNullable<ClubEventWorkspace["registration"]>; experience: NonNullable<ClubEventWorkspace["experience"]> };
 
+/** Confirms the state change after "Reopen to add or remove people" (#571 F-23). */
+export const REOPEN_NOTICE = "Registration reopened. Tick or untick people below, then continue to check their answers. Nothing changes until you save.";
+
+/** How long the roster section stays highlighted after it opens. */
+export const REOPEN_HIGHLIGHT_MS = 2500;
+
+/**
+ * Brings the reopened roster section into view and moves focus to it, so the
+ * change is visible and announced to keyboard and screen-reader users too.
+ */
+export function revealRosterSection(
+  element: Pick<HTMLElement, "focus" | "scrollIntoView"> | null,
+  reduceMotion: boolean,
+) {
+  if (!element) return;
+  element.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+  element.focus({ preventScroll: true });
+}
+
 /**
  * Reopens a submitted club registration (H3b, #366) before the event's
  * registration deadline. Step one re-ticks who's going: roster people, the
@@ -38,6 +57,8 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
   const [step, setStep] = useState<"who" | "form">("who");
   const [addingGuest, setAddingGuest] = useState(false);
   const [error, setError] = useState("");
+  const [highlightRoster, setHighlightRoster] = useState(false);
+  const rosterSectionRef = useRef<HTMLElement | null>(null);
   const definition = workspace.experience.form.definition;
 
   const registered = workspace.registration.attendees;
@@ -180,9 +201,17 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
     },
   }), [initialAttendees, workspace.lockedAttendeeFieldKeys, onDraftChange, submitEdit, router]);
 
+  // Reopening confirms itself: scroll to and highlight the roster section (#571 F-23).
+  useEffect(() => {
+    if (!open || step !== "who") return;
+    revealRosterSection(rosterSectionRef.current, window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    const timer = window.setTimeout(() => setHighlightRoster(false), REOPEN_HIGHLIGHT_MS);
+    return () => window.clearTimeout(timer);
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!open) {
     return (
-      <button className="secondary-button" onClick={() => setOpen(true)} type="button">
+      <button className="secondary-button" onClick={() => { setHighlightRoster(true); setOpen(true); }} type="button">
         <Pencil aria-hidden="true" size={14} /> Reopen to add or remove people
       </button>
     );
@@ -212,7 +241,14 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
   }
 
   return (
-    <section aria-labelledby="club-edit-title" className="public-manage-card">
+    <section
+      aria-labelledby="club-edit-title"
+      className={`public-manage-card${highlightRoster ? " club-roster-highlight" : ""}`}
+      id="club-edit-roster"
+      ref={rosterSectionRef}
+      tabIndex={-1}
+    >
+      <div className="inline-notice success" role="status"><Check aria-hidden="true" size={15} /> {REOPEN_NOTICE}</div>
       <div className="public-manage-card-heading club-roster-heading">
         <div>
           <p className="public-registration-eyebrow">Step 1 of 2 · Who&apos;s going</p>
