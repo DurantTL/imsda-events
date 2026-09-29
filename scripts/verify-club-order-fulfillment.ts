@@ -610,6 +610,17 @@ async function main() {
   await prisma.memberClassCompletion.create({ data: { organizationId: clubs.link, personId: cleoId, classLevel: "FRIEND", completedOn: "2026-05-01" } });
   await removeRosterMember(clubs.link, cleoMember.id, actor);
   assert(await prisma.person.count({ where: { id: cleoId } }) === 0, "a class completion no longer keeps the Person");
+  // A registered member keeps their contact fields: a registration with no contact snapshot is still claimable by email.
+  const reggieId = await addPerson("reggie", "Reggie", "Registered");
+  await prisma.person.update({ where: { id: reggieId }, data: { normalizedEmail: `${P}.reggie@example.test`, phone: "555-0102" } });
+  const reggieMember = await addMember(clubs.link, reggieId);
+  const legacyReg = await prisma.registration.create({ data: { eventId, accountHolderPersonId: reggieId, confirmationCode: `${P.toUpperCase()}-LEGACY`, status: "SUBMITTED", totalAmount: 0 } });
+  await removeRosterMember(clubs.link, reggieMember.id, actor);
+  const reggie = await prisma.person.findUniqueOrThrow({ where: { id: reggieId } });
+  assert(reggie.normalizedEmail === `${P}.reggie@example.test` && reggie.phone === "555-0102", "a registered Person keeps email and phone after roster removal");
+  const { matchingRegistrationIdsForVerifiedEmail } = await import("../modules/attendee-accounts/registrations-repository");
+  assert((await matchingRegistrationIdsForVerifiedEmail(`${P}.reggie@example.test`)).includes(legacyReg.id), "a legacy registration is still claimable by email after removal");
+
   // Sync and removal at once: no foreign-key failure, and no need left for a removed member.
   const raceIds: string[] = [];
   for (const key of ["r1", "r2", "r3"]) {

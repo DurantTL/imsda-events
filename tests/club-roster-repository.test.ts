@@ -33,7 +33,7 @@ const youth = {
 
 function fakeDatabase() {
   let sequence = 0;
-  const db = { people: [] as Row[], members: [] as Row[], otherReferences: new Set<string>(), honorEntries: [] as Row[], needs: [] as Row[], classCompletions: [] as Row[], calls: [] as string[], transferBlanks: [] as unknown[] };
+  const db = { people: [] as Row[], members: [] as Row[], otherReferences: new Set<string>(), honorEntries: [] as Row[], needs: [] as Row[], blankedTransferWhere: [] as unknown[], classCompletions: [] as Row[], calls: [] as string[], transferBlanks: [] as unknown[] };
   const matches = (row: Row, where: Record<string, unknown> = {}) => Object.entries(where).every(([key, value]) => {
     if (value === undefined) return true;
     if (value && typeof value === "object" && "not" in value) return row[key] !== (value as { not: unknown }).not;
@@ -68,7 +68,7 @@ function fakeDatabase() {
     },
     // Transfer records (#489) are blanked, never counted, when a person is erased.
     memberTransfer: {
-      findMany: async () => [{ id: "transfer-1" }],
+      findMany: async ({ where }: { where: { status?: unknown } }) => { if (where.status) db.blankedTransferWhere.push({ status: where.status }); return [{ id: "transfer-1" }]; },
       updateMany: async (args: unknown) => { db.transferBlanks.push(args); return { count: 1 }; },
     },
     memberTransferEvent: {
@@ -251,6 +251,7 @@ describe("club roster storage", () => {
     const { memberId: lone } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
     const { memberId: registered } = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Other" }, actor, { now });
     db.otherReferences.add(db.members[1].personId as string);
+    Object.assign(db.people[1], { normalizedEmail: "other@example.test", phone: "555-0103" });
 
     await removeRosterMember("club-1", lone, actor, now);
     await removeRosterMember("club-1", registered, actor, now);
@@ -259,14 +260,14 @@ describe("club roster storage", () => {
       expect(member).toMatchObject({ status: "REMOVED", sealedBirthDate: null, personId: null, gender: null, role: "", removedAt: now });
     }
     expect(db.people.map((person) => person.firstName)).toEqual(["Other"]);
-    // Transfer records (#489) keep no free text for a deleted person, and (#566) none for a kept, registered one either.
-    const blanked = [
+    // Contact fields are registration data (claiming, dedupe, matching): a registered person keeps them.
+    expect(db.people[0]).toMatchObject({ normalizedEmail: "other@example.test", phone: "555-0103" });
+    // A deleted person's transfer records (#489) keep no free text; a kept, registered person's are untouched.
+    expect(db.transferBlanks).toEqual([
       { where: { id: { in: ["transfer-1"] } }, data: { requestedFirstName: "", requestedLastName: "", reason: "", staffNote: "" } },
       { where: { transferId: { in: ["transfer-1"] } }, data: { note: "" } },
       { where: { transferId: { in: ["transfer-1"] } }, data: { note: "" } },
-    ];
-    expect(db.transferBlanks).toEqual([...blanked, ...blanked]);
-    expect(db.people[0]).toMatchObject({ firstName: "Other", normalizedEmail: null, phone: null });
+    ]);
     expect(await listRoster("club-1", "2026-27", now)).toEqual([]);
     await expect(updateRosterMember("club-1", lone, { role: "Back" }, actor, now)).rejects.toMatchObject({ code: "MEMBER_REMOVED" });
   });
@@ -375,6 +376,7 @@ describe("club roster storage", () => {
     const removed = await removeRosterMember("club-1", id, actor, now);
 
     expect(removed).toEqual({ personId, nameKept: true });
+    expect(db.blankedTransferWhere).toEqual([{ status: { not: "PENDING" } }]);
     expect(db.people.find((person) => person.id === personId)).toMatchObject({ firstName: "Test", lastName: "Youth", normalizedEmail: null, phone: null });
     expect(db.transferBlanks.length).toBeGreaterThan(0);
     expect(db.members[0]).toMatchObject({ status: "REMOVED", personId: null, sealedBirthDate: null });
@@ -400,5 +402,26 @@ describe("club roster storage", () => {
     await removeRosterMember("club-1", id, actor, now);
 
     expect(db.calls.slice(0, 4)).toEqual(["lock", "find-member", "person-row-lock", "erase-row"]);
+  });
+
+  it("keeps a registered person's email and phone even with an ordered need, and says the name stays (#566)", async () => {
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const personId = db.members[0].personId as string;
+    Object.assign(db.people.find((person) => person.id === personId)!, { normalizedEmail: "reg@example.test", phone: "555-0104" });
+    db.otherReferences.add(personId);
+    db.needs.push({ id: "need-ordered", organizationId: "club-1", personId, status: "ORDERED" });
+
+    const removed = await removeRosterMember("club-1", id, actor, now);
+
+    expect(removed.nameKept).toBe(true);
+    expect(db.people.find((person) => person.id === personId)).toMatchObject({ normalizedEmail: "reg@example.test", phone: "555-0104" });
+    expect(db.blankedTransferWhere).toEqual([]);
+  });
+
+  it("does not say the name stays when the person was kept for another reason (#566)", async () => {
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    db.otherReferences.add(db.members[0].personId as string);
+
+    expect((await removeRosterMember("club-1", id, actor, now)).nameKept).toBe(false);
   });
 });
