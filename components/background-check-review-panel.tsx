@@ -90,7 +90,7 @@ export function BackgroundCheckReviewPanel() {
         <div>
           <p className="eyebrow">Background checks</p>
           <h2>Needs a look</h2>
-          <p>Rows an upload couldn&apos;t match with confidence, and rows that match no one yet. Nothing is guessed.</p>
+          <p>Rows an upload couldn&apos;t match with confidence, waiting on a staff decision. Nothing is guessed.</p>
         </div>
         <button className="secondary-button" onClick={() => void load()} type="button"><RefreshCcw aria-hidden="true" size={14} /> Refresh</button>
       </div>
@@ -162,7 +162,9 @@ export function BackgroundCheckReviewPanel() {
         </div>
       )}
 
-      <h3>Not matched yet ({unmatched?.length ?? 0})</h3>
+      <details className="background-check-unmatched">
+        <summary><strong>Not on a club roster or registration yet ({unmatched?.length ?? 0})</strong></summary>
+        <p className="quiet-copy">Most volunteers on the conference-wide list aren&apos;t on any club roster. This isn&apos;t work to do; they match once they appear on a roster or registration.</p>
       {unmatched && unmatched.length === 0 && <p className="report-empty">Everyone on the list is matched to someone.</p>}
       {unmatched && unmatched.length > 0 && (
         <div className="report-table-wrap">
@@ -180,6 +182,7 @@ export function BackgroundCheckReviewPanel() {
           </table>
         </div>
       )}
+      </details>
     </section>
   );
 }

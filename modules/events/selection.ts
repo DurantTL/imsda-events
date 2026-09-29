@@ -62,12 +62,15 @@ export async function resolveEventContext(requestedEventId?: string) {
   };
 }
 
-async function loadSignedInEvents() {
+async function loadSignedInEvents(options: { allowNoEvents?: boolean } = {}) {
   const user = (await getCurrentSession()).user;
   if (!user) redirect(await staffLoginRedirectPath());
   const events = await listEventsForUser(user.id, user.globalRole === "SYSTEM_ADMIN");
 
-  if (events.length === 0) {
+  // A system administrator with zero events still owns the global /admin/*
+  // pages (#567 F-6), which need no event. Only the workspace layout opts in;
+  // pages that need an event still resolve (and redirect) on their own.
+  if (events.length === 0 && !(options.allowNoEvents && user.globalRole === "SYSTEM_ADMIN")) {
     redirect("/no-access");
   }
   return { user, events };
@@ -88,7 +91,7 @@ async function loadSignedInEvents() {
  * nothing can be chosen automatically (the picker case).
  */
 export async function loadWorkspaceEventContext() {
-  const { user, events } = await loadSignedInEvents();
+  const { user, events } = await loadSignedInEvents({ allowNoEvents: true });
   const selection = selectEventContext({ events, lastUsedEventId: await readLastUsedEventId() });
   const defaultEvent = selection.kind === "picker" || selection.kind === "unavailable" ? null : selection.event;
 

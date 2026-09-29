@@ -383,12 +383,127 @@ export function parseRosterBackgroundCsv(text: string): RosterBackgroundCsvRow[]
   });
 }
 
+const siteNoiseWords = /\b(?:seventh day adventist|sda|church|company|group|pathfinders?|adventurers?|club)\b/g;
+const siteNoiseWordSet = new Set(["seventh", "day", "adventist", "sda", "church", "company", "group", "pathfinder", "pathfinders", "adventurer", "adventurers", "club"]);
+const genericStemWords = new Set(["adventist", "seventh", "day", "first", "central"]);
+const usStateCodes = new Set((
+  "al ak az ar ca co ct de dc fl ga hi id il in ia ks ky la me md ma mi mn ms mo mt ne nv nh nj nm ny nc nd oh ok or pa ri sc sd tn tx ut vt va wa wv wi wy"
+).split(" "));
+
+function siteStem(value: string) {
+  return matchableName(value.replace(/[-‐-―]/g, " ")).replace(siteNoiseWords, " ").replace(/\s+/g, " ").trim();
+}
+
+/** A stem too short or too generic to identify a site: never used for matching. */
+function isGenericStem(stem: string) {
+  if (stem.length < 3) return true;
+  const words = stem.split(" ");
+  return words.every((word) => genericStemWords.has(word) || usStateCodes.has(word));
+}
+
+function parenthesesBalanced(value: string) {
+  let depth = 0;
+  for (const char of value) {
+    if (char === "(") depth += 1;
+    else if (char === ")") {
+      depth -= 1;
+      if (depth < 0) return false;
+    }
+  }
+  return depth === 0;
+}
+
+/** True when a piece is just a state code, optionally followed by church words ("MO SDA Church"). */
+function startsWithStateCode(piece: string) {
+  const [first, ...rest] = matchableName(piece.replace(/[-‐-―]/g, " ")).split(" ");
+  return Boolean(first) && usStateCodes.has(first!) && first!.length === 2 && rest.every((word) => siteNoiseWordSet.has(word));
+}
+
+/**
+ * Splits a `sites` cell into sites on commas outside parentheses. With
+ * unbalanced parentheses it falls back to every comma. A piece that only
+ * carries a state code ("Springfield, MO SDA Church") stays with its site.
+ */
+function splitSiteList(value: string) {
+  const balanced = parenthesesBalanced(value);
+  const raw: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const char of value) {
+    if (balanced && char === "(") depth += 1;
+    else if (balanced && char === ")") depth -= 1;
+    if (char === "," && depth === 0) {
+      raw.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  raw.push(current);
+  const parts: string[] = [];
+  for (const piece of raw) {
+    if (parts.length > 0 && startsWithStateCode(piece)) parts[parts.length - 1] += `, ${piece}`;
+    else parts.push(piece);
+  }
+  return parts;
+}
+
+/** The part without one trailing parenthetical (the export's city suffix), or null when it has none. */
+function withoutTrailingParenthetical(part: string) {
+  const trimmed = part.trim();
+  if (!trimmed.endsWith(")") || !parenthesesBalanced(trimmed)) return null;
+  let depth = 0;
+  for (let index = trimmed.length - 1; index >= 0; index -= 1) {
+    if (trimmed[index] === ")") depth += 1;
+    else if (trimmed[index] === "(") {
+      depth -= 1;
+      if (depth === 0) return trimmed.slice(0, index);
+    }
+  }
+  return null;
+}
+
+/**
+ * Comparison keys for one row's `sites` cell (#572). A cell may hold several
+ * comma-separated sites. Each site gives its full stem, and, when it ends in
+ * a parenthetical (the export's city suffix), the stem without that one
+ * parenthetical. Other parenthetical text is part of the name: `Nevada (IA)`
+ * is never `Nevada (MO)`. The stem ignores case, accents, punctuation,
+ * "Seventh-day Adventist", "SDA", "Church", "Company", "Group", and club
+ * words; school and academy words stay. Empty or generic stems are dropped.
+ */
+export function siteStems(value: string): Set<string> {
+  const stems = new Set<string>();
+  for (const part of splitSiteList(value)) {
+    const variants = [part];
+    const trimmed = withoutTrailingParenthetical(part);
+    if (trimmed !== null) variants.push(trimmed);
+    for (const variant of variants) {
+      const stem = siteStem(variant);
+      if (stem && !isGenericStem(stem)) stems.add(stem);
+    }
+  }
+  return stems;
+}
+
+/** Comparison keys for a directory club or church name: the full stem only. */
+export function candidateSiteStems(value: string): Set<string> {
+  const stems = new Set<string>();
+  for (const part of splitSiteList(value)) {
+    const stem = siteStem(part);
+    if (stem && !isGenericStem(stem)) stems.add(stem);
+  }
+  return stems;
+}
+
 /** A club's own name or its sponsoring church's name, for the `sites` location check. */
 export function matchesSite(site: string, candidateSites: Iterable<string>) {
-  const target = matchableName(site);
-  if (!target) return false;
+  const targets = siteStems(site);
+  if (targets.size === 0) return false;
   for (const candidate of candidateSites) {
-    if (matchableName(candidate) === target) return true;
+    for (const stem of candidateSiteStems(candidate)) {
+      if (targets.has(stem)) return true;
+    }
   }
   return false;
 }

@@ -402,9 +402,8 @@ export function EventSettingsWorkspace({
               </select>
               <small>
                 Controls Clubs and churches navigation, club oversight, and club reports —
-                independent of billing mode. A club event can still charge attendees directly
-                (for example Man Camp): mark it Club or church here even when billing mode below
-                is Attendees pay online.
+                Club registration uses church billing. For an event where individuals pay
+                (for example Man Camp), choose General.
               </small>
             </label>
             <label>

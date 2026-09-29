@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   EventTemplateReferenceError,
   parseEventTemplatePayload,
+  templateBillingMode,
   validateEventTemplatePayloadReferences,
 } from "@/modules/event-templates/domain";
 import {
@@ -47,9 +48,26 @@ describe("starter event templates (#546)", () => {
     expect(payload.messageTemplateDefaults).toEqual([]);
     expect(payload.attendeeTypes).toEqual([]);
     expect(Object.keys(payload).sort()).toEqual([
-      "attendeeClassifications", "attendeeTypes", "audience", "brandingDefaults", "formTemplateKeys",
+      "attendeeClassifications", "attendeeTypes", "audience", "billingMode", "brandingDefaults", "formTemplateKeys",
       "messageTemplateDefaults", "moduleEnablement", "reportSelections", "starterKey",
     ]);
+  });
+
+  it("bills every CLUB starter to the church so directors can see the event (#565)", () => {
+    for (const starter of starterEventTemplates) {
+      const payload = parseEventTemplatePayload(starterPayload(starter));
+      expect(starter.billingMode).toBe(starter.audience === "CLUB" ? "DEFERRED_ORGANIZATION_INVOICE" : "ATTENDEE_PAY");
+      expect(payload.billingMode).toBe(starter.billingMode);
+      expect(templateBillingMode(payload)).toBe(starter.billingMode);
+    }
+    const honors = starterEventTemplates.find((starter) => starter.starterKey === "honors_weekend")!;
+    expect(templateBillingMode(parseEventTemplatePayload(starterPayload(honors)))).toBe("DEFERRED_ORGANIZATION_INVOICE");
+  });
+
+  it("applies church billing to a stored CLUB payload that predates the billing field", () => {
+    expect(templateBillingMode(parseEventTemplatePayload({ audience: "CLUB" }))).toBe("DEFERRED_ORGANIZATION_INVOICE");
+    expect(templateBillingMode(parseEventTemplatePayload({ audience: "GENERAL" }))).toBe("ATTENDEE_PAY");
+    expect(templateBillingMode(parseEventTemplatePayload({ audience: "CLUB", billingMode: "ATTENDEE_PAY" }))).toBe("ATTENDEE_PAY");
   });
 
   it("uses the CLUB audience for the club events and GENERAL for the rest", () => {
