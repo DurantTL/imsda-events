@@ -141,3 +141,73 @@ export function getEventPublishReadiness(
     optionalItems,
   };
 }
+
+/**
+ * Setup reminders that never block publishing (#593). Directors and staff
+ * still see them until the work is done: a location never edited, and a fee
+ * field with no amount (pricing is a human decision, so nothing sets it for
+ * them).
+ */
+export type EventReadinessWarning = {
+  id: string;
+  label: string;
+  detail: string;
+};
+
+/** A location saved within this long of its creation counts as never edited. */
+const NEVER_EDITED_WINDOW_MS = 1000;
+
+/**
+ * A location with no dates of its own uses the event's dates, so blank dates
+ * are valid. Warn only "until edited": an active location with neither a first
+ * nor a last day that nobody has saved since it was created (for example one a
+ * starter made). One date set, or any save by staff, never warns.
+ */
+export function getLocationDateWarnings(
+  locations: ReadonlyArray<{
+    name: string;
+    firstDay: string | null;
+    lastDay: string | null;
+    isActive: boolean;
+    createdAt: string | Date;
+    updatedAt: string | Date;
+  }>,
+): EventReadinessWarning[] {
+  return locations
+    .filter((location) => location.isActive
+      && !location.firstDay
+      && !location.lastDay
+      && Math.abs(new Date(location.updatedAt).getTime() - new Date(location.createdAt).getTime()) <= NEVER_EDITED_WINDOW_MS)
+    .map((location) => ({
+      id: `location-dates:${location.name}`,
+      label: `Check the dates for ${location.name}`,
+      detail: "It uses the event's dates until you set its own.",
+    }));
+}
+
+type FeeFieldShape = {
+  type: string;
+  scope?: string;
+  label: string;
+  priceCents?: number;
+};
+
+/**
+ * Labels of the per-attendee fee fields that have no amount: a CALCULATED
+ * attendee field with no `priceCents`. The label is the field's own, so
+ * "Fall Camporee fee" reads "Set the Fall Camporee fee".
+ */
+export function unpricedFeeFieldLabels(definition: { sections: ReadonlyArray<{ fields: ReadonlyArray<FeeFieldShape> }> }) {
+  return definition.sections
+    .flatMap((section) => section.fields)
+    .filter((field) => field.type === "CALCULATED" && field.scope === "ATTENDEE" && field.priceCents === undefined)
+    .map((field) => field.label);
+}
+
+export function getFeeWarnings(unpricedLabels: readonly string[]): EventReadinessWarning[] {
+  return [...new Set(unpricedLabels)].map((label) => ({
+    id: `fee:${label}`,
+    label: `Set the ${label}`,
+    detail: "No amount is set. Choose the fee in the registration builder before publishing.",
+  }));
+}

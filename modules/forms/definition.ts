@@ -982,6 +982,63 @@ export const formTemplates: FormTemplate[] = [
   },
 ];
 
+/**
+ * Fall Camporee (#593), derived from the Spring Camporee export so the club
+ * contact fields and the roster fields stay in step: only the club section,
+ * the tents and kitchen canopy, and the roster carry over. Spring's duties,
+ * special activities, meal sponsorship and milestones are left out. The fee
+ * field deliberately has no amount: pricing is a human decision, and
+ * readiness flags it ("Set the Fall Camporee fee").
+ */
+function buildFallCamporeeTemplate(spring: FormTemplate): FormTemplate {
+  const rekey = (id: string) => id.replace(/^sc_/, "fc_");
+  const section = (id: string) => {
+    const found = spring.definition.sections.find((entry) => entry.id === id);
+    if (!found) throw new Error(`Spring Camporee section ${id} is missing.`);
+    return found;
+  };
+  const cloneFields = (fields: RegistrationFormField[]) => fields.map((field) => ({ ...field, id: rekey(field.id) }));
+  const camping = section("sc_camping");
+  const roster = section("sc_roster");
+  return {
+    key: "fall_camporee",
+    name: "Fall Camporee",
+    description: "Club contact, campsite needs, complete roster, photo and video release, and the adult background-check requirement. No prices are set.",
+    audience: "Club / group",
+    definition: {
+      title: "Fall Camporee registration",
+      description: "Register the club once, choose the Camporee location, and add every attendee.",
+      confirmationMessage: "Your Fall Camporee registration has been received. The calculated registration amount will be invoiced.",
+      attendeeRoster: { ...spring.definition.attendeeRoster!, enabled: true },
+      sections: [
+        { ...section("sc_club"), id: "fc_club", fields: cloneFields(section("sc_club").fields) },
+        {
+          id: "fc_camping",
+          title: "Camping",
+          description: "Describe the campsite the club needs.",
+          fields: cloneFields(camping.fields.filter((field) => field.key === "tents" || field.key === "kitchen_canopy")),
+        },
+        {
+          ...roster,
+          id: "fc_roster",
+          fields: cloneFields(roster.fields).map((field) => field.key === "registration_fee"
+            ? templateField(field.id, "registration_fee", "Fall Camporee fee", "CALCULATED", false, [], { scope: "ATTENDEE" })
+            : field),
+        },
+        { id: "fc_acknowledgments", title: "Release & background checks", description: "The director confirms both before submitting.", fields: [
+          templateField("fc_photo_release", "photo_video_release", "Photo and video release", "CHECKBOX", true, [], { placeholder: "I give permission for photos and video of our club's members to be taken and used by the Camporee organizers." }),
+          templateField("fc_background_ack", "background_check_acknowledgment", "Adult background checks", "CHECKBOX", true, [], { placeholder: "I understand every adult attending with our club must have a background check on file." }),
+        ] },
+      ],
+    },
+  };
+}
+
+{
+  const springIndex = formTemplates.findIndex((template) => template.key === "spring_camporee_export");
+  if (springIndex >= 0) formTemplates.splice(springIndex + 1, 0, buildFallCamporeeTemplate(formTemplates[springIndex]!));
+}
+
 export function getFormTemplate(key: string) {
   return formTemplates.find((template) => template.key === key) ?? null;
 }

@@ -43,6 +43,8 @@ function dataSource(overrides: {
   const reads = {
     event: { findUnique: vi.fn().mockResolvedValue(event) },
     registrationFormVersion: { count: vi.fn().mockResolvedValue(overrides.publishedFormCount ?? 1) },
+    registrationForm: { findMany: vi.fn().mockResolvedValue([]) },
+    eventLocation: { findMany: vi.fn().mockResolvedValue([]) },
     eventMessageSettings: { findFirst: vi.fn().mockResolvedValue(overrides.settings === null ? null : overrides.settings ?? { deliveryMode: "EXTERNAL_EMAIL", senderEmail: "notifications@imsda.org", replyToEmail: "registration@imsda.org" }) },
     eventMessageTemplate: { findMany: vi.fn().mockResolvedValue(templates) },
     registration: { findMany: vi.fn().mockResolvedValue(overrides.registrations ?? [{ totalAmount: 0, attendees: [{ formResponses: { shirt_size: "Adult M" } }], payments: [] }]) },

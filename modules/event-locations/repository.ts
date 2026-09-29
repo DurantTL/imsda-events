@@ -43,6 +43,7 @@ function serialize(
     remaining: remainingLocationSeats(location.capacity, usage.occupied),
     /** Registrations of any status that name this location: deletion is refused while there are any. */
     registrations: usage.registrations,
+    createdAt: location.createdAt.toISOString(),
     updatedAt: location.updatedAt.toISOString(),
   };
 }

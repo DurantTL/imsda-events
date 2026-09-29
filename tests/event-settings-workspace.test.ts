@@ -59,6 +59,7 @@ const baseEventFields = {
 const baseEvent: EventSettingsRecord = {
   ...baseEventFields,
   readiness: getEventPublishReadiness(baseEventFields, baseEventFields.publishedFormCount),
+  warnings: [],
 };
 
 /**

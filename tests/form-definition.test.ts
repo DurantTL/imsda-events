@@ -23,7 +23,7 @@ function ageForm(ageBounds?: { minimumAge: number | null; maximumAge: number | n
 
 describe("registration form definitions", () => {
   it("ships valid starter templates", () => {
-    expect(formTemplates).toHaveLength(10);
+    expect(formTemplates).toHaveLength(11);
     for (const template of formTemplates) expect(registrationFormDefinitionSchema.safeParse(template.definition).success).toBe(true);
   });
 

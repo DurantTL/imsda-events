@@ -11,6 +11,7 @@ import {
   remainingEventCapacity,
 } from "@/modules/events/lifecycle";
 import { CLUB_EVENT_BILLING_MESSAGE, getEventPublishReadiness } from "@/modules/events/readiness";
+import { collectEventReadinessWarnings } from "@/modules/events/readiness-warnings";
 import type { EventSettingsInput } from "@/modules/events/schemas";
 
 export class EventOperationError extends Error {
@@ -214,6 +215,7 @@ export async function getEventSettings(eventId: string) {
   return {
     ...view,
     readiness: getEventPublishReadiness(view, publishedFormCount),
+    warnings: await collectEventReadinessWarnings(prisma, eventId),
   };
 }
 
