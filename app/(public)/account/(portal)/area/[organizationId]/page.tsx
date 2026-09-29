@@ -40,6 +40,9 @@ export default async function AreaClubPage({ params }: { params: Promise<{ organ
         <Link className="secondary-button" href={`/account/area/${organizationId}/awards`}>
           <Package aria-hidden="true" size={14} /> Earned awards
         </Link>
+        <Link className="secondary-button" href={`/account/area/${organizationId}/forms`}>
+          <Package aria-hidden="true" size={14} /> Club forms
+        </Link>
         <p className="inline-notice" role="status">
           <Eye aria-hidden="true" size={14} /> View only. You see what the club&apos;s director sees, with ages instead of
           birth dates. The club makes changes.

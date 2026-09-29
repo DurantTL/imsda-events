@@ -39,6 +39,8 @@ function counts(overrides: Record<string, number> = {}) {
     monthlyReports: 3,
     externalIdentities: 0,
     sponsoredPromoCodes: 0,
+    clubFormSubmissions: 0,
+    clubFormLinks: 0,
     ...overrides,
   };
 }
@@ -85,6 +87,21 @@ describe("deleting Clubs and churches (#386)", () => {
 
     mocks.orgFindUnique.mockResolvedValueOnce({ id: "church-1", type: "CHURCH", name: "Test Church", _count: counts({ sponsoredPromoCodes: 1 }) });
     await expect(deleteOrganization("church-1", "Test Church", "admin-1")).rejects.toMatchObject({ code: "ORGANIZATION_DELETE_BLOCKED" });
+    expect(mocks.orgDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it("keeps a club with filled club forms or private links, and says why (#610)", async () => {
+    mocks.orgFindUnique.mockResolvedValueOnce(club({ clubFormSubmissions: 3, clubFormLinks: 1 }));
+    const check = await getOrganizationDeletionCheck("club-1");
+    expect(check.blockers).toHaveLength(1);
+    expect(check.blockers[0]).toMatch(/3 filled club forms and 1 private link/);
+    expect(check.blockers[0]).toMatch(/Deactivate the club instead/);
+
+    mocks.orgFindUnique.mockResolvedValueOnce(club({ clubFormLinks: 2 }));
+    expect((await getOrganizationDeletionCheck("club-1")).blockers[0]).toMatch(/0 filled club forms and 2 private links/);
+
+    mocks.orgFindUnique.mockResolvedValueOnce(club({ clubFormSubmissions: 1 }));
+    await expect(deleteOrganization("club-1", "Test Pathfinders", "admin-1")).rejects.toMatchObject({ code: "ORGANIZATION_DELETE_BLOCKED" });
     expect(mocks.orgDeleteMany).not.toHaveBeenCalled();
   });
 
