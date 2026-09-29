@@ -31,6 +31,8 @@ vi.mock("@/modules/attendee-accounts/portal-second-step", () => ({
 }));
 vi.mock("@/modules/organizations/director-access", () => ({ listDirectedClubs: mocks.listDirectedClubs }));
 const attendeeMfaStatus = vi.hoisted(() => vi.fn());
+const attendeePasskeys = vi.hoisted(() => vi.fn());
+vi.mock("@/modules/attendee-accounts/passkeys", () => ({ getPasskeySettings: attendeePasskeys }));
 vi.mock("@/modules/attendee-accounts/mfa-service", () => ({ getAttendeeMfaStatus: attendeeMfaStatus }));
 vi.mock("@/modules/access/mfa-service", () => ({ getMfaStatus: mocks.getMfaStatus }));
 vi.mock("@/modules/access/passkeys", () => ({ getPasskeySettings: mocks.getPasskeySettings }));
@@ -112,6 +114,7 @@ describe("/profile", () => {
 
   it("confirms two-step verification is on only when an authenticator is really active (#568)", async () => {
     signedIn({ attendee: true });
+    attendeePasskeys.mockResolvedValue({ available: true, passkeys: [] });
     attendeeMfaStatus.mockResolvedValue({ status: "ACTIVE" });
     expect(await render({ twoStep: "on" })).toContain("Two-step verification is on.");
     expect(await render()).not.toContain("Two-step verification is on.");
@@ -119,6 +122,9 @@ describe("/profile", () => {
     expect(await render({ twoStep: "on" })).not.toContain("Two-step verification is on.");
     attendeeMfaStatus.mockResolvedValue({ status: "PENDING" });
     expect(await render({ twoStep: "on" })).not.toContain("Two-step verification is on.");
+    // A registered passkey counts too.
+    attendeePasskeys.mockResolvedValue({ available: true, passkeys: [{ id: "pk1" }] });
+    expect(await render({ twoStep: "on" })).toContain("Two-step verification is on.");
   });
 
   it("renders only the registration account for an attendee", async () => {

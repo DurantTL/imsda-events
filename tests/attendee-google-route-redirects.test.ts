@@ -171,6 +171,34 @@ describe("Google attendee route redirects", () => {
       expect(mocks.cookieSet).toHaveBeenCalledWith("imsda_attendee_oauth_next", "", expect.objectContaining({ maxAge: 0 }));
     });
 
+    it("callback clears the next cookie on denied, expired-state and thrown-error paths", async () => {
+      const cleared = () => mocks.cookieSet.mock.calls.some(
+        ([name, value, options]) => name === "imsda_attendee_oauth_next" && value === "" && options.maxAge === 0,
+      );
+      const base = "http://10.42.0.19:3100/api/attendee/oauth/google/callback";
+      withNextCookie("/account/clubs/club-1/roster");
+      await callback(new Request(`${base}?error=access_denied`));
+      expect(cleared()).toBe(true);
+
+      mocks.cookieSet.mockClear();
+      withNextCookie("/account/clubs/club-1/roster");
+      await callback(new Request(`${base}?code=c&state=wrong-state`));
+      expect(cleared()).toBe(true);
+
+      mocks.cookieSet.mockClear();
+      withNextCookie("/account/clubs/club-1/roster");
+      mocks.exchangeGoogleAuthorizationCode.mockRejectedValueOnce(new Error("boom"));
+      const response = await callback(callbackRequest());
+      expect(response.headers.get("location")).toContain("error=google-failed");
+      expect(cleared()).toBe(true);
+    });
+
+    it("start with no next deletes an old cookie", async () => {
+      await start(new Request("http://10.42.0.19:3100/api/attendee/oauth/google/start"));
+      expect(mocks.cookieDelete).toHaveBeenCalledWith({ name: "imsda_attendee_oauth_next", path: "/api/attendee/oauth" });
+      expect(mocks.cookieSet.mock.calls.some(([name]) => name === "imsda_attendee_oauth_next")).toBe(false);
+    });
+
     it("callback revalidates and falls back to /account for a tampered cookie", async () => {
       for (const bad of ["https://evil.example/", "//evil.example", "/account/%2e%2e/admin"]) {
         withNextCookie(bad);

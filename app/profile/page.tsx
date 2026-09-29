@@ -9,6 +9,8 @@ import { MfaManager, type MfaStatus } from "@/components/mfa-manager";
 import { SignOutButton } from "@/components/sign-out-button";
 import { StaffPasskeyManager } from "@/components/staff-passkey-manager";
 import { getCurrentSession } from "@/modules/access/current-session";
+import { twoStepRedirectPath } from "@/modules/attendee-accounts/return-redirect";
+import { getPasskeySettings as getAttendeePasskeySettings } from "@/modules/attendee-accounts/passkeys";
 import { getAttendeeMfaStatus } from "@/modules/attendee-accounts/mfa-service";
 import { getMfaStatus } from "@/modules/access/mfa-service";
 import { getPasskeySettings } from "@/modules/access/passkeys";
@@ -48,16 +50,21 @@ export default async function ProfilePage({
   // A club role that hasn't passed its second step sees nothing of its
   // registration account yet. Attendee-only visitors go to finish it.
   const secondStepPending = attendeeAccount ? await attendeeSecondStepPending() : false;
-  if (!staff && secondStepPending) redirect("/account/two-step");
+  if (!staff && secondStepPending) redirect(await twoStepRedirectPath());
 
   const [mfaStatus, passkeySettings] = staff
     ? await Promise.all([getMfaStatus(staff.id) as Promise<MfaStatus>, getPasskeySettings(staff)])
     : [null, null];
-  // The confirmation banner is only true when an authenticator is really on (#568).
-  const showTwoStepOn = Boolean(
-    twoStep === "on" && attendeeAccount && !secondStepPending
-    && (await getAttendeeMfaStatus(attendeeAccount.id)).status === "ACTIVE",
-  );
+  // The confirmation banner is only true when a second step really is on: an
+  // active authenticator or a registered passkey (#568).
+  let showTwoStepOn = false;
+  if (twoStep === "on" && attendeeAccount && !secondStepPending) {
+    const [authenticator, passkeys] = await Promise.all([
+      getAttendeeMfaStatus(attendeeAccount.id),
+      getAttendeePasskeySettings(attendeeAccount.id, sessionId),
+    ]);
+    showTwoStepOn = authenticator.status === "ACTIVE" || passkeys.passkeys.length > 0;
+  }
   const clubs = attendeeAccount && !secondStepPending ? await listDirectedClubs(attendeeAccount.id) : [];
 
   // The same banner the workspace and portal layouts show while a system
