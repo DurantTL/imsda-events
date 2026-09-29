@@ -33,6 +33,8 @@ export function ClubYearEndConference({ reportYear, initialRows }: { reportYear:
         return;
       }
       setRows((current) => current.map((item) => (item.id === row.id ? { ...item, status: "DRAFT", submittedAt: null, late: false, totalMembership: null } : item)));
+    } catch {
+      setError("The report could not be reopened. Check your connection and try again.");
     } finally {
       setBusyId(null);
     }

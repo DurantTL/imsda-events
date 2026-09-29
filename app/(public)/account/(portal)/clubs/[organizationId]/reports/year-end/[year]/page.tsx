@@ -5,7 +5,7 @@ import { ClubYearEndReportForm } from "@/components/club-year-end-report-form";
 import { getClubRoleAccessForPage } from "@/modules/club-rosters/access";
 import {
   formatReportYearDueDate,
-  isReportYearOpen,
+  isReportYearReportable,
   isYearEndLockedForClub,
   reportYearSpanLabel,
 } from "@/modules/club-reports/year-end-domain";
@@ -28,7 +28,7 @@ export default async function ClubYearEndReportPage({ params }: { params: Promis
     );
   }
   const now = new Date();
-  if (!isReportYearOpen(year, now)) notFound();
+  if (!isReportYearReportable(year, now)) notFound();
   const view = await getYearEndView(organizationId, year, now);
   const report = view.report;
   const status = report?.status ?? null;

@@ -51,15 +51,20 @@ export function latestStartedReportYear(now: Date) {
   return reportYearLabel(month >= YEAR_END_START_MONTH ? year : year - 1);
 }
 
-/** A club may file a year once it has begun, and never before. */
-export function isReportYearOpen(reportYear: string, now: Date) {
-  return isReportYear(reportYear) && reportYearStart(reportYear) <= reportYearStart(latestStartedReportYear(now));
-}
-
-/** The years a club sees: the newest started year and the one before it, newest first. */
+/** The years a club may view and save: the newest started year and the one before it, newest first. */
 export function reportableReportYears(now: Date) {
   const latest = reportYearStart(latestStartedReportYear(now));
   return [reportYearLabel(latest), reportYearLabel(latest - 1)];
+}
+
+/** Whether a club may save this year's report right now: only the current and previous Pathfinder year. */
+export function isReportYearReportable(reportYear: string, now: Date) {
+  return isReportYear(reportYear) && reportableReportYears(now).includes(reportYear);
+}
+
+/** The first instant of the year (May 1, midnight Central daylight time), for comparing roster timestamps. */
+export function reportYearStartInstant(reportYear: string) {
+  return new Date(Date.UTC(reportYearStart(reportYear), YEAR_END_START_MONTH - 1, 1, 5, 0, 0));
 }
 
 /** Whether `date` (a calendar date) falls inside the Pathfinder year, inclusive. */
@@ -264,9 +269,11 @@ export function splitYearEndValues(values: Record<string, number | null | undefi
 /**
  * Grade isn't stored anywhere, so the roster falls back to age on the report
  * date, using the paper form's bands: grades 5-7 = ages 10-12, grades 8-10 =
- * 13-15, grades 11-12 = 16-18. Ages outside 10-18 go to the nearest band.
+ * 13-15, grades 11-12 = 16-18. Any other age has no band (null): those members
+ * are counted as "not placed" rather than folded into the nearest band.
  */
-export function gradeBandForAge(age: number): GradeBand {
+export function gradeBandForAge(age: number): GradeBand | null {
+  if (age < 10 || age > 18) return null;
   if (age <= 12) return "57";
   if (age <= 15) return "810";
   return "1112";
@@ -282,28 +289,36 @@ export type RosterCountMember = {
 
 export type RosterPrefill = {
   counts: Record<string, number>;
-  /** Members left out of a cell because their gender or age isn't on file: counts only. */
-  unplaced: { membersWithoutGender: number; membersWithoutAge: number; staffWithoutGender: number };
-  /** TLTs on the roster; their level (1 to 4) isn't stored, so the level cells stay manual. */
+  /** Members left out of a cell because a gender or age isn't usable: counts only, never names. */
+  unplaced: {
+    membersWithoutGender: number;
+    membersWithoutAge: number;
+    /** Members whose age is under 10 or over 18: outside the paper form's bands, and out of the membership totals. */
+    membersAgeOutsideBands: number;
+    staffWithoutGender: number;
+  };
+  /** TLTs on the roster (youth, or staff with the TLT class); their level (1 to 4) isn't stored, so the level cells stay manual. */
   tltsOnRoster: number;
 };
 
 /**
- * Sections 1 and 2 from the roster. Membership is youth members (TLTs
- * included; Underage children aren't club members), by age band and gender.
- * Staff is registered STAFF, not TLTs, by gender. Members without a gender
- * (or, for membership, an age) can't be placed and are counted separately so
- * the director knows to fill the gap.
+ * Sections 1 and 2 from the roster. Membership is youth members plus anyone
+ * with the TLT class level, staff included (the form says membership includes
+ * TLTs), by age band and gender. Underage children aren't club members. Staff
+ * is registered STAFF who aren't TLTs, by gender. A member without a gender or
+ * a usable age, or with an age outside 10 to 18, can't be placed and is counted
+ * separately so the director knows to fill the gap.
  */
 export function prefillFromRoster(members: readonly RosterCountMember[]): RosterPrefill {
   const counts: Record<string, number> = {};
   for (const key of [...membershipKeys, ...staffKeys]) counts[key] = 0;
-  const unplaced = { membersWithoutGender: 0, membersWithoutAge: 0, staffWithoutGender: 0 };
+  const unplaced = { membersWithoutGender: 0, membersWithoutAge: 0, membersAgeOutsideBands: 0, staffWithoutGender: 0 };
   let tltsOnRoster = 0;
   for (const member of members) {
     const gender = member.gender === "MALE" ? "Male" : member.gender === "FEMALE" ? "Female" : null;
-    if (member.classLevel === "TLT" && member.attendeeType === "YOUTH") tltsOnRoster += 1;
-    if (member.attendeeType === "YOUTH") {
+    const isTlt = member.classLevel === "TLT" && (member.attendeeType === "YOUTH" || member.attendeeType === "STAFF");
+    if (isTlt) tltsOnRoster += 1;
+    if (member.attendeeType === "YOUTH" || isTlt) {
       if (!gender) {
         unplaced.membersWithoutGender += 1;
         continue;
@@ -312,8 +327,13 @@ export function prefillFromRoster(members: readonly RosterCountMember[]): Roster
         unplaced.membersWithoutAge += 1;
         continue;
       }
-      counts[`member${gender}${gradeBandForAge(member.age)}`] += 1;
-    } else if (member.attendeeType === "STAFF" && member.classLevel !== "TLT") {
+      const band = gradeBandForAge(member.age);
+      if (!band) {
+        unplaced.membersAgeOutsideBands += 1;
+        continue;
+      }
+      counts[`member${gender}${band}`] += 1;
+    } else if (member.attendeeType === "STAFF") {
       if (!gender) {
         unplaced.staffWithoutGender += 1;
         continue;
@@ -322,6 +342,20 @@ export function prefillFromRoster(members: readonly RosterCountMember[]): Roster
     }
   }
   return { counts, unplaced, tltsOnRoster };
+}
+
+/**
+ * Whether a roster row counts for the year: currently ACTIVE, or it stopped
+ * being active (went inactive or was removed) on or after the year's first
+ * day, so it was active at some point in the year. `stoppedAt` is the row's
+ * `removedAt`, or its last update when it has no removal date.
+ */
+export function wasActiveDuringYear(
+  member: { status: "ACTIVE" | "INACTIVE" | "REMOVED"; removedAt: Date | null; updatedAt: Date },
+  reportYear: string,
+) {
+  if (member.status === "ACTIVE") return true;
+  return (member.removedAt ?? member.updatedAt) >= reportYearStartInstant(reportYear);
 }
 
 /**
@@ -341,20 +375,37 @@ export function prefillInvestitures(completions: ReadonlyArray<{ classLevel: str
   return counts;
 }
 
+export type HonorEntryFact = {
+  personId: string;
+  honorId: string;
+  status: string;
+  completionDate: string;
+  /** The club that recorded the entry. */
+  organizationId: string;
+  voided: boolean;
+  isMaster: boolean;
+};
+
 /**
- * Sections 8 and 9 from current honor status (voided entries are already
- * skipped by `currentHonorsFromHistory`, #591): completed with a date inside
- * the year. Master Awards are counted apart from other honors.
+ * Sections 8 and 9. `entries` are every entry for the roster's people, newest
+ * first (highest `seq` first), voided ones included. Current status per
+ * (person, honor) is the latest non-voided entry (#591, the same rule as
+ * `currentHonorsFromHistory`). Only a current entry this club recorded counts,
+ * and only when COMPLETED with a date inside the year, so an honor recorded by
+ * another club is never counted here. Master Awards are counted apart.
  */
-export function prefillHonors(
-  honors: ReadonlyArray<{ status: string; completionDate: string; isMaster: boolean }>,
-  reportYear: string,
-) {
+export function prefillHonorsForClub(entries: readonly HonorEntryFact[], clubId: string, reportYear: string) {
+  const current = new Map<string, HonorEntryFact>();
+  for (const entry of entries) {
+    if (entry.voided) continue;
+    const key = `${entry.personId}:${entry.honorId}`;
+    if (!current.has(key)) current.set(key, entry);
+  }
   let regular = 0;
   let masters = 0;
-  for (const honor of honors) {
-    if (honor.status !== "COMPLETED" || !isInReportYear(honor.completionDate, reportYear)) continue;
-    if (honor.isMaster) masters += 1;
+  for (const entry of current.values()) {
+    if (entry.organizationId !== clubId || entry.status !== "COMPLETED" || !isInReportYear(entry.completionDate, reportYear)) continue;
+    if (entry.isMaster) masters += 1;
     else regular += 1;
   }
   return { honors: regular, honorMasters: masters };

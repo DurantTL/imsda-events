@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * The Pathfinder Year-End Report (#607): year boundaries, each pre-fill rule,
@@ -15,7 +15,6 @@ const mocks = vi.hoisted(() => ({
   reportUpdate: vi.fn(),
   rosterFindMany: vi.fn(),
   completionFindMany: vi.fn(),
-  honorFindMany: vi.fn(),
   entryFindMany: vi.fn(),
   getCurrentAttendee: vi.fn(),
   listDirectedClubs: vi.fn(),
@@ -34,7 +33,6 @@ const client = {
   },
   clubRosterMember: { findMany: mocks.rosterFindMany },
   memberClassCompletion: { findMany: mocks.completionFindMany },
-  honor: { findMany: mocks.honorFindMany },
   memberHonorEntry: { findMany: mocks.entryFindMany },
   $transaction: (work: (tx: unknown) => unknown) => work(client),
 };
@@ -54,6 +52,7 @@ vi.mock("@/modules/club-rosters/birth-dates", () => ({ openBirthDate: (sealed: s
 import { PUT } from "@/app/api/attendee/clubs/[organizationId]/year-end-reports/[year]/route";
 import { GET as EXPORT } from "@/app/api/admin/club-reports/year-end/export/route";
 import { POST as REOPEN } from "@/app/api/admin/club-reports/year-end/[organizationId]/[year]/reopen/route";
+import ClubYearEndReportPage from "@/app/(public)/account/(portal)/clubs/[organizationId]/reports/year-end/[year]/page";
 import { AccessDeniedError } from "@/modules/access/authorization";
 import { yearEndReportCsv } from "@/modules/club-reports/year-end-csv";
 import {
@@ -63,11 +62,12 @@ import {
   isLateYearEndReport,
   isPastDue,
   isReportYear,
-  isReportYearOpen,
   isYearEndLockedForClub,
   latestStartedReportYear,
   prefillFromRoster,
-  prefillHonors,
+  prefillHonorsForClub,
+  wasActiveDuringYear,
+  isReportYearReportable,
   prefillInvestitures,
   reportYearRange,
   reportableReportYears,
@@ -122,12 +122,11 @@ const stored = (data: Record<string, unknown>) => ({
 });
 
 const member = (data: Record<string, unknown>) => ({
-  attendeeType: "YOUTH", classLevel: null, gender: "MALE", reportedAge: null, sealedBirthDate: null, ...data,
+  attendeeType: "YOUTH", classLevel: null, gender: "MALE", reportedAge: null, sealedBirthDate: null,
+  personId: null, status: "ACTIVE", removedAt: null, updatedAt: new Date("2026-09-01T00:00:00Z"), ...data,
 });
 
-/** The roster read for counts and the one for honors share a table; only the honors read selects `person`. */
-const rosterRows = (rows: unknown[], honorMembers: unknown[] = []) =>
-  mocks.rosterFindMany.mockImplementation((args: { select: Record<string, unknown> }) => Promise.resolve(args.select.person ? honorMembers : rows));
+const rosterRows = (rows: unknown[]) => mocks.rosterFindMany.mockResolvedValue(rows);
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -139,7 +138,6 @@ beforeEach(() => {
   mocks.reportUpdate.mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve(stored(data)));
   rosterRows([]);
   mocks.completionFindMany.mockResolvedValue([]);
-  mocks.honorFindMany.mockResolvedValue([]);
   mocks.entryFindMany.mockResolvedValue([]);
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
   mocks.currentStaffActingContext.mockResolvedValue(null);
@@ -169,8 +167,11 @@ describe("the May 1 to April 30 Pathfinder year", () => {
     expect(latestStartedReportYear(new Date("2026-05-01T06:00:00Z"))).toBe("2026-27");
     expect(latestStartedReportYear(NOW)).toBe("2026-27");
     expect(reportableReportYears(NOW)).toEqual(["2026-27", "2025-26"]);
-    expect(isReportYearOpen("2026-27", NOW)).toBe(true);
-    expect(isReportYearOpen("2027-28", NOW)).toBe(false);
+    // Only the current and previous years can be saved, never a future or an older one.
+    expect(isReportYearReportable("2026-27", NOW)).toBe(true);
+    expect(isReportYearReportable("2025-26", NOW)).toBe(true);
+    expect(isReportYearReportable("2027-28", NOW)).toBe(false);
+    expect(isReportYearReportable("2024-25", NOW)).toBe(false);
   });
 
   it("works out ages on the year's last day, or today while the year is running", () => {
@@ -187,10 +188,36 @@ describe("the May 1 to April 30 Pathfinder year", () => {
 });
 
 describe("roster pre-fill (sections 1 to 4)", () => {
-  it("maps age to the paper form's bands", () => {
-    expect([9, 10, 12].map(gradeBandForAge)).toEqual(["57", "57", "57"]);
+  it("maps ages 10 to 18 to the paper form's bands, and nothing else", () => {
+    expect([10, 12].map(gradeBandForAge)).toEqual(["57", "57"]);
     expect([13, 15].map(gradeBandForAge)).toEqual(["810", "810"]);
-    expect([16, 18, 19].map(gradeBandForAge)).toEqual(["1112", "1112", "1112"]);
+    expect([16, 18].map(gradeBandForAge)).toEqual(["1112", "1112"]);
+    expect([9, 19].map(gradeBandForAge)).toEqual([null, null]);
+  });
+
+  it("counts youth under 10 or over 18 as not placed, out of every membership total", () => {
+    const result = prefillFromRoster([
+      { attendeeType: "YOUTH", classLevel: null, gender: "MALE", age: 9 },
+      { attendeeType: "YOUTH", classLevel: null, gender: "FEMALE", age: 19 },
+      { attendeeType: "YOUTH", classLevel: null, gender: "FEMALE", age: 10 },
+      { attendeeType: "YOUTH", classLevel: null, gender: "MALE", age: 18 },
+    ]);
+    expect(result.unplaced.membersAgeOutsideBands).toBe(2);
+    expect(result.counts).toMatchObject({ memberFemale57: 1, memberMale1112: 1, memberMale57: 0, memberFemale1112: 0 });
+    expect(yearEndTotals(result.counts).membership).toBe(2);
+  });
+
+  it("counts staff with the TLT class as TLT members, in membership and the TLT reference count, not as staff", () => {
+    const result = prefillFromRoster([
+      { attendeeType: "STAFF", classLevel: "TLT", gender: "FEMALE", age: 16 },
+      { attendeeType: "STAFF", classLevel: "TLT", gender: "MALE", age: 17 },
+      { attendeeType: "STAFF", classLevel: "TLT", gender: "MALE", age: 25 },
+      { attendeeType: "STAFF", classLevel: null, gender: "MALE", age: 30 },
+    ]);
+    expect(result.counts).toMatchObject({ memberFemale1112: 1, memberMale1112: 1, staffMale: 1, staffFemale: 0 });
+    expect(result.unplaced.membersAgeOutsideBands).toBe(1);
+    expect(result.tltsOnRoster).toBe(3);
+    expect(yearEndTotals(result.counts)).toMatchObject({ membership: 2, staff: 1 });
   });
 
   it("counts youth by gender and age band, TLTs included, and staff apart from TLTs", () => {
@@ -219,7 +246,7 @@ describe("roster pre-fill (sections 1 to 4)", () => {
       { attendeeType: "YOUTH", classLevel: null, gender: "MALE", age: null },
       { attendeeType: "STAFF", classLevel: null, gender: null, age: 33 },
     ]);
-    expect(result.unplaced).toEqual({ membersWithoutGender: 1, membersWithoutAge: 1, staffWithoutGender: 1 });
+    expect(result.unplaced).toEqual({ membersWithoutGender: 1, membersWithoutAge: 1, membersAgeOutsideBands: 0, staffWithoutGender: 1 });
     expect(yearEndTotals(result.counts).totalMembership).toBe(0);
   });
 
@@ -235,7 +262,7 @@ describe("roster pre-fill (sections 1 to 4)", () => {
     ]);
     const { values } = await yearEndPrefill("club-1", "2026-27", NOW);
     expect(values).toMatchObject({ memberFemale57: 1, memberMale57: 1, memberMale810: 1, staffFemale: 1 });
-    expect(mocks.rosterFindMany.mock.calls[0][0].where).toMatchObject({ organizationId: "club-1", clubYear: "2026-27", status: "ACTIVE" });
+    expect(mocks.rosterFindMany.mock.calls[0][0].where).toEqual({ organizationId: "club-1", clubYear: "2026-27" });
   });
 });
 
@@ -266,55 +293,95 @@ describe("investiture pre-fill (section 7)", () => {
 });
 
 describe("honor pre-fill (sections 8 and 9)", () => {
-  it("counts completed honors dated in the year, Masters apart, in-progress and out-of-year ignored", () => {
-    expect(prefillHonors([
-      { status: "COMPLETED", completionDate: "2026-06-01", isMaster: false },
-      { status: "COMPLETED", completionDate: "2027-04-30", isMaster: false },
-      { status: "COMPLETED", completionDate: "2026-04-30", isMaster: false },
-      { status: "IN_PROGRESS", completionDate: "", isMaster: false },
-      { status: "COMPLETED", completionDate: "2026-12-01", isMaster: true },
-    ], "2026-27")).toEqual({ honors: 2, honorMasters: 1 });
+  const fact = (data: Record<string, unknown>) => ({
+    personId: "p1", honorId: "h1", status: "COMPLETED", completionDate: "2026-10-01", organizationId: "club-1", voided: false, isMaster: false, ...data,
+  });
+  const dbEntry = (data: Record<string, unknown>) => ({
+    personId: "p1", honorId: "h1", status: "COMPLETED", completionDate: "2026-10-01", organizationId: "club-1", void: null, honor: { category: "NATURE" }, ...data,
   });
 
-  it("leaves out voided entries, so a voided completion isn't counted and an earlier one shows through", async () => {
-    mocks.rosterFindMany.mockImplementation((args: { select: Record<string, unknown> }) => Promise.resolve(
-      args.select.person
-        ? [{ id: "m1", classLevel: null, person: { id: "p1", firstName: "A", lastName: "B" } }, { id: "m2", classLevel: null, person: { id: "p2", firstName: "C", lastName: "D" } }]
-        : [],
-    ));
-    const entry = (data: Record<string, unknown>) => ({
-      note: "", createdAt: new Date("2026-08-01T00:00:00Z"), organizationId: "club-1",
-      honor: { code: "H", name: "An honor" }, recordedByAccount: null, recordedByUser: null, organization: { name: "Test Pathfinders" }, void: null,
-      ...data,
+  it("counts completed honors dated in the year, Masters apart, in-progress and out-of-year ignored", () => {
+    expect(prefillHonorsForClub([
+      fact({ honorId: "a", completionDate: "2026-06-01" }),
+      fact({ honorId: "b", completionDate: "2027-04-30" }),
+      fact({ honorId: "c", completionDate: "2026-04-30" }),
+      fact({ honorId: "d", status: "IN_PROGRESS", completionDate: "" }),
+      fact({ honorId: "e", completionDate: "2026-12-01", isMaster: true }),
+    ], "club-1", "2026-27")).toEqual({ honors: 2, honorMasters: 1 });
+  });
+
+  it("doesn't count an honor recorded at another organization", () => {
+    expect(prefillHonorsForClub([
+      fact({ honorId: "a" }),
+      fact({ honorId: "b", organizationId: "club-2" }),
+      fact({ honorId: "c", organizationId: "club-2", isMaster: true }),
+    ], "club-1", "2026-27")).toEqual({ honors: 1, honorMasters: 0 });
+    // Another club's later entry is the current status, so this club's earlier completion is no longer current.
+    expect(prefillHonorsForClub([
+      fact({ organizationId: "club-2", status: "IN_PROGRESS", completionDate: "" }),
+      fact({ organizationId: "club-1" }),
+    ], "club-1", "2026-27")).toEqual({ honors: 0, honorMasters: 0 });
+  });
+
+  it("reads counts only from the database: no name, note, or void reason is selected", async () => {
+    rosterRows([member({ personId: "p1" })]);
+    mocks.entryFindMany.mockResolvedValue([dbEntry({})]);
+    await yearEndPrefill("club-1", "2026-27", NOW);
+    expect(mocks.entryFindMany.mock.calls[0][0].select).toEqual({
+      personId: true, honorId: true, status: true, completionDate: true, organizationId: true,
+      void: { select: { id: true } },
+      honor: { select: { category: true } },
     });
-    const voided = { reason: "Recorded by mistake", createdAt: new Date("2026-09-01T00:00:00Z"), voidedByAccount: null, voidedByUser: null };
-    // Newest first, as the repository orders them.
+  });
+
+  it("leaves out voided entries and lets an earlier completion show through", async () => {
+    rosterRows([member({ personId: "p1" }), member({ personId: "p2" })]);
+    // Newest first, as the read orders them.
     mocks.entryFindMany.mockResolvedValue([
-      // p1: the newest COMPLETED entry is voided, so nothing in the year counts for this honor.
-      entry({ id: "e3", personId: "p1", honorId: "h1", status: "COMPLETED", completionDate: "2026-09-01", void: voided }),
-      entry({ id: "e2", personId: "p1", honorId: "h1", status: "IN_PROGRESS", completionDate: "" }),
-      // p2: a valid completion, and a Master Award completion.
-      entry({ id: "e5", personId: "p2", honorId: "h2", status: "COMPLETED", completionDate: "2026-10-01" }),
-      entry({ id: "e4", personId: "p2", honorId: "h3", status: "COMPLETED", completionDate: "2026-10-05" }),
-    ]);
-    mocks.honorFindMany.mockResolvedValue([
-      { id: "h1", category: "NATURE" }, { id: "h2", category: "NATURE" }, { id: "h3", category: "MASTER_AWARDS" },
+      // p1 / h1: the newest COMPLETED entry is voided; the one before it is in progress, so nothing counts.
+      dbEntry({ personId: "p1", honorId: "h1", void: { id: "v1" } }),
+      dbEntry({ personId: "p1", honorId: "h1", status: "IN_PROGRESS", completionDate: "" }),
+      // p1 / h4: latest completion voided, an earlier completion in the year shows through.
+      dbEntry({ personId: "p1", honorId: "h4", completionDate: "2026-11-01", void: { id: "v2" } }),
+      dbEntry({ personId: "p1", honorId: "h4", completionDate: "2026-07-01" }),
+      // p2: a valid completion and a Master Award.
+      dbEntry({ personId: "p2", honorId: "h2" }),
+      dbEntry({ personId: "p2", honorId: "h3", honor: { category: "MASTER_AWARDS" } }),
     ]);
     const { values } = await yearEndPrefill("club-1", "2026-27", NOW);
-    expect(values).toMatchObject({ honors: 1, honorMasters: 1 });
+    expect(values).toMatchObject({ honors: 2, honorMasters: 1 });
   });
 
-  it("falls back to the earlier completion when the latest one is voided", async () => {
-    mocks.rosterFindMany.mockImplementation((args: { select: Record<string, unknown> }) => Promise.resolve(
-      args.select.person ? [{ id: "m1", classLevel: null, person: { id: "p1", firstName: "A", lastName: "B" } }] : [],
-    ));
-    const base = { note: "", createdAt: new Date("2026-08-01T00:00:00Z"), organizationId: "club-1", honor: { code: "H", name: "An honor" }, recordedByAccount: null, recordedByUser: null, organization: { name: "T" }, personId: "p1", honorId: "h1", status: "COMPLETED" };
-    mocks.entryFindMany.mockResolvedValue([
-      { ...base, id: "e2", completionDate: "2026-11-01", void: { reason: "Wrong date entered", createdAt: new Date(), voidedByAccount: null, voidedByUser: null } },
-      { ...base, id: "e1", completionDate: "2026-07-01", void: null },
+  it("counts honors only for people who were active during the year", async () => {
+    rosterRows([
+      member({ personId: "p1" }),
+      member({ personId: "p2", status: "INACTIVE", updatedAt: new Date("2026-03-01T00:00:00Z") }),
     ]);
-    mocks.honorFindMany.mockResolvedValue([{ id: "h1", category: "NATURE" }]);
-    expect((await yearEndPrefill("club-1", "2026-27", NOW)).values.honors).toBe(1);
+    mocks.entryFindMany.mockResolvedValue([dbEntry({ personId: "p1" })]);
+    await yearEndPrefill("club-1", "2026-27", NOW);
+    expect(mocks.entryFindMany.mock.calls[0][0].where).toEqual({ personId: { in: ["p1"] } });
+  });
+});
+
+describe("who counts as a member during the year", () => {
+  const at = (iso: string) => new Date(iso);
+  it("counts ACTIVE rows, and rows that stopped on or after May 1, but not ones that stopped earlier", () => {
+    expect(wasActiveDuringYear({ status: "ACTIVE", removedAt: null, updatedAt: at("2020-01-01T00:00:00Z") }, "2026-27")).toBe(true);
+    expect(wasActiveDuringYear({ status: "INACTIVE", removedAt: null, updatedAt: at("2026-08-15T00:00:00Z") }, "2026-27")).toBe(true);
+    expect(wasActiveDuringYear({ status: "INACTIVE", removedAt: null, updatedAt: at("2026-05-01T05:00:00Z") }, "2026-27")).toBe(true);
+    expect(wasActiveDuringYear({ status: "INACTIVE", removedAt: null, updatedAt: at("2026-05-01T04:59:00Z") }, "2026-27")).toBe(false);
+    expect(wasActiveDuringYear({ status: "REMOVED", removedAt: at("2026-12-01T00:00:00Z"), updatedAt: at("2027-01-01T00:00:00Z") }, "2026-27")).toBe(true);
+    expect(wasActiveDuringYear({ status: "REMOVED", removedAt: at("2026-02-01T00:00:00Z"), updatedAt: at("2027-01-01T00:00:00Z") }, "2026-27")).toBe(false);
+  });
+
+  it("includes a member who went inactive mid-year in the pre-fill, and leaves out one inactive since before the year", async () => {
+    rosterRows([
+      member({ gender: "FEMALE", reportedAge: 11 }),
+      member({ gender: "FEMALE", reportedAge: 11, status: "INACTIVE", updatedAt: new Date("2026-08-20T00:00:00Z") }),
+      member({ gender: "FEMALE", reportedAge: 11, status: "INACTIVE", updatedAt: new Date("2026-02-20T00:00:00Z") }),
+    ]);
+    const { values } = await yearEndPrefill("club-1", "2026-27", NOW);
+    expect(values.memberFemale57).toBe(2);
   });
 });
 
@@ -392,10 +459,19 @@ describe("saving, locking and reopening", () => {
     expect(() => input({ status: "DRAFT", contactName: "", contactEmail: "" })).not.toThrow();
   });
 
-  it("refuses a year that hasn't started", async () => {
-    await expect(saveYearEndReport("club-1", "2027-28", input(), { accountId: "account-1" }, NOW))
-      .rejects.toMatchObject({ code: "CLUB_REPORT_YEAR_INVALID" });
+  it("refuses a year that isn't the current or the previous one", async () => {
+    for (const year of ["2027-28", "2024-25"]) {
+      await expect(saveYearEndReport("club-1", year, input(), { accountId: "account-1" }, NOW))
+        .rejects.toMatchObject({ code: "CLUB_REPORT_YEAR_INVALID" });
+    }
     expect(mocks.reportCreate).not.toHaveBeenCalled();
+    await expect(saveYearEndReport("club-1", "2025-26", input(), { accountId: "account-1" }, NOW)).resolves.toBeTruthy();
+  });
+
+  it("turns two racing first saves into a conflict, not a crash", async () => {
+    mocks.reportCreate.mockRejectedValue(Object.assign(new Error("Unique constraint failed"), { code: "P2002" }));
+    await expect(saveYearEndReport("club-1", "2026-27", input(), { accountId: "account-1" }, NOW))
+      .rejects.toMatchObject({ code: "CLUB_REPORT_CONFLICT" });
   });
 
   it("locks a submitted report for the club, including a staff act-as director, and lets a draft still be filed late", async () => {
@@ -482,6 +558,13 @@ describe("who may file, reopen, or export", () => {
   it("requires sign-in", async () => {
     mocks.getCurrentAttendee.mockResolvedValue({ account: null, via: null, sessionId: null });
     expect((await PUT(request(), ctx)).status).toBe(401);
+  });
+
+  it("answers 409 when two first saves race, and 400 for a year that isn't reportable", async () => {
+    directed("club-1", "DIRECTOR");
+    mocks.reportCreate.mockRejectedValue(Object.assign(new Error("Unique constraint failed"), { code: "P2002" }));
+    expect((await PUT(request(), ctx)).status).toBe(409);
+    expect((await PUT(request(), { params: Promise.resolve({ organizationId: "club-1", year: "2020-21" }) })).status).toBe(400);
   });
 
   it("answers 409 for a locked report and 400 for a bad year or body", async () => {
@@ -583,5 +666,53 @@ describe("staff list and CSV", () => {
     expect(bravo[column("Status")]).toBe("Not started");
     expect(bravo[column("Membership total")]).toBe("");
     expect(header.join(" ")).not.toMatch(/first name|last name|birth/i);
+  });
+});
+
+describe("the club portal page", () => {
+  const pageParams = (organizationId: string, year = "2026-27") => ({ params: Promise.resolve({ organizationId, year }) });
+  const directed = (organizationId: string, role: string) =>
+    mocks.listDirectedClubs.mockResolvedValue([{ organizationId, name: "Test Pathfinders", role, sponsoringChurch: null }]);
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("opens the report for a director, a deputy, and a reporter", async () => {
+    for (const role of ["DIRECTOR", "DEPUTY", "REPORTER"]) {
+      directed("club-1", role);
+      const page = await ClubYearEndReportPage(pageParams("club-1"));
+      expect(JSON.stringify(page), role).toContain('"reportYear":"2026-27"');
+    }
+  });
+
+  it("tells a registrar the report isn't theirs, and reads no data", async () => {
+    directed("club-1", "REGISTRAR");
+    const page = await ClubYearEndReportPage(pageParams("club-1"));
+    expect(JSON.stringify(page)).toContain("filed by the club");
+    expect(JSON.stringify(page)).not.toContain('"reportYear"');
+    expect(mocks.rosterFindMany).not.toHaveBeenCalled();
+  });
+
+  it("shows nothing for another club's director, or someone signed out", async () => {
+    directed("club-2", "DIRECTOR");
+    expect(await ClubYearEndReportPage(pageParams("club-1"))).toBeNull();
+    mocks.getCurrentAttendee.mockResolvedValue({ account: null, via: null, sessionId: null });
+    expect(await ClubYearEndReportPage(pageParams("club-1"))).toBeNull();
+    expect(mocks.rosterFindMany).not.toHaveBeenCalled();
+  });
+
+  it("is not found for a year outside the current and previous", async () => {
+    directed("club-1", "DIRECTOR");
+    await expect(ClubYearEndReportPage(pageParams("club-1", "2027-28"))).rejects.toThrow();
+    await expect(ClubYearEndReportPage(pageParams("club-1", "2024-25"))).rejects.toThrow();
+  });
+
+  it("opens a submitted report read-only", async () => {
+    directed("club-1", "DIRECTOR");
+    mocks.reportFindUnique.mockResolvedValue(stored({ status: "SUBMITTED", firstSubmittedAt: new Date("2026-10-01T15:00:00Z") }));
+    expect(JSON.stringify(await ClubYearEndReportPage(pageParams("club-1")))).toContain('"readOnly":true');
   });
 });

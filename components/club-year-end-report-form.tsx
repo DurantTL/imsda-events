@@ -20,7 +20,7 @@ type Contact = {
 };
 
 type PrefillMeta = {
-  unplaced: { membersWithoutGender: number; membersWithoutAge: number; staffWithoutGender: number };
+  unplaced: { membersWithoutGender: number; membersWithoutAge: number; membersAgeOutsideBands: number; staffWithoutGender: number };
   tltsOnRoster: number;
 } | null;
 
@@ -31,7 +31,7 @@ const sectionOrder: YearEndSection[] = [
 ];
 
 const originLabels = {
-  "roster-age": "from your roster, estimated from age (grade isn't stored)",
+  "roster-age": "from your roster, estimated from the age on file (grade isn't stored)",
   roster: "from your roster",
   "class-completions": "from your class completions",
   honors: "from your honor records",
@@ -80,14 +80,19 @@ export function ClubYearEndReportForm({
   ));
   const [contact, setContact] = useState<Contact>(initialContact);
   const [current, setCurrent] = useState(status);
+  const [isLate, setIsLate] = useState(late);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const locked = readOnly || current === "SUBMITTED";
 
   const totals = useMemo(
-    () => yearEndTotals(Object.fromEntries(yearEndFields.map((field) => [field.key, toCount(values[field.key] ?? "") ?? 0]))),
-    [values],
+    // A blank pre-filled field counts as its pre-filled number, exactly as the server resolves it.
+    () => yearEndTotals(Object.fromEntries(yearEndFields.map((field) => [
+      field.key,
+      toCount(values[field.key] ?? "") ?? (field.source === "prefill" ? (resolved[field.key]?.prefill ?? 0) : 0),
+    ]))),
+    [values, resolved],
   );
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
@@ -114,6 +119,7 @@ export function ClubYearEndReportForm({
       }
       setResolved(result.report.resolved);
       setCurrent(result.report.status);
+      setIsLate(result.report.late);
       setNotice(next === "DRAFT" ? "Draft saved." : "Report submitted. Thank you.");
     } catch {
       setError("The report could not be saved. Check your connection and try again.");
@@ -140,7 +146,7 @@ export function ClubYearEndReportForm({
         </p>
         {current && (
           <span className={`status-chip ${current === "DRAFT" ? "gold" : "green"}`}>
-            {current === "DRAFT" ? "Draft" : `Submitted${late ? " (late)" : ""}`}
+            {current === "DRAFT" ? "Draft" : `Submitted${isLate ? " (late)" : ""}`}
           </span>
         )}
       </div>
@@ -151,11 +157,17 @@ export function ClubYearEndReportForm({
           Submitted. It is closed to changes; ask the conference office to reopen it if something needs to change.
         </div>
       )}
-      {prefillMeta && (prefillMeta.unplaced.membersWithoutGender > 0 || prefillMeta.unplaced.membersWithoutAge > 0 || prefillMeta.unplaced.staffWithoutGender > 0) && (
+      <div className="inline-notice" role="note">
+        Counts include roster members who were active at any point during the Pathfinder year, and TLTs (staff with the TLT class included).
+        Youth are grouped by age on the roster, using the age on file.
+      </div>
+      {prefillMeta && (
         <div className="inline-notice" role="status">
-          Some roster members couldn&apos;t be counted because a gender or age isn&apos;t on file
-          ({prefillMeta.unplaced.membersWithoutGender + prefillMeta.unplaced.staffWithoutGender} without a gender,
-          {" "}{prefillMeta.unplaced.membersWithoutAge} without an age or birth date). Fix the roster, or adjust the numbers below.
+          Not placed (age outside 10–18): {prefillMeta.unplaced.membersAgeOutsideBands}. These members are left out of the membership totals.
+          {prefillMeta.unplaced.membersWithoutGender + prefillMeta.unplaced.staffWithoutGender > 0
+            ? ` ${prefillMeta.unplaced.membersWithoutGender + prefillMeta.unplaced.staffWithoutGender} more have no gender on file.` : ""}
+          {prefillMeta.unplaced.membersWithoutAge > 0 ? ` ${prefillMeta.unplaced.membersWithoutAge} more have no age or birth date on file.` : ""}
+          {" "}Fix the roster, or adjust the numbers below.
         </div>
       )}
       {prefillMeta && prefillMeta.tltsOnRoster > 0 && (
