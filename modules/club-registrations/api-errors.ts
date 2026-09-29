@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { logError } from "@/lib/logger";
+import { isBusyDatabaseError } from "@/modules/event-locations/api-errors";
+import { EventLocationError, eventLocationErrorStatus, locationBusyMessage } from "@/modules/event-locations/errors";
 import { RosterAccessError } from "@/modules/club-rosters/access";
 import { ClubRegistrationError } from "@/modules/club-registrations/repository";
 import { PublicRegistrationError } from "@/modules/forms/public-repository";
@@ -20,6 +22,14 @@ export function clubRegistrationApiError(error: unknown, action: string) {
   }
   if (error instanceof RosterAccessError) {
     return Response.json({ error: error.code, message: error.message }, { status: error.status, headers: noStore });
+  }
+  if (error instanceof EventLocationError) {
+    return Response.json({ error: error.code, message: error.message }, { status: eventLocationErrorStatus(error.code), headers: noStore });
+  }
+  // A lock wait that gave up (55P03) or a transaction that timed out (P2028):
+  // nothing was saved, so the director can simply try again.
+  if (isBusyDatabaseError(error)) {
+    return Response.json({ error: "LOCATION_BUSY", message: locationBusyMessage }, { status: 503, headers: noStore });
   }
   if (error instanceof ClubRegistrationError) {
     const status = error.code === "EVENT_NOT_FOUND" || error.code === "REGISTRATION_NOT_FOUND"

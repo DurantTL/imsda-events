@@ -1,5 +1,8 @@
 import "server-only";
 
+import { checkLocationSeats } from "@/modules/event-locations/admission";
+import { EventLocationError } from "@/modules/event-locations/errors";
+
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
@@ -121,6 +124,15 @@ export type AmendmentServerOptions = {
     definition: RegistrationFormDefinition,
     tx: Prisma.TransactionClient,
   ) => Promise<Record<string, unknown>>;
+  /**
+   * The event location the registration should be at (#413); `undefined`
+   * leaves it where it is. The location (the new one on a switch, or the
+   * current one when seats are added) is locked and its capacity counted in
+   * the amendment's own transaction, with the registration's own seats left
+   * out. A switch needs an active location with room; a registration with a
+   * location can never be moved to none. Only the club director path sets it.
+   */
+  locationId?: string | null;
 };
 
 function allowedProfileMetadata(metadata: AmendmentProfileMetadata | undefined) {
@@ -782,6 +794,7 @@ async function prepareAmendment(
   registrationId: string,
   input: RegistrationAmendmentInput,
   serverOptions: AmendmentServerOptions = {},
+  lockLocation = false,
 ) {
   const registration = await loadRegistration(tx, eventId, registrationId);
   if (!registration) {
@@ -1048,6 +1061,22 @@ async function prepareAmendment(
     );
   }
 
+  // The registration's location (#413): its capacity is counted like the event
+  // capacity above, under the location's row lock when this is the commit.
+  const locationChanged = serverOptions.locationId !== undefined && serverOptions.locationId !== registration.locationId;
+  if (locationChanged && !serverOptions.locationId) {
+    throw new EventLocationError("LOCATION_REQUIRED", "A registration at a location can't be moved to no location.");
+  }
+  const targetLocationId = serverOptions.locationId === undefined ? registration.locationId : serverOptions.locationId;
+  await checkLocationSeats(tx, {
+    eventId,
+    locationId: targetLocationId,
+    requestedSeats: prepared.attendees.length,
+    requirePick: locationChanged,
+    excludeRegistrationId: registration.id,
+    lock: lockLocation,
+  });
+
   const pricedCalculation = applyStoredPromo(
     definition,
     prepared.registrationResponses,
@@ -1126,6 +1155,9 @@ async function prepareAmendment(
     configuredTypes,
     rosterRenamedCount,
     serverOwnedChangedKeys: serverOwnedChangedKeys.sort(),
+    locationChange: locationChanged
+      ? { from: registration.locationId, to: targetLocationId }
+      : null,
   };
 }
 
@@ -1257,7 +1289,7 @@ export async function amendRegistration(
           };
         }
 
-        const prepared = await prepareAmendment(tx, eventId, registrationId, input, serverOptions);
+        const prepared = await prepareAmendment(tx, eventId, registrationId, input, serverOptions, true);
         if (input.quoteFingerprint !== prepared.quoteFingerprint) {
           throw new RegistrationAmendmentError(
             "QUOTE_CHANGED",
@@ -1419,7 +1451,10 @@ export async function amendRegistration(
 
         await tx.registration.update({
           where: { id: registrationId },
-          data: { totalAmount: prepared.finalTotalCents / 100 },
+          data: {
+            totalAmount: prepared.finalTotalCents / 100,
+            ...(prepared.locationChange ? { locationId: prepared.locationChange.to } : {}),
+          },
         });
         if (prepared.registration.promoCodeRedemption) {
           const discountAmountCents = typeof (
@@ -1580,6 +1615,10 @@ export async function amendRegistration(
               // Registration answers the server set (the locked club, when
               // renamed in the directory since), not the actor's edits (#482).
               serverOwnedChangedFields: prepared.serverOwnedChangedKeys,
+              // Ids only: a club moved between locations of the event (#413).
+              ...(prepared.locationChange
+                ? { locationChangedFrom: prepared.locationChange.from, locationChangedTo: prepared.locationChange.to }
+                : {}),
             },
           },
         });

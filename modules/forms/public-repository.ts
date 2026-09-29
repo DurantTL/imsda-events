@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Prisma, RegistrationFormStatus } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
+import { admitToLocation } from "@/modules/event-locations/admission";
 import {
   enqueuePublicRegistrationMessages,
   processQueuedMessageIdsAfterCommit,
@@ -84,6 +85,12 @@ export type ClubSubmissionContext = {
   submittedByUserId?: string;
   /** The staff act-as record (#442) behind `submittedByUserId`; audited with the submission. */
   actAsId?: string;
+  /**
+   * The event location the club picked (#413). Required when the event has
+   * active locations; checked, locked, and capacity-counted in this
+   * transaction, so it is never trusted from the client's earlier view.
+   */
+  locationId?: string | null;
   prepareAttendees: (
     tx: Prisma.TransactionClient,
     args: {
@@ -612,7 +619,26 @@ async function createPublicRegistrationTransaction(
     }
   }
 
-  const phase = evaluateEventRegistrationPhase(form.event, now);
+  // A club registration takes the closing date and last day of the location it
+  // picked, in place of the event's (#413). The location row is locked here,
+  // before its seats are counted, and after the replay and duplicate checks so
+  // a retried submit never re-checks a location it already holds seats in.
+  let lifecycle: typeof form.event = form.event;
+  let registrationLocationId: string | null = null;
+  if (club) {
+    const clubRoster = getAttendeeRosterConfig(definition);
+    const admittedToLocation = await admitToLocation(tx, {
+      eventId: form.eventId,
+      event: form.event,
+      locationId: club.locationId,
+      requestedSeats: clubRoster.enabled ? input.attendees?.length ?? 0 : 1,
+      requirePick: true,
+    });
+    lifecycle = admittedToLocation.lifecycle;
+    registrationLocationId = admittedToLocation.locationId;
+  }
+
+  const phase = evaluateEventRegistrationPhase(lifecycle, now);
   if (phase === "UPCOMING") {
     const opening = form.event.registrationOpensOn
       ? ` Registration opens on ${form.event.registrationOpensOn} in the event timezone.`
@@ -622,7 +648,7 @@ async function createPublicRegistrationTransaction(
       `Registration for this event is not open yet.${opening}`
     );
   }
-  if (phase === "CLOSED" && hasEventEnded(form.event, now)) {
+  if (phase === "CLOSED" && hasEventEnded(lifecycle, now)) {
     throw new PublicRegistrationError(
       "REGISTRATION_CLOSED",
       registrationClosedMessage,
@@ -650,7 +676,7 @@ async function createPublicRegistrationTransaction(
     },
   });
   const admission = evaluateEventRegistrationAdmission(
-    form.event,
+    lifecycle,
     { occupied, requested: requestedAttendees },
     now
   );
@@ -816,6 +842,7 @@ async function createPublicRegistrationTransaction(
       accountHolderPersonId: accountHolder.id,
       confirmationCode,
       status: isWaitlisted ? "WAITLISTED" : "SUBMITTED",
+      locationId: registrationLocationId,
       totalAmount: admittedCalculation.totalCents / 100,
       contactSnapshot: {
         firstName: identity.firstName,
@@ -1090,6 +1117,7 @@ async function createPublicRegistrationTransaction(
         ...(club
           ? {
               clubOrganizationId: club.organizationId,
+              ...(registrationLocationId ? { locationId: registrationLocationId } : {}),
               ...(club.submittedByAccountId ? { submittedByAttendeeAccountId: club.submittedByAccountId } : {}),
               ...(club.submittedByUserId ? { submittedByStaffUserId: club.submittedByUserId } : {}),
               ...(club.actAsId ? { actAsId: club.actAsId } : {}),
