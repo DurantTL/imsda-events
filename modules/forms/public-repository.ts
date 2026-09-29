@@ -5,6 +5,7 @@ import { Prisma, RegistrationFormStatus } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
 import { admitToLocation } from "@/modules/event-locations/admission";
+import { effectiveLocationDates } from "@/modules/event-locations/domain";
 import {
   enqueuePublicRegistrationMessages,
   processQueuedMessageIdsAfterCommit,
@@ -625,6 +626,7 @@ async function createPublicRegistrationTransaction(
   // a retried submit never re-checks a location it already holds seats in.
   let lifecycle: typeof form.event = form.event;
   let registrationLocationId: string | null = null;
+  let registrationLocation: { name: string; address: string | null; firstDay: string; lastDay: string } | null = null;
   if (club) {
     const clubRoster = getAttendeeRosterConfig(definition);
     const admittedToLocation = await admitToLocation(tx, {
@@ -636,6 +638,10 @@ async function createPublicRegistrationTransaction(
     });
     lifecycle = admittedToLocation.lifecycle;
     registrationLocationId = admittedToLocation.locationId;
+    if (admittedToLocation.location) {
+      const { firstDay, lastDay } = effectiveLocationDates(form.event, admittedToLocation.location);
+      registrationLocation = { name: admittedToLocation.location.name, address: admittedToLocation.location.address, firstDay, lastDay };
+    }
   }
 
   const phase = evaluateEventRegistrationPhase(lifecycle, now);
@@ -1083,6 +1089,7 @@ async function createPublicRegistrationTransaction(
         responses: prepared.responses,
         attendeeResponses: createdAttendees.map((attendee) => attendee.responses),
         calculation: admittedCalculation,
+        location: registrationLocation,
       });
   await tx.auditLog.create({
     data: {

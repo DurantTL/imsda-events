@@ -162,6 +162,7 @@ export type RegistrationAmendmentErrorCode =
   | "ATTENDEE_IDENTITY_CHANGED"
   | "ATTENDEE_HAS_HISTORY"
   | "EVENT_CAPACITY_UNAVAILABLE"
+  | "LOCATION_CAPACITY_UNAVAILABLE"
   | "PAYMENT_ADJUSTMENT_REQUIRED"
   | "QUOTE_CHANGED"
   | "IDEMPOTENCY_KEY_REUSED"
@@ -1068,14 +1069,21 @@ async function prepareAmendment(
     throw new EventLocationError("LOCATION_REQUIRED", "A registration at a location can't be moved to no location.");
   }
   const targetLocationId = serverOptions.locationId === undefined ? registration.locationId : serverOptions.locationId;
-  await checkLocationSeats(tx, {
-    eventId,
-    locationId: targetLocationId,
-    requestedSeats: prepared.attendees.length,
-    requirePick: locationChanged,
-    excludeRegistrationId: registration.id,
-    lock: lockLocation,
-  });
+  try {
+    await checkLocationSeats(tx, {
+      eventId,
+      locationId: targetLocationId,
+      requestedSeats: prepared.attendees.length,
+      requirePick: locationChanged,
+      excludeRegistrationId: registration.id,
+      lock: lockLocation,
+    });
+  } catch (error) {
+    if (error instanceof EventLocationError && error.code === "LOCATION_FULL") {
+      throw new RegistrationAmendmentError("LOCATION_CAPACITY_UNAVAILABLE", error.message);
+    }
+    throw error;
+  }
 
   const pricedCalculation = applyStoredPromo(
     definition,

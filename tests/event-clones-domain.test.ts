@@ -54,6 +54,7 @@ function config(overrides: Partial<SourceConfiguration> = {}): SourceConfigurati
       id: "offering-1", honorId: "honor-1", honorName: "Knots", sessionId: "session-1", sessionName: "Friday", span: "SINGLE_SESSION",
       capacity: 30, minimumAge: null, perClubLimit: null, teacherName: "", location: "", isActive: true,
     }],
+    locations: [],
     unsupported: { merchandiseProducts: 3, paymentInstructionVersions: 1, messageDeliverySettings: 1, uploadedFiles: 2 },
     ...overrides,
   };

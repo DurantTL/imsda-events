@@ -94,6 +94,8 @@ export function directorAmendmentMessage(error: RegistrationAmendmentError) {
       return "This change would lower what your church owes below what's already paid. Ask the event team.";
     case "EVENT_CAPACITY_UNAVAILABLE":
       return "The event doesn't have room for everyone you chose. Remove someone, or ask the event team.";
+    case "LOCATION_CAPACITY_UNAVAILABLE":
+      return "That location doesn't have room for everyone you chose. Remove someone, choose another location, or ask the event team.";
     case "INVALID_AMENDMENT":
       return error.issues.length > 0
         ? "Review the highlighted answers and try again."

@@ -63,6 +63,28 @@ export const templateBrandingDefaultsSchema = z.object({
 const MESSAGE_TEMPLATE_DEFAULT_LIMIT = 30;
 
 /**
+ * A location a template creates on the new event (#413). Dates are day
+ * offsets from the new event's first day, so applying moves them by the same
+ * amount as the event's own dates: first and last day count forward from the
+ * start, and the registration closing offset may be negative (closes before
+ * the event starts).
+ */
+export const templateLocationSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  address: z.string().trim().max(500).nullable().default(null),
+  capacity: z.number().int().min(1).max(100_000).nullable().default(null),
+  firstDayOffset: z.number().int().min(0).max(365).nullable().default(null),
+  lastDayOffset: z.number().int().min(0).max(365).nullable().default(null),
+  registrationClosesOffset: z.number().int().min(-365).max(365).nullable().default(null),
+}).strict().superRefine((location, context) => {
+  if (location.firstDayOffset !== null && location.lastDayOffset !== null && location.lastDayOffset < location.firstDayOffset) {
+    context.addIssue({ code: "custom", path: ["lastDayOffset"], message: "A location's last day cannot be before its first day." });
+  }
+});
+
+export type TemplateLocation = z.infer<typeof templateLocationSchema>;
+
+/**
  * The immutable payload a published `EventTemplateVersion` carries (#152).
  * Everything here can be validated on its own shape at draft/publish time;
  * `validateEventTemplatePayloadReferences` below does the second check that
@@ -103,7 +125,17 @@ export const eventTemplatePayloadSchema = z.object({
     supportContact: null,
     calendarCategory: null,
   }),
+  /** Locations created on the new event, in this order (#413). Optional, so no stored payload changes shape. */
+  locations: z.array(templateLocationSchema).max(20).optional(),
 }).superRefine((payload, ctx) => {
+  const locationNames = new Set<string>();
+  (payload.locations ?? []).forEach((location, index) => {
+    const key = location.name.normalize("NFKC").replace(/\s+/g, " ").toLocaleLowerCase("en-US");
+    if (locationNames.has(key)) {
+      ctx.addIssue({ code: "custom", path: ["locations", index, "name"], message: `Location ${location.name} is repeated.` });
+    }
+    locationNames.add(key);
+  });
   const attendeeTypeCodes = new Set<string>();
   payload.attendeeTypes.forEach((type, index) => {
     if (attendeeTypeCodes.has(type.code)) {
