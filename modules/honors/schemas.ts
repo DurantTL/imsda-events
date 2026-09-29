@@ -20,7 +20,19 @@ export const honorSessionInputSchema = z.object({
   locationId: z.string().min(1).max(64).nullable().default(null),
 }).strict();
 
-export const honorSessionUpdateSchema = honorSessionInputSchema.partial().strict();
+/**
+ * A partial update names only the fields it changes. It is built from bare
+ * field schemas, not `honorSessionInputSchema.partial()`: Zod 4 still applies a
+ * `.default()` to a missing key inside `.partial()`, so a rename sent as
+ * `{ name }` parsed to `{ name, sortOrder: 0, locationId: null }` and the
+ * repository then tried to clear the session's site ("Choose the site", #615)
+ * and reset its order.
+ */
+export const honorSessionUpdateSchema = z.object({
+  name: text(80).min(1, "Enter the session name."),
+  sortOrder: wholeNumber("Order", 0, 99),
+  locationId: z.string().min(1).max(64).nullable(),
+}).partial().strict();
 
 const offeringDetails = {
   capacity: wholeNumber("Capacity", 0, 10_000),
@@ -50,8 +62,14 @@ export const honorOfferingInputSchema = z.object({
   }
 });
 
-/** Honor, span, and session are fixed once created; deactivate and add a new one instead. */
+/**
+ * Every field set at creation can be edited (#615). The repository refuses a
+ * change to the honor, span, session or site once clubs have picked the class.
+ */
 export const honorOfferingUpdateSchema = z.object({
+  honorId: z.string().min(1, "Choose an honor."),
+  span: z.enum(["SINGLE_SESSION", "ALL_SESSIONS"]),
+  sessionId: z.string().min(1).nullable(),
   capacity: offeringDetails.capacity,
   minimumAge: wholeNumber("Minimum age", 0, 99).nullable(),
   perClubLimit: wholeNumber("Per-club limit", 1, 1_000).nullable(),
@@ -61,6 +79,16 @@ export const honorOfferingUpdateSchema = z.object({
   /** Only for an all-sessions class (#589). */
   locationId: z.string().min(1).max(64).nullable(),
 }).partial().strict();
+
+/** `?confirmPicks=N` on a delete: the number of class picks the person was told would be removed. Absent means none were confirmed. */
+export const honorDeleteConfirmSchema = z.object({
+  confirmPicks: z.coerce.number().int("Confirm a whole number of picks.").min(0).optional(),
+});
+
+export function parseDeleteConfirmation(request: Request) {
+  const raw = new URL(request.url).searchParams.get("confirmPicks");
+  return honorDeleteConfirmSchema.parse(raw === null ? {} : { confirmPicks: raw }).confirmPicks;
+}
 
 export const honorCopyInputSchema = z.object({
   sourceEventId: z.string().min(1, "Choose the site to copy from."),

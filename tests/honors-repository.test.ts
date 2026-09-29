@@ -12,6 +12,7 @@ import {
   createHonor,
   createHonorOffering,
   createHonorSession,
+  deleteHonorOffering,
   deleteHonorSession,
   updateHonorSession,
   getEventHonorSetup,
@@ -32,10 +33,16 @@ function fakeDatabase() {
     locations: [] as Row[],
     /** Enrollments by offering, for the "clubs already picked" guard (#589). */
     pickedOfferingIds: [] as string[],
+    /** Offerings whose picks were already written back into members' honor records. */
+    writtenBackOfferingIds: [] as string[],
   };
   const id = (prefix: string) => `${prefix}-${++sequence}`;
   const matches = (row: Row, where: Record<string, unknown> = {}) =>
-    Object.entries(where).every(([key, value]) => row[key] === value);
+    Object.entries(where).every(([key, value]) => {
+      if (value && typeof value === "object" && "not" in value) return row[key] !== (value as { not: unknown }).not;
+      if (value && typeof value === "object" && "in" in value) return (value as { in: unknown[] }).in.includes(row[key]);
+      return row[key] === value;
+    });
   const withOfferingRelations = (offering: Row) => ({
     ...offering,
     honor: db.honors.find((honor) => honor.id === offering.honorId),
@@ -52,10 +59,19 @@ function fakeDatabase() {
   const client = {
     honorEnrollment: {
       groupBy: async () => [],
-      count: async ({ where }: { where: { offeringId?: string; offering?: { sessionId: string } } }) => db.pickedOfferingIds
-        .filter((offeringId) => (where.offeringId
-          ? offeringId === where.offeringId
-          : db.offerings.find((offering) => offering.id === offeringId)?.sessionId === where.offering?.sessionId)).length,
+      count: async ({ where }: { where: { offeringId?: string | { in: string[] }; offering?: { sessionId: string } } }) => db.pickedOfferingIds
+        .filter((offeringId) => {
+          if (typeof where.offeringId === "string") return offeringId === where.offeringId;
+          if (where.offeringId) return where.offeringId.in.includes(offeringId);
+          return db.offerings.find((offering) => offering.id === offeringId)?.sessionId === where.offering?.sessionId;
+        }).length,
+      deleteMany: async ({ where }: { where: { offeringId: { in: string[] } } }) => {
+        db.pickedOfferingIds = db.pickedOfferingIds.filter((offeringId) => !where.offeringId.in.includes(offeringId));
+      },
+    },
+    honorWeekendCompletionLink: {
+      count: async ({ where }: { where: { enrollment: { offeringId: { in: string[] } } } }) =>
+        db.pickedOfferingIds.filter((offeringId) => where.enrollment.offeringId.in.includes(offeringId) && db.writtenBackOfferingIds.includes(offeringId)).length,
     },
     eventLocation: {
       findMany: async ({ where }: { where: Record<string, unknown> }) => db.locations.filter((location) => matches(location, where)),
@@ -136,6 +152,9 @@ function fakeDatabase() {
         const row = db.offerings.find((offering) => offering.id === where.id)!;
         Object.assign(row, data);
         return row;
+      },
+      deleteMany: async ({ where }: { where: { id: { in: string[] } } }) => {
+        db.offerings = db.offerings.filter((offering) => !where.id.in.includes(offering.id));
       },
     },
   };
@@ -223,11 +242,89 @@ describe("honor offerings", () => {
     expect(fake.db.offerings[0]).toMatchObject({ capacity: 12, isActive: false });
   });
 
-  it("won't remove a session that still has classes", async () => {
+  it("removes an empty session, and a session with unpicked classes together with them (#615)", async () => {
     await createHonorOffering("site-a", offeringInput(), "staff-1");
-    await expect(deleteHonorSession("site-a", "sab-a", "staff-1")).rejects.toMatchObject({ code: "SESSION_IN_USE" });
     await deleteHonorSession("site-a", "sun-a", "staff-1");
     expect(fake.db.sessions.map((session) => session.id)).toEqual(["sab-a"]);
+    await deleteHonorSession("site-a", "sab-a", "staff-1");
+    expect(fake.db.sessions).toHaveLength(0);
+    expect(fake.db.offerings).toHaveLength(0);
+    expect(mocks.writeAuditLog.mock.calls.at(-1)![0]).toMatchObject({ action: "HONOR_SESSION_DELETED", metadata: { classes: 1, picksRemoved: 0 } });
+  });
+
+  it("deletes a class nobody picked, audited", async () => {
+    await createHonorOffering("site-a", offeringInput(), "staff-1");
+    const offeringId = fake.db.offerings[0].id;
+    await expect(deleteHonorOffering("site-b", offeringId, "staff-1")).rejects.toMatchObject({ code: "OFFERING_NOT_FOUND" });
+    expect(fake.db.offerings).toHaveLength(1);
+    await deleteHonorOffering("site-a", offeringId, "staff-1");
+    expect(fake.db.offerings).toHaveLength(0);
+    expect(mocks.writeAuditLog.mock.calls.at(-1)![0]).toMatchObject({ action: "HONOR_OFFERING_DELETED", metadata: { picksRemoved: 0 } });
+  });
+
+  it("won't delete a picked class without the confirmed pick count, and removes exactly those picks with it", async () => {
+    await createHonorOffering("site-a", offeringInput(), "staff-1");
+    const offeringId = fake.db.offerings[0].id;
+    fake.db.pickedOfferingIds.push(offeringId, offeringId, "another-offering");
+    const refusal = await deleteHonorOffering("site-a", offeringId, "staff-1").catch((error) => error);
+    expect(refusal).toMatchObject({ code: "PICKS_NEED_CONFIRMATION", picks: 2 });
+    expect(refusal.message).toContain("2 class picks");
+    await expect(deleteHonorOffering("site-a", offeringId, "staff-1", 1)).rejects.toMatchObject({ code: "PICKS_NEED_CONFIRMATION", picks: 2 });
+    expect(fake.db.offerings).toHaveLength(1);
+    expect(fake.db.pickedOfferingIds).toHaveLength(3);
+    await deleteHonorOffering("site-a", offeringId, "staff-1", 2);
+    expect(fake.db.offerings).toHaveLength(0);
+    // No orphaned picks: the deleted class's picks are gone, another class's are untouched.
+    expect(fake.db.pickedOfferingIds).toEqual(["another-offering"]);
+    expect(mocks.writeAuditLog.mock.calls.at(-1)![0]).toMatchObject({ metadata: { picksRemoved: 2 } });
+  });
+
+  it("refuses to delete a class whose picks were already written back into member records", async () => {
+    await createHonorOffering("site-a", offeringInput(), "staff-1");
+    const offeringId = fake.db.offerings[0].id;
+    fake.db.pickedOfferingIds.push(offeringId);
+    fake.db.writtenBackOfferingIds.push(offeringId);
+    await expect(deleteHonorOffering("site-a", offeringId, "staff-1", 1)).rejects.toMatchObject({ code: "HAS_WRITTEN_BACK_COMPLETIONS" });
+    expect(fake.db.offerings).toHaveLength(1);
+    expect(fake.db.pickedOfferingIds).toEqual([offeringId]);
+  });
+
+  it("counts picks across a session's classes when deleting the session", async () => {
+    await createHonorOffering("site-a", offeringInput(), "staff-1");
+    await createHonorOffering("site-a", offeringInput({ honorId: "honor-birds" }), "staff-1");
+    const [knots, birds] = fake.db.offerings.map((offering) => offering.id);
+    fake.db.pickedOfferingIds.push(knots, birds, birds);
+    await expect(deleteHonorSession("site-a", "sab-a", "staff-1")).rejects.toMatchObject({ code: "PICKS_NEED_CONFIRMATION", picks: 3 });
+    expect(fake.db.sessions.map((session) => session.id)).toContain("sab-a");
+    await deleteHonorSession("site-a", "sab-a", "staff-1", 3);
+    expect(fake.db.sessions.map((session) => session.id)).toEqual(["sun-a"]);
+    expect(fake.db.offerings).toHaveLength(0);
+    expect(fake.db.pickedOfferingIds).toHaveLength(0);
+  });
+
+  it("edits every field of a class: honor, session, span, seats and details", async () => {
+    await createHonorOffering("site-a", offeringInput(), "staff-1");
+    const offeringId = fake.db.offerings[0].id;
+    await updateHonorOffering("site-a", offeringId, { honorId: "honor-birds", sessionId: "sun-a", capacity: 8, teacherName: "A. Teacher", location: "Room 2", minimumAge: 9, perClubLimit: 2 }, "staff-1");
+    expect(fake.db.offerings[0]).toMatchObject({ honorId: "honor-birds", sessionId: "sun-a", capacity: 8, teacherName: "A. Teacher", location: "Room 2", minimumAge: 9, perClubLimit: 2 });
+    await updateHonorOffering("site-a", offeringId, { span: "ALL_SESSIONS", sessionId: null }, "staff-1");
+    expect(fake.db.offerings[0]).toMatchObject({ span: "ALL_SESSIONS", sessionId: null });
+    await updateHonorOffering("site-a", offeringId, { span: "SINGLE_SESSION", sessionId: "sab-a" }, "staff-1");
+    expect(fake.db.offerings[0]).toMatchObject({ span: "SINGLE_SESSION", sessionId: "sab-a", locationId: null });
+    await expect(updateHonorOffering("site-a", offeringId, { honorId: "honor-old" }, "staff-1")).rejects.toMatchObject({ code: "HONOR_INACTIVE" });
+    await expect(updateHonorOffering("site-a", offeringId, { span: "SINGLE_SESSION", sessionId: "missing" }, "staff-1")).rejects.toMatchObject({ code: "SESSION_NOT_FOUND" });
+  });
+
+  it("refuses an edit that would double-book the honor, and one that changes a picked class's placement", async () => {
+    await createHonorOffering("site-a", offeringInput(), "staff-1");
+    await createHonorOffering("site-a", offeringInput({ honorId: "honor-birds", sessionId: "sun-a" }), "staff-1");
+    const [knots, birds] = fake.db.offerings.map((offering) => offering.id);
+    await expect(updateHonorOffering("site-a", birds, { honorId: "honor-knots", sessionId: "sab-a" }, "staff-1")).rejects.toMatchObject({ code: "OFFERING_CONFLICT" });
+    fake.db.pickedOfferingIds.push(knots);
+    await expect(updateHonorOffering("site-a", knots, { sessionId: "sun-a" }, "staff-1")).rejects.toMatchObject({ code: "OFFERING_HAS_PICKS" });
+    // The seats, teacher and room of a picked class stay editable.
+    await updateHonorOffering("site-a", knots, { capacity: 30, teacherName: "B. Teacher" }, "staff-1");
+    expect(fake.db.offerings[0]).toMatchObject({ capacity: 30, teacherName: "B. Teacher", sessionId: "sab-a" });
   });
 });
 
@@ -357,6 +454,17 @@ describe("honors sessions at sites (#589)", () => {
     await createHonorSession("site-a", sessionInput({ locationId: "loc-hr" }), "staff-1");
     const session = fake.db.sessions.find((row) => row.name === "Sabbath Morning")!;
     await expect(updateHonorSession("site-a", session.id, { locationId: null }, "staff-1")).rejects.toMatchObject({ code: "LOCATION_REQUIRED" });
+  });
+
+  it("renames and reorders a session at a site without touching its site (#615)", async () => {
+    const { honorSessionUpdateSchema } = await import("@/modules/honors/schemas");
+    await createHonorSession("site-a", sessionInput({ locationId: "loc-hr", sortOrder: 4 }), "staff-1");
+    const session = fake.db.sessions.find((row) => row.name === "Sabbath Morning")!;
+    // Exactly what the rename request body parses to, through the real route schema.
+    await updateHonorSession("site-a", session.id, honorSessionUpdateSchema.parse({ name: "Sabbath Afternoon" }), "staff-1");
+    expect(session).toMatchObject({ name: "Sabbath Afternoon", normalizedName: "sabbath afternoon", locationId: "loc-hr", sortOrder: 4 });
+    await updateHonorSession("site-a", session.id, honorSessionUpdateSchema.parse({ sortOrder: 2 }), "staff-1");
+    expect(session).toMatchObject({ locationId: "loc-hr", sortOrder: 2 });
   });
 
   it("refuses a site that belongs to another event", async () => {

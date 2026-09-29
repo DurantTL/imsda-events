@@ -33,11 +33,18 @@ export type HonorErrorCode =
   | "SESSION_HAS_PICKS"
   | "OFFERING_HAS_PICKS"
   | "OFFERING_CONFLICT"
+  | "PICKS_NEED_CONFIRMATION"
+  | "HAS_WRITTEN_BACK_COMPLETIONS"
   | "COPY_SAME_EVENT"
   | "COPY_SOURCE_CHANGED";
 
 export class HonorConfigurationError extends Error {
-  constructor(public readonly code: HonorErrorCode, message: string) {
+  constructor(
+    public readonly code: HonorErrorCode,
+    message: string,
+    /** For a delete refusal: how many class picks the delete would remove. */
+    public readonly picks?: number,
+  ) {
     super(message);
     this.name = "HonorConfigurationError";
   }
@@ -355,19 +362,61 @@ export async function updateHonorSession(
   return getEventHonorSetup(eventId);
 }
 
-export async function deleteHonorSession(eventId: string, sessionId: string, actorUserId: string) {
-  await getPrisma().$transaction(async (tx) => {
-    const session = await tx.honorSession.findFirst({
-      where: { id: sessionId, eventId },
-      select: { id: true, name: true, _count: { select: { offerings: true } } },
-    });
-    if (!session) throw new HonorConfigurationError("SESSION_NOT_FOUND", "That session could not be found.");
-    if (session._count.offerings > 0) {
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+/**
+ * Removes classes and, with them, the clubs' picks of them (#615). A pick is
+ * only ever removed when the caller confirmed the exact count it was shown
+ * (`confirmPicks`); a stale or missing confirmation is refused with the live
+ * count so the screen can ask again. Picks already written back into members'
+ * honor records are never dropped: that would leave the record without its
+ * source, so the delete is refused instead. Runs inside the caller's
+ * serializable transaction, so a pick saved at the same moment is counted.
+ */
+async function removeOfferings(
+  tx: Prisma.TransactionClient,
+  offeringIds: string[],
+  confirmPicks: number | undefined,
+  what: string,
+) {
+  if (offeringIds.length === 0) return 0;
+  const picks = await tx.honorEnrollment.count({ where: { offeringId: { in: offeringIds } } });
+  if (picks > 0) {
+    const writtenBack = await tx.honorWeekendCompletionLink.count({ where: { enrollment: { offeringId: { in: offeringIds } } } });
+    if (writtenBack > 0) {
       throw new HonorConfigurationError(
-        "SESSION_IN_USE",
-        "This session still has honors in it. Move or deactivate them before removing the session.",
+        "HAS_WRITTEN_BACK_COMPLETIONS",
+        `${what} can't be deleted: ${plural(writtenBack, "pick")} already ${writtenBack === 1 ? "was" : "were"} written back into members' honor records. Deactivate it instead.`,
+        picks,
       );
     }
+    if (confirmPicks !== picks) {
+      throw new HonorConfigurationError(
+        "PICKS_NEED_CONFIRMATION",
+        `${plural(picks, "class pick")} will be removed from clubs' registrations if you delete ${what}.`,
+        picks,
+      );
+    }
+    await tx.honorEnrollment.deleteMany({ where: { offeringId: { in: offeringIds } } });
+  }
+  await tx.honorOffering.deleteMany({ where: { id: { in: offeringIds } } });
+  return picks;
+}
+
+export async function deleteHonorSession(eventId: string, sessionId: string, actorUserId: string, confirmPicks?: number) {
+  await serializable(async (tx) => {
+    const session = await tx.honorSession.findFirst({
+      where: { id: sessionId, eventId },
+      select: { id: true, name: true },
+    });
+    if (!session) throw new HonorConfigurationError("SESSION_NOT_FOUND", "That session could not be found.");
+    const offerings = await tx.honorOffering.findMany({ where: { sessionId, eventId }, select: { id: true } });
+    const removedPicks = await removeOfferings(
+      tx,
+      offerings.map((offering) => offering.id),
+      confirmPicks,
+      `the session "${session.name}" and its ${plural(offerings.length, "class")}`,
+    );
     await tx.honorSession.delete({ where: { id: sessionId } });
     await writeAuditLog({
       eventId,
@@ -375,7 +424,29 @@ export async function deleteHonorSession(eventId: string, sessionId: string, act
       action: "HONOR_SESSION_DELETED",
       entityType: "HonorSession",
       entityId: sessionId,
-      summary: `Removed empty honors session ${session.name}.`,
+      summary: `Removed honors session ${session.name} with ${plural(offerings.length, "class")} and ${plural(removedPicks, "pick")}.`,
+      metadata: { classes: offerings.length, picksRemoved: removedPicks },
+    }, tx);
+  });
+  return getEventHonorSetup(eventId);
+}
+
+export async function deleteHonorOffering(eventId: string, offeringId: string, actorUserId: string, confirmPicks?: number) {
+  await serializable(async (tx) => {
+    const offering = await tx.honorOffering.findFirst({
+      where: { id: offeringId, eventId },
+      select: { id: true, honor: { select: { name: true } } },
+    });
+    if (!offering) throw new HonorConfigurationError("OFFERING_NOT_FOUND", "That honor offering could not be found.");
+    const removedPicks = await removeOfferings(tx, [offeringId], confirmPicks, `the ${offering.honor.name} class`);
+    await writeAuditLog({
+      eventId,
+      actorUserId,
+      action: "HONOR_OFFERING_DELETED",
+      entityType: "HonorOffering",
+      entityId: offeringId,
+      summary: `Removed the ${offering.honor.name} offering and ${plural(removedPicks, "pick")}.`,
+      metadata: { picksRemoved: removedPicks },
     }, tx);
   });
   return getEventHonorSetup(eventId);
@@ -470,30 +541,78 @@ export async function updateHonorOffering(
   await serializable(async (tx) => {
     const existing = await tx.honorOffering.findFirst({
       where: { id: offeringId, eventId },
-      select: { id: true, honorId: true, span: true, locationId: true, honor: { select: { name: true } } },
+      select: { id: true, honorId: true, sessionId: true, span: true, locationId: true, honor: { select: { name: true } } },
     });
     if (!existing) throw new HonorConfigurationError("OFFERING_NOT_FOUND", "That honor offering could not be found.");
-    if (input.locationId !== undefined && input.locationId !== existing.locationId) {
-      if (existing.span !== "ALL_SESSIONS") {
+
+    const { honorId: nextHonorId, span: nextSpan, sessionId: nextSessionId, locationId: nextSiteInput, ...details } = input;
+    const honorId = nextHonorId ?? existing.honorId;
+    const span = nextSpan ?? existing.span;
+    const honorChanged = honorId !== existing.honorId;
+    const spanChanged = span !== existing.span;
+
+    // The final placement: an all-sessions class has its own site and no session; a single-session class has a session and takes its site.
+    let sessionId: string | null = null;
+    let sessionSite: string | null = null;
+    if (span === "SINGLE_SESSION") {
+      sessionId = nextSessionId !== undefined ? nextSessionId : existing.sessionId;
+      if (!sessionId) throw new HonorConfigurationError("SESSION_NOT_FOUND", "Choose the session for this honor.");
+      const session = await tx.honorSession.findFirst({ where: { id: sessionId, eventId }, select: { id: true, locationId: true } });
+      if (!session) throw new HonorConfigurationError("SESSION_NOT_FOUND", "That session could not be found.");
+      sessionSite = session.locationId;
+      if (nextSiteInput) {
         throw new HonorConfigurationError("OFFERING_CONFLICT", "A single-session class is at its session's site. Move the session instead.");
       }
-      await requireSessionLocation(tx, eventId, input.locationId);
-      if (!input.locationId && await eventHasActiveLocations(tx, eventId)) throw siteRequired("all-sessions class");
-      // Clubs that picked this class at its site would be stranded; nothing is removed silently.
+    } else if (nextSessionId) {
+      throw new HonorConfigurationError("OFFERING_CONFLICT", "An all-sessions honor isn't tied to one session.");
+    }
+    const locationId = span === "ALL_SESSIONS"
+      ? (nextSiteInput !== undefined ? nextSiteInput : existing.span === "ALL_SESSIONS" ? existing.locationId : null)
+      : null;
+    const sessionChanged = sessionId !== existing.sessionId;
+    const siteChanged = locationId !== existing.locationId;
+
+    if (honorChanged) {
+      const honor = await tx.honor.findUnique({ where: { id: honorId }, select: { id: true, isActive: true } });
+      if (!honor) throw new HonorConfigurationError("HONOR_NOT_FOUND", "That honor could not be found.");
+      if (!honor.isActive) throw new HonorConfigurationError("HONOR_INACTIVE", "That honor is inactive in the catalog.");
+    }
+    if (span === "ALL_SESSIONS" && (siteChanged || spanChanged)) {
+      await requireSessionLocation(tx, eventId, locationId);
+      if (!locationId && await eventHasActiveLocations(tx, eventId)) throw siteRequired("all-sessions class");
+    }
+
+    if (honorChanged || spanChanged || sessionChanged || siteChanged) {
+      // Clubs that picked this class would be stranded or hold a different class than they chose; nothing is removed silently.
       if (await tx.honorEnrollment.count({ where: { offeringId } }) > 0) {
-        throw new HonorConfigurationError("OFFERING_HAS_PICKS", "Clubs have already picked this class, so it can't move to another site.");
+        throw new HonorConfigurationError(
+          "OFFERING_HAS_PICKS",
+          siteChanged && !honorChanged && !spanChanged && !sessionChanged
+            ? "Clubs have already picked this class, so it can't move to another site."
+            : "Clubs have already picked this class, so its honor, session or span can't change. Delete it (which removes those picks) or add a new class.",
+        );
       }
       const others = await tx.honorOffering.findMany({
-        where: { eventId, honorId: existing.honorId, id: { not: offeringId } },
+        where: { eventId, honorId, id: { not: offeringId } },
         select: { honorId: true, span: true, sessionId: true, locationId: true, session: { select: { locationId: true } } },
       });
       const conflict = offeringSlotConflict(
-        { honorId: existing.honorId, span: "ALL_SESSIONS", sessionId: null, locationId: input.locationId },
+        { honorId, span, sessionId, locationId: span === "ALL_SESSIONS" ? locationId : sessionSite },
         others.map((offering) => ({ ...offering, locationId: offeringSiteId(offering) })),
       );
       if (conflict) throw new HonorConfigurationError("OFFERING_CONFLICT", conflict);
     }
-    await tx.honorOffering.update({ where: { id: offeringId }, data: input });
+
+    await tx.honorOffering.update({
+      where: { id: offeringId },
+      data: {
+        ...details,
+        ...(honorChanged ? { honorId } : {}),
+        ...(spanChanged ? { span } : {}),
+        ...(sessionChanged ? { sessionId } : {}),
+        ...(siteChanged ? { locationId } : {}),
+      },
+    });
     await writeAuditLog({
       eventId,
       actorUserId,

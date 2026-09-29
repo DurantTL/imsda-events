@@ -10,6 +10,40 @@ export const honorOfferingSpanLabels = {
 
 export type HonorOfferingSpan = keyof typeof honorOfferingSpanLabels;
 
+/**
+ * What the session edit form sends (#615): only the fields that changed, so a
+ * rename never carries a site or an order and an unchanged site is never
+ * re-sent. `formLocationId` is the select's value ("" for no site).
+ */
+export function sessionEditPatch(
+  current: { name: string; sortOrder: number; locationId: string | null },
+  form: { name: string; sortOrder: number; locationId: string | null },
+) {
+  return {
+    ...(form.name.trim() === current.name ? {} : { name: form.name }),
+    ...(form.sortOrder === current.sortOrder ? {} : { sortOrder: form.sortOrder }),
+    ...((form.locationId ?? null) === (current.locationId ?? null) ? {} : { locationId: form.locationId ?? null }),
+  };
+}
+
+/**
+ * The honor, span and session of a class being edited (#615), only when they
+ * changed, so a class clubs have picked can still have its seats, teacher and
+ * room edited without the server treating the request as a move.
+ */
+export function offeringPlacementPatch(
+  current: { honorId: string; span: HonorOfferingSpan; sessionId: string | null },
+  form: { honorId: string; span: HonorOfferingSpan; sessionId: string | null },
+) {
+  const span = form.span;
+  const sessionId = span === "SINGLE_SESSION" ? form.sessionId : null;
+  return {
+    ...(form.honorId === current.honorId ? {} : { honorId: form.honorId }),
+    ...(span === current.span ? {} : { span }),
+    ...(sessionId === current.sessionId ? {} : { sessionId }),
+  };
+}
+
 export function normalizeHonorText(value: string) {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
 }
