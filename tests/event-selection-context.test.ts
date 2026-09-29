@@ -250,6 +250,19 @@ describe("loadWorkspaceEventContext — the workspace layout never redirects for
     await expectRedirect("/no-access", () => loadWorkspaceEventContext());
   });
 
+  it("lets a system administrator with zero events load the layout context for global /admin pages (#567 F-6)", async () => {
+    mocks.getCurrentSession.mockResolvedValue({ user: admin });
+    mocks.listEventsForUser.mockResolvedValue([]);
+
+    const context = await loadWorkspaceEventContext();
+
+    expect(mocks.redirect).not.toHaveBeenCalled();
+    expect(context.events).toEqual([]);
+    expect(context.defaultEventId).toBeNull();
+    // Event-scoped pages still resolve for themselves and send the admin on.
+    await expectRedirect("/no-access", () => resolveEventContext(undefined));
+  });
+
   it.each([
     ["the last-used cookie", "evt_far"],
     ["the nearest published event (stale cookie)", "evt_gone"],

@@ -70,6 +70,13 @@ const nextConfig: NextConfig = {
   },
   async redirects() {
     return [
+      // "/dashboard" is a guessed address for the staff home, which is
+      // "/overview" (#567 F-27). Not permanent, so a real page could take it.
+      {
+        source: "/dashboard",
+        destination: "/overview",
+        permanent: false,
+      },
       // The public events home lives at "/" (#437), and "/events" is a
       // predictable address people guess (#470). This matches "/events"
       // exactly, never "/events/<slug>". A permanent redirect is cached by
