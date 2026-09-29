@@ -1731,8 +1731,8 @@ describe("name-only matches, variants, adults by age, and the lookup (#598)", ()
     await applyBackgroundCheckUpload(rosterRows({ userId: "7001", last: "Osei", first: "Mina", sites: otherChurch }), "ROSTER", "admin-1", now);
     expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-mina", matchedBy: "NAME_ONLY" })]);
     expect(seed.reviews.size).toBe(0);
-    // A guess staff spot-check never becomes a remembered id.
-    expect(seed.identities.size).toBe(0);
+    // Remembered like an automatic match (#619).
+    expect([...seed.identities.values()]).toEqual([expect.objectContaining({ externalId: "userId:7001", personId: "p-mina" })]);
     await expect(listNameOnlyBackgroundCheckMatches(now)).resolves.toEqual([
       expect.objectContaining({ personName: "Mina Osei", entryName: "Mina Osei", site: otherChurch, personSites: ["Maple Grove Pathfinders", "Maple Grove SDA Church"] }),
     ]);
@@ -1911,14 +1911,14 @@ describe("name-only matches, variants, adults by age, and the lookup (#598)", ()
     expect(seed.matches.size).toBe(1);
   });
 
-  it("creates a review, never a match, for a first-name variant with the same last name", async () => {
+  it("reviews a first-name variant with the same last name unless a detail agrees (#619)", async () => {
     const { client, seed } = makeFakeDb();
     currentClient = client;
     rosterAdult(seed, "p-jonathan", "Jonathan", "Reyes", mapleGrove);
     rosterAdult(seed, "p-vanessa", "Vanessa", "Cole", mapleGrove);
     rosterAdult(seed, "p-alan", "Alan", "Frost", mapleGrove);
     await applyBackgroundCheckUpload(rosterRows(
-      { userId: "6001", last: "Reyes", first: "Jon", sites: "Maple Grove SDA Church (Springfield)" },
+      { userId: "6001", last: "Reyes", first: "Jon", sites: otherChurch },
       { userId: "6002", last: "Cole", first: "Nessa", sites: otherChurch },
       { userId: "6003", last: "Frost", first: "Al", sites: "Maple Grove SDA Church (Springfield)" }, // too short to suggest
       { userId: "6004", last: "Other", first: "Jonathan", sites: "Maple Grove SDA Church (Springfield)" }, // different last name
@@ -1929,10 +1929,126 @@ describe("name-only matches, variants, adults by age, and the lookup (#598)", ()
       ["Jon Reyes", ["Jonathan Reyes"]],
       ["Nessa Cole", ["Vanessa Cole"]],
     ]);
+    expect(seed.identities.size).toBe(0);
     // Staff can confirm the suggestion by hand.
     const jon = reviews.find((review) => review.name === "Jon Reyes")!;
     await resolveBackgroundCheckReview(jon.id, { type: "match", personId: "p-jonathan" }, "admin-1");
     expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-jonathan", matchedBy: "MANUAL" })]);
+  });
+
+  it("second upload matches a prior name-only row as IDENTITY with no staff action, and lists nothing new (#619)", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    rosterAdult(seed, "p-mina", "Mina", "Osei", mapleGrove);
+    const rows = rosterRows({ userId: "7001", last: "Osei", first: "Mina", sites: otherChurch });
+    await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
+    expect(await listNameOnlyBackgroundCheckMatches(now)).toHaveLength(1);
+    // A Refresh finds it by its remembered id, but it is still new since the last upload.
+    await rematchBackgroundCheckList(now);
+    expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-mina", matchedBy: "NAME_ONLY" })]);
+    expect(await listNameOnlyBackgroundCheckMatches(now)).toHaveLength(1);
+    // A later namesake would have stopped a fresh name-only match, not a remembered one.
+    seed.persons.set("p-mina-two", { id: "p-mina-two", firstName: "Mina", lastName: "Osei" });
+    await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
+    expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-mina", matchedBy: "IDENTITY" })]);
+    expect(seed.reviews.size).toBe(0);
+    expect(await listNameOnlyBackgroundCheckMatches(now)).toEqual([]);
+  });
+
+  it("a rejection beats a remembered name-only match, on Refresh and on the next upload (#619)", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    rosterAdult(seed, "p-mina", "Mina", "Osei", mapleGrove);
+    const rows = rosterRows({ userId: "7001", last: "Osei", first: "Mina", sites: otherChurch });
+    await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
+    expect(seed.identities.size).toBe(1);
+    await rejectNameOnlyBackgroundCheckMatch([...seed.matches.values()][0]!.id as string, "admin-1");
+    expect(seed.identities.size).toBe(0); // the remembered id is forgotten too
+    await rematchBackgroundCheckList(now);
+    await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
+    expect(seed.matches.size).toBe(0);
+    expect(seed.reviews.size).toBe(0);
+    // Even if a remembered id is still there, the rejection wins and the row goes to review.
+    seed.identities.set("id-1", { id: "id-1", provider: "ROSTER_IMPORT", providerScope: "", externalId: "userId:7001", personId: "p-mina" });
+    await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
+    expect(seed.matches.size).toBe(0);
+    expect(String([...seed.reviews.values()][0]?.reason)).toMatch(/staff said it is not/i);
+  });
+
+  it("a match made by hand carries to the next upload, remembered by the row's user_id (#619)", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    rosterAdult(seed, "p-mina", "Mina", "Osei", mapleGrove);
+    rosterAdult(seed, "p-nora", "Nora", "Osei", mapleGrove);
+    const rows = rosterRows({ userId: "7001", last: "Osei", first: "Mina", sites: otherChurch });
+    await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
+    await rejectNameOnlyBackgroundCheckMatch([...seed.matches.values()][0]!.id as string, "admin-1");
+    const [entry] = [...seed.entries.values()];
+    seed.reviews.set("r-1", { id: "r-1", entryId: entry!.id, reason: "Check it.", candidatePersonIds: ["p-nora", "p-mina"], dismissedAt: null, createdAt: new Date() });
+    await resolveBackgroundCheckReview("r-1", { type: "match", personId: "p-nora" }, "admin-1");
+    expect([...seed.identities.values()]).toEqual([expect.objectContaining({ externalId: "userId:7001", personId: "p-nora" })]);
+    await applyBackgroundCheckUpload(rows, "ROSTER", "admin-1", now);
+    expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-nora", matchedBy: "MANUAL" })]);
+    expect(seed.reviews.size).toBe(0);
+    expect(await listNameOnlyBackgroundCheckMatches(now)).toEqual([]);
+  });
+
+  it("a row with no user_id has nothing to remember, so its hand match is carried by the row's own key (#619)", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    rosterAdult(seed, "p-mina", "Mina", "Osei", mapleGrove);
+    rosterAdult(seed, "p-nora", "Nora", "Osei", mapleGrove);
+    const row = { ...rosterRows({ userId: "7001", last: "Osei", first: "Mina", sites: otherChurch })[0]!, sourceUserId: null, identityKey: "email:mina@example.test|mina osei", email: "mina@example.test" };
+    await applyBackgroundCheckUpload([row], "STERLING", "admin-1", now);
+    expect(seed.identities.size).toBe(0);
+    const [entry] = [...seed.entries.values()];
+    seed.reviews.set("r-1", { id: "r-1", entryId: entry!.id, reason: "Check it.", candidatePersonIds: ["p-nora"], dismissedAt: null, createdAt: new Date() });
+    await resolveBackgroundCheckReview("r-1", { type: "match", personId: "p-nora" }, "admin-1");
+    await applyBackgroundCheckUpload([row], "STERLING", "admin-1", now);
+    expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-nora", matchedBy: "MANUAL" })]);
+  });
+
+  it("matches a first-name variant automatically only when one person is the variant and the site agrees (#619)", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    rosterAdult(seed, "p-jonathan", "Jonathan", "Reyes", mapleGrove);
+    const siteRow = rosterRows({ userId: "6001", last: "Reyes", first: "Jon", sites: "Maple Grove SDA Church (Springfield)" });
+    await applyBackgroundCheckUpload(siteRow, "ROSTER", "admin-1", now);
+    expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-jonathan", matchedBy: "NAME_ONLY" })]);
+    expect(seed.reviews.size).toBe(0);
+    expect(seed.identities.size).toBe(0); // the names differ, so nothing is remembered
+    expect(await listNameOnlyBackgroundCheckMatches(now)).toEqual([expect.objectContaining({ personName: "Jonathan Reyes", entryName: "Jon Reyes" })]);
+    // Staff can still say it is wrong; that holds on the next upload.
+    await rejectNameOnlyBackgroundCheckMatch([...seed.matches.values()][0]!.id as string, "admin-1");
+    await applyBackgroundCheckUpload(siteRow, "ROSTER", "admin-1", now);
+    expect(seed.matches.size).toBe(0);
+    expect(seed.reviews.size).toBe(0);
+  });
+
+  it("keeps a variant match through a per-person refresh, and re-derives it on a Refresh (#619)", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    rosterAdult(seed, "p-jonathan", "Jonathan", "Reyes", mapleGrove);
+    await applyBackgroundCheckUpload(rosterRows({ userId: "6001", last: "Reyes", first: "Jon", sites: "Maple Grove SDA Church (Springfield)" }), "ROSTER", "admin-1", now);
+    await refreshBackgroundCheckMatchForPerson("p-jonathan", now);
+    expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-jonathan", matchedBy: "NAME_ONLY" })]);
+    await rematchBackgroundCheckList(now);
+    expect([...seed.matches.values()]).toEqual([expect.objectContaining({ personId: "p-jonathan", matchedBy: "NAME_ONLY" })]);
+  });
+
+  it("sends a variant to review when two people are variants, or when the details contradict (#619)", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    rosterAdult(seed, "p-jonathan", "Jonathan", "Reyes", mapleGrove);
+    rosterAdult(seed, "p-jonas", "Jonas", "Reyes", mapleGrove);
+    rosterAdult(seed, "p-vanessa", "Vanessa", "Cole", { ...mapleGrove, email: "vanessa@example.test" });
+    const [cole] = rosterRows({ userId: "6002", last: "Cole", first: "Nessa", sites: "Maple Grove SDA Church (Springfield)" });
+    await applyBackgroundCheckUpload([
+      ...rosterRows({ userId: "6001", last: "Reyes", first: "Jon", sites: "Maple Grove SDA Church (Springfield)" }),
+      { ...cole!, email: "someone-else@example.test" },
+    ], "ROSTER", "admin-1", now);
+    expect(seed.matches.size).toBe(0);
+    expect(seed.reviews.size).toBe(1); // Jon Reyes: two candidates. Nessa Cole: her email contradicts, so no suggestion.
   });
 
   it("counts a roster member 18 or older as a candidate whatever their type, and not a younger one", async () => {

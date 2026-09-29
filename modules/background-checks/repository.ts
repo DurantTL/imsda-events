@@ -437,7 +437,8 @@ type EntryForMatch = {
   site: string | null;
 };
 type MatchedBy = "IDENTITY" | "AUTO" | "NAME_ONLY";
-type MatchResult = { entryId: string; personId: string; identityKey: string; matchedBy: MatchedBy };
+/** `viaVariant`: a first-name variant match (#619). The names differ, so it is never remembered as an id. */
+type MatchResult = { entryId: string; personId: string; identityKey: string; matchedBy: MatchedBy; viaVariant?: boolean };
 type ReviewResult = { entryId: string; reason: string; candidatePersonIds: string[] };
 
 const entryForMatchSelect = { id: true, identityKey: true, firstName: true, lastName: true, normalizedName: true, email: true, sealedBirthDate: true, site: true } as const;
@@ -524,8 +525,17 @@ function countRowsByName(entries: Array<Pick<EntryForMatch, "normalizedName">>) 
  *   candidates, or several rows for one candidate, go to review; a
  *   contradiction leaves the row unmatched.
  * - With no exact-name candidate at all, a candidate with the same last name
- *   and a first name that is a form of the row's (Jon/Jonathan) goes to
- *   review, never to a match.
+ *   and a first name that is a form of the row's (Jon/Jonathan) is a match
+ *   (`NAME_ONLY`) only when exactly one person is such a variant AND the row's
+ *   email, birth date, or site agrees with them (#619); otherwise it goes to
+ *   review. A variant match is not remembered as an id (the names differ, so
+ *   the remembered id would be a name mismatch), so it is re-derived by each
+ *   upload under these same rules.
+ * - A `NAME_ONLY` match of a `user_id` row is remembered like an `AUTO` one
+ *   (#619): the next upload finds it as `IDENTITY`, with no staff action, and
+ *   no later namesake un-makes it. A rejection ("not the same person") still
+ *   wins over a remembered id: the row goes to review instead, and rejecting
+ *   also forgets the id.
  * - A person matched by more than one entry is also a review, for every
  *   entry that matched them — never guessed which one is right.
  * - `unavailable` people already hold a match that isn't being recomputed
@@ -541,10 +551,10 @@ function matchEntries(
 ): { matches: MatchResult[]; reviews: ReviewResult[] } {
   const reviews: ReviewResult[] = [];
   const rowCounts = context.rowCounts ?? countRowsByName(entries);
-  const tentativeByPerson = new Map<string, Array<{ entryId: string; identityKey: string; matchedBy: MatchedBy }>>();
-  const pushTentative = (entry: EntryForMatch, personId: string, matchedBy: MatchedBy) => {
+  const tentativeByPerson = new Map<string, Array<{ entryId: string; identityKey: string; matchedBy: MatchedBy; viaVariant?: boolean }>>();
+  const pushTentative = (entry: EntryForMatch, personId: string, matchedBy: MatchedBy, viaVariant = false) => {
     const list = tentativeByPerson.get(personId) ?? [];
-    list.push({ entryId: entry.id, identityKey: entry.identityKey, matchedBy });
+    list.push({ entryId: entry.id, identityKey: entry.identityKey, matchedBy, viaVariant });
     tentativeByPerson.set(personId, list);
   };
 
@@ -614,6 +624,12 @@ function matchEntries(
     }
     if (sameName.length > 0) continue; // Only someone already matched to another row, or one staff rejected: nothing left to suggest.
     const variants = firstNameVariantCandidates(entry, index, unavailable, rejectedHere);
+    if (variants.length === 1 && candidatesForEntry(entry, variants, index.directoryStems).length === 1) {
+      // Exactly one person has this surname with a variant first name, and the
+      // row's email, birth date, or site agrees with them (#619).
+      pushTentative(entry, variants[0]!.personId, "NAME_ONLY", true);
+      continue;
+    }
     if (variants.length > 0) {
       reviews.push({
         entryId: entry.id,
@@ -627,7 +643,7 @@ function matchEntries(
   const matches: MatchResult[] = [];
   for (const [personId, list] of tentativeByPerson) {
     if (list.length === 1) {
-      matches.push({ entryId: list[0]!.entryId, identityKey: list[0]!.identityKey, personId, matchedBy: list[0]!.matchedBy });
+      matches.push({ entryId: list[0]!.entryId, identityKey: list[0]!.identityKey, personId, matchedBy: list[0]!.matchedBy, ...(list[0]!.viaVariant ? { viaVariant: true } : {}) });
       continue;
     }
     for (const item of list) {
@@ -717,9 +733,12 @@ async function saveMatchResults(tx: PrismaLike, matches: MatchResult[], reviews:
       skipDuplicates: true,
     });
   }
-  // A name-only match is a guess staff spot-check (#598): it never becomes a
-  // remembered id, which would win over the name on every later upload.
-  await rememberUserIdIdentities(tx, matches.filter((match) => match.matchedBy !== "NAME_ONLY"), now);
+  // Every match is remembered by the row's `user_id`, name-only ones too
+  // (#619; #598 skipped them): the next upload finds them as `IDENTITY` so
+  // staff don't recheck each upload. A rejection outranks the remembered id in
+  // `matchEntries`, and rejecting forgets it. A variant match isn't remembered:
+  // the remembered id's name check would fail against the row's variant name.
+  await rememberUserIdIdentities(tx, matches.filter((match) => !match.viaVariant), now);
 }
 
 /** Every entry in a fresh upload, matched once, in one bounded pass (#527). */
@@ -787,7 +806,29 @@ async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: stri
   const heldOpenReview = (entry: (typeof entries)[number]) => (
     Boolean(entry.review) && !dismissed(entry) && reviewCandidates(entry).some((personId) => held.has(personId))
   );
-  const derivedEntryIds = entries.filter((entry) => entry.match && !LOCKED_SOURCES.has(entry.match.matchedBy)).map((entry) => entry.id);
+  // A scoped pass can't rebuild a first-name variant match (its index holds
+  // one name group, not everyone with that last name), so it leaves one alone
+  // unless someone with the row's exact name is now in the group (#619).
+  const variantMatchedIds = new Set<string>();
+  if (!whole) {
+    const nameOnlyMatched = entries.filter((entry) => entry.match?.matchedBy === "NAME_ONLY");
+    if (nameOnlyMatched.length > 0) {
+      const matchedPeople = await tx.person.findMany({
+        where: { id: { in: nameOnlyMatched.map((entry) => entry.match!.personId) } },
+        select: { id: true, firstName: true, lastName: true },
+      });
+      const nameOf = new Map(matchedPeople.map((person) => [person.id, matchableName(`${person.firstName} ${person.lastName}`)]));
+      const exactNames = new Set(named.map((row) => matchableName(`${row.firstName} ${row.lastName}`)));
+      for (const entry of nameOnlyMatched) {
+        if (entry.normalizedName && nameOf.get(entry.match!.personId) !== entry.normalizedName && !exactNames.has(entry.normalizedName)) variantMatchedIds.add(entry.id);
+      }
+    }
+  }
+  // A `NAME_ONLY` match stays labelled so for the life of this upload even
+  // once it is remembered (a Refresh finds it as `IDENTITY`): the spot-check
+  // list is what is new since the last upload (#619).
+  const nameOnlyBefore = new Map(entries.filter((entry) => entry.match?.matchedBy === "NAME_ONLY").map((entry) => [entry.id, entry.match!.personId]));
+  const derivedEntryIds = entries.filter((entry) => entry.match && !LOCKED_SOURCES.has(entry.match.matchedBy) && !variantMatchedIds.has(entry.id)).map((entry) => entry.id);
   if (derivedEntryIds.length > 0) {
     await tx.backgroundCheckMatch.deleteMany({ where: { entryId: { in: derivedEntryIds }, matchedBy: { in: [...DERIVED_SOURCES] } } });
   }
@@ -804,7 +845,7 @@ async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: stri
   };
 
   const toMatch = entries.filter((entry) => (
-    !(entry.match && LOCKED_SOURCES.has(entry.match.matchedBy)) && !dismissed(entry) && !heldOpenReview(entry)
+    !(entry.match && LOCKED_SOURCES.has(entry.match.matchedBy)) && !variantMatchedIds.has(entry.id) && !dismissed(entry) && !heldOpenReview(entry)
   ));
   if (toMatch.length === 0) {
     await clearOpenReviews(new Set());
@@ -828,7 +869,9 @@ async function recomputeNameGroups(tx: PrismaLike, uploadId: string, names: stri
     rowCounts: countRowsByName(entries),
     rejected,
   });
-  const matches = result.matches.filter((match) => !held.has(match.personId));
+  const matches = result.matches
+    .filter((match) => !held.has(match.personId))
+    .map((match) => (match.matchedBy === "IDENTITY" && nameOnlyBefore.get(match.entryId) === match.personId ? { ...match, matchedBy: "NAME_ONLY" as const } : match));
   const reviews = [
     ...result.reviews,
     ...result.matches.filter((match) => held.has(match.personId)).map((match) => ({
@@ -1261,7 +1304,12 @@ export type NameOnlyBackgroundCheckMatch = {
   site: string | null;
 };
 
-/** Every match decided on the name alone (site didn't match), for a staff spot check (#598). Staff-only. */
+/**
+ * The matches decided on the name alone (site didn't match) since the last
+ * upload, for an informational spot check (#598, #619). Staff-only. Nothing
+ * here needs a click to count: a name-only match of a `user_id` row is
+ * remembered, so the next upload finds it as `IDENTITY` and it drops off.
+ */
 export async function listNameOnlyBackgroundCheckMatches(now = new Date()): Promise<NameOnlyBackgroundCheckMatch[]> {
   const prisma = getPrisma();
   const matches = await prisma.backgroundCheckMatch.findMany({
@@ -1314,6 +1362,12 @@ export async function rejectNameOnlyBackgroundCheckMatch(matchId: string, actorU
     if (match.matchedBy !== "NAME_ONLY") throw new BackgroundCheckOperationError("NOT_A_NAME_ONLY_MATCH", "Only a match made on the name alone can be undone here.");
     const deleted = await tx.backgroundCheckMatch.deleteMany({ where: { entryId: match.entryId, matchedBy: "NAME_ONLY" } });
     if (deleted.count !== 1) throw listChanged();
+    // The id remembered for this match (#619) goes too: staff said it is wrong.
+    if (isRememberedIdentityKey(match.entry.identityKey)) {
+      await tx.externalIdentity.deleteMany({
+        where: { provider: ROSTER_IMPORT_PROVIDER, providerScope: "", externalId: match.entry.identityKey, personId: match.personId },
+      });
+    }
     // Remembered by the row's identity key, so it holds across every upload.
     await tx.backgroundCheckRejectedPairing.createMany({
       data: [{ identityKey: match.entry.identityKey, personId: match.personId, rejectedByUserId: actorUserId }],

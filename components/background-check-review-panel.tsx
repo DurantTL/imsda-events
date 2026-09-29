@@ -229,9 +229,9 @@ export function BackgroundCheckReviewPanel() {
         </div>
       )}
 
-      <h3>Matched by name only (site didn&apos;t match) ({nameOnlyMatches?.length ?? 0})</h3>
-      <p className="quiet-copy">The name is the only one on the list and among the club and church adults, and nothing contradicts it, so the row was matched even though its site differs. Spot-check these; &quot;Not the same person&quot; puts the row back to unmatched, and that person is never offered for that row again, even after a new upload (you can still match them by hand).</p>
-      {nameOnlyMatches && nameOnlyMatches.length === 0 && <p className="report-empty">No rows are matched on the name alone.</p>}
+      <h3>Matched by name, new since the last upload ({nameOnlyMatches?.length ?? 0})</h3>
+      <p className="quiet-copy">These were matched by name. No action needed unless one is wrong. Each already counts, and it is remembered for the next upload, so it won&apos;t be listed again. &quot;Not the same person&quot; puts the row back to unmatched, and that person is never offered for that row again, even after a new upload (you can still match them by hand).</p>
+      {nameOnlyMatches && nameOnlyMatches.length === 0 && <p className="report-empty">No new matches by name since the last upload.</p>}
       {nameOnlyMatches && nameOnlyMatches.length > 0 && (
         <div className="report-table-wrap">
           <table className="report-table">

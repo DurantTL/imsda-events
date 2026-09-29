@@ -3850,7 +3850,10 @@ model BackgroundCheckMatch {
 /// when this list replaced it (#527), so nobody's status changed that day.
 /// `NAME_ONLY` (#598): the name is the only person and only row with it and
 /// nothing contradicts it, but the row's site didn't match; recomputed like
-/// `AUTO`, and shown to staff for a spot check.
+/// `AUTO`, and shown to staff for an informational spot check. Since #619 a
+/// `user_id` row's name-only match is remembered like `AUTO`, so the next
+/// upload finds it as `IDENTITY`; a first-name variant with one agreeing
+/// detail is also `NAME_ONLY` (not remembered).
 enum BackgroundCheckMatchSource {
   IDENTITY
   AUTO
