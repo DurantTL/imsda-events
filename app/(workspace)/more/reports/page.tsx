@@ -26,6 +26,8 @@ import type {
   OperationalSeminarField,
 } from "@/modules/reporting/operational-reports";
 import { getOperationalReport } from "@/modules/reporting/repository";
+import { getCurrentSession } from "@/modules/access/current-session";
+import { canSeeIssuesText } from "@/modules/background-checks/notes-access";
 import { listEventBackgroundFlags } from "@/modules/background-checks/repository";
 
 export const metadata: Metadata = { title: "Operational reports" };
@@ -137,7 +139,12 @@ export default async function OperationalReportsPage({
     );
   }
 
-  const [report, backgroundFlags] = await Promise.all([getOperationalReport(event.id), listEventBackgroundFlags(event.id)]);
+  // The issues text is for system administrators only (#427, #544).
+  const { user } = await getCurrentSession();
+  const [report, backgroundFlags] = await Promise.all([
+    getOperationalReport(event.id),
+    listEventBackgroundFlags(event.id, { includeNotes: canSeeIssuesText(user) }),
+  ]);
   const peopleQuery = `?event=${encodeURIComponent(event.id)}`;
   const summaryCards = [
     {

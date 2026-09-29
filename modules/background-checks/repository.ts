@@ -10,6 +10,7 @@ import { ageOn, clubYearFor } from "@/modules/club-rosters/domain";
 import type { ClubCapabilities } from "@/modules/organizations/director-grants-domain";
 import { activeRegistrationStatuses, calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { BackgroundCheckOperationError } from "@/modules/background-checks/errors";
+import { describeIssues } from "@/modules/background-checks/issues";
 import {
   ageFromAnswer,
   attendeeIsAdult,
@@ -977,7 +978,11 @@ export async function listUnmatchedBackgroundCheckEntries() {
 
 // --- Read path: everywhere a person's compliance is looked up ---
 
-type StoredCheck = { expiresOn: string | null; complianceStatus?: BackgroundComplianceStatus | null; issuesNote?: string | null };
+type StoredCheck = {
+  expiresOn: string | null;
+  complianceStatus?: BackgroundComplianceStatus | null;
+  issuesNote?: string | null;
+};
 
 type LookupSubject = {
   personId: string;
@@ -1124,14 +1129,19 @@ export type BackgroundFlag = {
   registrationId: string;
   state: Exclude<BackgroundCheckState, "CURRENT">;
   expiresOn: string | null;
+  /** The list's issues column as stored (#544): only when the caller asked for notes (`includeNotes`, system administrators only, #427); otherwise null. */
+  issuesNote: string | null;
+  /** The issues text as readable reasons for staff ("Marked Non-Driver", ...): same audience as `issuesNote`, empty otherwise. */
+  issueReasons: string[];
 };
 
 /**
  * Every adult registered for a youth or children's event who has no current
  * check through the event's last day. Null when the event doesn't check.
- * Staff and event managers only; never shown to clubs.
+ * Staff and event managers only; never shown to clubs. `includeNotes` adds each
+ * person's issues text, and must be decided by the caller from who is asking.
  */
-export async function listEventBackgroundFlags(eventId: string, options: { organizationId?: string } = {}) {
+export async function listEventBackgroundFlags(eventId: string, options: { organizationId?: string; includeNotes?: boolean } = {}) {
   const prisma = getPrisma();
   const event = await prisma.event.findUnique({
     where: { id: eventId },
@@ -1140,6 +1150,7 @@ export async function listEventBackgroundFlags(eventId: string, options: { organ
   if (!event?.checksAdultBackgrounds) return null;
   const eventDate = calendarDateInEventTimeZone(event.startsAt, event.timezone);
   const lastDay = calendarDateInEventTimeZone(event.endsAt, event.timezone);
+  const todayInChicago = calendarDateInEventTimeZone(new Date(), "America/Chicago");
   const attendees = await prisma.registrationAttendee.findMany({
     where: {
       eventId,
@@ -1160,7 +1171,7 @@ export async function listEventBackgroundFlags(eventId: string, options: { organ
           firstName: true,
           lastName: true,
           ...personEmailSelect,
-          backgroundCheckMatch: { select: { entry: { select: { expiresOn: true, complianceStatus: true } } } },
+          backgroundCheckMatch: { select: { entry: { select: { expiresOn: true, complianceStatus: true, issuesNote: true } } } },
         },
       },
       registration: {
@@ -1224,6 +1235,8 @@ export async function listEventBackgroundFlags(eventId: string, options: { organ
       registrationId: attendee.registration.id,
       state,
       expiresOn: check?.expiresOn ?? null,
+      issuesNote: options.includeNotes ? check?.issuesNote?.trim() || null : null,
+      issueReasons: options.includeNotes ? describeIssues(check?.issuesNote, todayInChicago) : [],
     });
   }
   return { adults: adultAttendees.length, people, lastDay };
@@ -1258,7 +1271,7 @@ export const personCheckEvidenceSelect = personEmailSelect;
 /**
  * Read-time checks for roster members the cache has no match for yet
  * (#527): the same lookup the club roster uses, for any roster-shaped page
- * (the driver verification queue, say). Keyed by person id.
+ * (any page that lists people by roster row). Keyed by person id.
  */
 export async function uncachedChecksForRosterMembers(members: RosterMemberForCheck[], prisma: PrismaLike = getPrisma()) {
   return lookupUncachedChecks(prisma, members
@@ -1308,7 +1321,7 @@ export async function clubRosterComplianceStatuses(
     },
   });
   const uncached = await uncachedChecksForRosterMembers(members, prisma);
-  const statuses: Record<string, { state: ClubComplianceState; note: string | null }> = {};
+  const statuses: Record<string, { state: ClubComplianceState; note: string | null; reasons: string[] }> = {};
   let notInCompliance = 0;
   let expiringSoon = 0;
   let missing = 0;
@@ -1320,7 +1333,11 @@ export async function clubRosterComplianceStatuses(
     if (state === "NOT_COMPLIANT") notInCompliance += 1;
     if (state === "FLAGGED") expiringSoon += 1;
     if (state === "NO_RECORD") missing += 1;
-    statuses[member.id] = { state, note: options.includeNotes ? check?.issuesNote ?? null : null };
+    statuses[member.id] = {
+      state,
+      note: options.includeNotes ? check?.issuesNote?.trim() || null : null,
+      reasons: options.includeNotes ? describeIssues(check?.issuesNote, today) : [],
+    };
   }
   return { statuses, notInCompliance, expiringSoon, missing };
 }

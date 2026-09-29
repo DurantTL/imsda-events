@@ -17,7 +17,6 @@ import {
   rosterSectionOf,
 } from "@/modules/club-rosters/domain";
 import type { RosterMemberRecord } from "@/modules/club-rosters/repository";
-import { canBeWillingDriver } from "@/modules/driver-verification/domain";
 
 import type { CurrentMemberHonor } from "@/modules/honors/member-honor-domain";
 
@@ -29,7 +28,12 @@ type RosterResponse = {
 };
 
 /** A background check's mark on a club page (#427): status only, or status and note for staff. */
-export type RosterComplianceInfo = { state: "CLEAR" | "FLAGGED" | "NOT_COMPLIANT" | "NO_RECORD"; note: string | null };
+export type RosterComplianceInfo = {
+  state: "CLEAR" | "FLAGGED" | "NOT_COMPLIANT" | "NO_RECORD";
+  note: string | null;
+  /** The note as readable reasons, for the same staff who get the note (#544); empty otherwise. */
+  reasons?: string[];
+};
 
 /** "!" on the roster import is `FLAGGED`: expiring soon. Staff, who get the note, are pointed to it. */
 function complianceLabel({ state, note }: RosterComplianceInfo) {
@@ -159,9 +163,6 @@ export function ClubRosterWorkspace({
       role: String(form.get("role") ?? ""),
       classLevel: String(form.get("classLevel") ?? "") || null,
       gender: String(form.get("gender") ?? "") || null,
-      // Only staff and adults can be willing drivers (#491); the checkbox is
-      // hidden for anyone else, so nothing is ever sent for them either.
-      willingToDrive: canBeWillingDriver(attendeeType) ? form.get("willingToDrive") === "on" : false,
     };
     const result = editing
       ? await call(`${base}/${encodeURIComponent(editing.id)}`, "PATCH", {
@@ -344,10 +345,7 @@ export function ClubRosterWorkspace({
                                   Missing info: {missing.join(", ")}
                                 </span>
                               )}
-                              {member.willingToDrive && (
-                                <span className="status-chip neutral">Willing to drive</span>
-                              )}
-                              {member.status === "ACTIVE" && missing.length === 0 && !member.willingToDrive && "—"}
+                              {member.status === "ACTIVE" && missing.length === 0 && "—"}
                               </div>
                             </td>
                             {complianceStatuses && (
@@ -359,6 +357,11 @@ export function ClubRosterWorkspace({
                                     </span>
                                     {complianceStatuses[member.id]!.note && (
                                       <small className="quiet-copy background-check-note"> {complianceStatuses[member.id]!.note}</small>
+                                    )}
+                                    {(complianceStatuses[member.id]!.reasons ?? []).length > 0 && (
+                                      <small className="quiet-copy background-check-note">
+                                        <br />{complianceStatuses[member.id]!.reasons!.join("; ")}
+                                      </small>
                                     )}
                                   </>
                                 ) : "—"}
@@ -460,23 +463,6 @@ export function ClubRosterWorkspace({
             </select>
           </label>
         </div>
-        {canBeWillingDriver(formType) && (
-          <>
-            <label className="checkbox-label roster-willing-to-drive">
-              <input
-                defaultChecked={editing?.willingToDrive ?? false}
-                key={editing?.id ?? "new"}
-                name="willingToDrive"
-                type="checkbox"
-              />
-              Willing to drive
-            </label>
-            <p className="field-help">
-              This doesn&apos;t clear them to transport youth by itself — it adds them to the driver verification
-              queue, where a reviewer confirms their license, insurance, and background-check status were checked.
-            </p>
-          </>
-        )}
         <p className="field-help">
           Birth dates are encrypted and shown only to your club&apos;s director and deputy. Registrars and event
           staff see age only. Don&apos;t enter medical or insurance information here.

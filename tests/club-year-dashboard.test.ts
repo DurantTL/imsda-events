@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * shared staff/Area Coordinator overview both build the same at-a-glance
  * tiles (roster, honors, background checks, events, monthly reports) from
  * data they already load — no new queries. These tests walk each server
- * page's returned tree (the pattern from `driver-verification-pages.test.ts`)
+ * page's returned tree (the same walk the roster page tests use)
  * and check the `ClubYearTiles` props each role gets, without rendering to DOM.
  */
 
@@ -51,7 +51,7 @@ import { ClubYearTiles } from "@/components/club-year-tiles";
 
 type AnyProps = Record<string, unknown>;
 
-/** Every component element in a rendered server tree, depth first — same walk as the driver-verification page tests. */
+/** Every component element in a rendered server tree, depth first — the same walk the roster page tests use. */
 function componentElements(node: ReactNode, found: ReactElement<AnyProps>[] = []) {
   if (Array.isArray(node)) {
     for (const child of node) componentElements(child, found);

@@ -25,7 +25,6 @@ function member(id: string, overrides: Partial<RosterMemberRecord> = {}): Roster
     age: 30,
     reportedAge: null,
     birthDateNeeded: false,
-    willingToDrive: false,
     updatedAt: new Date("2026-09-01T00:00:00Z").toISOString(),
     ...overrides,
   };
@@ -65,6 +64,29 @@ describe("club roster background-check column visibility (#427, #479)", () => {
     const html = markup({ complianceStatuses: undefined });
     expect(html).not.toContain("Background check");
     expect(html).not.toContain("Not in compliance");
+  });
+});
+
+describe("the issues text and readable reasons on the roster (#427, #544)", () => {
+  const noted: Record<string, RosterComplianceInfo> = {
+    "expired-check": { state: "NOT_COMPLIANT", note: "Synthetic issue, Non-Driver", reasons: ["Marked Non-Driver"] },
+  };
+
+  it("renders the text and the reasons for the staff who are given them", () => {
+    const html = markup({ complianceStatuses: noted });
+    expect(html).toContain("Synthetic issue, Non-Driver");
+    expect(html).toContain("Marked Non-Driver");
+  });
+
+  it("renders neither when the note is null and the reasons are empty or missing", () => {
+    for (const info of [
+      { state: "NOT_COMPLIANT", note: null, reasons: [] },
+      { state: "NOT_COMPLIANT", note: null },
+    ] satisfies RosterComplianceInfo[]) {
+      const html = markup({ complianceStatuses: { "expired-check": info } });
+      expect(html).not.toContain("background-check-note");
+      expect(html).not.toContain("Non-Driver");
+    }
   });
 });
 

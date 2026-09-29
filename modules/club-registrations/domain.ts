@@ -21,7 +21,7 @@ export function rosterMemberIdFromClientId(clientId: string) {
 const GUEST_PREFIX = "guest:";
 
 /**
- * Someone going who isn't on the roster (#388), e.g. a parent driver. For
+ * Someone going who isn't on the roster (#388), e.g. a visiting parent. For
  * this event only: never added to the roster or kept for another event.
  */
 export type ClubGuest = { id: string; firstName: string; lastName: string; age: number; email: string | null };

@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { BackLink } from "@/components/back-link";
 import { ClubRosterWorkspace } from "@/components/club-roster-workspace";
 import { ClubTransfersPanel, RequestTransferButton } from "@/components/club-transfers-panel";
-import { DriverVerificationQueue } from "@/components/driver-verification-queue";
 import { clubPortalComplianceStatuses } from "@/modules/background-checks/repository";
 import { COMPLIANCE_FILTER_VALUES, type ComplianceFilterValue } from "@/modules/background-checks/domain";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
@@ -69,13 +68,6 @@ export default async function ClubRosterPage({
         readOnly={readOnly}
       />
       {canTransfer && <ClubTransfersPanel organizationId={organizationId} />}
-      {/* Willing drivers, for review (#491): the same leader-only capability that manages the club's team. */}
-      {access.capabilities.manageTeam && !readOnly && (
-        <DriverVerificationQueue
-          clearEndpointBase={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/driver-verification`}
-          listEndpoint={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/driver-verification`}
-        />
-      )}
     </>
   );
 }

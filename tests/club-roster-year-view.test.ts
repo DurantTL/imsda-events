@@ -29,7 +29,6 @@ vi.mock("@/modules/club-transfers/repository", () => ({ listTransferClubOptions:
 import ClubRosterPage from "@/app/(public)/account/(portal)/clubs/[organizationId]/roster/page";
 import { ClubRosterWorkspace } from "@/components/club-roster-workspace";
 import { ClubTransfersPanel } from "@/components/club-transfers-panel";
-import { DriverVerificationQueue } from "@/components/driver-verification-queue";
 import { rosterYearView } from "@/modules/club-rosters/domain";
 import type { RosterMemberRecord } from "@/modules/club-rosters/repository";
 
@@ -59,7 +58,6 @@ const member: RosterMemberRecord = {
   age: null,
   reportedAge: 10,
   birthDateNeeded: true,
-  willingToDrive: false,
   updatedAt: new Date("2026-09-01T00:00:00Z").toISOString(),
 };
 
@@ -119,7 +117,6 @@ describe("the club roster page's ?year= view (#541)", () => {
     expect(mocks.listRoster).toHaveBeenCalledWith("club-1", "2025-26");
     expect(workspace).toMatchObject({ clubYear: "2025-26", readOnly: true, canSeeBirthDates: false, headingActions: undefined, honorsHref: undefined });
     expect(elements.some((element) => element.type === ClubTransfersPanel)).toBe(false);
-    expect(elements.some((element) => element.type === DriverVerificationQueue)).toBe(false);
 
     expect(html).toContain("Club year 2025-26");
     expect(html).toContain("Robin");

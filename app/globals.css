@@ -1041,7 +1041,7 @@ select:focus-visible {
 .status-chip.gold { background: var(--imsda-gold-soft); color: #805807; }
 .status-chip.purple { background: var(--imsda-purple-soft); color: var(--imsda-purple); }
 .status-chip.coral { background: #fff1ef; color: var(--coral); }
-/* Informational, not a status: e.g. "Willing to drive" (#491), which never means cleared. */
+/* Informational, not a status. */
 .status-chip.neutral { background: transparent; border: 1px solid var(--line); color: var(--muted); }
 
 .attention-row {

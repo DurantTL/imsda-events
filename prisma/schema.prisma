@@ -3536,12 +3536,9 @@ model ClubRosterMember {
   /// Set instead of `createdByAccountId` for a staff "act as" director (#442).
   createdByUserId      String?
   removedAt            DateTime?
-  /// Q1 (#491): the person has said they're willing to drive for club or
-  /// event transportation. Checking it never grants clearance by itself — it
-  /// only adds them to the driver verification queue (`DriverVerification`)
-  /// for a reviewer to confirm license, insurance, and background-check
-  /// status elsewhere and record an outcome. Meaningful for STAFF and ADULT
-  /// rows only (`canBeWillingDriver`); youth and underage rows never carry it.
+  /// Unused since #544: the app no longer has any driving feature, and roster
+  /// writes ignore this field. The column stays until a human-approved
+  /// migration removes it.
   willingToDrive       Boolean                @default(false)
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
@@ -3739,18 +3736,9 @@ enum BackgroundCheckComplianceStatus {
   NOT_COMPLIANT
 }
 
-/// A driver clearance decision (Q1, #491). Driver clearance itself is not a
-/// new compliance status — `BackgroundCheck` already carries the underlying
-/// background-check result — this is only the reviewer's own confirmation
-/// that the license, insurance, and background-check clearance were checked,
-/// and the outcome of that review. Never the license or insurance numbers or
-/// files themselves (ADR 0005 Addendum A; #491 acceptance criteria). One row
-/// per person; a later review replaces the previous outcome, and every
-/// decision is also written to `AuditLog` (`DRIVER_VERIFICATION_REVIEWED`) so
-/// the history of who decided what, and when, survives a later overwrite.
-/// The reviewer is attributed the same way a club roster edit is (#442):
-/// either the attendee account of a club director/deputy, or the staff user
-/// (with `actAsId` in the audit metadata for an "act as" director), never both.
+/// Unused since #544: the app no longer has any driving feature (this table
+/// held #491 driver review decisions and #544 staff overrides). No code reads
+/// or writes it; the table stays until a human-approved migration removes it.
 model DriverVerification {
   id                  String    @id @default(cuid())
   personId            String    @unique
@@ -3838,7 +3826,7 @@ model ClubRegistrationDraft {
   eventId            String
   organizationId     String
   selectedMemberIds  String[]
-  /// People going who aren't on the roster (#388), e.g. a parent driver:
+  /// People going who aren't on the roster (#388), e.g. a visiting parent:
   /// [{ id, firstName, lastName, age, email }]. For this event only; they're
   /// never added to the roster. The server reads them from here at submit.
   guests             Json     @default("[]")

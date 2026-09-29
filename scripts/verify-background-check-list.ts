@@ -31,6 +31,7 @@ import path from "node:path";
 import { loadEnvConfig } from "@next/env";
 import { PrismaClient } from "@prisma/client";
 import { clubComplianceState, matchableName, parseRosterBackgroundCsv, parseSterlingCsv, rosterRowToListRow, sterlingRowToListRow } from "../modules/background-checks/domain";
+import { describeIssues } from "../modules/background-checks/issues";
 import { clubYearFor } from "../modules/club-rosters/domain";
 import { calendarDateInEventTimeZone } from "../modules/events/lifecycle";
 
@@ -160,6 +161,7 @@ function statesBefore527(today: string) {
   return Object.fromEntries(people.map((person) => [ids.member(person.key), {
     state: clubComplianceState(person.check ? { expiresOn: person.check.expiresOn ?? null, complianceStatus: person.check.complianceStatus ?? null } : null, today),
     note: person.check?.issuesNote ?? null,
+    reasons: describeIssues(person.check?.issuesNote, today),
   }]));
 }
 
@@ -194,6 +196,9 @@ async function main() {
 
   const statuses = async () => (await repository.clubRosterComplianceStatuses(ids.club, clubYear, { includeNotes: true })).statuses;
   assertEqual(await statuses(), expected, "every roster adult's state is unchanged by the migration");
+  // The issues text and its readable reasons are for system administrators only (#427, #544).
+  const withoutNotes = (await repository.clubRosterComplianceStatuses(ids.club, clubYear, { includeNotes: false })).statuses;
+  assert(Object.values(withoutNotes).every((status) => status.note === null && status.reasons.length === 0), "without includeNotes there is no issues text and no reasons");
   const identities = await db.externalIdentity.findMany({ where: { provider: "ROSTER_IMPORT", personId: { startsWith: `${P}_` } }, orderBy: { externalId: "asc" }, select: { externalId: true } });
   assertEqual(identities.map((identity) => identity.externalId), ["userId:70001", "userId:70005", "userId:70007"], "remembered user_ids are rewritten to the list's key format");
   const migrated = await db.backgroundCheckEntry.findMany({ orderBy: { id: "asc" }, select: { identityKey: true, sourceUserId: true, normalizedName: true, match: { select: { matchedBy: true } } } });
