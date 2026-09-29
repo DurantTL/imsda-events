@@ -166,7 +166,8 @@ export function HonorsSetupWorkspace({
     let confirmed: number | null = null;
     // The count can change between asking and deleting (a club saved picks):
     // every time the server reports a different count, ask again with it.
-    for (let attempt = 0; attempt < 5; attempt += 1) {
+    // Each confirmation the person gives is always followed by its request; at the limit the error replaces another question.
+    for (let confirmations = 0; ; confirmations += 1) {
       pending.picks = null;
       const result = await call(
         confirmed === null ? url : `${url}?confirmPicks=${confirmed}`,
@@ -176,12 +177,14 @@ export function HonorsSetupWorkspace({
         needsConfirmation,
       );
       if (result || pending.picks === null) return result;
+      if (confirmations >= 5) {
+        setError("The number of class picks kept changing, so nothing was deleted. Try again.");
+        return null;
+      }
       const picks: number = pending.picks;
       if (!window.confirm(`${picks} class pick${picks === 1 ? "" : "s"} by clubs will be removed from their registrations. Delete ${label} anyway?`)) return null;
       confirmed = picks;
     }
-    setError("The number of class picks kept changing, so nothing was deleted. Try again.");
-    return null;
   }
 
   async function removeSession(session: SetupSession) {

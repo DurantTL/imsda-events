@@ -561,93 +561,93 @@ export async function updateHonorOffering(
   // Serializable, so a class pick saved at the same moment can't slip past the pick count on a site move (#589).
   try {
     await serializable(async (tx) => {
-    const existing = await tx.honorOffering.findFirst({
-      where: { id: offeringId, eventId },
-      select: { id: true, honorId: true, sessionId: true, span: true, locationId: true, honor: { select: { name: true } } },
-    });
-    if (!existing) throw new HonorConfigurationError("OFFERING_NOT_FOUND", "That honor offering could not be found.");
-
-    const { honorId: nextHonorId, span: nextSpan, sessionId: nextSessionId, locationId: nextSiteInput, ...details } = input;
-    const honorId = nextHonorId ?? existing.honorId;
-    const span = nextSpan ?? existing.span;
-    const honorChanged = honorId !== existing.honorId;
-    const spanChanged = span !== existing.span;
-
-    // The final placement: an all-sessions class has its own site and no session; a single-session class has a session and takes its site.
-    let sessionId: string | null = null;
-    let sessionSite: string | null = null;
-    if (span === "SINGLE_SESSION") {
-      sessionId = nextSessionId !== undefined ? nextSessionId : existing.sessionId;
-      if (!sessionId) throw new HonorConfigurationError("SESSION_NOT_FOUND", "Choose the session for this honor.");
-      const session = await tx.honorSession.findFirst({ where: { id: sessionId, eventId }, select: { id: true, locationId: true } });
-      if (!session) throw new HonorConfigurationError("SESSION_NOT_FOUND", "That session could not be found.");
-      sessionSite = session.locationId;
-      if (nextSiteInput) {
-        throw new HonorConfigurationError("OFFERING_CONFLICT", "A single-session class is at its session's site. Move the session instead.");
-      }
-    } else if (nextSessionId) {
-      throw new HonorConfigurationError("OFFERING_CONFLICT", "An all-sessions honor isn't tied to one session.");
-    }
-    const locationId = span === "ALL_SESSIONS"
-      ? (nextSiteInput !== undefined ? nextSiteInput : existing.span === "ALL_SESSIONS" ? existing.locationId : null)
-      : null;
-    const sessionChanged = sessionId !== existing.sessionId;
-    const siteChanged = locationId !== existing.locationId;
-
-    let newHonorName: string | null = null;
-    if (honorChanged) {
-      const honor = await tx.honor.findUnique({ where: { id: honorId }, select: { id: true, name: true, isActive: true } });
-      if (!honor) throw new HonorConfigurationError("HONOR_NOT_FOUND", "That honor could not be found.");
-      if (!honor.isActive) throw new HonorConfigurationError("HONOR_INACTIVE", "That honor is inactive in the catalog.");
-      newHonorName = honor.name;
-    }
-    if (span === "ALL_SESSIONS" && (siteChanged || spanChanged)) {
-      await requireSessionLocation(tx, eventId, locationId);
-      if (!locationId && await eventHasActiveLocations(tx, eventId)) throw siteRequired("all-sessions class");
-    }
-
-    if (honorChanged || spanChanged || sessionChanged || siteChanged) {
-      // Clubs that picked this class would be stranded or hold a different class than they chose; nothing is removed silently.
-      if (await tx.honorEnrollment.count({ where: { offeringId } }) > 0) {
-        throw new HonorConfigurationError(
-          "OFFERING_HAS_PICKS",
-          siteChanged && !honorChanged && !spanChanged && !sessionChanged
-            ? "Clubs have already picked this class, so it can't move to another site."
-            : "Clubs have already picked this class, so its honor, session or span can't change. Delete it (which removes those picks) or add a new class.",
-        );
-      }
-      const others = await tx.honorOffering.findMany({
-        where: { eventId, honorId, id: { not: offeringId } },
-        select: { honorId: true, span: true, sessionId: true, locationId: true, session: { select: { locationId: true } } },
+      const existing = await tx.honorOffering.findFirst({
+        where: { id: offeringId, eventId },
+        select: { id: true, honorId: true, sessionId: true, span: true, locationId: true, honor: { select: { name: true } } },
       });
-      const conflict = offeringSlotConflict(
-        { honorId, span, sessionId, locationId: span === "ALL_SESSIONS" ? locationId : sessionSite },
-        others.map((offering) => ({ ...offering, locationId: offeringSiteId(offering) })),
-      );
-      if (conflict) throw new HonorConfigurationError("OFFERING_CONFLICT", conflict);
-    }
+      if (!existing) throw new HonorConfigurationError("OFFERING_NOT_FOUND", "That honor offering could not be found.");
 
-    await tx.honorOffering.update({
-      where: { id: offeringId },
-      data: {
-        ...details,
-        ...(honorChanged ? { honorId } : {}),
-        ...(spanChanged ? { span } : {}),
-        ...(sessionChanged ? { sessionId } : {}),
-        ...(siteChanged ? { locationId } : {}),
-      },
-    });
-    await writeAuditLog({
-      eventId,
-      actorUserId,
-      action: "HONOR_OFFERING_UPDATED",
-      entityType: "HonorOffering",
-      entityId: offeringId,
-      summary: newHonorName
-        ? `Updated the ${existing.honor.name} offering and changed its honor to ${newHonorName}.`
-        : `Updated the ${existing.honor.name} offering.`,
-      metadata: { changes: input },
-    }, tx);
+      const { honorId: nextHonorId, span: nextSpan, sessionId: nextSessionId, locationId: nextSiteInput, ...details } = input;
+      const honorId = nextHonorId ?? existing.honorId;
+      const span = nextSpan ?? existing.span;
+      const honorChanged = honorId !== existing.honorId;
+      const spanChanged = span !== existing.span;
+
+      // The final placement: an all-sessions class has its own site and no session; a single-session class has a session and takes its site.
+      let sessionId: string | null = null;
+      let sessionSite: string | null = null;
+      if (span === "SINGLE_SESSION") {
+        sessionId = nextSessionId !== undefined ? nextSessionId : existing.sessionId;
+        if (!sessionId) throw new HonorConfigurationError("SESSION_NOT_FOUND", "Choose the session for this honor.");
+        const session = await tx.honorSession.findFirst({ where: { id: sessionId, eventId }, select: { id: true, locationId: true } });
+        if (!session) throw new HonorConfigurationError("SESSION_NOT_FOUND", "That session could not be found.");
+        sessionSite = session.locationId;
+        if (nextSiteInput) {
+          throw new HonorConfigurationError("OFFERING_CONFLICT", "A single-session class is at its session's site. Move the session instead.");
+        }
+      } else if (nextSessionId) {
+        throw new HonorConfigurationError("OFFERING_CONFLICT", "An all-sessions honor isn't tied to one session.");
+      }
+      const locationId = span === "ALL_SESSIONS"
+        ? (nextSiteInput !== undefined ? nextSiteInput : existing.span === "ALL_SESSIONS" ? existing.locationId : null)
+        : null;
+      const sessionChanged = sessionId !== existing.sessionId;
+      const siteChanged = locationId !== existing.locationId;
+
+      let newHonorName: string | null = null;
+      if (honorChanged) {
+        const honor = await tx.honor.findUnique({ where: { id: honorId }, select: { id: true, name: true, isActive: true } });
+        if (!honor) throw new HonorConfigurationError("HONOR_NOT_FOUND", "That honor could not be found.");
+        if (!honor.isActive) throw new HonorConfigurationError("HONOR_INACTIVE", "That honor is inactive in the catalog.");
+        newHonorName = honor.name;
+      }
+      if (span === "ALL_SESSIONS" && (siteChanged || spanChanged)) {
+        await requireSessionLocation(tx, eventId, locationId);
+        if (!locationId && await eventHasActiveLocations(tx, eventId)) throw siteRequired("all-sessions class");
+      }
+
+      if (honorChanged || spanChanged || sessionChanged || siteChanged) {
+        // Clubs that picked this class would be stranded or hold a different class than they chose; nothing is removed silently.
+        if (await tx.honorEnrollment.count({ where: { offeringId } }) > 0) {
+          throw new HonorConfigurationError(
+            "OFFERING_HAS_PICKS",
+            siteChanged && !honorChanged && !spanChanged && !sessionChanged
+              ? "Clubs have already picked this class, so it can't move to another site."
+              : "Clubs have already picked this class, so its honor, session or span can't change. Delete it (which removes those picks) or add a new class.",
+          );
+        }
+        const others = await tx.honorOffering.findMany({
+          where: { eventId, honorId, id: { not: offeringId } },
+          select: { honorId: true, span: true, sessionId: true, locationId: true, session: { select: { locationId: true } } },
+        });
+        const conflict = offeringSlotConflict(
+          { honorId, span, sessionId, locationId: span === "ALL_SESSIONS" ? locationId : sessionSite },
+          others.map((offering) => ({ ...offering, locationId: offeringSiteId(offering) })),
+        );
+        if (conflict) throw new HonorConfigurationError("OFFERING_CONFLICT", conflict);
+      }
+
+      await tx.honorOffering.update({
+        where: { id: offeringId },
+        data: {
+          ...details,
+          ...(honorChanged ? { honorId } : {}),
+          ...(spanChanged ? { span } : {}),
+          ...(sessionChanged ? { sessionId } : {}),
+          ...(siteChanged ? { locationId } : {}),
+        },
+      });
+      await writeAuditLog({
+        eventId,
+        actorUserId,
+        action: "HONOR_OFFERING_UPDATED",
+        entityType: "HonorOffering",
+        entityId: offeringId,
+        summary: newHonorName
+          ? `Updated the ${existing.honor.name} offering and changed its honor to ${newHonorName}.`
+          : `Updated the ${existing.honor.name} offering.`,
+        metadata: { changes: input },
+      }, tx);
     });
   } catch (error) {
     // Two classes can't be the same honor in the same session (the (sessionId, honorId) unique index).
