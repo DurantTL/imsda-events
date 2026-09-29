@@ -115,7 +115,7 @@ function registration() {
       formVersion: {
         status: "PUBLISHED",
         definition: formDefinition,
-        form: { status: "PUBLISHED" },
+        form: { versions: [{ id: "live-version" }] },
       },
     },
   };
@@ -296,7 +296,7 @@ describe("Square payment repository", () => {
             ...formDefinition,
             payment: { ...formDefinition.payment, passFeeToRegistrant: false },
           },
-          form: { status: "PUBLISHED" },
+          form: { versions: [{ id: "live-version" }] },
         },
       },
     });
@@ -369,6 +369,26 @@ describe("Square payment repository", () => {
     });
 
     expect(checkout).toMatchObject({ state: "NOT_ELIGIBLE" });
+    expect(checkout?.square).toBeNull();
+  });
+
+  it("refuses card payment once the form has been withdrawn (no published version), even for a card registration (#564)", async () => {
+    const client = transactionClient();
+    const base = registration();
+    client.registration.findUnique.mockResolvedValue({
+      ...base,
+      publicFormSubmission: {
+        ...base.publicFormSubmission,
+        formVersion: { ...base.publicFormSubmission.formVersion, status: "ARCHIVED", form: { versions: [] } },
+      },
+    });
+
+    const checkout = await getPublicSquareCheckout("a".repeat(43), {
+      client: client as never,
+      configuration,
+    });
+
+    expect(checkout?.state).not.toBe("READY");
     expect(checkout?.square).toBeNull();
   });
 

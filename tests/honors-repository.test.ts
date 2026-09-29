@@ -12,6 +12,7 @@ import {
   createHonor,
   createHonorOffering,
   deleteHonorSession,
+  getEventHonorSetup,
   updateHonorOffering,
 } from "@/modules/honors/repository";
 
@@ -39,6 +40,7 @@ function fakeDatabase() {
     _count: { offerings: db.offerings.filter((offering) => offering.sessionId === session.id).length },
   });
 
+  const sessionQueries: Array<{ where: Record<string, unknown>; orderBy?: unknown; select?: unknown }> = [];
   const client = {
     honorEnrollment: { groupBy: async () => [] },
     event: { findUnique: async ({ where }: { where: Row }) => db.events.find((event) => event.id === where.id) ?? null },
@@ -59,8 +61,20 @@ function fakeDatabase() {
       },
     },
     honorSession: {
-      findMany: async ({ where }: { where: Record<string, unknown> }) =>
-        db.sessions.filter((session) => matches(session, where)).map(withSessionCount),
+      findMany: async (args: { where: Record<string, unknown>; orderBy?: Array<Record<string, "asc" | "desc">> }) => {
+        sessionQueries.push(args);
+        const keys = (args.orderBy ?? []).map((entry) => Object.entries(entry)[0]!);
+        const compare = (a: Row, b: Row) => {
+          for (const [key] of keys) {
+            const x = a[key] as number | string | Date | undefined;
+            const y = b[key] as number | string | Date | undefined;
+            if (x === y || x === undefined || y === undefined) continue;
+            return x < y ? -1 : 1;
+          }
+          return 0;
+        };
+        return db.sessions.filter((session) => matches(session, args.where)).sort(compare).map(withSessionCount);
+      },
       findFirst: async ({ where }: { where: Record<string, unknown> }) => {
         const session = db.sessions.find((row) => matches(row, where));
         return session ? withSessionCount(session) : null;
@@ -95,7 +109,7 @@ function fakeDatabase() {
   };
   const transaction = vi.fn(async (work: (tx: typeof client) => unknown) => work(client));
   mocks.getPrisma.mockReturnValue({ ...client, $transaction: transaction });
-  return { db, transaction };
+  return { db, transaction, sessionQueries };
 }
 
 const offeringInput = (overrides: Record<string, unknown> = {}) => ({
@@ -237,5 +251,35 @@ describe("copying a site's classes", () => {
     const plan = await previewHonorCopy("site-b", "site-a");
     expect(plan.offerings.find((row) => row.honorName === "Birds")).toMatchObject({ action: "SKIP" });
     await expect(previewHonorCopy("site-a", "site-a")).rejects.toMatchObject({ code: "COPY_SAME_EVENT" });
+  });
+});
+
+describe("honors session order (#570)", () => {
+  it("queries sessions by sortOrder, then creation time, then name, and selects createdAt", async () => {
+    await getEventHonorSetup("site-a");
+    const query = fake.sessionQueries.at(-1)!;
+    expect(query.orderBy).toEqual([{ sortOrder: "asc" }, { createdAt: "asc" }, { name: "asc" }]);
+    expect(query.select).toMatchObject({ createdAt: true, sortOrder: true });
+  });
+
+  it("copy renumbers new sessions 0..n in the source's display order, so a tied source keeps Morning before Afternoon", async () => {
+    fake.db.sessions.length = 0;
+    // Afternoon is stored first and sorts first by name, but Morning was created first.
+    fake.db.sessions.push(
+      { id: "aft", eventId: "site-a", name: "Sabbath Afternoon", normalizedName: "sabbath afternoon", sortOrder: 0, createdAt: new Date("2026-10-01T11:00:00Z") },
+      { id: "mor", eventId: "site-a", name: "Sabbath Morning", normalizedName: "sabbath morning", sortOrder: 0, createdAt: new Date("2026-10-01T10:00:00Z") },
+    );
+    await createHonorOffering("site-a", offeringInput({ sessionId: "mor" }), "staff-1");
+    const plan = await previewHonorCopy("site-b", "site-a");
+    expect(plan.sessions.map((session) => [session.name, session.sortOrder])).toEqual([
+      ["Sabbath Morning", 0],
+      ["Sabbath Afternoon", 1],
+    ]);
+    await applyHonorCopy("site-b", "site-a", plan.fingerprint, "staff-1");
+    const copied = fake.db.sessions.filter((session) => session.eventId === "site-b");
+    expect(copied.map((session) => [session.name, session.sortOrder])).toEqual([
+      ["Sabbath Morning", 0],
+      ["Sabbath Afternoon", 1],
+    ]);
   });
 });

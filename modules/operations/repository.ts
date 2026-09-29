@@ -188,7 +188,7 @@ async function loadCapacitySource(eventId: string) {
       },
     }),
     prisma.registrationForm.findMany({
-      where: { eventId, status: "PUBLISHED" },
+      where: { eventId, versions: { some: { status: "PUBLISHED" } } },
       orderBy: { name: "asc" },
       select: {
         id: true,

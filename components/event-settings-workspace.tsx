@@ -22,6 +22,7 @@ import {
 } from "@/modules/events/schemas";
 import { buildRegistrationEmbedCode } from "@/modules/forms/embed";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
+import { PublishEventDialog } from "@/components/publish-event-dialog";
 import { UnpublishEventDialog } from "@/components/unpublish-event-dialog";
 import { DraftCreatedGuideBanner } from "@/components/draft-created-guide-banner";
 
@@ -107,6 +108,8 @@ export function EventSettingsWorkspace({
   // `unpublish()` below.
   const [published, setPublished] = useState(initialEvent?.isPublished ?? false);
   const [publishing, setPublishing] = useState(false);
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+  const [publishError, setPublishError] = useState("");
   const [unpublishDialogOpen, setUnpublishDialogOpen] = useState(false);
   const [unpublishing, setUnpublishing] = useState(false);
   const [unpublishError, setUnpublishError] = useState("");
@@ -204,9 +207,22 @@ export function EventSettingsWorkspace({
     }
   }
 
+  function openPublishDialog() {
+    if (!canPublish) return;
+    setPublishError("");
+    setPublishDialogOpen(true);
+  }
+
+  function cancelPublish() {
+    if (publishing) return;
+    setPublishDialogOpen(false);
+    setPublishError("");
+  }
+
   async function publish() {
     if (!canPublish) return;
     setPublishing(true);
+    setPublishError("");
     setError("");
     setNotice("");
     try {
@@ -216,6 +232,7 @@ export function EventSettingsWorkspace({
         throw new Error(result.message ?? "The event could not be published.");
       }
       setPublished(result.event.isPublished);
+      setPublishDialogOpen(false);
       const warnings = result.warnings ?? [];
       setNotice(
         warnings.length > 0
@@ -223,7 +240,7 @@ export function EventSettingsWorkspace({
           : "Event published. Public registration is available during the registration window.",
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The event could not be published.");
+      setPublishError(caught instanceof Error ? caught.message : "The event could not be published.");
     } finally {
       setPublishing(false);
     }
@@ -632,7 +649,7 @@ export function EventSettingsWorkspace({
                     Unpublish event
                   </button>
                 ) : (
-                  <button className="primary-button full-button" disabled={!canPublish} onClick={() => void publish()} type="button">
+                  <button className="primary-button full-button" disabled={!canPublish} onClick={openPublishDialog} type="button">
                     {publishing ? "Publishing…" : "Publish event"}
                   </button>
                 )}
@@ -690,6 +707,17 @@ export function EventSettingsWorkspace({
           </section>
         </aside>
       </form>
+      {mode === "edit" && (
+        <PublishEventDialog
+          busy={publishing}
+          eventName={initialEvent?.name ?? draft.name}
+          error={publishError}
+          warnings={publishWarnings}
+          onCancel={cancelPublish}
+          onConfirm={() => void publish()}
+          open={publishDialogOpen}
+        />
+      )}
       {mode === "edit" && (
         <UnpublishEventDialog
           busy={unpublishing}

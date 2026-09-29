@@ -90,11 +90,11 @@ export class ClubRegistrationError extends Error {
 
 const MAX_DRAFT_BYTES = 200_000;
 
-async function publishedClubForm(eventId: string) {
+/** Version-level status decides what is live; a draft beside it must not close club registration (#564). */
+export async function publishedClubForm(eventId: string) {
   const form = await getPrisma().registrationForm.findFirst({
     where: {
       eventId,
-      status: RegistrationFormStatus.PUBLISHED,
       versions: { some: { status: RegistrationFormStatus.PUBLISHED } },
     },
     orderBy: { createdAt: "asc" },

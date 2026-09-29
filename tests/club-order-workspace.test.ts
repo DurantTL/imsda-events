@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { ClubOrderWorkspace, orderExportHref, type ClubOrderWorkspaceData } from "@/components/club-order-workspace";
+import { ClubOrderWorkspace, orderExportAvailability, orderExportHref, type ClubOrderWorkspaceData } from "@/components/club-order-workspace";
 import { applyExtras } from "@/modules/club-orders/domain";
 import { parseExtrasQuery } from "@/modules/club-orders/schemas";
 
@@ -117,5 +117,40 @@ describe("ClubOrderWorkspace (#487)", () => {
   it("shows names and items only, no other personal field", () => {
     const html = render(false);
     expect(html).not.toMatch(/birth|phone|email|guardian|allerg|medical|address/i);
+  });
+});
+
+describe("empty order exports (#571 F-24)", () => {
+  const empty: ClubOrderWorkspaceData = { ...data, lines: [], awardable: [] };
+  const renderEmpty = () => renderToStaticMarkup(
+    createElement(ClubOrderWorkspace, { organizationId: "club-1", initial: empty, readOnly: false }),
+  );
+
+  it("disables every export with a note when nothing is to order or ready", () => {
+    const html = renderEmpty();
+    expect(html).toContain("Nothing to order yet");
+    expect(html).not.toContain('href="/api/attendee/clubs/club-1/orders/csv?view=adventsource"');
+    expect(html).not.toContain('href="/api/attendee/clubs/club-1/orders/csv?view=readable"');
+    expect(html).not.toContain('href="/api/attendee/clubs/club-1/orders/csv?view=picklist"');
+    expect(html).toContain('aria-describedby="club-order-nothing-to-order"');
+    expect(html).toContain('disabled=""');
+  });
+
+  it("keeps exports available when there is something to order", () => {
+    const html = render(false);
+    expect(html).toContain('href="/api/attendee/clubs/club-1/orders/csv?view=adventsource"');
+    expect(html).not.toContain("Nothing to order yet");
+  });
+
+  it("computes availability from what would actually be in each file", () => {
+    const line = (toOrder: number, catalogNumber: string | null) => ({
+      item: { itemId: "i", name: "Item", catalogNumber },
+      needed: toOrder, extra: 0, inStock: 0, toOrder, missingCatalogNumber: !catalogNumber,
+    });
+    expect(orderExportAvailability([], 0)).toEqual({ adventsource: false, readable: false, picklist: false });
+    expect(orderExportAvailability([line(0, "1")], 0)).toEqual({ adventsource: false, readable: false, picklist: false });
+    expect(orderExportAvailability([line(2, null)], 0)).toEqual({ adventsource: false, readable: true, picklist: true });
+    expect(orderExportAvailability([], 1)).toEqual({ adventsource: false, readable: false, picklist: true });
+    expect(orderExportAvailability([line(2, "005157")], 0)).toEqual({ adventsource: true, readable: true, picklist: true });
   });
 });

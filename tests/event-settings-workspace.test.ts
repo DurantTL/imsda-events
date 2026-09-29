@@ -12,6 +12,7 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/more/event-settings",
 }));
 import { EventSettingsWorkspace } from "@/components/event-settings-workspace";
+import { PublishEventDialog } from "@/components/publish-event-dialog";
 import { UnpublishEventDialog } from "@/components/unpublish-event-dialog";
 import { getEventPublishReadiness } from "@/modules/events/readiness";
 import type { EventSettingsRecord } from "@/modules/events/repository";
@@ -166,5 +167,51 @@ describe("UnpublishEventDialog (#471)", () => {
     }));
     expect(markup).toContain('role="alert"');
     expect(markup).toContain("The event could not be unpublished.");
+  });
+});
+
+describe("PublishEventDialog (#571 F-20)", () => {
+  it("names the event and states the consequence when open", () => {
+    const markup = renderToStaticMarkup(createElement(PublishEventDialog, {
+      busy: false,
+      eventName: "Synthetic Retreat",
+      error: "",
+      onCancel: () => {},
+      onConfirm: () => {},
+      open: true,
+    }));
+    expect(markup).toContain('role="dialog"');
+    expect(markup).toContain("Publish Synthetic Retreat?");
+    expect(markup).toContain("public registration links");
+    expect(markup).toContain("Publish event");
+  });
+
+  it("renders nothing while closed and shows an inline error", () => {
+    const props = { busy: false, eventName: "Synthetic Retreat", onCancel: () => {}, onConfirm: () => {} };
+    expect(renderToStaticMarkup(createElement(PublishEventDialog, { ...props, error: "", open: false }))).toBe("");
+    const markup = renderToStaticMarkup(createElement(PublishEventDialog, { ...props, error: "The event could not be published.", open: true }));
+    expect(markup).toContain('role="alert"');
+  });
+
+  it("shows the past-dates warning in the dialog, and keeps it in the success notice (#575)", () => {
+    const warning = "This event's dates have passed; public registration will be closed.";
+    const markup = renderToStaticMarkup(createElement(PublishEventDialog, {
+      busy: false,
+      eventName: "Synthetic Retreat",
+      error: "",
+      onCancel: () => {},
+      onConfirm: () => {},
+      open: true,
+      warnings: [warning],
+    }));
+    expect(markup).toContain("dates have passed");
+    expect(workspaceSource).toContain("warnings={publishWarnings}");
+    expect(workspaceSource).toContain("`Event published. ${warnings.join(\" \")}`");
+  });
+
+  it("the Publish button opens the confirmation instead of publishing directly", () => {
+    expect(workspaceSource).toContain("onClick={openPublishDialog}");
+    expect(workspaceSource).not.toContain("onClick={() => void publish()}");
+    expect(workspaceSource).toContain("onConfirm={() => void publish()}");
   });
 });

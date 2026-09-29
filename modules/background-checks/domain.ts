@@ -419,12 +419,14 @@ function startsWithStateCode(piece: string) {
   return Boolean(first) && usStateCodes.has(first!) && first!.length === 2 && rest.every((word) => siteNoiseWordSet.has(word));
 }
 
+type SitePart = { text: string; /** The part without a merged state-code piece, when one was merged in. */ withoutState: string | null };
+
 /**
  * Splits a `sites` cell into sites on commas outside parentheses. With
  * unbalanced parentheses it falls back to every comma. A piece that only
  * carries a state code ("Springfield, MO SDA Church") stays with its site.
  */
-function splitSiteList(value: string) {
+function splitSiteList(value: string): SitePart[] {
   const balanced = parenthesesBalanced(value);
   const raw: string[] = [];
   let depth = 0;
@@ -440,10 +442,14 @@ function splitSiteList(value: string) {
     }
   }
   raw.push(current);
-  const parts: string[] = [];
+  const parts: SitePart[] = [];
   for (const piece of raw) {
-    if (parts.length > 0 && startsWithStateCode(piece)) parts[parts.length - 1] += `, ${piece}`;
-    else parts.push(piece);
+    const last = parts[parts.length - 1];
+    if (last && startsWithStateCode(piece)) {
+      parts[parts.length - 1] = { text: `${last.text}, ${piece}`, withoutState: last.withoutState ?? last.text };
+    } else {
+      parts.push({ text: piece, withoutState: null });
+    }
   }
   return parts;
 }
@@ -465,40 +471,49 @@ function withoutTrailingParenthetical(part: string) {
 
 /**
  * Comparison keys for one row's `sites` cell (#572). A cell may hold several
- * comma-separated sites. Each site gives its full stem, and, when it ends in
- * a parenthetical (the export's city suffix), the stem without that one
- * parenthetical. Other parenthetical text is part of the name: `Nevada (IA)`
- * is never `Nevada (MO)`. The stem ignores case, accents, punctuation,
+ * comma-separated sites. Each site gives its full stem. Only when that full
+ * stem is no directory site's own full stem (`directoryStems`) does it also
+ * give fallback keys: the stem without one trailing parenthetical (the
+ * export's city suffix), and the stem without a merged state code
+ * ("Springfield, MO SDA Church" also reads "springfield"). Other
+ * parenthetical text is part of the name: `Nevada (IA)` is never
+ * `Nevada (MO)`. The stem ignores case, accents, punctuation,
  * "Seventh-day Adventist", "SDA", "Church", "Company", "Group", and club
  * words; school and academy words stay. Empty or generic stems are dropped.
  */
-export function siteStems(value: string): Set<string> {
+export function siteStems(value: string, directoryStems: ReadonlySet<string> = new Set()): Set<string> {
   const stems = new Set<string>();
+  const add = (text: string) => {
+    const stem = siteStem(text);
+    if (stem && !isGenericStem(stem)) stems.add(stem);
+  };
   for (const part of splitSiteList(value)) {
-    const variants = [part];
-    const trimmed = withoutTrailingParenthetical(part);
-    if (trimmed !== null) variants.push(trimmed);
-    for (const variant of variants) {
-      const stem = siteStem(variant);
-      if (stem && !isGenericStem(stem)) stems.add(stem);
-    }
+    const full = siteStem(part.text);
+    add(part.text);
+    if (directoryStems.has(full)) continue;
+    const trimmed = withoutTrailingParenthetical(part.text);
+    if (trimmed !== null) add(trimmed);
+    if (part.withoutState !== null) add(part.withoutState);
   }
   return stems;
 }
 
-/** Comparison keys for a directory club or church name: the full stem only. */
+/** The comparison key for one directory club or church name: it is a single site, never split. */
 export function candidateSiteStems(value: string): Set<string> {
+  const stem = siteStem(value);
+  return stem && !isGenericStem(stem) ? new Set([stem]) : new Set();
+}
+
+/** The full stems of every directory club and church name, for `matchesSite`'s fallback rule. */
+export function directorySiteStems(names: Iterable<string>): Set<string> {
   const stems = new Set<string>();
-  for (const part of splitSiteList(value)) {
-    const stem = siteStem(part);
-    if (stem && !isGenericStem(stem)) stems.add(stem);
-  }
+  for (const name of names) for (const stem of candidateSiteStems(name)) stems.add(stem);
   return stems;
 }
 
 /** A club's own name or its sponsoring church's name, for the `sites` location check. */
-export function matchesSite(site: string, candidateSites: Iterable<string>) {
-  const targets = siteStems(site);
+export function matchesSite(site: string, candidateSites: Iterable<string>, directoryStems: ReadonlySet<string> = new Set()) {
+  const targets = siteStems(site, directoryStems);
   if (targets.size === 0) return false;
   for (const candidate of candidateSites) {
     for (const stem of candidateSiteStems(candidate)) {
