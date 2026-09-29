@@ -313,9 +313,9 @@ export function clubEventRegistrationSteps(events: ClubEventSummary[], base: str
  * (`Registration.totalAmount`), and only a submitted or confirmed
  * registration is billed. Waitlisted and cancelled clubs stay listed, owing $0.
  */
-export async function listChurchAmountsOwed(eventId: string): Promise<ChurchAmountOwedRow[]> {
+export async function listChurchAmountsOwed(eventId: string, options: { locationId?: string | null } = {}): Promise<ChurchAmountOwedRow[]> {
   const rows = await getPrisma().clubEventRegistration.findMany({
-    where: { eventId },
+    where: { eventId, ...(options.locationId ? { registration: { locationId: options.locationId } } : {}) },
     select: {
       organization: {
         select: { id: true, name: true, parentOrganization: { select: { id: true, name: true } } },
@@ -325,6 +325,7 @@ export async function listChurchAmountsOwed(eventId: string): Promise<ChurchAmou
           confirmationCode: true,
           status: true,
           totalAmount: true,
+          location: { select: { name: true } },
           _count: { select: { attendees: true } },
         },
       },
@@ -340,6 +341,7 @@ export async function listChurchAmountsOwed(eventId: string): Promise<ChurchAmou
     attendeeCount: row.registration._count.attendees,
     isBilled: isChurchBilledStatus(row.registration.status),
     amountOwedCents: churchOwedCents(row.registration.status, moneyToCents(row.registration.totalAmount)),
+    locationName: row.registration.location?.name ?? null,
   })));
 }
 
@@ -351,6 +353,8 @@ export type ClubCheckInInfo = {
   confirmationCode: string;
   /** Read-only estimate billed to the church (#409); never an attendee balance or a door payment. */
   amountOwedCents: number;
+  /** The event location the club registered at (#413); null when the event has none. */
+  locationName?: string | null;
 };
 
 /**
@@ -360,12 +364,18 @@ export type ClubCheckInInfo = {
  * whole club by confirmation code or club name and see what its church owes,
  * without exposing an attendee balance or a payment action.
  */
-export async function listClubCheckInInfo(eventId: string): Promise<ClubCheckInInfo[]> {
+export async function listClubCheckInInfo(eventId: string, options: { locationId?: string | null } = {}): Promise<ClubCheckInInfo[]> {
   const rows = await getPrisma().clubEventRegistration.findMany({
-    where: { eventId, registration: { status: { in: [...activeRegistrationStatuses] } } },
+    where: {
+      eventId,
+      registration: {
+        status: { in: [...activeRegistrationStatuses] },
+        ...(options.locationId ? { locationId: options.locationId } : {}),
+      },
+    },
     select: {
       organization: { select: { id: true, name: true } },
-      registration: { select: { confirmationCode: true, status: true, totalAmount: true } },
+      registration: { select: { confirmationCode: true, status: true, totalAmount: true, location: { select: { name: true } } } },
     },
   });
   return rows.map((row) => ({
@@ -373,6 +383,7 @@ export async function listClubCheckInInfo(eventId: string): Promise<ClubCheckInI
     organizationName: row.organization.name,
     confirmationCode: row.registration.confirmationCode,
     amountOwedCents: churchOwedCents(row.registration.status, moneyToCents(row.registration.totalAmount)),
+    locationName: row.registration.location?.name ?? null,
   }));
 }
 
