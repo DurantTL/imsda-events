@@ -10,6 +10,7 @@ import { TwoStepSetup } from "@/components/two-step-setup";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { getAttendeeMfaStatus } from "@/modules/attendee-accounts/mfa-service";
 import { getPasskeySettings } from "@/modules/attendee-accounts/passkeys";
+import { attendeeReturnDestination, attendeeSignInPathFor } from "@/modules/attendee-accounts/return-destination";
 import { accountNeedsSecondStep } from "@/modules/attendee-accounts/sign-in-gate";
 
 export const dynamic = "force-dynamic";
@@ -24,12 +25,20 @@ export const metadata: Metadata = {
  * 2026-09-23). They confirm with a code or passkey, or set one up first.
  * Nothing else in the account opens until this session has passed it.
  */
-export default async function TwoStepPage() {
+export default async function TwoStepPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ next?: string | string[] }>;
+}) {
+  const { next: rawNext } = await searchParams;
+  // The page that sent them here (#568). Validated wherever it is followed;
+  // the challenge itself (code, passkey, rate limits) is unchanged.
+  const next = attendeeReturnDestination(typeof rawNext === "string" ? rawNext : undefined, "");
   const { account, via, sessionId } = await getCurrentAttendee();
-  if (!account) redirect("/account/sign-in");
+  if (!account) redirect(attendeeSignInPathFor(next));
   if (via !== "attendee") redirect("/account");
   const gate = await accountNeedsSecondStep(account.id, sessionId);
-  if (gate === "OK") redirect("/account");
+  if (gate === "OK") redirect(next || "/account");
   const [mfaStatus, passkeySettings] = await Promise.all([
     getAttendeeMfaStatus(account.id),
     getPasskeySettings(account.id, sessionId),
@@ -76,7 +85,7 @@ export default async function TwoStepPage() {
             )}
           </section>
         ) : (
-          <TwoStepSetup mfaStatus={mfaStatus} passkeySettings={passkeySettings} />
+          <TwoStepSetup mfaStatus={mfaStatus} passkeySettings={passkeySettings} next={next || undefined} />
         )}
       </div>
     </main>

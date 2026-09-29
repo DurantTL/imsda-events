@@ -2,6 +2,7 @@ import "server-only";
 
 import { redirect } from "next/navigation";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { twoStepRedirectPath } from "@/modules/attendee-accounts/return-redirect";
 import { accountNeedsSecondStep } from "@/modules/attendee-accounts/sign-in-gate";
 
 /**
@@ -21,5 +22,5 @@ export async function attendeeSecondStepPending() {
  * page that reads the attendee account checks the second step itself.
  */
 export async function requireAttendeeSecondStep() {
-  if (await attendeeSecondStepPending()) redirect("/account/two-step");
+  if (await attendeeSecondStepPending()) redirect(await twoStepRedirectPath());
 }

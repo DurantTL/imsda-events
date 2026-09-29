@@ -10,6 +10,10 @@ import {
   mutableRedirect,
   OAUTH_HANDOFF_LIFETIME_SECONDS,
 } from "@/modules/attendee-accounts/oauth-handoff";
+import {
+  ATTENDEE_OAUTH_NEXT_COOKIE_NAME,
+  attendeeReturnDestination,
+} from "@/modules/attendee-accounts/return-destination";
 import { attendeePublicUrl } from "@/modules/attendee-accounts/public-navigation";
 import {
   applyRateLimitHeaders,
@@ -62,6 +66,22 @@ async function getHandler(request: Request) {
         priority: "high",
       },
     );
+
+    // Where to land after sign-in (#568): validated now and again at the
+    // callback, kept only in this short-lived cookie, never in the OAuth state.
+    const next = attendeeReturnDestination(new URL(request.url).searchParams.get("next"), "");
+    const cookieStore = await cookies();
+    if (next) {
+      cookieStore.set(ATTENDEE_OAUTH_NEXT_COOKIE_NAME, next, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        path: "/api/attendee/oauth",
+        maxAge: OAUTH_HANDOFF_LIFETIME_SECONDS,
+      });
+    } else {
+      cookieStore.delete({ name: ATTENDEE_OAUTH_NEXT_COOKIE_NAME, path: "/api/attendee/oauth" });
+    }
 
     return applyRateLimitHeaders(
       mutableRedirect(authorization.authorizationUrl),

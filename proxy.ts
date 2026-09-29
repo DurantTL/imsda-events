@@ -16,9 +16,11 @@ export function proxy(request: NextRequest) {
   return NextResponse.next({ request: { headers: requestHeaders } });
 }
 
-// Staff workspace pages only (not /api, /_next, static files or public pages).
+// Staff workspace pages and the signed-in account area, so a signed-out visit
+// can sign in and come back (#568). Not /api, /_next, static files or public pages.
 export const config = {
   matcher: [
+    "/account/:path*",
     "/admin/:path*",
     "/check-in/:path*",
     "/communications/:path*",
