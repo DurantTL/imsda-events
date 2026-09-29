@@ -3,7 +3,7 @@ import { AccessDeniedError, requirePermission } from "@/modules/access/authoriza
 import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { processQueuedMessageIdsAfterCommit } from "@/modules/communications/messaging-repository";
-import { isBusyDatabaseError } from "@/modules/event-locations/api-errors";
+import { isBusyDatabaseError, logExpiredTransaction } from "@/modules/event-locations/api-errors";
 import { EventLocationError, eventLocationErrorStatus, locationBusyMessage } from "@/modules/event-locations/errors";
 import { findActiveMembership } from "@/modules/events/repository";
 import {
@@ -60,6 +60,7 @@ function errorResponse(error: unknown) {
   }
   // A location lock wait that gave up, or a transaction that timed out: nothing was saved (#413).
   if (isBusyDatabaseError(error)) {
+    logExpiredTransaction(error, "Registration amendment");
     return Response.json(
       { error: "LOCATION_BUSY", message: locationBusyMessage },
       { status: 503, headers: noStoreHeaders },

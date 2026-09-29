@@ -164,6 +164,7 @@ export type RegistrationMoveBlocker =
   | "DESTINATION_CANCELLED"
   | "ALREADY_ON_DESTINATION"
   | "CLUB_CLASS_LIMIT"
+  | "LOCATION_FULL"
   | "TOTAL_CLAMPED"
   | "TOTAL_BELOW_ZERO"
   | "TOTAL_BELOW_PAID";
@@ -178,6 +179,7 @@ export const registrationMoveBlockerLabels: Record<RegistrationMoveBlocker, stri
   DESTINATION_CANCELLED: "The new club's registration was cancelled.",
   ALREADY_ON_DESTINATION: "This person is already on the new club's registration. Resolve it there, then skip this move.",
   CLUB_CLASS_LIMIT: "Moving this person's class seat would put the new club over that class's per-club limit. Change their class first.",
+  LOCATION_FULL: "The new club's registration is at a location with no room for one more person. Ask the event team to raise that location's capacity or move the club, then approve this move.",
   TOTAL_CLAMPED: "One of these registrations has a total of $0, which may already be held at $0, so moving this person's adjustments would give the wrong amount. Fix the amounts with the adjustment tools first.",
   TOTAL_BELOW_ZERO: "Moving this person's adjustments would bring a registration's total below $0. Fix the amounts with the adjustment tools first.",
   TOTAL_BELOW_PAID: "Moving this person's adjustments would bring a registration's total below what has already been paid on it. Record a refund or adjust first.",
@@ -209,6 +211,8 @@ export function registrationMoveBlocker(input: {
   receivingMemberActive?: boolean;
   destination: { status: string; waitlisted: boolean; personAlreadyThere: boolean } | null;
   classLimitExceeded?: boolean;
+  /** The new club's location (#413) has no room for one more person. */
+  locationFull?: boolean;
   money?: MoveMoney | null;
 }): RegistrationMoveBlocker | null {
   if (!input.attendeeOnSource) return "ATTENDEE_GONE";
@@ -220,6 +224,7 @@ export function registrationMoveBlocker(input: {
   if (input.destination.status === "CANCELLED") return "DESTINATION_CANCELLED";
   if (input.destination.personAlreadyThere) return "ALREADY_ON_DESTINATION";
   if (input.classLimitExceeded) return "CLUB_CLASS_LIMIT";
+  if (input.locationFull) return "LOCATION_FULL";
   return input.money ? moveMoneyBlocker(input.money) : null;
 }
 

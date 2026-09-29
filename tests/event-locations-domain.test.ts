@@ -224,3 +224,22 @@ describe("staff exports name the location only when the event has one", () => {
     expect(located[1]!.length).toBe(plain[1]!.length + 1);
   });
 });
+
+describe("location-specific wording (#413)", () => {
+  const base = { registrationClosesOn: "2026-10-10", today: "2026-10-15", eventDate: "2026-12-05" };
+
+  it("names the location instead of the whole event when its window is closed", () => {
+    const named = (phase: "UPCOMING" | "CLOSED", ended = false) => clubRegistrationEditWindow({ ...base, phase, ended, locationName: "Des Moines" });
+    expect(named("CLOSED")).toEqual({ open: false, message: "Registration for Des Moines closed after October 10, 2026. Contact the event team to add or remove someone." });
+    expect(named("CLOSED", true)).toEqual({ open: false, message: "Registration for Des Moines has closed. Contact the event team to add or remove someone." });
+    const upcoming = named("UPCOMING");
+    expect(upcoming.open === false && upcoming.message).toContain("Registration for Des Moines isn't open");
+  });
+
+  it("keeps the event wording, unchanged, when there is no location", () => {
+    const closed = clubRegistrationEditWindow({ ...base, phase: "CLOSED" });
+    expect(closed).toEqual({ open: false, message: "Registration closed after October 10, 2026. Contact the event team to add or remove someone." });
+    const ended = clubRegistrationEditWindow({ ...base, phase: "CLOSED", ended: true });
+    expect(ended.open === false && ended.message).toContain("Registration for this event has closed.");
+  });
+});

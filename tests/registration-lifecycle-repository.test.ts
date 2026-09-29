@@ -648,3 +648,49 @@ describe("promotion and restoring respect the registration's location capacity (
     expect((tx as { $queryRaw?: unknown }).$queryRaw).toBeUndefined();
   });
 });
+
+describe("auto-promotion on cancel skips a candidate whose location is busy (#413)", () => {
+  it("blocks that candidate, promotes the next, and the cancellation still succeeds", async () => {
+    const { prisma, tx } = transactionFixture();
+    const raw = vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      void strings;
+      if (values[0] === "loc-busy") throw Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" });
+      return [{ id: String(values[0]), eventId: event.id, name: "Kansas City", capacity: null, isActive: true }];
+    });
+    const statements: string[] = [];
+    Object.assign(tx, {
+      $queryRaw: raw,
+      $executeRawUnsafe: vi.fn(async (sql: string) => { statements.push(sql); return 0; }),
+    });
+    const cancelled = registration({ id: "cancelled-registration", confirmationCode: "REG-CANCEL" });
+    const busy = registration({
+      id: "waitlist-busy", confirmationCode: "REG-BUSY", status: "WAITLISTED", locationId: "loc-busy",
+      waitlistEntry: { id: "entry-busy", status: "WAITING", position: 1 },
+    });
+    const fitting = registration({
+      id: "waitlist-fit", confirmationCode: "REG-FIT", status: "WAITLISTED", locationId: "loc-ok",
+      waitlistEntry: { id: "entry-fit", status: "WAITING", position: 2 },
+    });
+    tx.registration.findFirst.mockImplementation(async ({ where }: { where: { id: string } }) => (
+      [cancelled, busy, fitting].find((candidate) => candidate.id === where.id) ?? null
+    ));
+    tx.registrationWaitlistEntry.findMany.mockResolvedValue([
+      { id: "entry-busy", registrationId: busy.id, position: 1 },
+      { id: "entry-fit", registrationId: fitting.id, position: 2 },
+    ]);
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await cancelRegistration(event.id, cancelled.id, "user-1", "Cancelled.", new Date("2026-08-12T12:00:00.000Z"));
+
+    expect(statements).toContain("SAVEPOINT auto_promote_candidate");
+    expect(statements).toContain("ROLLBACK TO SAVEPOINT auto_promote_candidate");
+    expect(tx.registrationWaitlistEntry.update).toHaveBeenCalledWith({
+      where: { id: "entry-busy" },
+      data: { lastBlockedReason: expect.stringContaining("location was busy") },
+    });
+    // The cancellation went through and the next candidate was promoted.
+    expect(tx.registration.update).toHaveBeenCalledWith({ where: { id: cancelled.id }, data: expect.objectContaining({ status: "CANCELLED" }) });
+    expect(tx.registration.update).toHaveBeenCalledWith({ where: { id: fitting.id }, data: { status: "SUBMITTED", cancelledAt: null } });
+    expect(tx.registration.update).not.toHaveBeenCalledWith({ where: { id: busy.id }, data: expect.anything() });
+  });
+});

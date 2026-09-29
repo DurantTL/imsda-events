@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const migration = readFileSync(
-  new URL("../prisma/migrations/20260929100000_event_locations/migration.sql", import.meta.url),
+  new URL("../prisma/migrations/20260929190000_event_locations/migration.sql", import.meta.url),
   "utf8",
 );
 const statements = migration

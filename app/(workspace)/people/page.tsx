@@ -20,6 +20,6 @@ export default async function PeoplePage({ searchParams }: { searchParams: Promi
   const [registrations, flagged] = await Promise.all([listRegistrations(event.id, { locationId }), backgroundFlaggedAttendeeIds(event.id)]);
   return <>
     <LocationFilter basePath="/people" locations={locations} params={{ event: event.id, filter }} selectedId={locationId} />
-    <PeopleWorkspace key={event.id} eventId={event.id} eventSlug={event.slug} eventTimezone={event.timezone} waitlistEnabled={event.waitlistEnabled} initialRegistrations={registrations} canEdit={permissions.includes("MANAGE_REGISTRATION")} canEmail={permissions.includes("MANAGE_COMMUNICATIONS")} initialFilter={filter} initialRegistrationId={registration} backgroundFlaggedAttendeeIds={[...flagged]} />
+    <PeopleWorkspace key={event.id} eventId={event.id} eventSlug={event.slug} eventTimezone={event.timezone} waitlistEnabled={event.waitlistEnabled} initialRegistrations={registrations} canEdit={permissions.includes("MANAGE_REGISTRATION")} canEmail={permissions.includes("MANAGE_COMMUNICATIONS")} initialFilter={filter} initialRegistrationId={registration} backgroundFlaggedAttendeeIds={[...flagged]} locationId={locationId} />
   </>;
 }

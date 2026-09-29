@@ -67,3 +67,15 @@ export async function requireHonorsEditAccess(organizationId: string, now = new 
   const access = await requireRosterAccess(organizationId, now);
   return actorAttribution(access.actor);
 }
+
+/**
+ * For voiding an honor entry (#591): the club's director or deputy (or staff
+ * acting as the director), through the roster's own gate and MFA. The
+ * `manageTeam` capability is exactly the leader roles (director and deputy):
+ * a registrar can record honors but not void them, and an Area Coordinator's
+ * read-only view never reaches this (`requireRosterAccess` has no fallback).
+ */
+export async function requireHonorsVoidAccess(organizationId: string, now = new Date()): Promise<MemberHonorActor> {
+  const access = await requireRosterAccess(organizationId, now, "manageTeam");
+  return actorAttribution(access.actor);
+}

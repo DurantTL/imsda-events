@@ -184,6 +184,18 @@ describe("club event workspace locations (#413)", () => {
     expect(seatQuery.where).toMatchObject({ eventId: "event-1", id: { not: "registration-1" } });
   });
 
+  it("shows a location's own closing date only when it differs from the event's", async () => {
+    withLocations([
+      location({ id: "same", name: "Same", registrationClosesOn: "2026-11-30" }),
+      location({ id: "own", name: "Own", registrationClosesOn: "2026-11-15" }),
+      location({ id: "none", name: "None" }),
+    ]);
+    const { locations } = await getClubEventWorkspace("club-1", "event-1", now);
+    expect(locations.map((entry) => [entry.name, entry.registrationClosesOn, entry.ownClosingDate])).toEqual([
+      ["Same", "2026-11-30", null], ["Own", "2026-11-15", "2026-11-15"], ["None", "2026-11-30", null],
+    ]);
+  });
+
   it("keeps a registered club's deactivated location on its page", async () => {
     const retired = location({ id: "retired", name: "Retired", isActive: false });
     withLocations([], {}, { location: retired });

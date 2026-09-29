@@ -2,7 +2,7 @@ import "server-only";
 
 import { countLocationSeats, lockEventLocation } from "@/modules/event-locations/admission";
 import { locationHasRoom, remainingLocationSeats } from "@/modules/event-locations/domain";
-import { locationTransactionTimeoutMs } from "@/modules/event-locations/errors";
+import { EventLocationError, locationTransactionTimeoutMs } from "@/modules/event-locations/errors";
 
 import { Prisma, type RegistrationStatus } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
@@ -559,7 +559,25 @@ async function autoPromoteEarliestFitting(
       continue;
     }
 
-    const eventCapacity = await checkEventCapacity(tx, event, candidate);
+    // A candidate at a location takes that location's row lock. If another
+    // request holds it past the lock wait, this candidate is blocked for now
+    // and the cancellation itself still succeeds (#413). The savepoint keeps
+    // the failed lock wait from aborting the whole transaction.
+    const locationSavepoint = (candidate as { locationId?: string | null }).locationId;
+    if (locationSavepoint) await tx.$executeRawUnsafe("SAVEPOINT auto_promote_candidate");
+    let eventCapacity: CapacityCheck;
+    try {
+      eventCapacity = await checkEventCapacity(tx, event, candidate);
+    } catch (error) {
+      if (!locationSavepoint || !(error instanceof EventLocationError && error.code === "LOCATION_BUSY")) throw error;
+      await tx.$executeRawUnsafe("ROLLBACK TO SAVEPOINT auto_promote_candidate");
+      await tx.registrationWaitlistEntry.update({
+        where: { id: entry.id },
+        data: { lastBlockedReason: "The registration's location was busy, so it was not promoted automatically. Promote it by hand." },
+      });
+      continue;
+    }
+    if (locationSavepoint) await tx.$executeRawUnsafe("RELEASE SAVEPOINT auto_promote_candidate");
     if (!eventCapacity.fits) {
       await tx.registrationWaitlistEntry.update({
         where: { id: entry.id },

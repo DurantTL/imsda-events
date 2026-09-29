@@ -29,6 +29,17 @@ nothing is public and no attendee can register yet. Creating it hands you
 straight to its settings with a one-time "Draft created" banner naming the
 next three steps.
 
+**Templates are coder-administered.** Event templates are edited as raw JSON
+by administrators comfortable with that, not by event staff (decided
+2026-09-29, #592). Staff have two ways in on `/event-setup`: **Start from a
+template** (a starter such as Women's Retreat, or the **Blank event** and
+**Blank club event** starters, which apply through the same flow and give the
+event an admin membership, a form, and default message templates), or
+**Start blank** (fill in the event details by hand). In the registration
+builder, **Blank form** is always the first template choice: a Contact
+section for a general event, or a club and contact section plus an empty
+roster for a club event. Blank forms carry no fees.
+
 ### 2. Complete event settings
 
 Fill in the event's public details on its **Event settings** page: name, web

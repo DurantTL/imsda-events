@@ -511,6 +511,15 @@ describe("club registration submit at an event location (#413)", () => {
     await expect(at("loc-1")).rejects.toMatchObject({ code: "REGISTRATION_CLOSED" });
   });
 
+  it("says the location is closed, not the whole event, and names it", async () => {
+    located({ rows: [row({ registrationClosesOn: "2026-10-10" })] });
+    await expect(at("loc-1")).rejects.toMatchObject({ code: "REGISTRATION_CLOSED", message: "Registration for Camp Heritage is closed. Registration closed after 2026-10-10 in the event timezone." });
+    located({ rows: [row({ lastDay: "2026-10-01" })] });
+    await expect(at("loc-1")).rejects.toMatchObject({ code: "REGISTRATION_CLOSED", message: "Registration for Camp Heritage has closed." });
+    located({ rows: [row()], fixtureOptions: { registrationClosesOn: "2026-11-30" } });
+    await expect(at("loc-1", new Date("2026-09-01T15:00:00Z"))).rejects.toMatchObject({ code: "REGISTRATION_NOT_OPEN", message: expect.stringContaining("Registration for Camp Heritage is not open yet.") });
+  });
+
   it("reports a closed location before a full one", async () => {
     located({ rows: [row({ capacity: 1, registrationClosesOn: "2026-10-10" })], seatsAtLocation: 1 });
     await expect(at("loc-1")).rejects.toMatchObject({ code: "REGISTRATION_CLOSED" });

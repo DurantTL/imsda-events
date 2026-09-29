@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   listClubHonorsPage: vi.fn(),
   listActiveHonorOptions: vi.fn(),
   recordMemberHonorEntries: vi.fn(),
+  voidMemberHonorEntry: vi.fn(),
   listMemberHonorHistory: vi.fn(),
   auditClubHonorsExport: vi.fn(),
 }));
@@ -46,6 +47,7 @@ vi.mock("@/modules/honors/member-honor-repository", async () => {
     listClubHonorsPage: mocks.listClubHonorsPage,
     listActiveHonorOptions: mocks.listActiveHonorOptions,
     recordMemberHonorEntries: mocks.recordMemberHonorEntries,
+    voidMemberHonorEntry: mocks.voidMemberHonorEntry,
     listMemberHonorHistory: mocks.listMemberHonorHistory,
     auditClubHonorsExport: mocks.auditClubHonorsExport,
   };
@@ -54,6 +56,7 @@ vi.mock("@/modules/honors/member-honor-repository", async () => {
 import { GET as CLUB_HONORS_GET, POST as CLUB_HONORS_POST } from "@/app/api/attendee/clubs/[organizationId]/honors/route";
 import { GET as CSV_GET } from "@/app/api/attendee/clubs/[organizationId]/honors/csv/route";
 import { GET as MEMBER_GET, POST as MEMBER_POST } from "@/app/api/attendee/clubs/[organizationId]/roster/[memberId]/honors/route";
+import { POST as VOID_POST } from "@/app/api/attendee/clubs/[organizationId]/roster/[memberId]/honors/[entryId]/void/route";
 
 const club = { organizationId: "club-1", name: "Test Pathfinders", role: "DIRECTOR", sponsoringChurch: null };
 const account = { id: "director-1", verifiedEmail: "director@example.test", displayName: "Test Director" };
@@ -65,6 +68,7 @@ const postRequest = (body: unknown) => new Request("https://events.imsda.test/ap
   headers: { origin: "https://events.imsda.test", "content-type": "application/json" },
   body: JSON.stringify(body),
 });
+const voidCtx = () => ({ params: Promise.resolve({ organizationId: "club-1", memberId: "member-1", entryId: "entry-1" }) });
 const entry = { honorId: "honor-1", status: "IN_PROGRESS", completionDate: "", note: "" };
 
 /** Every honors route, called the way the browser would. */
@@ -74,6 +78,7 @@ const calls = [
   ["GET CSV export", () => CSV_GET(getRequest(), ctx())],
   ["GET member history", () => MEMBER_GET(getRequest(), memberCtx())],
   ["POST member entry", () => MEMBER_POST(postRequest(entry), memberCtx())],
+  ["POST void entry", () => VOID_POST(postRequest({ reason: "Wrong person" }), voidCtx())],
 ] as const;
 
 beforeEach(() => {
@@ -89,6 +94,7 @@ beforeEach(() => {
   mocks.listClubHonorsPage.mockResolvedValue([]);
   mocks.listActiveHonorOptions.mockResolvedValue([]);
   mocks.recordMemberHonorEntries.mockResolvedValue(undefined);
+  mocks.voidMemberHonorEntry.mockResolvedValue(undefined);
   mocks.listMemberHonorHistory.mockResolvedValue({ firstName: "Test", lastName: "Member", current: [], history: [] });
   mocks.auditClubHonorsExport.mockResolvedValue(undefined);
 });
@@ -97,6 +103,7 @@ function expectNothingRead() {
   expect(mocks.listClubHonorsPage).not.toHaveBeenCalled();
   expect(mocks.listMemberHonorHistory).not.toHaveBeenCalled();
   expect(mocks.recordMemberHonorEntries).not.toHaveBeenCalled();
+  expect(mocks.voidMemberHonorEntry).not.toHaveBeenCalled();
   expect(mocks.auditClubHonorsExport).not.toHaveBeenCalled();
 }
 
@@ -144,5 +151,54 @@ describe("honors routes refuse exactly like the roster", () => {
     mocks.findOrganization.mockResolvedValue({ type: "CHURCH", isActive: true });
     const church = await CLUB_HONORS_GET(getRequest(), ctx());
     expect(church.status).toBe(404);
+  });
+});
+
+describe("void route permissions (#591)", () => {
+  const voidCall = () => VOID_POST(postRequest({ reason: "Wrong person" }), voidCtx());
+
+  it.each(["DIRECTOR", "DEPUTY"])("lets a %s of the club void an entry", async (role) => {
+    mocks.listDirectedClubs.mockResolvedValue([{ ...club, role }]);
+    const response = await voidCall();
+    expect(response.status).toBe(200);
+    expect(mocks.voidMemberHonorEntry).toHaveBeenCalledWith("club-1", "member-1", "entry-1", "Wrong person", { accountId: "director-1" });
+  });
+
+  it.each(["REGISTRAR", "REPORTER"])("refuses a %s, who may not void", async (role) => {
+    mocks.listDirectedClubs.mockResolvedValue([{ ...club, role }]);
+    const response = await voidCall();
+    expect(response.status).toBe(403);
+    expect(mocks.voidMemberHonorEntry).not.toHaveBeenCalled();
+  });
+
+  it("refuses a different club's director (they have no role at this club)", async () => {
+    mocks.listDirectedClubs.mockResolvedValue([{ ...club, organizationId: "club-2" }]);
+    const response = await voidCall();
+    expect(response.status).toBe(404);
+    expect(mocks.voidMemberHonorEntry).not.toHaveBeenCalled();
+  });
+
+  it("refuses an Area Coordinator, whose view stays read-only", async () => {
+    mocks.listDirectedClubs.mockResolvedValue([]);
+    mocks.findAreaGrant.mockResolvedValue({ revokedAt: null, expiresAt: null });
+    const response = await voidCall();
+    expect(response.status).toBe(404);
+    expect(mocks.voidMemberHonorEntry).not.toHaveBeenCalled();
+  });
+
+  it("requires a reason of at least 3 characters before touching the repository", async () => {
+    const response = await VOID_POST(postRequest({ reason: " a " }), voidCtx());
+    expect(response.status).toBe(400);
+    expect(mocks.voidMemberHonorEntry).not.toHaveBeenCalled();
+  });
+
+  it("answers 409 for a double void and 403 for another club's entry", async () => {
+    const { MemberHonorError } = await import("@/modules/honors/member-honor-repository");
+    mocks.voidMemberHonorEntry.mockRejectedValueOnce(new MemberHonorError("ENTRY_ALREADY_VOIDED", "This entry has already been voided."));
+    const twice = await voidCall();
+    expect(twice.status).toBe(409);
+    expect(await twice.json()).toMatchObject({ error: "ENTRY_ALREADY_VOIDED" });
+    mocks.voidMemberHonorEntry.mockRejectedValueOnce(new MemberHonorError("VOID_NOT_ALLOWED", "Only the club that recorded this entry can void it."));
+    expect((await voidCall()).status).toBe(403);
   });
 });

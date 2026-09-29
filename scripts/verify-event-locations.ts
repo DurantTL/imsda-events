@@ -20,6 +20,16 @@ loadEnvConfig(process.cwd());
 // A synthetic key for this run's own sealed birth dates, when none is configured.
 process.env.SECRET_ENCRYPTION_KEY ||= "verify-event-locations-synthetic-key-not-a-secret";
 
+// Cleanup turns the immutability trigger on RegistrationOperation off for one transaction, so this
+// only ever runs against a local or CI database, never a shared or production one.
+const databaseHost = (() => {
+  try { return new URL(process.env.DATABASE_URL ?? "").hostname; } catch { return ""; }
+})();
+if (!["localhost", "127.0.0.1", "::1", "[::1]"].includes(databaseHost)) {
+  console.error(`Refusing to run: DATABASE_URL points at "${databaseHost || "nothing"}", not a local or CI database.`);
+  process.exit(1);
+}
+
 const prisma = new PrismaClient();
 const P = "loc";
 const staffUserId = `${P}_staff`;
@@ -67,6 +77,7 @@ async function cleanup() {
   await prisma.eventCloneRecord.deleteMany({ where: { actorUserId: staffUserId } });
   await prisma.auditLog.deleteMany({ where: { OR: [{ eventId: { in: eventIds } }, { actorUserId: staffUserId }] } });
   await prisma.clubRegistrationDraft.deleteMany({ where: { eventId: { in: eventIds } } });
+  await prisma.memberTransfer.deleteMany({ where: { fromOrganizationId: { startsWith: `${P}_` } } });
   await prisma.clubEventRegistration.deleteMany({ where: { eventId: { in: eventIds } } });
   await prisma.registration.deleteMany({ where: { eventId: { in: eventIds } } });
   await prisma.event.deleteMany({ where: { id: { in: eventIds } } });
@@ -327,6 +338,45 @@ async function main() {
   const afterDelete = await locations.deleteEventLocation(eventId, unused.id, staffUserId);
   assert(!afterDelete.some((row) => row.id === unused.id), "an unused location can be deleted");
   console.log("ok  delete refused while used, capacity never below use, deactivate and reactivate");
+
+  // 8b. A member transfer's registration move counts the receiving registration's location (#413):
+  // a full location blocks the move (and staff see it labelled), room lets it through, and staying
+  // within one location adds no seat.
+  const { listRegistrationMoves, approveRegistrationMove } = await import("../modules/club-transfers/repository");
+  const receiving = await regOf("c7");
+  assert(receiving.locationId === desMoines.id && await seats(desMoines.id) === 2, "c7 sits at a full Des Moines");
+  const sourceKey = kcClubKey;
+  const source = await regOf(sourceKey);
+  const moved = await prisma.registrationAttendee.findFirstOrThrow({ where: { registrationId: source.id }, orderBy: { position: "asc" }, select: { id: true, personId: true } });
+  const receivingMember = await prisma.clubRosterMember.create({
+    data: { organizationId: clubOf("c7"), clubYear: "2026-27", personId: moved.personId, attendeeType: "YOUTH", role: "Pathfinder", sealedBirthDate: sealed, source: "DIRECTOR" },
+  });
+  const transfer = await prisma.memberTransfer.create({
+    data: {
+      personId: moved.personId, clubYear: "2026-27", fromOrganizationId: clubOf(sourceKey), toOrganizationId: clubOf("c7"),
+      toRosterMemberId: receivingMember.id, requestedFirstName: "Loc", requestedLastName: "Mover", reason: "Synthetic transfer.",
+      status: "COMPLETED", resolution: "STAFF_OVERRIDDEN", acknowledgeDueAt: new Date("2026-10-19T00:00:00Z"),
+    },
+  });
+  const move = await prisma.memberTransferRegistrationMove.create({
+    data: { transferId: transfer.id, eventId, registrationAttendeeId: moved.id, fromRegistrationId: source.id },
+  });
+  const listed = (await listRegistrationMoves("PENDING")).find((row) => row.id === move.id);
+  assert(listed?.blocker === "LOCATION_FULL", `a full receiving location blocks the move, got ${String(listed?.blocker)}`);
+  assert(listed.fromRegistration?.locationName === "Kansas City Multicultural" && listed.toRegistration?.locationName === "Des Moines", "the review names both locations");
+  await expectCode(approveRegistrationMove(move.id, "Try", actor, midOctober), "MOVE_BLOCKED", "approving into a full location is refused");
+  assert((await prisma.registrationAttendee.findUniqueOrThrow({ where: { id: moved.id } })).registrationId === source.id, "a refused move changes nothing");
+  await locations.updateEventLocation(eventId, desMoines.id, staffUserId, { capacity: 3 });
+  const roomy = (await listRegistrationMoves("PENDING")).find((row) => row.id === move.id);
+  assert(roomy && roomy.blocker === null, `with room the move is ready, got ${String(roomy?.blocker)}`);
+  await approveRegistrationMove(move.id, "Approved", actor, midOctober);
+  assert((await prisma.registrationAttendee.findUniqueOrThrow({ where: { id: moved.id } })).registrationId === receiving.id, "the attendee moved to the receiving registration");
+  assert(await seats(desMoines.id) === 3, "the seat now counts at Des Moines");
+  await locations.updateEventLocation(eventId, desMoines.id, staffUserId, { capacity: 2 }).then(() => null, (error: unknown) => {
+    assert(error instanceof EventLocationError && error.code === "LOCATION_CAPACITY_BELOW_USAGE", "capacity can't drop below the moved seat");
+  });
+  await locations.updateEventLocation(eventId, desMoines.id, staffUserId, { capacity: 3 });
+  console.log("ok  a member transfer's move is blocked by a full receiving location, labelled across locations, and counted once approved");
 
   // 9. Filters and exports: each location alone, or all combined with the location named.
   const all = await listRegistrations(eventId);

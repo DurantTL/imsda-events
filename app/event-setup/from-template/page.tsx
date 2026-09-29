@@ -1,5 +1,6 @@
 import { staffLoginRedirectPath } from "@/modules/access/login-redirect";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { BrandMark } from "@/components/brand-mark";
 import { getCurrentSession } from "@/modules/access/current-session";
@@ -23,6 +24,7 @@ export default async function StartFromTemplatePage() {
         <div className="brand"><BrandMark /><span><strong>IMSDA</strong><small>Events</small></span></div>
         <div><p className="eyebrow">System administration</p><h1>Start from template</h1></div>
       </header>
+      <p><Link href="/event-setup#blank-event">Start blank</Link> instead: fill in the event details by hand.</p>
       <StartFromTemplate templates={templates} />
     </main>
   );

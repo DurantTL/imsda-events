@@ -1,4 +1,4 @@
-import { isBusyDatabaseError } from "@/modules/event-locations/api-errors";
+import { isBusyDatabaseError, logExpiredTransaction } from "@/modules/event-locations/api-errors";
 import { EventLocationError, eventLocationErrorStatus, locationBusyMessage } from "@/modules/event-locations/errors";
 import { z } from "zod";
 import { AccessDeniedError, requirePermission } from "@/modules/access/authorization";
@@ -63,6 +63,7 @@ function errorResponse(error: unknown) {
   }
   // A location lock wait that gave up, or a transaction that timed out: nothing was changed (#413).
   if (isBusyDatabaseError(error)) {
+    logExpiredTransaction(error, "Registration lifecycle action");
     return Response.json(
       { error: "LOCATION_BUSY", message: locationBusyMessage },
       { status: 503, headers: noStoreHeaders },

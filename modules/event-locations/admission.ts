@@ -156,14 +156,14 @@ export async function admitToLocation<E extends EventLifecycleSource>(
   input: LocationSeatCheck & {
     event: E;
     /** Called with the location's lifecycle before seats are counted; throw to refuse. */
-    beforeSeatCheck?: (lifecycle: E) => void;
+    beforeSeatCheck?: (lifecycle: E, location: LockedLocation) => void;
   },
 ): Promise<LocationAdmission<E>> {
   const guard = input.beforeSeatCheck;
   const location = await checkLocationSeats(
     tx,
     input,
-    guard ? (locked) => guard(locationLifecycleSource(input.event, locked)) : undefined,
+    guard ? (locked) => guard(locationLifecycleSource(input.event, locked), locked) : undefined,
   );
   return {
     locationId: location?.id ?? null,

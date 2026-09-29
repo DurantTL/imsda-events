@@ -1,6 +1,7 @@
 # ADR 0008: Deferred-organization invoice approval and finalization policy
 
-Status: **Proposed — draft for review.** Not yet Accepted. Deliverable for #167.
+Status: **Accepted** (September 29, 2026). The recommended option is adopted for
+each open question below. Deliverable for #167.
 
 Date: 2026-08-09
 
@@ -95,14 +96,27 @@ to commit an organization to a bill.
 with every other immutable-snapshot pattern already in the codebase (ledger,
 consent).
 
-## Approvals needed
+## Approval
 
-- [ ] Finance owner (names the finance-permission role, confirms the
-      reconciliation-precondition rule)
-- [ ] Ministry operations owner
+Approved by Caleb Durant on September 29, 2026, adopting every recommendation
+above:
+
+1. Finalizing an invoice needs a dedicated finance permission, separate from
+   event administration. Who holds it is set when the permission is granted,
+   not in code.
+2. An invoice draft must trace to an approved #166 attendance reconciliation;
+   finalization can't stand in for that review.
+3. Invoice numbers are issued exactly once per finalization (idempotent).
+4. A revision that changes a billable amount needs the same named approval;
+   contact or note fixes don't.
+
+**Ledger basis (same date):** deposits, cancellations and invoices build on the
+existing Payment, Refund and RegistrationAdjustment records rather than waiting
+for the full ledger (#117–#121). The full ledger stays a later migration; each
+money issue must document how its records would move onto it.
 
 ## Related
 
 - Parent: #67 (deferred church invoicing epic)
-- Depends on: #165, #166, #117–#120
+- Depends on: #165, #166 (the #117–#120 ledger is deferred; see Approval)
 - Roadmap: #98 (Phase 1E)

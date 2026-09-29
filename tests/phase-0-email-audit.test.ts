@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { formTemplates } from "@/modules/forms/definition";
+import { formTemplates as allFormTemplates, isBlankFormTemplateKey } from "@/modules/forms/definition";
+
+// The blank forms (#592) have no registrations to audit: this audit covers the eight fixture-backed templates.
+const formTemplates = allFormTemplates.filter((template) => !isBlankFormTemplateKey(template.key));
 import {
   DEFAULT_MESSAGE_TEMPLATE_LIST,
   renderMessageTemplate,

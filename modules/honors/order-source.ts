@@ -30,7 +30,7 @@ export function honorNeedSourceId(personId: string, honorId: string) {
 
 /**
  * This club's active members on this club year's roster (the same rows the
- * Honors page reads), and for each person-and-honor their latest entry — only
+ * Honors page reads), and for each person-and-honor their latest non-voided entry (#591) — only
  * the latest counts, same as the Honors page. A latest entry that's COMPLETED
  * is a need candidate, carrying the catalog item that honor's patch is linked
  * to right now (#531); one that's no longer COMPLETED (corrected back to in
@@ -46,18 +46,27 @@ async function honorCompletionsForClub(organizationId: string, now: Date) {
   const entries = await getPrisma().memberHonorEntry.findMany({
     where: { personId: { in: personIds } },
     orderBy: { seq: "desc" },
-    select: { personId: true, honorId: true, status: true, completionDate: true, honor: { select: { name: true } } },
+    select: {
+      personId: true, honorId: true, status: true, completionDate: true,
+      honor: { select: { name: true } },
+      void: { select: { id: true } },
+    },
   });
+  // Voided entries (#591) never count as current, but a person-and-honor whose
+  // entries are all voided still has its completion withdrawn, so a NEEDED
+  // need for a mistaken completion is removed rather than left behind.
+  const seenKeys = new Set<string>();
   const latestByPersonHonor = new Map<string, (typeof entries)[number]>();
   for (const entry of entries) {
     const key = honorNeedSourceId(entry.personId, entry.honorId);
+    seenKeys.add(key);
+    if (entry.void) continue;
     if (!latestByPersonHonor.has(key)) latestByPersonHonor.set(key, entry);
   }
   const latest = [...latestByPersonHonor.values()];
   const completed = latest.filter((entry) => entry.status === "COMPLETED");
-  const withdrawnSourceIds = latest
-    .filter((entry) => entry.status !== "COMPLETED")
-    .map((entry) => honorNeedSourceId(entry.personId, entry.honorId));
+  const completedKeys = new Set(completed.map((entry) => honorNeedSourceId(entry.personId, entry.honorId)));
+  const withdrawnSourceIds = [...seenKeys].filter((key) => !completedKeys.has(key));
   if (completed.length === 0) return { candidates: [], withdrawnSourceIds };
   const items = await getPrisma().clubSupplyItem.findMany({
     where: { honorId: { in: [...new Set(completed.map((entry) => entry.honorId))] } },
