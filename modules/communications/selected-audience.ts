@@ -1,11 +1,18 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
+  selectedAudienceTemplateKeys,
+  selectedAudienceTemplateLabels,
+  type SelectedAudienceTemplateKey,
+} from "@/modules/communications/selected-audience-templates";
+import {
   DEFAULT_MESSAGE_TEMPLATE_NAMES,
   selectRegistrationMessageTemplate,
   type MessageTemplateKey,
 } from "@/modules/communications/templates";
 import type { MessagingSettingsRecord } from "@/modules/communications/types";
+
+export { selectedAudienceTemplateKeys, selectedAudienceTemplateLabels, type SelectedAudienceTemplateKey };
 
 /**
  * Sending one template to a staff-chosen set of registrations.
@@ -20,29 +27,6 @@ import type { MessagingSettingsRecord } from "@/modules/communications/types";
  * event-wide batch applies still applies here, so a selection that includes a
  * cancelled registration or a settled balance sends nothing to it and says so.
  */
-
-/**
- * Templates staff may send to a chosen set. Deliberately short: each one
- * describes the registration as it already stands. A template that announces
- * a state change — a promotion, a cancellation, a transfer — is sent by the
- * operation that makes the change, never by hand at a selection, because an
- * email saying a place opened up is not true until one has.
- */
-export const selectedAudienceTemplateKeys = [
-  "BALANCE_REMINDER",
-  "EVENT_ANNOUNCEMENT",
-  "REGISTRATION_CONFIRMATION",
-] as const;
-
-export type SelectedAudienceTemplateKey =
-  typeof selectedAudienceTemplateKeys[number];
-
-export const selectedAudienceTemplateLabels:
-  Readonly<Record<SelectedAudienceTemplateKey, string>> = {
-  BALANCE_REMINDER: "Balance reminder",
-  EVENT_ANNOUNCEMENT: "Event announcement",
-  REGISTRATION_CONFIRMATION: "Send confirmation again",
-};
 
 export const selectedAudienceConfirmationTemplateKeys = [
   "REGISTRATION_CONFIRMATION_PAID",

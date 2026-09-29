@@ -1,3 +1,4 @@
+import { staffLoginRedirectPath } from "@/modules/access/login-redirect";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 export default async function CalendarAdminPage() {
   const { user } = await getCurrentSession();
-  if (!user) redirect("/login");
+  if (!user) redirect(await staffLoginRedirectPath());
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
   const [entries, events] = await Promise.all([listCalendarEntries(), listCalendarEvents()]);
 

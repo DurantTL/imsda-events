@@ -1,3 +1,4 @@
+import { staffLoginRedirectPath } from "@/modules/access/login-redirect";
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { DuplicateMatchReviewWorkspace } from "@/components/duplicate-match-review-workspace";
@@ -15,7 +16,7 @@ export const metadata: Metadata = { title: "Possible duplicate people" };
  */
 export default async function DuplicateMatchQueuePage() {
   const { user } = await getCurrentSession();
-  if (!user) redirect("/login");
+  if (!user) redirect(await staffLoginRedirectPath());
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
 
   const candidates = await listOpenMatchCandidates();

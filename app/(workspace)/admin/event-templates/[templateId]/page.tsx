@@ -1,3 +1,4 @@
+import { staffLoginRedirectPath } from "@/modules/access/login-redirect";
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { getCurrentSession } from "@/modules/access/current-session";
@@ -12,7 +13,7 @@ export default async function EventTemplateEditorPage({
   params: Promise<{ templateId: string }>;
 }) {
   const { user } = await getCurrentSession();
-  if (!user) redirect("/login");
+  if (!user) redirect(await staffLoginRedirectPath());
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
 
   const { templateId } = await params;

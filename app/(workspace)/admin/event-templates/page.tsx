@@ -1,3 +1,4 @@
+import { staffLoginRedirectPath } from "@/modules/access/login-redirect";
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getCurrentSession } from "@/modules/access/current-session";
@@ -8,7 +9,7 @@ export const metadata: Metadata = { title: "Event templates" };
 
 export default async function EventTemplatesPage() {
   const { user } = await getCurrentSession();
-  if (!user) redirect("/login");
+  if (!user) redirect(await staffLoginRedirectPath());
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
 
   const templates = await listEventTemplates();
