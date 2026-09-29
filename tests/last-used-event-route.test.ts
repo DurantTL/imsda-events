@@ -100,6 +100,15 @@ describe("POST /api/staff/last-event", () => {
     expect(mocks.cookieSet).not.toHaveBeenCalled();
   });
 
+  it("returns 403 and sets no cookie when a non-admin names an event they are not a member of", async () => {
+    mocks.findActiveMembership.mockResolvedValue(null);
+
+    const response = await POST(post({ eventId: "evt_cm27" }));
+
+    expect(response.status).toBe(403);
+    expect(mocks.cookieSet).not.toHaveBeenCalled();
+  });
+
   it("sets the httpOnly lax cookie for an event with an active membership", async () => {
     mocks.findActiveMembership.mockResolvedValue(activeMembership("clx0synthetic0event0id0001"));
 

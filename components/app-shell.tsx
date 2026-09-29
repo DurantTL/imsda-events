@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Fragment, useEffect } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
   ArrowRightLeft,
   ChevronDown,
@@ -13,6 +13,7 @@ import {
 import { BrandMark } from "@/components/brand-mark";
 import { EventAutoSelectNotice } from "@/components/event-auto-select-notice";
 import { rememberLastUsedEvent } from "@/components/remember-last-event";
+import { eventToRemember, resolveShellEvent } from "@/components/shell-event-selection";
 import { StaffAccountMenu } from "@/components/staff-account-menu";
 import type { EventPermission } from "@/modules/access/permissions";
 import { otherWorkspaceContextsForStaff } from "@/modules/access/workspace-contexts";
@@ -66,19 +67,23 @@ export function AppShell({
     ? systemNavigation
     : navigation.find((item) => pathname.startsWith(item.href)) ?? navigation[0];
   const requestedEventId = searchParams.get("event");
-  const requestedEvent = requestedEventId
-    ? events.find((event) => event.id === requestedEventId)
-    : undefined;
   const defaultEvent = defaultEventId
     ? events.find((event) => event.id === defaultEventId)
     : undefined;
-  // A `?event=` that matches nothing selects nothing, rather than quietly
-  // showing the default on pages that don't validate the id themselves.
-  const selectedEvent = requestedEventId ? requestedEvent : defaultEvent;
+  // The layout (and so `defaultEventId`) doesn't re-render on client
+  // navigation, so keep the last valid event seen and fall back to the
+  // default only when none has been seen (#616).
+  const [seenEventId, setSeenEventId] = useState<string | null>(null);
+  // Adjusting state during render (not in an effect) so the very render that
+  // sees a new `?event=` also records it.
+  if (requestedEventId && requestedEventId !== seenEventId && events.some((event) => event.id === requestedEventId)) {
+    setSeenEventId(requestedEventId);
+  }
+  const selectedEvent = resolveShellEvent({ requestedEventId, events, seenEventId, defaultEventId });
   const selectedEventId = selectedEvent?.id ?? "";
   // Same rule as the page (#465): no `?event=` and an automatic choice. Not on
   // pages that aren't event-scoped (/admin, the global duplicate review).
-  const showAutoSelectNotice = !requestedEventId && autoSelected && Boolean(defaultEvent)
+  const showAutoSelectNotice = !requestedEventId && !seenEventId && autoSelected && Boolean(defaultEvent)
     && !pathname.startsWith(systemNavigation.href) && !pathname.startsWith("/people/matches");
   const selectedPermissions = new Set(
     events.find((event) => event.id === selectedEventId)?.permissions ?? [],
@@ -140,10 +145,21 @@ export function AppShell({
 
   // An event named in the URL becomes the remembered selection (#616), so the
   // next page without `?event=` keeps it instead of falling back to the default.
-  const rememberedEventId = requestedEvent && requestedEvent.id !== defaultEventId ? requestedEvent.id : null;
+  const lastRememberedId = useRef<string | null>(defaultEventId);
+  const knownEventIds = events.map((event) => event.id).join("|");
   useEffect(() => {
-    if (rememberedEventId) rememberLastUsedEvent(rememberedEventId);
-  }, [rememberedEventId]);
+    const toRemember = eventToRemember({
+      requestedEventId,
+      knownEventIds: knownEventIds ? knownEventIds.split("|") : [],
+      lastRememberedId: lastRememberedId.current,
+    });
+    if (toRemember) {
+      lastRememberedId.current = toRemember;
+      // Refresh once the cookie is set so the server default catches up.
+      void rememberLastUsedEvent(toRemember).then(() => router.refresh());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedEventId, knownEventIds]);
 
   function selectEvent(eventId: string) {
     const params = new URLSearchParams(searchParams.toString());
@@ -152,7 +168,9 @@ export function AppShell({
       params.delete(resourceParam);
     }
     // Remembered for the next sign-in (#108 queue 1); never blocks the switch.
-    rememberLastUsedEvent(eventId);
+    lastRememberedId.current = eventId;
+    setSeenEventId(eventId);
+    void rememberLastUsedEvent(eventId).then(() => router.refresh());
     router.push(`${pathname}?${params.toString()}`);
   }
 
