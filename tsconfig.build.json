@@ -10,6 +10,7 @@
     "lib/**/*.ts",
     "modules/**/*.ts",
     "instrumentation.ts",
+    "proxy.ts",
     "next.config.ts",
     ".next/types/**/*.ts"
   ],

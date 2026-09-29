@@ -1,3 +1,4 @@
+import { staffLoginRedirectPath } from "@/modules/access/login-redirect";
 import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
@@ -114,7 +115,7 @@ export default async function SystemAdminPage({
   // wording as the staff picker, so nothing reveals whether it exists.
   const unavailable = (await searchParams).unavailable === "1";
   const { user } = await getCurrentSession();
-  if (!user) redirect("/login");
+  if (!user) redirect(await staffLoginRedirectPath());
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
 
   const [dashboard, health] = await Promise.all([

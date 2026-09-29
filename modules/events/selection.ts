@@ -1,5 +1,6 @@
 import "server-only";
 
+import { staffLoginRedirectPath } from "@/modules/access/login-redirect";
 import { redirect } from "next/navigation";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { eventPermissions, rolePermissions } from "@/modules/access/permissions";
@@ -63,7 +64,7 @@ export async function resolveEventContext(requestedEventId?: string) {
 
 async function loadSignedInEvents() {
   const user = (await getCurrentSession()).user;
-  if (!user) redirect("/login");
+  if (!user) redirect(await staffLoginRedirectPath());
   const events = await listEventsForUser(user.id, user.globalRole === "SYSTEM_ADMIN");
 
   if (events.length === 0) {

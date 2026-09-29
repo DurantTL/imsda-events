@@ -1,3 +1,4 @@
+import { staffLoginRedirectPath } from "@/modules/access/login-redirect";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -9,7 +10,7 @@ export const metadata: Metadata = { title: "Platform settings" };
 
 export default async function PlatformSettingsPage() {
   const { user } = await getCurrentSession();
-  if (!user) redirect("/login");
+  if (!user) redirect(await staffLoginRedirectPath());
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
 
   return (

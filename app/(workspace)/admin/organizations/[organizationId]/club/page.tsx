@@ -1,3 +1,4 @@
+import { staffLoginRedirectPath } from "@/modules/access/login-redirect";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
@@ -30,7 +31,7 @@ export default async function StaffOpenClubPage({
   searchParams?: Promise<{ year?: string | string[] }>;
 }) {
   const { user } = await getCurrentSession();
-  if (!user) redirect("/login");
+  if (!user) redirect(await staffLoginRedirectPath());
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
   const [{ organizationId }, query] = await Promise.all([params, searchParams]);
   const view = rosterYearView(query?.year);
