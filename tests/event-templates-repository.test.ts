@@ -180,6 +180,9 @@ describe("applyEventTemplate (#152)", () => {
     expect(eventCreate).toHaveBeenCalledTimes(1);
     const eventData = eventCreate.mock.calls[0]![0].data;
     expect(eventData).toMatchObject({ audience: "CLUB", waitlistEnabled: true, autoPromoteWaitlist: true, isPublished: false });
+    // A CLUB payload saved before billing existed carries none and applies church billing (#565).
+    expect(basicPayload.billingMode).toBeUndefined();
+    expect(eventData.billingMode).toBe("DEFERRED_ORGANIZATION_INVOICE");
     expect(attendeeTypeCreateMany).toHaveBeenCalledWith({ data: [{ eventId: "event-1", code: "ADULT", label: "Adult", description: "", sortOrder: 0, isActive: true, minimumAge: null, maximumAge: null }] });
     expect(registrationFormCreate).toHaveBeenCalledTimes(1);
     expect(applicationCreate).toHaveBeenCalledWith(expect.objectContaining({
