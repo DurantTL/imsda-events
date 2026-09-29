@@ -49,6 +49,9 @@ export function ChurchAmountsOwed({
   const sorted = sortChurchAmountsOwed(rows);
   const billed = sorted.filter((row) => row.isBilled);
   const notBilled = sorted.filter((row) => !row.isBilled);
+  // Registrations with no club (#606: Leadership Weekend, Outdoor School) are grouped by the church or organization the form names.
+  const hasIndividuals = rows.some((row) => row.kind === "INDIVIDUAL");
+  const unit = hasIndividuals ? "registration" : "club";
   return (
     <section className="page-stack">
       <div className="page-intro">
@@ -56,7 +59,7 @@ export function ChurchAmountsOwed({
           <p className="eyebrow">Financial operations</p>
           <h2>Owed by churches</h2>
           <p>
-            Estimated amount each church owes for its clubs at this event — billed to the church after the event, not paid online.
+            {hasIndividuals ? "Estimated amount each church or organization owes for its registrations at this event" : "Estimated amount each church owes for its clubs at this event"} — billed to the church after the event, not paid online.
             {!isDeferredOrganizationBilling && (sponsored.lineCount > 0
               ? " This event does not bill churches for club registrations; the amounts below are church-sponsored promo codes."
               : " This event does not bill churches, so no club registrations are billed here.")}
@@ -76,7 +79,7 @@ export function ChurchAmountsOwed({
         </article>
         <article className="finance-stat">
           <span><Building2 aria-hidden="true" size={18} /></span>
-          <small>Clubs billed</small>
+          <small>{hasIndividuals ? "Registrations billed" : "Clubs billed"}</small>
           <strong>{summary.billedClubCount}</strong>
         </article>
         {sponsored.lineCount > 0 && (
@@ -94,19 +97,19 @@ export function ChurchAmountsOwed({
       </section>
       {summary.churches.length > 0 && (
         <section className="panel finance-list" aria-label="Estimated amount owed by church">
-          <div className="finance-row finance-head"><span>Church</span><span>Clubs billed</span><span /><span>Estimated amount owed</span></div>
+          <div className="finance-row finance-head"><span>{hasIndividuals ? "Church or organization" : "Church"}</span><span>{hasIndividuals ? "Registrations billed" : "Clubs billed"}</span><span /><span>Estimated amount owed</span></div>
           {summary.churches.map((church) => (
             <div className="finance-row" key={church.churchKey}>
               <span><strong>{church.churchName}</strong></span>
-              <span>{church.clubCount} {church.clubCount === 1 ? "club" : "clubs"}</span>
+              <span>{church.clubCount} {church.clubCount === 1 ? unit : `${unit}s`}</span>
               <span />
               <span>{money(church.amountOwedCents)}</span>
             </div>
           ))}
         </section>
       )}
-      <section className="panel finance-list" aria-label="Clubs billed to their church">
-        <div className="finance-row finance-head"><span>Club / church</span><span>Confirmation</span><span>Attendees</span><span>Estimated amount owed</span></div>
+      <section className="panel finance-list" aria-label={hasIndividuals ? "Registrations billed to their church or organization" : "Clubs billed to their church"}>
+        <div className="finance-row finance-head"><span>{hasIndividuals ? "Registrant or club / church or organization" : "Club / church"}</span><span>Confirmation</span><span>Attendees</span><span>Estimated amount owed</span></div>
         {billed.map((row) => (
           <div className="finance-row" key={`${row.organizationId}-${row.confirmationCode}`}>
             <span><strong>{row.organizationName}</strong><small>{row.churchName ?? NO_CHURCH_ON_FILE} · {row.status.toLowerCase()}{row.locationName ? ` · ${row.locationName}` : ""}</small></span>
@@ -149,8 +152,8 @@ export function ChurchAmountsOwed({
         </section>
       )}
       {notBilled.length > 0 && (
-        <section className="panel finance-list" aria-label="Waitlisted and cancelled clubs">
-          <div className="finance-row finance-head"><span>Waitlisted or cancelled club</span><span>Confirmation</span><span>Attendees</span><span>Owed</span></div>
+        <section className="panel finance-list" aria-label={hasIndividuals ? "Waitlisted and cancelled registrations" : "Waitlisted and cancelled clubs"}>
+          <div className="finance-row finance-head"><span>{hasIndividuals ? "Waitlisted or cancelled registration" : "Waitlisted or cancelled club"}</span><span>Confirmation</span><span>Attendees</span><span>Owed</span></div>
           {notBilled.map((row) => (
             <div className="finance-row" key={`${row.organizationId}-${row.confirmationCode}`}>
               <span><strong>{row.organizationName}</strong><small>{row.churchName ?? NO_CHURCH_ON_FILE} · {notBilledLabel(row.status)}{row.locationName ? ` · ${row.locationName}` : ""}</small></span>

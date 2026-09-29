@@ -76,7 +76,7 @@ type FormView = {
   activeVersion: FormVersionView;
   versions: FormVersionView[];
 };
-type TemplateView = { key: string; name: string; description: string; audience: string; sectionCount: number; fieldCount: number };
+type TemplateView = { key: string; name: string; description: string; audience: string; collectsPayment?: boolean; sectionCount: number; fieldCount: number };
 type DragState =
   | { kind: "section"; sectionIndex: number }
   | { kind: "field"; sectionIndex: number; fieldIndex: number }
@@ -153,7 +153,7 @@ const conditionLabels = {
   NOT_EMPTY: "Has any answer",
 } as const;
 
-export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, eventAudience, initialForms, templates }: { eventId: string; eventSlug: string; eventName: string; eventAudience?: string; initialForms: FormView[]; templates: TemplateView[] }) {
+export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, eventAudience, eventBillingMode, initialForms, templates }: { eventId: string; eventSlug: string; eventName: string; eventAudience?: string; eventBillingMode?: string; initialForms: FormView[]; templates: TemplateView[] }) {
   const [forms, setForms] = useState(initialForms);
   const [selectedFormId, setSelectedFormId] = useState(initialForms[0]?.id ?? "");
   const selectedForm = forms.find((form) => form.id === selectedFormId) ?? null;
@@ -884,7 +884,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, ev
   return <section className="page-stack builder-workspace">
     <div className="page-intro"><div><p className="eyebrow">Public registration setup</p><h2>Registration builder</h2><p>Create, arrange, preview, test, and publish versioned registration forms for {eventName} without code.</p></div><div className="intro-actions"><span className="count-badge"><ShieldCheck size={16} /> Safe draft editing</span>{definition && <button className="secondary-button" type="button" onClick={showPreview}><Eye size={16} /> Preview &amp; test</button>}<button className="primary-button" type="button" onClick={() => setShowTemplates((value) => !value)}><CopyPlus size={16} /> New from template</button></div></div>
 
-    {showTemplates && <section className="panel builder-template-panel"><div className="section-heading"><div><p className="eyebrow">Start with a safe foundation</p><h2>Choose a template</h2></div><button className="icon-button" aria-label="Close templates" type="button" onClick={() => setShowTemplates(false)}><X size={18} /></button></div><div className="template-card-grid">{templatesForPicker(templates, eventAudience).map((template) => <article className="template-card" key={template.key}><span><Layers3 size={20} /></span><small>{template.audience}</small><h3>{template.name}</h3><p>{template.description}</p><div>{template.sectionCount} sections · {template.fieldCount} fields</div><button className="secondary-button" type="button" disabled={busy !== null} onClick={() => createFromTemplate(template.key)}>Use template <ChevronRight size={15} /></button></article>)}</div></section>}
+    {showTemplates && <section className="panel builder-template-panel"><div className="section-heading"><div><p className="eyebrow">Start with a safe foundation</p><h2>Choose a template</h2></div><button className="icon-button" aria-label="Close templates" type="button" onClick={() => setShowTemplates(false)}><X size={18} /></button></div><div className="template-card-grid">{templatesForPicker(templates, eventAudience, eventBillingMode).map((template) => <article className="template-card" key={template.key}><span><Layers3 size={20} /></span><small>{template.audience}</small><h3>{template.name}</h3><p>{template.description}</p><div>{template.sectionCount} sections · {template.fieldCount} fields</div><button className="secondary-button" type="button" disabled={busy !== null} onClick={() => createFromTemplate(template.key)}>Use template <ChevronRight size={15} /></button></article>)}</div></section>}
 
     {error && <div className="inline-notice error" role="alert">{error}</div>}
     {notice && <div className="inline-notice" role="status">{notice}</div>}

@@ -8,7 +8,8 @@ vi.mock("@/lib/prisma", () => ({ getPrisma: dependencies.getPrisma }));
 import { applyEventTemplate } from "@/modules/event-templates/repository";
 import { parseEventTemplatePayload, templateBillingMode, validateEventTemplatePayloadReferences } from "@/modules/event-templates/domain";
 import { starterDescription, starterEventTemplates, starterPayload } from "@/modules/event-templates/starters";
-import { getFeeWarnings, unpricedFeeFieldLabels } from "@/modules/events/readiness";
+import { getFeeWarnings, getPaymentOnChurchBilledWarnings, unpricedFeeFieldLabels } from "@/modules/events/readiness";
+import { collectEventReadinessWarnings } from "@/modules/events/readiness-warnings";
 import {
   calculateFormTotal,
   formTemplates,
@@ -422,8 +423,7 @@ describe("the #606 starters", () => {
     expect(description("leadership_weekend")).toContain("2026");
     expect(description("hispanic_institute")).toContain("keeps last year's prices.");
     expect(description("hispanic_institute")).toContain("$50 semester registration is the 2026 price");
-    expect(description("outdoor_school")).toContain("The form has no prices set.");
-    expect(description("outdoor_school")).toContain("Outdoor School fee has no amount");
+    expect(description("outdoor_school")).toContain("set the Outdoor School fee on the draft event before publishing");
     expect(description("tlt_retreat")).toContain("The retreat is free");
     for (const key of starterKeys) expect(description(key).length).toBeLessThanOrEqual(2000);
   });
@@ -458,6 +458,67 @@ describe("the #606 starters", () => {
     expect(tx.event.create.mock.calls[0]![0].data).toMatchObject({ audience: starter.audience, billingMode: starter.billingMode, isPublished: false, checksAdultBackgrounds: false });
     expect(tx.registrationForm.create).toHaveBeenCalledTimes(1);
     expect(tx.eventLocation.createMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("payment-enabled forms on church-billed events (#606)", () => {
+  it("are left out of the picker on a church-billed event only, and say to use an attendee-pay event", () => {
+    const templates = listFormTemplates();
+    const paying = templates.filter((template) => template.collectsPayment).map((template) => template.key);
+    expect(paying).toEqual(expect.arrayContaining(["conference_patches_pins", "hispanic_institute"]));
+    const churchBilled = templatesForPicker(templates, "GENERAL", "DEFERRED_ORGANIZATION_INVOICE").map((template) => template.key);
+    for (const key of paying) expect(churchBilled).not.toContain(key);
+    expect(churchBilled).toContain("tlt_opportunities");
+    for (const billingMode of ["ATTENDEE_PAY", undefined]) {
+      const keys = templatesForPicker(templates, "GENERAL", billingMode).map((template) => template.key);
+      for (const key of paying) expect(keys).toContain(key);
+    }
+    expect(getFormTemplate("conference_patches_pins")!.description).toContain("Use on an attendee-pay event");
+    expect(getFormTemplate("hispanic_institute")!.description).toContain("Use on an attendee-pay event");
+  });
+
+  it("are explained by a readiness warning when already attached, and only on a church-billed event", async () => {
+    expect(getPaymentOnChurchBilledWarnings("ATTENDEE_PAY", ["Order"])).toEqual([]);
+    const [warning] = getPaymentOnChurchBilledWarnings("DEFERRED_ORGANIZATION_INVOICE", ["Conference shoulder patches and pins order"]);
+    expect(warning).toMatchObject({ label: "Conference shoulder patches and pins order collects payment on a church-billed event" });
+    expect(warning!.detail).toContain("cannot be submitted");
+    const forms = [{ id: "form-1", versions: [{ definition: definitionOf("conference_patches_pins") }] }, { id: "form-2", versions: [{ definition: definitionOf("tlt_opportunities") }] }];
+    const prisma = { eventLocation: { findMany: vi.fn().mockResolvedValue([]) }, registrationForm: { findMany: vi.fn().mockResolvedValueOnce(forms).mockResolvedValueOnce(forms) } };
+    const warnings = await collectEventReadinessWarnings(prisma as never, "event-1", "DEFERRED_ORGANIZATION_INVOICE");
+    expect(warnings.map((entry) => entry.label)).toEqual(["Conference shoulder patches and pins order collects payment on a church-billed event"]);
+    const quiet = { ...prisma, registrationForm: { findMany: vi.fn().mockResolvedValueOnce(forms).mockResolvedValueOnce(forms) } };
+    expect(await collectEventReadinessWarnings(quiet as never, "event-1", "ATTENDEE_PAY")).toEqual([]);
+  });
+});
+
+describe("number checks (#606)", () => {
+  it("years as a leader must be a whole number", () => {
+    const key = "leadership_weekend";
+    const leader = {
+      first_name: "Sam", last_name: "Sample", gender: "Male", email: "leader@example.test", club_position: "Counselor", phone: "555-0100", years_as_leader: 3,
+      pathfinder_club: "Sample Trail Pathfinders", church_name: "Sample Hills SDA Church", training_track: "Master Guide", induction: "No", teaching_class: "No",
+      lodging: "Tent or Camper", church_billing_acknowledgment: true,
+    };
+    expect(submit(key, leader).isValid).toBe(true);
+    expect(submit(key, { ...leader, years_as_leader: 2.5 }).isValid).toBe(false);
+    expect(submit(key, { ...leader, years_as_leader: -1 }).isValid).toBe(false);
+  });
+
+  it("a patches order needs at least one item, and the rule is saved with the form", () => {
+    const key = "conference_patches_pins";
+    const address = { line1: "2 Sample Road", locality: "Sampleville", region: "MO", postalCode: "60000", country: "United States" };
+    const order = { contact_name: "Morgan Sample", email: "orders@example.test", club_name: "Sample Creek Pathfinders", mailing_address: address, payment_method: "Pay later" };
+    const empty = submit(key, order);
+    expect(empty.isValid).toBe(false);
+    expect(JSON.stringify(empty.issues)).toContain("Order at least one item.");
+    const zeros = submit(key, { ...order, pathfinder_shoulder_patch_quantity: 0, pathfinder_conference_pin_quantity: 0, adventurer_shoulder_patch_quantity: 0 });
+    expect(JSON.stringify(zeros.issues)).toContain("Order at least one item.");
+    expect(submit(key, { ...order, patches_to_exchange: 2 }).isValid).toBe(false);
+    expect(submit(key, { ...order, adventurer_shoulder_patch_quantity: 1 }).isValid).toBe(true);
+    expect(registrationFormDefinitionSchema.parse(definitionOf(key)).requireAtLeastOne?.message).toBe("Order at least one item.");
+    const broken = structuredClone(definitionOf(key));
+    broken.requireAtLeastOne = { fieldKeys: ["no_such_field", "pathfinder_conference_pin_quantity"], message: "Order at least one item." };
+    expect(registrationFormDefinitionSchema.safeParse(broken).success).toBe(false);
   });
 });
 

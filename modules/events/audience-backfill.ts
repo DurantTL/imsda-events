@@ -21,8 +21,14 @@ export type EventAudienceBackfillReport = {
  * Verifies the explicit `Event.audience` backfill (#481). The migration
  * `20260928120000_event_audience` itself sets every event billed to a club or
  * church (`billingMode: DEFERRED_ORGANIZATION_INVOICE`) to `CLUB`, so on a
- * migrated database this report should find 0 rows. It lists any
- * deferred-billed event that is not `CLUB`.
+ * migrated database this report should find 0 rows, except for events
+ * that are deliberately GENERAL and church-billed (#606: Leadership Weekend
+ * and Outdoor School, where individuals or a school register and the church
+ * or school is billed later). Those are recognised by their forms: an event
+ * whose forms all lack the club-registration shape (see
+ * `hasClubRegistrationShape`) is skipped, so neither the report nor
+ * `--apply` can flip it to CLUB. An event with no forms is still listed.
+ * It lists any other deferred-billed event that is not `CLUB`.
  *
  * After the migration, a deferred-billed event that is `GENERAL` is a
  * deliberate human choice (audience is independent of billing mode), so this
@@ -46,15 +52,39 @@ export function resolveEventAudienceBackfillMode(argv: readonly string[]): "repo
   return argv.includes("--force") ? "apply" : "refuse";
 }
 
+/**
+ * Whether a stored form definition has the shape club registration needs (#606): a `club_name` field, the
+ * club chosen from the directory, on a form with a repeatable roster. Leadership Weekend has no roster and
+ * Outdoor School has no club selector, so neither has it.
+ */
+export function hasClubRegistrationShape(definition: unknown): boolean {
+  if (!definition || typeof definition !== "object") return false;
+  const { sections, attendeeRoster } = definition as { sections?: unknown; attendeeRoster?: { enabled?: unknown } };
+  if (attendeeRoster?.enabled !== true || !Array.isArray(sections)) return false;
+  return sections.some((section) => Array.isArray((section as { fields?: unknown })?.fields)
+    && (section as { fields: Array<{ key?: unknown }> }).fields.some((field) => field?.key === "club_name"));
+}
+
 export async function backfillEventAudience(apply = false): Promise<EventAudienceBackfillReport> {
   const prisma = getPrisma();
   const events = await prisma.event.findMany({
     where: { billingMode: "DEFERRED_ORGANIZATION_INVOICE", audience: { not: "CLUB" } },
-    select: { id: true, name: true, billingMode: true, audience: true },
+    select: {
+      id: true,
+      name: true,
+      billingMode: true,
+      audience: true,
+      registrationForms: { select: { versions: { take: 1, orderBy: { versionNumber: "desc" }, select: { definition: true } } } },
+    },
     orderBy: { startsAt: "asc" },
   });
 
-  const candidates = events.map((event) => ({
+  // An event with forms, none of which has the club shape, is a deliberate GENERAL church-billed event (#606).
+  const clubShaped = events.filter((event) => {
+    const forms = event.registrationForms ?? [];
+    return forms.length === 0 || forms.some((form) => hasClubRegistrationShape(form.versions[0]?.definition));
+  });
+  const candidates = clubShaped.map((event) => ({
     id: event.id,
     name: event.name,
     billingMode: event.billingMode,

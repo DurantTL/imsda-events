@@ -215,7 +215,7 @@ export async function getEventSettings(eventId: string) {
   return {
     ...view,
     readiness: getEventPublishReadiness(view, publishedFormCount),
-    warnings: await collectEventReadinessWarnings(prisma, eventId),
+    warnings: await collectEventReadinessWarnings(prisma, eventId, event.billingMode),
   };
 }
 

@@ -217,6 +217,14 @@ export const registrationFormDefinitionSchema = z.object({
     attendeeLabel: z.string().trim().min(2).max(40).default("Attendee"),
     addButtonLabel: z.string().trim().min(2).max(80).default("Add another attendee"),
   }).optional(),
+  /**
+   * At least one of these fields must be answered with something (#606): a positive number for a NUMBER
+   * field, any answer otherwise. For an order form whose every quantity may be left at 0 individually.
+   */
+  requireAtLeastOne: z.object({
+    fieldKeys: z.array(z.string().trim().min(2).max(60)).min(2).max(10),
+    message: z.string().trim().min(3).max(120),
+  }).optional(),
   payment: z.object({
     enabled: z.boolean(),
     currency: z.literal("USD").default("USD"),
@@ -291,6 +299,9 @@ export const registrationFormDefinitionSchema = z.object({
   const allFields = definition.sections.flatMap((section) => section.fields);
   if (allFields.filter((field) => field.optionSource === "ATTENDEE_TYPES").length > 1) {
     context.addIssue({ code: "custom", path: ["sections"], message: "A form can designate only one attendee-type selector." });
+  }
+  for (const key of definition.requireAtLeastOne?.fieldKeys ?? []) {
+    if (!fieldKeys.has(key)) context.addIssue({ code: "custom", path: ["requireAtLeastOne", "fieldKeys"], message: `Field ${key} is not configured.` });
   }
   const paymentField = definition.payment ? allFields.find((field) => field.key === definition.payment?.paymentMethodFieldKey) : null;
   if (definition.payment && !paymentField) context.addIssue({ code: "custom", path: ["payment", "paymentMethodFieldKey"], message: "Payment settings must reference a configured payment-method field." });
@@ -596,11 +607,18 @@ export function isBlankFormTemplateKey(key: string) {
  * The template picker's list for one event (#592): the blank form that fits
  * the event's audience first (shown as "Blank form"), the other audience's
  * blank form left out, then the remaining templates in their given order.
+ * On a church-billed event (#606) a template that collects card payment is
+ * left out too: a deferred-billing event refuses a form with payment enabled.
  */
-export function templatesForPicker<T extends { key: string; name: string }>(templates: T[], eventAudience: string | null | undefined): T[] {
+export function templatesForPicker<T extends { key: string; name: string; collectsPayment?: boolean }>(
+  templates: T[],
+  eventAudience: string | null | undefined,
+  billingMode?: string | null,
+): T[] {
   const blankKey = blankFormTemplateKey(eventAudience);
   const blank = templates.find((template) => template.key === blankKey);
-  const rest = templates.filter((template) => !isBlankFormTemplateKey(template.key));
+  const churchBilled = billingMode === "DEFERRED_ORGANIZATION_INVOICE";
+  const rest = templates.filter((template) => !isBlankFormTemplateKey(template.key) && !(churchBilled && template.collectsPayment));
   return blank ? [{ ...blank, name: "Blank form" }, ...rest] : rest;
 }
 
@@ -1085,7 +1103,7 @@ const leadershipWeekendTemplate: FormTemplate = {
         templateField("lw_email", "email", "Email", "EMAIL", true),
         templateField("lw_position", "club_position", "Club position", "TEXT", true),
         templateField("lw_phone", "phone", "Mobile phone", "PHONE", true),
-        templateField("lw_years", "years_as_leader", "Years as a leader", "NUMBER", true),
+        templateField("lw_years", "years_as_leader", "Years as a leader", "NUMBER", true, [], { ageBounds: { minimumAge: 0, maximumAge: 100 } }),
         ...directoryClub("lw", "pathfinder_club", "Pathfinder club"),
         ...directoryChurch("lw"),
         templateField("lw_address", "mailing_address", "Mailing address", "ADDRESS", false),
@@ -1191,7 +1209,7 @@ const outdoorSchoolTemplate: FormTemplate = {
 const hispanicInstituteTemplate: FormTemplate = {
   key: "hispanic_institute",
   name: "Hispanic Institute of Evangelism",
-  description: "Attendee and church, the $50 semester registration (2026 price), and card payment with the platform's card fee.",
+  description: "Attendee and church, the $50 semester registration (2026 price), and card payment with the platform's card fee. Use on an attendee-pay event.",
   audience: "Individual",
   definition: {
     title: "Hispanic Institute of Evangelism registration",
@@ -1385,13 +1403,14 @@ const quantityBounds = { minimumAge: 0, maximumAge: 1000 };
 const conferencePatchesTemplate: FormTemplate = {
   key: "conference_patches_pins",
   name: "Conference shoulder patches and pins order",
-  description: "Add-on form: an order for Pathfinder and Adventurer shoulder patches and the Conference pin at the 2026 unit prices, with card payment. Postage not included.",
+  description: "Add-on form: an order for Pathfinder and Adventurer shoulder patches and the Conference pin at the 2026 unit prices, with card payment. Postage not included. Use on an attendee-pay event.",
   audience: "Individual",
   definition: {
     title: "Conference shoulder patches and pins order",
     description: "Postage not included.",
     confirmationMessage: "Your order has been received. Postage is not included. Check your email for payment details.",
     payment: { enabled: true, currency: "USD", paymentMethodFieldKey: "payment_method", cardOptionValue: "Credit / debit card", percentageBasisPoints: 290, fixedFeeCents: 30, passFeeToRegistrant: true },
+    requireAtLeastOne: { fieldKeys: ["pathfinder_shoulder_patch_quantity", "pathfinder_conference_pin_quantity", "adventurer_shoulder_patch_quantity"], message: "Order at least one item." },
     sections: [
       { id: "cp_orderer", title: "Orderer", description: "", fields: [
         templateField("cp_name", "contact_name", "Name", "TEXT", true, [], { helpText: "First and last name." }),
@@ -1775,6 +1794,15 @@ export function validateTestResponses(
           if (limit && current >= limit) issues.push({ fieldId: field.id, key: field.key, message: `${selection} has reached its limit of ${limit}.` });
         }
       }
+    }
+  }
+  const atLeastOne = definition.requireAtLeastOne;
+  if (atLeastOne) {
+    const referenced = definition.sections.flatMap((section) => section.fields).filter((field) => atLeastOne.fieldKeys.includes(field.key));
+    const inScope = referenced.filter((field) => (!scope || field.scope === scope) && !ignoredFieldKeys.has(field.key));
+    const answered = inScope.some((field) => (field.type === "NUMBER" ? Number(responses[field.key]) > 0 : hasValue(responses[field.key])));
+    if (inScope.length > 0 && inScope.length === referenced.length && !answered) {
+      issues.push({ fieldId: inScope[0]!.id, key: inScope[0]!.key, message: atLeastOne.message });
     }
   }
   return { isValid: issues.length === 0, issues };

@@ -3,6 +3,7 @@ import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import {
   getFeeWarnings,
   getLocationDateWarnings,
+  getPaymentOnChurchBilledWarnings,
   unpricedFeeFieldLabels,
   type EventReadinessWarning,
 } from "@/modules/events/readiness";
@@ -15,6 +16,7 @@ import {
 export async function collectEventReadinessWarnings(
   prisma: Pick<PrismaClient, "eventLocation" | "registrationForm">,
   eventId: string,
+  billingMode?: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE" | null,
 ): Promise<EventReadinessWarning[]> {
   const [locations, publishedForms, latestForms] = await Promise.all([
     prisma.eventLocation.findMany({
@@ -34,10 +36,11 @@ export async function collectEventReadinessWarnings(
   ]);
   // The published version when there is one, else the latest draft.
   const published = new Map(publishedForms.map((form) => [form.id, form.versions[0]?.definition]));
-  const feeLabels = latestForms.flatMap((form) => {
-    const definition = published.get(form.id) ?? form.versions[0]?.definition;
-    const parsed = registrationFormDefinitionSchema.safeParse(definition);
-    return parsed.success ? unpricedFeeFieldLabels(parsed.data) : [];
+  const parsedForms = latestForms.flatMap((form) => {
+    const parsed = registrationFormDefinitionSchema.safeParse(published.get(form.id) ?? form.versions[0]?.definition);
+    return parsed.success ? [parsed.data] : [];
   });
-  return [...getLocationDateWarnings(locations), ...getFeeWarnings(feeLabels)];
+  const feeLabels = parsedForms.flatMap((definition) => unpricedFeeFieldLabels(definition));
+  const paymentFormTitles = parsedForms.filter((definition) => definition.payment?.enabled).map((definition) => definition.title);
+  return [...getLocationDateWarnings(locations), ...getFeeWarnings(feeLabels), ...getPaymentOnChurchBilledWarnings(billingMode, paymentFormTitles)];
 }

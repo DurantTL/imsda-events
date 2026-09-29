@@ -180,7 +180,7 @@ export async function getRegistrationForm(eventId: string, formId: string) {
 
 export function listFormTemplates() {
   return formTemplates.map(({ key, name, description, audience, definition }) => ({
-    key, name, description, audience, sectionCount: definition.sections.length,
+    key, name, description, audience, collectsPayment: Boolean(definition.payment?.enabled), sectionCount: definition.sections.length,
     fieldCount: definition.sections.reduce((count, section) => count + section.fields.length, 0),
   }));
 }

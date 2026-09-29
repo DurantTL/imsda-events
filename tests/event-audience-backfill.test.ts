@@ -4,7 +4,8 @@ vi.mock("server-only", () => ({}));
 const mocks = vi.hoisted(() => ({ getPrisma: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({ getPrisma: mocks.getPrisma }));
 
-import { backfillEventAudience, resolveEventAudienceBackfillMode } from "@/modules/events/audience-backfill";
+import { backfillEventAudience, hasClubRegistrationShape, resolveEventAudienceBackfillMode } from "@/modules/events/audience-backfill";
+import { getFormTemplate } from "@/modules/forms/definition";
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -97,5 +98,40 @@ describe("event audience backfill CLI mode (#481 review)", () => {
   it("writes only with --apply --force", () => {
     expect(resolveEventAudienceBackfillMode(["--apply", "--force"])).toBe("apply");
     expect(resolveEventAudienceBackfillMode(["--force"])).toBe("report");
+  });
+});
+
+describe("GENERAL church-billed starter events (#606)", () => {
+  function withForms(forms: Record<string, unknown[]>) {
+    const events = Object.keys(forms).map((id) => ({ id, name: id, billingMode: "DEFERRED_ORGANIZATION_INVOICE" as const, audience: "GENERAL" as const }));
+    const update = vi.fn(async (args: { where: { id: string } }) => args);
+    mocks.getPrisma.mockReturnValue({
+      event: {
+        findMany: vi.fn(async () => events.map((event) => ({ ...event, registrationForms: forms[event.id]!.map((definition) => ({ versions: [{ definition }] })) }))),
+        update,
+      },
+      $transaction: vi.fn(async (operations: Promise<unknown>[]) => Promise.all(operations)),
+    });
+    return update;
+  }
+
+  it("recognises the club shape only on a roster form with a club selector", () => {
+    expect(hasClubRegistrationShape(getFormTemplate("spring_camporee_export")!.definition)).toBe(true);
+    expect(hasClubRegistrationShape(getFormTemplate("honors_weekend")!.definition)).toBe(true);
+    expect(hasClubRegistrationShape(getFormTemplate("leadership_weekend")!.definition)).toBe(false);
+    expect(hasClubRegistrationShape(getFormTemplate("outdoor_school")!.definition)).toBe(false);
+    expect(hasClubRegistrationShape(null)).toBe(false);
+  });
+
+  it("neither reports nor flips Leadership Weekend or Outdoor School, but still lists a club-shaped event and one with no forms", async () => {
+    const update = withForms({
+      leadership: [getFormTemplate("leadership_weekend")!.definition],
+      school: [getFormTemplate("outdoor_school")!.definition],
+      camporee: [getFormTemplate("spring_camporee_export")!.definition],
+      unformed: [],
+    });
+    const report = await backfillEventAudience(true);
+    expect(report.rows.map((row) => row.id)).toEqual(["camporee", "unformed"]);
+    expect(update.mock.calls.map((call) => call[0].where.id)).toEqual(["camporee", "unformed"]);
   });
 });

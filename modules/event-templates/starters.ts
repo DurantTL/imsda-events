@@ -1,4 +1,5 @@
 import { getFormTemplate, isBlankFormTemplateKey } from "@/modules/forms/definition";
+import { unpricedFeeFieldLabels } from "@/modules/events/readiness";
 import { eventTemplatePayloadSchema, type EventTemplatePayload, type TemplateLocation } from "@/modules/event-templates/domain";
 
 /**
@@ -55,15 +56,15 @@ export const starterEventTemplates: readonly StarterEventTemplate[] = [
   // church billing on a GENERAL event, and only the club portal needs CLUB. These forms take no online payment.
   {
     starterKey: "leadership_weekend", name: "Pathfinder Leadership Weekend", formTemplateKey: "leadership_weekend", audience: "GENERAL", billingMode: "DEFERRED_ORGANIZATION_INVOICE", collectsShirtSizes: false, checksAdultBackgrounds: false,
-    note: "Each leader registers as an individual and their church is billed after the event, so nothing is paid online. The lodging prices and the August 24 early-bird date are the 2026 ones: update them for this year.",
+    note: "Each leader registers as an individual and their church is billed after the event, so nothing is paid online. The August 24 early-bird date is the 2026 one.",
   },
   {
     starterKey: "tlt_retreat", name: "TLT Retreat", formTemplateKey: "tlt_retreat", audience: "GENERAL", billingMode: "ATTENDEE_PAY", collectsShirtSizes: false, checksAdultBackgrounds: false,
-    note: "The retreat is free, so the form has no fee. It serves the spring and fall retreats: remove the recommendation-forms question for the fall retreat.",
+    note: "The retreat is free. The form serves the spring and fall retreats: remove the recommendation-forms question for the fall retreat.",
   },
   {
     starterKey: "outdoor_school", name: "Outdoor School", formTemplateKey: "outdoor_school", audience: "GENERAL", billingMode: "DEFERRED_ORGANIZATION_INVOICE", collectsShirtSizes: false, checksAdultBackgrounds: false,
-    note: "A school registers its students and is billed after the event, so nothing is paid online. The Outdoor School fee has no amount: set it on the draft event before publishing.",
+    note: "A school registers its students and is billed after the event, so nothing is paid online.",
   },
   {
     starterKey: "hispanic_institute", name: "Hispanic Institute of Evangelism", formTemplateKey: "hispanic_institute", audience: "GENERAL", billingMode: "ATTENDEE_PAY", collectsShirtSizes: false, checksAdultBackgrounds: false,
@@ -104,10 +105,14 @@ export function starterDescription(starter: StarterEventTemplate) {
   const features = formPriceFeatures(starter.formTemplateKey);
   const kept = ["prices", ...(features.latePricing ? ["late-price dates"] : []), ...(features.choiceLimits ? ["choice limits"] : [])];
   const keptText = kept.length > 1 ? `${kept.slice(0, -1).join(", ")} and ${kept[kept.length - 1]}` : kept[0];
+  const unsetFees = unpricedFeeFieldLabels(form?.definition ?? { sections: [] });
+  // One price sentence, said once: kept prices, an unset fee, or no fee at all. The template itself never sets capacity.
   const priceNote = formCarriesPrices(starter.formTemplateKey)
     ? `The form keeps last year's ${keptText}. Review them on the draft event before publishing.`
-    : "The form has no prices set. Set any fee on the draft event before publishing.";
-  return `Starter set: created from ${source}. This template sets no prices or capacity. ${priceNote}${starter.note ? ` ${starter.note}` : ""}`;
+    : unsetFees.length > 0
+      ? `The form has no prices set: set the ${unsetFees.join(" and the ")} on the draft event before publishing.`
+      : "The form has no fees.";
+  return `Starter set: created from ${source}. ${priceNote} This template sets no capacity.${starter.note ? ` ${starter.note}` : ""}`;
 }
 
 export function starterPayload(starter: StarterEventTemplate): EventTemplatePayload {
