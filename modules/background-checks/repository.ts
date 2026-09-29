@@ -1801,6 +1801,9 @@ export async function listEventBackgroundFlags(eventId: string, options: { organ
           id: true,
           confirmationCode: true,
           clubRegistration: { select: { organizationId: true, organization: clubSelect } },
+          // A registration at a location of a multi-location event is checked through
+          // that location's last day (#413); without one, the event's last day.
+          location: { select: { lastDay: true } },
         },
       },
     },
@@ -1842,7 +1845,7 @@ export async function listEventBackgroundFlags(eventId: string, options: { organ
   for (const attendee of adultAttendees) {
     const snapshot = (attendee.profileSnapshot ?? {}) as { firstName?: unknown; lastName?: unknown };
     const check: StoredCheck | null = attendee.person.backgroundCheckMatch?.entry ?? uncached.get(attendee.personId) ?? null;
-    const state = backgroundCheckState(check, lastDay);
+    const state = backgroundCheckState(check, attendee.registration.location?.lastDay ?? lastDay);
     if (state === "CURRENT") continue;
     const club = attendee.registration.clubRegistration;
     people.push({

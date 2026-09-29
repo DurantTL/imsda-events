@@ -29,11 +29,14 @@ function money(cents: number) {
 export function ChurchAmountsOwed({
   eventId,
   isDeferredOrganizationBilling,
+  locationId = null,
   rows,
   sponsoredLines = [],
 }: {
   eventId: string;
   isDeferredOrganizationBilling: boolean;
+  /** The location filter (#413) the export follows; null exports every location. */
+  locationId?: string | null;
   rows: ChurchAmountOwedRow[];
   sponsoredLines?: ChurchSponsoredPromoLine[];
 }) {
@@ -60,7 +63,7 @@ export function ChurchAmountsOwed({
           </p>
         </div>
         <div className="page-intro-actions">
-          <a className="secondary-button" href={`/api/events/${eventId}/exports/church-owed`}>
+          <a className="secondary-button" href={`/api/events/${eventId}/exports/church-owed${locationId ? `?location=${encodeURIComponent(locationId)}` : ""}`}>
             <Download aria-hidden="true" size={17} /> Export CSV
           </a>
         </div>
@@ -106,7 +109,7 @@ export function ChurchAmountsOwed({
         <div className="finance-row finance-head"><span>Club / church</span><span>Confirmation</span><span>Attendees</span><span>Estimated amount owed</span></div>
         {billed.map((row) => (
           <div className="finance-row" key={`${row.organizationId}-${row.confirmationCode}`}>
-            <span><strong>{row.organizationName}</strong><small>{row.churchName ?? NO_CHURCH_ON_FILE} · {row.status.toLowerCase()}</small></span>
+            <span><strong>{row.organizationName}</strong><small>{row.churchName ?? NO_CHURCH_ON_FILE} · {row.status.toLowerCase()}{row.locationName ? ` · ${row.locationName}` : ""}</small></span>
             <span>{row.confirmationCode}</span>
             <span>{row.attendeeCount} {row.attendeeCount === 1 ? "person" : "people"}</span>
             <span>{money(row.amountOwedCents)}</span>
@@ -150,7 +153,7 @@ export function ChurchAmountsOwed({
           <div className="finance-row finance-head"><span>Waitlisted or cancelled club</span><span>Confirmation</span><span>Attendees</span><span>Owed</span></div>
           {notBilled.map((row) => (
             <div className="finance-row" key={`${row.organizationId}-${row.confirmationCode}`}>
-              <span><strong>{row.organizationName}</strong><small>{row.churchName ?? NO_CHURCH_ON_FILE} · {notBilledLabel(row.status)}</small></span>
+              <span><strong>{row.organizationName}</strong><small>{row.churchName ?? NO_CHURCH_ON_FILE} · {notBilledLabel(row.status)}{row.locationName ? ` · ${row.locationName}` : ""}</small></span>
               <span>{row.confirmationCode}</span>
               <span>{row.attendeeCount} {row.attendeeCount === 1 ? "person" : "people"}</span>
               <span>{money(0)}</span>

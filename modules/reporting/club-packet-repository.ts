@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
+import { effectiveLocationDates } from "@/modules/event-locations/domain";
 import { getClubEventRecords } from "@/modules/reporting/club-event-reports-repository";
 import { buildClubPacket, withClubPacketAssignment, type ClubPacket } from "@/modules/reporting/club-packet";
 
@@ -25,14 +26,28 @@ export async function getClubPacketData(eventId: string, organizationId: string)
   const club = clubs.find((candidate) => candidate.organizationId === organizationId);
   if (!club) return null;
 
+  // The location the club registered at (#413): its name, address, and dates
+  // (the event's when the location sets none) go on the packet.
+  const location = club.locationId
+    ? await getPrisma().eventLocation.findUnique({
+        where: { id: club.locationId },
+        select: { name: true, address: true, firstDay: true, lastDay: true },
+      })
+    : null;
+  const dates = location ? effectiveLocationDates({ ...event, registrationClosesOn: null }, { ...location, registrationClosesOn: null }) : null;
+
   const packet = buildClubPacket(club, {
     name: event.name,
     conferenceName: CONFERENCE_NAME,
-    startsOn: event.startsAt.toISOString(),
-    endsOn: event.endsAt.toISOString(),
+    // A date-only day at midday UTC reads as the same calendar day in the event's time zone.
+    startsOn: dates ? `${dates.firstDay}T12:00:00.000Z` : event.startsAt.toISOString(),
+    endsOn: dates ? `${dates.lastDay}T12:00:00.000Z` : event.endsAt.toISOString(),
     timezone: event.timezone,
     earlyBirdDeadline,
     lateRateApplied: false,
   });
+  if (location && dates) {
+    packet.club.location = { name: location.name, address: location.address, firstDay: dates.firstDay, lastDay: dates.lastDay };
+  }
   return withClubPacketAssignment(packet, assignments.get(organizationId) ?? null);
 }

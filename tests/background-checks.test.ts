@@ -2140,3 +2140,47 @@ describe("name-only matches, variants, adults by age, and the lookup (#598)", ()
     });
   });
 });
+
+describe("flags use the location's last day when the registration has a location (#413, #405)", () => {
+  function adult(id: string, check: Record<string, unknown> | null, location: { lastDay: string | null } | null | undefined) {
+    return {
+      id, personId: `person-${id}`, eventId: "event-1", attendeeType: "Adult", profileSnapshot: {}, formResponses: {},
+      person: { firstName: "Test", lastName: id, backgroundCheckMatch: check ? { entry: check } : null },
+      registration: {
+        id: `reg-${id}`, confirmationCode: `CODE-${id}`, status: "CONFIRMED", clubRegistration: null,
+        ...(location === undefined ? {} : { location }),
+      },
+    };
+  }
+
+  // The event ends Oct 4; one location runs later, another ends earlier.
+  it("flags an adult whose check ends before the location's later last day, though it covers the event's", async () => {
+    const db = makeFakeDb();
+    currentClient = db.client;
+    db.seed.events.set("event-1", {
+      id: "event-1", checksAdultBackgrounds: true, startsAt: new Date("2026-10-02T17:00:00Z"), endsAt: new Date("2026-10-04T17:00:00Z"), timezone: "America/Chicago",
+    });
+    db.seed.attendees.push(
+      adult("late-location", { expiresOn: "2026-10-06", complianceStatus: null }, { lastDay: "2026-10-11" }),
+      adult("event-days", { expiresOn: "2026-10-06", complianceStatus: null }, { lastDay: null }),
+      adult("no-location", { expiresOn: "2026-10-06", complianceStatus: null }, undefined),
+      adult("early-location", { expiresOn: "2026-10-02", complianceStatus: null }, { lastDay: "2026-10-01" }),
+    );
+    const flags = await listEventBackgroundFlags("event-1");
+    expect(flags?.adults).toBe(4);
+    expect(flags?.people.map((flag) => [flag.attendeeId, flag.state])).toEqual([["late-location", "EXPIRED"]]);
+    // The event's own last day is still what the report names.
+    expect(flags?.lastDay).toBe("2026-10-04");
+  });
+
+  it("checks through the event's last day for a location with no last day of its own", async () => {
+    const db = makeFakeDb();
+    currentClient = db.client;
+    db.seed.events.set("event-1", {
+      id: "event-1", checksAdultBackgrounds: true, startsAt: new Date("2026-10-02T17:00:00Z"), endsAt: new Date("2026-10-04T17:00:00Z"), timezone: "America/Chicago",
+    });
+    db.seed.attendees.push(adult("expires-too-soon", { expiresOn: "2026-10-03", complianceStatus: null }, { lastDay: null }));
+    const flags = await listEventBackgroundFlags("event-1");
+    expect(flags?.people.map((flag) => [flag.attendeeId, flag.state])).toEqual([["expires-too-soon", "EXPIRED"]]);
+  });
+});

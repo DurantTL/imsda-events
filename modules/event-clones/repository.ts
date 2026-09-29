@@ -26,6 +26,7 @@ import {
   type ConfirmEventCloneInput,
   type SourceConfiguration,
 } from "@/modules/event-clones/domain";
+import { calendarDayDifference, normalizeLocationName, shiftLocationsForClone } from "@/modules/event-locations/domain";
 import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { getEventSettings } from "@/modules/events/repository";
 import { createRegistrationFormFromDefinitionInTransaction } from "@/modules/forms/repository";
@@ -73,7 +74,7 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
   if (!event) return null;
 
   const [community, sections, forms, attendeeTypes, classifications, messageTemplates, tags, promoCodes, honorSessions, honorOfferings,
-    merchandiseProducts, paymentInstructionVersions, messageDeliverySettings, uploadedFiles] = [
+    merchandiseProducts, paymentInstructionVersions, messageDeliverySettings, uploadedFiles, locations] = [
     await db.eventCommunitySettings.findUnique({ where: { eventId } }),
     await db.eventContentSection.findMany({
       where: { eventId }, orderBy: [{ position: "asc" }, { id: "asc" }],
@@ -100,6 +101,11 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
     await db.eventPaymentInstructionVersion.count({ where: { eventId } }),
     await db.eventMessageSettings.count({ where: { eventId } }),
     await db.eventAsset.count({ where: { eventId } }),
+    // Active locations only: a deactivated one is retired, so it is not carried into next year (#413).
+    await db.eventLocation.findMany({
+      where: { eventId, isActive: true },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { name: "asc" }],
+    }),
   ];
 
   const currentForms = forms.filter((form) => form.status !== "ARCHIVED" && form.versions.length > 0);
@@ -156,6 +162,10 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
       id: promo.id, code: promo.code, normalizedCode: promo.normalizedCode, discountType: promo.discountType,
       discountValue: promo.discountValue, startsOn: promo.startsOn, endsOn: promo.endsOn,
       minimumSubtotalCents: promo.minimumSubtotalCents, maximumUses: promo.maximumUses, maximumDiscountCents: promo.maximumDiscountCents,
+    })),
+    locations: locations.map((location) => ({
+      name: location.name, address: location.address, capacity: location.capacity, sortOrder: location.sortOrder,
+      firstDay: location.firstDay, lastDay: location.lastDay, registrationClosesOn: location.registrationClosesOn,
     })),
     honorSessions: honorSessions.map((session) => ({ id: session.id, name: session.name, normalizedName: session.normalizedName, sortOrder: session.sortOrder })),
     honorOfferings: honorOfferings.map((offering) => ({
@@ -447,6 +457,16 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
           });
         }
         copied.honors = config.honorOfferings.length;
+      }
+
+      if (include.locations && config.locations.length > 0) {
+        // Dates move by the same number of days as the event's start date (#413).
+        const days = calendarDayDifference(config.event.startsOn, input.startsOn);
+        const shifted = shiftLocationsForClone(config.locations, days);
+        await tx.eventLocation.createMany({
+          data: shifted.map((location) => ({ eventId: event.id, ...location, normalizedName: normalizeLocationName(location.name) })),
+        });
+        copied.locations = shifted.length;
       }
 
       const excluded = excludedDomains(include);

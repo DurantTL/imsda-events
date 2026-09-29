@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { actorAttribution, requireRosterAccess } from "@/modules/club-rosters/access";
 import { clubRegistrationApiError } from "@/modules/club-registrations/api-errors";
@@ -21,8 +22,17 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
     if (Buffer.byteLength(body) > maximumBodyBytes) {
       return Response.json({ error: "REQUEST_TOO_LARGE", message: "This registration is too large." }, { status: 413 });
     }
-    const input = publicRegistrationInputSchema.parse(JSON.parse(body));
-    const confirmation = await submitClubRegistration(organizationId, eventId, actorAttribution(access.actor), input);
+    // The picked location travels beside the form answers, never inside them (#413).
+    const { locationId, ...answers } = z.object({ locationId: z.string().trim().min(1).max(100).nullish() }).loose().parse(JSON.parse(body));
+    const input = publicRegistrationInputSchema.parse(answers);
+    const confirmation = await submitClubRegistration(
+      organizationId,
+      eventId,
+      actorAttribution(access.actor),
+      input,
+      new Date(),
+      { locationId: locationId ?? null },
+    );
     return Response.json({ confirmation }, { status: 201, headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return clubRegistrationApiError(error, "Submitting the club registration");

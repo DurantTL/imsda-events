@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowRight, CalendarDays, CheckCircle2, Printer, QrCode } from "lucide-react";
+import { ArrowRight, CalendarDays, CheckCircle2, MapPin, Printer, QrCode } from "lucide-react";
+import { formatCalendarDate } from "@/modules/club-registrations/domain";
 import { BackLink } from "@/components/back-link";
 import { ClubClassPicker } from "@/components/club-class-picker";
 import { ClubPassQr } from "@/components/club-pass-qr";
@@ -86,6 +87,14 @@ export default async function ClubEventRegistrationPage({
             Confirmation <strong translate="no">{workspace.registration.confirmationCode}</strong> ·{" "}
             {workspace.registration.attendees.length} going. A confirmation email was sent to the contact on the registration.
           </p>
+          {workspace.registration.location && (
+            <p>
+              <MapPin aria-hidden="true" size={15} /> Location: <strong translate="no">{workspace.registration.location.name}</strong>
+              {workspace.registration.location.address ? <> · <span translate="no">{workspace.registration.location.address}</span></> : ""}
+              {" · "}{formatCalendarDate(workspace.registration.location.firstDay)}
+              {workspace.registration.location.lastDay !== workspace.registration.location.firstDay ? <> to {formatCalendarDate(workspace.registration.location.lastDay)}</> : ""}
+            </p>
+          )}
           <p className="field-help">
             {isChurchBilledStatus(workspace.registration.status)
               ? (
@@ -176,7 +185,11 @@ export default async function ClubEventRegistrationPage({
       {!workspace.registration && !workspace.problem && workspace.event.phase !== "OPEN" && (
         <section className="public-manage-card">
           <p className="public-manage-empty">
-            {workspace.event.phase === "CLOSED" && workspace.event.ended
+            {workspace.locations.length > 0
+              ? workspace.event.phase === "CLOSED"
+                ? "Registration has closed at every location."
+                : "Registration isn't open yet at any location."
+              : workspace.event.phase === "CLOSED" && workspace.event.ended
               ? registrationClosedMessage
               : workspace.event.phase === "CLOSED"
               ? `Registration closed${workspace.event.registrationClosesOn ? ` after ${workspace.event.registrationClosesOn}` : ""}.`

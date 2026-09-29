@@ -21,6 +21,12 @@ export type EventLifecycleSource = {
    * regardless of the registration-window settings.
    */
   endsAt?: Date | null;
+  /**
+   * A last calendar day (`YYYY-MM-DD`, in the event's time zone) that takes
+   * the place of `endsAt`. A location of a multi-location event (#413) sets it
+   * from its own last day, so that location closes on its own schedule.
+   */
+  lastDay?: string | null;
 };
 
 export type EventAdmissionSource = EventLifecycleSource & {
@@ -38,9 +44,10 @@ export function calendarDateInEventTimeZone(date: Date, timeZone: string) {
 
 /** True once the event's last calendar day has passed in its own time zone. */
 export function hasEventEnded(
-  event: Pick<EventLifecycleSource, "timezone" | "endsAt">,
+  event: Pick<EventLifecycleSource, "timezone" | "endsAt" | "lastDay">,
   now = new Date(),
 ) {
+  if (event.lastDay) return calendarDateInEventTimeZone(now, event.timezone) > event.lastDay;
   if (!event.endsAt) return false;
   return calendarDateInEventTimeZone(now, event.timezone)
     > calendarDateInEventTimeZone(event.endsAt, event.timezone);

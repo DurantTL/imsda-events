@@ -7160,6 +7160,15 @@ select:focus-visible {
 .club-going-list label { align-items: flex-start !important; font-size: 0.78rem !important; color: var(--ink) !important; }
 .club-going-list strong, .club-going-list small { display: block; }
 .club-going-list small { margin-top: 2px; color: var(--muted); font-size: 0.7rem; font-weight: 500; }
+.event-location-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.event-location-list li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; padding: 10px 12px; border: 1px solid var(--line, #d8dde6); border-radius: 8px; }
+.event-location-list li.is-inactive { opacity: 0.7; }
+.event-location-list li > span:first-child { display: grid; gap: 2px; }
+.event-location-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.location-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; }
+.location-filter-label { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
+.club-location-picker { border: 1px solid var(--line, #d8dde6); border-radius: 8px; padding: 12px 16px; margin: 0 0 16px; }
+.club-location-picker legend { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; padding: 0 6px; }
 .club-registration-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 .public-manage-club-list li .status-chip { display: inline-block; margin-top: 6px; }
 .club-registration-form { min-height: 0; background: transparent; padding: 0; }
