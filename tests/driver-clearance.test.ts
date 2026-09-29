@@ -129,6 +129,7 @@ describe("staff overrides against the list (#544)", () => {
     expect(overrideLapsedByDate(dated("BGC (10/15/26)"), "2026-10-15", "2026-10-16")).toBe(true);
     expect(overrideLapsedByDate(dated("BGC (09/15/26)"), "2026-10-01", "2026-10-16")).toBe(false);
     expect(overrideLapsedByDate(dated(""), "2026-10-01", "2026-12-01")).toBe(false);
+    expect(overrideLapsedByDate(dated("Non-Driver (10/10/26)"), "2026-10-01", "2026-10-11")).toBe(false);
     // A Sterling row's own expiry counts; a row with a mark ignores expiresOn.
     expect(overrideLapsedByDate({ expiresOn: "2026-10-15" }, "2026-10-01", "2026-10-16")).toBe(true);
     expect(overrideLapsedByDate({ complianceStatus: "CLEAR", expiresOn: "2026-10-15" }, "2026-10-01", "2026-10-16")).toBe(false);

@@ -132,7 +132,8 @@ export function overrideIsStale(reviewedAt: Date, latestUploadAt: Date | null | 
  */
 export function overrideLapsedByDate(check: DriverCheckEvidence | null | undefined, reviewedOn: string, today: string) {
   if (!check) return false;
-  const dates = parseIssues(check.issuesNote).items.map((item) => item.date);
+  // Only BGC and Training dates count: a date beside Non-Driver changes nothing.
+  const dates = parseIssues(check.issuesNote).items.filter((item) => item.kind !== "NON_DRIVER").map((item) => item.date);
   if (!check.complianceStatus) dates.push(check.expiresOn);
   return dates.some((date) => date !== null && date >= reviewedOn && date < today);
 }
