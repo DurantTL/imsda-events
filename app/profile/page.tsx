@@ -9,6 +9,7 @@ import { MfaManager, type MfaStatus } from "@/components/mfa-manager";
 import { SignOutButton } from "@/components/sign-out-button";
 import { StaffPasskeyManager } from "@/components/staff-passkey-manager";
 import { getCurrentSession } from "@/modules/access/current-session";
+import { getAttendeeMfaStatus } from "@/modules/attendee-accounts/mfa-service";
 import { getMfaStatus } from "@/modules/access/mfa-service";
 import { getPasskeySettings } from "@/modules/access/passkeys";
 import {
@@ -52,6 +53,11 @@ export default async function ProfilePage({
   const [mfaStatus, passkeySettings] = staff
     ? await Promise.all([getMfaStatus(staff.id) as Promise<MfaStatus>, getPasskeySettings(staff)])
     : [null, null];
+  // The confirmation banner is only true when an authenticator is really on (#568).
+  const showTwoStepOn = Boolean(
+    twoStep === "on" && attendeeAccount && !secondStepPending
+    && (await getAttendeeMfaStatus(attendeeAccount.id)).status === "ACTIVE",
+  );
   const clubs = attendeeAccount && !secondStepPending ? await listDirectedClubs(attendeeAccount.id) : [];
 
   // The same banner the workspace and portal layouts show while a system
@@ -133,7 +139,7 @@ export default async function ProfilePage({
         <section aria-labelledby="profile-registration-heading" className="profile-account-section">
           <div className="account-page-body">
             <h2 className="profile-account-heading" id="profile-registration-heading">Registration account</h2>
-            {!secondStepPending && twoStep === "on" && (
+            {showTwoStepOn && (
               <p className="auth-success" role="status">Two-step verification is on.</p>
             )}
             {!secondStepPending && (

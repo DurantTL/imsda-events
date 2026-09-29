@@ -53,7 +53,7 @@ export default async function AttendeeSignInPage({
         {(googleAvailable || passkeysAvailable) && (
           <>
             {passkeysAvailable && <PasskeySignInButton next={next} />}
-            {googleAvailable && <AttendeeGoogleButton label="Sign in with Google" />}
+            {googleAvailable && <AttendeeGoogleButton label="Sign in with Google" next={next} />}
             <p className="auth-divider"><span>or</span></p>
           </>
         )}

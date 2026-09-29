@@ -33,6 +33,9 @@ vi.mock("@/modules/attendee-accounts/passkeys", () => ({ getPasskeySettings: vi.
 vi.mock("@/modules/attendee-accounts/mfa-service", () => ({ getAttendeeMfaStatus: vi.fn() }));
 vi.mock("@/components/attendee-sign-out-button", () => ({ AttendeeSignOutButton: () => null }));
 
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { TwoStepFinished } from "@/components/two-step-setup";
 import { unstable_doesMiddlewareMatch } from "next/experimental/testing/server";
 import ClubLayout from "@/app/(public)/account/(portal)/clubs/[organizationId]/layout";
 import AttendeeSignInPage from "@/app/(public)/account/sign-in/page";
@@ -70,6 +73,13 @@ describe("attendeeReturnDestination", () => {
       "/api/attendee/mfa",
       "/admin/team",
       "/accounts-lookalike",
+      "/account/../admin",
+      "/account/%2e%2e/admin",
+      "/account/%2E%2E/admin",
+      "/account/./two-step",
+      "/account/%2e/two-step",
+      "/account/Sign-In",
+      "/account/TWO-STEP",
       "",
     ]) {
       expect(attendeeReturnDestination(bad, "/account")).toBe("/account");
@@ -140,6 +150,35 @@ describe("an off-site destination is refused", () => {
     await expect(ClubLayout({ children: null, params: Promise.resolve({ organizationId: "club-1" }) }))
       .rejects.toThrow("REDIRECT:/account/sign-in");
     expect(mocks.redirect).toHaveBeenLastCalledWith("/account/sign-in");
+  });
+});
+
+describe("two-step page edge cases", () => {
+  it("with no account redirects to sign-in carrying next", async () => {
+    mocks.getCurrentAttendee.mockResolvedValue({ account: null, via: null, sessionId: null });
+    await expect(TwoStepPage({ searchParams: Promise.resolve({ next: ROSTER }) }))
+      .rejects.toThrow(`REDIRECT:/account/sign-in?next=${ROSTER_NEXT}`);
+  });
+
+  it("refuses a repeated (array) next and falls back to /account", async () => {
+    mocks.getCurrentAttendee.mockResolvedValue({ account: { id: "a1" }, via: "attendee", sessionId: "s1" });
+    mocks.accountNeedsSecondStep.mockResolvedValue("OK");
+    await expect(TwoStepPage({ searchParams: Promise.resolve({ next: [ROSTER, "https://evil.example/"] }) }))
+      .rejects.toThrow("REDIRECT:/account");
+    expect(mocks.redirect).toHaveBeenLastCalledWith("/account");
+    await expect(AttendeeSignInPage({ searchParams: Promise.resolve({ next: [ROSTER, ROSTER] }) }))
+      .rejects.toThrow("REDIRECT:/account");
+    expect(mocks.redirect).toHaveBeenLastCalledWith("/account");
+  });
+});
+
+describe("setup finish card", () => {
+  it("says two-step verification is on and links to next, else /profile", () => {
+    for (const [next, href] of [[ROSTER, ROSTER], [undefined, "/profile?twoStep=on"]] as const) {
+      const markup = renderToStaticMarkup(createElement(TwoStepFinished, { next }));
+      expect(markup).toContain("Two-step verification is on.");
+      expect(markup).toContain(`href="${href}"`);
+    }
   });
 });
 

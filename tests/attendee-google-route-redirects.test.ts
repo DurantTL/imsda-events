@@ -127,4 +127,56 @@ describe("Google attendee route redirects", () => {
     expect(response.headers.get("location"))
       .toBe("https://events.imsda.org/account/sign-in?error=google-unavailable");
   });
+
+  describe("carrying a destination (#568)", () => {
+    const handoff = JSON.stringify({ state: "expected-state", nonce: "expected-nonce", codeVerifier: "expected-verifier" });
+    const callbackRequest = () => new Request(
+      "http://10.42.0.19:3100/api/attendee/oauth/google/callback?code=authorization-code&state=expected-state",
+    );
+    const withNextCookie = (value: string | undefined) => mocks.cookieGet.mockImplementation((name: string) => {
+      if (name === "imsda_attendee_oauth") return { value: handoff };
+      if (name === "imsda_attendee_oauth_next" && value !== undefined) return { value };
+      return undefined;
+    });
+
+    beforeEach(() => {
+      mocks.beginGoogleAuthorization.mockReturnValue({
+        state: "s", nonce: "n", codeVerifier: "v", authorizationUrl: "https://accounts.google.test/auth",
+      });
+    });
+
+    it("start stores a valid next in a short-lived httpOnly Lax cookie, leaving state alone", async () => {
+      const roster = "/account/clubs/club-1/roster";
+      await start(new Request(`http://10.42.0.19:3100/api/attendee/oauth/google/start?next=${encodeURIComponent(roster)}`));
+      const call = mocks.cookieSet.mock.calls.find(([name]) => name === "imsda_attendee_oauth_next");
+      expect(call?.[1]).toBe(roster);
+      expect(call?.[2]).toMatchObject({ httpOnly: true, sameSite: "lax", path: "/api/attendee/oauth" });
+      expect(call?.[2].maxAge).toBeGreaterThan(0);
+      const handoffCall = mocks.cookieSet.mock.calls.find(([name]) => name === "imsda_attendee_oauth");
+      expect(JSON.parse(handoffCall?.[1])).toEqual({ state: "s", nonce: "n", codeVerifier: "v" });
+    });
+
+    it("start refuses an off-site or dot-segment next", async () => {
+      for (const next of ["https://evil.example/", "/account/../admin"]) {
+        mocks.cookieSet.mockClear();
+        await start(new Request(`http://10.42.0.19:3100/api/attendee/oauth/google/start?next=${encodeURIComponent(next)}`));
+        expect(mocks.cookieSet.mock.calls.some(([name]) => name === "imsda_attendee_oauth_next")).toBe(false);
+      }
+    });
+
+    it("callback lands on the stored destination and clears the cookie", async () => {
+      withNextCookie("/account/clubs/club-1/roster");
+      const response = await callback(callbackRequest());
+      expect(response.headers.get("location")).toBe("https://events.imsda.org/account/clubs/club-1/roster");
+      expect(mocks.cookieSet).toHaveBeenCalledWith("imsda_attendee_oauth_next", "", expect.objectContaining({ maxAge: 0 }));
+    });
+
+    it("callback revalidates and falls back to /account for a tampered cookie", async () => {
+      for (const bad of ["https://evil.example/", "//evil.example", "/account/%2e%2e/admin"]) {
+        withNextCookie(bad);
+        const response = await callback(callbackRequest());
+        expect(response.headers.get("location")).toBe("https://events.imsda.org/account");
+      }
+    });
+  });
 });

@@ -30,6 +30,8 @@ vi.mock("@/modules/attendee-accounts/portal-second-step", () => ({
   requireAttendeeSecondStep: mocks.requireAttendeeSecondStep,
 }));
 vi.mock("@/modules/organizations/director-access", () => ({ listDirectedClubs: mocks.listDirectedClubs }));
+const attendeeMfaStatus = vi.hoisted(() => vi.fn());
+vi.mock("@/modules/attendee-accounts/mfa-service", () => ({ getAttendeeMfaStatus: attendeeMfaStatus }));
 vi.mock("@/modules/access/mfa-service", () => ({ getMfaStatus: mocks.getMfaStatus }));
 vi.mock("@/modules/access/passkeys", () => ({ getPasskeySettings: mocks.getPasskeySettings }));
 vi.mock("@/components/mfa-manager", () => ({
@@ -108,10 +110,15 @@ describe("/profile", () => {
     expect(markup).toContain('href="/admin"');
   });
 
-  it("confirms two-step verification is on after first-time setup, and only then (#568)", async () => {
+  it("confirms two-step verification is on only when an authenticator is really active (#568)", async () => {
     signedIn({ attendee: true });
+    attendeeMfaStatus.mockResolvedValue({ status: "ACTIVE" });
     expect(await render({ twoStep: "on" })).toContain("Two-step verification is on.");
     expect(await render()).not.toContain("Two-step verification is on.");
+    attendeeMfaStatus.mockResolvedValue({ status: "NONE" });
+    expect(await render({ twoStep: "on" })).not.toContain("Two-step verification is on.");
+    attendeeMfaStatus.mockResolvedValue({ status: "PENDING" });
+    expect(await render({ twoStep: "on" })).not.toContain("Two-step verification is on.");
   });
 
   it("renders only the registration account for an attendee", async () => {
