@@ -138,7 +138,7 @@ export async function getClassSelectionWorkspace(organizationId: string, eventId
       where: { registrationId: registration.registrationId },
       select: { registrationAttendeeId: true, offeringId: true },
     }),
-    prisma.honorSession.findMany({ where: { eventId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { name: "asc" }], select: { id: true, name: true, sortOrder: true } }),
+    prisma.honorSession.findMany({ where: { eventId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { name: "asc" }], select: { id: true, name: true, sortOrder: true, createdAt: true } }),
   ]);
   const selections: Record<string, string[]> = {};
   for (const enrollment of enrollments) {

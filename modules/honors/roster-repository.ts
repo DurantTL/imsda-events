@@ -44,7 +44,7 @@ export async function getHonorRosterData(
   const prisma = getPrisma();
   const [event, sessions, offerings, clubRegistrations] = await Promise.all([
     prisma.event.findUnique({ where: { id: eventId }, select: { id: true, name: true, startsAt: true, endsAt: true, timezone: true, location: true } }),
-    prisma.honorSession.findMany({ where: { eventId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { name: "asc" }], select: { id: true, name: true, sortOrder: true } }),
+    prisma.honorSession.findMany({ where: { eventId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { name: "asc" }], select: { id: true, name: true, sortOrder: true, createdAt: true } }),
     prisma.honorOffering.findMany({
       where: { eventId },
       select: {

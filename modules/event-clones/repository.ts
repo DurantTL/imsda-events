@@ -423,9 +423,12 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
 
       if (include.honors) {
         const sessionIds = new Map<string, string>();
-        for (const session of config.honorSessions) {
+        // Renumbered 0..n in the source's display order: the rows are created
+        // in one transaction, so they share a createdAt and a copied tie
+        // would fall back to alphabetical (#570).
+        for (const [position, session] of config.honorSessions.entries()) {
           const created = await tx.honorSession.create({
-            data: { eventId: event.id, name: session.name, normalizedName: session.normalizedName, sortOrder: session.sortOrder },
+            data: { eventId: event.id, name: session.name, normalizedName: session.normalizedName, sortOrder: position },
           });
           sessionIds.set(session.id, created.id);
         }

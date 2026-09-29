@@ -171,7 +171,7 @@ async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: st
     client.honorSession.findMany({
       where: { eventId },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { name: "asc" }],
-      select: { id: true, name: true, sortOrder: true, _count: { select: { offerings: true } } },
+      select: { id: true, name: true, sortOrder: true, createdAt: true, _count: { select: { offerings: true } } },
     }),
     client.honorOffering.findMany({
       where: { eventId },
@@ -208,7 +208,9 @@ async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: st
       id: session.id,
       name: session.name,
       sortOrder: session.sortOrder,
+      createdAt: session.createdAt,
       offeringCount: session._count.offerings,
+      activeOfferingCount: offerings.filter((offering) => offering.sessionId === session.id && offering.isActive).length,
     })),
     offerings: offerings.map((offering) => ({
       id: offering.id,

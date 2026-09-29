@@ -22,3 +22,29 @@ export function sortHonorSessions<T extends OrderableHonorSession>(sessions: rea
 
 export const emptySessionWarning =
   "No classes yet — this session will be hidden from directors until you add one.";
+
+export const inactiveSessionWarning =
+  "No active classes — directors will see this session but can't pick anything.";
+
+/**
+ * Which warning a session needs, if any. Directors only see a session that has
+ * at least one active class; a session whose classes are all inactive is
+ * listed but offers nothing to pick.
+ */
+export function sessionClassWarning(session: { offeringCount: number; activeOfferingCount: number }) {
+  if (session.offeringCount === 0) return emptySessionWarning;
+  if (session.activeOfferingCount === 0) return inactiveSessionWarning;
+  return null;
+}
+
+export const MAX_SESSION_ORDER = 99;
+
+/** Default "Order" for a new session: after the last one, or the lowest unused value once 99 is taken. */
+export function nextSessionOrder(sessions: readonly { sortOrder: number }[]) {
+  if (sessions.length === 0) return 0;
+  const max = Math.max(...sessions.map((session) => session.sortOrder));
+  if (max < MAX_SESSION_ORDER) return max + 1;
+  const used = new Set(sessions.map((session) => session.sortOrder));
+  for (let order = 0; order <= MAX_SESSION_ORDER; order += 1) if (!used.has(order)) return order;
+  return MAX_SESSION_ORDER;
+}

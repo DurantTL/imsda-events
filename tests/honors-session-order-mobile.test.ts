@@ -9,10 +9,14 @@ vi.mock("next/link", () => ({
 }));
 
 import { HonorsSetupWorkspace } from "@/components/honors-setup-workspace";
+import { buildClassRosters } from "@/modules/honors/roster-domain";
 import { ClubClassPicker } from "@/components/club-class-picker";
 import {
   compareHonorSessions,
   emptySessionWarning,
+  inactiveSessionWarning,
+  nextSessionOrder,
+  sessionClassWarning,
   sortHonorSessions,
 } from "@/modules/honors/session-order";
 
@@ -49,8 +53,8 @@ describe("honors session order (#570 F-10)", () => {
       otherEvents: [],
       initialSetup: {
         sessions: [
-          { id: "s2", name: "Sabbath Afternoon", sortOrder: 2, offeringCount: 1 },
-          { id: "s1", name: "Sabbath Morning", sortOrder: 1, offeringCount: 1 },
+          { id: "s2", name: "Sabbath Afternoon", sortOrder: 2, createdAt: new Date("2026-10-01T09:00:00Z"), offeringCount: 1, activeOfferingCount: 1 },
+          { id: "s1", name: "Sabbath Morning", sortOrder: 1, createdAt: new Date("2026-10-01T09:00:00Z"), offeringCount: 1, activeOfferingCount: 1 },
         ],
         offerings: [],
       },
@@ -82,13 +86,35 @@ describe("honors session order (#570 F-10)", () => {
   });
 });
 
+describe("new-session default order and rosters (#570)", () => {
+  it("defaults to one past the highest order, and to the lowest unused order at the cap", () => {
+    expect(nextSessionOrder([])).toBe(0);
+    expect(nextSessionOrder([{ sortOrder: 0 }, { sortOrder: 4 }])).toBe(5);
+    expect(nextSessionOrder([{ sortOrder: 0 }, { sortOrder: 2 }, { sortOrder: 99 }])).toBe(1);
+    expect(nextSessionOrder(Array.from({ length: 100 }, (_, sortOrder) => ({ sortOrder })))).toBe(99);
+  });
+
+  it("orders class rosters by the sessions' display position when sortOrder ties", () => {
+    const offering = (id: string, sessionId: string, honorName: string) => ({
+      id, honorName, honorCode: id, span: "SINGLE_SESSION", sessionId, capacity: 5, teacherName: "", location: "",
+    });
+    const rosters = buildClassRosters(
+      [afternoon, morning],
+      [offering("o-aft", "s-afternoon", "Aardvark"), offering("o-mor", "s-morning", "Zebra")] as never,
+      [],
+      [],
+    );
+    expect(rosters.map((roster) => roster.offering.id)).toEqual(["o-mor", "o-aft"]);
+  });
+});
+
 describe("honors admin empty-session warning (#570 F-25)", () => {
-  const setup = (offeringCount: number) => ({
-    sessions: [{ id: "s1", name: "Sunday", sortOrder: 0, offeringCount }],
+  const setup = (offeringCount: number, activeOfferingCount = offeringCount) => ({
+    sessions: [{ id: "s1", name: "Sunday", sortOrder: 0, createdAt: new Date("2026-10-01T09:00:00Z"), offeringCount, activeOfferingCount }],
     offerings: [],
   });
-  const render = (offeringCount: number) => renderToStaticMarkup(createElement(HonorsSetupWorkspace, {
-    catalog: [], eventId: "evt_1", eventName: "Synthetic Honors Weekend", otherEvents: [], initialSetup: setup(offeringCount),
+  const render = (offeringCount: number, activeOfferingCount = offeringCount) => renderToStaticMarkup(createElement(HonorsSetupWorkspace, {
+    catalog: [], eventId: "evt_1", eventName: "Synthetic Honors Weekend", otherEvents: [], initialSetup: setup(offeringCount, activeOfferingCount),
   }));
 
   it("uses the exact requested wording", () => {
@@ -98,6 +124,17 @@ describe("honors admin empty-session warning (#570 F-25)", () => {
   it("warns on a session with no classes and only then", () => {
     expect(render(0)).toContain(emptySessionWarning);
     expect(render(3)).not.toContain(emptySessionWarning);
+    expect(render(3)).not.toContain("No active classes");
+  });
+
+  it("warns differently when every class in the session is inactive", () => {
+    expect(inactiveSessionWarning).toBe("No active classes — directors will see this session but can't pick anything.");
+    const html = render(2, 0);
+    expect(html).toContain("No active classes — directors will see this session but can&#x27;t pick anything.");
+    expect(html).not.toContain("hidden from directors");
+    expect(sessionClassWarning({ offeringCount: 2, activeOfferingCount: 0 })).toBe(inactiveSessionWarning);
+    expect(sessionClassWarning({ offeringCount: 0, activeOfferingCount: 0 })).toBe(emptySessionWarning);
+    expect(sessionClassWarning({ offeringCount: 2, activeOfferingCount: 1 })).toBeNull();
   });
 });
 

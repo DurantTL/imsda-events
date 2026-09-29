@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Award, CalendarRange, ClipboardList, Copy, Pencil, Plus, Power, Save, Trash2, TriangleAlert, X } from "lucide-react";
 import { honorOfferingSpanLabels } from "@/modules/honors/domain";
 import type { HonorCopyPlan } from "@/modules/honors/copy";
-import { emptySessionWarning, sortHonorSessions } from "@/modules/honors/session-order";
+import { nextSessionOrder, sessionClassWarning, sortHonorSessions } from "@/modules/honors/session-order";
 import type { EventHonorSetup } from "@/modules/honors/repository";
 
 type Offering = EventHonorSetup["offerings"][number];
@@ -203,9 +203,9 @@ export function HonorsSetupWorkspace({
                 <CalendarRange aria-hidden="true" size={16} />
                 <strong>{session.name}</strong>
                 <small>{session.offeringCount} classes</small>
-                {session.offeringCount === 0 && (
+                {sessionClassWarning(session) && (
                   <p className="honor-session-warning" role="status">
-                    <TriangleAlert aria-hidden="true" size={14} /> {emptySessionWarning}
+                    <TriangleAlert aria-hidden="true" size={14} /> {sessionClassWarning(session)}
                   </p>
                 )}
                 <button className="text-button" disabled={saving} onClick={() => renameSession(session.id, session.name)} type="button">
@@ -227,7 +227,7 @@ export function HonorsSetupWorkspace({
           </label>
           <label>
             Order
-            <input defaultValue={sessions.length === 0 ? 0 : Math.min(99, Math.max(...sessions.map((session) => session.sortOrder)) + 1)} max={99} min={0} name="sortOrder" type="number" />
+            <input defaultValue={nextSessionOrder(sessions)} max={99} min={0} name="sortOrder" type="number" />
           </label>
           <button className="secondary-button" disabled={saving} type="submit">
             <Plus aria-hidden="true" size={14} /> Add session

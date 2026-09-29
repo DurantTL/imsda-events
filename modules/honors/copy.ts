@@ -84,9 +84,12 @@ async function buildPlan(client: CopyClient, sourceEventId: string, targetEventI
   const targetSessionByName = new Map(targetSessions.map((session) => [session.normalizedName, session.id]));
   const sourceSessionById = new Map(sourceSessions.map((session) => [session.id, session]));
 
-  const sessions = sourceSessions.map((session) => ({
+  // New rows are renumbered 0..n in the source's display order: they are all
+  // created in one transaction (same createdAt), so a copied tie would fall
+  // back to alphabetical (#570).
+  const sessions = sourceSessions.map((session, position) => ({
     name: session.name,
-    sortOrder: session.sortOrder,
+    sortOrder: position,
     action: targetSessionByName.has(session.normalizedName) ? "EXISTS" as const : "CREATE" as const,
   }));
 
@@ -172,14 +175,14 @@ export async function applyHonorCopy(
     }
 
     const sessionIds = new Map(built.targetSessionByName);
-    for (const session of built.sourceSessions) {
+    for (const [position, session] of built.sourceSessions.entries()) {
       if (sessionIds.has(session.normalizedName)) continue;
       const created = await tx.honorSession.create({
         data: {
           eventId: targetEventId,
           name: session.name,
           normalizedName: normalizeHonorText(session.name),
-          sortOrder: session.sortOrder,
+          sortOrder: position,
         },
         select: { id: true },
       });
