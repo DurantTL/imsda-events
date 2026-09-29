@@ -1282,6 +1282,7 @@ model EventLocation {
 
   event         Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
   registrations Registration[]
+  honorSessions HonorSession[]
 
   @@unique([eventId, normalizedName])
   @@index([eventId, isActive, sortOrder])
@@ -3516,6 +3517,9 @@ model ClubSupplyOrderLine {
 model HonorSession {
   id             String   @id @default(cuid())
   eventId        String
+  /// Site of a multi-location event (#589); null when the event has none, or
+  /// for a session every site shares.
+  locationId     String?
   name           String
   normalizedName String
   sortOrder      Int      @default(0)
@@ -3523,10 +3527,15 @@ model HonorSession {
   updatedAt      DateTime @updatedAt
 
   event     Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  location  EventLocation?  @relation(fields: [locationId], references: [id], onDelete: Restrict)
   offerings HonorOffering[]
 
-  @@unique([eventId, normalizedName])
+  // Name uniqueness is two partial unique indexes the migration adds (Prisma
+  // can't model them, and `migrate diff` leaves them alone): (eventId,
+  // normalizedName) WHERE locationId IS NULL, and (eventId, locationId,
+  // normalizedName) WHERE locationId IS NOT NULL.
   @@index([eventId, sortOrder])
+  @@index([locationId])
 }
 
 /// An honor taught at a site: in one session, or across all sessions.

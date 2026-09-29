@@ -212,7 +212,15 @@ export type SourceConfiguration = {
     maximumUses: number | null;
     maximumDiscountCents: number | null;
   }>;
-  honorSessions: Array<{ id: string; name: string; normalizedName: string; sortOrder: number }>;
+  honorSessions: Array<{
+    id: string;
+    name: string;
+    normalizedName: string;
+    sortOrder: number;
+    /** The site the session is at (#589), matched by name in the new event; null when it has none. */
+    locationName: string | null;
+    locationNormalizedName: string | null;
+  }>;
   honorOfferings: Array<{
     id: string;
     honorId: string;
@@ -615,7 +623,12 @@ export function buildClonePlan(rawConfig: SourceConfiguration, fingerprint: stri
     ],
     tags: [],
     promoCodes: config.promoCodes.length > 0 ? ["Copied inactive with usage reset to zero. Each needs a new date window. Discount amounts and limits are copied as they are."] : [],
-    honors: config.honorOfferings.length > 0 ? ["Each offering needs a capacity and a per-club limit you enter anew. Minimum ages carry over."] : [],
+    honors: [
+      ...(config.honorOfferings.length > 0 ? ["Each offering needs a capacity and a per-club limit you enter anew. Minimum ages carry over."] : []),
+      ...(config.honorSessions.some((session) => session.locationName)
+        ? ["Sessions follow their site by name. A session whose site has no same-named site in the new event is copied with no site, and the result says so."]
+        : []),
+    ],
   };
 
   const counts: Record<CloneDomainKey, number> = {

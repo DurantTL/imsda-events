@@ -49,7 +49,7 @@ function config(overrides: Partial<SourceConfiguration> = {}): SourceConfigurati
     promoCodes: [
       { id: "promo-1", code: "EARLY", normalizedCode: "EARLY", discountType: "FIXED_CENTS", discountValue: 500, startsOn: "2027-01-10", endsOn: "2027-02-10", minimumSubtotalCents: null, maximumUses: null, maximumDiscountCents: null },
     ],
-    honorSessions: [{ id: "session-1", name: "Friday", normalizedName: "friday", sortOrder: 0 }],
+    honorSessions: [{ id: "session-1", name: "Friday", normalizedName: "friday", sortOrder: 0, locationName: null, locationNormalizedName: null }],
     honorOfferings: [{
       id: "offering-1", honorId: "honor-1", honorName: "Knots", sessionId: "session-1", sessionName: "Friday", span: "SINGLE_SESSION",
       capacity: 30, minimumAge: null, perClubLimit: null, teacherName: "", location: "", isActive: true,

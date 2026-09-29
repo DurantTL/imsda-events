@@ -16,6 +16,8 @@ export const honorUpdateSchema = honorInputSchema.partial().strict();
 export const honorSessionInputSchema = z.object({
   name: text(80).min(1, "Enter the session name."),
   sortOrder: wholeNumber("Order", 0, 99).default(0),
+  /** The site (#589); null for a session no site owns. Required in practice when the event has locations: see the repository. */
+  locationId: z.string().min(1).max(64).nullable().default(null),
 }).strict();
 
 export const honorSessionUpdateSchema = honorSessionInputSchema.partial().strict();

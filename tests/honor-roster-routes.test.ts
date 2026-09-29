@@ -81,6 +81,40 @@ describe("staff roster CSV", () => {
   });
 });
 
+describe("staff roster CSV with sites (#589)", () => {
+  const siteData = {
+    ...data,
+    locations: [{ id: "loc-hr", name: "Camp Heritage 1", sortOrder: 0 }, { id: "loc-dm", name: "Des Moines", sortOrder: 1 }],
+    hasLocations: true,
+    sessions: [{ id: "s1", name: "Sabbath", locationId: "loc-hr", sortOrder: 1 }],
+    offerings: [{ ...data.offerings[0], siteName: "Camp Heritage 1" }],
+    attendees: [{ ...data.attendees[0], locationId: "loc-hr", locationName: "Camp Heritage 1" }],
+  };
+
+  it("filters by site and names the site on every row", async () => {
+    mocks.getHonorRosterData.mockResolvedValue(siteData);
+    const response = await STAFF_GET(staffRequest("view=classes&site=loc-hr"), staffCtx);
+    expect(mocks.getHonorRosterData).toHaveBeenLastCalledWith("event-1", { includeDietary: false, locationId: "loc-hr" });
+    const csv = await response.text();
+    expect(csv.split("\r\n")[0]).toMatch(/^"?Site"?,/);
+    expect(csv).toContain('"Camp Heritage 1","Sabbath"');
+  });
+
+  it("uses all sites when no site is given, and refuses a site the event doesn't have", async () => {
+    mocks.getHonorRosterData.mockResolvedValue(siteData);
+    await STAFF_GET(staffRequest("view=site"), staffCtx);
+    expect(mocks.getHonorRosterData).toHaveBeenLastCalledWith("event-1", { includeDietary: true });
+    const missing = await STAFF_GET(staffRequest("view=site&site=loc-nope"), staffCtx);
+    expect(missing.status).toBe(404);
+    await expect(missing.json()).resolves.toMatchObject({ error: "SITE_NOT_FOUND" });
+  });
+
+  it("leaves the columns as they were for an event without sites", async () => {
+    const csv = await (await STAFF_GET(staffRequest("view=classes"), staffCtx)).text();
+    expect(csv.split("\r\n")[0]).not.toMatch(/Site/);
+  });
+});
+
 describe("director schedule CSV", () => {
   const ctx = (organizationId = "club-a") => ({ params: Promise.resolve({ organizationId, eventId: "event-1" }) });
   const request = () => new Request("https://events.imsda.test/api/attendee/clubs/club-a/events/event-1/schedule");

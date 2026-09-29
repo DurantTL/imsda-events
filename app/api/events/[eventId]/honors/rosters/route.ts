@@ -36,22 +36,27 @@ async function getHandler(request: Request, context: { params: Promise<{ eventId
     const session = await getCurrentSession();
     const access = await requirePermission(session, eventId, "VIEW_REPORTS", findActiveMembership);
     const includeDietary = view === "site" && effectivePermissions(access.user, access.membership).includes("VIEW_SENSITIVE_DATA");
-    const data = await getHonorRosterData(eventId, { includeDietary });
+    // "All sites" is no `site` parameter; otherwise one of the event's locations (#589).
+    const siteId = url.searchParams.get("site") || undefined;
+    const data = await getHonorRosterData(eventId, { includeDietary, ...(siteId ? { locationId: siteId } : {}) });
     if (!data) return Response.json({ error: "EVENT_NOT_FOUND" }, { status: 404 });
+    if (siteId && !data.locations.some((location) => location.id === siteId)) {
+      return Response.json({ error: "SITE_NOT_FOUND", message: "That site isn't part of this event." }, { status: 404 });
+    }
     const safeEventId = eventId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 100) || "event";
 
     if (view === "classes") {
-      return csvResponse(classRostersCsv(buildClassRosters(data.sessions, data.offerings, data.enrollments, data.attendees)), `${safeEventId}-class-rosters.csv`);
+      return csvResponse(classRostersCsv(buildClassRosters(data.sessions, data.offerings, data.enrollments, data.attendees, data.locations), data.hasLocations), `${safeEventId}-class-rosters.csv`);
     }
     if (view === "site") {
-      return csvResponse(siteRosterCsv(buildSiteRoster(data.attendees), includeDietary), `${safeEventId}-site-roster.csv`);
+      return csvResponse(siteRosterCsv(buildSiteRoster(data.attendees), includeDietary, data.hasLocations), `${safeEventId}-site-roster.csv`);
     }
     const clubId = url.searchParams.get("club") ?? "";
     if (!data.clubs.some((club) => club.id === clubId)) {
       return Response.json({ error: "CLUB_NOT_FOUND", message: "That club isn't registered for this site." }, { status: 404 });
     }
     return csvResponse(
-      clubScheduleCsv(buildClubSchedule(clubId, data.sessions, data.offerings, data.enrollments, data.attendees)),
+      clubScheduleCsv(buildClubSchedule(clubId, data.sessions, data.offerings, data.enrollments, data.attendees, data.locations), data.hasLocations),
       `${safeEventId}-club-schedule.csv`,
     );
   } catch (error) {

@@ -91,7 +91,10 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
     }),
     await db.eventTag.findMany({ where: { eventId }, orderBy: { normalizedName: "asc" } }),
     await db.promoCode.findMany({ where: { eventId }, orderBy: { normalizedCode: "asc" } }),
-    await db.honorSession.findMany({ where: { eventId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { normalizedName: "asc" }] }),
+    await db.honorSession.findMany({
+      where: { eventId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { normalizedName: "asc" }],
+      include: { location: { select: { name: true, normalizedName: true } } },
+    }),
     await db.honorOffering.findMany({
       where: { eventId }, orderBy: [{ sessionId: "asc" }, { honorId: "asc" }],
       include: { honor: { select: { name: true } }, session: { select: { name: true } } },
@@ -157,7 +160,10 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
       discountValue: promo.discountValue, startsOn: promo.startsOn, endsOn: promo.endsOn,
       minimumSubtotalCents: promo.minimumSubtotalCents, maximumUses: promo.maximumUses, maximumDiscountCents: promo.maximumDiscountCents,
     })),
-    honorSessions: honorSessions.map((session) => ({ id: session.id, name: session.name, normalizedName: session.normalizedName, sortOrder: session.sortOrder })),
+    honorSessions: honorSessions.map((session) => ({
+      id: session.id, name: session.name, normalizedName: session.normalizedName, sortOrder: session.sortOrder,
+      locationName: session.location?.name ?? null, locationNormalizedName: session.location?.normalizedName ?? null,
+    })),
     honorOfferings: honorOfferings.map((offering) => ({
       id: offering.id, honorId: offering.honorId, honorName: offering.honor.name, sessionId: offering.sessionId,
       sessionName: offering.session?.name ?? null, span: offering.span, capacity: offering.capacity,
@@ -216,7 +222,7 @@ async function resolveExistingClone(actorUserId: string, input: ConfirmEventClon
 /** What the result screen shows after a clone (#157), kept in the clone record's snapshot. */
 export type CloneResultSummary = {
   copiedCounts: Record<string, number>;
-  skipped: { forms: number; messageTemplates: number; assetLinks: number; privateLinks: number };
+  skipped: { forms: number; messageTemplates: number; assetLinks: number; privateLinks: number; honorSessionsWithoutSite?: number };
   pricing: ClonePricingSummary;
   pricingMessage: string | null;
 };
@@ -313,7 +319,7 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
 
       const copied: Record<string, number> = Object.fromEntries(cloneDomainKeys.map((key) => [key, 0]));
       const sourceVersions: { forms: Array<{ sourceFormId: string; versionId: string; versionNumber: number; newFormId: string }>; messageTemplates: Array<{ key: string; versionId: string; versionNumber: number }> } = { forms: [], messageTemplates: [] };
-      const skipped = { forms: 0, messageTemplates: 0, assetLinks: 0, privateLinks: strippedPrivateLinks };
+      const skipped: CloneResultSummary["skipped"] = { forms: 0, messageTemplates: 0, assetLinks: 0, privateLinks: strippedPrivateLinks };
 
       if (include.eventDetails) copied.eventDetails = 1;
       if (include.moduleToggles) {
@@ -423,15 +429,35 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
 
       if (include.honors) {
         const sessionIds = new Map<string, string>();
+        // Sessions follow their site by name (#589): "Sabbath Morning" at Des
+        // Moines goes to the new event's Des Moines. The new event's locations
+        // must exist before this block (event-locations cloning, #413). A site
+        // with no same-named match leaves the session with no site, counted in
+        // the result as a warning.
+        const newLocations = new Map(
+          (await tx.eventLocation.findMany({ where: { eventId: event.id }, select: { id: true, normalizedName: true } }))
+            .map((location) => [location.normalizedName, location.id]),
+        );
+        const createdByKey = new Map<string, string>();
+        let sessionsWithoutSite = 0;
         // Renumbered 0..n in the source's display order: the rows are created
         // in one transaction, so they share a createdAt and a copied tie
         // would fall back to alphabetical (#570).
         for (const [position, session] of config.honorSessions.entries()) {
+          const locationId = session.locationNormalizedName ? newLocations.get(session.locationNormalizedName) ?? null : null;
+          if (session.locationNormalizedName && !locationId) sessionsWithoutSite += 1;
+          // Two sessions that both fall to "no site" under one name would break
+          // the unique name; the second reuses the first.
+          const key = `${locationId ?? ""}|${session.normalizedName}`;
+          const already = createdByKey.get(key);
+          if (already) { sessionIds.set(session.id, already); continue; }
           const created = await tx.honorSession.create({
-            data: { eventId: event.id, name: session.name, normalizedName: session.normalizedName, sortOrder: position },
+            data: { eventId: event.id, locationId, name: session.name, normalizedName: session.normalizedName, sortOrder: position },
           });
+          createdByKey.set(key, created.id);
           sessionIds.set(session.id, created.id);
         }
+        if (sessionsWithoutSite > 0) skipped.honorSessionsWithoutSite = sessionsWithoutSite;
         const reviewedOfferings = new Map(input.honorOfferingCapacities.map((entry) => [entry.offeringId, entry]));
         for (const offering of config.honorOfferings) {
           await tx.honorOffering.create({

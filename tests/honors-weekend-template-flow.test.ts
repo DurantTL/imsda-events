@@ -146,7 +146,9 @@ function fixture() {
       teacherName: "Fictional Teacher", location: "Pavilion", isActive: true,
       honor: { name: "Knot Tying", code: "HW-DEMO-1" }, session: { name: "Sabbath afternoon", sortOrder: 1 },
     }]) },
-    honorSession: { findMany: vi.fn().mockResolvedValue([{ id: "sabbath", name: "Sabbath afternoon" }]) },
+    honorSession: { findMany: vi.fn().mockResolvedValue([{ id: "sabbath", name: "Sabbath afternoon", locationId: null }]) },
+    // This event has no locations (#589): classes work exactly as before.
+    eventLocation: { count: vi.fn().mockResolvedValue(0), findMany: vi.fn().mockResolvedValue([]) },
     honorEnrollment: {
       findMany: vi.fn(async () => enrollments.map(({ id, registrationAttendeeId, offeringId }) => ({ id, registrationAttendeeId, offeringId }))),
       deleteMany: vi.fn(),

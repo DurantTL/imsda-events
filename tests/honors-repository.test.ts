@@ -11,7 +11,9 @@ import { applyHonorCopy, previewHonorCopy } from "@/modules/honors/copy";
 import {
   createHonor,
   createHonorOffering,
+  createHonorSession,
   deleteHonorSession,
+  updateHonorSession,
   getEventHonorSetup,
   updateHonorOffering,
 } from "@/modules/honors/repository";
@@ -27,6 +29,9 @@ function fakeDatabase() {
     honors: [] as Row[],
     sessions: [] as Row[],
     offerings: [] as Row[],
+    locations: [] as Row[],
+    /** Enrollments by offering, for the "clubs already picked" guard (#589). */
+    pickedOfferingIds: [] as string[],
   };
   const id = (prefix: string) => `${prefix}-${++sequence}`;
   const matches = (row: Row, where: Record<string, unknown> = {}) =>
@@ -37,12 +42,21 @@ function fakeDatabase() {
   });
   const withSessionCount = (session: Row) => ({
     ...session,
+    location: db.locations.find((location) => location.id === session.locationId) ?? null,
     _count: { offerings: db.offerings.filter((offering) => offering.sessionId === session.id).length },
   });
 
   const sessionQueries: Array<{ where: Record<string, unknown>; orderBy?: unknown; select?: unknown }> = [];
   const client = {
-    honorEnrollment: { groupBy: async () => [] },
+    honorEnrollment: {
+      groupBy: async () => [],
+      count: async ({ where }: { where: { offering: { sessionId: string } } }) => db.pickedOfferingIds
+        .filter((offeringId) => db.offerings.find((offering) => offering.id === offeringId)?.sessionId === where.offering.sessionId).length,
+    },
+    eventLocation: {
+      findMany: async ({ where }: { where: Record<string, unknown> }) => db.locations.filter((location) => matches(location, where)),
+      findFirst: async ({ where }: { where: Record<string, unknown> }) => db.locations.find((location) => matches(location, where)) ?? null,
+    },
     event: { findUnique: async ({ where }: { where: Row }) => db.events.find((event) => event.id === where.id) ?? null },
     honor: {
       findUnique: async ({ where }: { where: Row }) => db.honors.find((honor) => honor.id === where.id) ?? null,
@@ -80,8 +94,21 @@ function fakeDatabase() {
         return session ? withSessionCount(session) : null;
       },
       create: async ({ data }: { data: Row }) => {
+        // The database's two partial unique indexes: one name per (event, site), and per event when there is no site.
+        if (db.sessions.some((session) => session.eventId === data.eventId && (session.locationId ?? null) === (data.locationId ?? null) && session.normalizedName === data.normalizedName)) {
+          throw new Prisma.PrismaClientKnownRequestError("unique", { code: "P2002", clientVersion: "test" });
+        }
         const row = { ...data, id: id("session") };
         db.sessions.push(row);
+        return row;
+      },
+      update: async ({ where, data }: { where: Row; data: Row }) => {
+        const row = db.sessions.find((session) => session.id === where.id)!;
+        const next = { ...row, ...data };
+        if (db.sessions.some((session) => session.id !== row.id && session.eventId === next.eventId && (session.locationId ?? null) === (next.locationId ?? null) && session.normalizedName === next.normalizedName)) {
+          throw new Prisma.PrismaClientKnownRequestError("unique", { code: "P2002", clientVersion: "test" });
+        }
+        Object.assign(row, data);
         return row;
       },
       delete: async ({ where }: { where: Row }) => {
@@ -206,8 +233,8 @@ describe("copying a site's classes", () => {
   it("previews without writing anything", async () => {
     const plan = await previewHonorCopy("site-b", "site-a");
     expect(plan.sessions).toEqual([
-      { name: "Sabbath", sortOrder: 0, action: "CREATE" },
-      { name: "Sunday", sortOrder: 1, action: "CREATE" },
+      { name: "Sabbath", sortOrder: 0, action: "CREATE", siteName: null, siteWarning: null },
+      { name: "Sunday", sortOrder: 1, action: "CREATE", siteName: null, siteWarning: null },
     ]);
     expect(plan).toMatchObject({ createCount: 2, skipCount: 0 });
     expect(fake.db.offerings.filter((offering) => offering.eventId === "site-b")).toHaveLength(0);
@@ -281,5 +308,107 @@ describe("honors session order (#570)", () => {
       ["Sabbath Morning", 0],
       ["Sabbath Afternoon", 1],
     ]);
+  });
+});
+
+describe("honors sessions at sites (#589)", () => {
+  const sessionInput = (overrides: Record<string, unknown> = {}) => ({ name: "Sabbath Morning", sortOrder: 0, locationId: null, ...overrides });
+
+  beforeEach(() => {
+    fake.db.locations.push(
+      { id: "loc-hr", eventId: "site-a", name: "Camp Heritage 1", normalizedName: "camp heritage 1", sortOrder: 0 },
+      { id: "loc-dm", eventId: "site-a", name: "Des Moines", normalizedName: "des moines", sortOrder: 1 },
+      { id: "loc-other", eventId: "site-b", name: "Des Moines", normalizedName: "des moines", sortOrder: 0 },
+    );
+  });
+
+  it("lets two sites reuse a session name but not one site twice", async () => {
+    await createHonorSession("site-a", sessionInput({ locationId: "loc-hr" }), "staff-1");
+    await createHonorSession("site-a", sessionInput({ locationId: "loc-dm" }), "staff-1");
+    await expect(createHonorSession("site-a", sessionInput({ locationId: "loc-dm", name: " sabbath  MORNING " }), "staff-1"))
+      .rejects.toMatchObject({ code: "SESSION_NAME_CONFLICT" });
+    expect(fake.db.sessions.filter((session) => session.normalizedName === "sabbath morning").map((session) => session.locationId))
+      .toEqual(["loc-hr", "loc-dm"]);
+  });
+
+  it("keeps today's uniqueness for sessions with no site", async () => {
+    await createHonorSession("site-a", sessionInput(), "staff-1");
+    await expect(createHonorSession("site-a", sessionInput(), "staff-1")).rejects.toMatchObject({ code: "SESSION_NAME_CONFLICT" });
+    // A site's session of the same name is a different session.
+    await createHonorSession("site-a", sessionInput({ locationId: "loc-hr" }), "staff-1");
+  });
+
+  it("refuses a site that belongs to another event", async () => {
+    await expect(createHonorSession("site-a", sessionInput({ locationId: "loc-other" }), "staff-1"))
+      .rejects.toMatchObject({ code: "LOCATION_NOT_FOUND" });
+    expect(fake.db.sessions.some((session) => session.name === "Sabbath Morning")).toBe(false);
+  });
+
+  it("returns the event's sites and each session's site in the setup", async () => {
+    await createHonorSession("site-a", sessionInput({ locationId: "loc-dm" }), "staff-1");
+    const setup = await getEventHonorSetup("site-a");
+    expect(setup.locations.map((location) => location.name)).toEqual(["Camp Heritage 1", "Des Moines"]);
+    expect(setup.sessions.find((session) => session.name === "Sabbath Morning")).toMatchObject({ locationId: "loc-dm" });
+  });
+
+  it("won't move a session to another site once clubs picked its classes, and moves it otherwise", async () => {
+    await createHonorSession("site-a", sessionInput({ locationId: "loc-hr" }), "staff-1");
+    const session = fake.db.sessions.find((row) => row.name === "Sabbath Morning")!;
+    await createHonorOffering("site-a", offeringInput({ sessionId: session.id }), "staff-1");
+    fake.db.pickedOfferingIds.push(fake.db.offerings.at(-1)!.id);
+    await expect(updateHonorSession("site-a", session.id, { locationId: "loc-dm" }, "staff-1"))
+      .rejects.toMatchObject({ code: "SESSION_HAS_PICKS" });
+    expect(session.locationId).toBe("loc-hr");
+    fake.db.pickedOfferingIds.length = 0;
+    await updateHonorSession("site-a", session.id, { locationId: "loc-dm" }, "staff-1");
+    expect(session.locationId).toBe("loc-dm");
+  });
+});
+
+describe("copying sessions between events with sites (#589)", () => {
+  beforeEach(() => {
+    fake.db.sessions.length = 0;
+    fake.db.locations.push(
+      { id: "a-hr", eventId: "site-a", name: "Camp Heritage 1", normalizedName: "camp heritage 1", sortOrder: 0 },
+      { id: "a-dm", eventId: "site-a", name: "Des Moines", normalizedName: "des moines", sortOrder: 1 },
+      { id: "b-dm", eventId: "site-b", name: "DES MOINES", normalizedName: "des moines", sortOrder: 0 },
+    );
+    fake.db.sessions.push(
+      { id: "a-hr-sab", eventId: "site-a", locationId: "a-hr", name: "Sabbath Morning", normalizedName: "sabbath morning", sortOrder: 0 },
+      { id: "a-dm-sab", eventId: "site-a", locationId: "a-dm", name: "Sabbath Morning", normalizedName: "sabbath morning", sortOrder: 0 },
+      { id: "a-shared", eventId: "site-a", locationId: null, name: "Sunday", normalizedName: "sunday", sortOrder: 2 },
+    );
+  });
+
+  it("maps each session to the same-named site and warns when a site has no match", async () => {
+    const plan = await previewHonorCopy("site-b", "site-a");
+    expect(plan.sessions.map((session) => [session.name, session.siteName, session.action])).toEqual([
+      ["Sabbath Morning", null, "CREATE"],
+      ["Sabbath Morning", "DES MOINES", "CREATE"],
+      ["Sunday", null, "CREATE"],
+    ]);
+    expect(plan.warnings).toEqual([expect.stringContaining("Camp Heritage 1")]);
+  });
+
+  it("creates sessions at the matched site and leaves the unmatched one with no site", async () => {
+    const plan = await previewHonorCopy("site-b", "site-a");
+    await applyHonorCopy("site-b", "site-a", plan.fingerprint, "staff-1");
+    const copied = fake.db.sessions.filter((session) => session.eventId === "site-b");
+    expect(copied.map((session) => [session.name, session.locationId ?? null])).toEqual([
+      ["Sabbath Morning", null],
+      ["Sabbath Morning", "b-dm"],
+      ["Sunday", null],
+    ]);
+    expect(mocks.writeAuditLog.mock.calls.at(-1)![0]).toMatchObject({ metadata: expect.objectContaining({ sessionsWithoutSite: 1 }) });
+  });
+
+  it("copies into an event with no sites exactly as before, and warns per site-less target", async () => {
+    fake.db.events.push({ id: "site-c", name: "Honors Weekend C" });
+    const plan = await previewHonorCopy("site-c", "site-a");
+    expect(plan.warnings).toHaveLength(2);
+    // Two sessions of the same name that both lose their site collapse into one, rather than breaking the unique name.
+    expect(plan.sessions.map((session) => session.action)).toEqual(["CREATE", "EXISTS", "CREATE"]);
+    await applyHonorCopy("site-c", "site-a", plan.fingerprint, "staff-1");
+    expect(fake.db.sessions.filter((session) => session.eventId === "site-c")).toHaveLength(2);
   });
 });

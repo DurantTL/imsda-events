@@ -9,6 +9,7 @@ import {
   buildClassRosters,
   buildClubSchedule,
   buildSiteRoster,
+  allSitesLabel,
   rosterGroupLabels,
   rosterGroupOf,
 } from "@/modules/honors/roster-domain";
@@ -29,7 +30,7 @@ function ageText(age: number | null) {
 export default async function HonorRostersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ event?: string; view?: string; club?: string }>;
+  searchParams: Promise<{ event?: string; view?: string; club?: string; site?: string }>;
 }) {
   const query = await searchParams;
   const { event, permissions } = await resolveEventContext(query.event);
@@ -37,15 +38,20 @@ export default async function HonorRostersPage({
     return <AccessRestricted title="Honors rosters are restricted" detail="Ask an event administrator for report access." />;
   }
   const includeDietary = permissions.includes("VIEW_SENSITIVE_DATA");
-  const [data, flagged] = await Promise.all([getHonorRosterData(event.id, { includeDietary }), backgroundFlaggedAttendeeIds(event.id)]);
+  const [data, flagged] = await Promise.all([
+    getHonorRosterData(event.id, { includeDietary, ...(query.site ? { locationId: query.site } : {}) }),
+    backgroundFlaggedAttendeeIds(event.id),
+  ]);
   if (!data) return <AccessRestricted title="Event unavailable" detail="The selected event could not be loaded." />;
 
   const view: View = query.view === "site" || query.view === "clubs" ? query.view : "classes";
-  const eventQuery = `event=${encodeURIComponent(event.id)}`;
+  // "All sites" plus each site (#589); an unknown site in the address falls back to all.
+  const site = data.locations.find((location) => location.id === query.site) ?? null;
+  const eventQuery = `event=${encodeURIComponent(event.id)}${site ? `&site=${encodeURIComponent(site.id)}` : ""}`;
   const csv = (kind: string, club?: string) =>
-    `/api/events/${encodeURIComponent(event.id)}/honors/rosters?view=${kind}${club ? `&club=${encodeURIComponent(club)}` : ""}`;
-  const classRosters = buildClassRosters(data.sessions, data.offerings, data.enrollments, data.attendees);
-  const site = buildSiteRoster(data.attendees);
+    `/api/events/${encodeURIComponent(event.id)}/honors/rosters?view=${kind}${club ? `&club=${encodeURIComponent(club)}` : ""}${site ? `&site=${encodeURIComponent(site.id)}` : ""}`;
+  const classRosters = buildClassRosters(data.sessions, data.offerings, data.enrollments, data.attendees, data.locations);
+  const siteRoster = buildSiteRoster(data.attendees);
   const selectedClubs = query.club ? data.clubs.filter((club) => club.id === query.club) : data.clubs;
 
   return (
@@ -77,23 +83,41 @@ export default async function HonorRostersPage({
 
       <nav className="retreat-packet-selector" aria-label="Roster view">
         <Link className={view === "classes" ? "active" : ""} href={`/more/honors/rosters?${eventQuery}`}>Classes ({classRosters.length})</Link>
-        <Link className={view === "site" ? "active" : ""} href={`/more/honors/rosters?${eventQuery}&view=site`}>Site roster ({site.totals.total})</Link>
+        <Link className={view === "site" ? "active" : ""} href={`/more/honors/rosters?${eventQuery}&view=site`}>Site roster ({siteRoster.totals.total})</Link>
         <Link className={view === "clubs" ? "active" : ""} href={`/more/honors/rosters?${eventQuery}&view=clubs`}>Club schedules ({data.clubs.length})</Link>
       </nav>
+
+      {data.locations.length > 0 && (
+        <nav className="retreat-packet-selector" aria-label="Site filter">
+          <Link className={!site ? "active" : ""} href={`/more/honors/rosters?event=${encodeURIComponent(event.id)}${view === "classes" ? "" : `&view=${view}`}`}>All sites</Link>
+          {data.locations.map((location) => (
+            <Link
+              className={site?.id === location.id ? "active" : ""}
+              href={`/more/honors/rosters?event=${encodeURIComponent(event.id)}&site=${encodeURIComponent(location.id)}${view === "classes" ? "" : `&view=${view}`}`}
+              key={location.id}
+            >
+              {location.name}
+            </Link>
+          ))}
+        </nav>
+      )}
 
       {view === "classes" && (
         <>
           <div className="report-actions honor-roster-downloads">
             <a className="secondary-button report-download" href={csv("classes")}><Download aria-hidden="true" size={15} /> Download class rosters CSV</a>
           </div>
-          {classRosters.length === 0 && <p className="report-empty">No classes are set up for this site yet.</p>}
+          {classRosters.length === 0 && <p className="report-empty">No classes are set up for {site ? <span translate="no">{site.name}</span> : "this site"} yet.</p>}
           {classRosters.map((roster) => (
             <section className="panel report-panel honor-class-sheet" key={roster.offering.id}>
               <div className="section-heading report-section-heading">
                 <div className="report-title">
                   <span className="report-icon purple"><Award aria-hidden="true" size={19} /></span>
                   <div>
-                    <p className="eyebrow">{roster.session}{roster.offering.isActive ? "" : " · no longer offered"}</p>
+                    <p className="eyebrow">
+                      {data.hasLocations && <><span translate="no">{roster.siteName ?? allSitesLabel}</span>{" · "}</>}
+                      {roster.session}{roster.offering.isActive ? "" : " · no longer offered"}
+                    </p>
                     <h2>{roster.offering.honorName} <small>{roster.offering.honorCode}</small></h2>
                     <p>
                       {[roster.offering.location && `Room: ${roster.offering.location}`, roster.offering.teacherName && `Teacher: ${roster.offering.teacherName}`]
@@ -138,27 +162,27 @@ export default async function HonorRostersPage({
                 <p className="eyebrow">Check-in fallback</p>
                 <h2>Site roster</h2>
                 <p>
-                  {site.totals.YOUTH} youth · {site.totals.STAFF} staff · {site.totals.ADULT} adults · {site.totals.total} total.
+                  {siteRoster.totals.YOUTH} youth · {siteRoster.totals.STAFF} staff · {siteRoster.totals.ADULT} adults · {siteRoster.totals.total} total.
                   Use QR check-in first; this sheet is the paper backup.
                 </p>
               </div>
             </div>
             <a className="secondary-button report-download" href={csv("site")}><Download aria-hidden="true" size={15} /> Download site roster CSV</a>
           </div>
-          {site.clubs.length > 0 && (
+          {siteRoster.clubs.length > 0 && (
             <div className="report-table-wrap">
               <table className="report-table">
                 <caption className="sr-only">Totals by club</caption>
                 <thead><tr><th scope="col">Club</th><th scope="col">Youth</th><th scope="col">Staff</th><th scope="col">Adults</th></tr></thead>
                 <tbody>
-                  {site.clubs.map((club) => (
+                  {siteRoster.clubs.map((club) => (
                     <tr key={club.clubName}><th scope="row" translate="no">{club.clubName}</th><td>{club.YOUTH}</td><td>{club.STAFF}</td><td>{club.ADULT}</td></tr>
                   ))}
                 </tbody>
               </table>
             </div>
           )}
-          {site.people.length === 0 ? (
+          {siteRoster.people.length === 0 ? (
             <p className="report-empty">No club has registered for this site yet.</p>
           ) : (
             <div className="report-table-wrap">
@@ -166,16 +190,17 @@ export default async function HonorRostersPage({
                 <caption className="sr-only">Everyone registered for this site</caption>
                 <thead>
                   <tr>
-                    <th scope="col">Checked in</th><th scope="col">Name</th><th scope="col">Club</th><th scope="col">Age</th><th scope="col">Type</th>
+                    <th scope="col">Checked in</th><th scope="col">Name</th><th scope="col">Club</th>{data.hasLocations && <th scope="col">Site</th>}<th scope="col">Age</th><th scope="col">Type</th>
                     {includeDietary && <th scope="col">Dietary notes</th>}
                   </tr>
                 </thead>
                 <tbody>
-                  {site.people.map((person) => (
+                  {siteRoster.people.map((person) => (
                     <tr key={person.id}>
                       <td className="honor-roster-box">{person.checkedIn ? "✓" : ""}</td>
                       <th scope="row" translate="no">{person.lastName}, {person.firstName}{flagged.has(person.id) && <> <BackgroundCheckBadge /></>}</th>
                       <td translate="no">{person.clubName}</td>
+                      {data.hasLocations && <td translate="no">{person.locationName ?? "—"}</td>}
                       <td>{ageText(person.ageOnEventDate)}</td>
                       <td>{rosterGroupLabels[rosterGroupOf(person.attendeeType)]}</td>
                       {includeDietary && <td>{person.dietary ?? ""}</td>}
@@ -202,13 +227,13 @@ export default async function HonorRostersPage({
           )}
           {data.clubs.length === 0 && <p className="report-empty">No club has registered for this site yet.</p>}
           {selectedClubs.map((club) => {
-            const schedule = buildClubSchedule(club.id, data.sessions, data.offerings, data.enrollments, data.attendees);
+            const schedule = buildClubSchedule(club.id, data.sessions, data.offerings, data.enrollments, data.attendees, data.locations);
             return (
               <section className="panel report-panel" key={club.id}>
                 <div className="section-heading report-section-heading">
                   <div className="report-title">
                     <span className="report-icon green"><UsersRound aria-hidden="true" size={19} /></span>
-                    <div><p className="eyebrow">Club schedule</p><h2 translate="no">{club.name}</h2><p>{schedule.people.length} people</p></div>
+                    <div><p className="eyebrow">Club schedule</p><h2 translate="no">{club.name}</h2><p>{schedule.people.length} people{schedule.siteName ? <> · Site: <span translate="no">{schedule.siteName}</span></> : null}</p></div>
                   </div>
                   <a className="secondary-button report-download" href={csv("club", club.id)}><Download aria-hidden="true" size={15} /> Download CSV</a>
                 </div>
