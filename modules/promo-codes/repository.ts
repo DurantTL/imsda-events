@@ -28,6 +28,7 @@ import {
   type PromoCodeFailureReason,
   type PromoCodeRule,
 } from "@/modules/promo-codes/domain";
+import { eventBillsSponsoredPromoCodes } from "@/modules/promo-codes/church-sponsored";
 import type {
   PromoCodeInput,
   PublicPromoCodeQuoteInput,
@@ -163,24 +164,28 @@ export async function listPromoCodes(eventId: string, now = new Date()) {
 }
 
 /**
- * Church-sponsored codes (#545): only a GENERAL event's code may name a
- * sponsor, and the sponsor must be an active CHURCH organization. Church
- * billing for club events already bills the church directly (#409), so a
- * sponsored code there would bill it twice.
+ * Church-sponsored codes (#545): only a GENERAL, attendee-paid event's code
+ * may name a sponsor, and the sponsor must be an active CHURCH organization.
+ * An event that bills churches or organizations already invoices them
+ * directly (#409), so a sponsored code there would bill it twice. The event
+ * row is locked so a concurrent settings change cannot slip past this check
+ * (the settings save takes the same lock and refuses to leave the rule while
+ * a code has a sponsor).
  */
 async function assertSponsorAllowed(
   tx: Prisma.TransactionClient,
   eventId: string,
   sponsoringOrganizationId: string,
 ) {
+  await tx.$queryRaw`SELECT "id" FROM "Event" WHERE "id" = ${eventId} FOR UPDATE`;
   const event = await tx.event.findUnique({
     where: { id: eventId },
-    select: { audience: true },
+    select: { audience: true, billingMode: true },
   });
-  if (event?.audience !== "GENERAL") {
+  if (!event || !eventBillsSponsoredPromoCodes(event)) {
     throw new PromoCodeOperationError(
       "PROMO_CODE_SPONSOR_INVALID",
-      "Only promo codes on general events can be sponsored by a church. Club events already bill the church.",
+      "Only promo codes on general, attendee-paid events can be sponsored by a church. Events that bill churches or organizations already invoice them.",
     );
   }
   const church = await tx.organization.findUnique({
@@ -590,6 +595,8 @@ export async function evaluateAttendeePromoCodes(
 }
 
 export type PublicAttendeePromoQuote = DiscountedFormCalculation & {
+  /** Sponsoring church name by normalized code, for the codes entered (#545). */
+  sponsors?: Record<string, string>;
   attendeeDiscounts: AttendeePromoDiscount[];
   attendeeIssues: AttendeePromoIssue[];
 };
@@ -642,9 +649,18 @@ export async function getPublicPromoCodeQuote(
       pricingDate: prepared.pricingDate,
       claim: false,
     });
+    const enteredCodes = [...new Set(discounts.map((discount) => normalizePromoCode(discount.code)))];
+    const sponsored = enteredCodes.length === 0
+      ? []
+      : await prisma.promoCode.findMany({
+        where: { eventId: form.eventId, normalizedCode: { in: enteredCodes }, sponsoringOrganizationId: { not: null } },
+        select: { normalizedCode: true, sponsoringOrganization: { select: { name: true } } },
+      });
     return {
       ...applyAttendeePromoCodes(definition, prepared.registrationResponses, prepared.calculation, discounts),
       attendeeIssues: issues,
+      sponsors: Object.fromEntries(sponsored.flatMap((promo) =>
+        promo.sponsoringOrganization ? [[promo.normalizedCode, promo.sponsoringOrganization.name]] : [])),
     } satisfies PublicAttendeePromoQuote;
   }
   const field = requirePromoField(definition);

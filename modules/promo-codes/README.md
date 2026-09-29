@@ -68,3 +68,24 @@ when someone looks.
   lose its sponsor (deactivate it and create a new one), and cloning an event
   never copies a sponsor.
 - Attendees see only "Sponsored by <church>" on the code they entered.
+
+### Which redemptions become church lines
+
+- A code entered for the whole registration is one line (its `PromoCodeRedemption`).
+- A per-person code (#397) or a code a staff member applies is one line per
+  person: a `RegistrationAdjustment` of kind PROMO_CODE, billed at the
+  discount (its negative amount, made positive). An adjustment that a later
+  adjustment reverses, and the reversal row itself, are both left out.
+- Each source is counted once; a registration may hold both kinds.
+- Linking is allowed only while the event is GENERAL and attendee-paid, and the
+  event's settings save refuses to leave that (club audience, or billing
+  organizations) while any code on it has a sponsor: unlink them first. Events
+  made by cloning or from a template start with no sponsors.
+
+### Ordering of unlink and claim
+
+Unlinking (or moving) a sponsor is allowed only while `redeemedCount` is 0, and
+the write is guarded on that count. If a claim commits first, the unlink is
+refused; if the unlink commits first, the claim redeems an unsponsored code and
+no church is billed. Either order is consistent, and a church is never billed
+for a use it could not have been linked to.

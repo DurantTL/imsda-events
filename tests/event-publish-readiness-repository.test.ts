@@ -112,6 +112,7 @@ function mockPrisma(
     eventPaymentInstructionVersion: {
       findFirst: vi.fn().mockResolvedValue(null),
     },
+    promoCode: { count: vi.fn().mockResolvedValue(0) },
     auditLog: { create: auditLogCreate },
   };
   const prisma = {
@@ -357,6 +358,41 @@ describe("event audience (#481)", () => {
         }),
       }),
     }));
+  });
+});
+
+describe("sponsored promo codes pin the event to a general, attendee-paid event (#545)", () => {
+  async function save(input: Record<string, unknown>, sponsoredCodes: number) {
+    const { prisma, tx, eventUpdate } = mockPrisma({ isPublished: true }, 1, true);
+    tx.promoCode.count.mockResolvedValue(sponsoredCodes);
+    dependencies.getPrisma.mockReturnValue(prisma);
+    const outcome = await updateEventSettings("event-1", { ...baseInput, ...input } as never, "usr_1").then(() => null, (error: unknown) => error);
+    return { outcome, tx, eventUpdate };
+  }
+
+  it("refuses to make the event a club event or bill organizations while a code has a sponsor", async () => {
+    for (const change of [{ audience: "CLUB" }, { billingMode: "DEFERRED_ORGANIZATION_INVOICE" }]) {
+      const { outcome, tx, eventUpdate } = await save(change, 2);
+      expect(outcome).toBeInstanceOf(EventOperationError);
+      expect(outcome).toMatchObject({ code: "EVENT_HAS_SPONSORED_PROMO_CODES" });
+      expect((outcome as Error).message).toContain("Unlink the church sponsors");
+      expect(tx.promoCode.count).toHaveBeenCalledWith({ where: { eventId: "event-1", sponsoringOrganizationId: { not: null } } });
+      expect(eventUpdate).not.toHaveBeenCalled();
+    }
+  });
+
+  it("allows the change once no code has a sponsor, and never checks while the event stays general and attendee-paid", async () => {
+    const unlinked = await save({ audience: "CLUB" }, 0);
+    expect(unlinked.outcome).toBeNull();
+    expect(unlinked.eventUpdate).toHaveBeenCalledTimes(1);
+    const staying = await save({}, 3);
+    expect(staying.outcome).toBeNull();
+    expect(staying.tx.promoCode.count).not.toHaveBeenCalled();
+  });
+
+  it("locks the event row first, the lock a sponsor link takes", async () => {
+    const { tx } = await save({}, 0);
+    expect(tx.$queryRaw).toHaveBeenCalled();
   });
 });
 

@@ -38,6 +38,7 @@ const baseInput = {
 
 function txFor(options: {
   audience?: "GENERAL" | "CLUB";
+  billingMode?: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE";
   church?: { type: string; isActive: boolean } | null;
   existing?: Record<string, unknown> | null;
   updateCount?: number;
@@ -51,13 +52,19 @@ function txFor(options: {
   };
   const tx = {
     event: {
-      findUnique: vi.fn().mockResolvedValue({ id: "event_1", audience: options.audience ?? "GENERAL", timezone: "America/Chicago" }),
+      findUnique: vi.fn().mockResolvedValue({
+        id: "event_1",
+        audience: options.audience ?? "GENERAL",
+        billingMode: options.billingMode ?? "ATTENDEE_PAY",
+        timezone: "America/Chicago",
+      }),
     },
     organization: {
       findUnique: vi.fn().mockResolvedValue(options.church === undefined ? { type: "CHURCH", isActive: true } : options.church),
     },
     promoCode,
     auditLog,
+    $queryRaw: vi.fn().mockResolvedValue([]),
     $transaction: async (callback: (client: unknown) => unknown) => callback(tx),
   };
   dependencies.getPrisma.mockReturnValue(tx);
@@ -101,6 +108,20 @@ describe("linking a sponsoring church (#545)", () => {
     await expect(
       createPromoCode("event_1", { ...baseInput, sponsoringOrganizationId: "church_1" }, "user_1"),
     ).rejects.toMatchObject({ code: "PROMO_CODE_SPONSOR_INVALID" } satisfies Partial<PromoCodeOperationError>);
+  });
+
+  it("rejects a sponsor on a GENERAL event that bills organizations (#545)", async () => {
+    const tx = txFor({ billingMode: "DEFERRED_ORGANIZATION_INVOICE" });
+    await expect(
+      createPromoCode("event_1", { ...baseInput, sponsoringOrganizationId: "church_1" }, "user_1"),
+    ).rejects.toMatchObject({ code: "PROMO_CODE_SPONSOR_INVALID" });
+    expect(tx.promoCode.create).not.toHaveBeenCalled();
+  });
+
+  it("locks the event row before checking the sponsor rule (#545)", async () => {
+    const tx = txFor({});
+    await createPromoCode("event_1", { ...baseInput, sponsoringOrganizationId: "church_1" }, "user_1");
+    expect(tx.$queryRaw).toHaveBeenCalled();
   });
 
   it("rejects a club organization, an inactive church, and an unknown organization", async () => {
@@ -179,6 +200,7 @@ describe("linking a sponsoring church (#545)", () => {
 });
 
 const line = (overrides: Partial<ChurchSponsoredPromoLine> = {}): ChurchSponsoredPromoLine => ({
+  lineId: `line-${overrides.confirmationCode ?? "SYN-0001"}`,
   churchId: "church_1",
   churchName: "Synthetic Church",
   promoCode: "CHURCH25",
@@ -254,12 +276,14 @@ function redemptionPrisma(event: { audience: string; billingMode: string } | nul
     promoCodeRedemption: {
       findMany: vi.fn().mockResolvedValue([
         {
+          id: "red_1",
           codeSnapshot: "CHURCH25",
           discountAmountCents: 2_500,
           promoCode: { sponsoringOrganization: { id: "church_1", name: "Synthetic Church" } },
           registration: { confirmationCode: "SYN-0001", status: "CONFIRMED" },
         },
         {
+          id: "red_2",
           codeSnapshot: "CHURCH25",
           discountAmountCents: 900,
           promoCode: { sponsoringOrganization: null },
@@ -267,6 +291,25 @@ function redemptionPrisma(event: { audience: string; billingMode: string } | nul
         },
       ]),
       aggregate: vi.fn().mockResolvedValue({ _sum: { discountAmountCents: 5_000 } }),
+    },
+    registrationAdjustment: {
+      findMany: vi.fn().mockResolvedValue([
+        {
+          id: "adj_1",
+          promoCodeSnapshot: "CHURCH25",
+          amountCents: -1_500,
+          promoCode: { code: "CHURCH25", sponsoringOrganization: { id: "church_1", name: "Synthetic Church" } },
+          registration: { confirmationCode: "SYN-0003", status: "SUBMITTED" },
+        },
+        {
+          id: "adj_2",
+          promoCodeSnapshot: "GONE",
+          amountCents: -700,
+          promoCode: { code: "GONE", sponsoringOrganization: null },
+          registration: { confirmationCode: "SYN-0004", status: "SUBMITTED" },
+        },
+      ]),
+      aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: -1_500 } }),
     },
   };
 }
@@ -276,7 +319,19 @@ describe("sponsored promo code queries (#545)", () => {
     const prisma = redemptionPrisma({ audience: "GENERAL", billingMode: "ATTENDEE_PAY" });
     dependencies.getPrisma.mockReturnValue(prisma);
     const lines = await listChurchSponsoredPromoLines("event_1");
-    expect(lines).toEqual([line()]);
+    expect(lines).toEqual([
+      line({ lineId: "redemption:red_1" }),
+      line({ lineId: "adjustment:adj_1", confirmationCode: "SYN-0003", status: "SUBMITTED", amountCents: 1_500 }),
+    ]);
+    const adjustmentWhere = prisma.registrationAdjustment.findMany.mock.calls[0][0].where;
+    expect(adjustmentWhere).toMatchObject({
+      eventId: "event_1",
+      kind: "PROMO_CODE",
+      amountCents: { lt: 0 },
+      reversesAdjustmentId: null,
+      reversedBy: null,
+      registration: { status: { in: ["SUBMITTED", "CONFIRMED"] } },
+    });
     const query = prisma.promoCodeRedemption.findMany.mock.calls[0][0];
     expect(query.where).toMatchObject({
       eventId: "event_1",
@@ -298,13 +353,15 @@ describe("sponsored promo code queries (#545)", () => {
       expect(await sumChurchSponsoredPromoCents("event_1")).toBe(0);
       expect(prisma.promoCodeRedemption.findMany).not.toHaveBeenCalled();
       expect(prisma.promoCodeRedemption.aggregate).not.toHaveBeenCalled();
+      expect(prisma.registrationAdjustment.findMany).not.toHaveBeenCalled();
+      expect(prisma.registrationAdjustment.aggregate).not.toHaveBeenCalled();
     }
   });
 
   it("sums the same active, sponsored redemptions for the overview tile", async () => {
     const prisma = redemptionPrisma({ audience: "GENERAL", billingMode: "ATTENDEE_PAY" });
     dependencies.getPrisma.mockReturnValue(prisma);
-    expect(await sumChurchSponsoredPromoCents("event_1")).toBe(5_000);
+    expect(await sumChurchSponsoredPromoCents("event_1")).toBe(6_500);
     expect(prisma.promoCodeRedemption.aggregate.mock.calls[0][0].where).toMatchObject({
       eventId: "event_1",
       promoCode: { sponsoringOrganizationId: { not: null } },

@@ -1,3 +1,4 @@
+import { eventBillsSponsoredPromoCodes } from "@/modules/promo-codes/church-sponsored";
 import { sumChurchSponsoredPromoCents } from "@/modules/promo-codes/church-sponsored-repository";
 import type { MembershipRecord } from "@/modules/access/authorization";
 import { getPrisma } from "@/lib/prisma";
@@ -12,7 +13,7 @@ import type { EventSettingsInput } from "@/modules/events/schemas";
 
 export class EventOperationError extends Error {
   constructor(
-    public readonly code: "EVENT_NOT_FOUND" | "EVENT_NOT_READY",
+    public readonly code: "EVENT_NOT_FOUND" | "EVENT_NOT_READY" | "EVENT_HAS_SPONSORED_PROMO_CODES",
     message: string,
   ) {
     super(message);
@@ -308,6 +309,9 @@ export async function updateEventSettings(
 ) {
   const prisma = getPrisma();
   await prisma.$transaction(async (tx) => {
+    // Same lock a church-sponsor link takes (#545), so a link and a billing
+    // or audience change cannot both pass their checks.
+    await tx.$queryRaw`SELECT "id" FROM "Event" WHERE "id" = ${eventId} FOR UPDATE`;
     const [current, currentPaymentInstructions] = await Promise.all([
       tx.event.findUnique({
         where: { id: eventId },
@@ -353,6 +357,20 @@ export async function updateEventSettings(
     // An update without an audience keeps the stored one (#481 review), so a
     // stale client can't silently reset a CLUB event to GENERAL.
     const audience = input.audience ?? current.audience;
+    // A church is billed for sponsored promo codes only on a GENERAL,
+    // attendee-paid event (#545). Leaving that would bill it twice or strand
+    // its lines, so the sponsors must be unlinked first.
+    if (!eventBillsSponsoredPromoCodes({ audience, billingMode: input.billingMode })) {
+      const sponsored = await tx.promoCode.count({
+        where: { eventId, sponsoringOrganizationId: { not: null } },
+      });
+      if (sponsored > 0) {
+        throw new EventOperationError(
+          "EVENT_HAS_SPONSORED_PROMO_CODES",
+          "Unlink the church sponsors from this event's promo codes first. A church can sponsor codes only on a general event paid by attendees.",
+        );
+      }
+    }
     await tx.event.update({
       where: { id: eventId },
       data: {

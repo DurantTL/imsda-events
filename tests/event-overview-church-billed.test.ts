@@ -37,6 +37,7 @@ function prismaFor(billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE"
         { totalAmount: "13.00", payments: [] },
       ]),
     },
+    registrationAdjustment: { aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: null } }) },
     registrationAttendee: { count: vi.fn().mockResolvedValue(7) },
     checkIn: { count: vi.fn().mockResolvedValue(0) },
     registrationWaitlistEntry: { count: vi.fn().mockResolvedValue(0) },

@@ -5,9 +5,11 @@
  * registrations (#409), the amount is worked out when someone looks, from the
  * immutable `PromoCodeRedemption.discountAmountCents`.
  *
- * One line per redeemed registration. The line is the discount the attendee
- * received (the discount already applies to the whole registration, so there
- * is no per-attendee split). It counts only while the registration is
+ * One line per redemption: a whole-registration code is one line
+ * (`PromoCodeRedemption`), and a per-person or staff-applied code is one line
+ * per person (`RegistrationAdjustment` of kind PROMO_CODE, #397), unless a
+ * later adjustment reverses it. Each source is counted exactly once. The line
+ * is the discount the attendee received. It counts only while the registration is
  * SUBMITTED or CONFIRMED (the same statuses `churchOwedCents` bills); a
  * cancelled, waitlisted, or draft registration drops out on its own.
  */
@@ -34,6 +36,12 @@ export function eventBillsSponsoredPromoCodes(event: {
 }
 
 export type ChurchSponsoredPromoLine = {
+  /**
+   * Unique per line: the redemption id (whole-registration code) or the
+   * adjustment id (per-person or staff-applied code), so a registration with
+   * several lines keeps each one distinct.
+   */
+  lineId: string;
   churchId: string;
   churchName: string;
   promoCode: string;
@@ -50,7 +58,8 @@ export function billedSponsoredLines(lines: readonly ChurchSponsoredPromoLine[])
       left.churchName.localeCompare(right.churchName)
       || left.churchId.localeCompare(right.churchId)
       || left.promoCode.localeCompare(right.promoCode)
-      || left.confirmationCode.localeCompare(right.confirmationCode));
+      || left.confirmationCode.localeCompare(right.confirmationCode)
+      || left.lineId.localeCompare(right.lineId));
 }
 
 export type ChurchSponsoredSubtotal = {

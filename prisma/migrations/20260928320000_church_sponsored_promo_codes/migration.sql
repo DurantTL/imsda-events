@@ -2,8 +2,10 @@
 -- event to a sponsoring active CHURCH organization. What the church owes is
 -- computed on demand from PromoCodeRedemption (like church-billed club
 -- registrations, #409); nothing is stored per redemption.
--- Restrict on delete: organizations are deactivated, never deleted, and a
--- church that has sponsored a code must not silently lose the billing history.
+-- Restrict on delete: a church that has sponsored a code must not silently lose
+-- the billing history. Deleting such a church is refused with a readable
+-- message (the organization deletion check lists its sponsored codes), and
+-- deactivating it is the way to retire it.
 -- Hand-written; matches `prisma migrate diff` against the schema exactly.
 
 -- AlterTable

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { AccessRestricted } from "@/components/access-restricted";
 import { PromoCodeWorkspace } from "@/components/promo-code-workspace";
 import { resolveEventContext } from "@/modules/events/selection";
+import { eventBillsSponsoredPromoCodes } from "@/modules/promo-codes/church-sponsored";
 import { listPromoCodes, listSponsorChurchOptions } from "@/modules/promo-codes/repository";
 
 export const metadata: Metadata = { title: "Promo codes" };
@@ -22,7 +23,7 @@ export default async function PromoCodesPage({
       />
     );
   }
-  const canSponsorByChurch = event.audience === "GENERAL";
+  const canSponsorByChurch = eventBillsSponsoredPromoCodes(event);
   const [promoCodes, sponsorChurches] = await Promise.all([
     listPromoCodes(event.id),
     canSponsorByChurch ? listSponsorChurchOptions() : Promise.resolve([]),

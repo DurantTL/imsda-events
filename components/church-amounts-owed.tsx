@@ -54,7 +54,9 @@ export function ChurchAmountsOwed({
           <h2>Owed by churches</h2>
           <p>
             Estimated amount each church owes for its clubs at this event — billed to the church after the event, not paid online.
-            {!isDeferredOrganizationBilling && " This event does not bill churches, so no club registrations are billed here."}
+            {!isDeferredOrganizationBilling && (sponsored.lineCount > 0
+              ? " This event does not bill churches for club registrations; the amounts below are church-sponsored promo codes."
+              : " This event does not bill churches, so no club registrations are billed here.")}
           </p>
         </div>
         <div className="page-intro-actions">
@@ -113,8 +115,10 @@ export function ChurchAmountsOwed({
         {billed.length === 0 && (
           <div className="empty-state">
             <Building2 aria-hidden="true" size={24} />
-            <h3>No church-billed registrations</h3>
-            <p>No club has a submitted registration for this event yet, or this event does not bill churches.</p>
+            <h3>{sponsored.lineCount > 0 ? "No church-billed club registrations" : "No church-billed registrations"}</h3>
+            <p>{sponsored.lineCount > 0
+              ? "No club is billed for this event. Church-sponsored promo codes are listed below."
+              : "No club has a submitted registration for this event yet, or this event does not bill churches."}</p>
           </div>
         )}
       </section>
@@ -130,7 +134,7 @@ export function ChurchAmountsOwed({
                 <span><strong>{money(church.amountCents)}</strong></span>
               </div>
               {church.lines.map((line) => (
-                <div className="finance-row" key={`${church.churchId}-${line.confirmationCode}`}>
+                <div className="finance-row" key={line.lineId}>
                   <span><small>Promo code {line.promoCode}</small></span>
                   <span>{line.confirmationCode}</span>
                   <span>{line.status.toLowerCase()}</span>

@@ -38,6 +38,7 @@ export function notBilledLabel(status: ClubRegistrationStatus) {
  * lines already filtered to billed ones and ordered.
  */
 export type SponsoredCsvLine = {
+  lineId?: string;
   churchId: string;
   churchName: string;
   promoCode: string;
