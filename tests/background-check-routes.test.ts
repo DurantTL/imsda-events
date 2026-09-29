@@ -14,6 +14,11 @@ const mocks = vi.hoisted(() => ({
   listManualBackgroundCheckMatches: vi.fn(),
   undoManualBackgroundCheckMatch: vi.fn(),
   listUnmatchedBackgroundCheckEntries: vi.fn(),
+  listNameOnlyBackgroundCheckMatches: vi.fn(),
+  rejectNameOnlyBackgroundCheckMatch: vi.fn(),
+  lookupBackgroundCheckName: vi.fn(),
+  rematchBackgroundCheckList: vi.fn(),
+  matchRejectedBackgroundCheckPairing: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -27,6 +32,11 @@ vi.mock("@/modules/background-checks/repository", () => ({
   listManualBackgroundCheckMatches: mocks.listManualBackgroundCheckMatches,
   undoManualBackgroundCheckMatch: mocks.undoManualBackgroundCheckMatch,
   listUnmatchedBackgroundCheckEntries: mocks.listUnmatchedBackgroundCheckEntries,
+  listNameOnlyBackgroundCheckMatches: mocks.listNameOnlyBackgroundCheckMatches,
+  rejectNameOnlyBackgroundCheckMatch: mocks.rejectNameOnlyBackgroundCheckMatch,
+  lookupBackgroundCheckName: mocks.lookupBackgroundCheckName,
+  rematchBackgroundCheckList: mocks.rematchBackgroundCheckList,
+  matchRejectedBackgroundCheckPairing: mocks.matchRejectedBackgroundCheckPairing,
 }));
 
 import { POST as importPost } from "@/app/api/admin/background-checks/import/route";
@@ -35,6 +45,11 @@ import { DELETE as undoDelete } from "@/app/api/admin/background-checks/manual-m
 import { GET as manualGet } from "@/app/api/admin/background-checks/manual-matches/route";
 import { GET as reviewsGet } from "@/app/api/admin/background-checks/reviews/route";
 import { GET as unmatchedGet } from "@/app/api/admin/background-checks/unmatched/route";
+import { GET as nameOnlyGet } from "@/app/api/admin/background-checks/name-only-matches/route";
+import { DELETE as nameOnlyDelete } from "@/app/api/admin/background-checks/name-only-matches/[matchId]/route";
+import { GET as lookupGet } from "@/app/api/admin/background-checks/lookup/route";
+import { POST as rejectedMatchPost } from "@/app/api/admin/background-checks/rejected-matches/route";
+import { POST as rematchPost } from "@/app/api/admin/background-checks/rematch/route";
 import { AccessDeniedError } from "@/modules/access/authorization";
 import { BackgroundCheckOperationError } from "@/modules/background-checks/errors";
 
@@ -60,6 +75,70 @@ beforeEach(() => {
   mocks.listBackgroundCheckReviews.mockResolvedValue([]);
   mocks.listManualBackgroundCheckMatches.mockResolvedValue([]);
   mocks.listUnmatchedBackgroundCheckEntries.mockResolvedValue([]);
+  mocks.listNameOnlyBackgroundCheckMatches.mockResolvedValue([]);
+  mocks.lookupBackgroundCheckName.mockResolvedValue({ query: "", hasList: true, rows: [], people: [], pairs: [], truncated: false });
+});
+
+describe("name-only matches, lookup, and Refresh routes (#598)", () => {
+  const matchCtx = { params: Promise.resolve({ matchId: "m-1" }) };
+  const url = (path: string) => `https://events.imsda.test/api/admin/background-checks/${path}`;
+
+  it("lists name-only matches and rejects one as not the same person", async () => {
+    mocks.listNameOnlyBackgroundCheckMatches.mockResolvedValue([{ id: "m-1", personName: "Mina Osei" }]);
+    const list = await nameOnlyGet(new Request(url("name-only-matches")));
+    await expect(list.json()).resolves.toEqual({ matches: [{ id: "m-1", personName: "Mina Osei" }] });
+    const response = await nameOnlyDelete(post("/api/admin/background-checks/name-only-matches/m-1", undefined, "DELETE"), matchCtx);
+    expect(response.status).toBe(200);
+    expect(mocks.rejectNameOnlyBackgroundCheckMatch).toHaveBeenCalledWith("m-1", "admin-1");
+  });
+
+  it("is a 404 for a match that's gone and a 400 for one not made on the name alone", async () => {
+    mocks.rejectNameOnlyBackgroundCheckMatch.mockRejectedValueOnce(new BackgroundCheckOperationError("MATCH_NOT_FOUND", "gone"));
+    expect((await nameOnlyDelete(post("/api/admin/background-checks/name-only-matches/m-1", undefined, "DELETE"), matchCtx)).status).toBe(404);
+    mocks.rejectNameOnlyBackgroundCheckMatch.mockRejectedValueOnce(new BackgroundCheckOperationError("NOT_A_NAME_ONLY_MATCH", "no"));
+    expect((await nameOnlyDelete(post("/api/admin/background-checks/name-only-matches/m-1", undefined, "DELETE"), matchCtx)).status).toBe(400);
+  });
+
+  it("looks a name up and re-matches on Refresh, and Refresh is a 409 during an upload", async () => {
+    const lookup = await lookupGet(new Request(url("lookup?name=Mina%20Osei")));
+    expect(lookup.status).toBe(200);
+    expect(mocks.lookupBackgroundCheckName).toHaveBeenCalledWith("Mina Osei");
+    expect((await rematchPost(post("/api/admin/background-checks/rematch", undefined))).status).toBe(200);
+    expect(mocks.rematchBackgroundCheckList).toHaveBeenCalledTimes(1);
+    mocks.rematchBackgroundCheckList.mockRejectedValueOnce(new BackgroundCheckOperationError("UPLOAD_IN_PROGRESS", "busy"));
+    expect((await rematchPost(post("/api/admin/background-checks/rematch", undefined))).status).toBe(409);
+  });
+
+  it("matches a rejected pair anyway, staff-only, with clear errors", async () => {
+    const body = { entryId: "e-1", personId: "p-1" };
+    expect((await rejectedMatchPost(post("/api/admin/background-checks/rejected-matches", body))).status).toBe(200);
+    expect(mocks.matchRejectedBackgroundCheckPairing).toHaveBeenCalledWith("e-1", "p-1", "admin-1");
+    expect((await rejectedMatchPost(post("/api/admin/background-checks/rejected-matches", { entryId: "e-1" }))).status).toBe(400);
+    mocks.matchRejectedBackgroundCheckPairing.mockRejectedValueOnce(new BackgroundCheckOperationError("LIST_BUSY", "busy"));
+    expect((await rejectedMatchPost(post("/api/admin/background-checks/rejected-matches", body))).status).toBe(409);
+    mocks.matchRejectedBackgroundCheckPairing.mockClear();
+    mocks.requireSystemAdministrator.mockRejectedValueOnce(new AccessDeniedError("System administrator access is required.", 403, "PERMISSION_DENIED"));
+    expect((await rejectedMatchPost(post("/api/admin/background-checks/rejected-matches", body))).status).toBe(403);
+    expect(mocks.matchRejectedBackgroundCheckPairing).not.toHaveBeenCalled();
+  });
+
+  it("refuses all four to anyone who isn't a system administrator, and a cross-origin write", async () => {
+    mocks.requireSystemAdministrator.mockRejectedValue(new AccessDeniedError("System administrator access is required.", 403, "PERMISSION_DENIED"));
+    const responses = [
+      await nameOnlyGet(new Request(url("name-only-matches"))),
+      await nameOnlyDelete(post("/api/admin/background-checks/name-only-matches/m-1", undefined, "DELETE"), matchCtx),
+      await lookupGet(new Request(url("lookup?name=Mina%20Osei"))),
+      await rematchPost(post("/api/admin/background-checks/rematch", undefined)),
+    ];
+    expect(responses.map((response) => response.status)).toEqual([403, 403, 403, 403]);
+    expect(mocks.listNameOnlyBackgroundCheckMatches).not.toHaveBeenCalled();
+    expect(mocks.rejectNameOnlyBackgroundCheckMatch).not.toHaveBeenCalled();
+    expect(mocks.lookupBackgroundCheckName).not.toHaveBeenCalled();
+    expect(mocks.rematchBackgroundCheckList).not.toHaveBeenCalled();
+    mocks.rejectCrossOriginRequest.mockReturnValue(Response.json({ error: "CROSS_ORIGIN" }, { status: 403 }));
+    expect((await rematchPost(post("/api/admin/background-checks/rematch", undefined))).status).toBe(403);
+    expect(mocks.rematchBackgroundCheckList).not.toHaveBeenCalled();
+  });
 });
 
 describe("background-check upload route (#527)", () => {

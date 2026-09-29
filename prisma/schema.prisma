@@ -3746,11 +3746,15 @@ model BackgroundCheckMatch {
 /// next upload's entry with the same `identityKey`) until staff undo it.
 /// `MIGRATED`: carried over from the old per-person `BackgroundCheck` row
 /// when this list replaced it (#527), so nobody's status changed that day.
+/// `NAME_ONLY` (#598): the name is the only person and only row with it and
+/// nothing contradicts it, but the row's site didn't match; recomputed like
+/// `AUTO`, and shown to staff for a spot check.
 enum BackgroundCheckMatchSource {
   IDENTITY
   AUTO
   MANUAL
   MIGRATED
+  NAME_ONLY
 }
 
 /// A list entry that could match more than one person, or whose only
@@ -3769,6 +3773,23 @@ model BackgroundCheckReview {
   createdAt          DateTime  @default(now())
 
   entry BackgroundCheckEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+}
+
+/// Staff said a list row is not a given person (#598, "Not the same person" on
+/// a name-only match). Keyed by the row's `identityKey`, not its entry id, so
+/// the decision survives every upload; matching never offers that person for
+/// that row (name-only, automatic, or variant) until staff match them by
+/// hand, which clears it. No foreign keys: a row's key outlives any one
+/// upload, and a deleted person just leaves an inert pair. Any future person
+/// merge must re-point `personId` here (there is no foreign key to do it).
+model BackgroundCheckRejectedPairing {
+  id               String   @id @default(cuid())
+  identityKey      String
+  personId         String
+  rejectedByUserId String
+  createdAt        DateTime @default(now())
+
+  @@unique([identityKey, personId])
 }
 
 /// A background check's compliance mark from a roster import (#427): the

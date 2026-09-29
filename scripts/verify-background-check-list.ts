@@ -28,6 +28,14 @@
  *     suffix, several sites in one cell, ALL-CAPS, and a school that must not
  *     match a church; an adult on the previous club year's roster is matched;
  *     stored entries re-match through a refresh with no new upload.
+ * 10. (#572) Nevada (IA) never auto-matches a Nevada (MO) row.
+ * 11. (#598) A unique name matches by name only although the site differs
+ *     (NAME_ONLY, the additive enum migration); a first-name variant and two
+ *     same-name candidates go to review; a roster member 18 or older is a
+ *     candidate whatever the roster type; "not the same person" holds through
+ *     a Refresh and a new upload, and a hand match clears it; Refresh, reject
+ *     and per-person refresh exclude each other on the list lock; the lookup
+ *     explains non-matches and shows no birth dates.
  */
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -378,8 +386,11 @@ async function main() {
   const siteCases = [
     { key: "robin", first: "Robin", last: "Vale", userId: "81001", sites: "VERIFY CHURCH (Springfield),Lakeside Adventist School", year: previousYear, matches: true },
     { key: "wren", first: "Wren", last: "Moss", userId: "81002", sites: "Verify Church (Springfield)", year: clubYear, matches: true },
+    // A school never matches a church by site (#572). A second Tara Finch (on no roster) is on file, so the site is the only
+    // difference: the row is never AUTO-matched by school-vs-church, and never guessed by name alone (#598); it goes to review.
     { key: "tara", first: "Tara", last: "Finch", userId: "81003", sites: "Verify Adventist School", year: clubYear, matches: false },
   ];
+  await db.person.create({ data: { id: ids.person("tara-twin"), firstName: "Tara", lastName: "Finch" } });
   for (const item of siteCases) {
     await db.person.create({ data: { id: ids.person(item.key), firstName: item.first, lastName: item.last } });
     await db.clubRosterMember.create({ data: { id: ids.member(item.key), organizationId: ids.club, clubYear: item.year, personId: ids.person(item.key), attendeeType: "ADULT", source: "DIRECTOR" } });
@@ -397,8 +408,12 @@ async function main() {
   await db.backgroundCheckMatch.deleteMany({ where: { personId: { in: siteCases.map((item) => ids.person(item.key)) } } });
   for (const item of siteCases) await repository.refreshBackgroundCheckMatchForPerson(ids.person(item.key));
   for (const item of siteCases) {
-    assert(Boolean(await db.backgroundCheckMatch.findUnique({ where: { personId: ids.person(item.key) } })) === item.matches, `${item.key} re-matches through a refresh, with no new upload`);
+    const again = await db.backgroundCheckMatch.findUnique({ where: { personId: ids.person(item.key) } });
+    assert(Boolean(again) === item.matches, `${item.key} re-matches through a refresh, with no new upload`);
+    // The first upload remembered the user_id, so the re-match is by that identity (never name-only).
+    if (again) assert(again.matchedBy === "IDENTITY", `${item.key} re-matches by its remembered user_id`);
   }
+  assert((await repository.listBackgroundCheckReviews()).some((review) => review.name === "Tara Finch"), "the school-vs-church row with a same-name twin goes to review");
   console.log("ok  site suffixes, multi-site cells, ALL-CAPS, and the previous club year match; a school does not match a church");
   // 10. #572 review: Nevada (IA) and Nevada (MO) are different churches. Two
   // people share a name; only one is on the IA roster, and the row lists the MO church.
@@ -423,6 +438,116 @@ async function main() {
   assert(!(await db.backgroundCheckMatch.findUnique({ where: { personId: ids.person("nell-mo") } })), "the MO person, on no roster, is not guessed either");
   assert((await db.backgroundCheckMatch.findUnique({ where: { personId: ids.person("otto-ia") } }))?.matchedBy === "AUTO", "an IA row still matches the IA roster through its city suffix");
   console.log("ok  Nevada (IA) never auto-matches a Nevada (MO) row");
+
+  // 11. #598: name-only matches, first-name variant reviews, adults by age,
+  // the staff Refresh, "not the same person", and the lookup.
+  const { sealBirthDate } = await import("../modules/club-rosters/birth-dates");
+  const rosterPerson = async (key: string, first: string, last: string, options: { type?: "ADULT" | "STAFF" | "YOUTH" | "UNDERAGE"; birthDate?: string } = {}) => {
+    await db.person.create({ data: { id: ids.person(key), firstName: first, lastName: last } });
+    await db.clubRosterMember.create({
+      data: {
+        id: ids.member(key), organizationId: ids.club, clubYear, personId: ids.person(key), attendeeType: options.type ?? "ADULT", source: "DIRECTOR",
+        sealedBirthDate: options.birthDate ? sealBirthDate(options.birthDate) : null,
+      },
+    });
+  };
+  await rosterPerson("ines", "Ines", "Varga");
+  await rosterPerson("jonathan", "Jonathan", "Quill");
+  await rosterPerson("bea", "Bea", "Lindqvist", { type: "YOUTH", birthDate: "1988-05-06" });
+  await rosterPerson("cy", "Cy", "Lindqvist", { type: "YOUTH", birthDate: `${new Date().getUTCFullYear() - 12}-05-06` });
+  await rosterPerson("dot", "Dot", "Marsh");
+  await rosterPerson("dot-2", "Dot", "Marsh");
+  const otherSite = "Faraway Hills SDA Church (Elsewhere)";
+  const nameOnlyCsv = [
+    "user_id,user_last,user_first,sites,compliance",
+    `83001,Varga,Ines,"${otherSite}",y`, // name-only
+    `83002,Quill,Jon,"${otherSite}",y`, // first-name variant: review
+    `83003,Lindqvist,Bea,"${otherSite}",y`, // roster type is YOUTH, but she is 18 or older
+    `83004,Lindqvist,Cy,"${otherSite}",y`, // a child: never a candidate
+    `83005,Marsh,Dot,"${otherSite}",y`, // two candidates, nothing to separate them
+  ].join("\n");
+  const nameOnlyRows = parseRosterBackgroundCsv(nameOnlyCsv).map(rosterRowToListRow);
+  const nameOnlyPreview = await repository.planBackgroundCheckUpload(nameOnlyRows);
+  await repository.applyBackgroundCheckUpload(nameOnlyRows, "ROSTER", ids.user, new Date(), { expectedFingerprint: nameOnlyPreview.fingerprint });
+  const matchOf = async (key: string) => db.backgroundCheckMatch.findUnique({ where: { personId: ids.person(key) } });
+  assert((await matchOf("ines"))?.matchedBy === "NAME_ONLY", "a unique name matches by name only although the site differs");
+  assert((await matchOf("bea"))?.matchedBy === "NAME_ONLY", "a roster member 18 or older is a candidate whatever the roster type");
+  assert(!(await matchOf("cy")), "a child on the roster is never a candidate");
+  assert(!(await matchOf("jonathan")), "a first-name variant is never auto-matched");
+  const nameOnlyReviews = await repository.listBackgroundCheckReviews();
+  const jonReview = nameOnlyReviews.find((review) => review.name === "Jon Quill");
+  assertEqual(jonReview?.candidates.map((candidate) => candidate.name), ["Jonathan Quill"], "a first-name variant goes to review with the candidate");
+  const dotReview = nameOnlyReviews.find((review) => review.name === "Dot Marsh");
+  assert(dotReview?.candidates.length === 2, "two same-name candidates with nothing to separate them go to review");
+  assert(!(await db.externalIdentity.findFirst({ where: { externalId: { in: ["userId:83001", "userId:83003"] } } })), "a name-only match never becomes a remembered id");
+  const nameOnly = await repository.listNameOnlyBackgroundCheckMatches();
+  assert(nameOnly.length === 2 && nameOnly.some((item) => item.personName === "Ines Varga" && item.site === otherSite), "the name-only matches are listed with the row's site");
+  console.log("ok  name-only matches, variant reviews, and adults by age");
+
+  // "Not the same person": unmatched now, after a Refresh, and after a new upload with the same user_id.
+  const inesMatch = await matchOf("ines");
+  await repository.rejectNameOnlyBackgroundCheckMatch(inesMatch!.id, ids.user);
+  assert(!(await matchOf("ines")), "not the same person unmatches the row");
+  assert((await db.backgroundCheckRejectedPairing.count({ where: { identityKey: "userId:83001", personId: ids.person("ines") } })) === 1, "the rejection is stored by the row's identity key");
+  await repository.rematchBackgroundCheckList();
+  await repository.refreshBackgroundCheckMatchForPerson(ids.person("ines"));
+  assert(!(await matchOf("ines")), "a rejected name-only match stays unmatched through a Refresh");
+  assert((await matchOf("bea"))?.matchedBy === "NAME_ONLY", "Refresh re-derives the other name-only match");
+  const reuploadPreview = await repository.planBackgroundCheckUpload(nameOnlyRows);
+  await repository.applyBackgroundCheckUpload(nameOnlyRows, "ROSTER", ids.user, new Date(), { expectedFingerprint: reuploadPreview.fingerprint });
+  assert(!(await matchOf("ines")), "a rejected name-only match stays unmatched after a new upload with the same user_id");
+  assert((await matchOf("bea"))?.matchedBy === "NAME_ONLY", "the new upload still matches the other name-only row");
+  // A match by hand clears the rejection.
+  const inesEntry = await db.backgroundCheckEntry.findFirst({ where: { identityKey: "userId:83001" }, select: { id: true } });
+  const handReview = await db.backgroundCheckReview.create({ data: { entryId: inesEntry!.id, reason: "Check it.", candidatePersonIds: [ids.person("ines")] } });
+  await repository.resolveBackgroundCheckReview(handReview.id, { type: "match", personId: ids.person("ines") }, ids.user);
+  assert((await matchOf("ines"))?.matchedBy === "MANUAL", "staff can still match the rejected person by hand");
+  assert((await db.backgroundCheckRejectedPairing.count({ where: { identityKey: "userId:83001" } })) === 0, "a match by hand clears the rejection");
+  console.log("ok  not the same person holds through a Refresh and a new upload; a match by hand clears it");
+
+  // The whole-list Refresh and staff decisions exclude each other on the list lock.
+  const holdLockWhile = async (work: () => Promise<void>) => {
+    await db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${repository.BACKGROUND_CHECK_LOCK_KEY}::bigint)`;
+      await work();
+    });
+  };
+  await holdLockWhile(async () => {
+    await repository.rematchBackgroundCheckList().then(
+      () => { throw new Error("FAILED: a Refresh ran while another writer held the list"); },
+      (error: { code?: string }) => assert(error.code === "LIST_BUSY", "a Refresh is refused with LIST_BUSY while the list is held"),
+    );
+  });
+  const beaMatch = await matchOf("bea");
+  let concurrentRefresh: Promise<unknown> | null = null;
+  await db.$transaction(async (tx) => {
+    // Hold the lock exclusively the way a Refresh does, and try every other writer.
+    await tx.$queryRaw`SELECT pg_try_advisory_xact_lock(${repository.BACKGROUND_CHECK_LOCK_KEY}::bigint)`;
+    concurrentRefresh = repository.rematchBackgroundCheckList().catch((error: { code?: string }) => error.code);
+    assert((await concurrentRefresh) === "LIST_BUSY", "a second Refresh is refused while one runs");
+    await repository.rejectNameOnlyBackgroundCheckMatch(beaMatch!.id, ids.user).then(
+      () => { throw new Error("FAILED: a reject ran during a Refresh"); },
+      (error: { code?: string }) => assert(error.code === "LIST_BUSY", "a reject is refused while the list is held exclusively"),
+    );
+  });
+  assert((await matchOf("bea"))?.matchedBy === "NAME_ONLY", "the refused reject changed nothing");
+  console.log("ok  Refresh, reject, and per-person refresh exclude each other on the list lock");
+
+  // Stored entries re-match through the staff Refresh with no new upload.
+  await db.backgroundCheckMatch.deleteMany({ where: { matchedBy: "NAME_ONLY" } });
+  await db.backgroundCheckReview.deleteMany({ where: { dismissedAt: null } });
+  await repository.rematchBackgroundCheckList();
+  assert((await matchOf("bea"))?.matchedBy === "NAME_ONLY", "Refresh re-matches stored entries under the current rules");
+  assert((await repository.listBackgroundCheckReviews()).some((review) => review.name === "Jon Quill"), "Refresh recreates the first-name variant review");
+
+  // The lookup: reasons, and no birth dates.
+  const lookup = await repository.lookupBackgroundCheckName("Quill");
+  assert(/first name differs/i.test(lookup.pairs[0]?.reason ?? ""), "the lookup explains a first-name difference");
+  const lookupChild = await repository.lookupBackgroundCheckName("Cy Lindqvist");
+  assert(/not an adult/i.test(lookupChild.pairs[0]?.reason ?? ""), "the lookup explains a roster child is not an adult");
+  const lookupJson = JSON.stringify([lookup, lookupChild, await repository.lookupBackgroundCheckName("Lindqvist")]);
+  assert(!/1988|sealed|birth/i.test(lookupJson), "the lookup never shows a birth date");
+  console.log("ok  Refresh re-matches stored entries; the lookup explains non-matches without birth dates");
 }
 
 main()
