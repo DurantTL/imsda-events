@@ -18,6 +18,8 @@ export const SENSITIVE_FIELD_STEMS: readonly string[] = [
   "pediatric", "hospital", "clinic", "blood", "diagnos", "disab", "accessib", "special\\s*needs?",
   "policy\\s*(?:number|holder)", "birth", "bday", "d\\W?o\\W?b\\b", "guardian", "parent", "pick\\s?up",
   "custody", "emergency", "background", "ssn", "social\\s*security",
+  "injur", "surg", "ill(?:ness)?\\b", "sick", "symptom", "treatment", "anxi", "depress", "adhd", "autis",
+  "hearing", "vision", "impair", "lactose", "nut\\s*free", "care\\s*plan",
 ];
 
 export function sensitiveFieldPattern(extraStems: readonly string[] = []) {
@@ -36,7 +38,10 @@ export function isSensitiveFieldText(text: string) {
  * sensitive. Snake_case keys are split into words so `current_medications`
  * matches as well as its label.
  */
-export function isSensitiveField(field: Pick<RegistrationFormField, "key" | "label" | "helpText" | "options" | "optionLabels">) {
+export function isSensitiveField(
+  field: Pick<RegistrationFormField, "key" | "label" | "helpText" | "options" | "optionLabels">,
+  pattern: RegExp = SENSITIVE_FIELD_PATTERN,
+) {
   const parts = [
     field.key.replaceAll("_", " "),
     field.label,
@@ -44,5 +49,5 @@ export function isSensitiveField(field: Pick<RegistrationFormField, "key" | "lab
     ...(field.options ?? []),
     ...Object.values(field.optionLabels ?? {}),
   ];
-  return parts.some((part) => isSensitiveFieldText(part.replaceAll("_", " ")));
+  return parts.some((part) => pattern.test(part.replaceAll("_", " ")));
 }

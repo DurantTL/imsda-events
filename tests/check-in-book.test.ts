@@ -240,6 +240,47 @@ describe("extra column sensitive-field rules", () => {
     expect(optionKeys(field(key, label, "SELECT"))).toEqual([]);
   });
 
+  it.each([
+    ["Kosher meals"], ["Lactose"], ["Nut free"], ["Recent injury?"], ["Injuries"], ["Recent surgery"], ["Illness"],
+    ["Anxiety"], ["ADHD"], ["Autism"], ["Hearing impaired"], ["Treatment"], ["Care plan"], ["Sex"],
+    ["Is this attendee under 18?"], ["Meal preference"],
+  ])("does not offer %s", (label) => {
+    const key = label.toLowerCase().replace(/[^a-z]+/g, "_").replace(/^_|_$/g, "");
+    expect(optionKeys(field(key, label, "CHECKBOX"))).toEqual([]);
+    expect(optionKeys(field(key, label, "SELECT"))).toEqual([]);
+  });
+
+  it("does not offer a meal field whose choices are Kosher and Halal", () => {
+    expect(optionKeys(field("plate", "Plate", "SELECT", "ATTENDEE", { options: ["Kosher", "Halal"] }))).toEqual([]);
+    expect(optionKeys(field("meal_pref", "Meal preference", "SELECT", "ATTENDEE", { options: ["Kosher", "Halal"] }))).toEqual([]);
+  });
+
+  it("rules a field out when a field that depends on it is sensitive", () => {
+    const gate = field("plan_ahead", "Anything else we should plan for?", "RADIO", "ATTENDEE", { options: ["Yes", "No"] });
+    const detail = field("plan_detail", "Medication details", "SELECT", "ATTENDEE", { conditional: { fieldKey: "plan_ahead", operator: "EQUALS", value: "Yes" } });
+    expect(optionKeys(gate, detail)).toEqual([]);
+    // A dependent two steps down counts as well.
+    const middle = field("plan_middle", "Extra step", "SELECT", "ATTENDEE", { conditional: { fieldKey: "plan_ahead", operator: "EQUALS", value: "Yes" } });
+    const deep = field("plan_deep", "Medication details", "SELECT", "ATTENDEE", { optionalWhen: { fieldKey: "plan_middle", operator: "NOT_EMPTY", value: "" } });
+    expect(optionKeys(gate, middle, deep)).toEqual([]);
+  });
+
+  it("only treats guest_age or a field labelled exactly Age or Guest age as the age answer", () => {
+    const withField = (key: string, label: string) => buildCheckInBook({
+      event,
+      mode: "REGISTRATION",
+      clubs: [],
+      registrations: [registration({
+        id: "age-reg",
+        publicSubmission: { definition: definitionWith(field(key, label, "NUMBER")) },
+        attendees: [{ id: "g1", firstName: "Gus", lastName: "Guest", attendeeType: "ADULT", responses: { [key]: 41 } }],
+      })],
+    }).pages[0].attendees[0].age;
+    expect(withField("guest_age", "How old")).toBe(41);
+    expect(withField("years", "Guest age")).toBe(41);
+    expect(withField("child_age", "Child age at camp")).toBeNull();
+  });
+
   it("does not offer free text or long text at all", () => {
     expect(optionKeys(field("favorite_color", "Favorite color", "TEXT"), field("nickname", "Nickname", "LONG_TEXT"))).toEqual([]);
   });

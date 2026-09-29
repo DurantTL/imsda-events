@@ -4,7 +4,7 @@ import {
 } from "@/modules/forms/definition";
 import { attendeeAgeKey } from "@/modules/club-registrations/domain";
 import type { ClubEventRecord } from "@/modules/reporting/club-event-reports";
-import { isSensitiveField } from "@/modules/forms/sensitive-fields";
+import { isSensitiveField, sensitiveFieldPattern } from "@/modules/forms/sensitive-fields";
 import { toCsv } from "@/modules/reporting/csv";
 
 /**
@@ -49,8 +49,14 @@ const blockedKeys = new Set([
   "gender", "registration_fee", "birth_date", "birthdate", "date_of_birth", "dob", "dietary_needs",
 ]);
 
+// The shared stems plus check-in-only extras. The Age column already shows age,
+// so an age-based field adds nothing.
+const checkInSensitivePattern = sensitiveFieldPattern([
+  "meal", "food", "kosher", "halal", "\\bsex\\b", "gender", "\\bminor", "under\\s*18", "\\bage\\b",
+]);
+
 function isBlockedByItself(field: RegistrationFormField) {
-  return blockedKeys.has(field.key) || isSensitiveField(field);
+  return blockedKeys.has(field.key) || isSensitiveField(field, checkInSensitivePattern);
 }
 
 /**
@@ -74,6 +80,20 @@ export function isCheckInBookExtraField(field: RegistrationFormField, allFields:
       if (!controller) continue;
       if (isBlockedByItself(controller)) return false;
       pending.push(controller);
+    }
+  }
+
+  // Downward too: a "Yes/No" field that reveals "Medication details" gives the sensitive answer away.
+  const seenDown = new Set<string>([field.key]);
+  const queue = [field.key];
+  while (queue.length > 0) {
+    const key = queue.pop()!;
+    for (const dependent of allFields) {
+      if (seenDown.has(dependent.key)) continue;
+      if (dependent.conditional?.fieldKey !== key && dependent.optionalWhen?.fieldKey !== key) continue;
+      seenDown.add(dependent.key);
+      if (isBlockedByItself(dependent)) return false;
+      queue.push(dependent.key);
     }
   }
   return true;
@@ -154,10 +174,10 @@ function ageKeysByRegistration(registrations: CheckInBookRegistration[]) {
   for (const registration of registrations) {
     const parsed = registrationFormDefinitionSchema.safeParse(registration.publicSubmission?.definition);
     if (!parsed.success) continue;
-    // The club form's age key first, then any attendee number field asking for an age (Camp Meeting's `guest_age`).
+    // The club form's age key first, then Camp Meeting's `guest_age`, or a number field labelled exactly "Age" or "Guest age".
     const key = attendeeAgeKey(parsed.data)
       ?? parsed.data.sections.flatMap((section) => section.fields)
-        .find((field) => field.scope === "ATTENDEE" && field.type === "NUMBER" && (/_age$/.test(field.key) || /^(?:guest\s+)?age$/i.test(field.label.trim())))?.key;
+        .find((field) => field.scope === "ATTENDEE" && field.type === "NUMBER" && (field.key === "guest_age" || /^(?:guest\s+)?age$/i.test(field.label.trim())))?.key;
     if (key) keys.set(registration.id, key);
   }
   return keys;
