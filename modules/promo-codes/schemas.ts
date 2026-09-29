@@ -80,8 +80,24 @@ export const promoCodeInputSchema = z.object(promoCodeShape)
   .strict()
   .superRefine(validatePromoCodeInput);
 
+/**
+ * An edit replaces the whole code, so the fields that default on create
+ * (isActive, the limits, the dates) must be sent explicitly: a body that
+ * leaves one out is rejected instead of silently reactivating the code or
+ * clearing a limit. `sponsoringOrganizationId` stays optional on purpose
+ * (omitted means "leave the link as it is").
+ */
+const requiredNullableDate = z.union([calendarDateSchema, z.literal(""), z.null()])
+  .transform((value) => value || null);
+
 export const updatePromoCodeInputSchema = z.object({
   ...promoCodeShape,
+  isActive: z.boolean(),
+  startsOn: requiredNullableDate,
+  endsOn: requiredNullableDate,
+  minimumSubtotalCents: z.number().int().min(0).max(100_000_000).nullable(),
+  maximumUses: z.number().int().min(1).max(1_000_000).nullable(),
+  maximumDiscountCents: z.number().int().min(1).max(100_000_000).nullable(),
   expectedUpdatedAt: z.iso.datetime(),
 }).strict().superRefine(validatePromoCodeInput);
 
