@@ -4,6 +4,7 @@ import { AccountSectionNav } from "@/components/account-section-nav";
 import Link from "next/link";
 import { ClubAccessGate } from "@/components/club-access-gate";
 import { ClubGateSlot } from "@/components/club-gate-slot";
+import { attendeeSignInRedirectPath } from "@/modules/attendee-accounts/return-redirect";
 import { requireAttendeeSecondStep } from "@/modules/attendee-accounts/portal-second-step";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { clubYearFor } from "@/modules/club-rosters/domain";
@@ -28,7 +29,7 @@ export default async function ClubLayout({
 }) {
   const { organizationId } = await params;
   const access = await getRosterAccessStateForPage(organizationId);
-  if (access.state === "SIGN_IN") redirect("/account/sign-in");
+  if (access.state === "SIGN_IN") redirect(await attendeeSignInRedirectPath());
   if (access.state === "NOT_FOUND") notFound();
   // A club reached through the attendee's own account still needs the
   // attendee second step (the portal layout skips it while a staff act-as is

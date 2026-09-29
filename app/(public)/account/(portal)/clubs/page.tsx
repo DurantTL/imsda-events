@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowRight, UsersRound } from "lucide-react";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { attendeeSignInRedirectPath, twoStepRedirectPath } from "@/modules/attendee-accounts/return-redirect";
 import { attendeeSecondStepPending } from "@/modules/attendee-accounts/portal-second-step";
 import { isAreaCoordinator, listClubsForArea } from "@/modules/organizations/area-coordinators";
 import { listDirectedClubs } from "@/modules/organizations/director-access";
@@ -19,7 +20,7 @@ export const metadata: Metadata = {
 export default async function MyClubsPage() {
   const { account } = await getCurrentAttendee();
   const acting = await currentStaffActingContext();
-  if (!account && !acting) redirect("/account/sign-in");
+  if (!account && !acting) redirect(await attendeeSignInRedirectPath());
 
   // A staff "act as" director (#442) has nowhere else to go but their one
   // club: no attendee account, so no clubs list to show.
@@ -32,7 +33,7 @@ export default async function MyClubsPage() {
   // left out rather than sending the page to /account/two-step. Without an
   // act-as, the attendee's own clubs need that step as always.
   const secondStepPending = account ? await attendeeSecondStepPending() : false;
-  if (secondStepPending && !acting) redirect("/account/two-step");
+  if (secondStepPending && !acting) redirect(await twoStepRedirectPath());
   const ownAccount = secondStepPending ? null : account;
   const [clubs, areaCoordinator] = ownAccount
     ? await Promise.all([listDirectedClubs(ownAccount.id), isAreaCoordinator(ownAccount.id)])

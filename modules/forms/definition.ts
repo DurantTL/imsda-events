@@ -58,6 +58,9 @@ export function isAgeFieldKey(key: string) {
  * no more specific `ageBounds` (#483). */
 export const DEFAULT_AGE_BOUNDS = { minimumAge: 0, maximumAge: 120 } as const;
 
+/** The general cap on a NUMBER field that has no age-specific bound. */
+export const GENERAL_NUMBER_MAXIMUM = 100000;
+
 /** The allowed numeric range for a NUMBER field: its own `ageBounds` when
  * configured, else the default age range for a recognized age field key, else
  * null (no age-specific bound — the general 0–100,000 numeric check applies). */
@@ -67,7 +70,8 @@ export function numberFieldBounds(
   if (field.ageBounds) {
     return {
       minimumAge: field.ageBounds.minimumAge ?? DEFAULT_AGE_BOUNDS.minimumAge,
-      maximumAge: field.ageBounds.maximumAge ?? DEFAULT_AGE_BOUNDS.maximumAge,
+      // An unset maximum on a non-age number falls back to the general numeric cap.
+      maximumAge: field.ageBounds.maximumAge ?? (isAgeFieldKey(field.key) ? DEFAULT_AGE_BOUNDS.maximumAge : GENERAL_NUMBER_MAXIMUM),
     };
   }
   return isAgeFieldKey(field.key) ? { ...DEFAULT_AGE_BOUNDS } : null;
@@ -122,13 +126,24 @@ export const formFieldSchema = z.object({
    * `DEFAULT_AGE_BOUNDS` rather than accepting any number.
    */
   ageBounds: z.object({
-    minimumAge: z.number().int().min(0).max(130).nullable(),
-    maximumAge: z.number().int().min(0).max(130).nullable(),
-  }).refine(
-    (bounds) => bounds.minimumAge === null || bounds.maximumAge === null || bounds.minimumAge <= bounds.maximumAge,
-    { message: "Minimum age cannot exceed maximum age." },
-  ).optional(),
+    minimumAge: z.number().int().min(0).max(GENERAL_NUMBER_MAXIMUM).nullable(),
+    maximumAge: z.number().int().min(0).max(GENERAL_NUMBER_MAXIMUM).nullable(),
+  }).optional(),
 }).superRefine((field, context) => {
+  if (field.ageBounds) {
+    const { minimumAge, maximumAge } = field.ageBounds;
+    const isAge = isAgeFieldKey(field.key);
+    // Age fields keep their 130 cap; other numbers may go to the general cap.
+    for (const edge of ["minimumAge", "maximumAge"] as const) {
+      const bound = field.ageBounds[edge];
+      if (isAge && bound !== null && bound > 130) {
+        context.addIssue({ code: "custom", path: ["ageBounds", edge], message: "Age bounds cannot exceed 130." });
+      }
+    }
+    if (minimumAge !== null && maximumAge !== null && minimumAge > maximumAge) {
+      context.addIssue({ code: "custom", path: ["ageBounds"], message: isAge ? "Minimum age cannot exceed maximum age." : "Minimum value cannot exceed maximum value." });
+    }
+  }
   if (isChoiceFieldType(field.type) && field.options.length < 2 && !field.optionSource) {
     context.addIssue({ code: "custom", path: ["options"], message: "Choice fields need at least two choices." });
   }
@@ -1125,6 +1140,41 @@ export function summarizeChoiceUsage(definition: RegistrationFormDefinition, res
   return usage;
 }
 
+/** FB-5 (#569): no date answer may fall before this year. */
+export const EARLIEST_DATE_YEAR = 1900;
+export const EARLIEST_DATE_VALUE = `${EARLIEST_DATE_YEAR}-01-01`;
+
+/** Keys that explicitly hold a birth date. Labels are never guessed at, so a
+ * "Expected birth date" field (a due date) is not treated as one. */
+export const BIRTH_DATE_FIELD_KEYS = ["birth_date", "date_of_birth", "dob", "birthdate"] as const;
+
+/** True for a DATE field whose key explicitly marks it as a birth date. */
+export function isBirthDateField(field: Pick<RegistrationFormField, "type" | "key">) {
+  return field.type === "DATE" && (BIRTH_DATE_FIELD_KEYS as readonly string[]).includes(field.key);
+}
+
+/** Today's calendar date in the event's zone (Chicago), YYYY-MM-DD: the latest a
+ * birth date may be. Not UTC, so it doesn't flip at UTC midnight. */
+export function todayDateValue(now: Date = new Date()) {
+  return now.toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+}
+
+/** The `min`/`max` attributes a DATE input should carry. */
+export function dateFieldBounds(field: Pick<RegistrationFormField, "type" | "key" | "label">, now?: Date) {
+  return { min: EARLIEST_DATE_VALUE, max: isBirthDateField(field) ? todayDateValue(now) : undefined };
+}
+
+/** Null when the (already well-formed) date is acceptable, else the reason. */
+export function dateFieldProblem(
+  field: Pick<RegistrationFormField, "type" | "key" | "label">,
+  date: string,
+  now: Date = new Date(),
+) {
+  if (date < EARLIEST_DATE_VALUE) return `${field.label} can't be before ${EARLIEST_DATE_YEAR}.`;
+  if (isBirthDateField(field) && date > todayDateValue(now)) return `${field.label} can't be in the future.`;
+  return null;
+}
+
 export function validateTestResponses(
   definition: RegistrationFormDefinition,
   responses: Record<string, unknown>,
@@ -1164,6 +1214,10 @@ export function validateTestResponses(
         const date = String(value);
         const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00Z`) : null;
         if (!parsed || Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== date) issues.push({ fieldId: field.id, key: field.key, message: `${field.label} must be a valid date.` });
+        else {
+          const problem = dateFieldProblem(field, date);
+          if (problem) issues.push({ fieldId: field.id, key: field.key, message: problem });
+        }
       }
       if (field.type === "NUMBER") {
         const numeric = typeof value === "number" || typeof value === "string" ? Number(value) : Number.NaN;

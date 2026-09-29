@@ -9,6 +9,9 @@ import { MfaManager, type MfaStatus } from "@/components/mfa-manager";
 import { SignOutButton } from "@/components/sign-out-button";
 import { StaffPasskeyManager } from "@/components/staff-passkey-manager";
 import { getCurrentSession } from "@/modules/access/current-session";
+import { twoStepRedirectPath } from "@/modules/attendee-accounts/return-redirect";
+import { getPasskeySettings as getAttendeePasskeySettings } from "@/modules/attendee-accounts/passkeys";
+import { getAttendeeMfaStatus } from "@/modules/attendee-accounts/mfa-service";
 import { getMfaStatus } from "@/modules/access/mfa-service";
 import { getPasskeySettings } from "@/modules/access/passkeys";
 import {
@@ -29,7 +32,12 @@ export const dynamic = "force-dynamic";
  * shown as its own labelled section; nothing here joins them or adds auth
  * logic. No event is needed, and nothing redirects for the lack of one.
  */
-export default async function ProfilePage() {
+export default async function ProfilePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ twoStep?: string | string[] }>;
+}) {
+  const { twoStep } = await searchParams;
   const [{ user: staff }, { account, via, sessionId }] = await Promise.all([
     getCurrentSession(),
     getCurrentAttendee(),
@@ -42,11 +50,21 @@ export default async function ProfilePage() {
   // A club role that hasn't passed its second step sees nothing of its
   // registration account yet. Attendee-only visitors go to finish it.
   const secondStepPending = attendeeAccount ? await attendeeSecondStepPending() : false;
-  if (!staff && secondStepPending) redirect("/account/two-step");
+  if (!staff && secondStepPending) redirect(await twoStepRedirectPath());
 
   const [mfaStatus, passkeySettings] = staff
     ? await Promise.all([getMfaStatus(staff.id) as Promise<MfaStatus>, getPasskeySettings(staff)])
     : [null, null];
+  // The confirmation banner is only true when a second step really is on: an
+  // active authenticator or a registered passkey (#568).
+  let showTwoStepOn = false;
+  if (twoStep === "on" && attendeeAccount && !secondStepPending) {
+    const [authenticator, passkeys] = await Promise.all([
+      getAttendeeMfaStatus(attendeeAccount.id),
+      getAttendeePasskeySettings(attendeeAccount.id, sessionId),
+    ]);
+    showTwoStepOn = authenticator.status === "ACTIVE" || passkeys.passkeys.length > 0;
+  }
   const clubs = attendeeAccount && !secondStepPending ? await listDirectedClubs(attendeeAccount.id) : [];
 
   // The same banner the workspace and portal layouts show while a system
@@ -128,6 +146,9 @@ export default async function ProfilePage() {
         <section aria-labelledby="profile-registration-heading" className="profile-account-section">
           <div className="account-page-body">
             <h2 className="profile-account-heading" id="profile-registration-heading">Registration account</h2>
+            {showTwoStepOn && (
+              <p className="auth-success" role="status">Two-step verification is on.</p>
+            )}
             {!secondStepPending && (
               <p className="field-help">
                 Signed in as <strong>{attendeeAccount.verifiedEmail}</strong>. Saved details fill in new registration forms for you.

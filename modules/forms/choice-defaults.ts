@@ -54,3 +54,26 @@ export function singleChoiceTypeHint(
     ? { suggestedType, message: "Short list: radio cards are easier to tap.", actionLabel: "Switch to radio cards" }
     : { suggestedType, message: "Long list: a searchable dropdown is faster than scrolling this many cards.", actionLabel: "Switch to a searchable dropdown" };
 }
+
+/**
+ * FB-9 (#569): a choice field the builder is creating (converting a
+ * non-choice field into a "Dropdown") with this many choices or fewer starts
+ * as radio cards. Only newly created choice fields are affected: existing
+ * fields, module inserts, and published forms keep the type they have.
+ */
+export const NEW_FIELD_RADIO_MAX_OPTIONS = 6;
+
+/**
+ * The type a builder's field-type pick lands on. Picking "Dropdown" for a
+ * field that was not a choice field yet, with a short list, gives radio cards
+ * (the builder can "Keep dropdown"); every other transition is taken as picked.
+ */
+export function defaultTypeForNewChoiceField(
+  previousType: RegistrationFormField["type"],
+  requestedType: RegistrationFormField["type"],
+  optionCount: number,
+): RegistrationFormField["type"] {
+  const wasChoice = ["SELECT", "RADIO", "MULTISELECT", "RANKED_CHOICE"].includes(previousType);
+  if (requestedType === "SELECT" && !wasChoice && optionCount <= NEW_FIELD_RADIO_MAX_OPTIONS) return "RADIO";
+  return requestedType;
+}
