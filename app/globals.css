@@ -2991,13 +2991,15 @@ select:focus-visible {
   box-shadow: 0 12px 36px rgba(0, 59, 92, 0.06);
 }
 
-.public-registration-intro { border-radius: 20px; padding: 25px 27px; }
+.public-registration-intro { min-width: 0; max-width: 100%; overflow-wrap: anywhere; border-radius: 20px; padding: 25px 27px; }
 .public-registration-intro h2 { margin: 0; color: var(--ink); font-size: clamp(1.45rem, 3vw, 2rem); letter-spacing: -0.025em; }
 .public-registration-intro > p:not(.public-registration-eyebrow) { max-width: 700px; margin: 9px 0 0; color: var(--muted); font-size: 0.9rem; line-height: 1.65; }
 .public-registration-intro > span { display: block; margin-top: 15px; color: var(--muted); font-size: 0.72rem; }
 .public-registration-intro > span > span { color: var(--coral); font-weight: 800; }
 
 .public-registration-progress {
+  min-width: 0;
+  max-width: 100%;
   display: grid;
   gap: 11px;
   border: 1px solid #ccdce3;
@@ -5136,9 +5138,12 @@ select:focus-visible {
 @media (max-width: 900px) {
   .public-registration-hero { align-items: flex-start; flex-direction: column; }
   .public-registration-event-details { width: 100%; }
-  .public-registration-layout,
   .public-event-layout,
   .public-manage-layout { grid-template-columns: 1fr; }
+  /* minmax(0, 1fr), not 1fr: a bare 1fr track has an automatic minimum, so a
+     long unbroken word in the intro or step tracker widened the whole column
+     (and the page) past a 360/390px phone (#570). */
+  .public-registration-layout { grid-template-columns: minmax(0, 1fr); }
   .public-registration-summary { position: static; }
   .public-event-sidebar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .public-event-full-details-card { grid-column: 1 / -1; }
@@ -5172,6 +5177,8 @@ select:focus-visible {
     gap: 6px;
   }
   .public-registration-progress li { flex: 1 1 0; gap: 4px; }
+  /* With 5-6 steps the other labels ellipsize first; the current step keeps the most room, and the heading above always reads "Step N of M". */
+  .public-registration-progress li.is-current { flex-grow: 2.5; }
   .public-registration-progress li > span { width: 19px; height: 19px; font-size: 0.54rem; }
   .public-registration-progress li > small { font-size: 0.6rem; }
   .public-registration-step-heading { padding: 18px; }
@@ -6999,6 +7006,12 @@ select:focus-visible {
 .honor-inline-form select { border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd; padding: 10px 11px; font-size: 0.78rem; }
 .honor-group-heading { margin: 18px 0 8px; color: var(--ink); font-size: 0.8rem; }
 .honor-row-actions { display: flex; gap: 6px; }
+/* The table scrolls inside its own region. The visually hidden "Actions"
+   header is position: absolute, and without a positioned scroller it escaped
+   the clip and widened the document at 360/390px (#570). */
+.honor-table-wrap { position: relative; max-width: 100%; }
+.honor-session-warning { display: flex; flex: 1 0 100%; align-items: flex-start; gap: 6px; margin: 0; color: #8a5a00; font-size: 0.7rem; font-weight: 700; line-height: 1.45; }
+.honor-session-warning svg { flex: 0 0 auto; margin-top: 2px; }
 
 
 /* Club rosters (#356) */

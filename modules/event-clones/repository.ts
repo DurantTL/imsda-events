@@ -91,7 +91,7 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
     }),
     await db.eventTag.findMany({ where: { eventId }, orderBy: { normalizedName: "asc" } }),
     await db.promoCode.findMany({ where: { eventId }, orderBy: { normalizedCode: "asc" } }),
-    await db.honorSession.findMany({ where: { eventId }, orderBy: [{ sortOrder: "asc" }, { normalizedName: "asc" }] }),
+    await db.honorSession.findMany({ where: { eventId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { normalizedName: "asc" }] }),
     await db.honorOffering.findMany({
       where: { eventId }, orderBy: [{ sessionId: "asc" }, { honorId: "asc" }],
       include: { honor: { select: { name: true } }, session: { select: { name: true } } },

@@ -51,7 +51,7 @@ async function buildPlan(client: CopyClient, sourceEventId: string, targetEventI
   const [sourceSessions, targetSessions, sourceOfferings, targetOfferings] = await Promise.all([
     client.honorSession.findMany({
       where: { eventId: sourceEventId },
-      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { name: "asc" }],
       select: { id: true, name: true, normalizedName: true, sortOrder: true },
     }),
     client.honorSession.findMany({

@@ -170,7 +170,7 @@ async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: st
   const [sessions, offerings, enrollmentCounts] = await Promise.all([
     client.honorSession.findMany({
       where: { eventId },
-      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { name: "asc" }],
       select: { id: true, name: true, sortOrder: true, _count: { select: { offerings: true } } },
     }),
     client.honorOffering.findMany({

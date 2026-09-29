@@ -1,3 +1,4 @@
+import { sortHonorSessions } from "./session-order";
 import { toCsv } from "@/modules/reporting/csv";
 
 /**
@@ -109,7 +110,7 @@ export function buildClubSchedule(
   attendees: readonly RosterAttendee[],
 ) {
   const offeringsById = new Map(offerings.map((offering) => [offering.id, offering]));
-  const orderedSessions = [...sessions].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+  const orderedSessions = sortHonorSessions(sessions);
   const people = attendees.filter((attendee) => attendee.clubId === clubId).sort(byName);
   return {
     sessions: orderedSessions,
