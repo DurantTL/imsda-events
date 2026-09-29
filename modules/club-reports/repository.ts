@@ -26,6 +26,7 @@ import { clubYearFor, type ClubClassLevel } from "@/modules/club-rosters/domain"
 export type ClubReportErrorCode =
   | "CLUB_REPORT_LOCKED"
   | "CLUB_REPORT_MONTH_INVALID"
+  | "CLUB_REPORT_YEAR_INVALID"
   | "CLUB_REPORT_INVALID_POINTS"
   | "CLUB_REPORT_NOT_SUBMITTED"
   | "CLUB_REPORT_NOT_FOUND"

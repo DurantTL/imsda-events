@@ -14,6 +14,13 @@ import {
   yearToDate,
 } from "@/modules/club-reports/domain";
 import { getClubReportYear } from "@/modules/club-reports/repository";
+import {
+  formatReportYearDueDate,
+  isPastDue,
+  reportYearSpanLabel,
+  reportableReportYears,
+} from "@/modules/club-reports/year-end-domain";
+import { listYearEndReportsForClub } from "@/modules/club-reports/year-end-repository";
 
 export const metadata: Metadata = { title: "Monthly reports" };
 export const dynamic = "force-dynamic";
@@ -33,6 +40,8 @@ export default async function ClubReportsPage({ params }: { params: Promise<{ or
   const byMonth = new Map(reports.map((report) => [report.reportMonth, report]));
   const months = [...reportableMonths(clubYear, now)].reverse();
   const base = `/account/clubs/${organizationId}/reports`;
+  const yearEndYears = reportableReportYears(now);
+  const yearEndReports = await listYearEndReportsForClub(organizationId, yearEndYears);
 
   return (
     <>
@@ -81,6 +90,39 @@ export default async function ClubReportsPage({ params }: { params: Promise<{ or
                 </span>
                 <Link className={`${report ? "secondary-button" : "primary-button"} club-event-action`} href={`${base}/${month}`}>
                   {closed ? "View report" : "Open report"} <ArrowRight size={14} aria-hidden="true" />
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+
+      <section className="public-manage-card" aria-labelledby="club-year-end-heading">
+        <div className="public-manage-card-heading">
+          <p className="public-registration-eyebrow">Due April 1, pre-filled from your roster, honors, and classes</p>
+          <h2 id="club-year-end-heading">Year-End Report</h2>
+        </div>
+        <ul className="public-manage-club-list">
+          {yearEndYears.map((year) => {
+            const report = yearEndReports.get(year);
+            const submitted = report?.status === "SUBMITTED";
+            const due = formatReportYearDueDate(year);
+            return (
+              <li key={year}>
+                {submitted ? <CheckCircle2 size={17} aria-hidden="true" /> : <CircleAlert size={17} aria-hidden="true" />}
+                <span>
+                  <strong>Pathfinder year {year}</strong>
+                  <small>
+                    {reportYearSpanLabel(year)} ·{" "}
+                    {submitted
+                      ? `Submitted${report.late ? " late" : ""} · closed`
+                      : report
+                        ? `Draft · ${isPastDue(year, now) ? `was due ${due}` : `due ${due}`}`
+                        : isPastDue(year, now) ? `Not filed · was due ${due}` : `Due ${due}`}
+                  </small>
+                </span>
+                <Link className={`${report ? "secondary-button" : "primary-button"} club-event-action`} href={`${base}/year-end/${year}`}>
+                  {submitted ? "View report" : "Open report"} <ArrowRight size={14} aria-hidden="true" />
                 </Link>
               </li>
             );

@@ -1,0 +1,83 @@
+"use client";
+
+import { useState } from "react";
+import { Download } from "lucide-react";
+import { formatReportYearDueDate, yearEndProgress } from "@/modules/club-reports/year-end-domain";
+import type { YearEndClubSummary } from "@/modules/club-reports/year-end-repository";
+
+type Row = Pick<YearEndClubSummary, "id" | "name" | "church" | "status" | "submittedAt" | "late"> & {
+  totalMembership: number | null;
+};
+
+const statusText = { NONE: "Missing", DRAFT: "Draft (missing)", SUBMITTED: "Submitted" } as const;
+
+/**
+ * Every club's Year-End Report for a Pathfinder year (#607): submitted and
+ * missing counts, a CSV export, and a staff-only reopen for a submitted
+ * report. Counts only, no names of young people.
+ */
+export function ClubYearEndConference({ reportYear, initialRows }: { reportYear: string; initialRows: Row[] }) {
+  const [rows, setRows] = useState(initialRows);
+  const [error, setError] = useState("");
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const progress = yearEndProgress(rows);
+
+  async function reopen(row: Row) {
+    setError("");
+    setBusyId(row.id);
+    try {
+      const response = await fetch(`/api/admin/club-reports/year-end/${encodeURIComponent(row.id)}/${reportYear}/reopen`, { method: "POST" });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({})) as { message?: string };
+        setError(result.message ?? "The report could not be reopened.");
+        return;
+      }
+      setRows((current) => current.map((item) => (item.id === row.id ? { ...item, status: "DRAFT", submittedAt: null, late: false, totalMembership: null } : item)));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <section className="page-stack">
+      <div className="page-intro">
+        <div>
+          <p className="eyebrow">Clubs · Pathfinder year {reportYear}</p>
+          <h2>Year-End Reports</h2>
+          <p>
+            Due {formatReportYearDueDate(reportYear)}. <strong>{progress.submitted}</strong> submitted,{" "}
+            <strong>{progress.missing}</strong> missing{progress.drafts > 0 ? ` (${progress.drafts} still a draft)` : ""}.
+          </p>
+        </div>
+        <a className="secondary-button" href={`/api/admin/club-reports/year-end/export?year=${reportYear}`}>
+          <Download aria-hidden="true" size={16} /> Export CSV
+        </a>
+      </div>
+      {error && <div className="inline-notice error" role="alert">{error}</div>}
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Club</th><th>Sponsoring church</th><th>Status</th><th>Total membership</th><th /></tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id}>
+                <td>{row.name}</td>
+                <td>{row.church}</td>
+                <td>{statusText[row.status]}{row.status === "SUBMITTED" && row.late ? " (late)" : ""}</td>
+                <td>{row.totalMembership ?? ""}</td>
+                <td>
+                  {row.status === "SUBMITTED" && (
+                    <button className="secondary-button" disabled={busyId === row.id} onClick={() => reopen(row)} type="button">
+                      Reopen
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}

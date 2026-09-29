@@ -1699,6 +1699,7 @@ model Organization {
   clubProfile        ClubProfile?
   clubInvites        ClubInvite[]
   monthlyReports     ClubMonthlyReport[]
+  yearEndReports     ClubYearEndReport[]
   meetingNotes       ClubMeetingNote[]
   yearStandings      ClubYearStanding[]
   churchLocation     ChurchLocation?
@@ -1840,6 +1841,40 @@ model ClubMonthlyReport {
   @@unique([organizationId, reportMonth])
   @@index([clubYear, reportMonth])
   @@index([clubYear, status])
+}
+
+/// One club's Pathfinder Year-End Report (#607) for one Pathfinder year
+/// (May 1 - April 30, labelled by its start year, e.g. "2026-27"), due April 1.
+/// Counts only, never a name. `prefill` is the roster/honors/investiture
+/// snapshot the server worked out at the last save (frozen once SUBMITTED);
+/// `overrides` holds only the pre-filled fields the director changed, so the
+/// original number is always kept beside the override; `manual` holds the
+/// fields the platform has no data for. Totals are never stored.
+model ClubYearEndReport {
+  id                   String           @id @default(cuid())
+  organizationId       String
+  reportYear           String
+  status               ClubReportStatus @default(DRAFT)
+  contactName          String           @default("")
+  contactWorkPhone     String           @default("")
+  contactHomePhone     String           @default("")
+  contactCellPhone     String           @default("")
+  contactEmail         String           @default("")
+  prefill              Json             @default("{}")
+  overrides            Json             @default("{}")
+  manual               Json             @default("{}")
+  submittedAt          DateTime?
+  firstSubmittedAt     DateTime?
+  submittedByAccountId String?
+  updatedByAccountId   String?
+  updatedByUserId      String?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, reportYear])
+  @@index([reportYear, status])
 }
 
 /// One club meeting's notes (#426): a simple record so a monthly report's
