@@ -82,9 +82,17 @@ export function withRequestContext<Arguments extends unknown[]>(
   };
 }
 
+/**
+ * The path a log line carries. The segment after `/club-forms/` or `/manage/`
+ * is a private bearer token, so it is replaced before it can reach a log.
+ */
+export function redactTokenPath(pathname: string) {
+  return pathname.replace(/^(\/(?:api\/public\/)?(?:club-forms|manage)\/)[^/]+/, "$1[redacted]");
+}
+
 function safePath(url: string) {
   try {
-    return new URL(url).pathname;
+    return redactTokenPath(new URL(url).pathname);
   } catch {
     return undefined;
   }
