@@ -103,7 +103,7 @@ export function EventTemplateList({ initialTemplates }: EventTemplateListProps) 
           <div className="inline-notice" role="status">
             <p>Added {starterResult.added.length}: {starterResult.added.map((entry) => entry.name).join(", ") || "none"}.</p>
             <p>Skipped {starterResult.skipped.length} that already exist: {starterResult.skipped.map((entry) => `${entry.name}${entry.reason === "ARCHIVED" ? " (archived)" : ""}`).join(", ") || "none"}.</p>
-            <p>Still needed: {starterResult.stillNeeded.map((entry) => `${entry.name} (${entry.note})`).join(", ")}.</p>
+            {starterResult.stillNeeded.length > 0 ? <p>Still needed: {starterResult.stillNeeded.map((entry) => `${entry.name} (${entry.note})`).join(", ")}.</p> : null}
           </div>
         ) : null}
       </section>

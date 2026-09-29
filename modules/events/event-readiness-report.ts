@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import { getEventPublishReadiness } from "@/modules/events/readiness";
+import { collectEventReadinessWarnings } from "@/modules/events/readiness-warnings";
 import {
   checkOperationalReadiness,
   operationalReadinessSummary,
@@ -88,6 +89,7 @@ export async function collectEventReadinessReport(
     if (Number(registration.totalAmount) - paid > 0) registrationsWithBalanceDue += 1;
   }
 
+  const setupWarnings = await collectEventReadinessWarnings(prisma, event.id);
   const publishReadiness = getEventPublishReadiness({
     ...event,
     startsOn: event.startsAt.toISOString(),
@@ -107,6 +109,13 @@ export async function collectEventReadinessReport(
       label: item.label,
       severity: item.complete ? "READY" : "WARNING",
       detail: item.detail,
+    } satisfies OperationalReadinessCheck)),
+    // Never a blocker (#593): dates and fees are set by staff after applying a starter.
+    ...setupWarnings.map((warning) => ({
+      code: `SETUP_${warning.id.split(":")[0]!.replaceAll("-", "_").toUpperCase()}`,
+      label: warning.label,
+      severity: "WARNING",
+      detail: warning.detail,
     } satisfies OperationalReadinessCheck)),
   ];
 

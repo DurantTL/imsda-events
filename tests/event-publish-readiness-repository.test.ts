@@ -128,6 +128,8 @@ function mockPrisma(
       }),
     },
     registrationForm: { findMany: vi.fn().mockResolvedValue([]) },
+    eventLocation: { findMany: vi.fn().mockResolvedValue([]) },
+    registrationFormVersion: { findMany: vi.fn().mockResolvedValue([]) },
     eventPaymentInstructionVersion: { findFirst: vi.fn().mockResolvedValue(null) },
   };
   return { prisma, tx, eventUpdate, eventUpdateMany, auditLogCreate };

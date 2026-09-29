@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, MapPin, Pencil, Plus, Power, Trash2, X } from "lucide-react";
 import type { EventLocationRecord } from "@/modules/event-locations/repository";
+import { getLocationDateWarnings } from "@/modules/events/readiness";
 
 type Draft = {
   name: string;
@@ -122,6 +123,9 @@ export function EventLocationsPanel({
       </div>
       {error && <div className="inline-notice error" role="alert"><AlertTriangle size={17} aria-hidden="true" /> {error}</div>}
       {notice && <div className="inline-notice success" role="status"><CheckCircle2 size={17} aria-hidden="true" /> {notice}</div>}
+      {getLocationDateWarnings(locations).map((warning) => (
+        <div className="inline-notice clone-warning" key={warning.id} role="status"><AlertTriangle size={17} aria-hidden="true" /> <span><strong>{warning.label}</strong> Add its first and last day. This does not block publishing.</span></div>
+      ))}
       {locations.length === 0 && !formOpen && <p className="field-help">No locations yet.</p>}
       {locations.length > 0 && (
         <ul className="event-location-list">

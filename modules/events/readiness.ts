@@ -141,3 +141,55 @@ export function getEventPublishReadiness(
     optionalItems,
   };
 }
+
+/**
+ * Setup reminders that never block publishing (#593). Directors and staff
+ * still see them until the work is done: a location with no dates, and a fee
+ * field with no amount (pricing is a human decision, so nothing sets it for
+ * them).
+ */
+export type EventReadinessWarning = {
+  id: string;
+  label: string;
+  detail: string;
+};
+
+/** One warning for each active location that is missing its first or last day. */
+export function getLocationDateWarnings(
+  locations: ReadonlyArray<{ name: string; firstDay: string | null; lastDay: string | null; isActive: boolean }>,
+): EventReadinessWarning[] {
+  return locations
+    .filter((location) => location.isActive && !(location.firstDay && location.lastDay))
+    .map((location) => ({
+      id: `location-dates:${location.name}`,
+      label: `Set the dates for ${location.name}`,
+      detail: "Add this location's first and last day under Event settings, Locations.",
+    }));
+}
+
+type FeeFieldShape = {
+  type: string;
+  scope?: string;
+  label: string;
+  priceCents?: number;
+};
+
+/**
+ * Labels of the per-attendee fee fields that have no amount: a CALCULATED
+ * attendee field with no `priceCents`. The label is the field's own, so
+ * "Fall Camporee fee" reads "Set the Fall Camporee fee".
+ */
+export function unpricedFeeFieldLabels(definition: { sections: ReadonlyArray<{ fields: ReadonlyArray<FeeFieldShape> }> }) {
+  return definition.sections
+    .flatMap((section) => section.fields)
+    .filter((field) => field.type === "CALCULATED" && field.scope === "ATTENDEE" && field.priceCents === undefined)
+    .map((field) => field.label);
+}
+
+export function getFeeWarnings(unpricedLabels: readonly string[]): EventReadinessWarning[] {
+  return [...new Set(unpricedLabels)].map((label) => ({
+    id: `fee:${label}`,
+    label: `Set the ${label}`,
+    detail: "No amount is set. Choose the fee in the registration builder before publishing.",
+  }));
+}

@@ -153,6 +153,8 @@ function mockApply(options: {
     event: { findUnique: vi.fn().mockResolvedValue(eventRow) },
     registrationForm: { findMany: vi.fn().mockResolvedValue([]) },
     eventPaymentInstructionVersion: { findFirst: vi.fn().mockResolvedValue(null) },
+    eventLocation: { findMany: vi.fn().mockResolvedValue([]) },
+    registrationFormVersion: { findMany: vi.fn().mockResolvedValue([]) },
   };
 
   return { prisma, tx, eventCreate, auditLogCreate, applicationCreate, attendeeTypeCreateMany, registrationFormCreate, messageTemplateCreate };
