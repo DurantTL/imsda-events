@@ -1,4 +1,4 @@
-import { getFormTemplate } from "@/modules/forms/definition";
+import { getFormTemplate, isBlankFormTemplateKey } from "@/modules/forms/definition";
 import { eventTemplatePayloadSchema, type EventTemplatePayload } from "@/modules/event-templates/domain";
 
 /**
@@ -26,6 +26,8 @@ export type StarterEventTemplate = {
 };
 
 export const starterEventTemplates: readonly StarterEventTemplate[] = [
+  { starterKey: "blank_event", name: "Blank event", formTemplateKey: "blank_form", audience: "GENERAL", billingMode: "ATTENDEE_PAY", collectsShirtSizes: false, checksAdultBackgrounds: false },
+  { starterKey: "blank_club_event", name: "Blank club event", formTemplateKey: "blank_club_form", audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE", collectsShirtSizes: false, checksAdultBackgrounds: true },
   { starterKey: "womens_retreat", name: "Women's Retreat", formTemplateKey: "womens_retreat_export", audience: "GENERAL", billingMode: "ATTENDEE_PAY", collectsShirtSizes: true, checksAdultBackgrounds: false },
   { starterKey: "man_camp", name: "Man Camp", formTemplateKey: "man_camp_export", audience: "GENERAL", billingMode: "ATTENDEE_PAY", collectsShirtSizes: true, checksAdultBackgrounds: false },
   { starterKey: "spring_camporee", name: "Spring Camporee", formTemplateKey: "spring_camporee_export", audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE", collectsShirtSizes: false, checksAdultBackgrounds: true },
@@ -40,6 +42,9 @@ export const pendingStarterEvents = [
 
 export function starterDescription(starter: StarterEventTemplate) {
   const form = getFormTemplate(starter.formTemplateKey);
+  if (isBlankFormTemplateKey(starter.formTemplateKey)) {
+    return `Starter set: a blank ${starter.audience === "CLUB" ? "club " : ""}event created from the built-in "${form?.name ?? "Blank form"}" form (${starter.formTemplateKey}). It has a contact${starter.audience === "CLUB" ? " and club roster" : ""} section and no prices or capacity. Add your own questions on the draft event.`;
+  }
   const source = form ? `the built-in "${form.name}" form (${starter.formTemplateKey})` : `the ${starter.formTemplateKey} form`;
   return `Starter set: created from ${source}. This template sets no prices or capacity. The form keeps last year's prices, late-price dates and choice limits. Review them on the draft event before publishing.`;
 }

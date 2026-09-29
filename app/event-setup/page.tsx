@@ -23,10 +23,11 @@ export default async function EventSetupPage() {
         <div><p className="eyebrow">System administration</p><h1>Set up a new event</h1></div>
       </header>
       <div className="event-setup-entry-actions">
-        <Link className="secondary-button" href="/event-setup/from-template">Start from template</Link>
+        <Link className="secondary-button" href="/event-setup/from-template">Start from a template</Link>
+        <Link className="secondary-button" href="/event-setup#blank-event">Start blank</Link>
         <Link className="secondary-button" href="/event-setup/copy">Copy from a past event</Link>
       </div>
-      <EventSettingsWorkspace mode="create" initialEvent={null} />
+      <div id="blank-event"><EventSettingsWorkspace mode="create" initialEvent={null} /></div>
     </main>
   );
 }

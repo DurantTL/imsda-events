@@ -12,5 +12,5 @@ export default async function RegistrationBuilderPage({ searchParams }: { search
   if (!permissions.includes("MANAGE_FORMS")) {
     return <AccessRestricted title="Registration builder access is restricted" detail="Event administrators and registration managers can create, test, and publish event forms." />;
   }
-  return <RegistrationBuilderWorkspace key={event.id} eventId={event.id} eventSlug={event.slug} eventName={event.name} initialForms={await listRegistrationForms(event.id)} templates={listFormTemplates()} />;
+  return <RegistrationBuilderWorkspace key={event.id} eventId={event.id} eventSlug={event.slug} eventName={event.name} eventAudience={event.audience} initialForms={await listRegistrationForms(event.id)} templates={listFormTemplates()} />;
 }

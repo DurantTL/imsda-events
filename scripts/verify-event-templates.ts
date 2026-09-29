@@ -403,7 +403,7 @@ async function verifyStarters() {
   const first = await addStarterEventTemplates(adminId);
   assert(first.added.length === missing.length && first.skipped.length === remaining.length, `one click adds the ${missing.length} missing starters, added ${first.added.length}`);
   assert(first.added.map((entry) => entry.starterKey).sort().join() === missing.map((starter) => starter.starterKey).sort().join(), "exactly the missing starters were added");
-  if (remaining.length === 0) assert(first.added.length === 5, "on a database with no starters one click adds 5");
+  if (remaining.length === 0) assert(first.added.length === starterEventTemplates.length, `on a database with no starters one click adds ${starterEventTemplates.length}`);
   assert(first.stillNeeded.length === 1 && first.stillNeeded[0]!.name === "Fall Camporee", "Fall Camporee is listed as still needing a form");
   const created = (await starterTemplates()).filter(isOwn);
   assert(created.length === missing.length, "the missing starters now exist");
@@ -417,19 +417,19 @@ async function verifyStarters() {
     assert(!/price|capacity|cents/i.test(JSON.stringify(template.versions[0]!.payload)), `${starter.name} carries no pricing or capacity`);
   }
   assert(await prisma.auditLog.count({ where: { actorUserId: adminId, action: "EVENT_TEMPLATE_CREATED", summary: { startsWith: "Created starter event template" } } }) === missing.length, "each starter creation is audited");
-  assert((await starterTemplates()).length === 5, "five starters exist in total");
+  assert((await starterTemplates()).length === starterEventTemplates.length, "every starter exists in total");
   console.log("ok  one click creates the missing starters as valid DRAFTs (no pricing or capacity); Fall Camporee is listed as form still needed");
 
   // 2. Re-running adds nothing.
   const second = await addStarterEventTemplates(adminId);
-  assert(second.added.length === 0 && second.skipped.length === 5, `re-running adds 0, added ${second.added.length}`);
-  assert((await starterTemplates()).length === 5, "still five starters after a re-run");
-  console.log("ok  re-running adds 0 and skips all 5");
+  assert(second.added.length === 0 && second.skipped.length === starterEventTemplates.length, `re-running adds 0, added ${second.added.length}`);
+  assert((await starterTemplates()).length === starterEventTemplates.length, "still every starter after a re-run");
+  console.log(`ok  re-running adds 0 and skips all ${starterEventTemplates.length}`);
 
   // 3. Two clicks at once still add each starter only once.
   await prisma.eventTemplate.deleteMany({ where: { id: { in: created.map((template) => template.id) } } });
   const raced = await Promise.all([addStarterEventTemplates(adminId), addStarterEventTemplates(otherAdminId)]);
-  assert(raced[0].added.length + raced[1].added.length === missing.length && (await starterTemplates()).length === 5, "concurrent clicks add each starter exactly once");
+  assert(raced[0].added.length + raced[1].added.length === missing.length && (await starterTemplates()).length === starterEventTemplates.length, "concurrent clicks add each starter exactly once");
   console.log("ok  two simultaneous clicks add each starter exactly once");
 
   // 4. A held starter lock times out as a retryable 409 instead of waiting forever.
@@ -452,7 +452,7 @@ async function verifyStarters() {
   const busyResponse = eventTemplateApiError(busy, { failureMessage: "x", logMessage: "x" });
   assert(busyResponse.status === 409 && (await busyResponse.json()).error === "TEMPLATE_BUSY", `the lock timeout maps to 409 TEMPLATE_BUSY, got ${String(busy)}`);
   assert(waited >= 3_000 && waited < 15_000, `the wait is bounded, waited ${waited}ms`);
-  assert((await starterTemplates()).length === 5, "a busy attempt added nothing");
+  assert((await starterTemplates()).length === starterEventTemplates.length, "a busy attempt added nothing");
   console.log(`ok  a held starter lock times out after ${Math.round(waited / 100) / 10}s as a retryable 409 TEMPLATE_BUSY`);
 
   // 5. Every draft this run created publishes, then applies to a complete draft event.
@@ -527,7 +527,7 @@ async function verifyStarters() {
   });
   await archiveEventTemplate(archivedTemplate.id, adminId);
   const third = await addStarterEventTemplates(adminId);
-  assert(third.added.length === 0 && third.skipped.length === 5, `re-running after edits adds 0, added ${third.added.length}`);
+  assert(third.added.length === 0 && third.skipped.length === starterEventTemplates.length, `re-running after edits adds 0, added ${third.added.length}`);
   assert(third.skipped.find((entry) => entry.starterKey === keyOf(archivedTemplate))?.reason === "ARCHIVED", "the archived starter is reported as archived");
   const afterEdit = await getEventTemplate(editedTemplate.id);
   draft = afterEdit.versions.find((version) => version.status === "DRAFT")!;
@@ -536,7 +536,7 @@ async function verifyStarters() {
   assert((draft.payload as { starterKey?: string }).starterKey === editedKey, "saving a draft keeps the starter's identity");
   const afterArchive = await getEventTemplate(archivedTemplate.id);
   assert(afterArchive.status === "ARCHIVED" && !afterArchive.canApply, "the archived starter stays archived");
-  assert((await starterTemplates()).length === 5, "no duplicates after edits and archive");
+  assert((await starterTemplates()).length === starterEventTemplates.length, "no duplicates after edits and archive");
   console.log("ok  an edited starter and an archived starter are left alone; the starterKey is server-owned; no duplicates");
 }
 
