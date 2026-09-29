@@ -6,7 +6,7 @@ import { getPrisma } from "@/lib/prisma";
 import { logError, logInfo } from "@/lib/logger";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { openBirthDate, sealBirthDate } from "@/modules/club-rosters/birth-dates";
-import { ageOn, clubYearChoices } from "@/modules/club-rosters/domain";
+import { ageOn, clubYearChoices, clubYearFor } from "@/modules/club-rosters/domain";
 import type { ClubCapabilities } from "@/modules/organizations/director-grants-domain";
 import { activeRegistrationStatuses, calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { BackgroundCheckOperationError } from "@/modules/background-checks/errors";
@@ -281,14 +281,15 @@ async function buildCandidateIndex(tx: PrismaLike, now: Date, scope?: { personId
   if (scope && scope.personIds.length === 0) return { byName: new Map(), byPerson: new Map() };
   // The current club year and the one before it: rosters imported before the
   // September rollover (#541) still describe the same adults (#572).
-  const [previousClubYear, clubYear] = clubYearChoices(now);
+  const clubYear = clubYearFor(now);
+  const previousClubYear = clubYearChoices(now)[0]!;
   const cutoff = new Date(now);
   cutoff.setUTCMonth(cutoff.getUTCMonth() - REGISTRATION_LOOKBACK_MONTHS);
   const today = calendarDateInEventTimeZone(now, "America/Chicago");
 
   const [rosterMembers, attendees] = await Promise.all([
     tx.clubRosterMember.findMany({
-      where: { clubYear: { in: [previousClubYear!, clubYear!] }, status: "ACTIVE", attendeeType: { in: ["ADULT", "STAFF"] }, personId: scope ? { in: scope.personIds } : { not: null } },
+      where: { clubYear: { in: [previousClubYear, clubYear] }, status: "ACTIVE", attendeeType: { in: ["ADULT", "STAFF"] }, personId: scope ? { in: scope.personIds } : { not: null } },
       select: {
         personId: true,
         sealedBirthDate: true,

@@ -871,7 +871,7 @@ describe("site matching against the real export's shapes (#572)", () => {
   it("matches when any one site in a comma-separated cell matches", () => {
     expect(matchesSite("Maple Grove SDA Church (Springfield),Lakeside Adventist School", ["Maple Grove SDA Church"])).toBe(true);
     expect(matchesSite("Maple Grove SDA Church (Springfield),Lakeside Adventist School", ["Lakeside Adventist School"])).toBe(true);
-    expect(siteStems("Nevada (IA) SDA Church, Other Place")).toEqual(new Set(["nevada ia", "nevada", "other place"]));
+    expect(siteStems("Nevada (IA) SDA Church, Other Place")).toEqual(new Set(["nevada ia", "other place"]));
   });
 
   it("ignores case, so ALL-CAPS names match", () => {
@@ -888,7 +888,43 @@ describe("site matching against the real export's shapes (#572)", () => {
   it("matches a directory name with its own parenthetical, with or without it", () => {
     expect(matchesSite("Reedville (IA) SDA Church", ["Reedville (IA) SDA Church"])).toBe(true);
     expect(matchesSite("Reedville (IA) SDA Church (Reedville)", ["Reedville (IA) SDA Church"])).toBe(true);
-    expect(matchesSite("Reedville SDA Church", ["Reedville (IA) SDA Church"])).toBe(true);
+    expect(matchesSite("Reedville SDA Church", ["Reedville (IA) SDA Church"])).toBe(false);
+  });
+
+  it("never treats two different parentheticals as the same church (MO vs IA)", () => {
+    expect(matchesSite("Nevada (MO) SDA Church", ["Nevada (IA) SDA Church"])).toBe(false);
+    expect(matchesSite("Nevada (MO) SDA Church (Nevada)", ["Nevada (IA) SDA Church"])).toBe(false);
+    expect(matchesSite("Nevada (IA) SDA Church (Nevada)", ["Nevada (IA) SDA Church"])).toBe(true);
+  });
+
+  it("reads only one trailing parenthetical as the export's city suffix", () => {
+    expect(siteStems("Kansas City SDA Church (Central)")).toEqual(new Set(["kansas city central", "kansas city"]));
+    expect(matchesSite("Kansas City SDA Church (Central)", ["Kansas City SDA Church"])).toBe(true);
+    expect(matchesSite("Kansas City SDA Church", ["Kansas City SDA Church (Central)"])).toBe(false);
+    expect(siteStems("Nevada (IA) SDA Church (Nevada)")).toEqual(new Set(["nevada ia nevada", "nevada ia"]));
+  });
+
+  it("drops short and generic stems so they never match", () => {
+    expect(siteStems("SDA Church")).toEqual(new Set());
+    expect(siteStems("First SDA Church")).toEqual(new Set());
+    expect(siteStems("Central Church, MO, Ab")).toEqual(new Set());
+    expect(siteStems("Seventh-day Adventist Church")).toEqual(new Set());
+    expect(matchesSite("First SDA Church", ["First SDA Church"])).toBe(false);
+    expect(matchesSite("Ab Church", ["Ab Church"])).toBe(false);
+    expect(matchesSite("SDA Church (Springfield)", ["Springfield SDA Church"])).toBe(true);
+    expect(siteStems("SDA Church (Springfield)")).toEqual(new Set(["springfield"]));
+  });
+
+  it("does not split on a comma before a state code", () => {
+    expect(siteStems("Springfield, MO SDA Church")).toEqual(new Set(["springfield mo"]));
+    expect(siteStems("Springfield SDA Church, MO")).toEqual(new Set(["springfield mo"]));
+    expect(siteStems("Springfield SDA Church, Lakeside Adventist School")).toEqual(new Set(["springfield", "lakeside adventist school"]));
+  });
+
+  it("handles nested and unbalanced parentheses", () => {
+    expect(siteStems("Lake (North (Old)) SDA Church (Lake (Town))")).toEqual(new Set(["lake north old lake town", "lake north old"]));
+    expect(siteStems("Elm SDA Church (Elm,Oak SDA Church")).toEqual(new Set(["elm elm", "oak"]));
+    expect(siteStems("Pine SDA Church),Ash SDA Church")).toEqual(new Set(["pine", "ash"]));
   });
 
   it("returns false for an empty or noise-only site", () => {

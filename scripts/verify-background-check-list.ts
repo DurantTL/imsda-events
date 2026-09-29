@@ -396,6 +396,29 @@ async function main() {
     assert(Boolean(await db.backgroundCheckMatch.findUnique({ where: { personId: ids.person(item.key) } })) === item.matches, `${item.key} re-matches through a refresh, with no new upload`);
   }
   console.log("ok  site suffixes, multi-site cells, ALL-CAPS, and the previous club year match; a school does not match a church");
+  // 10. #572 review: Nevada (IA) and Nevada (MO) are different churches. Two
+  // people share a name; only one is on the IA roster, and the row lists the MO church.
+  const iaChurch = `${P}_church_ia`;
+  const iaClub = `${P}_club_ia`;
+  await db.organization.create({ data: { id: iaChurch, type: "CHURCH", name: "Nevada (IA) SDA Church", normalizedName: "nevada ia sda church" } });
+  await db.organization.create({ data: { id: iaClub, type: "CLUB", name: "Nevada (IA) Pathfinders", normalizedName: "nevada ia pathfinders", parentOrganizationId: iaChurch } });
+  await db.person.create({ data: { id: ids.person("nell-ia"), firstName: "Nell", lastName: "Hart" } });
+  await db.clubRosterMember.create({ data: { id: ids.member("nell-ia"), organizationId: iaClub, clubYear, personId: ids.person("nell-ia"), attendeeType: "ADULT", source: "DIRECTOR" } });
+  await db.person.create({ data: { id: ids.person("nell-mo"), firstName: "Nell", lastName: "Hart" } });
+  await db.person.create({ data: { id: ids.person("otto-ia"), firstName: "Otto", lastName: "Hart" } });
+  await db.clubRosterMember.create({ data: { id: ids.member("otto-ia"), organizationId: iaClub, clubYear, personId: ids.person("otto-ia"), attendeeType: "ADULT", source: "DIRECTOR" } });
+  const nevadaCsv = [
+    "user_id,user_last,user_first,sites,compliance",
+    '82001,Hart,Nell,"Nevada (MO) SDA Church (Nevada)",y',
+    '82002,Hart,Otto,"Nevada (IA) SDA Church (Nevada)",y',
+  ].join("\n");
+  const nevadaRows = parseRosterBackgroundCsv(nevadaCsv).map(rosterRowToListRow);
+  const nevadaPreview = await repository.planBackgroundCheckUpload(nevadaRows);
+  await repository.applyBackgroundCheckUpload(nevadaRows, "ROSTER", ids.user, new Date(), { expectedFingerprint: nevadaPreview.fingerprint });
+  assert(!(await db.backgroundCheckMatch.findUnique({ where: { personId: ids.person("nell-ia") } })), "the IA person is not auto-matched to the MO row");
+  assert(!(await db.backgroundCheckMatch.findUnique({ where: { personId: ids.person("nell-mo") } })), "the MO person, on no roster, is not guessed either");
+  assert((await db.backgroundCheckMatch.findUnique({ where: { personId: ids.person("otto-ia") } }))?.matchedBy === "AUTO", "an IA row still matches the IA roster through its city suffix");
+  console.log("ok  Nevada (IA) never auto-matches a Nevada (MO) row");
 }
 
 main()
