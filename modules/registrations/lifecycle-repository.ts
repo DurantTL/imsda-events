@@ -2,6 +2,7 @@ import "server-only";
 
 import { countLocationSeats, lockEventLocation } from "@/modules/event-locations/admission";
 import { locationHasRoom, remainingLocationSeats } from "@/modules/event-locations/domain";
+import { locationTransactionTimeoutMs } from "@/modules/event-locations/errors";
 
 import { Prisma, type RegistrationStatus } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
@@ -617,6 +618,8 @@ async function runSerializable<T>(
     try {
       return await prisma.$transaction(operation, {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        // Promoting or restoring may wait up to 5s on a location's row lock (#413).
+        timeout: locationTransactionTimeoutMs,
       });
     } catch (error) {
       if (!retryableTransactionError(error)) throw error;

@@ -17,7 +17,7 @@ import {
   remainingLocationSeats,
   locationDateProblem,
 } from "@/modules/event-locations/domain";
-import { EventLocationError, locationBusyMessage } from "@/modules/event-locations/errors";
+import { EventLocationError, locationBusyMessage, locationTransactionTimeoutMs } from "@/modules/event-locations/errors";
 import { activeRegistrationStatuses } from "@/modules/events/lifecycle";
 
 type Db = Prisma.TransactionClient;
@@ -127,7 +127,7 @@ export async function createEventLocation(eventId: string, actorUserId: string, 
         metadata: { capacity: location.capacity, hasOwnDates: Boolean(location.firstDay || location.lastDay || location.registrationClosesOn) },
       } });
       return location;
-    });
+    }, { timeout: locationTransactionTimeoutMs });
     return serialize(created, { occupied: 0, registrations: 0 });
   } catch (error) {
     return nameTaken(error);
@@ -183,7 +183,7 @@ export async function updateEventLocation(eventId: string, locationId: string, a
       } });
       const registrations = await tx.registration.count({ where: { locationId } });
       return serialize(updated, { occupied, registrations });
-    });
+    }, { timeout: locationTransactionTimeoutMs });
   } catch (error) {
     return nameTaken(error);
   }
@@ -206,7 +206,7 @@ export async function reorderEventLocations(eventId: string, actorUserId: string
       eventId, actorUserId, action: "EVENT_LOCATIONS_REORDERED", entityType: "Event", entityId: eventId,
       correlationId: randomUUID(), summary: "Reordered the event's locations.", metadata: { count: orderedIds.length },
     } });
-  });
+  }, { timeout: locationTransactionTimeoutMs });
   return listEventLocations(eventId);
 }
 
@@ -232,7 +232,7 @@ export async function deleteEventLocation(eventId: string, locationId: string, a
         eventId, actorUserId, action: "EVENT_LOCATION_DELETED", entityType: "EventLocation", entityId: locationId,
         correlationId: randomUUID(), summary: `Deleted location ${current.name}.`, metadata: {},
       } });
-    });
+    }, { timeout: locationTransactionTimeoutMs });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003") {
       throw new EventLocationError("LOCATION_IN_USE", "A registration uses this location, so it can't be deleted. Deactivate it instead.");

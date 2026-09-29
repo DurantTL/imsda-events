@@ -100,3 +100,11 @@ jobs:
       # owed line per redemption, cancellation dropping it, parallel redemptions,
       # and no double billing on church-billed events (#545).
       - run: npm run test:church-promo-codes
+
+      # Real-database check of locations inside one event: the required pick on a
+      # real club submit, per-location capacity under the location row lock (two
+      # clubs racing for the last seats, exactly one wins), per-location closing
+      # dates and last days, changing location on a director edit, a held lock
+      # timing out as a retryable busy, the location filters and CSV columns,
+      # and cloning with shifted dates (#413).
+      - run: npm run test:event-locations

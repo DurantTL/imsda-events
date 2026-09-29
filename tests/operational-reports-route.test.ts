@@ -35,6 +35,11 @@ vi.mock("@/modules/access/current-session", () => ({
 vi.mock("@/modules/events/repository", () => ({
   findActiveMembership: dependencies.findActiveMembership,
 }));
+// No locations on the event under test (#413): the export reads and names none.
+vi.mock("@/modules/event-locations/filter", () => ({
+  resolveLocationFilter: vi.fn(async () => ({ locations: [], locationId: null, selected: null })),
+  locationParam: () => null,
+}));
 vi.mock("@/modules/reporting/repository", () => ({
   getOperationalReport: dependencies.getOperationalReport,
 }));

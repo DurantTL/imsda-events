@@ -107,7 +107,12 @@ export type LocationSeatCheck = {
  * Returns the location (or `null` for none). Throws `EventLocationError`:
  * LOCATION_REQUIRED, LOCATION_INVALID, LOCATION_FULL, LOCATION_BUSY.
  */
-export async function checkLocationSeats(tx: Tx, input: LocationSeatCheck): Promise<LockedLocation | null> {
+export async function checkLocationSeats(
+  tx: Tx,
+  input: LocationSeatCheck,
+  /** Runs once the location is loaded and locked, before its seats are counted: "closed" is reported before "full". */
+  beforeSeatCheck?: (location: LockedLocation) => void,
+): Promise<LockedLocation | null> {
   if (!input.locationId) {
     if (input.requirePick && (await countActiveLocations(tx, input.eventId)) > 0) {
       throw new EventLocationError("LOCATION_REQUIRED", "Choose a location for your registration.");
@@ -130,6 +135,7 @@ export async function checkLocationSeats(tx: Tx, input: LocationSeatCheck): Prom
   if (input.requirePick && !location.isActive) {
     throw new EventLocationError("LOCATION_INVALID", `${location.name} is no longer taking registrations. Choose another location.`);
   }
+  beforeSeatCheck?.(location);
   const occupied = await countLocationSeats(tx, location.id, input.excludeRegistrationId);
   if (!locationHasRoom(location.capacity, occupied, input.requestedSeats)) {
     throw new EventLocationError("LOCATION_FULL", locationFullMessage(location.name, remainingLocationSeats(location.capacity, occupied)));
@@ -147,9 +153,18 @@ export type LocationAdmission<E extends EventLifecycleSource> = {
 /** `checkLocationSeats` plus the event lifecycle for the chosen location. */
 export async function admitToLocation<E extends EventLifecycleSource>(
   tx: Tx,
-  input: LocationSeatCheck & { event: E },
+  input: LocationSeatCheck & {
+    event: E;
+    /** Called with the location's lifecycle before seats are counted; throw to refuse. */
+    beforeSeatCheck?: (lifecycle: E) => void;
+  },
 ): Promise<LocationAdmission<E>> {
-  const location = await checkLocationSeats(tx, input);
+  const guard = input.beforeSeatCheck;
+  const location = await checkLocationSeats(
+    tx,
+    input,
+    guard ? (locked) => guard(locationLifecycleSource(input.event, locked)) : undefined,
+  );
   return {
     locationId: location?.id ?? null,
     location,

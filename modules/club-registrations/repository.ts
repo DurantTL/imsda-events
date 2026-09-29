@@ -40,17 +40,13 @@ import {
 import {
   activeRegistrationStatuses,
   calendarDateInEventTimeZone,
-  evaluateEventRegistrationPhase,
-  hasEventEnded,
 } from "@/modules/events/lifecycle";
-import { checkLocationSeats, locationOpenProblem } from "@/modules/event-locations/admission";
+import { locationOpenProblem } from "@/modules/event-locations/admission";
 import {
   effectiveLocationDates,
   evaluateLocationPhase,
   hasLocationEnded,
-  locationLifecycleSource,
   remainingLocationSeats,
-  locationHasRoom,
   type LocationDateSource,
 } from "@/modules/event-locations/domain";
 import { EventLocationError } from "@/modules/event-locations/errors";
@@ -341,7 +337,7 @@ export async function listChurchAmountsOwed(eventId: string, options: { location
     attendeeCount: row.registration._count.attendees,
     isBilled: isChurchBilledStatus(row.registration.status),
     amountOwedCents: churchOwedCents(row.registration.status, moneyToCents(row.registration.totalAmount)),
-    locationName: row.registration.location?.name ?? null,
+    ...(row.registration.location ? { locationName: row.registration.location.name } : {}),
   })));
 }
 
@@ -383,7 +379,8 @@ export async function listClubCheckInInfo(eventId: string, options: { locationId
     organizationName: row.organization.name,
     confirmationCode: row.registration.confirmationCode,
     amountOwedCents: churchOwedCents(row.registration.status, moneyToCents(row.registration.totalAmount)),
-    locationName: row.registration.location?.name ?? null,
+    // Only when the club registered at a location, so an event without locations returns what it always did (#413).
+    ...(row.registration.location ? { locationName: row.registration.location.name } : {}),
   }));
 }
 

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { checkLocationSeats } from "@/modules/event-locations/admission";
-import { EventLocationError } from "@/modules/event-locations/errors";
+import { EventLocationError, locationTransactionTimeoutMs } from "@/modules/event-locations/errors";
 
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
@@ -1631,7 +1631,11 @@ export async function amendRegistration(
           },
         });
         return response;
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      }, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        // The registration's location row lock may be waited on for up to 5s (#413).
+        timeout: locationTransactionTimeoutMs,
+      });
       // #527: a new or renamed attendee on the background-check list is
       // matched after commit; best effort, never fails the amendment.
       await refreshBackgroundCheckMatchesForRegistrations([registrationId]);

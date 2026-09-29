@@ -27,6 +27,14 @@ export class EventLocationError extends Error {
   }
 }
 
+/**
+ * Interactive transaction timeout for anything that waits on a location lock.
+ * Prisma's default is 5s, the same as the 5s lock wait, so a held lock would
+ * surface as an expired transaction (P2028) instead of a lock timeout
+ * (55P03); this leaves room for the wait plus the work after it.
+ */
+export const locationTransactionTimeoutMs = 20_000;
+
 export const locationBusyMessage = "That is being updated by someone else right now. Nothing was saved. Try again in a moment.";
 
 /** HTTP status for each refusal. A busy lock is retryable (503); a full or closed location is a conflict or gone. */

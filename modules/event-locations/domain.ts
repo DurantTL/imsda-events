@@ -137,7 +137,7 @@ export function locationHasRoom(capacity: number | null, occupied: number, reque
 
 export function locationFullMessage(name: string, remaining: number | null) {
   if (remaining === null || remaining <= 0) return `${name} is full.`;
-  return `Only ${remaining} spot${remaining === 1 ? "" : "s"} remain at ${name}.`;
+  return `Only ${remaining} ${remaining === 1 ? "spot remains" : "spots remain"} at ${name}.`;
 }
 
 /** "2026-12-05" moved by `days` calendar days, with no time zone in play. */

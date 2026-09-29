@@ -505,3 +505,47 @@ describe("helpers", () => {
     expect(excludedDomains(all)).toEqual([]);
   });
 });
+
+describe("locations in a clone (#413)", () => {
+  const locations = [
+    { name: "Camp Heritage 1", address: "1 Synthetic Rd", capacity: 120, sortOrder: 0, firstDay: "2027-05-05", lastDay: "2027-05-06", registrationClosesOn: "2027-04-20" },
+    { name: "Des Moines", address: null, capacity: null, sortOrder: 1, firstDay: null, lastDay: null, registrationClosesOn: null },
+  ];
+  const parse = (overrides: Record<string, unknown> = {}) => confirmEventCloneInputSchema.parse(validBody(overrides));
+
+  it("lists locations as its own domain with a count and how the dates move", () => {
+    const plan = buildClonePlan(config({ locations }), fingerprint);
+    const domain = plan.domains.find((entry) => entry.key === "locations")!;
+    expect(domain.count).toBe(2);
+    expect(domain.label).toBe("Locations");
+    expect(domain.notes.join(" ")).toContain("same number of days as the event's start date");
+  });
+
+  it("counts nothing, with no note, for an event without locations", () => {
+    const domain = buildClonePlan(config(), fingerprint).domains.find((entry) => entry.key === "locations")!;
+    expect(domain.count).toBe(0);
+    expect(domain.notes).toEqual([]);
+  });
+
+  it("reads a confirm body from before locations existed as not selecting them", () => {
+    const { locations: ignored, ...rest } = all;
+    void ignored;
+    expect(parse({ include: rest }).include.locations).toBe(false);
+    expect(parse({ include: { ...all, locations: true } }).include.locations).toBe(true);
+    expect(excludedDomains(parse({ include: rest }).include)).toContain("locations");
+  });
+
+  it("needs no dates or capacities entered anew: they move with the event and are copied", () => {
+    const source = config({ locations });
+    expect(reviewIssues(source, parse({ include: { ...all, locations: true } })).filter((issue) => /location/i.test(issue))).toEqual([]);
+    expect(reviewIssues(source, parse({
+      include: { ...noDomains, locations: true }, formLatePricingDates: [], formChoiceLimits: [], promoCodeWindows: [], honorOfferingCapacities: [],
+    }))).toEqual([]);
+  });
+
+  it("keeps the locations in the request a retry is compared against", () => {
+    const body = parse({ include: { ...all, locations: true } });
+    expect(cloneRequestInputOf(body).include.locations).toBe(true);
+    expect(canonicalJson(cloneRequestInputOf(body))).not.toBe(canonicalJson(cloneRequestInputOf(parse({ include: { ...all, locations: false } }))));
+  });
+});
