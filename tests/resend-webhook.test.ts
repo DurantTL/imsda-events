@@ -141,6 +141,20 @@ describe("Resend webhook verification and persistence", () => {
     });
   });
 
+  it("keeps no recipient address when an event matches no message, but still stores it for linking (#620)", async () => {
+    const unmatched = { ...event(), data: { email_id: "email-provider-unknown", to: ["late@example.test"] } };
+    const result = await recordResendWebhookEvent("webhook-unmatched", unmatched);
+    expect(result).toMatchObject({ duplicate: false, matchedMessageId: null });
+    const stored = database.state.providerEvents.get("webhook-unmatched");
+    expect(stored).toMatchObject({ messageOutboxId: null, providerMessageId: "email-provider-unknown", eventType: "email.delivered" });
+    expect(JSON.stringify(stored)).not.toContain("late@example.test");
+  });
+
+  it("keeps the whole payload for an event that matches a message", async () => {
+    await recordResendWebhookEvent("webhook-matched", event());
+    expect(JSON.stringify(database.state.providerEvents.get("webhook-matched"))).toContain("attendee@example.test");
+  });
+
   it.each(["email.bounced", "email.failed", "email.complained", "email.suppressed"])(
     "withdraws a club form link when %s says its email never arrived (#610)",
     async (type) => {

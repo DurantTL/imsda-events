@@ -29,6 +29,7 @@ function eventApiError(error: unknown, failure = { code: "EVENT_REQUEST_FAILED",
     const status = error.code === "EVENT_NOT_FOUND" ? 404
       : error.code === "EVENT_DELETE_FORBIDDEN" ? 403
       : error.code === "EVENT_NAME_MISMATCH" ? 400
+      : error.code === "EVENT_DELETE_TIMEOUT" ? 500
       : 409;
     return Response.json({ error: error.code, message: error.message }, { status });
   }

@@ -16,7 +16,12 @@ import {
 
 export class EventDeletionError extends Error {
   constructor(
-    public readonly code: "EVENT_NOT_FOUND" | "EVENT_DELETE_FORBIDDEN" | "EVENT_NAME_MISMATCH" | "EVENT_BUSY",
+    public readonly code:
+      | "EVENT_NOT_FOUND"
+      | "EVENT_DELETE_FORBIDDEN"
+      | "EVENT_NAME_MISMATCH"
+      | "EVENT_BUSY"
+      | "EVENT_DELETE_TIMEOUT",
     message: string,
   ) {
     super(message);
@@ -80,9 +85,18 @@ async function loadDeletionFacts(db: Db, eventId: string) {
   return { event, facts: { isPublished: event.isPublished, counts } satisfies EventDeletionFacts };
 }
 
-/** Prisma's interactive-transaction expiry (P2028): nothing was committed, so the caller can retry. */
-function isTransactionTimeout(error: unknown) {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2028";
+/**
+ * Prisma's interactive-transaction errors (P2028). "Unable to start a
+ * transaction in the given time" is the maxWait: nothing ran, so the event was
+ * only busy. Any other P2028 is the transaction outliving its deadline; the
+ * rollback removed nothing, but a retry will likely take as long.
+ */
+function isTransactionStartTimeout(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2028" && /start a transaction/i.test(error.message);
+}
+
+function isTransactionDeadlineExceeded(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2028" && !isTransactionStartTimeout(error);
 }
 
 export type EventDeletionActorInput = { userId: string; globalRole?: "SYSTEM_ADMIN" | null };
@@ -202,7 +216,10 @@ export async function deleteEvent(input: {
     }
     return { eventId: result.eventId, name: result.name, counts: result.counts };
   } catch (error) {
-    if (isLockTimeoutError(error) || isDeadlockError(error) || isTransactionTimeout(error)) {
+    if (isTransactionDeadlineExceeded(error)) {
+      throw new EventDeletionError("EVENT_DELETE_TIMEOUT", "Deleting this event took too long and nothing was removed. Contact support.");
+    }
+    if (isLockTimeoutError(error) || isDeadlockError(error) || isTransactionStartTimeout(error)) {
       throw new EventDeletionError("EVENT_BUSY", "The event is busy with other changes. Try again in a moment.");
     }
     throw error;
@@ -219,17 +236,18 @@ async function removeEventOwnedRows(tx: Db, eventId: string) {
     where: { eventId, status: { in: ["PENDING", "PROCESSING"] } },
     data: { status: "CANCELLED" },
   });
-  // Provider events are matched by the outbox rows' provider ids as well as
-  // the link, and removed after the outbox rows, so a webhook that lands
-  // mid-transaction (linked or not yet linked) cannot survive as an orphan.
-  const providerMessageIds = (await tx.messageOutbox.findMany({
-    where: { eventId, providerMessageId: { not: null } },
-    select: { providerMessageId: true },
-  })).flatMap((row) => (row.providerMessageId ? [row.providerMessageId] : []));
+  // Provider events (delivery webhooks, which carry the recipient's address in
+  // their payload) go with their messages. They are matched by the outbox rows'
+  // provider ids as well as the link, in one statement with a subquery so a large
+  // event cannot hit bind-parameter limits. Best effort against concurrency: a
+  // webhook committing between this statement and the transaction's end is not
+  // seen, and is stored without a message (with the recipient stripped).
+  await tx.$executeRaw`
+    DELETE FROM "MessageProviderEvent"
+    WHERE "messageOutboxId" IN (SELECT "id" FROM "MessageOutbox" WHERE "eventId" = ${eventId})
+       OR ("provider" = 'RESEND' AND "providerMessageId" IN (
+            SELECT "providerMessageId" FROM "MessageOutbox" WHERE "eventId" = ${eventId} AND "providerMessageId" IS NOT NULL))`;
   await tx.messageOutbox.deleteMany({ where: inEvent });
-  await tx.messageProviderEvent.deleteMany({
-    where: { OR: [{ providerMessageId: { in: providerMessageIds } }, { message: { eventId } }] },
-  });
 
   // 2. Payment processor bookkeeping, then payments themselves.
   await tx.squareWebhookEvent.deleteMany({ where: inEvent });
