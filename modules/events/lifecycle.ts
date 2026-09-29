@@ -15,6 +15,12 @@ export type EventLifecycleSource = {
   registrationOpensOn: string | null;
   registrationClosesOn: string | null;
   waitlistEnabled: boolean;
+  /**
+   * The event's last instant. When present, public registration also closes
+   * once the event's last calendar day (in its own time zone) has passed (#575),
+   * regardless of the registration-window settings.
+   */
+  endsAt?: Date | null;
 };
 
 export type EventAdmissionSource = EventLifecycleSource & {
@@ -30,11 +36,24 @@ export function calendarDateInEventTimeZone(date: Date, timeZone: string) {
   }).format(date);
 }
 
+/** True once the event's last calendar day has passed in its own time zone. */
+export function hasEventEnded(
+  event: Pick<EventLifecycleSource, "timezone" | "endsAt">,
+  now = new Date(),
+) {
+  if (!event.endsAt) return false;
+  return calendarDateInEventTimeZone(now, event.timezone)
+    > calendarDateInEventTimeZone(event.endsAt, event.timezone);
+}
+
+export const registrationClosedMessage = "Registration for this event has closed.";
+
 export function evaluateEventRegistrationPhase(
   event: EventLifecycleSource,
   now = new Date(),
 ): EventRegistrationPhase {
   if (!event.isPublished) return "DRAFT";
+  if (hasEventEnded(event, now)) return "CLOSED";
   const today = calendarDateInEventTimeZone(now, event.timezone);
   if (event.registrationOpensOn && today < event.registrationOpensOn) return "UPCOMING";
   if (event.registrationClosesOn && today > event.registrationClosesOn) return "CLOSED";

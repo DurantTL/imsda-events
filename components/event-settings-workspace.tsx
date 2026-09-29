@@ -15,7 +15,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import type { EventSettingsRecord } from "@/modules/events/repository";
-import { getEventPublishReadiness } from "@/modules/events/readiness";
+import { getEventPublishReadiness, getEventPublishWarnings } from "@/modules/events/readiness";
 import {
   eventTimeZones,
   type EventSettingsInput,
@@ -35,6 +35,7 @@ type EventApiResult = {
   event?: EventSettingsRecord;
   message?: string;
   issues?: Array<{ message?: string }>;
+  warnings?: string[];
 };
 
 const timeZoneLabels: Record<(typeof eventTimeZones)[number], string> = {
@@ -123,6 +124,10 @@ export function EventSettingsWorkspace({
   const readiness = useMemo(
     () => getEventPublishReadiness(savedDraft, publishedFormCount),
     [savedDraft, publishedFormCount],
+  );
+  const publishWarnings = useMemo(
+    () => getEventPublishWarnings(savedDraft),
+    [savedDraft],
   );
   const dirty = useMemo(
     () => JSON.stringify(draft) !== JSON.stringify(savedDraft),
@@ -228,7 +233,12 @@ export function EventSettingsWorkspace({
       }
       setPublished(result.event.isPublished);
       setPublishDialogOpen(false);
-      setNotice("Event published. Public registration is available during the registration window.");
+      const warnings = result.warnings ?? [];
+      setNotice(
+        warnings.length > 0
+          ? `Event published. ${warnings.join(" ")}`
+          : "Event published. Public registration is available during the registration window.",
+      );
     } catch (caught) {
       setPublishError(caught instanceof Error ? caught.message : "The event could not be published.");
     } finally {
@@ -599,6 +609,10 @@ export function EventSettingsWorkspace({
                 </li>
               ))}
             </ul>
+            {/* Never blocks publish (#575): a warning only. */}
+            {!published && publishWarnings.map((warning) => (
+              <div className="inline-notice clone-warning" key={warning} role="status"><AlertTriangle size={17} aria-hidden="true" /> {warning}</div>
+            ))}
             {/* Never blocks publish (#467): shown for visibility only. */}
             <p className="event-readiness-optional-heading">Optional</p>
             <ul className="event-readiness-list event-readiness-optional">
@@ -698,6 +712,7 @@ export function EventSettingsWorkspace({
           busy={publishing}
           eventName={initialEvent?.name ?? draft.name}
           error={publishError}
+          warnings={publishWarnings}
           onCancel={cancelPublish}
           onConfirm={() => void publish()}
           open={publishDialogOpen}

@@ -32,6 +32,8 @@ import {
   activeRegistrationStatuses,
   evaluateEventRegistrationAdmission,
   evaluateEventRegistrationPhase,
+  hasEventEnded,
+  registrationClosedMessage,
   type CapacityDecision,
   type EventRegistrationPhase,
 } from "@/modules/events/lifecycle";
@@ -618,6 +620,12 @@ async function createPublicRegistrationTransaction(
     throw new PublicRegistrationError(
       "REGISTRATION_NOT_OPEN",
       `Registration for this event is not open yet.${opening}`
+    );
+  }
+  if (phase === "CLOSED" && hasEventEnded(form.event, now)) {
+    throw new PublicRegistrationError(
+      "REGISTRATION_CLOSED",
+      registrationClosedMessage,
     );
   }
   if (phase === "CLOSED") {

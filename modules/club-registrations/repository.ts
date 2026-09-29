@@ -41,6 +41,7 @@ import {
   activeRegistrationStatuses,
   calendarDateInEventTimeZone,
   evaluateEventRegistrationPhase,
+  hasEventEnded,
 } from "@/modules/events/lifecycle";
 import { isSeminarPreferenceField } from "@/modules/attendee-accounts/registration-answer-policy";
 import {
@@ -334,6 +335,7 @@ function clubEditWindow(event: ClubEvent, now: Date) {
     registrationClosesOn: event.registrationClosesOn,
     today: calendarDateInEventTimeZone(now, event.timezone),
     eventDate: calendarDateInEventTimeZone(event.startsAt, event.timezone),
+    ended: hasEventEnded(event, now),
   });
 }
 
@@ -404,6 +406,7 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
       timezone: event.timezone,
       eventDate,
       phase: evaluateEventRegistrationPhase(event, now),
+      ended: hasEventEnded(event, now),
       registrationClosesOn: event.registrationClosesOn,
       // Whether a submitted registration may still be reopened (H3b, #366).
       edit: clubEditWindow(event, now),

@@ -14,7 +14,7 @@ import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { loadDirectorClubAssignment } from "@/modules/club-registrations/director-assignment";
 import { isChurchBilledStatus, notBilledLabel } from "@/modules/club-registrations/church-owed";
 import { ClubRegistrationError, getClubEventWorkspace } from "@/modules/club-registrations/repository";
-import { activeRegistrationStatuses } from "@/modules/events/lifecycle";
+import { activeRegistrationStatuses, registrationClosedMessage } from "@/modules/events/lifecycle";
 import { getClassSelectionWorkspace } from "@/modules/honors/enrollment-repository";
 
 export const metadata: Metadata = { title: "Club registration" };
@@ -176,7 +176,9 @@ export default async function ClubEventRegistrationPage({
       {!workspace.registration && !workspace.problem && workspace.event.phase !== "OPEN" && (
         <section className="public-manage-card">
           <p className="public-manage-empty">
-            {workspace.event.phase === "CLOSED"
+            {workspace.event.phase === "CLOSED" && workspace.event.ended
+              ? registrationClosedMessage
+              : workspace.event.phase === "CLOSED"
               ? `Registration closed${workspace.event.registrationClosesOn ? ` after ${workspace.event.registrationClosesOn}` : ""}.`
               : "Registration for this event isn't open yet."}
           </p>

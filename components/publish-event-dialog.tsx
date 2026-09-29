@@ -15,6 +15,7 @@ export function PublishEventDialog({
   onCancel,
   onConfirm,
   open,
+  warnings = [],
 }: {
   busy: boolean;
   eventName: string;
@@ -22,6 +23,8 @@ export function PublishEventDialog({
   onCancel: () => void;
   onConfirm: () => void;
   open: boolean;
+  /** Non-blocking notes, such as an event whose dates have passed (#575). */
+  warnings?: string[];
 }) {
   return (
     <ConfirmDialog
@@ -39,6 +42,9 @@ export function PublishEventDialog({
         Anyone with a link can see the event, and attendees can register whenever a registration form
         is open. You can unpublish at any time to close every public form.
       </p>
+      {warnings.map((warning) => (
+        <p className="inline-notice clone-warning" key={warning} role="status">{warning}</p>
+      ))}
     </ConfirmDialog>
   );
 }

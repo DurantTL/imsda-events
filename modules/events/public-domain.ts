@@ -1,5 +1,7 @@
 import {
   evaluateEventRegistrationPhase,
+  hasEventEnded,
+  registrationClosedMessage,
   remainingEventCapacity,
   type EventRegistrationPhase,
 } from "@/modules/events/lifecycle";
@@ -53,6 +55,7 @@ type PublicEventLifecycleInput = {
   registrationOpensOn: string | null;
   registrationClosesOn: string | null;
   waitlistEnabled: boolean;
+  endsAt?: Date | null;
 };
 
 const publicAnnouncementPriorityRank: Record<
@@ -161,6 +164,18 @@ export function describePublicEventLifecycle(
       statusLabel: `Registration opens ${opens}`,
       detail: "Review the event details now and return when online registration opens.",
       ctaLabel: `Opens ${opens}`,
+      ctaEnabled: false,
+      remainingSpots,
+    };
+  }
+
+  if (phase === "CLOSED" && hasEventEnded(event, now)) {
+    return {
+      phase,
+      state: "CLOSED",
+      statusLabel: registrationClosedMessage,
+      detail: "This event has ended. Contact the event team if you need help.",
+      ctaLabel: "Registration closed",
       ctaEnabled: false,
       remainingSpots,
     };

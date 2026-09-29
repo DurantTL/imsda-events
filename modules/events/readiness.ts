@@ -34,6 +34,29 @@ export type EventReadinessOptionalItem = {
   complete: boolean;
 };
 
+export const pastEventPublishWarning =
+  "This event's dates have passed; public registration will be closed.";
+
+/**
+ * Warnings shown when publishing (#575). Unlike readiness items they never
+ * block publishing: an event whose last day has passed can still be published
+ * (for example to show its page), it just won't take public registrations.
+ * `endsOn` is a calendar date (YYYY-MM-DD) in the event time zone.
+ */
+export function getEventPublishWarnings(
+  event: { endsOn?: string | null; timezone?: string | null },
+  now = new Date(),
+) {
+  if (!event.endsOn || !event.timezone) return [];
+  const today = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: event.timezone,
+  }).format(now);
+  return today > event.endsOn ? [pastEventPublishWarning] : [];
+}
+
 function hasText(value: string | null | undefined) {
   return Boolean(value?.trim());
 }

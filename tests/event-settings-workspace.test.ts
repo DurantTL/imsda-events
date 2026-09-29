@@ -193,6 +193,22 @@ describe("PublishEventDialog (#571 F-20)", () => {
     expect(markup).toContain('role="alert"');
   });
 
+  it("shows the past-dates warning in the dialog, and keeps it in the success notice (#575)", () => {
+    const warning = "This event's dates have passed; public registration will be closed.";
+    const markup = renderToStaticMarkup(createElement(PublishEventDialog, {
+      busy: false,
+      eventName: "Synthetic Retreat",
+      error: "",
+      onCancel: () => {},
+      onConfirm: () => {},
+      open: true,
+      warnings: [warning],
+    }));
+    expect(markup).toContain("dates have passed");
+    expect(workspaceSource).toContain("warnings={publishWarnings}");
+    expect(workspaceSource).toContain("`Event published. ${warnings.join(\" \")}`");
+  });
+
   it("the Publish button opens the confirmation instead of publishing directly", () => {
     expect(workspaceSource).toContain("onClick={openPublishDialog}");
     expect(workspaceSource).not.toContain("onClick={() => void publish()}");
