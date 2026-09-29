@@ -1,11 +1,10 @@
 import { getPrisma } from "@/lib/prisma";
 
-export async function listAnnouncements(eventId: string) {
-  const rows = await getPrisma().announcement.findMany({
-    where: { eventId },
-    orderBy: [{ status: "desc" }, { pinnedAt: "desc" }, { updatedAt: "desc" }],
-  });
-  return rows.map((row) => ({
+type AnnouncementRow = Awaited<ReturnType<ReturnType<typeof getPrisma>["announcement"]["findMany"]>>[number];
+
+/** The client-facing shape: no internal user IDs. */
+function toAnnouncementRecord(row: AnnouncementRow) {
+  return {
     id: row.id,
     title: row.title,
     body: row.body,
@@ -16,7 +15,15 @@ export async function listAnnouncements(eventId: string) {
     publishedAt: row.publishedAt?.toISOString() ?? null,
     pinnedAt: row.pinnedAt?.toISOString() ?? null,
     updatedAt: row.updatedAt.toISOString(),
-  }));
+  };
+}
+
+export async function listAnnouncements(eventId: string) {
+  const rows = await getPrisma().announcement.findMany({
+    where: { eventId },
+    orderBy: [{ status: "desc" }, { pinnedAt: "desc" }, { updatedAt: "desc" }],
+  });
+  return rows.map(toAnnouncementRecord);
 }
 
 export async function createAnnouncement(
@@ -52,15 +59,25 @@ export async function createAnnouncement(
   });
 }
 
+/**
+ * Publishes a draft. Only a DRAFT can be published: an already-published or
+ * discarded announcement returns null and is left untouched (`publishedAt` is
+ * never reset).
+ */
 export async function publishAnnouncement(eventId: string, announcementId: string, actorUserId: string) {
-  const prisma = getPrisma();
-  const existing = await prisma.announcement.findFirst({ where: { id: announcementId, eventId } });
-  if (!existing) return null;
-  return prisma.$transaction(async (tx) => {
-    const announcement = await tx.announcement.update({
-      where: { id: announcementId },
+  return getPrisma().$transaction(async (tx) => {
+    const existing = await tx.announcement.findFirst({
+      where: { id: announcementId, eventId, status: "DRAFT" },
+      select: { id: true, title: true },
+    });
+    if (!existing) return null;
+    const updated = await tx.announcement.updateMany({
+      where: { id: announcementId, eventId, status: "DRAFT" },
       data: { status: "PUBLISHED", publishedAt: new Date() },
     });
+    if (updated.count === 0) return null;
+    const announcement = await tx.announcement.findFirst({ where: { id: announcementId, eventId } });
+    if (!announcement) return null;
     await tx.auditLog.create({
       data: {
         eventId,
@@ -72,7 +89,7 @@ export async function publishAnnouncement(eventId: string, announcementId: strin
         summary: `Published announcement: ${existing.title}.`,
       },
     });
-    return announcement;
+    return toAnnouncementRecord(announcement);
   });
 }
 
@@ -93,10 +110,13 @@ export async function updateAnnouncementDraft(
       select: { id: true, title: true },
     });
     if (!existing) return null;
-    const announcement = await tx.announcement.update({
-      where: { id: existing.id },
+    const updated = await tx.announcement.updateMany({
+      where: { id: existing.id, eventId, status: "DRAFT" },
       data: { title: input.title, body: input.body, priority: input.priority },
     });
+    if (updated.count === 0) return null;
+    const announcement = await tx.announcement.findFirst({ where: { id: existing.id, eventId } });
+    if (!announcement) return null;
     await tx.auditLog.create({
       data: {
         eventId,
@@ -109,7 +129,7 @@ export async function updateAnnouncementDraft(
         metadata: { previousTitle: existing.title },
       },
     });
-    return announcement;
+    return toAnnouncementRecord(announcement);
   });
 }
 

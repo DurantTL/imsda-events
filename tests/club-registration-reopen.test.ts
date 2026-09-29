@@ -25,6 +25,8 @@ describe("reopen confirmation", () => {
     expect(REOPEN_NOTICE).toMatch(/reopened/i);
     const source = readFileSync("components/club-registration-editor.tsx", "utf8");
     expect(source).toContain('role="status"');
+    // Only right after a reopen, not on every render of Step 1.
+    expect(source).toContain("{justReopened && <div");
     expect(source).toContain("club-roster-highlight");
     expect(readFileSync("app/globals.css", "utf8")).toContain(".club-roster-highlight");
   });

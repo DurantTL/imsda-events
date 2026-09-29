@@ -58,6 +58,8 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
   const [addingGuest, setAddingGuest] = useState(false);
   const [error, setError] = useState("");
   const [highlightRoster, setHighlightRoster] = useState(false);
+  // The confirmation shows only right after a reopen, not on every return to Step 1.
+  const [justReopened, setJustReopened] = useState(false);
   const rosterSectionRef = useRef<HTMLElement | null>(null);
   const definition = workspace.experience.form.definition;
 
@@ -196,6 +198,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
     submitLabel: "Save changes",
     onSubmitted: () => {
       setOpen(false);
+      setJustReopened(false);
       setStep("who");
       router.refresh();
     },
@@ -211,7 +214,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
 
   if (!open) {
     return (
-      <button className="secondary-button" onClick={() => { setHighlightRoster(true); setOpen(true); }} type="button">
+      <button className="secondary-button" onClick={() => { setHighlightRoster(true); setJustReopened(true); setOpen(true); }} type="button">
         <Pencil aria-hidden="true" size={14} /> Reopen to add or remove people
       </button>
     );
@@ -248,7 +251,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
       ref={rosterSectionRef}
       tabIndex={-1}
     >
-      <div className="inline-notice success" role="status"><Check aria-hidden="true" size={15} /> {REOPEN_NOTICE}</div>
+      {justReopened && <div className="inline-notice success" role="status"><Check aria-hidden="true" size={15} /> {REOPEN_NOTICE}</div>}
       <div className="public-manage-card-heading club-roster-heading">
         <div>
           <p className="public-registration-eyebrow">Step 1 of 2 · Who&apos;s going</p>
@@ -358,13 +361,13 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
         )}
       </section>
       <div className="club-registration-toolbar">
-        <button className="secondary-button" onClick={() => setOpen(false)} type="button">
+        <button className="secondary-button" onClick={() => { setJustReopened(false); setOpen(false); }} type="button">
           <X aria-hidden="true" size={15} /> Cancel
         </button>
         <button
           className="primary-button"
           disabled={goingCount === 0}
-          onClick={() => { setError(""); setStep("form"); }}
+          onClick={() => { setError(""); setJustReopened(false); setStep("form"); }}
           type="button"
         >
           Continue with {goingCount} {goingCount === 1 ? "person" : "people"} <ArrowRight aria-hidden="true" size={15} />

@@ -20,7 +20,7 @@ async function patchHandler(request: Request, context: { params: Promise<{ event
     const { eventId, announcementId } = await context.params;
     const access = await requirePermission(await getCurrentSession(), eventId, "MANAGE_COMMUNICATIONS", findActiveMembership);
     const announcement = await publishAnnouncement(eventId, announcementId, access.user.id);
-    return announcement ? Response.json({ announcement }) : Response.json({ error: "ANNOUNCEMENT_NOT_FOUND" }, { status: 404 });
+    return announcement ? Response.json({ announcement }) : Response.json({ error: "DRAFT_NOT_FOUND", message: "That draft no longer exists or was already published." }, { status: 404 });
   } catch (error) {
     if (error instanceof AccessDeniedError) return Response.json({ error: error.code, message: error.message }, { status: error.status });
     logError("Announcement publish failed", error);
