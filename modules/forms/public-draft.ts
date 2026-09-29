@@ -1,4 +1,4 @@
-import { isBirthDateField, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
+import { isBirthDateField, isFieldVisible, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
 
 /**
  * Browser-only drafts for public registration forms (#574).
@@ -19,6 +19,9 @@ import { isBirthDateField, type RegistrationFormDefinition, type RegistrationFor
  *     checkbox, or a key or label containing acknowledg, consent, agree,
  *     waiver, release or terms).
  *  3. The payment-method field and birth-date fields are never saved.
+ *     A conditional follow-up whose controlling question is excluded is
+ *     excluded too (transitively), and restored answers whose question is
+ *     hidden are dropped.
  *  4. Any field whose key or label (camelCase and underscores split, stems
  *     matched without a trailing word boundary) looks health, insurance,
  *     care, custody or note related is never saved: medic*, health*, insur*,
@@ -46,20 +49,20 @@ export const PUBLIC_DRAFT_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 export const PUBLIC_DRAFT_RESTORED_NOTICE = "We restored your answers from earlier.";
 export const PUBLIC_DRAFT_VERSION_CHANGED_NOTICE = "The form changed since you started. Please re-enter your answers.";
 export const PUBLIC_DRAFT_STAFF_HELP =
-  "Visitors' unfinished answers are kept only in their own browser for 14 days, and only after they edit the form. Never kept: long-text, address and calculated fields; consent or acknowledgment checkboxes; payment and birth-date fields; anything that looks medical, health, insurance, dietary, accommodation, guardian, custody, pickup, or notes; and every attendee answer except name, attendee type, shirt size, and paid or limited session choices. Nothing is kept for signed-in visitors.";
+  "Visitors' unfinished answers are kept only in their own browser for 14 days, and only after they edit the form. Never kept: long-text, address and calculated fields; consent or acknowledgment checkboxes; payment and birth-date fields; anything that looks medical, health, insurance, dietary, meal, accommodation, guardian, custody, pickup, or notes (and any follow-up question shown because of one); and every attendee answer except name, attendee type, shirt size, and paid or limited session choices. Nothing is kept for signed-in visitors.";
 
 const KEY_PREFIX = "imsda-events:draft:v1";
 const FORMAT = 1;
 
 // Stems are matched without a trailing word boundary on purpose.
 const excludedFieldPattern = new RegExp(
-  "\\b(?:medic|health|insur|condition|accommod|restrict|allerg|dietar|diet\\b|physician|doctor|prescri|meds?\\b|epi\\W?pen|inhaler|asthma|seizure|immuni[sz]|vaccin|tetanus|mental|background|guardian|custody|pick\\s?up|notes?\\b|anything\\b.*\\bknow|wheelchair|mobility|diabet|epilep|pregnan|therap|counsel|behavio|limitation|sensitiv|vegetarian|vegan|gluten|pediatric|hospital|clinic|blood|emergency|parent|bday|diagnos|disab|accessib|special\\s*needs?|policy\\s*(?:number|holder)|birth|dob\\b|payment|pay\\s*method|card|cvv|cvc|bank|routing|ssn|social\\s*security|password)",
+  "\\b(?:medic|health|insur|condition|accommod|restrict|allerg|dietar|diet\\b|physician|doctor|prescri|meds?\\b|epi\\W?pen|inhaler|asthma|seizure|immuni[sz]|vaccin|tetanus|mental|background|guardian|custody|pick\\s?up|notes?\\b|anything\\b.*\\bknow|wheelchair|mobility|diabet|epilep|pregnan|therap|counsel|behavio|limitation|sensitiv|vegetarian|vegan|gluten|pediatric|hospital|clinic|blood|emergency|parent|bday|diagnos|disab|accessib|special\\s*needs?|policy\\s*(?:number|holder)|birth|d\\W?o\\W?b\\b|meal|food|payment|pay\\s*method|card|cvv|cvc|bank|routing|ssn|social\\s*security|password)",
   "i",
 );
 // Plain-TEXT address parts; an EMAIL field's "Email address" label is not one.
 const addressPartPattern = /\b(?:street|city|zip|postal|address)/i;
 const consentPattern = /\b(?:acknowledg|consent|agree|waiver|release|terms)/i;
-const demographicPattern = /\b(?:age|gender|sex|grade|minor|dob)\b/i;
+const demographicPattern = /\b(?:age|gender|sex|grade|minor|d\W?o\W?b)\b/i;
 const attendeeNameKeys = new Set(["first_name", "last_name", "middle_name", "preferred_name", "full_name", "name", "attendee_name", "guest_name"]);
 const choiceTypes = new Set(["SELECT", "RADIO", "MULTISELECT", "RANKED_CHOICE"]);
 
@@ -96,13 +99,19 @@ export function shouldPersistDraft(state: { enabled: boolean; ready: boolean; di
 type DraftFieldShape = Pick<RegistrationFormField, "key" | "label" | "type">
   & Partial<Pick<RegistrationFormField, "scope" | "required" | "optionSource" | "priceCents" | "choicePricesCents" | "choiceLimits" | "availabilityMode" | "latePricing">>;
 
+const hasPositive = (prices: Record<string, number> | undefined) =>
+  prices !== undefined && Object.values(prices).some((cents) => cents > 0);
+
+// Empty pricing objects (the builder's Quick choices preset writes
+// `choicePricesCents: {}`) do not make a field a paid or limited choice.
 function isSessionOrProductChoice(field: DraftFieldShape) {
   return field.optionSource === "ATTENDEE_TYPES"
-    || field.priceCents !== undefined
-    || field.choicePricesCents !== undefined
-    || field.choiceLimits !== undefined
+    || (field.priceCents ?? 0) > 0
+    || hasPositive(field.choicePricesCents)
+    || (field.choiceLimits !== undefined && Object.keys(field.choiceLimits).length > 0)
     || (field.availabilityMode !== undefined && field.availabilityMode !== "NONE")
-    || field.latePricing !== undefined;
+    || (field.latePricing !== undefined
+      && ((field.latePricing.priceCents ?? 0) > 0 || hasPositive(field.latePricing.choicePricesCents)));
 }
 
 export function isDraftExcludedField(
@@ -127,14 +136,56 @@ export function isDraftExcludedField(
   return false;
 }
 
+/**
+ * Keys of every field that must not be saved: those excluded by
+ * `isDraftExcludedField`, plus any field whose "show only when" controller is
+ * excluded (followed transitively, so a follow-up to a follow-up is covered;
+ * the fixed-point loop terminates on cycles).
+ */
+export function draftExcludedKeys(definition: RegistrationFormDefinition) {
+  const fields = definition.sections.flatMap((section) => section.fields);
+  const excluded = new Set(fields.filter((field) => isDraftExcludedField(field, definition)).map((field) => field.key));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const field of fields) {
+      if (!excluded.has(field.key) && field.conditional && excluded.has(field.conditional.fieldKey)) {
+        excluded.add(field.key);
+        changed = true;
+      }
+    }
+  }
+  return excluded;
+}
+
 function draftFields(definition: RegistrationFormDefinition, scope: "REGISTRATION" | "ATTENDEE") {
+  const excluded = draftExcludedKeys(definition);
   return new Map(
     definition.sections
       .flatMap((section) => section.fields)
-      .filter((field) => field.scope === scope)
-      .filter((field) => !isDraftExcludedField(field, definition))
+      .filter((field) => field.scope === scope && !excluded.has(field.key))
       .map((field) => [field.key, field] as const),
   );
+}
+
+/** Same rule as the form's own pruning: a conditional answer whose question is hidden is dropped. */
+function pruneHidden(
+  fields: Map<string, RegistrationFormField>,
+  responses: DraftResponses,
+  shared: DraftResponses,
+) {
+  const next = { ...responses };
+  for (let pass = 0; pass < fields.size; pass += 1) {
+    let removed = false;
+    for (const field of fields.values()) {
+      if (field.conditional && field.key in next && !isFieldVisible(field, { ...shared, ...next })) {
+        delete next[field.key];
+        removed = true;
+      }
+    }
+    if (!removed) break;
+  }
+  return next;
 }
 
 function isPlainValue(value: unknown): boolean {
@@ -170,9 +221,13 @@ export function sanitizeDraftContent(
       return [{ clientId, responses: pickAllowed(responses, attendeeFields) }];
     })
     : [];
+  const registrationResponses = pruneHidden(registrationFields, pickAllowed(content.responses, registrationFields), {});
   return {
-    responses: pickAllowed(content.responses, registrationFields),
-    attendees,
+    responses: registrationResponses,
+    attendees: attendees.map((attendee) => ({
+      clientId: attendee.clientId,
+      responses: pruneHidden(attendeeFields, attendee.responses, registrationResponses),
+    })),
   };
 }
 

@@ -477,7 +477,11 @@ export function PublicRegistrationForm({
   const [draftReady, setDraftReady] = useState(false);
   const [draftDirty, setDraftDirty] = useState(false);
   useEffect(() => {
-    if (!draftsEnabled) return;
+    if (!draftsEnabled) {
+      // Signed in or prefilled: also drop any older signed-out draft.
+      if (!club) clearPublicDraft(getBrowserDraftStorage(), draftIdentity);
+      return;
+    }
     // Deferred a tick so the restore is an external-storage sync, not a
     // synchronous state cascade inside the effect.
     const timer = window.setTimeout(restoreDraft, 0);
@@ -2478,6 +2482,7 @@ export function PublicRegistrationForm({
 
   function startAnotherRegistration() {
     setDraftDirty(false);
+    setDraftNotice(null);
     setResponses(initialResponses);
     setRegistrationResponses(initialResponses);
     setAttendees(buildInitialAttendees());

@@ -8,6 +8,7 @@ import {
   PUBLIC_DRAFT_TTL_MS,
   PUBLIC_DRAFT_VERSION_CHANGED_NOTICE,
   clearPublicDraft,
+  draftExcludedKeys,
   draftsAllowed,
   isDraftExcludedField,
   mergeDraftAttendees,
@@ -307,5 +308,82 @@ describe("restore details (#574 review)", () => {
     expect(storage.length).toBe(0);
     storage.setItem(publicDraftKey({ ...identity, versionId: "version-0" }), "{corrupt");
     expect(loadPublicDraft(storage, identity, definition, now).status).toBe("none");
+  });
+});
+
+describe("draft review round 3 (#574)", () => {
+  const excluded = (key: string, label: string, type: "TEXT" | "SELECT" | "RADIO" | "CHECKBOX", scope: "REGISTRATION" | "ATTENDEE", extra: Record<string, unknown> = {}) =>
+    isDraftExcludedField({ key, label, type, scope, required: false, ...extra }, definition);
+
+  it("does not treat empty pricing objects (Quick choices preset) as paid or limited", () => {
+    const preset = { choicePricesCents: {}, choiceLimits: {}, latePricing: { startsOn: "2026-10-01", label: "Late", choicePricesCents: {} } };
+    expect(excluded("session_pick", "Session", "RADIO", "ATTENDEE", preset)).toBe(true);
+    expect(excluded("photo_ok", "Photo permission", "RADIO", "ATTENDEE", preset)).toBe(true);
+    expect(excluded("meal_pref", "Meal preference", "SELECT", "ATTENDEE", { choicePricesCents: {} })).toBe(true);
+    expect(excluded("meal_pref", "Meal preference", "SELECT", "REGISTRATION", { choicePricesCents: {} })).toBe(true);
+    expect(excluded("food_pick", "Food", "RADIO", "REGISTRATION")).toBe(true);
+    expect(excluded("workshop", "Workshop", "SELECT", "ATTENDEE", { priceCents: 0 })).toBe(true);
+  });
+
+  it("still saves genuinely priced or limited attendee choices", () => {
+    expect(excluded("workshop", "Workshop", "SELECT", "ATTENDEE", { priceCents: 500 })).toBe(false);
+    expect(excluded("workshop", "Workshop", "SELECT", "ATTENDEE", { choicePricesCents: { A: 0, B: 500 } })).toBe(false);
+    expect(excluded("workshop", "Workshop", "SELECT", "ATTENDEE", { choiceLimits: { A: 5 } })).toBe(false);
+    expect(excluded("workshop", "Workshop", "SELECT", "ATTENDEE", { availabilityMode: "RANKED_INTEREST" })).toBe(false);
+    expect(excluded("workshop", "Workshop", "SELECT", "ATTENDEE", { latePricing: { startsOn: "2026-10-01", label: "Late", priceCents: 100 } })).toBe(false);
+  });
+
+  it("excludes D.O.B. style birth-date labels and keys", () => {
+    expect(excluded("d_o_b", "Date", "TEXT", "REGISTRATION")).toBe(true);
+    expect(excluded("when", "D.O.B.", "TEXT", "REGISTRATION")).toBe(true);
+  });
+
+  const conditional = registrationFormDefinitionSchema.parse({
+    title: "Synthetic", description: "Synthetic.", confirmationMessage: "Received.",
+    sections: [{ id: "sec", title: "Section", description: "", fields: [
+      { ...base, id: "f_name", key: "contact_name", label: "Contact name", type: "TEXT", scope: "REGISTRATION", required: true },
+      { ...base, id: "f_flag", key: "any_flag", label: "Any medical conditions?", type: "RADIO", scope: "REGISTRATION", required: false, options: ["No", "Yes"] },
+      { ...base, id: "f_desc", key: "flag_more", label: "Please describe", type: "TEXT", scope: "REGISTRATION", required: false, conditional: { fieldKey: "any_flag", operator: "EQUALS", value: "Yes" } },
+      { ...base, id: "f_desc2", key: "flag_more_detail", label: "Further detail", type: "TEXT", scope: "REGISTRATION", required: false, conditional: { fieldKey: "flag_more", operator: "NOT_EMPTY", value: "" } },
+      { ...base, id: "f_pref", key: "contact_pref", label: "Contact preference", type: "RADIO", scope: "REGISTRATION", required: false, options: ["Email", "Phone"] },
+      { ...base, id: "f_phone", key: "best_phone", label: "Best phone", type: "TEXT", scope: "REGISTRATION", required: false, conditional: { fieldKey: "contact_pref", operator: "EQUALS", value: "Phone" } },
+    ] }],
+  });
+
+  it("excludes follow-ups of an excluded question, through a chain", () => {
+    const keys = draftExcludedKeys(conditional);
+    expect(keys.has("any_flag")).toBe(true);
+    expect(keys.has("flag_more")).toBe(true);
+    expect(keys.has("flag_more_detail")).toBe(true);
+    expect(keys.has("best_phone")).toBe(false);
+    const storage = new FakeStorage();
+    savePublicDraft(storage, identity, conditional, {
+      responses: { contact_name: "Avery", any_flag: "Yes", flag_more: "synthetic detail", flag_more_detail: "chained detail" },
+      attendees: [],
+    }, now);
+    const raw = storage.getItem(publicDraftKey(identity)) ?? "";
+    expect(raw).toContain("Avery");
+    for (const leaked of ["synthetic detail", "chained detail", "any_flag", "flag_more"]) expect(raw).not.toContain(leaked);
+  });
+
+  it("handles conditional cycles without hanging", () => {
+    const cyclic = registrationFormDefinitionSchema.parse({
+      title: "Synthetic", description: "Synthetic.", confirmationMessage: "Received.",
+      sections: [{ id: "sec", title: "Section", description: "", fields: [
+        { ...base, id: "cyc_a", key: "cycle_a", label: "Alpha", type: "TEXT", scope: "REGISTRATION", required: false, conditional: { fieldKey: "cycle_b", operator: "NOT_EMPTY", value: "" } },
+        { ...base, id: "cyc_b", key: "cycle_b", label: "Beta", type: "TEXT", scope: "REGISTRATION", required: false, conditional: { fieldKey: "cycle_a", operator: "NOT_EMPTY", value: "" } },
+      ] }],
+    });
+    expect(draftExcludedKeys(cyclic).size).toBe(0);
+  });
+
+  it("drops hidden conditional answers on restore", () => {
+    const storage = new FakeStorage();
+    storage.setItem(publicDraftKey(identity), JSON.stringify({
+      format: 1, versionId: "version-1", savedAt: now.getTime(),
+      responses: { contact_name: "Avery", contact_pref: "Email", best_phone: "555-0100" }, attendees: [],
+    }));
+    const result = loadPublicDraft(storage, identity, conditional, now);
+    expect(result.status === "restored" && result.draft.responses).toEqual({ contact_name: "Avery", contact_pref: "Email" });
   });
 });
