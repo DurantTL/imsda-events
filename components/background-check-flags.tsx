@@ -62,6 +62,7 @@ export function BackgroundCheckList({
                 <BackgroundCheckBadge state={person.state} />
                 <small className="quiet-copy"> {person.state === "EXPIRED" ? `Expired ${person.expiresOn}` : backgroundFlagLabels[person.state]}</small>
                 {person.issuesNote && <><br /><small className="quiet-copy background-check-note" translate="no">Issues: {person.issuesNote}</small></>}
+                {person.issueReasons.length > 0 && <><br /><small className="quiet-copy background-check-note">{person.issueReasons.join("; ")}</small></>}
               </td>
               <td>
                 {registrationHref

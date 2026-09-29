@@ -1175,12 +1175,13 @@ describe("club page compliance (#427, #527)", () => {
   it("never includes the note unless the caller is allowed to see it", async () => {
     const { client, seed } = makeFakeDb();
     currentClient = client;
-    seed.rosterMembers.push(member("member-1", { complianceStatus: "NOT_COMPLIANT", expiresOn: null, issuesNote: "Pending paperwork" }));
+    seed.rosterMembers.push(member("member-1", { complianceStatus: "NOT_COMPLIANT", expiresOn: null, issuesNote: "Pending paperwork, Non-Driver" }));
     const forClub = await clubRosterComplianceStatuses("org-1", "2026", { includeNotes: false });
-    expect(forClub.statuses["member-1"]).toEqual({ state: "NOT_COMPLIANT", note: null });
+    expect(forClub.statuses["member-1"]).toEqual({ state: "NOT_COMPLIANT", note: null, reasons: [] });
     expect(JSON.stringify(forClub)).not.toContain("Pending paperwork");
+    expect(JSON.stringify(forClub)).not.toContain("Non-Driver");
     const forStaff = await clubRosterComplianceStatuses("org-1", "2026", { includeNotes: true });
-    expect(forStaff.statuses["member-1"]).toEqual({ state: "NOT_COMPLIANT", note: "Pending paperwork" });
+    expect(forStaff.statuses["member-1"]).toEqual({ state: "NOT_COMPLIANT", note: "Pending paperwork, Non-Driver", reasons: ["Marked Non-Driver"] });
   });
 
   it("shows a club's own roster the status for directors and deputies only, never a registrar, and never the note", async () => {
@@ -1189,7 +1190,7 @@ describe("club page compliance (#427, #527)", () => {
     seed.rosterMembers.push(member("member-1", { complianceStatus: "FLAGGED", expiresOn: null, issuesNote: "Training expires 2026-11-01" }));
     await expect(clubPortalComplianceStatuses("org-1", "2026", clubCapabilities("REGISTRAR"))).resolves.toBeUndefined();
     for (const role of ["DIRECTOR", "DEPUTY"] as const) {
-      await expect(clubPortalComplianceStatuses("org-1", "2026", clubCapabilities(role))).resolves.toEqual({ "member-1": { state: "FLAGGED", note: null } });
+      await expect(clubPortalComplianceStatuses("org-1", "2026", clubCapabilities(role))).resolves.toEqual({ "member-1": { state: "FLAGGED", note: null, reasons: [] } });
     }
   });
 
@@ -1220,7 +1221,7 @@ describe("club page compliance (#427, #527)", () => {
     seed.attendees.push(
       attendee("roster-clear", { complianceStatus: "CLEAR", expiresOn: null }),
       attendee("roster-soon", { complianceStatus: "FLAGGED", expiresOn: null }),
-      attendee("roster-no", { complianceStatus: "NOT_COMPLIANT", expiresOn: null, issuesNote: "Synthetic BGC issue" }),
+      attendee("roster-no", { complianceStatus: "NOT_COMPLIANT", expiresOn: null, issuesNote: "Synthetic issue, Non-Driver, BGC" }),
       attendee("none", null),
     );
     const flags = await listEventBackgroundFlags("event-1");
@@ -1231,7 +1232,11 @@ describe("club page compliance (#427, #527)", () => {
     expect(flags!.people.every((flag) => flag.issuesNote === null)).toBe(true);
     expect(JSON.stringify(flags)).not.toContain("Synthetic");
     const withNotes = await listEventBackgroundFlags("event-1", { includeNotes: true });
-    expect(withNotes!.people.map((flag) => [flag.attendeeId, flag.issuesNote])).toEqual([["roster-no", "Synthetic BGC issue"], ["none", null]]);
+    expect(withNotes!.people.map((flag) => [flag.attendeeId, flag.issuesNote])).toEqual([["roster-no", "Synthetic issue, Non-Driver, BGC"], ["none", null]]);
+    expect(withNotes!.people[0]!.issueReasons).toEqual(["Marked Non-Driver", "Background check expired"]);
+    // Without includeNotes there is no text and no reason: nothing to leak.
+    expect(flags!.people.every((flag) => flag.issueReasons.length === 0)).toBe(true);
+    expect(JSON.stringify(flags)).not.toContain("Non-Driver");
     expect(backgroundFlagsCsv(withNotes!.people)).not.toContain("Synthetic");
   });
 });
@@ -1348,10 +1353,10 @@ describe("read-time matching for people the cache hasn't matched yet (#527 B5)",
       person: { firstName: "Maria", lastName: "Rivera-Lopez", normalizedEmail: null, attendeeAccountLinks: [], backgroundCheckMatch: null },
     });
     const forClub = await clubRosterComplianceStatuses("org-1", "2026", { includeNotes: false });
-    expect(forClub.statuses["member-maria"]).toEqual({ state: "FLAGGED", note: null });
+    expect(forClub.statuses["member-maria"]).toEqual({ state: "FLAGGED", note: null, reasons: [] });
     expect(forClub.missing).toBe(0);
     const forStaff = await clubRosterComplianceStatuses("org-1", "2026", { includeNotes: true });
-    expect(forStaff.statuses["member-maria"]).toEqual({ state: "FLAGGED", note: "Training expires 2026-11-01" });
+    expect(forStaff.statuses["member-maria"]).toEqual({ state: "FLAGGED", note: "Training expires 2026-11-01", reasons: [] });
     await expect(clubComplianceReminderCounts("org-1", "2026")).resolves.toEqual({ notInCompliance: 0, expiringSoon: 1, missing: 0 });
   });
 });

@@ -114,7 +114,6 @@ const rosterMemberSelect = {
   reportedAge: true,
   gender: true,
   sealedBirthDate: true,
-  willingToDrive: true,
   status: true,
 } satisfies Prisma.ClubRosterMemberSelect;
 
@@ -574,7 +573,6 @@ async function completeTransfer(
       reportedAge: sending.reportedAge,
       gender: sending.gender,
       sealedBirthDate: sending.sealedBirthDate,
-      willingToDrive: sending.willingToDrive,
       status: "ACTIVE",
       source: "TRANSFER",
       ...("accountId" in attribution ? { createdByAccountId: attribution.accountId } : { createdByUserId: attribution.userId }),

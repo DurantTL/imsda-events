@@ -279,7 +279,7 @@ export function ClubRegistrationWorkspace({
         <div className="club-roster-tools">
           <span>
             <strong id="club-guests-title">Not on your roster</strong>
-            <small className="field-help"> For this event only, e.g. a parent driver. They won&apos;t be added to your roster.</small>
+            <small className="field-help"> For this event only, e.g. a visiting parent. They won&apos;t be added to your roster.</small>
           </span>
           {!addingGuest && (
             <button className="text-button" onClick={() => { setGuestError(""); setAddingGuest(true); }} type="button">

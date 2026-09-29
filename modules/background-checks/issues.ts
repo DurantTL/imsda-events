@@ -7,12 +7,12 @@
  * - `Non-Driver`: the person may serve but may not drive.
  * - Blank: good standing.
  *
- * Parsed once here and shared by the roster status (`clubComplianceState`),
- * event flags (`backgroundCheckState`), and driver clearance
- * (`modules/driver-verification`). Pure and client-safe: no imports at all,
- * so nothing here can pull `node:` into a browser bundle (#550). The text
- * itself is staff only (#427); what a club may see is a summary state, or
- * an expiry date, never these items.
+ * Parsed once here so staff can see readable reasons (`describeIssues`)
+ * beside the text. The compliance mark (y / ! / n) stays the primary status,
+ * exactly as #527 reads it; nothing here changes it. Pure and client-safe:
+ * no imports at all, so nothing here can pull `node:` into a browser bundle
+ * (#550). The text and the reasons are for system administrators only
+ * (#427); a club never sees them.
  *
  * Parsing rules:
  * - Items are separated by commas; empty items are ignored.
@@ -22,10 +22,9 @@
  *   `(MM/DD/YYYY)`, spaces allowed inside. A two-digit year is 20YY.
  * - An undated `BGC` or `Training` is expired. A dated one lasts through its
  *   date, as a Sterling check does, and is expired the day after.
- * - `Non-Driver` blocks only driving; a date beside it changes nothing.
+ * - `Non-Driver` may serve but not drive; a date beside it changes nothing.
  * - Any other item, or a date that is not a real calendar date, is
- *   unrecognised. It never changes the overall status, but a driver with
- *   unrecognised text needs staff review.
+ *   unrecognised. It is shown as written and never changes the overall status.
  */
 
 export type IssueKind = "NON_DRIVER" | "BGC" | "TRAINING";
@@ -105,6 +104,21 @@ export function assessIssues(text: string | null | undefined, today: string): Is
     }
   }
   return { nonDriver, expired, pastDue, soonest, unrecognised };
+}
+
+/**
+ * The parsed items as readable reasons for staff, in the order written, as of
+ * `today`: "Marked Non-Driver", "Background check expired", "Background check
+ * expiring (10/04/2026)", "Child-protection training not completed", and so
+ * on. Unrecognised items are left to the text shown beside them.
+ */
+export function describeIssues(text: string | null | undefined, today: string): string[] {
+  return parseIssues(text).items.map((item) => {
+    if (item.kind === "NON_DRIVER") return "Marked Non-Driver";
+    const subject = item.kind === "BGC" ? "Background check" : "Child-protection training";
+    if (item.date === null) return item.kind === "BGC" ? `${subject} expired` : `${subject} not completed`;
+    return item.date < today ? `${subject} expired (${formatIssueDate(item.date)})` : `${subject} expiring (${formatIssueDate(item.date)})`;
+  });
 }
 
 /** "2026-10-04" as "10/04/2026", without a time zone shift. */

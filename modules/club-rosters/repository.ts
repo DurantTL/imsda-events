@@ -6,7 +6,6 @@ import { writeAuditLog } from "@/modules/audit/audit-service";
 import { openBirthDate, sealBirthDate } from "@/modules/club-rosters/birth-dates";
 import { ageOn, birthDateProblem, calendarDateOf, defaultRosterRole } from "@/modules/club-rosters/domain";
 import type { RosterMemberInput, RosterMemberUpdate } from "@/modules/club-rosters/schemas";
-import { willingToDriveAllowed } from "@/modules/driver-verification/domain";
 
 /**
  * Club roster storage (#356). Birth dates are sealed on write and opened only
@@ -19,8 +18,7 @@ export type RosterErrorCode =
   | "DUPLICATE_MEMBER"
   | "BIRTH_DATE_INVALID"
   | "MEMBER_REMOVED"
-  | "GENDER_REQUIRED"
-  | "WILLING_TO_DRIVE_NOT_ALLOWED";
+  | "GENDER_REQUIRED";
 
 export class RosterOperationError extends Error {
   constructor(public readonly code: RosterErrorCode, message: string) {
@@ -51,7 +49,6 @@ const memberSelect = {
   status: true,
   source: true,
   sourceRegistrationId: true,
-  willingToDrive: true,
   updatedAt: true,
   person: { select: { firstName: true, lastName: true } },
 } satisfies Prisma.ClubRosterMemberSelect;
@@ -73,8 +70,6 @@ function serializeMember(member: StoredMember, today: string) {
     gender: member.gender,
     status: member.status,
     source: member.source,
-    /** Q1 (#491): never grants clearance by itself — see `modules/driver-verification`. */
-    willingToDrive: member.willingToDrive,
     age: ageFrom(member, today),
     /** Imported without a birth date (#376): the form's age, until a birth date is added. */
     reportedAge: member.sealedBirthDate ? null : member.reportedAge,
@@ -185,9 +180,6 @@ export async function addRosterMember(
 ) {
   const now = options.now ?? new Date();
   assertBirthDate(input.birthDate, now);
-  if (!willingToDriveAllowed(input.attendeeType, input.willingToDrive)) {
-    throw new RosterOperationError("WILLING_TO_DRIVE_NOT_ALLOWED", "Only staff and adults can be marked willing to drive.");
-  }
   const result = await getPrisma().$transaction(async (tx) => {
     await assertNotDuplicate(tx, organizationId, clubYear, input.firstName, input.lastName, input.birthDate);
     const person = await tx.person.create({
@@ -204,7 +196,6 @@ export async function addRosterMember(
         classLevel: input.classLevel,
         gender: input.gender,
         sealedBirthDate: sealBirthDate(input.birthDate),
-        willingToDrive: input.willingToDrive,
         source: options.source ?? "DIRECTOR",
         sourceRegistrationId: options.sourceRegistrationId ?? null,
         ...("accountId" in actor ? { createdByAccountId: actor.accountId } : { createdByUserId: actor.userId }),
@@ -216,11 +207,6 @@ export async function addRosterMember(
       attendeeType: input.attendeeType,
       source: options.source ?? "DIRECTOR",
     });
-    // A willing driver's clearance is derived from the background-check list
-    // (#544), never granted by this alone — see `modules/driver-verification`.
-    if (input.willingToDrive) {
-      await audit(tx, actor, "CLUB_ROSTER_WILLING_TO_DRIVE_SET", organizationId, member.id, "Marked a roster member willing to drive.");
-    }
     return { memberId: member.id, personId: person.id };
   });
   return result;
@@ -267,12 +253,6 @@ export async function updateRosterMember(
     if ((input.firstName !== undefined || input.lastName !== undefined) && member.personId) {
       await tx.person.update({ where: { id: member.personId }, data: { firstName, lastName } });
     }
-    // "Willing to drive" (#491) is meaningful for staff and adults only,
-    // whatever the row ends up being after this edit.
-    const finalWillingToDrive = input.willingToDrive === undefined ? member.willingToDrive : input.willingToDrive;
-    if (!willingToDriveAllowed(finalType, finalWillingToDrive)) {
-      throw new RosterOperationError("WILLING_TO_DRIVE_NOT_ALLOWED", "Only staff and adults can be marked willing to drive.");
-    }
     await tx.clubRosterMember.update({
       where: { id: memberId },
       data: {
@@ -282,7 +262,6 @@ export async function updateRosterMember(
         ...(input.gender === undefined ? {} : { gender: input.gender }),
         ...(input.status === undefined ? {} : { status: input.status }),
         ...(input.birthDate === undefined ? {} : { sealedBirthDate: sealBirthDate(input.birthDate), reportedAge: null }),
-        ...(input.willingToDrive === undefined ? {} : { willingToDrive: input.willingToDrive }),
       },
     });
     const action = input.status === "INACTIVE" && member.status !== "INACTIVE"
@@ -293,13 +272,6 @@ export async function updateRosterMember(
     await audit(tx, actor, action, organizationId, memberId, "Updated a person on a club roster.", {
       fields: Object.keys(input),
     });
-    // Never clearance (#544 derives that from the background-check list):
-    // checking the box for the first time makes the person a willing driver.
-    // Recorded as its own entry only on the flip from not-willing to willing,
-    // so the audit trail shows exactly when someone was newly marked willing.
-    if (input.willingToDrive === true && member.willingToDrive !== true) {
-      await audit(tx, actor, "CLUB_ROSTER_WILLING_TO_DRIVE_SET", organizationId, memberId, "Marked a roster member willing to drive.");
-    }
     return { personId: member.personId };
   });
 }
@@ -307,7 +279,7 @@ export async function updateRosterMember(
 /**
  * Erases one roster row the way ADR 0005 Addendum A section 6 requires:
  * birth date, gender, role, class, reported age, the person link, and
- * willing-to-drive all go, and the row is marked removed. Shared by a club
+ * any leftover willing-to-drive flag (unused since #544) all go, and the row is marked removed. Shared by a club
  * removing someone (`removeRosterMember`) and a completed transfer (#489)
  * leaving its sending row behind, so the two can never drift apart. Clearing
  * `personId` also frees the `[organizationId, clubYear, personId]` unique
@@ -325,7 +297,7 @@ export async function eraseRosterRow(tx: Prisma.TransactionClient, memberId: str
       classLevel: null,
       reportedAge: null,
       personId: null,
-      // A removed row is never a willing driver (#491): it leaves the queue.
+      // The column is unused since #544; an erased row never keeps a leftover value.
       willingToDrive: false,
     },
   });

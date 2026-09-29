@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { backgroundFlagsCsv } from "@/modules/background-checks/domain";
-import { assessIssues, daysUntil, formatIssueDate, parseIssues } from "@/modules/background-checks/issues";
+import { assessIssues, daysUntil, describeIssues, formatIssueDate, parseIssues } from "@/modules/background-checks/issues";
 
 describe("parsing the background-check issues column (#544)", () => {
   it("reads blank as good standing", () => {
@@ -85,6 +85,27 @@ describe("assessing issues on a day (#544)", () => {
     expect(formatIssueDate("2026-10-04")).toBe("10/04/2026");
     expect(daysUntil("2026-10-01", "2026-10-31")).toBe(30);
     expect(daysUntil("2026-10-31", "2026-10-01")).toBe(-30);
+  });
+});
+
+describe("readable reasons for staff (#544)", () => {
+  const today = "2026-10-01";
+
+  it("says what each item means, in the order written", () => {
+    expect(describeIssues("Non-Driver", today)).toEqual(["Marked Non-Driver"]);
+    expect(describeIssues("BGC", today)).toEqual(["Background check expired"]);
+    expect(describeIssues("Training", today)).toEqual(["Child-protection training not completed"]);
+    expect(describeIssues("Training (10/04/26),BGC (09/30/26), non driver", today)).toEqual([
+      "Child-protection training expiring (10/04/2026)",
+      "Background check expired (09/30/2026)",
+      "Marked Non-Driver",
+    ]);
+  });
+
+  it("is empty for blank text and leaves unrecognised items to the text shown beside it", () => {
+    expect(describeIssues("", today)).toEqual([]);
+    expect(describeIssues(null, today)).toEqual([]);
+    expect(describeIssues("Fingerprints pending", today)).toEqual([]);
   });
 });
 

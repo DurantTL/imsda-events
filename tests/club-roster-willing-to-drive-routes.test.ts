@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * "Willing to drive" (#491) over HTTP: the roster's add and edit routes
- * answer 400 WILLING_TO_DRIVE_NOT_ALLOWED for a youth row. The real
- * repository runs against a small fake database, so the refusal is the
- * repository's own, and nothing is written.
+ * The app has no driving feature any more (#544). An older client may still
+ * send `willingToDrive` to the roster's add and edit routes; it is accepted
+ * and ignored, so nothing breaks and nothing is stored. The real schema and
+ * repository run against a small fake database.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: mocks.getPrisma }));
+vi.mock("@/lib/env", () => ({ getServerEnv: () => ({ SECRET_ENCRYPTION_KEY: "a-secret-encryption-key-of-adequate-length" }) }));
+vi.mock("@/modules/background-checks/refresh-after-write", () => ({ refreshBackgroundCheckMatchesSafely: async () => undefined }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: mocks.writeAuditLog }));
 vi.mock("@/modules/access/request-security", () => ({ rejectCrossOriginRequest: mocks.rejectCrossOriginRequest }));
 vi.mock("@/modules/club-rosters/access", async () => {
@@ -43,7 +45,6 @@ const storedYouth = {
   status: "ACTIVE",
   source: "DIRECTOR",
   sourceRegistrationId: null,
-  willingToDrive: false,
   updatedAt: new Date("2026-09-01T00:00:00Z"),
   person: { firstName: "Test", lastName: "Youth" },
 };
@@ -70,8 +71,29 @@ beforeEach(() => {
   mocks.getPrisma.mockReturnValue({ ...client, $transaction: async (work: (tx: typeof client) => unknown) => work(client) });
 });
 
-describe("the roster routes refuse 'Willing to drive' on a youth row (#491)", () => {
-  it("answers 400 when adding a youth marked willing to drive", async () => {
+describe("the roster routes ignore 'willingToDrive' from an older client (#544)", () => {
+  beforeEach(() => {
+    mocks.personCreate.mockResolvedValue({ id: "person-new" });
+    mocks.memberCreate.mockResolvedValue({ id: "member-new" });
+  });
+
+  it("accepts it when adding, and never stores it", async () => {
+    for (const willingToDrive of [true, false, "yes"]) {
+      mocks.memberCreate.mockClear();
+      const response = await addMember(
+        jsonRequest("POST", "https://events.imsda.test/api/attendee/clubs/club-1/roster", {
+          firstName: "Test", lastName: "Adult", birthDate: "1980-05-06", attendeeType: "ADULT",
+          gender: "FEMALE", willingToDrive,
+        }),
+        { params: Promise.resolve({ organizationId: "club-1" }) },
+      );
+      expect(response.status).toBe(201);
+      expect(mocks.memberCreate).toHaveBeenCalledTimes(1);
+      expect(mocks.memberCreate.mock.calls[0]![0].data).not.toHaveProperty("willingToDrive");
+    }
+  });
+
+  it("accepts it on a youth row too, with no 400", async () => {
     const response = await addMember(
       jsonRequest("POST", "https://events.imsda.test/api/attendee/clubs/club-1/roster", {
         firstName: "Test", lastName: "Youth", birthDate: "2014-12-06", attendeeType: "YOUTH",
@@ -79,20 +101,29 @@ describe("the roster routes refuse 'Willing to drive' on a youth row (#491)", ()
       }),
       { params: Promise.resolve({ organizationId: "club-1" }) },
     );
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({ error: "WILLING_TO_DRIVE_NOT_ALLOWED" });
-    expect(mocks.personCreate).not.toHaveBeenCalled();
-    expect(mocks.memberCreate).not.toHaveBeenCalled();
+    expect(response.status).toBe(201);
+    expect(mocks.memberCreate.mock.calls[0]![0].data).not.toHaveProperty("willingToDrive");
   });
 
-  it("answers 400 when editing a stored youth row to willing to drive", async () => {
+  it("accepts it when editing, changes the rest, and never stores it or audits it", async () => {
     const response = await editMember(
-      jsonRequest("PATCH", "https://events.imsda.test/api/attendee/clubs/club-1/roster/member-1", { willingToDrive: true }),
+      jsonRequest("PATCH", "https://events.imsda.test/api/attendee/clubs/club-1/roster/member-1", { willingToDrive: true, role: "Deputy" }),
+      { params: Promise.resolve({ organizationId: "club-1", memberId: "member-1" }) },
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.memberUpdate).toHaveBeenCalledTimes(1);
+    const { data } = mocks.memberUpdate.mock.calls[0]![0];
+    expect(data).toMatchObject({ role: "Deputy" });
+    expect(data).not.toHaveProperty("willingToDrive");
+    expect(JSON.stringify(mocks.writeAuditLog.mock.calls)).not.toMatch(/WILLING_TO_DRIVE|willingToDrive/);
+  });
+
+  it("still rejects any other unknown field", async () => {
+    const response = await editMember(
+      jsonRequest("PATCH", "https://events.imsda.test/api/attendee/clubs/club-1/roster/member-1", { somethingElse: true }),
       { params: Promise.resolve({ organizationId: "club-1", memberId: "member-1" }) },
     );
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({ error: "WILLING_TO_DRIVE_NOT_ALLOWED" });
     expect(mocks.memberUpdate).not.toHaveBeenCalled();
-    expect(mocks.writeAuditLog).not.toHaveBeenCalled();
   });
 });
