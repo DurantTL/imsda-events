@@ -4,6 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
+  latestBackgroundCheckUploadAt,
   personCheckEvidenceSelect,
   rosterMemberCheckEvidenceSelect,
   uncachedChecksForRosterMembers,
@@ -15,8 +16,10 @@ import { personIdForActor, type GlobalReviewerActor } from "@/modules/driver-ver
 import {
   clubDriverLabel,
   deriveDriverClearance,
+  overrideLapsedByDate,
   needsStaffAction,
   overrideIsStale,
+  type DriverCheckEvidence,
   type DriverClearance,
   type DriverClearanceStatus,
 } from "@/modules/driver-verification/clearance";
@@ -58,7 +61,7 @@ const willingDriverSelect = {
       firstName: true,
       lastName: true,
       ...personCheckEvidenceSelect,
-      backgroundCheckMatch: { select: { entry: { select: { complianceStatus: true, expiresOn: true, issuesNote: true, upload: { select: { createdAt: true } } } } } },
+      backgroundCheckMatch: { select: { entry: { select: { complianceStatus: true, expiresOn: true, issuesNote: true } } } },
       driverVerification: {
         select: {
           clearedToTransport: true,
@@ -115,13 +118,23 @@ type Evidence = Awaited<ReturnType<typeof uncachedChecksForRosterMembers>>;
  * kinds of saved decision are ignored (never deleted, so this is reversible):
  * - one written by a club director or deputy under #491 (no
  *   `reviewedByUserId`): only staff overrides count (#544);
- * - one older than the list it was made against: once a newer upload arrives
- *   the check it judged has been replaced, so the derived result stands.
+ * - one older than the newest list upload, whether or not the person is on
+ *   that list: the list it judged has been replaced, so the derived result
+ *   stands (`overrideIsStale`);
+ * - one made before a `BGC` / `Training` / check date on the list passed, once
+ *   that date has passed, even with no new upload (`overrideLapsedByDate`).
  */
-function overrideOf(member: WillingDriverRow, listUploadedAt: Date | null | undefined): DriverOverride | null {
+function overrideOf(
+  member: WillingDriverRow,
+  check: DriverCheckEvidence | null,
+  latestUploadAt: Date | null,
+  today: string,
+): DriverOverride | null {
   const verification = member.person?.driverVerification;
   if (!verification?.reviewedByUserId) return null;
-  if (overrideIsStale(verification.reviewedAt, listUploadedAt)) return null;
+  if (overrideIsStale(verification.reviewedAt, latestUploadAt)) return null;
+  const reviewedOn = calendarDateInEventTimeZone(verification.reviewedAt, "America/Chicago");
+  if (overrideLapsedByDate(check, reviewedOn, today)) return null;
   return {
     clearedToTransport: verification.clearedToTransport,
     note: verification.note,
@@ -138,17 +151,17 @@ async function loadWillingDrivers(where: Prisma.ClubRosterMemberWhereInput, now:
     orderBy: [{ person: { lastName: "asc" } }, { person: { firstName: "asc" } }],
   });
   const uncached: Evidence = await uncachedChecksForRosterMembers(members);
+  // Once per request, not per person: overrides are judged against the newest upload overall.
+  const latestUploadAt = await latestBackgroundCheckUploadAt();
   return members.flatMap((member) => {
     if (!member.personId || !member.person) return [];
     // The cached match, or the same read-time lookup the club roster uses (#527).
-    const matched = member.person.backgroundCheckMatch?.entry;
-    const check = matched ?? uncached.get(member.personId) ?? null;
-    const listUploadedAt = matched ? matched.upload.createdAt : uncached.get(member.personId)?.uploadedAt;
+    const check = member.person.backgroundCheckMatch?.entry ?? uncached.get(member.personId) ?? null;
     return [{
       member,
       check,
       clearance: deriveDriverClearance(check, today),
-      override: overrideOf(member, listUploadedAt),
+      override: overrideOf(member, check, latestUploadAt, today),
     }];
   });
 }

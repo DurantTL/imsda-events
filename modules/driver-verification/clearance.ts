@@ -21,7 +21,7 @@ import {
   type DriverClearanceReason,
   type DriverClearanceStatus,
 } from "@/modules/background-checks/display";
-import { assessIssues, daysUntil } from "@/modules/background-checks/issues";
+import { assessIssues, daysUntil, parseIssues } from "@/modules/background-checks/issues";
 
 export { clubDriverLabel, driverReasonLabels };
 export type { DriverClearanceReason, DriverClearanceStatus };
@@ -110,12 +110,31 @@ export function isDriverException(clearance: DriverClearance) {
 }
 
 /**
- * An override is stale once a newer list has arrived: the check it was made
- * against has been replaced. A stale override is ignored and the derived
- * result stands. With no list upload to compare (nothing matched), it stands.
+ * An override is stale once a newer list has arrived: the list it was made
+ * against has been replaced. `latestUploadAt` is the newest upload overall,
+ * not the person's own entry, so it also catches a person the newer list
+ * leaves off. A stale override is ignored and the derived result stands.
+ * With no upload at all, it stands. A hand-made match, made after the
+ * override, from the current (older) upload does not make it stale: only a
+ * new upload does.
  */
-export function overrideIsStale(reviewedAt: Date, listUploadedAt: Date | null | undefined) {
-  return Boolean(listUploadedAt && listUploadedAt.getTime() > reviewedAt.getTime());
+export function overrideIsStale(reviewedAt: Date, latestUploadAt: Date | null | undefined) {
+  return Boolean(latestUploadAt && latestUploadAt.getTime() > reviewedAt.getTime());
+}
+
+/**
+ * An override also lapses when a date on the list it judged passes, with no
+ * new upload: a `BGC` / `Training` date in the issues text, or a Sterling
+ * row's own expiry, that fell on or after the day the override was made
+ * (`reviewedOn`) and is before `today`. A date that had already passed when
+ * the override was made doesn't lapse it. Computed from the same evidence at
+ * read time, so nothing is stored; both arguments are "YYYY-MM-DD" Chicago dates.
+ */
+export function overrideLapsedByDate(check: DriverCheckEvidence | null | undefined, reviewedOn: string, today: string) {
+  if (!check) return false;
+  const dates = parseIssues(check.issuesNote).items.map((item) => item.date);
+  if (!check.complianceStatus) dates.push(check.expiresOn);
+  return dates.some((date) => date !== null && date >= reviewedOn && date < today);
 }
 
 /**

@@ -170,6 +170,25 @@ async function main() {
   const staleLabel = (await drivers.clubDriverEntries(clubId, clubYear, now)).find((entry) => entry.rosterMemberId === `${people.notCleared}_roster`)?.label;
   assert(staleLabel === "Not cleared", `a stale override must not clear the driver for the club, got ${staleLabel}`);
 
+  // 7. A person the list never had: an override resolves them, and a newer upload that still leaves them off ends it.
+  await drivers.recordDriverClearance(people.unlisted, { clearedToTransport: true, note: "Confirmed by phone." }, { userId: staffUserId });
+  assert(!(await drivers.listDriverExceptions(now)).some((entry) => entry.personId === people.unlisted), "an override must resolve a needs-review driver");
+  await upload([
+    ["cleared", "y", ""],
+    ["nondriver", "y", ""],
+    ["notcleared", "n", written],
+    ["bang", "!", `Training (${later})`],
+    ["soon", "y", `bgc (${soon})`],
+    ["later", "y", `BGC (${later})`],
+    ["unknown", "y", "Fingerprints pending"],
+    ["notwilling", "n", "BGC"],
+    ["late", "y", ""],
+  ]);
+  const offList = (await drivers.listDriverExceptions(now)).find((entry) => entry.personId === people.unlisted);
+  assert(offList && offList.override === null && offList.clearance.status === "NEEDS_REVIEW", "a newer upload must end an override for someone off the list");
+  const offListLabel = (await drivers.clubDriverEntries(clubId, clubYear, now)).find((entry) => entry.rosterMemberId === `${people.unlisted}_roster`)?.label;
+  assert(offListLabel === "Pending", `an off-list driver must read Pending to the club, got ${offListLabel}`);
+
   console.log("Driver clearance verified against PostgreSQL.");
 }
 

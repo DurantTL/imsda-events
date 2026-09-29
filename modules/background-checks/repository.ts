@@ -74,6 +74,15 @@ async function latestUpload(prisma: PrismaLike) {
 }
 
 /**
+ * When the newest list upload was made, or null before any upload (#544).
+ * Read once per request by callers that ask whether something was decided
+ * before the list last changed, whether or not a given person is on the list.
+ */
+export async function latestBackgroundCheckUploadAt() {
+  return (await latestUpload(getPrisma()))?.createdAt ?? null;
+}
+
+/**
  * Fills in `normalizedName` for entries the #527 migration carried over
  * (#527 B3): names are only ever normalized here, in TypeScript, never
  * approximated in SQL. One bounded statement; a no-op once filled.
@@ -981,8 +990,6 @@ type StoredCheck = {
   expiresOn: string | null;
   complianceStatus?: BackgroundComplianceStatus | null;
   issuesNote?: string | null;
-  /** When the list upload this check came from was made (#544: an older staff override is stale against it). */
-  uploadedAt?: Date | null;
 };
 
 type LookupSubject = {
@@ -1068,7 +1075,7 @@ async function lookupUncachedChecks(prisma: PrismaLike, subjects: LookupSubject[
   for (const [personId, list] of entriesByPerson) {
     if (list.length !== 1) continue;
     const entry = list[0]!;
-    found.set(personId, { complianceStatus: entry.complianceStatus, expiresOn: entry.expiresOn, issuesNote: entry.issuesNote, uploadedAt: entry.upload.createdAt });
+    found.set(personId, { complianceStatus: entry.complianceStatus, expiresOn: entry.expiresOn, issuesNote: entry.issuesNote });
   }
   return found;
 }

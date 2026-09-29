@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   writeAuditLog: vi.fn(),
   personIdForActor: vi.fn(),
   uncachedChecksForRosterMembers: vi.fn(),
+  latestBackgroundCheckUploadAt: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -12,7 +13,7 @@ vi.mock("@/lib/prisma", () => ({ getPrisma: mocks.getPrisma }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: mocks.writeAuditLog }));
 vi.mock("@/modules/background-checks/repository", async () => {
   const actual = await vi.importActual<typeof import("@/modules/background-checks/repository")>("@/modules/background-checks/repository");
-  return { ...actual, uncachedChecksForRosterMembers: mocks.uncachedChecksForRosterMembers };
+  return { ...actual, uncachedChecksForRosterMembers: mocks.uncachedChecksForRosterMembers, latestBackgroundCheckUploadAt: mocks.latestBackgroundCheckUploadAt };
 });
 vi.mock("@/modules/driver-verification/access", async () => {
   const actual = await vi.importActual<typeof import("@/modules/driver-verification/access")>("@/modules/driver-verification/access");
@@ -64,7 +65,6 @@ function member(
   overrides: Row = {},
   entry: Entry | null = { complianceStatus: "CLEAR", expiresOn: null, issuesNote: null },
   verification: Row | null = null,
-  uploadedAt = new Date("2026-09-01T00:00:00Z"),
 ): Row {
   return {
     id: "member-1",
@@ -78,7 +78,7 @@ function member(
     person: {
       firstName: "Dana",
       lastName: "Driver",
-      backgroundCheckMatch: entry ? { entry: { ...entry, upload: { createdAt: uploadedAt } } } : null,
+      backgroundCheckMatch: entry ? { entry } : null,
       driverVerification: verification && { reviewedByUserId: "admin-1", ...verification },
     },
     ...overrides,
@@ -95,6 +95,7 @@ beforeEach(() => {
   mocks.writeAuditLog.mockResolvedValue({});
   mocks.personIdForActor.mockResolvedValue(null);
   mocks.uncachedChecksForRosterMembers.mockResolvedValue(new Map());
+  mocks.latestBackgroundCheckUploadAt.mockResolvedValue(new Date("2026-09-01T00:00:00Z"));
   db = fakeDatabase();
 });
 
@@ -145,7 +146,7 @@ describe("the staff driver exceptions (#544)", () => {
     const row = member({}, { complianceStatus: "NOT_COMPLIANT", expiresOn: null, issuesNote: "BGC" });
     db.members.push(row);
     expect(await listDriverExceptions(now)).toHaveLength(1);
-    (row.person as Row).backgroundCheckMatch = { entry: { complianceStatus: "CLEAR", expiresOn: null, issuesNote: null, upload: { createdAt: new Date("2026-09-02T00:00:00Z") } } };
+    (row.person as Row).backgroundCheckMatch = { entry: { complianceStatus: "CLEAR", expiresOn: null, issuesNote: null } };
     expect(await listDriverExceptions(now)).toEqual([]);
   });
 
@@ -253,14 +254,56 @@ describe("staff overrides against the list (#544)", () => {
     expect(await listDriverExceptions(now)).toEqual([]);
     expect((await clubDriverEntries("club-1", "2026-27", now))[0]!.label).toBe("Cleared to drive");
     // A newer upload arrives (after the override) saying n.
-    (row.person as Row).backgroundCheckMatch = { entry: { ...notCompliant, upload: { createdAt: new Date("2026-10-01T09:00:00Z") } } };
+    (row.person as Row).backgroundCheckMatch = { entry: notCompliant };
+    mocks.latestBackgroundCheckUploadAt.mockResolvedValue(new Date("2026-10-01T09:00:00Z"));
     const [entry] = await listDriverExceptions(now);
     expect(entry).toMatchObject({ clearance: { status: "NOT_CLEARED" }, override: null });
     expect((await clubDriverEntries("club-1", "2026-27", now))[0]!.label).toBe("Not cleared");
   });
 
+  it("a newer upload that leaves the person off the list ends the override: Needs review, back in the queue", async () => {
+    const row = member({}, clean, override(true));
+    db.members.push(row);
+    expect(await listDriverExceptions(now)).toEqual([]);
+    // The next upload has no entry for this person at all.
+    (row.person as Row).backgroundCheckMatch = null;
+    mocks.latestBackgroundCheckUploadAt.mockResolvedValue(new Date("2026-10-01T09:00:00Z"));
+    const [entry] = await listDriverExceptions(now);
+    expect(entry).toMatchObject({ clearance: { status: "NEEDS_REVIEW", reasons: ["NO_RECORD"] }, override: null });
+    expect((await clubDriverEntries("club-1", "2026-27", now))[0]!.label).toBe("Pending");
+  });
+
+  it("goes stale through the read-time path too: a person matched only at read time, then a newer upload", async () => {
+    db.members.push(member({}, null, override(true)));
+    mocks.uncachedChecksForRosterMembers.mockResolvedValue(new Map([["person-1", clean]]));
+    expect(await listDriverExceptions(now)).toEqual([]);
+    mocks.uncachedChecksForRosterMembers.mockResolvedValue(new Map([["person-1", notCompliant]]));
+    mocks.latestBackgroundCheckUploadAt.mockResolvedValue(new Date("2026-10-01T09:00:00Z"));
+    const [entry] = await listDriverExceptions(now);
+    expect(entry).toMatchObject({ clearance: { status: "NOT_CLEARED" }, override: null });
+    expect((await clubDriverEntries("club-1", "2026-27", now))[0]!.label).toBe("Not cleared");
+  });
+
+  it("an override lapses when the date it was made against passes, with no new upload", async () => {
+    db.members.push(member({}, { complianceStatus: "CLEAR", expiresOn: null, issuesNote: "BGC (10/15/26)" }, override(true, "2026-10-01T12:00:00Z")));
+    // Through 10/15 the override stands (and agrees with the expiring list).
+    const onTheDate = new Date("2026-10-15T15:00:00Z");
+    expect((await clubDriverEntries("club-1", "2026-27", onTheDate))[0]!.label).toBe("Cleared to drive");
+    // On 10/16 the date has passed: the derived result decides.
+    const after = new Date("2026-10-16T15:00:00Z");
+    expect((await clubDriverEntries("club-1", "2026-27", after))[0]!.label).toBe("Not cleared");
+    expect(await listDriverExceptions(after)).toMatchObject([{ clearance: { status: "NOT_CLEARED" }, override: null }]);
+  });
+
+  it("a date that had already passed when the override was made doesn't lapse it", async () => {
+    db.members.push(member({}, { complianceStatus: "CLEAR", expiresOn: null, issuesNote: "BGC (09/15/26)" }, override(true, "2026-10-01T12:00:00Z")));
+    const [entry] = await listDriverExceptions(now);
+    expect(entry!.override).toMatchObject({ clearedToTransport: true });
+  });
+
   it("an override made after the list still stands", async () => {
-    db.members.push(member({}, notCompliant, override(true, "2026-09-30T12:00:00Z"), new Date("2026-09-30T11:00:00Z")));
+    mocks.latestBackgroundCheckUploadAt.mockResolvedValue(new Date("2026-09-30T11:00:00Z"));
+    db.members.push(member({}, notCompliant, override(true, "2026-09-30T12:00:00Z")));
     const [entry] = await listDriverExceptions(now);
     expect(entry!.override).toMatchObject({ clearedToTransport: true });
   });
