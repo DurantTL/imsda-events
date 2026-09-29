@@ -101,6 +101,7 @@ function mockPrisma(
   const auditLogCreate = vi.fn().mockResolvedValue({});
   const tx = {
     $queryRaw: vi.fn().mockResolvedValue([{ id: "event-1" }]),
+    $executeRawUnsafe: vi.fn().mockResolvedValue(0),
     event: {
       findUnique: vi.fn().mockResolvedValue(eventRow(current)),
       update: eventUpdate,
@@ -390,9 +391,23 @@ describe("sponsored promo codes pin the event to a general, attendee-paid event 
     expect(staying.tx.promoCode.count).not.toHaveBeenCalled();
   });
 
-  it("locks the event row first, the lock a sponsor link takes", async () => {
+  it("locks the event row FOR NO KEY UPDATE first, with lock_timeout scoped to the wait", async () => {
     const { tx } = await save({}, 0);
-    expect(tx.$queryRaw).toHaveBeenCalled();
+    const [strings] = tx.$queryRaw.mock.calls[0] as unknown as [string[]];
+    expect(strings.join("?")).toContain("FOR NO KEY UPDATE");
+    expect(tx.$executeRawUnsafe.mock.calls.map(([sql]) => sql)).toEqual([
+      "SET LOCAL lock_timeout = '5s'",
+      "SET LOCAL lock_timeout = 0",
+    ]);
+  });
+
+  it("reports a lock timeout as a readable busy error, and the refusal explains used codes", async () => {
+    const { prisma, tx } = mockPrisma({ isPublished: true }, 1, true);
+    tx.$queryRaw.mockRejectedValue(Object.assign(new Error("lock timeout"), { code: "55P03" }));
+    dependencies.getPrisma.mockReturnValue(prisma);
+    await expect(updateEventSettings("event-1", baseInput as never, "usr_1")).rejects.toMatchObject({ code: "EVENT_BUSY" });
+    const refused = await save({ audience: "CLUB" }, 1);
+    expect((refused.outcome as Error).message).toContain("has been used can't be unlinked");
   });
 });
 

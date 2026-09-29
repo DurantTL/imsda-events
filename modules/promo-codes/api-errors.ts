@@ -26,7 +26,9 @@ export function promoCodeApiError(error: unknown, operation: string) {
       ? 404
       : error.code === "PROMO_CODE_SPONSOR_INVALID"
         ? 422
-        : 409;
+        : error.code === "PROMO_CODE_BUSY"
+          ? 503
+          : 409;
     return Response.json(
       { error: error.code, message: error.message },
       { status }

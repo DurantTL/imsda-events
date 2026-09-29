@@ -6,6 +6,7 @@ import {
   type PrismaClient,
 } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { isLockTimeoutError } from "@/lib/prisma-errors";
 import { calendarDateInTimeZone } from "@/modules/forms/public-domain";
 import { hydrateFormOptions } from "@/modules/forms/form-options-repository";
 import {
@@ -46,7 +47,8 @@ export type PromoCodeOperationErrorCode =
   | "PROMO_CODE_LIMIT_BELOW_USAGE"
   | "PROMO_CODE_CLAIM_CONFLICT"
   | "PROMO_CODE_SPONSOR_INVALID"
-  | "PROMO_CODE_SPONSOR_LOCKED";
+  | "PROMO_CODE_SPONSOR_LOCKED"
+  | "PROMO_CODE_BUSY";
 
 export class PromoCodeOperationError extends Error {
   constructor(
@@ -177,7 +179,14 @@ async function assertSponsorAllowed(
   eventId: string,
   sponsoringOrganizationId: string,
 ) {
-  await tx.$queryRaw`SELECT "id" FROM "Event" WHERE "id" = ${eventId} FOR UPDATE`;
+  // FOR NO KEY UPDATE serializes this check against an event settings save
+  // (which takes the same lock) without conflicting with the FOR KEY SHARE
+  // lock every registration or adjustment insert takes on the event, so it
+  // can neither deadlock with a claim nor stall registrations. Only the lock
+  // wait is bounded; a timeout is reported as "busy, try again".
+  await tx.$executeRawUnsafe("SET LOCAL lock_timeout = '5s'");
+  await tx.$queryRaw`SELECT "id" FROM "Event" WHERE "id" = ${eventId} FOR NO KEY UPDATE`;
+  await tx.$executeRawUnsafe("SET LOCAL lock_timeout = 0");
   const event = await tx.event.findUnique({
     where: { id: eventId },
     select: { audience: true, billingMode: true },
@@ -207,6 +216,16 @@ export async function listSponsorChurchOptions() {
     orderBy: { name: "asc" },
     select: { id: true, name: true },
   });
+}
+
+/** A lock wait that gave up, or a deadlock / write conflict: nothing was saved, so retrying is safe. */
+function busyError(error: unknown) {
+  const conflict = error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034";
+  if (!conflict && !isLockTimeoutError(error)) return null;
+  return new PromoCodeOperationError(
+    "PROMO_CODE_BUSY",
+    "The promo codes are busy right now (another change is being saved). Nothing was changed; try again in a moment.",
+  );
 }
 
 async function auditSponsorChange(
@@ -315,7 +334,7 @@ export async function createPromoCode(
         "That promo code is already configured for this event.",
       );
     }
-    throw error;
+    throw busyError(error) ?? error;
   }
   return listPromoCodes(eventId);
 }
@@ -442,7 +461,7 @@ export async function updatePromoCode(
         "That promo code is already configured for this event.",
       );
     }
-    throw error;
+    throw busyError(error) ?? error;
   }
   return listPromoCodes(eventId);
 }

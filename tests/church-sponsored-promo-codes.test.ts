@@ -5,6 +5,7 @@ const dependencies = vi.hoisted(() => ({ getPrisma: vi.fn() }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: dependencies.getPrisma }));
 
+import { Prisma } from "@prisma/client";
 import {
   createPromoCode,
   updatePromoCode,
@@ -65,6 +66,7 @@ function txFor(options: {
     promoCode,
     auditLog,
     $queryRaw: vi.fn().mockResolvedValue([]),
+    $executeRawUnsafe: vi.fn().mockResolvedValue(0),
     $transaction: async (callback: (client: unknown) => unknown) => callback(tx),
   };
   dependencies.getPrisma.mockReturnValue(tx);
@@ -118,10 +120,35 @@ describe("linking a sponsoring church (#545)", () => {
     expect(tx.promoCode.create).not.toHaveBeenCalled();
   });
 
-  it("locks the event row before checking the sponsor rule (#545)", async () => {
+  it("locks the event row FOR NO KEY UPDATE with the timeout scoped to the lock wait only (#545)", async () => {
     const tx = txFor({});
     await createPromoCode("event_1", { ...baseInput, sponsoringOrganizationId: "church_1" }, "user_1");
-    expect(tx.$queryRaw).toHaveBeenCalled();
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    const [strings] = tx.$queryRaw.mock.calls[0] as unknown as [string[]];
+    expect(strings.join("?")).toContain("FOR NO KEY UPDATE");
+    expect(strings.join("?")).not.toMatch(/FOR UPDATE/);
+    expect(tx.$executeRawUnsafe.mock.calls.map(([sql]) => sql)).toEqual([
+      "SET LOCAL lock_timeout = '5s'",
+      "SET LOCAL lock_timeout = 0",
+    ]);
+    const order = [tx.$executeRawUnsafe.mock.invocationCallOrder[0], tx.$queryRaw.mock.invocationCallOrder[0], tx.$executeRawUnsafe.mock.invocationCallOrder[1]];
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  it("reports a lock timeout or deadlock as a readable retry message, not a 500", async () => {
+    for (const failure of [
+      Object.assign(new Error("lock timeout"), { code: "55P03" }),
+      new Prisma.PrismaClientKnownRequestError("deadlock detected", { code: "P2034", clientVersion: "test" }),
+    ]) {
+      const tx = txFor({ existing: existingPromo() });
+      tx.promoCode.updateMany.mockRejectedValue(failure);
+      await expect(
+        updatePromoCode("event_1", "promo_1", { ...updateInput, isActive: false }, "user_1"),
+      ).rejects.toMatchObject({ code: "PROMO_CODE_BUSY" });
+      const createTx = txFor({});
+      createTx.promoCode.create.mockRejectedValue(failure);
+      await expect(createPromoCode("event_1", baseInput, "user_1")).rejects.toMatchObject({ code: "PROMO_CODE_BUSY" });
+    }
   });
 
   it("rejects a club organization, an inactive church, and an unknown organization", async () => {

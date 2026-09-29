@@ -1,6 +1,8 @@
 import { eventBillsSponsoredPromoCodes } from "@/modules/promo-codes/church-sponsored";
 import { sumChurchSponsoredPromoCents } from "@/modules/promo-codes/church-sponsored-repository";
 import type { MembershipRecord } from "@/modules/access/authorization";
+import { Prisma } from "@prisma/client";
+import { isLockTimeoutError } from "@/lib/prisma-errors";
 import { getPrisma } from "@/lib/prisma";
 import {
   activeRegistrationStatuses,
@@ -13,7 +15,7 @@ import type { EventSettingsInput } from "@/modules/events/schemas";
 
 export class EventOperationError extends Error {
   constructor(
-    public readonly code: "EVENT_NOT_FOUND" | "EVENT_NOT_READY" | "EVENT_HAS_SPONSORED_PROMO_CODES",
+    public readonly code: "EVENT_NOT_FOUND" | "EVENT_NOT_READY" | "EVENT_HAS_SPONSORED_PROMO_CODES" | "EVENT_BUSY",
     message: string,
   ) {
     super(message);
@@ -308,10 +310,16 @@ export async function updateEventSettings(
   actorUserId: string,
 ) {
   const prisma = getPrisma();
+  try {
   await prisma.$transaction(async (tx) => {
     // Same lock a church-sponsor link takes (#545), so a link and a billing
-    // or audience change cannot both pass their checks.
-    await tx.$queryRaw`SELECT "id" FROM "Event" WHERE "id" = ${eventId} FOR UPDATE`;
+    // or audience change cannot both pass their checks. NO KEY UPDATE does
+    // not conflict with the FOR KEY SHARE lock registration and adjustment
+    // inserts take on the event, so a save cannot stall registrations or
+    // deadlock with a promo claim. Only the lock wait is bounded.
+    await tx.$executeRawUnsafe("SET LOCAL lock_timeout = '5s'");
+    await tx.$queryRaw`SELECT "id" FROM "Event" WHERE "id" = ${eventId} FOR NO KEY UPDATE`;
+    await tx.$executeRawUnsafe("SET LOCAL lock_timeout = 0");
     const [current, currentPaymentInstructions] = await Promise.all([
       tx.event.findUnique({
         where: { id: eventId },
@@ -367,7 +375,7 @@ export async function updateEventSettings(
       if (sponsored > 0) {
         throw new EventOperationError(
           "EVENT_HAS_SPONSORED_PROMO_CODES",
-          "Unlink the church sponsors from this event's promo codes first. A church can sponsor codes only on a general event paid by attendees.",
+          "Unlink the church sponsors from this event's promo codes first. A church can sponsor codes only on a general event paid by attendees, and a sponsored code that has been used can't be unlinked, so an event with used sponsored codes stays general and attendee-paid.",
         );
       }
     }
@@ -424,6 +432,15 @@ export async function updateEventSettings(
       },
     });
   });
+  } catch (error) {
+    if (isLockTimeoutError(error) || (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034")) {
+      throw new EventOperationError(
+        "EVENT_BUSY",
+        "This event is being changed by someone else right now. Nothing was saved; try again in a moment.",
+      );
+    }
+    throw error;
+  }
   return getEventSettings(eventId);
 }
 

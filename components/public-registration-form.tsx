@@ -783,7 +783,7 @@ export function PublicRegistrationForm({
     const issue = activeAttendeePromo.attendeeIssues.find((candidate) => candidate.attendeeIndex === attendeeIndex);
     if (issue) return { ok: false, text: issue.message };
     const applied = activeAttendeePromo.attendeeDiscounts.find((candidate) => candidate.attendeeIndex === attendeeIndex);
-    const sponsor = applied ? activeAttendeePromo.sponsors?.[applied.code.trim().toUpperCase()] : undefined;
+    const sponsor = applied ? activeAttendeePromo.sponsors?.[applied.code.normalize("NFKC").trim().toUpperCase()] : undefined;
     return applied ? { ok: true, text: `${applied.code} applied — ${money(applied.discountAmountCents)} off for this person.${sponsor ? ` Sponsored by ${sponsor}.` : ""}` } : null;
   }
 
