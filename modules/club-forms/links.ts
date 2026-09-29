@@ -24,6 +24,7 @@ import {
 import { ClubFormError } from "@/modules/club-forms/errors";
 import { CLUB_FORM_LINK_TEMPLATE_KEY, clubFormLinkEmailContent } from "@/modules/club-forms/link-email";
 import { sealSensitiveAnswers } from "@/modules/club-forms/sealed-answers";
+import { lockClubFormTemplateForWrite } from "@/modules/club-forms/template-lock";
 import { assertAnswersSize, resolveRosterMemberName } from "@/modules/club-forms/submissions";
 import { getEnabledClubFormTemplate, withLiveDirectory } from "@/modules/club-forms/templates";
 import { getAccountEmailSender, isAccountEmailConfigured } from "@/modules/communications/account-email";
@@ -288,16 +289,18 @@ export async function submitClubFormViaLink(token: string, rawAnswers: Record<st
   const answers = sanitizeClubFormAnswers(definition, rawAnswers, template.staffOnlyFieldKeys);
   const issues = validateClubFormAnswers(definition, answers, { excludeKeys: template.staffOnlyFieldKeys });
   if (issues.length > 0) throw new ClubFormError("VALIDATION_FAILED", issues[0].message, issues);
-  const { plain, sensitive } = splitAnswers(template, answers);
-  const hasSensitive = Object.keys(sensitive).length > 0;
-  if (hasSensitive && !isSecretEncryptionConfigured()) {
-    throw new ClubFormError("ENCRYPTION_NOT_CONFIGURED", "This form can't be saved right now. Please try again later.");
-  }
   const submissionId = randomUUID();
-  const sealed = hasSensitive ? sealSensitiveAnswers(submissionId, sensitive) : null;
   const tokenHash = hashOpaqueToken(token);
 
   return getPrisma().$transaction(async (tx) => {
+    // Which answers are sensitive is decided under a share lock on the template row, so a concurrent re-seal cannot leave this save in plaintext.
+    const keys = await lockClubFormTemplateForWrite(tx, link.template.id);
+    const { plain, sensitive } = splitAnswers({ sensitiveFieldKeys: keys.sensitiveFieldKeys }, answers);
+    const hasSensitive = Object.keys(sensitive).length > 0;
+    if (hasSensitive && !isSecretEncryptionConfigured()) {
+      throw new ClubFormError("ENCRYPTION_NOT_CONFIGURED", "This form can't be saved right now. Please try again later.");
+    }
+    const sealed = hasSensitive ? sealSensitiveAnswers(submissionId, sensitive) : null;
     const spent = await tx.clubFormLink.updateMany({
       where: { id: link.id, tokenHash, status: "OPEN", expiresAt: { gt: now } },
       data: { status: "USED", usedAt: now },

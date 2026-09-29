@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   writeAuditLog: vi.fn(),
   templateFindFirst: vi.fn(),
+  templateFindUnique: vi.fn(),
+  queryRaw: vi.fn(),
   linkCreate: vi.fn(),
   linkUpdate: vi.fn(),
   linkUpdateMany: vi.fn(),
@@ -19,7 +21,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 const client = {
-  clubFormTemplate: { findFirst: mocks.templateFindFirst },
+  clubFormTemplate: { findFirst: mocks.templateFindFirst, findUnique: mocks.templateFindUnique },
+  $queryRaw: mocks.queryRaw,
   clubFormLink: {
     create: mocks.linkCreate,
     update: mocks.linkUpdate,
@@ -127,6 +130,10 @@ beforeEach(() => {
   mocks.organizationFindUnique.mockResolvedValue({ type: "CLUB", isActive: true, name: "Example Pathfinders" });
   mocks.organizationFindMany.mockResolvedValue([]);
   mocks.templateFindFirst.mockResolvedValue(templateRow("off_premises_permission_slip"));
+  mocks.templateFindUnique.mockReset();
+  mocks.templateFindUnique.mockResolvedValue(templateRow("off_premises_permission_slip"));
+  mocks.queryRaw.mockReset();
+  mocks.queryRaw.mockResolvedValue([]);
   mocks.linkCreate.mockResolvedValue({ id: "link-1" });
   mocks.linkUpdate.mockResolvedValue({});
   mocks.linkUpdateMany.mockResolvedValue({ count: 1 });
@@ -305,6 +312,19 @@ describe("opening a private link (#610)", () => {
 });
 
 describe("submitting through a private link (#610)", () => {
+  it("takes a share lock on the template row and seals by the keys read under it", async () => {
+    // Between the unlocked read and the lock, a re-seal made "activity" sensitive.
+    mocks.templateFindUnique.mockResolvedValue({
+      ...templateRow("off_premises_permission_slip"),
+      sensitiveFieldKeys: [...templateRow("off_premises_permission_slip").sensitiveFieldKeys, "activity"],
+    });
+    const result = await submitClubFormViaLink(TOKEN, slipAnswers, now);
+    expect(mocks.queryRaw.mock.calls[0][0].join("?")).toMatch(/FOR SHARE/);
+    const data = mocks.submissionCreate.mock.calls[0][0].data;
+    expect(data.answers).not.toHaveProperty("activity");
+    expect(openSensitiveAnswers(result.submissionId, data.sealedSensitiveAnswers)).toMatchObject({ activity: "Canoe trip" });
+  });
+
   it("spends the link and stores the submission in that link's club, sealing sensitive answers", async () => {
     const result = await submitClubFormViaLink(TOKEN, slipAnswers, now);
     expect(result.confirmationMessage).toContain("permission slip");

@@ -141,7 +141,7 @@ describe("Resend webhook verification and persistence", () => {
     });
   });
 
-  it.each(["email.bounced", "email.failed", "email.complained", "email.suppressed"])(
+  it.each(["email.bounced", "email.failed"])(
     "withdraws a club form link when %s says its email never arrived (#610)",
     async (type) => {
       database.clubFormLink.updateMany.mockClear();
@@ -152,6 +152,20 @@ describe("Resend webhook verification and persistence", () => {
       });
     },
   );
+
+  it("leaves the link alone on a spam complaint, which arrives after delivery (#610)", async () => {
+    database.clubFormLink.updateMany.mockClear();
+    await recordResendWebhookEvent("webhook-complained", event("email.complained"));
+    expect(database.clubFormLink.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("leaves the link alone when the bounce is an out-of-order event that did not apply (#610)", async () => {
+    database.clubFormLink.updateMany.mockClear();
+    database.state.outbox.providerStatusAt = new Date("2026-07-23T13:00:00.000Z") as never;
+    database.state.outbox.providerDeliveryStatus = "DELIVERED" as never;
+    await recordResendWebhookEvent("webhook-late-bounce", event("email.bounced", "2026-07-23T12:00:00.000Z"));
+    expect(database.clubFormLink.updateMany).not.toHaveBeenCalled();
+  });
 
   it.each(["email.sent", "email.delivered"])("leaves a club form link alone when %s (#610)", async (type) => {
     database.clubFormLink.updateMany.mockClear();

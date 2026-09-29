@@ -15,6 +15,10 @@
  *   off (past submissions stay readable);
  * - a template version that makes a field newly sensitive re-seals existing
  *   submissions, and the club deletion check counts club forms;
+ * - the re-seal and a concurrent save cannot leave plaintext behind: a save
+ *   holding the template's share lock makes the re-seal wait and then seal
+ *   the save's row, and a save started during a re-seal waits for it and
+ *   reads the new keys;
  * - every view of a submission with sensitive answers writes one audit row that
  *   carries no answer text;
  * - a private link: the emailed token is minted at delivery and stored only as a
@@ -27,7 +31,7 @@
  *
  *   npm run test:club-forms
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { loadEnvConfig } from "@next/env";
 import { PrismaClient } from "@prisma/client";
 
@@ -556,6 +560,64 @@ async function main() {
   assert(!afterReseal.includes(marker), "after re-sealing, the answer is in no plain column");
   assert(sealed.openSensitiveAnswers(plainFirst.id, (await prisma.clubFormSubmission.findUniqueOrThrow({ where: { id: plainFirst.id } })).sealedSensitiveAnswers!).activity === marker, "the re-sealed answer opens");
   assert(await prisma.clubFormSubmission.count({ where: { id: plainFirst.id, hasSensitiveAnswers: true } }) === 1, "the sensitive flag follows the re-seal");
+
+  // A save that already read the old keys, committing during a re-seal, must not leave plaintext.
+  const lockModule = await import("../modules/club-forms/template-lock");
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const raceMarker = "Race activity marker";
+  const raceId = randomUUID();
+  let raceLocked!: () => void;
+  const writerHoldsLock = new Promise<void>((resolve) => { raceLocked = resolve; });
+  let releaseWriter!: () => void;
+  const writerMayCommit = new Promise<void>((resolve) => { releaseWriter = resolve; });
+  const writer = prisma.$transaction(async (tx) => {
+    await lockModule.lockClubFormTemplateForWrite(tx, slipRow.id);
+    raceLocked();
+    await tx.clubFormSubmission.create({
+      data: {
+        id: raceId, templateId: slipRow.id, organizationId: clubs.a, clubYear, subjectName: "Race", status: "SUBMITTED",
+        answers: { child_name: "Race", activity: raceMarker }, templateVersion: slipRow.version, enteredVia: "ATTENDEE",
+        enteredByAccountId: accounts.a, submittedAt: new Date(),
+      },
+    });
+    await writerMayCommit;
+  }, { timeout: 30_000 });
+  await writerHoldsLock;
+  let resealFinished = false;
+  const resealing = prisma.$transaction((tx) => reseal.resealClubFormSubmissions(tx, slipRow.id, ["activity"]), { timeout: 30_000 }).then(() => { resealFinished = true; });
+  await sleep(1000);
+  assert(!resealFinished, "the re-seal waits for a save that holds the template's share lock");
+  releaseWriter();
+  await writer;
+  await resealing;
+  const raced = await prisma.clubFormSubmission.findUniqueOrThrow({ where: { id: raceId } });
+  assert(!JSON.stringify(raced.answers).includes(raceMarker), "the save that committed during the re-seal is not left in plaintext");
+  assert(sealed.openSensitiveAnswers(raceId, raced.sealedSensitiveAnswers!).activity === raceMarker, "the raced answer was sealed by the re-seal");
+
+  // And a save that starts during a re-seal waits for it, then reads the new keys.
+  const slipKeys = slipRow.sensitiveFieldKeys;
+  let holdReseal!: () => void;
+  const resealMayCommit = new Promise<void>((resolve) => { holdReseal = resolve; });
+  let resealLocked!: () => void;
+  const resealHoldsLock = new Promise<void>((resolve) => { resealLocked = resolve; });
+  const bigReseal = prisma.$transaction(async (tx) => {
+    await lockModule.lockClubFormTemplateForReseal(tx, slipRow.id);
+    await tx.clubFormTemplate.update({ where: { id: slipRow.id }, data: { sensitiveFieldKeys: [...slipKeys, "activity"] } });
+    resealLocked();
+    await resealMayCommit;
+  }, { timeout: 30_000 });
+  await resealHoldsLock;
+  let keysRead: string[] | null = null;
+  const laterWriter = prisma.$transaction(async (tx) => {
+    keysRead = (await lockModule.lockClubFormTemplateForWrite(tx, slipRow.id)).sensitiveFieldKeys;
+  }, { timeout: 30_000 });
+  await sleep(1000);
+  assert(keysRead === null, "a save started during a re-seal waits for it");
+  holdReseal();
+  await bigReseal;
+  await laterWriter;
+  assert((keysRead as string[] | null)?.includes("activity"), "the waiting save reads the new sensitive keys");
+  await prisma.clubFormTemplate.update({ where: { id: slipRow.id }, data: { sensitiveFieldKeys: slipKeys } });
 
   // Club forms and links block deleting a club.
   const deletion = await orgRepository.getOrganizationDeletionCheck(clubs.a);

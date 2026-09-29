@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   templateUpdate: vi.fn(),
   submissionFindMany: vi.fn(),
   submissionUpdate: vi.fn(),
+  queryRaw: vi.fn(),
+  transactionOptions: vi.fn(),
 }));
 
 const client = {
@@ -20,7 +22,11 @@ const client = {
     update: mocks.templateUpdate,
   },
   clubFormSubmission: { findMany: mocks.submissionFindMany, update: mocks.submissionUpdate },
-  $transaction: (work: (tx: unknown) => unknown) => work(client),
+  $queryRaw: mocks.queryRaw,
+  $transaction: (work: (tx: unknown) => unknown, options?: unknown) => {
+    mocks.transactionOptions(options);
+    return work(client);
+  },
 };
 
 vi.mock("server-only", () => ({}));
@@ -53,6 +59,13 @@ const slipRow = {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.writeAuditLog.mockResolvedValue({});
+  mocks.queryRaw.mockResolvedValue([]);
+  // The locked re-read of a template's keys: by default, what the earlier unlocked read returned.
+  mocks.templateFindUnique.mockReset();
+  mocks.templateFindUnique.mockImplementation(async ({ where }: { where: { id?: string } }) => {
+    const rows = (await mocks.templateFindMany()) as Array<{ id?: string }> | undefined;
+    return rows?.find((row) => row.id === where.id) ?? null;
+  });
 });
 
 describe("club form templates are off until a system administrator turns them on (#610)", () => {
@@ -72,11 +85,12 @@ describe("club form templates are off until a system administrator turns them on
     expect(mocks.templateUpdate).not.toHaveBeenCalled();
   });
 
-  const storedRows = (overrides: Record<string, { version?: number; sensitiveFieldKeys?: string[] }> = {}) => clubFormTemplateSeeds.map((seed) => ({
+  const storedRows = (overrides: Record<string, { version?: number; sensitiveFieldKeys?: string[]; birthDateFieldKeys?: string[] }> = {}) => clubFormTemplateSeeds.map((seed) => ({
     id: `id-${seed.key}`,
     key: seed.key,
     version: seed.version - 1,
     sensitiveFieldKeys: seed.sensitiveFieldKeys,
+    birthDateFieldKeys: seed.birthDateFieldKeys,
     ...overrides[seed.key],
   }));
 
@@ -115,6 +129,43 @@ describe("club form templates are off until a system administrator turns them on
     expect(openSensitiveAnswers("sub-1", update.data.sealedSensitiveAnswers)).toEqual({ emergency_contact_phone: "555-0111", physician_name: "Dr. Was Plain" });
     // The re-seal happens before the template row changes, so no window exists where the field is sensitive but unsealed.
     expect(order.indexOf("reseal")).toBeLessThan(order.indexOf(`template:${slip.key}`));
+  });
+
+  it("locks the template row FOR UPDATE and gives the re-seal a timeout sized for thousands of rows", async () => {
+    const stored = slip.sensitiveFieldKeys.filter((key) => key !== "physician_name");
+    mocks.templateFindMany.mockResolvedValue(storedRows({ [slip.key]: { sensitiveFieldKeys: stored } }));
+    mocks.submissionFindMany.mockResolvedValueOnce([]);
+    await syncClubFormTemplates(client as never);
+    expect(mocks.queryRaw).toHaveBeenCalled();
+    expect(mocks.queryRaw.mock.calls[0][0].join("?")).toMatch(/FOR UPDATE/);
+    for (const [options] of mocks.transactionOptions.mock.calls) {
+      expect(options.timeout).toBeGreaterThanOrEqual(60_000);
+      expect(options.maxWait).toBeGreaterThanOrEqual(10_000);
+    }
+  });
+
+  it("decides what to seal from the locked row, not from the earlier read", async () => {
+    // The unlocked read says physician_name was already sensitive; a concurrent change made it plain before the lock.
+    mocks.templateFindMany.mockResolvedValue(storedRows());
+    const lockedStored = slip.sensitiveFieldKeys.filter((key) => key !== "physician_name");
+    mocks.templateFindUnique.mockImplementation(async ({ where }: { where: { id: string } }) => ({
+      version: 0,
+      sensitiveFieldKeys: where.id === `id-${slip.key}` ? lockedStored : clubFormTemplateSeeds.find((seed) => `id-${seed.key}` === where.id)?.sensitiveFieldKeys,
+      birthDateFieldKeys: clubFormTemplateSeeds.find((seed) => `id-${seed.key}` === where.id)?.birthDateFieldKeys,
+    }));
+    mocks.submissionFindMany.mockResolvedValueOnce([
+      { id: "sub-1", answers: { physician_name: "Dr. Was Plain" }, sealedSensitiveAnswers: null },
+    ]).mockResolvedValueOnce([]);
+    await syncClubFormTemplates(client as never);
+    expect(mocks.submissionUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a version that would stop a birth-date field being one (ADR 0005 Addendum A)", async () => {
+    const member = clubFormTemplateSeeds.find((seed) => seed.birthDateFieldKeys.length > 0);
+    if (!member) throw new Error("no seed with a birth-date field");
+    mocks.templateFindMany.mockResolvedValue(storedRows({ [member.key]: { birthDateFieldKeys: [...member.birthDateFieldKeys, "extra_birth_date"], sensitiveFieldKeys: [...member.sensitiveFieldKeys, "extra_birth_date"] } }));
+    await expect(syncClubFormTemplates(client as never)).rejects.toMatchObject({ code: "INVALID_TEMPLATE", message: expect.stringMatching(/reviewed change/) });
+    expect(mocks.templateUpdate.mock.calls.map(([call]) => call.where.key)).not.toContain(member.key);
   });
 
   it("refuses a version that would make a sensitive field readable again", async () => {

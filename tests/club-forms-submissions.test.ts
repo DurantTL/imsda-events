@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   writeAuditLog: vi.fn(),
   templateFindFirst: vi.fn(),
+  templateFindUnique: vi.fn(),
+  queryRaw: vi.fn(),
   submissionCreate: vi.fn(),
   submissionFindFirst: vi.fn(),
   submissionFindMany: vi.fn(),
@@ -14,7 +16,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 const client = {
-  clubFormTemplate: { findFirst: mocks.templateFindFirst },
+  clubFormTemplate: { findFirst: mocks.templateFindFirst, findUnique: mocks.templateFindUnique },
+  $queryRaw: mocks.queryRaw,
   clubFormSubmission: {
     create: mocks.submissionCreate,
     findFirst: mocks.submissionFindFirst,
@@ -95,12 +98,36 @@ beforeEach(() => {
   mocks.writeAuditLog.mockResolvedValue({});
   mocks.organizationFindUnique.mockResolvedValue({ type: "CLUB", isActive: true, name: "Example Pathfinders" });
   mocks.templateFindFirst.mockResolvedValue(slipTemplateRow());
+  mocks.templateFindUnique.mockReset();
+  mocks.templateFindUnique.mockResolvedValue(slipTemplateRow());
+  mocks.queryRaw.mockReset();
+  mocks.queryRaw.mockResolvedValue([]);
   mocks.submissionCreate.mockResolvedValue({});
   mocks.submissionUpdateMany.mockResolvedValue({ count: 1 });
   mocks.rosterFindFirst.mockResolvedValue({ id: "member-1", person: { firstName: "Riley", lastName: "Sample" } });
 });
 
 describe("saving a club form (#610)", () => {
+  it("takes a share lock on the template row and seals by the keys read under it", async () => {
+    // Between the unlocked read and the lock, a re-seal made "activity" sensitive.
+    mocks.templateFindUnique.mockResolvedValue({
+      ...slipTemplateRow(),
+      sensitiveFieldKeys: [...slipTemplateRow().sensitiveFieldKeys, "activity"],
+    });
+    const saved = await saveClubFormSubmission(director, {
+      organizationId: "club-a",
+      templateKey: "off_premises_permission_slip",
+      rosterMemberId: "member-1",
+      answers: slipAnswers,
+      submit: true,
+    }, now);
+    expect(mocks.queryRaw.mock.calls[0][0].join("?")).toMatch(/FOR SHARE/);
+    const stored = mocks.submissionCreate.mock.calls[0][0].data;
+    expect(stored.answers).not.toHaveProperty("activity");
+    expect(JSON.stringify(stored.answers)).not.toContain("Canoe trip");
+    expect(openSensitiveAnswers(saved.id, stored.sealedSensitiveAnswers)).toMatchObject({ activity: "Canoe trip" });
+  });
+
   it("seals sensitive answers and stores none of their text anywhere Prisma can see", async () => {
     const saved = await saveClubFormSubmission(director, {
       organizationId: "club-a",
@@ -298,6 +325,16 @@ describe("opening a submission (#610)", () => {
     expect(view.answers).not.toHaveProperty("emergency_contact_phone");
     expect(JSON.stringify(view)).not.toContain(SECRET_PHYSICIAN);
     expect(mocks.writeAuditLog.mock.calls[0][0]).toMatchObject({ metadata: expect.objectContaining({ viewerKind: "AREA_COORDINATOR", sensitiveRevealed: false }) });
+  });
+
+  it("drops a restricted key from the plain answers too, in case one was stored there", async () => {
+    mocks.submissionFindFirst.mockImplementation(async () => row({
+      answers: { child_name: "Riley Sample", physician_name: "Dr. Stored Plain By Mistake" },
+    }));
+    const view = await getSubmissionForViewer(areaCoordinator, submissionId);
+    expect(view.answers).not.toHaveProperty("physician_name");
+    expect(JSON.stringify(view)).not.toContain("Dr. Stored Plain By Mistake");
+    expect(view.answers).toMatchObject({ child_name: "Riley Sample" });
   });
 
   it("gives an Event Admin and a system administrator the health, physician and emergency answers", async () => {

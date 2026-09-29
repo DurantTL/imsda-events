@@ -11,6 +11,7 @@ import {
 } from "@/modules/club-forms/domain";
 import { ClubFormError } from "@/modules/club-forms/errors";
 import { resealClubFormSubmissions } from "@/modules/club-forms/reseal";
+import { lockClubFormTemplateForReseal } from "@/modules/club-forms/template-lock";
 import { registrationFormDefinitionSchema, type RegistrationFormDefinition } from "@/modules/forms/definition";
 import { hasDirectoryOptionSource, withDirectoryOptions } from "@/modules/organizations/directory-form-options";
 import { getOrganizationDirectory } from "@/modules/organizations/directory-options";
@@ -43,7 +44,7 @@ const templateSelect = {
  * the stored one. The `enabled` switch is never touched. Safe to call often.
  */
 export async function syncClubFormTemplates(client: Client = getPrisma()) {
-  const existing = await client.clubFormTemplate.findMany({ select: { id: true, key: true, version: true, sensitiveFieldKeys: true } });
+  const existing = await client.clubFormTemplate.findMany({ select: { id: true, key: true, version: true, sensitiveFieldKeys: true, birthDateFieldKeys: true } });
   const stored = new Map(existing.map((row) => [row.key, row]));
   for (const seed of clubFormTemplateSeeds) {
     const definition = registrationFormDefinitionSchema.parse(seed.definition);
@@ -69,21 +70,44 @@ export async function syncClubFormTemplates(client: Client = getPrisma()) {
         update: {},
       });
     } else if (current.version < seed.version) {
-      const newlySensitive = seed.sensitiveFieldKeys.filter((key) => !current.sensitiveFieldKeys.includes(key));
-      const noLongerSensitive = current.sensitiveFieldKeys.filter((key) => !seed.sensitiveFieldKeys.includes(key));
-      // Never silently make an answer readable: a field that stops being sensitive is a human's call.
-      if (noLongerSensitive.length > 0) {
-        throw new ClubFormError("INVALID_TEMPLATE", `${seed.key}: ${noLongerSensitive[0]} would stop being sensitive, which needs a reviewed change.`);
-      }
-      // A newly sensitive field must be sealed in existing submissions in the same transaction as the update.
       const apply = async (tx: Prisma.TransactionClient) => {
+        // Lock, then decide from the locked row: a concurrent save or sync cannot change the keys under us.
+        const locked = await lockClubFormTemplateForReseal(tx, current.id);
+        if (locked.version >= seed.version) return;
+        assertNotLoosened(seed, locked);
+        const newlySensitive = seed.sensitiveFieldKeys.filter((key) => !locked.sensitiveFieldKeys.includes(key));
+        // A newly sensitive field must be sealed in existing submissions in the same transaction as the update.
         await resealClubFormSubmissions(tx, current.id, newlySensitive);
         await tx.clubFormTemplate.update({ where: { key: seed.key }, data });
       };
-      if (newlySensitive.length === 0) await client.clubFormTemplate.update({ where: { key: seed.key }, data });
-      else if ("$transaction" in client) await client.$transaction(apply);
+      assertNotLoosened(seed, current);
+      if ("$transaction" in client) await client.$transaction(apply, RESEAL_TRANSACTION);
       else await apply(client);
     }
+  }
+}
+
+/**
+ * A large re-seal touches thousands of rows, well past Prisma's 5 s default
+ * for an interactive transaction, which would roll it back every time.
+ */
+const RESEAL_TRANSACTION = { maxWait: 30_000, timeout: 10 * 60_000 } as const;
+
+/**
+ * Never silently make an answer readable: a field that stops being sensitive,
+ * or stops being a birth date (ADR 0005 Addendum A), is a human's call.
+ */
+function assertNotLoosened(
+  seed: { key: string; sensitiveFieldKeys: readonly string[]; birthDateFieldKeys: readonly string[] },
+  stored: { sensitiveFieldKeys: readonly string[]; birthDateFieldKeys: readonly string[] },
+) {
+  const noLongerSensitive = stored.sensitiveFieldKeys.filter((key) => !seed.sensitiveFieldKeys.includes(key));
+  if (noLongerSensitive.length > 0) {
+    throw new ClubFormError("INVALID_TEMPLATE", `${seed.key}: ${noLongerSensitive[0]} would stop being sensitive, which needs a reviewed change.`);
+  }
+  const noLongerBirthDate = stored.birthDateFieldKeys.filter((key) => !seed.birthDateFieldKeys.includes(key));
+  if (noLongerBirthDate.length > 0) {
+    throw new ClubFormError("INVALID_TEMPLATE", `${seed.key}: ${noLongerBirthDate[0]} would stop being a birth date field, which needs a reviewed change.`);
   }
 }
 
@@ -126,8 +150,9 @@ export async function listClubFormTemplatesForAdmin(): Promise<ClubFormTemplateS
 
 /** Turns one template on or off. The caller has already checked for a system administrator. */
 export async function setClubFormTemplateEnabled(key: string, enabled: boolean, actorUserId: string, now = new Date()) {
+  // Synced first, in its own transaction: a re-seal can outlast an ordinary transaction's timeout.
+  await syncClubFormTemplates(getPrisma());
   return getPrisma().$transaction(async (tx) => {
-    await syncClubFormTemplates(tx);
     const template = await tx.clubFormTemplate.findUnique({ where: { key }, select: { id: true, enabled: true } });
     if (!template) throw new ClubFormError("TEMPLATE_NOT_FOUND", "That form could not be found.");
     if (template.enabled !== enabled) {
