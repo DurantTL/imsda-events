@@ -13,6 +13,7 @@ import {
   type ApplyEventTemplateInput,
   type EventTemplatePayload,
 } from "@/modules/event-templates/domain";
+import { activeCoordinatorAccountIds } from "@/modules/event-locations/coordinators";
 import { normalizeLocationName, shiftCalendarDate } from "@/modules/event-locations/domain";
 import { createRegistrationFormFromTemplateInTransaction } from "@/modules/forms/repository";
 import { getEventSettings } from "@/modules/events/repository";
@@ -409,6 +410,8 @@ export async function applyEventTemplate(
 
       const templateLocations = payload.locations ?? [];
       if (templateLocations.length > 0) {
+        // A template's coordinator is applied only if still an active Area Coordinator (#599).
+        const activeCoordinators = await activeCoordinatorAccountIds(tx, templateLocations.map((location) => location.coordinatorAccountId));
         // Dates count from the new event's first day, so they move with it (#413).
         await tx.eventLocation.createMany({
           data: templateLocations.map((location, position) => ({
@@ -417,6 +420,7 @@ export async function applyEventTemplate(
             normalizedName: normalizeLocationName(location.name),
             address: location.address,
             capacity: location.capacity,
+            coordinatorAccountId: location.coordinatorAccountId && activeCoordinators.has(location.coordinatorAccountId) ? location.coordinatorAccountId : null,
             sortOrder: position,
             firstDay: location.firstDayOffset === null ? null : shiftCalendarDate(input.startsOn, location.firstDayOffset),
             lastDay: location.lastDayOffset === null ? null : shiftCalendarDate(input.startsOn, location.lastDayOffset),

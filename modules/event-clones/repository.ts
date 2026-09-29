@@ -28,6 +28,7 @@ import {
 } from "@/modules/event-clones/domain";
 import { normalizeHonorText, offeringSlotConflict } from "@/modules/honors/domain";
 import { calendarDayDifference, normalizeLocationName, shiftLocationsForClone } from "@/modules/event-locations/domain";
+import { activeCoordinatorAccountIds } from "@/modules/event-locations/coordinators";
 import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { getEventSettings } from "@/modules/events/repository";
 import { createRegistrationFormFromDefinitionInTransaction } from "@/modules/forms/repository";
@@ -170,6 +171,7 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
     locations: locations.map((location) => ({
       name: location.name, address: location.address, capacity: location.capacity, sortOrder: location.sortOrder,
       firstDay: location.firstDay, lastDay: location.lastDay, registrationClosesOn: location.registrationClosesOn,
+      coordinatorAccountId: location.coordinatorAccountId,
     })),
     honorSessions: honorSessions.map((session) => ({
       id: session.id, name: session.name, normalizedName: session.normalizedName, sortOrder: session.sortOrder,
@@ -445,8 +447,19 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
         // Dates move by the same number of days as the event's start date (#413).
         const days = calendarDayDifference(config.event.startsOn, input.startsOn);
         const shifted = shiftLocationsForClone(config.locations, days);
+        // A coordinator is carried only if still active when the copy is made (#599).
+        const activeCoordinators = await activeCoordinatorAccountIds(tx, config.locations.map((location) => location.coordinatorAccountId));
+        const coordinatorByName = new Map(config.locations.map((location) => [location.name, location.coordinatorAccountId ?? null]));
         await tx.eventLocation.createMany({
-          data: shifted.map((location) => ({ eventId: event.id, ...location, normalizedName: normalizeLocationName(location.name) })),
+          data: shifted.map((location) => {
+            const coordinatorId = coordinatorByName.get(location.name) ?? null;
+            return {
+              eventId: event.id,
+              ...location,
+              normalizedName: normalizeLocationName(location.name),
+              coordinatorAccountId: coordinatorId && activeCoordinators.has(coordinatorId) ? coordinatorId : null,
+            };
+          }),
         });
         copied.locations = shifted.length;
       }

@@ -226,6 +226,8 @@ export type SourceConfiguration = {
     firstDay: string | null;
     lastDay: string | null;
     registrationClosesOn: string | null;
+    /** The location's Area Coordinator (#599); carried to the copy only while still active. */
+    coordinatorAccountId?: string | null;
   }>;
   honorSessions: Array<{
     id: string;

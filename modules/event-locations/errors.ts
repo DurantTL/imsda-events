@@ -10,7 +10,8 @@ export type EventLocationErrorCode =
   | "LOCATION_INVALID"
   | "LOCATION_FULL"
   | "LOCATION_CLOSED"
-  | "LOCATION_BUSY";
+  | "LOCATION_BUSY"
+  | "LOCATION_COORDINATOR_INVALID";
 
 /**
  * Every refusal the locations module can make (#413), for staff setup and for
@@ -45,6 +46,7 @@ export function eventLocationErrorStatus(code: EventLocationErrorCode) {
       return 404;
     case "LOCATION_REQUIRED":
     case "LOCATION_INVALID":
+    case "LOCATION_COORDINATOR_INVALID":
     case "LOCATION_ORDER_MISMATCH":
       return 422;
     case "LOCATION_CLOSED":

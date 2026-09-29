@@ -15,7 +15,9 @@ What happens on `docker compose up`:
    entrypoint runs `prisma migrate deploy` before starting `next start` on port 3000.
    The app validates its whole environment before accepting a request and **refuses
    to start** if anything required is missing — see [Environment variables](#environment-variables-set-these-in-the-xcloud-env-panel).
-3. **outbox-sweeper** retries queued email that failed a first delivery attempt.
+3. **outbox-sweeper** retries queued email that failed a first delivery attempt, and
+   sends the daily location waitlist digest each morning at 7:00 Central
+   (see [LOCATION-WAITLISTS.md](LOCATION-WAITLISTS.md)).
 4. **backup** takes a nightly `pg_dump`, archives uploaded event files, and
    periodically rehearses a database restore.
 

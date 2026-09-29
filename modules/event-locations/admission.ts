@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { Prisma } from "@prisma/client";
-import { isLockTimeoutError } from "@/lib/prisma-errors";
+import { isDeadlockError, isLockTimeoutError } from "@/lib/prisma-errors";
 import {
   EventLocationError,
   locationBusyMessage,
@@ -60,7 +60,9 @@ export async function lockEventLocation(tx: Tx, eventId: string, locationId: str
       WHERE "id" = ${locationId} AND "eventId" = ${eventId}
       FOR UPDATE`;
   } catch (error) {
-    if (isLockTimeoutError(error)) throw new EventLocationError("LOCATION_BUSY", locationBusyMessage);
+    // A deadlock (two requests taking locations in opposite orders) is busy too: nothing was written here,
+    // and the auto-promotion loop's savepoint skips the candidate (#599).
+    if (isLockTimeoutError(error) || isDeadlockError(error)) throw new EventLocationError("LOCATION_BUSY", locationBusyMessage);
     throw error;
   }
   await tx.$executeRawUnsafe("SET LOCAL lock_timeout = 0");
@@ -91,7 +93,16 @@ export type LocationSeatCheck = {
   requirePick: boolean;
   excludeRegistrationId?: string;
   lock?: boolean;
+  /**
+   * The event's waitlist is on (#599): a location without room for the request
+   * is not refused with LOCATION_FULL; the location is returned with
+   * `waitlisted: true` so the registration joins that location's waitlist.
+   */
+  waitlistIfFull?: boolean;
 };
+
+/** A locked location, and whether the request did not fit and should be waitlisted there. */
+export type AdmittedLocation = LockedLocation & { waitlisted: boolean };
 
 /**
  * Checks and locks the location a registration takes seats at.
@@ -104,6 +115,10 @@ export type LocationSeatCheck = {
  *   are not counted against itself.
  * - `lock: false` reads without the row lock (an amendment preview).
  *
+ * - `waitlistIfFull`: a full location is returned with `waitlisted: true`
+ *   instead of throwing LOCATION_FULL (#599). The lock is still held, so the
+ *   caller's waitlist place is decided under it.
+ *
  * Returns the location (or `null` for none). Throws `EventLocationError`:
  * LOCATION_REQUIRED, LOCATION_INVALID, LOCATION_FULL, LOCATION_BUSY.
  */
@@ -112,7 +127,7 @@ export async function checkLocationSeats(
   input: LocationSeatCheck,
   /** Runs once the location is loaded and locked, before its seats are counted: "closed" is reported before "full". */
   beforeSeatCheck?: (location: LockedLocation) => void,
-): Promise<LockedLocation | null> {
+): Promise<AdmittedLocation | null> {
   if (!input.locationId) {
     if (input.requirePick && (await countActiveLocations(tx, input.eventId)) > 0) {
       throw new EventLocationError("LOCATION_REQUIRED", "Choose a location for your registration.");
@@ -138,14 +153,17 @@ export async function checkLocationSeats(
   beforeSeatCheck?.(location);
   const occupied = await countLocationSeats(tx, location.id, input.excludeRegistrationId);
   if (!locationHasRoom(location.capacity, occupied, input.requestedSeats)) {
+    if (input.waitlistIfFull) return { ...location, waitlisted: true };
     throw new EventLocationError("LOCATION_FULL", locationFullMessage(location.name, remainingLocationSeats(location.capacity, occupied)));
   }
-  return location;
+  return { ...location, waitlisted: false };
 }
 
 export type LocationAdmission<E extends EventLifecycleSource> = {
   locationId: string | null;
   location: LockedLocation | null;
+  /** The location had no room and the event waitlist is on: join that location's waitlist (#599). */
+  waitlisted: boolean;
   /** The event's lifecycle with this location's own closing date and last day applied. */
   lifecycle: E;
 };
@@ -168,6 +186,7 @@ export async function admitToLocation<E extends EventLifecycleSource>(
   return {
     locationId: location?.id ?? null,
     location,
+    waitlisted: location?.waitlisted ?? false,
     lifecycle: location ? locationLifecycleSource(input.event, location) : input.event,
   };
 }
