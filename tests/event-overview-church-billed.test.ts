@@ -7,8 +7,9 @@ vi.mock("@/lib/prisma", () => ({ getPrisma: dependencies.getPrisma }));
 
 import { getEventOverview } from "@/modules/events/repository";
 
-function prismaFor(billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE") {
+function prismaFor(billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE", sponsoredCents = 0) {
   return {
+    promoCodeRedemption: { aggregate: vi.fn().mockResolvedValue({ _sum: { discountAmountCents: sponsoredCents || null } }) },
     event: {
       findUnique: vi.fn().mockResolvedValue({
         id: "event-1",
@@ -26,6 +27,7 @@ function prismaFor(billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE"
         collectsShirtSizes: false,
         checksAdultBackgrounds: false,
         autoPromoteWaitlist: false,
+        audience: "GENERAL",
         billingMode,
       }),
     },
@@ -55,6 +57,26 @@ describe("event overview metrics (#409)", () => {
       outstandingCents: 0,
       churchBilledCents: 7_600,
     });
+  });
+
+  it("adds church-sponsored promo code discounts to what churches are billed (#545)", async () => {
+    dependencies.getPrisma.mockReturnValue(prismaFor("ATTENDEE_PAY", 5_000));
+    const overview = await getEventOverview("event-1");
+    expect(overview?.metrics).toMatchObject({
+      isDeferredOrganizationBilling: false,
+      churchSponsoredCents: 5_000,
+      pendingPaymentCount: 2,
+    });
+  });
+
+  it("does not bill sponsored discounts on an event that already bills churches (#545)", async () => {
+    const prisma = prismaFor("DEFERRED_ORGANIZATION_INVOICE", 5_000);
+    const event = await prisma.event.findUnique();
+    prisma.event.findUnique.mockResolvedValue({ ...event, audience: "CLUB" });
+    dependencies.getPrisma.mockReturnValue(prisma);
+    const overview = await getEventOverview("event-1");
+    expect(overview?.metrics).toMatchObject({ churchBilledCents: 7_600, churchSponsoredCents: 0 });
+    expect(prisma.promoCodeRedemption.aggregate).not.toHaveBeenCalled();
   });
 
   it("keeps attendee-pay balances as pending payment", async () => {

@@ -31,6 +31,23 @@ export function notBilledLabel(status: ClubRegistrationStatus) {
   return "Not submitted — nothing owed";
 }
 
+/**
+ * A church-sponsored promo code line (#545), structurally the same as
+ * `ChurchSponsoredPromoLine` in the promo-codes module (which imports this
+ * file, so the shape is repeated here to avoid an import cycle). Callers pass
+ * lines already filtered to billed ones and ordered.
+ */
+export type SponsoredCsvLine = {
+  churchId: string;
+  churchName: string;
+  promoCode: string;
+  confirmationCode: string;
+  status: ClubRegistrationStatus;
+  amountCents: number;
+};
+
+export const SPONSORED_PROMO_NOTE = "Church-sponsored promo code; billed to the church after the event, not paid online";
+
 export type ChurchAmountOwedRow = {
   organizationId: string;
   organizationName: string;
@@ -92,10 +109,20 @@ export function summarizeChurchAmountsOwed(rows: ChurchAmountOwedRow[]) {
   };
 }
 
-/** CSV rows: one per club with its church and that church's subtotal, so the file sorts and filters cleanly. */
-export function churchAmountsOwedCsvRows(rows: ChurchAmountOwedRow[]) {
+/**
+ * CSV rows: one per club with its church and that church's subtotal, so the
+ * file sorts and filters cleanly. Church-sponsored promo code lines (#545)
+ * follow, one per redeemed registration, and count toward the church total.
+ */
+export function churchAmountsOwedCsvRows(
+  rows: ChurchAmountOwedRow[],
+  sponsoredLines: readonly SponsoredCsvLine[] = [],
+) {
   const summary = summarizeChurchAmountsOwed(rows);
   const subtotalByChurch = new Map(summary.churches.map((church) => [church.churchKey, church.amountOwedCents]));
+  for (const line of sponsoredLines) {
+    subtotalByChurch.set(line.churchId, (subtotalByChurch.get(line.churchId) ?? 0) + line.amountCents);
+  }
   const money = (cents: number) => (cents / 100).toFixed(2);
   const table: Array<Array<string | number>> = [[
     "Church",
@@ -121,6 +148,19 @@ export function churchAmountsOwedCsvRows(rows: ChurchAmountOwedRow[]) {
       row.isBilled
         ? "Billed to the church after the event, not paid online"
         : notBilledLabel(row.status),
+    ]);
+  }
+  for (const line of sponsoredLines) {
+    table.push([
+      line.churchName,
+      `Promo code ${line.promoCode}`,
+      line.confirmationCode,
+      line.status,
+      "Yes",
+      "",
+      money(line.amountCents),
+      money(subtotalByChurch.get(line.churchId) ?? 0),
+      SPONSORED_PROMO_NOTE,
     ]);
   }
   return table;

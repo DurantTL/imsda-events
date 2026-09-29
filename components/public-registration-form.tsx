@@ -147,6 +147,8 @@ type PromoCodeQuote = FormCalculation & {
   preDiscountSubtotalCents: number;
   discountAmountCents: number;
   promoCode: string;
+  /** The church sponsoring the code the attendee entered (#545); nothing else about it is shown. */
+  sponsoredBy?: string | null;
 };
 
 /** Per-person codes (#397): every attendee's code, checked together. */
@@ -711,7 +713,7 @@ export function PublicRegistrationForm({
       setPromoCodeQuote(quote);
       setPromoQuoteBasis(requestBasis);
       setPromoCodeNotice(
-        `${quote.promoCode} applied — ${money(quote.discountAmountCents)} off.`,
+        `${quote.promoCode} applied — ${money(quote.discountAmountCents)} off.${quote.sponsoredBy ? ` Sponsored by ${quote.sponsoredBy}.` : ""}`,
       );
       setIdempotencyKey(null);
     } catch {

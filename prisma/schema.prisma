@@ -1675,6 +1675,7 @@ model Organization {
   clubOrderNeeds     ClubOrderNeed[]
   clubOrderBatches   ClubSupplyOrderBatch[]
   memberClassCompletions MemberClassCompletion[]
+  sponsoredPromoCodes PromoCode[] @relation("PromoCodeSponsor")
 
   @@index([type, isActive, name])
   @@index([parentOrganizationId, isActive])
@@ -2063,15 +2064,23 @@ model PromoCode {
   maximumUses          Int?
   maximumDiscountCents Int?
   redeemedCount        Int               @default(0)
+  /// Church-sponsored code (#545): the church that owes the discount for each
+  /// active registration that redeemed it. Only on a GENERAL event, and only
+  /// an active CHURCH organization when linked; staff-set. Nothing is stored
+  /// per redemption — what the church owes is computed on demand from
+  /// PromoCodeRedemption, like church-billed club registrations (#409).
+  sponsoringOrganizationId String?
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
 
   event       Event                 @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  sponsoringOrganization Organization? @relation("PromoCodeSponsor", fields: [sponsoringOrganizationId], references: [id], onDelete: Restrict)
   redemptions PromoCodeRedemption[]
   adjustments RegistrationAdjustment[]
 
   @@unique([eventId, normalizedCode])
   @@index([eventId, isActive, updatedAt])
+  @@index([sponsoringOrganizationId])
 }
 
 model PromoCodeRedemption {

@@ -43,7 +43,9 @@ export type PromoCodeOperationErrorCode =
   | "PROMO_CODE_CONFLICT"
   | "PROMO_CODE_CODE_LOCKED"
   | "PROMO_CODE_LIMIT_BELOW_USAGE"
-  | "PROMO_CODE_CLAIM_CONFLICT";
+  | "PROMO_CODE_CLAIM_CONFLICT"
+  | "PROMO_CODE_SPONSOR_INVALID"
+  | "PROMO_CODE_SPONSOR_LOCKED";
 
 export class PromoCodeOperationError extends Error {
   constructor(
@@ -83,6 +85,7 @@ type StoredPromo = {
   maximumUses: number | null;
   maximumDiscountCents: number | null;
   redeemedCount: number;
+  sponsoringOrganizationId: string | null;
 };
 
 export type ClaimedPromoCode = {
@@ -91,7 +94,10 @@ export type ClaimedPromoCode = {
   pricingDate: string;
 };
 
-export type PublicPromoCodeQuote = DiscountedFormCalculation;
+export type PublicPromoCodeQuote = DiscountedFormCalculation & {
+  /** Name of the sponsoring church, shown only for the code the attendee entered (#545). */
+  sponsoredBy?: string | null;
+};
 
 function storedPromoRule(promo: StoredPromo): PromoCodeRule {
   return promo;
@@ -103,9 +109,14 @@ function isUniqueConstraint(error: unknown) {
 }
 
 function serializePromoCode(
-  promo: StoredPromo & { createdAt: Date; updatedAt: Date },
+  promo: StoredPromo & {
+    createdAt: Date;
+    updatedAt: Date;
+    sponsoringOrganization?: { name: string } | null;
+  },
   pricingDate: string,
 ) {
+  const { sponsoringOrganization, ...stored } = promo;
   const remainingUses = promo.maximumUses === null
     ? null
     : Math.max(promo.maximumUses - promo.redeemedCount, 0);
@@ -119,7 +130,8 @@ function serializePromoCode(
           ? "USED_UP" as const
           : "AVAILABLE" as const;
   return {
-    ...promo,
+    ...stored,
+    sponsoringOrganizationName: sponsoringOrganization?.name ?? null,
     remainingUses,
     availability,
     createdAt: promo.createdAt.toISOString(),
@@ -144,9 +156,86 @@ export async function listPromoCodes(eventId: string, now = new Date()) {
   const promos = await prisma.promoCode.findMany({
     where: { eventId },
     orderBy: [{ isActive: "desc" }, { updatedAt: "desc" }],
+    include: { sponsoringOrganization: { select: { name: true } } },
   });
   const pricingDate = calendarDateInTimeZone(now, event.timezone);
   return promos.map((promo) => serializePromoCode(promo, pricingDate));
+}
+
+/**
+ * Church-sponsored codes (#545): only a GENERAL event's code may name a
+ * sponsor, and the sponsor must be an active CHURCH organization. Church
+ * billing for club events already bills the church directly (#409), so a
+ * sponsored code there would bill it twice.
+ */
+async function assertSponsorAllowed(
+  tx: Prisma.TransactionClient,
+  eventId: string,
+  sponsoringOrganizationId: string,
+) {
+  const event = await tx.event.findUnique({
+    where: { id: eventId },
+    select: { audience: true },
+  });
+  if (event?.audience !== "GENERAL") {
+    throw new PromoCodeOperationError(
+      "PROMO_CODE_SPONSOR_INVALID",
+      "Only promo codes on general events can be sponsored by a church. Club events already bill the church.",
+    );
+  }
+  const church = await tx.organization.findUnique({
+    where: { id: sponsoringOrganizationId },
+    select: { type: true, isActive: true },
+  });
+  if (!church || church.type !== "CHURCH" || !church.isActive) {
+    throw new PromoCodeOperationError(
+      "PROMO_CODE_SPONSOR_INVALID",
+      "Choose an active church as the sponsor.",
+    );
+  }
+}
+
+/** Active churches staff may pick as a code's sponsor. Names only. */
+export async function listSponsorChurchOptions() {
+  return getPrisma().organization.findMany({
+    where: { type: "CHURCH", isActive: true },
+    orderBy: { name: "asc" },
+    select: { id: true, name: true },
+  });
+}
+
+async function auditSponsorChange(
+  tx: Prisma.TransactionClient,
+  input: {
+    eventId: string;
+    actorUserId: string;
+    promoCodeId: string;
+    code: string;
+    previous: string | null;
+    next: string | null;
+  },
+) {
+  await tx.auditLog.create({
+    data: {
+      eventId: input.eventId,
+      actorUserId: input.actorUserId,
+      action: input.next
+        ? "PROMO_CODE_SPONSOR_LINKED"
+        : "PROMO_CODE_SPONSOR_UNLINKED",
+      entityType: "PromoCode",
+      entityId: input.promoCodeId,
+      correlationId: crypto.randomUUID(),
+      summary: input.next
+        ? `Linked promo code ${input.code} to a sponsoring church.`
+        : `Removed the sponsoring church from promo code ${input.code}.`,
+      // Identifiers only: never a church name or any attendee detail.
+      metadata: {
+        promoCodeId: input.promoCodeId,
+        sponsoringOrganizationId: input.next,
+        previousSponsoringOrganizationId: input.previous,
+      },
+    },
+  });
 }
 
 export async function createPromoCode(
@@ -167,6 +256,10 @@ export async function createPromoCode(
           "The event could not be found.",
         );
       }
+      const sponsoringOrganizationId = input.sponsoringOrganizationId ?? null;
+      if (sponsoringOrganizationId) {
+        await assertSponsorAllowed(tx, eventId, sponsoringOrganizationId);
+      }
       const promo = await tx.promoCode.create({
         data: {
           eventId,
@@ -180,8 +273,19 @@ export async function createPromoCode(
           minimumSubtotalCents: input.minimumSubtotalCents,
           maximumUses: input.maximumUses,
           maximumDiscountCents: input.maximumDiscountCents,
+          sponsoringOrganizationId,
         },
       });
+      if (sponsoringOrganizationId) {
+        await auditSponsorChange(tx, {
+          eventId,
+          actorUserId,
+          promoCodeId: promo.id,
+          code: promo.code,
+          previous: null,
+          next: sponsoringOrganizationId,
+        });
+      }
       await tx.auditLog.create({
         data: {
           eventId,
@@ -248,13 +352,34 @@ export async function updatePromoCode(
           `This code has already been used ${existing.redeemedCount} time${existing.redeemedCount === 1 ? "" : "s"}. Its maximum uses cannot be lower than that.`,
         );
       }
+      // Omitted means "leave the sponsor as it is".
+      const nextSponsor = input.sponsoringOrganizationId === undefined
+        ? existing.sponsoringOrganizationId
+        : input.sponsoringOrganizationId;
+      const sponsorChanged = nextSponsor !== existing.sponsoringOrganizationId;
+      if (sponsorChanged) {
+        // What a church owes is computed from a code's redemptions, so moving
+        // or removing the sponsor of a used code would silently rewrite who
+        // owes past discounts. Deactivate it and create a new code instead.
+        if (existing.redeemedCount > 0) {
+          throw new PromoCodeOperationError(
+            "PROMO_CODE_SPONSOR_LOCKED",
+            "A promo code that has already been used cannot change its sponsoring church. Deactivate it and create a new code instead.",
+          );
+        }
+        if (nextSponsor) await assertSponsorAllowed(tx, eventId, nextSponsor);
+      }
       const changed = await tx.promoCode.updateMany({
         where: {
           id: promoCodeId,
           eventId,
+          // Guarded so a use claimed after the read above cannot slip past
+          // the sponsor lock.
+          ...(sponsorChanged ? { redeemedCount: 0 } : {}),
           updatedAt: new Date(input.expectedUpdatedAt),
         },
         data: {
+          sponsoringOrganizationId: nextSponsor,
           code: normalizedCode,
           normalizedCode,
           isActive: input.isActive,
@@ -272,6 +397,16 @@ export async function updatePromoCode(
           "PROMO_CODE_CONFLICT",
           "Someone else updated this promo code. Refresh and review the latest values before saving.",
         );
+      }
+      if (sponsorChanged) {
+        await auditSponsorChange(tx, {
+          eventId,
+          actorUserId,
+          promoCodeId,
+          code: normalizedCode,
+          previous: existing.sponsoringOrganizationId,
+          next: nextSponsor,
+        });
       }
       await tx.auditLog.create({
         data: {
@@ -542,12 +677,21 @@ export async function getPublicPromoCodeQuote(
     },
   );
   if (!evaluation.valid) publicErrorFromEvaluation(evaluation, field.id);
-  return applyPromoCodeToCalculation(
-    definition,
-    prepared.registrationResponses,
-    prepared.calculation,
-    evaluation,
-  );
+  const sponsor = promo?.sponsoringOrganizationId
+    ? await prisma.organization.findUnique({
+      where: { id: promo.sponsoringOrganizationId },
+      select: { name: true },
+    })
+    : null;
+  return {
+    ...applyPromoCodeToCalculation(
+      definition,
+      prepared.registrationResponses,
+      prepared.calculation,
+      evaluation,
+    ),
+    sponsoredBy: sponsor?.name ?? null,
+  };
 }
 
 export async function claimPromoCode(

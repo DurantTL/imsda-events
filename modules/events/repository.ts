@@ -1,3 +1,4 @@
+import { sumChurchSponsoredPromoCents } from "@/modules/promo-codes/church-sponsored-repository";
 import type { MembershipRecord } from "@/modules/access/authorization";
 import { getPrisma } from "@/lib/prisma";
 import {
@@ -614,6 +615,10 @@ export async function getEventOverview(eventId: string) {
       outstandingCents,
       isDeferredOrganizationBilling,
       churchBilledCents,
+      // Discounts from church-sponsored promo codes billed to churches on a
+      // GENERAL attendee-paid event (#545); 0 on any event that already bills
+      // churches, so a church is never billed twice.
+      churchSponsoredCents: await sumChurchSponsoredPromoCents(eventId, prisma),
       waitlistedRegistrations: await prisma.registrationWaitlistEntry.count({
         where: { eventId, status: "WAITING" },
       }),

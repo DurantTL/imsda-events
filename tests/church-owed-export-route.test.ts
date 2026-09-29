@@ -16,6 +16,7 @@ const dependencies = vi.hoisted(() => {
     getCurrentSession: vi.fn(),
     findActiveMembership: vi.fn(),
     listChurchAmountsOwed: vi.fn(),
+    listChurchSponsoredPromoLines: vi.fn(),
   };
 });
 
@@ -40,6 +41,10 @@ vi.mock("@/modules/club-registrations/repository", () => ({
   listChurchAmountsOwed: dependencies.listChurchAmountsOwed,
 }));
 
+vi.mock("@/modules/promo-codes/church-sponsored-repository", () => ({
+  listChurchSponsoredPromoLines: dependencies.listChurchSponsoredPromoLines,
+}));
+
 const realRequirePermission = vi.hoisted(() => ({
   current: null as null | typeof import("@/modules/access/authorization").requirePermission,
 }));
@@ -49,6 +54,7 @@ import { GET } from "@/app/api/events/[eventId]/exports/church-owed/route";
 beforeEach(() => {
   vi.clearAllMocks();
   dependencies.getCurrentSession.mockResolvedValue({ user: { id: "user_one" } });
+  dependencies.listChurchSponsoredPromoLines.mockResolvedValue([]);
 });
 
 function row(overrides: Record<string, unknown> = {}) {
@@ -105,6 +111,28 @@ describe("church-owed CSV export (#409)", () => {
     );
     expect(response.status).toBe(403);
     expect(dependencies.listChurchAmountsOwed).not.toHaveBeenCalled();
+    expect(dependencies.listChurchSponsoredPromoLines).not.toHaveBeenCalled();
+  });
+
+  it("adds church-sponsored promo code lines under their church, by confirmation code and amount only (#545)", async () => {
+    dependencies.requirePermission.mockResolvedValue({ user: { id: "user_one" }, membership: {} });
+    dependencies.listChurchAmountsOwed.mockResolvedValue([row({ amountOwedCents: 900 })]);
+    dependencies.listChurchSponsoredPromoLines.mockResolvedValue([
+      { churchId: "church-1", churchName: "Ankeny SDA Church", promoCode: "SPONSOR25", confirmationCode: "GEN-1", status: "CONFIRMED", amountCents: 2500 },
+      { churchId: "church-1", churchName: "Ankeny SDA Church", promoCode: "SPONSOR25", confirmationCode: "GEN-2", status: "CANCELLED", amountCents: 2500 },
+    ]);
+    const response = await GET(
+      new Request("https://events.imsda.test/api/events/event_one/exports/church-owed"),
+      { params: Promise.resolve({ eventId: "event_one" }) },
+    );
+    const csv = await response.text();
+    expect(response.status).toBe(200);
+    expect(dependencies.listChurchSponsoredPromoLines).toHaveBeenCalledWith("event_one");
+    expect(csv).toContain(
+      '"Ankeny SDA Church","Promo code SPONSOR25","GEN-1","CONFIRMED","Yes","","25.00","34.00","Church-sponsored promo code; billed to the church after the event, not paid online"',
+    );
+    expect(csv).not.toContain("GEN-2");
+    expect(csv).not.toMatch(/birth|medical|allerg|email|phone/i);
   });
 
   it("exports what each church owes, with confirmation, headcount, and amount, never birth dates or medical detail", async () => {

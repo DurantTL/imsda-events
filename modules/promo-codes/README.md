@@ -43,3 +43,28 @@ The local seed and `npm run db:refresh-demo` upsert the fictitious `LOCAL10`
 code for Women’s Retreat (`10%` off, `$50` maximum, `$100` minimum). A refresh
 extends the local-only ceiling so at least 25 test uses remain without deleting
 any immutable redemption history. It must not be treated as a live event offer.
+
+## Church-sponsored codes (#545)
+
+On a GENERAL event, staff with `MANAGE_FINANCE` may link a code to a sponsoring
+church (an active CHURCH organization) in the same editor. The attendee gets the
+normal discount; the church is billed that discount after the event, not paid
+online. Nothing is stored per redemption: like church-billed club registrations
+(#409), what a church owes is computed from `PromoCodeRedemption.discountAmountCents`
+when someone looks.
+
+- One line per redeemed registration, counted only while the registration is
+  SUBMITTED or CONFIRMED (the statuses `churchOwedCents` bills). Cancelled,
+  waitlisted, and draft registrations drop out on their own.
+- Lines appear on `/finance/church-owed` and its CSV grouped under the church,
+  by confirmation code and amount only, and count in the overview
+  "Billed to churches" figure. Each surface keeps its existing permission.
+- A church is never billed twice: an event that is a CLUB event, or already
+  bills organizations (`DEFERRED_ORGANIZATION_INVOICE`), bills no sponsored
+  lines even if a code there names a church.
+- The church's exposure is the code's own `maximumUses` and
+  `maximumDiscountCents`; there is no separate cap.
+- Linking and unlinking are audited with ids only. A used code cannot change or
+  lose its sponsor (deactivate it and create a new one), and cloning an event
+  never copies a sponsor.
+- Attendees see only "Sponsored by <church>" on the code they entered.

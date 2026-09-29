@@ -70,15 +70,21 @@ function currentPromoCodeEditorDraft(form: HTMLFormElement) {
     minimumSubtotal: String(values.get("minimumSubtotal") ?? ""),
     maximumUses: String(values.get("maximumUses") ?? ""),
     maximumDiscount: String(values.get("maximumDiscount") ?? ""),
+    sponsoringOrganizationId: String(values.get("sponsoringOrganizationId") ?? ""),
   });
 }
 
 export function PromoCodeWorkspace({
   eventId,
   initialPromoCodes,
+  canSponsorByChurch = false,
+  sponsorChurches = [],
 }: {
   eventId: string;
   initialPromoCodes: PromoCodeRecord[];
+  /** Only a GENERAL event's code may be sponsored by a church (#545). */
+  canSponsorByChurch?: boolean;
+  sponsorChurches?: Array<{ id: string; name: string }>;
 }) {
   const [promoCodes, setPromoCodes] = useState(initialPromoCodes);
   const [editing, setEditing] = useState<PromoCodeRecord | "new" | null>(null);
@@ -172,6 +178,11 @@ export function PromoCodeWorkspace({
       maximumDiscountCents: discountType === "PERCENT_BPS"
         ? numberOrNull(form, "maximumDiscount", 100)
         : null,
+      // Omitted on an event that cannot be sponsored, and for a used code
+      // (its sponsor is locked), so the server leaves the link as it is.
+      ...(canSponsorByChurch && !current?.redeemedCount
+        ? { sponsoringOrganizationId: String(form.get("sponsoringOrganizationId") ?? "") || null }
+        : {}),
       ...(current ? { expectedUpdatedAt: current.updatedAt } : {}),
     };
     const url = current
@@ -341,6 +352,12 @@ export function PromoCodeWorkspace({
                         : ` of ${promo.maximumUses} · ${promo.remainingUses} left`}
                     </dd>
                   </div>
+                  {promo.sponsoringOrganizationName && (
+                    <div>
+                      <dt>Sponsored by</dt>
+                      <dd>{promo.sponsoringOrganizationName} · billed to the church</dd>
+                    </div>
+                  )}
                   <div>
                     <dt>Dates</dt>
                     <dd>
@@ -476,6 +493,28 @@ export function PromoCodeWorkspace({
                 <label>
                   Maximum discount per registration <small>Optional dollars</small>
                   <input name="maximumDiscount" type="number" min="0.01" step="0.01" defaultValue={optionalMoneyValue(editedPromo?.maximumDiscountCents ?? null)} />
+                </label>
+              )}
+              {canSponsorByChurch && (
+                <label>
+                  Sponsoring church <small>Optional · the church is billed for the discount on each active registration that uses this code</small>
+                  <select
+                    name="sponsoringOrganizationId"
+                    defaultValue={editedPromo?.sponsoringOrganizationId ?? ""}
+                    disabled={Boolean(editedPromo?.redeemedCount)}
+                  >
+                    <option value="">No sponsor (attendee pays the normal price)</option>
+                    {editedPromo?.sponsoringOrganizationId
+                      && !sponsorChurches.some((church) => church.id === editedPromo.sponsoringOrganizationId) && (
+                      <option value={editedPromo.sponsoringOrganizationId}>
+                        {editedPromo.sponsoringOrganizationName ?? "Current sponsor"} (no longer active)
+                      </option>
+                    )}
+                    {sponsorChurches.map((church) => (
+                      <option key={church.id} value={church.id}>{church.name}</option>
+                    ))}
+                  </select>
+                  {Boolean(editedPromo?.redeemedCount) && <small>Used codes cannot change their sponsoring church. Deactivate this one and create a new code instead.</small>}
                 </label>
               )}
               <label className="public-registration-check">

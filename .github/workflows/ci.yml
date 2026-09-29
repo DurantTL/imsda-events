@@ -93,3 +93,8 @@ jobs:
       # configuration only, excluded domains, disabled modules, stale sources, parallel
       # duplicates, and key reuse (#157).
       - run: npm run test:event-cloning
+
+      # Real-database check of church-sponsored promo codes: linking rules, the
+      # owed line per redemption, cancellation dropping it, parallel redemptions,
+      # and no double billing on church-billed events (#545).
+      - run: npm run test:church-promo-codes

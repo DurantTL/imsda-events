@@ -12,6 +12,7 @@ export type PromoCodeEditorRecord = {
   minimumSubtotalCents: number | null;
   maximumUses: number | null;
   maximumDiscountCents: number | null;
+  sponsoringOrganizationId?: string | null;
 };
 
 export type RawPromoCodeEditorDraft = {
@@ -24,6 +25,7 @@ export type RawPromoCodeEditorDraft = {
   minimumSubtotal: string;
   maximumUses: string;
   maximumDiscount: string;
+  sponsoringOrganizationId?: string;
 };
 
 export type NormalizedPromoCodeEditorDraft = {
@@ -36,6 +38,7 @@ export type NormalizedPromoCodeEditorDraft = {
   minimumSubtotalCents: number | null;
   maximumUses: number | null;
   maximumDiscountCents: number | null;
+  sponsoringOrganizationId: string | null;
 };
 
 function normalizedScaledNumber(value: string, multiplier = 1) {
@@ -64,6 +67,7 @@ export function emptyPromoCodeEditorDraft(): NormalizedPromoCodeEditorDraft {
     minimumSubtotalCents: null,
     maximumUses: null,
     maximumDiscountCents: null,
+    sponsoringOrganizationId: null,
   };
 }
 
@@ -83,6 +87,7 @@ export function savedPromoCodeEditorDraft(
     maximumDiscountCents: promo.discountType === "PERCENT_BPS"
       ? promo.maximumDiscountCents
       : null,
+    sponsoringOrganizationId: promo.sponsoringOrganizationId ?? null,
   };
 }
 
@@ -105,6 +110,7 @@ export function normalizePromoCodeEditorDraft(
     maximumDiscountCents: discountType === "PERCENT_BPS"
       ? normalizedScaledNumber(draft.maximumDiscount, 100)
       : null,
+    sponsoringOrganizationId: draft.sponsoringOrganizationId?.trim() || null,
   };
 }
 
@@ -120,5 +126,6 @@ export function isPromoCodeEditorDraftDirty(
     || saved.endsOn !== current.endsOn
     || saved.minimumSubtotalCents !== current.minimumSubtotalCents
     || saved.maximumUses !== current.maximumUses
-    || saved.maximumDiscountCents !== current.maximumDiscountCents;
+    || saved.maximumDiscountCents !== current.maximumDiscountCents
+    || saved.sponsoringOrganizationId !== current.sponsoringOrganizationId;
 }
