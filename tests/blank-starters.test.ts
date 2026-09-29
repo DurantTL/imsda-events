@@ -49,8 +49,9 @@ describe("blank form templates (#592)", () => {
     expect(definition.sections.map((section) => section.title)).toEqual(["Club & contact", "Club roster"]);
     expect(definition.attendeeRoster?.enabled).toBe(true);
     const roster = definition.sections[1]!.fields;
-    expect(roster.map((field) => field.key)).toEqual(["first_name", "last_name", "attendee_type"]);
-    expect(roster.every((field) => field.scope === "ATTENDEE" && field.required)).toBe(true);
+    expect(roster.map((field) => field.key)).toEqual(["first_name", "last_name", "attendee_age", "attendee_type"]);
+    expect(roster.every((field) => field.scope === "ATTENDEE")).toBe(true);
+    expect(roster.filter((field) => !field.required).map((field) => field.key)).toEqual(["attendee_age"]);
   });
 
   it.each([BLANK_FORM_KEY, BLANK_CLUB_FORM_KEY])("%s carries no prices, fees or payment settings", (key) => {
@@ -77,6 +78,7 @@ describe("blank form templates (#592)", () => {
       first_name: "Alex",
       last_name: "Demo",
       attendee_type: "Pathfinder",
+      attendee_age: 12,
     });
     expect(ok.issues).toEqual([]);
     expect(ok.isValid).toBe(true);
@@ -120,7 +122,15 @@ describe("applying the blank starters through the create-from-template flow (#59
   const applyInput = { name: "Sample Blank 2027", slug: "sample-blank-2027", startsOn: "2027-05-01", endsOn: "2027-05-03", requestKey: "idempotency-key-0592" };
 
   function mockApply(payload: unknown) {
-    const eventRow = { id: "event-1", name: applyInput.name, slug: applyInput.slug, audience: "GENERAL" };
+    const at = new Date("2027-01-01T00:00:00.000Z");
+    const eventRow = {
+      id: "event-1", name: applyInput.name, slug: applyInput.slug, startsAt: new Date("2027-05-01T12:00:00.000Z"), endsAt: new Date("2027-05-03T12:00:00.000Z"),
+      timezone: "America/Chicago", location: null, capacity: null, publicInfoUrl: null, supportContact: null,
+      hotelName: null, hotelBookingUrl: null, hotelPhone: null, hotelGroupName: null, hotelRate: null, hotelInstructions: null,
+      isPublished: false, registrationOpensOn: null, registrationClosesOn: null, waitlistEnabled: false, collectsShirtSizes: false,
+      checksAdultBackgrounds: false, attendeeEditPolicy: "VERIFY_EVERY_EDIT", billingMode: "ATTENDEE_PAY", audience: "GENERAL",
+      seminarPreferenceClosesOn: null, seminarPreferenceSelfServiceLocked: false, autoPromoteWaitlist: false, createdAt: at, updatedAt: at,
+    };
     const registrationFormCreate = vi.fn().mockResolvedValue({ id: "form-1", name: "Form" });
     const membershipCreate = vi.fn().mockResolvedValue({});
     const eventCreate = vi.fn().mockResolvedValue(eventRow);
@@ -142,7 +152,7 @@ describe("applying the blank starters through the create-from-template flow (#59
     const prisma = {
       eventTemplateApplication: { findUnique: vi.fn().mockResolvedValue(null) },
       $transaction: vi.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
-      event: { findUnique: vi.fn().mockResolvedValue({ ...eventRow, startsAt: new Date(), endsAt: new Date() }) },
+      event: { findUnique: vi.fn().mockResolvedValue(eventRow) },
       registrationForm: { findMany: vi.fn().mockResolvedValue([]) },
       eventPaymentInstructionVersion: { findFirst: vi.fn().mockResolvedValue(null) },
     };
@@ -157,7 +167,9 @@ describe("applying the blank starters through the create-from-template flow (#59
     const starter = starterEventTemplates.find((entry) => entry.name === name)!;
     const { eventCreate, membershipCreate, registrationFormCreate } = mockApply(starterPayload(starter));
 
-    await applyEventTemplate("template-1", "usr_actor", applyInput).catch(() => undefined);
+    const result = await applyEventTemplate("template-1", "usr_actor", applyInput);
+    expect(result.alreadyApplied).toBe(false);
+    expect(result.event?.id).toBe("event-1");
 
     expect(eventCreate.mock.calls[0]![0].data).toMatchObject({ audience, billingMode, isPublished: false });
     expect(membershipCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ role: "EVENT_ADMIN", userId: "usr_actor", status: "ACTIVE" }) });
@@ -186,6 +198,11 @@ describe("template editor unsaved-publish guard (#592)", () => {
     expect(hasUnsavedTemplateEdits({ name: "Renamed", description: saved.description, payloadText: text(saved.payload) }, saved)).toBe(true);
     expect(hasUnsavedTemplateEdits({ name: saved.name, description: "Changed", payloadText: text(saved.payload) }, saved)).toBe(true);
     expect(hasUnsavedTemplateEdits({ name: saved.name, description: saved.description, payloadText: "{ not json" }, saved)).toBe(true);
+  });
+
+  it("ignores whitespace-only differences the server trims away after a save", () => {
+    expect(hasUnsavedTemplateEdits({ name: saved.name, description: saved.description, payloadText: text(saved.payload) }, saved)).toBe(false);
+    expect(hasUnsavedTemplateEdits({ name: `  ${saved.name} `, description: saved.description, payloadText: text(saved.payload) }, saved)).toBe(true);
   });
 
   it("explains every disabled state and stays enabled otherwise", () => {

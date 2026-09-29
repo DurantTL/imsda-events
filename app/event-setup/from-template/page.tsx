@@ -24,7 +24,7 @@ export default async function StartFromTemplatePage() {
         <div className="brand"><BrandMark /><span><strong>IMSDA</strong><small>Events</small></span></div>
         <div><p className="eyebrow">System administration</p><h1>Start from template</h1></div>
       </header>
-      <p><Link href="/event-setup#blank-event">Start blank</Link> instead: fill in the event details by hand, or use the Blank event and Blank club event starters.</p>
+      <p><Link href="/event-setup#blank-event">Start blank</Link> instead: fill in the event details by hand.</p>
       <StartFromTemplate templates={templates} />
     </main>
   );

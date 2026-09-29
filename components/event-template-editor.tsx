@@ -70,6 +70,8 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
       const body = await response.json();
       if (!response.ok) throw new Error(body.message ?? "The draft could not be saved.");
       setTemplate(body.template);
+      setName(body.template.name);
+      setDescription(body.template.description);
       const savedVersion = currentVersion(body.template as EventTemplateRecord);
       if (savedVersion) setPayloadText(JSON.stringify(savedVersion.payload ?? {}, null, 2));
       setNotice("Draft saved.");

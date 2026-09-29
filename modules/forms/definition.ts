@@ -938,7 +938,7 @@ export const formTemplates: FormTemplate[] = [
     key: BLANK_FORM_KEY,
     name: "Blank form",
     description: "Just a Contact section (first name, last name, email, phone). Add your own questions. No fees.",
-    audience: "Blank",
+    audience: "Blank form",
     definition: {
       title: "Event registration",
       description: "",
@@ -955,7 +955,7 @@ export const formTemplates: FormTemplate[] = [
     key: BLANK_CLUB_FORM_KEY,
     name: "Blank form (club event)",
     description: "Club and contact section plus an empty club roster with name and role fields. Add your own questions. No fees.",
-    audience: "Blank club",
+    audience: "Blank form",
     definition: {
       title: "Club event registration",
       description: "Register the club once and add every attendee who is going.",
@@ -974,6 +974,7 @@ export const formTemplates: FormTemplate[] = [
         { id: "blank_roster", title: "Club roster", description: "Add each attendee using their full first and last name.", fields: [
           templateField("blank_member_first", "first_name", "First name", "TEXT", true, [], { scope: "ATTENDEE" }),
           templateField("blank_member_last", "last_name", "Last name", "TEXT", true, [], { scope: "ATTENDEE" }),
+          templateField("blank_member_age", "attendee_age", "Age", "NUMBER", false, [], { scope: "ATTENDEE" }),
           templateField("blank_member_role", "attendee_type", "Roster role", "RADIO", true, ["Pathfinder", "TLT", "Staff", "Child"], { scope: "ATTENDEE" }),
         ] },
       ],
