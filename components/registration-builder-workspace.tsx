@@ -274,13 +274,20 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
   const scheduledPriceFields = allFields.filter((field) => field.latePricing);
   const publishedVersion = selectedForm?.versions.find((version) => version.status === "PUBLISHED") ?? null;
   const isHistorical = Boolean(selectedVersion && selectedForm && selectedVersion.id !== selectedForm.activeVersion.id);
-  const canEdit = Boolean(selectedVersion && !isHistorical && (selectedVersion.status === "DRAFT" || selectedVersion.status === "PUBLISHED"));
+  // The current version is always editable. When it is live or withdrawn, the
+  // first save creates a new draft version (#564); the live version is never
+  // changed in place. Only superseded historical versions are read-only.
+  const canEdit = Boolean(selectedVersion && !isHistorical);
+  const editsCreateDraft = Boolean(selectedVersion && selectedVersion.status !== "DRAFT");
   const hasValidTest = Boolean(selectedVersion?.testSubmissions.some((submission) => submission.isValid));
-  // A published version proves this form can be filled in and priced, so only
-  // a form that has never been published is held behind a test submission.
-  // Mirrors the same rule in publishRegistrationForm.
+  // Publishing requires a valid test submission against the selected version
+  // itself, every time (#564). Earlier publications do not count.
   const hasEverPublished = Boolean(selectedForm?.versions.some((version) => version.publishedAt));
-  const publishGateSatisfied = hasValidTest || hasEverPublished;
+  const publishBlockedReason = dirty
+    ? "Save your changes as a draft before publishing."
+    : !hasValidTest
+      ? "Run a test submission first: open the last step of the preview and choose Run test submission."
+      : "";
   // A form copied from a template can keep the template's web address after
   // its title changes. Before a form's first publish only, offer to sync the
   // slug to the current title — after that, shared links depend on the slug
@@ -336,7 +343,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message ?? "Unable to save this draft.");
-      syncForm(result.form, selectedVersion.status === "PUBLISHED" ? "A new draft version was created from the published form." : "Draft saved locally.");
+      syncForm(result.form, editsCreateDraft ? `Version ${result.form.activeVersion.versionNumber} was saved as a new draft. The ${selectedVersion.status === "PUBLISHED" ? "published version stays live" : "withdrawn version stays withdrawn"} until you test and publish this draft.` : "Draft saved locally.");
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Unable to save this draft."); }
     finally { setBusy(null); }
   }
@@ -425,7 +432,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
       const response = await fetch(`/api/events/${eventId}/forms/${selectedForm.id}/unpublish`, { method: "POST" });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message ?? "Unable to withdraw this form.");
-      syncForm(result.form, "This form is no longer offered on the public event page. Registrations already taken keep the exact questions and prices they were submitted under.");
+      syncForm(result.form, "This form is withdrawn: it is no longer offered on the public event page and registration is closed. Registrations already taken keep the exact questions and prices they were submitted under.");
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Unable to withdraw this form."); }
     finally { setBusy(null); }
   }
@@ -876,7 +883,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
       <aside className="panel builder-form-list"><div className="section-heading"><div><p className="eyebrow">Event forms</p><h2>{forms.length} form{forms.length === 1 ? "" : "s"}</h2></div></div><div className="builder-form-buttons">{forms.map((form) => <button aria-pressed={form.id === selectedFormId} className={form.id === selectedFormId ? "selected" : ""} type="button" key={form.id} onClick={() => chooseForm(form)}><span><strong>{form.name}</strong><small>Version {form.activeVersion.versionNumber} · {statusLabel(form.activeVersion.status)}</small></span><ChevronRight size={16} /></button>)}</div>{selectedForm && <div className="version-history"><p className="eyebrow">Version history</p>{selectedForm.versions.map((version) => <button aria-pressed={version.id === selectedVersion?.id} className={version.id === selectedVersion?.id ? "selected" : ""} type="button" key={version.id} onClick={() => chooseVersion(version)}><FileClock size={15} /><span><strong>Version {version.versionNumber}</strong><small>{statusLabel(version.status)} · {version.testSubmissionCount} tests</small></span></button>)}</div>}</aside>
 
 	      {selectedForm && selectedVersion && definition && <>
-	        <div className="builder-canvas"><section className="panel builder-editor-head"><div className="builder-status-row"><span className={`status-chip ${selectedVersion.status === "PUBLISHED" ? "green" : selectedVersion.status === "DRAFT" ? "gold" : "purple"}`}>{statusLabel(selectedVersion.status)}</span><span>Version {selectedVersion.versionNumber}</span>{dirty && <span className="unsaved-dot">Unsaved changes</span>}</div><label>Form title<input disabled={!canEdit} value={definition.title} maxLength={120} onChange={(event) => replaceDefinition({ ...definition, title: event.target.value })} /></label><label>Description<textarea disabled={!canEdit} value={definition.description} maxLength={500} rows={2} onChange={(event) => replaceDefinition({ ...definition, description: event.target.value })} /></label><div className="builder-actions"><button className="secondary-button" type="button" disabled={!canEdit || !dirty || busy !== null} onClick={saveDraft}><Save size={15} /> {busy === "save" ? "Saving…" : selectedVersion.status === "PUBLISHED" ? "Save as new draft" : "Save draft"}</button>{publishedVersion ? <a className="secondary-button" href={`/register/${eventSlug}/${selectedForm.slug}`} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Open public form</a> : <button className="secondary-button" type="button" disabled title="Publish this form to create its public link"><ExternalLink size={15} /> Open public form</button>}{selectedVersion.status === "DRAFT" && <button className="primary-button" type="button" disabled={dirty || busy !== null || !publishGateSatisfied} onClick={beginPublish}><Send size={15} /> Publish version</button>}{publishedVersion && <button className="secondary-button" type="button" disabled={busy !== null} onClick={() => setConfirmingUnpublish(true)}><FileClock size={15} /> Withdraw from public page</button>}</div>{selectedVersion.status === "DRAFT" && !publishGateSatisfied && <p className="builder-gate"><AlertTriangle size={15} /> A valid saved test submission is required before publishing this form for the first time.</p>}{isHistorical && <p className="builder-gate"><FileClock size={15} /> Historical versions are immutable and shown read-only.</p>}</section>
+	        <div className="builder-canvas"><section className="panel builder-editor-head"><div className="builder-status-row"><span className={`status-chip ${selectedVersion.status === "PUBLISHED" ? "green" : selectedVersion.status === "DRAFT" ? "gold" : "purple"}`}>{statusLabel(selectedVersion.status)}</span><span>Version {selectedVersion.versionNumber}</span>{dirty && <span className="unsaved-dot">Unsaved changes</span>}</div><label>Form title<input disabled={!canEdit} value={definition.title} maxLength={120} onChange={(event) => replaceDefinition({ ...definition, title: event.target.value })} /></label><label>Description<textarea disabled={!canEdit} value={definition.description} maxLength={500} rows={2} onChange={(event) => replaceDefinition({ ...definition, description: event.target.value })} /></label><div className="builder-actions"><button className="secondary-button" type="button" disabled={!canEdit || (!dirty && !editsCreateDraft) || busy !== null} aria-describedby="builder-action-hints" onClick={saveDraft}><Save size={15} /> {busy === "save" ? "Saving…" : editsCreateDraft ? (dirty ? "Save as new draft" : "Create new version") : "Save draft"}</button>{publishedVersion ? <a className="secondary-button" href={`/register/${eventSlug}/${selectedForm.slug}`} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Open public form</a> : <button className="secondary-button" type="button" disabled title="Publish this form to create its public link"><ExternalLink size={15} /> Open public form</button>}{selectedVersion.status === "DRAFT" && <button className="primary-button" type="button" disabled={Boolean(publishBlockedReason) || busy !== null} aria-describedby="builder-action-hints" title={publishBlockedReason || undefined} onClick={beginPublish}><Send size={15} /> Publish version</button>}{publishedVersion && <button className="secondary-button" type="button" disabled={busy !== null} onClick={() => setConfirmingUnpublish(true)}><FileClock size={15} /> Withdraw from public page</button>}</div><div id="builder-action-hints">{editsCreateDraft && !isHistorical && <p className="builder-gate"><FileClock size={15} /> {selectedVersion.status === "PUBLISHED" ? `Version ${selectedVersion.versionNumber} is live and is never changed in place.` : `Version ${selectedVersion.versionNumber} is withdrawn from the public page.`} {dirty ? "Choose Save as new draft to keep your edits; until then they are not saved." : "Make your edits, or choose Create new version to start a draft from it."} Existing registrations keep the version they were submitted under.</p>}{selectedVersion.status === "DRAFT" && dirty && <p className="builder-gate"><AlertTriangle size={15} /> Save this draft to enable Publish version.</p>}{selectedVersion.status === "DRAFT" && !dirty && !hasValidTest && <p className="builder-gate"><AlertTriangle size={15} /> Run a test submission first. Publishing needs a valid test against this version (version {selectedVersion.versionNumber}), and saving edits clears earlier tests. <a href="#live-form-preview" onClick={() => { const last = previewSteps[previewSteps.length - 1]; if (last) setPreviewStepId(last.id); }}>Go to the test panel</a></p>}</div>{isHistorical && <p className="builder-gate"><FileClock size={15} /> Historical versions are immutable and shown read-only.</p>}</section>
 
         {canEdit && <TemplateCleanupChecklistPanel key={selectedForm.id} formId={selectedForm.id} definition={definition} />}
 
@@ -1182,12 +1189,12 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, in
                 {!previewStep.isReview && <button className="primary-button" type="button" onClick={() => setPreviewStepId(previewSteps[previewStepIndex + 1]!.id)}>Continue</button>}
               </nav>}
               {previewStep?.isReview && <>
-                <button className="primary-button full-button" type="button" disabled={busy !== null || isHistorical || dirty} onClick={runTest}><ClipboardCheck size={16} /> {busy === "test" ? "Testing…" : dirty ? "Save draft to test" : "Run test submission"}</button>
+                <button className="primary-button full-button" type="button" disabled={busy !== null || isHistorical || dirty} title={isHistorical ? "Historical versions are read-only and cannot be tested." : dirty ? "Save your changes as a draft first, then run the test." : undefined} onClick={runTest}><ClipboardCheck size={16} /> {busy === "test" ? "Testing…" : dirty ? "Save draft to test" : "Run test submission"}</button>
                 <small className="preview-boundary"><ShieldCheck size={13} /> Saves a form test only — it does not create a registration, send email, or charge a card</small>
               </>}
             </div>
           </div>
-          <div className="test-summary"><Settings2 size={17} /><span><strong>{selectedVersion.testSubmissionCount} test submission{selectedVersion.testSubmissionCount === 1 ? "" : "s"}</strong><small>{hasValidTest ? "Valid test passed" : hasEverPublished ? "Optional — this form is already published" : "A valid test is still required"}</small></span>{publishGateSatisfied && <CheckCircle2 className="success-icon" size={18} />}</div>
+          <div className="test-summary"><Settings2 size={17} /><span><strong>{selectedVersion.testSubmissionCount} test submission{selectedVersion.testSubmissionCount === 1 ? "" : "s"}</strong><small>{hasValidTest ? "Valid test passed for this version" : "A valid test against this version is required to publish"}</small></span>{hasValidTest && <CheckCircle2 className="success-icon" size={18} />}</div>
         </aside>
       </>}
     </div>}

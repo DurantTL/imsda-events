@@ -105,27 +105,31 @@ describe("registration form publish gate", () => {
     );
   });
 
-  it("publishes a later version without a test once the form has been published before", async () => {
+  it("gates a later version on its own valid test even after an earlier version was published (#564)", async () => {
     const tx = transactionClient(1, 0);
+    dependencies.getPrisma.mockReturnValue(prismaFor(tx));
+
+    await expect(
+      publishRegistrationForm("event-1", "form-1", "user-1"),
+    ).rejects.toMatchObject({ code: "TEST_REQUIRED" });
+    expect(tx.formTestSubmission.count).toHaveBeenCalledWith({
+      where: { formVersionId: "version-2", isValid: true },
+    });
+    expect(tx.registrationFormVersion.update).not.toHaveBeenCalled();
+  });
+
+  it("publishes a later version once that version has a valid test", async () => {
+    const tx = transactionClient(1, 1);
     dependencies.getPrisma.mockReturnValue(prismaFor(tx));
 
     await publishRegistrationForm("event-1", "form-1", "user-1");
 
-    expect(tx.formTestSubmission.count).not.toHaveBeenCalled();
+    expect(tx.registrationFormVersion.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: "ARCHIVED" } }),
+    );
     expect(tx.registrationFormVersion.update).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "version-2" } }),
     );
-  });
-
-  it("counts prior publications by publishedAt so an archived version still counts", async () => {
-    const tx = transactionClient(1, 0);
-    dependencies.getPrisma.mockReturnValue(prismaFor(tx));
-
-    await publishRegistrationForm("event-1", "form-1", "user-1");
-
-    expect(tx.registrationFormVersion.count).toHaveBeenCalledWith({
-      where: { formId: "form-1", publishedAt: { not: null } },
-    });
   });
 
   it("still refuses a form with no draft version", async () => {
