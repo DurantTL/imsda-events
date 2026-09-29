@@ -13,7 +13,7 @@ import {
 } from "@/modules/event-templates/starters";
 import { formTemplates, getFormTemplate } from "@/modules/forms/definition";
 
-const wantedNames = ["Blank event", "Blank club event", "Women's Retreat", "Man Camp", "Spring Camporee", "Fall Camporee", "Camp Meeting", "Honors Weekend"];
+const wantedNames = ["Blank event", "Blank club event", "Women's Retreat", "Man Camp", "Spring Camporee", "Fall Camporee", "Camp Meeting", "Honors Weekend", "Pathfinder Leadership Weekend", "TLT Retreat", "Outdoor School", "Hispanic Institute of Evangelism"];
 
 function fieldsOf(formKey: string) {
   const definition = getFormTemplate(formKey)!.definition;
@@ -21,7 +21,7 @@ function fieldsOf(formKey: string) {
 }
 
 describe("starter event templates (#546)", () => {
-  it("covers the two blank starters and the six events with a form, with unique stable keys", () => {
+  it("covers the two blank starters and the ten events with a form, with unique stable keys", () => {
     expect(starterEventTemplates.map((starter) => starter.name)).toEqual(wantedNames);
     expect(new Set(starterEventTemplates.map((starter) => starter.starterKey)).size).toBe(starterEventTemplates.length);
   });
@@ -57,9 +57,11 @@ describe("starter event templates (#546)", () => {
   });
 
   it("bills every CLUB starter to the church so directors can see the event (#565)", () => {
+    // Church or school billing on a GENERAL event is allowed (#606): these individual and school-group starters take no online payment.
+    const generalChurchBilled = ["leadership_weekend", "outdoor_school"];
     for (const starter of starterEventTemplates) {
       const payload = parseEventTemplatePayload(starterPayload(starter));
-      expect(starter.billingMode).toBe(starter.audience === "CLUB" ? "DEFERRED_ORGANIZATION_INVOICE" : "ATTENDEE_PAY");
+      expect(starter.billingMode).toBe(starter.audience === "CLUB" || generalChurchBilled.includes(starter.starterKey) ? "DEFERRED_ORGANIZATION_INVOICE" : "ATTENDEE_PAY");
       expect(payload.billingMode).toBe(starter.billingMode);
       expect(templateBillingMode(payload)).toBe(starter.billingMode);
     }
@@ -84,6 +86,10 @@ describe("starter event templates (#546)", () => {
       "Fall Camporee": "CLUB",
       "Camp Meeting": "GENERAL",
       "Honors Weekend": "CLUB",
+      "Pathfinder Leadership Weekend": "GENERAL",
+      "TLT Retreat": "GENERAL",
+      "Outdoor School": "GENERAL",
+      "Hispanic Institute of Evangelism": "GENERAL",
     });
   });
 

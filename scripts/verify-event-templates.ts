@@ -22,6 +22,8 @@ import {
 } from "../modules/event-templates/domain";
 import { addStarterEventTemplates } from "../modules/event-templates/starter-repository";
 import { pendingStarterEvents, starterEventTemplates, starterPayload } from "../modules/event-templates/starters";
+import { getFormTemplate } from "../modules/forms/definition";
+import { getFeeWarnings, unpricedFeeFieldLabels } from "../modules/events/readiness";
 import { listClubEvents } from "../modules/club-registrations/repository";
 import { publishEvent } from "../modules/events/repository";
 import {
@@ -485,6 +487,11 @@ async function verifyStarters() {
     if (starter.starterKey === "fall_camporee") {
       const labels = event.warnings.map((warning) => warning.label);
       assert(labels.join() === "Check the dates for Iowa,Check the dates for Missouri,Set the Fall Camporee fee", `Fall Camporee warns about both location dates and the fee, got ${labels.join(" | ")}`);
+    }
+    if (!starter.locations) {
+      // Without locations the only setup warnings are the form's own unset fees (#606): Outdoor School flags one, the priced or free forms none.
+      const expectedFeeLabels = getFeeWarnings(unpricedFeeFieldLabels(getFormTemplate(starter.formTemplateKey)!.definition)).map((warning) => warning.label);
+      assert(event.warnings.map((warning) => warning.label).join() === expectedFeeLabels.join(), `${starter.name} warns only about its unset fees, got ${event.warnings.map((warning) => warning.label).join(" | ")}`);
     }
     const resave = eventSettingsInputSchema.safeParse({ ...(await getEventSettings(event.id)), approvedPaymentInstructions: null });
     assert(resave.success, `${starter.name} event re-saves in settings`);

@@ -86,8 +86,9 @@ export function EventTemplateList({ initialTemplates }: EventTemplateListProps) 
         <p>
           Adds a draft template for each real event that has a built-in form. Nothing is published. Templates set no
           prices or capacity. Some forms (Women&apos;s Retreat, Man Camp, Spring Camporee, Camp Meeting) keep last
-          year&apos;s prices, late-price dates and choice limits; Honors Weekend, Fall Camporee and the blank starters
-          have no prices. Review each draft event before publishing. Templates that already exist (even renamed, edited, or archived) are left alone.
+          year&apos;s prices, late-price dates and choice limits; Leadership Weekend and Hispanic Institute keep their
+          2026 prices; TLT Retreat is free; Honors Weekend, Fall Camporee, Outdoor School and the blank starters have no
+          prices (the fee is flagged until you set it). Review each draft event before publishing. Templates that already exist (even renamed, edited, or archived) are left alone.
         </p>
         <ul>
           {starterEventTemplates.map((starter) => (
