@@ -1,5 +1,7 @@
+import { Prisma } from "@prisma/client";
 import { ZodError } from "zod";
 import { logError } from "@/lib/logger";
+import { isLockTimeoutError } from "@/lib/prisma-errors";
 import { AttendeeMfaError } from "@/modules/attendee-accounts/mfa-service";
 import { ClubInviteError } from "@/modules/club-imports/invites";
 import { RosterAccessError } from "@/modules/club-rosters/access";
@@ -8,12 +10,31 @@ import { RosterOperationError } from "@/modules/club-rosters/repository";
 import { organizationApiError } from "@/modules/organizations/api-errors";
 import { OrganizationOperationError } from "@/modules/organizations/repository";
 
+/**
+ * Reads a JSON request body, turning an empty or malformed one into a 400
+ * (`INVALID_JSON_BODY`) instead of the generic 500 (#566).
+ */
+export class RosterBodyError extends Error {
+  readonly code = "INVALID_JSON_BODY";
+}
+
+export async function readRosterJson(request: Request): Promise<unknown> {
+  try {
+    return await request.json();
+  } catch {
+    throw new RosterBodyError("Send a JSON request body.");
+  }
+}
+
 export function rosterApiError(error: unknown, action: string) {
   if (error instanceof ZodError) {
     return Response.json(
       { error: "INVALID_ROSTER_REQUEST", message: error.issues[0]?.message, issues: error.issues },
       { status: 400 },
     );
+  }
+  if (error instanceof RosterBodyError) {
+    return Response.json({ error: error.code, message: error.message }, { status: 400 });
   }
   if (error instanceof RosterAccessError) {
     return Response.json({ error: error.code, message: error.message }, { status: error.status });
@@ -51,6 +72,14 @@ export function rosterApiError(error: unknown, action: string) {
           : error.code === "MFA_LOCKED" ? 429
           : 400,
       },
+    );
+  }
+  // A club-order lock wait that gave up (nothing was written): ask to retry.
+  // P2028: the interactive transaction ran past its limit while waiting.
+  if (isLockTimeoutError(error) || (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2028")) {
+    return Response.json(
+      { error: "ROSTER_BUSY", message: "The club's orders are busy right now. Try again in a moment." },
+      { status: 503 },
     );
   }
   // Never log the request body here: it can hold a birth date.
