@@ -354,9 +354,14 @@ async function main() {
       idempotencyKey: id("msg_sent"), correlationId: id("corr_sent"), status: "SENT",
     },
   });
+  await prisma.messageOutbox.update({ where: { id: sent.id }, data: { providerMessageId: id("prov_msg") } });
   await prisma.messageDeliveryAttempt.create({ data: { messageOutboxId: sent.id, attemptNumber: 1, provider: "LOCAL", status: "SENT" } });
   await prisma.messageProviderEvent.create({
     data: { messageOutboxId: sent.id, provider: "RESEND", providerEventId: id("prov_evt"), providerMessageId: id("prov_msg"), eventType: "delivered", occurredAt: new Date(), payload: {} },
+  });
+  // A webhook that arrived before it could be linked to its message still names it by provider id.
+  await prisma.messageProviderEvent.create({
+    data: { provider: "RESEND", providerEventId: id("prov_evt_unlinked"), providerMessageId: id("prov_msg"), eventType: "opened", occurredAt: new Date(), payload: {} },
   });
   for (const key of ["q1", "q2"]) {
     await prisma.messageOutbox.create({
@@ -485,6 +490,27 @@ async function main() {
   // ---- The ledger stays immutable for everyone else. ----
   const ledgerDelete = await caught(prisma.registrationOperation.deleteMany({ where: { eventId } }));
   assert(ledgerDelete, "the amendment ledger still rejects a delete outside an event deletion");
+
+  // The flag only ever relaxes DELETE, and only inside the transaction that set it. One connection, so the
+  // second transaction is guaranteed to reuse the first one's session.
+  const singleConnection = new PrismaClient({ datasourceUrl: `${process.env.DATABASE_URL}${process.env.DATABASE_URL?.includes("?") ? "&" : "?"}connection_limit=1` });
+  try {
+    const updateWithFlag = await caught(singleConnection.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('imsda.event_deletion', 'on', true)`;
+      await tx.$executeRaw`UPDATE "RegistrationOperation" SET "actorNameSnapshot" = 'changed' WHERE "eventId" = ${eventId}`;
+    }));
+    assert(updateWithFlag, "UPDATE is still rejected while the deletion flag is on");
+    await singleConnection.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('imsda.event_deletion', 'on', true)`;
+    });
+    const carried = await singleConnection.$queryRaw<Array<{ value: string | null }>>`SELECT current_setting('imsda.event_deletion', true) AS value`;
+    assert(!carried[0].value, `the deletion flag does not carry into the next transaction on the same connection (saw "${carried[0].value}")`);
+    const nextDelete = await caught(singleConnection.registrationOperation.deleteMany({ where: { eventId } }));
+    assert(nextDelete, "a delete in the next transaction on the same connection is still rejected");
+    assert(await prisma.registrationOperation.count({ where: { eventId } }) === 1, "the ledger row is untouched by those attempts");
+  } finally {
+    await singleConnection.$disconnect();
+  }
 
   // ---- The deletion. ----
   const started = Date.now();

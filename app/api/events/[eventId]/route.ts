@@ -14,7 +14,7 @@ import { eventSettingsInputSchema } from "@/modules/events/schemas";
 import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
 
-function eventApiError(error: unknown) {
+function eventApiError(error: unknown, failure = { code: "EVENT_REQUEST_FAILED", message: "The event settings could not be saved." }) {
   if (error instanceof z.ZodError) {
     return Response.json({
       error: "INVALID_EVENT",
@@ -46,8 +46,8 @@ function eventApiError(error: unknown) {
   }
   logError("Event settings request failed", error);
   return Response.json({
-    error: "EVENT_REQUEST_FAILED",
-    message: "The event settings could not be saved.",
+    error: failure.code,
+    message: failure.message,
   }, { status: 500 });
 }
 
@@ -113,7 +113,7 @@ async function deleteHandler(
     if (error instanceof z.ZodError) {
       return Response.json({ error: "EVENT_NAME_MISMATCH", message: "Type the event's exact name to confirm the deletion." }, { status: 400 });
     }
-    return eventApiError(error);
+    return eventApiError(error, { code: "EVENT_DELETE_FAILED", message: "The event could not be deleted. Nothing was removed; try again." });
   }
 }
 

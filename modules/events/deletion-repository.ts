@@ -1,7 +1,8 @@
 import { Prisma } from "@prisma/client";
 import { logError } from "@/lib/logger";
 import { getPrisma } from "@/lib/prisma";
-import { isLockTimeoutError } from "@/lib/prisma-errors";
+import { isDeadlockError, isLockTimeoutError } from "@/lib/prisma-errors";
+import { currentCorrelationId } from "@/lib/request-context";
 import type { EventRole } from "@/modules/access/permissions";
 import {
   EVENT_DELETION_TRANSACTION_MAX_WAIT_MS,
@@ -77,6 +78,11 @@ async function loadDeletionFacts(db: Db, eventId: string) {
     realPayments,
   };
   return { event, facts: { isPublished: event.isPublished, counts } satisfies EventDeletionFacts };
+}
+
+/** Prisma's interactive-transaction expiry (P2028): nothing was committed, so the caller can retry. */
+function isTransactionTimeout(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2028";
 }
 
 export type EventDeletionActorInput = { userId: string; globalRole?: "SYSTEM_ADMIN" | null };
@@ -177,7 +183,7 @@ export async function deleteEvent(input: {
             action: "EVENT_DELETED",
             entityType: "Event",
             entityId: event.id,
-            correlationId: crypto.randomUUID(),
+            correlationId: currentCorrelationId() ?? crypto.randomUUID(),
             summary: `Deleted event: ${event.name}.`,
             metadata: metadata as unknown as Prisma.InputJsonValue,
           },
@@ -196,7 +202,7 @@ export async function deleteEvent(input: {
     }
     return { eventId: result.eventId, name: result.name, counts: result.counts };
   } catch (error) {
-    if (isLockTimeoutError(error)) {
+    if (isLockTimeoutError(error) || isDeadlockError(error) || isTransactionTimeout(error)) {
       throw new EventDeletionError("EVENT_BUSY", "The event is busy with other changes. Try again in a moment.");
     }
     throw error;
@@ -213,8 +219,17 @@ async function removeEventOwnedRows(tx: Db, eventId: string) {
     where: { eventId, status: { in: ["PENDING", "PROCESSING"] } },
     data: { status: "CANCELLED" },
   });
-  await tx.messageProviderEvent.deleteMany({ where: { message: { eventId } } });
+  // Provider events are matched by the outbox rows' provider ids as well as
+  // the link, and removed after the outbox rows, so a webhook that lands
+  // mid-transaction (linked or not yet linked) cannot survive as an orphan.
+  const providerMessageIds = (await tx.messageOutbox.findMany({
+    where: { eventId, providerMessageId: { not: null } },
+    select: { providerMessageId: true },
+  })).flatMap((row) => (row.providerMessageId ? [row.providerMessageId] : []));
   await tx.messageOutbox.deleteMany({ where: inEvent });
+  await tx.messageProviderEvent.deleteMany({
+    where: { OR: [{ providerMessageId: { in: providerMessageIds } }, { message: { eventId } }] },
+  });
 
   // 2. Payment processor bookkeeping, then payments themselves.
   await tx.squareWebhookEvent.deleteMany({ where: inEvent });

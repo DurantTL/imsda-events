@@ -752,7 +752,6 @@ export function EventSettingsWorkspace({
       {mode === "edit" && initialEvent && (
         <DeleteEventDialog
           eventId={initialEvent.id}
-          eventName={initialEvent.name}
           onCancel={() => setDeleteDialogOpen(false)}
           open={deleteDialogOpen}
         />

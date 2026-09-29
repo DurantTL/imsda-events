@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { eventDeletionHasRealMoney, eventNameConfirmed, type EventDeletionCounts } from "@/modules/events/deletion";
 
-type Preview = {
+export type DeletionPreview = {
   name: string;
   counts: EventDeletionCounts;
   decision: { allowed: true } | { allowed: false; reason: string };
@@ -22,7 +22,6 @@ function plural(count: number, one: string, many = `${one}s`) {
  */
 export function DeleteEventDialog(props: {
   eventId: string;
-  eventName: string;
   onCancel: () => void;
   open: boolean;
 }) {
@@ -32,17 +31,15 @@ export function DeleteEventDialog(props: {
 
 function DeleteEventDialogBody({
   eventId,
-  eventName,
   onCancel,
   open,
 }: {
   eventId: string;
-  eventName: string;
   onCancel: () => void;
   open: boolean;
 }) {
   const router = useRouter();
-  const [preview, setPreview] = useState<Preview | null>(null);
+  const [preview, setPreview] = useState<DeletionPreview | null>(null);
   const [loadError, setLoadError] = useState("");
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
@@ -52,7 +49,7 @@ function DeleteEventDialogBody({
     let cancelled = false;
     fetch(`/api/events/${eventId}/deletion`)
       .then(async (response) => {
-        const body = await response.json().catch(() => ({})) as { preview?: Preview; message?: string };
+        const body = await response.json().catch(() => ({})) as { preview?: DeletionPreview; message?: string };
         if (!response.ok || !body.preview) throw new Error(body.message ?? "The deletion summary could not be loaded.");
         if (!cancelled) setPreview(body.preview);
       })
@@ -82,6 +79,48 @@ function DeleteEventDialogBody({
     }
   }
 
+  return (
+    <DeleteEventDialogView
+      busy={busy}
+      error={error || loadError}
+      loadFailed={Boolean(loadError)}
+      onCancel={onCancel}
+      onConfirm={() => void confirmDelete()}
+      onTyped={setTyped}
+      open={open}
+      preview={preview}
+      typed={typed}
+    />
+  );
+}
+
+/**
+ * The dialog's presentation. The name shown, and the name the user must type,
+ * come from the server's preview rather than the page's copy, which goes stale
+ * when the event is renamed in the same page without a reload.
+ */
+export function DeleteEventDialogView({
+  busy,
+  error,
+  loadFailed,
+  onCancel,
+  onConfirm,
+  onTyped,
+  open,
+  preview,
+  typed,
+}: {
+  busy: boolean;
+  error: string;
+  loadFailed: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+  onTyped: (value: string) => void;
+  open: boolean;
+  preview: DeletionPreview | null;
+  typed: string;
+}) {
+  const eventName = preview?.name ?? "";
   const counts = preview?.counts;
   const allowed = preview?.decision.allowed === true;
   const confirmed = eventNameConfirmed(eventName, typed);
@@ -93,17 +132,17 @@ function DeleteEventDialogBody({
       confirmDisabled={!allowed || !confirmed}
       confirmLabel="Delete event permanently"
       destructive
-      error={error || loadError}
+      error={error}
       onCancel={onCancel}
-      onConfirm={() => void confirmDelete()}
+      onConfirm={onConfirm}
       open={open}
-      title={`Delete ${eventName}?`}
+      title={preview ? `Delete ${eventName}?` : "Delete this event?"}
     >
       <p>
-        This permanently deletes <strong translate="no">{eventName}</strong> and everything it owns. It cannot be undone.
+        This permanently deletes {preview ? <strong translate="no">{eventName}</strong> : "the event"} and everything it owns. It cannot be undone.
         People, accounts, clubs and background checks are shared with other events and are kept.
       </p>
-      {!preview && !loadError && <p role="status">Counting what will be removed…</p>}
+      {!preview && !loadFailed && <p role="status">Counting what will be removed…</p>}
       {counts && (
         <>
           <p>This will remove:</p>
@@ -128,7 +167,7 @@ function DeleteEventDialogBody({
               <input
                 autoComplete="off"
                 disabled={busy}
-                onChange={(event) => setTyped(event.target.value)}
+                onChange={(event) => onTyped(event.target.value)}
                 placeholder={eventName}
                 value={typed}
               />

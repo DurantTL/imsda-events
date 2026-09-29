@@ -1,4 +1,7 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { DeleteEventDialogView } from "@/components/delete-event-dialog";
 import {
   decideEventDeletion,
   eventDeletionHasRealMoney,
@@ -149,11 +152,49 @@ describe("event deletion routes (#620)", () => {
     expect((await DELETE(deleteRequest({ confirmName: "x" }), context)).status).toBe(404);
   });
 
+  it("reports an unexpected failure with a deletion message and maps a busy event to 409", async () => {
+    deps.getCurrentSession.mockResolvedValue({ user: { id: "admin", email: "s@example.test", displayName: "S", globalRole: "SYSTEM_ADMIN" } });
+    deps.deleteEvent.mockRejectedValueOnce(new Error("boom"));
+    const failed = await DELETE(deleteRequest({ confirmName: "x" }), context);
+    expect(failed.status).toBe(500);
+    expect((await failed.json()).message).toMatch(/could not be deleted/);
+    deps.deleteEvent.mockRejectedValueOnce(new deps.MockEventDeletionError("EVENT_BUSY", "busy"));
+    expect((await DELETE(deleteRequest({ confirmName: "x" }), context)).status).toBe(409);
+  });
+
   it("serves the preview to an authorized user", async () => {
     deps.getCurrentSession.mockResolvedValue({ user: { id: "admin", email: "s@example.test", displayName: "S", globalRole: "SYSTEM_ADMIN" } });
     deps.getEventDeletionPreview.mockResolvedValue({ eventId: "evt_1", name: "Camporee", counts: emptyCounts, decision: { allowed: true } });
     const response = await PREVIEW(new Request("http://localhost/api/events/evt_1/deletion"), context);
     expect(response.status).toBe(200);
     expect((await response.json()).preview.name).toBe("Camporee");
+  });
+});
+
+describe("delete event dialog (#620)", () => {
+  const noop = () => undefined;
+  const view = (value: typeof preview, typed: string) => createElement(DeleteEventDialogView, {
+    busy: false, error: "", loadFailed: false, onCancel: noop, onConfirm: noop, onTyped: noop, open: true, preview: value, typed,
+  });
+  const preview = { name: "Renamed Camporee 2028", counts: emptyCounts, decision: { allowed: true } as const };
+
+  it("names the event from the server's preview, so a rename in the same page is not stale", () => {
+    const markup = renderToStaticMarkup(view(preview, ""));
+    expect(markup).toContain("Delete Renamed Camporee 2028?");
+    expect(markup).toContain('placeholder="Renamed Camporee 2028"');
+    expect(markup).not.toContain("Old Camporee");
+  });
+
+  it("disables confirm until the previewed name is typed", () => {
+    const render = (typed: string) => renderToStaticMarkup(view(preview, typed));
+    expect(render("Old Camporee 2028")).toMatch(/lifecycle-danger-button"[^>]*disabled/);
+    expect(render("Renamed Camporee 2028")).not.toMatch(/lifecycle-danger-button"[^>]*disabled/);
+  });
+
+  it("shows the real-money warning only when payments are not test-mode", () => {
+    const withMoney = { ...preview, counts: { ...emptyCounts, realPayments: 1 } };
+    const render = (value: typeof preview) => renderToStaticMarkup(view(value, ""));
+    expect(render(withMoney)).toContain("payment history will be removed");
+    expect(render(preview)).not.toContain("payment history will be removed");
   });
 });
