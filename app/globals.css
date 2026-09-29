@@ -390,6 +390,12 @@ select:focus-visible {
   width: var(--sidebar-width);
   flex-direction: column;
   padding: 25px 18px 20px;
+  /* #567 F-5: at short heights (1440x500) the brand, system link and event
+     picker leave the nav little room, so the whole sidebar scrolls as well. */
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+  scrollbar-width: thin;
   background: linear-gradient(180deg, var(--imsda-navy) 0%, var(--imsda-navy-deep) 100%);
   color: white;
 }
@@ -453,6 +459,11 @@ select:focus-visible {
   letter-spacing: 0.2em;
   text-transform: uppercase;
 }
+
+.brand,
+.system-navigation,
+.event-workspace-label,
+.event-picker-wrap { flex-shrink: 0; }
 
 .system-navigation {
   display: grid;
@@ -561,7 +572,7 @@ select:focus-visible {
   align-content: start;
   gap: 6px;
   min-height: 0;
-  flex: 1 1 auto;
+  flex: 1 0 180px;
   overflow-x: hidden;
   overflow-y: auto;
   /* Room for the 3px + 3px-offset focus ring and the hover nudge, which the
@@ -606,6 +617,7 @@ select:focus-visible {
 }
 
 .sidebar-foot {
+  flex: 0 0 auto;
   display: flex;
   align-items: flex-start;
   gap: 10px;
