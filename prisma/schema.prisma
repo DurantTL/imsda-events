@@ -404,6 +404,9 @@ enum MessageTemplateKey {
   /// or staff-overridden): sent to both clubs, and the member or guardian if
   /// an email is on file.
   MEMBER_TRANSFER_COMPLETED
+  /// The single-use private link to fill in a club form (#610). The body
+  /// carries a sentinel; the link is minted when the email is delivered.
+  CLUB_FORM_LINK
 }
 
 enum MessageTemplateStatus {
@@ -586,6 +589,9 @@ model User {
   createdEventTemplateVersions       EventTemplateVersion[]       @relation("EventTemplateVersionCreatedBy")
   eventTemplateApplications          EventTemplateApplication[]   @relation("EventTemplateApplicationActor")
   eventCloneRecords                  EventCloneRecord[]           @relation("EventCloneRecordActor")
+  enabledClubFormTemplates           ClubFormTemplate[]           @relation("ClubFormTemplateEnabledBy")
+  createdClubFormLinks               ClubFormLink[]               @relation("ClubFormLinkCreatedByUser")
+  enteredClubFormSubmissions         ClubFormSubmission[]         @relation("ClubFormSubmissionEnteredByUser")
 
   @@index([accountStatus])
 }
@@ -820,6 +826,8 @@ model AttendeeAccount {
   updatedClubSupplyStock            ClubSupplyStock[]           @relation("ClubSupplyStockUpdatedByAccount")
   createdClubOrderBatches           ClubSupplyOrderBatch[]      @relation("ClubSupplyOrderBatchCreatedByAccount")
   receivedClubOrderBatches          ClubSupplyOrderBatch[]      @relation("ClubSupplyOrderBatchReceivedByAccount")
+  createdClubFormLinks              ClubFormLink[]              @relation("ClubFormLinkCreatedByAccount")
+  enteredClubFormSubmissions        ClubFormSubmission[]        @relation("ClubFormSubmissionEnteredByAccount")
 
   @@index([status])
 }
@@ -1760,6 +1768,8 @@ model Organization {
   clubOrderBatches   ClubSupplyOrderBatch[]
   memberClassCompletions MemberClassCompletion[]
   sponsoredPromoCodes PromoCode[] @relation("PromoCodeSponsor")
+  clubFormSubmissions ClubFormSubmission[]
+  clubFormLinks       ClubFormLink[]
 
   @@index([type, isActive, name])
   @@index([parentOrganizationId, isActive])
@@ -3699,6 +3709,8 @@ model ClubRosterMember {
   transferAsSender   MemberTransfer[] @relation("MemberTransferFromRoster")
   /// The transfer, if any, that created this row at the receiving club (#489).
   transferAsReceiver MemberTransfer?  @relation("MemberTransferToRoster")
+  clubFormSubmissions ClubFormSubmission[]
+  clubFormLinks       ClubFormLink[]
 
   @@unique([organizationId, clubYear, personId])
   @@index([organizationId, clubYear, status])
@@ -4557,4 +4569,147 @@ model MasterAwardRuleGroupHonor {
 
   @@id([groupId, honorId])
   @@index([honorId])
+}
+
+enum ClubFormSubmissionStatus {
+  DRAFT
+  SUBMITTED
+}
+
+/// How a club form submission was entered (#610): a club director or deputy
+/// signed in with their own account, a system administrator acting as that
+/// director, or the person who opened a single-use private link.
+enum ClubFormEntryChannel {
+  ATTENDEE
+  STAFF_ACTING
+  LINK
+}
+
+/// OPEN links can still be used (until `expiresAt`); USED links submitted once
+/// and are dead; REVOKED links were withdrawn by the club or lost an email
+/// delivery. Expiry is derived from `expiresAt`, never stored.
+enum ClubFormLinkStatus {
+  OPEN
+  USED
+  REVOKED
+}
+
+/// A conference-managed club form (#610): forms that are not tied to an event
+/// (membership application, staff service form, permission slip, passenger
+/// list). `definition` is validated by the registration-form definition
+/// schema, so the builder's field types and validation apply. Every template
+/// is off (`enabled = false`) until a system administrator turns it on, and
+/// clubs never see a disabled one. Sensitive fields are marked per field key.
+model ClubFormTemplate {
+  id                 String    @id @default(cuid())
+  key                String    @unique
+  name               String
+  description        String    @default("")
+  /// Bumped when the seeded definition changes; submissions record the
+  /// version they were filled in against.
+  version            Int       @default(1)
+  definition         Json
+  /// Display-only paragraphs per section id, for text a field label cannot
+  /// carry (the Pathfinder Pledge and Law, approval and waiver text).
+  sectionNotes       Json      @default("{}")
+  /// Field keys whose answers are sealed with `lib/secret-box.ts`, redacted
+  /// for Area Coordinators, and left out of CSVs, drafts and logs.
+  sensitiveFieldKeys String[]  @default([])
+  /// The birth-date class of sensitive field, a subset of `sensitiveFieldKeys`:
+  /// readable only by the club's own director and deputies and system
+  /// administrators (ADR 0005 Addendum A); Event Admins and Area Coordinators
+  /// see "Restricted".
+  birthDateFieldKeys String[]  @default([])
+  /// Field keys a private-link filler never sees (for example office use).
+  staffOnlyFieldKeys String[]  @default([])
+  /// "STANDARD", or "PASSENGER_LIST" for the roll-call print layout.
+  printLayout        String    @default("STANDARD")
+  sortOrder          Int       @default(0)
+  enabled            Boolean   @default(false)
+  enabledAt          DateTime?
+  enabledByUserId    String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  enabledBy   User?                @relation("ClubFormTemplateEnabledBy", fields: [enabledByUserId], references: [id], onDelete: SetNull)
+  submissions ClubFormSubmission[]
+  links       ClubFormLink[]
+}
+
+/// One filled-in club form (#610). `answers` holds only non-sensitive answers;
+/// sensitive ones are sealed into `sealedSensitiveAnswers` (AES-256-GCM, key
+/// bound to this row's id). Every read of a row with sensitive answers writes
+/// an audit row that carries no answer text.
+model ClubFormSubmission {
+  id                     String                   @id @default(cuid())
+  templateId             String
+  organizationId         String
+  clubYear               String
+  rosterMemberId         String?
+  /// A display label for lists ("by member"): the roster member's name, or
+  /// what the director typed for a non-member form.
+  subjectName            String                   @default("")
+  status                 ClubFormSubmissionStatus @default(DRAFT)
+  answers                Json                     @default("{}")
+  sealedSensitiveAnswers String?
+  hasSensitiveAnswers    Boolean                  @default(false)
+  templateVersion        Int
+  enteredVia             ClubFormEntryChannel
+  enteredByAccountId     String?
+  /// Set instead of `enteredByAccountId` for a staff "act as" director.
+  enteredByUserId        String?
+  linkId                 String?                  @unique
+  submittedAt            DateTime?
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+
+  template         ClubFormTemplate  @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  rosterMember     ClubRosterMember? @relation(fields: [rosterMemberId], references: [id], onDelete: SetNull)
+  enteredByAccount AttendeeAccount?  @relation("ClubFormSubmissionEnteredByAccount", fields: [enteredByAccountId], references: [id], onDelete: SetNull)
+  enteredByUser    User?             @relation("ClubFormSubmissionEnteredByUser", fields: [enteredByUserId], references: [id], onDelete: SetNull)
+  link             ClubFormLink?     @relation(fields: [linkId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, templateId, status])
+  @@index([organizationId, clubYear])
+  @@index([rosterMemberId])
+  @@index([templateId, submittedAt])
+}
+
+/// A single-use, expiring private link (#610) for a parent or staff person to
+/// fill in one form for one club, with no account. Only the SHA-256 of the
+/// token is stored (`tokenHash`); the token itself is minted when the email is
+/// delivered and never written to the outbox or a log.
+model ClubFormLink {
+  id                 String             @id @default(cuid())
+  templateId         String
+  organizationId     String
+  clubYear           String
+  rosterMemberId     String?
+  /// The director's own label for who this link is for; never shown on the
+  /// public page.
+  subjectName        String             @default("")
+  recipientEmail     String
+  status             ClubFormLinkStatus @default(OPEN)
+  tokenHash          String?            @unique
+  expiresAt          DateTime
+  usedAt             DateTime?
+  revokedAt          DateTime?
+  /// The outbox message that carries the link, for delivery-time minting.
+  messageId          String?            @unique
+  createdByAccountId String?
+  createdByUserId    String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  template         ClubFormTemplate    @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  organization     Organization        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  rosterMember     ClubRosterMember?   @relation(fields: [rosterMemberId], references: [id], onDelete: SetNull)
+  createdByAccount AttendeeAccount?    @relation("ClubFormLinkCreatedByAccount", fields: [createdByAccountId], references: [id], onDelete: SetNull)
+  createdByUser    User?               @relation("ClubFormLinkCreatedByUser", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  submission       ClubFormSubmission?
+
+  @@index([organizationId, status])
+  @@index([templateId, organizationId])
+  @@index([status, expiresAt])
 }
