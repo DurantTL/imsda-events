@@ -60,6 +60,8 @@ function formRow(versions: unknown[], status = "PUBLISHED") {
 
 function txFor(versions: unknown[]) {
   return {
+    $executeRaw: vi.fn().mockResolvedValue(0),
+    $queryRaw: vi.fn().mockResolvedValue([]),
     registrationForm: { findFirst: vi.fn().mockResolvedValue(formRow(versions)), update: vi.fn().mockResolvedValue({}) },
     registrationFormVersion: { create: vi.fn().mockResolvedValue({}), update: vi.fn().mockResolvedValue({}), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     formTestSubmission: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
@@ -151,6 +153,43 @@ describe("keeping the live form open while a draft exists (#564)", () => {
     await expect(
       updateRegistrationForm("event-1", "form-1", "user-1", { definition: individualDefinition, expectedUpdatedAt: updatedAt.toISOString() }),
     ).rejects.toMatchObject({ code: "EDIT_CONFLICT" });
+  });
+});
+
+describe("serialized form writers (#564)", () => {
+  it("takes the form row lock before reading, and updates an existing draft conditionally", async () => {
+    const draft = version({ id: "version-2", versionNumber: 2, status: "DRAFT", publishedAt: null });
+    const tx = txFor([draft, version()]);
+    dependencies.getPrisma.mockReturnValue(prismaFor(tx, [draft, version()]));
+
+    await updateRegistrationForm("event-1", "form-1", "user-1", { definition: individualDefinition, expectedUpdatedAt: updatedAt.toISOString() });
+
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(tx.registrationForm.findFirst.mock.invocationCallOrder[0]!);
+    expect(tx.registrationFormVersion.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "version-2", status: "DRAFT", updatedAt },
+    }));
+    // Tests are deleted only after the conditional update matched.
+    expect(tx.registrationFormVersion.updateMany.mock.invocationCallOrder[0]).toBeLessThan(tx.formTestSubmission.deleteMany.mock.invocationCallOrder[0]!);
+  });
+
+  it("refuses with EDIT_CONFLICT, deleting no tests, when the draft changed after it was read", async () => {
+    const draft = version({ id: "version-2", versionNumber: 2, status: "DRAFT", publishedAt: null });
+    const tx = txFor([draft]);
+    tx.registrationFormVersion.updateMany.mockResolvedValue({ count: 0 });
+    dependencies.getPrisma.mockReturnValue(prismaFor(tx, [draft]));
+
+    await expect(
+      updateRegistrationForm("event-1", "form-1", "user-1", { definition: individualDefinition, expectedUpdatedAt: updatedAt.toISOString() }),
+    ).rejects.toMatchObject({ code: "EDIT_CONFLICT" });
+    expect(tx.formTestSubmission.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("reports FORM_BUSY when the lock wait gives up", async () => {
+    const tx = txFor([version()]);
+    tx.$queryRaw.mockRejectedValue(Object.assign(new Error("lock timeout 55P03"), { code: "55P03" }));
+    dependencies.getPrisma.mockReturnValue(prismaFor(tx, []));
+
+    await expect(unpublishRegistrationForm("event-1", "form-1", "user-1")).rejects.toMatchObject({ code: "FORM_BUSY" });
   });
 });
 

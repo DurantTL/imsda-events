@@ -38,6 +38,8 @@ function version(overrides: Record<string, unknown> = {}) {
 
 function transactionClient(previouslyPublishedCount: number, validTests: number) {
   return {
+    $executeRaw: vi.fn().mockResolvedValue(0),
+    $queryRaw: vi.fn().mockResolvedValue([]),
     registrationForm: {
       findFirst: vi.fn().mockResolvedValue({
         id: "form-1",

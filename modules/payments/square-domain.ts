@@ -87,18 +87,18 @@ export function selectedCardPayment(input: {
   definition: unknown;
   responses: unknown;
   /**
-   * The owning form's current status, not the submitted version's. A form
-   * version is archived the moment a newer one is published, so gating on
-   * the version would permanently strand every earlier registrant without
-   * online payment the instant staff fix a typo. What actually determines
-   * whether a card payment can be taken is whether this form is still
-   * published at all — the submitted version's own definition still decides
-   * the payment fields and pricing, since that is what the registrant
-   * actually answered.
+   * Whether the owning form still has a PUBLISHED version — not the
+   * submitted version's own status, and not the form-level status. A version
+   * is archived the moment a newer one is published, so gating on it would
+   * strand every earlier registrant without online payment the instant staff
+   * fix a typo; and the form-level status can read DRAFT while a live version
+   * still serves (a draft beside it, #564). What determines whether a card
+   * payment can be taken is whether the form is live at all — the submitted
+   * version's definition still decides the payment fields and pricing.
    */
-  formStatus: string;
+  formHasPublishedVersion: boolean;
 }) {
-  if (input.formStatus !== "PUBLISHED") {
+  if (!input.formHasPublishedVersion) {
     return { configured: false, cardSelected: false };
   }
   const definition = registrationFormDefinitionSchema.safeParse(

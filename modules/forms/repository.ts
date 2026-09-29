@@ -3,6 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { Prisma, RegistrationFormStatus } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { isLockTimeoutError } from "@/lib/prisma-errors";
 import {
   formTemplates,
   getFormTemplate,
@@ -19,11 +20,34 @@ import { hasDirectoryOptionSource, stripDirectoryOptions, withDirectoryOptions }
 import type { OrganizationDirectory } from "@/modules/organizations/directory-options";
 import { directoryForDefinitions, hydrateFormOptions } from "@/modules/forms/form-options-repository";
 
+/**
+ * Every writer of a form's versions (save, test, publish, withdraw) runs in
+ * one of these: the first statement locks the form row, so the writers are
+ * serialized and each re-reads current state under the lock (#564). Because
+ * they all take this one lock first, there is no lock-order cycle. The lock
+ * wait gives up after 5s as a readable "busy" error instead of hanging.
+ */
+async function formWriteTransaction<T>(operation: (tx: Prisma.TransactionClient) => Promise<T>, formId: string): Promise<T> {
+  try {
+    return await getPrisma().$transaction(async (tx) => {
+      await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
+      await tx.$queryRaw`SELECT "id" FROM "RegistrationForm" WHERE "id" = ${formId} FOR UPDATE`;
+      await tx.$executeRaw`SET LOCAL lock_timeout = 0`;
+      return operation(tx);
+    }, { timeout: 10_000 });
+  } catch (error) {
+    if (isLockTimeoutError(error) || (error instanceof Prisma.PrismaClientKnownRequestError && (error.code === "P2028" || error.code === "P2034"))) {
+      throw new FormOperationError("FORM_BUSY", "This form is being changed by someone else right now. Wait a moment and try again.");
+    }
+    throw error;
+  }
+}
+
 const emptyDirectory: OrganizationDirectory = { clubs: [], churches: [] };
 
 export class FormOperationError extends Error {
   constructor(
-    public readonly code: "FORM_NOT_FOUND" | "TEMPLATE_NOT_FOUND" | "EDIT_CONFLICT" | "NO_DRAFT" | "TEST_REQUIRED" | "VERSION_NOT_FOUND" | "NOT_PUBLISHED" | "SLUG_LOCKED" | "FORM_SLUG_TAKEN",
+    public readonly code: "FORM_NOT_FOUND" | "TEMPLATE_NOT_FOUND" | "EDIT_CONFLICT" | "NO_DRAFT" | "TEST_REQUIRED" | "VERSION_NOT_FOUND" | "NOT_PUBLISHED" | "FORM_BUSY" | "SLUG_LOCKED" | "FORM_SLUG_TAKEN",
     message: string,
   ) {
     super(message);
@@ -244,15 +268,21 @@ export async function updateRegistrationForm(
   const definition = registrationFormDefinitionSchema.parse(input.definition);
   const storedDefinition = stripDirectoryOptions(stripAttendeeTypeOptions(definition));
   try {
-  await getPrisma().$transaction(async (tx) => {
+  await formWriteTransaction(async (tx) => {
     let invalidatedTestCount = 0;
     const form = await tx.registrationForm.findFirst({ where: { id: formId, eventId }, include: { versions: { orderBy: { versionNumber: "desc" } } } });
     if (!form) throw new FormOperationError("FORM_NOT_FOUND", "That registration form was not found.");
     const draft = form.versions.find((version) => version.status === RegistrationFormStatus.DRAFT);
     if (draft) {
       if (draft.updatedAt.getTime() !== new Date(input.expectedUpdatedAt).getTime()) throw new FormOperationError("EDIT_CONFLICT", "This draft changed in another session. Reload it before saving again.");
+      // Conditional on the draft still being exactly what the editor loaded,
+      // then delete its tests: a test can no longer commit between the two.
+      const saved = await tx.registrationFormVersion.updateMany({
+        where: { id: draft.id, status: RegistrationFormStatus.DRAFT, updatedAt: new Date(input.expectedUpdatedAt) },
+        data: { definition: storedDefinition as Prisma.InputJsonValue, createdByUserId: actorUserId },
+      });
+      if (saved.count !== 1) throw new FormOperationError("EDIT_CONFLICT", "This draft changed in another session. Reload it before saving again.");
       invalidatedTestCount = (await tx.formTestSubmission.deleteMany({ where: { formVersionId: draft.id } })).count;
-      await tx.registrationFormVersion.update({ where: { id: draft.id }, data: { definition: storedDefinition as Prisma.InputJsonValue, createdByUserId: actorUserId } });
     } else {
       const source = form.versions[0];
       if (!source) throw new FormOperationError("NO_DRAFT", "This form has no version to edit.");
@@ -271,7 +301,7 @@ export async function updateRegistrationForm(
       eventId, actorUserId, action: "REGISTRATION_FORM_DRAFT_SAVED", entityType: "RegistrationForm", entityId: formId,
       correlationId: randomUUID(), summary: `Saved a draft of ${definition.title}.`, metadata: { sectionCount: definition.sections.length, invalidatedTestCount, productionWrite: false },
     } });
-  });
+  }, formId);
   } catch (error) {
     // Two staff creating the next draft at once collide on (formId, versionNumber).
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -361,7 +391,7 @@ export async function suggestRegistrationFormSlug(eventId: string, formId: strin
 }
 
 export async function publishRegistrationForm(eventId: string, formId: string, actorUserId: string) {
-  await getPrisma().$transaction(async (tx) => {
+  await formWriteTransaction(async (tx) => {
     const form = await tx.registrationForm.findFirst({ where: { id: formId, eventId }, include: { versions: { orderBy: { versionNumber: "desc" } } } });
     if (!form) throw new FormOperationError("FORM_NOT_FOUND", "That registration form was not found.");
     const draft = form.versions.find((version) => version.status === RegistrationFormStatus.DRAFT);
@@ -388,7 +418,7 @@ export async function publishRegistrationForm(eventId: string, formId: string, a
       eventId, actorUserId, action: "REGISTRATION_FORM_PUBLISHED", entityType: "RegistrationForm", entityId: formId,
       correlationId: randomUUID(), summary: `Published ${definition.title} version ${draft.versionNumber}.`, metadata: { versionId: draft.id, versionNumber: draft.versionNumber, productionWrite: false },
     } });
-  });
+  }, formId);
   return (await getRegistrationForm(eventId, formId))!;
 }
 
@@ -405,7 +435,7 @@ export async function publishRegistrationForm(eventId: string, formId: string, a
  * somebody already submitted.
  */
 export async function unpublishRegistrationForm(eventId: string, formId: string, actorUserId: string) {
-  await getPrisma().$transaction(async (tx) => {
+  await formWriteTransaction(async (tx) => {
     const form = await tx.registrationForm.findFirst({
       where: { id: formId, eventId },
       include: { versions: { where: { status: RegistrationFormStatus.PUBLISHED }, orderBy: { versionNumber: "desc" } } },
@@ -426,7 +456,7 @@ export async function unpublishRegistrationForm(eventId: string, formId: string,
       summary: `Withdrew ${form.name} version ${published.versionNumber} from the public event page.`,
       metadata: { versionId: published.id, versionNumber: published.versionNumber, productionWrite: false },
     } });
-  });
+  }, formId);
   return (await getRegistrationForm(eventId, formId))!;
 }
 
@@ -476,11 +506,10 @@ export async function createTestSubmission(
         })),
       }
     : prepared.responses;
-  const submission = await getPrisma().$transaction(async (tx) => {
-    // Share-lock the version row (a concurrent save waits for us) and re-read
-    // it: a test computed against an older definition must never be stored
-    // as valid for a draft that has since changed.
-    await tx.$queryRaw`SELECT "id" FROM "RegistrationFormVersion" WHERE "id" = ${version.id} FOR SHARE`;
+  const submission = await formWriteTransaction(async (tx) => {
+    // Under the form lock, re-read the version: a test computed against an
+    // older definition must never be stored as valid for a draft that has
+    // since changed.
     const current = await tx.registrationFormVersion.findUnique({ where: { id: version.id }, select: { updatedAt: true, status: true } });
     if (!current || current.updatedAt.getTime() !== version.updatedAt.getTime() || current.status !== version.status) {
       throw new FormOperationError("EDIT_CONFLICT", "This version changed while the test ran. Reload it and run the test again.");
@@ -495,7 +524,7 @@ export async function createTestSubmission(
       metadata: { isValid: validation.isValid, issueCount: validation.issues.length, productionWrite: false },
     } });
     return created;
-  });
+  }, formId);
   return { id: submission.id, isValid: validation.isValid, validation, createdAt: submission.createdAt.toISOString() };
 }
 

@@ -256,6 +256,8 @@ describe("the address offered before a first publish (#476)", () => {
 describe("a published form's slug never changes on its own", () => {
   function transactionClient(previouslyPublishedCount: number, validTests: number) {
     return {
+      $executeRaw: vi.fn().mockResolvedValue(0),
+      $queryRaw: vi.fn().mockResolvedValue([]),
       registrationForm: {
         findFirst: vi.fn().mockResolvedValue({
           id: "form-1",
