@@ -26,6 +26,11 @@ import {
   prepareAccountEmailBodyForDelivery,
 } from "@/modules/communications/account-email";
 import { prepareAttendeeEmailBodyForDelivery } from "@/modules/attendee-accounts/attendee-email";
+import {
+  CLUB_FORM_LINK_TEMPLATE_KEY,
+  prepareClubFormLinkBodyForDelivery,
+  retireClubFormLinkForMessage,
+} from "@/modules/club-forms/link-email";
 import { logError } from "@/lib/logger";
 import {
   createStableRegistrationAccessToken,
@@ -608,7 +613,17 @@ async function runDeliveryLoop(
         now()
       );
       if (failure.rescheduled) result.rescheduledIds.push(message.id);
-      else if (failure.finalized) result.failedIds.push(message.id);
+      else if (failure.finalized) {
+        result.failedIds.push(message.id);
+        // Out of retries or non-retryable: a club form link that never arrived must not stay live (#610).
+        if (message.templateKey === CLUB_FORM_LINK_TEMPLATE_KEY) {
+          try {
+            await retireClubFormLinkForMessage(prisma as unknown as PrismaClient, message.id, now());
+          } catch (retireError) {
+            logError("Unable to withdraw a club form link after its email finally failed.", retireError);
+          }
+        }
+      }
     }
   }
   return result;
@@ -624,6 +639,14 @@ async function runDeliveryLoop(
 async function prepareAccountEmailBody(
   input: EmailBodyPreparationInput,
 ): Promise<PreparedEmailBody> {
+  // A club form's private link (#610): the token is minted here, at delivery.
+  if (input.templateKey === CLUB_FORM_LINK_TEMPLATE_KEY) {
+    return prepareClubFormLinkBodyForDelivery({
+      messageId: input.messageId,
+      bodyText: input.bodyText,
+      now: input.now,
+    });
+  }
   if (input.templateKey?.startsWith("ATTENDEE_")) {
     return prepareAttendeeEmailBodyForDelivery({
       messageId: input.messageId,

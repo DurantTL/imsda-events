@@ -9,6 +9,7 @@ export default function robots(): MetadataRoute.Robots {
       disallow: [
         "/api/",
         "/check-in",
+        "/club-forms/",
         "/communications",
         "/embed/",
         "/event-setup",
