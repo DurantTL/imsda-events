@@ -15,7 +15,11 @@ const definition = registrationFormDefinitionSchema.parse({
   title: "Synthetic camporee",
   description: "Synthetic form.",
   confirmationMessage: "Received.",
-  sections: [{ id: "details", title: "Details", description: "", fields: [{ id: "note_field", key: "note", label: "Note", type: "TEXT", scope: "REGISTRATION", required: false, helpText: "", options: [] }] }],
+  attendeeRoster: { enabled: true, minAttendees: 1, maxAttendees: 50, attendeeLabel: "Person", addButtonLabel: "Add" },
+  sections: [{ id: "details", title: "Details", description: "", fields: [{ id: "note_field", key: "note", label: "Note", type: "TEXT", scope: "REGISTRATION", required: false, helpText: "", options: [] },
+    { id: "first_field", key: "first_name", label: "First name", type: "TEXT", scope: "ATTENDEE", required: true, helpText: "", options: [] },
+    { id: "last_field", key: "last_name", label: "Last name", type: "TEXT", scope: "ATTENDEE", required: true, helpText: "", options: [] },
+  ] }],
 });
 
 function fixture() {

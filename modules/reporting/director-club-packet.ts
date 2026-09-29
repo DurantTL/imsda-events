@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
-import { lineItemsFromPricingSnapshot, perPersonPriceText } from "@/modules/club-registrations/per-person-price";
+import { currentPricingSnapshot, perPersonPriceFromSnapshot } from "@/modules/club-registrations/per-person-price";
 import { getRosterAccessState } from "@/modules/club-rosters/access";
 import { getClubPacketData } from "@/modules/reporting/club-packet-repository";
 
@@ -23,11 +23,19 @@ export async function loadDirectorClubPacket(organizationId: string, eventId: st
   if (!packet) return null;
   const submission = await getPrisma().clubEventRegistration.findUnique({
     where: { eventId_organizationId: { eventId, organizationId: access.club.organizationId } },
-    select: { registration: { select: { publicFormSubmission: { select: { pricingSnapshot: true } } } } },
+    select: {
+      registration: {
+        select: {
+          publicFormSubmission: { select: { pricingSnapshot: true } },
+          // The latest amendment's pricing wins over the original submission's.
+          operations: { where: { type: "AMENDMENT" }, orderBy: { createdAt: "desc" }, take: 1, select: { afterSnapshot: true } },
+        },
+      },
+    },
   });
   return {
     ...packet,
     amountOwedCents: null,
-    perPersonNotice: perPersonPriceText(lineItemsFromPricingSnapshot(submission?.registration.publicFormSubmission?.pricingSnapshot)),
+    perPersonPrice: perPersonPriceFromSnapshot(submission ? currentPricingSnapshot(submission.registration) : null, true),
   };
 }

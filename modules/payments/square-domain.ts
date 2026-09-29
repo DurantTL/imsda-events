@@ -26,7 +26,21 @@ export type SquareCheckoutState =
   | "NO_BALANCE"
   | "FORM_UNAVAILABLE";
 
-export type SquareCheckoutView = {
+/**
+ * What a church-billed registration's payment endpoints return (#621): a state and a message,
+ * never an amount, balance, surcharge or payment-choice total.
+ */
+export type SquareChurchBilledCheckoutView = {
+  state: "NOT_ELIGIBLE";
+  message: string;
+  currency: "USD";
+  /** Never present: a church-billed registration has no card checkout. */
+  square?: undefined;
+};
+
+export type SquareCheckoutView = SquareChurchBilledCheckoutView | SquarePayableCheckoutView;
+
+export type SquarePayableCheckoutView = {
   state: SquareCheckoutState;
   message: string;
   /** What the card is charged: the outstanding balance plus any surcharge. */

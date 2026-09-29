@@ -79,7 +79,27 @@ describe("loadDirectorClubPacket", () => {
     });
     const packet = await loadDirectorClubPacket("org-a", "event-1");
     expect(packet?.amountOwedCents).toBeNull();
-    expect(packet?.perPersonNotice).toBe("$25 per person. Your church is billed after the event.");
+    expect(packet?.perPersonPrice?.notice).toBe("$25 per person. Your church is billed after the event.");
     expect(JSON.stringify(packet)).not.toContain("4500");
+  });
+
+  it("prices the director's packet from the latest amendment, not the original submission (#621)", async () => {
+    mocks.getRosterAccessState.mockResolvedValue({
+      state: "OPEN", club: clubA, capabilities: { roster: true }, accountId: "account-1", sessionId: "session-1",
+    });
+    mocks.findSubmission.mockResolvedValue({
+      registration: {
+        publicFormSubmission: {
+          pricingSnapshot: { lineItems: [{ label: "Fee", amountCents: 2500, attendeeIndex: 0, attendeeLabel: "A" }], attendeeCount: 1 },
+        },
+        operations: [{
+          afterSnapshot: {
+            pricingSnapshot: { lineItems: [{ label: "Fee", amountCents: 3000, attendeeIndex: 0, attendeeLabel: "A" }], attendeeCount: 1 },
+          },
+        }],
+      },
+    });
+    const packet = await loadDirectorClubPacket("org-a", "event-1");
+    expect(packet?.perPersonPrice?.notice).toBe("$30 per person. Your church is billed after the event.");
   });
 });

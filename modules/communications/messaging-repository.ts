@@ -57,7 +57,7 @@ import {
   withChurchBilledLinkWording,
   withChurchBilledPriceWording,
 } from "@/modules/communications/templates";
-import { perPersonPriceInline } from "@/modules/club-registrations/per-person-price";
+import { perPersonPrice, perPersonPriceInline } from "@/modules/club-registrations/per-person-price";
 import {
   computeBalanceReminderPreview,
   type BalanceReminderCandidate,
@@ -97,7 +97,7 @@ import {
   buildRegistrationCheckinTokens,
   EVENT_LODGING_SELECT,
 } from "@/modules/communications/message-blocks";
-import { resolveBillingContactName, resolveResponsibleOrganization } from "@/modules/forms/definition";
+import { getAttendeeRosterConfig, resolveBillingContactName, resolveResponsibleOrganization } from "@/modules/forms/definition";
 import type { FormCalculation, RegistrationFormDefinition } from "@/modules/forms/definition";
 
 const fallbackSettings = {
@@ -3227,7 +3227,11 @@ export async function enqueuePublicRegistrationMessages(
     : null;
   // A church-billed registrant sees the per-person price only, never a total or
   // balance (#621). The internal team notice keeps the amounts.
-  const churchBilledNotice = perPersonPriceInline(input.calculation.lineItems);
+  const churchBilledNotice = perPersonPriceInline(perPersonPrice({
+    lineItems: input.calculation.lineItems,
+    roster: getAttendeeRosterConfig(input.definition).enabled,
+    attendeeCount: registrationAttendees.length,
+  }));
   const commonContext: MessageTemplateContext = {
     registrant_name: registrantName,
     event_name: input.event.name,

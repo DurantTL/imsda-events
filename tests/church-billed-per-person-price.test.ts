@@ -8,8 +8,10 @@ import { withChurchBilledPriceWording } from "@/modules/communications/templates
 import { buildPaymentStatusBlock } from "@/modules/communications/message-blocks";
 import {
   CHURCH_BILLED_NOTICE,
+  currentPricingSnapshot,
   lineItemsFromPricingSnapshot,
   perPersonPrice,
+  perPersonPriceFromSnapshot,
   perPersonPriceInline,
   perPersonPriceText,
 } from "@/modules/club-registrations/per-person-price";
@@ -25,31 +27,70 @@ const line = (index: number, amountCents: number, label = `Person ${index + 1}`)
   attendeeLabel: label,
 });
 
+const roster = (lineItems: Parameters<typeof perPersonPrice>[0]["lineItems"], extra: { attendeeNames?: string[]; attendeeCount?: number } = {}) =>
+  perPersonPrice({ lineItems, roster: true, ...extra });
+
 describe("perPersonPrice", () => {
   it("collapses identical per-person prices into one notice and never sums attendees", () => {
-    const price = perPersonPrice([line(0, 2500), line(1, 2500), line(2, 2500)]);
+    const price = roster([line(0, 2500), line(1, 2500), line(2, 2500)]);
     expect(price.notice).toBe("$25 per person. Your church is billed after the event.");
     expect(price.uniformAmountCents).toBe(2500);
     expect(price.notice).not.toContain("75");
   });
 
   it("lists each attendee's own price, without a sum, when prices differ (options or add-ons)", () => {
-    const price = perPersonPrice([line(0, 2500, "Ada"), { ...line(0, 500, "Ada"), key: "attendees.0.addon" }, line(1, 2500, "Ben")]);
+    const price = roster([line(0, 2500, "Ada"), { ...line(0, 500, "Ada"), key: "attendees.0.addon" }, line(1, 2500, "Ben")]);
     expect(price.uniformAmountCents).toBeNull();
     expect(price.attendeeLines).toEqual([
       { attendeeLabel: "Ada", amountCents: 3000 },
       { attendeeLabel: "Ben", amountCents: 2500 },
     ]);
-    expect(perPersonPriceText([line(0, 3000, "Ada"), line(1, 2500, "Ben")])).not.toContain("$55");
-    expect(perPersonPriceInline([line(0, 3000, "Ada"), line(1, 2500, "Ben")])).not.toContain("$55");
+    expect(perPersonPriceText(roster([line(0, 3000, "Ada"), line(1, 2500, "Ben")]))).not.toContain("$55");
+    expect(perPersonPriceInline(roster([line(0, 3000, "Ada"), line(1, 2500, "Ben")]))).not.toContain("$55");
   });
 
-  it("uses the plain lines as the one person's price when the form has no roster", () => {
-    expect(perPersonPrice([{ label: "Fee", amountCents: 1800 }]).notice).toBe("$18 per person. Your church is billed after the event.");
+  it("counts free attendees, so 10 at $25 plus 2 free is not read as \"$25 per person\" (S2)", () => {
+    const paid = Array.from({ length: 10 }, (_, index) => line(index, 2500, `Paid ${index + 1}`));
+    const names = [...paid.map((item) => item.attendeeLabel), "Free One", "Free Two"];
+    const price = roster(paid, { attendeeNames: names, attendeeCount: 12 });
+    expect(price.uniformAmountCents).toBeNull();
+    expect(price.notice).not.toContain("$25 per person");
+    expect(price.attendeeLines).toHaveLength(12);
+    expect(price.attendeeLines.slice(-2)).toEqual([
+      { attendeeLabel: "Free One", amountCents: 0 },
+      { attendeeLabel: "Free Two", amountCents: 0 },
+    ]);
+    // Everyone free is a uniform $0, never dropped to "no price".
+    expect(roster([], { attendeeCount: 3 }).notice).toBe("$0 per person. Your church is billed after the event.");
   });
 
-  it("falls back to the notice alone when there is no price", () => {
-    expect(perPersonPrice([]).notice).toBe(CHURCH_BILLED_NOTICE);
+  it("lists registration-level fees on their own, never adding them to a per-person price (S3)", () => {
+    const price = roster([
+      { key: "reg_fee", label: "Registration fee", amountCents: 5000 },
+      line(0, 2500),
+      line(1, 2500),
+    ]);
+    expect(price.notice).toBe("$25 per person. Your church is billed after the event.");
+    expect(price.registrationLines).toEqual([{ label: "Registration fee", amountCents: 5000 }]);
+    expect(perPersonPriceText(price)).toContain("Registration fee: $50");
+    expect(perPersonPriceText(price)).not.toContain("$75");
+    expect(perPersonPriceText(price)).not.toContain("$100");
+  });
+
+  it("does not say \"per person\" on a form with no roster, and lists each line without a total (S3)", () => {
+    const price = perPersonPrice({
+      roster: false,
+      lineItems: [{ label: "Camporee fee", amountCents: 1800 }, { label: "Meal", amountCents: 700 }],
+    });
+    expect(price.notice).toBe(CHURCH_BILLED_NOTICE);
+    expect(perPersonPriceText(price)).not.toContain("per person");
+    expect(perPersonPriceText(price)).toContain("Price: Camporee fee $18");
+    expect(perPersonPriceText(price)).toContain("Price: Meal $7");
+    expect(perPersonPriceText(price)).not.toContain("$25");
+  });
+
+  it("falls back to the notice alone when there is nothing to price", () => {
+    expect(perPersonPrice({ lineItems: [], roster: false }).notice).toBe(CHURCH_BILLED_NOTICE);
   });
 
   it("reads line items from a stored pricing snapshot and ignores anything malformed", () => {
@@ -59,8 +100,30 @@ describe("perPersonPrice", () => {
     expect(lineItemsFromPricingSnapshot(null)).toEqual([]);
   });
 
+  it("prices a snapshot with its saved names and count, and takes the roster setting from the caller first", () => {
+    const snapshot = { lineItems: [line(0, 2500, "Ada")], attendeeNames: ["Ada", "Ben"], attendeeCount: 2, rosterEnabled: true };
+    expect(perPersonPriceFromSnapshot(snapshot).attendeeLines).toEqual([
+      { attendeeLabel: "Ada", amountCents: 2500 },
+      { attendeeLabel: "Ben", amountCents: 0 },
+    ]);
+    expect(perPersonPriceFromSnapshot(snapshot, false).roster).toBe(false);
+  });
+
+  it("prefers the latest amendment's pricing snapshot over the original submission's (B2)", () => {
+    const original = { lineItems: [line(0, 2500)], attendeeCount: 1 };
+    const amended = { lineItems: [line(0, 3000), line(1, 3000)], attendeeCount: 2 };
+    const registration = {
+      publicFormSubmission: { pricingSnapshot: original },
+      operations: [{ afterSnapshot: { pricingSnapshot: amended } }],
+    };
+    expect(currentPricingSnapshot(registration)).toBe(amended);
+    expect(perPersonPriceFromSnapshot(currentPricingSnapshot(registration), true).notice).toBe("$30 per person. Your church is billed after the event.");
+    expect(currentPricingSnapshot({ ...registration, operations: [] })).toBe(original);
+    expect(currentPricingSnapshot({ ...registration, operations: [{ afterSnapshot: {} }] })).toBe(original);
+  });
+
   it("renders the notice component with no total", () => {
-    const markup = renderToStaticMarkup(createElement(PerPersonPriceNotice, { price: perPersonPrice([line(0, 2500), line(1, 2500)]) }));
+    const markup = renderToStaticMarkup(createElement(PerPersonPriceNotice, { price: roster([line(0, 2500), line(1, 2500)]) }));
     expect(markup).toContain("$25 per person. Your church is billed after the event.");
     expect(markup).not.toContain("$50");
   });
@@ -104,7 +167,10 @@ function renderForm(billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE
 describe("registration form order summary", () => {
   it("shows a church-billed registrant the per-person price and no total, subtotal or estimate", () => {
     const markup = renderForm("DEFERRED_ORGANIZATION_INVOICE");
-    expect(markup).toContain("$25 per person. Your church is billed after the event.");
+    // No roster on this form, so nothing is called "per person" and there is no total (S3).
+    expect(markup).toContain("Your church is billed after the event.");
+    expect(markup).toContain("Price: Camporee fee $25");
+    expect(markup).not.toContain("per person");
     expect(markup).not.toContain("Subtotal");
     expect(markup).not.toContain("Estimated total");
     expect(markup).not.toContain("Total");
@@ -135,7 +201,7 @@ describe("club packet", () => {
 
   it("shows the director the per-person notice, and staff the amount", () => {
     const director = renderToStaticMarkup(createElement(ClubPacketSheet, {
-      packet: { ...base, amountOwedCents: null, perPersonNotice: "$25 per person. Your church is billed after the event." } as never,
+      packet: { ...base, amountOwedCents: null, perPersonPrice: roster([line(0, 2500), line(1, 2500)]) } as never,
       qrSrc: "/qr",
     }));
     expect(director).toContain("$25 per person. Your church is billed after the event.");
@@ -162,7 +228,7 @@ describe("confirmation email wording", () => {
       totalCents: 7500,
       paidCents: 0,
       balanceCents: 7500,
-      perPersonNotice: perPersonPriceInline([line(0, 2500), line(1, 2500), line(2, 2500)]),
+      perPersonNotice: perPersonPriceInline(roster([line(0, 2500), line(1, 2500), line(2, 2500)])),
     });
     expect(block).toContain("$25 per person. Your church is billed after the event.");
     expect(block).not.toContain("$75");

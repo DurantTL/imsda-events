@@ -30,9 +30,11 @@ import { TranslateHint } from "@/components/translate-hint";
 import { planAttendeeRemoval, withoutAttendee } from "@/modules/forms/attendee-removal";
 import { hasAddressValue, isPlainAddressObject, type AddressValue } from "@/modules/forms/address";
 import {
+  calculateFormLineItems,
   calculateFormTotal,
   dateFieldBounds,
   isBirthDateField,
+  calculateRosterLineItems,
   calculateRosterTotal,
   getAttendeeRosterConfig,
   getAvailabilityMode,
@@ -46,7 +48,7 @@ import {
   type RegistrationFormDefinition,
   type RegistrationFormField,
 } from "@/modules/forms/definition";
-import { perPersonPrice } from "@/modules/club-registrations/per-person-price";
+import { perPersonPrice, type PerPersonPrice } from "@/modules/club-registrations/per-person-price";
 import {
   AttendeeRosterCsvError,
   createAttendeeRosterCsvTemplate,
@@ -144,6 +146,8 @@ type Confirmation = {
   discountAmountCents?: number;
   promoCode: string | null;
   processingFeeCents?: number;
+  /** Church-billed events: the computed per-person price; `lineItems` is empty (#621). */
+  perPerson?: PerPersonPrice;
   lineItems: Array<{ key: string; label: string; amountCents: number; pricingLabel?: string }>;
   pricingDate: string;
   cardSelected: boolean;
@@ -161,10 +165,14 @@ type Confirmation = {
   waitlistPosition: number | null;
 };
 
-type PromoCodeQuote = Pick<FormCalculation, "lineItems"> & Partial<Omit<FormCalculation, "lineItems">> & {
+/** What the browser prices a form with. A church-billed event carries the lines only, never a sum (#621). */
+type DisplayedCalculation = Pick<FormCalculation, "lineItems"> & Partial<Omit<FormCalculation, "lineItems">>;
+
+type PromoCodeQuote = Partial<FormCalculation> & {
   /** Absent on a church-billed event (#621). */
   preDiscountSubtotalCents?: number;
-  discountAmountCents: number;
+  discountAmountCents?: number;
+  perPerson?: PerPersonPrice;
   promoCode: string;
   /** The church sponsoring the code the attendee entered (#545); nothing else about it is shown. */
   sponsoredBy?: string | null;
@@ -231,10 +239,10 @@ const moneyFormatter = new Intl.NumberFormat("en-US", {
 });
 
 /** What a promo quote depends on: the pre-discount lines and the processing fee. */
-function promoCalculationBasis(calculation: FormCalculation) {
+function promoCalculationBasis(calculation: DisplayedCalculation) {
   return JSON.stringify([
-    calculation.subtotalCents,
-    calculation.processingFeeCents,
+    calculation.subtotalCents ?? null,
+    calculation.processingFeeCents ?? null,
     calculation.lineItems.map((item) => [item.key, item.amountCents, item.attendeeIndex ?? null]),
   ]);
 }
@@ -542,16 +550,26 @@ export function PublicRegistrationForm({
     ])),
     [issues],
   );
-  const baseCalculation = useMemo(
-    () => rosterEnabled
-      ? calculateRosterTotal(
-        definition,
-        registrationResponses,
-        attendees.map((attendee) => attendee.responses),
-        pricingDate,
-      )
-      : calculateFormTotal(definition, responses, pricingDate),
-    [attendees, definition, pricingDate, registrationResponses, responses, rosterEnabled],
+  const baseCalculation = useMemo<DisplayedCalculation>(
+    () => {
+      // A church-billed registrant is never shown a total, so the browser prices the lines only (#621).
+      if (deferredOrganizationBilling) {
+        return {
+          lineItems: rosterEnabled
+            ? calculateRosterLineItems(definition, registrationResponses, attendees.map((attendee) => attendee.responses), pricingDate)
+            : calculateFormLineItems(definition, responses, pricingDate),
+        };
+      }
+      return rosterEnabled
+        ? calculateRosterTotal(
+          definition,
+          registrationResponses,
+          attendees.map((attendee) => attendee.responses),
+          pricingDate,
+        )
+        : calculateFormTotal(definition, responses, pricingDate);
+    },
+    [attendees, definition, deferredOrganizationBilling, pricingDate, registrationResponses, responses, rosterEnabled],
   );
   // An applied code survives answers that don't change the price (checking the
   // acknowledgment, picking pay later); a price change re-checks it below.
@@ -573,9 +591,12 @@ export function PublicRegistrationForm({
     : null;
   const activeQuote = promoCodeQuote && promoQuoteBasis === calculationBasis
     ? promoCodeQuote
-    : activeAttendeePromo && activeAttendeePromo.discountAmountCents > 0 ? activeAttendeePromo : null;
-  const calculation: FormCalculation | PromoCodeQuote =
-    activeQuote ?? baseCalculation;
+    : activeAttendeePromo && activeAttendeePromo.attendeeDiscounts.some((discount) => discount.discountAmountCents > 0) ? activeAttendeePromo : null;
+  // A church-billed quote carries no lines, so the browser's own lines stand in for it.
+  const calculation: DisplayedCalculation = {
+    ...(activeQuote ?? baseCalculation),
+    lineItems: activeQuote?.lineItems ?? baseCalculation.lineItems,
+  };
   const displayedDiscountCents =
     activeQuote?.discountAmountCents ?? 0;
   const displayedPreDiscountSubtotalCents =
@@ -583,7 +604,12 @@ export function PublicRegistrationForm({
     ?? calculation.subtotalCents
     ?? 0;
   // Church-billed events show the per-person price only, never a total (#621).
-  const perPerson = perPersonPrice(calculation.lineItems);
+  const perPerson = perPersonPrice({
+    lineItems: calculation.lineItems,
+    roster: rosterEnabled,
+    attendeeCount: rosterEnabled ? attendees.length : undefined,
+    attendeeNames: rosterEnabled ? attendees.map((attendee, index) => attendeeName(attendee, index, roster.attendeeLabel)) : undefined,
+  });
   const displayedPromoCode = activeQuote?.promoCode ?? null;
   const visibleFieldKeys = useMemo(() => {
     const visible = new Set<string>();
@@ -831,7 +857,7 @@ export function PublicRegistrationForm({
       setPromoCodeQuote(quote);
       setPromoQuoteBasis(requestBasis);
       setPromoCodeNotice(
-        `${quote.promoCode} applied — ${money(quote.discountAmountCents)} off.${quote.sponsoredBy ? ` Sponsored by ${quote.sponsoredBy}.` : ""}`,
+        `${quote.promoCode} applied${quote.discountAmountCents === undefined ? "." : ` — ${money(quote.discountAmountCents)} off.`}${quote.sponsoredBy ? ` Sponsored by ${quote.sponsoredBy}.` : ""}`,
       );
       setIdempotencyKey(null);
     } catch {
@@ -2219,7 +2245,7 @@ export function PublicRegistrationForm({
           {deferredOrganizationBilling ? (
             <>
               <PerPersonPriceNotice price={perPerson} className="public-registration-review-lines" />
-              {displayedDiscountCents > 0 && <p>Promo code {displayedPromoCode} applied.</p>}
+              {displayedPromoCode && <p>Promo code {displayedPromoCode} applied.</p>}
             </>
           ) : calculation.lineItems.length > 0 ? (
             <div className="public-registration-review-lines">
@@ -2586,7 +2612,7 @@ export function PublicRegistrationForm({
             </dl>
             {deferredOrganizationBilling && (
               <>
-                <PerPersonPriceNotice price={perPersonPrice(confirmation.lineItems)} className="public-registration-review-waitlist" />
+                <PerPersonPriceNotice price={confirmation.perPerson ?? perPersonPrice({ lineItems: confirmation.lineItems, roster: rosterEnabled })} className="public-registration-review-waitlist" />
                 {!waitlisted && <p className="public-registration-review-waitlist">No payment is due online.</p>}
               </>
             )}

@@ -28,7 +28,7 @@ const definition = registrationFormDefinitionSchema.parse({
   }],
 });
 
-function useEvent(billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE") {
+function setEvent(billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE") {
   dependencies.getPrisma.mockReturnValue({
     registrationForm: {
       findFirst: vi.fn().mockResolvedValue({
@@ -81,19 +81,40 @@ beforeEach(() => vi.clearAllMocks());
 
 describe("public promo quote totals (#621)", () => {
   it("omits subtotal, total and processing fee on a church-billed event, keeping per-person lines", async () => {
-    useEvent("DEFERRED_ORGANIZATION_INVOICE");
+    setEvent("DEFERRED_ORGANIZATION_INVOICE");
     const quote = await getPublicPromoCodeQuote("synthetic-camporee", "registration", quoteInput, now);
     expect(quote).not.toHaveProperty("subtotalCents");
     expect(quote).not.toHaveProperty("totalCents");
     expect(quote).not.toHaveProperty("processingFeeCents");
     expect(quote).not.toHaveProperty("preDiscountSubtotalCents");
-    expect(quote.lineItems[0]).toMatchObject({ amountCents: 2500 });
-    expect(quote).toMatchObject({ promoCode: "SAVE5" });
+    // No aggregate discount and no raw line items either: they would add back up to the total (S1, O1).
+    expect(quote).not.toHaveProperty("discountAmountCents");
+    expect(quote).not.toHaveProperty("lineItems");
+    expect(quote).toMatchObject({ promoCode: "SAVE5", perPerson: { roster: false, registrationLines: [{ label: "Camporee fee", amountCents: 2500 }] } });
   });
 
   it("keeps the totals on a self-pay event", async () => {
-    useEvent("ATTENDEE_PAY");
+    setEvent("ATTENDEE_PAY");
     const quote = await getPublicPromoCodeQuote("synthetic-camporee", "registration", quoteInput, now);
-    expect(quote).toMatchObject({ preDiscountSubtotalCents: 2500, subtotalCents: 2000, totalCents: 2000 });
+    expect(quote).toMatchObject({ preDiscountSubtotalCents: 2500, subtotalCents: 2000, totalCents: 2000, discountAmountCents: 500 });
+    expect(quote).toHaveProperty("lineItems");
+  });
+
+  it("words a minimum-not-met refusal without any amount on a church-billed event, and keeps the amounts on self-pay (S1)", async () => {
+    for (const billingMode of ["DEFERRED_ORGANIZATION_INVOICE", "ATTENDEE_PAY"] as const) {
+      setEvent(billingMode);
+      const prisma = dependencies.getPrisma();
+      prisma.promoCode.findUnique.mockResolvedValue({
+        id: "promo_1", code: "SAVE5", normalizedCode: "SAVE5", isActive: true, discountType: "FIXED_CENTS", discountValue: 500,
+        startsOn: null, endsOn: null, minimumSubtotalCents: 10_000, maximumUses: null, maximumDiscountCents: null, redeemedCount: 0,
+        sponsoringOrganizationId: null,
+      });
+      const failure = getPublicPromoCodeQuote("synthetic-camporee", "registration", quoteInput, now);
+      if (billingMode === "DEFERRED_ORGANIZATION_INVOICE") {
+        await expect(failure).rejects.toMatchObject({ reason: "MINIMUM_NOT_MET", message: "This promo code's minimum isn't met for this registration." });
+      } else {
+        await expect(failure).rejects.toMatchObject({ reason: "MINIMUM_NOT_MET", message: expect.stringContaining("$25.00") });
+      }
+    }
   });
 });

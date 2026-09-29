@@ -514,6 +514,7 @@ describe("church-billed (deferred-organization) lifecycle messages", () => {
   function withBillingMode(
     billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE",
     publishedBody?: string,
+    registrationExtra: Record<string, unknown> = {},
   ) {
     const fixture = transactionFixture();
     const base = fixture.tx.registration.findFirst.getMockImplementation();
@@ -521,6 +522,7 @@ describe("church-billed (deferred-organization) lifecycle messages", () => {
       const registration = await (base as (...a: unknown[]) => Promise<Record<string, unknown>>)(...args);
       return {
         ...registration,
+        ...registrationExtra,
         event: {
           ...(registration.event as Record<string, unknown>),
           billingMode,
@@ -591,6 +593,26 @@ describe("church-billed (deferred-organization) lifecycle messages", () => {
     const { tx, upsert } = withBillingMode("DEFERRED_ORGANIZATION_INVOICE");
     await enqueueRegistrationReactivatedMessage(tx as never, input);
     expectNoPaymentRequest(queuedMessage(upsert).create.bodyTextSnapshot);
+  });
+
+  it("prices a church-billed email from the latest amendment, not the original submission (#621)", async () => {
+    const lines = (amountCents: number) => [
+      { label: "Fee — A", amountCents, attendeeIndex: 0, attendeeLabel: "A" },
+      { label: "Fee — B", amountCents, attendeeIndex: 1, attendeeLabel: "B" },
+    ];
+    const { tx, upsert } = withBillingMode(
+      "DEFERRED_ORGANIZATION_INVOICE",
+      "Price token: {{total_amount}}\n\n{{payment_status_block}}",
+      {
+        publicFormSubmission: { pricingSnapshot: { lineItems: lines(2500), attendeeCount: 2, rosterEnabled: true } },
+        operations: [{ afterSnapshot: { pricingSnapshot: { lineItems: lines(3000), attendeeCount: 2, rosterEnabled: true } } }],
+      },
+    );
+    await enqueueRegistrationUpdatedMessage(tx as never, { ...input, changeCategory: "REGISTRATION_DETAILS" });
+    const body = queuedMessage(upsert).create.bodyTextSnapshot;
+    expect(body).toContain("$30 per person. Your church is billed after the event.");
+    expect(body).not.toContain("$25 per person");
+    expect(body).not.toContain("$60");
   });
 
   it("renders the payment block and balance token of an edited update template as invoiced, $0 balance", async () => {

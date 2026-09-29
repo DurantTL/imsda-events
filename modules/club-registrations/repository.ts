@@ -63,7 +63,7 @@ import {
 import { registrationOperationFingerprint } from "@/modules/registrations/operations-domain";
 import type { RegistrationAmendmentInput } from "@/modules/registrations/schemas";
 import { moneyToCents } from "@/modules/payments/square-domain";
-import { lineItemsFromPricingSnapshot, perPersonPrice } from "@/modules/club-registrations/per-person-price";
+import { currentPricingSnapshot, perPersonPriceFromSnapshot } from "@/modules/club-registrations/per-person-price";
 import {
   churchOwedCents,
   isChurchBilledStatus,
@@ -509,6 +509,8 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
             status: true,
             updatedAt: true,
             publicFormSubmission: { select: { pricingSnapshot: true } },
+            // The latest amendment's pricing wins over the original submission's (#621).
+            operations: { where: { type: "AMENDMENT" }, orderBy: { createdAt: "desc" }, take: 1, select: { afterSnapshot: true } },
             location: { select: clubLocationSelect },
             attendees: { orderBy: { position: "asc" }, select: { id: true, profileSnapshot: true, formResponses: true } },
           },
@@ -601,7 +603,7 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
           : null,
         // The director sees the per-person price only, never what the church
         // owes (#621); the amount stays on the staff finance views (#409).
-        perPerson: perPersonPrice(lineItemsFromPricingSnapshot(clubRegistration.registration.publicFormSubmission?.pricingSnapshot)),
+        perPerson: perPersonPriceFromSnapshot(currentPricingSnapshot(clubRegistration.registration), true),
         // The registration-scope answers as they stand now, so a reopened
         // edit can evaluate attendee questions that depend on them. The
         // edit never changes these.

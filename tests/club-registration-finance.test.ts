@@ -51,6 +51,17 @@ const churchRows = [
 ];
 
 describe("what each church owes (#409)", () => {
+  it("still shows staff the total each church owes, unchanged by the registrant per-person view (#621)", async () => {
+    dependencies.getPrisma.mockReturnValue({
+      clubEventRegistration: { findMany: vi.fn().mockResolvedValue(churchRows) },
+      event: { findUnique: vi.fn().mockResolvedValue({ billingMode: "DEFERRED_ORGANIZATION_INVOICE", audience: "CLUB" }) },
+      registration: { findMany: vi.fn().mockResolvedValue([]) },
+    });
+    const owed = await listChurchAmountsOwed("event-1");
+    expect(owed.find((row) => row.confirmationCode === "REG-Z1")).toMatchObject({ isBilled: true, amountOwedCents: 6300 });
+    expect(owed.find((row) => row.confirmationCode === "REG-A1")).toMatchObject({ isBilled: true, amountOwedCents: 1300 });
+  });
+
   it("lists each club with its church, billing only submitted and confirmed registrations", async () => {
     dependencies.getPrisma.mockReturnValue({
       clubEventRegistration: { findMany: vi.fn().mockResolvedValue(churchRows) },

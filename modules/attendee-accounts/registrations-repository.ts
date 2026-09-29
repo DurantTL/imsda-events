@@ -14,7 +14,7 @@ import { consumeAttendeeEditStepUp } from "@/modules/attendee-accounts/step-up-s
 import {
   processQueuedMessageIdsAfterCommit,
 } from "@/modules/communications/messaging-repository";
-import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
+import { getAttendeeRosterConfig, registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { enqueueRegistrationContactUpdatedMessage } from "@/modules/communications/transactional-messages";
 import { moneyToCents, registrationBalanceCents } from "@/modules/payments/square-domain";
@@ -26,7 +26,7 @@ import {
   type PublicContactUpdateInput,
 } from "@/modules/public-access/domain";
 import { isChurchBilledStatus, notBilledLabel } from "@/modules/club-registrations/church-owed";
-import { lineItemsFromPricingSnapshot, perPersonPrice, type PerPersonPrice } from "@/modules/club-registrations/per-person-price";
+import { currentPricingSnapshot, perPersonPriceFromSnapshot, type PerPersonPrice } from "@/modules/club-registrations/per-person-price";
 
 /**
  * Every registration an account may see: those whose contact address is the
@@ -379,6 +379,8 @@ export async function listRegistrationsForVerifiedEmail(
         },
       },
       waitlistEntry: { select: { position: true, status: true } },
+      // The latest amendment's pricing wins over the original submission's (#621).
+      operations: { where: { type: "AMENDMENT" }, orderBy: { createdAt: "desc" }, take: 1, select: { afterSnapshot: true } },
     },
   });
 
@@ -470,7 +472,7 @@ export async function listRegistrationsForVerifiedEmail(
         ? {
           billed: isChurchBilledStatus(registration.status),
           // The per-person price only (#621); the amount the church owes is never shown to a registrant.
-          perPerson: perPersonPrice(lineItemsFromPricingSnapshot(registration.publicFormSubmission?.pricingSnapshot)),
+          perPerson: perPersonPriceFromSnapshot(currentPricingSnapshot(registration), parsedDefinition?.success ? getAttendeeRosterConfig(parsedDefinition.data).enabled : undefined),
           label: isChurchBilledStatus(registration.status)
             ? "billed to your church after the event, not paid online"
             : notBilledLabel(registration.status),

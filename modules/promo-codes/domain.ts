@@ -86,6 +86,8 @@ export function evaluatePromoCode(
     submittedCode: string;
     eligibleSubtotalCents: number;
     pricingDate: string;
+    /** Church-billed events never show a registrant an amount (#621). */
+    hideAmounts?: boolean;
   },
 ): PromoCodeEvaluation {
   const normalizedCode = normalizePromoCode(input.submittedCode);
@@ -146,7 +148,9 @@ export function evaluatePromoCode(
     return {
       valid: false,
       reason: "MINIMUM_NOT_MET",
-      message: `That promo code requires a subtotal of at least ${money(rule.minimumSubtotalCents)}. Your current subtotal is ${money(eligibleSubtotalCents)}.`,
+      message: input.hideAmounts
+        ? "This promo code's minimum isn't met for this registration."
+        : `That promo code requires a subtotal of at least ${money(rule.minimumSubtotalCents)}. Your current subtotal is ${money(eligibleSubtotalCents)}.`,
     };
   }
   if (eligibleSubtotalCents === 0) {

@@ -44,7 +44,7 @@ import {
 } from "@/modules/events/lifecycle";
 import { issueRegistrationAccessToken } from "@/modules/public-access/repository";
 import { logError } from "@/lib/logger";
-import { isChurchBilledBillingMode } from "@/modules/club-registrations/per-person-price";
+import { isChurchBilledBillingMode, perPersonPrice, type PerPersonPrice } from "@/modules/club-registrations/per-person-price";
 import {
   applyAttendeePromoCodes,
   applyPromoCodeToCalculation,
@@ -148,6 +148,8 @@ type PricingSnapshot = {
   totalCents: number;
   cardSelected: boolean;
   paymentCollected: false;
+  /** Whether the form has an attendee roster, so a church-billed price can be worded per person (#621). */
+  rosterEnabled?: boolean;
   attendeeCount?: number;
   attendeeNames?: string[];
   registrationStatus?: "SUBMITTED" | "WAITLISTED";
@@ -169,7 +171,10 @@ export type PublicRegistrationConfirmation = {
   discountAmountCents?: number;
   promoCode: string | null;
   processingFeeCents?: number;
+  /** Empty on a church-billed event (#621): raw lines would add back up to the total. */
   lineItems: FormCalculation["lineItems"];
+  /** Church-billed events only (#621): the per-person price shown instead of any total. */
+  perPerson?: PerPersonPrice;
   pricingDate: string;
   cardSelected: boolean;
   emailSent: boolean;
@@ -445,7 +450,17 @@ function confirmationFromSnapshot(
     email,
     ...totals,
     promoCode: snapshot.promoCode ?? null,
-    lineItems: snapshot.lineItems,
+    lineItems: churchBilled ? [] : snapshot.lineItems,
+    ...(churchBilled
+      ? {
+          perPerson: perPersonPrice({
+            lineItems: snapshot.lineItems,
+            roster: getAttendeeRosterConfig(definition).enabled,
+            attendeeNames: snapshot.attendeeNames,
+            attendeeCount: snapshot.attendeeCount,
+          }),
+        }
+      : {}),
     pricingDate: snapshot.pricingDate,
     cardSelected: !isWaitlisted && snapshot.cardSelected,
     emailSent: false,
@@ -781,6 +796,7 @@ async function createPublicRegistrationTransaction(
         eligibleSubtotalCents: prepared.calculation.subtotalCents,
         pricingDate: prepared.pricingDate,
         fieldId: configuredPromoField.id,
+        hideAmounts: isChurchBilledBillingMode(form.event.billingMode),
       });
       pricedCalculation = applyPromoCodeToCalculation(
         definition,
@@ -818,6 +834,7 @@ async function createPublicRegistrationTransaction(
       calculation: prepared.calculation,
       pricingDate: prepared.pricingDate,
       claim: true,
+      hideAmounts: isChurchBilledBillingMode(form.event.billingMode),
     });
     if (evaluated.issues.length > 0) {
       throw new PublicRegistrationError(
@@ -1036,6 +1053,7 @@ async function createPublicRegistrationTransaction(
     totalCents: admittedCalculation.totalCents,
     cardSelected: !isWaitlisted && isCardSelected(definition, prepared.registrationResponses),
     paymentCollected: false,
+    rosterEnabled: getAttendeeRosterConfig(definition).enabled,
     attendeeCount: createdAttendees.length,
     attendeeNames,
     registrationStatus: isWaitlisted ? "WAITLISTED" : "SUBMITTED",

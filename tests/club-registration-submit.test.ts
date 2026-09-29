@@ -300,7 +300,10 @@ describe("club registration submit", () => {
     expect(confirmation).not.toHaveProperty("subtotalCents");
     expect(confirmation).not.toHaveProperty("preDiscountSubtotalCents");
     expect(confirmation).not.toHaveProperty("processingFeeCents");
-    expect(confirmation.lineItems.filter((item) => item.attendeeIndex !== undefined).map((item) => item.amountCents)).toEqual([900, 900]);
+    // Raw lines would add back up to the total, so only the computed per-person price comes back (O1).
+    expect(confirmation.lineItems).toEqual([]);
+    expect(confirmation.perPerson?.notice).toBe("$9 per person. Your church is billed after the event.");
+    expect(confirmation.perPerson?.registrationLines).toEqual([{ label: "People sponsored", amountCents: -500 }]);
   });
 
   it("returns the same total-free confirmation on a repeated church-billed submit (#621)", async () => {
@@ -315,7 +318,8 @@ describe("club registration submit", () => {
     tx.clubEventRegistration.findUnique.mockResolvedValue({ id: "cer-1" });
     const replay = await submit();
     expect(replay).not.toHaveProperty("totalCents");
-    expect(replay.lineItems.length).toBeGreaterThan(0);
+    expect(replay.lineItems).toEqual([]);
+    expect(replay.perPerson?.notice).toBe("$9 per person. Your church is billed after the event.");
   });
 
   it("prices a club submitted after the late date at the late fee, through the real submit path (#409)", async () => {

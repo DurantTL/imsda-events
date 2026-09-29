@@ -12,7 +12,7 @@ import {
   withChurchBilledLinkWording,
   withChurchBilledPriceWording,
 } from "@/modules/communications/templates";
-import { lineItemsFromPricingSnapshot, perPersonPriceInline } from "@/modules/club-registrations/per-person-price";
+import { currentPricingSnapshot, perPersonPriceFromSnapshot, perPersonPriceInline } from "@/modules/club-registrations/per-person-price";
 import {
   buildHotelInformationBlock,
   buildPaymentStatusBlock,
@@ -283,6 +283,8 @@ async function enqueueTransactionalMessage(
         totalAmount: true,
         contactSnapshot: true,
         publicFormSubmission: { select: { pricingSnapshot: true } },
+        // The latest amendment's pricing wins over the original submission's (#621).
+        operations: { where: { type: "AMENDMENT" }, orderBy: { createdAt: "desc" }, take: 1, select: { afterSnapshot: true } },
         location: { select: { name: true, address: true } },
         accountHolderPerson: {
           select: {
@@ -426,7 +428,7 @@ async function enqueueTransactionalMessage(
   );
   // A church-billed registrant sees the per-person price only, never a total or balance (#621).
   const perPersonNotice = isDeferredOrganizationBilling
-    ? perPersonPriceInline(lineItemsFromPricingSnapshot(registration.publicFormSubmission?.pricingSnapshot))
+    ? perPersonPriceInline(perPersonPriceFromSnapshot(currentPricingSnapshot(registration)))
     : null;
   // A waitlist email for a club at a location says which location, even when
   // the template (a customized one, or one of the defaults) has no location

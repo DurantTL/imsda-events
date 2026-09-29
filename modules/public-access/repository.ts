@@ -37,8 +37,8 @@ import {
   publicEventWebsiteLinks,
 } from "@/modules/events/public-domain";
 import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
-import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
-import { isChurchBilledBillingMode, lineItemsFromPricingSnapshot, perPersonPrice } from "@/modules/club-registrations/per-person-price";
+import { getAttendeeRosterConfig, registrationFormDefinitionSchema } from "@/modules/forms/definition";
+import { currentPricingSnapshot, isChurchBilledBillingMode, perPersonPriceFromSnapshot } from "@/modules/club-registrations/per-person-price";
 
 export { REGISTRATION_MANAGE_LINK_SENTINEL } from "@/modules/communications/manage-link";
 
@@ -118,6 +118,8 @@ const registrationAccessInclude = {
           },
         },
       },
+      // The latest amendment's pricing wins over the original submission's (#621).
+      operations: { where: { type: "AMENDMENT" as const }, orderBy: { createdAt: "desc" as const }, take: 1, select: { afterSnapshot: true } },
       payments: {
         where: { status: "SUCCEEDED" as const },
         orderBy: { createdAt: "asc" as const },
@@ -439,7 +441,10 @@ function serializeRegistrationAccess(
     moneyToCents(registration.totalAmount),
   );
   const perPerson = churchBilled
-    ? perPersonPrice(lineItemsFromPricingSnapshot(pricingSnapshot))
+    ? perPersonPriceFromSnapshot(
+        currentPricingSnapshot(registration),
+        parsedDefinition?.success ? getAttendeeRosterConfig(parsedDefinition.data).enabled : undefined,
+      )
     : null;
   const order = submission && !churchBilled ? {
     lineItems: pricingLineItems,
