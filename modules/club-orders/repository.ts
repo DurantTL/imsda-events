@@ -777,8 +777,9 @@ export async function setOrderListQuantity(organizationId: string, itemId: strin
 
 /**
  * The club details printed on the export (#654): the club, its sponsoring
- * church, and the current director's contact (the director's own account
- * details, falling back to the club profile's contact). Nothing about
+ * church, and the current director's contact (the club profile's contact email and
+ * phone first; the director account's name and email as a fallback, never
+ * its personal phone). Nothing about
  * members.
  */
 export async function loadOrderExportHeader(organizationId: string, now = new Date()): Promise<OrderExportHeader> {
@@ -792,7 +793,7 @@ export async function loadOrderExportHeader(organizationId: string, now = new Da
         where: { role: "DIRECTOR", revokedAt: null, effectiveFrom: { lte: now }, OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }] },
         orderBy: { effectiveFrom: "desc" },
         take: 1,
-        select: { attendeeAccount: { select: { displayName: true, email: true, phone: true } } },
+        select: { attendeeAccount: { select: { displayName: true, email: true } } },
       },
     },
   });
@@ -801,8 +802,10 @@ export async function loadOrderExportHeader(organizationId: string, now = new Da
     clubName: club?.name ?? "",
     church: club?.parentOrganization?.name ?? "",
     directorName: director?.displayName ?? "",
-    directorEmail: director?.email || club?.clubProfile?.contactEmail || "",
-    directorPhone: director?.phone || club?.clubProfile?.contactPhone || "",
+    // The club's own contact first; the director's account name and email only as a fallback.
+    // The account's personal phone is never used.
+    directorEmail: club?.clubProfile?.contactEmail || director?.email || "",
+    directorPhone: club?.clubProfile?.contactPhone || "",
     date: now.toLocaleDateString("en-CA", { timeZone: "America/Chicago" }),
   };
 }

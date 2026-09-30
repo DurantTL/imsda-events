@@ -37,6 +37,7 @@ export default async function ClubOrderListPrintPage({ params }: { params: Promi
           <div><dt>Director phone</dt><dd translate="no">{header.directorPhone || "—"}</dd></div>
           <div><dt>Date</dt><dd>{header.date}</dd></div>
         </dl>
+        <p className="field-help">Available = in stock minus items set aside for someone.</p>
         {lines.length === 0 && <p className="quiet-copy">Nothing on the list.</p>}
         {ORDER_LIST_SECTIONS.map((section) => {
           const rows = lines.filter((line) => line.section === section);
@@ -46,7 +47,7 @@ export default async function ClubOrderListPrintPage({ params }: { params: Promi
               <h3>{orderListSectionLabels[section]}</h3>
               <table className={styles.printTable}>
                 <thead>
-                  <tr><th>Item name</th><th>Size</th><th>Item number</th><th>Quantity</th><th>On hand</th><th>To order</th></tr>
+                  <tr><th>Item name</th><th>Size</th><th>Item number</th><th>Quantity</th><th>Available</th><th>To order</th></tr>
                 </thead>
                 <tbody>
                   {rows.map((line) => (
@@ -54,7 +55,7 @@ export default async function ClubOrderListPrintPage({ params }: { params: Promi
                       <td translate="no">{line.name}</td>
                       <td>{line.size}</td>
                       <td>{line.catalogNumber ?? ""}</td>
-                      <td>{line.needed}</td>
+                      <td>{line.needed}{line.edited && line.needed !== line.computedNeeded ? ` (calculated: ${line.computedNeeded})` : ""}</td>
                       <td>{line.onHand}</td>
                       <td>{line.toOrder}</td>
                     </tr>

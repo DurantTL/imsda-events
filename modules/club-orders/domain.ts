@@ -256,8 +256,8 @@ export type OrderExportHeader = {
 
 /**
  * The export (#654): club name, church, director contact and date, then every
- * line grouped by section with item name, size, item number, quantity, on
- * hand and to order. Not an AdventSource file: it is a list to order from.
+ * line grouped by section with item name, size, item number, quantity, what honors, uniforms and awards calculated, what is
+ * available (in stock minus items set aside for someone) and to order. Not an AdventSource file: it is a list to order from.
  */
 export function orderListCsv(header: OrderExportHeader, lines: readonly HelperLine[]) {
   const rows: Array<Array<string | number>> = [
@@ -268,12 +268,12 @@ export function orderListCsv(header: OrderExportHeader, lines: readonly HelperLi
     ["Director phone", header.directorPhone],
     ["Date", header.date],
     [],
-    ["Section", "Item name", "Size", "Item number", "Quantity needed", "On hand", "To order"],
+    ["Section", "Item name", "Size", "Item number", "Quantity needed", "Calculated", "Available", "To order"],
   ];
   const active = activeHelperLines(lines);
   for (const section of ORDER_LIST_SECTIONS) {
     for (const line of active.filter((entry) => entry.section === section)) {
-      rows.push([orderListSectionLabels[section], line.name, line.size, line.catalogNumber ?? "", line.needed, line.onHand, line.toOrder]);
+      rows.push([orderListSectionLabels[section], line.name, line.size, line.catalogNumber ?? "", line.needed, line.computedNeeded, line.onHand, line.toOrder]);
     }
   }
   return toCsv(rows);

@@ -105,12 +105,27 @@ describe("orderListCsv (#654)", () => {
 
   it("lists every line grouped by section with name, size, item number and quantity; removed lines stay out", () => {
     const rows = parseCsvMatrix(orderListCsv(header, lines)).filter((row) => row.length > 2);
-    expect(rows[0]).toEqual(["Section", "Item name", "Size", "Item number", "Quantity needed", "On hand", "To order"]);
+    expect(rows[0]).toEqual(["Section", "Item name", "Size", "Item number", "Quantity needed", "Calculated", "Available", "To order"]);
     expect(rows.slice(1)).toEqual([
-      ["Uniforms", "Boys' Short Sleeve Shirt", "M", "011112", "2", "0", "2"],
-      ["Honors", "Knot Tying", "", "002120", "3", "1", "2"],
-      ["Other supplies and insignia", "Good Conduct Star", "", "", "4", "0", "4"],
+      ["Uniforms", "Boys' Short Sleeve Shirt", "M", "011112", "2", "2", "0", "2"],
+      ["Honors", "Knot Tying", "", "002120", "3", "3", "1", "2"],
+      ["Other supplies and insignia", "Good Conduct Star", "", "", "4", "4", "0", "4"],
     ]);
+  });
+
+  it("adds a Calculated column showing the computed count beside a changed quantity", () => {
+    const edited = buildHelperLines(items, new Map([["knots", 3]]), new Map([["knots", 7]]), new Map());
+    const rows = parseCsvMatrix(orderListCsv(header, edited)).filter((row) => row.length > 2);
+    expect(rows[1]).toEqual(["Honors", "Knot Tying", "", "002120", "7", "3", "0", "7"]);
+  });
+
+  it("neutralises a header value that starts with a formula character", () => {
+    const formula = ["=", "HYPERLINK(1)"].join("");
+    const csv = orderListCsv({ ...header, clubName: formula, directorName: "+cmd", directorEmail: "@x", directorPhone: "-1" }, lines);
+    expect(csv).toContain(`"Club","'${formula}"`);
+    expect(csv).toContain(`"Director","'+cmd"`);
+    expect(csv).toContain(`"Director email","'@x"`);
+    expect(csv).toContain(`"Director phone","'-1"`);
   });
 
   it("keeps leading zeros in item numbers as text", () => {

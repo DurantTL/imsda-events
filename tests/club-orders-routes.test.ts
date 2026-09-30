@@ -201,8 +201,8 @@ describe("club order routes (#487, #654): permissioned like club supplies (#531)
     const text = await response.text();
     expect(text).toContain('"Club","Test Pathfinders"');
     expect(text).toContain('"Church","Sample Church"');
-    expect(text).toContain('"Uniforms","Boys\' Shirt","M","011112","2","0","2"');
-    expect(text).toContain('"Honors","Knot Tying","","002120","3","1","2"');
+    expect(text).toContain('"Uniforms","Boys\' Shirt","M","011112","2","2","0","2"');
+    expect(text).toContain('"Honors","Knot Tying","","002120","3","3","1","2"');
     expect(text.indexOf("Uniforms")).toBeLessThan(text.indexOf("Honors"));
     // An editor's download syncs first.
     expect(mocks.syncHonorOrderNeeds).toHaveBeenCalledWith("club-1");

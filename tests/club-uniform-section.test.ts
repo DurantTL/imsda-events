@@ -15,6 +15,7 @@ const orders: ClubOrderWorkspaceData = {
     { itemId: "scarf", section: "UNIFORMS", name: "Adult Scarf", size: "", catalogNumber: "020001", computedNeeded: 2, needed: 2, edited: false, onHand: 0, toOrder: 2 },
   ],
   unmatched: [],
+  batches: [],
   awardable: [],
   waiting: [
     { needId: "u1", sourceType: "UNIFORM", itemName: "Adult Scarf", sourceLabel: "Adult Scarf", sourceDate: "2026-09-28", firstName: "Alex", lastName: "Sample", beforeFirstOrder: true },

@@ -104,22 +104,34 @@ describe("listHelperLines (#654)", () => {
 });
 
 describe("loadOrderExportHeader (#654)", () => {
-  it("uses the club, its church and the director's contact, with the club profile as a fallback", async () => {
+  it("uses the club profile's contact first and never the director account's personal phone", async () => {
     mocks.orgFindUnique.mockResolvedValue({
       name: "Test Pathfinders",
       parentOrganization: { name: "Sample Church" },
       clubProfile: { contactEmail: "club@example.test", contactPhone: "555-0199" },
-      directorGrants: [{ attendeeAccount: { displayName: "Test Director", email: "director@example.test", phone: null } }],
+      directorGrants: [{ attendeeAccount: { displayName: "Test Director", email: "director@example.test" } }],
     });
     const header = await loadOrderExportHeader("club-1", new Date("2026-09-30T18:00:00Z"));
     expect(header).toEqual({
       clubName: "Test Pathfinders",
       church: "Sample Church",
       directorName: "Test Director",
-      directorEmail: "director@example.test",
+      directorEmail: "club@example.test",
       directorPhone: "555-0199",
       date: "2026-09-30",
     });
+  });
+
+  it("falls back to the director account's name and email only, leaving the phone blank", async () => {
+    mocks.orgFindUnique.mockResolvedValue({
+      name: "Test Pathfinders",
+      parentOrganization: { name: "Sample Church" },
+      clubProfile: { contactEmail: "", contactPhone: "" },
+      directorGrants: [{ attendeeAccount: { displayName: "Test Director", email: "director@example.test", phone: "555-0000" } }],
+    });
+    const header = await loadOrderExportHeader("club-1", new Date("2026-09-30T18:00:00Z"));
+    expect(header).toMatchObject({ directorName: "Test Director", directorEmail: "director@example.test", directorPhone: "" });
+    expect(mocks.orgFindUnique.mock.calls[0][0].select.directorGrants.select.attendeeAccount.select).not.toHaveProperty("phone");
   });
 
   it("is blank, not an error, for a club with no director or church on file", async () => {

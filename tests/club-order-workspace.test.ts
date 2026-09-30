@@ -20,6 +20,7 @@ const data: ClubOrderWorkspaceData = {
     { itemId: "o1", section: "OTHER", name: "Good Conduct Star", size: "", catalogNumber: "000123", computedNeeded: 0, needed: 4, edited: true, onHand: 0, toOrder: 4 },
     { itemId: "i3", section: "HONORS", name: "Orienteering", size: "", catalogNumber: "005200", computedNeeded: 2, needed: 0, edited: true, onHand: 0, toOrder: 0 },
   ],
+  batches: [{ id: "b1", status: "ORDERED", createdAt: "2026-08-20T15:00:00.000Z", receivedAt: null, itemCount: 1, totalQuantity: 4, lines: [] }],
   unmatched: [{ sourceId: "s1", personId: "p1" }],
   awardable: [
     { needId: "n1", itemId: "i1", itemName: "Camping Skills", firstName: "Alex", lastName: "Sample", fromStock: false },
@@ -31,6 +32,9 @@ const data: ClubOrderWorkspaceData = {
   ],
   firstOrderAt: null,
 };
+
+// No director edits yet: the state in which the one-time prompt is offered.
+const clean: ClubOrderWorkspaceData = { ...data, helper: data.helper.map((line) => ({ ...line, edited: false, needed: line.computedNeeded })) };
 
 const stock: ClubStockRow[] = [
   { itemId: "i1", section: "OUTDOOR_INDUSTRIES", name: "Camping Skills", catalogNumber: "005157", sizeLabel: null, isActive: true, quantityOnHand: 1 },
@@ -57,9 +61,26 @@ describe("ClubOrderWorkspace (#654)", () => {
       const html = render(readOnly);
       expect(html).not.toContain("Place order");
       expect(html).not.toContain("Orders placed");
-      expect(html).not.toContain("Mark received");
       expect(html).not.toContain("AdventSource file");
     }
+  });
+
+  it("shows a legacy order still waiting to arrive with Mark received for editors only, and nothing without one", () => {
+    expect(render(false)).toContain("Orders waiting to arrive");
+    expect(render(false)).toContain("Mark received");
+    const viewer = render(true);
+    expect(viewer).toContain("Orders waiting to arrive");
+    expect(viewer).not.toContain("Mark received");
+    const none = render(false, { ...data, batches: [{ ...data.batches[0], status: "RECEIVED" }] });
+    expect(none).not.toContain("Orders waiting to arrive");
+    expect(render(false, { ...data, batches: [] })).not.toContain("Mark received");
+  });
+
+  it("shows the calculated count next to a quantity that differs from it, and explains Available", () => {
+    const html = render(false);
+    expect(html).toContain("calculated: 2");
+    expect(html).toContain("Available = in stock minus items set aside for someone.");
+    expect(html).not.toContain("On hand</dt>");
   });
 
   it("lists Uniforms, then Honors, then other supplies, each line with name, size, item number and quantity", () => {
@@ -83,7 +104,7 @@ describe("ClubOrderWorkspace (#654)", () => {
   it("shows needed, on hand, and to order on a line", () => {
     const html = render(true);
     expect(html).toContain("<dt>Quantity</dt><dd>3</dd>");
-    expect(html).toContain("<dt>On hand</dt><dd>1</dd>");
+    expect(html).toContain("<dt>Available</dt><dd>1</dd>");
     expect(html).toContain("<dt>To order</dt><dd><strong>2</strong></dd>");
   });
 
@@ -159,7 +180,7 @@ describe("ClubOrderWorkspace (#654)", () => {
   });
 
   it("offers editors the one-time 'already handed out' prompt for honors that may already be handed out", () => {
-    const html = render(false);
+    const html = render(false, clean);
     expect(html).toContain("Honors that may already be handed out");
     expect(html).toContain("Mark the ones already handed out");
     expect(html).toContain("Select all (1)");
@@ -168,6 +189,12 @@ describe("ClubOrderWorkspace (#654)", () => {
     expect(html).not.toContain("Riley Test");
     expect(html).not.toMatch(/checked=""/);
     expect(render(true)).not.toContain("Already handed out");
+    expect(render(true)).not.toContain("Honors that may already be handed out");
+  });
+
+  it("drops the prompt once the club has edited the helper list", () => {
+    const edited = { ...data, helper: data.helper.map((line) => ({ ...line, edited: true })) };
+    expect(render(false, edited)).not.toContain("Honors that may already be handed out");
   });
 
   it("shows names and items only, no other personal field", () => {

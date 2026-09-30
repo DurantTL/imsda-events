@@ -137,6 +137,7 @@ describe("earned awards on the order screen", () => {
   const orders: ClubOrderWorkspaceData = {
     helper: [{ itemId: "camp", section: "OTHER", name: "Fall Camporee Patch", size: "", catalogNumber: null, computedNeeded: 2, needed: 2, edited: false, onHand: 0, toOrder: 2 }],
     unmatched: [],
+    batches: [],
     awardable: [],
     waiting: [{ needId: "n1", sourceType: "AWARD", itemName: "Fall Camporee Patch", sourceLabel: "Fall Camporee", sourceDate: "2026-09-19", firstName: "Alex", lastName: "Sample", beforeFirstOrder: true }],
     firstOrderAt: null,

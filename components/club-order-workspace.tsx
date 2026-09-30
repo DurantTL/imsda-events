@@ -1,16 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, Download, Eye, History, Plus, Printer, RotateCcw, Save, Trash2 } from "lucide-react";
+import { useMemo, useState, useSyncExternalStore } from "react";
+import { AlertTriangle, CheckCircle2, Download, Eye, History, PackageCheck, Plus, Printer, RotateCcw, Save, Trash2 } from "lucide-react";
 import styles from "@/components/club-orders.module.css";
 import { ClubSupplyStockWorkspace } from "@/components/club-supply-stock-workspace";
 import { ClubUniformSection, emptyUniformData, type ClubUniformData } from "@/components/club-uniform-section";
 import { ORDER_LIST_SECTIONS, activeHelperLines, orderListSectionLabels, type HelperLine } from "@/modules/club-orders/domain";
-import type { AwardableNeed, UnmatchedNeed, WaitingNeed } from "@/modules/club-orders/repository";
+import type { AwardableNeed, OrderBatchSummary, UnmatchedNeed, WaitingNeed } from "@/modules/club-orders/repository";
 import type { ClubStockRow } from "@/modules/club-supplies/repository";
 
 export type ClubOrderWorkspaceData = {
   helper: HelperLine[];
+  /** Orders placed before the helper list (#654): only ones still waiting to arrive are shown, to mark received. */
+  batches: OrderBatchSummary[];
   unmatched: UnmatchedNeed[];
   awardable: AwardableNeed[];
   waiting: WaitingNeed[];
@@ -38,6 +40,45 @@ export const ADVENTSOURCE_URL = "https://www.adventsource.org";
 
 /** Most items the "add an item" picker lists at once. */
 const PICKER_LIMIT = 100;
+
+const promptDismissedKey = (organizationId: string) => `imsda:orders:earlier-honors-dismissed:${organizationId}`;
+
+/** Fallback for this page view when storage is blocked. */
+const dismissedInMemory = new Set<string>();
+
+function readDismissed(organizationId: string) {
+  if (dismissedInMemory.has(organizationId)) return true;
+  try {
+    return window.localStorage.getItem(promptDismissedKey(organizationId)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+const DISMISSED_EVENT = "imsda:orders-prompt-dismissed";
+
+function subscribeDismissed(onChange: () => void) {
+  window.addEventListener(DISMISSED_EVENT, onChange);
+  window.addEventListener("storage", onChange);
+  return () => {
+    window.removeEventListener(DISMISSED_EVENT, onChange);
+    window.removeEventListener("storage", onChange);
+  };
+}
+
+function writeDismissed(organizationId: string) {
+  dismissedInMemory.add(organizationId);
+  try {
+    window.localStorage.setItem(promptDismissedKey(organizationId), "1");
+  } catch {
+    // Storage can be blocked; the prompt then returns next visit.
+  }
+  window.dispatchEvent(new Event(DISMISSED_EVENT));
+}
+
+function formatDate(value: string) {
+  return new Date(value).toLocaleDateString("en-US", { dateStyle: "medium", timeZone: "America/Chicago" });
+}
 
 /**
  * A club's Orders screen (#487, #497, #654): a helper for building the list
@@ -74,7 +115,8 @@ export function ClubOrderWorkspace({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [handedOut, setHandedOut] = useState<Set<string>>(new Set());
   const [beforeDate, setBeforeDate] = useState("");
-  const [promptDismissed, setPromptDismissed] = useState(false);
+  // Remembered per club on this device. The server snapshot is "not dismissed", so the first render matches the server.
+  const promptDismissed = useSyncExternalStore(subscribeDismissed, () => readDismissed(organizationId), () => false);
   const [pickerQuery, setPickerQuery] = useState("");
   const [pickerItem, setPickerItem] = useState("");
   const [pickerQuantity, setPickerQuantity] = useState("1");
@@ -105,15 +147,21 @@ export function ClubOrderWorkspace({
   }, [stock, pickerQuery, onList]);
   // Honors that may have been handed out long ago: the club marks them so they aren't counted as needed.
   const earlier = useMemo(() => data.waiting.filter((need) => need.sourceType === "HONOR" && need.beforeFirstOrder), [data.waiting]);
-  const showPrompt = !readOnly && !promptDismissed && earlier.length > 0;
+  // Shown only while the club hasn't edited the helper list or handed anything out here: a one-time cleanup, never in read-only mode.
+  const showPrompt = !readOnly && !promptDismissed && earlier.length > 0 && !data.helper.some((line) => line.edited);
+  const waitingBatches = data.batches.filter((batch) => batch.status === "ORDERED");
+
+  function dismissPrompt() {
+    writeDismissed(organizationId);
+  }
 
   async function refresh() {
     // Uniforms first: an editor's load drops departed members' needs before the order list is read.
     const uniformResponse = await fetch(uniformsBase, { cache: "no-store" });
     const response = await fetch(base, { cache: "no-store" });
     const result = await response.json().catch(() => ({})) as ApiResult;
-    if (response.ok && result.helper && result.awardable && result.unmatched && result.waiting) {
-      setData({ helper: result.helper, unmatched: result.unmatched, awardable: result.awardable, waiting: result.waiting, firstOrderAt: result.firstOrderAt ?? null });
+    if (response.ok && result.helper && result.batches && result.awardable && result.unmatched && result.waiting) {
+      setData({ helper: result.helper, batches: result.batches, unmatched: result.unmatched, awardable: result.awardable, waiting: result.waiting, firstOrderAt: result.firstOrderAt ?? null });
     }
     const uniformResult = await uniformResponse.json().catch(() => ({})) as Partial<ClubUniformData>;
     if (uniformResponse.ok && uniformResult.needs && uniformResult.catalog && uniformResult.members) {
@@ -199,7 +247,10 @@ export function ClubOrderWorkspace({
       const fromStock = result.fromStock ?? 0;
       return `Marked ${result.awarded ?? 0} handed out${fromStock > 0 ? ` (${fromStock} from stock)` : ""}.`;
     });
-    if (ok) setSelected(new Set());
+    if (ok) {
+      setSelected(new Set());
+      dismissPrompt();
+    }
   }
 
   async function markAlreadyHandedOut() {
@@ -213,7 +264,10 @@ export function ClubOrderWorkspace({
       }
       return `Marked ${marked} as already handed out. Stock wasn't changed.`;
     });
-    if (ok) setHandedOut(new Set());
+    if (ok) {
+      setHandedOut(new Set());
+      dismissPrompt();
+    }
   }
 
   async function recordUniforms(input: { personIds: string[]; itemIds: string[]; alreadyHasOne: boolean }) {
@@ -317,7 +371,7 @@ export function ClubOrderWorkspace({
             <button className="primary-button" disabled={busy || handedOut.size === 0} onClick={markAlreadyHandedOut} type="button">
               <CheckCircle2 aria-hidden="true" size={16} /> Already handed out{handedOut.size > 0 ? ` (${handedOut.size})` : ""}
             </button>
-            <button className="text-button" onClick={() => setPromptDismissed(true)} type="button">Not now</button>
+            <button className="text-button" onClick={dismissPrompt} type="button">Not now</button>
           </div>
         </section>
       )}
@@ -351,7 +405,7 @@ export function ClubOrderWorkspace({
                             {line.catalogNumber ? <>Item no. <code>{line.catalogNumber}</code></> : (
                               <span className={styles.flagInline}><AlertTriangle aria-hidden="true" size={12} /> No item number</span>
                             )}
-                            {line.edited && " · edited"}
+                            {line.edited && line.needed !== line.computedNeeded && <> · calculated: {line.computedNeeded}</>}
                           </small>
                         </span>
                         <dl className={styles.numbers}>
@@ -374,7 +428,7 @@ export function ClubOrderWorkspace({
                               )}
                             </dd>
                           </div>
-                          <div><dt>On hand</dt><dd>{line.onHand}</dd></div>
+                          <div><dt>Available</dt><dd>{line.onHand}</dd></div>
                           <div><dt>To order</dt><dd><strong>{line.toOrder}</strong></dd></div>
                         </dl>
                         {!readOnly && (
@@ -419,7 +473,7 @@ export function ClubOrderWorkspace({
           })
         )}
         {onList.length > 0 && (
-          <p className="field-help">To order is the quantity less what the club has on hand (Inventory below), never below zero. {totalToOrder} to order in all.</p>
+          <p className="field-help">To order is the quantity less what is available, never below zero. Available = in stock minus items set aside for someone. {totalToOrder} to order in all.</p>
         )}
 
         {takenOff.length > 0 && (
@@ -493,6 +547,33 @@ export function ClubOrderWorkspace({
           readOnly={readOnly}
         />
       </section>
+
+      {waitingBatches.length > 0 && (
+        <section className={styles.block}>
+          <h3>Orders waiting to arrive</h3>
+          <p className="field-help">Earlier orders, from before this helper list. Mark one received when it arrives and its items join your stock. New orders can&apos;t be placed here.</p>
+          <ul className={styles.list}>
+            {waitingBatches.map((batch) => (
+              <li className={styles.row} key={batch.id}>
+                <span className={styles.text}>
+                  <strong>{formatDate(batch.createdAt)}</strong>
+                  <small>{batch.itemCount} {batch.itemCount === 1 ? "item" : "items"} · {batch.totalQuantity} ordered</small>
+                </span>
+                {!readOnly && (
+                  <button
+                    className="secondary-button"
+                    disabled={busy}
+                    onClick={() => void act(async () => { await post(`${base}/${encodeURIComponent(batch.id)}/receive`, {}); return "Order marked received."; })}
+                    type="button"
+                  >
+                    <PackageCheck aria-hidden="true" size={14} /> Mark received
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className={styles.block}>
         <h3>Ready to hand out</h3>
