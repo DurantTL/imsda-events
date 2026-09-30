@@ -1,10 +1,17 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { FileText, FileUp, Link2, Plus, Save, Sparkles, Trash2, X } from "lucide-react";
+import { FileText, FileUp, Info, Link2, ListOrdered, Plus, Save, Sparkles, SquareCheck, Trash2, X } from "lucide-react";
 import type { EventAssetRecord } from "@/modules/events/asset-repository";
 import type { EventContentSectionRecord } from "@/modules/events/content-repository";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { EventInfoCards, eventContentToneLabels } from "@/components/event-info-cards";
+import {
+  eventContentTones,
+  isInfoCardKind,
+  type EventContentPlacement,
+  type EventContentTone,
+} from "@/modules/events/content-schemas";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import {
@@ -83,11 +90,139 @@ const retreatGuideStarterSections: SectionDraft[] = [
   },
 ];
 
+const kindLabels: Record<SectionDraft["kind"], string> = {
+  RICH_TEXT: "Text section",
+  RESOURCE_LINKS: "Resource links",
+  NOTICE: "Notice card",
+  STEPS: "Steps card",
+  CHECKLIST: "Checklist card",
+};
+
+type UpdateSection = (index: number, patch: Partial<SectionDraft>) => void;
+
+function LinksEditor({
+  section,
+  index,
+  assets,
+  updateSection,
+  allowMail = false,
+}: {
+  section: SectionDraft;
+  index: number;
+  assets: EventAssetRecord[];
+  updateSection: UpdateSection;
+  allowMail?: boolean;
+}) {
+  return (
+              <div className="form-stack">
+                {section.links.map((link, linkIndex) => (
+                  <div className="event-content-link-row" key={linkIndex}>
+                    <label>Label<input value={link.label} maxLength={80} onChange={(event) => updateSection(index, {
+                      links: section.links.map((entry, position) => position === linkIndex ? { ...entry, label: event.target.value } : entry),
+                    })} /></label>
+                    <label>Note<input value={link.description} maxLength={120} placeholder="Full weekend · PDF" onChange={(event) => updateSection(index, {
+                      links: section.links.map((entry, position) => position === linkIndex ? { ...entry, description: event.target.value } : entry),
+                    })} /></label>
+                    <label>
+                      Destination
+                      <select
+                        value={link.assetId ?? ""}
+                        onChange={(event) => updateSection(index, {
+                          links: section.links.map((entry, position) => position === linkIndex
+                            // A tile points at one thing, so choosing a file
+                            // clears the address and vice versa.
+                            ? { ...entry, assetId: event.target.value || null, url: event.target.value ? null : entry.url ?? "" }
+                            : entry),
+                        })}
+                      >
+                        <option value="">A web address</option>
+                        {assets.map((asset) => (
+                          <option value={asset.id} key={asset.id}>{asset.displayName}</option>
+                        ))}
+                      </select>
+                      {!link.assetId && (
+                        <input type={allowMail ? "text" : "url"} value={link.url ?? ""} placeholder={allowMail ? "https://… or mailto:office@example.org" : "https://imsda.org/flyer.pdf"} onChange={(event) => updateSection(index, {
+                          links: section.links.map((entry, position) => position === linkIndex ? { ...entry, url: event.target.value } : entry),
+                        })} />
+                      )}
+                    </label>
+                    <button className="secondary-button" type="button" onClick={() => updateSection(index, {
+                      links: section.links.filter((_, position) => position !== linkIndex),
+                    })}>
+                      <Trash2 size={15} aria-hidden="true" />
+                    </button>
+                  </div>
+                ))}
+                <button className="secondary-button" type="button" onClick={() => updateSection(index, {
+                  links: [...section.links, { label: "", description: "", url: "", assetId: null }],
+                })}>
+                  <Plus size={15} aria-hidden="true" /> Add a link
+                </button>
+              </div>
+  );
+}
+
+function ItemsEditor({
+  section,
+  index,
+  updateSection,
+}: {
+  section: SectionDraft;
+  index: number;
+  updateSection: UpdateSection;
+}) {
+  const items = section.items ?? [];
+  const isSteps = section.kind === "STEPS";
+  function setItem(position: number, patch: Partial<{ title: string; text: string }>) {
+    updateSection(index, {
+      items: items.map((item, at) => (at === position ? { ...item, ...patch } : item)),
+    });
+  }
+  return (
+    <div className="form-stack">
+      {items.map((item, position) => (
+        <div className="event-content-link-row" key={position}>
+          <label>
+            {isSteps ? `Step ${position + 1} title` : `Item ${position + 1}`}
+            <input value={item.title} maxLength={120} onChange={(event) => setItem(position, { title: event.target.value })} />
+          </label>
+          {isSteps && (
+            <label>
+              Text
+              <textarea rows={2} maxLength={600} value={item.text} onChange={(event) => setItem(position, { text: event.target.value })} />
+            </label>
+          )}
+          <button
+            className="secondary-button"
+            type="button"
+            aria-label={`Remove ${isSteps ? "step" : "item"} ${position + 1}`}
+            onClick={() => updateSection(index, { items: items.filter((_, at) => at !== position) })}
+          >
+            <Trash2 size={15} aria-hidden="true" />
+          </button>
+        </div>
+      ))}
+      {items.length < 20 && (
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={() => updateSection(index, { items: [...items, { title: "", text: "" }] })}
+        >
+          <Plus size={15} aria-hidden="true" /> {isSteps ? "Add a step" : "Add an item"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function draftsFrom(sections: EventContentSectionRecord[]): SectionDraft[] {
   return sections.map((section) => ({
     kind: section.kind,
     title: section.title,
     body: section.body,
+    tone: section.tone,
+    placement: section.placement,
+    items: section.items.map((item) => ({ ...item })),
     isPublished: section.isPublished,
     links: section.links.map((link) => ({ ...link })),
   }));
@@ -163,11 +298,14 @@ export function EventContentWorkspace({
     });
   }
 
-  function addSection(kind: SectionDraft["kind"]) {
+  function addSection(kind: SectionDraft["kind"], tone?: EventContentTone) {
     setSections((current) => [...current, {
       kind,
       title: "",
       body: "",
+      tone: kind === "NOTICE" ? tone ?? "INFO" : null,
+      placement: "PUBLIC_PAGE",
+      items: kind === "STEPS" || kind === "CHECKLIST" ? [{ title: "", text: "" }] : [],
       isPublished: false,
       links: kind === "RESOURCE_LINKS" ? [{ label: "", description: "", url: "", assetId: null }] : [],
     }]);
@@ -389,7 +527,7 @@ export function EventContentWorkspace({
             <div className="message-delivery-toolbar">
               <div>
                 <p className="eyebrow">
-                  {section.kind === "RICH_TEXT" ? "Text section" : "Resource links"}
+                  {kindLabels[section.kind]}
                   {section.isPublished ? "" : " · draft"}
                 </p>
               </div>
@@ -427,52 +565,69 @@ export function EventContentWorkspace({
                 />
                 <small>Leave a blank line between paragraphs. Formatting and links are not carried through.</small>
               </label>
+            ) : section.kind === "RESOURCE_LINKS" ? (
+              <LinksEditor section={section} index={index} assets={assets} updateSection={updateSection} />
+            ) : section.kind === "NOTICE" ? (
+              <>
+                <label>
+                  Tone
+                  <select
+                    value={section.tone ?? "INFO"}
+                    onChange={(event) => updateSection(index, { tone: event.target.value as EventContentTone })}
+                  >
+                    {eventContentTones.map((tone) => (
+                      <option value={tone} key={tone}>{eventContentToneLabels[tone]}</option>
+                    ))}
+                  </select>
+                  <small>Shown as a coloured card with an icon and this label.</small>
+                </label>
+                <label>
+                  Text
+                  <textarea
+                    rows={5}
+                    maxLength={8000}
+                    value={section.body}
+                    onChange={(event) => updateSection(index, { body: event.target.value })}
+                  />
+                  <small>Plain text. Start lines with - for bullets or 1. for numbers. HTML and formatting are not carried through.</small>
+                </label>
+                <LinksEditor section={section} index={index} assets={assets} updateSection={updateSection} allowMail />
+              </>
             ) : (
-              <div className="form-stack">
-                {section.links.map((link, linkIndex) => (
-                  <div className="event-content-link-row" key={linkIndex}>
-                    <label>Label<input value={link.label} maxLength={80} onChange={(event) => updateSection(index, {
-                      links: section.links.map((entry, position) => position === linkIndex ? { ...entry, label: event.target.value } : entry),
-                    })} /></label>
-                    <label>Note<input value={link.description} maxLength={120} placeholder="Full weekend · PDF" onChange={(event) => updateSection(index, {
-                      links: section.links.map((entry, position) => position === linkIndex ? { ...entry, description: event.target.value } : entry),
-                    })} /></label>
-                    <label>
-                      Destination
-                      <select
-                        value={link.assetId ?? ""}
-                        onChange={(event) => updateSection(index, {
-                          links: section.links.map((entry, position) => position === linkIndex
-                            // A tile points at one thing, so choosing a file
-                            // clears the address and vice versa.
-                            ? { ...entry, assetId: event.target.value || null, url: event.target.value ? null : entry.url ?? "" }
-                            : entry),
-                        })}
-                      >
-                        <option value="">A web address</option>
-                        {assets.map((asset) => (
-                          <option value={asset.id} key={asset.id}>{asset.displayName}</option>
-                        ))}
-                      </select>
-                      {!link.assetId && (
-                        <input type="url" value={link.url ?? ""} placeholder="https://imsda.org/flyer.pdf" onChange={(event) => updateSection(index, {
-                          links: section.links.map((entry, position) => position === linkIndex ? { ...entry, url: event.target.value } : entry),
-                        })} />
-                      )}
-                    </label>
-                    <button className="secondary-button" type="button" onClick={() => updateSection(index, {
-                      links: section.links.filter((_, position) => position !== linkIndex),
-                    })}>
-                      <Trash2 size={15} aria-hidden="true" />
-                    </button>
-                  </div>
-                ))}
-                <button className="secondary-button" type="button" onClick={() => updateSection(index, {
-                  links: [...section.links, { label: "", description: "", url: "", assetId: null }],
-                })}>
-                  <Plus size={15} aria-hidden="true" /> Add a link
-                </button>
-              </div>
+              <ItemsEditor section={section} index={index} updateSection={updateSection} />
+            )}
+
+            {isInfoCardKind(section.kind) && (
+              <>
+                <label>
+                  Show this card
+                  <select
+                    value={section.placement ?? "PUBLIC_PAGE"}
+                    onChange={(event) => updateSection(index, { placement: event.target.value as EventContentPlacement })}
+                  >
+                    <option value="PUBLIC_PAGE">On the public event page</option>
+                    <option value="REGISTRATION_FORM">At the top of the registration form</option>
+                    <option value="BOTH">On both</option>
+                  </select>
+                </label>
+                <details className="event-info-card-preview">
+                  <summary>Preview this card</summary>
+                  <EventInfoCards
+                    sections={[{
+                      id: `preview-${index}`,
+                      kind: section.kind,
+                      title: section.title || "Untitled card",
+                      body: section.body,
+                      tone: section.tone ?? (section.kind === "NOTICE" ? "INFO" : null),
+                      placement: "BOTH",
+                      items: section.items ?? [],
+                      links: section.links,
+                    }]}
+                    eventSlug="preview"
+                    placement="page"
+                  />
+                </details>
+              </>
             )}
 
             <label className="message-enabled-toggle">
@@ -482,8 +637,8 @@ export function EventContentWorkspace({
                 onChange={(event) => updateSection(index, { isPublished: event.target.checked })}
               />
               <span>
-                <strong>Show this section on the public event page</strong>
-                <small>Unpublished sections are kept here and are never sent to a visitor.</small>
+                <strong>Publish this section</strong>
+                <small>Unpublished sections are kept here and are never sent to a visitor. Where it appears depends on its placement.</small>
               </span>
             </label>
           </section>
@@ -495,6 +650,15 @@ export function EventContentWorkspace({
           </button>
           <button className="secondary-button" type="button" onClick={() => addSection("RESOURCE_LINKS")}>
             <Link2 size={15} aria-hidden="true" /> Add resource links
+          </button>
+          <button className="secondary-button" type="button" onClick={() => addSection("NOTICE")}>
+            <Info size={15} aria-hidden="true" /> Add a notice card
+          </button>
+          <button className="secondary-button" type="button" onClick={() => addSection("STEPS")}>
+            <ListOrdered size={15} aria-hidden="true" /> Add a steps card
+          </button>
+          <button className="secondary-button" type="button" onClick={() => addSection("CHECKLIST")}>
+            <SquareCheck size={15} aria-hidden="true" /> Add a checklist card
           </button>
         </div>
 

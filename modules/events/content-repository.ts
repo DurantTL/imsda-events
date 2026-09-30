@@ -3,7 +3,14 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 
 import { getPrisma } from "@/lib/prisma";
-import type { EventContentInput } from "@/modules/events/content-schemas";
+import {
+  parseEventContentItems,
+  type EventContentInput,
+  type EventContentItem,
+  type EventContentKind,
+  type EventContentPlacement,
+  type EventContentTone,
+} from "@/modules/events/content-schemas";
 
 /** Thrown when a content save cannot be honored as written. */
 export class EventContentError extends Error {
@@ -27,9 +34,14 @@ export type EventContentLinkRecord = {
 
 export type EventContentSectionRecord = {
   id: string;
-  kind: "RICH_TEXT" | "RESOURCE_LINKS";
+  kind: EventContentKind;
   title: string;
   body: string;
+  /** NOTICE cards only; null for every other kind. */
+  tone: EventContentTone | null;
+  placement: EventContentPlacement;
+  /** STEPS and CHECKLIST entries; empty for every other kind. */
+  items: EventContentItem[];
   isPublished: boolean;
   links: EventContentLinkRecord[];
 };
@@ -39,6 +51,9 @@ const sectionSelect = {
   kind: true,
   title: true,
   body: true,
+  tone: true,
+  placement: true,
+  items: true,
   isPublished: true,
   links: {
     orderBy: { position: "asc" as const },
@@ -46,15 +61,22 @@ const sectionSelect = {
   },
 } as const;
 
+type StoredSection = Omit<EventContentSectionRecord, "items"> & { items: unknown };
+
+function toRecord(section: StoredSection): EventContentSectionRecord {
+  return { ...section, items: parseEventContentItems(section.items) };
+}
+
 /** Every section, published or not. For staff. */
 export async function listEventContentSections(
   eventId: string,
 ): Promise<EventContentSectionRecord[]> {
-  return getPrisma().eventContentSection.findMany({
+  const rows = await getPrisma().eventContentSection.findMany({
     where: { eventId },
     orderBy: { position: "asc" },
     select: sectionSelect,
   });
+  return rows.map(toRecord);
 }
 
 /**
@@ -67,11 +89,33 @@ export async function listEventContentSections(
 export async function listPublishedEventContentSections(
   eventId: string,
 ): Promise<EventContentSectionRecord[]> {
-  return getPrisma().eventContentSection.findMany({
+  const rows = await getPrisma().eventContentSection.findMany({
     where: { eventId, isPublished: true },
     orderBy: { position: "asc" },
     select: sectionSelect,
   });
+  return rows.map(toRecord);
+}
+
+/**
+ * Published info cards placed at the top of the registration form, looked up
+ * by the event's public slug. Same rule as the public page: drafts are
+ * filtered in the query.
+ */
+export async function listPublishedRegistrationInfoCards(
+  eventSlug: string,
+): Promise<EventContentSectionRecord[]> {
+  const rows = await getPrisma().eventContentSection.findMany({
+    where: {
+      event: { slug: eventSlug, isPublished: true },
+      isPublished: true,
+      kind: { in: ["NOTICE", "STEPS", "CHECKLIST"] },
+      placement: { in: ["REGISTRATION_FORM", "BOTH"] },
+    },
+    orderBy: { position: "asc" },
+    select: sectionSelect,
+  });
+  return rows.map(toRecord);
 }
 
 /**
@@ -91,7 +135,7 @@ export async function replaceEventContent(
   const prisma = getPrisma();
   const linkedAssetIds = [...new Set(
     input.sections.flatMap((section) => (
-      section.kind === "RESOURCE_LINKS"
+      section.kind === "RESOURCE_LINKS" || section.kind === "NOTICE"
         ? section.links.flatMap((link) => (link.assetId ? [link.assetId] : []))
         : []
     )),
@@ -123,10 +167,18 @@ export async function replaceEventContent(
             eventId,
             kind: section.kind,
             title: section.title,
-            body: section.kind === "RICH_TEXT" ? section.body : "",
+            body: section.kind === "RICH_TEXT" || section.kind === "NOTICE" ? section.body : "",
+            tone: section.kind === "NOTICE" ? section.tone ?? "INFO" : null,
+            placement: section.placement,
+            items: section.kind === "STEPS" || section.kind === "CHECKLIST"
+              ? section.items.map((item) => ({
+                title: item.title,
+                text: section.kind === "STEPS" ? item.text : "",
+              }))
+              : [],
             isPublished: section.isPublished,
             position,
-            links: section.kind === "RESOURCE_LINKS"
+            links: section.kind === "RESOURCE_LINKS" || section.kind === "NOTICE"
               ? {
                 create: section.links.map((link, linkPosition) => ({
                   label: link.label,

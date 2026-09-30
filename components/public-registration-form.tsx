@@ -200,6 +200,8 @@ export type PublicRegistrationFormProps = {
   initialResponses?: FormResponses;
   initialAttendeeResponses?: FormResponses;
   embedded?: boolean;
+  /** Published info cards for the top of the form (#652); rendered by the server page. */
+  topContent?: React.ReactNode;
   /** True for a signed-in visitor: no browser draft is read or written (#574). */
   disableDrafts?: boolean;
   /**
@@ -383,6 +385,7 @@ export function PublicRegistrationForm({
   initialResponses = {},
   initialAttendeeResponses = {},
   embedded = false,
+  topContent,
   disableDrafts = false,
   club,
 }: PublicRegistrationFormProps) {
@@ -2708,6 +2711,7 @@ export function PublicRegistrationForm({
 
       <form className="public-registration-layout" noValidate onSubmit={submit}>
         <div className="public-registration-form-column">
+          {topContent}
           {joiningWaitlist && (
             <section className="public-registration-waitlist-banner" role="status">
               <Clock3 size={22} aria-hidden="true" />

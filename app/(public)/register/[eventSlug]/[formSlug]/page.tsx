@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
+import { EventInfoCards } from "@/components/event-info-cards";
 import { PublicRegistrationForm } from "@/components/public-registration-form";
+import { listPublishedRegistrationInfoCards } from "@/modules/events/content-repository";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import {
   attendeeProfilePrefill,
@@ -80,6 +82,13 @@ export default async function PublicRegistrationPage({
       initialResponses={scopedPrefill("REGISTRATION")}
       initialAttendeeResponses={scopedPrefill("ATTENDEE")}
       disableDrafts={Boolean(account)}
+      topContent={
+        <EventInfoCards
+          sections={await listPublishedRegistrationInfoCards(eventSlug)}
+          eventSlug={eventSlug}
+          placement="registration"
+        />
+      }
     />
   );
 }

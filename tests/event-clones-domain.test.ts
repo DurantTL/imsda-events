@@ -550,3 +550,21 @@ describe("locations in a clone (#413)", () => {
     expect(canonicalJson(cloneRequestInputOf(body))).not.toBe(canonicalJson(cloneRequestInputOf(parse({ include: { ...all, locations: false } }))));
   });
 });
+
+describe("info cards in a clone (#652)", () => {
+  it("carries tone, placement, and entries, and strips private links from entries", () => {
+    const { config: clean, findings } = sanitizeSourceForClone(config({
+      contentSections: [{
+        kind: "STEPS", title: "Steps", body: "", position: 1, assetLinkCount: 0, links: [],
+        tone: null, placement: "BOTH",
+        items: [{ title: "Open the form", text: "Use https://example.test/help?sig=MARKER-SIG-VALUE to start." }],
+      }],
+    }), ["https://events.imsda.test"]);
+    const section = clean.contentSections[0]!;
+    expect(section.kind).toBe("STEPS");
+    expect(section.placement).toBe("BOTH");
+    expect(section.items?.[0]?.title).toBe("Open the form");
+    expect(JSON.stringify(section.items)).not.toContain("MARKER-SIG-VALUE");
+    expect(findings.some((finding) => finding.location.includes("entry 1 text"))).toBe(true);
+  });
+});

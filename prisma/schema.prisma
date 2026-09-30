@@ -288,6 +288,29 @@ enum CommunityNotificationKind {
 enum EventContentSectionKind {
   RICH_TEXT
   RESOURCE_LINKS
+  /// An info card: a titled plain-text message with a tone, and optional links.
+  NOTICE
+  /// An info card: numbered steps, each a short title and text.
+  STEPS
+  /// An info card: a titled list of items to have ready.
+  CHECKLIST
+}
+
+/// The look and meaning of a NOTICE card. Rendered with a text label and an
+/// icon as well as colour, so the tone never depends on colour alone.
+enum EventContentTone {
+  INFO
+  DEADLINE
+  REQUIREMENT
+  SUCCESS
+  HELP
+}
+
+/// Where a section is shown. The four older kinds only ever use PUBLIC_PAGE.
+enum EventContentPlacement {
+  PUBLIC_PAGE
+  REGISTRATION_FORM
+  BOTH
 }
 
 enum AttendeeClassificationKind {
@@ -1065,6 +1088,12 @@ model EventContentSection {
   /// public page, and accepting markup from a form is how a content field
   /// becomes a cross-site scripting hole.
   body        String                  @default("")
+  /// Set for NOTICE cards only.
+  tone        EventContentTone?
+  placement   EventContentPlacement   @default(PUBLIC_PAGE)
+  /// STEPS and CHECKLIST entries: `[{ "title": string, "text": string }]`.
+  /// Plain text, validated by modules/events/content-schemas.ts.
+  items       Json                    @default("[]")
   position    Int
   isPublished Boolean                 @default(false)
   createdAt   DateTime                @default(now())

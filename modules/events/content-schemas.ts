@@ -19,10 +19,33 @@ const externalUrlSchema = z.url().max(500).refine(
   "Enter a complete http:// or https:// web address.",
 );
 
+/**
+ * A link inside a NOTICE card may also be a mailto: address, so "email the
+ * office" works without a separate page. Nothing else is accepted: no
+ * `javascript:`, `data:`, or protocol-relative value.
+ */
+const mailtoSchema = z.string().max(500).refine((value) => {
+  if (!/^mailto:/i.test(value)) return false;
+  const address = value.slice("mailto:".length).split("?")[0];
+  return z.email().safeParse(address).success && !/[\s<>"']/.test(value);
+}, "Enter a complete mailto: address such as mailto:office@example.org.");
+
+const linkUrlSchema = z.union([externalUrlSchema, mailtoSchema]);
+
+/**
+ * The only way a stored link becomes an href. Anything that is not http(s) or
+ * a well-formed mailto: address yields null, so a bad value that somehow
+ * reached the database still cannot render as a clickable `javascript:` link.
+ */
+export function safeContentHref(value: string | null | undefined): string | null {
+  if (!value) return null;
+  return linkUrlSchema.safeParse(value).success ? value : null;
+}
+
 export const eventContentLinkInputSchema = z.object({
   label: z.string().trim().min(1, "Give the link a label.").max(80),
   description: z.string().trim().max(120).default(""),
-  url: z.union([z.literal(""), externalUrlSchema]).nullable().optional()
+  url: z.union([z.literal(""), linkUrlSchema]).nullable().optional()
     .transform((value) => (value ? value : null)),
   assetId: z.union([z.literal(""), z.string().trim().max(40)]).nullable().optional()
     .transform((value) => (value ? value : null)),
@@ -45,10 +68,43 @@ export const eventContentLinkInputSchema = z.object({
   }
 });
 
+export const eventContentKinds = ["RICH_TEXT", "RESOURCE_LINKS", "NOTICE", "STEPS", "CHECKLIST"] as const;
+export const eventContentTones = ["INFO", "DEADLINE", "REQUIREMENT", "SUCCESS", "HELP"] as const;
+export const eventContentPlacements = ["PUBLIC_PAGE", "REGISTRATION_FORM", "BOTH"] as const;
+
+export type EventContentKind = (typeof eventContentKinds)[number];
+export type EventContentTone = (typeof eventContentTones)[number];
+export type EventContentPlacement = (typeof eventContentPlacements)[number];
+
+/** The kinds that render as info cards rather than page prose or tiles. */
+export function isInfoCardKind(kind: EventContentKind) {
+  return kind === "NOTICE" || kind === "STEPS" || kind === "CHECKLIST";
+}
+
+/** One step or checklist entry. Plain text, like everything else here. */
+export const eventContentItemSchema = z.object({
+  title: z.string().trim().min(1, "Give each entry a short title.").max(120),
+  text: z.string().trim().max(600).default(""),
+}).strict();
+
+export type EventContentItem = z.infer<typeof eventContentItemSchema>;
+
+/**
+ * Reads the stored JSON back into items. Lenient on purpose: a malformed row
+ * shows nothing rather than failing the whole public page.
+ */
+export function parseEventContentItems(value: unknown): EventContentItem[] {
+  const parsed = z.array(eventContentItemSchema).safeParse(value);
+  return parsed.success ? parsed.data : [];
+}
+
 export const eventContentSectionInputSchema = z.object({
-  kind: z.enum(["RICH_TEXT", "RESOURCE_LINKS"]),
+  kind: z.enum(eventContentKinds),
   title: z.string().trim().min(2, "Give the section a heading.").max(120),
   body: z.string().trim().max(8000).default(""),
+  tone: z.enum(eventContentTones).nullable().optional(),
+  placement: z.enum(eventContentPlacements).default("PUBLIC_PAGE"),
+  items: z.array(eventContentItemSchema).max(20).default([]),
   isPublished: z.boolean().default(false),
   links: z.array(eventContentLinkInputSchema).max(12).default([]),
 }).strict().superRefine((value, context) => {
@@ -64,6 +120,45 @@ export const eventContentSectionInputSchema = z.object({
       code: "custom",
       path: ["links"],
       message: "Add at least one link, or the section would publish an empty row.",
+    });
+  }
+  if (value.kind === "NOTICE" && !value.body && value.links.length === 0) {
+    context.addIssue({
+      code: "custom",
+      path: ["body"],
+      message: "Add some text or a link, or the notice would publish an empty card.",
+    });
+  }
+  if (value.kind === "NOTICE" && !value.tone) {
+    context.addIssue({
+      code: "custom",
+      path: ["tone"],
+      message: "Choose what kind of notice this is.",
+    });
+  }
+  if ((value.kind === "STEPS" || value.kind === "CHECKLIST") && value.items.length === 0) {
+    context.addIssue({
+      code: "custom",
+      path: ["items"],
+      message: value.kind === "STEPS"
+        ? "Add at least one step, or the card would publish empty."
+        : "Add at least one item, or the card would publish empty.",
+    });
+  }
+  // mailto: belongs to notices only; resource tiles stay http(s) or a file.
+  if (value.kind !== "NOTICE" && value.links.some((link) => link.url && /^mailto:/i.test(link.url))) {
+    context.addIssue({
+      code: "custom",
+      path: ["links"],
+      message: "Email links are only available on notices. Use a web address here.",
+    });
+  }
+  // Only the public page has a place for the two older kinds.
+  if (!isInfoCardKind(value.kind) && value.placement !== "PUBLIC_PAGE") {
+    context.addIssue({
+      code: "custom",
+      path: ["placement"],
+      message: "Only info cards can be placed on the registration form.",
     });
   }
 });

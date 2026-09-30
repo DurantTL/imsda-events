@@ -159,10 +159,14 @@ export type SourceConfiguration = {
     community: SourceCommunitySettings | null;
   };
   contentSections: Array<{
-    kind: "RICH_TEXT" | "RESOURCE_LINKS";
+    kind: "RICH_TEXT" | "RESOURCE_LINKS" | "NOTICE" | "STEPS" | "CHECKLIST";
     title: string;
     body: string;
     position: number;
+    /** Info cards (#652). Absent on older sources, which read as no tone, public page, no items. */
+    tone?: "INFO" | "DEADLINE" | "REQUIREMENT" | "SUCCESS" | "HELP" | null;
+    placement?: "PUBLIC_PAGE" | "REGISTRATION_FORM" | "BOTH";
+    items?: Array<{ title: string; text: string }>;
     links: Array<{ label: string; description: string; url: string; position: number }>;
     /** Links that point at an uploaded file: not copied. */
     assetLinkCount: number;
@@ -416,6 +420,10 @@ export function sanitizeSourceForClone(
   const contentSections = config.contentSections.map((section) => ({
     ...section,
     body: text("contentSections", `Section "${section.title}" text`, section.body),
+    items: section.items?.map((item, index) => ({
+      title: text("contentSections", `Section "${section.title}" entry ${index + 1} title`, item.title),
+      text: text("contentSections", `Section "${section.title}" entry ${index + 1} text`, item.text),
+    })),
     links: section.links.flatMap((link) => {
       if (url("contentSections", `Section "${section.title}" link "${link.label}"`, link.url) === null) return [];
       return [{ ...link, description: text("contentSections", `Section "${section.title}" link "${link.label}" description`, link.description) }];
