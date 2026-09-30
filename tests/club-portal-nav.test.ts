@@ -14,7 +14,7 @@ describe("club portal menu (#644)", () => {
     const items = nav("DIRECTOR");
     expect(items.map((item) => `${item.group ?? "-"}:${item.label}`)).toEqual([
       "-:Home",
-      "People:Roster", "People:Honors", "People:Class tracking",
+      "People:Roster", "People:Honors", "People:Class tracking", "People:Reports",
       "Events:Events", "Events:Forms",
       "Records:Meeting notes", "Records:Monthly reports",
       "Orders:Supplies", "Orders:Orders",
@@ -30,11 +30,11 @@ describe("club portal menu (#644)", () => {
   });
 
   it("gives each role exactly the destinations it had before, with Club info standing for team and profile", () => {
-    const everything = ["/", "/roster", "/honors", "/class-tracking", "/events", "/forms", "/notes", "/reports", "/supplies", "/orders", "/club-info"];
+    const everything = ["/", "/roster", "/honors", "/class-tracking", "/exports", "/events", "/forms", "/notes", "/reports", "/supplies", "/orders", "/club-info"];
     expect(hrefs("DIRECTOR")).toEqual(everything);
     expect(hrefs("DEPUTY")).toEqual(everything);
     // A registrar: no forms, no notes or reports, no club info.
-    expect(hrefs("REGISTRAR")).toEqual(["/", "/roster", "/honors", "/class-tracking", "/events", "/supplies", "/orders"]);
+    expect(hrefs("REGISTRAR")).toEqual(["/", "/roster", "/honors", "/class-tracking", "/exports", "/events", "/supplies", "/orders"]);
   });
 
   it("hides groups with no visible items for a registrar", () => {
