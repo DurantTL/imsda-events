@@ -4,7 +4,7 @@ OrganizationID,OrgCode,OrgName,OrgType,GroupStartedOn,CompanyOrganizedOn,ChurchO
 turn left at the ""big"" barn.
 Second line of directions.",,,,,www.samplehills.example.test,c.o.person@example.test,,,North District,,English,,10 Sample Road,Sample Hills,ZZ,00002,,,,,,,,555-0101,,,,,,,,,,
 9003,SC003,Sample Creek Company,Company,,,,,Y,,Sample Hills SDA Church,,,,,,,,,,,,,,,Sample Creek,ZZ,,,,,,,,,,,,,,,,,,,
-9004,SC004,Sample Ridge Group,Group,,,,03/01/2024,Y,,,,,,,,,,,,,,,,,Sample Ridge,ZZ,,,,,,,,,,,,,,,,,,,
+9004,SC004,Sample Ridge Group,Group,,,,03/01/2024,Y,,,,,,,,,,,,,,,,5 Home Lane,Sample Ridge,ZZ,00004,,,,,,,,555-0104,,,,,,,,,,
 9005,SC005,Sample Hills Elementary,PK-08 School,,,,,Y,,Sample Hills SDA Church,,,,,,,,,,,,,,,Sample Hills,ZZ,,,,,,,,,,,,,,,,,,,
 9006,SC006,Sample Junior Academy,PK-10 School,,,,,Y,,,,,,,,,,,,,,,,,Sample Junction,ZZ,,,,,,,,,,,,,,,,,,,
 9007,SC007,Sample Adventist Academy,9-12 School,,,,,Y,,,,,,,,,,,,,,,,,Sample City,ZZ,,,,,,,,,,,,,,,,,,,

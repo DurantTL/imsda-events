@@ -45,11 +45,34 @@ which).
 3. Uploading again updates records matched by `OrganizationID`; it never adds
    duplicates. The same file twice is a no-op.
 
-Matching a church that predates the import: a row of type Church with no
-stored `OrganizationID` match is linked once to the one existing `CHURCH` with
-the same normalized name and no eAdventist id. The preview shows each proposed
-match. If two existing churches share the name the row is **Skipped**; fix the
-duplicates and upload again.
+Matching, in order:
+
+1. **By OrganizationID.** The id is kept in two places that must agree:
+   `Organization.eadventistId` and the organization's `EADVENTIST`
+   `ExternalIdentity`. Either one matches a row. If they disagree, or two
+   stored organizations claim the id, the row is **Skipped** with a conflict
+   note. A save writes both.
+2. **By exact name, once.** A Church, Company or Group row is linked to the one
+   stored `CHURCH` with the same normalized name and no eAdventist id. The
+   preview shows each proposed match. Two stored churches with that name make
+   the row **Skipped**.
+3. **Possible match.** When no exact match exists but a stored church matches
+   loosely (ignoring case, punctuation, and the words SDA, Seventh-day
+   Adventist, Church, Company, Group), the row is marked **Possible match** with
+   a choice per row: *Link to {existing name}* (default) or *Create new*. Save
+   applies the choices. Linking only sets the id and updates fields; nothing is
+   deleted or merged.
+
+A linked `CHURCH` is retyped to Company or Group only if it sponsors no clubs or
+promo codes and has no church location; otherwise it stays a church and the
+preview says so. The preview always shows what Save will write, so uploading the
+same file again is a no-op.
+
+Privacy: for **Group** rows (which often meet in homes) the street address and
+office phone are not stored; city, state and postal code are.
+
+`IsActive` accepts Y/N, TRUE/FALSE and 1/0 in any case; any other value
+(including blank) rejects that row with a reason.
 
 ## Active and inactive
 
@@ -77,7 +100,7 @@ active club cannot be switched off until its clubs are moved.
 
 ## Before running on production
 
-1. Deploy the migration `20260930200000_organization_eadventist_import`
+1. Deploy the migration `20260930210000_organization_eadventist_import`
    (additive; nullable columns and new enum values).
 2. Upload the real file, read the preview (especially name matches and
    Skipped rows), then Save.

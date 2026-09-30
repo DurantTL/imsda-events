@@ -4,16 +4,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /** In-memory stand-in for the organization table and audit log. */
 type Row = Record<string, unknown> & { id: string; type: string; name: string; isActive: boolean; eadventistId: string | null; affiliatedOrganizationId: string | null; parentOrganizationId?: string | null };
-const state = vi.hoisted(() => ({ rows: [] as unknown[], audit: [] as unknown[], next: 1 }));
+const state = vi.hoisted(() => ({ rows: [] as unknown[], audit: [] as unknown[], identities: [] as Array<{ organizationId: string; externalId: string }>, next: 1 }));
 const rows = () => state.rows as Row[];
 
 const db = vi.hoisted(() => {
   const organization = {
     findMany: async () => rows().map((row) => ({
       ...row,
+      externalIdentities: state.identities.filter((identity) => identity.organizationId === row.id).map((identity) => ({ externalId: identity.externalId })),
+      churchLocation: null,
+      _count: { childOrganizations: rows().filter((other) => other.parentOrganizationId === row.id).length, sponsoredPromoCodes: 0 },
       disbandedOn: (row.disbandedOn as Date | null) ?? null,
       affiliatedOrganization: rows().find((other) => other.id === row.affiliatedOrganizationId) ? { eadventistId: rows().find((other) => other.id === row.affiliatedOrganizationId)!.eadventistId } : null,
-    })).filter((row) => row.eadventistId || row.type === "CHURCH"),
+    })).filter((row) => row.eadventistId || row.type === "CHURCH" || row.externalIdentities.length > 0),
     create: async ({ data }: { data: Record<string, unknown> }) => {
       if (data.eadventistId && rows().some((row) => row.eadventistId === data.eadventistId)) throw Object.assign(new Error("dupe"), { code: "P2002" });
       const row = { affiliatedOrganizationId: null, disbandedOn: null, ...data, id: `org-${state.next++}` } as unknown as Row;
@@ -30,8 +33,17 @@ const db = vi.hoisted(() => {
       rows().find((row) => row.parentOrganizationId === where.parentOrganizationId && row.type === where.type && row.isActive === where.isActive) ?? null,
     count: async ({ where }: { where: { parentOrganizationId: string } }) => rows().filter((row) => row.parentOrganizationId === where.parentOrganizationId).length,
   };
+  const externalIdentity = {
+    upsert: async ({ where, create, update }: { where: { organizationId_provider_providerScope: { organizationId: string } }; create: { organizationId: string; externalId: string }; update: { externalId: string } }) => {
+      const existing = state.identities.find((identity) => identity.organizationId === where.organizationId_provider_providerScope.organizationId);
+      if (existing) existing.externalId = update.externalId;
+      else state.identities.push({ organizationId: create.organizationId, externalId: create.externalId });
+      return {};
+    },
+  };
   const client = {
     organization,
+    externalIdentity,
     auditLog: { create: async ({ data }: { data: unknown }) => { state.audit.push(data); return data; } },
     $transaction: async (callback: (tx: unknown) => unknown) => callback(client),
   };
@@ -50,6 +62,7 @@ const byName = (name: string) => rows().find((row) => row.name === name)!;
 beforeEach(() => {
   state.rows = [];
   state.audit = [];
+  state.identities = [];
   state.next = 1;
 });
 
@@ -107,11 +120,64 @@ describe("eAdventist import storage (#649)", () => {
     expect(again.counts).toMatchObject({ new: 0, updated: 0, unchanged: 12 });
   });
 
-  it("keeps a church that sponsors clubs as a church even if the export retypes it", async () => {
+  it("keeps a church that sponsors clubs as a church even if the export retypes it, and a re-upload is then a no-op", async () => {
     await commitEadventistImport(fixture, "admin-1");
     rows().push({ id: "club-1", type: "CLUB", name: "Sample Club", isActive: true, eadventistId: null, affiliatedOrganizationId: null, parentOrganizationId: byName("Sample Hills SDA Church").id } as Row);
-    await commitEadventistImport(fixture.replace("Sample Hills SDA Church,Church,", "Sample Hills SDA Church,Company,"), "admin-1");
+    const retyped = fixture.replace("Sample Hills SDA Church,Church,", "Sample Hills SDA Church,Company,");
+    const preview = await previewEadventistImport(retyped);
+    expect(preview.items.find((item) => item.name === "Sample Hills SDA Church")!.notes.join(" ")).toContain("Kept as a church");
+    await commitEadventistImport(retyped, "admin-1");
     expect(byName("Sample Hills SDA Church").type).toBe("CHURCH");
+    expect((await previewEadventistImport(retyped)).counts).toMatchObject({ new: 0, updated: 0, unchanged: 12 });
+  });
+
+  it("writes the EADVENTIST external identity alongside the column, for new and linked records", async () => {
+    rows().push({ id: "church-old", type: "CHURCH", name: "Sample Hills SDA Church", normalizedName: "sample hills sda church", isActive: true, eadventistId: null, affiliatedOrganizationId: null } as Row);
+    await commitEadventistImport(fixture, "admin-1");
+    expect(state.identities).toHaveLength(12);
+    expect(state.identities.find((identity) => identity.organizationId === "church-old")).toMatchObject({ externalId: "9002" });
+    expect(rows().every((row) => state.identities.some((identity) => identity.organizationId === row.id && identity.externalId === row.eadventistId))).toBe(true);
+  });
+
+  it("matches a church that only has an EADVENTIST identity by that id, and fills in the column", async () => {
+    rows().push({ id: "church-old", type: "CHURCH", name: "Renamed Elsewhere", normalizedName: "renamed elsewhere", isActive: true, eadventistId: null, affiliatedOrganizationId: null } as Row);
+    state.identities.push({ organizationId: "church-old", externalId: "9002" });
+    await commitEadventistImport(fixture, "admin-1");
+    expect(rows()).toHaveLength(12);
+    expect(rows().find((row) => row.id === "church-old")).toMatchObject({ eadventistId: "9002", name: "Sample Hills SDA Church" });
+    expect(state.identities.filter((identity) => identity.organizationId === "church-old")).toHaveLength(1);
+  });
+
+  it("applies staff choices for a possible match: link by default, or create a new record", async () => {
+    const loose = () => rows().push({ id: "church-old", type: "CHURCH", name: "Sample Hills Seventh-day Adventist Church", normalizedName: "sample hills seventh-day adventist church", isActive: true, eadventistId: null, affiliatedOrganizationId: null } as Row);
+    loose();
+    const preview = await previewEadventistImport(fixture);
+    expect(preview.items.find((item) => item.eadventistId === "9002")).toMatchObject({ action: "UPDATED", matchedBy: "POSSIBLE", selectedMatch: "church-old" });
+    await commitEadventistImport(fixture, "admin-1");
+    expect(rows()).toHaveLength(12);
+    expect(rows().find((row) => row.id === "church-old")).toMatchObject({ eadventistId: "9002", name: "Sample Hills SDA Church" });
+
+    state.rows = [];
+    state.identities = [];
+    loose();
+    const chosen = await commitEadventistImport(fixture, "admin-1", { "9002": "NEW" });
+    expect(chosen.items.find((item) => item.eadventistId === "9002")).toMatchObject({ action: "NEW", selectedMatch: "NEW" });
+    expect(rows()).toHaveLength(13);
+    expect(rows().find((row) => row.id === "church-old")).toMatchObject({ eadventistId: null, name: "Sample Hills Seventh-day Adventist Church" });
+  });
+
+  it("does not store a Group's street address or phone", async () => {
+    await commitEadventistImport(fixture, "admin-1");
+    expect(byName("Sample Ridge Group")).toMatchObject({ streetAddress: null, officePhone: null, city: "Sample Ridge", postalCode: "00004" });
+  });
+
+  it("writes nothing for a conflicting or skipped row", async () => {
+    rows().push({ id: "church-x", type: "CHURCH", name: "Whatever", normalizedName: "whatever", isActive: true, eadventistId: "9002", affiliatedOrganizationId: null } as Row);
+    state.identities.push({ organizationId: "church-x", externalId: "1111" });
+    const result = await commitEadventistImport(fixture, "admin-1");
+    expect(result.items.find((item) => item.eadventistId === "9002")!.action).toBe("SKIPPED");
+    expect(rows().find((row) => row.id === "church-x")!.name).toBe("Whatever");
+    expect(byName("Sample Creek Company").affiliatedOrganizationId).toBeNull();
   });
 
   it("refuses to switch a church off while it has an active club, and never touches clubs", async () => {

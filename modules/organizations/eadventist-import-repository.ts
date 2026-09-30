@@ -7,7 +7,9 @@ import { normalizeOrganizationName } from "@/modules/organizations/domain";
 import {
   parseEadventistCsv,
   planEadventistImport,
+  NEW_RECORD,
   type ExistingOrganization,
+  type LinkChoices,
   type ImportPlan,
   type PlanItem,
 } from "@/modules/organizations/eadventist-import";
@@ -27,38 +29,49 @@ const isoDay = (date: Date | null) => (date ? date.toISOString().slice(0, 10) : 
 
 async function loadExisting(client: Client): Promise<ExistingOrganization[]> {
   const rows = await client.organization.findMany({
-    where: { OR: [{ eadventistId: { not: null } }, { type: "CHURCH" }] },
+    where: { OR: [{ eadventistId: { not: null } }, { type: "CHURCH" }, { externalIdentities: { some: { provider: "EADVENTIST", providerScope: "" } } }] },
     select: {
       id: true, type: true, name: true, normalizedName: true, eadventistId: true, orgCode: true, sourceOrgType: true,
       streetAddress: true, city: true, state: true, postalCode: true, website: true, officePhone: true, district: true,
       language: true, disbandedOn: true,
       affiliatedOrganization: { select: { eadventistId: true } },
+      externalIdentities: { where: { provider: "EADVENTIST", providerScope: "" }, select: { externalId: true }, take: 1 },
+      churchLocation: { select: { organizationId: true } },
+      _count: { select: { childOrganizations: true, sponsoredPromoCodes: true } },
     },
   });
-  return rows.map(({ affiliatedOrganization, disbandedOn, ...row }) => ({
+  return rows.map(({ affiliatedOrganization, disbandedOn, externalIdentities, churchLocation, _count, ...row }) => ({
     ...row,
     disbandedOn: isoDay(disbandedOn),
     affiliatedEadventistId: affiliatedOrganization?.eadventistId ?? null,
+    identityEadventistId: externalIdentities[0]?.externalId ?? null,
+    hasDependents: _count.childOrganizations > 0 || _count.sponsoredPromoCodes > 0 || churchLocation !== null,
   }));
 }
 
 /** What the upload screen shows: no field values beyond the name and kind. */
-export type ImportPreviewItem = Pick<PlanItem, "line" | "name" | "kind" | "action" | "matchedBy" | "notes" | "disbandedOn">;
+export type ImportPreviewItem = Pick<PlanItem, "line" | "eadventistId" | "name" | "kind" | "action" | "matchedBy" | "notes" | "disbandedOn" | "possibleMatches"> & {
+  /** For a possible match: the stored organization that will be linked, or `NEW` to create a new record. */
+  selectedMatch: string | null;
+};
 export type ImportPreview = { counts: ImportPlan["counts"]; items: ImportPreviewItem[]; rejected: ImportPlan["rejected"] };
 
 function previewOf(plan: ImportPlan): ImportPreview {
   return {
     counts: plan.counts,
     rejected: plan.rejected,
-    items: plan.items.map(({ line, name, kind, action, matchedBy, notes, disbandedOn }) => ({ line, name, kind, action, matchedBy, notes, disbandedOn })),
+    items: plan.items.map(({ line, eadventistId, name, kind, action, matchedBy, notes, disbandedOn, possibleMatches, existingId }) => ({
+      line, eadventistId, name, kind, action, matchedBy, notes, disbandedOn, possibleMatches,
+      selectedMatch: possibleMatches.length > 0 ? (matchedBy === "POSSIBLE" ? existingId : NEW_RECORD) : null,
+    })),
   };
 }
 
 /** Reads the file and reports what committing it would do. Writes nothing. */
-export async function previewEadventistImport(csv: string): Promise<ImportPreview> {
+export async function previewEadventistImport(csv: string, choices: LinkChoices = {}): Promise<ImportPreview> {
   const parsed = parseEadventistCsv(csv);
   const existing = await getPrisma().$transaction((tx) => loadExisting(tx));
-  return previewOf(planEadventistImport(parsed, existing));
+  return previewOf(planEadventistImport(parsed, existing, choices));
 }
 
 export type ImportCommitResult = ImportPreview & { committed: true };
@@ -84,38 +97,37 @@ const dataFor = (record: NonNullable<PlanItem["record"]>) => ({
  * an existing record's active/inactive switch is never touched, so a staff
  * decision survives every re-upload.
  */
-export async function commitEadventistImport(csv: string, actorUserId: string): Promise<ImportCommitResult> {
+export async function commitEadventistImport(csv: string, actorUserId: string, choices: LinkChoices = {}): Promise<ImportCommitResult> {
   const parsed = parseEadventistCsv(csv);
   try {
     return await getPrisma().$transaction(async (tx) => {
-      const plan = planEadventistImport(parsed, await loadExisting(tx));
+      const plan = planEadventistImport(parsed, await loadExisting(tx), choices);
       const idByEadventistId = new Map<string, string>();
-      let churchesKept = 0;
+      const now = new Date();
 
       for (const item of plan.items) {
         const record = item.record;
-        if (!record) continue;
+        if (!record || item.action === "SKIPPED") continue;
+        let organizationId = item.existingId;
         if (item.action === "NEW") {
           const created = await tx.organization.create({
-            data: { ...dataFor(record), type: record.type, eadventistId: record.eadventistId, isActive: record.isActive },
+            data: { ...dataFor(record), type: item.kind, eadventistId: record.eadventistId, isActive: record.isActive },
             select: { id: true },
           });
-          idByEadventistId.set(record.eadventistId, created.id);
-        } else if (item.existingId) {
-          idByEadventistId.set(record.eadventistId, item.existingId);
+          organizationId = created.id;
+        } else if (organizationId) {
+          idByEadventistId.set(record.eadventistId, organizationId);
           if (item.action === "UNCHANGED") continue;
-          const current = await tx.organization.findUniqueOrThrow({ where: { id: item.existingId }, select: { type: true } });
-          let type: OrganizationType = record.type;
-          if (current.type !== record.type && current.type === "CHURCH") {
-            // A church that sponsors clubs stays a church: those clubs depend on it.
-            const clubs = await tx.organization.count({ where: { parentOrganizationId: item.existingId } });
-            if (clubs > 0) {
-              type = current.type;
-              churchesKept += 1;
-            }
-          }
-          await tx.organization.update({ where: { id: item.existingId }, data: { ...dataFor(record), type, eadventistId: record.eadventistId } });
+          await tx.organization.update({ where: { id: organizationId }, data: { ...dataFor(record), type: item.kind, eadventistId: record.eadventistId } });
         }
+        if (!organizationId) continue;
+        idByEadventistId.set(record.eadventistId, organizationId);
+        // The column and the ExternalIdentity both carry the id; keep them in step.
+        await tx.externalIdentity.upsert({
+          where: { organizationId_provider_providerScope: { organizationId, provider: "EADVENTIST", providerScope: "" } },
+          create: { organizationId, provider: "EADVENTIST", providerScope: "", externalId: record.eadventistId, displayLabel: "eAdventist OrganizationID", lastVerifiedAt: now },
+          update: { externalId: record.eadventistId, lastVerifiedAt: now },
+        });
       }
 
       // Parents second, once every row has an id.
@@ -133,7 +145,7 @@ export async function commitEadventistImport(csv: string, actorUserId: string): 
         action: "ORGANIZATIONS_EADVENTIST_IMPORTED",
         entityType: "OrganizationImport",
         summary: `Imported the eAdventist organizations export: ${plan.counts.new} new, ${plan.counts.updated} updated, ${plan.counts.unchanged} unchanged, ${plan.counts.skipped} skipped, ${plan.counts.flagged} flagged as disbanded.`,
-        metadata: { ...plan.counts, rejected: plan.rejected.length, churchesKeptAsChurch: churchesKept },
+        metadata: { ...plan.counts, rejected: plan.rejected.length, keptAsChurch: plan.items.filter((item) => item.notes.some((note) => note.startsWith("Kept as a church"))).length },
       }, tx);
       return { ...previewOf(plan), committed: true as const };
     }, { timeout: 60_000, maxWait: 10_000 });

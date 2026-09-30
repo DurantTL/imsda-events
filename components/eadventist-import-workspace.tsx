@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { CheckCircle2, FileUp, Upload } from "lucide-react";
-import { disbandedNotice, organizationKindLabels } from "@/modules/organizations/eadventist-import";
+import { disbandedNotice, NEW_RECORD, organizationKindLabels } from "@/modules/organizations/eadventist-import";
 import type { ImportPreview } from "@/modules/organizations/eadventist-import-repository";
 
 const actionLabels = { NEW: "New", UPDATED: "Updated", UNCHANGED: "Unchanged", SKIPPED: "Skipped" } as const;
@@ -21,17 +21,19 @@ export function EadventistImportWorkspace({ initialPreview }: { initialPreview?:
   const [csv, setCsv] = useState<string | null>(null);
   const [preview, setPreview] = useState<ImportPreview | null>(initialPreview ?? null);
   const [saved, setSaved] = useState(false);
+  // "Possible match" choices: OrganizationID to a stored organization id, or "NEW".
+  const [choices, setChoices] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  async function send(text: string, confirm: boolean) {
+  async function send(text: string, confirm: boolean, chosen: Record<string, string> = choices) {
     setBusy(true);
     setError("");
     try {
       const response = await fetch("/api/admin/organizations/eadventist-import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ csv: text, confirm }),
+        body: JSON.stringify({ csv: text, confirm, choices: chosen }),
       });
       const result = await response.json().catch(() => ({})) as ImportPreview & ApiError;
       if (!response.ok || !result.items) throw new Error(result.message ?? result.issues?.[0]?.message ?? "That file couldn't be read.");
@@ -55,7 +57,8 @@ export function EadventistImportWorkspace({ initialPreview }: { initialPreview?:
     const text = await file.text();
     setCsv(text);
     setSaved(false);
-    await send(text, false);
+    setChoices({});
+    await send(text, false, {});
   }
 
   const counts = preview?.counts;
@@ -107,7 +110,23 @@ export function EadventistImportWorkspace({ initialPreview }: { initialPreview?:
                     <td>{organizationKindLabels[item.kind]}</td>
                     <td>
                       <span className={`status-chip ${actionTone[item.action]}`}>{actionLabels[item.action]}</span>
+                      {item.possibleMatches.length > 0 && <span className="status-chip gold">Possible match</span>}
                       {item.notes.map((note) => <div className="field-help" key={note}>{note}</div>)}
+                      {item.possibleMatches.length > 0 && !saved && (
+                        <select
+                          aria-label={`Possible match for ${item.name}`}
+                          disabled={busy}
+                          onChange={(event) => {
+                            const next = { ...choices, [item.eadventistId]: event.target.value };
+                            setChoices(next);
+                            if (csv) void send(csv, false, next);
+                          }}
+                          value={item.selectedMatch ?? NEW_RECORD}
+                        >
+                          {item.possibleMatches.map((match) => <option key={match.id} value={match.id}>Link to {match.name}</option>)}
+                          <option value={NEW_RECORD}>Create new</option>
+                        </select>
+                      )}
                       {item.disbandedOn && <div className="field-help">{disbandedNotice(item.disbandedOn, true)}</div>}
                     </td>
                   </tr>
@@ -116,7 +135,7 @@ export function EadventistImportWorkspace({ initialPreview }: { initialPreview?:
             </table>
           </div>
           <div className="form-actions">
-            <button className="secondary-button" disabled={busy} onClick={() => { setPreview(null); setCsv(null); setSaved(false); }} type="button">
+            <button className="secondary-button" disabled={busy} onClick={() => { setPreview(null); setCsv(null); setSaved(false); setChoices({}); }} type="button">
               {saved ? "Upload another file" : "Cancel"}
             </button>
             {!saved && (
