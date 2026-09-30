@@ -8391,7 +8391,7 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
     display: flow-root; padding-left: 8.5rem; font-size: max(var(--type-body-floor, 0px), 0.8rem);
   }
   table.table-cards > tbody > tr > td[data-label]::before {
-    content: attr(data-label) / ""; float: left; width: 7.75rem; margin-left: -8.5rem;
+    content: attr(data-label); content: attr(data-label) / ""; float: left; width: 7.75rem; margin-left: -8.5rem;
     color: var(--muted); font-weight: 700; font-size: max(var(--type-floor, 0px), 0.68rem);
     overflow-wrap: break-word; text-transform: none; letter-spacing: 0;
   }

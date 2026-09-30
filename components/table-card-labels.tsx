@@ -15,16 +15,6 @@ export function isLongCardLabel(label: string) {
   return label.length > LONG_CARD_LABEL_LENGTH;
 }
 
-export type HeaderCell = { text: string; hiddenOnly: boolean };
-
-/** One label per column; a column whose header is screen-reader-only gets none. */
-export function cardLabelsFromHeaders(headers: HeaderCell[]): (string | null)[] {
-  return headers.map((header) => {
-    const text = header.text.replace(/\s+/g, " ").trim();
-    return header.hiddenOnly || !text ? null : text;
-  });
-}
-
 /**
  * Props for a body cell: `<td {...cardCell("Club")}>`. A null label (an
  * sr-only action column) gets the role only, so the card shows no label for it.

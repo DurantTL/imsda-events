@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { AreaClubsOverview, AreaMonthlyReportsTable, AreaPointsChart } from "@/components/area-clubs-views";
-import { cardCell, cardLabelsFromHeaders, isLongCardLabel } from "@/components/table-card-labels";
+import { cardCell, isLongCardLabel } from "@/components/table-card-labels";
 import type { AreaClubSummary } from "@/modules/club-reports/area-summary-domain";
 
 const club: AreaClubSummary = {
@@ -73,14 +73,6 @@ describe("phone table cards render their labels and roles on the server (#686)",
 });
 
 describe("card cell helpers", () => {
-  it("derives one label per header and skips sr-only or empty headers", () => {
-    expect(cardLabelsFromHeaders([
-      { text: "  Reports\n  submitted ", hiddenOnly: false },
-      { text: "Actions", hiddenOnly: true },
-      { text: "", hiddenOnly: false },
-    ])).toEqual(["Reports submitted", null, null]);
-  });
-
   it("cardCell gives the role always, the label when present and the long flag by length", () => {
     expect(cardCell(null)).toEqual({ role: "cell" });
     expect(cardCell("Church")).toEqual({ role: "cell", "data-label": "Church" });
