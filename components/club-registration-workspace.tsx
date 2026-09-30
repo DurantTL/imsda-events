@@ -10,6 +10,7 @@ import {
   type RosterAttendee,
 } from "@/components/public-registration-form";
 import { createDraftSaveQueue } from "@/modules/club-registrations/draft-save-queue";
+import { createDraftSender, DRAFT_CONFLICT_MESSAGE, draftBlockedReason } from "@/modules/club-registrations/draft-sender";
 import { restoreDraftLocation } from "@/modules/club-registrations/draft-location";
 import { rosterHrefFromRegistration } from "@/modules/club-registrations/roster-return";
 import { ClubRosterAgeField } from "@/components/club-roster-age-field";
@@ -98,41 +99,26 @@ export function ClubRegistrationWorkspace({
   const [leaveHref, setLeaveHref] = useState<string | null>(null);
   // The revision the saved draft is at (#659); every save names it, so a stale save from another tab is refused.
   const [conflict, setConflict] = useState(false);
-  const [queue] = useState(() => {
-    let revision = workspace.draft?.revision ?? 0;
-    let conflicted = false;
-    return createDraftSaveQueue<DraftState>({
-      onState: (state) => {
-        setSaveState(state);
-        if (state === "saved") setLeaveHref(null);
-      },
-      send: async (next) => {
-        // After a conflict nothing more is sent: the director reloads to see the other tab's work.
-        if (conflicted) return false;
-        const response = await fetch(`${base}/draft`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...next, baseRevision: revision }),
-        });
-        if (response.ok) {
-          const saved = await response.json().catch(() => null) as { revision?: number } | null;
-          if (typeof saved?.revision === "number") revision = saved.revision;
-          return true;
-        }
-        if (response.status === 409) {
-          const problem = await response.json().catch(() => null) as { error?: string } | null;
-          if (problem?.error === "DRAFT_CONFLICT") { conflicted = true; setConflict(true); }
-        }
-        return false;
-      },
-    });
-  });
+  const [sender] = useState(() => createDraftSender<DraftState>({
+    url: `${base}/draft`,
+    initialRevision: workspace.draft?.revision ?? 0,
+    onConflict: () => setConflict(true),
+  }));
+  const [queue] = useState(() => createDraftSaveQueue<DraftState>({
+    onState: (state) => {
+      setSaveState(state);
+      if (state === "saved") setLeaveHref(null);
+    },
+    send: (next) => sender.send(next),
+  }));
 
   /** Saves the pending draft now; true when nothing is left unsaved. */
   const flush = useCallback(async (): Promise<boolean> => {
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    // Nothing more is sent once the draft is in conflict (#659).
+    if (sender.isConflicted()) return false;
     return queue.flush();
-  }, [queue]);
+  }, [queue, sender]);
 
   // Leaving for the roster (#643): save first, and warn instead of silently dropping an unsaved edit.
   const rosterHref = rosterHrefFromRegistration(organizationId, workspace.event.id);
@@ -154,8 +140,8 @@ export function ClubRegistrationWorkspace({
   const queueSave = useCallback((next: DraftState) => {
     queue.set(next);
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => { timer.current = null; void queue.flush(false); }, 1200);
-  }, [queue]);
+    timer.current = setTimeout(() => { timer.current = null; if (!sender.isConflicted()) void queue.flush(false); }, 1200);
+  }, [queue, sender]);
 
   const setLocationId = (next: string) => {
     setLocationNote(null);
@@ -170,10 +156,10 @@ export function ClubRegistrationWorkspace({
 
   // Back online: send whatever failed while the connection was down (#659).
   useEffect(() => {
-    const retry = () => { if (queue.hasPending()) void queue.flush(); };
+    const retry = () => { if (queue.hasPending() && !sender.isConflicted()) void queue.flush(); };
     window.addEventListener("online", retry);
     return () => window.removeEventListener("online", retry);
-  }, [queue]);
+  }, [queue, sender]);
 
   function toggle(memberId: string) {
     setDraft((current) => {
@@ -378,7 +364,7 @@ export function ClubRegistrationWorkspace({
     locationId,
     honorSelections: hasHonors ? honorPicks : {},
     renderAttendeeExtras,
-    blockedReason: honorsProblem,
+    blockedReason: draftBlockedReason({ conflict, honorsProblem }),
     submitUrl: `${base}/registration`,
     onDraftChange,
     onSubmitted: (result?: { honors?: { error?: string } | null }) => {
@@ -391,10 +377,10 @@ export function ClubRegistrationWorkspace({
       router.refresh();
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, hasHonors, honorPicks, honorsProblem, honorAttendees, honorOfferings, base, onDraftChange, router, organizationId, workspace.event.id, queue]);
+  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, hasHonors, honorPicks, honorsProblem, conflict, honorAttendees, honorOfferings, base, onDraftChange, router, organizationId, workspace.event.id, queue]);
 
   const saveLabel = conflict
-    ? "This draft changed in another tab. Reload to see the latest version."
+    ? DRAFT_CONFLICT_MESSAGE
     : saveState === "saving" ? "Saving draft…" : saveState === "saved" ? "Draft saved" : saveState === "error" ? "Draft not saved. Check your connection." : "";
   const saveAction = conflict
     ? <button className="text-button" onClick={() => window.location.reload()} type="button">Reload</button>

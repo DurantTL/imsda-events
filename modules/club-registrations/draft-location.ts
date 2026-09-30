@@ -31,8 +31,11 @@ export function restoreDraftLocation(
     return { locationId: fallback, note: "The location you chose earlier is no longer offered. Choose a location to continue." };
   }
   if (isPickableLocation(saved)) return { locationId: saved.id, note: null };
-  const reason = saved.full
-    ? "is now full"
-    : saved.phase === "UPCOMING" ? "is not open for registration yet" : "is now closed for registration";
+  // The same order the picker's option label uses: removed, full (unless the event waitlists), not open yet, closed.
+  const reason = saved.isActive === false
+    ? "is no longer available"
+    : saved.full && !saved.waitlistOnFull
+      ? "is now full"
+      : saved.phase === "UPCOMING" ? "is not open for registration yet" : "is now closed for registration";
   return { locationId: fallback, note: `${saved.name} ${reason}. Choose another location to continue.` };
 }

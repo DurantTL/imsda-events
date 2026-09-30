@@ -8,10 +8,8 @@ const mocks = vi.hoisted(() => ({
   amendClubRegistration: vi.fn(),
   eventFindFirst: vi.fn(),
   rosterFindMany: vi.fn(),
-  draftUpsert: vi.fn(),
-  draftUpdateMany: vi.fn(),
+  draftUpdate: vi.fn(),
   draftFind: vi.fn(),
-  draftFindOrThrow: vi.fn(),
   draftCreate: vi.fn(),
   locationFindFirst: vi.fn(),
 }));
@@ -28,10 +26,8 @@ vi.mock("@/lib/prisma", () => ({
     event: { findFirst: mocks.eventFindFirst },
     clubRosterMember: { findMany: mocks.rosterFindMany },
     clubRegistrationDraft: {
-      upsert: mocks.draftUpsert,
-      updateMany: mocks.draftUpdateMany,
+      update: mocks.draftUpdate,
       findUnique: mocks.draftFind,
-      findUniqueOrThrow: mocks.draftFindOrThrow,
       create: mocks.draftCreate,
     },
     eventLocation: { findFirst: mocks.locationFindFirst },
@@ -66,7 +62,8 @@ function request(method: string, body: unknown) {
   return new Request("https://events.imsda.test/api/attendee/clubs/x/events/y", {
     method,
     headers: { origin: "https://events.imsda.test", "content-type": "application/json" },
-    body: JSON.stringify(body),
+    // A draft save always names its base revision and save id.
+    body: JSON.stringify(method === "PUT" && body && typeof body === "object" ? { baseRevision: 1, saveId: "save-00000001", ...body } : body),
   });
 }
 
@@ -82,11 +79,9 @@ beforeEach(() => {
   });
   mocks.eventFindFirst.mockResolvedValue({ id: "event-1", startsAt: new Date("2026-12-05T15:00:00Z") });
   mocks.rosterFindMany.mockResolvedValue([{ id: "m1" }, { id: "m2" }]);
-  mocks.draftUpsert.mockResolvedValue({ updatedAt: new Date("2026-10-01T00:00:00Z"), revision: 1 });
-  mocks.draftUpdateMany.mockResolvedValue({ count: 1 });
+  mocks.draftUpdate.mockResolvedValue({ updatedAt: new Date("2026-10-01T00:00:00Z"), revision: 2, lastSaveId: "save-00000001" });
   mocks.draftFind.mockResolvedValue({ id: "draft-1" });
-  mocks.draftFindOrThrow.mockResolvedValue({ updatedAt: new Date("2026-10-01T00:00:00Z"), revision: 4 });
-  mocks.draftCreate.mockResolvedValue({ updatedAt: new Date("2026-10-01T00:00:00Z"), revision: 1 });
+  mocks.draftCreate.mockResolvedValue({ updatedAt: new Date("2026-10-01T00:00:00Z"), revision: 1, lastSaveId: "save-00000001" });
   mocks.locationFindFirst.mockResolvedValue({ id: "loc-1" });
 });
 
@@ -103,7 +98,7 @@ describe("club registration routes", () => {
     mocks.listDirectedClubs.mockResolvedValue([clubB]);
     expect((await PUT_DRAFT(request("PUT", { selectedMemberIds: ["m1", "m2"], responses: {}, attendeeResponses: {} }), ctx("club-a"))).status).toBe(404);
     expect((await SUBMIT(request("POST", submission), ctx("club-a"))).status).toBe(404);
-    expect(mocks.draftUpsert).toHaveBeenCalledTimes(1);
+    expect(mocks.draftUpdate).toHaveBeenCalledTimes(1);
     expect(mocks.submitClubRegistration).not.toHaveBeenCalled();
   });
 
@@ -199,47 +194,88 @@ describe("club registration routes", () => {
     expect(mocks.rosterFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ organizationId: "club-a", status: "ACTIVE" }) }));
 
     await PUT_DRAFT(request("PUT", { selectedMemberIds: ["m1"], responses: { email: "x@example.test" }, attendeeResponses: { m1: { dietary_needs: "None" }, intruder: { note: "x" } } }), ctx("club-a"));
-    expect(mocks.draftUpsert.mock.calls[0][0].update.attendeeResponses).toEqual({ m1: { dietary_needs: "None" } });
+    expect(mocks.draftUpdate.mock.calls[0][0].data.attendeeResponses).toEqual({ m1: { dietary_needs: "None" } });
   });
 
   describe("draft revisions and location (#659)", () => {
     const body = { selectedMemberIds: ["m1"], responses: {}, attendeeResponses: {} };
+    const missed = () => Object.assign(new Error("No record found"), { code: "P2025" });
+    const row = (revision: number, lastSaveId: string | null) => ({ id: "draft-1", updatedAt: new Date("2026-10-01T00:00:00Z"), revision, lastSaveId });
 
-    it("saves against the revision the page loaded and returns the new one", async () => {
-      const response = await PUT_DRAFT(request("PUT", { ...body, baseRevision: 3 }), ctx("club-a"));
+    it("saves against the revision the page loaded, in one statement, and returns the new one", async () => {
+      const response = await PUT_DRAFT(request("PUT", { ...body, baseRevision: 1 }), ctx("club-a"));
       expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toMatchObject({ revision: 4 });
-      expect(mocks.draftUpdateMany.mock.calls[0][0].where).toMatchObject({ eventId: "event-1", organizationId: "club-a", revision: 3 });
-      expect(mocks.draftUpdateMany.mock.calls[0][0].data.revision).toEqual({ increment: 1 });
-      expect(mocks.draftUpsert).not.toHaveBeenCalled();
+      await expect(response.json()).resolves.toMatchObject({ revision: 2 });
+      const call = mocks.draftUpdate.mock.calls[0][0];
+      expect(call.where).toMatchObject({ eventId_organizationId: { eventId: "event-1", organizationId: "club-a" }, revision: 1 });
+      expect(call.data.revision).toEqual({ increment: 1 });
+      expect(call.data.lastSaveId).toBe("save-00000001");
+    });
+
+    it("requires the base revision and save id", async () => {
+      const bare = { ...body };
+      const raw = new Request("https://events.imsda.test/x", {
+        method: "PUT",
+        headers: { origin: "https://events.imsda.test", "content-type": "application/json" },
+        body: JSON.stringify(bare),
+      });
+      expect((await PUT_DRAFT(raw, ctx("club-a"))).status).toBe(400);
+      expect(mocks.draftUpdate).not.toHaveBeenCalled();
     });
 
     it("refuses a stale save from a second tab without overwriting", async () => {
-      mocks.draftUpdateMany.mockResolvedValue({ count: 0 });
+      mocks.draftUpdate.mockRejectedValue(missed());
+      mocks.draftFind.mockResolvedValue(row(5, "another-tab-save"));
       const response = await PUT_DRAFT(request("PUT", { ...body, baseRevision: 2 }), ctx("club-a"));
       expect(response.status).toBe(409);
       await expect(response.json()).resolves.toMatchObject({ error: "DRAFT_CONFLICT" });
       expect(mocks.draftCreate).not.toHaveBeenCalled();
     });
 
-    it("creates the first draft, and refuses the tab that loses a simultaneous first save", async () => {
-      mocks.draftUpdateMany.mockResolvedValue({ count: 0 });
+    it("treats a retry of a commit whose response was lost as success, not a conflict", async () => {
+      // The first attempt landed (revision 1 to 2, save id kept) but its response never arrived.
+      mocks.draftUpdate.mockRejectedValue(missed());
+      mocks.draftFind.mockResolvedValue(row(2, "save-00000001"));
+      const retry = await PUT_DRAFT(request("PUT", { ...body, baseRevision: 1, saveId: "save-00000001" }), ctx("club-a"));
+      expect(retry.status).toBe(200);
+      await expect(retry.json()).resolves.toMatchObject({ revision: 2 });
+      // Same save id but the draft has moved on since: that is a conflict.
+      mocks.draftFind.mockResolvedValue(row(3, "save-00000001"));
+      expect((await PUT_DRAFT(request("PUT", { ...body, baseRevision: 1, saveId: "save-00000001" }), ctx("club-a"))).status).toBe(409);
+    });
+
+    it("creates the first draft only for a page that loaded with none", async () => {
+      mocks.draftUpdate.mockRejectedValue(missed());
       mocks.draftFind.mockResolvedValue(null);
       expect((await PUT_DRAFT(request("PUT", { ...body, baseRevision: 0 }), ctx("club-a"))).status).toBe(200);
-      expect(mocks.draftCreate.mock.calls[0][0].data.revision).toBe(1);
-      mocks.draftCreate.mockRejectedValue(Object.assign(new Error("unique"), { code: "P2002" }));
-      const response = await PUT_DRAFT(request("PUT", { ...body, baseRevision: 0 }), ctx("club-a"));
+      expect(mocks.draftCreate.mock.calls[0][0].data).toMatchObject({ revision: 1, lastSaveId: "save-00000001" });
+    });
+
+    it("does not bring back a draft that was submitted or deleted", async () => {
+      mocks.draftUpdate.mockRejectedValue(missed());
+      mocks.draftFind.mockResolvedValue(null);
+      const response = await PUT_DRAFT(request("PUT", { ...body, baseRevision: 3 }), ctx("club-a"));
       expect(response.status).toBe(409);
       await expect(response.json()).resolves.toMatchObject({ error: "DRAFT_CONFLICT" });
+      expect(mocks.draftCreate).not.toHaveBeenCalled();
+    });
+
+    it("refuses the tab that loses a simultaneous first save, but accepts its own lost-response retry", async () => {
+      mocks.draftUpdate.mockRejectedValue(missed());
+      mocks.draftFind.mockResolvedValueOnce(null).mockResolvedValueOnce(row(1, "someone-else"));
+      mocks.draftCreate.mockRejectedValue(Object.assign(new Error("unique"), { code: "P2002" }));
+      expect((await PUT_DRAFT(request("PUT", { ...body, baseRevision: 0 }), ctx("club-a"))).status).toBe(409);
+      mocks.draftFind.mockResolvedValueOnce(null).mockResolvedValueOnce(row(1, "save-00000001"));
+      expect((await PUT_DRAFT(request("PUT", { ...body, baseRevision: 0 }), ctx("club-a"))).status).toBe(200);
     });
 
     it("keeps the chosen location only when it is an active location of this event", async () => {
-      await PUT_DRAFT(request("PUT", { ...body, baseRevision: 1, locationId: "loc-1" }), ctx("club-a"));
+      await PUT_DRAFT(request("PUT", { ...body, locationId: "loc-1" }), ctx("club-a"));
       expect(mocks.locationFindFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "loc-1", eventId: "event-1", isActive: true } }));
-      expect(mocks.draftUpdateMany.mock.calls[0][0].data.locationId).toBe("loc-1");
+      expect(mocks.draftUpdate.mock.calls[0][0].data.locationId).toBe("loc-1");
       mocks.locationFindFirst.mockResolvedValue(null);
-      await PUT_DRAFT(request("PUT", { ...body, baseRevision: 1, locationId: "elsewhere" }), ctx("club-a"));
-      expect(mocks.draftUpdateMany.mock.calls[1][0].data.locationId).toBeNull();
+      await PUT_DRAFT(request("PUT", { ...body, locationId: "elsewhere" }), ctx("club-a"));
+      expect(mocks.draftUpdate.mock.calls[1][0].data.locationId).toBeNull();
     });
   });
 
@@ -252,15 +288,14 @@ describe("club registration routes", () => {
     const body = { selectedMemberIds: ["m1", "m2"], responses: {}, attendeeResponses: {} };
     const response = await PUT_DRAFT(request("PUT", { ...body, rosterAges: { m1: 40, m2: 12, m3: 9 } }), ctx("club-a"));
     expect(response.status).toBe(200);
-    expect(mocks.draftUpsert.mock.calls[0][0].update.rosterAges).toEqual({ m2: 12 });
-    expect(mocks.draftUpsert.mock.calls[0][0].create.rosterAges).toEqual({ m2: 12 });
+    expect(mocks.draftUpdate.mock.calls[0][0].data.rosterAges).toEqual({ m2: 12 });
   });
 
   it("keeps a save-back opt-out only for people whose age is kept in the draft (#639)", async () => {
     mocks.rosterFindMany.mockResolvedValue([{ id: "m1", sealedBirthDate: null }, { id: "m2", sealedBirthDate: null }]);
     const body = { selectedMemberIds: ["m1", "m2"], responses: {}, attendeeResponses: {}, rosterAges: { m1: 12 } };
     expect((await PUT_DRAFT(request("PUT", { ...body, rosterAgeSaveOff: ["m1", "m2"] }), ctx("club-a"))).status).toBe(200);
-    expect(mocks.draftUpsert.mock.calls[0][0].update.rosterAgeSaveOff).toEqual(["m1"]);
+    expect(mocks.draftUpdate.mock.calls[0][0].data.rosterAgeSaveOff).toEqual(["m1"]);
   });
 
   it("rejects typed-in ages that are not whole numbers from 0 to 120 (#639)", async () => {
@@ -268,7 +303,7 @@ describe("club registration routes", () => {
     for (const age of [121, -1, 4.5, "12"]) {
       expect((await PUT_DRAFT(request("PUT", { ...body, rosterAges: { m1: age } }), ctx("club-a"))).status).toBe(400);
     }
-    expect(mocks.draftUpsert).not.toHaveBeenCalled();
+    expect(mocks.draftUpdate).not.toHaveBeenCalled();
   });
 
   it("rejects cross-origin writes and malformed drafts", async () => {

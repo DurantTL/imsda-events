@@ -26,6 +26,12 @@ describe("restoring the draft's location (#659)", () => {
     expect(upcoming.note).toMatch(/not open for registration yet/);
   });
 
+  it("names a closed location that is full but waitlisted as closed, and a deactivated one as unavailable", () => {
+    const closedFull = { ...north, full: true, waitlistOnFull: true, open: false, phase: "CLOSED" };
+    expect(restoreDraftLocation([closedFull, south, third], "north").note).toMatch(/now closed for registration/);
+    expect(restoreDraftLocation([{ ...north, isActive: false }, south, third], "north").note).toMatch(/no longer available/);
+  });
+
   it("keeps a full location the event will waitlist", () => {
     expect(restoreDraftLocation([{ ...north, full: true, waitlistOnFull: true }, south], "north").locationId).toBe("north");
   });
