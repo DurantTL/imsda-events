@@ -21,7 +21,7 @@ export function ClubEventList({ events, organizationId }: { events: ClubEventSum
     <section className="public-manage-card" aria-labelledby="club-events-heading">
       <div className="public-manage-card-heading">
         <p className="public-registration-eyebrow">Register your club</p>
-        <h2 id="club-events-heading">Club events</h2>
+        <h2 id="club-events-heading">Events</h2>
       </div>
       {events.length === 0 ? (
         <p className="public-manage-empty">
