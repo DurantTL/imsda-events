@@ -206,7 +206,7 @@ export function RegistrationNotesTagsPanel({
             </article>
           ))}
           {canManage && !addingNote && (
-            <button type="button" className="text-button" onClick={() => { setError(""); setAddingNote(true); }}>
+            <button type="button" className="secondary-button" onClick={() => { setError(""); setAddingNote(true); }}>
               <NotebookPen aria-hidden="true" size={14} /> Add note
             </button>
           )}

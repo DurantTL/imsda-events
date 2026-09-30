@@ -546,7 +546,7 @@ export function RegistrationAmendmentEditor({
       <section className="amendment-attendees">
         <div className="inline-heading">
           <div><p className="eyebrow">Attendee roster</p><h4>{attendees.length} attendee{attendees.length === 1 ? "" : "s"}</h4></div>
-          <button className="text-button" type="button" disabled={attendees.length >= 50} onClick={addAttendee}>
+          <button className="secondary-button" type="button" disabled={attendees.length >= 50} onClick={addAttendee}>
             <Plus aria-hidden="true" size={15} /> Add person
           </button>
         </div>

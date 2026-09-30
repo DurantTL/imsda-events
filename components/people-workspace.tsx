@@ -841,7 +841,7 @@ export function PeopleWorkspace({
                   </details>
                 </div>}
                 <div className="registration-attendee-list">
-                  <div className="inline-heading"><p className="eyebrow">Attendees</p>{canAddAttendee && !addingAttendee && <button className="text-button" type="button" onClick={() => { setError(""); setAddingAttendee(true); }}><Plus aria-hidden="true" size={14} /> Add attendee</button>}</div>
+                  <div className="inline-heading"><p className="eyebrow">Attendees</p>{canAddAttendee && !addingAttendee && <button className="secondary-button" type="button" onClick={() => { setError(""); setAddingAttendee(true); }}><Plus aria-hidden="true" size={14} /> Add attendee</button>}</div>
                   {selected.attendees.map((attendee, attendeeIndex) => <article className="attendee-detail-card" key={attendee.id}>
                     <div className="attendee-summary">
                       <span>{attendee.firstName} {attendee.lastName}<small>{attendee.attendeeType.toLowerCase()} · {attendee.source === "PUBLIC_REGISTRATION" ? "Submitted on public form" : "Added by staff"}</small></span>

@@ -52,6 +52,10 @@ vi.mock("@/components/attendee-sign-out-button", () => ({
 vi.mock("@/components/sign-out-button", () => ({
   SignOutButton: (props: { label?: string }) => createElement("button", { type: "button" }, props.label ?? "Sign out"),
 }));
+vi.mock("@/components/workspace-shell", () => ({
+  WorkspaceShell: (props: { anyStaffWithoutEvents?: boolean; children: React.ReactNode }) =>
+    createElement("div", { "data-shell": "staff", "data-any-staff": String(Boolean(props.anyStaffWithoutEvents)) }, props.children),
+}));
 vi.mock("@/components/act-as-banner", () => ({
   ActAsBanner: (props: { acting: unknown }) => (props.acting ? createElement("aside", null, "ACT-AS-BANNER") : null),
 }));
@@ -95,24 +99,27 @@ describe("/profile", () => {
     const markup = await render();
     expect(mocks.redirect).not.toHaveBeenCalled();
     expect(markup).toContain("Edit profile");
-    expect(markup).toContain("Staff account");
+    // A staff-only browser gets the staff workspace shell (#623), which lets
+    // staff with no events in too.
+    expect(markup).toContain('data-shell="staff"');
+    expect(markup).toContain('data-any-staff="true"');
     expect(markup).toContain("Riley Staff");
     expect(markup).toContain("riley@imsda-events.test");
     expect(markup).toContain('data-manager="staff-mfa"');
     expect(markup).toContain('data-manager="staff-passkeys"');
-    expect(markup).toContain("Back to staff workspace");
-    expect(markup).toContain('href="/overview"');
+    expect(markup).not.toContain("Back to staff workspace");
+    expect(markup).toContain(">Sign out of staff account<");
     expect(markup).not.toContain("Registration account");
     expect(markup).not.toContain("System management");
     expect(mocks.getMfaStatus).toHaveBeenCalledWith("staff-1");
     expect(mocks.getPasskeySettings).toHaveBeenCalledWith(staff);
   });
 
-  it("links administrators to System management", async () => {
-    signedIn({ staff: admin });
+  it("leaves the System management link to the staff shell instead of repeating it", async () => {
+    signedIn({ staff: admin, attendee: true });
     const markup = await render();
-    expect(markup).toContain("System management");
-    expect(markup).toContain('href="/admin"');
+    expect(markup).toContain('data-shell="staff"');
+    expect(markup).not.toContain("System management");
   });
 
   it("confirms two-step verification is on only when an authenticator is really active (#568)", async () => {
@@ -174,15 +181,55 @@ describe("/profile", () => {
     expect(markup).toContain("Pathfinder Test Club");
   });
 
-  it("shows both labelled sections when both sessions are present", async () => {
+  it("keeps the public-style page, not the staff shell, for an attendee-only session (#623)", async () => {
+    signedIn({ attendee: true });
+    const markup = await render();
+    expect(markup).not.toContain('data-shell="staff"');
+    expect(markup).toContain("Registration account");
+  });
+
+  it("shows announcements inside the registration card once the second step is passed (#623)", async () => {
+    signedIn({ staff, attendee: true });
+    mocks.listAccountBannerAnnouncements.mockResolvedValue([{
+      id: "ann-2", title: "Synthetic shell notice", body: "Bring a jacket.", priority: "NORMAL",
+      pinned: false, eventName: "Synthetic Retreat", href: "/account/events/synthetic-retreat",
+    }]);
+    const markup = await render();
+    expect(markup).toContain('data-shell="staff"');
+    expect(markup).toContain("Synthetic shell notice");
+    expect(mocks.listAccountBannerAnnouncements).toHaveBeenCalledWith(attendee, []);
+  });
+
+  it("hides settings, the verified email and announcements while a second step is pending, inside the shell (#623)", async () => {
+    signedIn({ staff, attendee: true });
+    mocks.attendeeSecondStepPending.mockResolvedValue(true);
+    const markup = await render();
+    expect(markup).toContain('data-shell="staff"');
+    expect(markup).toContain("Confirm your second step");
+    expect(markup).not.toContain('data-manager="attendee-settings"');
+    expect(markup).not.toContain("pat@imsda-events.test");
+    expect(mocks.listAccountBannerAnnouncements).not.toHaveBeenCalled();
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+
+  it("uses the staff shell for staff with events too, and never redirects to /no-access (#623)", async () => {
+    signedIn({ staff });
+    const markup = await render();
+    expect(markup).toContain('data-shell="staff"');
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+
+  it("renders both accounts inside the staff shell when both sessions are present (#623)", async () => {
     signedIn({ staff, attendee: true });
     const markup = await render();
-    expect(markup).toContain("Staff account");
+    expect(markup).toContain('data-shell="staff"');
     expect(markup).toContain("Registration account");
     expect(markup).toContain('data-manager="staff-mfa"');
     expect(markup).toContain('data-manager="attendee-settings"');
-    expect(markup).toContain("Back to staff workspace");
+    expect(markup).toContain('href="/account"');
     expect(markup).toContain("My registrations");
+    expect(markup).not.toContain("Back to staff workspace");
+    expect(markup.indexOf('data-manager="staff-mfa"')).toBeLessThan(markup.indexOf("Registration account"));
   });
 
   it("labels which session each sign-out button ends when both are signed in", async () => {
@@ -199,19 +246,18 @@ describe("/profile", () => {
     expect(attendeeOnly).not.toContain("Sign out of staff account");
   });
 
-  it("shows the act-as banner only when a staff act-as context is active", async () => {
-    signedIn({ staff });
-    expect(await render()).not.toContain("ACT-AS-BANNER");
+  it("leaves the act-as banner to the staff shell and never shows it on the attendee-only page", async () => {
     mocks.currentStaffActingContext.mockResolvedValue({ role: "CLUB_DIRECTOR" });
-    expect(await render()).toContain("ACT-AS-BANNER");
     signedIn({ attendee: true });
-    expect(await render()).not.toContain("ACT-AS-BANNER");
+    const markup = await render();
+    expect(markup).not.toContain("ACT-AS-BANNER");
+    expect(markup).not.toContain('data-shell="staff"');
   });
 
   it("does not treat a staff session that merely matches an attendee email as a registration account", async () => {
     signedIn({ staff, attendee: true, sessionVia: "staff" });
     const markup = await render();
-    expect(markup).toContain("Staff account");
+    expect(markup).toContain('data-shell="staff"');
     expect(markup).not.toContain("Registration account");
   });
 

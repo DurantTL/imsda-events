@@ -62,7 +62,7 @@ export async function resolveEventContext(requestedEventId?: string) {
   };
 }
 
-async function loadSignedInEvents(options: { allowNoEvents?: boolean } = {}) {
+async function loadSignedInEvents(options: { allowNoEvents?: boolean; anyStaffWithoutEvents?: boolean } = {}) {
   const user = (await getCurrentSession()).user;
   if (!user) redirect(await staffLoginRedirectPath());
   const events = await listEventsForUser(user.id, user.globalRole === "SYSTEM_ADMIN");
@@ -70,7 +70,13 @@ async function loadSignedInEvents(options: { allowNoEvents?: boolean } = {}) {
   // A system administrator with zero events still owns the global /admin/*
   // pages (#567 F-6), which need no event. Only the workspace layout opts in;
   // pages that need an event still resolve (and redirect) on their own.
-  if (events.length === 0 && !(options.allowNoEvents && user.globalRole === "SYSTEM_ADMIN")) {
+  // The staff-only /profile page (#623) also lets any staff account with no
+  // events in, so they can still reach their own security settings.
+  if (
+    events.length === 0
+    && !options.anyStaffWithoutEvents
+    && !(options.allowNoEvents && user.globalRole === "SYSTEM_ADMIN")
+  ) {
     redirect("/no-access");
   }
   return { user, events };
@@ -90,8 +96,8 @@ async function loadSignedInEvents(options: { allowNoEvents?: boolean } = {}) {
  * notice agree with what the page renders. `defaultEventId` is `null` when
  * nothing can be chosen automatically (the picker case).
  */
-export async function loadWorkspaceEventContext() {
-  const { user, events } = await loadSignedInEvents({ allowNoEvents: true });
+export async function loadWorkspaceEventContext(options: { anyStaffWithoutEvents?: boolean } = {}) {
+  const { user, events } = await loadSignedInEvents({ allowNoEvents: true, ...options });
   const selection = selectEventContext({ events, lastUsedEventId: await readLastUsedEventId() });
   const defaultEvent = selection.kind === "picker" || selection.kind === "unavailable" ? null : selection.event;
 

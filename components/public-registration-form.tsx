@@ -1990,6 +1990,7 @@ export function PublicRegistrationForm({
             <div className="public-registration-roster-actions">
               <button
                 id="public_registration_add_attendee"
+                className="accent-button"
                 type="button"
                 disabled={attendees.length >= roster.maxAttendees}
                 onClick={addAttendee}

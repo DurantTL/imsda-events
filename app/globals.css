@@ -7696,14 +7696,17 @@ select:focus-visible {
 }
 
 /* One Edit profile page for every account (#543). */
-.profile-back-links { display: flex; flex-wrap: wrap; gap: 0 20px; }
+.profile-back-links { display: flex; flex-wrap: wrap; gap: 10px; }
 .profile-identity { display: grid; gap: 4px; margin-top: 8px; }
 .profile-identity strong { color: var(--imsda-navy); font-size: 1.05rem; }
 .profile-identity small { color: var(--muted); }
-.profile-back-links .text-button { min-height: 44px; }
+.profile-back-links .secondary-button { min-height: 44px; text-decoration: none; }
 .profile-account-section { display: grid; gap: 16px; }
+/* Staff cards share the workspace .panel look and the same 16px rhythm. */
+.profile-staff-body .panel .section-heading { margin-bottom: 10px; }
+.profile-staff-body .panel .profile-identity { margin-top: 0; }
+.profile-staff-body .panel .profile-identity span { color: var(--ink); font-size: 0.85rem; }
 .profile-account-heading { margin: 8px 0 0; color: var(--imsda-navy); font-size: 1.25rem; }
-.profile-back-links .text-button { display: inline-flex; align-items: center; gap: 6px; }
 
 
 /* #576: one-line definitions under the roster Type control and in the CSV help. */
@@ -7830,6 +7833,21 @@ select:focus-visible {
   .club-form-answers dd, .club-form-answers dt { color: #111; }
   .club-form-restricted { border-color: #555; color: #333; }
 }
+
+/* #623: key "add" and save actions stay prominent and reachable on a phone. */
+/* Shared accent variant: a filled purple action that must outrank its neighbours. */
+.accent-button,
+button.accent-button { border: 1px solid var(--imsda-purple); background: var(--imsda-purple); color: white; }
+button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); background: color-mix(in srgb, var(--imsda-purple) 82%, black); }
+@media (max-width: 640px) {
+  .primary-button,
+  .secondary-button { min-height: 44px; }
+}
+
+/* Buttons sitting directly in a profile-page card get breathing room (#623). */
+.profile-page > .panel > button.secondary-button { margin: 10px 0; }
+.profile-shell-attendee .account-page-body { max-width: none; margin: 16px 0 0; }
+.profile-shell-attendee .profile-back-links { margin: 12px 0; }
 
 /* Collapsed disclosures for settings that do not apply to this event type (#624). */
 .event-more-settings > summary,

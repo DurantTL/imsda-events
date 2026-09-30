@@ -329,7 +329,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
             <small className="field-help"> For this event only.</small>
           </span>
           {!addingGuest && (
-            <button className="text-button" onClick={() => { setError(""); setAddingGuest(true); }} type="button">
+            <button className="secondary-button" onClick={() => { setError(""); setAddingGuest(true); }} type="button">
               <UserPlus aria-hidden="true" size={14} /> Add a person for this event
             </button>
           )}
