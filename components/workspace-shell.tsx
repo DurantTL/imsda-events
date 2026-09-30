@@ -9,8 +9,8 @@ import { currentStaffActingContext } from "@/modules/organizations/staff-act-as"
 
 /**
  * The staff workspace chrome (sidebar, header, act-as banner), shared by the
- * `(workspace)` layout and the staff-only `/profile` page (#623). `/profile`
- * passes `anyStaffWithoutEvents` so staff with no events still reach their profile
+ * `(workspace)` layout, which also hosts `/profile` (#646). The layout
+ * passes `anyStaffWithoutEvents` for `/profile` so staff with no events still reach their profile
  * instead of being sent to /no-access.
  */
 export async function WorkspaceShell({ anyStaffWithoutEvents = false, children }: { anyStaffWithoutEvents?: boolean; children: React.ReactNode }) {

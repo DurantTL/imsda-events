@@ -33,7 +33,7 @@ export function ClubAccessGate({ access }: { access: RosterAccessState }) {
       <Gate title="Set up two-step sign-in first">
         <p>
           Rosters hold birth dates for young people, so they need two-step sign-in.{" "}
-          <Link href="/profile">Set up an authenticator app or a passkey</Link>, then come back.
+          <Link href="/account/profile">Set up an authenticator app or a passkey</Link>, then come back.
         </p>
       </Gate>
     );

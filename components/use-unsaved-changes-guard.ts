@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
+import { registerUnsavedChanges } from "@/components/unsaved-changes-registry";
 
 const defaultMessage = "You have unsaved changes. Leave this page and discard them?";
 
@@ -9,6 +10,12 @@ export function useUnsavedChangesGuard(
   message = defaultMessage,
 ) {
   const allowNavigationRef = useRef(false);
+
+  // Expose the dirty state to programmatic navigation (#647).
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+    return registerUnsavedChanges(message);
+  }, [hasUnsavedChanges, message]);
 
   useEffect(() => {
     if (!hasUnsavedChanges) {
