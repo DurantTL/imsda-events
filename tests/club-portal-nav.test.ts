@@ -17,7 +17,7 @@ describe("club portal menu (#644)", () => {
       "People:Roster", "People:Honors", "People:Class tracking", "People:Honors & class reports",
       "Events:Events", "Events:Forms",
       "Records:Meeting notes", "Records:Monthly reports",
-      "Orders:Supplies", "Orders:Orders",
+      "Orders:Orders",
       "Club:Club info",
     ]);
     expect(items.find((item) => item.label === "Class tracking")?.href).toBe(`${base}/class-tracking`);
@@ -30,11 +30,11 @@ describe("club portal menu (#644)", () => {
   });
 
   it("gives each role exactly the destinations it had before, with Club info standing for team and profile", () => {
-    const everything = ["/", "/roster", "/honors", "/class-tracking", "/exports", "/events", "/forms", "/notes", "/reports", "/supplies", "/orders", "/club-info"];
+    const everything = ["/", "/roster", "/honors", "/class-tracking", "/exports", "/events", "/forms", "/notes", "/reports", "/orders", "/club-info"];
     expect(hrefs("DIRECTOR")).toEqual(everything);
     expect(hrefs("DEPUTY")).toEqual(everything);
     // A registrar: no forms, no notes or reports, no club info.
-    expect(hrefs("REGISTRAR")).toEqual(["/", "/roster", "/honors", "/class-tracking", "/exports", "/events", "/supplies", "/orders"]);
+    expect(hrefs("REGISTRAR")).toEqual(["/", "/roster", "/honors", "/class-tracking", "/exports", "/events", "/orders"]);
   });
 
   it("hides groups with no visible items for a registrar", () => {

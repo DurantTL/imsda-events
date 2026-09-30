@@ -39,3 +39,15 @@
 .chips li { display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 4px 2px 12px; font-size: .72rem; }
 .chipRemove { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border: 0; background: none; color: var(--muted); cursor: pointer; }
 .rowStatic { display: flex; align-items: center; min-height: 44px; padding-left: 32px; font-size: .74rem; }
+
+/* Order helper list, printable page (#654). */
+.printHeader { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px 16px; margin: 0; }
+.printHeader div { display: grid; gap: 2px; min-width: 0; }
+.printHeader dt { color: var(--muted); font-size: .63rem; }
+.printHeader dd { margin: 0; font-size: .78rem; overflow-wrap: anywhere; }
+.printSection { display: grid; gap: 6px; margin-top: 14px; break-inside: avoid; }
+.printSection h3 { margin: 0; color: var(--imsda-navy); font-size: .86rem; }
+.printTable { width: 100%; border-collapse: collapse; font-size: .74rem; }
+.printTable th, .printTable td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; overflow-wrap: anywhere; }
+.noPrint { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+@media print { .noPrint { display: none !important; } }

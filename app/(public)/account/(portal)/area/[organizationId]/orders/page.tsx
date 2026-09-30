@@ -3,14 +3,15 @@ import { notFound } from "next/navigation";
 import { BackLink } from "@/components/back-link";
 import { ClubOrderWorkspace } from "@/components/club-order-workspace";
 import { getPrisma } from "@/lib/prisma";
+import { listClubStock } from "@/modules/club-supplies/repository";
 import { loadOrderWorkspace } from "@/modules/club-orders/repository";
 import { loadUniformWorkspace } from "@/modules/uniforms/order-source";
 import { currentAreaCoordinatorViewerActive } from "@/modules/organizations/area-coordinators";
 
-export const metadata: Metadata = { title: "Club orders", robots: { index: false, follow: false, nocache: true } };
+export const metadata: Metadata = { title: "Orders", robots: { index: false, follow: false, nocache: true } };
 export const dynamic = "force-dynamic";
 
-/** Any club's orders (honors and uniforms), view only, for an Area Coordinator (#387, #487, #497). Reads what's on file; never writes. */
+/** Any club's orders helper list and supplies on hand, view only, for an Area Coordinator (#387, #487, #497). Reads what's on file; never writes. */
 export default async function AreaClubOrdersPage({ params }: { params: Promise<{ organizationId: string }> }) {
   if (!(await currentAreaCoordinatorViewerActive())) notFound();
   const { organizationId } = await params;
@@ -32,6 +33,7 @@ export default async function AreaClubOrdersPage({ params }: { params: Promise<{
         <ClubOrderWorkspace
           initial={await loadOrderWorkspace(organizationId)}
           initialUniforms={await loadUniformWorkspace(organizationId, { forEditing: false })}
+          stock={await listClubStock(organizationId)}
           organizationId={organizationId}
           readOnly
         />

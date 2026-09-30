@@ -31,11 +31,8 @@ export default async function AreaClubPage({ params }: { params: Promise<{ organ
       </section>
       <div className="account-page-body club-roster-stack">
         <BackLink href="/account/clubs">All clubs</BackLink>
-        <Link className="secondary-button" href={`/account/area/${organizationId}/supplies`}>
-          <Package aria-hidden="true" size={14} /> Club supplies
-        </Link>
         <Link className="secondary-button" href={`/account/area/${organizationId}/orders`}>
-          <Package aria-hidden="true" size={14} /> Club orders
+          <Package aria-hidden="true" size={14} /> Orders
         </Link>
         <Link className="secondary-button" href={`/account/area/${organizationId}/awards`}>
           <Package aria-hidden="true" size={14} /> Earned awards
