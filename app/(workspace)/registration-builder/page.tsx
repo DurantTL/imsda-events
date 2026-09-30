@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { AccessRestricted } from "@/components/access-restricted";
+import { BuilderPhoneNotice } from "@/components/builder-phone-notice";
 import { RegistrationBuilderWorkspace } from "@/components/registration-builder-workspace";
 import { resolveEventContext } from "@/modules/events/selection";
 import { listFormTemplates, listRegistrationForms } from "@/modules/forms/repository";
@@ -13,5 +14,8 @@ export default async function RegistrationBuilderPage({ searchParams }: { search
   if (!permissions.includes("MANAGE_FORMS")) {
     return <AccessRestricted title="Registration builder access is restricted" detail="Event administrators and registration managers can create, test, and publish event forms." />;
   }
-  return <RegistrationBuilderWorkspace key={event.id} eventId={event.id} eventSlug={event.slug} eventName={event.name} eventAudience={event.audience} eventBillingMode={event.billingMode} initialForms={await listRegistrationForms(event.id)} templates={listFormTemplates()} focusTarget={focusForm && focusField ? { formId: focusForm, fieldId: focusField } : null} />;
+  return <>
+    <BuilderPhoneNotice eventId={event.id} />
+    <div className="builder-phone-hidden"><RegistrationBuilderWorkspace key={event.id} eventId={event.id} eventSlug={event.slug} eventName={event.name} eventAudience={event.audience} eventBillingMode={event.billingMode} initialForms={await listRegistrationForms(event.id)} templates={listFormTemplates()} focusTarget={focusForm && focusField ? { formId: focusForm, fieldId: focusField } : null} /></div>
+  </>;
 }

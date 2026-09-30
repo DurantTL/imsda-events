@@ -8206,3 +8206,13 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
   .public-registration-page .club-form-sheet-header h2 { font-size: var(--heading-section); font-weight: 700; line-height: 1.25; }
 }
 .club-class-person legend strong { font-size: var(--heading-group); font-weight: 600; }
+
+/* Registration form builder on phones (#685): a notice replaces it under 768px. */
+.builder-phone-notice { display: none; }
+@media (max-width: 767px) {
+  .builder-phone-notice { display: grid; justify-items: start; gap: 10px; margin-top: 16px; padding: 20px; border-color: var(--imsda-gold); background: #fff9e8; color: var(--imsda-navy); }
+  .builder-phone-notice h2 { margin: 0; font-size: 1.05rem; }
+  .builder-phone-notice p { margin: 0; line-height: 1.5; }
+  .builder-phone-notice .primary-button { text-decoration: none; }
+  .builder-phone-hidden { display: none; }
+}
