@@ -15,6 +15,7 @@ import {
   contentBlocks,
   isInfoCardKind,
   safeContentHref,
+  safeNoticeHref,
   type EventContentTone,
 } from "@/modules/events/content-schemas";
 
@@ -117,7 +118,7 @@ export function EventInfoCards({
                     }
                     const href = link.assetId
                       ? `/api/public/events/${encodeURIComponent(eventSlug)}/assets/${encodeURIComponent(link.assetId)}`
-                      : safeContentHref(link.url);
+                      : (card.kind === "NOTICE" ? safeNoticeHref(link.url) : safeContentHref(link.url));
                     if (!href) return null;
                     const isMail = href.toLowerCase().startsWith("mailto:");
                     return (

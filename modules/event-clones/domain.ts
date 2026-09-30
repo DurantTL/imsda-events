@@ -379,6 +379,14 @@ const strippedConfirmationFallback = "Thank you. Your registration was received.
  * entirely; inside text, only the link itself is removed. Choice values are
  * never rewritten, because prices, limits, and conditions refer to them.
  */
+/**
+ * A NOTICE whose only content was an uploaded-file link (not copied) and whose
+ * text is empty would be copied as an empty card, so the clone drops it.
+ */
+export function isEmptyAfterClone(section: { kind: string; body: string; links: unknown[]; items?: unknown[] }): boolean {
+  return section.kind === "NOTICE" && section.body.trim() === "" && section.links.length === 0;
+}
+
 export function sanitizeSourceForClone(
   config: SourceConfiguration,
   appOrigins: readonly string[] = [],

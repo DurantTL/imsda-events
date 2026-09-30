@@ -117,6 +117,19 @@ describe("EventInfoCards rendering", () => {
     expect(html).toContain("&lt;img");
   });
 
+  it("renders no link for an http: notice link that reached storage", () => {
+    const html = render([card({
+      body: "Text",
+      links: [
+        { label: "Plain http", description: "", url: "http://example.org", assetId: null },
+        { label: "Secure", description: "", url: "https://example.org", assetId: null },
+      ],
+    })]);
+    expect(html).not.toContain("http://example.org");
+    expect(html).not.toContain("Plain http");
+    expect(html).toContain("https://example.org");
+  });
+
   it("never renders a javascript: link, even if one reached storage", () => {
     const html = render([card({
       body: "Text",

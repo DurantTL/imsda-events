@@ -13,6 +13,7 @@ import {
   reviewIssues,
   rewriteFormDefinitionForClone,
   sanitizeSourceForClone,
+  isEmptyAfterClone,
   type CloneDomainKey,
   type ConfirmEventCloneInput,
   type SourceConfiguration,
@@ -623,5 +624,12 @@ describe("info cards in a clone (#652)", () => {
       }],
     }), ["https://events.imsda.test"]);
     expect(clean.contentSections[0]!.items).toEqual([{ title: "Roster", text: "" }]);
+  });
+
+  it("drops a notice whose only content was an uploaded-file link", () => {
+    expect(isEmptyAfterClone({ kind: "NOTICE", body: "  ", links: [] })).toBe(true);
+    expect(isEmptyAfterClone({ kind: "NOTICE", body: "Text", links: [] })).toBe(false);
+    expect(isEmptyAfterClone({ kind: "NOTICE", body: "", links: [{}] })).toBe(false);
+    expect(isEmptyAfterClone({ kind: "RESOURCE_LINKS", body: "", links: [] })).toBe(false);
   });
 });

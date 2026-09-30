@@ -25,6 +25,7 @@ import {
   type ClonePricingSummary,
   type ConfirmEventCloneInput,
   type SourceConfiguration,
+  isEmptyAfterClone,
 } from "@/modules/event-clones/domain";
 import { normalizeHonorText, offeringSlotConflict } from "@/modules/honors/domain";
 import { calendarDayDifference, normalizeLocationName, shiftLocationsForClone } from "@/modules/event-locations/domain";
@@ -367,7 +368,10 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
       }
 
       if (include.contentSections) {
+        let copiedSections = 0;
         for (const section of config.contentSections) {
+          if (isEmptyAfterClone(section)) { skipped.assetLinks += section.assetLinkCount; continue; }
+          copiedSections += 1;
           await tx.eventContentSection.create({
             data: {
               eventId: event.id, kind: section.kind, title: section.title, body: section.body, position: section.position,
@@ -379,7 +383,7 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
           });
           skipped.assetLinks += section.assetLinkCount;
         }
-        copied.contentSections = config.contentSections.length;
+        copied.contentSections = copiedSections;
       }
 
       if (include.registrationForms) {

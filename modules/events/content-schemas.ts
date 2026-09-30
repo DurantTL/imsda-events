@@ -44,10 +44,17 @@ const httpsOnlySchema = z.string().refine((value) => {
  * The only way a stored link becomes an href. Anything that is not http(s) or
  * a well-formed mailto: address yields null, so a bad value that somehow
  * reached the database still cannot render as a clickable `javascript:` link.
+ * Notice cards use `safeNoticeHref`, which is stricter (https or mailto only).
  */
 export function safeContentHref(value: string | null | undefined): string | null {
   if (!value) return null;
   return linkUrlSchema.safeParse(value).success ? value : null;
+}
+
+/** Notice cards accept https and well-formed mailto only, matching the save rule. */
+export function safeNoticeHref(value: string | null | undefined): string | null {
+  if (!value) return null;
+  return z.union([httpsOnlySchema, mailtoSchema]).safeParse(value).success ? value : null;
 }
 
 export const eventContentLinkInputSchema = z.object({

@@ -48,15 +48,14 @@ export default async function GroupRegistrationPage({ params }: GroupRegistratio
   if (experience.experience.lifecycle.phase !== "OPEN" || experience.experience.lifecycle.capacityDecision === "FULL") {
     redirect(`/events/${encodeURIComponent(eventSlug)}`);
   }
+  const editableCards = await listPublishedRegistrationInfoCards(eventSlug);
   return (
     <GroupRegistrationFlow
       eventSlug={eventSlug}
       topContent={
-        <EventInfoCards
-          sections={await listPublishedRegistrationInfoCards(eventSlug)}
-          eventSlug={eventSlug}
-          placement="registration"
-        />
+        editableCards.length > 0
+          ? <EventInfoCards sections={editableCards} eventSlug={eventSlug} placement="registration" />
+          : undefined
       }
       ready={{
         ...experience,
