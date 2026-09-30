@@ -7104,6 +7104,12 @@ select:focus-visible {
 .translate-hint > svg { flex: 0 0 auto; margin-top: 2px; }
 .translate-hint a { color: var(--imsda-navy); font-weight: 700; text-underline-offset: 3px; }
 .public-registration-embed .translate-hint { display: none; }
+@media (max-width: 640px) {
+  .translate-hint { gap: 6px; padding: 6px 12px; line-height: 1.35; }
+  .translate-hint > svg { margin-top: 1px; }
+  /* The link text already says "How to translate"; the English sentence adds two more lines. */
+  .translate-hint-en { display: none; }
+}
 
 /* Honors Weekend setup (#357) */
 .honor-session-list { display: grid; gap: 8px; margin: 0 0 16px; padding: 0; list-style: none; }
@@ -7329,7 +7335,7 @@ select:focus-visible {
 .account-nav ul::-webkit-scrollbar { display: none; }
 .account-nav li { flex: none; }
 .account-nav a {
-  display: inline-flex; min-height: 42px; align-items: center; border-radius: 10px; padding: 8px 15px;
+  display: inline-flex; min-height: 44px; align-items: center; border-radius: 10px; padding: 8px 15px;
   color: var(--muted); font-size: max(var(--type-body-floor, 0px), 0.76rem); font-weight: 800; text-decoration: none; white-space: nowrap;
 }
 .account-nav a:hover { background: var(--imsda-navy-soft); color: var(--imsda-navy); }
@@ -7340,6 +7346,13 @@ select:focus-visible {
 .account-nav-secondary .account-nav-group > ul { border-width: 0; }
 .account-nav-group-label {
   color: var(--imsda-navy); font-size: max(var(--type-floor, 0px), 0.72rem); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap;
+}
+/* Scroll cue for a tab row that overflows: a fade on each side that still has
+   tabs hidden (account-section-nav.tsx keeps data-fade-start/-end current). */
+.account-nav[data-fade-end="true"] > ul { mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); }
+.account-nav[data-fade-start="true"] > ul { mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent); }
+.account-nav[data-fade-start="true"][data-fade-end="true"] > ul {
+  mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent);
 }
 .account-nav-secondary { width: 100%; margin: 0; }
 .account-nav-secondary ul { border-width: 0 0 1px; border-radius: 0; background: transparent; padding: 0; gap: 2px; }
@@ -7412,7 +7425,27 @@ select:focus-visible {
   .club-home-stat svg { display: none; }
   .club-home-stat strong { font-size: 1.3rem; }
   .club-home-stat span { font-size: var(--text-helper-min); line-height: 1.3; }
-  .account-nav-primary ul { mask-image: linear-gradient(to right, #000 88%, transparent); }
+}
+@media (max-width: 640px) {
+  /* Club roster toolbar on a phone: every action is a full-width 44px row,
+     with one even gap between them. */
+  .club-roster-heading-actions { display: grid; flex: 1 1 100%; grid-template-columns: 1fr; justify-content: stretch; gap: 8px; }
+  .club-roster-heading-actions .count-badge { justify-self: start; }
+  .club-roster-heading-actions :is(.primary-button, .secondary-button) { width: 100%; min-height: 44px; justify-content: center; }
+  .club-roster-heading .club-roster-heading-actions .secondary-button { width: 100%; }
+  /* Same for a card heading's action pair (Monthly Records meetings): it overflowed 390px. */
+  .club-roster-heading > .club-team-invite-actions { display: grid; flex: 1 1 100%; grid-template-columns: 1fr; gap: 8px; }
+  .club-roster-heading > .club-team-invite-actions :is(.primary-button, .secondary-button) { width: 100%; min-height: 44px; justify-content: center; white-space: normal; }
+  .club-roster-toolbar { display: grid; grid-template-columns: 1fr; justify-content: stretch; gap: 8px; }
+  .club-roster-toolbar .roster-csv-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .club-roster-toolbar .roster-csv-actions > *,
+  .club-roster-toolbar > .text-button {
+    display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 6px;
+    border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 8px 12px; text-decoration: none;
+  }
+  /* The three Monthly Records counters: one even column instead of 2 + 1. */
+  .club-roster-layout .club-home-stats { grid-template-columns: 1fr; gap: 8px; }
+  .club-roster-layout .club-home-stat { grid-template-columns: minmax(2ch, auto) 1fr; align-items: center; gap: 12px; }
 }
 @media (max-width: 580px) {
   .account-nav, .account-page-body, .account-overview-grid { margin-right: 12px; margin-left: 12px; }

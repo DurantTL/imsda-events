@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { BackLink } from "@/components/back-link";
 import { ClubProfileForm } from "@/components/club-profile-form";
 import { ClubTeamWorkspace } from "@/components/club-team-workspace";
 import { listPendingClubTeamInvites } from "@/modules/club-imports/invites";
@@ -19,12 +18,10 @@ export default async function ClubInfoPage({ params }: { params: Promise<{ organ
   const { organizationId } = await params;
   const access = await getRosterAccessStateForPage(organizationId);
   if (access.state !== "OPEN") return null;
-  const back = <BackLink href={`/account/clubs/${organizationId}`}>Back to {access.club.name}</BackLink>;
   const { editProfile, manageTeam } = access.capabilities;
   if (!editProfile && !manageTeam) {
     return (
       <>
-        {back}
         <p className="public-manage-empty">Only the club&apos;s director or deputy can change the club&apos;s info.</p>
       </>
     );
@@ -37,7 +34,6 @@ export default async function ClubInfoPage({ params }: { params: Promise<{ organ
 
   return (
     <>
-      {back}
       {profileSection && (
         <div id="club-profile">
           <ClubProfileForm

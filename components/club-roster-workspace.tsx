@@ -271,7 +271,7 @@ export function ClubRosterWorkspace({
             <button className="text-button" onClick={() => setComplianceFilter(null)} type="button">Clear filter</button>
           </p>
         )}
-        <div className="club-roster-tools">
+        <div className="club-roster-tools club-roster-toolbar">
           <label className="checkbox-label">
             <input checked={showInactive} onChange={(event) => setShowInactive(event.target.checked)} type="checkbox" />
             Show inactive people

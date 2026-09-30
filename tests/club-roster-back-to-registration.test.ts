@@ -48,7 +48,7 @@ beforeEach(() => {
 
 describe("roster page Back to registration (#643)", () => {
   it("shows the link for this club's registration path", async () => {
-    expect(await hrefs("/account/clubs/club-1/events/event-1")).toEqual(["/account/clubs/club-1", "/account/clubs/club-1/events/event-1"]);
+    expect(await hrefs("/account/clubs/club-1/events/event-1")).toEqual(["/account/clubs/club-1/events/event-1"]);
   });
 
   it.each([
@@ -57,7 +57,7 @@ describe("roster page Back to registration (#643)", () => {
     "/account/clubs/club-1",
     "https://evil.test/account/clubs/club-1/events/event-1",
     ["/account/clubs/club-1/events/event-1", "/x"],
-  ])("shows only the club link for %s", async (value) => {
-    expect(await hrefs(value)).toEqual(["/account/clubs/club-1"]);
+  ])("shows no back link (the club tabs already lead Home) for %s", async (value) => {
+    expect(await hrefs(value)).toEqual([]);
   });
 });

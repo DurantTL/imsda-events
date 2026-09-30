@@ -22,6 +22,16 @@ function isActive(pathname: string, item: AccountNavItem) {
 }
 
 /**
+ * A group heading that one of its own tabs already says ("Events" above
+ * "Events", "Club" above "Club info") only takes up room in a row that scrolls,
+ * so it is left off the screen; the list keeps the name for assistive tech.
+ */
+function groupLabelIsRedundant(group: string, items: AccountNavItem[]) {
+  const name = group.trim().toLowerCase();
+  return items.some((item) => item.label.toLowerCase().includes(name));
+}
+
+/**
  * Tabs across the attendee and club-director pages. On a phone the row
  * scrolls sideways and keeps the current tab in view instead of wrapping into
  * a tall stack of buttons.
@@ -36,11 +46,35 @@ export function AccountSectionNav({
   variant?: "primary" | "secondary";
 }) {
   const pathname = usePathname();
+  const navRef = useRef<HTMLElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
 
+  // Open with the current tab centred in the row (the row scrolls sideways on
+  // a phone), then keep the edge fades in step with how far the row is scrolled.
+  // Only the row itself scrolls: scrollIntoView could also move the page.
   useEffect(() => {
-    const current = listRef.current?.querySelector<HTMLElement>("[aria-current=page]");
-    current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const nav = navRef.current;
+    const list = listRef.current;
+    if (!nav || !list) return;
+    const current = list.querySelector<HTMLElement>("[aria-current=page]");
+    if (current) {
+      const listBox = list.getBoundingClientRect();
+      const currentBox = current.getBoundingClientRect();
+      const offset = currentBox.left - listBox.left + list.scrollLeft;
+      list.scrollLeft = Math.max(0, offset - (list.clientWidth - currentBox.width) / 2);
+    }
+    const updateFades = () => {
+      nav.dataset.fadeStart = String(list.scrollLeft > 1);
+      nav.dataset.fadeEnd = String(list.scrollLeft + list.clientWidth < list.scrollWidth - 1);
+    };
+    updateFades();
+    list.addEventListener("scroll", updateFades, { passive: true });
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateFades);
+    observer?.observe(list);
+    return () => {
+      list.removeEventListener("scroll", updateFades);
+      observer?.disconnect();
+    };
   }, [pathname]);
 
   const groupIdBase = useId();
@@ -60,13 +94,19 @@ export function AccountSectionNav({
   );
 
   return (
-    <nav aria-label={label} className={`account-nav account-nav-${variant}`}>
+    <nav aria-label={label} className={`account-nav account-nav-${variant}`} ref={navRef}>
       <ul ref={listRef}>
         {sections.map((section, index) =>
           section.group ? (
             <li className="account-nav-group" key={`${section.group}-${index}`}>
-              <span className="account-nav-group-label" id={`${groupIdBase}-${index}`}>{section.group}</span>
-              <ul aria-labelledby={`${groupIdBase}-${index}`}>{section.items.map(renderItem)}</ul>
+              {groupLabelIsRedundant(section.group, section.items)
+                ? <ul aria-label={section.group}>{section.items.map(renderItem)}</ul>
+                : (
+                  <>
+                    <span className="account-nav-group-label" id={`${groupIdBase}-${index}`}>{section.group}</span>
+                    <ul aria-labelledby={`${groupIdBase}-${index}`}>{section.items.map(renderItem)}</ul>
+                  </>
+                )}
             </li>
           ) : (
             section.items.map(renderItem)

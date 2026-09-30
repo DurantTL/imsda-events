@@ -49,7 +49,7 @@ export function ClubYearTiles({
   return (
     <div className="club-year-tiles">
       <div className="club-year-tile">
-        <h3 className="club-year-tile-heading"><UsersRound size={16} aria-hidden="true" /> Roster</h3>
+        <h2 className="club-year-tile-heading"><UsersRound size={16} aria-hidden="true" /> Roster</h2>
         <p className="club-year-tile-stat">{roster.active}</p>
         <p className="club-year-tile-detail">active this club year · {roster.staff} staff · {roster.members} members</p>
         {roster.byClass.length > 0 && (
@@ -62,7 +62,7 @@ export function ClubYearTiles({
 
       {honors && (
         <div className="club-year-tile">
-          <h3 className="club-year-tile-heading"><Award size={16} aria-hidden="true" /> Honors</h3>
+          <h2 className="club-year-tile-heading"><Award size={16} aria-hidden="true" /> Honors</h2>
           {honors.inProgress === 0 && honors.completedThisYear === 0 ? (
             <p className="club-year-tile-detail">None recorded yet this club year.</p>
           ) : (
@@ -77,7 +77,7 @@ export function ClubYearTiles({
 
       {compliance && (
         <div className="club-year-tile">
-          <h3 className="club-year-tile-heading"><ShieldCheck size={16} aria-hidden="true" /> Background checks</h3>
+          <h2 className="club-year-tile-heading"><ShieldCheck size={16} aria-hidden="true" /> Background checks</h2>
           {complianceTotal === 0 ? (
             <p className="club-year-tile-detail"><CheckCircle2 size={15} aria-hidden="true" /> All current.</p>
           ) : (
@@ -92,7 +92,7 @@ export function ClubYearTiles({
       )}
 
       <div className="club-year-tile">
-        <h3 className="club-year-tile-heading"><CalendarDays size={16} aria-hidden="true" /> Events</h3>
+        <h2 className="club-year-tile-heading"><CalendarDays size={16} aria-hidden="true" /> Events</h2>
         <p className="club-year-tile-stat">{events.open}</p>
         <p className="club-year-tile-detail">
           {events.open === 1 ? "event open to register" : "events open to register"} · {events.registered} registered
@@ -102,7 +102,7 @@ export function ClubYearTiles({
 
       {reports && (
         <div className="club-year-tile">
-          <h3 className="club-year-tile-heading"><FileText size={16} aria-hidden="true" /> Monthly reports</h3>
+          <h2 className="club-year-tile-heading"><FileText size={16} aria-hidden="true" /> Monthly reports</h2>
           <p className="club-year-tile-stat">{reports.filed}</p>
           <p className="club-year-tile-detail">
             filed this club year

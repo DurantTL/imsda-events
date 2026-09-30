@@ -116,7 +116,8 @@ export function AutoEventInfoCards({ cards }: { cards: EventInfoCards }) {
               {section.title && <h3>{section.title}</h3>}
               {section.groups.map((group, groupIndex) => (
                 <div className="auto-info-fee-group" key={`${groupIndex}:${group.title}`}>
-                  <h3>{group.title}</h3>
+                  {/* The card heading already says "Fees"; don't repeat it as the group heading. */}
+                  {group.title.trim().toLowerCase() !== "fees" && <h3>{group.title}</h3>}
                   <dl>
                     {group.lines.map((line, lineIndex) => (
                       <div key={`${lineIndex}:${line.label}`}>

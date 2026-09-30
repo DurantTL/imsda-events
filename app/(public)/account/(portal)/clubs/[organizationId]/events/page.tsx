@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { BackLink } from "@/components/back-link";
 import { ClubEventList } from "@/components/club-event-list";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { listClubEvents } from "@/modules/club-registrations/repository";
@@ -14,7 +13,6 @@ export default async function ClubEventsPage({ params }: { params: Promise<{ org
   const events = await listClubEvents(organizationId);
   return (
     <>
-      <BackLink href={`/account/clubs/${organizationId}`}>Back to {access.club.name}</BackLink>
       <ClubEventList events={events} organizationId={organizationId} />
     </>
   );

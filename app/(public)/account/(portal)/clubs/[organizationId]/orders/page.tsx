@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { BackLink } from "@/components/back-link";
 import { ClubOrderWorkspace } from "@/components/club-order-workspace";
 import { loadOrderWorkspace } from "@/modules/club-orders/repository";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
@@ -27,7 +26,6 @@ export default async function ClubOrdersPage({ params }: { params: Promise<{ org
   const uniforms = await loadUniformWorkspace(organizationId, { forEditing: access.capabilities.manageTeam });
   return (
     <>
-      <BackLink href={`/account/clubs/${organizationId}`}>Back to {access.club.name}</BackLink>
       <ClubOrderWorkspace
         initial={await loadOrderWorkspace(organizationId)}
         initialUniforms={uniforms}

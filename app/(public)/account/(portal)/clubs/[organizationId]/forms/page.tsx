@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { FileText, Printer } from "lucide-react";
-import { BackLink } from "@/components/back-link";
 import { RevokeClubFormLinkButton, SendClubFormLink } from "@/components/club-forms-actions";
 import { clubLeaderViewerFromAccess } from "@/modules/club-forms/access";
 import { CLUB_FORM_LINK_DEFAULT_DAYS, isClubFormsRole } from "@/modules/club-forms/domain";
@@ -43,11 +42,9 @@ export default async function ClubFormsPage({
   const [{ organizationId }, { member }] = await Promise.all([params, searchParams]);
   const access = await getRosterAccessStateForPage(organizationId);
   if (access.state !== "OPEN") return null;
-  const back = <BackLink href={`/account/clubs/${organizationId}`}>Back to {access.club.name}</BackLink>;
   if (!isClubFormsRole(access.club.role)) {
     return (
       <>
-        {back}
         <p className="public-manage-empty">Club forms are kept by the club&apos;s director and deputy.</p>
       </>
     );
@@ -63,7 +60,6 @@ export default async function ClubFormsPage({
 
   return (
     <>
-      {back}
       <section className="public-manage-card club-forms-intro">
         <p className="public-registration-eyebrow">Club forms</p>
         <h2>Forms for your club&apos;s files</h2>
