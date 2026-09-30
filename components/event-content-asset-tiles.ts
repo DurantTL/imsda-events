@@ -1,11 +1,21 @@
 /** Pure helpers for how deleting an uploaded file affects the content
  * editor's sections. Kept free of React so they can be tested directly. */
 
+import type {
+  EventContentKind,
+  EventContentPlacement,
+  EventContentTone,
+} from "@/modules/events/content-schemas";
+
 export type LinkDraft = { label: string; description: string; url: string | null; assetId: string | null };
 export type SectionDraft = {
-  kind: "RICH_TEXT" | "RESOURCE_LINKS";
+  kind: EventContentKind;
   title: string;
   body: string;
+  /** Info cards (#652). Optional so older drafts and fixtures stay valid. */
+  tone?: EventContentTone | null;
+  placement?: EventContentPlacement;
+  items?: Array<{ title: string; text: string }>;
   isPublished: boolean;
   links: LinkDraft[];
 };
@@ -31,7 +41,10 @@ export function localAssetImpact(sections: SectionDraft[], assetId: string) {
   return {
     affectedTitles: [...new Set(affected.map(sectionLabel))],
     emptiedTitles: [...new Set(affected
-      .filter((section) => section.kind === "RESOURCE_LINKS" && section.links.every((link) => link.assetId === assetId))
+      .filter((section) => (
+        section.links.every((link) => link.assetId === assetId)
+        && (section.kind === "RESOURCE_LINKS" || (section.kind === "NOTICE" && section.body.trim() === ""))
+      ))
       .map(sectionLabel))],
   };
 }

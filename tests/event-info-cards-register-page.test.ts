@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getPublicRegistrationExperience: vi.fn(),
   getAutoEventInfoCards: vi.fn(),
+  listPublishedRegistrationInfoCards: vi.fn(),
   eventFindFirst: vi.fn(),
   formProps: vi.fn(),
 }));
@@ -15,6 +16,9 @@ vi.mock("@/modules/forms/public-repository", () => ({
 }));
 vi.mock("@/modules/event-info-cards/repository", () => ({
   getAutoEventInfoCards: mocks.getAutoEventInfoCards,
+}));
+vi.mock("@/modules/events/content-repository", () => ({
+  listPublishedRegistrationInfoCards: mocks.listPublishedRegistrationInfoCards,
 }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({
   getCurrentAttendee: vi.fn().mockResolvedValue({ account: null }),
@@ -59,6 +63,7 @@ const render = async () => renderToStaticMarkup(await RegisterPage({
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getPublicRegistrationExperience.mockResolvedValue(experience);
+  mocks.listPublishedRegistrationInfoCards.mockResolvedValue([]);
 });
 
 describe("auto info cards on the registration page", () => {
@@ -88,5 +93,16 @@ describe("the card repository only serves club events", () => {
     const { getAutoEventInfoCards } = await import("@/modules/event-info-cards/repository");
     await expect(getAutoEventInfoCards("general-event")).resolves.toBeNull();
     expect(mocks.eventFindFirst.mock.calls[0]![0].where).toMatchObject({ slug: "general-event", isPublished: true, audience: "CLUB" });
+  });
+
+  it("shows the editable cards first, then the auto cards", async () => {
+    mocks.getAutoEventInfoCards.mockResolvedValue(cards);
+    mocks.listPublishedRegistrationInfoCards.mockResolvedValue([
+      { id: "card-1", kind: "NOTICE", title: "Synthetic editable notice", body: "Bring a synthetic item.", tone: "INFO", placement: "REGISTRATION_FORM", items: [], links: [] },
+    ]);
+    const markup = await render();
+    expect(markup.indexOf("Synthetic editable notice")).toBeGreaterThan(-1);
+    expect(markup.indexOf("Synthetic editable notice")).toBeLessThan(markup.indexOf("Registration deadlines"));
+    expect(markup.indexOf("Registration deadlines")).toBeLessThan(markup.indexOf("REGISTRATION-FORM-STUB"));
   });
 });

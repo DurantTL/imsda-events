@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { AutoEventInfoCards } from "@/components/auto-event-info-cards";
+import { EventInfoCards } from "@/components/event-info-cards";
 import { PublicRegistrationForm } from "@/components/public-registration-form";
+import { listPublishedRegistrationInfoCards } from "@/modules/events/content-repository";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import {
   attendeeProfilePrefill,
@@ -71,6 +73,7 @@ export default async function PublicRegistrationPage({
   // Auto info cards (#651): club events only. The repository returns null for
   // any other audience, so a general event's registration page is unchanged.
   const autoCards = await getAutoEventInfoCards(eventSlug);
+  const editableCards = await listPublishedRegistrationInfoCards(eventSlug);
 
   return (
     <PublicRegistrationForm
@@ -86,7 +89,14 @@ export default async function PublicRegistrationPage({
       initialResponses={scopedPrefill("REGISTRATION")}
       initialAttendeeResponses={scopedPrefill("ATTENDEE")}
       disableDrafts={Boolean(account)}
-      topContent={autoCards ? <AutoEventInfoCards cards={autoCards} /> : undefined}
+      topContent={
+        editableCards.length > 0 || autoCards ? (
+          <>
+            <EventInfoCards sections={editableCards} eventSlug={eventSlug} placement="registration" />
+            {autoCards ? <AutoEventInfoCards cards={autoCards} /> : null}
+          </>
+        ) : undefined
+      }
     />
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowRight, UsersRound } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 import { ClassPickFields } from "@/components/class-pick-fields";
@@ -46,7 +46,7 @@ function readSaved(eventSlug: string): Saved | null {
  * is no payment step. The server prices, checks ages and takes the seats; this
  * only guides.
  */
-export function GroupRegistrationFlow({ eventSlug, ready }: { eventSlug: string; ready: Ready }) {
+export function GroupRegistrationFlow({ eventSlug, ready, topContent }: { eventSlug: string; ready: Ready; topContent?: ReactNode }) {
   const { experience, locations, honorsCatalog } = ready;
   const definition = experience.form.definition;
   const pickableLocations = locations.filter((location) => (
@@ -190,6 +190,7 @@ export function GroupRegistrationFlow({ eventSlug, ready }: { eventSlug: string;
       initialResponses={{} as FormResponses}
       lifecycle={experience.lifecycle}
       pricingDate={experience.pricingDate}
+      topContent={topContent}
     />
   );
 }

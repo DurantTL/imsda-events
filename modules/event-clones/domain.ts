@@ -162,10 +162,14 @@ export type SourceConfiguration = {
     community: SourceCommunitySettings | null;
   };
   contentSections: Array<{
-    kind: "RICH_TEXT" | "RESOURCE_LINKS";
+    kind: "RICH_TEXT" | "RESOURCE_LINKS" | "NOTICE" | "STEPS" | "CHECKLIST";
     title: string;
     body: string;
     position: number;
+    /** Info cards (#652). Absent on older sources, which read as no tone, public page, no items. */
+    tone?: "INFO" | "DEADLINE" | "REQUIREMENT" | "SUCCESS" | "HELP" | null;
+    placement?: "PUBLIC_PAGE" | "REGISTRATION_FORM" | "BOTH";
+    items?: Array<{ title: string; text: string }>;
     links: Array<{ label: string; description: string; url: string; position: number }>;
     /** Links that point at an uploaded file: not copied. */
     assetLinkCount: number;
@@ -375,6 +379,14 @@ const strippedConfirmationFallback = "Thank you. Your registration was received.
  * entirely; inside text, only the link itself is removed. Choice values are
  * never rewritten, because prices, limits, and conditions refer to them.
  */
+/**
+ * A NOTICE whose only content was an uploaded-file link (not copied) and whose
+ * text is empty would be copied as an empty card, so the clone drops it.
+ */
+export function isEmptyAfterClone(section: { kind: string; body: string; links: unknown[]; items?: unknown[] }): boolean {
+  return section.kind === "NOTICE" && section.body.trim() === "" && section.links.length === 0;
+}
+
 export function sanitizeSourceForClone(
   config: SourceConfiguration,
   appOrigins: readonly string[] = [],
@@ -425,6 +437,13 @@ export function sanitizeSourceForClone(
   const contentSections = config.contentSections.map((section) => ({
     ...section,
     body: text("contentSections", `Section "${section.title}" text`, section.body),
+    // An entry whose title was only a private link has nothing left to show.
+    items: section.items
+      ?.map((item, index) => ({
+        title: text("contentSections", `Section "${section.title}" entry ${index + 1} title`, item.title).trim(),
+        text: text("contentSections", `Section "${section.title}" entry ${index + 1} text`, item.text),
+      }))
+      .filter((item) => item.title !== ""),
     links: section.links.flatMap((link) => {
       if (url("contentSections", `Section "${section.title}" link "${link.label}"`, link.url) === null) return [];
       return [{ ...link, description: text("contentSections", `Section "${section.title}" link "${link.label}" description`, link.description) }];

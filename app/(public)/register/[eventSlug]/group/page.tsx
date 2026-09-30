@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
+import { EventInfoCards } from "@/components/event-info-cards";
 import { GroupRegistrationFlow } from "@/components/group-registration-flow";
+import { listPublishedRegistrationInfoCards } from "@/modules/events/content-repository";
 import { GroupRegistrationError, getGroupRegistrationExperience } from "@/modules/group-registrations/repository";
 
 export const dynamic = "force-dynamic";
@@ -46,9 +48,15 @@ export default async function GroupRegistrationPage({ params }: GroupRegistratio
   if (experience.experience.lifecycle.phase !== "OPEN" || experience.experience.lifecycle.capacityDecision === "FULL") {
     redirect(`/events/${encodeURIComponent(eventSlug)}`);
   }
+  const editableCards = await listPublishedRegistrationInfoCards(eventSlug);
   return (
     <GroupRegistrationFlow
       eventSlug={eventSlug}
+      topContent={
+        editableCards.length > 0
+          ? <EventInfoCards sections={editableCards} eventSlug={eventSlug} placement="registration" />
+          : undefined
+      }
       ready={{
         ...experience,
         event: experience.event,

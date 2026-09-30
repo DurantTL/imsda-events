@@ -13,6 +13,7 @@ import {
   reviewIssues,
   rewriteFormDefinitionForClone,
   sanitizeSourceForClone,
+  isEmptyAfterClone,
   type CloneDomainKey,
   type ConfirmEventCloneInput,
   type SourceConfiguration,
@@ -591,5 +592,44 @@ describe("locations in a clone (#413)", () => {
     const body = parse({ include: { ...all, locations: true } });
     expect(cloneRequestInputOf(body).include.locations).toBe(true);
     expect(canonicalJson(cloneRequestInputOf(body))).not.toBe(canonicalJson(cloneRequestInputOf(parse({ include: { ...all, locations: false } }))));
+  });
+});
+
+describe("info cards in a clone (#652)", () => {
+  it("carries tone, placement, and entries, and strips private links from entries", () => {
+    const { config: clean, findings } = sanitizeSourceForClone(config({
+      contentSections: [{
+        kind: "STEPS", title: "Steps", body: "", position: 1, assetLinkCount: 0, links: [],
+        tone: null, placement: "BOTH",
+        items: [{ title: "Open the form", text: "Use https://example.test/help?sig=MARKER-SIG-VALUE to start." }],
+      }],
+    }), ["https://events.imsda.test"]);
+    const section = clean.contentSections[0]!;
+    expect(section.kind).toBe("STEPS");
+    expect(section.placement).toBe("BOTH");
+    expect(section.items?.[0]?.title).toBe("Open the form");
+    expect(JSON.stringify(section.items)).not.toContain("MARKER-SIG-VALUE");
+    expect(findings.some((finding) => finding.location.includes("entry 1 text"))).toBe(true);
+  });
+
+  it("drops an entry whose title was only a private link", () => {
+    const { config: clean } = sanitizeSourceForClone(config({
+      contentSections: [{
+        kind: "CHECKLIST", title: "Ready", body: "", position: 1, assetLinkCount: 0, links: [],
+        tone: null, placement: "PUBLIC_PAGE",
+        items: [
+          { title: "https://example.test/help?sig=MARKER-SIG-VALUE", text: "" },
+          { title: "Roster", text: "" },
+        ],
+      }],
+    }), ["https://events.imsda.test"]);
+    expect(clean.contentSections[0]!.items).toEqual([{ title: "Roster", text: "" }]);
+  });
+
+  it("drops a notice whose only content was an uploaded-file link", () => {
+    expect(isEmptyAfterClone({ kind: "NOTICE", body: "  ", links: [] })).toBe(true);
+    expect(isEmptyAfterClone({ kind: "NOTICE", body: "Text", links: [] })).toBe(false);
+    expect(isEmptyAfterClone({ kind: "NOTICE", body: "", links: [{}] })).toBe(false);
+    expect(isEmptyAfterClone({ kind: "RESOURCE_LINKS", body: "", links: [] })).toBe(false);
   });
 });

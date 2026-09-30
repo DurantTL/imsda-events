@@ -25,10 +25,12 @@ import {
   type ClonePricingSummary,
   type ConfirmEventCloneInput,
   type SourceConfiguration,
+  isEmptyAfterClone,
 } from "@/modules/event-clones/domain";
 import { normalizeHonorText, offeringSlotConflict } from "@/modules/honors/domain";
 import { calendarDayDifference, normalizeLocationName, shiftLocationsForClone } from "@/modules/event-locations/domain";
 import { activeCoordinatorAccountIds } from "@/modules/event-locations/coordinators";
+import { parseEventContentItems } from "@/modules/events/content-schemas";
 import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { getEventSettings } from "@/modules/events/repository";
 import { createRegistrationFormFromDefinitionInTransaction } from "@/modules/forms/repository";
@@ -139,6 +141,7 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
     },
     contentSections: sections.map((section) => ({
       kind: section.kind, title: section.title, body: section.body, position: section.position,
+      tone: section.tone, placement: section.placement, items: parseEventContentItems(section.items),
       links: section.links
         .filter((link) => link.assetId === null && link.url !== null)
         .map((link) => ({ label: link.label, description: link.description, url: link.url!, position: link.position })),
@@ -365,10 +368,14 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
       }
 
       if (include.contentSections) {
+        let copiedSections = 0;
         for (const section of config.contentSections) {
+          if (isEmptyAfterClone(section)) { skipped.assetLinks += section.assetLinkCount; continue; }
+          copiedSections += 1;
           await tx.eventContentSection.create({
             data: {
               eventId: event.id, kind: section.kind, title: section.title, body: section.body, position: section.position,
+              tone: section.tone ?? null, placement: section.placement ?? "PUBLIC_PAGE", items: section.items ?? [],
               // Reset: a copied section is hidden until staff publish it.
               isPublished: false,
               links: { create: section.links },
@@ -376,7 +383,7 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
           });
           skipped.assetLinks += section.assetLinkCount;
         }
-        copied.contentSections = config.contentSections.length;
+        copied.contentSections = copiedSections;
       }
 
       if (include.registrationForms) {

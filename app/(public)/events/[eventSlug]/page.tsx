@@ -15,6 +15,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
+import { EventInfoCards } from "@/components/event-info-cards";
 import { TranslateHint } from "@/components/translate-hint";
 import { AutoEventHeader, AutoEventInfoCards } from "@/components/auto-event-info-cards";
 import { getAutoEventInfoCards } from "@/modules/event-info-cards/repository";
@@ -162,6 +163,8 @@ export default async function PublicEventPage({
           </ul>
         </section>
       )}
+
+      <EventInfoCards sections={landing.contentSections} eventSlug={landing.event.slug} placement="page" />
 
       {resourceSections.map((section, sectionIndex) => {
         const headingId = `public-event-resources-${sectionIndex}`;

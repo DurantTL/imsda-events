@@ -43,6 +43,8 @@ function linksInput(links: EventContentInput["sections"][number]["links"]): Even
         kind: "RESOURCE_LINKS",
         title: "Downloads",
         body: "",
+        placement: "PUBLIC_PAGE",
+        items: [],
         isPublished: true,
         links,
       },
@@ -157,7 +159,7 @@ describe("replaceEventContent", () => {
     const { create, findMany } = mockPrisma([]);
     const input: EventContentInput = {
       sections: [
-        { kind: "RICH_TEXT", title: "Lodging", body: "Rooms are held.", isPublished: true, links: [] },
+        { kind: "RICH_TEXT", title: "Lodging", body: "Rooms are held.", placement: "PUBLIC_PAGE", items: [], isPublished: true, links: [] },
       ],
     };
 

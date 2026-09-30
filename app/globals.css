@@ -7895,6 +7895,111 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
   margin-bottom: 14px;
 }
 
+/* Event info cards (#652): notices, steps and checklists. Plain text only.
+   Tones are tokens, and every tone also carries an icon and a text label. */
+:root {
+  --info-card-info-bg: #e6f0f9;
+  --info-card-info-edge: #1d5f9c;
+  --info-card-deadline-bg: #fdeceb;
+  --info-card-deadline-edge: #b3261e;
+  --info-card-requirement-bg: #fff1e0;
+  --info-card-requirement-edge: #b45309;
+  --info-card-success-bg: #e5f3ed;
+  --info-card-success-edge: #267357;
+  --info-card-help-bg: #f1eaf7;
+  --info-card-help-edge: #582c83;
+  --info-card-neutral-bg: #ffffff;
+  --info-card-neutral-edge: #003b5c;
+  --info-card-ink: #1f3039;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --info-card-info-bg: #12283a;
+    --info-card-info-edge: #8ec1f0;
+    --info-card-deadline-bg: #3a1917;
+    --info-card-deadline-edge: #ff9f98;
+    --info-card-requirement-bg: #36230d;
+    --info-card-requirement-edge: #f2b36b;
+    --info-card-success-bg: #12301f;
+    --info-card-success-edge: #86d4ad;
+    --info-card-help-bg: #261a38;
+    --info-card-help-edge: #cdb0ef;
+    --info-card-neutral-bg: #17232b;
+    --info-card-neutral-edge: #9cc7de;
+    --info-card-ink: #edf3f6;
+  }
+}
+.event-info-cards {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  width: calc(100% - 48px);
+  max-width: 1132px;
+  margin: 0 auto 22px;
+}
+.event-info-card {
+  --card-bg: var(--info-card-neutral-bg);
+  --card-edge: var(--info-card-neutral-edge);
+  border: 1px solid var(--card-edge);
+  border-left-width: 6px;
+  border-radius: 14px;
+  background: var(--card-bg);
+  color: var(--info-card-ink);
+  padding: 18px 20px;
+}
+.event-info-card.is-info { --card-bg: var(--info-card-info-bg); --card-edge: var(--info-card-info-edge); }
+.event-info-card.is-deadline { --card-bg: var(--info-card-deadline-bg); --card-edge: var(--info-card-deadline-edge); }
+.event-info-card.is-requirement { --card-bg: var(--info-card-requirement-bg); --card-edge: var(--info-card-requirement-edge); }
+.event-info-card.is-success { --card-bg: var(--info-card-success-bg); --card-edge: var(--info-card-success-edge); }
+.event-info-card.is-help { --card-bg: var(--info-card-help-bg); --card-edge: var(--info-card-help-edge); }
+.event-info-card-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.event-info-card-icon { display: inline-flex; flex: none; color: var(--card-edge); }
+.event-info-card-tone {
+  margin: 0;
+  color: var(--card-edge);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.event-info-card h2 { margin: 2px 0 0; font-size: 1.05rem; line-height: 1.3; overflow-wrap: anywhere; }
+.event-info-card-body { font-size: 0.92rem; line-height: 1.7; }
+.event-info-card-body p { margin: 0; overflow-wrap: anywhere; }
+.event-info-card-body p + p,
+.event-info-card-body p + ul,
+.event-info-card-body p + ol,
+.event-info-card-body ul + p,
+.event-info-card-body ol + p { margin-top: 0.7rem; }
+.event-info-card-body ul,
+.event-info-card-body ol { display: grid; gap: 0.35rem; margin: 0; padding-left: 1.3rem; }
+.event-info-card-body ul { list-style: disc; }
+.event-info-card-body ol { list-style: decimal; }
+.event-info-card-links { display: grid; gap: 8px; margin: 12px 0 0; padding: 0; list-style: none; }
+.event-info-card-links a {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+.event-info-card-links small { display: block; font-weight: 400; }
+.event-info-card-steps { display: grid; gap: 10px; margin: 0; padding-left: 1.5rem; list-style: decimal; }
+.event-info-card-steps li { padding-left: 0.3rem; }
+.event-info-card-steps strong,
+.event-info-card-steps span { display: block; overflow-wrap: anywhere; }
+.event-info-card-steps span { font-size: 0.88rem; line-height: 1.6; }
+.event-info-card-checklist { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.event-info-card-checklist li { display: flex; align-items: flex-start; gap: 9px; overflow-wrap: anywhere; }
+.event-info-card-checklist svg { flex: none; margin-top: 3px; color: var(--card-edge); }
+@media (max-width: 580px) {
+  .event-info-cards { width: calc(100% - 24px); }
+  .event-info-card { padding: 16px 14px; }
+}
+.public-registration-form-column .event-info-cards { width: 100%; max-width: none; margin: 0 0 18px; }
+.event-info-card-file-text { display: inline-flex; align-items: flex-start; gap: 8px; font-weight: 700; overflow-wrap: anywhere; }
+
 /* Area Coordinator points chart (#657): one SVG bar per club, label above, fills the width on a phone. */
 .area-points-chart { margin: 0 0 16px; }
 .area-points-chart figcaption { font-weight: 700; margin-bottom: 8px; }
