@@ -33,6 +33,12 @@ describe("event header and help fields (#651)", () => {
     expect(eventSettingsInputSchema.safeParse({ ...settings, helpEmail: "not an email" }).success).toBe(false);
     expect(eventSettingsInputSchema.safeParse({ ...settings, tagline: "x".repeat(121) }).success).toBe(false);
   });
+
+  it("rejects a help email that could alter a mailto link", () => {
+    for (const bad of ["a@b.test?cc=x@y.test", "a@b.test&bcc=x", "a%40b.test", "a@b", "a b@c.test"]) {
+      expect(eventSettingsInputSchema.safeParse({ ...settings, helpEmail: bad }).success, bad).toBe(false);
+    }
+  });
 });
 
 describe("honor offering cost and requirement fields (#651)", () => {

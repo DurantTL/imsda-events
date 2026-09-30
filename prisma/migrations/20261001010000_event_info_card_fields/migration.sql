@@ -6,4 +6,4 @@ ALTER TABLE "Event" ADD COLUMN "helpEmail" TEXT;
 ALTER TABLE "HonorOffering" ADD COLUMN "additionalCostCents" INTEGER;
 ALTER TABLE "HonorOffering" ADD COLUMN "requirementNote" TEXT NOT NULL DEFAULT '';
 
-ALTER TABLE "HonorOffering" ADD CONSTRAINT "HonorOffering_additionalCostCents_check" CHECK ("additionalCostCents" IS NULL OR "additionalCostCents" > 0);
+ALTER TABLE "HonorOffering" ADD CONSTRAINT "HonorOffering_additionalCostCents_positive" CHECK ("additionalCostCents" IS NULL OR "additionalCostCents" > 0);

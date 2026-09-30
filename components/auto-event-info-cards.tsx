@@ -5,14 +5,30 @@ import { formatCardMoney, type EventInfoCards } from "@/modules/event-info-cards
  * only: every value is escaped by React and nothing here takes markup.
  */
 
-export function AutoEventHeader({ header }: { header: EventInfoCards["header"] }) {
+export function AutoEventHeader({
+  header,
+  timeLabel,
+  statusLabel,
+  introLine,
+}: {
+  header: EventInfoCards["header"];
+  /** Time range line, e.g. "Friday, 4:00 PM CDT – Sunday, 12:00 PM CDT". */
+  timeLabel?: string;
+  /** Registration state, e.g. "Registration open". */
+  statusLabel?: string;
+  /** The lifecycle sentence that used to sit under the title. */
+  introLine?: string;
+}) {
   return (
     <section className="auto-info-header" aria-labelledby="auto-info-title">
       <p className="public-registration-eyebrow">{header.eyebrow}</p>
       <h1 id="auto-info-title">{header.title}</h1>
       {header.tagline && <p className="auto-info-tagline">{header.tagline}</p>}
       {header.meta && <p className="auto-info-meta">{header.meta}</p>}
+      {timeLabel && <p className="auto-info-meta">{timeLabel}</p>}
       {header.subtitle && <p className="auto-info-subtitle">{header.subtitle}</p>}
+      {statusLabel && <p className="auto-info-status"><strong>{statusLabel}</strong></p>}
+      {introLine && <p className="auto-info-subtitle">{introLine}</p>}
     </section>
   );
 }
@@ -46,7 +62,7 @@ export function AutoEventInfoCards({ cards }: { cards: EventInfoCards }) {
                         <strong>{entry.honorName}</strong>
                         {entry.teacherName && <small>{entry.teacherName}</small>}
                         <small>
-                          {entry.capacity} spots
+                          {entry.capacity === 0 ? "Full" : `${entry.capacity} spots`}
                           {entry.perClubLimit ? ` · up to ${entry.perClubLimit} per club` : ""}
                         </small>
                         {entry.badges.length > 0 && (
@@ -99,24 +115,29 @@ export function AutoEventInfoCards({ cards }: { cards: EventInfoCards }) {
       {fees && (
         <section className="auto-info-card" aria-labelledby="auto-info-fees-title">
           <h2 id="auto-info-fees-title">Fees</h2>
-          {fees.groups.map((group) => (
-            <div className="auto-info-fee-group" key={group.title}>
-              <h3>{group.title}</h3>
-              <dl>
-                {group.lines.map((line) => (
-                  <div key={line.label}>
-                    <dt>{line.label}{line.unit ? <small> {line.unit}</small> : null}</dt>
-                    <dd>
-                      {line.tiers.map((tier) => (
-                        <span key={`${tier.amountCents}:${tier.note ?? ""}`}>
-                          {tier.amountCents === 0 ? "No charge" : formatCardMoney(tier.amountCents)}
-                          {tier.note ? <small> {tier.note}</small> : null}
-                        </span>
-                      ))}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
+          {fees.sections.map((section, sectionIndex) => (
+            <div className="auto-info-fee-section" key={`${sectionIndex}:${section.title ?? ""}`}>
+              {section.title && <h3>{section.title}</h3>}
+              {section.groups.map((group, groupIndex) => (
+                <div className="auto-info-fee-group" key={`${groupIndex}:${group.title}`}>
+                  <h3>{group.title}</h3>
+                  <dl>
+                    {group.lines.map((line, lineIndex) => (
+                      <div key={`${lineIndex}:${line.label}`}>
+                        <dt>{line.label}{line.unit ? <small> {line.unit}</small> : null}</dt>
+                        <dd>
+                          {line.tiers.map((tier, tierIndex) => (
+                            <span key={`${tierIndex}:${tier.amountCents}`}>
+                              {tier.amountCents === 0 ? "No charge" : formatCardMoney(tier.amountCents)}
+                              {tier.note ? <small> {tier.note}</small> : null}
+                            </span>
+                          ))}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              ))}
             </div>
           ))}
           {fees.notes.length > 0 && (

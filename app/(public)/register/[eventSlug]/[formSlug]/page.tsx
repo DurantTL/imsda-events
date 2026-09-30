@@ -73,9 +73,7 @@ export default async function PublicRegistrationPage({
   const autoCards = await getAutoEventInfoCards(eventSlug);
 
   return (
-    <>
-      {autoCards && <AutoEventInfoCards cards={autoCards} />}
-      <PublicRegistrationForm
+    <PublicRegistrationForm
       event={{
         ...experience.event,
         startsAt: serializeDate(experience.event.startsAt),
@@ -88,7 +86,7 @@ export default async function PublicRegistrationPage({
       initialResponses={scopedPrefill("REGISTRATION")}
       initialAttendeeResponses={scopedPrefill("ATTENDEE")}
       disableDrafts={Boolean(account)}
-      />
-    </>
+      topContent={autoCards ? <AutoEventInfoCards cards={autoCards} /> : undefined}
+    />
   );
 }

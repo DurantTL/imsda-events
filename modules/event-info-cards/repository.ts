@@ -34,9 +34,9 @@ async function loadAutoEventInfoCards(eventSlug: string): Promise<EventInfoCards
       billingMode: true,
       registrationClosesOn: true,
       locations: {
-        where: { isActive: true },
         select: {
           id: true,
+          isActive: true,
           name: true,
           address: true,
           firstDay: true,
@@ -104,8 +104,12 @@ async function loadAutoEventInfoCards(eventSlug: string): Promise<EventInfoCards
       audience: event.audience,
       billingMode: event.billingMode,
       registrationClosesOn: event.registrationClosesOn,
+      startsAt: event.startsAt,
+      endsAt: event.endsAt,
+      timezone: event.timezone,
     },
-    locations: event.locations,
+    locations: event.locations.filter((location) => location.isActive),
+    inactiveLocationIds: event.locations.filter((location) => !location.isActive).map((location) => location.id),
     sessions: event.honorSessions,
     offerings: event.honorOfferings.map((offering) => ({
       id: offering.id,

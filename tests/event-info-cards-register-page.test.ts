@@ -1,3 +1,4 @@
+import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -5,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   getPublicRegistrationExperience: vi.fn(),
   getAutoEventInfoCards: vi.fn(),
   eventFindFirst: vi.fn(),
+  formProps: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -21,8 +23,12 @@ vi.mock("@/modules/attendee-accounts/profile-service", () => ({
   attendeeProfilePrefill: vi.fn(),
   getAttendeeProfile: vi.fn(),
 }));
+// The stub renders topContent first, then a marker, like the real form column.
 vi.mock("@/components/public-registration-form", () => ({
-  PublicRegistrationForm: () => "REGISTRATION-FORM-STUB",
+  PublicRegistrationForm: (props: { topContent?: unknown }) => {
+    mocks.formProps(props);
+    return createElement("div", null, props.topContent as never, "REGISTRATION-FORM-STUB");
+  },
 }));
 vi.mock("next/navigation", () => ({ notFound: vi.fn(), redirect: vi.fn() }));
 
@@ -41,6 +47,7 @@ const cards = buildEventInfoCards({
   event: {
     name: "Synthetic Event", location: null, dateLabel: "November 6 – 8, 2026", tagline: null, subtitle: null, helpEmail: null,
     audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE", registrationClosesOn: "2026-10-30",
+    startsAt: new Date("2026-11-06T15:00:00Z"), endsAt: new Date("2026-11-08T18:00:00Z"), timezone: "America/Chicago",
   },
   locations: [], sessions: [], offerings: [], forms: [],
 });
@@ -60,12 +67,15 @@ describe("auto info cards on the registration page", () => {
     const markup = await render();
     expect(markup).toContain("Registration deadlines");
     expect(markup.indexOf("Registration deadlines")).toBeLessThan(markup.indexOf("REGISTRATION-FORM-STUB"));
+    // The cards reach the form through topContent, inside its layout.
+    expect(mocks.formProps.mock.calls[0]![0].topContent).toBeTruthy();
   });
 
   it("renders only the form for any other event", async () => {
     mocks.getAutoEventInfoCards.mockResolvedValue(null);
     const markup = await render();
-    expect(markup).toBe("REGISTRATION-FORM-STUB");
+    expect(markup).toBe("<div>REGISTRATION-FORM-STUB</div>");
+    expect(mocks.formProps.mock.calls[0]![0].topContent).toBeUndefined();
   });
 });
 

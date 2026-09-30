@@ -114,8 +114,9 @@ export const eventSettingsInputSchema = z.object({
   // Public header and help (#651). Plain text only; absent on update keeps the stored value.
   tagline: optionalNullableText(120),
   subtitle: optionalNullableText(200),
+  // Used in a mailto: link, so it must be a real address (z.email() also rules out ?, & and % tricks).
   helpEmail: optionalNullableText(200).refine(
-    (value) => value === undefined || value === null || /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(value),
+    (value) => value === undefined || value === null || z.email().safeParse(value).success,
     "Enter a valid help email address.",
   ),
   // Lodging for this event. Rendered into messages through

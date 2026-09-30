@@ -350,6 +350,17 @@ describe("event info card fields in a clone (#651)", () => {
     expect(result.config.honorOfferings[0]).toMatchObject({ additionalCostCents: 500, requirementNote: "Bring a flashlight" });
   });
 
+  it("strips a private link from a class requirement and shows cost and requirement in the review rows", () => {
+    const source = config({
+      honorOfferings: [{ ...config().honorOfferings[0]!, additionalCostCents: 500, requirementNote: "Bring ID https://events.imsda.test/manage/MARKER-MANAGE-TOKEN" }],
+    });
+    const result = sanitizeSourceForClone(source, appOrigins);
+    expect(result.config.honorOfferings[0]!.requirementNote).not.toContain("MARKER-MANAGE-TOKEN");
+    expect(result.findings.some((finding) => finding.domain === "honors")).toBe(true);
+    const row = buildClonePlan(result.config, fingerprint).review.honorOfferings[0]!;
+    expect(row).toMatchObject({ additionalCostCents: 500, requirementNote: "Bring ID" });
+  });
+
   it("clears an empty tagline to null like the other optional details", () => {
     const result = sanitizeSourceForClone(config({ eventDetails: { ...config().eventDetails, tagline: "  " } }), appOrigins);
     expect(result.config.eventDetails.tagline).toBeNull();

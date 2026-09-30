@@ -62,6 +62,7 @@ const cards = buildEventInfoCards({
     audience: "CLUB",
     billingMode: "DEFERRED_ORGANIZATION_INVOICE",
     registrationClosesOn: "2026-10-30",
+    startsAt: new Date("2026-11-06T15:00:00Z"), endsAt: new Date("2026-11-08T18:00:00Z"), timezone: "America/Chicago",
   },
   locations: [],
   sessions: [],

@@ -462,7 +462,13 @@ export function sanitizeSourceForClone(
     bodyTemplate: text("messageTemplates", `Message ${template.key} body`, template.bodyTemplate),
   }));
 
-  return { config: { ...config, eventDetails, contentSections, registrationForms, messageTemplates }, findings };
+  // A class requirement is free text; it is scanned like the other copied text.
+  const honorOfferings = config.honorOfferings.map((offering) => ({
+    ...offering,
+    requirementNote: text("honors", `Class ${offering.honorName} requirement`, offering.requirementNote).trim(),
+  }));
+
+  return { config: { ...config, eventDetails, contentSections, registrationForms, messageTemplates, honorOfferings }, findings };
 }
 
 // ---------------------------------------------------------------------------
@@ -550,6 +556,8 @@ export type ClonePlan = {
       sourcePerClubLimit: number | null;
       /** Carried over as it is; shown so the reviewer sees it. */
       minimumAge: number | null;
+      additionalCostCents: number | null;
+      requirementNote: string;
     }>;
     /** Private links found in copied text: each "needs review" and is removed from the copy. */
     privateLinks: PrivateLinkFinding[];
@@ -706,6 +714,7 @@ export function buildClonePlan(rawConfig: SourceConfiguration, fingerprint: stri
       honorOfferings: config.honorOfferings.map((offering) => ({
         offeringId: offering.id, honorName: offering.honorName, sessionName: offering.sessionName,
         sourceCapacity: offering.capacity, sourcePerClubLimit: offering.perClubLimit, minimumAge: offering.minimumAge,
+        additionalCostCents: offering.additionalCostCents, requirementNote: offering.requirementNote,
       })),
       privateLinks: findings,
     },

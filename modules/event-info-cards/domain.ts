@@ -1,4 +1,5 @@
 import type { RegistrationFormDefinition } from "@/modules/forms/definition";
+import { effectiveLocationDates } from "@/modules/event-locations/domain";
 import { getPublicRegistrationStepPlan } from "@/modules/forms/public-registration-steps";
 
 /**
@@ -60,8 +61,13 @@ export type InfoCardsInput = {
     audience: "GENERAL" | "CLUB";
     billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE";
     registrationClosesOn: string | null;
+    startsAt: Date;
+    endsAt: Date;
+    timezone: string;
   };
   locations: InfoCardLocation[];
+  /** Inactive sites: a class at one is retired and never listed. */
+  inactiveLocationIds?: string[];
   sessions: InfoCardSession[];
   offerings: InfoCardOffering[];
   forms: InfoCardForm[];
@@ -167,10 +173,16 @@ export type ClassGridsCard = {
 const ALL_SESSIONS_TITLE = "All sessions";
 const NO_SITE_ID = "__no-site";
 
-/** The capacity most classes share; a class below it is "limited". */
+/**
+ * The capacity most classes at a site share; a class below it is "limited".
+ * Needs at least two classes sharing it, so a site of all-different capacities
+ * has no standard and no class is called limited.
+ */
 function standardCapacity(offerings: readonly InfoCardOffering[]) {
   const counts = new Map<number, number>();
-  for (const offering of offerings) counts.set(offering.capacity, (counts.get(offering.capacity) ?? 0) + 1);
+  for (const offering of offerings) {
+    if (offering.capacity > 0) counts.set(offering.capacity, (counts.get(offering.capacity) ?? 0) + 1);
+  }
   let best: number | null = null;
   let bestCount = 0;
   for (const [capacity, count] of counts) {
@@ -179,19 +191,21 @@ function standardCapacity(offerings: readonly InfoCardOffering[]) {
       bestCount = count;
     }
   }
-  return best;
+  return bestCount >= 2 ? best : null;
 }
 
 function classEntry(offering: InfoCardOffering, standard: number | null): ClassCardEntry {
   const badges: ClassBadge[] = [];
-  if (standard !== null && offering.capacity < standard) {
+  if (offering.capacity === 0) {
+    badges.push({ kind: "LIMITED", text: "Full" });
+  } else if (standard !== null && offering.capacity < standard) {
     badges.push({ kind: "LIMITED", text: `Limited spots: ${offering.capacity}` });
   }
   if (offering.minimumAge !== null) {
     badges.push({ kind: "AGE", text: `Ages ${offering.minimumAge} and up` });
   }
   if (offering.additionalCostCents) {
-    badges.push({ kind: "COST", text: `Additional cost: ${formatCardMoney(offering.additionalCostCents)}` });
+    badges.push({ kind: "COST", text: `Additional cost (paid separately): ${formatCardMoney(offering.additionalCostCents)}` });
   }
   const note = offering.requirementNote.trim();
   if (note) badges.push({ kind: "SPECIAL", text: `Requirement: ${note}` });
@@ -211,9 +225,22 @@ function classEntry(offering: InfoCardOffering, standard: number | null): ClassC
 
 const byHonorName = (a: ClassCardEntry, b: ClassCardEntry) => a.honorName.localeCompare(b.honorName);
 
-export function buildClassGridsCard(input: InfoCardsInput): ClassGridsCard | null {
+export function buildClassGridsCard(rawInput: InfoCardsInput): ClassGridsCard | null {
+  const inactive = new Set(rawInput.inactiveLocationIds ?? []);
+  const sessionSite = new Map(rawInput.sessions.map((session) => [session.id, session.locationId]));
+  const resolvedSite = (offering: InfoCardOffering) => (
+    offering.span === "ALL_SESSIONS" ? offering.locationId : sessionSite.get(offering.sessionId ?? "") ?? null
+  );
+  // A class at an inactive site is retired; only genuinely site-less classes stay.
+  const input: InfoCardsInput = {
+    ...rawInput,
+    sessions: rawInput.sessions.filter((session) => !session.locationId || !inactive.has(session.locationId)),
+    offerings: rawInput.offerings.filter((offering) => {
+      const site = resolvedSite(offering);
+      return !site || !inactive.has(site);
+    }),
+  };
   if (input.offerings.length === 0) return null;
-  const standard = standardCapacity(input.offerings);
   const sessionById = new Map(input.sessions.map((session) => [session.id, session]));
 
   const orderedLocations = [...input.locations].sort(
@@ -233,6 +260,7 @@ export function buildClassGridsCard(input: InfoCardsInput): ClassGridsCard | nul
   const buildGrid = (id: string, locationName: string | null): ClassGrid | null => {
     const inSite = input.offerings.filter((offering) => siteOf(offering) === id);
     if (inSite.length === 0) return null;
+    const standard = standardCapacity(inSite);
     const groups: ClassSessionGroup[] = [];
     const allSessions = inSite.filter((offering) => offering.span === "ALL_SESSIONS");
     if (allSessions.length > 0) {
@@ -293,19 +321,26 @@ const activeOrdered = (locations: readonly InfoCardLocation[]) => (
 );
 
 export function buildDatesCard(input: InfoCardsInput): { rows: LocationDateRow[] } | null {
-  const rows = activeOrdered(input.locations).flatMap((location) => {
-    const dates = formatCardDateRange(location.firstDay, location.lastDay);
-    return dates ? [{ id: location.id, name: location.name, address: location.address?.trim() || null, dates }] : [];
+  const rows = activeOrdered(input.locations).map((location) => {
+    // A site with no dates of its own uses the event's (#413).
+    const { firstDay, lastDay } = effectiveLocationDates(input.event, location);
+    return {
+      id: location.id,
+      name: location.name,
+      address: location.address?.trim() || null,
+      dates: formatCardDateRange(firstDay, lastDay) ?? "",
+    };
   });
   return rows.length > 0 ? { rows } : null;
 }
 
 export function buildDeadlinesCard(input: InfoCardsInput): { rows: DeadlineRow[] } | null {
-  const rows: DeadlineRow[] = activeOrdered(input.locations).flatMap((location) => (
-    location.registrationClosesOn
-      ? [{ id: location.id, name: location.name, deadline: formatCardDate(location.registrationClosesOn) }]
-      : []
-  ));
+  const rows: DeadlineRow[] = activeOrdered(input.locations).flatMap((location) => {
+    const { registrationClosesOn } = effectiveLocationDates(input.event, location);
+    return registrationClosesOn
+      ? [{ id: location.id, name: location.name, deadline: formatCardDate(registrationClosesOn) }]
+      : [];
+  });
   if (rows.length === 0 && input.locations.length === 0 && input.event.registrationClosesOn) {
     rows.push({ id: "event", name: input.event.name, deadline: formatCardDate(input.event.registrationClosesOn) });
   }
@@ -318,80 +353,95 @@ export function buildDeadlinesCard(input: InfoCardsInput): { rows: DeadlineRow[]
 export type FeeTier = { amountCents: number; note: string | null };
 export type FeeLine = { label: string; unit: string | null; tiers: FeeTier[] };
 export type FeeGroup = { title: string; lines: FeeLine[] };
-export type FeesCard = { groups: FeeGroup[]; notes: string[] };
+export type FeeSection = { title: string | null; groups: FeeGroup[] };
+export type FeesCard = { sections: FeeSection[]; notes: string[] };
 
 function unitFor(scope: "REGISTRATION" | "ATTENDEE", type: string) {
   if (type === "NUMBER") return "each";
   return scope === "ATTENDEE" ? "per person" : "per registration";
 }
 
-function tiersFor(regularCents: number | undefined, late: { startsOn: string; label: string; cents: number | undefined } | null): FeeTier[] {
-  const tiers: FeeTier[] = [];
-  if (regularCents !== undefined) {
-    tiers.push({ amountCents: regularCents, note: late ? `through ${formatCardDate(dayBefore(late.startsOn))}` : null });
-  }
-  if (late && late.cents !== undefined) {
+/**
+ * The regular price, then the late price when there is one. The engine charges
+ * the regular price when a late price is missing, so a missing late price is one
+ * undated tier, never "through <date>".
+ */
+function tiersFor(regularCents: number | undefined, late: { startsOn: string; cents: number | undefined } | null): FeeTier[] {
+  if (late && late.cents !== undefined && late.cents !== regularCents) {
+    const tiers: FeeTier[] = [];
+    if (regularCents !== undefined) {
+      tiers.push({ amountCents: regularCents, note: `through ${formatCardDate(dayBefore(late.startsOn))}` });
+    }
     tiers.push({ amountCents: late.cents, note: `from ${formatCardDate(late.startsOn)}` });
+    return tiers;
   }
-  return tiers;
+  return regularCents !== undefined ? [{ amountCents: regularCents, note: null }] : [];
 }
 
-export function buildFeesCard(input: InfoCardsInput): FeesCard | null {
+function feeGroupsFor(form: InfoCardForm): FeeGroup[] {
   const groups: FeeGroup[] = [];
   const singles: FeeLine[] = [];
   const seen = new Set<string>();
+  for (const section of form.definition.sections) {
+    for (const field of section.fields) {
+      if (field.creditCentsPerUnit !== undefined) continue;
+      const unit = unitFor(field.scope, field.type);
+      const latePricing = field.latePricing ?? null;
 
-  for (const form of input.forms) {
-    for (const section of form.definition.sections) {
-      for (const field of section.fields) {
-        if (field.creditCentsPerUnit !== undefined) continue;
-        const unit = unitFor(field.scope, field.type);
-        const late = field.latePricing
-          ? { startsOn: field.latePricing.startsOn, label: field.latePricing.label }
-          : null;
-
-        if (field.choicePricesCents && Object.keys(field.choicePricesCents).length > 0) {
-          const choices = field.options.filter((option) => field.choicePricesCents?.[option] !== undefined);
-          const lines = choices.map((option): FeeLine => ({
-            label: field.optionLabels?.[option] ?? option,
-            unit: null,
-            tiers: tiersFor(
-              field.choicePricesCents?.[option],
-              late ? { ...late, cents: field.latePricing?.choicePricesCents?.[option] } : null,
-            ),
-          })).filter((line) => line.tiers.length > 0);
-          const key = `choice:${field.label}:${JSON.stringify(lines)}`;
-          if (lines.length > 0 && !seen.has(key)) {
-            seen.add(key);
-            groups.push({ title: field.label, lines });
-          }
-          continue;
+      if (field.choicePricesCents && Object.keys(field.choicePricesCents).length > 0) {
+        const choices = field.options.filter((option) => (
+          field.choicePricesCents?.[option] !== undefined || latePricing?.choicePricesCents?.[option] !== undefined
+        ));
+        const lines = choices.map((option): FeeLine => ({
+          label: field.optionLabels?.[option] ?? option,
+          unit: null,
+          tiers: tiersFor(
+            field.choicePricesCents?.[option],
+            latePricing ? { startsOn: latePricing.startsOn, cents: latePricing.choicePricesCents?.[option] } : null,
+          ),
+        })).filter((line) => line.tiers.length > 0);
+        const key = `choice:${field.label}:${JSON.stringify(lines)}`;
+        if (lines.length > 0 && !seen.has(key)) {
+          seen.add(key);
+          groups.push({ title: field.label, lines });
         }
+        continue;
+      }
 
-        if (field.priceCents !== undefined || field.latePricing?.priceCents !== undefined) {
-          const line: FeeLine = {
-            label: field.label,
-            unit,
-            tiers: tiersFor(field.priceCents, late ? { ...late, cents: field.latePricing?.priceCents } : null),
-          };
-          const key = `single:${JSON.stringify(line)}`;
-          if (line.tiers.length > 0 && !seen.has(key)) {
-            seen.add(key);
-            singles.push(line);
-          }
+      if (field.priceCents !== undefined || latePricing?.priceCents !== undefined) {
+        const line: FeeLine = {
+          label: field.label,
+          unit,
+          tiers: tiersFor(field.priceCents, latePricing ? { startsOn: latePricing.startsOn, cents: latePricing.priceCents } : null),
+        };
+        const key = `single:${JSON.stringify(line)}`;
+        if (line.tiers.length > 0 && !seen.has(key)) {
+          seen.add(key);
+          singles.push(line);
         }
       }
     }
   }
   if (singles.length > 0) groups.unshift({ title: "Fees", lines: singles });
-  if (groups.length === 0) return null;
+  return groups;
+}
+
+export function buildFeesCard(input: InfoCardsInput): FeesCard | null {
+  const perForm = input.forms.map((form) => ({ title: form.title, groups: feeGroupsFor(form) }))
+    .filter((entry) => entry.groups.length > 0);
+  if (perForm.length === 0) return null;
+  // With several published forms, each form's fees are listed under its name.
+  const sections: FeeSection[] = perForm.map((entry) => ({
+    title: input.forms.length > 1 ? entry.title : null,
+    groups: entry.groups,
+  }));
 
   const notes: string[] = [];
   if (input.event.billingMode === "DEFERRED_ORGANIZATION_INVOICE") {
     if (input.event.audience === "CLUB") notes.push("Billed to your church");
     notes.push("Billed after the event");
   }
-  return { groups, notes };
+  return { sections, notes };
 }
 
 // ---------------------------------------------------------------------------

@@ -71,6 +71,7 @@ const input: InfoCardsInput = {
     audience: "CLUB",
     billingMode: "DEFERRED_ORGANIZATION_INVOICE",
     registrationClosesOn: null,
+    startsAt: new Date("2026-11-06T15:00:00Z"), endsAt: new Date("2026-11-08T18:00:00Z"), timezone: "America/Chicago",
   },
   locations: [
     { id: "l-b", name: "Site B", address: "2 Synthetic Way", firstDay: "2026-11-13", lastDay: "2026-11-14", registrationClosesOn: "2026-11-01", sortOrder: 1 },
@@ -127,7 +128,7 @@ describe("event info card builders", () => {
     expect(byName.Birds.badges).toEqual([{ kind: "LIMITED", text: "Limited spots: 8" }]);
     expect(byName.Knots.badges.map((badge) => badge.text)).toEqual([
       "Ages 10 and up",
-      "Additional cost: $5.00",
+      "Additional cost (paid separately): $5.00",
       "Requirement: Bring a flashlight",
     ]);
     expect(byName.Knots.kind).toBe("SPECIAL");
@@ -141,17 +142,32 @@ describe("event info card builders", () => {
     expect(buildClassGridsCard({ ...input, offerings: [] })).toBeNull();
   });
 
-  it("lists dates and deadlines by location in order, skipping locations without them", () => {
+  it("lists every site's dates and deadline, inheriting the event's where a site sets none", () => {
     expect(buildDatesCard(input)!.rows.map((row) => [row.name, row.dates])).toEqual([
       ["Site A", "Nov 6 – Nov 8, 2026"],
       ["Site B", "Nov 13 – Nov 14, 2026"],
+      // Site C sets no dates, so it shows the event's.
+      ["Site C", "Nov 6 – Nov 8, 2026"],
     ]);
+    // The event has no deadline, so Site C has none and is left out.
     expect(buildDeadlinesCard(input)!.rows.map((row) => [row.name, row.deadline])).toEqual([
       ["Site A", "Oct 23, 2026"],
       ["Site B", "Nov 1, 2026"],
     ]);
     expect(buildDatesCard({ ...input, locations: [] })).toBeNull();
     expect(buildDeadlinesCard({ ...input, locations: [] })).toBeNull();
+  });
+
+  it("keeps the cards when every site inherits the event's dates and deadline", () => {
+    const inherit = (id: string, name: string) => ({ id, name, address: null, firstDay: null, lastDay: null, registrationClosesOn: null, sortOrder: 0 });
+    const all = { ...input, locations: [inherit("l1", "Site One"), inherit("l2", "Site Two")], event: { ...input.event, registrationClosesOn: "2026-10-30" } };
+    expect(buildDatesCard(all)!.rows.map((row) => row.dates)).toEqual(["Nov 6 – Nov 8, 2026", "Nov 6 – Nov 8, 2026"]);
+    expect(buildDeadlinesCard(all)!.rows.map((row) => row.deadline)).toEqual(["Oct 30, 2026", "Oct 30, 2026"]);
+  });
+
+  it("shows the event start through a site's last day when only the last day is set", () => {
+    const lastOnly = { ...input, locations: [{ id: "l1", name: "Site One", address: null, firstDay: null, lastDay: "2026-11-07", registrationClosesOn: null, sortOrder: 0 }] };
+    expect(buildDatesCard(lastOnly)!.rows[0]!.dates).toBe("Nov 6 – Nov 7, 2026");
   });
 
   it("falls back to the event deadline when there are no locations", () => {
@@ -161,7 +177,8 @@ describe("event info card builders", () => {
 
   it("builds fees with early and late tiers, attendee-type prices and billing notes", () => {
     const card = buildFeesCard(input)!;
-    const fees = card.groups.find((group) => group.title === "Fees")!;
+    const groups = card.sections[0]!.groups;
+    const fees = groups.find((group) => group.title === "Fees")!;
     expect(fees.lines).toEqual([{
       label: "Registration fee",
       unit: "per person",
@@ -170,7 +187,7 @@ describe("event info card builders", () => {
         { amountCents: 3500, note: "from Oct 16, 2026" },
       ],
     }]);
-    const types = card.groups.find((group) => group.title === "Attendee type")!;
+    const types = groups.find((group) => group.title === "Attendee type")!;
     expect(types.lines.map((line) => [line.label, line.tiers[0].amountCents])).toEqual([
       ["Participant", 2500],
       ["Non-participating adult", 1500],
@@ -212,5 +229,83 @@ describe("event info card builders", () => {
     expect(all.classes && all.dates && all.deadlines && all.fees && all.steps && all.help).toBeTruthy();
     const empty = buildEventInfoCards({ ...input, locations: [], sessions: [], offerings: [], forms: [], event: { ...input.event, audience: "GENERAL" } });
     expect(empty).toMatchObject({ classes: null, dates: null, deadlines: null, fees: null, steps: null, help: null });
+  });
+});
+
+describe("event info card edge cases", () => {
+  const feeForm = (fields: unknown[], title = "Club registration") => ({
+    title,
+    definition: registrationFormDefinitionSchema.parse({
+      title: "Synthetic form",
+      description: "",
+      confirmationMessage: "Thank you for registering.",
+      sections: [{ id: "sec-fees", title: "Fees", description: "", fields }],
+    }),
+  });
+
+  it("shows one undated tier when a choice has no late price", () => {
+    const form = feeForm([{
+      id: "fld-a", key: "lodging", label: "Lodging", type: "SELECT", scope: "ATTENDEE", required: true,
+      options: ["Tent", "Cabin", "Child"],
+      choicePricesCents: { Tent: 2500, Cabin: 3500, Child: 2500 },
+      latePricing: { startsOn: "2026-08-24", label: "Regular", choicePricesCents: { Tent: 3500, Cabin: 4500 } },
+    }]);
+    const lines = buildFeesCard({ ...input, forms: [form] })!.sections[0]!.groups[0]!.lines;
+    expect(lines.find((line) => line.label === "Tent")!.tiers).toEqual([
+      { amountCents: 2500, note: "through Aug 23, 2026" },
+      { amountCents: 3500, note: "from Aug 24, 2026" },
+    ]);
+    // The engine charges the regular price when a late one is missing.
+    expect(lines.find((line) => line.label === "Child")!.tiers).toEqual([{ amountCents: 2500, note: null }]);
+  });
+
+  it("shows one undated tier when a single price has no late price", () => {
+    const form = feeForm([{
+      id: "fld-a", key: "registration_fee", label: "Registration fee", type: "CALCULATED", scope: "ATTENDEE", required: false,
+      priceCents: 900, latePricing: { startsOn: "2026-08-24", label: "Late" },
+    }]);
+    expect(buildFeesCard({ ...input, forms: [form] })!.sections[0]!.groups[0]!.lines[0]!.tiers).toEqual([{ amountCents: 900, note: null }]);
+  });
+
+  it("groups fees per form, by form name, when several forms are published", () => {
+    const fee = (amount: number) => [{ id: "fld-a", key: "registration_fee", label: "Fee", type: "CALCULATED", scope: "ATTENDEE", required: false, priceCents: amount }];
+    const card = buildFeesCard({ ...input, forms: [feeForm(fee(900), "Form One"), feeForm(fee(1200), "Form Two")] })!;
+    expect(card.sections.map((section) => section.title)).toEqual(["Form One", "Form Two"]);
+    expect(buildFeesCard({ ...input, forms: [feeForm(fee(900), "Form One")] })!.sections[0]!.title).toBeNull();
+  });
+
+  it("drops classes at inactive sites and keeps site-less classes under Other classes", () => {
+    const card = buildClassGridsCard({
+      ...input,
+      inactiveLocationIds: ["l-b"],
+      offerings: [
+        offering({ id: "a", honorName: "Active", sessionId: "s-a1" }),
+        offering({ id: "b", honorName: "Retired", sessionId: "s-b1" }),
+        offering({ id: "c", honorName: "Retired all", span: "ALL_SESSIONS", sessionId: null, locationId: "l-b" }),
+        offering({ id: "d", honorName: "Siteless", span: "ALL_SESSIONS", sessionId: null, locationId: null }),
+      ],
+    })!;
+    const names = card.grids.flatMap((grid) => grid.sessions.flatMap((session) => session.classes.map((entry) => entry.honorName)));
+    expect(names.sort()).toEqual(["Active", "Siteless"]);
+    expect(card.grids.map((grid) => grid.locationName)).toEqual(["Site A", "Other classes"]);
+  });
+
+  it("calls a class limited only against a standard capacity shared by two classes, per site", () => {
+    const two = (capacity: number, id: string) => offering({ id, capacity, honorName: id, sessionId: "s-a1" });
+    const limited = (offerings: InfoCardOffering[]) => buildClassGridsCard({ ...input, offerings })!.grids[0]!.sessions[0]!.classes.filter((entry) => entry.kind === "LIMITED").length;
+    expect(limited([two(15, "x"), two(15, "y"), two(8, "z")])).toBe(1);
+    // All different: no standard, so nothing is limited.
+    expect(limited([two(15, "x"), two(12, "y"), two(8, "z")])).toBe(0);
+    // Site B's standard is its own; Site A's 30-seat classes don't make B's 15 limited.
+    const mixed = buildClassGridsCard({ ...input, offerings: [
+      offering({ id: "a1", capacity: 30, sessionId: "s-a1" }), offering({ id: "a2", capacity: 30, sessionId: "s-a1" }),
+      offering({ id: "b1", capacity: 15, sessionId: "s-b1" }), offering({ id: "b2", capacity: 15, sessionId: "s-b1" }),
+    ] })!;
+    expect(mixed.grids.flatMap((grid) => grid.sessions.flatMap((session) => session.classes)).every((entry) => entry.kind === "STANDARD")).toBe(true);
+  });
+
+  it("shows a zero-seat class as Full", () => {
+    const entry = buildClassGridsCard({ ...input, offerings: [offering({ id: "z", capacity: 0, sessionId: "s-a1" })] })!.grids[0]!.sessions[0]!.classes[0]!;
+    expect(entry.badges).toEqual([{ kind: "LIMITED", text: "Full" }]);
   });
 });

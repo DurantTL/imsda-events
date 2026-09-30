@@ -99,7 +99,12 @@ export default async function PublicEventPage({
       <TranslateHint />
 
       {autoCards ? (
-        <AutoEventHeader header={autoCards.header} />
+        <AutoEventHeader
+          header={autoCards.header}
+          timeLabel={landing.event.timeLabel}
+          statusLabel={landing.lifecycle.statusLabel}
+          introLine={landing.lifecycle.heroTagline}
+        />
       ) : (
         <section className="public-registration-hero public-event-hero">
           <div>
