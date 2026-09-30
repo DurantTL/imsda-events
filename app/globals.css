@@ -3,6 +3,7 @@
 :root {
   /* #645 heading scale. rem resolves against the html root (16px), not body. */
   --text-helper-min: 0.875rem;
+  --text-badge: 0.75rem;
   --heading-section: 1.3rem;
   --heading-sub: 1.075rem;
   --heading-group: 1rem;
@@ -792,7 +793,7 @@ select:focus-visible {
   border-top: 1px solid var(--line);
   color: var(--imsda-purple);
   padding-top: 11px;
-  font-size: var(--text-helper-min);
+  font-size: 0.68rem;
   font-weight: 700;
 }
 
@@ -1820,7 +1821,7 @@ select:focus-visible {
 .password-requirements li svg { flex-shrink: 0; color: var(--muted); opacity: 0.5; }
 .password-requirements li[data-met="true"] { color: var(--green); }
 .password-requirements li[data-met="true"] svg { color: var(--green); opacity: 1; }
-.field-help { margin: -9px 0 0; color: var(--muted); font-size: var(--text-helper-min); }
+.field-help { margin: -9px 0 0; color: var(--muted); font-size: 0.63rem; }
 .field-help code { overflow-wrap: anywhere; }
 /* #478: .field-help's -9px pull only makes sense right under a label/input.
    Following a full paragraph (as on the two-step "set up an authenticator"
@@ -2907,7 +2908,7 @@ select:focus-visible {
   background: var(--green-soft);
   color: var(--green);
   padding: 7px 11px;
-  font-size: var(--text-helper-min);
+  font-size: var(--text-badge);
   font-weight: 700;
 }
 
@@ -3096,14 +3097,14 @@ select:focus-visible {
 }
 .public-registration-progress li > span {
   display: grid;
-  width: 23px;
-  height: 23px;
+  width: 1.917em;
+  height: 1.917em;
   flex: 0 0 auto;
   place-items: center;
   border: 1px solid #c5d2d7;
   border-radius: 50%;
   background: white;
-  font-size: var(--text-helper-min);
+  font-size: var(--text-badge);
   font-weight: 900;
 }
 .public-registration-progress li > small {
@@ -3174,8 +3175,8 @@ select:focus-visible {
 }
 
 .public-registration-section { overflow: hidden; border-radius: 20px; }
-.public-registration-section > header { display: grid; grid-template-columns: auto 1fr; gap: 13px; border-bottom: 1px solid var(--line); background: linear-gradient(135deg, #fbfcfd, #f4f8f9); padding: 20px 24px; }
-.public-registration-section > header > span { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 10px; background: var(--imsda-navy); color: white; font-size: var(--text-helper-min); font-weight: 800; }
+.public-registration-section > header { display: grid; grid-template-columns: auto 1fr; gap: 13px; border-bottom: 1px solid var(--line); background: linear-gradient(135deg, #fbfcfd, #f4f8f9); padding: 24px 24px 20px; }
+.public-registration-section > header > span { display: grid; width: 2.724em; height: 2.724em; place-items: center; border-radius: 10px; background: var(--imsda-navy); color: white; font-size: 0.78rem; font-weight: 800; }
 .public-registration-section > header h2 { margin: 0; color: var(--ink); font-size: 1.12rem; letter-spacing: -0.015em; }
 .public-registration-section > header p { margin: 4px 0 0; color: var(--muted); font-size: var(--text-helper-min); line-height: 1.55; }
 .public-registration-fields { display: grid; gap: 22px; padding: 24px; }
@@ -3196,17 +3197,17 @@ select:focus-visible {
   gap: 13px;
   border-bottom: 1px solid var(--line);
   background: linear-gradient(135deg, #fbfcfd, #f4f8f9);
-  padding: 20px 24px;
+  padding: 24px 24px 20px;
 }
 .public-registration-roster-heading > span:first-child {
   display: grid;
-  width: 34px;
-  height: 34px;
+  width: 2.724em;
+  height: 2.724em;
   place-items: center;
   border-radius: 10px;
   background: var(--imsda-navy);
   color: white;
-  font-size: var(--text-helper-min);
+  font-size: 0.78rem;
   font-weight: 800;
 }
 .public-registration-roster-heading .public-registration-eyebrow { margin-bottom: 3px; font-size: var(--text-helper-min); }
@@ -3218,7 +3219,7 @@ select:focus-visible {
   background: white;
   color: var(--imsda-navy);
   padding: 7px 10px;
-  font-size: var(--text-helper-min);
+  font-size: var(--text-badge);
   white-space: nowrap;
 }
 .public-registration-attendee-list { display: grid; gap: 15px; padding: 20px 24px; }
@@ -3251,13 +3252,13 @@ select:focus-visible {
 }
 .public-registration-attendee-number {
   display: grid;
-  width: 32px;
-  height: 32px;
+  width: 2.667em;
+  height: 2.667em;
   place-items: center;
   border-radius: 10px;
   background: var(--imsda-purple-soft);
   color: var(--imsda-purple);
-  font-size: var(--text-helper-min);
+  font-size: var(--text-badge);
   font-weight: 900;
 }
 .public-registration-attendee-heading > div:nth-child(2) { min-width: 0; }
@@ -3321,7 +3322,7 @@ select:focus-visible {
   line-height: 1.5;
 }
 .public-registration-attendee-section + .public-registration-attendee-section { border-top: 1px solid #e4ecef; }
-.public-registration-attendee-section-heading { padding: 18px 20px 0; }
+.public-registration-attendee-section-heading { padding: 26px 20px 0; }
 .public-registration-attendee-section-heading h4 { margin: 0; color: var(--ink); font-size: var(--text-helper-min); }
 .public-registration-attendee-section-heading p { margin: 4px 0 0; color: var(--muted); font-size: var(--text-helper-min); line-height: 1.5; }
 .public-registration-attendee-section > .public-registration-fields { padding: 18px 20px 22px; }
@@ -3512,7 +3513,7 @@ select:focus-visible {
 .public-registration-ranking-list button > span { display: grid; gap: 3px; }
 .public-registration-ranking-list button > span strong { font-size: var(--text-helper-min); }
 .public-registration-ranking-list button > span small { color: var(--muted); font-size: var(--text-helper-min); line-height: 1.4; }
-.public-registration-ranking-list button > b { flex: 0 0 auto; border-radius: 999px; background: white; color: var(--imsda-purple); padding: 5px 9px; font-size: var(--text-helper-min); }
+.public-registration-ranking-list button > b { flex: 0 0 auto; border-radius: 999px; background: white; color: var(--imsda-purple); padding: 5px 9px; font-size: var(--text-badge); }
 .public-registration-select-descriptions { display: grid; gap: 7px; border-left: 3px solid #d8c8e6; padding: 2px 0 2px 11px; }
 .public-registration-select-descriptions small { color: #40545e; font-size: var(--text-helper-min); line-height: 1.5; }
 .public-registration-select-descriptions strong { color: var(--ink); }
@@ -3901,7 +3902,7 @@ select:focus-visible {
 .public-registration-confirmation h1 { margin: 4px 0 9px; color: var(--ink); font-size: clamp(1.8rem, 5vw, 2.6rem); letter-spacing: -0.03em; }
 .public-registration-confirmation-message { max-width: 590px; margin: 0 auto; color: var(--muted); font-size: 0.9rem; line-height: 1.65; }
 .public-registration-code { display: grid; max-width: 390px; gap: 3px; margin: 24px auto; border: 1px dashed #9db9c5; border-radius: 14px; background: #f7fafb; padding: 14px; }
-.public-registration-code small { color: var(--muted); font-size: var(--text-helper-min); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.public-registration-code small { color: var(--muted); font-size: var(--text-badge); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .public-registration-code strong { color: var(--imsda-navy); font-size: 1.35rem; letter-spacing: 0.07em; }
 .public-registration-local-warning { display: flex; max-width: 620px; align-items: flex-start; gap: 11px; margin: 0 auto 22px; border: 1px solid #e7d297; border-radius: 14px; background: var(--imsda-gold-soft); color: #6f5316; padding: 14px; text-align: left; }
 .public-registration-local-warning svg { flex: 0 0 auto; margin-top: 1px; }
@@ -4094,7 +4095,7 @@ select:focus-visible {
   background: var(--green-soft);
   color: var(--green);
   padding: 8px 12px;
-  font-size: var(--text-helper-min);
+  font-size: var(--text-badge);
   font-weight: 900;
   text-align: center;
 }
@@ -4126,13 +4127,13 @@ select:focus-visible {
 }
 .public-event-form-number {
   display: grid;
-  width: 45px;
-  height: 45px;
+  width: 3.75em;
+  height: 3.75em;
   place-items: center;
   border-radius: 13px;
   background: var(--imsda-purple-soft);
   color: var(--imsda-purple);
-  font-size: var(--text-helper-min);
+  font-size: var(--text-badge);
   font-weight: 900;
   letter-spacing: 0.07em;
 }
@@ -4276,7 +4277,7 @@ select:focus-visible {
 .public-manage-status strong { display: block; }
 .public-manage-status small {
   color: #bed5df;
-  font-size: var(--text-helper-min);
+  font-size: var(--text-badge);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -4566,6 +4567,9 @@ select:focus-visible {
 .public-manage-club-list small { display: block; }
 .public-manage-club-list strong { color: var(--ink); font-size: var(--text-helper-min); }
 .public-manage-club-list li > span { flex: 1; }
+.public-manage-club-list li.club-step-danger { color: #a3271b; }
+.public-manage-club-list li.club-step-danger strong { color: #a3271b; }
+.public-manage-club-list li.club-step-danger .club-step-flag { color: #a3271b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
 .public-manage-club-list li > a,
 .public-manage-club-list li > button { align-self: center; white-space: nowrap; }
 .public-manage-club-list small { margin-top: 2px; color: var(--muted); font-size: var(--text-helper-min); }
@@ -5220,7 +5224,7 @@ select:focus-visible {
   .public-registration-progress li { flex: 1 1 0; gap: 4px; }
   /* With 5-6 steps the other labels ellipsize first; the current step keeps the most room, and the heading above always reads "Step N of M". */
   .public-registration-progress li.is-current { flex-grow: 2.5; }
-  .public-registration-progress li > span { width: 19px; height: 19px; font-size: var(--text-helper-min); }
+  .public-registration-progress li > span { width: 1.583em; height: 1.583em; font-size: var(--text-badge); }
   .public-registration-progress li > small { font-size: var(--text-helper-min); }
   .public-registration-step-heading { padding: 18px; }
   .public-registration-section,
@@ -5268,7 +5272,7 @@ select:focus-visible {
   .public-event-layout { gap: 12px; margin: 0 12px; padding-bottom: 35px; }
   .public-event-registration-state { grid-template-columns: 1fr; gap: 14px; border-radius: 17px; padding: 19px; }
   .public-event-form-card { grid-template-columns: auto minmax(0, 1fr); gap: 13px; border-radius: 17px; padding: 18px 17px; }
-  .public-event-form-number { width: 39px; height: 39px; }
+  .public-event-form-number { width: 3.25em; height: 3.25em; }
   .public-event-form-cta { grid-column: 1 / -1; width: 100%; min-width: 0; }
   .public-event-sidebar { grid-template-columns: 1fr; }
   .public-event-full-details-card { grid-column: auto; }
@@ -7040,18 +7044,18 @@ select:focus-visible {
 /* Honors Weekend setup (#357) */
 .honor-session-list { display: grid; gap: 8px; margin: 0 0 16px; padding: 0; list-style: none; }
 .honor-session-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px; color: var(--imsda-purple); }
-.honor-session-list strong { color: var(--ink); font-size: var(--text-helper-min); }
-.honor-session-list small { margin-right: auto; color: var(--muted); font-size: var(--text-helper-min); }
+.honor-session-list strong { color: var(--ink); font-size: 0.76rem; }
+.honor-session-list small { margin-right: auto; color: var(--muted); font-size: 0.66rem; }
 .honor-inline-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
-.honor-inline-form label { display: grid; flex: 1 1 180px; gap: 6px; color: var(--ink); font-size: var(--text-helper-min); font-weight: 700; }
-.honor-inline-form select { border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd; padding: 10px 11px; font-size: var(--text-helper-min); }
-.honor-group-heading { margin: 18px 0 8px; color: var(--ink); font-size: var(--text-helper-min); }
+.honor-inline-form label { display: grid; flex: 1 1 180px; gap: 6px; color: var(--ink); font-size: 0.7rem; font-weight: 700; }
+.honor-inline-form select { border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd; padding: 10px 11px; font-size: 0.78rem; }
+.honor-group-heading { margin: 18px 0 8px; color: var(--ink); font-size: 0.8rem; }
 .honor-row-actions { display: flex; gap: 6px; }
 /* The table scrolls inside its own region. The visually hidden "Actions"
    header is position: absolute, and without a positioned scroller it escaped
    the clip and widened the document at 360/390px (#570). */
 .honor-table-wrap { position: relative; max-width: 100%; }
-.honor-session-warning { display: flex; flex: 1 0 100%; align-items: flex-start; gap: 6px; margin: 0; color: #8a5a00; font-size: var(--text-helper-min); font-weight: 700; line-height: 1.45; }
+.honor-session-warning { display: flex; flex: 1 0 100%; align-items: flex-start; gap: 6px; margin: 0; color: #8a5a00; font-size: 0.7rem; font-weight: 700; line-height: 1.45; }
 .honor-session-warning svg { flex: 0 0 auto; margin-top: 2px; }
 
 
@@ -7110,7 +7114,7 @@ select:focus-visible {
 .club-report-total .field-help { margin: 0; }
 .club-report-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); padding: 10px 0; }
 .club-report-item label { display: grid; flex: 1; gap: 2px; min-width: 0; }
-.club-report-item small { color: var(--muted); font-size: var(--text-helper-min); font-weight: 500; }
+.club-report-item small { color: var(--muted); font-size: 0.72rem; font-weight: 500; }
 .club-report-item select { width: 110px; flex: 0 0 auto; }
 .club-report-item.has-problem select { border-color: #b42318; }
 .club-report-auto { background: #f6f9fa; border-radius: 10px; padding: 10px 12px; }
@@ -7122,7 +7126,7 @@ select:focus-visible {
 .club-report-honor-row { display: flex; align-items: center; gap: 6px; }
 .club-report-honor-row input { flex: 1; }
 .club-report-back { justify-self: start; }
-.club-reports-grid th small { display: block; color: var(--muted); font-weight: 500; font-size: var(--text-helper-min); }
+.club-reports-grid th small { display: block; color: var(--muted); font-weight: 500; font-size: 0.68rem; }
 .club-reports-missing { color: #b42318; font-weight: 700; }
 .club-reports-due { color: var(--imsda-purple); }
 .club-reports-future { color: var(--muted); }
@@ -7262,11 +7266,17 @@ select:focus-visible {
 .account-nav li { flex: none; }
 .account-nav a {
   display: inline-flex; min-height: 42px; align-items: center; border-radius: 10px; padding: 8px 15px;
-  color: var(--muted); font-size: var(--text-helper-min); font-weight: 800; text-decoration: none; white-space: nowrap;
+  color: var(--muted); font-size: 0.76rem; font-weight: 800; text-decoration: none; white-space: nowrap;
 }
 .account-nav a:hover { background: var(--imsda-navy-soft); color: var(--imsda-navy); }
 .account-nav a[aria-current="page"] { background: var(--imsda-navy); color: #fff; }
 .account-nav a:focus-visible { outline: 3px solid var(--imsda-purple); outline-offset: 1px; }
+.account-nav-group { display: flex; align-items: center; gap: 4px; margin-left: 10px; padding-left: 12px; border-left: 1px solid var(--line); }
+.account-nav .account-nav-group > ul { overflow: visible; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.account-nav-secondary .account-nav-group > ul { border-width: 0; }
+.account-nav-group-label {
+  color: var(--imsda-navy); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap;
+}
 .account-nav-secondary { width: 100%; margin: 0; }
 .account-nav-secondary ul { border-width: 0 0 1px; border-radius: 0; background: transparent; padding: 0; gap: 2px; }
 .account-nav-secondary a { min-height: 44px; border-bottom: 3px solid transparent; border-radius: 0; padding: 8px 14px 6px; }
@@ -7287,14 +7297,14 @@ select:focus-visible {
 .account-overview-card p { margin: 0; }
 .account-overview-link { align-self: flex-start; margin-top: auto; }
 .account-overview-card .field-help { margin-bottom: 10px; }
-.account-overview-alert { display: flex; align-items: center; gap: 6px; color: #9a4a12; font-size: var(--text-helper-min); font-weight: 800; margin-bottom: 10px !important; }
+.account-overview-alert { display: flex; align-items: center; gap: 6px; color: #9a4a12; font-size: 0.78rem; font-weight: 800; margin-bottom: 10px !important; }
 .account-overview-list { display: grid; gap: 6px; margin: 4px 0 6px; padding: 0; list-style: none; }
 .account-overview-list a {
   display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: 10px; min-height: 48px;
   border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; color: var(--ink); text-decoration: none;
 }
 .account-overview-list a:hover { border-color: var(--imsda-navy); background: var(--imsda-navy-soft); }
-.account-overview-list small { grid-row: 2; color: var(--muted); font-size: var(--text-helper-min); }
+.account-overview-list small { grid-row: 2; color: var(--muted); font-size: 0.7rem; }
 .account-overview-list svg { grid-row: 1 / 3; grid-column: 2; color: var(--imsda-navy); }
 .club-home-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .club-home-stat {
@@ -7503,7 +7513,7 @@ select:focus-visible {
 
 /* Honors Weekend rosters (#360) */
 .honor-roster-downloads { display: flex; justify-content: flex-end; }
-.honor-class-sheet h2 small { margin-left: 6px; color: var(--muted); font-size: var(--text-helper-min); font-weight: 600; }
+.honor-class-sheet h2 small { margin-left: 6px; color: var(--muted); font-size: 0.72rem; font-weight: 600; }
 .report-table td.honor-roster-box { width: 64px; text-align: center; }
 .club-schedule { display: grid; gap: 10px; }
 .club-schedule-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
@@ -7698,7 +7708,7 @@ select:focus-visible {
   justify-content: flex-start;
   gap: 8px;
   text-align: left;
-  font-size: var(--text-helper-min);
+  font-size: 0.68rem;
   font-weight: 700;
 }
 
@@ -7745,7 +7755,7 @@ select:focus-visible {
 .account-announcement.is-urgent { border-left-color: #b42318; background: #fff7f5; }
 .account-announcement h2 { margin: 0; font-size: 0.95rem; }
 .account-announcement p { margin: 2px 0 0; overflow-wrap: anywhere; }
-.account-announcement .account-announcement-event { font-size: var(--text-helper-min); text-transform: uppercase; letter-spacing: 0.04em; color: var(--imsda-navy); }
+.account-announcement .account-announcement-event { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--imsda-navy); }
 .account-announcements > .text-button { justify-self: start; }
 
 /* Paper check-in book (#600) */
@@ -7798,10 +7808,10 @@ select:focus-visible {
 .club-form-fill { display: grid; gap: 16px; }
 .club-form-fill fieldset { min-width: 0; border: 0; }
 .club-form-fill legend { padding: 0; margin-bottom: 8px; }
-.club-form-note { margin: 0; color: var(--ink); font-size: var(--text-helper-min); line-height: 1.5; }
+.club-form-note { margin: 0; color: var(--ink); font-size: 0.78rem; line-height: 1.5; }
 .club-form-field-wide { grid-column: 1 / -1; }
 .club-form-choice { display: grid; gap: 6px; border: 0; padding: 0; margin: 0; min-width: 0; }
-.club-form-choice legend { font-size: var(--text-helper-min); font-weight: 700; }
+.club-form-choice legend { font-size: 0.7rem; font-weight: 700; }
 .club-form-choice-row { display: flex; flex-wrap: wrap; gap: 8px 16px; }
 .club-form-private { display: inline-flex; align-items: center; gap: 3px; margin-left: 8px; color: var(--muted); font-weight: 600; }
 .club-form-done { display: grid; gap: 4px; }
@@ -7809,22 +7819,22 @@ select:focus-visible {
 .club-form-template-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
 .club-form-send { display: grid; gap: 10px; }
 .club-form-filter { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 12px; }
-.club-form-filter label { display: grid; gap: 4px; font-size: var(--text-helper-min); font-weight: 700; }
+.club-form-filter label { display: grid; gap: 4px; font-size: 0.7rem; font-weight: 700; }
 .club-form-public { max-width: 820px; margin: 0 auto; padding: 0 16px 48px; }
 .club-form-page { display: grid; gap: 14px; }
 .club-form-sheet { display: grid; gap: 14px; border: 1px solid var(--line); border-radius: 14px; background: #fff; padding: 22px; }
 .club-form-sheet-header h2 { margin: 2px 0 6px; font-size: 1.25rem; }
-.club-form-sheet-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 6px 0 0; color: var(--muted); font-size: var(--text-helper-min); }
-.club-form-restricted-note { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; color: var(--muted); font-size: var(--text-helper-min); }
+.club-form-sheet-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 6px 0 0; color: var(--muted); font-size: 0.72rem; }
+.club-form-restricted-note { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; color: var(--muted); font-size: 0.72rem; }
 .club-form-sheet-section { display: grid; gap: 8px; break-inside: avoid; }
 .club-form-sheet-section h3 { margin: 0; font-size: 0.95rem; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
 .club-form-answers { display: grid; gap: 6px 18px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; }
 .club-form-answers > div { display: grid; gap: 1px; }
-.club-form-answers dt { color: var(--muted); font-size: var(--text-helper-min); font-weight: 700; }
-.club-form-answers dd { margin: 0; font-size: var(--text-helper-min); overflow-wrap: anywhere; }
+.club-form-answers dt { color: var(--muted); font-size: 0.68rem; font-weight: 700; }
+.club-form-answers dd { margin: 0; font-size: 0.8rem; overflow-wrap: anywhere; }
 .club-form-restricted { display: inline-block; border: 1px dashed var(--line); border-radius: 6px; padding: 0 6px; color: var(--muted); font-style: italic; }
 .club-form-blank { color: var(--muted); }
-.club-form-roll-table { width: 100%; border-collapse: collapse; font-size: var(--text-helper-min); }
+.club-form-roll-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
 .club-form-roll-table th, .club-form-roll-table td { border: 1px solid #999; padding: 6px 8px; text-align: left; }
 .club-form-roll-cell { width: 34px; text-align: center !important; }
 .club-form-roll-box { display: inline-block; width: 14px; height: 14px; border: 1px solid #333; }
@@ -7911,15 +7921,17 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 /* Issue #645: one heading scale and vertical rhythm for public registration
    forms, Honors Weekend, and the club portal (pages, cards, Forms tab).
    Section h2 1.3rem, sub-section h3 1.075rem, attendee/group heading 1rem
-   semibold. Space above a heading exceeds the gap below it (>= 10px), and helper
-   text never drops under --text-helper-min (0.875rem). */
+   semibold. Space above a heading exceeds the gap below it (>= 10px); helper
+   text is at least --text-helper-min (0.875rem); counters and badges use
+   --text-badge (0.75rem) and em-sized boxes so they grow with text zoom.
+   Everything here is scoped to the public pages or the club portal, so staff
+   screens and the staff club-form viewer and print are unchanged. */
 .public-registration-section > header h2,
 .public-registration-roster-heading h2,
 .public-manage-card-heading h2,
 .account-overview-card h2,
 .public-registration-summary h2,
-.public-event-info-card h2,
-.club-form-sheet-header h2 {
+.public-event-info-card h2 {
   font-size: var(--heading-section);
   font-weight: 700;
   line-height: 1.25;
@@ -7928,7 +7940,6 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .public-registration-review-card h3,
 .public-event-form-copy h3,
 .public-event-empty-forms h3,
-.club-form-sheet-section h3,
 .public-registration-account-prompt h2 {
   margin-top: 0;
   font-size: var(--heading-sub);
@@ -7939,14 +7950,12 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .public-registration-attendee-section-heading h4,
 .public-registration-confirmation-order h2,
 .public-registration-confirmation-attendees h2,
-.honor-group-heading,
+.public-registration-page .honor-group-heading,
 .club-year-tile-heading {
   font-size: var(--heading-group);
   font-weight: 600;
   line-height: 1.3;
 }
-.public-registration-section > header,
-.public-registration-roster-heading { padding-top: 24px; padding-bottom: 20px; }
 .public-registration-section > header h2 + p,
 .public-registration-roster-heading h2 + p,
 .public-registration-roster-heading p:last-child { margin-top: var(--heading-gap); }
@@ -7954,26 +7963,21 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .public-manage-card-heading h2 + p,
 .public-manage-card-heading > p:last-child { margin-top: var(--heading-gap); line-height: 1.55; }
 .public-manage-card-heading h2 { margin-top: 4px; }
-.public-registration-attendee-section-heading { padding: 26px 20px 0; }
 .public-registration-attendee-section-heading p { margin-top: 6px; line-height: 1.5; }
 .public-registration-attendee-heading h3 { margin-top: 4px; }
 .public-registration-review-card h3 { margin-bottom: var(--heading-gap); }
-.honor-group-heading { margin: var(--heading-space-above) 0 var(--heading-gap); }
-.club-form-sheet-section h3 { padding-bottom: 6px; margin-bottom: 2px; }
-.club-form-sheet-section { gap: var(--heading-gap); }
+.public-registration-page .honor-group-heading { margin: var(--heading-space-above) 0 var(--heading-gap); }
 .account-overview-card h2 { margin: 6px 0 var(--heading-gap); }
 .public-registration-page .section-heading { margin-bottom: 1.1rem; }
 .public-registration-page .section-heading h2,
 .public-registration-page .panel h2 { font-size: var(--heading-section); line-height: 1.25; }
 .public-registration-page .section-heading p:not(.eyebrow) { margin-top: 6px; }
-.public-registration-step-content,
-.public-manage-layout,
-.account-page-body { row-gap: 1.5rem; }
-@media (max-width: 480px) {
-  .public-registration-section > header h2,
-  .public-registration-roster-heading h2,
-  .public-manage-card-heading h2 { overflow-wrap: anywhere; }
+.public-registration-step-content { row-gap: 1.5rem; }
+@media (min-width: 581px) {
+  .public-manage-layout,
+  .account-page-body { row-gap: 1.5rem; }
 }
+
 /* Card-level spacing: room under the toolbar and heading before the content. */
 .public-manage-card > .club-registration-toolbar { margin-bottom: 1.25rem; }
 .public-manage-card > .public-manage-card-heading { margin-bottom: var(--heading-gap); }
@@ -7981,11 +7985,10 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .public-manage-card > .public-manage-card-heading + p { margin: 0 0 var(--heading-gap); }
 .public-manage-card > .public-manage-card-heading ~ .club-class-grid,
 .public-manage-card > .public-manage-card-heading ~ .club-registration-toolbar { margin-top: 1rem; }
-.public-registration-eyebrow { margin-bottom: 8px; }
-.public-registration-page .quiet-copy,
-.public-registration-page .text-button { font-size: var(--text-helper-min); }
-/* Bare headings inside portal cards (Forms tab, club home "To do", etc.). :where()
-   keeps specificity at zero so every classed heading rule above still wins. */
+.public-registration-page .public-registration-eyebrow { margin-bottom: 8px; }
+
+/* Bare headings inside portal cards (Forms tab, club home "To do", etc.).
+   :where() keeps specificity at zero so every classed heading rule above wins. */
 :where(.public-registration-page .public-manage-card) > h2 {
   margin: 0 0 var(--heading-gap);
   font-size: var(--heading-section);
@@ -7998,8 +8001,15 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
   font-weight: 700;
   line-height: 1.3;
 }
-:where(.public-registration-page .public-manage-card) > .public-registration-eyebrow + h2 { margin-top: 0; }
 .club-form-template { gap: 1rem; }
+.club-form-template .field-help { margin: 0; }
+
+/* Helper text that shares a global class: floored only inside the public/portal pages. */
+.public-registration-page :is(.field-help, .quiet-copy, .text-button, .club-form-note, .account-nav a),
+.public-registration-page :is(.club-form-choice legend, .club-form-filter label),
+.public-registration-page :is(.primary-button, .secondary-button),
+.translate-hint { font-size: var(--text-helper-min); }
+
 /* Helper text is larger now; keep long labels from widening their grid track
    (selects size to their longest option, flex/grid items default to min-content). */
 .club-class-grid { grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); }
@@ -8017,6 +8027,3 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .club-home-stat { min-width: 0; }
 .club-home-stat span { overflow-wrap: anywhere; }
 @media (max-width: 480px) { .primary-button.club-event-action, .secondary-button.club-event-action { white-space: normal; max-width: 100%; flex-wrap: wrap; } }
-.translate-hint,
-.public-registration-page :is(.primary-button, .secondary-button) { font-size: var(--text-helper-min); }
-.club-form-template .field-help { margin: 0; }
