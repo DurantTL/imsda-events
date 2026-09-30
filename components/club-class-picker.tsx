@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Award, Save } from "lucide-react";
 import { formatCalendarDate } from "@/modules/club-registrations/domain";
 import { attendeeTypeLabel as typeLabel, seatsNote, unavailableReason } from "@/modules/honors/class-picker-view";
+import { honorsNoteKey } from "@/modules/honors/registration-picks";
 import { sortHonorSessions } from "@/modules/honors/session-order";
 import type { ClassSelectionWorkspace } from "@/modules/honors/enrollment-repository";
 
@@ -88,6 +89,8 @@ export function ClubClassPicker({
       if (!response.ok || !result.workspace) throw new Error(result.message ?? "Class choices could not be saved.");
       setWorkspace(result.workspace);
       setSelections(result.workspace.selections);
+      // The earlier "your honors weren't saved" note is settled now (#618).
+      try { sessionStorage.removeItem(honorsNoteKey(organizationId, eventId)); } catch { /* storage is optional */ }
       setNotice("Classes saved. Seats are held for your club.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Class choices could not be saved.");

@@ -92,7 +92,7 @@ export default async function ClubEventRegistrationPage({
             <p className="public-registration-eyebrow">Registered</p>
             <h2><CheckCircle2 size={20} aria-hidden="true" /> Your club is registered</h2>
           </div>
-          <ClubHonorsNote eventId={eventId} />
+          <ClubHonorsNote eventId={eventId} organizationId={organizationId} />
           <p>
             Confirmation <strong translate="no">{workspace.registration.confirmationCode}</strong> ·{" "}
             {workspace.registration.attendees.length} going. A confirmation email was sent to the contact on the registration.

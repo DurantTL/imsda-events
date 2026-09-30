@@ -25,7 +25,7 @@ import {
 import { fillMissingAnswers } from "@/modules/club-registrations/contact-prefill";
 import type { ClubEventWorkspace } from "@/modules/club-registrations/repository";
 import { ClubHonorsStep, type HonorPicks } from "@/components/club-honors-step";
-import { firstPickProblem, offeringsAtLocation, pickingAttendees, prunePicks } from "@/modules/honors/registration-picks";
+import { firstPickProblem, honorsNoteKey, offeringsAtLocation, pickingAttendees, prunePicks } from "@/modules/honors/registration-picks";
 import type { RegistrationHonorsCatalog } from "@/modules/honors/enrollment-repository";
 import type { PublicRegistrationExperience } from "@/modules/forms/public-repository";
 
@@ -259,11 +259,11 @@ export function ClubRegistrationWorkspace({
       pending.current = null;
       // The registration is saved even when a class filled up meanwhile; the class picker on the next screen says so.
       if (result?.honors?.error) {
-        try { sessionStorage.setItem(`club-honors-note:${workspace.event.id}`, result.honors.error); } catch { /* the picker still shows the picks */ }
+        try { sessionStorage.setItem(honorsNoteKey(organizationId, workspace.event.id), result.honors.error); } catch { /* the picker still shows the picks */ }
       }
       router.refresh();
     },
-  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, hasHonorsStep, honorPicks, base, onDraftChange, router, workspace.event.id]);
+  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, hasHonorsStep, honorPicks, base, onDraftChange, router, organizationId, workspace.event.id]);
 
   const saveLabel = saveState === "saving" ? "Saving draft…" : saveState === "saved" ? "Draft saved" : saveState === "error" ? "Draft not saved. Check your connection." : "";
 

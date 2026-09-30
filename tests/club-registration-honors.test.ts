@@ -15,6 +15,7 @@ import {
 import { seatsNote, unavailableReason } from "@/modules/honors/class-picker-view";
 import {
   firstPickProblem,
+  honorsNoteKey,
   offeringsAtLocation,
   pickingAttendees,
   picksByAttendeeId,
@@ -171,6 +172,11 @@ describe("the honors step of a club registration (#618)", () => {
     expect(firstPickProblem({ "member:member-1": ["knots-hr", "camp-shared"] }, [alex!], here)).toBeNull();
     expect(firstPickProblem({ "member:member-1": ["all-hr", "camp-shared"] }, [alex!], here)).toContain("has to be the only class");
     expect(firstPickProblem({ "member:member-1": ["adults-only"] }, [alex!], here)).toContain("ages 16 and up");
+  });
+
+  it("keeps one club's unsaved-honors note apart from another club's, and from another event's", () => {
+    const keys = new Set([honorsNoteKey("club-a", "event-1"), honorsNoteKey("club-b", "event-1"), honorsNoteKey("club-a", "event-2")]);
+    expect(keys.size).toBe(3);
   });
 
   it("drops picks for people who are no longer going and classes not offered at the site", () => {

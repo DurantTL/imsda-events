@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useSyncExternalStore } from "react";
+import { honorsNoteKey } from "@/modules/honors/registration-picks";
 
 const subscribe = () => () => {};
 
@@ -9,10 +10,10 @@ const subscribe = () => () => {};
  * saved, but the honors picked while registering were not (a class filled up,
  * or the club is waitlisted, #618). Carried across the page refresh in
  * sessionStorage, and shown whether or not the class picker below renders,
- * until the director dismisses it.
+ * until the director dismisses it or saves classes in the picker.
  */
-export function ClubHonorsNote({ eventId }: { eventId: string }) {
-  const key = `club-honors-note:${eventId}`;
+export function ClubHonorsNote({ eventId, organizationId }: { eventId: string; organizationId: string }) {
+  const key = honorsNoteKey(organizationId, eventId);
   const stored = useSyncExternalStore(
     subscribe,
     () => { try { return sessionStorage.getItem(key) ?? ""; } catch { return ""; } },

@@ -13,6 +13,11 @@ import { sessionVisibleAtLocation } from "@/modules/honors/locations";
 export const honorSelectionsSchema = z.record(z.string().min(1).max(80), z.array(z.string().min(1).max(64)).max(6))
   .refine((picks) => Object.keys(picks).length <= 60, "Too many people in one save.");
 
+/** Where the "your honors weren't saved" note waits across the refresh after submitting; per club and event. */
+export function honorsNoteKey(organizationId: string, eventId: string) {
+  return `club-honors-note:${organizationId}:${eventId}`;
+}
+
 /** A person on the not-yet-submitted registration, keyed by the same client id the event form uses. */
 export type PickingAttendee = {
   clientId: string;
