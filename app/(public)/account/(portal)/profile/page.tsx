@@ -9,7 +9,10 @@ import {
 import { requireAttendeeSecondStep } from "@/modules/attendee-accounts/portal-second-step";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Edit profile" };
+export const metadata: Metadata = {
+  title: "Edit profile",
+  robots: { index: false, follow: false, nocache: true },
+};
 
 /**
  * The attendee/director profile (#646), rendered inside the portal layout

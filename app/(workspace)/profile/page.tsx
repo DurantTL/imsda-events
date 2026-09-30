@@ -9,7 +9,10 @@ import {
 } from "@/modules/account-profile/load-profile";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Edit profile" };
+export const metadata: Metadata = {
+  title: "Edit profile",
+  robots: { index: false, follow: false, nocache: true },
+};
 
 /**
  * `/profile` for anyone with a staff session (#646): it lives under the

@@ -300,6 +300,7 @@ describe("/account/profile (attendee, inside the portal layout)", () => {
 
 describe("workspace layout and /profile with no events (#623, #646)", () => {
   async function layoutFor(target: string | null) {
+    signedIn({ staff });
     mocks.headers.mockResolvedValue({ get: () => target });
     return renderToStaticMarkup(await WorkspaceLayout({ children: createElement("p", null, "child") }));
   }
@@ -313,6 +314,7 @@ describe("workspace layout and /profile with no events (#623, #646)", () => {
   });
 
   it("still renders the shell when the request header cannot be read", async () => {
+    signedIn({ staff });
     mocks.headers.mockRejectedValue(new Error("outside a request"));
     const markup = renderToStaticMarkup(await WorkspaceLayout({ children: createElement("p", null, "child") }));
     expect(markup).toContain('data-shell="staff"');
