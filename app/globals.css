@@ -7835,14 +7835,27 @@ select:focus-visible {
 .event-more-settings > summary,
 .activity-disclosure > summary {
   cursor: pointer;
-  display: grid;
-  gap: 2px;
+  display: list-item; /* keeps the browser's open/closed marker */
+  padding-left: 4px;
+}
+.event-more-settings > summary strong,
+.event-more-settings > summary small,
+.activity-disclosure > summary small,
+.activity-disclosure > summary h2 {
+  display: inline;
+}
+.activity-disclosure > summary h2,
+.event-more-settings > summary h2 {
+  font-size: inherit;
+  margin: 0;
+}
+.event-more-settings > summary small,
+.activity-disclosure > summary small {
+  display: block;
+  margin-left: 0;
+  color: var(--muted, inherit);
 }
 .event-more-settings[open] > summary,
 .activity-disclosure[open] > summary {
   margin-bottom: 14px;
-}
-.event-more-settings > summary small,
-.activity-disclosure > summary small {
-  color: var(--muted, inherit);
 }

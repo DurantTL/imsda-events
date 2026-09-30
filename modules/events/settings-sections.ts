@@ -14,14 +14,33 @@
  */
 
 export type EventKind = "club" | "general";
-export type AppliesTo = "both" | EventKind;
+/**
+ * "attendee-pay" is billing-based, not audience-based: the section only has an
+ * effect when attendees pay online (billing mode ATTENDEE_PAY). Choice (#624
+ * review): payment instructions are read only for attendee-pay events
+ * (`messaging-repository`), so church billing hides them whatever the audience.
+ */
+export type AppliesTo = "both" | EventKind | "attendee-pay";
+
+/** What decides whether a section applies: the audience and the billing mode. */
+export type EventTypeContext = {
+  kind: EventKind;
+  billingMode?: string | null;
+};
+
+export function appliesToContext(appliesTo: AppliesTo, context: EventTypeContext): boolean {
+  if (appliesTo === "both") return true;
+  if (appliesTo === "attendee-pay") return context.billingMode !== "DEFERRED_ORGANIZATION_INVOICE";
+  return appliesTo === context.kind;
+}
 
 export function eventKindFromAudience(audience: string | null | undefined): EventKind {
   return audience === "CLUB" ? "club" : "general";
 }
 
+/** Audience-only check, for cards and activity, which do not depend on billing. */
 export function appliesToKind(appliesTo: AppliesTo, kind: EventKind): boolean {
-  return appliesTo === "both" || appliesTo === kind;
+  return appliesToContext(appliesTo, { kind });
 }
 
 /** Sections of the event settings form and its side column. */
@@ -32,22 +51,22 @@ export const eventSettingsSections = {
   "registration-timing": "both",
   // Audience and billing mode decide what every other section does.
   "audience-billing": "both",
-  // Emailed-code verification guards individual registrants' private pages;
-  // club directors edit through the club portal.
-  "attendee-edit-policy": "general",
-  // Only used in unpaid-balance messages for attendee-pay events; church
-  // billing never creates an attendee balance.
-  "payment-instructions": "general",
+  // Emailed-code verification guards every registrant's private page, club
+  // registrants' included (`attendee-accounts`).
+  "attendee-edit-policy": "both",
+  // Read only for attendee-pay events (`messaging-repository`), so it follows
+  // the billing mode, not the audience.
+  "payment-instructions": "attendee-pay",
   // Ranked seminar preferences belong to individual attendees.
   "seminar-preferences": "general",
-  // Registrants pick a shirt size on their own private page.
-  "shirt-sizes": "general",
-  // Youth-event flag for club staff and adults on a club roster.
-  "adult-background-checks": "club",
+  // Club registrants have private pages that read the shirt-size setting.
+  "shirt-sizes": "both",
+  // Applies to every event that registers adults, general youth events too.
+  "adult-background-checks": "both",
   // Public page link and support contact: shown for every event.
   "public-information": "both",
-  // Hotel tokens appear in individual registration messages only.
-  lodging: "general",
+  // Club registrations get `hotel_information` in their messages too.
+  lodging: "both",
   // Readiness, publishing, sharing, delete, and save are never hidden.
   readiness: "both",
   sharing: "both",
@@ -100,10 +119,10 @@ export type SectionPlacement = "primary" | "more";
 /** Where a section renders for this event kind: in view, or under "More settings". */
 export function resolveSectionPlacement(
   id: EventSettingsSectionId,
-  kind: EventKind,
+  context: EventTypeContext,
   nonDefault: ReadonlySet<EventSettingsSectionId>,
 ): SectionPlacement {
-  return appliesToKind(eventSettingsSections[id], kind) || nonDefault.has(id) ? "primary" : "more";
+  return appliesToContext(eventSettingsSections[id], context) || nonDefault.has(id) ? "primary" : "more";
 }
 
 /** "Settings & activity" directory cards (`buildMoreDirectoryCards` keys). */
@@ -147,27 +166,59 @@ export const activityPagePanels = [
   { id: "sessions", appliesTo: "both", collapsed: true },
 ] as const satisfies ReadonlyArray<{ id: string; appliesTo: AppliesTo; collapsed: boolean }>;
 
-const generalOnlyActionPrefixes = [
-  "PROMO_CODE",
-  "SHIRT_SIZE",
-  "PUBLIC_ATTENDEE",
-  "PUBLIC_REGISTRATION",
-  "PRIVATE_LINK",
-  "PROGRAM_ASSIGNMENTS",
-  "REGISTRATION_ACCESS_",
-  "REGISTRATION_CARD_SURCHARGE",
-  "SQUARE_",
-  "BALANCE_REMINDER",
+/**
+ * Activity is filtered by an allowlist of low-risk configuration noise only
+ * (#624 review): each prefix below is hidden on the other event type. Anything
+ * not listed always shows.
+ */
+const generalOnlyNoisePrefixes = [
+  "PROMO_CODE_",
+  "SHIRT_SIZE_REQUEST",
+  "BALANCE_REMINDER_BATCH",
 ] as const;
-const clubOnlyActionPrefixes = ["CLUB_"] as const;
+const clubOnlyNoisePrefixes = ["CLUB_ASSIGNMENTS_BATCH"] as const;
 
-/** Which event type an audit action belongs to; unknown actions apply to both. */
+/**
+ * Never filtered, whatever the type: refunds and payments, registration
+ * access and private links, public registration and attendee actions, deletes,
+ * staff and permission changes, and background checks. Checked before the
+ * allowlist so a future prefix can't hide them.
+ */
+const neverFilteredPattern =
+  /SQUARE|REFUND|PAYMENT|CARD_SURCHARGE|ADJUSTMENT|REGISTRATION_ACCESS|PRIVATE_LINK|PUBLIC_|ATTENDEE|DELETE|STAFF|PERMISSION|MEMBERSHIP|ROLE|BACKGROUND/;
+
+/** Which event type an audit action belongs to; unlisted actions apply to both. */
 export function activityActionAppliesTo(action: string): AppliesTo {
-  if (clubOnlyActionPrefixes.some((prefix) => action.startsWith(prefix))) return "club";
-  if (generalOnlyActionPrefixes.some((prefix) => action.startsWith(prefix))) return "general";
+  if (neverFilteredPattern.test(action)) return "both";
+  if (clubOnlyNoisePrefixes.some((prefix) => action.startsWith(prefix))) return "club";
+  if (generalOnlyNoisePrefixes.some((prefix) => action.startsWith(prefix))) return "general";
   return "both";
 }
 
 export function filterActivityForKind<T extends { action: string }>(entries: readonly T[], kind: EventKind): T[] {
   return entries.filter((entry) => appliesToKind(activityActionAppliesTo(entry.action), kind));
+}
+
+export type ActivitySelection<T> = {
+  entries: T[];
+  /** True when entries were hidden for the event type (counted before any slice). */
+  filtered: boolean;
+  /** True when there were entries but every one was for the other event type. */
+  allFilteredOut: boolean;
+};
+
+/** The recent-activity list for one event type; `showAll` bypasses the filter. */
+export function selectActivity<T extends { action: string }>(
+  all: readonly T[],
+  kind: EventKind,
+  showAll: boolean,
+  limit = 12,
+): ActivitySelection<T> {
+  const matching = showAll ? [...all] : filterActivityForKind(all, kind);
+  const filtered = !showAll && matching.length < all.length;
+  return {
+    entries: matching.slice(0, limit),
+    filtered,
+    allFilteredOut: filtered && matching.length === 0,
+  };
 }

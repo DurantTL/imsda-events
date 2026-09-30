@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   CalendarDays,
@@ -453,11 +453,13 @@ export function EventSettingsWorkspace({
   );
 
   const eventKind = eventKindFromAudience(draft.audience);
-  // Placement follows what was last saved, so typing into a hidden section
+  // Placement follows the live audience and billing mode, so changing either
+  // moves sections at once. Whether a section holds a non-default value is read
+  // from what was last saved, so typing into a section in "More settings"
   // never moves it out from under the cursor.
   const nonDefaultSections = sectionsWithNonDefaultValues(savedDraft);
   const placementOf = (id: EventSettingsSectionId) =>
-    resolveSectionPlacement(id, eventKind, nonDefaultSections);
+    resolveSectionPlacement(id, { kind: eventKind, billingMode: draft.billingMode }, nonDefaultSections);
 
   const optionFields: Array<{ id: EventSettingsSectionId; node: React.ReactNode }> = [
     { id: "attendee-edit-policy", node: attendeeEditField },
@@ -471,6 +473,19 @@ export function EventSettingsWorkspace({
     more: optionFields.filter((field) => placementOf(field.id) === "more"),
   };
   const lodgingInMore = placementOf("lodging") === "more";
+  const moreSettingsRef = useRef<HTMLDetailsElement>(null);
+
+  // A field inside the closed "More settings" can fail native validation (a bad
+  // URL, say). The browser cannot show a message on a hidden field, so Save
+  // would do nothing; open the disclosure and focus the field instead.
+  function openMoreSettingsForInvalidField(event: React.FormEvent<HTMLFormElement>) {
+    const details = moreSettingsRef.current;
+    const target = event.target as HTMLElement;
+    if (details && !details.open && details.contains(target)) {
+      details.open = true;
+      target.focus();
+    }
+  }
 
   return (
     <section className="page-stack event-settings-workspace">
@@ -496,7 +511,7 @@ export function EventSettingsWorkspace({
       {error && <div className="inline-notice error" role="alert"><AlertTriangle size={17} aria-hidden="true" /> {error}</div>}
       {notice && <div className="inline-notice success" role="status"><CheckCircle2 size={17} aria-hidden="true" /> {notice}</div>}
 
-      <form className="event-settings-layout" onSubmit={save}>
+      <form className="event-settings-layout" onSubmit={save} onInvalidCapture={openMoreSettingsForInvalidField}>
         <div className="event-settings-main">
           <section className="panel form-stack event-settings-panel">
             <div className="section-heading">
@@ -658,10 +673,10 @@ export function EventSettingsWorkspace({
           {!lodgingInMore && lodgingPanel}
 
           {(optionalFields.more.length > 0 || lodgingInMore) && (
-            <details className="panel event-more-settings">
+            <details className="panel event-more-settings" ref={moreSettingsRef}>
               <summary>
                 <strong>More settings</strong>
-                <small>Settings that do not apply to {eventKind === "club" ? "club" : "general"} events. They are kept, not removed.</small>
+                <small>Settings that do not apply to this kind of event. They are kept, not removed.</small>
               </summary>
               <div className="form-stack">
                 {optionalFields.more.map((field) => <div className="event-settings-option" key={field.id}>{field.node}</div>)}

@@ -1,15 +1,18 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import Link from "next/link";
-import { Activity } from "lucide-react";
+import { DetailsOpenOnHash } from "@/components/details-open-on-hash";
+import { EventActivityPanel } from "@/components/event-activity-panel";
 import { SessionManager } from "@/components/session-manager";
 import { buildMoreDirectoryCards, moreDirectoryGroupLabels, moreDirectoryGroupOrder } from "@/components/staff-navigation";
 import { listUserSessions, SESSION_COOKIE_NAME, SESSION_IDLE_TIMEOUT_SECONDS } from "@/modules/access/session-store";
 import { resolveStaffViewer } from "@/modules/club-forms/access";
 import { listRecentAuditActivity } from "@/modules/audit/audit-service";
 import { resolveEventContext } from "@/modules/events/selection";
-import { eventKindFromAudience, filterActivityForKind, moreCardApplies } from "@/modules/events/settings-sections";
+import { eventKindFromAudience, moreCardApplies, selectActivity } from "@/modules/events/settings-sections";
 import { resolveClubOversight } from "@/modules/club-rosters/event-oversight";
+
+const signInAnchors = ["two-step-verification", "passkeys"] as const;
 
 export const metadata: Metadata = { title: "More" };
 
@@ -24,8 +27,7 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
   // Activity is filtered to the event type (#624); "?activity=all" shows every entry.
   const showAllActivity = activityFilter === "all";
   const allActivity = permissions.includes("VIEW_REPORTS") ? await listRecentAuditActivity(event.id, 40) : [];
-  const activity = (showAllActivity ? allActivity : filterActivityForKind(allActivity, kind)).slice(0, 12);
-  const activityFiltered = allActivity.length > activity.length && !showAllActivity;
+  const activity = selectActivity(allActivity, kind, showAllActivity);
 
   // Every page the desktop sidebar can reach that isn't one of the six
   // bottom tabs (#475): built from `buildMoreDirectoryCards`, the same
@@ -69,20 +71,20 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
       {renderGroups(visibleGroups)}
       {otherGroups.length > 0 && (
         <details className="panel activity-disclosure">
-          <summary><strong>More settings</strong><small>Tools that do not apply to {kind === "club" ? "club" : "general"} events. Nothing is removed.</small></summary>
+          <summary><h2>More settings</h2><small>Tools that do not apply to {kind === "club" ? "club" : "general"} events. Nothing is removed.</small></summary>
           <div className="page-stack">{renderGroups(otherGroups)}</div>
         </details>
       )}
-      {permissions.includes("VIEW_REPORTS") && <section className="panel"><div className="section-heading"><div><p className="eyebrow">Audit trail</p><h2>Recent activity</h2></div><span className="count-badge"><Activity aria-hidden="true" size={16} /> {activity.length} {activity.length === 1 ? "entry" : "entries"}</span></div><div className="activity-list">{activity.map((entry) => <article className="activity-row" key={entry.id}><span className="activity-icon"><Activity aria-hidden="true" size={16} /></span><span><strong>{entry.summary}</strong><small>{entry.actorName} · {new Date(entry.createdAt).toLocaleString()}</small></span><code>{entry.action}</code></article>)}{activity.length === 0 && <p className="quiet-copy">No activity has been recorded for this event.</p>}</div>{activityFiltered && <p className="quiet-copy">Showing activity for {kind === "club" ? "club" : "general"} events. <Link href={`/more?event=${event.id}&activity=all`}>Show all activity</Link></p>}{showAllActivity && <p className="quiet-copy"><Link href={`/more?event=${event.id}`}>Show only {kind === "club" ? "club" : "general"} event activity</Link></p>}</section>}
+      {permissions.includes("VIEW_REPORTS") && <EventActivityPanel eventId={event.id} kind={kind} selection={activity} showAll={showAllActivity} />}
       {/* Two-step verification and passkeys moved to the one Edit profile page (#543). The anchors keep older links to them landing here. */}
-      <details className="panel activity-disclosure" id="two-step-verification">
-        <summary><strong>Sign-in settings</strong><small>Two-step verification and passkeys</small></summary>
+      <DetailsOpenOnHash anchors={signInAnchors} className="panel activity-disclosure" id="two-step-verification">
+        <summary><h2>Sign-in settings</h2><small>Two-step verification and passkeys</small></summary>
         <span id="passkeys" />
         <p className="quiet-copy">Set up two-step verification and passkeys on your profile page.</p>
         <Link className="secondary-button" href="/profile">Edit profile</Link>
-      </details>
-      <details className="activity-disclosure">
-        <summary><strong>Your signed-in devices</strong><small>Review or end other sessions</small></summary>
+      </DetailsOpenOnHash>
+      <details className="panel activity-disclosure">
+        <summary><h2>Your signed-in devices</h2><small>Review or end other sessions</small></summary>
         <SessionManager initialSessions={sessions} idleTimeoutSeconds={SESSION_IDLE_TIMEOUT_SECONDS} />
       </details>
       {process.env.NODE_ENV !== "production" && <section className="panel review-gate"><div><p className="eyebrow">Testing status</p><h2>This local workspace uses test data</h2><p>Changes stay in the local IMSDA Events database. Live card charging and external delivery remain off until their configured test connections are ready.</p></div><span className="review-badge">Local testing</span></section>}
