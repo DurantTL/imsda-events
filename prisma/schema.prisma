@@ -1178,6 +1178,12 @@ model Event {
   capacity             Int?
   publicInfoUrl        String?
   supportContact       String?
+  /// Theme or tagline shown in the public event header (#651), e.g. "Lest We Forget".
+  tagline              String?
+  /// One line under the header's dates (#651).
+  subtitle             String?
+  /// Where the event's help card and notices send people (#651); club events fall back to youth@imsda.org.
+  helpEmail            String?
   isPublished          Boolean            @default(false)
   registrationOpensOn  String?
   registrationClosesOn String?
@@ -3736,6 +3742,10 @@ model HonorOffering {
   perClubLimit Int?
   teacherName  String            @default("")
   location     String            @default("")
+  /// Extra cost of this class in cents (#651); null means none. Shown on the public class grid.
+  additionalCostCents Int?
+  /// A special requirement shown as a badge on the public class grid (#651), e.g. "Bring a flashlight".
+  requirementNote String         @default("")
   isActive     Boolean           @default(true)
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt

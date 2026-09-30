@@ -8,6 +8,10 @@ const landingMocks = vi.hoisted(() => ({
 vi.mock("@/modules/events/public-repository", () => ({
   getPublicEventLanding: landingMocks.getPublicEventLanding,
 }));
+// The page reads auto info cards only for club events (#651); this file's events are not.
+vi.mock("@/modules/event-info-cards/repository", () => ({
+  getAutoEventInfoCards: vi.fn(),
+}));
 vi.mock("next/navigation", () => ({
   notFound: vi.fn(),
 }));

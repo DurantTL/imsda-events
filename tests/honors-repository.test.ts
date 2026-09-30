@@ -185,6 +185,8 @@ const offeringInput = (overrides: Record<string, unknown> = {}) => ({
   capacity: 20,
   minimumAge: null,
   perClubLimit: null,
+  additionalCostCents: null,
+  requirementNote: "",
   teacherName: "",
   location: "",
   isActive: true,

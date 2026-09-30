@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 import { TranslateHint } from "@/components/translate-hint";
+import { AutoEventHeader, AutoEventInfoCards } from "@/components/auto-event-info-cards";
+import { getAutoEventInfoCards } from "@/modules/event-info-cards/repository";
 import { contentBlocks } from "@/modules/events/content-schemas";
 import { getPublicEventLanding } from "@/modules/events/public-repository";
 
@@ -73,6 +75,11 @@ export default async function PublicEventPage({
     (section) => section.kind === "RICH_TEXT" && section.body.trim().length > 0,
   );
   const canChooseForm = landing.lifecycle.ctaEnabled && hasForms;
+  // Auto-built info cards (#651) are for club events only; every other event's
+  // page renders exactly as before, without even reading the card data.
+  const autoCards = landing.event.audience === "CLUB"
+    ? await getAutoEventInfoCards(eventSlug)
+    : null;
 
   return (
     <main className="public-registration-page public-event-page">
@@ -91,18 +98,26 @@ export default async function PublicEventPage({
       </header>
       <TranslateHint />
 
-      <section className="public-registration-hero public-event-hero">
-        <div>
-          <p className="public-registration-eyebrow">Iowa-Missouri Conference event</p>
-          <h1>{landing.event.name}</h1>
-          <p>{landing.lifecycle.heroTagline}</p>
-        </div>
-        <div className="public-registration-event-details">
-          <span><CalendarDays size={17} aria-hidden="true" /> {landing.event.dateLabel}</span>
-          <span><Clock3 size={17} aria-hidden="true" /> {landing.event.timeLabel}</span>
-          <span><MapPin size={17} aria-hidden="true" /> {landing.event.location ?? "Location details coming soon"}</span>
-        </div>
-      </section>
+      {autoCards ? (
+        <AutoEventHeader
+          header={autoCards.header}
+          timeLabel={landing.event.timeLabel}
+          introLine={landing.lifecycle.heroTagline}
+        />
+      ) : (
+        <section className="public-registration-hero public-event-hero">
+          <div>
+            <p className="public-registration-eyebrow">Iowa-Missouri Conference event</p>
+            <h1>{landing.event.name}</h1>
+            <p>{landing.lifecycle.heroTagline}</p>
+          </div>
+          <div className="public-registration-event-details">
+            <span><CalendarDays size={17} aria-hidden="true" /> {landing.event.dateLabel}</span>
+            <span><Clock3 size={17} aria-hidden="true" /> {landing.event.timeLabel}</span>
+            <span><MapPin size={17} aria-hidden="true" /> {landing.event.location ?? "Location details coming soon"}</span>
+          </div>
+        </section>
+      )}
 
       {landing.announcements.length > 0 && (
         <section
@@ -189,6 +204,8 @@ export default async function PublicEventPage({
           </section>
         );
       })}
+
+      {autoCards && <AutoEventInfoCards cards={autoCards} />}
 
       <div className="public-event-layout">
         <section className="public-event-main" aria-labelledby="registration-options-title">
