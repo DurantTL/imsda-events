@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef } from "react";
+import { Fragment, useEffect, useRef } from "react";
 
 export type AccountNavItem = {
   href: string;
@@ -11,6 +11,8 @@ export type AccountNavItem = {
   matchChildren?: boolean;
   /** Another section this tab owns (e.g. Area Coordinator club pages under "Clubs"). */
   alsoMatchPrefix?: string;
+  /** A heading shown before the first item of each run of items sharing it (e.g. "People"). Items without one sit ungrouped. */
+  group?: string;
 };
 
 function isActive(pathname: string, item: AccountNavItem) {
@@ -44,12 +46,17 @@ export function AccountSectionNav({
   return (
     <nav aria-label={label} className={`account-nav account-nav-${variant}`}>
       <ul ref={listRef}>
-        {items.map((item) => (
-          <li key={item.href}>
-            <Link aria-current={isActive(pathname, item) ? "page" : undefined} href={item.href}>
-              {item.label}
-            </Link>
-          </li>
+        {items.map((item, index) => (
+          <Fragment key={item.href}>
+            {item.group && item.group !== items[index - 1]?.group && (
+              <li className="account-nav-group-label" role="presentation">{item.group}</li>
+            )}
+            <li>
+              <Link aria-current={isActive(pathname, item) ? "page" : undefined} href={item.href}>
+                {item.label}
+              </Link>
+            </li>
+          </Fragment>
         ))}
       </ul>
     </nav>
