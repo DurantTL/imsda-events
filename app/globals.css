@@ -4559,6 +4559,9 @@ select:focus-visible {
 .public-manage-club-list small { display: block; }
 .public-manage-club-list strong { color: var(--ink); font-size: 0.82rem; }
 .public-manage-club-list li > span { flex: 1; }
+.public-manage-club-list li.club-step-danger { color: #a3271b; }
+.public-manage-club-list li.club-step-danger strong { color: #a3271b; }
+.public-manage-club-list li.club-step-danger .club-step-flag { color: #a3271b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
 .public-manage-club-list li > a,
 .public-manage-club-list li > button { align-self: center; white-space: nowrap; }
 .public-manage-club-list small { margin-top: 2px; color: var(--muted); font-size: 0.7rem; }
@@ -7260,6 +7263,12 @@ select:focus-visible {
 .account-nav a:hover { background: var(--imsda-navy-soft); color: var(--imsda-navy); }
 .account-nav a[aria-current="page"] { background: var(--imsda-navy); color: #fff; }
 .account-nav a:focus-visible { outline: 3px solid var(--imsda-purple); outline-offset: 1px; }
+.account-nav-group { display: flex; align-items: center; gap: 4px; margin-left: 10px; padding-left: 12px; border-left: 1px solid var(--line); }
+.account-nav .account-nav-group > ul { overflow: visible; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.account-nav-secondary .account-nav-group > ul { border-width: 0; }
+.account-nav-group-label {
+  color: var(--imsda-navy); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap;
+}
 .account-nav-secondary { width: 100%; margin: 0; }
 .account-nav-secondary ul { border-width: 0 0 1px; border-radius: 0; background: transparent; padding: 0; gap: 2px; }
 .account-nav-secondary a { min-height: 44px; border-bottom: 3px solid transparent; border-radius: 0; padding: 8px 14px 6px; }
@@ -7876,4 +7885,27 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .event-more-settings[open] > summary,
 .activity-disclosure[open] > summary {
   margin-bottom: 14px;
+}
+
+/* Shared profile view in the staff shell and the attendee portal (#646). */
+.profile-readonly-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 24px; margin: 0; }
+.profile-readonly-fields > div { display: grid; gap: 2px; min-width: 0; }
+.profile-readonly-fields dt { color: var(--muted); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.profile-readonly-fields dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+.profile-readonly-note { margin: 12px 0 0; }
+.profile-staff-card .section-heading { align-items: flex-start; gap: 12px; }
+.profile-portal-staff { margin-bottom: 0; }
+.profile-portal-staff > .panel { min-width: 0; }
+.profile-account-heading-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.profile-account-heading-row .profile-account-heading { margin: 0; }
+.profile-readonly-field { grid-column: 1 / -1; }
+.profile-readonly-field em { color: var(--muted); font-style: normal; font-weight: 400; }
+.profile-readonly-field input[readonly] { background: color-mix(in srgb, var(--muted) 10%, transparent); color: var(--muted); cursor: default; }
+.profile-details-form { display: grid; gap: 16px; }
+.profile-details-form input, .profile-details-form textarea { max-width: 100%; }
+@media (max-width: 640px) {
+  .profile-details-form .public-manage-contact-grid { grid-template-columns: 1fr; }
+  .profile-details-form .public-manage-contact-actions button { width: 100%; justify-content: center; min-height: 44px; }
+  .profile-staff-card .section-heading, .profile-account-heading-row { flex-direction: column; align-items: stretch; }
+  .profile-staff-card .section-heading .secondary-button, .profile-account-heading-row .secondary-button { width: 100%; }
 }

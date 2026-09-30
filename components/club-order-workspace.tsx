@@ -384,7 +384,7 @@ export function ClubOrderWorkspace({
           </p>
         )}
         {onList.length === 0 ? (
-          <p className="quiet-copy">Nothing on the list. New completed honors appear here on their own; record uniform needs below, add earned awards on the Earned awards page, or add an item yourself.</p>
+          <p className="quiet-copy">Nothing on the list. New completed honors appear here on their own; record uniform needs below, add earned awards on the Class tracking page, or add an item yourself.</p>
         ) : (
           ORDER_LIST_SECTIONS.map((section) => {
             const lines = onList.filter((line) => line.section === section);

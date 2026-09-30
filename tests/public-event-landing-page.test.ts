@@ -12,6 +12,7 @@ vi.mock("next/navigation", () => ({
   notFound: vi.fn(),
 }));
 
+import { describePublicEventLifecycle } from "@/modules/events/public-domain";
 import PublicEventPage from "@/app/(public)/events/[eventSlug]/page";
 
 const landing = {
@@ -34,6 +35,14 @@ const landing = {
     detail: "Choose the form that matches your registration.",
     ctaLabel: "Start registration",
     ctaEnabled: true,
+    ended: false,
+    heroTagline: "Everything you need to choose the right registration path.",
+    formsHeading: "Choose how you’re registering",
+    emptyForms: {
+      title: "Registration forms are being prepared",
+      body: "Event details are available now.",
+    },
+    availability: { heading: "Registration open", body: "96 spots currently remain." },
     remainingSpots: 96,
   },
   forms: [],
@@ -171,5 +180,35 @@ describe("public event extra information", () => {
     expect(markup).toContain('rel="noopener noreferrer"');
     expect(markup).toContain("Packing guide");
     expect(markup).toContain("PDF checklist");
+  });
+});
+
+describe("public event page for a closed or ended event (#642)", () => {
+  it("shows one closed message and no capacity number or 'being prepared' copy", async () => {
+    landingMocks.getPublicEventLanding.mockResolvedValueOnce({
+      ...landing,
+      lifecycle: describePublicEventLifecycle(
+        {
+          isPublished: true,
+          timezone: "America/Chicago",
+          capacity: 100,
+          registrationOpensOn: "2026-01-01",
+          registrationClosesOn: "2026-02-01",
+          waitlistEnabled: false,
+        },
+        40,
+        new Date("2026-03-01T18:00:00.000Z"),
+      ),
+      forms: [],
+    });
+
+    const markup = renderToStaticMarkup(await PublicEventPage({
+      params: Promise.resolve({ eventSlug: "public-retreat" }),
+    }));
+
+    expect(markup).toContain("Registration closed");
+    expect(markup).not.toContain("being prepared");
+    expect(markup).not.toContain("currently remain");
+    expect(markup).not.toContain("spot");
   });
 });
