@@ -395,6 +395,20 @@ describe("a staff \"act as\" director gets exactly the club's rules (#442)", () 
     expect(mocks.reportUpdate).not.toHaveBeenCalled();
   });
 
+  it("is locked out of saving a reopened draft after the due date (#640)", async () => {
+    mocks.reportFindUnique.mockResolvedValue({
+      id: "report-1", status: "DRAFT", firstSubmittedAt: new Date("2026-11-05T15:00:00Z"), submittedAt: null, totalPoints: 0, onTimePoints: 0,
+    });
+    await expect(saveClubReport("club-1", "2026-10", { ...input(), status: "DRAFT" }, acting, pastDue)).rejects.toMatchObject({ code: "CLUB_REPORT_LOCKED" });
+    expect(mocks.reportUpdate).not.toHaveBeenCalled();
+  });
+
+  it("can still file a never-submitted draft late, with no on-time points", async () => {
+    mocks.reportFindUnique.mockResolvedValue({ id: "report-1", status: "DRAFT", firstSubmittedAt: null, submittedAt: null, totalPoints: 0, onTimePoints: 0 });
+    await saveClubReport("club-1", "2026-10", input(), acting, pastDue);
+    expect(mocks.reportUpdate.mock.calls[0][0].data).toMatchObject({ status: "SUBMITTED", onTimePoints: 0, updatedByUserId: "admin-1" });
+  });
+
   it("is refused through the club route after the due date, with no attendee account involved", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-10-12T15:00:00Z"));

@@ -4,11 +4,11 @@ import type { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
+  clubReportClosedMessage,
   clubYearMonths,
   isLockedForClub,
   onTimePoints,
   pickedTotal,
-  clubReportClosedMessage,
   reportProblems,
   type PickedPoints,
   type ReportHonor,
@@ -121,8 +121,10 @@ export async function getClubReportYear(organizationId: string, clubYear: string
 
 /**
  * Saves a report as a draft or a submission. A club may file a month up to
- * the current one, and may change or reopen it until the due date; after
- * that only staff can. On-time points come from the first time a report
+ * the current one. A never-submitted report may still be submitted late (no
+ * on-time points). Once submitted, the club may change or reopen it until the
+ * due date; after that, including a reopened draft, only staff (not act-as)
+ * can (#640). On-time points come from the first time a report
  * reaches SUBMITTED, and never change on later edits, reopens, or resubmits.
  */
 export async function saveClubReport(
