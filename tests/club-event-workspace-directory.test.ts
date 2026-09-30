@@ -158,6 +158,9 @@ describe("club event workspace locations (#413)", () => {
       },
     });
     const workspace = await getClubEventWorkspace("club-1", "event-1", now);
+    const select = prisma.clubEventRegistration.findUnique.mock.calls[0]![0].select;
+    const keys = select.registration.select.messages.where.templateKey.in;
+    expect(keys).toEqual(expect.arrayContaining(["REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED", "WAITLIST_PROMOTED"]));
     expect(workspace.registration?.confirmationEmail.status).toBe(expected);
     expect(workspace.registration?.confirmationEmail.supportEmail).toBe(hasSupport ? "events@example.test" : null);
   });

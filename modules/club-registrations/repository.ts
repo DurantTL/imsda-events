@@ -66,7 +66,7 @@ import { moneyToCents } from "@/modules/payments/square-domain";
 import { confirmationEmailStatusFromMessages, describeClubConfirmationEmail } from "@/modules/forms/confirmation-email-status";
 
 // The registrant messages that confirm a club registration (or its waitlist spot).
-const confirmationTemplateKeys = ["REGISTRATION_CONFIRMATION_PAID", "REGISTRATION_CONFIRMATION_UNPAID", "WAITLIST_JOINED"] as const;
+const confirmationTemplateKeys = ["REGISTRATION_CONFIRMATION_PAID", "REGISTRATION_CONFIRMATION_UNPAID", "REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED", "WAITLIST_JOINED", "WAITLIST_PROMOTED"] as const;
 import { currentPricingSnapshot, perPersonPriceFromSnapshot } from "@/modules/club-registrations/per-person-price";
 import {
   churchOwedCents,

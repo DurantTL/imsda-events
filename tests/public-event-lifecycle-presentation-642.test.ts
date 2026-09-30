@@ -47,6 +47,8 @@ describe("one lifecycle presentation per state (#642)", () => {
     const summary = describePublicEventLifecycle(baseEvent, 100, openAt);
     expect(summary).toMatchObject({ state: "WAITLIST", ctaLabel: "Join the waitlist", ctaEnabled: true });
     expect(summary.formsHeading).toBe("Join the waitlist");
+    expect(summary.emptyForms.title).toBe("Waitlist opening soon");
+    expect(rendered(summary)).not.toContain("being prepared");
   });
 
   it("CLOSED says so everywhere and shows no capacity number", () => {
@@ -77,6 +79,7 @@ describe("one lifecycle presentation per state (#642)", () => {
       statusLabel: "This event has ended",
       remainingSpots: null,
     });
+    expect(summary.ctaLabel).toBe("This event has ended");
     expect(summary.heroTagline).toBe("This event has ended.");
     expect(summary.emptyForms.title).toBe("This event has ended");
     expect(rendered(summary)).not.toContain("capacity has been reached");

@@ -217,7 +217,7 @@ function presentPublicEventLifecycle(
       state: "CLOSED",
       statusLabel: "This event has ended",
       detail: "This event has ended. Contact the event team if you need help.",
-      ctaLabel: "Registration closed",
+      ctaLabel: "This event has ended",
       ctaEnabled: false,
       ended: true,
       heroTagline: "This event has ended.",
@@ -270,7 +270,10 @@ function presentPublicEventLifecycle(
         ended: false,
         heroTagline: "The event is full, but you can join the waitlist.",
         formsHeading: "Join the waitlist",
-        emptyForms: preparing,
+        emptyForms: {
+          title: "Waitlist opening soon",
+          body: "The waitlist form will appear here when it's ready.",
+        },
         availability: {
           heading: "Event full · waitlist open",
           body: "The event-wide capacity has been reached. You can join the waitlist.",
