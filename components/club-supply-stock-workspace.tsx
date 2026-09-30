@@ -108,7 +108,7 @@ export function ClubSupplyStockWorkspace({
         <div className="empty-state">
           <Package aria-hidden="true" size={27} />
           <h3>No catalog items yet</h3>
-          <p>Conference staff haven&apos;t loaded the supply catalog yet.</p>
+          <p>Conference staff haven&apos;t loaded the supply catalog yet. Check back later, or ask the conference office.</p>
         </div>
       ) : (
         <>

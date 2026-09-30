@@ -88,6 +88,7 @@ export function SessionManager({
         className="secondary-button"
         type="button"
         onClick={revokeOthers}
+        aria-label={`Sign out ${others.length} other device${others.length === 1 ? "" : "s"}`}
         disabled={busy || others.length === 0}
       >
         <LogOut aria-hidden="true" size={16} />

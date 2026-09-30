@@ -7,7 +7,7 @@ import { getCurrentSession } from "@/modules/access/current-session";
 import { passkeysConfigured } from "@/modules/access/passkeys";
 import { resolvePostLoginDestination } from "@/modules/access/post-login-destination";
 
-export const metadata: Metadata = { title: "Sign in", robots: { index: false, follow: false } };
+export const metadata: Metadata = { title: "Staff sign in", robots: { index: false, follow: false } };
 
 export default async function LoginPage({
   searchParams,
@@ -38,7 +38,7 @@ export default async function LoginPage({
         </div>
         <div className="auth-heading">
           <p className="eyebrow">Staff workspace</p>
-          <h1>Welcome back</h1>
+          <h1>Staff sign in</h1>
           <p>Sign in to manage the events assigned to your account.</p>
         </div>
         {passkeysAvailable && (

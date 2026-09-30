@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
+import { BrandMark } from "@/components/brand-mark";
 import { EventInfoCards } from "@/components/event-info-cards";
 import { GroupRegistrationFlow } from "@/components/group-registration-flow";
 import { listPublishedRegistrationInfoCards } from "@/modules/events/content-repository";
+import { GROUP_LABEL } from "@/modules/group-registrations/domain";
 import { GroupRegistrationError, getGroupRegistrationExperience } from "@/modules/group-registrations/repository";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +13,7 @@ export const dynamic = "force-dynamic";
 type GroupRegistrationPageProps = { params: Promise<{ eventSlug: string }> };
 
 export const metadata: Metadata = {
-  title: "Register as a group or individual",
+  title: `${GROUP_LABEL} registration`,
   robots: { index: false, follow: false },
 };
 
@@ -36,11 +38,18 @@ export default async function GroupRegistrationPage({ params }: GroupRegistratio
   if (experience.problem || !experience.event || !experience.experience) {
     return (
       <main className="public-registration-page">
-        <section className="public-manage-card" style={{ maxWidth: 640, margin: "48px auto" }}>
-          <p className="public-registration-eyebrow">Group registration</p>
-          <h1>Group registration isn&apos;t available yet</h1>
-          <p>The event team hasn&apos;t finished setting up registration for groups. Please check back soon, or contact the event team.</p>
-          <p><Link href={`/events/${encodeURIComponent(eventSlug)}`}>Back to the event</Link></p>
+        <header className="public-registration-header">
+          <div className="public-registration-header-inner">
+            <Link className="public-registration-brand public-event-brand-link" href={`/events/${encodeURIComponent(eventSlug)}`}>
+              <BrandMark /><span><strong>IMSDA</strong><small>Events</small></span>
+            </Link>
+          </div>
+        </header>
+        <section className="public-manage-card public-group-state">
+          <p className="public-registration-eyebrow">{GROUP_LABEL}</p>
+          <h1>{GROUP_LABEL} registration isn&apos;t available yet</h1>
+          <p>The event team hasn&apos;t finished setting up {GROUP_LABEL.toLowerCase()} registration. Please check back soon, or contact the event team.</p>
+          <p><Link className="public-event-not-found-link" href={`/events/${encodeURIComponent(eventSlug)}`}>Back to the event</Link></p>
         </section>
       </main>
     );

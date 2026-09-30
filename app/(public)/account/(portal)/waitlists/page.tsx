@@ -36,7 +36,7 @@ export default async function AreaWaitlistsPage() {
             </p>
           ) : withClubs.length === 0 ? (
             <p className="public-manage-empty">
-              <ListChecks size={17} aria-hidden="true" /> No clubs are waiting at your locations right now.
+              <ListChecks size={17} aria-hidden="true" /> No clubs are waiting at your locations right now. Check back after a location fills up.
             </p>
           ) : (
             withClubs.map((location) => (

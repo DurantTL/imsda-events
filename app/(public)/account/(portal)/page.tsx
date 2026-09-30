@@ -81,7 +81,7 @@ export default async function AttendeeAccountOverviewPage() {
           ) : (
             <>
               <h2>{registrations.length === 0 ? "No registrations yet" : "Nothing coming up"}</h2>
-              <p className="field-help">Registrations made with {account.verifiedEmail} show up here.</p>
+              <p className="field-help">Registrations made with {account.verifiedEmail} show up here. To find one made with another address, open its confirmation email.</p>
             </>
           )}
           {balanceDue > 0 && (
