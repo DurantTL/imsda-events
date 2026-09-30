@@ -7916,3 +7916,38 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
   .profile-staff-card .section-heading, .profile-account-heading-row { flex-direction: column; align-items: stretch; }
   .profile-staff-card .section-heading .secondary-button, .profile-account-heading-row .secondary-button { width: 100%; }
 }
+
+/* Auto-built event info cards for club events (#651). Mobile first: one column under 600px. */
+.auto-info-header { max-width: 1100px; margin: 0 auto; padding: 28px 16px 12px; }
+.auto-info-header h1 { margin: 4px 0; color: var(--imsda-navy); font-size: clamp(1.6rem, 6vw, 2.4rem); }
+.auto-info-tagline { margin: 0; color: var(--imsda-purple); font-size: 1.2rem; font-weight: 700; }
+.auto-info-meta { margin: 6px 0 0; color: var(--muted); }
+.auto-info-subtitle { margin: 8px 0 0; color: var(--ink); }
+.auto-info-cards { display: grid; gap: 16px; max-width: 1100px; margin: 0 auto; padding: 8px 16px 20px; }
+.auto-info-card { border: 1px solid var(--line); border-radius: 18px; background: var(--card); padding: 20px; box-shadow: 0 12px 36px rgba(0, 59, 92, 0.06); }
+.auto-info-card h2 { margin: 0 0 10px; color: var(--imsda-navy); font-size: 1.2rem; }
+.auto-info-card h3 { margin: 14px 0 6px; color: var(--ink); font-size: 1rem; }
+.auto-info-card h4 { margin: 10px 0 6px; color: var(--muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.auto-info-card dl { display: grid; gap: 8px; margin: 0; }
+.auto-info-card dl > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+.auto-info-card dt { font-weight: 700; }
+.auto-info-card dd { margin: 0; display: grid; gap: 2px; text-align: right; }
+.auto-info-card small { display: block; color: var(--muted); }
+.auto-info-card dt small, .auto-info-card dd small { display: inline; }
+.auto-info-card ol { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+.auto-info-notes { margin: 12px 0 0; padding-left: 18px; font-weight: 700; color: var(--imsda-navy); }
+.auto-info-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0 0 8px; padding: 0; list-style: none; font-size: 0.8rem; }
+.auto-info-legend li { display: flex; align-items: center; gap: 6px; }
+.auto-info-swatch { width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--line); background: var(--card); }
+.auto-info-class-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.auto-info-class { display: grid; gap: 2px; align-content: start; border: 1px solid var(--line); border-left-width: 6px; border-radius: 10px; padding: 10px; background: var(--card); }
+.auto-info-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.auto-info-badge { border-radius: 999px; padding: 2px 8px; font-size: 0.72rem; font-weight: 700; background: var(--paper); border: 1px solid var(--line); }
+.auto-info-swatch.is-limited, .auto-info-class.is-limited, .auto-info-badge.is-limited { border-color: var(--imsda-gold); background: var(--imsda-gold-soft); }
+.auto-info-swatch.is-age, .auto-info-class.is-age, .auto-info-badge.is-age { border-color: var(--imsda-navy); background: var(--imsda-navy-soft); }
+.auto-info-swatch.is-cost, .auto-info-class.is-cost, .auto-info-badge.is-cost { border-color: var(--green); background: var(--green-soft); }
+.auto-info-swatch.is-special, .auto-info-class.is-special, .auto-info-badge.is-special { border-color: var(--imsda-purple); background: var(--imsda-purple-soft); }
+@media (max-width: 600px) {
+  .auto-info-class-list { grid-template-columns: 1fr; }
+  .auto-info-card dd { text-align: left; }
+}

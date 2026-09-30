@@ -84,6 +84,9 @@ function draftFromEvent(event: EventSettingsRecord | null): EventSettingsInput {
     capacity: event?.capacity ?? null,
     publicInfoUrl: event?.publicInfoUrl ?? null,
     supportContact: event?.supportContact ?? null,
+    tagline: event?.tagline ?? null,
+    subtitle: event?.subtitle ?? null,
+    helpEmail: event?.helpEmail ?? null,
     hotelName: event?.hotelName ?? null,
     hotelBookingUrl: event?.hotelBookingUrl ?? null,
     hotelPhone: event?.hotelPhone ?? null,
@@ -189,6 +192,9 @@ export function EventSettingsWorkspace({
             location: draft.location || null,
             publicInfoUrl: draft.publicInfoUrl || null,
             supportContact: draft.supportContact || null,
+            tagline: draft.tagline || null,
+            subtitle: draft.subtitle || null,
+            helpEmail: draft.helpEmail || null,
             registrationOpensOn: draft.registrationOpensOn || null,
             registrationClosesOn: draft.registrationClosesOn || null,
             capacity: draft.capacity || null,
@@ -661,6 +667,21 @@ export function EventSettingsWorkspace({
               Registration support contact
               <input value={draft.supportContact ?? ""} maxLength={200} placeholder="registration@imsda.org or conference office phone" onChange={(event) => update("supportContact", event.target.value || null)} />
               <small>Enter the email, phone number, or office name attendees should use for help.</small>
+            </label>
+            <label>
+              Event theme or tagline (optional)
+              <input value={draft.tagline ?? ""} maxLength={120} placeholder="Lest We Forget" onChange={(event) => update("tagline", event.target.value || null)} />
+              <small>Shown under the event title on the public page of a club event. Plain text only.</small>
+            </label>
+            <label>
+              Header subtitle (optional)
+              <input value={draft.subtitle ?? ""} maxLength={200} placeholder="Register all of your club's attendees using only one form" onChange={(event) => update("subtitle", event.target.value || null)} />
+              <small>One line under the dates. Plain text only.</small>
+            </label>
+            <label>
+              Help email (optional)
+              <input type="email" value={draft.helpEmail ?? ""} maxLength={200} placeholder="youth@imsda.org" onChange={(event) => update("helpEmail", event.target.value || null)} />
+              <small>Used by the help card on a club event&rsquo;s public page. Club events fall back to youth@imsda.org.</small>
             </label>
             {draft.publicInfoUrl && (
               <a className="secondary-button event-info-preview" href={draft.publicInfoUrl} target="_blank" rel="noreferrer">

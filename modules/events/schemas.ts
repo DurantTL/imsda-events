@@ -111,6 +111,13 @@ export const eventSettingsInputSchema = z.object({
   location: nullableText(200),
   publicInfoUrl: publicInfoUrlSchema,
   supportContact: nullableText(200),
+  // Public header and help (#651). Plain text only; absent on update keeps the stored value.
+  tagline: optionalNullableText(120),
+  subtitle: optionalNullableText(200),
+  helpEmail: optionalNullableText(200).refine(
+    (value) => value === undefined || value === null || /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(value),
+    "Enter a valid help email address.",
+  ),
   // Lodging for this event. Rendered into messages through
   // {{hotel_information}} and omitted entirely when the name is blank, so an
   // event that books no room block never carries another event's hotel.
