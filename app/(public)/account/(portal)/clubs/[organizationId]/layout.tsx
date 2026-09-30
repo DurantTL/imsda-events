@@ -6,9 +6,9 @@ import { ClubAccessGate } from "@/components/club-access-gate";
 import { ClubGateSlot } from "@/components/club-gate-slot";
 import { attendeeSignInRedirectPath } from "@/modules/attendee-accounts/return-redirect";
 import { requireAttendeeSecondStep } from "@/modules/attendee-accounts/portal-second-step";
-import { isClubFormsRole } from "@/modules/club-forms/domain";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { clubYearFor } from "@/modules/club-rosters/domain";
+import { clubPortalNavItems, clubReporterNavItems } from "@/modules/club-rosters/portal-nav";
 import { clubCapabilities, clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
 
 // Every page under a club's portal is an authenticated leader/director
@@ -52,39 +52,13 @@ export default async function ClubLayout({
       <div className="club-roster-layout">
         {access.state === "OPEN" ? (
           <AccountSectionNav
-            items={[
-              { href: base, label: "Club home" },
-              { href: `${base}/roster`, label: "Roster" },
-              // Honors open on the roster's own gate (#486), so the tab follows the roster capability.
-              ...(access.capabilities.roster ? [{ href: `${base}/honors`, label: "Honors" }] : []),
-              // Supplies open on the roster's gate too (#531): directors and deputies edit, registrars view.
-              ...(access.capabilities.roster ? [{ href: `${base}/supplies`, label: "Supplies" }] : []),
-              // Orders (honors, #487, and uniforms, #497) share the supplies gate.
-              ...(access.capabilities.roster ? [{ href: `${base}/orders`, label: "Orders" }] : []),
-              // Earned awards (#532) share the same gate: directors and deputies confirm, registrars view.
-              ...(access.capabilities.roster ? [{ href: `${base}/awards`, label: "Earned awards" }] : []),
-              { href: `${base}/events`, label: "Events & classes", matchChildren: true },
-              ...(access.capabilities.submitReports ? [
-                { href: `${base}/notes`, label: "Meeting notes", matchChildren: true },
-                { href: `${base}/reports`, label: "Monthly reports", matchChildren: true },
-              ] : []),
-              // Club forms (#610) hold health and conduct answers: the club's director and deputy only.
-              ...(isClubFormsRole(access.club.role) ? [{ href: `${base}/forms`, label: "Forms", matchChildren: true }] : []),
-              ...(access.capabilities.manageTeam ? [{ href: `${base}/team`, label: "Club admins" }] : []),
-              ...(access.capabilities.editProfile ? [{ href: `${base}/profile`, label: "Club profile" }] : []),
-            ]}
+            items={clubPortalNavItems({ base, role: access.club.role, capabilities: access.capabilities })}
             label="Club"
             variant="secondary"
           />
         ) : access.state === "NO_ROSTER" ? (
           <AccountSectionNav
-            items={[
-              { href: base, label: "Club home" },
-              ...(access.capabilities.submitReports ? [
-                { href: `${base}/notes`, label: "Meeting notes", matchChildren: true },
-                { href: `${base}/reports`, label: "Monthly reports", matchChildren: true },
-              ] : []),
-            ]}
+            items={clubReporterNavItems({ base, capabilities: access.capabilities })}
             label="Club"
             variant="secondary"
           />

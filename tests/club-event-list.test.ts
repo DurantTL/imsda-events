@@ -5,7 +5,7 @@ import { ClubEventList } from "@/components/club-event-list";
 import type { ClubEventSummary } from "@/modules/club-registrations/repository";
 
 /**
- * Events & classes tab (#478): an open club event needs a real "Register
+ * Events tab (#478): an open club event needs a real "Register
  * your club" action, and an empty roster of events needs a real
  * explanation instead of a blank tab.
  */
