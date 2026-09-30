@@ -5,6 +5,7 @@ import { ClubTransfersPanel, RequestTransferButton } from "@/components/club-tra
 import { clubPortalComplianceStatuses } from "@/modules/background-checks/repository";
 import { COMPLIANCE_FILTER_VALUES, type ComplianceFilterValue } from "@/modules/background-checks/domain";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
+import { registrationReturnTo } from "@/modules/club-registrations/roster-return";
 import { rosterYearView } from "@/modules/club-rosters/domain";
 import { listRoster } from "@/modules/club-rosters/repository";
 import { listTransferClubOptions } from "@/modules/club-transfers/repository";
@@ -23,9 +24,9 @@ export default async function ClubRosterPage({
   searchParams,
 }: {
   params: Promise<{ organizationId: string }>;
-  searchParams: Promise<{ compliance?: string; year?: string | string[] }>;
+  searchParams: Promise<{ compliance?: string; year?: string | string[]; returnTo?: string | string[] }>;
 }) {
-  const [{ organizationId }, { compliance: complianceParam, year: yearParam }] = await Promise.all([params, searchParams]);
+  const [{ organizationId }, { compliance: complianceParam, year: yearParam, returnTo: returnToParam }] = await Promise.all([params, searchParams]);
   const access = await getRosterAccessStateForPage(organizationId);
   if (access.state !== "OPEN") return null;
   // The previous or next club year can be opened with ?year= (#541), read-only:
@@ -41,9 +42,11 @@ export default async function ClubRosterPage({
     listClubHonorsPage(organizationId, clubYear),
     canTransfer ? listTransferClubOptions(organizationId) : Promise.resolve([]),
   ]);
+  const registrationHref = registrationReturnTo(organizationId, returnToParam);
   return (
     <>
       <BackLink href={`/account/clubs/${organizationId}`}>Back to {access.club.name}</BackLink>
+      {registrationHref && <BackLink href={registrationHref}>Back to registration</BackLink>}
       <p className="quiet-copy">
         <a href={`/account/clubs/${organizationId}/roster/export`}>Build a roster export</a> for an outside camporee.
       </p>

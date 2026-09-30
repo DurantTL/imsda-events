@@ -9,6 +9,7 @@ import {
   type FormResponses,
   type RosterAttendee,
 } from "@/components/public-registration-form";
+import { rosterHrefFromRegistration } from "@/modules/club-registrations/roster-return";
 import { ClubRosterAgeField } from "@/components/club-roster-age-field";
 import { ageInputProblem, ageInputValue, effectiveRosterAges, parseTypedAge, withRosterAge } from "@/modules/club-registrations/roster-ages";
 import { ClubLocationPicker } from "@/components/club-location-picker";
@@ -86,22 +87,50 @@ export function ClubRegistrationWorkspace({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const base = `/api/attendee/clubs/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(workspace.event.id)}`;
 
-  const flush = useCallback(async () => {
+  const inFlight = useRef<Promise<boolean> | null>(null);
+
+  /** Saves the pending draft now. Resolves true when nothing is left unsaved; a failed save stays pending so Retry can resend it. */
+  const flush = useCallback(async (): Promise<boolean> => {
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    if (inFlight.current) await inFlight.current;
     const next = pending.current;
-    if (!next) return;
+    if (!next) return true;
     pending.current = null;
     setSaveState("saving");
-    try {
-      const response = await fetch(`${base}/draft`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(next),
-      });
-      setSaveState(response.ok ? "saved" : "error");
-    } catch {
-      setSaveState("error");
-    }
+    const attempt = (async () => {
+      try {
+        const response = await fetch(`${base}/draft`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(next),
+        });
+        if (!response.ok) throw new Error("save failed");
+        setSaveState("saved");
+        return true;
+      } catch {
+        pending.current ??= next;
+        setSaveState("error");
+        return false;
+      }
+    })();
+    inFlight.current = attempt;
+    const ok = await attempt;
+    if (inFlight.current === attempt) inFlight.current = null;
+    return ok;
   }, [base]);
+
+  // Leaving for the roster (#643): save first, and warn instead of silently dropping an unsaved edit.
+  const [leaveHref, setLeaveHref] = useState<string | null>(null);
+  const rosterHref = rosterHrefFromRegistration(organizationId, workspace.event.id);
+  async function goToRoster(href: string) {
+    if (await flush()) router.push(href);
+    else setLeaveHref(href);
+  }
+  function followRosterLink(event: { preventDefault: () => void; metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean; button?: number }, href: string) {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || (event.button ?? 0) !== 0) return;
+    event.preventDefault();
+    void goToRoster(href);
+  }
 
   const queueSave = useCallback((next: DraftState) => {
     pending.current = next;
@@ -367,7 +396,7 @@ export function ClubRegistrationWorkspace({
       </p>
       {workspace.roster.length === 0 ? (
         <p className="public-manage-empty">
-          <UsersRound size={17} aria-hidden="true" /> Your roster is empty. Add your club members first.
+          <UsersRound size={17} aria-hidden="true" /> Your roster is empty. Add regular members using Add to roster on the roster page, or import a CSV. You can add event-only guests when registering.
         </p>
       ) : (
         <>
@@ -404,7 +433,8 @@ export function ClubRegistrationWorkspace({
                     error={ageProblem !== "" || ageInputValue(person, ageText, draft.rosterAges).trim() !== "" ? ageInputProblem(person, ageText, draft.rosterAges) : null}
                     value={ageInputValue(person, ageText, draft.rosterAges)}
                     onAge={(raw) => changeRosterAge(person.memberId, raw)}
-                    onNavigate={() => { void flush(); }}
+                    href={rosterHref}
+                    onNavigate={(event) => followRosterLink(event, rosterHref)}
                     onSaveToRoster={(save) => changeSaveToRoster(person.memberId, save)}
                     organizationId={organizationId}
                     saveToRoster={!draft.rosterAgeSaveOff.includes(person.memberId)}
@@ -467,11 +497,18 @@ export function ClubRegistrationWorkspace({
         )}
       </section>
 
+      {leaveHref && (
+        <div className="inline-notice error" role="alert">
+          Your latest changes aren&apos;t saved yet.{" "}
+          <button className="text-button" onClick={() => { const href = leaveHref; setLeaveHref(null); void goToRoster(href); }} type="button">Retry</button>{" "}
+          <button className="text-button" onClick={() => router.push(leaveHref)} type="button">Leave anyway</button>
+        </div>
+      )}
       {honorsCatalog && chosenLocation?.full && (
         <p className="inline-notice" role="status">This club will be waitlisted; pick classes after you&apos;re confirmed.</p>
       )}
       <div className="club-registration-toolbar club-sticky-bar">
-        <Link className="secondary-button" href={`/account/clubs/${organizationId}`} onClick={() => { void flush(); }}>
+        <Link className="secondary-button" href={rosterHref} onClick={(event) => followRosterLink(event, rosterHref)}>
           <UserPlus aria-hidden="true" size={15} /> Add someone new to the roster
         </Link>
         <button
