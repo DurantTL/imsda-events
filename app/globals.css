@@ -7950,7 +7950,6 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .public-registration-attendee-section-heading h4,
 .public-registration-confirmation-order h2,
 .public-registration-confirmation-attendees h2,
-.public-registration-page .honor-group-heading,
 .club-year-tile-heading {
   font-size: var(--heading-group);
   font-weight: 600;
@@ -7966,7 +7965,6 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .public-registration-attendee-section-heading p { margin-top: 6px; line-height: 1.5; }
 .public-registration-attendee-heading h3 { margin-top: 4px; }
 .public-registration-review-card h3 { margin-bottom: var(--heading-gap); }
-.public-registration-page .honor-group-heading { margin: var(--heading-space-above) 0 var(--heading-gap); }
 .account-overview-card h2 { margin: 6px 0 var(--heading-gap); }
 .public-registration-page .section-heading { margin-bottom: 1.1rem; }
 .public-registration-page .section-heading h2,
@@ -8005,7 +8003,7 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .club-form-template .field-help { margin: 0; }
 
 /* Helper text that shares a global class: floored only inside the public/portal pages. */
-.public-registration-page :is(.field-help, .quiet-copy, .text-button, .club-form-note, .account-nav a),
+.public-registration-page :is(.field-help, .quiet-copy, .text-button, .club-form-note, .account-nav a, .account-nav-group-label, .club-form-private),
 .public-registration-page :is(.club-form-choice legend, .club-form-filter label),
 .public-registration-page :is(.primary-button, .secondary-button),
 .translate-hint { font-size: var(--text-helper-min); }
@@ -8027,3 +8025,12 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .club-home-stat { min-width: 0; }
 .club-home-stat span { overflow-wrap: anywhere; }
 @media (max-width: 480px) { .primary-button.club-event-action, .secondary-button.club-event-action { white-space: normal; max-width: 100%; flex-wrap: wrap; } }
+
+/* Club form viewer and fill-in inside the portal: screen only, so print and the
+   staff viewer (outside .public-registration-page) are unchanged. */
+@media screen {
+  .public-registration-page :is(.club-form-answers dt, .club-form-answers dd, .club-form-sheet-meta, .club-form-restricted-note, .club-form-roll-table, .form-stack label) { font-size: var(--text-helper-min); }
+  .public-registration-page .checkbox-label { font-size: var(--text-helper-min) !important; }
+  .public-registration-page .club-form-sheet-header h2 { font-size: var(--heading-section); font-weight: 700; line-height: 1.25; }
+}
+.club-class-person legend strong { font-size: var(--heading-group); font-weight: 600; }
