@@ -1,9 +1,10 @@
 /**
  * Shared unsaved-changes registry (#647). Forms register a message while they
- * hold unsaved edits; any programmatic navigation (event picker, in-page
- * `router.replace`) runs through `guardedNavigate`, which asks once for
- * confirmation when at least one form is dirty. Kept free of React so it can
- * be unit tested in the node environment.
+ * hold unsaved edits; `guardedNavigate` asks once for confirmation when at
+ * least one form is dirty. Today only the event picker uses it.
+ * `communications-workspace` `setQuery` has its own discard confirmation, so
+ * it must not be wrapped (that would prompt twice). Kept free of React so it
+ * can be unit tested in the node environment.
  */
 
 const entries = new Map<symbol, string>();

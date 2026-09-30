@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   guardedNavigate,
   hasRegisteredUnsavedChanges,
@@ -6,6 +6,17 @@ import {
   unsavedChangesMessage,
 } from "@/components/unsaved-changes-registry";
 import { eventSwitchHref, switchEvent } from "@/components/shell-event-selection";
+
+const cleanups: Array<() => void> = [];
+function register(message: string) {
+  const unregister = registerUnsavedChanges(message);
+  cleanups.push(unregister);
+  return unregister;
+}
+
+afterEach(() => {
+  while (cleanups.length) cleanups.pop()!();
+});
 
 describe("unsaved changes registry (#647)", () => {
   it("navigates without a prompt when no form is dirty", () => {
@@ -18,26 +29,24 @@ describe("unsaved changes registry (#647)", () => {
   });
 
   it("prompts with the dirty form's message and skips navigation on Cancel", () => {
-    const unregister = registerUnsavedChanges("Unsaved settings");
+    register("Unsaved settings");
     const navigate = vi.fn();
     const confirm = vi.fn(() => false);
     expect(guardedNavigate(navigate, confirm)).toBe(false);
     expect(confirm).toHaveBeenCalledWith("Unsaved settings");
     expect(navigate).not.toHaveBeenCalled();
-    unregister();
   });
 
   it("navigates after the user confirms", () => {
-    const unregister = registerUnsavedChanges("Unsaved builder");
+    register("Unsaved builder");
     const navigate = vi.fn();
     expect(guardedNavigate(navigate, () => true)).toBe(true);
     expect(navigate).toHaveBeenCalledTimes(1);
-    unregister();
   });
 
   it("prompts once however many forms are dirty, and clears on unregister", () => {
-    const a = registerUnsavedChanges("A");
-    const b = registerUnsavedChanges("B");
+    const a = register("A");
+    const b = register("B");
     const confirm = vi.fn(() => true);
     guardedNavigate(() => {}, confirm);
     expect(confirm).toHaveBeenCalledTimes(1);
@@ -66,7 +75,7 @@ describe("event picker switch (#647)", () => {
   });
 
   it("blocks with a dirty form on Cancel and switches on OK", () => {
-    const unregister = registerUnsavedChanges("dirty");
+    register("dirty");
     const commit = vi.fn();
     const push = vi.fn();
     switchEvent({ ...base, guard: (nav) => guardedNavigate(nav, () => false), commit, push });
@@ -75,7 +84,6 @@ describe("event picker switch (#647)", () => {
     switchEvent({ ...base, guard: (nav) => guardedNavigate(nav, () => true), commit, push });
     expect(commit).toHaveBeenCalledWith("evt_2");
     expect(push).toHaveBeenCalledWith("/people?event=evt_2&tab=a");
-    unregister();
   });
 
   it("switches a clean form without prompting", () => {
