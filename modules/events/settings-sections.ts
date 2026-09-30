@@ -111,9 +111,11 @@ export const moreDirectoryCardApplicability: Record<string, AppliesTo> = {
   "event-settings": "both",
   "attendee-configuration": "both",
   tags: "both",
-  // Honors classes, seminar assignments, merchandise, and promo codes are not
+  // Honors Weekend is a club (Pathfinder) event: its classes, sessions, and picks
+  // run through club registration, so honors stays "both". Seminar assignments,
+  // merchandise, and promo codes are not
   // read by club registration (`modules/club-registrations`).
-  honors: "general",
+  honors: "both",
   "program-assignments": "general",
   merchandise: "general",
   "promo-codes": "general",
