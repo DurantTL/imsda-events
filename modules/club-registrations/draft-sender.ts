@@ -16,7 +16,10 @@ export function draftBlockedReason({ conflict, honorsProblem }: { conflict: bool
   return conflict ? DRAFT_CONFLICT_MESSAGE : honorsProblem;
 }
 
-type Attempt = "ok" | "failed" | "conflict";
+type Attempt = "ok" | "failed" | "conflict" | "rejected";
+
+/** Refusals that can recover (the session, the route or the server may come back); any other 4xx never will. */
+const recoverableStatuses = new Set([401, 403, 404, 408, 410, 429]);
 
 export function createDraftSender<T extends object>({
   url,
@@ -70,10 +73,14 @@ export function createDraftSender<T extends object>({
         return "conflict";
       }
     }
-    // Any other refusal (401, 403, 404, 410, other 4xx, 5xx) doesn't say whether the save landed,
-    // so the snapshot stays unconfirmed and is resent with the same save id.
-    unconfirmed = snapshot;
-    return "failed";
+    if (response.status >= 500 || recoverableStatuses.has(response.status)) {
+      // Doesn't say whether the save landed, and may succeed later: resent with the same save id.
+      unconfirmed = snapshot;
+      return "failed";
+    }
+    // 400, 413, 422 and other 4xx will never succeed: drop it so it can't block newer saves.
+    if (unconfirmed === snapshot) unconfirmed = null;
+    return "rejected";
   }
 
   return {
@@ -81,7 +88,9 @@ export function createDraftSender<T extends object>({
     async send(snapshot: T): Promise<boolean> {
       if (conflicted) return false;
       if (unconfirmed && unconfirmed !== snapshot) {
-        if ((await attempt(unconfirmed)) !== "ok") return false;
+        // A resend that can never succeed is dropped and the newer snapshot goes ahead on the current base.
+        const resent = await attempt(unconfirmed);
+        if (resent !== "ok" && resent !== "rejected") return false;
       }
       return (await attempt(snapshot)) === "ok";
     },

@@ -71,6 +71,16 @@ describe("draft sender (#659)", () => {
     expect(new Set(sent.slice(0, 3).map((s) => s.saveId)).size).toBe(1);
   });
 
+  it("does not let a resend that can never succeed (413) block the newer snapshot", async () => {
+    const { sender, sent } = harness(["throw", { ok: false, status: 413, body: {} }, ok(4), ok(5)]);
+    expect(await sender.send({ value: "a" })).toBe(false);
+    expect(await sender.send({ value: "b" })).toBe(true);
+    expect(sent.map((s) => [s.value, s.baseRevision])).toEqual([["a", 3], ["a", 3], ["b", 3]]);
+    // "a" is dropped for good: the next save does not resend it.
+    expect(await sender.send({ value: "c" })).toBe(true);
+    expect(sent.map((s) => s.value)).toEqual(["a", "a", "b", "c"]);
+  });
+
   it("resends a snapshot whose 200 carried no revision, so the next save has the right base", async () => {
     const { sender, sent } = harness([{ ok: true, status: 200, body: {} }, ok(4), ok(5)]);
     expect(await sender.send({ value: "a" })).toBe(true);
