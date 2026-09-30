@@ -202,7 +202,12 @@ describe("promoted waitlist payment-choice repository", () => {
       "a".repeat(43),
       input,
     )).resolves.toEqual(stored);
-    expect(tx.registration.findUnique).not.toHaveBeenCalled();
+    // Only the billing-mode read that refuses a church-billed event first (#621); nothing is loaded for the replay.
+    expect(tx.registration.findUnique).toHaveBeenCalledTimes(1);
+    expect(tx.registration.findUnique).toHaveBeenCalledWith({
+      where: { id: "registration-1" },
+      select: { event: { select: { billingMode: true } } },
+    });
     expect(tx.registration.update).not.toHaveBeenCalled();
     expect(tx.registrationPaymentChoiceOperation.create)
       .not.toHaveBeenCalled();
@@ -230,7 +235,12 @@ describe("promoted waitlist payment-choice repository", () => {
     )).rejects.toMatchObject({
       code: "PAYMENT_CHOICE_IDEMPOTENCY_CONFLICT",
     });
-    expect(tx.registration.findUnique).not.toHaveBeenCalled();
+    // Only the billing-mode read that refuses a church-billed event first (#621); nothing is loaded for the replay.
+    expect(tx.registration.findUnique).toHaveBeenCalledTimes(1);
+    expect(tx.registration.findUnique).toHaveBeenCalledWith({
+      where: { id: "registration-1" },
+      select: { event: { select: { billingMode: true } } },
+    });
     expect(tx.registration.update).not.toHaveBeenCalled();
   });
 

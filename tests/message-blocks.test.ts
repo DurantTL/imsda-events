@@ -158,10 +158,13 @@ describe("payment status block", () => {
       balanceCents: 900,
       organization: "Ankeny Son-Seekers",
       billingContact: "Jane Doe",
+      perPersonNotice: "$9 per person. Your church is billed after the event.",
     });
 
     expect(block).toContain("No payment is due online");
-    expect(block).toContain("$9.00");
+    expect(block).toContain("$9 per person. Your church is billed after the event.");
+    // A church-billed registrant never sees a total (#621).
+    expect(block).not.toContain("$9.00");
     expect(block).toContain("Responsible organization: **Ankeny Son-Seekers**");
     expect(block).toContain("Billing contact: **Jane Doe**");
     expect(block).not.toContain("Balance due");

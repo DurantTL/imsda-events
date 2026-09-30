@@ -47,7 +47,7 @@ describe("ClubEventList (#478)", () => {
   it("offers 'View' instead, once the club is registered", () => {
     const markup = renderToStaticMarkup(
       createElement(ClubEventList, {
-        events: [event({ id: "evt-1", registration: { confirmationCode: "ABC123", status: "CONFIRMED", attendeeCount: 8, amountOwedCents: 0 } })],
+        events: [event({ id: "evt-1", registration: { confirmationCode: "ABC123", status: "CONFIRMED", attendeeCount: 8 } })],
         organizationId: "org-1",
       }),
     );

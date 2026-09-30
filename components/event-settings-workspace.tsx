@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   CalendarDays,
@@ -18,6 +18,12 @@ import {
 import { EventLocationsPanel } from "@/components/event-locations-panel";
 import type { ActiveAreaCoordinator, EventLocationRecord } from "@/modules/event-locations/repository";
 import type { EventSettingsRecord } from "@/modules/events/repository";
+import {
+  eventKindFromAudience,
+  resolveSectionPlacement,
+  sectionsWithNonDefaultValues,
+  type EventSettingsSectionId,
+} from "@/modules/events/settings-sections";
 import { getEventPublishReadiness, getEventPublishWarnings } from "@/modules/events/readiness";
 import {
   eventTimeZones,
@@ -307,6 +313,180 @@ export function EventSettingsWorkspace({
     }
   }
 
+  const attendeeEditField = (
+    <label>
+      Attendee edit verification
+      <select
+        value={draft.attendeeEditPolicy}
+        onChange={(event) => update(
+          "attendeeEditPolicy",
+          event.target.value as EventSettingsInput["attendeeEditPolicy"],
+        )}
+      >
+        <option value="VERIFY_EVERY_EDIT">Email a code for every edit</option>
+        <option value="TIERED">Allow low-risk answers without a code</option>
+      </select>
+      <small>
+        Contact changes, cancellations, and transfers always require a fresh emailed
+        code. Medical and club data always require an authenticator.
+      </small>
+    </label>
+  );
+  const paymentInstructionsField = (
+    <label>
+      Approved payment instructions
+      <textarea
+        value={draft.approvedPaymentInstructions ?? ""}
+        maxLength={2_000}
+        rows={5}
+        placeholder="Tell registrants how to pay this event's approved balance."
+        onChange={(event) => update("approvedPaymentInstructions", event.target.value || null)}
+      />
+      <small>
+        Versioned event guidance appears only on applicable unpaid messages. Amounts, payment
+        state, waitlist, complimentary, and organization-billed wording remain server-derived.
+      </small>
+    </label>
+  );
+  const seminarField = (
+    <div className="form-grid two-column">
+      <label>
+        Seminar preference deadline
+        <input
+          type="date"
+          value={draft.seminarPreferenceClosesOn ?? ""}
+          onChange={(event) => update(
+            "seminarPreferenceClosesOn",
+            event.target.value || null,
+          )}
+        />
+        <small>Holders can update ranked seminar preferences through this date in the event timezone.</small>
+      </label>
+      <label className="event-setting-toggle">
+        <input
+          type="checkbox"
+          checked={draft.seminarPreferenceSelfServiceLocked}
+          onChange={(event) => update(
+            "seminarPreferenceSelfServiceLocked",
+            event.target.checked,
+          )}
+        />
+        <span><strong>Lock seminar preference self-service</strong><small>Current preferences remain visible; staff can still make a documented override.</small></span>
+      </label>
+    </div>
+  );
+  const shirtField = (
+    <label className="event-setting-toggle">
+      <input
+        type="checkbox"
+        checked={draft.collectsShirtSizes}
+        onChange={(event) => update("collectsShirtSizes", event.target.checked)}
+      />
+      <span>
+        <strong>Collect a shirt size for each attendee</strong>
+        <small>
+          Registrants choose a size on their private page, and staff can send a reviewed
+          request to everyone still missing one. Turning this off hides the question and
+          stops the request being sent.
+        </small>
+      </span>
+    </label>
+  );
+  const backgroundField = (
+    <label className="event-setting-toggle">
+      <input
+        type="checkbox"
+        checked={draft.checksAdultBackgrounds}
+        onChange={(event) => update("checksAdultBackgrounds", event.target.checked)}
+      />
+      <span>
+        <strong>Youth or children&apos;s event: check adults&apos; background checks</strong>
+        <small>
+          For events where parents aren&apos;t normally there. Every adult registered, club
+          staff or not, is flagged until a current Sterling Volunteers check is on file.
+          Registration and check-in are never blocked.
+        </small>
+      </span>
+    </label>
+  );
+  const lodgingPanel = (
+    <section className="panel form-stack event-settings-panel">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">Optional</p>
+          <h2>Lodging</h2>
+          <p>
+            Rooms held for this event. Registration messages that use the hotel token show
+            these details, and leave the section out entirely when the hotel name is blank —
+            so an event with no room block never carries another event&rsquo;s hotel.
+          </p>
+        </div>
+        <Globe2 size={21} aria-hidden="true" />
+      </div>
+      <label>
+        Hotel name
+        <input value={draft.hotelName ?? ""} maxLength={200} placeholder="Holiday Inn Des Moines – Airport Conference Center" onChange={(event) => update("hotelName", event.target.value || null)} />
+        <small>Leave blank for an event with no room block. Everything below is then unused.</small>
+      </label>
+      <label>
+        Reservation link
+        <input type="url" value={draft.hotelBookingUrl ?? ""} maxLength={500} placeholder="https://…" onChange={(event) => update("hotelBookingUrl", event.target.value || null)} />
+      </label>
+      <label>
+        Reservation phone
+        <input value={draft.hotelPhone ?? ""} maxLength={60} placeholder="(515) 287-2400" onChange={(event) => update("hotelPhone", event.target.value || null)} />
+      </label>
+      <label>
+        Group name to ask for
+        <input value={draft.hotelGroupName ?? ""} maxLength={200} placeholder="IA-MO Conference of Seventh-day Adventists Women’s Retreat" onChange={(event) => update("hotelGroupName", event.target.value || null)} />
+      </label>
+      <label>
+        Group rate
+        <input value={draft.hotelRate ?? ""} maxLength={120} placeholder="$120 per night plus tax" onChange={(event) => update("hotelRate", event.target.value || null)} />
+      </label>
+      <label>
+        Additional lodging notes
+        <textarea value={draft.hotelInstructions ?? ""} rows={3} maxLength={1000} placeholder="Pro tip: share a room with a friend and split the cost." onChange={(event) => update("hotelInstructions", event.target.value || null)} />
+        <small>Shown under the reservation details in every message that includes lodging.</small>
+      </label>
+    </section>
+  );
+
+  const eventKind = eventKindFromAudience(draft.audience);
+  // Placement follows the live audience and billing mode, so changing either
+  // moves sections at once. Whether a section holds a non-default value is read
+  // from what was last saved, so typing into a section in "More settings"
+  // never moves it out from under the cursor.
+  const nonDefaultSections = sectionsWithNonDefaultValues(savedDraft);
+  const placementOf = (id: EventSettingsSectionId) =>
+    resolveSectionPlacement(id, { kind: eventKind, billingMode: draft.billingMode }, nonDefaultSections);
+
+  const optionFields: Array<{ id: EventSettingsSectionId; node: React.ReactNode }> = [
+    { id: "attendee-edit-policy", node: attendeeEditField },
+    { id: "payment-instructions", node: paymentInstructionsField },
+    { id: "seminar-preferences", node: seminarField },
+    { id: "shirt-sizes", node: shirtField },
+    { id: "adult-background-checks", node: backgroundField },
+  ];
+  const optionalFields = {
+    primary: optionFields.filter((field) => placementOf(field.id) === "primary"),
+    more: optionFields.filter((field) => placementOf(field.id) === "more"),
+  };
+  const lodgingInMore = placementOf("lodging") === "more";
+  const moreSettingsRef = useRef<HTMLDetailsElement>(null);
+
+  // A field inside the closed "More settings" can fail native validation (a bad
+  // URL, say). The browser cannot show a message on a hidden field, so Save
+  // would do nothing; open the disclosure and focus the field instead.
+  function openMoreSettingsForInvalidField(event: React.FormEvent<HTMLFormElement>) {
+    const details = moreSettingsRef.current;
+    const target = event.target as HTMLElement;
+    if (details && !details.open && details.contains(target)) {
+      details.open = true;
+      target.focus();
+    }
+  }
+
   return (
     <section className="page-stack event-settings-workspace">
       {mode === "edit" && initialEvent && (
@@ -331,7 +511,7 @@ export function EventSettingsWorkspace({
       {error && <div className="inline-notice error" role="alert"><AlertTriangle size={17} aria-hidden="true" /> {error}</div>}
       {notice && <div className="inline-notice success" role="status"><CheckCircle2 size={17} aria-hidden="true" /> {notice}</div>}
 
-      <form className="event-settings-layout" onSubmit={save}>
+      <form className="event-settings-layout" onSubmit={save} onInvalidCapture={openMoreSettingsForInvalidField}>
         <div className="event-settings-main">
           <section className="panel form-stack event-settings-panel">
             <div className="section-heading">
@@ -413,23 +593,6 @@ export function EventSettingsWorkspace({
               <span><strong>Offer a waitlist when the event is full</strong><small>People can submit without taking a confirmed event spot.</small></span>
             </label>
             <label>
-              Attendee edit verification
-              <select
-                value={draft.attendeeEditPolicy}
-                onChange={(event) => update(
-                  "attendeeEditPolicy",
-                  event.target.value as EventSettingsInput["attendeeEditPolicy"],
-                )}
-              >
-                <option value="VERIFY_EVERY_EDIT">Email a code for every edit</option>
-                <option value="TIERED">Allow low-risk answers without a code</option>
-              </select>
-              <small>
-                Contact changes, cancellations, and transfers always require a fresh emailed
-                code. Medical and club data always require an authenticator.
-              </small>
-            </label>
-            <label>
               Audience
               <select
                 value={draft.audience}
@@ -465,45 +628,6 @@ export function EventSettingsWorkspace({
                 organization is billed later based on final attendance.
               </small>
             </label>
-            <label>
-              Approved payment instructions
-              <textarea
-                value={draft.approvedPaymentInstructions ?? ""}
-                maxLength={2_000}
-                rows={5}
-                placeholder="Tell registrants how to pay this event's approved balance."
-                onChange={(event) => update("approvedPaymentInstructions", event.target.value || null)}
-              />
-              <small>
-                Versioned event guidance appears only on applicable unpaid messages. Amounts, payment
-                state, waitlist, complimentary, and organization-billed wording remain server-derived.
-              </small>
-            </label>
-            <div className="form-grid two-column">
-              <label>
-                Seminar preference deadline
-                <input
-                  type="date"
-                  value={draft.seminarPreferenceClosesOn ?? ""}
-                  onChange={(event) => update(
-                    "seminarPreferenceClosesOn",
-                    event.target.value || null,
-                  )}
-                />
-                <small>Holders can update ranked seminar preferences through this date in the event timezone.</small>
-              </label>
-              <label className="event-setting-toggle">
-                <input
-                  type="checkbox"
-                  checked={draft.seminarPreferenceSelfServiceLocked}
-                  onChange={(event) => update(
-                    "seminarPreferenceSelfServiceLocked",
-                    event.target.checked,
-                  )}
-                />
-                <span><strong>Lock seminar preference self-service</strong><small>Current preferences remain visible; staff can still make a documented override.</small></span>
-              </label>
-            </div>
             <label className="event-setting-toggle nested">
               <input
                 type="checkbox"
@@ -513,37 +637,15 @@ export function EventSettingsWorkspace({
               />
               <span><strong>Automatically promote the next eligible registration</strong><small>Use the saved queue order when capacity becomes available.</small></span>
             </label>
-            <label className="event-setting-toggle">
-              <input
-                type="checkbox"
-                checked={draft.collectsShirtSizes}
-                onChange={(event) => update("collectsShirtSizes", event.target.checked)}
-              />
-              <span>
-                <strong>Collect a shirt size for each attendee</strong>
-                <small>
-                  Registrants choose a size on their private page, and staff can send a reviewed
-                  request to everyone still missing one. Turning this off hides the question and
-                  stops the request being sent.
-                </small>
-              </span>
-            </label>
-            <label className="event-setting-toggle">
-              <input
-                type="checkbox"
-                checked={draft.checksAdultBackgrounds}
-                onChange={(event) => update("checksAdultBackgrounds", event.target.checked)}
-              />
-              <span>
-                <strong>Youth or children&apos;s event: check adults&apos; background checks</strong>
-                <small>
-                  For events where parents aren&apos;t normally there. Every adult registered, club
-                  staff or not, is flagged until a current Sterling Volunteers check is on file.
-                  Registration and check-in are never blocked.
-                </small>
-              </span>
-            </label>
           </section>
+
+          {optionalFields.primary.length > 0 && <section className="panel form-stack event-settings-panel">
+            <div className="section-heading">
+              <div><p className="eyebrow">Options</p><h2>Registration options</h2><p>Settings that apply to this kind of event.</p></div>
+            </div>
+            {optionalFields.primary.map((field) => <div className="event-settings-option" key={field.id}>{field.node}</div>)}
+          </section>}
+
 
           <section className="panel form-stack event-settings-panel">
             <div className="section-heading">
@@ -567,46 +669,21 @@ export function EventSettingsWorkspace({
             )}
           </section>
 
-          <section className="panel form-stack event-settings-panel">
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">Optional</p>
-                <h2>Lodging</h2>
-                <p>
-                  Rooms held for this event. Registration messages that use the hotel token show
-                  these details, and leave the section out entirely when the hotel name is blank —
-                  so an event with no room block never carries another event&rsquo;s hotel.
-                </p>
+
+          {!lodgingInMore && lodgingPanel}
+
+          {(optionalFields.more.length > 0 || lodgingInMore) && (
+            <details className="panel event-more-settings" ref={moreSettingsRef}>
+              <summary>
+                <strong>More settings</strong>
+                <small>Settings that do not apply to this kind of event. They are kept, not removed.</small>
+              </summary>
+              <div className="form-stack">
+                {optionalFields.more.map((field) => <div className="event-settings-option" key={field.id}>{field.node}</div>)}
+                {lodgingInMore && lodgingPanel}
               </div>
-              <Globe2 size={21} aria-hidden="true" />
-            </div>
-            <label>
-              Hotel name
-              <input value={draft.hotelName ?? ""} maxLength={200} placeholder="Holiday Inn Des Moines – Airport Conference Center" onChange={(event) => update("hotelName", event.target.value || null)} />
-              <small>Leave blank for an event with no room block. Everything below is then unused.</small>
-            </label>
-            <label>
-              Reservation link
-              <input type="url" value={draft.hotelBookingUrl ?? ""} maxLength={500} placeholder="https://…" onChange={(event) => update("hotelBookingUrl", event.target.value || null)} />
-            </label>
-            <label>
-              Reservation phone
-              <input value={draft.hotelPhone ?? ""} maxLength={60} placeholder="(515) 287-2400" onChange={(event) => update("hotelPhone", event.target.value || null)} />
-            </label>
-            <label>
-              Group name to ask for
-              <input value={draft.hotelGroupName ?? ""} maxLength={200} placeholder="IA-MO Conference of Seventh-day Adventists Women’s Retreat" onChange={(event) => update("hotelGroupName", event.target.value || null)} />
-            </label>
-            <label>
-              Group rate
-              <input value={draft.hotelRate ?? ""} maxLength={120} placeholder="$120 per night plus tax" onChange={(event) => update("hotelRate", event.target.value || null)} />
-            </label>
-            <label>
-              Additional lodging notes
-              <textarea value={draft.hotelInstructions ?? ""} rows={3} maxLength={1000} placeholder="Pro tip: share a room with a friend and split the cost." onChange={(event) => update("hotelInstructions", event.target.value || null)} />
-              <small>Shown under the reservation details in every message that includes lodging.</small>
-            </label>
-          </section>
+            </details>
+          )}
         </div>
 
         <aside className="event-settings-side">

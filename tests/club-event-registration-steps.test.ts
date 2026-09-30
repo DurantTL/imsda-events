@@ -63,7 +63,7 @@ describe("clubEventRegistrationSteps (#478)", () => {
 
   it("leaves out an event the club has already registered for", () => {
     const steps = clubEventRegistrationSteps(
-      [event({ id: "evt-1", registration: { confirmationCode: "ABC123", status: "CONFIRMED", attendeeCount: 12, amountOwedCents: 0 } })],
+      [event({ id: "evt-1", registration: { confirmationCode: "ABC123", status: "CONFIRMED", attendeeCount: 12 } })],
       "/account/clubs/org-1",
     );
     expect(steps).toEqual([]);

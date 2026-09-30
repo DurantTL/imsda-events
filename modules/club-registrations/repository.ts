@@ -63,6 +63,7 @@ import {
 import { registrationOperationFingerprint } from "@/modules/registrations/operations-domain";
 import type { RegistrationAmendmentInput } from "@/modules/registrations/schemas";
 import { moneyToCents } from "@/modules/payments/square-domain";
+import { currentPricingSnapshot, perPersonPriceFromSnapshot } from "@/modules/club-registrations/per-person-price";
 import {
   churchOwedCents,
   isChurchBilledStatus,
@@ -240,7 +241,6 @@ export async function listClubEvents(organizationId: string, now = new Date()) {
             select: {
               confirmationCode: true,
               status: true,
-              totalAmount: true,
               _count: { select: { attendees: true } },
               location: { select: clubLocationSelect },
             },
@@ -279,7 +279,6 @@ export async function listClubEvents(organizationId: string, now = new Date()) {
           confirmationCode: registration.confirmationCode,
           status: registration.status,
           attendeeCount: registration._count.attendees,
-          amountOwedCents: churchOwedCents(registration.status, moneyToCents(registration.totalAmount)),
         }
         : null,
       draft: draft ? { updatedAt: draft.updatedAt.toISOString(), selectedCount: draft.selectedMemberIds.length } : null,
@@ -509,7 +508,9 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
             confirmationCode: true,
             status: true,
             updatedAt: true,
-            totalAmount: true,
+            publicFormSubmission: { select: { pricingSnapshot: true } },
+            // The latest amendment's pricing wins over the original submission's (#621).
+            operations: { where: { type: "AMENDMENT" }, orderBy: { createdAt: "desc" }, take: 1, select: { afterSnapshot: true } },
             location: { select: clubLocationSelect },
             attendees: { orderBy: { position: "asc" }, select: { id: true, profileSnapshot: true, formResponses: true } },
           },
@@ -600,12 +601,15 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
         location: registeredLocation
           ? clubLocationView(event, registeredLocation, seatCounts.get(registeredLocation.id) ?? 0, now)
           : null,
-        // What the church owes for this registration (#409): priced by the
-        // same engine as any other registration, never an attendee balance
-        // or a card payment — this event bills the church directly.
-        amountOwedCents: churchOwedCents(
-          clubRegistration.registration.status,
-          moneyToCents(clubRegistration.registration.totalAmount),
+        // The director sees the per-person price only, never what the church
+        // owes (#621); the amount stays on the staff finance views (#409).
+        perPerson: perPersonPriceFromSnapshot(
+          currentPricingSnapshot(clubRegistration.registration),
+          true,
+          clubRegistration.registration.attendees.map(({ profileSnapshot }) => {
+            const snapshot = recordFromJson(profileSnapshot);
+            return `${typeof snapshot.firstName === "string" ? snapshot.firstName : ""} ${typeof snapshot.lastName === "string" ? snapshot.lastName : ""}`.trim();
+          }),
         ),
         // The registration-scope answers as they stand now, so a reopened
         // edit can evaluate attendee questions that depend on them. The

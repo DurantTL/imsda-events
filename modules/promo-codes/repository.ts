@@ -14,6 +14,7 @@ import {
 import { calendarDateInTimeZone } from "@/modules/forms/public-domain";
 import { hydrateFormOptions } from "@/modules/forms/form-options-repository";
 import {
+  getAttendeeRosterConfig,
   registrationFormDefinitionSchema,
   type FormCalculation,
   type RegistrationFormDefinition,
@@ -34,6 +35,7 @@ import {
   type PromoCodeRule,
 } from "@/modules/promo-codes/domain";
 import { eventBillsSponsoredPromoCodes } from "@/modules/promo-codes/church-sponsored";
+import { isChurchBilledBillingMode, perPersonPrice, type PerPersonPrice } from "@/modules/club-registrations/per-person-price";
 import type {
   PromoCodeInput,
   PublicPromoCodeQuoteInput,
@@ -487,6 +489,7 @@ function publicFormQuery(eventSlug: string, formSlug: string) {
           registrationOpensOn: true,
           registrationClosesOn: true,
           waitlistEnabled: true,
+          billingMode: true,
           attendeeTypes: {
             where: { isActive: true },
             orderBy: [{ sortOrder: "asc" as const }, { label: "asc" as const }],
@@ -567,6 +570,8 @@ export async function evaluateAttendeePromoCodes(
     calculation: FormCalculation;
     pricingDate: string;
     claim: boolean;
+    /** Church-billed events: no amounts in any message (#621). */
+    hideAmounts?: boolean;
   },
 ) {
   const discounts: AttendeePromoDiscount[] = [];
@@ -592,6 +597,7 @@ export async function evaluateAttendeePromoCodes(
           eligibleSubtotalCents,
           pricingDate: input.pricingDate,
           fieldId: input.field.id,
+          hideAmounts: input.hideAmounts,
         });
         discounts.push({ attendeeIndex, code: claimed.promoCode.code, discountAmountCents: claimed.evaluation.discountAmountCents, promoCodeId: claimed.promoCode.id });
       } catch (error) {
@@ -607,7 +613,7 @@ export async function evaluateAttendeePromoCodes(
     const earlierUses = promo ? usedHere.get(promo.id) ?? 0 : 0;
     const evaluation = evaluatePromoCode(
       promo ? { ...storedPromoRule(promo), redeemedCount: promo.redeemedCount + earlierUses } : null,
-      { submittedCode, eligibleSubtotalCents, pricingDate: input.pricingDate },
+      { submittedCode, eligibleSubtotalCents, pricingDate: input.pricingDate, hideAmounts: input.hideAmounts },
     );
     if (!evaluation.valid) {
       issueFor(
@@ -623,6 +629,32 @@ export async function evaluateAttendeePromoCodes(
   return { discounts, issues };
 }
 
+const hiddenQuoteTotals = [
+  "subtotalCents",
+  "totalCents",
+  "processingFeeCents",
+  "preDiscountSubtotalCents",
+  "discountAmountCents",
+  "lineItems",
+] as const;
+/**
+ * A quote for a church-billed event (#621): no subtotal, total, fee sum, aggregate discount or raw
+ * line items (which add back up to the total), only the computed per-person price.
+ */
+export type ChurchBilledPromoQuote<T> = Omit<T, (typeof hiddenQuoteTotals)[number]> & { perPerson: PerPersonPrice };
+
+function withoutQuoteTotals<T extends DiscountedFormCalculation>(
+  quote: T,
+  churchBilled: boolean,
+  pricing: { roster: boolean; attendeeCount: number },
+): T | ChurchBilledPromoQuote<T> {
+  if (!churchBilled) return quote;
+  const perPerson = perPersonPrice({ lineItems: quote.lineItems, ...pricing });
+  const copy: Partial<T> = { ...quote };
+  for (const key of hiddenQuoteTotals) delete copy[key];
+  return { ...copy, perPerson } as ChurchBilledPromoQuote<T>;
+}
+
 export type PublicAttendeePromoQuote = DiscountedFormCalculation & {
   /** Sponsoring church name by normalized code, for the codes entered (#545). */
   sponsors?: Record<string, string>;
@@ -635,7 +667,12 @@ export async function getPublicPromoCodeQuote(
   formSlug: string,
   input: PublicPromoCodeQuoteInput,
   now = new Date(),
-): Promise<PublicPromoCodeQuote | PublicAttendeePromoQuote> {
+): Promise<
+  | PublicPromoCodeQuote
+  | PublicAttendeePromoQuote
+  | ChurchBilledPromoQuote<PublicPromoCodeQuote>
+  | ChurchBilledPromoQuote<PublicAttendeePromoQuote>
+> {
   const prisma = getPrisma();
   const form = await prisma.registrationForm.findFirst(
     publicFormQuery(eventSlug, formSlug),
@@ -665,6 +702,7 @@ export async function getPublicPromoCodeQuote(
     registrationFormDefinitionSchema.parse(version.definition),
     { attendeeTypes: form.event.attendeeTypes },
   );
+  const churchBilled = isChurchBilledBillingMode(form.event.billingMode);
   const attendeeField = attendeePromoCodeField(definition);
   if (attendeeField) {
     // Per person (#397): every attendee's code is checked together; problems
@@ -683,6 +721,7 @@ export async function getPublicPromoCodeQuote(
       calculation: prepared.calculation,
       pricingDate: prepared.pricingDate,
       claim: false,
+      hideAmounts: churchBilled,
     });
     const enteredCodes = [...new Set(discounts.map((discount) => normalizePromoCode(discount.code)))];
     const sponsored = enteredCodes.length === 0
@@ -691,12 +730,12 @@ export async function getPublicPromoCodeQuote(
         where: { eventId: form.eventId, normalizedCode: { in: enteredCodes }, sponsoringOrganizationId: { not: null } },
         select: { normalizedCode: true, sponsoringOrganization: { select: { name: true } } },
       });
-    return {
+    return withoutQuoteTotals({
       ...applyAttendeePromoCodes(definition, prepared.registrationResponses, prepared.calculation, discounts),
       attendeeIssues: issues,
       sponsors: Object.fromEntries(sponsored.flatMap((promo) =>
         promo.sponsoringOrganization ? [[promo.normalizedCode, promo.sponsoringOrganization.name]] : [])),
-    } satisfies PublicAttendeePromoQuote;
+    } satisfies PublicAttendeePromoQuote, churchBilled, { roster: true, attendeeCount: prepared.attendees.length });
   }
   const field = requirePromoField(definition);
   const responses = {
@@ -725,6 +764,7 @@ export async function getPublicPromoCodeQuote(
       submittedCode: input.code,
       eligibleSubtotalCents: prepared.calculation.subtotalCents,
       pricingDate: prepared.pricingDate,
+      hideAmounts: churchBilled,
     },
   );
   if (!evaluation.valid) publicErrorFromEvaluation(evaluation, field.id);
@@ -734,7 +774,7 @@ export async function getPublicPromoCodeQuote(
       select: { name: true },
     })
     : null;
-  return {
+  return withoutQuoteTotals({
     ...applyPromoCodeToCalculation(
       definition,
       prepared.registrationResponses,
@@ -742,7 +782,7 @@ export async function getPublicPromoCodeQuote(
       evaluation,
     ),
     sponsoredBy: sponsor?.name ?? null,
-  };
+  }, churchBilled, { roster: getAttendeeRosterConfig(definition).enabled, attendeeCount: prepared.attendees.length });
 }
 
 export async function claimPromoCode(
@@ -753,6 +793,7 @@ export async function claimPromoCode(
     eligibleSubtotalCents: number;
     pricingDate: string;
     fieldId: string;
+    hideAmounts?: boolean;
   },
 ): Promise<ClaimedPromoCode> {
   const promo = await findPromoForCode(

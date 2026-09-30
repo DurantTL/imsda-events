@@ -514,6 +514,7 @@ describe("church-billed (deferred-organization) lifecycle messages", () => {
   function withBillingMode(
     billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE",
     publishedBody?: string,
+    registrationExtra: Record<string, unknown> = {},
   ) {
     const fixture = transactionFixture();
     const base = fixture.tx.registration.findFirst.getMockImplementation();
@@ -521,6 +522,7 @@ describe("church-billed (deferred-organization) lifecycle messages", () => {
       const registration = await (base as (...a: unknown[]) => Promise<Record<string, unknown>>)(...args);
       return {
         ...registration,
+        ...registrationExtra,
         event: {
           ...(registration.event as Record<string, unknown>),
           billingMode,
@@ -593,6 +595,43 @@ describe("church-billed (deferred-organization) lifecycle messages", () => {
     expectNoPaymentRequest(queuedMessage(upsert).create.bodyTextSnapshot);
   });
 
+  it("prices a church-billed email from the latest amendment, not the original submission (#621)", async () => {
+    const lines = (amountCents: number) => [
+      { label: "Fee — A", amountCents, attendeeIndex: 0, attendeeLabel: "A" },
+      { label: "Fee — B", amountCents, attendeeIndex: 1, attendeeLabel: "B" },
+    ];
+    const { tx, upsert } = withBillingMode(
+      "DEFERRED_ORGANIZATION_INVOICE",
+      "Price token: {{total_amount}}\n\n{{payment_status_block}}",
+      {
+        publicFormSubmission: { pricingSnapshot: { lineItems: lines(2500), attendeeCount: 2, rosterEnabled: true } },
+        operations: [{ afterSnapshot: { pricingSnapshot: { lineItems: lines(3000), attendeeCount: 2, rosterEnabled: true } } }],
+      },
+    );
+    await enqueueRegistrationUpdatedMessage(tx as never, { ...input, changeCategory: "REGISTRATION_DETAILS" });
+    const body = queuedMessage(upsert).create.bodyTextSnapshot;
+    expect(body).toContain("$30 per person. Your church is billed after the event.");
+    expect(body).not.toContain("$25 per person");
+    expect(body).not.toContain("$60");
+  });
+
+  it("shows the price of an amendment that is not stored yet (#621)", async () => {
+    const lines = (amountCents: number) => [{ label: "Fee", amountCents, attendeeIndex: 0, attendeeLabel: "Old Name" }];
+    const { tx, upsert } = withBillingMode(
+      "DEFERRED_ORGANIZATION_INVOICE",
+      "Price token: {{total_amount}}",
+      { publicFormSubmission: { pricingSnapshot: { lineItems: lines(2500), attendeeCount: 1, rosterEnabled: true } }, operations: [] },
+    );
+    await enqueueRegistrationUpdatedMessage(tx as never, {
+      ...input,
+      changeCategory: "REGISTRATION_DETAILS",
+      pricingSnapshot: { lineItems: lines(3000), attendeeCount: 1, rosterEnabled: true },
+    });
+    const body = queuedMessage(upsert).create.bodyTextSnapshot;
+    expect(body).toContain("$30 per person");
+    expect(body).not.toContain("$25");
+  });
+
   it("renders the payment block and balance token of an edited update template as invoiced, $0 balance", async () => {
     const { tx, upsert } = withBillingMode("DEFERRED_ORGANIZATION_INVOICE", PAYMENT_BODY);
     await enqueueRegistrationUpdatedMessage(tx as never, {
@@ -601,7 +640,8 @@ describe("church-billed (deferred-organization) lifecycle messages", () => {
     });
     const body = queuedMessage(upsert).create.bodyTextSnapshot;
     expectNoPaymentRequest(body);
-    expect(body).toContain("Balance token: $0.00");
+    expect(body).toContain("Balance token: Nothing is due online.");
+    expect(body).not.toContain("$0.00");
   });
 
   it("still shows the balance and pay link on an attendee-pay event", async () => {

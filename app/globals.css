@@ -7846,3 +7846,32 @@ select:focus-visible {
 .page-stack > .panel > button.secondary-button { align-self: flex-start; margin: 10px 0; }
 .profile-shell-attendee .account-page-body { max-width: none; margin: 16px 0 0; }
 .profile-shell-attendee .profile-back-links { margin: 12px 0; }
+
+/* Collapsed disclosures for settings that do not apply to this event type (#624). */
+.event-more-settings > summary,
+.activity-disclosure > summary {
+  cursor: pointer;
+  display: list-item; /* keeps the browser's open/closed marker */
+  padding-left: 4px;
+}
+.event-more-settings > summary strong,
+.event-more-settings > summary small,
+.activity-disclosure > summary small,
+.activity-disclosure > summary h2 {
+  display: inline;
+}
+.activity-disclosure > summary h2,
+.event-more-settings > summary h2 {
+  font-size: inherit;
+  margin: 0;
+}
+.event-more-settings > summary small,
+.activity-disclosure > summary small {
+  display: block;
+  margin-left: 0;
+  color: var(--muted, inherit);
+}
+.event-more-settings[open] > summary,
+.activity-disclosure[open] > summary {
+  margin-bottom: 14px;
+}

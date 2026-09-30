@@ -1580,6 +1580,8 @@ export async function amendRegistration(
             registrationId,
             correlationId: input.clientRequestId,
             transitionKey: `registration-amendment:${amendmentId}`,
+            // The operation holding the new pricing is created after this notice is queued.
+            pricingSnapshot: { ...prepared.nextPricingSnapshot, attendeeNames: undefined },
             changeCategory: prepared.seminarPreferencesChanged
               ? "SEMINAR_PREFERENCES"
               : "REGISTRATION_DETAILS",
