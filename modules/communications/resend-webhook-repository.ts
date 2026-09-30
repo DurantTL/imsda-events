@@ -59,7 +59,15 @@ export async function recordResendWebhookEvent(
           eventType: event.type,
           mappedDeliveryStatus: transition?.status ?? null,
           occurredAt,
-          payload: event as Prisma.InputJsonValue,
+          // An event that matches no message yet is held only so it can be linked
+          // when the send is recorded (email-delivery.ts). It may also belong to a
+          // message whose event was deleted (#620), so it keeps what linking needs
+          // (type, time, provider id) and not the recipient's address.
+          payload: (message ? event : {
+            type: event.type,
+            created_at: event.created_at,
+            data: { email_id: event.data.email_id },
+          }) as Prisma.InputJsonValue,
         },
       });
       if (message && transition) {

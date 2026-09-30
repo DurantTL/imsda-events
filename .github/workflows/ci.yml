@@ -122,3 +122,11 @@ jobs:
       # Real-database check of Honors Weekend sessions at sites: per-site names beside the
       # no-site rule, copying and cloning by site name with the no-match warning (#589).
       - run: npm run test:honor-sites
+
+      # Real-database check of deleting an event at any stage: a rich event
+      # (registrations, payments, honors, forms, messages, locations, club forms,
+      # amendment ledgers) is removed in one transaction with no leftover rows
+      # anywhere, shared people/clubs/accounts survive, permissions and the typed
+      # name are enforced, the audit row holds counts only, a mid-deletion failure
+      # rolls everything back, and the ledger trigger flag never leaks (#620).
+      - run: npm run test:event-deletion
