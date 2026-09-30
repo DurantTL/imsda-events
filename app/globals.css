@@ -8345,76 +8345,70 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 }
 
 /* Issue #686 - mobile pass 3: report and overview tables as stacked cards on
-   phones. `table.table-cards` is the opt-in; components/table-card-labels.tsx
-   adds data-label to each cell plus ARIA roles (so the real <table> keeps its
-   semantics when display changes), then sets data-table-cards-ready. Until
-   that attribute exists the table keeps its normal horizontally scrolling
-   layout, so a table is never stacked without its labels. Desktop untouched. */
+   phones. `table.table-cards` is the opt-in. Everything is CSS plus markup the
+   server already renders (data-label on each cell via cardCell(), static ARIA
+   roles on the table parts so the display changes keep table semantics), so the
+   first paint is already cards. Desktop is untouched: all rules sit inside the
+   media query. The doubled class (.table-cards.table-cards) beats desktop
+   rules such as `.report-table td:last-child { width: 120px }` and the
+   roster/seminar/team nowrap rules without !important. */
 @media screen and (max-width: 600px) {
-  .report-table-wrap:has(> table.table-cards[data-table-cards-ready]),
-  .table-wrap:has(> table.table-cards[data-table-cards-ready]),
-  .reminder-recipient-table-wrap:has(> table.table-cards[data-table-cards-ready]) { overflow: visible; }
+  .report-table-wrap:has(> table.table-cards),
+  .table-wrap:has(> table.table-cards),
+  .reminder-recipient-table-wrap:has(> table.table-cards) { overflow: visible; }
 
-  table.table-cards[data-table-cards-ready],
-  table.table-cards[data-table-cards-ready] > tbody,
-  table.table-cards[data-table-cards-ready] > tbody > tr,
-  table.table-cards[data-table-cards-ready] > tbody > tr > th,
-  table.table-cards[data-table-cards-ready] > tbody > tr > td { display: block; width: 100%; box-sizing: border-box; min-width: 0; }
+  table.table-cards.table-cards,
+  table.table-cards.table-cards > tbody,
+  table.table-cards.table-cards > caption { display: block; width: 100%; box-sizing: border-box; min-width: 0; }
 
   /* Visually hidden but still in the accessibility tree: the column headers
-     stay announced, and never clip. */
-  table.table-cards[data-table-cards-ready] > thead {
+     stay announced, and can never clip. */
+  table.table-cards.table-cards > thead {
     position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
     clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
   }
-  table.table-cards[data-table-cards-ready] > caption { display: block; }
 
-  table.table-cards[data-table-cards-ready] > tbody > tr {
+  table.table-cards.table-cards > tbody > tr {
+    display: flex; flex-direction: column; box-sizing: border-box; width: 100%;
     margin: 0 0 12px; padding: 10px 14px; border: 1px solid var(--line, #d6dee2); border-radius: 12px; background: #fff;
   }
-  table.table-cards[data-table-cards-ready] > tbody > tr > th,
-  table.table-cards[data-table-cards-ready] > tbody > tr > td { border: 0; padding: 4px 0; text-align: left; }
+  table.table-cards.table-cards > tbody > tr > :is(th, td) {
+    display: block; box-sizing: border-box; width: 100%; min-width: 0; margin: 0;
+    border: 0; padding: 4px 0; text-align: left; white-space: normal; overflow-wrap: anywhere;
+  }
 
-  /* Row header is the card title: full width, names wrap by phrase, not by word. */
-  table.table-cards[data-table-cards-ready] > tbody > tr > th[scope="row"] {
-    margin-bottom: 4px; padding-bottom: 8px; border-bottom: 1px solid #eaf0f2;
+  /* The row header is the card title, always first (the points table lists
+     Rank before Club, the special-roles table Role before Name). */
+  table.table-cards.table-cards > tbody > tr > th[scope="row"] {
+    order: -1; margin-bottom: 4px; padding-bottom: 8px; border-bottom: 1px solid #eaf0f2;
     font-size: max(var(--type-body-floor, 0px), 0.9rem); overflow-wrap: break-word; word-break: normal;
   }
 
-  /* "Header: value" lines: the label sits in a fixed left gutter and any mix of
-     text, <small> and inline content flows beside it. */
-  table.table-cards[data-table-cards-ready] > tbody > tr > td[data-label] {
-    position: relative; padding-left: 8.5rem; min-height: 1.5em;
-    font-size: max(var(--type-body-floor, 0px), 0.8rem); overflow-wrap: anywhere; white-space: normal;
+  /* "Header: value" lines. The label floats into a left gutter (negative margin
+     into the cell's padding), so a label that wraps to two lines grows the row
+     instead of overlapping the next one. flow-root contains the float. */
+  table.table-cards.table-cards > tbody > tr > td[data-label] {
+    display: flow-root; padding-left: 8.5rem; font-size: max(var(--type-body-floor, 0px), 0.8rem);
   }
-  table.table-cards[data-table-cards-ready] > tbody > tr > td[data-label]::before {
-    content: attr(data-label); position: absolute; left: 0; top: 4px; width: 7.75rem;
+  table.table-cards > tbody > tr > td[data-label]::before {
+    content: attr(data-label) / ""; float: left; width: 7.75rem; margin-left: -8.5rem;
     color: var(--muted); font-weight: 700; font-size: max(var(--type-floor, 0px), 0.68rem);
     overflow-wrap: break-word; text-transform: none; letter-spacing: 0;
   }
-  /* Cells that hold controls, or have a long label: label above, value full width. */
-  table.table-cards[data-table-cards-ready] > tbody > tr > td[data-label]:is(:has(button, .team-account-actions), [data-label-long]) { padding-left: 0; }
-  table.table-cards[data-table-cards-ready] > tbody > tr > td[data-label]:is(:has(button, .team-account-actions), [data-label-long])::before {
-    position: static; display: block; width: auto; margin-bottom: 4px;
+  /* Long labels and cells that hold controls: label above, value full width. */
+  table.table-cards.table-cards > tbody > tr > td[data-label]:is([data-label-long], :has(button, .team-account-actions)) { padding-left: 0; }
+  table.table-cards > tbody > tr > td[data-label]:is([data-label-long], :has(button, .team-account-actions))::before {
+    float: none; display: block; width: auto; margin: 0 0 2px;
   }
-  table.table-cards[data-table-cards-ready] .team-account-actions { flex-wrap: wrap; }
-  table.table-cards[data-table-cards-ready] > tbody > tr > td:not([data-label]) { display: flex; flex-wrap: wrap; gap: 8px; }
-  table.table-cards[data-table-cards-ready] > tbody > tr > td:empty { display: none; }
+  table.table-cards .team-account-actions { flex-wrap: wrap; }
+  /* Unlabelled (sr-only header) action cells: just the controls, wrapping. */
+  table.table-cards.table-cards > tbody > tr > td:not([data-label]) { display: flex; flex-wrap: wrap; gap: 8px; }
+  table.table-cards.table-cards > tbody > tr > td:empty { display: none; }
 
-  /* Reset fixed desktop column widths and centring. */
-  .report-table.table-cards td:last-child,
-  .seminar-table.table-cards td:not(:first-child),
-  .seminar-table.table-cards th:not(:first-child) { width: 100%; }
-  .seminar-table.table-cards[data-table-cards-ready] td { text-align: left; }
-  .roster-table.table-cards[data-table-cards-ready] td,
-  .roster-table.table-cards[data-table-cards-ready] th { white-space: normal; }
-  .roster-table.table-cards th:first-child { min-width: 0; }
-
-  /* Wide month grids: two short cells per line inside the card. */
-  .club-reports-grid table.table-cards[data-table-cards-ready] > tbody > tr {
-    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 14px;
-  }
-  .club-reports-grid table.table-cards[data-table-cards-ready] > tbody > tr > th[scope="row"] { grid-column: 1 / -1; }
-  .club-reports-grid table.table-cards[data-table-cards-ready] > tbody > tr > td[data-label] { padding-left: 0; display: flex; justify-content: space-between; gap: 8px; }
-  .club-reports-grid table.table-cards[data-table-cards-ready] > tbody > tr > td[data-label]::before { position: static; width: auto; }
+  /* Month grids: two short "Sep  81" cells per line. The label takes the free
+     space (margin-right: auto) so the value and a following "late" stay together. */
+  .club-reports-grid table.table-cards.table-cards > tbody > tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 14px; }
+  .club-reports-grid table.table-cards.table-cards > tbody > tr > th[scope="row"] { grid-column: 1 / -1; }
+  .club-reports-grid table.table-cards.table-cards > tbody > tr > td[data-label] { display: flex; align-items: baseline; gap: 6px; padding-left: 0; }
+  .club-reports-grid table.table-cards > tbody > tr > td[data-label]::before { float: none; width: auto; margin: 0 auto 0 0; }
 }

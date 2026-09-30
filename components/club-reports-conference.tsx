@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Download } from "lucide-react";
 import { clubYearMonths, isLockedForClub, yearToDate } from "@/modules/club-reports/domain";
 import type { ClubYearSummary } from "@/modules/club-reports/repository";
+import { cardCell } from "@/components/table-card-labels";
 
 const shortMonth = (month: string) => new Date(`${month}-15T12:00:00Z`).toLocaleDateString("en-US", { month: "short", timeZone: "UTC" });
 
@@ -73,20 +74,20 @@ export function ClubReportsConference({
         <div className="panel"><p className="report-empty">No active clubs yet.</p></div>
       ) : (
         <div className="report-table-wrap club-reports-grid">
-          <table className="report-table table-cards">
+          <table role="table" className="report-table table-cards">
             <caption className="sr-only">Monthly report points by club for {clubYear}</caption>
-            <thead>
-              <tr>
-                <th scope="col">Club</th>
-                {months.map((month) => <th key={month} scope="col">{shortMonth(month)}</th>)}
-                <th scope="col">Registration</th>
-                <th scope="col">Year to date</th>
+            <thead role="rowgroup">
+              <tr role="row">
+                <th role="columnheader" scope="col">Club</th>
+                {months.map((month) => <th key={month} role="columnheader" scope="col">{shortMonth(month)}</th>)}
+                <th role="columnheader" scope="col">Registration</th>
+                <th role="columnheader" scope="col">Year to date</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody role="rowgroup">
               {clubs.map((club) => (
-                <tr key={club.id}>
-                  <th scope="row" translate="no">{club.name}{club.church && <small>{club.church}</small>}</th>
+                <tr role="row" key={club.id}>
+                  <th role="rowheader" scope="row" translate="no">{club.name}{club.church && <small>{club.church}</small>}</th>
                   {months.map((month) => {
                     const report = club.reports[month];
                     const future = month > now.slice(0, 7);
@@ -94,21 +95,21 @@ export function ClubReportsConference({
                       ? `${viewOnlyReportHref.base}/${encodeURIComponent(club.id)}/${month}${viewOnlyReportHref.query}`
                       : `/admin/clubs/reports/${encodeURIComponent(club.id)}/${month}`;
                     if (report) {
-                      return <td key={month}><Link href={href}>{report.totalPoints}</Link>{!report.onTime && <small> late</small>}</td>;
+                      return <td key={month} {...cardCell(shortMonth(month))}><Link href={href}>{report.totalPoints}</Link>{!report.onTime && <small> late</small>}</td>;
                     }
-                    if (future) return <td key={month} className="club-reports-future">—</td>;
+                    if (future) return <td key={month} {...cardCell(shortMonth(month))} className="club-reports-future">—</td>;
                     if (viewOnly) {
-                      return <td key={month} className={isLockedForClub(month, today) ? "club-reports-missing" : "club-reports-due"}>{isLockedForClub(month, today) ? "Missing" : "Due"}</td>;
+                      return <td key={month} {...cardCell(shortMonth(month))} className={isLockedForClub(month, today) ? "club-reports-missing" : "club-reports-due"}>{isLockedForClub(month, today) ? "Missing" : "Due"}</td>;
                     }
                     return (
-                      <td key={month}>
+                      <td key={month} {...cardCell(shortMonth(month))}>
                         {isLockedForClub(month, today)
                           ? <Link className="club-reports-missing" href={href}>Missing</Link>
                           : <Link className="club-reports-due" href={href}>Due</Link>}
                       </td>
                     );
                   })}
-                  <td>
+                  <td {...cardCell("Registration")}>
                     {viewOnly
                       ? (club.registrationOnTime ? "On time" : "—")
                       : (
@@ -120,7 +121,7 @@ export function ClubReportsConference({
                         />
                       )}
                   </td>
-                  <td><strong>{yearToDate(Object.values(club.reports), club.registrationOnTime).toLocaleString("en-US")}</strong></td>
+                  <td {...cardCell("Year to date")}><strong>{yearToDate(Object.values(club.reports), club.registrationOnTime).toLocaleString("en-US")}</strong></td>
                 </tr>
               ))}
             </tbody>

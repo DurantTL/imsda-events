@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { TeamDirectory } from "@/modules/system-admin/team-directory";
+import { cardCell } from "@/components/table-card-labels";
 
 function friendly(value: string) {
   return value.split("_").map((part) => (
@@ -182,45 +183,45 @@ export function TeamDirectoryWorkspace({
 
       <section className="panel">
         <div className="reminder-recipient-table-wrap">
-          <table className="reminder-recipient-table table-cards">
+          <table role="table" className="reminder-recipient-table table-cards">
             <caption>{directory.totalCount} account{directory.totalCount === 1 ? "" : "s"}</caption>
-            <thead>
-              <tr>
-                <th scope="col">Name</th>
-                <th scope="col">Email</th>
-                <th scope="col">Sign-in</th>
-                <th scope="col">Two-factor</th>
-                <th scope="col">Last signed in</th>
-                <th scope="col">Events</th>
-                <th scope="col">Action</th>
+            <thead role="rowgroup">
+              <tr role="row">
+                <th role="columnheader" scope="col">Name</th>
+                <th role="columnheader" scope="col">Email</th>
+                <th role="columnheader" scope="col">Sign-in</th>
+                <th role="columnheader" scope="col">Two-factor</th>
+                <th role="columnheader" scope="col">Last signed in</th>
+                <th role="columnheader" scope="col">Events</th>
+                <th role="columnheader" scope="col">Action</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody role="rowgroup">
               {directory.members.map((member) => (
-                <tr key={member.id}>
-                  <td>
+                <tr role="row" key={member.id}>
+                  <td {...cardCell("Name")}>
                     {member.displayName}
                     {member.globalRole === "SYSTEM_ADMIN" && <small>System administrator</small>}
                     {member.jobTitle && <small>{member.jobTitle}</small>}
                   </td>
-                  <td>
+                  <td {...cardCell("Email")}>
                     {member.email}
                     {member.phone && <small>{member.phone}</small>}
                   </td>
-                  <td>
+                  <td {...cardCell("Sign-in")}>
                     {member.signInDisabled
                       ? "Disabled"
                       : friendly(member.accountStatus)}
                   </td>
-                  <td>
+                  <td {...cardCell("Two-factor")}>
                     {member.mfaStatus === "ACTIVE"
                       ? <><ShieldCheck aria-hidden="true" size={13} /> On</>
                       : member.mfaStatus === "PENDING"
                         ? <><ShieldAlert aria-hidden="true" size={13} /> Started</>
                         : <><ShieldAlert aria-hidden="true" size={13} /> Off</>}
                   </td>
-                  <td>{whenever(member.lastSignedInAt)}</td>
-                  <td>
+                  <td {...cardCell("Last signed in")}>{whenever(member.lastSignedInAt)}</td>
+                  <td {...cardCell("Events")}>
                     {member.globalRole === "SYSTEM_ADMIN"
                       // A system administrator has every event; per-event rows would suggest limits that don't apply.
                       ? <><strong>All events</strong><small>System administrators have full access to every event.</small></>
@@ -235,7 +236,7 @@ export function TeamDirectoryWorkspace({
                       </small>
                     )}
                   </td>
-                  <td>
+                  <td {...cardCell("Action")}>
                     <div className="team-account-actions">
                       <button
                         className="secondary-button"

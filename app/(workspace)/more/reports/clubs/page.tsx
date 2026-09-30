@@ -8,6 +8,7 @@ import { resolveLocationFilter } from "@/modules/event-locations/filter";
 import { getClubEventReports } from "@/modules/reporting/club-event-reports-repository";
 import { resolveClubReportsAccess } from "@/modules/reporting/club-reports-access";
 import { staffPageTitles } from "@/components/staff-navigation";
+import { cardCell } from "@/components/table-card-labels";
 
 export const metadata: Metadata = { title: staffPageTitles.clubReports };
 export const dynamic = "force-dynamic";
@@ -69,32 +70,32 @@ export default async function ClubEventReportsPage({
         </div>
         {reports.camping.length === 0 ? <p className="report-empty">No active club registrations yet.</p> : (
           <div className="report-table-wrap">
-            <table className="report-table table-cards">
+            <table role="table" className="report-table table-cards">
               <caption className="sr-only">Club camping summary</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Club</th>{showLocation && <th scope="col">Location</th>}<th scope="col">Tents</th><th scope="col">Trailers</th>
-                  <th scope="col">Kitchen canopy</th><th scope="col">Total sq ft</th><th scope="col">Camp next to</th>
-                  <th scope="col">PF</th><th scope="col">TLT</th><th scope="col">Staff</th><th scope="col">Child</th><th scope="col">Total</th>
-                  <th scope="col"><span className="sr-only">Print packet</span></th>
+              <thead role="rowgroup">
+                <tr role="row">
+                  <th role="columnheader" scope="col">Club</th>{showLocation && <th role="columnheader" scope="col">Location</th>}<th role="columnheader" scope="col">Tents</th><th role="columnheader" scope="col">Trailers</th>
+                  <th role="columnheader" scope="col">Kitchen canopy</th><th role="columnheader" scope="col">Total sq ft</th><th role="columnheader" scope="col">Camp next to</th>
+                  <th role="columnheader" scope="col">PF</th><th role="columnheader" scope="col">TLT</th><th role="columnheader" scope="col">Staff</th><th role="columnheader" scope="col">Child</th><th role="columnheader" scope="col">Total</th>
+                  <th role="columnheader" scope="col"><span className="sr-only">Print packet</span></th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody role="rowgroup">
                 {reports.camping.map((row) => (
-                  <tr key={row.organizationId}>
-                    <th scope="row" translate="no">{row.organizationName}{row.sponsoringChurch && <small> · {row.sponsoringChurch}</small>}</th>
-                    {showLocation && <td translate="no">{row.locationName ?? "—"}</td>}
-                    <td>{row.camping.tents}</td>
-                    <td>{row.camping.trailers}</td>
-                    <td>{row.camping.kitchenCanopy}</td>
-                    <td>{row.camping.totalSqft}</td>
-                    <td>{row.camping.campNextTo || "—"}</td>
-                    <td>{row.headcounts.pathfinder}</td>
-                    <td>{row.headcounts.tlt}</td>
-                    <td>{row.headcounts.staff}</td>
-                    <td>{row.headcounts.child}</td>
-                    <td><strong>{row.headcounts.total}</strong></td>
-                    <td><Link className="report-record-link" href={`/more/reports/clubs/packet/${encodeURIComponent(row.organizationId)}?${eventQuery}`}><PackageOpen aria-hidden="true" size={13} /> Packet</Link></td>
+                  <tr role="row" key={row.organizationId}>
+                    <th role="rowheader" scope="row" translate="no">{row.organizationName}{row.sponsoringChurch && <small> · {row.sponsoringChurch}</small>}</th>
+                    {showLocation && <td {...cardCell("Location")} translate="no">{row.locationName ?? "—"}</td>}
+                    <td {...cardCell("Tents")}>{row.camping.tents}</td>
+                    <td {...cardCell("Trailers")}>{row.camping.trailers}</td>
+                    <td {...cardCell("Kitchen canopy")}>{row.camping.kitchenCanopy}</td>
+                    <td {...cardCell("Total sq ft")}>{row.camping.totalSqft}</td>
+                    <td {...cardCell("Camp next to")}>{row.camping.campNextTo || "—"}</td>
+                    <td {...cardCell("PF")}>{row.headcounts.pathfinder}</td>
+                    <td {...cardCell("TLT")}>{row.headcounts.tlt}</td>
+                    <td {...cardCell("Staff")}>{row.headcounts.staff}</td>
+                    <td {...cardCell("Child")}>{row.headcounts.child}</td>
+                    <td {...cardCell("Total")}><strong>{row.headcounts.total}</strong></td>
+                    <td {...cardCell(null)}><Link className="report-record-link" href={`/more/reports/clubs/packet/${encodeURIComponent(row.organizationId)}?${eventQuery}`}><PackageOpen aria-hidden="true" size={13} /> Packet</Link></td>
                   </tr>
                 ))}
               </tbody>
@@ -112,21 +113,21 @@ export default async function ClubEventReportsPage({
         </div>
         {reports.dutiesActivities.length === 0 ? <p className="report-empty">No active club registrations yet.</p> : (
           <div className="report-table-wrap">
-            <table className="report-table table-cards">
+            <table role="table" className="report-table table-cards">
               <caption className="sr-only">Club duties and activities</caption>
-              <thead>
-                <tr><th scope="col">Club</th>{showLocation && <th scope="col">Location</th>}<th scope="col">Duty areas</th><th scope="col">Activities</th><th scope="col">Assigned campsite</th><th scope="col">Assigned duty</th><th scope="col">Assigned activity</th></tr>
+              <thead role="rowgroup">
+                <tr role="row"><th role="columnheader" scope="col">Club</th>{showLocation && <th role="columnheader" scope="col">Location</th>}<th role="columnheader" scope="col">Duty areas</th><th role="columnheader" scope="col">Activities</th><th role="columnheader" scope="col">Assigned campsite</th><th role="columnheader" scope="col">Assigned duty</th><th role="columnheader" scope="col">Assigned activity</th></tr>
               </thead>
-              <tbody>
+              <tbody role="rowgroup">
                 {reports.dutiesActivities.map((row) => (
-                  <tr key={row.organizationId}>
-                    <th scope="row" translate="no">{row.organizationName}</th>
-                    {showLocation && <td translate="no">{row.locationName ?? "—"}</td>}
-                    <td>{row.dutyAreas.join(", ") || "—"}</td>
-                    <td>{row.specialActivities.join(", ") || "—"}</td>
-                    <td>{row.assignment?.campsiteLocation || "Not assigned"}</td>
-                    <td>{row.assignment ? [row.assignment.dutyLabel, row.assignment.dutyDay, row.assignment.dutyTime].filter(Boolean).join(" · ") || "Not assigned" : "Not assigned"}</td>
-                    <td>{row.assignment?.activityLabel || "Not assigned"}</td>
+                  <tr role="row" key={row.organizationId}>
+                    <th role="rowheader" scope="row" translate="no">{row.organizationName}</th>
+                    {showLocation && <td {...cardCell("Location")} translate="no">{row.locationName ?? "—"}</td>}
+                    <td {...cardCell("Duty areas")}>{row.dutyAreas.join(", ") || "—"}</td>
+                    <td {...cardCell("Activities")}>{row.specialActivities.join(", ") || "—"}</td>
+                    <td {...cardCell("Assigned campsite")}>{row.assignment?.campsiteLocation || "Not assigned"}</td>
+                    <td {...cardCell("Assigned duty")}>{row.assignment ? [row.assignment.dutyLabel, row.assignment.dutyDay, row.assignment.dutyTime].filter(Boolean).join(" · ") || "Not assigned" : "Not assigned"}</td>
+                    <td {...cardCell("Assigned activity")}>{row.assignment?.activityLabel || "Not assigned"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -144,16 +145,16 @@ export default async function ClubEventReportsPage({
         </div>
         {reports.milestones.length === 0 ? <p className="report-empty">No club has submitted a baptism or Bible read-through name yet.</p> : (
           <div className="report-table-wrap">
-            <table className="report-table table-cards">
+            <table role="table" className="report-table table-cards">
               <caption className="sr-only">Club spiritual milestones</caption>
-              <thead><tr><th scope="col">Club</th>{showLocation && <th scope="col">Location</th>}<th scope="col">Baptism interest</th><th scope="col">Bible read-through</th></tr></thead>
-              <tbody>
+              <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Club</th>{showLocation && <th role="columnheader" scope="col">Location</th>}<th role="columnheader" scope="col">Baptism interest</th><th role="columnheader" scope="col">Bible read-through</th></tr></thead>
+              <tbody role="rowgroup">
                 {reports.milestones.map((row) => (
-                  <tr key={row.organizationId}>
-                    <th scope="row" translate="no">{row.organizationName}</th>
-                    {showLocation && <td translate="no">{row.locationName ?? "—"}</td>}
-                    <td>{row.baptismNames || "—"}</td>
-                    <td>{row.bibleNames || "—"}</td>
+                  <tr role="row" key={row.organizationId}>
+                    <th role="rowheader" scope="row" translate="no">{row.organizationName}</th>
+                    {showLocation && <td {...cardCell("Location")} translate="no">{row.locationName ?? "—"}</td>}
+                    <td {...cardCell("Baptism interest")}>{row.baptismNames || "—"}</td>
+                    <td {...cardCell("Bible read-through")}>{row.bibleNames || "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -171,16 +172,16 @@ export default async function ClubEventReportsPage({
         </div>
         {reports.specialRoles.length === 0 ? <p className="report-empty">No club has flagged medical personnel or a Master Guide candidate yet.</p> : (
           <div className="report-table-wrap">
-            <table className="report-table table-cards">
+            <table role="table" className="report-table table-cards">
               <caption className="sr-only">Special roles</caption>
-              <thead><tr><th scope="col">Role</th><th scope="col">Name</th><th scope="col">Club</th>{showLocation && <th scope="col">Location</th>}</tr></thead>
-              <tbody>
+              <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Role</th><th role="columnheader" scope="col">Name</th><th role="columnheader" scope="col">Club</th>{showLocation && <th role="columnheader" scope="col">Location</th>}</tr></thead>
+              <tbody role="rowgroup">
                 {reports.specialRoles.map((row) => (
-                  <tr key={`${row.role}-${row.attendeeId}`}>
-                    <td>{row.role}</td>
-                    <th scope="row" translate="no">{row.name}</th>
-                    <td translate="no">{row.organizationName}</td>
-                    {showLocation && <td translate="no">{row.locationName ?? "—"}</td>}
+                  <tr role="row" key={`${row.role}-${row.attendeeId}`}>
+                    <td {...cardCell("Role")}>{row.role}</td>
+                    <th role="rowheader" scope="row" translate="no">{row.name}</th>
+                    <td {...cardCell("Club")} translate="no">{row.organizationName}</td>
+                    {showLocation && <td {...cardCell("Location")} translate="no">{row.locationName ?? "—"}</td>}
                   </tr>
                 ))}
               </tbody>

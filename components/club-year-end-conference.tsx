@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Download } from "lucide-react";
 import { formatReportYearDueDate, yearEndProgress } from "@/modules/club-reports/year-end-domain";
 import type { YearEndClubSummary } from "@/modules/club-reports/year-end-repository";
+import { cardCell } from "@/components/table-card-labels";
 
 type Row = Pick<YearEndClubSummary, "id" | "name" | "church" | "status" | "submittedAt" | "late"> & {
   totalMembership: number | null;
@@ -57,18 +58,18 @@ export function ClubYearEndConference({ reportYear, initialRows }: { reportYear:
       </div>
       {error && <div className="inline-notice error" role="alert">{error}</div>}
       <div className="table-wrap">
-        <table className="table-cards">
-          <thead>
-            <tr><th>Club</th><th>Sponsoring church</th><th>Status</th><th>Total membership</th><th /></tr>
+        <table role="table" className="table-cards">
+          <thead role="rowgroup">
+            <tr role="row"><th role="columnheader">Club</th><th role="columnheader">Sponsoring church</th><th role="columnheader">Status</th><th role="columnheader">Total membership</th><th role="columnheader" /></tr>
           </thead>
-          <tbody>
+          <tbody role="rowgroup">
             {rows.map((row) => (
-              <tr key={row.id}>
-                <td>{row.name}</td>
-                <td>{row.church}</td>
-                <td>{statusText[row.status]}{row.status === "SUBMITTED" && row.late ? " (late)" : ""}</td>
-                <td>{row.totalMembership ?? ""}</td>
-                <td>
+              <tr role="row" key={row.id}>
+                <td {...cardCell("Club")}>{row.name}</td>
+                <td {...cardCell("Sponsoring church")}>{row.church}</td>
+                <td {...cardCell("Status")}>{statusText[row.status]}{row.status === "SUBMITTED" && row.late ? " (late)" : ""}</td>
+                <td {...cardCell("Total membership")}>{row.totalMembership ?? ""}</td>
+                <td {...cardCell(null)}>
                   {row.status === "SUBMITTED" && (
                     <button className="secondary-button" disabled={busyId === row.id} onClick={() => reopen(row)} type="button">
                       Reopen

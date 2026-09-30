@@ -11,6 +11,7 @@ import {
 } from "@/modules/club-reports/area-summary-domain";
 import type { AreaClubEvent } from "@/modules/club-reports/area-summary-repository";
 import { reportMonthLabel } from "@/modules/club-reports/domain";
+import { cardCell } from "@/components/table-card-labels";
 
 /**
  * Read-only cross-club report views shared by the Area Coordinator's Clubs
@@ -31,31 +32,31 @@ export function AreaClubsOverview({ clubs, clubYear, links }: { clubs: AreaClubS
   if (clubs.length === 0) return <p className="report-empty">No active clubs yet.</p>;
   return (
     <div className="report-table-wrap">
-      <table className="report-table table-cards">
+      <table role="table" className="report-table table-cards">
         <caption className="sr-only">Club overview for {clubYear}</caption>
-        <thead>
-          <tr>
-            <th scope="col">Club</th>
-            <th scope="col">Director</th>
-            <th scope="col">Church</th>
-            <th scope="col">Roster</th>
-            <th scope="col">Reports submitted</th>
-            <th scope="col">Total points</th>
-            <th scope="col">Last report</th>
-            <th scope="col">Background checks</th>
+        <thead role="rowgroup">
+          <tr role="row">
+            <th role="columnheader" scope="col">Club</th>
+            <th role="columnheader" scope="col">Director</th>
+            <th role="columnheader" scope="col">Church</th>
+            <th role="columnheader" scope="col">Roster</th>
+            <th role="columnheader" scope="col">Reports submitted</th>
+            <th role="columnheader" scope="col">Total points</th>
+            <th role="columnheader" scope="col">Last report</th>
+            <th role="columnheader" scope="col">Background checks</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody role="rowgroup">
           {clubs.map((club) => (
-            <tr key={club.id}>
-              <th scope="row" translate="no"><Link href={links.clubHref(club.id)}>{club.name}</Link></th>
-              <td translate="no">{club.directors.length > 0 ? club.directors.join(", ") : "—"}</td>
-              <td translate="no">{club.church || "—"}</td>
-              <td>{club.rosterSize}</td>
-              <td>{club.submitted}{club.late > 0 && <small> ({club.late} late)</small>}</td>
-              <td><strong>{formatNumber(club.totalPoints)}</strong></td>
-              <td>{club.lastReportMonth ? reportMonthLabel(club.lastReportMonth) : "None yet"}</td>
-              <td>
+            <tr role="row" key={club.id}>
+              <th role="rowheader" scope="row" translate="no"><Link href={links.clubHref(club.id)}>{club.name}</Link></th>
+              <td {...cardCell("Director")} translate="no">{club.directors.length > 0 ? club.directors.join(", ") : "—"}</td>
+              <td {...cardCell("Church")} translate="no">{club.church || "—"}</td>
+              <td {...cardCell("Roster")}>{club.rosterSize}</td>
+              <td {...cardCell("Reports submitted")}>{club.submitted}{club.late > 0 && <small> ({club.late} late)</small>}</td>
+              <td {...cardCell("Total points")}><strong>{formatNumber(club.totalPoints)}</strong></td>
+              <td {...cardCell("Last report")}>{club.lastReportMonth ? reportMonthLabel(club.lastReportMonth) : "None yet"}</td>
+              <td {...cardCell("Background checks")}>
                 {/* Counts only: who and why stay with the club (#479). */}
                 {club.backgroundChecks.notInCompliance} not in compliance · {club.backgroundChecks.expiringSoon} expiring soon · {club.backgroundChecks.missing} missing
               </td>
@@ -72,42 +73,42 @@ export function AreaMonthlyReportsTable({ clubs, clubYear, links }: { clubs: Are
   const months = clubs[0]!.months.map((cell) => cell.month);
   return (
     <div className="report-table-wrap club-reports-grid">
-      <table className="report-table table-cards">
+      <table role="table" className="report-table table-cards">
         <caption className="sr-only">Monthly report status and points by club for {clubYear}</caption>
-        <thead>
-          <tr>
-            <th scope="col">Club</th>
-            {months.map((month) => <th key={month} scope="col">{shortMonth(month)}</th>)}
-            <th scope="col">Submitted</th>
-            <th scope="col">Draft</th>
-            <th scope="col">Missing</th>
-            <th scope="col">Total points</th>
+        <thead role="rowgroup">
+          <tr role="row">
+            <th role="columnheader" scope="col">Club</th>
+            {months.map((month) => <th key={month} role="columnheader" scope="col">{shortMonth(month)}</th>)}
+            <th role="columnheader" scope="col">Submitted</th>
+            <th role="columnheader" scope="col">Draft</th>
+            <th role="columnheader" scope="col">Missing</th>
+            <th role="columnheader" scope="col">Total points</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody role="rowgroup">
           {clubs.map((club) => (
-            <tr key={club.id}>
-              <th scope="row" translate="no">{club.name}{club.church && <small>{club.church}</small>}</th>
+            <tr role="row" key={club.id}>
+              <th role="rowheader" scope="row" translate="no">{club.name}{club.church && <small>{club.church}</small>}</th>
               {club.months.map((cell) => {
                 if (cell.status === "SUBMITTED" || cell.status === "LATE") {
                   return (
-                    <td key={cell.month}>
+                    <td key={cell.month} {...cardCell(shortMonth(cell.month))}>
                       <Link href={links.reportHref(club.id, cell.month)}>{cell.points}</Link>
                       {cell.status === "LATE" && <small> late</small>}
                     </td>
                   );
                 }
-                if (cell.status === "FUTURE") return <td key={cell.month} className="club-reports-future"><span aria-hidden="true">—</span><span className="sr-only">{monthStatusLabels.FUTURE}</span></td>;
+                if (cell.status === "FUTURE") return <td key={cell.month} {...cardCell(shortMonth(cell.month))} className="club-reports-future"><span aria-hidden="true">—</span><span className="sr-only">{monthStatusLabels.FUTURE}</span></td>;
                 return (
-                  <td key={cell.month} className={cell.status === "MISSING" ? "club-reports-missing" : "club-reports-due"}>
+                  <td key={cell.month} {...cardCell(shortMonth(cell.month))} className={cell.status === "MISSING" ? "club-reports-missing" : "club-reports-due"}>
                     {monthStatusLabels[cell.status]}
                   </td>
                 );
               })}
-              <td>{club.submitted}{club.late > 0 && <small> ({club.late} late)</small>}</td>
-              <td>{club.drafts}</td>
-              <td>{club.missing}</td>
-              <td><strong>{formatNumber(club.totalPoints)}</strong></td>
+              <td {...cardCell("Submitted")}>{club.submitted}{club.late > 0 && <small> ({club.late} late)</small>}</td>
+              <td {...cardCell("Draft")}>{club.drafts}</td>
+              <td {...cardCell("Missing")}>{club.missing}</td>
+              <td {...cardCell("Total points")}><strong>{formatNumber(club.totalPoints)}</strong></td>
             </tr>
           ))}
         </tbody>
@@ -150,25 +151,25 @@ export function AreaPointsChart({ clubs, clubYear, sort, basePath }: { clubs: Ar
             </ul>
           </figure>
           <div className="report-table-wrap">
-            <table className="report-table table-cards">
+            <table role="table" className="report-table table-cards">
               <caption className="sr-only">Total points per club for {clubYear}, in chart order</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Rank</th>
-                  <th scope="col">Club</th>
-                  <th scope="col">Report points</th>
-                  <th scope="col">Yearly registration</th>
-                  <th scope="col">Total points</th>
+              <thead role="rowgroup">
+                <tr role="row">
+                  <th role="columnheader" scope="col">Rank</th>
+                  <th role="columnheader" scope="col">Club</th>
+                  <th role="columnheader" scope="col">Report points</th>
+                  <th role="columnheader" scope="col">Yearly registration</th>
+                  <th role="columnheader" scope="col">Total points</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody role="rowgroup">
                 {sorted.map((club, index) => (
-                  <tr key={club.id}>
-                    <td>{index + 1}</td>
-                    <th scope="row" translate="no">{club.name}</th>
-                    <td>{formatNumber(club.reportPoints)}</td>
-                    <td>{formatNumber(club.totalPoints - club.reportPoints)}</td>
-                    <td><strong>{formatNumber(club.totalPoints)}</strong></td>
+                  <tr role="row" key={club.id}>
+                    <td {...cardCell("Rank")}>{index + 1}</td>
+                    <th role="rowheader" scope="row" translate="no">{club.name}</th>
+                    <td {...cardCell("Report points")}>{formatNumber(club.reportPoints)}</td>
+                    <td {...cardCell("Yearly registration")}>{formatNumber(club.totalPoints - club.reportPoints)}</td>
+                    <td {...cardCell("Total points")}><strong>{formatNumber(club.totalPoints)}</strong></td>
                   </tr>
                 ))}
               </tbody>
@@ -196,17 +197,17 @@ export function AreaClubEvents({ events, clubHref }: { events: AreaClubEvent[]; 
             </div>
           </div>
           <div className="report-table-wrap">
-            <table className="report-table table-cards">
+            <table role="table" className="report-table table-cards">
               <caption className="sr-only">Club registrations for {event.name}</caption>
-              <thead>
-                <tr><th scope="col">Club</th><th scope="col">Status</th><th scope="col">Headcount</th></tr>
+              <thead role="rowgroup">
+                <tr role="row"><th role="columnheader" scope="col">Club</th><th role="columnheader" scope="col">Status</th><th role="columnheader" scope="col">Headcount</th></tr>
               </thead>
-              <tbody>
+              <tbody role="rowgroup">
                 {event.clubs.map((club) => (
-                  <tr key={club.organizationId}>
-                    <th scope="row" translate="no"><Link href={clubHref(club.organizationId)}>{club.name}</Link></th>
-                    <td>{eventStatusLabels[club.status]}</td>
-                    <td>{club.headcount ?? "—"}</td>
+                  <tr role="row" key={club.organizationId}>
+                    <th role="rowheader" scope="row" translate="no"><Link href={clubHref(club.organizationId)}>{club.name}</Link></th>
+                    <td {...cardCell("Status")}>{eventStatusLabels[club.status]}</td>
+                    <td {...cardCell("Headcount")}>{club.headcount ?? "—"}</td>
                   </tr>
                 ))}
               </tbody>
