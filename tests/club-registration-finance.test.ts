@@ -55,6 +55,7 @@ describe("what each church owes (#409)", () => {
     dependencies.getPrisma.mockReturnValue({
       clubEventRegistration: { findMany: vi.fn().mockResolvedValue(churchRows) },
       event: { findUnique: vi.fn().mockResolvedValue({ billingMode: "DEFERRED_ORGANIZATION_INVOICE", audience: "CLUB" }) },
+      groupEventRegistration: { findMany: vi.fn().mockResolvedValue([]) },
       registration: { findMany: vi.fn().mockResolvedValue([]) },
     });
     const owed = await listChurchAmountsOwed("event-1");
@@ -66,6 +67,7 @@ describe("what each church owes (#409)", () => {
     dependencies.getPrisma.mockReturnValue({
       clubEventRegistration: { findMany: vi.fn().mockResolvedValue(churchRows) },
       event: { findUnique: vi.fn().mockResolvedValue({ billingMode: "DEFERRED_ORGANIZATION_INVOICE", audience: "CLUB" }) },
+      groupEventRegistration: { findMany: vi.fn().mockResolvedValue([]) },
       registration: { findMany: vi.fn().mockResolvedValue([]) },
     });
 
@@ -107,6 +109,7 @@ describe("what each church owes (#409)", () => {
     dependencies.getPrisma.mockReturnValue({
       clubEventRegistration: { findMany: vi.fn().mockResolvedValue(churchRows) },
       event: { findUnique: vi.fn().mockResolvedValue({ billingMode: "DEFERRED_ORGANIZATION_INVOICE", audience: "CLUB" }) },
+      groupEventRegistration: { findMany: vi.fn().mockResolvedValue([]) },
       registration: { findMany: vi.fn().mockResolvedValue([]) },
     });
     const markup = renderToStaticMarkup(ChurchAmountsOwed({
@@ -133,6 +136,7 @@ describe("what each church owes (#409)", () => {
     dependencies.getPrisma.mockReturnValue({
       clubEventRegistration: { findMany: vi.fn().mockResolvedValue([]) },
       event: { findUnique: vi.fn().mockResolvedValue({ billingMode: "DEFERRED_ORGANIZATION_INVOICE", audience: "CLUB" }) },
+      groupEventRegistration: { findMany: vi.fn().mockResolvedValue([]) },
       registration: { findMany: vi.fn().mockResolvedValue([]) },
     });
     expect(await listChurchAmountsOwed("event-1")).toEqual([]);
@@ -245,6 +249,7 @@ describe("what each church or organization owes on an event with no club registr
     dependencies.getPrisma.mockReturnValue({
       clubEventRegistration: { findMany: vi.fn().mockResolvedValue(clubRows) },
       event: { findUnique: vi.fn().mockResolvedValue({ billingMode: "DEFERRED_ORGANIZATION_INVOICE", audience: "CLUB" }) },
+      groupEventRegistration: { findMany: vi.fn().mockResolvedValue([]) },
       // A single-person registration and a TLT Opportunities sign-up on the same CLUB event.
       registration: { findMany: findMany.mockResolvedValue([
         individual("r1", "IND-1", "CONFIRMED", "10", 1, "Sam", { church_name: "Ankeny SDA Church" }),

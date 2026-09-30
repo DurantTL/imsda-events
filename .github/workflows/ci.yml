@@ -53,6 +53,8 @@ jobs:
       - run: npm run verify
       # Real-database check that Honors Weekend class seats hold under concurrent saves (#359).
       - run: npm run test:honor-capacity
+      # Real-database check of "Group" registration on a club event (#650): never a club or church, no roster, billing contact recorded, shared class and location seats under concurrent saves, the contact's reopen-and-change path re-validating ages and seats.
+      - run: npm run test:group-registration
       # Real-database check of revising a published form: a draft beside the live version keeps public and club registration open, withdraw closes both, edits delete tests, each version needs its own test, and concurrent save/publish, save/withdraw and test/save through the form-row lock never mutate a published version or leave a stale valid test (#564).
       - run: npm run test:form-revisions
       # Real-database check of the one-active-act-as-per-session index and racing starts (#442).

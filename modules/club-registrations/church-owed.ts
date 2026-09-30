@@ -57,7 +57,7 @@ export type ChurchAmountOwedRow = {
    * Weekend, Outdoor School). Its organization is the answer the form names (`resolveResponsibleOrganization`),
    * `organizationName` is the registrant, and `churchId` is a key made from the organization's name. Absent for clubs.
    */
-  kind?: "INDIVIDUAL";
+  kind?: "INDIVIDUAL" | "GROUP";
   organizationId: string;
   organizationName: string;
   churchId: string | null;
@@ -71,6 +71,11 @@ export type ChurchAmountOwedRow = {
   amountOwedCents: number;
   /** The event location the club registered at (#413); absent when the event has none. */
   locationName?: string | null;
+  /**
+   * A "Group" registration (#650) has no club or church; its contact is the billing party. Present only on
+   * `kind: "GROUP"` rows, where `organizationName` is the contact's name and `churchId` is `GROUP_KEY`.
+   */
+  billingContact?: { name: string; email: string | null };
 };
 
 export type ChurchSubtotal = {
@@ -122,12 +127,51 @@ export function individualOwedRows(sources: readonly IndividualOwedSource[]): Ch
   });
 }
 
+/** The report key for every "Group" registration (#650): they share one bucket, billed to their own contacts, not to a church. */
+export const GROUP_KEY = "groups";
+
+export const GROUP_BUCKET_LABEL = "Groups (billed to their contact)";
+
+/** A "Group" registration, with what the owed report needs from it (#650). */
+export type GroupOwedSource = {
+  confirmationCode: string;
+  registrationId: string;
+  status: ClubRegistrationStatus;
+  totalAmountCents: number;
+  attendeeCount: number;
+  contactName: string;
+  contactEmail: string | null;
+  locationName?: string | null;
+};
+
+/**
+ * Report rows for "Group" registrations (#650). Same statuses and amounts as club rows, but the billing party
+ * is the registration's contact, recorded beside the row, and the row never names a club or a church.
+ */
+export function groupOwedRows(sources: readonly GroupOwedSource[]): ChurchAmountOwedRow[] {
+  return sources.map((source) => ({
+    kind: "GROUP" as const,
+    organizationId: source.registrationId,
+    organizationName: source.contactName,
+    churchId: GROUP_KEY,
+    churchName: GROUP_BUCKET_LABEL,
+    confirmationCode: source.confirmationCode,
+    status: source.status,
+    attendeeCount: source.attendeeCount,
+    isBilled: isChurchBilledStatus(source.status),
+    amountOwedCents: churchOwedCents(source.status, source.totalAmountCents),
+    billingContact: { name: source.contactName, email: source.contactEmail },
+    ...(source.locationName ? { locationName: source.locationName } : {}),
+  }));
+}
+
 export function sortChurchAmountsOwed(rows: ChurchAmountOwedRow[]) {
   return [...rows].sort((left, right) => {
     // Billed clubs first, then waitlisted and cancelled ones.
     if (left.isBilled !== right.isBilled) return left.isBilled ? -1 : 1;
-    // Clubs with no church on file sort after every named church.
-    if ((left.churchName === null) !== (right.churchName === null)) return left.churchName === null ? 1 : -1;
+    // Clubs with no church on file sort after every named church, and groups (#650) after those.
+    const rank = (row: ChurchAmountOwedRow) => (row.churchId === GROUP_KEY ? 2 : row.churchName === null ? 1 : 0);
+    if (rank(left) !== rank(right)) return rank(left) - rank(right);
     return (left.churchName ?? "").localeCompare(right.churchName ?? "")
       || left.organizationName.localeCompare(right.organizationName);
   });
@@ -149,13 +193,15 @@ export function summarizeChurchAmountsOwed(rows: ChurchAmountOwedRow[]) {
     current.amountOwedCents += row.amountOwedCents;
     subtotals.set(churchKey, current);
   }
+  // Groups (#650) are listed last, after clubs with no church on file: they are billed to a contact, not a church.
+  const bucketRank = (key: string) => (key === GROUP_KEY ? 2 : key === "none" ? 1 : 0);
   const churches = [...subtotals.values()].sort((left, right) => {
-    if ((left.churchKey === "none") !== (right.churchKey === "none")) return left.churchKey === "none" ? 1 : -1;
+    if (bucketRank(left.churchKey) !== bucketRank(right.churchKey)) return bucketRank(left.churchKey) - bucketRank(right.churchKey);
     return left.churchName.localeCompare(right.churchName);
   });
   return {
     billedClubCount: billed.length,
-    churchCount: churches.filter((church) => church.churchKey !== "none").length,
+    churchCount: churches.filter((church) => church.churchKey !== "none" && church.churchKey !== GROUP_KEY).length,
     notBilledCount: rows.length - billed.length,
     totalOwedCents: billed.reduce((sum, row) => sum + row.amountOwedCents, 0),
     churches,
@@ -179,16 +225,20 @@ export function churchAmountsOwedCsvRows(
   const money = (cents: number) => (cents / 100).toFixed(2);
   // Organization columns (#606) are relabeled only when some row is an individual registration, so a club event exports what it always did.
   const hasIndividuals = rows.some((row) => row.kind === "INDIVIDUAL");
+  // "Group" rows (#650) add the billing contact, and relabel the columns that would otherwise say "church".
+  const hasGroups = rows.some((row) => row.kind === "GROUP");
+  const relabeled = hasIndividuals || hasGroups;
   const table: Array<Array<string | number>> = [[
-    hasIndividuals ? "Church or organization" : "Church",
-    hasIndividuals ? "Club or registrant" : "Club",
+    hasGroups ? "Church, organization or group" : hasIndividuals ? "Church or organization" : "Church",
+    relabeled ? "Club or registrant" : "Club",
     "Confirmation code",
     "Status",
-    "Billed to church",
+    hasGroups ? "Billed after the event" : "Billed to church",
     "Attendees",
     "Estimated amount owed",
-    "Church estimated total",
+    hasGroups ? "Church or group estimated total" : "Church estimated total",
     "Note",
+    ...(hasGroups ? ["Billing contact", "Billing contact email"] : []),
   ]];
   const sortedRows = sortChurchAmountsOwed(rows);
   for (const row of sortedRows) {
@@ -202,8 +252,9 @@ export function churchAmountsOwedCsvRows(
       money(row.amountOwedCents),
       row.isBilled ? money(subtotalByChurch.get(row.churchId ?? "none") ?? 0) : "",
       row.isBilled
-        ? "Billed to the church after the event, not paid online"
+        ? row.kind === "GROUP" ? "Billed to the group's contact after the event, not paid online" : "Billed to the church after the event, not paid online"
         : notBilledLabel(row.status),
+      ...(hasGroups ? [row.billingContact?.name ?? "", row.billingContact?.email ?? ""] : []),
     ]);
   }
   for (const line of sponsoredLines) {
@@ -217,6 +268,7 @@ export function churchAmountsOwedCsvRows(
       money(line.amountCents),
       money(subtotalByChurch.get(line.churchId) ?? 0),
       SPONSORED_PROMO_NOTE,
+      ...(hasGroups ? ["", ""] : []),
     ]);
   }
   // A Location column (#413), only when some club registered at one, so an

@@ -1253,6 +1253,7 @@ model Event {
   honorSessions                       HonorSession[]
   honorOfferings                      HonorOffering[]
   clubRegistrations                   ClubEventRegistration[]
+  groupRegistrations                  GroupEventRegistration[]
   clubRegistrationDrafts              ClubRegistrationDraft[]
   clubAssignments                     ClubEventAssignment[]
   honorEnrollments                    HonorEnrollment[]
@@ -1550,6 +1551,8 @@ model Person {
 
   householdMembers   HouseholdMember[]
   heldRegistrations  Registration[]
+  groupBillingRegistrations GroupEventRegistration[]
+  groupContactOperations RegistrationOperation[] @relation("RegistrationOperationActorPerson")
   registrationEvents RegistrationAttendee[]
   externalIdentities ExternalIdentity[]
   notes              StaffNote[]
@@ -2185,6 +2188,7 @@ model Registration {
   notes                   StaffNote[]
   tagAssignments          RegistrationTagAssignment[]
   clubRegistration        ClubEventRegistration?
+  groupRegistration       GroupEventRegistration?
   honorEnrollments        HonorEnrollment[]
   adjustments             RegistrationAdjustment[]
   memberTransferMovesFrom MemberTransferRegistrationMove[] @relation("MemberTransferMoveFrom")
@@ -2379,6 +2383,10 @@ model RegistrationOperation {
   /// Set when a club director reopened and amended their own club
   /// registration (H3b, #366) instead of a staff user amending it.
   actorAttendeeAccountId String?
+  /// Set when the contact of a "Group" registration (#650) changed it through
+  /// the registration's private manage link: a person, not a signed-in account.
+  /// Exactly one of the three actor columns is set (database check constraint).
+  actorPersonId      String?
   actorNameSnapshot  String
   beforeSnapshot     Json
   afterSnapshot      Json
@@ -2390,12 +2398,14 @@ model RegistrationOperation {
   attendee            RegistrationAttendee? @relation(fields: [attendeeId], references: [id], onDelete: Restrict)
   actor               User?                 @relation("RegistrationOperationActor", fields: [actorUserId], references: [id], onDelete: Restrict)
   actorAttendeeAccount AttendeeAccount?     @relation("RegistrationOperationActorAttendeeAccount", fields: [actorAttendeeAccountId], references: [id], onDelete: Restrict)
+  actorPerson         Person?               @relation("RegistrationOperationActorPerson", fields: [actorPersonId], references: [id], onDelete: Restrict)
 
   @@unique([eventId, clientRequestId])
   @@index([registrationId, createdAt])
   @@index([attendeeId, createdAt])
   @@index([actorUserId, createdAt])
   @@index([actorAttendeeAccountId, createdAt])
+  @@index([actorPersonId, createdAt])
 }
 
 /// A staff change to what a registration owes (#396): a scholarship, a
@@ -4047,6 +4057,27 @@ model ClubEventRegistration {
   @@index([organizationId])
 }
 
+/// A "Group" registration on a club event (#650): people who are not in a
+/// club (homeschoolers, unaffiliated adults) registered by one contact. It is an
+/// ordinary Registration, but it is deliberately NOT a `ClubEventRegistration`:
+/// it names no club or church, creates no roster members, and the contact is
+/// the billing party (billed on the back end after the event).
+model GroupEventRegistration {
+  id              String   @id @default(cuid())
+  eventId         String
+  registrationId  String   @unique
+  /// The contact person the group is billed to after the event.
+  billingPersonId String
+  createdAt       DateTime @default(now())
+
+  event         Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration  Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  billingPerson Person       @relation(fields: [billingPersonId], references: [id], onDelete: Restrict)
+
+  @@index([eventId])
+  @@index([billingPersonId])
+}
+
 /// A staff-set campsite/duty/activity assignment for one club's event
 /// registration (#410). Kept separate from `ClubEventRegistration` /
 /// `PublicRegistrationSubmission` so a club's submitted preferences and
@@ -4130,7 +4161,10 @@ model HonorEnrollment {
   offeringId             String
   registrationId         String
   registrationAttendeeId String
-  organizationId         String
+  /// The club that holds the seat. Null for a "Group" registration (#650),
+  /// which is never attributable to a club: its per-club limit is counted per
+  /// registration instead.
+  organizationId         String?
   consumesSeat           Boolean
   createdAt              DateTime @default(now())
 
@@ -4138,7 +4172,7 @@ model HonorEnrollment {
   offering             HonorOffering        @relation(fields: [offeringId], references: [id], onDelete: Restrict)
   registration         Registration         @relation(fields: [registrationId], references: [id], onDelete: Cascade)
   registrationAttendee RegistrationAttendee @relation(fields: [registrationAttendeeId], references: [id], onDelete: Cascade)
-  organization         Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  organization         Organization?        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   weekendCompletion    HonorWeekendCompletionLink?
 
   @@unique([registrationAttendeeId, offeringId])

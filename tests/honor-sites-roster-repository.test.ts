@@ -35,6 +35,7 @@ function database() {
         },
       }]),
     },
+    groupEventRegistration: { findMany: vi.fn().mockResolvedValue([]) },
     clubRosterMember: { findMany: vi.fn().mockResolvedValue([]) },
     honorEnrollment: { findMany: vi.fn().mockResolvedValue([{ offeringId: "o-dm", registrationAttendeeId: "a1", consumesSeat: true }]) },
     eventLocation: {

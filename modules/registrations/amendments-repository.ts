@@ -56,10 +56,22 @@ export type AmendmentActor =
    * to their staff user id plus the act-as record, never to an attendee
    * account. The club path gives them exactly a director's rules.
    */
-  | { kind: "STAFF_ACTING_DIRECTOR"; id: string; actAsId: string; displayName: string };
+  | { kind: "STAFF_ACTING_DIRECTOR"; id: string; actAsId: string; displayName: string }
+  /**
+   * The contact of a "Group" registration (#650), reopening it from its
+   * private manage link. A person, not an account: recorded on the operation
+   * as `actorPersonId`, never as a staff user or attendee account.
+   */
+  | { kind: "GROUP_CONTACT"; personId: string; displayName: string };
 
 function amendmentActorUserId(actor: AmendmentActor) {
-  return actor.kind === "CLUB_DIRECTOR" ? null : actor.id;
+  return actor.kind === "CLUB_DIRECTOR" || actor.kind === "GROUP_CONTACT" ? null : actor.id;
+}
+
+/** Who the audit calls the actor, without a name. */
+function amendmentActorNoun(actor: AmendmentActor) {
+  if (actor.kind === "STAFF") return "staff member";
+  return actor.kind === "GROUP_CONTACT" ? "group contact" : "director";
 }
 
 type AmendmentInputAttendee = RegistrationAmendmentInput["attendees"][number];
@@ -78,6 +90,8 @@ export type AmendmentProfileMetadata = {
   temporary?: boolean;
   temporaryAttendeeType?: "ADULT" | "YOUTH";
   clubGuestId?: string;
+  /** A "Group" person's id (#650): the client id the registration form gave them. */
+  groupAttendeeId?: string;
 };
 
 /**
@@ -128,6 +142,12 @@ export type AmendmentServerOptions = {
     tx: Prisma.TransactionClient,
   ) => Promise<Record<string, unknown>>;
   /**
+   * The form the registration is validated and priced against, given its own
+   * hydrated form. A "Group" registration (#650) sees the club form without
+   * the club and church questions, on amendment as it did on submit.
+   */
+  transformDefinition?: (definition: RegistrationFormDefinition) => RegistrationFormDefinition;
+  /**
    * The event location the registration should be at (#413); `undefined`
    * leaves it where it is. The location (the new one on a switch, or the
    * current one when seats are added) is locked and its capacity counted in
@@ -157,6 +177,7 @@ function allowedProfileMetadata(metadata: AmendmentProfileMetadata | undefined) 
     allowed.temporaryAttendeeType = metadata.temporaryAttendeeType;
   }
   if (typeof metadata.clubGuestId === "string") allowed.clubGuestId = metadata.clubGuestId;
+  if (typeof metadata.groupAttendeeId === "string") allowed.groupAttendeeId = metadata.groupAttendeeId;
   return allowed;
 }
 
@@ -849,7 +870,7 @@ async function prepareAmendment(
   // this transaction. The registration's own current club or church stays a
   // valid choice even if it has left the directory since, so an unchanged
   // historical answer keeps validating (like a deactivated attendee type below).
-  const definition = await hydrateFormOptions(
+  const hydratedDefinition = await hydrateFormOptions(
     registrationFormDefinitionSchema.parse(registration.publicFormSubmission.formVersion.definition),
     {
       attendeeTypes: configuredTypes.filter((type) => type.isActive),
@@ -857,6 +878,7 @@ async function prepareAmendment(
       retainedResponses: currentRegistrationResponses,
     },
   );
+  const definition = serverOptions.transformDefinition ? serverOptions.transformDefinition(hydratedDefinition) : hydratedDefinition;
   // Answers the server set itself (e.g. the club renamed in the directory
   // since this registration was submitted), kept apart from the actor's own
   // changes in the audit record.
@@ -1625,6 +1647,7 @@ export async function amendRegistration(
             requestFingerprint,
             actorUserId: amendmentActorUserId(actor),
             actorAttendeeAccountId: actor.kind === "CLUB_DIRECTOR" ? actor.attendeeAccountId : null,
+            actorPersonId: actor.kind === "GROUP_CONTACT" ? actor.personId : null,
             actorNameSnapshot: actor.displayName,
             beforeSnapshot: beforeSnapshot as Prisma.InputJsonValue,
             afterSnapshot: afterSnapshot as Prisma.InputJsonValue,
@@ -1646,13 +1669,14 @@ export async function amendRegistration(
             entityType: "RegistrationOperation",
             entityId: amendmentId,
             correlationId: input.clientRequestId,
-            summary: `Amended registration ${prepared.registration.confirmationCode}: ${prepared.registration.attendees.length} to ${prepared.prepared.attendees.length} attendees and ${cents(prepared.registration.totalAmount) / 100} to ${prepared.finalTotalCents / 100}.${prepared.serverOwnedChangedKeys.length > 0 ? ` Also updated by the system, not the ${actor.kind === "STAFF" ? "staff member" : "director"}: ${prepared.serverOwnedChangedKeys.join(", ")} (to match the live directory).` : ""}`,
+            summary: `Amended registration ${prepared.registration.confirmationCode}: ${prepared.registration.attendees.length} to ${prepared.prepared.attendees.length} attendees and ${cents(prepared.registration.totalAmount) / 100} to ${prepared.finalTotalCents / 100}.${prepared.serverOwnedChangedKeys.length > 0 ? ` Also updated by the system, not the ${amendmentActorNoun(actor)}: ${prepared.serverOwnedChangedKeys.join(", ")} (to match the live directory).` : ""}`,
             metadata: {
               operationId: amendmentId,
               clientRequestId: input.clientRequestId,
               reason: input.reason,
               actorKind: actor.kind,
               actorAttendeeAccountId: actor.kind === "CLUB_DIRECTOR" ? actor.attendeeAccountId : null,
+              ...(actor.kind === "GROUP_CONTACT" ? { actorPersonId: actor.personId } : {}),
               ...(actor.kind === "STAFF_ACTING_DIRECTOR" ? { actAsId: actor.actAsId } : {}),
               priorTotalCents: cents(prepared.registration.totalAmount),
               resultingTotalCents: prepared.finalTotalCents,

@@ -44,27 +44,41 @@ export class ClassSelectionError extends Error {
 
 type Snapshot = { firstName?: string; lastName?: string; ageOnEventDate?: number | null; clubRosterMemberId?: string; temporaryAttendeeType?: "ADULT" | "YOUTH" };
 
-async function loadClubRegistration(client: Prisma.TransactionClient, organizationId: string, eventId: string) {
-  const clubRegistration = await client.clubEventRegistration.findUnique({
-    where: { eventId_organizationId: { eventId, organizationId } },
-    select: {
-      event: { select: { id: true, isPublished: true, endsAt: true, timezone: true, registrationOpensOn: true, registrationClosesOn: true, waitlistEnabled: true } },
-      registration: {
-        select: {
-          id: true,
-          status: true,
-          locationId: true,
-          location: { select: { id: true, name: true } },
-          attendees: {
-            orderBy: { position: "asc" },
-            select: { id: true, profileSnapshot: true },
-          },
-        },
-      },
-    },
-  });
+/**
+ * Whose seats these are (#650). A club holds seats as its club; a "Group"
+ * registration has no club, so it is its own "club" for the per-club limit,
+ * counted by its registration. A group is never recorded under an organization.
+ */
+export type SeatOwner = { kind: "club"; organizationId: string } | { kind: "group"; registrationId: string };
+
+const registrationForLoading = {
+  id: true,
+  status: true,
+  locationId: true,
+  location: { select: { id: true, name: true } },
+  attendees: {
+    orderBy: { position: "asc" as const },
+    select: { id: true, profileSnapshot: true },
+  },
+} satisfies Prisma.RegistrationSelect;
+
+const eventForLoading = { id: true, isPublished: true, endsAt: true, timezone: true, registrationOpensOn: true, registrationClosesOn: true, waitlistEnabled: true } satisfies Prisma.EventSelect;
+
+async function loadRegistration(client: Prisma.TransactionClient, owner: SeatOwner, eventId: string) {
+  const clubRegistration = owner.kind === "club"
+    ? await client.clubEventRegistration.findUnique({
+      where: { eventId_organizationId: { eventId, organizationId: owner.organizationId } },
+      select: { event: { select: eventForLoading }, registration: { select: registrationForLoading } },
+    })
+    : await client.groupEventRegistration.findFirst({
+      where: { eventId, registrationId: owner.registrationId },
+      select: { event: { select: eventForLoading }, registration: { select: registrationForLoading } },
+    });
   if (!clubRegistration || !["SUBMITTED", "CONFIRMED"].includes(clubRegistration.registration.status)) {
-    throw new ClassSelectionError("NOT_REGISTERED", "Register your club for this event before choosing classes.");
+    throw new ClassSelectionError(
+      "NOT_REGISTERED",
+      owner.kind === "club" ? "Register your club for this event before choosing classes." : "Register your group for this event before choosing classes.",
+    );
   }
   const memberIds = clubRegistration.registration.attendees
     .map((attendee) => (attendee.profileSnapshot as Snapshot).clubRosterMemberId)
@@ -140,10 +154,16 @@ async function loadOfferings(client: Prisma.TransactionClient, eventId: string) 
 /** Seats held by active registrations; a cancelled club registration gives its seats back. */
 export const seatHoldingEnrollment = { consumesSeat: true, registration: { status: { in: ["SUBMITTED", "CONFIRMED"] } } } satisfies Prisma.HonorEnrollmentWhereInput;
 
-async function seatCounts(client: Prisma.TransactionClient, eventId: string, organizationId: string) {
+/** The seats one owner holds, for its per-club limit: a club's, or a group registration's own (#650). */
+function ownerSeats(owner: SeatOwner | null): Prisma.HonorEnrollmentWhereInput {
+  if (!owner) return { id: { in: [] } };
+  return owner.kind === "club" ? { organizationId: owner.organizationId } : { registrationId: owner.registrationId };
+}
+
+async function seatCounts(client: Prisma.TransactionClient, eventId: string, owner: SeatOwner | null) {
   const [all, club] = await Promise.all([
     client.honorEnrollment.groupBy({ by: ["offeringId"], where: { eventId, ...seatHoldingEnrollment }, _count: { _all: true } }),
-    client.honorEnrollment.groupBy({ by: ["offeringId"], where: { eventId, organizationId, ...seatHoldingEnrollment }, _count: { _all: true } }),
+    client.honorEnrollment.groupBy({ by: ["offeringId"], where: { eventId, ...ownerSeats(owner), ...seatHoldingEnrollment }, _count: { _all: true } }),
   ]);
   return {
     taken: new Map(all.map((row) => [row.offeringId, row._count._all])),
@@ -153,12 +173,21 @@ async function seatCounts(client: Prisma.TransactionClient, eventId: string, org
 
 /** What the director's class picker needs: who's going, classes with live seats, and current picks. */
 export async function getClassSelectionWorkspace(organizationId: string, eventId: string, now = new Date()) {
+  return getOwnerClassSelectionWorkspace({ kind: "club", organizationId }, eventId, now);
+}
+
+/** A "Group" registration's class picker (#650): the same workspace, for its own registration. */
+export async function getGroupClassSelectionWorkspace(registrationId: string, eventId: string, now = new Date()) {
+  return getOwnerClassSelectionWorkspace({ kind: "group", registrationId }, eventId, now);
+}
+
+async function getOwnerClassSelectionWorkspace(owner: SeatOwner, eventId: string, now: Date) {
   const prisma = getPrisma();
-  const registration = await loadClubRegistration(prisma, organizationId, eventId);
+  const registration = await loadRegistration(prisma, owner, eventId);
   const locationId = registration.location?.id ?? null;
   const [allOfferings, counts, enrollments, allSessions] = await Promise.all([
     loadOfferings(prisma, eventId),
-    seatCounts(prisma, eventId, organizationId),
+    seatCounts(prisma, eventId, owner),
     prisma.honorEnrollment.findMany({
       where: { registrationId: registration.registrationId },
       select: { registrationAttendeeId: true, offeringId: true },
@@ -214,11 +243,38 @@ export async function setClassSelections(
   selections: Record<string, string[]>,
   now = new Date(),
 ) {
+  return setOwnerClassSelections({ kind: "club", organizationId }, eventId, actor, selections, now);
+}
+
+/**
+ * The contact of a "Group" registration changing its class picks (#650). The
+ * contact is identified by their registration's private manage link, not an
+ * account, so the audit names the registration and the contact's person id.
+ */
+export type GroupClassActor = { groupContactPersonId: string };
+
+export async function setGroupClassSelections(
+  registrationId: string,
+  eventId: string,
+  actor: GroupClassActor,
+  selections: Record<string, string[]>,
+  now = new Date(),
+) {
+  return setOwnerClassSelections({ kind: "group", registrationId }, eventId, actor, selections, now);
+}
+
+async function setOwnerClassSelections(
+  owner: SeatOwner,
+  eventId: string,
+  actor: ClassSelectionActor | GroupClassActor,
+  selections: Record<string, string[]>,
+  now: Date,
+) {
   const prisma = getPrisma();
   for (let attempt = 0; ; attempt += 1) {
     try {
       await prisma.$transaction(async (tx) => {
-        const registration = await loadClubRegistration(tx, organizationId, eventId);
+        const registration = await loadRegistration(tx, owner, eventId);
         if (evaluateEventRegistrationPhase(registration.event, now) !== "OPEN") {
           throw new ClassSelectionError(
             "DEADLINE_PASSED",
@@ -246,7 +302,7 @@ export async function setClassSelections(
         const toDelete: string[] = [];
         for (const [attendeeId, offeringIds] of Object.entries(selections)) {
           const attendee = attendeesById.get(attendeeId);
-          if (!attendee) throw new ClassSelectionError("ATTENDEE_NOT_FOUND", "That person isn't on your club's registration.");
+          if (!attendee) throw new ClassSelectionError("ATTENDEE_NOT_FOUND", owner.kind === "club" ? "That person isn't on your club's registration." : "That person isn't on your group's registration.");
           // Only picks the club can see are replaced; a hidden pick is left as it is.
           const current = existing.filter((enrollment) => enrollment.registrationAttendeeId === attendeeId && offeringsById.has(enrollment.offeringId));
           const currentIds = new Set(current.map((enrollment) => enrollment.offeringId));
@@ -282,13 +338,14 @@ export async function setClassSelections(
               offeringId: row.offeringId,
               registrationId: registration.registrationId,
               registrationAttendeeId: row.attendeeId,
-              organizationId,
+              // A group's seats name no club (#650).
+              organizationId: owner.kind === "club" ? owner.organizationId : null,
               consumesSeat: row.consumesSeat,
             })),
           });
         }
 
-        const counts = await seatCounts(tx, eventId, organizationId);
+        const counts = await seatCounts(tx, eventId, owner);
         for (const offeringId of gaining) {
           const offering = offeringsById.get(offeringId)!;
           if ((counts.taken.get(offeringId) ?? 0) > offering.capacity) {
@@ -297,7 +354,7 @@ export async function setClassSelections(
           if (offering.perClubLimit !== null && (counts.clubTaken.get(offeringId) ?? 0) > offering.perClubLimit) {
             throw new ClassSelectionError(
               "CLUB_LIMIT_REACHED",
-              `${offering.honorName} allows ${offering.perClubLimit} youth per club.`,
+              `${offering.honorName} allows ${offering.perClubLimit} youth per ${owner.kind === "club" ? "club" : "group"}.`,
             );
           }
         }
@@ -308,17 +365,19 @@ export async function setClassSelections(
           action: "HONOR_CLASSES_UPDATED",
           entityType: "Registration",
           entityId: registration.registrationId,
-          summary: "A club director updated class choices.",
+          summary: owner.kind === "club" ? "A club director updated class choices." : "A group contact updated class choices.",
           metadata: {
-            organizationId,
-            ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId }),
+            ...(owner.kind === "club" ? { organizationId: owner.organizationId } : { group: true }),
+            ...("accountId" in actor
+              ? { actorAttendeeAccountId: actor.accountId }
+              : "groupContactPersonId" in actor ? { groupContactPersonId: actor.groupContactPersonId } : { actAsId: actor.actAsId }),
             added: toCreate.length,
             removed: toDelete.length,
             people: Object.keys(selections).length,
           },
         }, tx);
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-      return getClassSelectionWorkspace(organizationId, eventId, now);
+      return getOwnerClassSelectionWorkspace(owner, eventId, now);
     } catch (error) {
       if (!isSerializationFailure(error)) throw error;
       if (attempt === 3) {
@@ -335,7 +394,7 @@ export async function setClassSelections(
  * server narrows it again on save (`setClassSelections`), so this is guidance.
  */
 export async function getRegistrationHonorsCatalog(
-  organizationId: string,
+  organizationId: string | null,
   eventId: string,
   /**
    * The site, when the server already knows it (a single-site event, or none):
@@ -347,7 +406,8 @@ export async function getRegistrationHonorsCatalog(
   const prisma = getPrisma();
   const [offerings, counts, sessions] = await Promise.all([
     loadOfferings(prisma, eventId),
-    seatCounts(prisma, eventId, organizationId),
+    // A group not yet registered holds no seats, so it has no club count (#650).
+    seatCounts(prisma, eventId, organizationId ? { kind: "club", organizationId } : null),
     prisma.honorSession.findMany({
       where: { eventId },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { name: "asc" }],

@@ -42,7 +42,22 @@ export async function getHonorRosterData(
   options: { includeDietary: boolean; organizationId?: string; /** Only this site's registrations and sessions (#589). */ locationId?: string },
 ) {
   const prisma = getPrisma();
-  const [event, allSessions, allOfferings, clubRegistrations, locations] = await Promise.all([
+  const registrationSelect = {
+    locationId: true,
+    location: { select: { name: true } },
+    publicFormSubmission: { select: { formVersion: { select: { definition: true } } } },
+    attendees: {
+      orderBy: { position: "asc" as const },
+      select: {
+        id: true,
+        profileSnapshot: true,
+        formResponses: options.includeDietary,
+        checkIns: { where: { undoneAt: null }, select: { id: true }, take: 1 },
+      },
+    },
+  };
+  const activeInScope = { status: { in: ["SUBMITTED" as const, "CONFIRMED" as const] }, ...(options.locationId ? { locationId: options.locationId } : {}) };
+  const [event, allSessions, allOfferings, clubRegistrationRows, groupRegistrationRows, locations] = await Promise.all([
     prisma.event.findUnique({ where: { id: eventId }, select: { id: true, name: true, startsAt: true, endsAt: true, timezone: true, location: true } }),
     prisma.honorSession.findMany({
       where: { eventId, ...(options.locationId ? { OR: [{ locationId: options.locationId }, { locationId: null }] } : {}) },
@@ -61,32 +76,38 @@ export async function getHonorRosterData(
       where: {
         eventId,
         ...(options.organizationId ? { organizationId: options.organizationId } : {}),
-        registration: { status: { in: ["SUBMITTED", "CONFIRMED"] }, ...(options.locationId ? { locationId: options.locationId } : {}) },
+        registration: activeInScope,
       },
       select: {
         organizationId: true,
         organization: { select: { name: true } },
-        registration: {
-          select: {
-            locationId: true,
-            location: { select: { name: true } },
-            publicFormSubmission: { select: { formVersion: { select: { definition: true } } } },
-            attendees: {
-              orderBy: { position: "asc" },
-              select: {
-                id: true,
-                profileSnapshot: true,
-                formResponses: options.includeDietary,
-                checkIns: { where: { undoneAt: null }, select: { id: true }, take: 1 },
-              },
-            },
-          },
-        },
+        registration: { select: registrationSelect },
       },
     }),
+    // "Group" registrations (#650) hold class seats too, so they are on the staff rosters. They are
+    // never one club's: a director's own schedule (`organizationId`) never includes them.
+    options.organizationId
+      ? Promise.resolve([])
+      : prisma.groupEventRegistration.findMany({
+        where: { eventId, registration: activeInScope },
+        select: {
+          registrationId: true,
+          billingPerson: { select: { firstName: true, lastName: true } },
+          registration: { select: registrationSelect },
+        },
+      }),
     prisma.eventLocation.findMany({ where: { eventId }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }], select: { id: true, name: true, sortOrder: true } }),
   ]);
   if (!event) return null;
+  // One entry per club or per group: its key, the name rosters print, and its registration.
+  const clubRegistrations = [
+    ...clubRegistrationRows.map((club) => ({ organizationId: club.organizationId, name: club.organization.name, registration: club.registration })),
+    ...groupRegistrationRows.map((group) => ({
+      organizationId: `group:${group.registrationId}`,
+      name: `Group: ${`${group.billingPerson.firstName} ${group.billingPerson.lastName}`.trim() || "contact"}`,
+      registration: group.registration,
+    })),
+  ];
   const sessions = allSessions.map((session) => ({ id: session.id, name: session.name, locationId: session.locationId, sortOrder: session.sortOrder, createdAt: session.createdAt }));
   const siteBySession = new Map(allSessions.map((session) => [session.id, session.location?.name ?? null]));
   // A class rides on its session's site; with a site filter, classes of other sites drop out.
@@ -113,7 +134,7 @@ export async function getHonorRosterData(
         firstName: snapshot.firstName ?? "",
         lastName: snapshot.lastName ?? "",
         clubId: club.organizationId,
-        clubName: club.organization.name,
+        clubName: club.name,
         ageOnEventDate: typeof snapshot.ageOnEventDate === "number" ? snapshot.ageOnEventDate : null,
         attendeeType: snapshot.clubRosterMemberId ? typeByMember.get(snapshot.clubRosterMemberId) ?? null : snapshot.temporaryAttendeeType ?? null,
         checkedIn: attendee.checkIns.length > 0,
@@ -162,7 +183,7 @@ export async function getHonorRosterData(
     /** Every site of the event (#589); empty for an event without locations. */
     locations,
     hasLocations: locations.length > 0,
-    clubs: [...new Map(clubRegistrations.map((club) => [club.organizationId, { id: club.organizationId, name: club.organization.name, siteName: club.registration.location?.name ?? null }])).values()]
+    clubs: [...new Map(clubRegistrations.map((club) => [club.organizationId, { id: club.organizationId, name: club.name, siteName: club.registration.location?.name ?? null }])).values()]
       .sort((a, b) => a.name.localeCompare(b.name)),
   };
 }

@@ -63,6 +63,7 @@ const registrationAccessInclude = {
       contactSnapshot: true,
       submittedAt: true,
       updatedAt: true,
+      groupRegistration: { select: { id: true } },
       event: {
         select: {
           name: true,
@@ -329,11 +330,14 @@ function serializeRegistrationAccess(
       ),
     })),
     isDeferredOrganizationBilling: event.billingMode === "DEFERRED_ORGANIZATION_INVOICE",
+    billedToGroup: Boolean(registration.groupRegistration),
   });
+  // A "Group" (#650) is billed to its contact and is shown its price and estimated total.
+  const isGroup = Boolean(registration.groupRegistration);
   // A church-billed event never shows the registrant a total, amount paid, amount
   // due or balance (#621): the totals are removed here, server-side, and the
   // per-person price is returned instead.
-  const churchBilled = isChurchBilledBillingMode(event.billingMode);
+  const churchBilled = isChurchBilledBillingMode(event.billingMode) && !isGroup;
   const payment = churchBilled
     ? {
         currency: paymentSummary.currency,
@@ -529,6 +533,8 @@ function serializeRegistrationAccess(
     payment,
     order,
     perPerson,
+    /** True for a "Group" registration (#650): its contact manages it on the group page. */
+    isGroup,
     form: submission ? {
       name: submission.formVersion.form.name,
       slug: submission.formVersion.form.slug,

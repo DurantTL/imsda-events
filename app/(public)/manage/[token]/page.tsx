@@ -298,7 +298,7 @@ export default async function PublicManagePage({
               </div>
             </dl>
             )}
-            {!view.perPerson && <PublicSquarePayment token={token} />}
+            {!view.perPerson && !view.isGroup && <PublicSquarePayment token={token} />}
           </section>
         </div>
 
