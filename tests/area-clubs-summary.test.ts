@@ -32,7 +32,7 @@ vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAtten
 vi.mock("@/modules/attendee-accounts/sign-in-gate", () => ({ accountNeedsSecondStep: mocks.accountNeedsSecondStep }));
 vi.mock("@/modules/organizations/staff-act-as", () => ({ currentStaffActingContext: mocks.currentStaffActingContext }));
 vi.mock("@/modules/access/current-session", () => ({ getCurrentSession: mocks.getCurrentSession }));
-vi.mock("@/modules/background-checks/repository", () => ({ clubComplianceReminderCounts: mocks.complianceCounts }));
+vi.mock("@/modules/background-checks/repository", () => ({ clubsComplianceReminderCounts: mocks.complianceCounts }));
 
 import { GET as ADMIN_EXPORT } from "@/app/api/admin/club-reports/area-export/route";
 import { GET as AREA_EXPORT } from "@/app/api/attendee/area-clubs/export/route";
@@ -161,8 +161,10 @@ describe("area club summary repository (#657)", () => {
     mocks.grantFindMany.mockResolvedValue([
       { organizationId: "club-a", effectiveFrom: new Date("2026-01-01"), effectiveTo: null, revokedAt: null, attendeeAccount: { displayName: "Dana Director" } },
     ]);
-    mocks.complianceCounts.mockImplementation(async (id: string) =>
-      id === "club-a" ? { missing: 1, notInCompliance: 2, expiringSoon: 3 } : { missing: 0, notInCompliance: 0, expiringSoon: 0 });
+    mocks.complianceCounts.mockResolvedValue(new Map([
+      ["club-a", { missing: 1, notInCompliance: 2, expiringSoon: 3 }],
+      ["club-b", { missing: 0, notInCompliance: 0, expiringSoon: 0 }],
+    ]));
   });
 
   it("builds one row per active club from the stored reports, with counts-only background checks", async () => {
@@ -174,7 +176,22 @@ describe("area club summary repository (#657)", () => {
     // A draft counts as a draft with no points, and its unfiled September is not "missing".
     expect(bravo).toMatchObject({ rosterSize: 0, drafts: 1, totalPoints: 0, directors: [], church: "" });
     expect(JSON.stringify(clubs)).not.toMatch(/issuesNote|reasons|email/);
-    expect(mocks.complianceCounts).toHaveBeenCalledTimes(2);
+    // One batched query for all clubs, not one per club.
+    expect(mocks.complianceCounts).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips the background-check query when the caller does not show counts", async () => {
+    const clubs = await getAreaClubsSummary("2026-27", now, { backgroundChecks: false });
+    expect(mocks.complianceCounts).not.toHaveBeenCalled();
+    expect(clubs[0]!.backgroundChecks).toEqual({ missing: 0, notInCompliance: 0, expiringSoon: 0 });
+  });
+
+  it("limits events to the club year on both ends", async () => {
+    mocks.eventFindMany.mockResolvedValue([]);
+    await listAreaClubEvents("2025-26");
+    const where = mocks.eventFindMany.mock.calls[0]![0].where;
+    expect(where.endsAt).toEqual({ gte: new Date("2025-09-01T00:00:00Z") });
+    expect(where.startsAt).toEqual({ lt: new Date("2026-09-01T00:00:00Z") });
   });
 
   it("lists club events with each club's registration status and headcount", async () => {
@@ -234,6 +251,14 @@ describe("area club export permissions (#657)", () => {
     mocks.getCurrentAttendee.mockResolvedValue({ account: null, via: null, sessionId: null });
     expect((await AREA_EXPORT(request("/api/attendee/area-clubs/export"))).status).toBe(404);
     expect(mocks.orgFindMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses a revoked or expired Area Coordinator grant", async () => {
+    mocks.getCurrentAttendee.mockResolvedValue({ account: { id: "account-1" }, via: "attendee", sessionId: "s1" });
+    mocks.areaGrantFindUnique.mockResolvedValue({ revokedAt: new Date("2026-01-01"), expiresAt: null });
+    expect((await AREA_EXPORT(request("/api/attendee/area-clubs/export"))).status).toBe(404);
+    mocks.areaGrantFindUnique.mockResolvedValue({ revokedAt: null, expiresAt: new Date("2020-01-01") });
+    expect((await AREA_EXPORT(request("/api/attendee/area-clubs/export"))).status).toBe(404);
   });
 
   it("refuses a coordinator who has not passed the second sign-in step", async () => {

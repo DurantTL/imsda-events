@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-/** #543: the attendee portal's Profile and Security tabs became one Profile link to /profile. */
+/** #543, #646: the attendee portal has one Profile tab, pointing at the portal-hosted /account/profile. */
 const mocks = vi.hoisted(() => ({
   navItems: [] as Array<{ href: string; label: string }>,
 }));
@@ -39,12 +39,12 @@ vi.mock("@/modules/organizations/staff-act-as", () => ({ currentStaffActingConte
 import AccountPortalLayout from "@/app/(public)/account/(portal)/layout";
 
 describe("attendee portal navigation (#543)", () => {
-  it("has a single Profile entry pointing at /profile, and no Security tab", async () => {
+  it("has a single Profile entry pointing at /account/profile, and no Security tab", async () => {
     renderToStaticMarkup(await AccountPortalLayout({ children: null }));
     const labels = mocks.navItems.map((item) => item.label);
     expect(labels.filter((label) => label === "Profile")).toHaveLength(1);
-    expect(mocks.navItems.find((item) => item.label === "Profile")?.href).toBe("/profile");
+    expect(mocks.navItems.find((item) => item.label === "Profile")?.href).toBe("/account/profile");
     expect(labels).not.toContain("Security");
-    expect(mocks.navItems.some((item) => item.href.startsWith("/account/profile") || item.href.startsWith("/account/security"))).toBe(false);
+    expect(mocks.navItems.some((item) => item.href.startsWith("/account/security"))).toBe(false);
   });
 });

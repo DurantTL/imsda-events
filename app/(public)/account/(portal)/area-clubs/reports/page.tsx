@@ -1,14 +1,18 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { AreaExportLinks, AreaMonthlyReportsTable } from "@/components/area-clubs-views";
 import { resolveAreaClubYear } from "@/modules/club-reports/area-export";
 import { getAreaClubsSummary } from "@/modules/club-reports/area-summary-repository";
+import { currentAreaCoordinatorViewerActive } from "@/modules/organizations/area-coordinators";
 
 export const metadata: Metadata = { title: "Monthly reports summary", robots: { index: false, follow: false, nocache: true } };
 export const dynamic = "force-dynamic";
 
 export default async function AreaMonthlyReportsPage({ searchParams }: { searchParams: Promise<{ year?: string }> }) {
+  // Layouts do not re-run on navigation, so every page checks for itself (#657).
+  if (!(await currentAreaCoordinatorViewerActive())) notFound();
   const clubYear = resolveAreaClubYear((await searchParams).year);
-  const clubs = await getAreaClubsSummary(clubYear);
+  const clubs = await getAreaClubsSummary(clubYear, new Date(), { backgroundChecks: false });
   return (
     <section className="public-manage-card page-stack">
       <h2>Monthly reports, {clubYear}</h2>

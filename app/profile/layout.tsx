@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 
 /**
- * `/profile` sits outside both the staff `(workspace)` group and the attendee
- * `(portal)` group (#543), so neither layout's redirects apply. It resolves
- * each session itself; the two stay separate (ADR 0003). Never indexable.
+ * Only `/profile/sign-in` lives here now (#543). The profile itself moved into
+ * the layouts it belongs to (#646): `/profile` under `(workspace)` for staff,
+ * `/account/profile` under the attendee portal. Never indexable.
  */
 export const metadata: Metadata = {
   title: "Edit profile",

@@ -82,7 +82,7 @@ export default async function ClubEventRegistrationPage({
   return (
     <>
       <section className="public-manage-card club-event-heading">
-        <BackLink href={`/account/clubs/${organizationId}/events`}>Back to club events</BackLink>
+        <BackLink href={`/account/clubs/${organizationId}/events`}>Back to Events</BackLink>
         <h2>{workspace.event.name}</h2>
         <p className="field-help">Billed to your church. No payment is taken online.</p>
       </section>
@@ -95,7 +95,22 @@ export default async function ClubEventRegistrationPage({
           <ClubHonorsNote eventId={eventId} organizationId={organizationId} />
           <p>
             Confirmation <strong translate="no">{workspace.registration.confirmationCode}</strong> ·{" "}
-            {workspace.registration.attendees.length} going. A confirmation email was sent to the contact on the registration.
+            {workspace.registration.attendees.length} going. {workspace.registration.confirmationEmail.registrationSaved}
+          </p>
+          <p
+            className="field-help"
+            data-email-status={workspace.registration.confirmationEmail.status}
+            role="status"
+          >
+            {workspace.registration.confirmationEmail.email}
+            {workspace.registration.confirmationEmail.supportEmail && (
+              <>
+                {" "}Questions? Email{" "}
+                <a href={`mailto:${workspace.registration.confirmationEmail.supportEmail}`}>
+                  {workspace.registration.confirmationEmail.supportEmail}
+                </a>.
+              </>
+            )}
           </p>
           {workspace.registration.location && (
             <p>

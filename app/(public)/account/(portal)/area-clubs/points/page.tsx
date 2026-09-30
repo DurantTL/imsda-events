@@ -1,16 +1,20 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { AreaExportLinks, AreaPointsChart } from "@/components/area-clubs-views";
 import { parseLeaderboardSort } from "@/modules/club-reports/area-summary-domain";
 import { resolveAreaClubYear } from "@/modules/club-reports/area-export";
 import { getAreaClubsSummary } from "@/modules/club-reports/area-summary-repository";
+import { currentAreaCoordinatorViewerActive } from "@/modules/organizations/area-coordinators";
 
 export const metadata: Metadata = { title: "Club points", robots: { index: false, follow: false, nocache: true } };
 export const dynamic = "force-dynamic";
 
 export default async function AreaPointsPage({ searchParams }: { searchParams: Promise<{ year?: string; sort?: string }> }) {
+  // Layouts do not re-run on navigation, so every page checks for itself (#657).
+  if (!(await currentAreaCoordinatorViewerActive())) notFound();
   const params = await searchParams;
   const clubYear = resolveAreaClubYear(params.year);
-  const clubs = await getAreaClubsSummary(clubYear);
+  const clubs = await getAreaClubsSummary(clubYear, new Date(), { backgroundChecks: false });
   return (
     <section className="public-manage-card page-stack">
       <h2>Points, {clubYear}</h2>

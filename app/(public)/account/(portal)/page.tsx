@@ -126,7 +126,7 @@ export default async function AttendeeAccountOverviewPage() {
                 ? "Club rosters hold young people's birth dates, so they need an authenticator. Set one up to open your club."
                 : "Add an authenticator app for extra protection."}
           </p>
-          <Link className={`${!authenticatorOn && clubs.length > 0 ? "primary-button" : "secondary-button"} account-overview-link`} href="/profile">
+          <Link className={`${!authenticatorOn && clubs.length > 0 ? "primary-button" : "secondary-button"} account-overview-link`} href="/account/profile">
             {authenticatorOn ? "Manage sign-in" : "Set up an authenticator"} <ArrowRight size={14} aria-hidden="true" />
           </Link>
         </section>
@@ -135,7 +135,7 @@ export default async function AttendeeAccountOverviewPage() {
           <p className="public-registration-eyebrow"><UserRound size={15} aria-hidden="true" /> Profile</p>
           <h2>Your details</h2>
           <p className="field-help">Saved details fill in new registration forms for you, so you don&apos;t retype them.</p>
-          <Link className="secondary-button account-overview-link" href="/profile">
+          <Link className="secondary-button account-overview-link" href="/account/profile">
             Edit profile <ArrowRight size={14} aria-hidden="true" />
           </Link>
         </section>

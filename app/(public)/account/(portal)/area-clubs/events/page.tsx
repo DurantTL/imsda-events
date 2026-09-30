@@ -1,12 +1,16 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { AreaClubEvents } from "@/components/area-clubs-views";
 import { resolveAreaClubYear } from "@/modules/club-reports/area-export";
 import { listAreaClubEvents } from "@/modules/club-reports/area-summary-repository";
+import { currentAreaCoordinatorViewerActive } from "@/modules/organizations/area-coordinators";
 
 export const metadata: Metadata = { title: "Club events", robots: { index: false, follow: false, nocache: true } };
 export const dynamic = "force-dynamic";
 
 export default async function AreaEventsPage({ searchParams }: { searchParams: Promise<{ year?: string }> }) {
+  // Layouts do not re-run on navigation, so every page checks for itself (#657).
+  if (!(await currentAreaCoordinatorViewerActive())) notFound();
   const clubYear = resolveAreaClubYear((await searchParams).year);
   const events = await listAreaClubEvents(clubYear);
   return (

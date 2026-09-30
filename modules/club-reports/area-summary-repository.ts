@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
-import { clubComplianceReminderCounts } from "@/modules/background-checks/repository";
+import { clubsComplianceReminderCounts } from "@/modules/background-checks/repository";
 import {
   registrationStatusFor,
   summarizeClub,
@@ -16,7 +16,12 @@ import { directorGrantIsActive } from "@/modules/organizations/director-grants-d
  * coordinator already sees on a club (#479), never a name or note. Director
  * names are the club's current Director role holders.
  */
-export async function getAreaClubsSummary(clubYear: string, now = new Date()): Promise<AreaClubSummary[]> {
+export async function getAreaClubsSummary(
+  clubYear: string,
+  now = new Date(),
+  options: { backgroundChecks?: boolean } = {},
+): Promise<AreaClubSummary[]> {
+  const withChecks = options.backgroundChecks !== false;
   const prisma = getPrisma();
   const clubs = await prisma.organization.findMany({
     where: { type: "CLUB", isActive: true },
@@ -47,13 +52,8 @@ export async function getAreaClubsSummary(clubYear: string, now = new Date()): P
       select: { organizationId: true, effectiveFrom: true, effectiveTo: true, revokedAt: true, attendeeAccount: { select: { displayName: true } } },
     }),
   ]);
-  // Counts only, in small batches so a long club list doesn't open a query per club at once.
-  const checks = new Map<string, Awaited<ReturnType<typeof clubComplianceReminderCounts>>>();
-  for (let index = 0; index < clubIds.length; index += 8) {
-    const batch = clubIds.slice(index, index + 8);
-    const counts = await Promise.all(batch.map((id) => clubComplianceReminderCounts(id, clubYear)));
-    batch.forEach((id, position) => checks.set(id, counts[position]!));
-  }
+  // Counts only, in one batched query; skipped by callers that don't show them.
+  const checks = withChecks ? await clubsComplianceReminderCounts(clubIds, clubYear) : new Map();
   const onTime = new Map(standings.map((standing) => [standing.organizationId, standing.registrationOnTime]));
   const roster = new Map(rosterGroups.map((group) => [group.organizationId, group._count._all]));
   return clubs.map((club) =>
@@ -78,14 +78,15 @@ export type AreaClubEvent = {
   clubs: AreaEventClubRow[];
 };
 
-/** Club-audience events that haven't ended yet or ended within the club year, with each active club's registration status and headcount. */
+/** Club-audience events that fall inside the club year (Sept 1 to before the next Sept 1), with each active club's registration status and headcount. */
 export async function listAreaClubEvents(clubYear: string): Promise<AreaClubEvent[]> {
   const prisma = getPrisma();
   const yearStart = new Date(`${clubYear.slice(0, 4)}-09-01T00:00:00Z`);
+  const yearEnd = new Date(`${Number(clubYear.slice(0, 4)) + 1}-09-01T00:00:00Z`);
   const [clubs, events] = await Promise.all([
     prisma.organization.findMany({ where: { type: "CLUB", isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
     prisma.event.findMany({
-      where: { isPublished: true, audience: "CLUB", endsAt: { gte: yearStart } },
+      where: { isPublished: true, audience: "CLUB", endsAt: { gte: yearStart }, startsAt: { lt: yearEnd } },
       orderBy: { startsAt: "asc" },
       select: {
         id: true,

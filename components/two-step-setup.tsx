@@ -15,7 +15,7 @@ export function TwoStepFinished({ next }: { next?: string }) {
       <strong>Two-step verification is on.</strong>
       <p>You&apos;re all set. Your account now has a second step for signing in. You can add a backup method any time from Sign-in &amp; security.</p>
       <div className="two-step-finish-actions">
-        <Link className="primary-button" href={next ?? "/profile?twoStep=on"}>
+        <Link className="primary-button" href={next ?? "/account/profile?twoStep=on"}>
           {next ? "Continue" : "Continue to Sign-in & security"}
         </Link>
         <a className="secondary-button" href="https://imsda.org/">Go home</a>

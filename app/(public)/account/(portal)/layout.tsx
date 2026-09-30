@@ -74,7 +74,7 @@ export default async function AccountPortalLayout({ children }: { children: Reac
         : []),
     // An Area Coordinator sees the clubs waitlisted at the locations they coordinate (#599).
     ...(areaCoordinator ? [{ href: "/account/waitlists", label: "Waitlists" }] : []),
-    ...(chromeAccount ? [{ href: "/profile", label: "Profile" }] : []),
+    ...(chromeAccount ? [{ href: "/account/profile", label: "Profile" }] : []),
   ];
 
   return (
