@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   findFirst: vi.fn(),
+  refundFindFirst: vi.fn(),
   transaction: vi.fn(),
   getRegistrationById: vi.fn(),
   enqueueRefundNoticeMessage: vi.fn(),
@@ -15,6 +16,7 @@ vi.mock("@/lib/prisma", () => ({
     payment: {
       findFirst: mocks.findFirst,
     },
+    refund: { findFirst: mocks.refundFindFirst },
     $transaction: mocks.transaction,
   }),
 }));
@@ -123,7 +125,7 @@ describe("manual refund safety", () => {
   });
 
   it("records nothing more when the same operation is retried", async () => {
-    const tx = makeTx({ existing: { id: "refund_manual" } });
+    const tx = makeTx({ existing: { amount: 10, reason: "Registrant request" } });
     mocks.findFirst.mockResolvedValue(manualPayment());
     mocks.transaction.mockImplementation(async (callback) => callback(tx));
     mocks.getRegistrationById.mockResolvedValue({ id: "registration_1" });
@@ -167,5 +169,36 @@ describe("manual refund safety", () => {
       code: "REFUND_EXCEEDS_AVAILABLE",
     });
     expect(tx.refund.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a reused key with a different amount or reason", async () => {
+    mocks.findFirst.mockResolvedValue(manualPayment());
+    for (const existing of [
+      { amount: 20, reason: "Registrant request" },
+      { amount: 10, reason: "Different reason" },
+    ]) {
+      const tx = makeTx({ existing });
+      mocks.transaction.mockImplementationOnce(async (callback) => callback(tx));
+      await expect(recordRefund("event_1", "payment_manual", "user_1", input)).rejects.toMatchObject({
+        code: "REFUND_IDEMPOTENCY_KEY_REUSED",
+      });
+      expect(tx.refund.create).not.toHaveBeenCalled();
+    }
+  });
+
+  it("falls through to the replay path when the unique index fires", async () => {
+    mocks.findFirst.mockResolvedValue(manualPayment());
+    mocks.transaction.mockRejectedValueOnce(Object.assign(new Error("unique"), { code: "P2002" }));
+    mocks.refundFindFirst.mockResolvedValueOnce({ amount: 10, reason: "Registrant request" });
+    mocks.getRegistrationById.mockResolvedValue({ id: "registration_1" });
+
+    await expect(recordRefund("event_1", "payment_manual", "user_1", input)).resolves.toEqual({ id: "registration_1" });
+    expect(mocks.enqueueRefundNoticeMessage).not.toHaveBeenCalled();
+
+    mocks.transaction.mockRejectedValueOnce(Object.assign(new Error("unique"), { code: "P2002" }));
+    mocks.refundFindFirst.mockResolvedValueOnce({ amount: 99, reason: "Registrant request" });
+    await expect(recordRefund("event_1", "payment_manual", "user_1", input)).rejects.toMatchObject({
+      code: "REFUND_IDEMPOTENCY_KEY_REUSED",
+    });
   });
 });
