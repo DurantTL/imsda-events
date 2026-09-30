@@ -5,7 +5,7 @@ import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { rosterYearView } from "@/modules/club-rosters/domain";
 import { honorCategoryLabels } from "@/modules/honors/domain";
 import { honorsSummary } from "@/modules/reporting/director-exports";
-import { listExportMemberOptions, loadHonorsExport } from "@/modules/reporting/director-exports-repository";
+import { isHonorCategory, listExportMemberOptions, loadHonorsExport } from "@/modules/reporting/director-exports-repository";
 
 export const metadata: Metadata = { title: "Honors report" };
 export const dynamic = "force-dynamic";
@@ -25,7 +25,7 @@ export default async function ClubHonorsReportPage({
   const access = await getRosterAccessStateForPage(organizationId);
   if (access.state !== "OPEN") return null;
   const { clubYear, choices } = rosterYearView(one(query.year));
-  const category = one(query.category) in honorCategoryLabels ? one(query.category) : "";
+  const category = isHonorCategory(one(query.category)) ? one(query.category) : "";
   const memberId = one(query.member);
   const [{ rows }, members] = await Promise.all([
     loadHonorsExport(organizationId, clubYear, { memberId: memberId || undefined, category: category || undefined }),
@@ -76,7 +76,7 @@ export default async function ClubHonorsReportPage({
               </thead>
               <tbody>
                 {rows.map((row) => (
-                  <tr key={`${row.lastName}-${row.firstName}-${row.honorName}`}>
+                  <tr key={`${row.memberId}-${row.honorId}`}>
                     <td>{row.lastName}, {row.firstName}</td>
                     <td>{row.className}</td>
                     <td>{row.honorName}</td>

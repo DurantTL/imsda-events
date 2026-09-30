@@ -1,10 +1,9 @@
 import { withRequestContext } from "@/lib/request-context";
 import { rosterYearView } from "@/modules/club-rosters/domain";
-import { honorCategoryLabels } from "@/modules/honors/domain";
 import { requireHonorsAccess } from "@/modules/honors/member-honor-access";
 import { memberHonorApiError } from "@/modules/honors/member-honor-api-errors";
 import { honorsExportCsv, exportFileName } from "@/modules/reporting/director-exports";
-import { auditDirectorExport, loadHonorsExport } from "@/modules/reporting/director-exports-repository";
+import { auditDirectorExport, isHonorCategory, loadHonorsExport } from "@/modules/reporting/director-exports-repository";
 
 type RouteContext = { params: Promise<{ organizationId: string }> };
 
@@ -21,9 +20,12 @@ async function getHandler(request: Request, context: RouteContext) {
     const params = new URL(request.url).searchParams;
     const { clubYear } = rosterYearView(params.get("year") ?? undefined);
     const category = params.get("category") ?? "";
+    if (category && !isHonorCategory(category)) {
+      return Response.json({ error: "INVALID_HONOR_CATEGORY", message: "That honor category isn't recognized." }, { status: 400 });
+    }
     const { clubName, rows } = await loadHonorsExport(organizationId, clubYear, {
       memberId: params.get("member") || undefined,
-      category: category in honorCategoryLabels ? category : undefined,
+      category: category || undefined,
     });
     await auditDirectorExport(
       organizationId, "honors", clubYear, rows.length,
@@ -33,6 +35,8 @@ async function getHandler(request: Request, context: RouteContext) {
     return new Response(honorsExportCsv({ clubName, clubYear }, rows), {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
+        "Cache-Control": "private, no-store, max-age=0",
+        "X-Content-Type-Options": "nosniff",
         "Content-Disposition": `attachment; filename="${exportFileName("honors", clubYear)}"`,
       },
     });

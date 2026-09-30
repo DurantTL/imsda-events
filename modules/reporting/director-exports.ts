@@ -12,6 +12,8 @@ export type ExportContext = { clubName: string; clubYear: string };
 // ---------------------------------------------------------------- honors
 
 export type HonorsExportRow = {
+  memberId: string;
+  honorId: string;
   lastName: string;
   firstName: string;
   /** Class label, or "" when the roster has none. */
@@ -29,16 +31,16 @@ export type HonorsExportRow = {
   eventName: string;
 };
 
-export type HonorsSummaryRow = { honorName: string; category: string; count: number };
+export type HonorsSummaryRow = { honorId: string; honorName: string; category: string; count: number };
 
 /** Completed honors per honor name, most first then by name. */
 export function honorsSummary(rows: readonly HonorsExportRow[]): HonorsSummaryRow[] {
   const counts = new Map<string, HonorsSummaryRow>();
   for (const row of rows) {
     if (row.status !== "Completed") continue;
-    const entry = counts.get(row.honorName) ?? { honorName: row.honorName, category: row.category, count: 0 };
+    const entry = counts.get(row.honorId) ?? { honorId: row.honorId, honorName: row.honorName, category: row.category, count: 0 };
     entry.count += 1;
-    counts.set(row.honorName, entry);
+    counts.set(row.honorId, entry);
   }
   return [...counts.values()].sort((a, b) => b.count - a.count || a.honorName.localeCompare(b.honorName));
 }

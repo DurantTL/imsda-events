@@ -14,7 +14,7 @@ describe("club portal menu (#644)", () => {
     const items = nav("DIRECTOR");
     expect(items.map((item) => `${item.group ?? "-"}:${item.label}`)).toEqual([
       "-:Home",
-      "People:Roster", "People:Honors", "People:Class tracking", "People:Reports",
+      "People:Roster", "People:Honors", "People:Class tracking", "People:Honors & class reports",
       "Events:Events", "Events:Forms",
       "Records:Meeting notes", "Records:Monthly reports",
       "Orders:Supplies", "Orders:Orders",

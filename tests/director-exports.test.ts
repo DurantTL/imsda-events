@@ -32,7 +32,7 @@ import { loadClassTrackingExport, loadHonorsExport } from "@/modules/reporting/d
 
 const context = { clubName: "Sample Pathfinders", clubYear: "2026-27" };
 const honor = (overrides: Partial<HonorsExportRow> = {}): HonorsExportRow => ({
-  lastName: "Sample", firstName: "Alex", className: "Friend", honorName: "Basic Rescue", category: "Health and Science",
+  memberId: "m1", honorId: "h1", lastName: "Sample", firstName: "Alex", className: "Friend", honorName: "Basic Rescue", category: "Health and Science",
   status: "Completed", dateEarned: "2026-09-19", dateKind: "Completed", eventName: "Fall Camporee", ...overrides,
 });
 
@@ -65,8 +65,13 @@ describe("honors export CSV", () => {
   });
 
   it("counts completed honors most first", () => {
-    const rows = [honor(), honor({ lastName: "B" }), honor({ honorName: "Knots", lastName: "C" })];
+    const rows = [honor(), honor({ lastName: "B" }), honor({ honorName: "Knots", honorId: "h2", lastName: "C" })];
     expect(honorsSummary(rows).map((r) => [r.honorName, r.count])).toEqual([["Basic Rescue", 2], ["Knots", 1]]);
+  });
+
+  it("groups the summary by honor id, not by name", () => {
+    const rows = [honor(), honor({ honorId: "h9", lastName: "B" })];
+    expect(honorsSummary(rows).map((r) => [r.honorId, r.count])).toEqual([["h1", 1], ["h9", 1]]);
   });
 });
 
@@ -114,6 +119,14 @@ describe("export repository", () => {
     expect(prisma.memberHonorEntry.findMany.mock.calls[0][0].where).toMatchObject({ void: null, honor: { category: "HEALTH_AND_SCIENCE" } });
   });
 
+  it("ignores an unknown category in the repository filter and takes the earliest event link", async () => {
+    prisma.memberHonorEntry.findMany.mockResolvedValue([]);
+    await loadHonorsExport("club-1", "2026-27", { category: "toString" });
+    const call = prisma.memberHonorEntry.findMany.mock.calls[0][0];
+    expect(call.where.honor).toBeUndefined();
+    expect(call.select.weekendCompletionLinks).toMatchObject({ orderBy: { createdAt: "asc" }, take: 1 });
+  });
+
   it("returns no rows for an empty roster without querying entries", async () => {
     prisma.clubRosterMember.findMany.mockResolvedValue([]);
     expect((await loadHonorsExport("club-1", "2026-27")).rows).toEqual([]);
@@ -138,6 +151,9 @@ describe("export repository", () => {
       masterAwards: ["Health Master Award: 5 of 7"],
     });
     expect(rows[0].masterAwards).toEqual(["Health Master Award: eligible"]);
+    // The selected club year's roster, and no cut-off on the closest list.
+    expect(prisma.clubRosterMember.findMany.mock.calls[0][0].where).toMatchObject({ clubYear: "2026-27" });
+    expect(mocks.loadMasterAwardProgress).toHaveBeenCalledWith("club-1", expect.any(Date), { personIds: ["p1", "p2"], closestLimit: Number.POSITIVE_INFINITY });
   });
 });
 
@@ -164,6 +180,8 @@ describe("export routes", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toContain("text/csv");
     expect(response.headers.get("Content-Disposition")).toContain("club-honors-2026-27.csv");
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store, max-age=0");
+    expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(await response.text()).toContain("No honors recorded for the chosen filters.");
     expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({
       action: "CLUB_DIRECTOR_EXPORT_DOWNLOADED",
@@ -171,10 +189,21 @@ describe("export routes", () => {
     }));
   });
 
+  it("rejects an unknown category with 400, including inherited property names", async () => {
+    mocks.requireHonorsAccess.mockResolvedValue({ mode: "EDIT", actor: { accountId: "acct-dir" } });
+    for (const bad of ["BOGUS", "toString", "__proto__"]) {
+      const response = await HONORS_GET(request(`?category=${bad}`), ctx);
+      expect(response.status).toBe(400);
+    }
+    expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+  });
+
   it("downloads class tracking on the class tracking gate", async () => {
     mocks.requireClubSupplyAccess.mockResolvedValue({ mode: "EDIT", actor: { accountId: "acct-dir" } });
     const response = await CLASS_GET(request(), ctx);
     expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store, max-age=0");
+    expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(response.headers.get("Content-Disposition")).toMatch(/club-class-tracking-\d{4}-\d{2}\.csv/);
     expect(await response.text()).toContain("No active roster members for this club year.");
     expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ report: "class-tracking", readOnly: false }) }));

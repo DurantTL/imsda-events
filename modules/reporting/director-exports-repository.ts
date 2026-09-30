@@ -14,6 +14,10 @@ import type { ClassTrackingMemberRow, HonorsExportRow } from "@/modules/reportin
  * only: no birth date, age, contact or health field is ever selected.
  */
 
+export function isHonorCategory(value: string): value is keyof typeof honorCategoryLabels {
+  return Object.hasOwn(honorCategoryLabels, value);
+}
+
 export type HonorsExportFilter = { memberId?: string; category?: string };
 
 export type ExportActor = { accountId?: string; userId?: string; actAsId?: string };
@@ -64,13 +68,13 @@ export async function loadHonorsExport(
     where: {
       personId: { in: members.map((member) => member.personId) },
       void: null,
-      ...(filter.category ? { honor: { category: filter.category as keyof typeof honorCategoryLabels } } : {}),
+      ...(filter.category && isHonorCategory(filter.category) ? { honor: { category: filter.category } } : {}),
     },
     orderBy: { seq: "desc" },
     select: {
       personId: true, honorId: true, status: true, completionDate: true, createdAt: true,
       honor: { select: { name: true, category: true } },
-      weekendCompletionLinks: { select: { enrollment: { select: { event: { select: { name: true } } } } } },
+      weekendCompletionLinks: { orderBy: { createdAt: "asc" }, take: 1, select: { enrollment: { select: { event: { select: { name: true } } } } } },
     },
   });
   const seen = new Set<string>();
@@ -83,6 +87,8 @@ export async function loadHonorsExport(
     const member = byPerson.get(entry.personId)!;
     const completed = entry.status === "COMPLETED";
     rows.push({
+      memberId: member.memberId,
+      honorId: entry.honorId,
       lastName: member.lastName,
       firstName: member.firstName,
       className: member.className,
@@ -117,7 +123,7 @@ export async function loadClassTrackingExport(
       where: { organizationId, sourceType: "AWARD", personId: { in: personIds }, itemId: { not: null } },
       select: { personId: true, sourceId: true, status: true, item: { select: { name: true } } },
     }),
-    loadMasterAwardProgress(organizationId, now),
+    loadMasterAwardProgress(organizationId, now, { personIds, closestLimit: Number.POSITIVE_INFINITY }),
   ]);
   const rows = new Map<string, ClassTrackingMemberRow>(members.map((member) => [member.personId, {
     personId: member.personId,

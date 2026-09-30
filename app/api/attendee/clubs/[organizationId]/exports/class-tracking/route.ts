@@ -27,6 +27,8 @@ async function getHandler(request: Request, context: RouteContext) {
     return new Response(classTrackingExportCsv({ clubName, clubYear }, rows), {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
+        "Cache-Control": "private, no-store, max-age=0",
+        "X-Content-Type-Options": "nosniff",
         "Content-Disposition": `attachment; filename="${exportFileName("class-tracking", clubYear)}"`,
       },
     });
