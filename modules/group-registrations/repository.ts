@@ -2,7 +2,7 @@ import "server-only";
 
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
-import { attendeeAgeKey, lockedAttendeeFieldKeys } from "@/modules/club-registrations/domain";
+import { attendeeAgeKey } from "@/modules/club-registrations/domain";
 import {
   ClubRegistrationError,
   clubEditWindow,
@@ -20,7 +20,6 @@ import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { effectiveLocationDates, hasLocationEnded } from "@/modules/event-locations/domain";
 import { EventLocationError } from "@/modules/event-locations/errors";
 import { locationOpenProblem } from "@/modules/event-locations/admission";
-import type { RegistrationFormDefinition } from "@/modules/forms/definition";
 import type { PublicRegistrationInput } from "@/modules/forms/public-domain";
 import {
   getPublicRegistrationExperience,
@@ -32,6 +31,7 @@ import {
   estimateFromPricing,
   groupFormDefinition,
   groupFormProblem,
+  groupPickingAttendee,
   groupSeatType,
   GROUP_BILLING_NOTICE,
   isValidGroupAttendeeClientId,
@@ -384,19 +384,14 @@ export async function getGroupRegistrationWorkspace(token: string, now = new Dat
     locations: locations.map((location) => publicLocation(clubLocationView(event, location, seats.get(location.id) ?? 0, now))),
     // The event form as a group sees it: what the people's edit form is built from (#650).
     experience: experience && definition ? { ...experience, form: { ...experience.form, definition } } : null,
-    lockedAttendeeFieldKeys: definition ? lockedNameKeys(definition) : [],
+    // Names are the contact's to correct; nothing on a group person is locked (#650).
+    lockedAttendeeFieldKeys: [] as string[],
     attendeeAgeKey: definition ? attendeeAgeKey(definition) : null,
     classes,
   };
 }
 
 export type GroupRegistrationWorkspace = NonNullable<Awaited<ReturnType<typeof getGroupRegistrationWorkspace>>>;
-
-/** Name fields only: a group's ages are the contact's to change, names go through Substitute. */
-function lockedNameKeys(definition: RegistrationFormDefinition) {
-  const age = attendeeAgeKey(definition);
-  return lockedAttendeeFieldKeys(definition).filter((key) => key !== age);
-}
 
 function snapshotName(snapshot: Record<string, unknown>) {
   return `${typeof snapshot.firstName === "string" ? snapshot.firstName : ""} ${typeof snapshot.lastName === "string" ? snapshot.lastName : ""}`.trim() || "Someone";
@@ -500,7 +495,6 @@ export async function amendGroupRegistration(token: string, input: GroupRegistra
   const seen = new Set<string>();
   const amendmentAttendees: RegistrationAmendmentInput["attendees"] = [];
   const serverOptions = new Map<string, AmendmentAttendeeServerOptions>();
-  const nameKeys = lockedNameKeys(definition);
   for (const [index, attendee] of input.attendees.entries()) {
     const current = attendee.attendeeId ? currentById.get(attendee.attendeeId) : undefined;
     if (attendee.attendeeId && !current) {
@@ -515,17 +509,17 @@ export async function amendGroupRegistration(token: string, input: GroupRegistra
     if (age === null) {
       throw new GroupRegistrationError("ATTENDEES_INVALID", `Enter person ${index + 1}'s age on the event date, from 0 to 120.`);
     }
-    // A kept person's name stays as registered (a different person is added, not renamed).
-    const registered = current ? recordFromJson(current.formResponses) : {};
+    // The contact may correct a kept person's name (#650). They stay the same person on the registration,
+    // so their class picks and seats are untouched; the amendment engine records the change in its audit
+    // (as a count, never the names). The name is read from the answers, never taken from the browser separately.
     const responses: Record<string, unknown> = { ...attendee.responses };
-    if (current) {
-      for (const key of nameKeys) {
-        if (Object.hasOwn(registered, key)) responses[key] = registered[key];
-        else delete responses[key];
-      }
+    const name = groupPickingAttendee(definition, { clientId, responses });
+    if (!name.firstName || !name.lastName) {
+      throw new GroupRegistrationError("ATTENDEES_INVALID", `Enter person ${index + 1}'s first and last name.`);
     }
     amendmentAttendees.push({ attendeeId: current?.id ?? null, clientId, responses });
     serverOptions.set(clientId, {
+      ...(current ? { rosterName: { firstName: name.firstName, lastName: name.lastName } } : {}),
       profileMetadata: { ageOnEventDate: age, temporaryAttendeeType: groupSeatType(age), groupAttendeeId: clientId },
     });
   }

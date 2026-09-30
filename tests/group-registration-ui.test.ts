@@ -149,6 +149,9 @@ describe("one person's class choices", () => {
       .toEqual({ clientId: "p1", firstName: "Ada", lastName: "Demo", ageOnEventDate: 9, attendeeType: "YOUTH", consumesSeat: true });
     expect(groupPickingAttendee(groupDefinition, { clientId: "p2", responses: { first_name: "Ben", last_name: "Demo", attendee_age: "40" } }))
       .toMatchObject({ ageOnEventDate: 40, attendeeType: "ADULT", consumesSeat: false });
+    // A corrected name is read from the answers, which is what a rename sends (#650).
+    expect(groupPickingAttendee(groupDefinition, { clientId: "p1", responses: { first_name: " Adaline ", last_name: "Demo-Smith", attendee_age: "9" } }))
+      .toMatchObject({ firstName: "Adaline", lastName: "Demo-Smith" });
     // No age yet: no type, so nothing about classes is decided.
     expect(groupPickingAttendee(groupDefinition, { clientId: "p3", responses: { first_name: "Cy", last_name: "Demo" } }))
       .toMatchObject({ ageOnEventDate: null, attendeeType: null });

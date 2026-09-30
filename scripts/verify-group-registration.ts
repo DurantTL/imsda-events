@@ -386,15 +386,30 @@ async function main() {
   await group.amendGroupRegistration(token, edit(withoutA, afterAdd.registration.updatedAt), october);
   const seatsAfter = await prisma.honorEnrollment.count({ where: { offeringId: poolOffering.id, consumesSeat: true } });
   assert(seatsAfter === seatsBefore - 1, `removing a person frees their class seat (${seatsBefore} to ${seatsAfter})`);
-  // A name can't be changed on a kept person.
+  // The contact can correct a kept person's name: same person, same class picks and seats, audited.
   const workspaceNow = await group.getGroupRegistrationWorkspace(token, october);
   assert(workspaceNow, "workspace reloads");
+  const holders = new Set((await prisma.honorEnrollment.findMany({ where: { registrationId: reg1.id }, select: { registrationAttendeeId: true } })).map((row) => row.registrationAttendeeId));
+  const targetIndex = workspaceNow.registration.attendees.findIndex((person) => holders.has(person.attendeeId));
+  assert(targetIndex >= 0, "someone on the registration holds a class pick");
+  const target = workspaceNow.registration.attendees[targetIndex]!;
+  const picksBefore = await prisma.honorEnrollment.count({ where: { registrationAttendeeId: target.attendeeId } });
+  assert(picksBefore > 0, "the person being renamed holds a class pick");
   const renamed = workspaceNow.registration.attendees.map((person, index) => ({
-    attendeeId: person.attendeeId, responses: index === 0 ? { ...person.responses, first_name: "Changed" } : person.responses,
+    attendeeId: person.attendeeId, responses: index === targetIndex ? { ...person.responses, first_name: "Corrected", last_name: "Spelling" } : person.responses,
   }));
   await group.amendGroupRegistration(token, edit(renamed, workspaceNow.registration.updatedAt), october);
   const afterRename = await group.getGroupRegistrationWorkspace(token, october);
-  assert(afterRename && afterRename.registration.attendees[0].firstName === workspaceNow.registration.attendees[0].firstName, "a kept person's name stays as registered");
+  assert(afterRename, "workspace reloads after the rename");
+  assert(afterRename.registration.attendees[targetIndex]!.attendeeId === target.attendeeId, "a renamed person is the same person on the registration");
+  assert(afterRename.registration.attendees[targetIndex]!.firstName === "Corrected" && afterRename.registration.attendees[targetIndex]!.lastName === "Spelling", "the corrected name is saved");
+  assert((await prisma.honorEnrollment.count({ where: { registrationAttendeeId: target.attendeeId } })) === picksBefore, "a rename keeps the person's class picks and seats");
+  const renameAudit = await prisma.auditLog.findFirstOrThrow({ where: { eventId, action: "REGISTRATION_AMENDED", entityType: "RegistrationOperation" }, orderBy: { createdAt: "desc" } });
+  assert((renameAudit.metadata as { rosterNameUpdatedCount?: number }).rosterNameUpdatedCount === 1, "the rename is counted in the audit record");
+  assert(!JSON.stringify(renameAudit.metadata).includes("Corrected"), "the audit record keeps names out");
+  // A blank name is refused, and nothing is saved.
+  const blank = afterRename.registration.attendees.map((person, index) => ({ attendeeId: person.attendeeId, responses: index === targetIndex ? { ...person.responses, first_name: "" } : person.responses }));
+  await expectCode(group.amendGroupRegistration(token, edit(blank, afterRename.registration.updatedAt), october), "ATTENDEES_INVALID", "a blank name is refused");
   // A location move to a full site is refused.
   await expectCode(
     group.amendGroupRegistration(token, edit(afterRename.registration.attendees.map((person) => ({ attendeeId: person.attendeeId, responses: person.responses })), afterRename.registration.updatedAt, { locationId: siteB.id }), october),
@@ -407,7 +422,7 @@ async function main() {
     "REGISTRATION_CLOSED",
     "a closed registration can't be changed by the contact",
   );
-  console.log("ok  contact edits: stale/invalid/closed refused, ages and seat use re-validated, people added and removed, recorded against the contact");
+  console.log("ok  contact edits: stale/invalid/closed refused, ages and seat use re-validated, people added, removed and renamed, recorded against the contact");
 
   // 10. A link is only ever a group's own: a club's link can't be used here, and another group's link sees only its own registration.
   const clubToken = (await issueRegistrationAccessToken(prisma, { registrationId: clubRegistration.id, now: october })).token;

@@ -38,7 +38,6 @@ async function loadPublicEventLanding(
       registrationOpensOn: true,
       registrationClosesOn: true,
       waitlistEnabled: true,
-      audience: true,
       billingMode: true,
       announcements: {
         where: {
