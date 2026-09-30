@@ -162,7 +162,7 @@ describe("club API routes with a pending second step", () => {
 describe("account pages with a pending second step and no act-as", () => {
   it.each([
     ["Overview", () => OverviewPage()],
-    ["Profile", () => ProfilePage()],
+    ["Profile", () => ProfilePage({ searchParams: Promise.resolve({}) })],
     ["Registrations", () => RegistrationsPage()],
     ["Security", () => SecurityPage()],
   ])("%s redirects to /account/two-step", async (_name, render) => {

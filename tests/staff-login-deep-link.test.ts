@@ -190,4 +190,9 @@ describe("page coverage guards", () => {
     const offenders = pages.filter((p) => p.source.includes("staffLoginRedirectPath") && !covered(p.url)).map((p) => p.url);
     expect(offenders).toEqual([]);
   });
+
+  it("every page under the (workspace) layout sits under the proxy matcher, so proxy.ts always sets its request-target header", () => {
+    const offenders = pages.filter((p) => p.file.includes(`${path.sep}(workspace)${path.sep}`) && !covered(p.url)).map((p) => p.url);
+    expect(offenders).toEqual([]);
+  });
 });

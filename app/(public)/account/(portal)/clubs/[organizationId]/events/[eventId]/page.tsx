@@ -95,7 +95,22 @@ export default async function ClubEventRegistrationPage({
           <ClubHonorsNote eventId={eventId} organizationId={organizationId} />
           <p>
             Confirmation <strong translate="no">{workspace.registration.confirmationCode}</strong> ·{" "}
-            {workspace.registration.attendees.length} going. A confirmation email was sent to the contact on the registration.
+            {workspace.registration.attendees.length} going. {workspace.registration.confirmationEmail.registrationSaved}
+          </p>
+          <p
+            className="field-help"
+            data-email-status={workspace.registration.confirmationEmail.status}
+            role="status"
+          >
+            {workspace.registration.confirmationEmail.email}
+            {workspace.registration.confirmationEmail.supportEmail && (
+              <>
+                {" "}Questions? Email{" "}
+                <a href={`mailto:${workspace.registration.confirmationEmail.supportEmail}`}>
+                  {workspace.registration.confirmationEmail.supportEmail}
+                </a>.
+              </>
+            )}
           </p>
           {workspace.registration.location && (
             <p>

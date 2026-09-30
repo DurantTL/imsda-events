@@ -28,6 +28,7 @@ import { RegistrationAccountPrompt } from "@/components/registration-account-pro
 import { SearchableSelect } from "@/components/searchable-select";
 import { TranslateHint } from "@/components/translate-hint";
 import { planAttendeeRemoval, withoutAttendee } from "@/modules/forms/attendee-removal";
+import { confirmationEmailHeadline } from "@/modules/forms/confirmation-email-status";
 import { hasAddressValue, isPlainAddressObject, type AddressValue } from "@/modules/forms/address";
 import {
   calculateFormLineItems,
@@ -2582,15 +2583,7 @@ export function PublicRegistrationForm({
               <ShieldCheck size={20} aria-hidden="true" />
               <span>
                 <strong>
-                  {confirmation.notificationStatus === "SENT"
-                    ? "Your confirmation email was accepted for delivery."
-                    : confirmation.notificationStatus === "CAPTURED"
-                    ? "A local confirmation preview was saved; no external email was sent."
-                    : confirmation.notificationStatus === "PENDING"
-                      ? "Your registration is saved and the confirmation email is queued."
-                      : confirmation.notificationStatus === "FAILED"
-                        ? "Your registration is saved, but the confirmation email could not be sent."
-                        : "Your registration is saved. Email delivery is not enabled for this event."}
+                  {confirmationEmailHeadline(confirmation.notificationStatus)}
                 </strong>
                 <small>
                   {confirmation.paymentCollected

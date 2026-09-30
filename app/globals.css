@@ -7886,3 +7886,26 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .activity-disclosure[open] > summary {
   margin-bottom: 14px;
 }
+
+/* Shared profile view in the staff shell and the attendee portal (#646). */
+.profile-readonly-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 24px; margin: 0; }
+.profile-readonly-fields > div { display: grid; gap: 2px; min-width: 0; }
+.profile-readonly-fields dt { color: var(--muted); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.profile-readonly-fields dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+.profile-readonly-note { margin: 12px 0 0; }
+.profile-staff-card .section-heading { align-items: flex-start; gap: 12px; }
+.profile-portal-staff { margin-bottom: 0; }
+.profile-portal-staff > .panel { min-width: 0; }
+.profile-account-heading-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.profile-account-heading-row .profile-account-heading { margin: 0; }
+.profile-readonly-field { grid-column: 1 / -1; }
+.profile-readonly-field em { color: var(--muted); font-style: normal; font-weight: 400; }
+.profile-readonly-field input[readonly] { background: color-mix(in srgb, var(--muted) 10%, transparent); color: var(--muted); cursor: default; }
+.profile-details-form { display: grid; gap: 16px; }
+.profile-details-form input, .profile-details-form textarea { max-width: 100%; }
+@media (max-width: 640px) {
+  .profile-details-form .public-manage-contact-grid { grid-template-columns: 1fr; }
+  .profile-details-form .public-manage-contact-actions button { width: 100%; justify-content: center; min-height: 44px; }
+  .profile-staff-card .section-heading, .profile-account-heading-row { flex-direction: column; align-items: stretch; }
+  .profile-staff-card .section-heading .secondary-button, .profile-account-heading-row .secondary-button { width: 100%; }
+}
