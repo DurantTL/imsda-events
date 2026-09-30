@@ -4,8 +4,9 @@ import { ProgramAssignmentsWorkspace } from "@/components/program-assignments-wo
 import { resolveEventContext } from "@/modules/events/selection";
 import { canManageProgramAssignments } from "@/modules/program-assignments/access";
 import { getProgramAssignmentWorkspace } from "@/modules/program-assignments/repository";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Seminar assignments" };
+export const metadata: Metadata = { title: staffPageTitles.programAssignments };
 
 export default async function ProgramAssignmentsPage({
   searchParams,

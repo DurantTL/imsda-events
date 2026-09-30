@@ -259,16 +259,6 @@ export function AppShell({
       <main className="workspace">
         <header className="workspace-header">
           <div><p className="eyebrow">Staff workspace</p><h1>{pageTitle}</h1></div>
-          {!isSystemRoute && !eventlessProfile && (
-            <label className="mobile-event-picker">
-              <span className="sr-only">Current event</span>
-              <select value={selectedEventId} onChange={(event) => selectEvent(event.target.value)}>
-                {!selectedEventId && <option value="" disabled>Choose an event</option>}
-                {events.map((event) => <option value={event.id} key={event.id}>{event.name}</option>)}
-              </select>
-              <ChevronDown aria-hidden="true" size={15} />
-            </label>
-          )}
           <div className="header-actions">
             {canSwitchToAttendee
               ? (
@@ -304,6 +294,16 @@ export function AppShell({
               systemAdminContext={systemAdminContext ? { ...systemAdminContext, href: withCurrentEvent(systemAdminContext.href, selectedEventId) } : systemAdminContext}
             />
           </div>
+          {!isSystemRoute && !eventlessProfile && (
+            <label className="mobile-event-picker">
+              <span className="sr-only">Current event</span>
+              <select value={selectedEventId} onChange={(event) => selectEvent(event.target.value)}>
+                {!selectedEventId && <option value="" disabled>Choose an event</option>}
+                {events.map((event) => <option value={event.id} key={event.id}>{event.name}</option>)}
+              </select>
+              <ChevronDown aria-hidden="true" size={15} />
+            </label>
+          )}
         </header>
         <div className="workspace-content" id="workspace-content">
           {showAutoSelectNotice && defaultEvent && (

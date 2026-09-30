@@ -11,7 +11,7 @@ export default async function AttendeeConfigurationPage({ searchParams }: { sear
   const { event: requested } = await searchParams;
   const { event, permissions } = await resolveEventContext(requested);
   if (!permissions.includes("CONFIGURE_EVENT")) {
-    return <AccessRestricted title="Attendee configuration is restricted" detail="Event administrators can configure attendee identities and groupings." />;
+    return <AccessRestricted title="Attendee setup is restricted" detail="Event administrators can configure attendee identities and groupings." />;
   }
   const configuration = await listAttendeeConfiguration(event.id);
   const types = configuration.attendeeTypes.map((row) => ({

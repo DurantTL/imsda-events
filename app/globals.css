@@ -681,7 +681,13 @@ select:focus-visible {
   letter-spacing: -0.02em;
 }
 
-.workspace-header h1 { font-size: clamp(1.35rem, 2vw, 1.7rem); white-space: nowrap; }
+.workspace-header h1 { overflow: hidden; font-size: clamp(1.35rem, 2vw, 1.7rem); text-overflow: ellipsis; white-space: nowrap; }
+.workspace-header > div:first-child { min-width: 0; }
+/* Tablet widths share the header with the sidebar: the attendee button keeps
+   its icon and accessible name, and the title keeps room to show in full. */
+@media (max-width: 1100px) {
+  .workspace-header .attendee-preview-switch span { display: none; }
+}
 
 .eyebrow,
 .hero-eyebrow {
@@ -978,7 +984,8 @@ select:focus-visible {
 /* Actions sitting alongside a page heading, beside its count badge. */
 .page-intro-actions {
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
   align-items: center;
   gap: 9px;
 }
@@ -1101,11 +1108,11 @@ select:focus-visible {
 .safe-boundary > span { display: inline-flex; align-items: center; gap: 6px; color: var(--green); font-size: 0.68rem; font-weight: 700; }
 
 .page-stack { display: grid; gap: 18px; padding-top: 28px; }
-.page-intro { align-items: center; }
+.page-intro { flex-wrap: wrap; align-items: center; }
 .page-intro h2 { font-size: clamp(1.35rem, 2.4vw, 1.8rem); }
 .page-intro p:not(.eyebrow) { max-width: 700px; margin: 6px 0 0; color: var(--muted); font-size: 0.78rem; }
 .count-badge { border: 1px solid #cddde4; background: var(--imsda-navy-soft); color: var(--imsda-navy); padding: 7px 11px; font-size: 0.68rem; white-space: nowrap; }
-.intro-actions { display: flex; align-items: center; gap: 9px; }
+.intro-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
 
 .toolbar { display: flex; align-items: center; gap: 10px; padding: 12px; }
 .search-field { display: flex; min-width: 0; flex: 1; align-items: center; gap: 9px; color: #8799a2; }
@@ -2391,19 +2398,18 @@ select:focus-visible {
   .workspace-header { min-height: 0; flex-wrap: wrap; gap: 8px 10px; padding: 10px 0 12px; }
   .workspace-header > div:first-child { flex: 1 1 0; min-width: 0; }
   .workspace-header .eyebrow { display: none; }
-  .workspace-header h1 { overflow: hidden; font-size: 1.18rem; text-overflow: ellipsis; }
+  .workspace-header h1 { font-size: 1.18rem; }
   .header-actions { display: contents; }
-  .workspace-header form { display: contents; }
-  .staff-pill { order: 6; }
+  .header-actions > form { display: contents; }
+  .staff-pill { order: 1; }
   /* Pages without an event picker (System management) keep the pill on its own
      row too, so the longer page titles have the whole first row. */
-  .workspace-header:not(:has(.mobile-event-picker))::after { content: ""; order: 5; flex: 0 0 100%; height: 0; margin-top: -8px; }
+  .workspace-header:not(:has(.mobile-event-picker))::after { content: ""; flex: 0 0 100%; height: 0; margin-top: -8px; }
   .attendee-preview-switch { min-width: 44px; min-height: 44px; justify-content: center; }
   .preview-pill { display: none; }
   .mobile-event-picker {
     position: relative;
     display: flex;
-    order: 3;
     /* Wide enough that it always drops to its own row; "Staff mode" shares it. */
     flex: 1 0 calc(100% - 100px);
     min-width: 0;
@@ -2433,14 +2439,15 @@ select:focus-visible {
   .primary-button,
   .secondary-button,
   .preview-step-actions .primary-button,
-  .preview-step-actions .secondary-button { min-height: 44px; }
+  .preview-step-actions .secondary-button,
+  .check-in-manual-form .secondary-button { min-height: 44px; }
   .event-hero { margin-top: 16px; }
   .event-hero,
   .checkin-hero { display: block; border-radius: 20px; padding: 22px; }
   .hero-capacity { margin-top: 20px; }
   .record-grid { grid-template-columns: 1fr; }
   .mobile-nav { position: fixed; inset: auto 0 0; z-index: 40; display: flex; height: 67px; border-top: 1px solid var(--line); background: white; padding: 5px 4px max(5px, env(safe-area-inset-bottom)); box-shadow: 0 -8px 24px rgba(0, 59, 92, 0.07); }
-  .mobile-nav a { display: flex; min-width: 0; flex: 1 1 auto; padding: 0 1px; align-items: center; justify-content: center; flex-direction: column; gap: 2px; color: #7d8e96; font-size: 0.58rem; font-weight: 700; text-decoration: none; }
+  .mobile-nav a { display: flex; min-width: 0; flex: 1 1 0; min-width: max-content; padding: 0 1px; align-items: center; justify-content: center; flex-direction: column; gap: 2px; color: #7d8e96; font-size: 0.58rem; font-weight: 700; text-decoration: none; }
   .mobile-nav a span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mobile-nav a.active { color: var(--imsda-navy); }
   .mobile-nav a.active svg { color: var(--imsda-purple); }
@@ -8215,4 +8222,9 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
   .builder-phone-notice p { margin: 0; line-height: 1.5; }
   .builder-phone-notice .primary-button { text-decoration: none; }
   .builder-phone-hidden { display: none; }
+}
+
+/* Narrow phones: keep long page titles in the header on one line (#685). */
+@media (max-width: 400px) {
+  .workspace-header h1 { font-size: 1rem; }
 }

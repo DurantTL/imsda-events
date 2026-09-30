@@ -5,8 +5,9 @@ import { EventContentWorkspace } from "@/components/event-content-workspace";
 import { listEventAssets } from "@/modules/events/asset-repository";
 import { listEventContentSections } from "@/modules/events/content-repository";
 import { resolveEventContext } from "@/modules/events/selection";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Public content" };
+export const metadata: Metadata = { title: staffPageTitles.eventContent };
 
 export default async function EventContentPage({
   searchParams,

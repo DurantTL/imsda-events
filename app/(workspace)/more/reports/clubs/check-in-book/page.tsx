@@ -8,8 +8,9 @@ import { PrintReportButton } from "@/components/print-report-button";
 import { checkInBookStatuses, parseCheckInBookStatuses } from "@/modules/reporting/check-in-book";
 import { getCheckInBookData } from "@/modules/reporting/check-in-book-repository";
 import { resolveClubReportsAccess } from "@/modules/reporting/club-reports-access";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Check-in book" };
+export const metadata: Metadata = { title: staffPageTitles.checkInBook };
 export const dynamic = "force-dynamic";
 
 const statusLabels: Record<(typeof checkInBookStatuses)[number], string> = {
@@ -50,7 +51,7 @@ export default async function CheckInBookPage({
       <div className="page-intro report-page-intro check-in-book-intro">
         <div>
           <p className="eyebrow">Event-day check-in</p>
-          <h2>Check-in book</h2>
+          <h2 className="duplicate-page-title">{staffPageTitles.checkInBook}</h2>
           <p>One printed page per {data.book.mode === "CLUB" ? "club" : "registration"} for {event.name}, with a box to tick at check-in and the campsite needs on top.</p>
         </div>
         <div className="intro-actions report-actions">

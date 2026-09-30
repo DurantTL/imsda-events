@@ -12,7 +12,7 @@ export default async function RegistrationBuilderPage({ searchParams }: { search
   const { event: requested, form: focusForm, field: focusField } = await searchParams;
   const { event, permissions } = await resolveEventContext(requested);
   if (!permissions.includes("MANAGE_FORMS")) {
-    return <AccessRestricted title="Registration builder access is restricted" detail="Event administrators and registration managers can create, test, and publish event forms." />;
+    return <AccessRestricted title="Registration form access is restricted" detail="Event administrators and registration managers can create, test, and publish event forms." />;
   }
   return <>
     <BuilderPhoneNotice eventId={event.id} />

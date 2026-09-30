@@ -100,26 +100,64 @@ export const staffPageTitles = {
   emails: "Emails",
   more: "More",
   systemManagement: "System management",
+  honorsRosters: "Honors Weekend rosters",
   honors: "Honors Weekend classes",
+  clubPacket: "Club packet",
+  checkInBook: "Check-in book",
+  clubReports: "Camporee club reports",
+  groupedPackets: "Grouped retreat packets",
+  operationalReports: "Operational reports",
+  clubMonthlyReport: "Club monthly report",
+  clubMonthlyReports: "Club monthly reports",
+  clubs: "Clubs",
+  club: "Club",
+  clubForm: "Club form",
+  clubForms: "Club forms",
+  clubAssignments: "Club assignments",
+  eventContent: "Public content",
+  eventPatches: "Event patches",
+  operationalHealth: "Operational health",
+  merchandise: "Merchandise catalog",
+  assignmentRoster: "Assignment roster",
+  programAssignments: "Seminar assignments",
 } as const;
 
-const moreSubpageTitles: readonly (readonly [string, string])[] = [
-  ["/more/honors", staffPageTitles.honors],
-  ["/more/club-assignments", "Club assignments"],
-  ["/more/club-forms", "Club forms"],
-  ["/more/clubs", "Clubs"],
-  ["/more/event-content", "Public content"],
-  ["/more/event-patches", "Event patches"],
-  ["/more/health", "Operational health"],
-  ["/more/merchandise", "Merchandise"],
-  ["/more/program-assignments", "Seminar assignments"],
-  ["/more/reports", "Operational reports"],
+type SubpageRule = readonly [path: string, match: "exact" | "prefix" | "under", title: string];
+
+/**
+ * Checked in order, so a longer or more specific path comes before the path it
+ * sits under. `exact` is that path alone, `under` is anything below it, and
+ * `prefix` is both.
+ */
+const subpageRules: readonly SubpageRule[] = [
+  ["/more/honors/rosters", "prefix", staffPageTitles.honorsRosters],
+  ["/more/honors", "prefix", staffPageTitles.honors],
+  ["/more/reports/clubs/packet", "prefix", staffPageTitles.clubPacket],
+  ["/more/reports/clubs/check-in-book", "prefix", staffPageTitles.checkInBook],
+  ["/more/reports/clubs", "prefix", staffPageTitles.clubReports],
+  ["/more/reports/packets", "prefix", staffPageTitles.groupedPackets],
+  ["/more/reports", "prefix", staffPageTitles.operationalReports],
+  ["/more/clubs/reports/", "under", staffPageTitles.clubMonthlyReport],
+  ["/more/clubs/reports", "exact", staffPageTitles.clubMonthlyReports],
+  ["/more/clubs", "exact", staffPageTitles.clubs],
+  ["/more/clubs/", "under", staffPageTitles.club],
+  ["/more/club-forms/", "under", staffPageTitles.clubForm],
+  ["/more/club-forms", "exact", staffPageTitles.clubForms],
+  ["/more/club-assignments", "prefix", staffPageTitles.clubAssignments],
+  ["/more/event-content", "prefix", staffPageTitles.eventContent],
+  ["/more/event-patches", "prefix", staffPageTitles.eventPatches],
+  ["/more/health", "prefix", staffPageTitles.operationalHealth],
+  ["/more/merchandise", "prefix", staffPageTitles.merchandise],
+  ["/more/program-assignments/", "under", staffPageTitles.assignmentRoster],
+  ["/more/program-assignments", "exact", staffPageTitles.programAssignments],
 ];
 
 /** The title a staff page shows in the workspace header, or `null` to use its nav label. */
 export function staffSubpageTitle(pathname: string): string | null {
-  for (const [prefix, title] of moreSubpageTitles) {
-    if (pathname === prefix || pathname.startsWith(`${prefix}/`)) return title;
+  for (const [path, match, title] of subpageRules) {
+    const isExact = pathname === path;
+    const isUnder = pathname.startsWith(path.endsWith("/") ? path : `${path}/`);
+    if (match === "exact" ? isExact : match === "under" ? isUnder : isExact || isUnder) return title;
   }
   return null;
 }
@@ -146,7 +184,6 @@ export const navigation: readonly NavigationItem[] = [
   {
     href: "/more",
     label: staffPageTitles.more,
-   
     icon: MoreHorizontal,
     requiredAnyPermissions: [
       "VIEW_REPORTS",

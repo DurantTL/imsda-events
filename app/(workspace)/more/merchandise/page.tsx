@@ -3,8 +3,9 @@ import Link from "next/link";
 import { AccessRestricted } from "@/components/access-restricted";
 import { MerchandiseAdminWorkspace } from "@/components/merchandise-admin-workspace";
 import { resolveEventContext } from "@/modules/events/selection";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Merchandise catalog" };
+export const metadata: Metadata = { title: staffPageTitles.merchandise };
 
 export default async function MerchandisePage({
   searchParams,

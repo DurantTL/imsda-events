@@ -8,8 +8,9 @@ import { allowedReturnTo } from "@/lib/return-to";
 import { resolveClubOversight } from "@/modules/club-rosters/event-oversight";
 import { formatDueDate, isReportMonth, reportDueDate, reportMonthLabel } from "@/modules/club-reports/domain";
 import { getClubReport, reportPrefill } from "@/modules/club-reports/repository";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Club monthly report" };
+export const metadata: Metadata = { title: staffPageTitles.clubMonthlyReport };
 export const dynamic = "force-dynamic";
 
 /**

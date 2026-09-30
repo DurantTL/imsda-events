@@ -7,8 +7,9 @@ import { LocationFilter } from "@/components/location-filter";
 import { resolveLocationFilter } from "@/modules/event-locations/filter";
 import { getClubEventReports } from "@/modules/reporting/club-event-reports-repository";
 import { resolveClubReportsAccess } from "@/modules/reporting/club-reports-access";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Camporee club reports" };
+export const metadata: Metadata = { title: staffPageTitles.clubReports };
 export const dynamic = "force-dynamic";
 
 function reportDownloadHref(eventId: string, kind: string, locationId: string | null) {
@@ -41,7 +42,7 @@ export default async function ClubEventReportsPage({
       <div className="page-intro report-page-intro">
         <div>
           <p className="eyebrow">Event-day planning</p>
-          <h2>Camporee club reports</h2>
+          <h2 className="duplicate-page-title">{staffPageTitles.clubReports}</h2>
           <p>Camping coordinator, duties and activities, spiritual milestones, and special roles for {event.name}, built from each club&apos;s registration.{readOnly ? " View only." : ""}</p>
         </div>
         <div className="intro-actions report-actions">

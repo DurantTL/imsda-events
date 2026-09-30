@@ -30,8 +30,9 @@ import { getOperationalReport } from "@/modules/reporting/repository";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { canSeeIssuesText } from "@/modules/background-checks/notes-access";
 import { listEventBackgroundFlags } from "@/modules/background-checks/repository";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Operational reports" };
+export const metadata: Metadata = { title: staffPageTitles.operationalReports };
 
 function reportDownloadHref(eventId: string, kind: OperationalReportKind) {
   return `/api/events/${encodeURIComponent(eventId)}/reports?report=${kind}`;
@@ -203,7 +204,7 @@ export default async function OperationalReportsPage({
       <div className="page-intro report-page-intro">
         <div>
           <p className="eyebrow">Event-day planning</p>
-          <h2>Operational reports</h2>
+          <h2 className="duplicate-page-title">{staffPageTitles.operationalReports}</h2>
           <p>Live planning totals for {event.name}, organized so a staff member can print them or open each CSV in a spreadsheet.</p>
         </div>
         <div className="intro-actions report-actions">

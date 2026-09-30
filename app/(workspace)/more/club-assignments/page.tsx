@@ -9,8 +9,9 @@ import {
 import { listClubAssignments } from "@/modules/club-registrations/assignments-repository";
 import { resolveClubOversight } from "@/modules/club-rosters/event-oversight";
 import { resolveEventContext } from "@/modules/events/selection";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Club assignments" };
+export const metadata: Metadata = { title: staffPageTitles.clubAssignments };
 export const dynamic = "force-dynamic";
 
 /** Staff screen for campsite/duty/activity assignments per club (#410). */
