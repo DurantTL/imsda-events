@@ -1,4 +1,4 @@
-import type { RegistrationFormDefinition } from "@/modules/forms/definition";
+import { resolveFieldPrices, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
 import { effectiveLocationDates } from "@/modules/event-locations/domain";
 import { getPublicRegistrationStepPlan } from "@/modules/forms/public-registration-steps";
 
@@ -197,7 +197,7 @@ function standardCapacity(offerings: readonly InfoCardOffering[]) {
 function classEntry(offering: InfoCardOffering, standard: number | null): ClassCardEntry {
   const badges: ClassBadge[] = [];
   if (offering.capacity === 0) {
-    badges.push({ kind: "LIMITED", text: "Full" });
+    badges.push({ kind: "LIMITED", text: "No youth seats" });
   } else if (standard !== null && offering.capacity < standard) {
     badges.push({ kind: "LIMITED", text: `Limited spots: ${offering.capacity}` });
   }
@@ -362,20 +362,29 @@ function unitFor(scope: "REGISTRATION" | "ATTENDEE", type: string) {
 }
 
 /**
- * The regular price, then the late price when there is one. The engine charges
- * the regular price when a late price is missing, so a missing late price is one
- * undated tier, never "through <date>".
+ * Tiers from what the engine charges before and after the late date. `null`
+ * means nothing is priced in that state (the engine charges $0 there), which is
+ * never shown as a price.
  */
-function tiersFor(regularCents: number | undefined, late: { startsOn: string; cents: number | undefined } | null): FeeTier[] {
-  if (late && late.cents !== undefined && late.cents !== regularCents) {
-    const tiers: FeeTier[] = [];
-    if (regularCents !== undefined) {
-      tiers.push({ amountCents: regularCents, note: `through ${formatCardDate(dayBefore(late.startsOn))}` });
-    }
-    tiers.push({ amountCents: late.cents, note: `from ${formatCardDate(late.startsOn)}` });
-    return tiers;
+function tiersFor(regular: number | null, late: { startsOn: string; cents: number | null } | null): FeeTier[] {
+  if (!late) return regular === null ? [] : [{ amountCents: regular, note: null }];
+  const through = `through ${formatCardDate(dayBefore(late.startsOn))}`;
+  const from = `from ${formatCardDate(late.startsOn)}`;
+  if (regular === null && late.cents === null) return [];
+  if (regular !== null && late.cents === null) return [{ amountCents: regular, note: through }];
+  if (regular === null && late.cents !== null) {
+    // Priced only from the late date: the engine charges nothing before it.
+    return [{ amountCents: 0, note: through }, { amountCents: late.cents, note: from }];
   }
-  return regularCents !== undefined ? [{ amountCents: regularCents, note: null }] : [];
+  if (regular === late.cents) return [{ amountCents: regular!, note: null }];
+  return [{ amountCents: regular!, note: through }, { amountCents: late.cents!, note: from }];
+}
+
+/** What one option (or the field itself, for null) is charged in a pricing state; null when nothing is priced. */
+function chargedIn(field: RegistrationFormField, active: boolean, option: string | null): number | null {
+  const { priceCents, choicePricesCents } = resolveFieldPrices(field, active);
+  if (choicePricesCents) return option === null ? null : choicePricesCents[option] ?? null;
+  return priceCents ?? null;
 }
 
 function feeGroupsFor(form: InfoCardForm): FeeGroup[] {
@@ -387,18 +396,21 @@ function feeGroupsFor(form: InfoCardForm): FeeGroup[] {
       if (field.creditCentsPerUnit !== undefined) continue;
       const unit = unitFor(field.scope, field.type);
       const latePricing = field.latePricing ?? null;
+      const tiersForOption = (option: string | null) => tiersFor(
+        chargedIn(field, false, option),
+        latePricing ? { startsOn: latePricing.startsOn, cents: chargedIn(field, true, option) } : null,
+      );
 
-      if (field.choicePricesCents && Object.keys(field.choicePricesCents).length > 0) {
-        const choices = field.options.filter((option) => (
-          field.choicePricesCents?.[option] !== undefined || latePricing?.choicePricesCents?.[option] !== undefined
-        ));
+      const priced = new Set([
+        ...Object.keys(field.choicePricesCents ?? {}),
+        ...Object.keys(latePricing?.choicePricesCents ?? {}),
+      ]);
+      const choices = field.options.filter((option) => priced.has(option));
+      if (choices.length > 0) {
         const lines = choices.map((option): FeeLine => ({
           label: field.optionLabels?.[option] ?? option,
           unit: null,
-          tiers: tiersFor(
-            field.choicePricesCents?.[option],
-            latePricing ? { startsOn: latePricing.startsOn, cents: latePricing.choicePricesCents?.[option] } : null,
-          ),
+          tiers: tiersForOption(option),
         })).filter((line) => line.tiers.length > 0);
         const key = `choice:${field.label}:${JSON.stringify(lines)}`;
         if (lines.length > 0 && !seen.has(key)) {
@@ -408,17 +420,11 @@ function feeGroupsFor(form: InfoCardForm): FeeGroup[] {
         continue;
       }
 
-      if (field.priceCents !== undefined || latePricing?.priceCents !== undefined) {
-        const line: FeeLine = {
-          label: field.label,
-          unit,
-          tiers: tiersFor(field.priceCents, latePricing ? { startsOn: latePricing.startsOn, cents: latePricing.priceCents } : null),
-        };
-        const key = `single:${JSON.stringify(line)}`;
-        if (line.tiers.length > 0 && !seen.has(key)) {
-          seen.add(key);
-          singles.push(line);
-        }
+      const line: FeeLine = { label: field.label, unit, tiers: tiersForOption(null) };
+      const key = `single:${JSON.stringify(line)}`;
+      if (line.tiers.length > 0 && !seen.has(key)) {
+        seen.add(key);
+        singles.push(line);
       }
     }
   }

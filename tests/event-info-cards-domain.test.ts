@@ -267,6 +267,41 @@ describe("event info card edge cases", () => {
     expect(buildFeesCard({ ...input, forms: [form] })!.sections[0]!.groups[0]!.lines[0]!.tiers).toEqual([{ amountCents: 900, note: null }]);
   });
 
+  describe("shows only what the engine charges", () => {
+    const field = (extra: Record<string, unknown>) => ({
+      id: "fld-a", key: "registration_fee", label: "Registration fee", type: "CALCULATED", scope: "ATTENDEE", required: false, ...extra,
+    });
+    const tiers = (extra: Record<string, unknown>) => buildFeesCard({ ...input, forms: [feeForm([field(extra)])] })?.sections[0]?.groups[0]?.lines[0]?.tiers;
+
+    it("omits the tier a late empty choice map would charge as $0", () => {
+      // From the late date the engine is in choice mode with an empty map: $0.
+      expect(tiers({ priceCents: 900, latePricing: { startsOn: "2026-08-24", label: "Late", priceCents: 1400, choicePricesCents: {} } }))
+        .toEqual([{ amountCents: 900, note: "through Aug 23, 2026" }]);
+    });
+
+    it("shows no price for an empty choice map on the field, which charges $0 throughout", () => {
+      expect(tiers({ priceCents: 900, choicePricesCents: {} })).toBeUndefined();
+    });
+
+    it("shows the field price then the late option price for a late-only non-empty choice map", () => {
+      expect(tiers({ priceCents: 900, options: ["A"], latePricing: { startsOn: "2026-08-24", label: "Late", choicePricesCents: { A: 1500 } } }))
+        .toEqual([{ amountCents: 900, note: "through Aug 23, 2026" }, { amountCents: 1500, note: "from Aug 24, 2026" }]);
+    });
+
+    it("adds a No charge tier before the date for an option priced only late", () => {
+      const form = feeForm([{
+        id: "fld-a", key: "lodging", label: "Lodging", type: "SELECT", scope: "ATTENDEE", required: true,
+        options: ["Tent", "Cabin"], choicePricesCents: { Tent: 2500 },
+        latePricing: { startsOn: "2026-08-24", label: "Late", choicePricesCents: { Cabin: 4500 } },
+      }]);
+      const lines = buildFeesCard({ ...input, forms: [form] })!.sections[0]!.groups[0]!.lines;
+      expect(lines.find((line) => line.label === "Cabin")!.tiers).toEqual([
+        { amountCents: 0, note: "through Aug 23, 2026" },
+        { amountCents: 4500, note: "from Aug 24, 2026" },
+      ]);
+    });
+  });
+
   it("groups fees per form, by form name, when several forms are published", () => {
     const fee = (amount: number) => [{ id: "fld-a", key: "registration_fee", label: "Fee", type: "CALCULATED", scope: "ATTENDEE", required: false, priceCents: amount }];
     const card = buildFeesCard({ ...input, forms: [feeForm(fee(900), "Form One"), feeForm(fee(1200), "Form Two")] })!;
@@ -304,8 +339,8 @@ describe("event info card edge cases", () => {
     expect(mixed.grids.flatMap((grid) => grid.sessions.flatMap((session) => session.classes)).every((entry) => entry.kind === "STANDARD")).toBe(true);
   });
 
-  it("shows a zero-seat class as Full", () => {
+  it("shows a zero-seat class as No youth seats", () => {
     const entry = buildClassGridsCard({ ...input, offerings: [offering({ id: "z", capacity: 0, sessionId: "s-a1" })] })!.grids[0]!.sessions[0]!.classes[0]!;
-    expect(entry.badges).toEqual([{ kind: "LIMITED", text: "Full" }]);
+    expect(entry.badges).toEqual([{ kind: "LIMITED", text: "No youth seats" }]);
   });
 });

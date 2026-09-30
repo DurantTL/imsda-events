@@ -8,14 +8,11 @@ import { formatCardMoney, type EventInfoCards } from "@/modules/event-info-cards
 export function AutoEventHeader({
   header,
   timeLabel,
-  statusLabel,
   introLine,
 }: {
   header: EventInfoCards["header"];
   /** Time range line, e.g. "Friday, 4:00 PM CDT – Sunday, 12:00 PM CDT". */
   timeLabel?: string;
-  /** Registration state, e.g. "Registration open". */
-  statusLabel?: string;
   /** The lifecycle sentence that used to sit under the title. */
   introLine?: string;
 }) {
@@ -27,7 +24,6 @@ export function AutoEventHeader({
       {header.meta && <p className="auto-info-meta">{header.meta}</p>}
       {timeLabel && <p className="auto-info-meta">{timeLabel}</p>}
       {header.subtitle && <p className="auto-info-subtitle">{header.subtitle}</p>}
-      {statusLabel && <p className="auto-info-status"><strong>{statusLabel}</strong></p>}
       {introLine && <p className="auto-info-subtitle">{introLine}</p>}
     </section>
   );
@@ -62,7 +58,7 @@ export function AutoEventInfoCards({ cards }: { cards: EventInfoCards }) {
                         <strong>{entry.honorName}</strong>
                         {entry.teacherName && <small>{entry.teacherName}</small>}
                         <small>
-                          {entry.capacity === 0 ? "Full" : `${entry.capacity} spots`}
+                          {entry.capacity > 0 ? `${entry.capacity} spots` : null}
                           {entry.perClubLimit ? ` · up to ${entry.perClubLimit} per club` : ""}
                         </small>
                         {entry.badges.length > 0 && (

@@ -2704,7 +2704,7 @@ export function PublicRegistrationForm({
 
       <form className="public-registration-layout" noValidate onSubmit={submit}>
         <div className="public-registration-form-column">
-        {topContent}
+          {topContent}
           {joiningWaitlist && (
             <section className="public-registration-waitlist-banner" role="status">
               <Clock3 size={22} aria-hidden="true" />

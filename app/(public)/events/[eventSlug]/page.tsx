@@ -102,7 +102,6 @@ export default async function PublicEventPage({
         <AutoEventHeader
           header={autoCards.header}
           timeLabel={landing.event.timeLabel}
-          statusLabel={landing.lifecycle.statusLabel}
           introLine={landing.lifecycle.heroTagline}
         />
       ) : (
