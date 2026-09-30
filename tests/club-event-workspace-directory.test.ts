@@ -134,12 +134,33 @@ describe("club event workspace locations (#413)", () => {
         createdAt: new Date("2026-10-10T12:00:00Z"), registrationId: "registration-1",
         registration: {
           confirmationCode: "REG-CLUB", status: "SUBMITTED", updatedAt: new Date("2026-10-10T12:00:00Z"), totalAmount: 0,
-          location: registered.location, attendees: [],
+          location: registered.location, attendees: [], messages: [],
         },
       });
     }
     return prisma;
   }
+
+  it.each([
+    ["SENT", "SENT", false],
+    ["PENDING", "PENDING", true],
+    ["FAILED", "FAILED", true],
+  ])("reports the real confirmation email state for a %s message (#642)", async (outbox, expected, hasSupport) => {
+    const prisma = withLocations([], {}, { location: location({ id: "own" }) });
+    prisma.event.findFirst.mockResolvedValue({
+      ...(await prisma.event.findFirst()), supportContact: "events@example.test",
+    });
+    prisma.clubEventRegistration.findUnique.mockResolvedValue({
+      createdAt: new Date("2026-10-10T12:00:00Z"), registrationId: "registration-1",
+      registration: {
+        confirmationCode: "REG-CLUB", status: "SUBMITTED", updatedAt: new Date("2026-10-10T12:00:00Z"),
+        location: null, attendees: [], messages: [{ status: outbox }],
+      },
+    });
+    const workspace = await getClubEventWorkspace("club-1", "event-1", now);
+    expect(workspace.registration?.confirmationEmail.status).toBe(expected);
+    expect(workspace.registration?.confirmationEmail.supportEmail).toBe(hasSupport ? "events@example.test" : null);
+  });
 
   it("has no locations for an event without them, and reads no seat counts", async () => {
     const prisma = mockPrisma(null);
