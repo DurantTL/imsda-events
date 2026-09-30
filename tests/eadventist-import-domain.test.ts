@@ -299,18 +299,20 @@ describe("the synthetic eAdventist export (#649)", () => {
       expect(other.items.find((entry) => entry.eadventistId === "9002")!.existingId).toBe("church-2");
     });
 
-    it("skips a row whose choice is no longer a candidate, and never falls back to another church", () => {
+    it("asks again when a choice is no longer a candidate, keeping the current candidates and never falling back", () => {
       const parsed = parseEadventistCsv(fixture);
       for (const stale of ["nope", "church-gone"]) {
         const plan = planEadventistImport(parsed, [church({})], { "9002": stale });
         const item = plan.items.find((entry) => entry.eadventistId === "9002")!;
-        expect(item).toMatchObject({ action: "SKIPPED", existingId: null, needsChoice: false });
-        expect(item.notes).toContain("Your choice is no longer available — preview again");
-        expect(plan.needsChoice).toBe(0);
+        expect(item).toMatchObject({ existingId: null, needsChoice: true, possibleMatches: [{ id: "church-1" }] });
+        expect(item.notes).toContain("Your choice is no longer available — choose again");
+        expect(plan.needsChoice).toBe(1);
       }
-      // A choice for a church that has since been linked elsewhere is also stale.
+      // A choice for a church that has since been linked elsewhere is also stale, with nothing left to offer.
       const taken = planEadventistImport(parsed, [church({ eadventistId: "5555" })], { "9002": "church-1" });
-      expect(taken.items.find((entry) => entry.eadventistId === "9002")!.action).toBe("SKIPPED");
+      expect(taken.items.find((entry) => entry.eadventistId === "9002")).toMatchObject({ needsChoice: true, possibleMatches: [] });
+      // Choosing "Create new" resolves it.
+      expect(planEadventistImport(parsed, [church({ eadventistId: "5555" })], { "9002": NEW_RECORD }).needsChoice).toBe(0);
     });
 
     it("lets one stored church go to at most one row", () => {
@@ -318,7 +320,7 @@ describe("the synthetic eAdventist export (#649)", () => {
       const twoRows = { ...parsed, records: [...parsed.records, { ...parsed.records.find((record) => record.eadventistId === "9002")!, eadventistId: "9099", line: 99 }] };
       const plan = planEadventistImport(twoRows, [church({})], { "9002": "church-1", "9099": "church-1" });
       expect(plan.items.filter((entry) => entry.existingId === "church-1")).toHaveLength(1);
-      expect(plan.items.find((entry) => entry.eadventistId === "9099")!.action).toBe("SKIPPED");
+      expect(plan.items.find((entry) => entry.eadventistId === "9099")).toMatchObject({ needsChoice: true, possibleMatches: [] });
     });
 
     it("matches whole-file passes in order: an exact name beats an earlier row's loose match (Sampletown)", () => {

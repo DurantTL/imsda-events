@@ -112,9 +112,9 @@ export function EadventistImportWorkspace({ initialPreview }: { initialPreview?:
                     <td>{organizationKindLabels[item.kind]}</td>
                     <td>
                       <span className={`status-chip ${actionTone[item.action]}`}>{actionLabels[item.action]}</span>
-                      {item.possibleMatches.length > 0 && <span className="status-chip gold">{item.needsChoice ? "Possible match — choose" : "Possible match"}</span>}
+                      {(item.possibleMatches.length > 0 || item.needsChoice) && <span className="status-chip gold">{item.needsChoice ? "Possible match — choose" : "Possible match"}</span>}
                       {item.notes.map((note) => <div className="field-help" key={note}>{note}</div>)}
-                      {item.possibleMatches.length > 0 && !saved && (
+                      {(item.possibleMatches.length > 0 || item.needsChoice) && !saved && (
                         <select
                           aria-label={`Possible match for ${item.name}`}
                           disabled={busy}

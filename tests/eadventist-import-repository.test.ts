@@ -174,12 +174,12 @@ describe("eAdventist import storage (#649)", () => {
     expect(rows().find((row) => row.id === "church-old")).toMatchObject({ eadventistId: null, name: "Sample Hills Seventh-day Adventist Church" });
   });
 
-  it("skips a row with a stale choice instead of linking another church", async () => {
+  it("asks again for a row with a stale choice instead of linking another church", async () => {
     rows().push({ id: "church-old", type: "CHURCH", name: "Sample Hills Seventh-day Adventist Church", normalizedName: "sample hills seventh-day adventist church", isActive: true, eadventistId: null, affiliatedOrganizationId: null } as Row);
-    const result = await commitEadventistImport(fixture, "admin-1", { "9002": "church-gone" });
-    expect(result.items.find((item) => item.eadventistId === "9002")).toMatchObject({ action: "SKIPPED" });
-    expect(rows().find((row) => row.id === "church-old")!.eadventistId).toBeFalsy();
-    expect(rows()).toHaveLength(12);
+    await expect(commitEadventistImport(fixture, "admin-1", { "9002": "church-gone" })).rejects.toMatchObject({ code: "NEEDS_CHOICES" });
+    const preview = await previewEadventistImport(fixture, { "9002": "church-gone" });
+    expect(preview.items.find((item) => item.eadventistId === "9002")).toMatchObject({ needsChoice: true, possibleMatches: [{ id: "church-old" }], selectedMatch: null });
+    expect(rows()).toHaveLength(1);
   });
 
   it("skips rows whose id a club, a person, or another scope holds, and imports the rest", async () => {

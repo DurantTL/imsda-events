@@ -409,7 +409,11 @@ export function planEadventistImport(
     }
     const chosen = candidates.find((candidate) => candidate.id === choice);
     if (!chosen) {
-      skip(index, "Your choice is no longer available — preview again");
+      // Stale or crafted: never fall back to another church. Keep the current candidates and ask again.
+      results[index] = {
+        record, existing: null, matchedBy: null, skipped: false, needsChoice: true, possibleMatches: candidates,
+        notes: ["Your choice is no longer available — choose again"],
+      };
       continue;
     }
     claimed.add(chosen.id);
