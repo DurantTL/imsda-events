@@ -13,6 +13,7 @@ import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee
 import { attendeeProfilePrefill, getAttendeeProfile } from "@/modules/attendee-accounts/profile-service";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { loadDirectorClubAssignment } from "@/modules/club-registrations/director-assignment";
+import { PerPersonPriceNotice } from "@/components/per-person-price-notice";
 import { isChurchBilledStatus, notBilledLabel } from "@/modules/club-registrations/church-owed";
 import { ClubRegistrationError, getClubEventWorkspace } from "@/modules/club-registrations/repository";
 import { activeRegistrationStatuses, registrationClosedMessage } from "@/modules/events/lifecycle";
@@ -20,11 +21,6 @@ import { getClassSelectionWorkspace } from "@/modules/honors/enrollment-reposito
 
 export const metadata: Metadata = { title: "Club registration" };
 export const dynamic = "force-dynamic";
-
-const moneyFormatter = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-function moneyLabel(cents: number) {
-  return moneyFormatter.format(cents / 100);
-}
 
 export default async function ClubEventRegistrationPage({
   params,
@@ -95,15 +91,11 @@ export default async function ClubEventRegistrationPage({
               {workspace.registration.location.lastDay !== workspace.registration.location.firstDay ? <> to {formatCalendarDate(workspace.registration.location.lastDay)}</> : ""}
             </p>
           )}
-          <p className="field-help">
+          <div className="field-help">
             {isChurchBilledStatus(workspace.registration.status)
-              ? (
-                <>
-                  Estimated amount owed by your church: <strong translate="no">{moneyLabel(workspace.registration.amountOwedCents)}</strong> · billed to the church after the event, not paid online.
-                </>
-              )
+              ? <PerPersonPriceNotice price={workspace.registration.perPerson} />
               : notBilledLabel(workspace.registration.status)}
-          </p>
+          </div>
           {(activeRegistrationStatuses as readonly string[]).includes(workspace.registration.status)
             && clubPassIsAvailable(new Date(workspace.event.endsAt)) && (
             // Q1 (#412): one QR for the whole club, not one per member.

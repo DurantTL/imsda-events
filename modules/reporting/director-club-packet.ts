@@ -1,5 +1,7 @@
 import "server-only";
 
+import { getPrisma } from "@/lib/prisma";
+import { currentPricingSnapshot, perPersonPriceFromSnapshot } from "@/modules/club-registrations/per-person-price";
 import { getRosterAccessState } from "@/modules/club-rosters/access";
 import { getClubPacketData } from "@/modules/reporting/club-packet-repository";
 
@@ -10,9 +12,30 @@ import { getClubPacketData } from "@/modules/reporting/club-packet-repository";
  * organization id never comes from the request, only from the verified
  * roster session, so a director can never fetch another club's packet by
  * editing the URL.
+ *
+ * The director never sees what the church owes (#621): the amount is removed
+ * here, server-side, and the per-person price is shown instead.
  */
 export async function loadDirectorClubPacket(organizationId: string, eventId: string) {
   const access = await getRosterAccessState(organizationId);
   if (access.state !== "OPEN") return null;
-  return getClubPacketData(eventId, access.club.organizationId);
+  const packet = await getClubPacketData(eventId, access.club.organizationId);
+  if (!packet) return null;
+  const submission = await getPrisma().clubEventRegistration.findUnique({
+    where: { eventId_organizationId: { eventId, organizationId: access.club.organizationId } },
+    select: {
+      registration: {
+        select: {
+          publicFormSubmission: { select: { pricingSnapshot: true } },
+          // The latest amendment's pricing wins over the original submission's.
+          operations: { where: { type: "AMENDMENT" }, orderBy: { createdAt: "desc" }, take: 1, select: { afterSnapshot: true } },
+        },
+      },
+    },
+  });
+  return {
+    ...packet,
+    amountOwedCents: null,
+    perPersonPrice: perPersonPriceFromSnapshot(submission ? currentPricingSnapshot(submission.registration) : null, true),
+  };
 }

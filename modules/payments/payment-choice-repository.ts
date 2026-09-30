@@ -136,6 +136,19 @@ async function choosePromotedWaitlistPaymentInTransaction(
     access.registrationId,
     input,
   );
+  // A church-billed event has no card or pay-later choice, so this is refused before anything else,
+  // including the idempotent replay of a stored result. Nothing about a quote, subtotal or total is
+  // returned to the registrant (#621).
+  const billing = await tx.registration.findUnique({
+    where: { id: access.registrationId },
+    select: { event: { select: { billingMode: true } } },
+  });
+  if (billing?.event?.billingMode === "DEFERRED_ORGANIZATION_INVOICE") {
+    throw new PaymentChoiceOperationError(
+      "PAYMENT_CHOICE_NOT_ELIGIBLE",
+      "This event bills the responsible organization directly, so there is no payment choice to make.",
+    );
+  }
   const existing = await tx.registrationPaymentChoiceOperation.findUnique({
     where: {
       registrationId_clientRequestId: {
