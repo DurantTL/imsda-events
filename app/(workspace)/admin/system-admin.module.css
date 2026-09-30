@@ -71,9 +71,14 @@
 }
 
 .heroActions :global(.secondary-button) {
-  border-color: rgba(255, 255, 255, 0.28);
-  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.16);
   color: white;
+}
+
+.heroActions :global(.primary-button),
+.heroActions :global(.secondary-button) {
+  white-space: nowrap;
 }
 
 .metrics {
@@ -544,14 +549,27 @@
   }
 
   .heroActions {
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .heroActions :global(.primary-button) {
+    grid-column: 1 / -1;
   }
 
   .heroActions :global(.primary-button),
   .heroActions :global(.secondary-button) {
-    flex: 1;
     justify-content: center;
   }
+}
+
+@media (max-width: 480px) {
+  .heroActions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 700px) {
 
   .eventStats {
     grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -1,5 +1,6 @@
 "use client";
 
+import { staffPageTitles } from "@/components/staff-navigation";
 import { BackgroundCheckBadge } from "@/components/background-check-flags";
 import { useMemo, useState } from "react";
 import {
@@ -642,7 +643,7 @@ export function PeopleWorkspace({
   return (
     <section className="page-stack">
       <div className="page-intro">
-        <div><p className="eyebrow">Registration hub</p><h2>People & registrations</h2><p>Review each party’s attendees, submitted choices, payments, emails, and operational status in one record. Times are shown in {eventTimezone}.</p></div>
+        <div><p className="eyebrow">Registration hub</p><h2 className="duplicate-page-title">{staffPageTitles.registrations}</h2><p>Review each party’s attendees, submitted choices, payments, emails, and operational status in one record. Times are shown in {eventTimezone}.</p></div>
         <div className="intro-actions">
           <span className="count-badge"><UsersRound aria-hidden="true" size={17} /> {expectedPeople} expected</span>
           <a className="secondary-button" href={`/people/duplicates?event=${encodeURIComponent(eventId)}`}><CopyCheck aria-hidden="true" size={17} /> Find duplicates</a>

@@ -727,7 +727,7 @@ export function EventSettingsWorkspace({
             ))}
             {/* Never blocks publish (#593): dates and fees staff still need to set. */}
             {setupWarnings.map((warning) => (
-              <div className="inline-notice clone-warning" key={warning.id} role="status"><AlertTriangle size={17} aria-hidden="true" /> <span><strong>{warning.label}.</strong> {warning.detail}{warning.href ? <>{" "}<Link href={warning.href}>Open the registration builder</Link></> : null}</span></div>
+              <div className="inline-notice clone-warning" key={warning.id} role="status"><AlertTriangle size={17} aria-hidden="true" /> <span><strong>{warning.label}.</strong> {warning.detail}{warning.href ? <>{" "}<Link href={warning.href}>Open the registration form</Link></> : null}</span></div>
             ))}
             {/* Never blocks publish (#467): shown for visibility only. */}
             <p className="event-readiness-optional-heading">Optional</p>
@@ -741,7 +741,7 @@ export function EventSettingsWorkspace({
             </ul>
             {!readiness.items.find((item) => item.id === "registration-form")?.complete && (
               mode === "edit"
-                ? <a className="secondary-button full-button" href={`/registration-builder?event=${initialEvent?.id}`}>Open registration builder</a>
+                ? <a className="secondary-button full-button" href={`/registration-builder?event=${initialEvent?.id}`}>Open registration form</a>
                 : <div className="inline-notice">Create this draft first. Then build, test, and publish its registration form.</div>
             )}
             {mode === "edit" && (

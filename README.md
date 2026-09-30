@@ -327,7 +327,7 @@ The current UI writes authoritative operational state to the configured IMSDA Ev
 
 ## Registration builder workflow
 
-1. Sign in as an event administrator or registration manager and open **Registration builder**.
+1. Sign in as an event administrator or registration manager and open **Registration form**.
 2. Create a form from Simple RSVP, Retreat registration, Household interest, Women’s Retreat 2026, Man Camp 2026, Spring Camporee 2026, or Camp Meeting 2026, or edit a saved event draft.
 3. Add, remove, and reorder sections and fields; insert reusable modules; configure labels, stable field keys, field types, scope, choices, help text, and required status.
 4. Configure conditional visibility, ordinary versus capacity/ranked-interest choices, per-choice limits, prices, automatic fees, and optional date-driven late prices. Add the **Promo code** drop-in module when the event offers finance-managed discounts. Use the calculation-preview date to test both sides of a pricing deadline.
@@ -338,7 +338,7 @@ The builder supports short and long text, email, phone, dropdown, radio, multise
 
 ## Staging import workflow
 
-1. Sign in as an event administrator and open **Import & reconcile**.
+1. Sign in as an event administrator and open **Imports**.
 2. Download the template or sample CSV, or choose a compatible `.csv` file up to 2 MB and 2,000 data rows.
 3. Select **Preview import**. Review row validation, identity matches, proposed actions, warnings, and field-level differences. Preview never changes a registration.
 4. Correct and re-upload files with errors. Warning-only runs remain eligible for a reviewed commit.

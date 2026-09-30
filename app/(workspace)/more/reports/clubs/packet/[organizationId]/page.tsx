@@ -5,8 +5,9 @@ import { ClubPacketSheet } from "@/components/club-packet-sheet";
 import { PrintReportButton } from "@/components/print-report-button";
 import { getClubPacketData } from "@/modules/reporting/club-packet-repository";
 import { resolveClubReportsAccess } from "@/modules/reporting/club-reports-access";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Club packet" };
+export const metadata: Metadata = { title: staffPageTitles.clubPacket };
 export const dynamic = "force-dynamic";
 
 /** Staff's printable club packet (Q1, #411): one club, gated the same as the four Camporee reports. */

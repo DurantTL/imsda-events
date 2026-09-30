@@ -6,8 +6,9 @@ import { BackLink } from "@/components/back-link";
 import { BackgroundCheckBadge } from "@/components/background-check-flags";
 import { listEventBackgroundFlags } from "@/modules/background-checks/repository";
 import { listRegisteredClubs, resolveClubOversight } from "@/modules/club-rosters/event-oversight";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Clubs" };
+export const metadata: Metadata = { title: staffPageTitles.clubs };
 export const dynamic = "force-dynamic";
 
 /** Every club registered for this Pathfinder event, for its event managers (#387). */

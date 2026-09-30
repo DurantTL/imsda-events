@@ -1,5 +1,6 @@
 "use client";
 
+import { staffPageTitles } from "@/components/staff-navigation";
 import { useState } from "react";
 import Link from "next/link";
 import { Info } from "lucide-react";
@@ -93,8 +94,8 @@ export function AttendeeConfigurationWorkspace({
   }
 
   return <div className="settings-stack">
-    <div className="page-intro"><div><p className="eyebrow">Event configuration</p><h2>Attendee types and groupings</h2><p>Configure stable attendee identities and independent categories, tracks, and departments for {eventName}.</p></div></div>
-    <p className="usage-note"><Info aria-hidden="true" size={16} /><span>Where this shows up: attendee types fill the attendee-type field in the <Link href={`/registration-builder?event=${eventId}`}>registration builder</Link>, and appear throughout <Link href={`/more/reports?event=${eventId}`}>reports</Link> and <Link href={`/check-in?event=${eventId}`}>check-in</Link>.</span></p>
+    <div className="page-intro"><div><p className="eyebrow">Event configuration</p><h2 className="duplicate-page-title">{staffPageTitles.attendeeSetup}</h2><p>Configure stable attendee identities and independent categories, tracks, and departments for {eventName}.</p></div></div>
+    <p className="usage-note"><Info aria-hidden="true" size={16} /><span>Where this shows up: attendee types fill the attendee-type field in the <Link href={`/registration-builder?event=${eventId}`}>registration form</Link>, and appear throughout <Link href={`/more/reports?event=${eventId}`}>reports</Link> and <Link href={`/check-in?event=${eventId}`}>check-in</Link>.</span></p>
     {error && <p className="form-error" role="alert">{error}</p>}
     <section className="panel"><div className="section-heading"><div><h2>Attendee types</h2><p>Codes are permanent identities. Labels, descriptions, sort order, age bands, and active status may be edited; prior registration snapshots remain unchanged.</p></div></div>
       <div className="table-wrap"><table className="editable-settings-table"><thead><tr><th>Code</th><th>Label</th><th>Description</th><th>Sort order</th><th>Age band</th><th>Status</th><th>Actions</th></tr></thead><tbody>{types.map((row) => <tr key={row.id}>

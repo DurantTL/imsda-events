@@ -412,11 +412,11 @@ function assertProtectedFieldsUnchanged(
       );
     }
     const responses = recordFromJson(current.formResponses);
-    // Per-person promo codes (#397) are money, handled in Finance.
+    // Per-person promo codes (#397) are money, handled in Payments.
     if (stableJson(responses.promo_code ?? null) !== stableJson(attendeeInput.responses.promo_code ?? null)) {
       throw new RegistrationAmendmentError(
         "PROTECTED_FIELD_CHANGED",
-        "Promo codes cannot be changed through a registration amendment. Use Adjust amount owed in Finance.",
+        "Promo codes cannot be changed through a registration amendment. Use Adjust amount owed in Payments.",
       );
     }
     // A roster-linked rename is checked against the roster name once the
@@ -1233,7 +1233,7 @@ async function prepareAmendment(
   if (Math.max(pricedCalculation.totalCents + adjustmentsCents, 0) < netPaidCents) {
     throw new RegistrationAmendmentError(
       "PAYMENT_ADJUSTMENT_REQUIRED",
-      "This change would lower the registration total below the amount already paid. Record the required refund or adjustment in Finance before completing this amendment.",
+      "This change would lower the registration total below the amount already paid. Record the required refund or adjustment in Payments before completing this amendment.",
       [],
       {
         paidCents: netPaidCents,

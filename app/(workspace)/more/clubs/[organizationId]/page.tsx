@@ -11,8 +11,9 @@ import { ClubOverview } from "@/components/club-overview";
 import { getPrisma } from "@/lib/prisma";
 import { getClubAssignmentForClub } from "@/modules/club-registrations/assignments-repository";
 import { isClubRegisteredForEvent, resolveClubOversight } from "@/modules/club-rosters/event-oversight";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Club" };
+export const metadata: Metadata = { title: staffPageTitles.club };
 export const dynamic = "force-dynamic";
 
 /** One registered club, view only with ages, for this event's managers (#387). */

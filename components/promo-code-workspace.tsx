@@ -1,5 +1,6 @@
 "use client";
 
+import { staffPageTitles } from "@/components/staff-navigation";
 import { useMemo, useState } from "react";
 import {
   BadgePercent,
@@ -281,7 +282,7 @@ export function PromoCodeWorkspace({
       <div className="page-intro">
         <div>
           <p className="eyebrow">Registration pricing</p>
-          <h2>Promo codes</h2>
+          <h2 className="duplicate-page-title">{staffPageTitles.promoCodes}</h2>
           <p>
             Offer a fixed-dollar or percentage discount. Every successful use
             is saved with the registration so later edits never change a

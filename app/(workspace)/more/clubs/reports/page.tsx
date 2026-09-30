@@ -6,8 +6,9 @@ import { calendarDateIn } from "@/modules/calendar/domain";
 import { resolveClubOversight } from "@/modules/club-rosters/event-oversight";
 import { listClubReportsForYear } from "@/modules/club-reports/repository";
 import { clubYearFor } from "@/modules/club-rosters/domain";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Club monthly reports" };
+export const metadata: Metadata = { title: staffPageTitles.clubMonthlyReports };
 export const dynamic = "force-dynamic";
 
 /** Every club's monthly reports, view only, for a Pathfinder event's managers (#387). */

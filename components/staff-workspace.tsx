@@ -1,5 +1,6 @@
 "use client";
 
+import { staffPageTitles } from "@/components/staff-navigation";
 import { useMemo, useState } from "react";
 import { Check, KeyRound, Plus, Search, ShieldCheck, UserCog, X } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
@@ -100,7 +101,7 @@ export function StaffWorkspace({ eventId, eventName, initialMemberships, current
   }
 
   return <section className="page-stack">
-    <div className="page-intro"><div><p className="eyebrow">Event access</p><h2>Staff assignments</h2><p>Control who can work in {eventName} and which operational role each account receives.</p></div><div className="intro-actions"><span className="count-badge"><ShieldCheck size={16} /> {activeCount} active</span><button className="primary-button" type="button" onClick={openAdd}><Plus size={17} /> Add staff</button></div></div>
+    <div className="page-intro"><div><p className="eyebrow">Event access</p><h2 className="duplicate-page-title">{staffPageTitles.team}</h2><p>Control who can work in {eventName} and which operational role each account receives.</p></div><div className="intro-actions"><span className="count-badge"><ShieldCheck size={16} /> {activeCount} active</span><button className="primary-button" type="button" onClick={openAdd}><Plus size={17} /> Add staff</button></div></div>
     <div className="toolbar panel"><label className="search-field"><Search size={18} /><span className="sr-only">Search staff</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search staff name, email, or role" /></label></div>
     <div className="staff-list panel"><div className="staff-row staff-head"><span>Staff member</span><span>Event role</span><span>Status</span><span>Access</span></div>{visible.map((membership) => {
       const pendingActivation = membership.user.accountStatus === "PENDING_ACTIVATION";

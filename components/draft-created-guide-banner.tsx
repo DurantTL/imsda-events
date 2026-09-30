@@ -80,7 +80,7 @@ export function DraftCreatedGuideBanner({ eventId }: DraftCreatedGuideBannerProp
         <li>
           <strong>Build and test the registration form.</strong>{" "}
           <a href={`/registration-builder?event=${encodeURIComponent(eventId)}`}>
-            Open the registration builder
+            Open the registration form
           </a>.
         </li>
         <li>

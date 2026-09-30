@@ -3,14 +3,15 @@ import { AccessRestricted } from "@/components/access-restricted";
 import { AttendeeConfigurationWorkspace } from "@/components/attendee-configuration-workspace";
 import { resolveEventContext } from "@/modules/events/selection";
 import { listAttendeeConfiguration } from "@/modules/attendee-types/repository";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Attendee configuration" };
+export const metadata: Metadata = { title: staffPageTitles.attendeeSetup };
 
 export default async function AttendeeConfigurationPage({ searchParams }: { searchParams: Promise<{ event?: string }> }) {
   const { event: requested } = await searchParams;
   const { event, permissions } = await resolveEventContext(requested);
   if (!permissions.includes("CONFIGURE_EVENT")) {
-    return <AccessRestricted title="Attendee configuration is restricted" detail="Event administrators can configure attendee identities and groupings." />;
+    return <AccessRestricted title="Attendee setup is restricted" detail="Event administrators can configure attendee identities and groupings." />;
   }
   const configuration = await listAttendeeConfiguration(event.id);
   const types = configuration.attendeeTypes.map((row) => ({

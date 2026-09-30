@@ -3,8 +3,9 @@ import { AccessRestricted } from "@/components/access-restricted";
 import { ImportWorkspace } from "@/components/import-workspace";
 import { getImportReconciliation, listImportRuns } from "@/modules/imports/repository";
 import { resolveEventContext } from "@/modules/events/selection";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Import & reconcile" };
+export const metadata: Metadata = { title: staffPageTitles.imports };
 
 export default async function ImportsPage({ searchParams }: { searchParams: Promise<{ event?: string }> }) {
   const { event: requested } = await searchParams;

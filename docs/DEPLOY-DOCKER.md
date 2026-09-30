@@ -440,7 +440,7 @@ clean deployment is still being rebuilt.
    `ps`, is held to the same policy as any other, and is stored only as its
    scrypt hash. Clear `IMSDA_ADMIN_PASSWORD` afterwards, and change the password
    from the workspace once account email works.
-5. Invite colleagues from **Staff access** in the workspace. Each invitation
+5. Invite colleagues from **Team** in the workspace. Each invitation
    emails its own one-time activation link to the person invited; if they lose it
    they can request another from **Forgot password**. (Where account email is not
    configured — development only, since production requires it — the link is
