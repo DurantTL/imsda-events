@@ -292,7 +292,7 @@ export function ClubRegistrationWorkspace({
             <small className="field-help"> For this event only, e.g. a visiting parent. They won&apos;t be added to your roster.</small>
           </span>
           {!addingGuest && (
-            <button className="text-button" onClick={() => { setGuestError(""); setAddingGuest(true); }} type="button">
+            <button className="secondary-button" onClick={() => { setGuestError(""); setAddingGuest(true); }} type="button">
               <UserPlus aria-hidden="true" size={14} /> Add a person for this event
             </button>
           )}

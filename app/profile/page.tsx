@@ -112,36 +112,38 @@ export default async function ProfilePage({
       <div className="account-page-body">
         <nav aria-label="Back" className="profile-back-links">
           {staffWorkspace && (
-            <Link className="text-button" href={staffWorkspace.href}>
+            <Link className="secondary-button" href={staffWorkspace.href}>
               <ArrowLeft aria-hidden="true" size={15} /> Back to staff workspace
             </Link>
           )}
-          {systemAdmin && <Link className="text-button" href={systemAdmin.href}>{systemAdmin.label}</Link>}
-          {attendeeAccount && <Link className="text-button" href="/account">My registrations</Link>}
+          {systemAdmin && <Link className="secondary-button" href={systemAdmin.href}>{systemAdmin.label}</Link>}
+          {attendeeAccount && <Link className="secondary-button" href="/account">My registrations</Link>}
           {clubs.length === 1 && (
-            <Link className="text-button" href={`/account/clubs/${encodeURIComponent(clubs[0].organizationId)}`}>
+            <Link className="secondary-button" href={`/account/clubs/${encodeURIComponent(clubs[0].organizationId)}`}>
               {clubs[0].name}
             </Link>
           )}
-          {clubs.length > 1 && <Link className="text-button" href="/account/clubs">My clubs</Link>}
+          {clubs.length > 1 && <Link className="secondary-button" href="/account/clubs">My clubs</Link>}
         </nav>
       </div>
 
       {staff && mfaStatus && passkeySettings && (
         <section aria-labelledby="profile-staff-heading" className="profile-account-section">
-          <div className="account-page-body">
+          <div className="account-page-body profile-staff-body">
             <h2 className="profile-account-heading" id="profile-staff-heading">Staff account</h2>
-            <section className="public-manage-card">
-              <p className="public-registration-eyebrow">Profile</p>
+            <section className="panel">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Profile</p>
+                  <h2>{staff.displayName}</h2>
+                </div>
+                <SignOutButton className="secondary-button" label="Sign out of staff account" />
+              </div>
               <div className="profile-identity">
-                <strong>{staff.displayName}</strong>
                 <span>{staff.email}</span>
                 <small>Your name and email are managed by a system administrator.</small>
               </div>
-              <SignOutButton label="Sign out of staff account" />
             </section>
-          </div>
-          <div className="account-page-body">
             <MfaManager initialStatus={mfaStatus} />
             <StaffPasskeyManager
               available={passkeySettings.available}
@@ -164,7 +166,7 @@ export default async function ProfilePage({
                 Signed in as <strong>{attendeeAccount.verifiedEmail}</strong>. Saved details fill in new registration forms for you.
               </p>
             )}
-            <AttendeeSignOutButton label="Sign out of registration account" />
+            <AttendeeSignOutButton className="secondary-button" label="Sign out of registration account" />
           </div>
           {secondStepPending
             ? (

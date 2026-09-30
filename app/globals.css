@@ -7696,14 +7696,17 @@ select:focus-visible {
 }
 
 /* One Edit profile page for every account (#543). */
-.profile-back-links { display: flex; flex-wrap: wrap; gap: 0 20px; }
+.profile-back-links { display: flex; flex-wrap: wrap; gap: 10px; }
 .profile-identity { display: grid; gap: 4px; margin-top: 8px; }
 .profile-identity strong { color: var(--imsda-navy); font-size: 1.05rem; }
 .profile-identity small { color: var(--muted); }
-.profile-back-links .text-button { min-height: 44px; }
+.profile-back-links .secondary-button { min-height: 44px; text-decoration: none; }
 .profile-account-section { display: grid; gap: 16px; }
+/* Staff cards share the workspace .panel look and the same 16px rhythm. */
+.profile-staff-body .panel .section-heading { margin-bottom: 10px; }
+.profile-staff-body .panel .profile-identity { margin-top: 0; }
+.profile-staff-body .panel .profile-identity span { color: var(--ink); font-size: 0.85rem; }
 .profile-account-heading { margin: 8px 0 0; color: var(--imsda-navy); font-size: 1.25rem; }
-.profile-back-links .text-button { display: inline-flex; align-items: center; gap: 6px; }
 
 
 /* #576: one-line definitions under the roster Type control and in the CSV help. */
@@ -7829,4 +7832,12 @@ select:focus-visible {
   .club-form-sheet-section { break-inside: avoid; }
   .club-form-answers dd, .club-form-answers dt { color: #111; }
   .club-form-restricted { border-color: #555; color: #333; }
+}
+
+/* #623: key "add" and save actions stay prominent and reachable on a phone. */
+#public_registration_add_attendee { border-color: var(--imsda-purple); background: var(--imsda-purple); color: white; }
+#public_registration_add_attendee:hover:not(:disabled) { border-color: var(--imsda-purple); background: #5b3a7c; }
+@media (max-width: 640px) {
+  .primary-button,
+  .secondary-button { min-height: 44px; }
 }
