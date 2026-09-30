@@ -1128,6 +1128,18 @@ export function withChurchBilledPriceWording(body: string, isChurchBilled: boole
     .replace(/^- \*\*(?:Balance due|Remaining balance):\*\* \{\{balance_amount\}\}\n/gm, "");
 }
 
+const DEFAULT_ORGANIZATION_BILLED_SENTENCE = "This event bills the responsible organization directly — do not send payment yourself.";
+const GROUP_BILLED_SENTENCE = "You'll be billed after the event — do not send payment yet.";
+
+/**
+ * A "Group" registration (#650) is billed to its contact, not to an
+ * organization. Only the default organization-billed sentence changes; wording
+ * staff wrote themselves is left as they wrote it.
+ */
+export function withGroupBilledWording(body: string, isGroup: boolean) {
+  return isGroup ? body.replaceAll(DEFAULT_ORGANIZATION_BILLED_SENTENCE, GROUP_BILLED_SENTENCE) : body;
+}
+
 export function renderMessageTemplate(
   template: Pick<MessageTemplateDefinition, "subject" | "body">,
   context: MessageTemplateContext,

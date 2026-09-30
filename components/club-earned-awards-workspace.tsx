@@ -274,7 +274,7 @@ export function ClubEarnedAwardsWorkspace({
       <div className="section-heading">
         <div>
           <p className="public-registration-eyebrow">Club supplies</p>
-          <h2>Earned awards</h2>
+          <h2>Class tracking</h2>
         </div>
         <span className="count-badge">{data.needs.length} open</span>
       </div>

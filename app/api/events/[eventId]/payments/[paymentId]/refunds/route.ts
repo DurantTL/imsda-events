@@ -26,7 +26,7 @@ async function postHandler(
     if (error instanceof PaymentOperationError) {
       const status = error.code === "REFUND_EXCEEDS_AVAILABLE"
         ? 400
-        : error.code === "CARD_REFUND_REQUIRES_SQUARE"
+        : error.code === "CARD_REFUND_REQUIRES_SQUARE" || error.code === "REFUND_IDEMPOTENCY_KEY_REUSED"
           ? 409
           : 404;
       return Response.json({ error: error.code, message: error.message }, { status });

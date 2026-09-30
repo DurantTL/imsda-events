@@ -93,7 +93,9 @@ export type PaymentState =
   | "WAITLISTED"
   | "WAITLIST_PROMOTED"
   | "CANCELLED"
-  | "ORGANIZATION_INVOICED";
+  | "ORGANIZATION_INVOICED"
+  /** A "Group" registration (#650): no card online, billed to its contact after the event. */
+  | "GROUP_INVOICED";
 
 export type PaymentStatusBlockInput = {
   state: PaymentState;
@@ -193,6 +195,19 @@ export function buildPaymentStatusBlock(input: PaymentStatusBlockInput) {
     ];
     if (organization) lines.push("", `Responsible organization: **${organization}**`);
     if (billingContact) lines.push(`Billing contact: **${billingContact}**`);
+    return lines.join("\n");
+  }
+
+  if (input.state === "GROUP_INVOICED") {
+    const lines = [
+      "### Payment status",
+      "",
+      "**No payment is due online.** You'll be billed after the event.",
+      "",
+      `**Estimated total: ${total}**`,
+    ];
+    const notice = clean(input.perPersonNotice);
+    if (notice) lines.push("", notice);
     return lines.join("\n");
   }
 

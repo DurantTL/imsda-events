@@ -32,13 +32,16 @@ export function pickingAttendees(input: {
   roster: ReadonlyArray<{ memberId: string; firstName: string; lastName: string; ageOnEventDate: number | null; attendeeType: PickingAttendee["attendeeType"] }>;
   selectedMemberIds: readonly string[];
   guests: ReadonlyArray<{ id: string; firstName: string; lastName: string; age: number }>;
+  /** Ages typed in for roster people with no birth date (#639), by roster member id. */
+  rosterAges?: Readonly<Record<string, number>>;
 }): PickingAttendee[] {
   const selected = new Set(input.selectedMemberIds);
   const people = input.roster.filter((person) => selected.has(person.memberId)).map((person) => ({
     clientId: clubAttendeeClientId(person.memberId),
     firstName: person.firstName,
     lastName: person.lastName,
-    ageOnEventDate: person.ageOnEventDate,
+    // A roster age always wins; the typed-in age only fills a missing one.
+    ageOnEventDate: person.ageOnEventDate ?? input.rosterAges?.[person.memberId] ?? null,
     attendeeType: person.attendeeType,
     consumesSeat: consumesClassSeat(person.attendeeType),
   }));
@@ -102,12 +105,14 @@ export function firstPickProblem(
  */
 export function picksByAttendeeId(
   picks: Readonly<Record<string, readonly string[]>>,
-  attendees: ReadonlyArray<{ id: string; clubRosterMemberId?: string | null; clubGuestId?: string | null }>,
+  attendees: ReadonlyArray<{ id: string; clubRosterMemberId?: string | null; clubGuestId?: string | null; groupAttendeeId?: string | null }>,
 ) {
   const idByClientId = new Map<string, string>();
   for (const attendee of attendees) {
     if (attendee.clubRosterMemberId) idByClientId.set(clubAttendeeClientId(attendee.clubRosterMemberId), attendee.id);
     if (attendee.clubGuestId) idByClientId.set(clubGuestClientId(attendee.clubGuestId), attendee.id);
+    // A "Group" person is keyed by the client id the registration form gave them (#650).
+    if (attendee.groupAttendeeId) idByClientId.set(attendee.groupAttendeeId, attendee.id);
   }
   const mapped: Record<string, string[]> = {};
   const unknown: string[] = [];

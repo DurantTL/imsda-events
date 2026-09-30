@@ -60,6 +60,17 @@ describe("event overview metrics (#409)", () => {
     });
   });
 
+  it("keeps group registrations out of the church total and shows them separately (#650)", async () => {
+    const prisma = prismaFor("DEFERRED_ORGANIZATION_INVOICE");
+    prisma.registration.findMany.mockResolvedValue([
+      { totalAmount: "63.00", payments: [], groupRegistration: null },
+      { totalAmount: "13.00", payments: [], groupRegistration: { id: "group-1" } },
+    ]);
+    dependencies.getPrisma.mockReturnValue(prisma);
+    const overview = await getEventOverview("event-1");
+    expect(overview?.metrics).toMatchObject({ churchBilledCents: 6_300, groupBilledCents: 1_300 });
+  });
+
   it("adds church-sponsored promo code discounts to what churches are billed (#545)", async () => {
     dependencies.getPrisma.mockReturnValue(prismaFor("ATTENDEE_PAY", 5_000));
     const overview = await getEventOverview("event-1");

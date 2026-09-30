@@ -51,9 +51,21 @@ enum MembershipStatus {
   INACTIVE
 }
 
+/// CHURCH and CLUB predate the eAdventist organizations import (#649) and keep
+/// their meaning everywhere. The rest are the kinds that import brings in:
+/// COMPANY and GROUP are congregations that are not yet organized churches.
 enum OrganizationType {
   CHURCH
   CLUB
+  COMPANY
+  GROUP
+  SCHOOL
+  EARLY_CHILDHOOD
+  BOOKSTORE
+  COMMUNITY_CENTER
+  CAMP
+  CONFERENCE
+  ASSOCIATION
 }
 
 /// A person's authority over one club (#354, #375). DEPUTY carries the same
@@ -1195,6 +1207,12 @@ model Event {
   capacity             Int?
   publicInfoUrl        String?
   supportContact       String?
+  /// Theme or tagline shown in the public event header (#651), e.g. "Lest We Forget".
+  tagline              String?
+  /// One line under the header's dates (#651).
+  subtitle             String?
+  /// Where the event's help card and notices send people (#651); club events fall back to youth@imsda.org.
+  helpEmail            String?
   isPublished          Boolean            @default(false)
   registrationOpensOn  String?
   registrationClosesOn String?
@@ -1270,6 +1288,7 @@ model Event {
   honorSessions                       HonorSession[]
   honorOfferings                      HonorOffering[]
   clubRegistrations                   ClubEventRegistration[]
+  groupRegistrations                  GroupEventRegistration[]
   clubRegistrationDrafts              ClubRegistrationDraft[]
   clubAssignments                     ClubEventAssignment[]
   honorEnrollments                    HonorEnrollment[]
@@ -1567,6 +1586,8 @@ model Person {
 
   householdMembers   HouseholdMember[]
   heldRegistrations  Registration[]
+  groupBillingRegistrations GroupEventRegistration[]
+  groupContactOperations RegistrationOperation[] @relation("RegistrationOperationActorPerson")
   registrationEvents RegistrationAttendee[]
   externalIdentities ExternalIdentity[]
   notes              StaffNote[]
@@ -1768,11 +1789,34 @@ model Organization {
   normalizedName       String
   parentOrganizationId String?
   isActive             Boolean          @default(true)
+
+  /// eAdventist organizations export (#649). `eadventistId` is the export's
+  /// OrganizationID: unique, and the key a re-import matches on.
+  eadventistId         String?          @unique
+  orgCode              String?
+  /// The export's OrgType text ("PK-08 School", "Camp/Conf center", ...), kept
+  /// because several of them collapse into one `type`.
+  sourceOrgType        String?
+  streetAddress        String?
+  city                 String?
+  state                String?
+  postalCode           String?
+  website              String?
+  officePhone          String?
+  district             String?
+  language             String?
+  /// A DisbandedOn date on file. Informational: it never changes `isActive`.
+  disbandedOn          DateTime?        @db.Date
+  /// The export's SubOrgOf, resolved by name. Kept apart from
+  /// `parentOrganizationId`, which means "sponsoring church" for a club.
+  affiliatedOrganizationId String?
   createdAt            DateTime         @default(now())
   updatedAt            DateTime         @updatedAt
 
   parentOrganization Organization?      @relation("OrganizationHierarchy", fields: [parentOrganizationId], references: [id], onDelete: Restrict)
   childOrganizations Organization[]     @relation("OrganizationHierarchy")
+  affiliatedOrganization Organization?  @relation("OrganizationAffiliation", fields: [affiliatedOrganizationId], references: [id], onDelete: SetNull)
+  affiliatedChildren Organization[]     @relation("OrganizationAffiliation")
   externalIdentities ExternalIdentity[]
   directorGrants     ClubDirectorGrant[]
   rosterMembers      ClubRosterMember[]
@@ -1795,6 +1839,7 @@ model Organization {
   clubSupplyStock    ClubSupplyStock[]
   clubOrderNeeds     ClubOrderNeed[]
   clubOrderBatches   ClubSupplyOrderBatch[]
+  clubOrderListLines ClubOrderListLine[]
   memberClassCompletions MemberClassCompletion[]
   sponsoredPromoCodes PromoCode[] @relation("PromoCodeSponsor")
   clubFormSubmissions ClubFormSubmission[]
@@ -1802,6 +1847,7 @@ model Organization {
 
   @@index([type, isActive, name])
   @@index([parentOrganizationId, isActive])
+  @@index([affiliatedOrganizationId])
   @@index([normalizedName])
 }
 
@@ -1988,8 +2034,27 @@ model ClubMeetingNote {
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   createdByUser   User?        @relation("ClubMeetingNoteCreatedByUser", fields: [createdByUserId], references: [id], onDelete: SetNull)
   updatedByUser   User?        @relation("ClubMeetingNoteUpdatedByUser", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  /// Optional per-member check-off (#653). Empty when a club only keeps head counts.
+  attendance      ClubMeetingAttendance[]
 
   @@index([organizationId, meetingDate])
+}
+
+/// One roster member's check-off for one meeting (#653). Names come from the
+/// roster; nothing health-related or otherwise sensitive is stored here.
+model ClubMeetingAttendance {
+  id             String   @id @default(cuid())
+  meetingNoteId  String
+  rosterMemberId String
+  present        Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  meetingNote  ClubMeetingNote  @relation(fields: [meetingNoteId], references: [id], onDelete: Cascade)
+  rosterMember ClubRosterMember @relation(fields: [rosterMemberId], references: [id], onDelete: Cascade)
+
+  @@unique([meetingNoteId, rosterMemberId])
+  @@index([rosterMemberId])
 }
 
 /// A club's standing for one club year (#377): whether the yearly
@@ -2177,6 +2242,7 @@ model Registration {
   notes                   StaffNote[]
   tagAssignments          RegistrationTagAssignment[]
   clubRegistration        ClubEventRegistration?
+  groupRegistration       GroupEventRegistration?
   honorEnrollments        HonorEnrollment[]
   adjustments             RegistrationAdjustment[]
   memberTransferMovesFrom MemberTransferRegistrationMove[] @relation("MemberTransferMoveFrom")
@@ -2371,6 +2437,10 @@ model RegistrationOperation {
   /// Set when a club director reopened and amended their own club
   /// registration (H3b, #366) instead of a staff user amending it.
   actorAttendeeAccountId String?
+  /// Set when the contact of a "Group" registration (#650) changed it through
+  /// the registration's private manage link: a person, not a signed-in account.
+  /// Exactly one of the three actor columns is set (database check constraint).
+  actorPersonId      String?
   actorNameSnapshot  String
   beforeSnapshot     Json
   afterSnapshot      Json
@@ -2382,12 +2452,14 @@ model RegistrationOperation {
   attendee            RegistrationAttendee? @relation(fields: [attendeeId], references: [id], onDelete: Restrict)
   actor               User?                 @relation("RegistrationOperationActor", fields: [actorUserId], references: [id], onDelete: Restrict)
   actorAttendeeAccount AttendeeAccount?     @relation("RegistrationOperationActorAttendeeAccount", fields: [actorAttendeeAccountId], references: [id], onDelete: Restrict)
+  actorPerson         Person?               @relation("RegistrationOperationActorPerson", fields: [actorPersonId], references: [id], onDelete: Restrict)
 
   @@unique([eventId, clientRequestId])
   @@index([registrationId, createdAt])
   @@index([attendeeId, createdAt])
   @@index([actorUserId, createdAt])
   @@index([actorAttendeeAccountId, createdAt])
+  @@index([actorPersonId, createdAt])
 }
 
 /// A staff change to what a registration owes (#396): a scholarship, a
@@ -2500,6 +2572,10 @@ model Refund {
   status            RefundStatus
   externalReference String?
   reason            String?
+  /// One key per reviewed manual refund operation (#525). A retry with the
+  /// same key returns the recorded refund instead of recording another.
+  /// Null for provider-driven and older refunds (nulls never collide).
+  idempotencyKey    String?
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
@@ -2507,6 +2583,7 @@ model Refund {
   payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
 
   @@unique([paymentId, externalReference])
+  @@unique([paymentId, idempotencyKey])
   @@index([eventId, status])
   @@index([paymentId])
 }
@@ -3487,6 +3564,7 @@ model ClubSupplyItem {
   stock ClubSupplyStock[]
   orderNeeds ClubOrderNeed[]
   orderLines ClubSupplyOrderLine[]
+  orderListLines ClubOrderListLine[]
   eventAwardItems EventAwardItem[]
   masterAwardRules MasterAwardRule[]
 
@@ -3579,6 +3657,27 @@ model ClubOrderNeed {
   @@index([organizationId, status])
   @@index([itemId])
   @@index([batchId])
+}
+
+/// A director's edit to one line of the club's order helper list (#654): the
+/// quantity the club wants on the list for one catalog item, replacing the
+/// count worked out from honors, uniforms and awards. 0 takes the item off
+/// the list; a positive number on an item with no need adds it. Deleting the
+/// row puts the line back to the computed count. It is a planning aid only;
+/// nothing is ordered from it.
+model ClubOrderListLine {
+  id             String   @id @default(cuid())
+  organizationId String
+  itemId         String
+  quantity       Int
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  item         ClubSupplyItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, itemId])
+  @@index([itemId])
 }
 
 /// A `ClubSupplyOrderBatch`'s own two states: placed, or received.
@@ -3682,6 +3781,10 @@ model HonorOffering {
   perClubLimit Int?
   teacherName  String            @default("")
   location     String            @default("")
+  /// Extra cost of this class in cents (#651); null means none. Shown on the public class grid.
+  additionalCostCents Int?
+  /// A special requirement shown as a badge on the public class grid (#651), e.g. "Bring a flashlight".
+  requirementNote String         @default("")
   isActive     Boolean           @default(true)
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
@@ -3740,6 +3843,7 @@ model ClubRosterMember {
   transferAsReceiver MemberTransfer?  @relation("MemberTransferToRoster")
   clubFormSubmissions ClubFormSubmission[]
   clubFormLinks       ClubFormLink[]
+  meetingAttendance   ClubMeetingAttendance[]
 
   @@unique([organizationId, clubYear, personId])
   @@index([organizationId, clubYear, status])
@@ -4012,6 +4116,27 @@ model ClubEventRegistration {
   @@index([organizationId])
 }
 
+/// A "Group" registration on a club event (#650): people who are not in a
+/// club (homeschoolers, unaffiliated adults) registered by one contact. It is an
+/// ordinary Registration, but it is deliberately NOT a `ClubEventRegistration`:
+/// it names no club or church, creates no roster members, and the contact is
+/// the billing party (billed on the back end after the event).
+model GroupEventRegistration {
+  id              String   @id @default(cuid())
+  eventId         String
+  registrationId  String   @unique
+  /// The contact person the group is billed to after the event.
+  billingPersonId String
+  createdAt       DateTime @default(now())
+
+  event         Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration  Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  billingPerson Person       @relation(fields: [billingPersonId], references: [id], onDelete: Restrict)
+
+  @@index([eventId])
+  @@index([billingPersonId])
+}
+
 /// A staff-set campsite/duty/activity assignment for one club's event
 /// registration (#410). Kept separate from `ClubEventRegistration` /
 /// `PublicRegistrationSubmission` so a club's submitted preferences and
@@ -4066,6 +4191,12 @@ model ClubRegistrationDraft {
   /// Honors picked while registering (#618): { [attendee client id]: [offering id] }.
   /// Only a draft; seats are taken by the enrollment domain after the registration is submitted.
   honorSelections    Json     @default("{}")
+  /// Ages typed in for roster people with no birth date on file (#639):
+  /// { [roster member id]: age on the event date }. For this registration only.
+  rosterAges         Json     @default("{}")
+  /// Roster member ids whose typed-in age should NOT also be saved to the roster
+  /// when the registration is submitted (#639). Saving back is the default.
+  rosterAgeSaveOff   Json     @default("[]")
   updatedByAccountId String?
   /// Set instead of `updatedByAccountId` for a staff "act as" director (#442).
   updatedByUserId    String?
@@ -4089,7 +4220,10 @@ model HonorEnrollment {
   offeringId             String
   registrationId         String
   registrationAttendeeId String
-  organizationId         String
+  /// The club that holds the seat. Null for a "Group" registration (#650),
+  /// which is never attributable to a club: its per-club limit is counted per
+  /// registration instead.
+  organizationId         String?
   consumesSeat           Boolean
   createdAt              DateTime @default(now())
 
@@ -4097,7 +4231,7 @@ model HonorEnrollment {
   offering             HonorOffering        @relation(fields: [offeringId], references: [id], onDelete: Restrict)
   registration         Registration         @relation(fields: [registrationId], references: [id], onDelete: Cascade)
   registrationAttendee RegistrationAttendee @relation(fields: [registrationAttendeeId], references: [id], onDelete: Cascade)
-  organization         Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  organization         Organization?        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   weekendCompletion    HonorWeekendCompletionLink?
 
   @@unique([registrationAttendeeId, offeringId])

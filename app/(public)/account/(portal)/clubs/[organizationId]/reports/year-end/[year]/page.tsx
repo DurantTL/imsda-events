@@ -18,11 +18,11 @@ export default async function ClubYearEndReportPage({ params }: { params: Promis
   const { organizationId, year } = await params;
   const access = await getClubRoleAccessForPage(organizationId);
   if (access.state !== "OK") return null;
-  const backHref = `/account/clubs/${organizationId}/reports`;
+  const backHref = `/account/clubs/${organizationId}/records`;
   if (!access.capabilities.submitReports) {
     return (
       <>
-        <BackLink href={backHref}>Back to reports</BackLink>
+        <BackLink href={backHref}>Back to Monthly Records</BackLink>
         <p className="public-manage-empty">The Year-End Report is filed by the club&apos;s director, deputy, or reporter.</p>
       </>
     );
@@ -35,7 +35,7 @@ export default async function ClubYearEndReportPage({ params }: { params: Promis
 
   return (
     <>
-      <BackLink href={backHref}>Back to reports</BackLink>
+      <BackLink href={backHref}>Back to Monthly Records</BackLink>
       <ClubYearEndReportForm
         dueLabel={formatReportYearDueDate(year)}
         endpoint={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/year-end-reports/${year}`}

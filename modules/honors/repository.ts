@@ -199,6 +199,8 @@ async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: st
         perClubLimit: true,
         teacherName: true,
         location: true,
+        additionalCostCents: true,
+        requirementNote: true,
         isActive: true,
         honor: { select: { code: true, name: true, isActive: true } },
       },
@@ -246,6 +248,8 @@ async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: st
       perClubLimit: offering.perClubLimit,
       teacherName: offering.teacherName,
       location: offering.location,
+      additionalCostCents: offering.additionalCostCents,
+      requirementNote: offering.requirementNote,
       isActive: offering.isActive,
       seatsTaken: seatsTaken.get(offering.id) ?? 0,
       enrolled: enrolled.get(offering.id) ?? 0,
@@ -393,7 +397,8 @@ async function removeOfferings(
   const perOrganization = new Map<string, number>();
   for (const row of pickRows) {
     perOffering.set(row.offeringId, (perOffering.get(row.offeringId) ?? 0) + 1);
-    perOrganization.set(row.organizationId, (perOrganization.get(row.organizationId) ?? 0) + 1);
+    // A "Group" registration's picks (#650) have no club; they are in `picks` but name no organization.
+    if (row.organizationId) perOrganization.set(row.organizationId, (perOrganization.get(row.organizationId) ?? 0) + 1);
   }
   const snapshot = {
     offerings: offerings.map((offering) => ({ id: offering.id, honorId: offering.honorId, picks: perOffering.get(offering.id) ?? 0 })),
@@ -523,6 +528,8 @@ export async function createHonorOffering(eventId: string, input: HonorOfferingI
           perClubLimit: input.perClubLimit,
           teacherName: input.teacherName,
           location: input.location,
+          additionalCostCents: input.additionalCostCents,
+          requirementNote: input.requirementNote,
           isActive: input.isActive,
         },
       });

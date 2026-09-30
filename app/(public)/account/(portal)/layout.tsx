@@ -68,13 +68,13 @@ export default async function AccountPortalLayout({ children }: { children: Reac
     ...(chromeAccount ? [{ href: "/account", label: "Overview" }, { href: "/account/registrations", label: "Registrations" }] : []),
     // Area Coordinators see every club (#387), so the tab is just "Clubs".
     ...(areaCoordinator || actingAsAreaCoordinator
-      ? [{ href: "/account/clubs", label: "Clubs", matchChildren: true, alsoMatchPrefix: "/account/area/" }]
+      ? [{ href: "/account/clubs", label: "Clubs", matchChildren: true, alsoMatchPrefix: "/account/area" }]
       : clubs.length > 0 || actingAsDirector
         ? [{ href: "/account/clubs", label: clubs.length === 1 || actingAsDirector ? "My club" : "My clubs", matchChildren: true }]
         : []),
     // An Area Coordinator sees the clubs waitlisted at the locations they coordinate (#599).
     ...(areaCoordinator ? [{ href: "/account/waitlists", label: "Waitlists" }] : []),
-    ...(chromeAccount ? [{ href: "/profile", label: "Profile" }] : []),
+    ...(chromeAccount ? [{ href: "/account/profile", label: "Profile" }] : []),
   ];
 
   return (

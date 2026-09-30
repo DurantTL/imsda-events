@@ -22,8 +22,19 @@ const mocks = vi.hoisted(() => {
     }
   }
 
+  class MockGroupRegistrationError extends Error {
+    constructor(
+      public readonly code: string,
+      message: string,
+    ) {
+      super(message);
+    }
+  }
+
   return {
     AccessDeniedError: MockAccessDeniedError,
+    GroupRegistrationError: MockGroupRegistrationError,
+    groupStaffAmendmentOptions: vi.fn(),
     RegistrationAmendmentError: MockRegistrationAmendmentError,
     requirePermission: vi.fn(),
     getCurrentSession: vi.fn(),
@@ -51,6 +62,10 @@ vi.mock("@/modules/events/repository", () => ({
 }));
 vi.mock("@/modules/communications/messaging-repository", () => ({
   processQueuedMessageIdsAfterCommit: mocks.processQueuedMessageIdsAfterCommit,
+}));
+vi.mock("@/modules/group-registrations/repository", () => ({
+  GroupRegistrationError: mocks.GroupRegistrationError,
+  groupStaffAmendmentOptions: mocks.groupStaffAmendmentOptions,
 }));
 vi.mock("@/modules/registrations/amendments-repository", () => ({
   RegistrationAmendmentError: mocks.RegistrationAmendmentError,
@@ -116,6 +131,7 @@ const context = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.groupStaffAmendmentOptions.mockResolvedValue(null);
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
   mocks.getCurrentSession.mockResolvedValue({
     user: { id: "user-1", displayName: "Staff User" },
@@ -139,6 +155,38 @@ beforeEach(() => {
 });
 
 describe("registration amendment route", () => {
+  it("amends a group registration under the group's options, for the preview and the commit (#650)", async () => {
+    const groupOptions = { transformDefinition: vi.fn(), inTransaction: vi.fn(), attendees: new Map() };
+    mocks.groupStaffAmendmentOptions.mockResolvedValue(groupOptions);
+
+    await POST(request(baseBody), context);
+    expect(mocks.groupStaffAmendmentOptions).toHaveBeenCalledWith("event-1", "registration-1", expect.objectContaining({ attendees: [attendee] }));
+    expect(mocks.previewRegistrationAmendment).toHaveBeenCalledWith("event-1", "registration-1", expect.anything(), groupOptions);
+
+    await POST(request({ ...baseBody, previewOnly: false, quoteFingerprint: "a".repeat(64) }), context);
+    expect(mocks.amendRegistration).toHaveBeenCalledWith(
+      "event-1",
+      "registration-1",
+      expect.anything(),
+      expect.objectContaining({ kind: "STAFF" }),
+      expect.any(Date),
+      groupOptions,
+    );
+  });
+
+  it("leaves an ordinary registration's amendment without group options (#650)", async () => {
+    await POST(request({ ...baseBody, previewOnly: false, quoteFingerprint: "a".repeat(64) }), context);
+    expect(mocks.amendRegistration.mock.calls[0]).toHaveLength(4);
+  });
+
+  it("explains a group's class picks that no longer fit, and saves nothing (#650)", async () => {
+    mocks.groupStaffAmendmentOptions.mockResolvedValue({ attendees: new Map() });
+    mocks.amendRegistration.mockRejectedValue(new mocks.GroupRegistrationError("CLASS_PICKS_CONFLICT", "Sam is too young for Archery."));
+    const response = await POST(request({ ...baseBody, previewOnly: false, quoteFingerprint: "a".repeat(64) }), context);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: "CLASS_PICKS_CONFLICT", message: "Sam is too young for Archery." });
+  });
+
   it("rejects client-set attendee profile metadata (server-only, #366)", async () => {
     const response = await POST(request({
       ...baseBody,

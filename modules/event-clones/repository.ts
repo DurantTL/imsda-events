@@ -68,7 +68,7 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
     where: { id: eventId },
     select: {
       id: true, name: true, slug: true, startsAt: true, endsAt: true, timezone: true, isPublished: true,
-      location: true, publicInfoUrl: true, supportContact: true, calendarCategory: true, showOnCalendar: true,
+      location: true, publicInfoUrl: true, supportContact: true, tagline: true, subtitle: true, helpEmail: true, calendarCategory: true, showOnCalendar: true,
       hotelName: true, hotelBookingUrl: true, hotelPhone: true, hotelGroupName: true, hotelRate: true, hotelInstructions: true,
       audience: true, billingMode: true,
       waitlistEnabled: true, autoPromoteWaitlist: true, collectsShirtSizes: true, checksAdultBackgrounds: true,
@@ -126,6 +126,7 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
     },
     eventDetails: {
       location: event.location, timezone: event.timezone, publicInfoUrl: event.publicInfoUrl, supportContact: event.supportContact,
+      tagline: event.tagline, subtitle: event.subtitle, helpEmail: event.helpEmail,
       calendarCategory: event.calendarCategory, showOnCalendar: event.showOnCalendar, hotelName: event.hotelName, hotelBookingUrl: event.hotelBookingUrl,
       hotelPhone: event.hotelPhone, hotelGroupName: event.hotelGroupName, hotelRate: event.hotelRate,
       hotelInstructions: event.hotelInstructions, audience: event.audience, billingMode: event.billingMode,
@@ -184,6 +185,7 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
       sessionName: offering.session?.name ?? null, span: offering.span, capacity: offering.capacity,
       minimumAge: offering.minimumAge, perClubLimit: offering.perClubLimit, teacherName: offering.teacherName,
       location: offering.location, isActive: offering.isActive,
+      additionalCostCents: offering.additionalCostCents, requirementNote: offering.requirementNote,
       // An all-sessions class's own site (#589), matched by name in the new event.
       locationName: offering.site?.name ?? null, locationNormalizedName: offering.site?.normalizedName ?? null,
     })),
@@ -321,7 +323,8 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
           attendeeEditPolicy: platform.defaultAttendeeEditPolicy,
           ...(details ? {
             timezone: details.timezone, location: details.location, publicInfoUrl: details.publicInfoUrl,
-            supportContact: details.supportContact, calendarCategory: details.calendarCategory, showOnCalendar: details.showOnCalendar,
+            supportContact: details.supportContact,
+            tagline: details.tagline, subtitle: details.subtitle, helpEmail: details.helpEmail, calendarCategory: details.calendarCategory, showOnCalendar: details.showOnCalendar,
             hotelName: details.hotelName, hotelBookingUrl: details.hotelBookingUrl, hotelPhone: details.hotelPhone,
             hotelGroupName: details.hotelGroupName, hotelRate: details.hotelRate, hotelInstructions: details.hotelInstructions,
             audience: details.audience, billingMode: details.billingMode,
@@ -535,6 +538,7 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
             // Carried over as it is; shown in the preview.
             minimumAge: offering.minimumAge,
             teacherName: offering.teacherName, location: offering.location, isActive: offering.isActive,
+            additionalCostCents: offering.additionalCostCents, requirementNote: offering.requirementNote,
           });
           offeringsCopied += 1;
         }

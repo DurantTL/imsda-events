@@ -22,6 +22,7 @@ import {
 } from "@/modules/forms/definition";
 import { withAttendeeTypeOptionsForAttendee } from "@/modules/attendee-types/form-options";
 import type { AttendeeTypeOption } from "@/modules/attendee-types/domain";
+import { groupFormDefinition } from "@/modules/group-registrations/domain";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 
 type Responses = Record<string, unknown>;
@@ -277,7 +278,12 @@ export function RegistrationAmendmentEditor({
     ),
     [registration.publicSubmission?.definition],
   );
-  const definition = parsedDefinition.success ? parsedDefinition.data : null;
+  // A group registration is edited through the group form, never the club's (#650). Idempotent when the server already did it.
+  const definition = useMemo(() => (
+    parsedDefinition.success
+      ? registration.isGroup ? groupFormDefinition(parsedDefinition.data) : parsedDefinition.data
+      : null
+  ), [parsedDefinition, registration.isGroup]);
   const allFields = useMemo(
     () => definition?.sections.flatMap((section) => section.fields) ?? [],
     [definition],

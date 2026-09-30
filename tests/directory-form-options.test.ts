@@ -12,7 +12,7 @@ import {
 import { getOrganizationDirectory } from "@/modules/organizations/directory-options";
 import { hydrateFormOptions } from "@/modules/forms/form-options-repository";
 
-const directory = { clubs: ["Test Pathfinders", "Sample Explorers"], churches: ["Test SDA Church"] };
+const directory = { clubs: ["Test Pathfinders", "Sample Explorers"], churches: ["Test SDA Church"], schools: ["Sample Junior Academy"] };
 
 const sourcedDefinition = registrationFormDefinitionSchema.parse({
   title: "Directory-sourced form",
@@ -80,12 +80,15 @@ describe("directory form options (#482)", () => {
   });
 });
 
-function organizationClient(rows: Record<"CLUB" | "CHURCH", Array<{ name: string; normalizedName: string }>>) {
+type DirectoryRow = { name: string; normalizedName: string };
+
+function organizationClient(rows: Record<string, DirectoryRow[]>) {
   return {
     organization: {
-      findMany: vi.fn(async ({ where }: { where: { type: "CLUB" | "CHURCH"; isActive: boolean } }) => {
+      findMany: vi.fn(async ({ where }: { where: { type: string | { in: string[] }; isActive: boolean } }) => {
         expect(where.isActive).toBe(true);
-        return rows[where.type];
+        const types = typeof where.type === "string" ? [where.type] : where.type.in;
+        return types.flatMap((type) => rows[type] ?? []);
       }),
     },
   };
@@ -100,10 +103,12 @@ describe("live directory reads (#482)", () => {
         { name: "Sample Explorers", normalizedName: "sample explorers" },
       ],
       CHURCH: [{ name: "Test SDA Church", normalizedName: "test sda church" }],
+      SCHOOL: [{ name: "Sample Junior Academy", normalizedName: "sample junior academy" }],
     });
     const result = await getOrganizationDirectory(client as never);
-    expect(result).toEqual({ clubs: ["Test Pathfinders", "Sample Explorers"], churches: ["Test SDA Church"] });
+    expect(result).toEqual({ clubs: ["Test Pathfinders", "Sample Explorers"], churches: ["Test SDA Church"], schools: ["Sample Junior Academy"] });
     expect(client.organization.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { type: { in: ["CHURCH", "COMPANY", "GROUP"] }, isActive: true },
       orderBy: [{ name: "asc" }, { id: "asc" }],
       select: { name: true, normalizedName: true },
     }));
@@ -113,7 +118,7 @@ describe("live directory reads (#482)", () => {
     const client = organizationClient({ CLUB: [{ name: "Test Pathfinders", normalizedName: "test pathfinders" }], CHURCH: [] });
     const hydrated = await hydrateFormOptions(sourcedDefinition, { client: client as never });
     expect(hydrated.sections[0].fields[0].options).toEqual(["Test Pathfinders", "Not listed"]);
-    expect(client.organization.findMany).toHaveBeenCalledTimes(2);
+    expect(client.organization.findMany).toHaveBeenCalledTimes(3);
 
     const untouched = organizationClient({ CLUB: [], CHURCH: [] });
     expect(await hydrateFormOptions(plainDefinition, { client: untouched as never })).toBe(plainDefinition);

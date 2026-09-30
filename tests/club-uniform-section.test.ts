@@ -11,8 +11,8 @@ import { groupUniformCatalog } from "@/modules/uniforms/domain";
  */
 
 const orders: ClubOrderWorkspaceData = {
-  lines: [
-    { item: { itemId: "scarf", name: "Adult Scarf", catalogNumber: "020001" }, needed: 2, extra: 0, inStock: 0, toOrder: 2, missingCatalogNumber: false },
+  helper: [
+    { itemId: "scarf", section: "UNIFORMS", name: "Adult Scarf", size: "", catalogNumber: "020001", computedNeeded: 2, needed: 2, edited: false, onHand: 0, toOrder: 2 },
   ],
   unmatched: [],
   batches: [],
@@ -84,8 +84,8 @@ describe("the Uniforms section (#497)", () => {
     expect(html).not.toContain('type="checkbox"');
   });
 
-  it("does not offer the honors 'completed before you started ordering' prompt for uniform needs", () => {
-    expect(render(false)).not.toContain("Honors completed before you started ordering here");
+  it("does not offer the honors 'may already be handed out' prompt for uniform needs", () => {
+    expect(render(false)).not.toContain("Honors that may already be handed out");
   });
 
   it("shows names, items and sizes only, no other personal field", () => {

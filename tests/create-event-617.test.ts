@@ -257,7 +257,7 @@ describe("Copy from a previous event with a realistic source (#617)", () => {
     const offerings = sessions.flatMap((session) => honorRows.slice(0, 20).map((row, index) => ({
       id: `offering_${session.id}_${index}`, honorId: `honor_${row.honor + index}`, honor: { name: `Honor ${row.honor + index}` },
       sessionId: session.id, session: { name: session.name }, span: "SINGLE_SESSION", capacity: 30, minimumAge: null, perClubLimit: null,
-      teacherName: "Synthetic Teacher", location: "", isActive: true, site: null,
+      teacherName: "Synthetic Teacher", location: "", additionalCostCents: null, requirementNote: "", isActive: true, site: null,
     })));
     return { locations, sessions, offerings };
   }
@@ -269,7 +269,7 @@ describe("Copy from a previous event with a realistic source (#617)", () => {
         findUnique: () => ({
           id: "evt_source", name: "Synthetic Camporee 2027", slug: "synthetic-camporee-2027",
           startsAt: new Date("2027-05-05T12:00:00Z"), endsAt: new Date("2027-05-07T12:00:00Z"), timezone: "America/Chicago", isPublished: true,
-          location: "Synthetic Lodge", publicInfoUrl: null, supportContact: "help@example.test", calendarCategory: null, showOnCalendar: true,
+          location: "Synthetic Lodge", publicInfoUrl: null, supportContact: "help@example.test", tagline: null, subtitle: null, helpEmail: null, calendarCategory: null, showOnCalendar: true,
           hotelName: null, hotelBookingUrl: null, hotelPhone: null, hotelGroupName: null, hotelRate: null, hotelInstructions: null,
           audience: "GENERAL", billingMode: "ATTENDEE_PAY", waitlistEnabled: false, autoPromoteWaitlist: false,
           collectsShirtSizes: false, checksAdultBackgrounds: false,

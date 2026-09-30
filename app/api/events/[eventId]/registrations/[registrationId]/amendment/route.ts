@@ -6,6 +6,7 @@ import { processQueuedMessageIdsAfterCommit } from "@/modules/communications/mes
 import { isBusyDatabaseError, logExpiredTransaction } from "@/modules/event-locations/api-errors";
 import { EventLocationError, eventLocationErrorStatus, locationBusyMessage } from "@/modules/event-locations/errors";
 import { findActiveMembership } from "@/modules/events/repository";
+import { GroupRegistrationError, groupStaffAmendmentOptions } from "@/modules/group-registrations/repository";
 import {
   amendRegistration,
   previewRegistrationAmendment,
@@ -50,6 +51,13 @@ function errorResponse(error: unknown) {
         details: error.details,
       },
       { status, headers: noStoreHeaders },
+    );
+  }
+  // A group's class picks no longer fit the change (#650).
+  if (error instanceof GroupRegistrationError) {
+    return Response.json(
+      { error: error.code, message: error.message },
+      { status: error.code === "ATTENDEES_INVALID" ? 422 : 409, headers: noStoreHeaders },
     );
   }
   if (error instanceof EventLocationError) {
@@ -110,27 +118,21 @@ async function postHandler(
       findActiveMembership,
     );
     const input = registrationAmendmentInputSchema.parse(await request.json());
+    // A group registration is amended under the same options as its contact's edit (#650).
+    const groupOptions = await groupStaffAmendmentOptions(eventId, registrationId, input);
     if (input.previewOnly) {
-      const preview = await previewRegistrationAmendment(
-        eventId,
-        registrationId,
-        input,
-      );
+      const preview = groupOptions
+        ? await previewRegistrationAmendment(eventId, registrationId, input, groupOptions)
+        : await previewRegistrationAmendment(eventId, registrationId, input);
       return Response.json(
         { preview },
         { status: 200, headers: noStoreHeaders },
       );
     }
-    const { pendingMessageIds, ...result } = await amendRegistration(
-      eventId,
-      registrationId,
-      input,
-      {
-        kind: "STAFF",
-        id: access.user.id,
-        displayName: access.user.displayName,
-      },
-    );
+    const staffActor = { kind: "STAFF" as const, id: access.user.id, displayName: access.user.displayName };
+    const { pendingMessageIds, ...result } = groupOptions
+      ? await amendRegistration(eventId, registrationId, input, staffActor, new Date(), groupOptions)
+      : await amendRegistration(eventId, registrationId, input, staffActor);
     try {
       await processQueuedMessageIdsAfterCommit(pendingMessageIds);
     } catch (error) {

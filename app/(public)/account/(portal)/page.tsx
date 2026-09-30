@@ -1,13 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { ArrowRight, CalendarDays, CircleDollarSign, ShieldAlert, ShieldCheck, UserRound, UsersRound } from "lucide-react";
+import { AreaCoordinatorCardSection, AreaCoordinatorCardSkeleton } from "@/components/area-coordinator-card";
 import { ClubInviteAccept } from "@/components/club-invite-accept";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { requireAttendeeSecondStep } from "@/modules/attendee-accounts/portal-second-step";
 import { getAttendeeMfaStatus } from "@/modules/attendee-accounts/mfa-service";
 import { listRegistrationsForVerifiedEmail, type AttendeeRegistrationSummary } from "@/modules/attendee-accounts/registrations-repository";
 import { listInvitesForAccount } from "@/modules/club-imports/invites";
+import { currentAreaCoordinator } from "@/modules/organizations/area-coordinators";
 import { listDirectedClubs } from "@/modules/organizations/director-access";
 import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
 
@@ -38,12 +41,14 @@ export default async function AttendeeAccountOverviewPage() {
   const { account, via } = await getCurrentAttendee();
   if (!account) redirect("/account/sign-in");
 
-  const [registrations, mfaStatus, clubs, invites] = await Promise.all([
+  const [registrations, mfaStatus, clubs, invites, areaCoordinator] = await Promise.all([
     listRegistrationsForVerifiedEmail(account.verifiedEmail),
     getAttendeeMfaStatus(account.id),
     listDirectedClubs(account.id),
     // Only the person themselves may accept, so staff viewing an account don't see them.
     via === "attendee" ? listInvitesForAccount(account.verifiedEmail) : Promise.resolve([]),
+    // Null unless this is the person's own session with an active Area Coordinator grant and second step (#656).
+    currentAreaCoordinator(),
   ]);
   const upcoming = upcomingOnly(registrations);
   const next = upcoming[0];
@@ -89,6 +94,12 @@ export default async function AttendeeAccountOverviewPage() {
           </Link>
         </section>
 
+        {areaCoordinator && (
+          <Suspense fallback={<AreaCoordinatorCardSkeleton />}>
+            <AreaCoordinatorCardSection account={areaCoordinator} />
+          </Suspense>
+        )}
+
         {clubs.length > 0 && (
           <section className="public-manage-card account-overview-card">
             <p className="public-registration-eyebrow"><UsersRound size={15} aria-hidden="true" /> {clubs.length === 1 ? "My club" : "My clubs"}</p>
@@ -119,7 +130,7 @@ export default async function AttendeeAccountOverviewPage() {
                 ? "Club rosters hold young people's birth dates, so they need an authenticator. Set one up to open your club."
                 : "Add an authenticator app for extra protection."}
           </p>
-          <Link className={`${!authenticatorOn && clubs.length > 0 ? "primary-button" : "secondary-button"} account-overview-link`} href="/profile">
+          <Link className={`${!authenticatorOn && clubs.length > 0 ? "primary-button" : "secondary-button"} account-overview-link`} href="/account/profile">
             {authenticatorOn ? "Manage sign-in" : "Set up an authenticator"} <ArrowRight size={14} aria-hidden="true" />
           </Link>
         </section>
@@ -128,7 +139,7 @@ export default async function AttendeeAccountOverviewPage() {
           <p className="public-registration-eyebrow"><UserRound size={15} aria-hidden="true" /> Profile</p>
           <h2>Your details</h2>
           <p className="field-help">Saved details fill in new registration forms for you, so you don&apos;t retype them.</p>
-          <Link className="secondary-button account-overview-link" href="/profile">
+          <Link className="secondary-button account-overview-link" href="/account/profile">
             Edit profile <ArrowRight size={14} aria-hidden="true" />
           </Link>
         </section>

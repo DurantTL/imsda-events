@@ -84,4 +84,28 @@ describe("registration amendment choice rendering", () => {
     expect(markup).not.toContain(">adult<");
     expect(markup).not.toContain(">legacy<");
   });
+
+  it("renders a group registration from the group form, without club or church fields (#650)", () => {
+    const clubForm = registrationFormDefinitionSchema.parse({
+      ...definition,
+      sections: [
+        { id: "club", title: "Club & contact", description: "Select the Pathfinder club.", fields: [
+          { id: "club-name", key: "club_name", label: "Pathfinder club", helpText: "", type: "SELECT", scope: "REGISTRATION", required: true, options: ["Some Club"], optionSource: "CLUBS_DIRECTORY" },
+          { id: "church-name", key: "church_name", label: "Church", helpText: "", type: "SELECT", scope: "REGISTRATION", required: false, options: ["Some Church"], optionSource: "CHURCHES_DIRECTORY" },
+          { id: "director", key: "director_name", label: "Club director", helpText: "", type: "TEXT", scope: "REGISTRATION", required: true, options: [] },
+        ] },
+        ...definition.sections,
+      ],
+    });
+    const render = (isGroup: boolean) => renderToStaticMarkup(createElement(RegistrationAmendmentEditor, {
+      eventId: "event-1",
+      registration: { ...registration, isGroup, publicSubmission: { ...registration.publicSubmission, responses: {}, definition: clubForm } } as unknown as RegistrationRecord,
+      onCancel: () => undefined,
+      onSaved: () => undefined,
+    }));
+    const group = render(true);
+    expect(group).not.toMatch(/Pathfinder club|Church|Club director|Club &amp; contact/);
+    expect(group).toContain("Contact name");
+    expect(render(false)).toContain("Pathfinder club");
+  });
 });

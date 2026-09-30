@@ -86,6 +86,8 @@ async function buildPlan(client: CopyClient, sourceEventId: string, targetEventI
         perClubLimit: true,
         teacherName: true,
         location: true,
+        additionalCostCents: true,
+        requirementNote: true,
         updatedAt: true,
         honor: { select: { code: true, name: true, isActive: true } },
       },
@@ -279,6 +281,8 @@ export async function applyHonorCopy(
           perClubLimit: offering.perClubLimit,
           teacherName: offering.teacherName,
           location: offering.location,
+          additionalCostCents: offering.additionalCostCents,
+          requirementNote: offering.requirementNote,
         },
       });
     }

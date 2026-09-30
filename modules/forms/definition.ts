@@ -31,11 +31,16 @@ export function isChoiceFieldType(type: string): type is typeof choiceFieldTypes
  * directory" read current `Organization` records instead of a hand-typed
  * list, alongside the existing `ATTENDEE_TYPES` mechanism.
  */
-export const directoryOptionSources = ["CLUBS_DIRECTORY", "CHURCHES_DIRECTORY"] as const;
+export const directoryOptionSources = ["CLUBS_DIRECTORY", "CHURCHES_DIRECTORY", "SCHOOLS_DIRECTORY"] as const;
 export type DirectoryOptionSource = typeof directoryOptionSources[number];
 
 export function isDirectoryOptionSource(source: string | undefined): source is DirectoryOptionSource {
-  return source === "CLUBS_DIRECTORY" || source === "CHURCHES_DIRECTORY";
+  return source === "CLUBS_DIRECTORY" || source === "CHURCHES_DIRECTORY" || source === "SCHOOLS_DIRECTORY";
+}
+
+/** Plural noun for a directory source, for builder labels. */
+export function directorySourceNoun(source: DirectoryOptionSource) {
+  return source === "CLUBS_DIRECTORY" ? "clubs" : source === "SCHOOLS_DIRECTORY" ? "schools" : "churches";
 }
 
 /**
@@ -93,7 +98,7 @@ export const formFieldSchema = z.object({
   scope: z.enum(formFieldScopes),
   required: z.boolean(),
   options: z.array(z.string().trim().min(1).max(120)).max(200).default([]),
-  optionSource: z.enum(["ATTENDEE_TYPES", "CLUBS_DIRECTORY", "CHURCHES_DIRECTORY"]).optional(),
+  optionSource: z.enum(["ATTENDEE_TYPES", "CLUBS_DIRECTORY", "CHURCHES_DIRECTORY", "SCHOOLS_DIRECTORY"]).optional(),
   optionLabels: z.record(z.string(), z.string().trim().min(1).max(120)).optional(),
   optionDescriptions: z.record(
     z.string(),
@@ -705,8 +710,8 @@ export const formTemplates: FormTemplate[] = [
           templateField("wr_contact_last", "primary_contact_last_name", "Primary contact last name", "TEXT", true),
           templateField("wr_email", "email", "Primary contact email", "EMAIL", true),
           templateField("wr_phone", "phone", "Primary contact phone", "PHONE", true),
-          templateField("wr_church", "church", "Church", "SELECT", true, imsdaChurchOptions),
-          templateField("wr_church_other", "church_other", "Church — other or notes", "TEXT", true, [], { conditional: { fieldKey: "church", operator: "EQUALS", value: "Other" } }),
+          templateField("wr_church", "church", "Church", "SELECT", true, [], { optionSource: "CHURCHES_DIRECTORY" }),
+          templateField("wr_church_other", "church_other", "Church — not listed, or notes", "TEXT", true, [], { conditional: { fieldKey: "church", operator: "EQUALS", value: DIRECTORY_NOT_LISTED_VALUE } }),
           templateField("wr_emergency_name", "emergency_contact_name", "Emergency contact name", "TEXT", true),
           templateField("wr_emergency_phone", "emergency_contact_phone", "Emergency contact phone", "PHONE", true),
           templateField("wr_special", "special_needs", "Special needs / accessibility", "LONG_TEXT"),
@@ -761,8 +766,8 @@ export const formTemplates: FormTemplate[] = [
           templateField("mc_state", "state", "State / province", "TEXT", true),
           templateField("mc_zip", "zip", "ZIP / postal code", "TEXT", true),
           templateField("mc_country", "country", "Country", "SELECT", true, ["United States", "Canada", "Other"]),
-          templateField("mc_church", "church", "Church", "SELECT", true, imsdaChurchOptions),
-          templateField("mc_church_other", "church_other", "Church — other", "TEXT", true, [], { conditional: { fieldKey: "church", operator: "EQUALS", value: "Other" } }),
+          templateField("mc_church", "church", "Church", "SELECT", true, [], { optionSource: "CHURCHES_DIRECTORY" }),
+          templateField("mc_church_other", "church_other", "Church — not listed", "TEXT", true, [], { conditional: { fieldKey: "church", operator: "EQUALS", value: DIRECTORY_NOT_LISTED_VALUE } }),
           templateField("mc_primary_age", "primary_age", "Primary contact age", "NUMBER", true),
           templateField("mc_primary_accommodations", "primary_accommodations", "Accessibility or accommodation needs", "LONG_TEXT"),
         ] },
@@ -893,8 +898,8 @@ export const formTemplates: FormTemplate[] = [
           templateField("cm_country", "country", "Country", "SELECT", true, ["United States", "Canada", "Other"]),
           templateField("cm_email", "email", "Email", "EMAIL", true),
           templateField("cm_phone", "phone", "Mobile phone", "PHONE", true),
-          templateField("cm_church", "church_name", "Home church", "SELECT", false, imsdaChurchOptions),
-          templateField("cm_church_other", "church_other", "Home church — other", "TEXT", true, [], { conditional: { fieldKey: "church_name", operator: "EQUALS", value: "Other" } }),
+          templateField("cm_church", "church_name", "Home church", "SELECT", false, [], { optionSource: "CHURCHES_DIRECTORY" }),
+          templateField("cm_church_other", "church_other", "Home church — not listed", "TEXT", true, [], { conditional: { fieldKey: "church_name", operator: "EQUALS", value: DIRECTORY_NOT_LISTED_VALUE } }),
         ] },
         { id: "cm_housing", title: "Housing selection", description: "Pricing is per night. RV capacity begins at 16 spots and every housing limit can be adjusted.", fields: [
           templateField("cm_housing_choice", "housing_selection", "Housing", "RADIO", true, campMeetingHousingOptions, { availabilityMode: "CAPACITY", choiceLimits: { "RV / camper hookup": 16 } }),
@@ -1541,6 +1546,19 @@ function attendeeDisplayName(responses: Record<string, unknown>, index: number, 
   return `${attendeeLabel} ${index + 1}`;
 }
 
+/**
+ * The prices a field charges in one pricing state, exactly as `pricedLineItem`
+ * resolves them. A field is choice-priced whenever `choicePricesCents` is
+ * defined (even empty), or the late map is defined while late pricing is active.
+ * Shared so a display of prices can never disagree with what is charged.
+ */
+export function resolveFieldPrices(field: RegistrationFormField, latePricingActive: boolean) {
+  const priceCents = latePricingActive ? field.latePricing?.priceCents ?? field.priceCents : field.priceCents;
+  const hasChoicePrices = field.choicePricesCents !== undefined || (latePricingActive && field.latePricing?.choicePricesCents !== undefined);
+  const choicePricesCents = hasChoicePrices ? { ...(field.choicePricesCents ?? {}), ...(latePricingActive ? field.latePricing?.choicePricesCents ?? {} : {}) } : undefined;
+  return { priceCents, choicePricesCents };
+}
+
 function pricedLineItem(
   field: RegistrationFormField,
   responses: Record<string, unknown>,
@@ -1564,9 +1582,7 @@ function pricedLineItem(
     return { key: field.key, label: field.label, amountCents: Math.round(creditCents) };
   }
   const latePricingActive = isLatePricingActive(field, pricingDate);
-  const priceCents = latePricingActive ? field.latePricing?.priceCents ?? field.priceCents : field.priceCents;
-  const hasChoicePrices = field.choicePricesCents !== undefined || (latePricingActive && field.latePricing?.choicePricesCents !== undefined);
-  const choicePricesCents = hasChoicePrices ? { ...(field.choicePricesCents ?? {}), ...(latePricingActive ? field.latePricing?.choicePricesCents ?? {} : {}) } : undefined;
+  const { priceCents, choicePricesCents } = resolveFieldPrices(field, latePricingActive);
   let amountCents = 0;
   if (choicePricesCents) {
     const selections = Array.isArray(value) ? value.map(String) : hasValue(value) ? [String(value)] : [];

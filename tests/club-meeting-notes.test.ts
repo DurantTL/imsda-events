@@ -94,8 +94,8 @@ describe("no names, counts only — averaging a month's meeting notes (#426)", (
     ]);
     // Pathfinder average: (10+13)/2 = 11.5 -> 12. TLT: 2.5 -> 3 (round half up). Staff: 3.5 -> 4.
     expect(summary).toMatchObject({ pathfinderCount: 12, tltCount: 3, staffCount: 4 });
-    // Attendance per meeting: 15 and 20 -> average 17.5 -> 18. The count-free meeting is excluded.
-    expect(summary?.averageAttendance).toBe(18);
+    // TLTs are Pathfinders too, so typed totals are Pathfinders + staff: 13 and 17 -> 15. The count-free meeting is excluded.
+    expect(summary?.averageAttendance).toBe(15);
   });
 
   it("dedupes honors by name, keeping the highest recorded participant count, and leaves it for the director when none was recorded", () => {

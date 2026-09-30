@@ -127,6 +127,9 @@ export type SourceEventDetails = {
   timezone: string;
   publicInfoUrl: string | null;
   supportContact: string | null;
+  tagline: string | null;
+  subtitle: string | null;
+  helpEmail: string | null;
   calendarCategory: string | null;
   showOnCalendar: boolean;
   hotelName: string | null;
@@ -254,6 +257,8 @@ export type SourceConfiguration = {
     perClubLimit: number | null;
     teacherName: string;
     location: string;
+    additionalCostCents: number | null;
+    requirementNote: string;
     isActive: boolean;
     locationName: string | null;
     locationNormalizedName: string | null;
@@ -391,8 +396,9 @@ export function sanitizeSourceForClone(
     return result.text;
   };
   /** A nullable detail: stripped like text, and null when nothing is left. */
-  const optionalText = (domain: CloneDomainKey, location: string, value: string | null) => {
-    if (value === null) return null;
+  const optionalText = (domain: CloneDomainKey, location: string, value: string | null | undefined) => {
+    // A source that predates a column gives undefined; treat it as empty.
+    if (value === null || value === undefined) return null;
     const next = text(domain, location, value).trim();
     return next.length > 0 ? next : null;
   };
@@ -411,6 +417,9 @@ export function sanitizeSourceForClone(
     hotelInstructions: optionalText("eventDetails", "Lodging instructions", config.eventDetails.hotelInstructions),
     location: optionalText("eventDetails", "Location", config.eventDetails.location),
     supportContact: optionalText("eventDetails", "Support contact", config.eventDetails.supportContact),
+    tagline: optionalText("eventDetails", "Tagline", config.eventDetails.tagline),
+    subtitle: optionalText("eventDetails", "Subtitle", config.eventDetails.subtitle),
+    helpEmail: optionalText("eventDetails", "Help email", config.eventDetails.helpEmail),
     hotelName: optionalText("eventDetails", "Lodging name", config.eventDetails.hotelName),
     hotelPhone: optionalText("eventDetails", "Lodging phone", config.eventDetails.hotelPhone),
     hotelGroupName: optionalText("eventDetails", "Lodging group name", config.eventDetails.hotelGroupName),
@@ -465,7 +474,13 @@ export function sanitizeSourceForClone(
     bodyTemplate: text("messageTemplates", `Message ${template.key} body`, template.bodyTemplate),
   }));
 
-  return { config: { ...config, eventDetails, contentSections, registrationForms, messageTemplates }, findings };
+  // A class requirement is free text; it is scanned like the other copied text.
+  const honorOfferings = config.honorOfferings.map((offering) => ({
+    ...offering,
+    requirementNote: text("honors", `Class ${offering.honorName} requirement`, offering.requirementNote ?? "").trim(),
+  }));
+
+  return { config: { ...config, eventDetails, contentSections, registrationForms, messageTemplates, honorOfferings }, findings };
 }
 
 // ---------------------------------------------------------------------------
@@ -553,6 +568,8 @@ export type ClonePlan = {
       sourcePerClubLimit: number | null;
       /** Carried over as it is; shown so the reviewer sees it. */
       minimumAge: number | null;
+      additionalCostCents: number | null;
+      requirementNote: string;
     }>;
     /** Private links found in copied text: each "needs review" and is removed from the copy. */
     privateLinks: PrivateLinkFinding[];
@@ -709,6 +726,7 @@ export function buildClonePlan(rawConfig: SourceConfiguration, fingerprint: stri
       honorOfferings: config.honorOfferings.map((offering) => ({
         offeringId: offering.id, honorName: offering.honorName, sessionName: offering.sessionName,
         sourceCapacity: offering.capacity, sourcePerClubLimit: offering.perClubLimit, minimumAge: offering.minimumAge,
+        additionalCostCents: offering.additionalCostCents ?? null, requirementNote: offering.requirementNote ?? "",
       })),
       privateLinks: findings,
     },

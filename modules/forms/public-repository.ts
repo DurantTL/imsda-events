@@ -44,6 +44,7 @@ import {
 } from "@/modules/events/lifecycle";
 import { issueRegistrationAccessToken } from "@/modules/public-access/repository";
 import { logError } from "@/lib/logger";
+import { groupFormDefinition } from "@/modules/group-registrations/domain";
 import { isChurchBilledBillingMode, perPersonPrice, type PerPersonPrice } from "@/modules/club-registrations/per-person-price";
 import {
   applyAttendeePromoCodes,
@@ -75,7 +76,9 @@ export type PublicRegistrationErrorCode =
   | "SUBMISSION_CONFLICT"
   | "CLUB_REGISTRATION_UNAVAILABLE"
   | "CLUB_ALREADY_REGISTERED"
-  | "CLUB_ATTENDEES_INVALID";
+  | "CLUB_ATTENDEES_INVALID"
+  | "GROUP_REGISTRATION_UNAVAILABLE"
+  | "GROUP_ATTENDEES_INVALID";
 
 /**
  * A club registration (#358) runs through this same transaction so it gets the
@@ -128,6 +131,26 @@ export type ClubSubmissionContext = {
     }>;
   }>;
 };
+
+/**
+ * A "Group" registration on a club event (#650): people who are not in a club,
+ * registered by one contact. It runs through the same transaction, so it gets
+ * the same validation, age rules, location seats, pricing, confirmation, and
+ * audit as a club, but it is never attributable to a club or church: no
+ * `ClubEventRegistration`, no roster, no organization on the audit or the
+ * snapshot. The contact becomes the billing party (`GroupEventRegistration`).
+ */
+export type GroupSubmissionContext = {
+  group: true;
+  locationId?: string | null;
+  report?: ClubSubmissionContext["report"];
+  /** Told the new (or replayed) registration's id once it has committed, so class picks can follow. */
+  registered?: (registrationId: string) => void;
+  prepareAttendees: ClubSubmissionContext["prepareAttendees"];
+};
+
+/** Either kind of bulk registration the submit transaction understands. */
+export type BulkSubmissionContext = ClubSubmissionContext | GroupSubmissionContext;
 
 export class PublicRegistrationError extends Error {
   constructor(
@@ -602,8 +625,10 @@ async function createPublicRegistrationTransaction(
   formSlug: string,
   submittedInput: PublicRegistrationInput,
   now: Date,
-  club?: ClubSubmissionContext,
+  bulk?: BulkSubmissionContext,
 ) {
+  const group = bulk && "group" in bulk ? bulk : undefined;
+  const club = bulk && !("group" in bulk) ? bulk : undefined;
   let input = submittedInput;
   const form = await tx.registrationForm.findFirst(publishedFormQuery(eventSlug, formSlug));
   const version = form?.versions[0];
@@ -614,10 +639,13 @@ async function createPublicRegistrationTransaction(
 
   // Read through the transaction, so the directory the answers are validated
   // against is the same snapshot the registration is written in (#482).
-  const definition = await hydrateFormOptions(definitionFromJson(version.definition), {
+  const hydratedDefinition = await hydrateFormOptions(definitionFromJson(version.definition), {
     attendeeTypes: form.event.attendeeTypes,
     client: tx,
   });
+  // A group is validated and priced against the form it was shown: the same
+  // questions without the club and church ones (#650).
+  const definition = group ? groupFormDefinition(hydratedDefinition) : hydratedDefinition;
   if (form.event.billingMode === "DEFERRED_ORGANIZATION_INVOICE" && definition.payment?.enabled) {
     // A deferred-organization event must never create an attendee balance or
     // online payment. This form should never have been published with a
@@ -627,22 +655,28 @@ async function createPublicRegistrationTransaction(
       `Registration form ${form.slug} has card payment enabled for a deferred-organization-billing event. Disable payment on the form or change the event's billing mode.`
     );
   }
+  // Church-billed events show a per-person price only (#621). A group is billed
+  // to its contact instead, and is shown its price and estimated total (#650).
+  const churchBilledDisplay = isChurchBilledBillingMode(form.event.billingMode) && !group;
   let clubAttendees: Awaited<ReturnType<ClubSubmissionContext["prepareAttendees"]>>["attendees"] | null = null;
-  if (club) {
+  if (bulk) {
     // Bulk club registration needs a CLUB audience (#481) and church billing,
     // the same gate as the club portal's `listClubEvents`/`requireClubEvent`.
+    // A group registers on the same kind of event (#650), with no card checkout.
     if (form.event.audience !== "CLUB" || form.event.billingMode !== "DEFERRED_ORGANIZATION_INVOICE") {
       throw new PublicRegistrationError(
-        "CLUB_REGISTRATION_UNAVAILABLE",
-        "This event isn't set up for club registration billed to the church.",
+        group ? "GROUP_REGISTRATION_UNAVAILABLE" : "CLUB_REGISTRATION_UNAVAILABLE",
+        group
+          ? "This event isn't set up for group registration."
+          : "This event isn't set up for club registration billed to the church.",
       );
     }
-    const clubPrepared = await club.prepareAttendees(tx, { definition, event: form.event, input });
-    input = clubPrepared.input;
-    clubAttendees = clubPrepared.attendees;
+    const bulkPrepared = await bulk.prepareAttendees(tx, { definition, event: form.event, input });
+    input = bulkPrepared.input;
+    clubAttendees = bulkPrepared.attendees;
   }
   const requestHash = submissionHash(input);
-  const replay = await findExistingConfirmation(tx, version.id, input.idempotencyKey, requestHash, definition, isChurchBilledBillingMode(form.event.billingMode));
+  const replay = await findExistingConfirmation(tx, version.id, input.idempotencyKey, requestHash, definition, churchBilledDisplay);
   if (replay) return replay;
   if (club) {
     const existingClubRegistration = await tx.clubEventRegistration.findUnique({
@@ -700,12 +734,12 @@ async function createPublicRegistrationTransaction(
   let registrationLocationId: string | null = null;
   let locationWaitlisted = false;
   let registrationLocation: { name: string; address: string | null; firstDay: string; lastDay: string } | null = null;
-  if (club) {
+  if (bulk) {
     const clubRoster = getAttendeeRosterConfig(definition);
     const admittedToLocation = await admitToLocation(tx, {
       eventId: form.eventId,
       event: form.event,
-      locationId: club.locationId,
+      locationId: bulk.locationId,
       requestedSeats: clubRoster.enabled ? input.attendees?.length ?? 0 : 1,
       requirePick: true,
       // A full location joins its own waitlist when the event has one (#599).
@@ -803,7 +837,7 @@ async function createPublicRegistrationTransaction(
         eligibleSubtotalCents: prepared.calculation.subtotalCents,
         pricingDate: prepared.pricingDate,
         fieldId: configuredPromoField.id,
-        hideAmounts: isChurchBilledBillingMode(form.event.billingMode),
+        hideAmounts: churchBilledDisplay,
       });
       pricedCalculation = applyPromoCodeToCalculation(
         definition,
@@ -841,7 +875,7 @@ async function createPublicRegistrationTransaction(
       calculation: prepared.calculation,
       pricingDate: prepared.pricingDate,
       claim: true,
-      hideAmounts: isChurchBilledBillingMode(form.event.billingMode),
+      hideAmounts: churchBilledDisplay,
     });
     if (evaluated.issues.length > 0) {
       throw new PublicRegistrationError(
@@ -935,7 +969,9 @@ async function createPublicRegistrationTransaction(
     }
     const clubAttendee = clubAttendees?.get(attendee.clientId) ?? null;
     if (clubAttendees && !clubAttendee) {
-      throw new PublicRegistrationError("CLUB_ATTENDEES_INVALID", "Everyone on a club registration must come from the club roster.");
+      throw group
+        ? new PublicRegistrationError("GROUP_ATTENDEES_INVALID", "Everyone on a group registration must be added to the group.")
+        : new PublicRegistrationError("CLUB_ATTENDEES_INVALID", "Everyone on a club registration must come from the club roster.");
     }
     const attendeeIdentity = clubAttendee?.guest
       ? { ...attendee.identity, email: clubAttendee.guest.email ?? attendee.identity.email }
@@ -975,10 +1011,16 @@ async function createPublicRegistrationTransaction(
           lastName: attendee.identity.lastName,
           email: attendeeIdentity.email,
           phone: attendee.identity.phone || null,
-          source: clubAttendee ? "CLUB_REGISTRATION" : "PUBLIC_REGISTRATION",
+          source: clubAttendee ? (group ? "GROUP_REGISTRATION" : "CLUB_REGISTRATION") : "PUBLIC_REGISTRATION",
           formVersionId: version.id,
-          ...(clubAttendee ? {
-            clubOrganizationId: club!.organizationId,
+          // A group person carries no club and no roster id; only the age the
+          // server checked and the seat type it derived from it (#650).
+          ...(clubAttendee && group ? {
+            ageOnEventDate: clubAttendee.ageOnEventDate,
+            ...(clubAttendee.guest ? { groupAttendeeId: clubAttendee.guest.guestId, temporaryAttendeeType: clubAttendee.guest.attendeeType } : {}),
+          } : {}),
+          ...(clubAttendee && club ? {
+            clubOrganizationId: club.organizationId,
             ...(clubAttendee.rosterMemberId ? { clubRosterMemberId: clubAttendee.rosterMemberId } : {}),
             ageOnEventDate: clubAttendee.ageOnEventDate,
             // For this event only: never on the club roster (#388).
@@ -1118,6 +1160,15 @@ async function createPublicRegistrationTransaction(
       await recordLocationWaitlistChange(tx, { registrationId: registration.id, locationId: registrationLocationId, kind: "JOINED", place: waitlistPosition });
     }
   }
+  if (group) {
+    // The contact is the billing party; no club, church, or roster is involved (#650).
+    await tx.groupEventRegistration.create({
+      data: { eventId: form.eventId, registrationId: registration.id, billingPersonId: accountHolder.id },
+    });
+    if (isWaitlisted && registrationLocationId) {
+      await recordLocationWaitlistChange(tx, { registrationId: registration.id, locationId: registrationLocationId, kind: "JOINED", place: waitlistPosition });
+    }
+  }
   const submissionCorrelationId = randomUUID();
   const queuedMessages = isWaitlisted
     ? await enqueueWaitlistJoinedMessage(tx, {
@@ -1152,6 +1203,7 @@ async function createPublicRegistrationTransaction(
         attendeeResponses: createdAttendees.map((attendee) => attendee.responses),
         calculation: admittedCalculation,
         location: registrationLocation,
+        billedToGroup: Boolean(group),
       });
   await tx.auditLog.create({
     data: {
@@ -1159,6 +1211,7 @@ async function createPublicRegistrationTransaction(
       actorUserId: club?.submittedByUserId ?? null,
       action: club
         ? "CLUB_REGISTRATION_SUBMITTED"
+        : group ? "GROUP_REGISTRATION_SUBMITTED"
         : isWaitlisted ? "PUBLIC_REGISTRATION_WAITLISTED" : "PUBLIC_REGISTRATION_SUBMITTED",
       entityType: "Registration",
       entityId: registration.id,
@@ -1192,6 +1245,10 @@ async function createPublicRegistrationTransaction(
               ...(club.actAsId ? { actAsId: club.actAsId } : {}),
             }
           : {}),
+        // A group names no club or church: only its place and its billing contact (#650).
+        ...(group
+          ? { group: true, billingPersonId: accountHolder.id, ...(registrationLocationId ? { locationId: registrationLocationId } : {}) }
+          : {}),
       },
     },
   });
@@ -1206,7 +1263,7 @@ async function createPublicRegistrationTransaction(
         queuedMessages.deliveryMode === "DISABLED" ? "DISABLED" : "PENDING",
         isWaitlisted ? "WAITLISTED" : "SUBMITTED",
         waitlistPosition,
-        isChurchBilledBillingMode(form.event.billingMode),
+        churchBilledDisplay,
       ),
       managePath: access.managePath,
       manageLinkExpiresAt: access.expiresAt.toISOString(),
@@ -1235,18 +1292,18 @@ export async function submitPublicRegistration(
   formSlug: string,
   input: PublicRegistrationInput,
   now = new Date(),
-  club?: ClubSubmissionContext,
+  bulk?: BulkSubmissionContext,
 ) {
   const prisma = getPrisma();
   for (let attempt = 0; attempt < submitAttempts; attempt += 1) {
     try {
       const result = await prisma.$transaction(
-        (tx) => createPublicRegistrationTransaction(tx, eventSlug, formSlug, input, now, club),
+        (tx) => createPublicRegistrationTransaction(tx, eventSlug, formSlug, input, now, bulk),
         {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-          // A club may wait up to 5s on its location's row lock (#413); the
+          // A club or group may wait up to 5s on its location's row lock (#413); the
           // default 5s transaction timeout would expire before that wait ends.
-          ...(club ? { timeout: locationTransactionTimeoutMs } : {}),
+          ...(bulk ? { timeout: locationTransactionTimeoutMs } : {}),
         }
       );
       // #527: a registrant already on the background-check list is matched
@@ -1275,7 +1332,8 @@ export async function submitPublicRegistration(
       const registrantFailed = result.registrantMessageIds.some((messageId) => (
         processed.failedIds.includes(messageId)
       ));
-      club?.report?.({ replayed: result.replayed, waitlisted: result.confirmation.registrationStatus === "WAITLISTED" });
+      bulk?.report?.({ replayed: result.replayed, waitlisted: result.confirmation.registrationStatus === "WAITLISTED" });
+      if (bulk && "group" in bulk) bulk.registered?.(result.registrationId);
       return {
         ...result.confirmation,
         emailSent: registrantSent,

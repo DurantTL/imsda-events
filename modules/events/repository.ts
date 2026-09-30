@@ -134,6 +134,9 @@ export async function getEventSettings(eventId: string) {
         capacity: true,
         publicInfoUrl: true,
         supportContact: true,
+        tagline: true,
+        subtitle: true,
+        helpEmail: true,
         hotelName: true,
         hotelBookingUrl: true,
         hotelPhone: true,
@@ -187,6 +190,9 @@ export async function getEventSettings(eventId: string) {
     capacity: event.capacity,
     publicInfoUrl: event.publicInfoUrl,
     supportContact: event.supportContact,
+    tagline: event.tagline,
+    subtitle: event.subtitle,
+    helpEmail: event.helpEmail,
     hotelName: event.hotelName,
     hotelBookingUrl: event.hotelBookingUrl,
     hotelPhone: event.hotelPhone,
@@ -244,6 +250,9 @@ export async function createEvent(
         capacity: input.capacity,
         publicInfoUrl: input.publicInfoUrl,
         supportContact: input.supportContact,
+        tagline: input.tagline ?? null,
+        subtitle: input.subtitle ?? null,
+        helpEmail: input.helpEmail ?? null,
         ...lodgingCreateData(input),
         // Every new event starts as a draft (#471); only `publishEvent` publishes.
         isPublished: false,
@@ -335,6 +344,9 @@ export async function updateEventSettings(
           capacity: true,
           publicInfoUrl: true,
           supportContact: true,
+          tagline: true,
+          subtitle: true,
+          helpEmail: true,
           hotelName: true,
           hotelBookingUrl: true,
           hotelPhone: true,
@@ -404,6 +416,10 @@ export async function updateEventSettings(
         capacity: input.capacity,
         publicInfoUrl: input.publicInfoUrl,
         supportContact: input.supportContact,
+        // Absent keeps the stored value; an explicit null clears it.
+        tagline: input.tagline,
+        subtitle: input.subtitle,
+        helpEmail: input.helpEmail,
         ...lodgingUpdateData(input),
         // No `isPublished` here, on purpose (#471): see the function doc above.
         registrationOpensOn: input.registrationOpensOn,
@@ -613,6 +629,7 @@ export async function getEventOverview(eventId: string) {
       where: { eventId, status: { in: [...activeRegistrationStatuses] } },
       select: {
         totalAmount: true,
+        groupRegistration: { select: { id: true } },
         payments: {
           where: { status: "SUCCEEDED" },
           select: { amount: true, refunds: { where: { status: "SUCCEEDED" }, select: { amount: true } } },
@@ -643,9 +660,14 @@ export async function getEventOverview(eventId: string) {
   let outstandingCents = 0;
   let pendingPaymentCount = 0;
   let churchBilledCents = 0;
+  // Group registrations (#650) are billed to their contact, never to a church,
+  // so their totals stay out of churchBilledCents.
+  let groupBilledCents = 0;
   for (const registration of registrations) {
     if (isDeferredOrganizationBilling) {
-      churchBilledCents += Math.max(Math.round(Number(registration.totalAmount) * 100), 0);
+      const cents = Math.max(Math.round(Number(registration.totalAmount) * 100), 0);
+      if (registration.groupRegistration) groupBilledCents += cents;
+      else churchBilledCents += cents;
       continue;
     }
     const paid = registration.payments.reduce((paymentTotal, payment) => {
@@ -671,6 +693,7 @@ export async function getEventOverview(eventId: string) {
       outstandingCents,
       isDeferredOrganizationBilling,
       churchBilledCents,
+      groupBilledCents,
       // Discounts from church-sponsored promo codes billed to churches on a
       // GENERAL attendee-paid event (#545); 0 on any event that already bills
       // churches, so a church is never billed twice.

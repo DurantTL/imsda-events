@@ -22,6 +22,10 @@ import { PublicShirtSizeConfirmation } from "@/components/public-shirt-size-conf
 import { AttendeeRegistrationAnswersForm } from "@/components/attendee-registration-answers-form";
 import { PublicSquarePayment } from "@/components/public-square-payment";
 import { PerPersonPriceNotice } from "@/components/per-person-price-notice";
+import { ClubClassPicker } from "@/components/club-class-picker";
+import { GroupRegistrationEditor } from "@/components/group-registration-editor";
+import { formatCalendarDate } from "@/modules/club-registrations/domain";
+import { getGroupRegistrationWorkspace } from "@/modules/group-registrations/repository";
 import { resolveRegistrationAccessToken } from "@/modules/public-access/repository";
 
 export const dynamic = "force-dynamic";
@@ -81,6 +85,8 @@ export default async function PublicManagePage({
   const { token } = await params;
   const view = await resolveRegistrationAccessToken(token);
   if (!view) notFound();
+  // A "Group" registration (#650) can be reopened by its contact from this page.
+  const group = view.isGroup ? await getGroupRegistrationWorkspace(token) : null;
   const attendeePassesAvailable = (
     view.registration.status === "SUBMITTED"
     || view.registration.status === "CONFIRMED"
@@ -208,6 +214,46 @@ export default async function PublicManagePage({
             </div>
           </section>
 
+          {group && (
+            <section className="public-manage-card" aria-labelledby="group-registration-title">
+              <div className="public-manage-card-heading">
+                <p className="public-registration-eyebrow">Group registration</p>
+                <h2 id="group-registration-title">Your group</h2>
+              </div>
+              <dl className="public-manage-event-grid">
+                {group.registration.location && (
+                  <div>
+                    <dt><MapPin size={17} aria-hidden="true" /> Registered at</dt>
+                    <dd translate="no">{group.registration.location.name}</dd>
+                  </div>
+                )}
+                <div>
+                  <dt><CircleDollarSign size={17} aria-hidden="true" /> Estimated total</dt>
+                  <dd translate="no">{money(group.billing.estimate.totalCents)}</dd>
+                </div>
+              </dl>
+              <p>
+                <strong>{group.billing.notice}</strong> No payment is due online. The total is an estimate from
+                the price of each person{group.billing.estimate.perPersonCents !== null ? ` (${money(group.billing.estimate.perPersonCents)} each)` : ""}.
+              </p>
+              {group.event.registrationClosesOn && group.event.edit.open && (
+                <p className="field-help">You can change people, locations, and classes until registration closes on {formatCalendarDate(group.event.registrationClosesOn)}.</p>
+              )}
+              {group.experience && (
+                <GroupRegistrationEditor token={token} workspace={{ ...group, experience: group.experience }} />
+              )}
+              {!group.experience && <p className="field-help">This registration can&apos;t be edited here right now. Contact the event team.</p>}
+            </section>
+          )}
+
+          {group?.classes && group.classes.offerings.length > 0 && (
+            <ClubClassPicker
+              endpoint={`/api/public/manage/${encodeURIComponent(token)}/group/classes`}
+              initialWorkspace={group.classes}
+              noun="group"
+            />
+          )}
+
           {view.event.shirtSizesAvailable && view.attendees.length > 0 && (
             view.registration.status === "SUBMITTED"
             || view.registration.status === "CONFIRMED"
@@ -298,7 +344,7 @@ export default async function PublicManagePage({
               </div>
             </dl>
             )}
-            {!view.perPerson && <PublicSquarePayment token={token} />}
+            {!view.perPerson && !view.isGroup && <PublicSquarePayment token={token} />}
           </section>
         </div>
 
@@ -336,7 +382,7 @@ export default async function PublicManagePage({
               <strong>Keep this link private</strong>
               <p>
                 Anyone with this link can view this registration and update its
-                contact details. It expires {expiryLabel(view.access.expiresAt)}.
+                contact details{group ? ", people, locations, and classes" : ""}. It expires {expiryLabel(view.access.expiresAt)}.
               </p>
             </div>
           </section>

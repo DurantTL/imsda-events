@@ -25,6 +25,14 @@ function optionalNumber(value: FormDataEntryValue | null) {
   return text === "" ? null : Number(text);
 }
 
+/** Whole cents from a dollars text box; blank or zero means no additional cost. */
+function dollarsToCents(value: FormDataEntryValue | null) {
+  const text = String(value ?? "").trim();
+  if (text === "") return null;
+  const cents = Math.round(Number(text) * 100);
+  return Number.isFinite(cents) && cents > 0 ? cents : null;
+}
+
 export function HonorsSetupWorkspace({
   catalog,
   eventId,
@@ -208,6 +216,8 @@ export function HonorsSetupWorkspace({
       perClubLimit: optionalNumber(form.get("perClubLimit")),
       teacherName: String(form.get("teacherName") ?? ""),
       location: String(form.get("location") ?? ""),
+      additionalCostCents: dollarsToCents(form.get("additionalCost")),
+      requirementNote: String(form.get("requirementNote") ?? ""),
       // Only an all-sessions class has its own site; a single-session class is at its session's.
       // Editing sends the site only when it changed (a legacy no-site class, or one with picks, keeps editing its other fields).
       ...(editing
@@ -535,6 +545,14 @@ export function HonorsSetupWorkspace({
           <label>
             Location (optional)
             <input defaultValue={editing?.location ?? ""} maxLength={120} name="location" />
+          </label>
+          <label>
+            Additional cost in dollars (optional)
+            <input defaultValue={editing?.additionalCostCents ? (editing.additionalCostCents / 100).toFixed(2) : ""} min={0.01} max={10000} name="additionalCost" step="0.01" type="number" />
+          </label>
+          <label>
+            Special requirement (optional)
+            <input defaultValue={editing?.requirementNote ?? ""} maxLength={200} name="requirementNote" placeholder="Bring a flashlight" />
           </label>
         </div>
         {catalog.length === 0 && !editing && (

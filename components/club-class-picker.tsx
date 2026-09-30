@@ -16,14 +16,21 @@ type Attendee = ClassSelectionWorkspace["attendees"][number];
  * These checks only guide the director; the server enforces every rule.
  */
 export function ClubClassPicker({
-  initialWorkspace,
-  organizationId,
+  endpoint,
   eventId,
+  initialWorkspace,
+  noun = "club",
+  organizationId,
 }: {
+  /** Where picks are saved. A club's own route by default; a "Group" contact's private link passes its own (#650). */
+  endpoint?: string;
+  eventId?: string;
   initialWorkspace: ClassSelectionWorkspace;
-  organizationId: string;
-  eventId: string;
+  /** Who holds the seats, in the words the page uses. */
+  noun?: "club" | "group";
+  organizationId?: string;
 }) {
+  const saveUrl = endpoint ?? `/api/attendee/clubs/${encodeURIComponent(organizationId ?? "")}/events/${encodeURIComponent(eventId ?? "")}/classes`;
   const [workspace, setWorkspace] = useState(initialWorkspace);
   const [selections, setSelections] = useState<Record<string, string[]>>(initialWorkspace.selections);
   const [saving, setSaving] = useState(false);
@@ -82,7 +89,7 @@ export function ClubClassPicker({
     setNotice("");
     try {
       const response = await fetch(
-        `/api/attendee/clubs/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(eventId)}/classes`,
+        saveUrl,
         { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ selections }) },
       );
       const result = await response.json().catch(() => ({})) as { workspace?: ClassSelectionWorkspace; message?: string };
@@ -90,8 +97,10 @@ export function ClubClassPicker({
       setWorkspace(result.workspace);
       setSelections(result.workspace.selections);
       // The earlier "your honors weren't saved" note is settled now (#618).
-      try { sessionStorage.removeItem(honorsNoteKey(organizationId, eventId)); } catch { /* storage is optional */ }
-      setNotice("Classes saved. Seats are held for your club.");
+      if (organizationId && eventId) {
+        try { sessionStorage.removeItem(honorsNoteKey(organizationId, eventId)); } catch { /* storage is optional */ }
+      }
+      setNotice(`Classes saved. Seats are held for your ${noun}.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Class choices could not be saved.");
     } finally {
@@ -104,7 +113,7 @@ export function ClubClassPicker({
     const reason = unavailableReason(offering, heldHere, attendee);
     return (
       <option disabled={Boolean(reason)} key={offering.id} value={offering.id}>
-        {offering.honorName} ({reason ?? seatsNote(offering, heldHere, attendee)})
+        {offering.honorName} ({reason ?? seatsNote(offering, heldHere, attendee, noun)})
       </option>
     );
   };
@@ -122,7 +131,7 @@ export function ClubClassPicker({
       )}
       <p>
         Pick one class per session, or one class that fills every session. Seats go to the first
-        clubs to save. Only youth use a seat; staff, adults, and underage children join without one.
+        {noun === "club" ? "clubs" : "registrations"} to save. Only youth use a seat; {noun === "club" ? "staff, adults, and underage children join" : "adults join"} without one.
         {workspace.registrationClosesOn ? ` You can change classes until ${formatCalendarDate(workspace.registrationClosesOn)}.` : ""}
       </p>
       {notice && <div className="inline-notice success" role="status">{notice}</div>}

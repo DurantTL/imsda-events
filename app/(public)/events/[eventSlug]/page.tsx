@@ -17,6 +17,8 @@ import {
 import { BrandMark } from "@/components/brand-mark";
 import { EventInfoCards } from "@/components/event-info-cards";
 import { TranslateHint } from "@/components/translate-hint";
+import { AutoEventHeader, AutoEventInfoCards } from "@/components/auto-event-info-cards";
+import { getAutoEventInfoCards } from "@/modules/event-info-cards/repository";
 import { contentBlocks } from "@/modules/events/content-schemas";
 import { getPublicEventLanding } from "@/modules/events/public-repository";
 
@@ -74,6 +76,11 @@ export default async function PublicEventPage({
     (section) => section.kind === "RICH_TEXT" && section.body.trim().length > 0,
   );
   const canChooseForm = landing.lifecycle.ctaEnabled && hasForms;
+  // Auto-built info cards (#651) are for club events only; every other event's
+  // page renders exactly as before, without even reading the card data.
+  const autoCards = landing.event.audience === "CLUB"
+    ? await getAutoEventInfoCards(eventSlug)
+    : null;
 
   return (
     <main className="public-registration-page public-event-page">
@@ -92,18 +99,26 @@ export default async function PublicEventPage({
       </header>
       <TranslateHint />
 
-      <section className="public-registration-hero public-event-hero">
-        <div>
-          <p className="public-registration-eyebrow">Iowa-Missouri Conference event</p>
-          <h1>{landing.event.name}</h1>
-          <p>Everything you need to choose the right registration path.</p>
-        </div>
-        <div className="public-registration-event-details">
-          <span><CalendarDays size={17} aria-hidden="true" /> {landing.event.dateLabel}</span>
-          <span><Clock3 size={17} aria-hidden="true" /> {landing.event.timeLabel}</span>
-          <span><MapPin size={17} aria-hidden="true" /> {landing.event.location ?? "Location details coming soon"}</span>
-        </div>
-      </section>
+      {autoCards ? (
+        <AutoEventHeader
+          header={autoCards.header}
+          timeLabel={landing.event.timeLabel}
+          introLine={landing.lifecycle.heroTagline}
+        />
+      ) : (
+        <section className="public-registration-hero public-event-hero">
+          <div>
+            <p className="public-registration-eyebrow">Iowa-Missouri Conference event</p>
+            <h1>{landing.event.name}</h1>
+            <p>{landing.lifecycle.heroTagline}</p>
+          </div>
+          <div className="public-registration-event-details">
+            <span><CalendarDays size={17} aria-hidden="true" /> {landing.event.dateLabel}</span>
+            <span><Clock3 size={17} aria-hidden="true" /> {landing.event.timeLabel}</span>
+            <span><MapPin size={17} aria-hidden="true" /> {landing.event.location ?? "Location details coming soon"}</span>
+          </div>
+        </section>
+      )}
 
       {landing.announcements.length > 0 && (
         <section
@@ -193,6 +208,8 @@ export default async function PublicEventPage({
         );
       })}
 
+      {autoCards && <AutoEventInfoCards cards={autoCards} />}
+
       <div className="public-event-layout">
         <section className="public-event-main" aria-labelledby="registration-options-title">
           <div className="public-event-registration-state">
@@ -201,7 +218,7 @@ export default async function PublicEventPage({
             </span>
             <div>
               <p className="public-registration-eyebrow">Online registration</p>
-              <h2 id="registration-options-title">Choose how you’re registering</h2>
+              <h2 id="registration-options-title">{landing.lifecycle.formsHeading}</h2>
               <p>{landing.lifecycle.detail}</p>
             </div>
           </div>
@@ -236,8 +253,28 @@ export default async function PublicEventPage({
           ) : (
             <div className="public-event-empty-forms">
               <CalendarDays size={28} aria-hidden="true" />
-              <h3>Registration forms are being prepared</h3>
-              <p>Event details are available now. Please check back or contact the event team for registration help.</p>
+              <h3>{landing.lifecycle.emptyForms.title}</h3>
+              <p>{landing.lifecycle.emptyForms.body}</p>
+            </div>
+          )}
+
+          {landing.groupRegistration && (
+            <div className="public-event-form-list">
+              <article className="public-event-form-card">
+                <div className="public-event-form-number" aria-hidden="true"><UsersRound size={20} /></div>
+                <div className="public-event-form-copy">
+                  <p className="public-registration-eyebrow">{landing.groupRegistration.label}</p>
+                  <h3>{landing.groupRegistration.title}</h3>
+                  <p>Not part of a club? One contact can register several people, each with their own classes. You&apos;ll be billed after the event; there is no payment to make now.</p>
+                </div>
+                {landing.lifecycle.ctaEnabled ? (
+                  <Link className="public-event-form-cta" href={landing.groupRegistration.href}>
+                    {landing.lifecycle.ctaLabel} <ArrowRight size={17} aria-hidden="true" />
+                  </Link>
+                ) : (
+                  <span className="public-event-form-cta is-disabled" aria-disabled="true">{landing.lifecycle.ctaLabel}</span>
+                )}
+              </article>
             </div>
           )}
 
@@ -287,14 +324,8 @@ export default async function PublicEventPage({
           <section className="public-event-info-card">
             <span className="public-event-side-icon"><UsersRound size={20} aria-hidden="true" /></span>
             <p className="public-registration-eyebrow">Current availability</p>
-            <h2>{landing.lifecycle.statusLabel}</h2>
-            {landing.lifecycle.remainingSpots === null ? (
-              <p>No event-wide capacity limit is listed.</p>
-            ) : landing.lifecycle.remainingSpots > 0 ? (
-              <p><strong>{landing.lifecycle.remainingSpots}</strong> event spot{landing.lifecycle.remainingSpots === 1 ? "" : "s"} currently remain.</p>
-            ) : (
-              <p>The event-wide capacity has been reached.</p>
-            )}
+            <h2>{landing.lifecycle.availability.heading}</h2>
+            <p>{landing.lifecycle.availability.body}</p>
           </section>
 
           <section className="public-event-info-card public-event-help-card">
