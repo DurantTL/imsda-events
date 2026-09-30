@@ -41,11 +41,11 @@ describe("mobile foundations (issue #684)", () => {
     expect(phone).toMatch(/--touch-target: 44px;/);
   });
 
-  it("never writes a literal font size under 0.75rem outside print rules; small sizes go through the floor tokens", () => {
+  it("never writes a literal rem or em font size under 0.75 outside print rules; small sizes go through the floor tokens", () => {
     const offenders: string[] = [];
     for (const rule of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-      for (const size of rule[2].matchAll(/font-size:\s*([\d.]+)rem/g)) {
-        if (Number(size[1]) < 0.75) offenders.push(`${rule[1].trim().replace(/\s+/g, " ")} { font-size: ${size[1]}rem }`);
+      for (const size of rule[2].matchAll(/font-size:\s*([\d.]+)(rem|em)\b/g)) {
+        if (Number(size[1]) < 0.75) offenders.push(`${rule[1].trim().replace(/\s+/g, " ")} { font-size: ${size[1]}${size[2]} }`);
       }
     }
     expect(offenders).toEqual([]);

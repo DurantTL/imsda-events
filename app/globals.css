@@ -3383,7 +3383,7 @@ select:focus-visible {
 .public-registration-field legend { width: 100%; margin: 0 0 2px; padding: 0; }
 .public-registration-field-label { display: block; }
 .public-registration-optional-mark { color: var(--muted); }
-.public-registration-optional-note { display: block; margin-top: 2px; color: var(--muted); font-size: 0.72em; font-weight: 600; }
+.public-registration-optional-note { display: block; margin-top: 2px; color: var(--muted); font-size: max(var(--type-floor, 0px), 0.72em); font-weight: 600; }
 .public-registration-field-label > span:first-of-type { color: var(--coral); }
 .public-registration-field > small { color: var(--muted); font-size: var(--text-helper-min); font-weight: 500; line-height: 1.5; }
 
@@ -8225,15 +8225,20 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
     .public-event-help-card a, .calendar-subscribe) {
     padding-inline: 6px;
   }
-  :root .public-event-details-link { width: var(--touch-target); }
+  :root .public-event-details-link { min-width: var(--touch-target); }
+  /* Tag chip remove buttons: a 32px visible button whose 44px hit area comes from
+     a pseudo-element, so chips do not grow. */
+  :root .tag-chip .text-button { position: relative; min-height: 32px; padding-block: 0; }
+  :root .tag-chip .text-button::after { content: ""; position: absolute; inset: -6px -4px; }
   :root .calendar-subscribe { min-width: var(--touch-target); justify-content: center; }
   :root .calendar-month-nav .secondary-button { width: var(--touch-target); min-width: var(--touch-target); min-height: var(--touch-target); }
 
   /* Password show/hide toggle: a full 44px square at the field's right edge. */
   :root .password-field button {
-    inset: 0 0 auto auto;
+    inset: 0 0 0 auto;
     width: var(--touch-target);
-    height: var(--touch-target);
+    height: auto;
+    min-height: var(--touch-target);
     place-items: center;
     padding: 0;
     transform: none;
@@ -8246,8 +8251,10 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
   :root :is(.checkbox-label, .event-setting-toggle, .switch-toggle, label:has(> input[type="checkbox"]), label:has(> input[type="radio"])) {
     min-height: var(--touch-target);
   }
-  :root :is(.checkbox-label, label:has(> input[type="checkbox"]), label:has(> input[type="radio"])) { align-items: center; }
+  :root .checkbox-label { align-items: center; }
   :root .record-select { top: 0; right: 0; width: var(--touch-target); height: var(--touch-target); }
+  :root .record-card-shell:has(.record-select) > .record-card { padding-right: calc(var(--touch-target) + 4px); }
+  :root .account-nav a { min-height: var(--touch-target); }
   :root .record-select input { width: 22px; height: 22px; }
 
   /* Search and filter controls: the input itself is 44px tall. */
@@ -8256,8 +8263,8 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 
 /* Every input, select and textarea gets one clear keyboard/typing focus ring
    (several form styles set outline: 0 and relied on a 10%-alpha shadow). */
-:root:root:root :is(input, select, textarea):not(.searchable-select-control > input):focus-visible,
-:root:root:root .searchable-select-control:focus-within {
+:root:root:root :is(input, select, textarea):not(.searchable-select-control > input, .money-input > input, .event-slug-input input, .input-with-icon input):focus-visible,
+:root:root:root :is(.searchable-select-control, .money-input, .event-slug-input, .input-with-icon):focus-within {
   outline: 2px solid var(--imsda-purple);
   outline-offset: 2px;
 }
