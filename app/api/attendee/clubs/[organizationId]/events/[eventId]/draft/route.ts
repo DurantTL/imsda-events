@@ -3,7 +3,7 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { actorAttribution, requireRosterAccess } from "@/modules/club-rosters/access";
 import { clubRegistrationApiError } from "@/modules/club-registrations/api-errors";
 import { saveClubRegistrationDraft } from "@/modules/club-registrations/repository";
-import { clubGuestsSchema, rosterAgesSchema } from "@/modules/club-registrations/domain";
+import { clubGuestsSchema, rosterAgesSchema, rosterAgeSaveOffSchema } from "@/modules/club-registrations/domain";
 import { honorSelectionsSchema } from "@/modules/honors/registration-picks";
 import { withRequestContext } from "@/lib/request-context";
 
@@ -14,6 +14,7 @@ const draftSchema = z.object({
   attendeeResponses: z.record(z.string(), z.record(z.string(), z.unknown())),
   honorSelections: honorSelectionsSchema.default({}),
   rosterAges: rosterAgesSchema.default({}),
+  rosterAgeSaveOff: rosterAgeSaveOffSchema.default([]),
 }).strict();
 
 type RouteContext = { params: Promise<{ organizationId: string; eventId: string }> };

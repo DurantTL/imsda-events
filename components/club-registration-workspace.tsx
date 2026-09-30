@@ -9,6 +9,8 @@ import {
   type FormResponses,
   type RosterAttendee,
 } from "@/components/public-registration-form";
+import { ClubRosterAgeField } from "@/components/club-roster-age-field";
+import { parseTypedAge, reportedAgeDefaults, withRosterAge } from "@/modules/club-registrations/roster-ages";
 import { ClubLocationPicker } from "@/components/club-location-picker";
 import { clubRosterAttendeeTypeLabels } from "@/modules/club-rosters/domain";
 import {
@@ -16,7 +18,6 @@ import {
   formatCalendarDate,
   guestIdFromClientId,
   guestIsAdult,
-  attendeeAgeKey,
   MAX_CLUB_GUESTS,
   rosterMemberIdFromClientId,
   rosterOwnedResponses,
@@ -40,6 +41,8 @@ type DraftState = {
   honorSelections: HonorPicks;
   /** Ages typed in for roster people with no birth date on file (#639), by roster member id. */
   rosterAges: Record<string, number>;
+  /** Roster people whose typed-in age is NOT also saved to the roster at submit (#639); saving is the default. */
+  rosterAgeSaveOff: string[];
 };
 
 export function ClubRegistrationWorkspace({
@@ -55,6 +58,7 @@ export function ClubRegistrationWorkspace({
   workspace: Workspace;
 }) {
   const router = useRouter();
+  const ageKey = workspace.attendeeAgeKey;
   const rosterIds = useMemo(() => new Set(workspace.roster.map((person) => person.memberId)), [workspace.roster]);
   const [draft, setDraft] = useState<DraftState>(() => ({
     selectedMemberIds: (workspace.draft?.selectedMemberIds ?? []).filter((memberId) => rosterIds.has(memberId)),
@@ -64,6 +68,7 @@ export function ClubRegistrationWorkspace({
     attendeeResponses: (workspace.draft?.attendeeResponses as Record<string, FormResponses> | undefined) ?? {},
     honorSelections: workspace.draft?.honorSelections ?? {},
     rosterAges: workspace.draft?.rosterAges ?? {},
+    rosterAgeSaveOff: workspace.draft?.rosterAgeSaveOff ?? [],
   }));
   const [step, setStep] = useState<"who" | "honors" | "form">("who");
   const [honorsProblem, setHonorsProblem] = useState<string | null>(null);
@@ -128,27 +133,28 @@ export function ClubRegistrationWorkspace({
   const selected = workspace.roster.filter((person) => draft.selectedMemberIds.includes(person.memberId));
   const goingCount = selected.length + draft.guests.length;
   // Roster people with no birth date need an age typed in for this registration (#639).
-  const missingAge = selected.filter((person) => person.ageOnEventDate === null && draft.rosterAges[person.memberId] === undefined);
+  // The roster's reported age stands in until one is typed in (#639).
+  const effectiveAges = useMemo(
+    () => ({ ...reportedAgeDefaults(workspace.roster, draft.selectedMemberIds, draft.rosterAges), ...draft.rosterAges }),
+    [workspace.roster, draft.selectedMemberIds, draft.rosterAges],
+  );
+  const missingAge = selected.filter((person) => person.ageOnEventDate === null && effectiveAges[person.memberId] === undefined);
   const [ageProblem, setAgeProblem] = useState("");
 
   function changeRosterAge(memberId: string, raw: string) {
     setAgeProblem("");
     setDraft((current) => {
-      const rosterAges = { ...current.rosterAges };
-      const age = Number(raw);
       // A blank or invalid entry clears the age; only whole numbers 0 to 120 are kept, like guests.
-      if (raw.trim() !== "" && Number.isInteger(age) && age >= 0 && age <= 120) rosterAges[memberId] = age;
-      else delete rosterAges[memberId];
-      // The typed age also becomes the event form's age answer for this person,
-      // so the form shows it (the server sets it again from the saved draft).
-      const ageKey = attendeeAgeKey(workspace.experience.form.definition);
-      const attendeeResponses = { ...current.attendeeResponses };
-      if (ageKey) {
-        const { [ageKey]: _previous, ...others } = attendeeResponses[memberId] ?? {};
-        void _previous;
-        attendeeResponses[memberId] = rosterAges[memberId] === undefined ? others : { ...others, [ageKey]: String(rosterAges[memberId]) };
-      }
-      const next = { ...current, rosterAges, attendeeResponses };
+      const next = withRosterAge(current, memberId, parseTypedAge(raw), ageKey);
+      queueSave(next);
+      return next;
+    });
+  }
+
+  function changeSaveToRoster(memberId: string, save: boolean) {
+    setDraft((current) => {
+      const off = current.rosterAgeSaveOff.filter((id) => id !== memberId);
+      const next = { ...current, rosterAgeSaveOff: save ? off : [...off, memberId] };
       queueSave(next);
       return next;
     });
@@ -157,8 +163,8 @@ export function ClubRegistrationWorkspace({
   // The honors step (#618): only when the event has classes at the chosen site
   // (or at no site), so an event without honors goes straight to the form.
   const honorAttendees = useMemo(
-    () => pickingAttendees({ roster: workspace.roster, selectedMemberIds: draft.selectedMemberIds, guests: draft.guests, rosterAges: draft.rosterAges }),
-    [workspace.roster, draft.selectedMemberIds, draft.guests, draft.rosterAges],
+    () => pickingAttendees({ roster: workspace.roster, selectedMemberIds: draft.selectedMemberIds, guests: draft.guests, rosterAges: effectiveAges }),
+    [workspace.roster, draft.selectedMemberIds, draft.guests, effectiveAges],
   );
   const honorOfferings = useMemo(
     () => (honorsCatalog ? offeringsAtLocation(honorsCatalog.offerings, locationId) : []),
@@ -281,6 +287,8 @@ export function ClubRegistrationWorkspace({
     });
   }, [queueSave]);
 
+  // The compiler can't prove this memo matches its hand-written dependencies once ages are derived (#639); it still works as written.
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const club = useMemo(() => ({
     initialAttendees,
     lockedAttendeeFieldKeys: workspace.lockedAttendeeFieldKeys,
@@ -386,30 +394,22 @@ export function ClubRegistrationWorkspace({
                     <small>
                       {clubRosterAttendeeTypeLabels[person.attendeeType]}
                       {person.role ? ` · ${person.role}` : ""}
-                      {person.ageOnEventDate !== null ? <> · Age <span translate="no">{person.ageOnEventDate}</span></> : ""}
+                      {person.ageOnEventDate !== null
+                        ? <> · Age <span translate="no">{person.ageOnEventDate}</span></>
+                        : person.reportedAge !== null ? <> · Age <span translate="no">{person.reportedAge}</span> (reported)</> : ""}
                     </small>
                   </span>
                 </label>
                 {person.ageOnEventDate === null && draft.selectedMemberIds.includes(person.memberId) && (
-                  <div className="club-roster-age">
-                    <label>
-                      Age on event date
-                      <input
-                        aria-invalid={ageProblem !== "" && draft.rosterAges[person.memberId] === undefined}
-                        defaultValue={draft.rosterAges[person.memberId] ?? ""}
-                        inputMode="numeric"
-                        max={120}
-                        min={0}
-                        onChange={(event) => changeRosterAge(person.memberId, event.target.value)}
-                        required
-                        type="number"
-                      />
-                    </label>
-                    <small className="field-help">
-                      No birth date on the roster. This age is used for this registration only.{" "}
-                      <Link href={`/account/clubs/${organizationId}`} onClick={() => { void flush(); }}>Add their birth date on the roster</Link>
-                    </small>
-                  </div>
+                  <ClubRosterAgeField
+                    age={effectiveAges[person.memberId]}
+                    invalid={ageProblem !== "" && effectiveAges[person.memberId] === undefined}
+                    onAge={(raw) => changeRosterAge(person.memberId, raw)}
+                    onNavigate={() => { void flush(); }}
+                    onSaveToRoster={(save) => changeSaveToRoster(person.memberId, save)}
+                    organizationId={organizationId}
+                    saveToRoster={!draft.rosterAgeSaveOff.includes(person.memberId)}
+                  />
                 )}
               </li>
             ))}

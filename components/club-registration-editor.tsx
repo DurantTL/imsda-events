@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check, Pencil, Trash2, UserPlus, X } from "lucide-react";
 import { ClubLocationPicker } from "@/components/club-location-picker";
+import { ClubRosterAgeField } from "@/components/club-roster-age-field";
+import { parseTypedAge } from "@/modules/club-registrations/roster-ages";
 import {
   PublicRegistrationForm,
   type FormIssue,
@@ -90,6 +92,39 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
   const [keptOffRosterIds, setKeptOffRosterIds] = useState<string[]>(() => offRoster.map((attendee) => attendee.attendeeId));
   const [keptGuestIds, setKeptGuestIds] = useState<string[]>(() => existingGuests.map((guest) => guest.guestId!));
   const [newGuests, setNewGuests] = useState<ClubGuest[]>([]);
+  // Roster people with no birth date need an age for this registration (#639).
+  // It starts at the age they were registered with, else the roster's reported age.
+  const [rosterAges, setRosterAges] = useState<Record<string, number>>(() => Object.fromEntries(
+    workspace.roster.flatMap((person) => {
+      if (person.ageOnEventDate !== null) return [];
+      const registeredAge = registeredByMemberId.get(person.memberId)?.ageOnEventDate ?? null;
+      const age = registeredAge ?? person.reportedAge;
+      return age === null ? [] : [[person.memberId, age] as const];
+    }),
+  ));
+  const [saveAgeOff, setSaveAgeOff] = useState<string[]>([]);
+  const missingAge = workspace.roster.find((person) => (
+    selectedMemberIds.includes(person.memberId) && person.ageOnEventDate === null && rosterAges[person.memberId] === undefined
+  ));
+
+  function toggleMember(person: (typeof workspace.roster)[number]) {
+    setSelectedMemberIds((current) => toggle(current, person.memberId));
+    // Someone newly ticked with no birth date starts at the roster's reported age, if it has one.
+    if (person.ageOnEventDate === null && person.reportedAge !== null) {
+      setRosterAges((current) => (current[person.memberId] === undefined ? { ...current, [person.memberId]: person.reportedAge! } : current));
+    }
+  }
+
+  function changeAge(memberId: string, raw: string) {
+    setError("");
+    const age = parseTypedAge(raw);
+    setRosterAges((current) => {
+      const next = { ...current };
+      if (age === undefined) delete next[memberId];
+      else next[memberId] = age;
+      return next;
+    });
+  }
   // Answers edited in step two, kept if the director goes back to step one.
   const [answers, setAnswers] = useState<Record<string, FormResponses>>({});
 
@@ -126,7 +161,13 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
       ...workspace.roster.filter((person) => selectedMemberIds.includes(person.memberId)).map((person) => {
         const current = registeredByMemberId.get(person.memberId);
         return {
-          ...withEdits(clubAttendeeClientId(person.memberId), current ? current.responses : person.prefillResponses, person.ownedResponses),
+          ...withEdits(clubAttendeeClientId(person.memberId), current ? current.responses : person.prefillResponses, {
+            ...person.ownedResponses,
+            // The age entered on Who's going, when the roster has no birth date (#639).
+            ...(person.ageOnEventDate === null && rosterAges[person.memberId] !== undefined
+              ? rosterOwnedResponses(definition, { firstName: person.firstName, lastName: person.lastName, ageOnEventDate: rosterAges[person.memberId]!, gender: null })
+              : {}),
+          }),
           // Compact attendee cards (#483): a roster person's card starts
           // collapsed, and a carried-over value that didn't match a form
           // option is prompted for rather than left silently blank.
@@ -170,6 +211,15 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
     }));
   }, []);
 
+  // Only for going people the roster has no birth date for; a birth date always wins.
+  const typedAges = useMemo(() => Object.fromEntries(
+    workspace.roster.flatMap((person) => (
+      selectedMemberIds.includes(person.memberId) && person.ageOnEventDate === null && rosterAges[person.memberId] !== undefined
+        ? [[person.memberId, rosterAges[person.memberId]!] as const]
+        : []
+    )),
+  ), [workspace.roster, selectedMemberIds, rosterAges]);
+
   const submitEdit = useCallback(async (attendees: RosterAttendee[]) => {
     const response = await fetch(
       `/api/attendee/clubs/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(workspace.event.id)}/registration`,
@@ -183,6 +233,8 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
           keptOffRosterAttendeeIds: keptOffRosterIds,
           keptGuestIds,
           newGuests,
+          rosterAges: typedAges,
+          saveAgeToRosterIds: Object.keys(typedAges).filter((memberId) => !saveAgeOff.includes(memberId)),
           attendeeResponses: Object.fromEntries(attendees.map((attendee) => [attendee.clientId, attendee.responses])),
           ...(locationId && locationId !== currentLocationId ? { locationId } : {}),
         }),
@@ -201,7 +253,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
         : { key: issue.key, message: issue.message, attendeeIndex: null }];
     });
     return { ok: false as const, message: result.message ?? "That change couldn't be saved. Refresh and try again.", issues };
-  }, [organizationId, workspace.event.id, workspace.registration.updatedAt, selectedMemberIds, keptOffRosterIds, keptGuestIds, newGuests, locationId, currentLocationId]);
+  }, [organizationId, workspace.event.id, workspace.registration.updatedAt, selectedMemberIds, keptOffRosterIds, keptGuestIds, newGuests, typedAges, saveAgeOff, locationId, currentLocationId]);
 
   const club = useMemo(() => ({
     initialAttendees,
@@ -284,7 +336,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
             <label className="checkbox-label">
               <input
                 checked={selectedMemberIds.includes(person.memberId)}
-                onChange={() => setSelectedMemberIds((current) => toggle(current, person.memberId))}
+                onChange={() => toggleMember(person)}
                 type="checkbox"
               />
               <span>
@@ -292,6 +344,16 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
                 {person.ageOnEventDate !== null && <small>Age <span translate="no">{person.ageOnEventDate}</span></small>}
               </span>
             </label>
+            {person.ageOnEventDate === null && selectedMemberIds.includes(person.memberId) && (
+              <ClubRosterAgeField
+                age={rosterAges[person.memberId]}
+                invalid={error !== "" && rosterAges[person.memberId] === undefined}
+                onAge={(raw) => changeAge(person.memberId, raw)}
+                onSaveToRoster={(save) => setSaveAgeOff((current) => (save ? current.filter((id) => id !== person.memberId) : [...current.filter((id) => id !== person.memberId), person.memberId]))}
+                organizationId={organizationId}
+                saveToRoster={!saveAgeOff.includes(person.memberId)}
+              />
+            )}
           </li>
         ))}
       </ul>
@@ -382,7 +444,10 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
         <button
           className="primary-button"
           disabled={goingCount === 0}
-          onClick={() => { setError(""); setJustReopened(false); setStep("form"); }}
+          onClick={() => {
+            if (missingAge) return setError(`Enter ${missingAge.firstName} ${missingAge.lastName}'s age on the event date.`);
+            setError(""); setJustReopened(false); setStep("form");
+          }}
           type="button"
         >
           Continue with {goingCount} {goingCount === 1 ? "person" : "people"} <ArrowRight aria-hidden="true" size={15} />

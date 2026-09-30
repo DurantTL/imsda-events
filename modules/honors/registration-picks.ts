@@ -29,7 +29,7 @@ export type PickingAttendee = {
 };
 
 export function pickingAttendees(input: {
-  roster: ReadonlyArray<{ memberId: string; firstName: string; lastName: string; ageOnEventDate: number | null; attendeeType: PickingAttendee["attendeeType"] }>;
+  roster: ReadonlyArray<{ memberId: string; firstName: string; lastName: string; ageOnEventDate: number | null; reportedAge?: number | null; attendeeType: PickingAttendee["attendeeType"] }>;
   selectedMemberIds: readonly string[];
   guests: ReadonlyArray<{ id: string; firstName: string; lastName: string; age: number }>;
   /** Ages typed in for roster people with no birth date (#639), by roster member id. */
@@ -41,7 +41,7 @@ export function pickingAttendees(input: {
     firstName: person.firstName,
     lastName: person.lastName,
     // A roster age always wins; the typed-in age only fills a missing one.
-    ageOnEventDate: person.ageOnEventDate ?? input.rosterAges?.[person.memberId] ?? null,
+    ageOnEventDate: person.ageOnEventDate ?? input.rosterAges?.[person.memberId] ?? person.reportedAge ?? null,
     attendeeType: person.attendeeType,
     consumesSeat: consumesClassSeat(person.attendeeType),
   }));

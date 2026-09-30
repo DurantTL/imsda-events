@@ -103,7 +103,7 @@ describe("club registration routes", () => {
   it("reopens and amends a submitted club registration for a current director", async () => {
     const response = await EDIT(request("PATCH", edit), ctx("club-a"));
     expect(response.status).toBe(200);
-    expect(mocks.amendClubRegistration).toHaveBeenCalledWith("club-a", "event-1", { accountId: "director-1" }, edit);
+    expect(mocks.amendClubRegistration).toHaveBeenCalledWith("club-a", "event-1", { accountId: "director-1" }, { ...edit, rosterAges: {}, saveAgeToRosterIds: [] });
     // Only the club summary, never the staff view of the registration (B3).
     await expect(response.json()).resolves.toEqual({ confirmationCode: "REG-1", updatedAt: "2026-10-15T13:00:00.000Z", attendeeCount: 2 });
   });
@@ -196,6 +196,13 @@ describe("club registration routes", () => {
     expect(response.status).toBe(200);
     expect(mocks.draftUpsert.mock.calls[0][0].update.rosterAges).toEqual({ m2: 12 });
     expect(mocks.draftUpsert.mock.calls[0][0].create.rosterAges).toEqual({ m2: 12 });
+  });
+
+  it("keeps a save-back opt-out only for people whose age is kept in the draft (#639)", async () => {
+    mocks.rosterFindMany.mockResolvedValue([{ id: "m1", sealedBirthDate: null }, { id: "m2", sealedBirthDate: null }]);
+    const body = { selectedMemberIds: ["m1", "m2"], responses: {}, attendeeResponses: {}, rosterAges: { m1: 12 } };
+    expect((await PUT_DRAFT(request("PUT", { ...body, rosterAgeSaveOff: ["m1", "m2"] }), ctx("club-a"))).status).toBe(200);
+    expect(mocks.draftUpsert.mock.calls[0][0].update.rosterAgeSaveOff).toEqual(["m1"]);
   });
 
   it("rejects typed-in ages that are not whole numbers from 0 to 120 (#639)", async () => {

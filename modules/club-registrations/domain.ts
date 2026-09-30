@@ -56,6 +56,14 @@ export function rosterAgesFromJson(value: unknown): RosterAges {
   return parsed.success ? parsed.data : {};
 }
 
+/** Roster member ids whose typed-in age is not saved back to the roster (#639). */
+export const rosterAgeSaveOffSchema = z.array(z.string().min(1).max(64)).max(500);
+
+export function rosterAgeSaveOffFromJson(value: unknown): string[] {
+  const parsed = rosterAgeSaveOffSchema.safeParse(value);
+  return parsed.success ? parsed.data : [];
+}
+
 export const clubGuestsSchema = z.array(clubGuestSchema).max(MAX_CLUB_GUESTS, `Add up to ${MAX_CLUB_GUESTS} extra people.`);
 
 /**
@@ -79,11 +87,16 @@ export const clubRegistrationEditInputSchema = z.object({
   keptOffRosterAttendeeIds: z.array(z.string().trim().min(1).max(100)).max(500),
   newGuests: clubGuestsSchema,
   attendeeResponses: z.record(z.string(), z.record(z.string(), z.unknown())),
+  /** Ages typed in for roster people with no birth date on file (#639), by roster member id. */
+  rosterAges: rosterAgesSchema.default({}),
+  /** Roster members whose typed-in age should also be saved to the roster (#639). */
+  saveAgeToRosterIds: z.array(z.string().trim().min(1).max(64)).max(500).default([]),
   /** Move the registration to another location of the event (#413); omitted leaves it where it is. */
   locationId: z.string().trim().min(1).max(100).optional(),
 }).strict();
 
-export type ClubRegistrationEditInput = z.infer<typeof clubRegistrationEditInputSchema>;
+/** What a caller sends: the #639 age fields may be left out (they default to none). */
+export type ClubRegistrationEditInput = z.input<typeof clubRegistrationEditInputSchema>;
 
 /** Guests saved in a draft, dropping anything that no longer reads as one. */
 export function guestsFromJson(value: unknown): ClubGuest[] {

@@ -4040,6 +4040,9 @@ model ClubRegistrationDraft {
   /// Ages typed in for roster people with no birth date on file (#639):
   /// { [roster member id]: age on the event date }. For this registration only.
   rosterAges         Json     @default("{}")
+  /// Roster member ids whose typed-in age should NOT also be saved to the roster
+  /// when the registration is submitted (#639). Saving back is the default.
+  rosterAgeSaveOff   Json     @default("[]")
   updatedByAccountId String?
   /// Set instead of `updatedByAccountId` for a staff "act as" director (#442).
   updatedByUserId    String?

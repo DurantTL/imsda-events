@@ -84,6 +84,8 @@ function fixture({ billingMode = "DEFERRED_ORGANIZATION_INVOICE", audience = "CL
     { id: "m2", personId: "person-m2", attendeeType: "STAFF", role: "Counselor", gender: null, sealedBirthDate: sealSecret("1988-03-02", "club-roster:birth-date"), person: { firstName: "Jordan", lastName: "Example" } },
     // No birth date on the roster (#639).
     { id: "m3", personId: "person-m3", attendeeType: "YOUTH", role: "Pathfinder", gender: null, sealedBirthDate: null, person: { firstName: "Casey", lastName: "Nobirth" } },
+    // No birth date, but a reported age from an import (#639).
+    { id: "m4", personId: "person-m4", attendeeType: "YOUTH", role: "Pathfinder", gender: null, sealedBirthDate: null, reportedAge: 15, person: { firstName: "Morgan", lastName: "Reported" } },
   ];
   const tx = {
     organization: {
@@ -102,7 +104,10 @@ function fixture({ billingMode = "DEFERRED_ORGANIZATION_INVOICE", audience = "CL
       },
       versions: [{ id: "version-1", versionNumber: 1, definition: form, publishedAt: new Date("2026-09-01T00:00:00Z") }],
     }) },
-    clubRosterMember: { findMany: vi.fn(async ({ where }: { where: { organizationId: string } }) => (where.organizationId === "club-1" ? members : [])) },
+    clubRosterMember: {
+      findMany: vi.fn(async ({ where }: { where: { organizationId: string } }) => (where.organizationId === "club-1" ? members : [])),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
     clubEventRegistration: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: "cer-1" }) },
     eventLocation: { count: vi.fn().mockResolvedValue(0) },
     clubRegistrationDraft: { findUnique: vi.fn().mockResolvedValue(null), deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
@@ -165,6 +170,11 @@ const club = (organizationId = "club-1"): ClubSubmissionContext => ({
   organizationId,
   submittedByAccountId: "director-1",
   prepareAttendees: clubAttendeePreparer(organizationId),
+});
+const clubAs = (): ClubSubmissionContext => ({
+  organizationId: "club-1",
+  submittedByAccountId: "director-1",
+  prepareAttendees: clubAttendeePreparer("club-1", { accountId: "director-1" }),
 });
 const now = new Date("2026-10-15T15:00:00.000Z");
 const submit = (input = baseInput, context = club(), at = now) =>
@@ -253,7 +263,7 @@ describe("club registration submit", () => {
     expect(guestCall.formResponses).toMatchObject({ first_name: "Pat", last_name: "Driver", attendee_age: "42", dietary_needs: "None" });
     expect(tx.person.create).toHaveBeenCalledWith({ data: expect.objectContaining({ firstName: "Pat", lastName: "Driver" }) });
     // The roster is only read, never written.
-    expect(Object.keys(tx.clubRosterMember)).toEqual(["findMany"]);
+    expect(tx.clubRosterMember.updateMany).not.toHaveBeenCalled();
   });
 
   it("uses the age typed in for a roster person with no birth date, from the saved draft (#639)", async () => {
@@ -267,8 +277,43 @@ describe("club registration submit", () => {
     expect(typed.formResponses).toMatchObject({ attendee_age: "13" });
     // A birth date on file always wins over a typed-in age.
     expect(dated.profileSnapshot).toMatchObject({ ageOnEventDate: 11 });
-    // The roster is only read: no guessed birth date is written back.
-    expect(Object.keys(tx.clubRosterMember)).toEqual(["findMany"]);
+    // Without an actor there is no save-back, and no birth date is ever written.
+    expect(tx.clubRosterMember.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("starts from the roster's reported age when none is typed in, and writes nothing to the roster (#639)", async () => {
+    const tx = fixture();
+    tx.clubRegistrationDraft.findUnique.mockResolvedValue({ guests: [], rosterAges: {} });
+    await submit({ ...baseInput, attendees: [{ clientId: "member:m4", responses: {} }] }, clubAs());
+    const data = tx.registrationAttendee.create.mock.calls[0]![0].data;
+    expect(data.profileSnapshot).toMatchObject({ clubRosterMemberId: "m4", ageOnEventDate: 15 });
+    expect(data.formResponses).toMatchObject({ attendee_age: "15" });
+    expect(tx.clubRosterMember.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("saves a typed-in age back to the roster at submit, audited, only for a member with no birth date (#639)", async () => {
+    const tx = fixture();
+    tx.clubRegistrationDraft.findUnique.mockResolvedValue({ guests: [], rosterAges: { m3: 13, m4: 16, m1: 99 } });
+    await submit({ ...baseInput, attendees: [
+      { clientId: "member:m3", responses: {} }, { clientId: "member:m4", responses: {} }, { clientId: "member:m1", responses: {} },
+    ] }, clubAs());
+
+    expect(tx.clubRosterMember.updateMany.mock.calls).toEqual([
+      [{ where: { id: "m3", organizationId: "club-1", sealedBirthDate: null, NOT: { reportedAge: 13 } }, data: { reportedAge: 13 } }],
+      [{ where: { id: "m4", organizationId: "club-1", sealedBirthDate: null, NOT: { reportedAge: 16 } }, data: { reportedAge: 16 } }],
+    ]);
+    const audits = tx.auditLog.create.mock.calls.map(([call]) => call.data).filter((data) => data.action === "CLUB_ROSTER_MEMBER_UPDATED");
+    expect(audits.map((audit) => audit.entityId)).toEqual(["m3", "m4"]);
+    expect(audits[0]).toMatchObject({ entityType: "ClubRosterMember", metadata: { organizationId: "club-1", actorAttendeeAccountId: "director-1", fields: ["reportedAge"] } });
+    expect(JSON.stringify(tx.clubRosterMember.updateMany.mock.calls)).not.toMatch(/birthDate"?: *"/);
+  });
+
+  it("leaves the roster alone for a member whose save-back box is off (#639)", async () => {
+    const tx = fixture();
+    tx.clubRegistrationDraft.findUnique.mockResolvedValue({ guests: [], rosterAges: { m3: 13 }, rosterAgeSaveOff: ["m3"] });
+    await submit({ ...baseInput, attendees: [{ clientId: "member:m3", responses: {} }] }, clubAs());
+    expect(tx.registrationAttendee.create.mock.calls[0]![0].data.profileSnapshot).toMatchObject({ ageOnEventDate: 13 });
+    expect(tx.clubRosterMember.updateMany).not.toHaveBeenCalled();
   });
 
   it("refuses a roster person with no birth date and no typed-in age when the form asks for age (#639)", async () => {
