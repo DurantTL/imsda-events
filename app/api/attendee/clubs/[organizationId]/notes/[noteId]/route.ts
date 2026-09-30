@@ -1,8 +1,8 @@
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { clubMeetingNoteApiError } from "@/modules/club-meeting-notes/api-errors";
-import { deleteClubMeetingNote, updateClubMeetingNote } from "@/modules/club-meeting-notes/repository";
+import { deleteClubMeetingNote, moveWouldClearAttendance, updateClubMeetingNote } from "@/modules/club-meeting-notes/repository";
 import { meetingNoteInputSchema } from "@/modules/club-meeting-notes/schemas";
-import { actorAttribution, requireClubCapability } from "@/modules/club-rosters/access";
+import { actorAttribution, requireClubCapability, requireRosterAccess } from "@/modules/club-rosters/access";
 import { withRequestContext } from "@/lib/request-context";
 
 type RouteContext = { params: Promise<{ organizationId: string; noteId: string }> };
@@ -15,6 +15,11 @@ async function putHandler(request: Request, context: RouteContext) {
     const { organizationId, noteId } = await context.params;
     const access = await requireClubCapability(organizationId, "submitReports");
     const input = meetingNoteInputSchema.parse(await request.json());
+    // Names on the roster need the roster's own gate (MFA and an open unlock), so a reporter can't save a check-off (#653).
+    // Moving a meeting into another club year also clears its marks, which a reporter may not do either.
+    if (input.attendance !== undefined || await moveWouldClearAttendance(organizationId, noteId, input.meetingDate)) {
+      await requireRosterAccess(organizationId);
+    }
     const note = await updateClubMeetingNote(organizationId, noteId, input, actorAttribution(access.actor));
     return Response.json({ note });
   } catch (error) {

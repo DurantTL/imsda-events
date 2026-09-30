@@ -12,3 +12,10 @@ export function ClubGateSlot({ children }: { children: React.ReactNode }) {
   if (/\/reports(\/|$)/.test(pathname)) return null;
   return <>{children}</>;
 }
+
+/** The "open Monthly Records" pointer is pointless on Monthly Records itself (#653). */
+export function ClubRecordsHint({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  if (/\/records(\/|$)/.test(pathname)) return null;
+  return <>{children}</>;
+}

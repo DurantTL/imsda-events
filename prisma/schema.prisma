@@ -1996,8 +1996,27 @@ model ClubMeetingNote {
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   createdByUser   User?        @relation("ClubMeetingNoteCreatedByUser", fields: [createdByUserId], references: [id], onDelete: SetNull)
   updatedByUser   User?        @relation("ClubMeetingNoteUpdatedByUser", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  /// Optional per-member check-off (#653). Empty when a club only keeps head counts.
+  attendance      ClubMeetingAttendance[]
 
   @@index([organizationId, meetingDate])
+}
+
+/// One roster member's check-off for one meeting (#653). Names come from the
+/// roster; nothing health-related or otherwise sensitive is stored here.
+model ClubMeetingAttendance {
+  id             String   @id @default(cuid())
+  meetingNoteId  String
+  rosterMemberId String
+  present        Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  meetingNote  ClubMeetingNote  @relation(fields: [meetingNoteId], references: [id], onDelete: Cascade)
+  rosterMember ClubRosterMember @relation(fields: [rosterMemberId], references: [id], onDelete: Cascade)
+
+  @@unique([meetingNoteId, rosterMemberId])
+  @@index([rosterMemberId])
 }
 
 /// A club's standing for one club year (#377): whether the yearly
@@ -3775,6 +3794,7 @@ model ClubRosterMember {
   transferAsReceiver MemberTransfer?  @relation("MemberTransferToRoster")
   clubFormSubmissions ClubFormSubmission[]
   clubFormLinks       ClubFormLink[]
+  meetingAttendance   ClubMeetingAttendance[]
 
   @@unique([organizationId, clubYear, personId])
   @@index([organizationId, clubYear, status])

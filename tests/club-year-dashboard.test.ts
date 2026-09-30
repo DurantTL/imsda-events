@@ -176,7 +176,7 @@ describe("the club home page builds the director's tiles (#488)", () => {
     expect(props.reports).toEqual({ filed: 1, missing: 1, dueSoon: { count: 1, dueDate: "2026-12-10" } });
     expect(props.rosterHref).toBe("/account/clubs/club-1/roster");
     expect(props.eventsHref).toBe("/account/clubs/club-1/events");
-    expect(props.reportsHref).toBe("/account/clubs/club-1/reports");
+    expect(props.reportsHref).toBe("/account/clubs/club-1/records");
     expect(props.honorsHref).toBe("/account/clubs/club-1/honors");
 
     // The existing "What's next" list stays.
