@@ -668,12 +668,21 @@ const CLOSEST_LIMIT = 8;
  * from the stored ACTIVE rules and each member's latest COMPLETED honors.
  * Reads only. Names and counts, never anything else about a member.
  */
-export async function loadMasterAwardProgress(organizationId: string, now = new Date()): Promise<MasterAwardProgressRow[]> {
+export async function loadMasterAwardProgress(
+  organizationId: string,
+  now = new Date(),
+  /**
+   * `personIds` replaces the current club year's active roster (an export for another club year);
+   * `closestLimit` replaces the screen's cut-off of the members closest to an award.
+   */
+  options: { personIds?: readonly string[]; closestLimit?: number } = {},
+): Promise<MasterAwardProgressRow[]> {
   const db = getPrisma();
   const rules = await activeRules(db);
   if (rules.length === 0) return [];
-  const personIds = await activeMemberIds(db, organizationId, now);
+  const personIds = options.personIds ? [...new Set(options.personIds)] : await activeMemberIds(db, organizationId, now);
   if (personIds.length === 0) return rules.map((rule) => emptyRow(rule));
+  const closestLimit = options.closestLimit ?? CLOSEST_LIMIT;
   const honorIds = [...new Set(rules.flatMap((rule) => rule.groups.flatMap((group) => group.honorIds)))];
   const [completed, names, needs, keyed] = await Promise.all([
     completedHonorsByPerson(db, personIds, honorIds),
@@ -716,7 +725,7 @@ export async function loadMasterAwardProgress(organizationId: string, now = new 
     row.onOrder.sort(byName);
     row.givenElsewhere.sort(byName);
     row.closest.sort((a, b) => b.counted / b.required - a.counted / a.required || byName(a, b));
-    row.closest = row.closest.slice(0, CLOSEST_LIMIT);
+    row.closest = row.closest.slice(0, closestLimit);
     return row;
   });
 }
