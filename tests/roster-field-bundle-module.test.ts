@@ -268,7 +268,8 @@ describe("builder module data follows the choice size rule (#484)", () => {
   it("keeps long directories (home church, shirt size) as searchable dropdowns", () => {
     const church = builderFieldModules.find((module) => module.key === "church_club")!.fields.find((field) => field.key === "church_name")!;
     expect(church.type).toBe("SELECT");
-    expect(church.options.length).toBeGreaterThan(RADIO_CARD_MAX_OPTIONS);
+    // The church list is sourced from the live directory (#649), so it is long by construction.
+    expect(church.optionSource).toBe("CHURCHES_DIRECTORY");
   });
 
   it("includes the roster bundle and promo code modules, each once, with unique module keys", () => {

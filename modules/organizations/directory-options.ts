@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Prisma } from "@prisma/client";
+import type { OrganizationType, Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { normalizeOrganizationName } from "@/modules/organizations/domain";
 
@@ -8,7 +8,7 @@ import { normalizeOrganizationName } from "@/modules/organizations/domain";
  * The live club/church directory a registration form can source choices from
  * (#482): names only, for active organizations — never contact details,
  * addresses, or any other club's private data. Used to hydrate a form field
- * declared with `optionSource: "CLUBS_DIRECTORY" | "CHURCHES_DIRECTORY"`
+ * declared with `optionSource: "CLUBS_DIRECTORY" | "CHURCHES_DIRECTORY" | "SCHOOLS_DIRECTORY"`
  * (see `modules/forms/form-options-repository.ts`) at read and submit time,
  * so a rename or deactivation reaches every form immediately without a
  * republish.
@@ -21,7 +21,10 @@ import { normalizeOrganizationName } from "@/modules/organizations/domain";
  */
 export type OrganizationDirectory = {
   clubs: string[];
+  /** Active churches, companies, and groups (#649): every congregation. */
   churches: string[];
+  /** Active schools (#649), for education events. */
+  schools: string[];
 };
 
 /** Anything that can read organizations: the app client or a transaction. */
@@ -33,9 +36,9 @@ export type DirectoryReadClient = Pick<Prisma.TransactionClient, "organization">
  * same one always wins and the option list (and its React keys) stays stable
  * between reads.
  */
-async function listDirectoryNames(client: DirectoryReadClient, type: "CLUB" | "CHURCH"): Promise<string[]> {
+async function listDirectoryNames(client: DirectoryReadClient, types: OrganizationType[]): Promise<string[]> {
   const organizations = await client.organization.findMany({
-    where: { type, isActive: true },
+    where: { type: types.length === 1 ? types[0]! : { in: types }, isActive: true },
     orderBy: [{ name: "asc" }, { id: "asc" }],
     select: { name: true, normalizedName: true },
   });
@@ -52,17 +55,23 @@ async function listDirectoryNames(client: DirectoryReadClient, type: "CLUB" | "C
 }
 
 export function listClubDirectoryNames(client: DirectoryReadClient = getPrisma()): Promise<string[]> {
-  return listDirectoryNames(client, "CLUB");
+  return listDirectoryNames(client, ["CLUB"]);
 }
 
+/** Churches, companies, and groups (#649): the congregations a member can belong to. */
 export function listChurchDirectoryNames(client: DirectoryReadClient = getPrisma()): Promise<string[]> {
-  return listDirectoryNames(client, "CHURCH");
+  return listDirectoryNames(client, ["CHURCH", "COMPANY", "GROUP"]);
+}
+
+export function listSchoolDirectoryNames(client: DirectoryReadClient = getPrisma()): Promise<string[]> {
+  return listDirectoryNames(client, ["SCHOOL"]);
 }
 
 export async function getOrganizationDirectory(client: DirectoryReadClient = getPrisma()): Promise<OrganizationDirectory> {
-  const [clubs, churches] = await Promise.all([
+  const [clubs, churches, schools] = await Promise.all([
     listClubDirectoryNames(client),
     listChurchDirectoryNames(client),
+    listSchoolDirectoryNames(client),
   ]);
-  return { clubs, churches };
+  return { clubs, churches, schools };
 }

@@ -1,0 +1,15 @@
+OrganizationID,OrgCode,OrgName,OrgType,GroupStartedOn,CompanyOrganizedOn,ChurchOrganizedOn,DisbandedOn,IsActive,IsOnline,SubOrgOf,DrivingDirections,SabbathSchool,Church,Church2nd,PrayerMeeting,WebSite,Email,AverageAttendance,County,District,Ethnicity,Language,StreetOptional,StreetAddress,StreetCity,StreetState,StreetPostal,StreetCountry,MailOptional,MailAddress,MailCity,MailState,MailPostal,MailCountry,OfficePhone,Fax,Latitude,Longitude,CountyName,CountyFIPS,FacebookUrl,InstagramUrl,TwitterUrl,StreamingUrl,StreamingTime
+9001,SC001,Sample Test Conference,Conference,,,,,Y,,,,,,,,https://conference.example.test,,,,,,,,1 Example Way,Exampleville,ZZ,00001,,,,,,,,555-0100,,,,,,,,,,
+9002,SC002,Sample Hills SDA Church,Church,,,,,Y,,Sample Test Conference,"Take Exit 5,
+turn left at the ""big"" barn.
+Second line of directions.",,,,,www.samplehills.example.test,c.o.person@example.test,,,North District,,English,,10 Sample Road,Sample Hills,ZZ,00002,,,,,,,,555-0101,,,,,,,,,,
+9003,SC003,Sample Creek Company,Company,,,,,Y,,Sample Hills SDA Church,,,,,,,,,,,,,,,Sample Creek,ZZ,,,,,,,,,,,,,,,,,,,
+9004,SC004,Sample Ridge Group,Group,,,,03/01/2024,Y,,,,,,,,,,,,,,,,,Sample Ridge,ZZ,,,,,,,,,,,,,,,,,,,
+9005,SC005,Sample Hills Elementary,PK-08 School,,,,,Y,,Sample Hills SDA Church,,,,,,,,,,,,,,,Sample Hills,ZZ,,,,,,,,,,,,,,,,,,,
+9006,SC006,Sample Junior Academy,PK-10 School,,,,,Y,,,,,,,,,,,,,,,,,Sample Junction,ZZ,,,,,,,,,,,,,,,,,,,
+9007,SC007,Sample Adventist Academy,9-12 School,,,,,Y,,,,,,,,,,,,,,,,,Sample City,ZZ,,,,,,,,,,,,,,,,,,,
+9008,SC008,Sample Little Learners,Early Childhood Program (ECP),,,,,Y,,Sample Hills Elementary,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+9009,SC009,Sample Book and Bible House,Bookstore,,,,,Y,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+9010,SC010,Sample Community Services Center,Community Center,,,,,Y,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+9011,SC011,Sample Pines Camp,Camp/Conf center,,,,,Y,,,,,,,,,,,,,,,,,Sample Pines,ZZ,,,,,,,,,,,,,,,,,,,
+9012,SC012,Sample Regional Association,Association,,,,,Y,,Missing Parent Name,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,

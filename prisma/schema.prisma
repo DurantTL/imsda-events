@@ -51,9 +51,21 @@ enum MembershipStatus {
   INACTIVE
 }
 
+/// CHURCH and CLUB predate the eAdventist organizations import (#649) and keep
+/// their meaning everywhere. The rest are the kinds that import brings in:
+/// COMPANY and GROUP are congregations that are not yet organized churches.
 enum OrganizationType {
   CHURCH
   CLUB
+  COMPANY
+  GROUP
+  SCHOOL
+  EARLY_CHILDHOOD
+  BOOKSTORE
+  COMMUNITY_CENTER
+  CAMP
+  CONFERENCE
+  ASSOCIATION
 }
 
 /// A person's authority over one club (#354, #375). DEPUTY carries the same
@@ -1739,11 +1751,34 @@ model Organization {
   normalizedName       String
   parentOrganizationId String?
   isActive             Boolean          @default(true)
+
+  /// eAdventist organizations export (#649). `eadventistId` is the export's
+  /// OrganizationID: unique, and the key a re-import matches on.
+  eadventistId         String?          @unique
+  orgCode              String?
+  /// The export's OrgType text ("PK-08 School", "Camp/Conf center", ...), kept
+  /// because several of them collapse into one `type`.
+  sourceOrgType        String?
+  streetAddress        String?
+  city                 String?
+  state                String?
+  postalCode           String?
+  website              String?
+  officePhone          String?
+  district             String?
+  language             String?
+  /// A DisbandedOn date on file. Informational: it never changes `isActive`.
+  disbandedOn          DateTime?        @db.Date
+  /// The export's SubOrgOf, resolved by name. Kept apart from
+  /// `parentOrganizationId`, which means "sponsoring church" for a club.
+  affiliatedOrganizationId String?
   createdAt            DateTime         @default(now())
   updatedAt            DateTime         @updatedAt
 
   parentOrganization Organization?      @relation("OrganizationHierarchy", fields: [parentOrganizationId], references: [id], onDelete: Restrict)
   childOrganizations Organization[]     @relation("OrganizationHierarchy")
+  affiliatedOrganization Organization?  @relation("OrganizationAffiliation", fields: [affiliatedOrganizationId], references: [id], onDelete: SetNull)
+  affiliatedChildren Organization[]     @relation("OrganizationAffiliation")
   externalIdentities ExternalIdentity[]
   directorGrants     ClubDirectorGrant[]
   rosterMembers      ClubRosterMember[]
@@ -1773,6 +1808,7 @@ model Organization {
 
   @@index([type, isActive, name])
   @@index([parentOrganizationId, isActive])
+  @@index([affiliatedOrganizationId])
   @@index([normalizedName])
 }
 
