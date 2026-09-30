@@ -53,4 +53,49 @@ describe("draft save queue (#643)", () => {
     await flushing;
     expect(queue.hasPending()).toBe(false);
   });
+
+  it("three overlapping flushes coalesce to the latest edit and all resolve", async () => {
+    const gates = [deferred(), deferred(), deferred()];
+    const sent: string[] = [];
+    const queue = createDraftSaveQueue<string>({ send: (draft) => { sent.push(draft); return gates[sent.length - 1]!.promise; } });
+    queue.set("a");
+    const one = queue.flush();
+    queue.set("b");
+    const two = queue.flush();
+    queue.set("c");
+    const three = queue.flush();
+    for (const gate of gates) {
+      await new Promise((r) => setTimeout(r, 0));
+      gate.resolve(true);
+    }
+    expect(await Promise.all([one, two, three])).toEqual([true, true, true]);
+    expect(sent).toEqual(["a", "c"]);
+    expect(queue.hasPending()).toBe(false);
+  });
+
+  it("a newer edit queued during a failed save wins", async () => {
+    const gate = deferred();
+    const sent: string[] = [];
+    const queue = createDraftSaveQueue<string>({ send: (draft) => { sent.push(draft); return sent.length === 1 ? gate.promise : Promise.resolve(true); } });
+    queue.set("old");
+    const failing = queue.flush();
+    queue.set("new");
+    gate.resolve(false);
+    expect(await failing).toBe(false);
+    expect(await queue.flush()).toBe(true);
+    expect(sent).toEqual(["old", "new"]);
+  });
+
+  it("a timer-style flush does not send edits queued during the save", async () => {
+    const gate = deferred();
+    const sent: string[] = [];
+    const queue = createDraftSaveQueue<string>({ send: (draft) => { sent.push(draft); return sent.length === 1 ? gate.promise : Promise.resolve(true); } });
+    queue.set("a");
+    const timerFlush = queue.flush(false);
+    queue.set("b");
+    gate.resolve(true);
+    expect(await timerFlush).toBe(true);
+    expect(sent).toEqual(["a"]);
+    expect(queue.hasPending()).toBe(true);
+  });
 });

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check, Pencil, Trash2, UserPlus, X } from "lucide-react";
 import { ClubLocationPicker } from "@/components/club-location-picker";
 import { rosterHrefFromRegistration } from "@/modules/club-registrations/roster-return";
+import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import { ClubRosterAgeField } from "@/components/club-roster-age-field";
 import { ageInputProblem, ageInputValue, parseTypedAge } from "@/modules/club-registrations/roster-ages";
 import {
@@ -107,6 +108,18 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
   const [saveAgeOff, setSaveAgeOff] = useState<string[]>([]);
   // The raw text of the age fields, so a half-typed entry is reported rather than read as blank.
   const [ageText, setAgeText] = useState<Record<string, string>>({});
+  // A real dirty flag (#643): any edit away from the registration as loaded, while the editor is open.
+  const [startingSelected] = useState<string[]>(selectedMemberIds);
+  const [startingKeptOff] = useState<string[]>(keptOffRosterIds);
+  const [startingKeptGuests] = useState<string[]>(keptGuestIds);
+  const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((id) => b.includes(id));
+  const sameAges = Object.keys(rosterAges).length === Object.keys(startingAges).length
+    && Object.entries(rosterAges).every(([id, age]) => startingAges[id] === age);
+  const dirty = open && !(
+    sameSet(selectedMemberIds, startingSelected) && sameSet(keptOffRosterIds, startingKeptOff)
+    && sameSet(keptGuestIds, startingKeptGuests) && newGuests.length === 0 && sameAges && locationId === currentLocationId
+  );
+  const allowNextNavigation = useUnsavedChangesGuard(dirty);
   const problemPerson = workspace.roster.find((person) => (
     selectedMemberIds.includes(person.memberId) && ageInputProblem(person, ageText, rosterAges) !== null
   ));
@@ -261,12 +274,13 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
     submitEdit,
     submitLabel: "Save changes",
     onSubmitted: () => {
+      allowNextNavigation();
       setOpen(false);
       setJustReopened(false);
       setStep("who");
       router.refresh();
     },
-  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, onDraftChange, submitEdit, router]);
+  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, onDraftChange, submitEdit, router, allowNextNavigation]);
 
   // Reopening confirms itself: scroll to and highlight the roster section (#571 F-23).
   useEffect(() => {

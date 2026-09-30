@@ -87,7 +87,8 @@ export function ClubRegistrationWorkspace({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const base = `/api/attendee/clubs/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(workspace.event.id)}`;
 
-  const queue = useMemo(() => createDraftSaveQueue<DraftState>({
+  const [leaveHref, setLeaveHref] = useState<string | null>(null);
+  const [queue] = useState(() => createDraftSaveQueue<DraftState>({
     onState: (state) => {
       setSaveState(state);
       if (state === "saved") setLeaveHref(null);
@@ -100,7 +101,7 @@ export function ClubRegistrationWorkspace({
       });
       return response.ok;
     },
-  }), [base]);
+  }));
 
   /** Saves the pending draft now; true when nothing is left unsaved. */
   const flush = useCallback(async (): Promise<boolean> => {
@@ -109,7 +110,6 @@ export function ClubRegistrationWorkspace({
   }, [queue]);
 
   // Leaving for the roster (#643): save first, and warn instead of silently dropping an unsaved edit.
-  const [leaveHref, setLeaveHref] = useState<string | null>(null);
   const rosterHref = rosterHrefFromRegistration(organizationId, workspace.event.id);
   const [leaving, setLeaving] = useState(false);
   async function goToRoster(href: string) {
@@ -129,8 +129,8 @@ export function ClubRegistrationWorkspace({
   const queueSave = useCallback((next: DraftState) => {
     queue.set(next);
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => { void flush(); }, 1200);
-  }, [flush, queue]);
+    timer.current = setTimeout(() => { timer.current = null; void queue.flush(false); }, 1200);
+  }, [queue]);
 
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
 

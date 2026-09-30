@@ -16,7 +16,12 @@ export function createDraftSaveQueue<T>({
   let inFlight: Promise<boolean> | null = null;
   let generation = 0;
 
-  async function flush(): Promise<boolean> {
+  /**
+   * `followUp` (default true, for explicit flushes such as leaving the page):
+   * after a save succeeds, send any newer edit queued meanwhile too. The
+   * debounce timer passes false; a newer edit has its own timer.
+   */
+  async function flush(followUp = true): Promise<boolean> {
     while (inFlight) await inFlight;
     const next = pending;
     if (next === null) return true;
@@ -27,16 +32,20 @@ export function createDraftSaveQueue<T>({
       let ok = false;
       try { ok = await send(next); } catch { ok = false; }
       if (started !== generation) return true;
+      // A newer edit queued during a failed save wins over the failed one.
       if (!ok) pending ??= next;
       onState?.(ok ? "saved" : "error");
       return ok;
     })();
     inFlight = attempt;
-    const ok = await attempt;
-    if (inFlight === attempt) inFlight = null;
+    let ok = false;
+    try {
+      ok = await attempt;
+    } finally {
+      if (inFlight === attempt) inFlight = null;
+    }
     if (!ok) return false;
-    // A newer edit may have been queued while this save ran.
-    return pending === null ? true : flush();
+    return followUp && pending !== null ? flush(true) : true;
   }
 
   return {
