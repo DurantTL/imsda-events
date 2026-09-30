@@ -22,7 +22,11 @@ import {
   rosterRolePrefill,
   type ClubGuest,
 } from "@/modules/club-registrations/domain";
+import { fillBlankAnswers } from "@/modules/club-registrations/contact-prefill";
 import type { ClubEventWorkspace } from "@/modules/club-registrations/repository";
+import { ClubHonorsStep, type HonorPicks } from "@/components/club-honors-step";
+import { firstPickProblem, offeringsAtLocation, pickingAttendees, prunePicks } from "@/modules/honors/registration-picks";
+import type { RegistrationHonorsCatalog } from "@/modules/honors/enrollment-repository";
 import type { PublicRegistrationExperience } from "@/modules/forms/public-repository";
 
 type Workspace = ClubEventWorkspace & { experience: PublicRegistrationExperience };
@@ -32,14 +36,18 @@ type DraftState = {
   guests: ClubGuest[];
   responses: FormResponses;
   attendeeResponses: Record<string, FormResponses>;
+  honorSelections: HonorPicks;
 };
 
 export function ClubRegistrationWorkspace({
   contactPrefill,
+  honorsCatalog = null,
   organizationId,
   workspace,
 }: {
   contactPrefill: Record<string, string>;
+  /** The event's honors classes, when it has any (#618). */
+  honorsCatalog?: RegistrationHonorsCatalog | null;
   organizationId: string;
   workspace: Workspace;
 }) {
@@ -48,10 +56,13 @@ export function ClubRegistrationWorkspace({
   const [draft, setDraft] = useState<DraftState>(() => ({
     selectedMemberIds: (workspace.draft?.selectedMemberIds ?? []).filter((memberId) => rosterIds.has(memberId)),
     guests: workspace.draft?.guests ?? [],
-    responses: (workspace.draft?.responses as FormResponses | undefined) ?? contactPrefill,
+    // The director's own details fill in only what the draft (or the person) left blank (#618).
+    responses: fillBlankAnswers(workspace.draft?.responses, contactPrefill) as FormResponses,
     attendeeResponses: (workspace.draft?.attendeeResponses as Record<string, FormResponses> | undefined) ?? {},
+    honorSelections: workspace.draft?.honorSelections ?? {},
   }));
-  const [step, setStep] = useState<"who" | "form">("who");
+  const [step, setStep] = useState<"who" | "honors" | "form">("who");
+  const [honorsProblem, setHonorsProblem] = useState<string | null>(null);
   // The event's locations (#413): a location is required before continuing when there are any.
   // Kept in this page's state; the server locks it and counts its seats when the registration is saved.
   const locations = workspace.locations;
@@ -112,6 +123,46 @@ export function ClubRegistrationWorkspace({
 
   const selected = workspace.roster.filter((person) => draft.selectedMemberIds.includes(person.memberId));
   const goingCount = selected.length + draft.guests.length;
+
+  // The honors step (#618): only when the event has classes at the chosen site
+  // (or at no site), so an event without honors goes straight to the form.
+  const honorAttendees = useMemo(
+    () => pickingAttendees({ roster: workspace.roster, selectedMemberIds: draft.selectedMemberIds, guests: draft.guests }),
+    [workspace.roster, draft.selectedMemberIds, draft.guests],
+  );
+  const honorOfferings = useMemo(
+    () => (honorsCatalog ? offeringsAtLocation(honorsCatalog.offerings, locationId) : []),
+    [honorsCatalog, locationId],
+  );
+  const hasHonorsStep = honorOfferings.length > 0;
+  const honorPicks = useMemo(
+    () => prunePicks(draft.honorSelections, honorAttendees, honorOfferings),
+    [draft.honorSelections, honorAttendees, honorOfferings],
+  );
+  const totalSteps = hasHonorsStep ? 4 : 3;
+
+  function changeHonors(next: HonorPicks) {
+    setHonorsProblem(null);
+    setDraft((current) => {
+      const updated = { ...current, honorSelections: next };
+      queueSave(updated);
+      return updated;
+    });
+  }
+
+  function leaveWho() {
+    void flush();
+    setStep(hasHonorsStep ? "honors" : "form");
+  }
+
+  function leaveHonors() {
+    // The same age, session and all-sessions rules the server applies on save.
+    const problem = firstPickProblem(honorPicks, honorAttendees, honorOfferings);
+    if (problem) return setHonorsProblem(problem);
+    setHonorsProblem(null);
+    void flush();
+    setStep("form");
+  }
 
   function addGuest(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -199,26 +250,48 @@ export function ClubRegistrationWorkspace({
     lockedAttendeeFieldKeys: workspace.lockedAttendeeFieldKeys,
     lockedRegistrationFieldKeys: workspace.directory.lockedFieldKeys,
     locationId,
+    honorSelections: honorPicks,
     submitUrl: `${base}/registration`,
     onDraftChange,
-    onSubmitted: () => {
+    onSubmitted: (result?: { honors?: { error?: string } | null }) => {
       if (timer.current) clearTimeout(timer.current);
       pending.current = null;
+      // The registration is saved even when a class filled up meanwhile; the class picker on the next screen says so.
+      if (result?.honors?.error) {
+        try { sessionStorage.setItem(`club-honors-note:${workspace.event.id}`, result.honors.error); } catch { /* the picker still shows the picks */ }
+      }
       router.refresh();
     },
-  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, base, onDraftChange, router]);
+  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, honorPicks, base, onDraftChange, router, workspace.event.id]);
 
   const saveLabel = saveState === "saving" ? "Saving draft…" : saveState === "saved" ? "Draft saved" : saveState === "error" ? "Draft not saved. Check your connection." : "";
+
+  if (step === "honors" && hasHonorsStep && honorsCatalog) {
+    return (
+      <ClubHonorsStep
+        attendees={honorAttendees}
+        catalog={honorsCatalog}
+        locationId={locationId}
+        locationName={chosenLocation?.name ?? null}
+        onBack={() => { void flush(); setStep("who"); }}
+        onChange={changeHonors}
+        onContinue={leaveHonors}
+        picks={honorPicks}
+        problem={honorsProblem}
+        saveLabel={saveLabel}
+      />
+    );
+  }
 
   if (step === "form") {
     const { experience } = workspace;
     return (
       <div className="club-roster-stack">
         <div className="club-registration-toolbar">
-          <button className="secondary-button" onClick={() => { void flush(); setStep("who"); }} type="button">
-            <ArrowLeft aria-hidden="true" size={15} /> Change who&apos;s going
+          <button className="secondary-button" onClick={() => { void flush(); setStep(hasHonorsStep ? "honors" : "who"); }} type="button">
+            <ArrowLeft aria-hidden="true" size={15} /> {hasHonorsStep ? "Back to honors" : "Change who’s going"}
           </button>
-          <span className="public-registration-eyebrow">Step 2 of 3 · Event form{chosenLocation ? ` · ${chosenLocation.name}` : ""}</span>
+          <span className="public-registration-eyebrow">Step {totalSteps - 1} of {totalSteps} · Event form{chosenLocation ? ` · ${chosenLocation.name}` : ""}</span>
           <span className="field-help" role="status">{saveLabel}</span>
         </div>
         <PublicRegistrationForm
@@ -238,7 +311,7 @@ export function ClubRegistrationWorkspace({
     <section className="public-manage-card">
       <div className="public-manage-card-heading club-roster-heading">
         <div>
-          <p className="public-registration-eyebrow">Step 1 of 3 · Who&apos;s going</p>
+          <p className="public-registration-eyebrow">Step 1 of {totalSteps} · Who&apos;s going</p>
           <h2>Who&apos;s going?</h2>
         </div>
         <span className="count-badge">{goingCount} chosen</span>
@@ -343,7 +416,7 @@ export function ClubRegistrationWorkspace({
         <button
           className="primary-button"
           disabled={goingCount === 0 || needsLocation}
-          onClick={() => { void flush(); setStep("form"); }}
+          onClick={leaveWho}
           title={needsLocation ? "Choose a location first" : undefined}
           type="button"
         >

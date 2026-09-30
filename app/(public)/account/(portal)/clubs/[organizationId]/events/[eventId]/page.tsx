@@ -10,14 +10,15 @@ import { clubPassIsAvailable } from "@/modules/checkin/club-pass-token";
 import { ClubRegistrationEditor } from "@/components/club-registration-editor";
 import { ClubRegistrationWorkspace } from "@/components/club-registration-workspace";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
-import { attendeeProfilePrefill, getAttendeeProfile } from "@/modules/attendee-accounts/profile-service";
+import { getAttendeeProfile } from "@/modules/attendee-accounts/profile-service";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
+import { directorContactPrefill } from "@/modules/club-registrations/contact-prefill";
 import { loadDirectorClubAssignment } from "@/modules/club-registrations/director-assignment";
 import { PerPersonPriceNotice } from "@/components/per-person-price-notice";
 import { isChurchBilledStatus, notBilledLabel } from "@/modules/club-registrations/church-owed";
 import { ClubRegistrationError, getClubEventWorkspace } from "@/modules/club-registrations/repository";
 import { activeRegistrationStatuses, registrationClosedMessage } from "@/modules/events/lifecycle";
-import { getClassSelectionWorkspace } from "@/modules/honors/enrollment-repository";
+import { getClassSelectionWorkspace, getRegistrationHonorsCatalog } from "@/modules/honors/enrollment-repository";
 
 export const metadata: Metadata = { title: "Club registration" };
 export const dynamic = "force-dynamic";
@@ -41,6 +42,8 @@ export default async function ClubEventRegistrationPage({
   }
 
   const classes = workspace.registration ? await getClassSelectionWorkspace(organizationId, eventId) : null;
+  // The honors step of a new registration (#618); once registered, the class picker below takes over.
+  const honorsCatalog = !workspace.registration && workspace.experience ? await getRegistrationHonorsCatalog(organizationId, eventId) : null;
   // #410: only shown once staff have set something — an empty section would
   // tell a director less than nothing. The loader re-checks this club's
   // roster access itself rather than trusting the check above.
@@ -52,14 +55,17 @@ export default async function ClubEventRegistrationPage({
   // browser isn't the club's contact.
   if (workspace.experience && access.actor.kind === "ATTENDEE") {
     const { account } = await getCurrentAttendee();
-    const prefill = account ? attendeeProfilePrefill(await getAttendeeProfile(account.id), account.verifiedEmail) : {};
-    const registrationKeys = new Set(workspace.experience.form.definition.sections
-      .flatMap((section) => section.fields)
-      .filter((field) => field.scope === "REGISTRATION")
-      .map((field) => field.key));
-    contactPrefill = Object.fromEntries(Object.entries(prefill).flatMap(([key, value]) => (
-      registrationKeys.has(key) && typeof value === "string" && value ? [[key, value]] : []
-    )));
+    if (account) {
+      const profile = await getAttendeeProfile(account.id);
+      // One key/type-to-source table for every club form (#618); the director's
+      // name, email and mobile phone only.
+      contactPrefill = directorContactPrefill(workspace.experience.form.definition, {
+        firstName: profile.firstName,
+        lastName: profile.lastName,
+        email: account.verifiedEmail,
+        mobile: profile.phone,
+      });
+    }
   }
   // The club and church directory fields (#482): always this club's own
   // record, whether an attendee director or staff acting as director is
@@ -192,6 +198,7 @@ export default async function ClubEventRegistrationPage({
       {!workspace.registration && !workspace.problem && workspace.event.phase === "OPEN" && workspace.experience && (
         <ClubRegistrationWorkspace
           contactPrefill={contactPrefill}
+          honorsCatalog={honorsCatalog && honorsCatalog.offerings.length > 0 ? honorsCatalog : null}
           organizationId={organizationId}
           workspace={{ ...workspace, experience: workspace.experience }}
         />

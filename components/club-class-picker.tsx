@@ -1,43 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Award, Save } from "lucide-react";
 import { formatCalendarDate } from "@/modules/club-registrations/domain";
+import { attendeeTypeLabel as typeLabel, seatsNote, unavailableReason } from "@/modules/honors/class-picker-view";
 import { sortHonorSessions } from "@/modules/honors/session-order";
 import type { ClassSelectionWorkspace } from "@/modules/honors/enrollment-repository";
 
 type Offering = ClassSelectionWorkspace["offerings"][number];
 type Attendee = ClassSelectionWorkspace["attendees"][number];
-
-/** What the roster calls this person; underage children are youth but take no seat (#462). */
-function typeLabel(attendee: Attendee) {
-  if (attendee.attendeeType === "STAFF") return "Staff";
-  if (attendee.attendeeType === "ADULT") return "Adult";
-  if (attendee.attendeeType === "UNDERAGE") return "Underage";
-  return "Youth";
-}
-
-function seatsNote(offering: Offering, heldHere: boolean, attendee: Attendee) {
-  if (!attendee.consumesSeat) return "no seat needed";
-  if (heldHere) return "seat held";
-  const left = offering.capacity - offering.seatsTaken;
-  const clubLeft = offering.perClubLimit === null ? null : offering.perClubLimit - offering.clubSeatsTaken;
-  const parts = [`${Math.max(left, 0)} of ${offering.capacity} seats left`];
-  if (clubLeft !== null) parts.push(`${Math.max(clubLeft, 0)} left for your club`);
-  return parts.join(", ");
-}
-
-function unavailableReason(offering: Offering, heldHere: boolean, attendee: Attendee) {
-  if (heldHere) return null;
-  if (!offering.isActive) return "no longer offered";
-  if (offering.minimumAge !== null && (attendee.ageOnEventDate === null || attendee.ageOnEventDate < offering.minimumAge)) {
-    return `ages ${offering.minimumAge}+`;
-  }
-  if (!attendee.consumesSeat) return null;
-  if (offering.seatsTaken >= offering.capacity) return "full";
-  if (offering.perClubLimit !== null && offering.clubSeatsTaken >= offering.perClubLimit) return "club limit reached";
-  return null;
-}
 
 /**
  * Choosing Honors Weekend classes for each person on a club registration.
@@ -57,6 +28,17 @@ export function ClubClassPicker({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+
+  // Honors picked while registering that couldn't be saved (a class filled up meanwhile, #618).
+  useEffect(() => {
+    try {
+      const key = `club-honors-note:${eventId}`;
+      const note = sessionStorage.getItem(key);
+      if (!note) return;
+      sessionStorage.removeItem(key);
+      setError(note);
+    } catch { /* storage is optional */ }
+  }, [eventId]);
 
   const bySession = useMemo(() => {
     const groups = new Map<string, Offering[]>();

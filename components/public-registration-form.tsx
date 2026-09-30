@@ -220,9 +220,11 @@ export type PublicRegistrationFormProps = {
     lockedRegistrationFieldKeys?: string[];
     /** The event location the club picked (#413), sent beside the answers; the server checks it again. */
     locationId?: string | null;
+    /** Honors picked on the honors step (#618), by attendee client id; saved by the server after the registration. */
+    honorSelections?: Record<string, string[]>;
     submitUrl: string;
     onDraftChange?: (draft: { responses: FormResponses; attendees: RosterAttendee[] }) => void;
-    onSubmitted?: () => void;
+    onSubmitted?: (result?: { honors?: { error?: string } | null }) => void;
     /**
      * Reopening a submitted club registration (H3b, #366): the page saves the
      * edited attendees itself instead of submitting a new registration.
@@ -2482,11 +2484,13 @@ export function PublicRegistrationForm({
             })),
           } : {}),
           ...(club?.locationId ? { locationId: club.locationId } : {}),
+          ...(club?.honorSelections && Object.keys(club.honorSelections).length > 0 ? { honorSelections: club.honorSelections } : {}),
           website,
         }),
       });
       const result = await response.json().catch(() => ({})) as {
         confirmation?: Confirmation;
+        honors?: { error?: string } | null;
         issues?: FormIssue[];
         message?: string;
       };
@@ -2509,7 +2513,7 @@ export function PublicRegistrationForm({
       }
       setConfirmation(result.confirmation);
       if (!club) clearPublicDraft(getBrowserDraftStorage(), draftIdentity);
-      club?.onSubmitted?.();
+      club?.onSubmitted?.({ honors: result.honors });
       window.imsdaEmbedScrollTop?.();
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch {

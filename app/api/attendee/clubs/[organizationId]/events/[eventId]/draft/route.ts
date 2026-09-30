@@ -11,6 +11,7 @@ const draftSchema = z.object({
   guests: clubGuestsSchema.default([]),
   responses: z.record(z.string(), z.unknown()),
   attendeeResponses: z.record(z.string(), z.record(z.string(), z.unknown())),
+  honorSelections: z.record(z.string().min(1).max(80), z.array(z.string().min(1).max(64)).max(6)).default({}),
 }).strict();
 
 type RouteContext = { params: Promise<{ organizationId: string; eventId: string }> };

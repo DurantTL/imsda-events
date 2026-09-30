@@ -656,6 +656,7 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
           ? clubDraftResponsesWithDirectory(experience.form.definition, identity, draft.responses as Record<string, unknown>)
           : draft.responses as Record<string, unknown>,
         attendeeResponses: draft.attendeeResponses as Record<string, Record<string, unknown>>,
+        honorSelections: recordFromJson(draft.honorSelections) as Record<string, string[]>,
         updatedAt: draft.updatedAt.toISOString(),
       }
       : null,
@@ -669,6 +670,8 @@ export type ClubRegistrationDraftInput = {
   guests: ClubGuest[];
   responses: Record<string, unknown>;
   attendeeResponses: Record<string, Record<string, unknown>>;
+  /** Honors picked while registering (#618), by the event form's client id. */
+  honorSelections?: Record<string, string[]>;
 };
 
 /** Never an attendee account credited for a staff action (#442): `userId` for a staff "act as" director. */
@@ -697,7 +700,12 @@ export async function saveClubRegistrationDraft(
   const attendeeResponses = Object.fromEntries(
     Object.entries(input.attendeeResponses).filter(([key]) => allowed.has(key) || guestKeys.has(key)),
   );
+  const pickable = new Set([...input.selectedMemberIds.map(clubAttendeeClientId), ...guestKeys]);
+  const honorSelections = Object.fromEntries(
+    Object.entries(input.honorSelections ?? {}).filter(([key, ids]) => pickable.has(key) && ids.length > 0),
+  );
   const data = {
+    honorSelections: honorSelections as Prisma.InputJsonValue,
     selectedMemberIds: input.selectedMemberIds,
     guests: input.guests as Prisma.InputJsonValue,
     responses: input.responses as Prisma.InputJsonValue,

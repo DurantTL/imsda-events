@@ -16,6 +16,7 @@ import {
   selectionProblem,
   type SelectableOffering,
 } from "@/modules/honors/enrollment-domain";
+import { picksByAttendeeId } from "@/modules/honors/registration-picks";
 
 /**
  * Honors Weekend class seats (#359). Every rule is checked here, inside one
@@ -325,4 +326,68 @@ export async function setClassSelections(
       }
     }
   }
+}
+
+/**
+ * What the honors step of a club registration needs before anything is
+ * saved (#618): every active class with its site and live seats. The screen
+ * narrows it to the site the club picks with `offeringsAtLocation`; the
+ * server narrows it again on save (`setClassSelections`), so this is guidance.
+ */
+export async function getRegistrationHonorsCatalog(organizationId: string, eventId: string) {
+  const prisma = getPrisma();
+  const [offerings, counts, sessions] = await Promise.all([
+    loadOfferings(prisma, eventId),
+    seatCounts(prisma, eventId, organizationId),
+    prisma.honorSession.findMany({
+      where: { eventId },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { name: "asc" }],
+      select: { id: true, name: true, locationId: true, sortOrder: true, createdAt: true },
+    }),
+  ]);
+  return {
+    sessions,
+    offerings: offerings
+      .filter((offering) => offering.isActive)
+      .map((offering) => ({
+        ...offering,
+        seatsTaken: counts.taken.get(offering.id) ?? 0,
+        clubSeatsTaken: counts.clubTaken.get(offering.id) ?? 0,
+      })),
+  };
+}
+
+export type RegistrationHonorsCatalog = Awaited<ReturnType<typeof getRegistrationHonorsCatalog>>;
+
+/**
+ * Saves the honors picked during registration, right after the registration
+ * is submitted. The picks arrive keyed by the event form's client ids; they
+ * are mapped to the saved attendees and handed to `setClassSelections`, so
+ * seats, per-club limits, site, age and one-per-session rules are the same
+ * ones every other save uses. Returns how many classes were saved.
+ */
+export async function saveRegistrationHonorPicks(
+  organizationId: string,
+  eventId: string,
+  actor: ClassSelectionActor,
+  picks: Record<string, string[]>,
+  now = new Date(),
+) {
+  if (Object.values(picks).every((ids) => ids.length === 0)) return { saved: 0 };
+  const prisma = getPrisma();
+  const clubRegistration = await prisma.clubEventRegistration.findUnique({
+    where: { eventId_organizationId: { eventId, organizationId } },
+    select: { registration: { select: { attendees: { orderBy: { position: "asc" }, select: { id: true, profileSnapshot: true } } } } },
+  });
+  if (!clubRegistration) throw new ClassSelectionError("NOT_REGISTERED", "Register your club for this event before choosing classes.");
+  const { mapped, unknown } = picksByAttendeeId(
+    picks,
+    clubRegistration.registration.attendees.map((attendee) => {
+      const snapshot = attendee.profileSnapshot as { clubRosterMemberId?: string; clubGuestId?: string };
+      return { id: attendee.id, clubRosterMemberId: snapshot.clubRosterMemberId ?? null, clubGuestId: snapshot.clubGuestId ?? null };
+    }),
+  );
+  if (unknown.length > 0) throw new ClassSelectionError("ATTENDEE_NOT_FOUND", "That person isn't on your club's registration.");
+  await setClassSelections(organizationId, eventId, actor, mapped, now);
+  return { saved: Object.values(mapped).reduce((total, ids) => total + ids.length, 0) };
 }
