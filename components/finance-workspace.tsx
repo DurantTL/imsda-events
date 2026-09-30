@@ -60,7 +60,7 @@ export function FinanceWorkspace({
   const [selectedAdjustment, setSelectedAdjustment] = useState<AdjustmentRecord | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [pendingRefund, setPendingRefund] = useState<{ amountCents: number; reason: string } | null>(null);
+  const [pendingRefund, setPendingRefund] = useState<{ amountCents: number; reason: string; idempotencyKey: string } | null>(null);
   const [refundReviewError, setRefundReviewError] = useState("");
   // Both dialogs listen for Escape on the document; while the refund confirm
   // is open, Escape belongs to it alone and must not also close this modal.
@@ -119,7 +119,8 @@ export function FinanceWorkspace({
     if (reasonError) { setError(reasonError); return; }
     setError("");
     setRefundReviewError("");
-    setPendingRefund({ amountCents, reason });
+    // One key per opened review, reused on every retry of this confirmation (#525).
+    setPendingRefund({ amountCents, reason, idempotencyKey: crypto.randomUUID() });
   }
 
   function cancelRefundReview() {

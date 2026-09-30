@@ -304,7 +304,7 @@ export function ClubOrderWorkspace({
           </p>
         )}
         {lines.length === 0 ? (
-          <p className="quiet-copy">Nothing to order. New completed honors appear here on their own; record uniform needs below, and add earned awards on the Earned awards page.</p>
+          <p className="quiet-copy">Nothing to order. New completed honors appear here on their own; record uniform needs below, and add earned awards on the Class tracking page.</p>
         ) : (
           <ul className={styles.list}>
             {lines.map((line) => {
