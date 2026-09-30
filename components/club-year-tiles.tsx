@@ -30,6 +30,7 @@ export function ClubYearTiles({
   eventsHref,
   reports,
   reportsHref,
+  headingLevel = 2,
 }: {
   roster: RosterYearSummary;
   rosterHref: string;
@@ -44,12 +45,15 @@ export function ClubYearTiles({
   /** Null hides the tile: the viewer's role doesn't submit or see reports. */
   reports: MonthlyReportProgress | null;
   reportsHref: string;
+  /** Tile heading level: 2 under the page's h1 (the default), 3 on a page that puts its own h2 above the tiles. */
+  headingLevel?: 2 | 3;
 }) {
+  const Heading = `h${headingLevel}` as const;
   const complianceTotal = compliance ? compliance.missing + compliance.notInCompliance + compliance.expiringSoon : 0;
   return (
     <div className="club-year-tiles">
       <div className="club-year-tile">
-        <h2 className="club-year-tile-heading"><UsersRound size={16} aria-hidden="true" /> Roster</h2>
+        <Heading className="club-year-tile-heading"><UsersRound size={16} aria-hidden="true" /> Roster</Heading>
         <p className="club-year-tile-stat">{roster.active}</p>
         <p className="club-year-tile-detail">active this club year · {roster.staff} staff · {roster.members} members</p>
         {roster.byClass.length > 0 && (
@@ -62,7 +66,7 @@ export function ClubYearTiles({
 
       {honors && (
         <div className="club-year-tile">
-          <h2 className="club-year-tile-heading"><Award size={16} aria-hidden="true" /> Honors</h2>
+          <Heading className="club-year-tile-heading"><Award size={16} aria-hidden="true" /> Honors</Heading>
           {honors.inProgress === 0 && honors.completedThisYear === 0 ? (
             <p className="club-year-tile-detail">None recorded yet this club year.</p>
           ) : (
@@ -77,7 +81,7 @@ export function ClubYearTiles({
 
       {compliance && (
         <div className="club-year-tile">
-          <h2 className="club-year-tile-heading"><ShieldCheck size={16} aria-hidden="true" /> Background checks</h2>
+          <Heading className="club-year-tile-heading"><ShieldCheck size={16} aria-hidden="true" /> Background checks</Heading>
           {complianceTotal === 0 ? (
             <p className="club-year-tile-detail"><CheckCircle2 size={15} aria-hidden="true" /> All current.</p>
           ) : (
@@ -92,7 +96,7 @@ export function ClubYearTiles({
       )}
 
       <div className="club-year-tile">
-        <h2 className="club-year-tile-heading"><CalendarDays size={16} aria-hidden="true" /> Events</h2>
+        <Heading className="club-year-tile-heading"><CalendarDays size={16} aria-hidden="true" /> Events</Heading>
         <p className="club-year-tile-stat">{events.open}</p>
         <p className="club-year-tile-detail">
           {events.open === 1 ? "event open to register" : "events open to register"} · {events.registered} registered
@@ -102,7 +106,7 @@ export function ClubYearTiles({
 
       {reports && (
         <div className="club-year-tile">
-          <h2 className="club-year-tile-heading"><FileText size={16} aria-hidden="true" /> Monthly reports</h2>
+          <Heading className="club-year-tile-heading"><FileText size={16} aria-hidden="true" /> Monthly reports</Heading>
           <p className="club-year-tile-stat">{reports.filed}</p>
           <p className="club-year-tile-detail">
             filed this club year

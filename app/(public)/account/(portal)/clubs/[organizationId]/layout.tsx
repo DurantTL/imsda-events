@@ -63,16 +63,26 @@ export default async function ClubLayout({
             variant="secondary"
           />
         ) : (
-          <ClubGateSlot>
-            <ClubAccessGate access={access} />
+          <>
+            {/* Gated (set up or unlock two-step, own sign-in): Monthly Records still opens, so keep the way back Home. */}
             {"club" in access && clubCapabilities(access.club.role).submitReports && (
-              <ClubRecordsHint>
-                <p className="field-help club-gate-reports">
-                  Monthly Records open without this step, except the attendance check-off: <Link href={`${base}/records`}>open Monthly Records</Link>.
-                </p>
-              </ClubRecordsHint>
+              <AccountSectionNav
+                items={clubReporterNavItems({ base, capabilities: clubCapabilities(access.club.role) })}
+                label="Club"
+                variant="secondary"
+              />
             )}
-          </ClubGateSlot>
+            <ClubGateSlot>
+              <ClubAccessGate access={access} />
+              {"club" in access && clubCapabilities(access.club.role).submitReports && (
+                <ClubRecordsHint>
+                  <p className="field-help club-gate-reports">
+                    Monthly Records open without this step, except the attendance check-off: <Link href={`${base}/records`}>open Monthly Records</Link>.
+                  </p>
+                </ClubRecordsHint>
+              )}
+            </ClubGateSlot>
+          </>
         )}
         {children}
       </div>

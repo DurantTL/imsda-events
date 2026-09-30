@@ -72,6 +72,7 @@ export default async function EventClubPage({
         </section>
       )}
       <ClubOverview
+        headingLevel={3}
         organizationId={organizationId}
         reportHref={(month) => `/more/clubs/reports/${organizationId}/${month}${fromHere}`}
         reportsEditable={false}

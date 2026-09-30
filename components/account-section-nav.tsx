@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useId, useRef } from "react";
+import { useId, useLayoutEffect, useRef } from "react";
 
 export type AccountNavItem = {
   href: string;
@@ -13,22 +13,18 @@ export type AccountNavItem = {
   alsoMatchPrefix?: string;
   /** A heading shown before the first item of each run of items sharing it (e.g. "People"). Items without one sit ungrouped. */
   group?: string;
+  /**
+   * Leave the group's heading off the screen (the list keeps the name for
+   * assistive tech). Set it when the group's own tab already says it, e.g.
+   * "Events" above an "Events" tab: a scrolling row can't spare the width.
+   */
+  hideGroupLabel?: boolean;
 };
 
 function isActive(pathname: string, item: AccountNavItem) {
   if (pathname === item.href) return true;
   if (item.alsoMatchPrefix && pathname.startsWith(item.alsoMatchPrefix)) return true;
   return Boolean(item.matchChildren) && pathname.startsWith(`${item.href}/`);
-}
-
-/**
- * A group heading that one of its own tabs already says ("Events" above
- * "Events", "Club" above "Club info") only takes up room in a row that scrolls,
- * so it is left off the screen; the list keeps the name for assistive tech.
- */
-function groupLabelIsRedundant(group: string, items: AccountNavItem[]) {
-  const name = group.trim().toLowerCase();
-  return items.some((item) => item.label.toLowerCase().includes(name));
 }
 
 /**
@@ -50,9 +46,10 @@ export function AccountSectionNav({
   const listRef = useRef<HTMLUListElement>(null);
 
   // Open with the current tab centred in the row (the row scrolls sideways on
-  // a phone), then keep the edge fades in step with how far the row is scrolled.
-  // Only the row itself scrolls: scrollIntoView could also move the page.
-  useEffect(() => {
+  // a phone) before the first paint, then keep the edge fades in step with how
+  // far the row is scrolled. Only the row itself scrolls: scrollIntoView could
+  // also move the page.
+  useLayoutEffect(() => {
     const nav = navRef.current;
     const list = listRef.current;
     if (!nav || !list) return;
@@ -63,19 +60,34 @@ export function AccountSectionNav({
       const offset = currentBox.left - listBox.left + list.scrollLeft;
       list.scrollLeft = Math.max(0, offset - (list.clientWidth - currentBox.width) / 2);
     }
+    const setFade = (name: "fadeStart" | "fadeEnd", on: boolean) => {
+      const value = String(on);
+      if (nav.dataset[name] !== value) nav.dataset[name] = value;
+    };
     const updateFades = () => {
-      nav.dataset.fadeStart = String(list.scrollLeft > 1);
-      nav.dataset.fadeEnd = String(list.scrollLeft + list.clientWidth < list.scrollWidth - 1);
+      setFade("fadeStart", list.scrollLeft > 1);
+      setFade("fadeEnd", list.scrollLeft + list.clientWidth < list.scrollWidth - 1);
     };
     updateFades();
     list.addEventListener("scroll", updateFades, { passive: true });
+    // The row's width changes without it resizing when the tabs reflow (web fonts
+    // arriving, a tab label changing), so watch the tabs too and re-check once
+    // fonts are ready.
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateFades);
-    observer?.observe(list);
+    if (observer) {
+      observer.observe(list);
+      for (const child of Array.from(list.children)) observer.observe(child);
+    }
+    let cancelled = false;
+    void document.fonts?.ready.then(() => {
+      if (!cancelled) updateFades();
+    });
     return () => {
+      cancelled = true;
       list.removeEventListener("scroll", updateFades);
       observer?.disconnect();
     };
-  }, [pathname]);
+  }, [pathname, items]);
 
   const groupIdBase = useId();
   // Consecutive items sharing a group become one section; ungrouped items stay top level.
@@ -99,7 +111,7 @@ export function AccountSectionNav({
         {sections.map((section, index) =>
           section.group ? (
             <li className="account-nav-group" key={`${section.group}-${index}`}>
-              {groupLabelIsRedundant(section.group, section.items)
+              {section.items.some((item) => item.hideGroupLabel)
                 ? <ul aria-label={section.group}>{section.items.map(renderItem)}</ul>
                 : (
                   <>

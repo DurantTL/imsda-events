@@ -7438,7 +7438,7 @@ select:focus-visible {
   .club-roster-heading > .club-team-invite-actions :is(.primary-button, .secondary-button) { width: 100%; min-height: 44px; justify-content: center; white-space: normal; }
   .club-roster-toolbar { display: grid; grid-template-columns: 1fr; justify-content: stretch; gap: 8px; }
   .club-roster-toolbar .roster-csv-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .club-roster-toolbar .roster-csv-actions > *,
+  .club-roster-toolbar .roster-csv-actions > :is(a, button),
   .club-roster-toolbar > .text-button {
     display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 6px;
     border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 8px 12px; text-decoration: none;

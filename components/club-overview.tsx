@@ -29,6 +29,7 @@ export async function ClubOverview({
   complianceCounts,
   honorsHref,
   rosterYear,
+  headingLevel = 2,
 }: {
   organizationId: string;
   /**
@@ -37,6 +38,8 @@ export async function ClubOverview({
    * never offers birth dates, since the reveal route covers the current year.
    */
   rosterYear?: string;
+  /** Heading level of the summary tiles (see ClubYearTiles): 3 when the page has its own h2 above. */
+  headingLevel?: 2 | 3;
   birthDatesEndpoint?: string;
   reportHref: (month: string) => string;
   /** Staff can open and file a month with no report yet; others only view. */
@@ -93,6 +96,7 @@ export async function ClubOverview({
   return (
     <>
       <ClubYearTiles
+        headingLevel={headingLevel}
         compliance={complianceTile}
         complianceHref="#open-club-roster"
         events={{ open: open.length, registered: registered.length }}
