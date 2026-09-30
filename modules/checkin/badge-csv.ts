@@ -42,13 +42,22 @@ function eligibleFields(definition: unknown): RegistrationFormField[] {
 export function badgePositionOptions(
   registrations: RegistrationRecord[],
 ): BadgePositionOption[] {
-  const options = new Map<string, BadgePositionOption>();
+  const found = new Map<string, { label: string; forms: Set<string> }>();
   for (const registration of registrations) {
+    const formName = registration.publicSubmission?.formName ?? "";
     for (const field of eligibleFields(registration.publicSubmission?.definition)) {
-      if (!options.has(field.key)) options.set(field.key, { key: field.key, label: field.label });
+      const entry = found.get(field.key) ?? { label: field.label, forms: new Set<string>() };
+      if (formName) entry.forms.add(formName);
+      found.set(field.key, entry);
     }
   }
-  return [...options.values()].sort((left, right) => left.label.localeCompare(right.label));
+  return [...found.entries()]
+    .map(([key, { label, forms }]) => ({
+      key,
+      // The same question key in more than one form: say which forms.
+      label: forms.size > 1 ? `${label} (${[...forms].sort().join(", ")})` : label,
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label));
 }
 
 /** The chosen key when it is eligible, otherwise null (blank Position). */
@@ -73,6 +82,7 @@ export function buildBadgeCsvRows(
         .find((candidate) => candidate.key === positionField);
       if (!field) continue;
       const registrationAnswer = answerText(
+        field,
         record(registration.publicSubmission?.responses)[positionField],
       );
       for (const attendee of registration.attendees) {
@@ -80,7 +90,7 @@ export function buildBadgeCsvRows(
           attendee.id,
           field.scope === "REGISTRATION"
             ? registrationAnswer
-            : answerText(record(attendee.responses)[positionField]),
+            : answerText(field, record(attendee.responses)[positionField]),
         );
       }
     }
@@ -95,8 +105,13 @@ export function buildBadgeCsvRows(
   ];
 }
 
-function answerText(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
+/** The text as staff saw it: a choice exports its option label, not the stored value. */
+function answerText(field: RegistrationFormField, value: unknown) {
+  if (typeof value !== "string") return "";
+  const raw = value.trim();
+  return field.type === "SELECT" || field.type === "RADIO"
+    ? (field.optionLabels?.[raw] ?? raw).trim()
+    : raw;
 }
 
 export function badgeCsvFilename(eventSlug: string) {

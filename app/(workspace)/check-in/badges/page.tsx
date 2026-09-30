@@ -179,6 +179,9 @@ export default async function PrintableNameBadgesPage({
               <option key={option.key} value={option.key}>{option.label}</option>
             ))}
           </select>
+          <small className="quiet-copy">
+            Questions asked once per registration apply to everyone on it.
+          </small>
         </label>
         <label className="badge-print-checkbox">
           <input name="title" type="hidden" value="0" />

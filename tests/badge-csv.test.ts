@@ -195,6 +195,59 @@ describe("badge CSV rows", () => {
   });
 });
 
+describe("badge CSV option labels, form names and mixed form versions", () => {
+  const withForm = (base: RegistrationRecord, formName: string) => ({
+    ...base,
+    publicSubmission: { ...base.publicSubmission, formName },
+  }) as unknown as RegistrationRecord;
+
+  it("exports the option label of a SELECT answer, not the stored value", () => {
+    const definition = definitionWith(
+      field("ministry_area", "Ministry area", "SELECT", "REGISTRATION", {
+        options: ["music", "welcome"],
+        optionLabels: { music: "Music ministry", welcome: "Welcome team" },
+      }),
+    );
+    const rows = buildBadgeCsvRows([
+      registration("REG-DDDD4444", [{ id: "d1", first: "Di", last: "Dale" }], { ministry_area: "music" }, definition),
+      registration("REG-EEEE5555", [{ id: "e1", first: "Ed", last: "Eve" }], { ministry_area: "other" }, definition),
+    ], "ministry_area");
+    expect(rows.slice(1).map((row) => row[2])).toEqual(["Music ministry", "other"]);
+  });
+
+  it("names the forms when the same key is offered by more than one form", () => {
+    const options = badgePositionOptions([
+      withForm(registration("REG-A", [{ id: "x1", first: "A", last: "A" }]), "Retreat form"),
+      withForm(registration("REG-B", [{ id: "x2", first: "B", last: "B" }]), "Camp form"),
+    ]);
+    expect(options.find((option) => option.key === "church_role")?.label)
+      .toBe("Church role (Camp form, Retreat form)");
+    const single = badgePositionOptions([
+      withForm(registration("REG-C", [{ id: "x3", first: "C", last: "C" }]), "Retreat form"),
+    ]);
+    expect(single.find((option) => option.key === "church_role")?.label).toBe("Church role");
+  });
+
+  it.each([
+    ["sensitive", definitionWith(field("church_role", "Church role or health condition", "TEXT"))],
+    ["conditional on a medical question", definitionWith(
+      field("medical_question", "Any medical needs?", "RADIO"),
+      field("church_role", "Church role", "TEXT", "ATTENDEE", {
+        conditional: { fieldKey: "medical_question", operator: "EQUALS", value: "Option A" },
+      }),
+    )],
+  ])("leaves Position blank for a registration whose form version makes the key %s", (_name, otherDefinition) => {
+    const rows = buildBadgeCsvRows([
+      registration("REG-AAAA1111", [{ id: "m1", first: "Amy", last: "Adams", responses: { church_role: "Greeter" } }]),
+      registration("REG-BBBB2222", [{ id: "m2", first: "Bo", last: "Brown", responses: { church_role: "Secret" } }], {}, otherDefinition),
+    ], "church_role");
+    expect(rows.slice(1)).toEqual([
+      ["REG-AAAA1111", "Amy Adams", "Greeter"],
+      ["REG-BBBB2222", "Bo Brown", ""],
+    ]);
+  });
+});
+
 describe("badge CSV route", () => {
   it("returns private, no-store CSV with the right headers and an audit row with counts only", async () => {
     const response = await call();
