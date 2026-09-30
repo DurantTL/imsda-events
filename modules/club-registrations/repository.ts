@@ -95,6 +95,7 @@ export class ClubRegistrationError extends Error {
       | "FORM_UNAVAILABLE"
       | "MEMBER_NOT_ON_ROSTER"
       | "DRAFT_TOO_LARGE"
+      | "DRAFT_CONFLICT"
       | "GUEST_INVALID"
       | "REGISTRATION_NOT_FOUND"
       | "REGISTRATION_CLOSED"
@@ -776,6 +777,9 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
         honorSelections: recordFromJson(draft.honorSelections) as Record<string, string[]>,
         rosterAges: rosterAgesFromJson(draft.rosterAges),
         rosterAgeSaveOff: rosterAgeSaveOffFromJson(draft.rosterAgeSaveOff),
+        // The page revalidates this against the locations above (#659).
+        locationId: draft.locationId,
+        revision: draft.revision,
         updatedAt: draft.updatedAt.toISOString(),
       }
       : null,
@@ -795,6 +799,14 @@ export type ClubRegistrationDraftInput = {
   rosterAges?: Record<string, number>;
   /** Roster members whose typed-in age is not also saved to the roster at submit (#639). */
   rosterAgeSaveOff?: string[];
+  /** The location picked so far (#659). A draft reserves no seats; it is checked again on restore. */
+  locationId?: string | null;
+  /**
+   * The revision this save was based on (0 when the page loaded with no
+   * draft). A save based on an older revision is refused (#659). Left out, the
+   * save is unconditional, as before.
+   */
+  baseRevision?: number;
 };
 
 /** Never an attendee account credited for a staff action (#442): `userId` for a staff "act as" director. */
@@ -847,13 +859,45 @@ export async function saveClubRegistrationDraft(
     attendeeResponses: attendeeResponses as Prisma.InputJsonValue,
     ...("accountId" in actor ? { updatedByAccountId: actor.accountId, updatedByUserId: null } : { updatedByUserId: actor.userId, updatedByAccountId: null }),
   };
-  const draft = await getPrisma().clubRegistrationDraft.upsert({
-    where: { eventId_organizationId: { eventId, organizationId } },
-    create: { eventId, organizationId, ...data },
-    update: data,
-    select: { updatedAt: true },
+  // Only a location of this event is kept; anything else is dropped, not an error.
+  const location = input.locationId
+    ? await getPrisma().eventLocation.findFirst({ where: { id: input.locationId, eventId, isActive: true }, select: { id: true } })
+    : null;
+  const fields = { ...data, locationId: location?.id ?? null };
+  const where = { eventId_organizationId: { eventId, organizationId } };
+  const select = { updatedAt: true, revision: true } as const;
+  if (input.baseRevision === undefined) {
+    const draft = await getPrisma().clubRegistrationDraft.upsert({
+      where,
+      create: { eventId, organizationId, ...fields, revision: 1 },
+      update: { ...fields, revision: { increment: 1 } },
+      select,
+    });
+    return { updatedAt: draft.updatedAt.toISOString(), revision: draft.revision };
+  }
+  // Optimistic revision (#659): only a save based on the current revision lands.
+  const conflict = new ClubRegistrationError(
+    "DRAFT_CONFLICT",
+    "This draft changed in another tab or window. Reload the page to see the latest version.",
+  );
+  const updated = await getPrisma().clubRegistrationDraft.updateMany({
+    where: { eventId, organizationId, revision: input.baseRevision },
+    data: { ...fields, revision: { increment: 1 } },
   });
-  return { updatedAt: draft.updatedAt.toISOString() };
+  if (updated.count === 0) {
+    const existing = await getPrisma().clubRegistrationDraft.findUnique({ where, select: { id: true } });
+    if (existing) throw conflict;
+    try {
+      const created = await getPrisma().clubRegistrationDraft.create({ data: { eventId, organizationId, ...fields, revision: 1 }, select });
+      return { updatedAt: created.updatedAt.toISOString(), revision: created.revision };
+    } catch (error) {
+      // Another tab created the first draft at the same moment.
+      if ((error as { code?: string } | null)?.code === "P2002") throw conflict;
+      throw error;
+    }
+  }
+  const saved = await getPrisma().clubRegistrationDraft.findUniqueOrThrow({ where, select });
+  return { updatedAt: saved.updatedAt.toISOString(), revision: saved.revision };
 }
 
 /**

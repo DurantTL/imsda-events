@@ -15,6 +15,8 @@ const draftSchema = z.object({
   honorSelections: honorSelectionsSchema.default({}),
   rosterAges: rosterAgesSchema.default({}),
   rosterAgeSaveOff: rosterAgeSaveOffSchema.default([]),
+  locationId: z.string().min(1).max(64).nullable().optional(),
+  baseRevision: z.number().int().min(0).optional(),
 }).strict();
 
 type RouteContext = { params: Promise<{ organizationId: string; eventId: string }> };

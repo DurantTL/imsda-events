@@ -4168,6 +4168,13 @@ model ClubRegistrationDraft {
   /// Roster member ids whose typed-in age should NOT also be saved to the roster
   /// when the registration is submitted (#639). Saving back is the default.
   rosterAgeSaveOff   Json     @default("[]")
+  /// The location the director picked (#659), kept so a reload doesn't lose it.
+  /// Not a foreign key: a location removed later is explained on restore rather
+  /// than blocking the draft. A draft reserves no seats.
+  locationId         String?
+  /// Bumped by every save. A save must name the revision it was based on, so a
+  /// second tab's stale save is refused instead of silently overwriting (#659).
+  revision           Int      @default(0)
   updatedByAccountId String?
   /// Set instead of `updatedByAccountId` for a staff "act as" director (#442).
   updatedByUserId    String?

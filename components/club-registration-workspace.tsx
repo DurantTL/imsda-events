@@ -10,6 +10,7 @@ import {
   type RosterAttendee,
 } from "@/components/public-registration-form";
 import { createDraftSaveQueue } from "@/modules/club-registrations/draft-save-queue";
+import { restoreDraftLocation } from "@/modules/club-registrations/draft-location";
 import { rosterHrefFromRegistration } from "@/modules/club-registrations/roster-return";
 import { ClubRosterAgeField } from "@/components/club-roster-age-field";
 import { ageInputProblem, ageInputValue, effectiveRosterAges, parseTypedAge, withRosterAge } from "@/modules/club-registrations/roster-ages";
@@ -49,6 +50,8 @@ type DraftState = {
   rosterAges: Record<string, number>;
   /** Roster people whose typed-in age is NOT also saved to the roster at submit (#639); saving is the default. */
   rosterAgeSaveOff: string[];
+  /** The chosen location (#659), saved with the draft and checked again on restore. */
+  locationId: string | null;
 };
 
 export function ClubRegistrationWorkspace({
@@ -65,6 +68,11 @@ export function ClubRegistrationWorkspace({
 }) {
   const router = useRouter();
   const ageKey = workspace.attendeeAgeKey;
+  // The event's locations (#413): a location is required before continuing when there are any.
+  // The choice is part of the draft (#659); the server locks it and counts its seats when the registration is saved.
+  const locations = workspace.locations;
+  const [restoredLocation] = useState(() => restoreDraftLocation(locations, workspace.draft?.locationId));
+  const [locationNote, setLocationNote] = useState<string | null>(restoredLocation.note);
   const rosterIds = useMemo(() => new Set(workspace.roster.map((person) => person.memberId)), [workspace.roster]);
   const [draft, setDraft] = useState<DraftState>(() => ({
     selectedMemberIds: (workspace.draft?.selectedMemberIds ?? []).filter((memberId) => rosterIds.has(memberId)),
@@ -75,13 +83,10 @@ export function ClubRegistrationWorkspace({
     honorSelections: workspace.draft?.honorSelections ?? {},
     rosterAges: workspace.draft?.rosterAges ?? {},
     rosterAgeSaveOff: workspace.draft?.rosterAgeSaveOff ?? [],
+    locationId: restoredLocation.locationId,
   }));
   const [step, setStep] = useState<"who" | "form">("who");
-  // The event's locations (#413): a location is required before continuing when there are any.
-  // Kept in this page's state; the server locks it and counts its seats when the registration is saved.
-  const locations = workspace.locations;
-  const pickableLocations = locations.filter((location) => location.open && (!location.full || location.waitlistOnFull));
-  const [locationId, setLocationId] = useState<string | null>(() => (pickableLocations.length === 1 ? pickableLocations[0]!.id : null));
+  const locationId = draft.locationId;
   const chosenLocation = locations.find((location) => location.id === locationId) ?? null;
   const needsLocation = locations.length > 0 && !chosenLocation;
   const [addingGuest, setAddingGuest] = useState(false);
@@ -91,20 +96,37 @@ export function ClubRegistrationWorkspace({
   const base = `/api/attendee/clubs/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(workspace.event.id)}`;
 
   const [leaveHref, setLeaveHref] = useState<string | null>(null);
-  const [queue] = useState(() => createDraftSaveQueue<DraftState>({
-    onState: (state) => {
-      setSaveState(state);
-      if (state === "saved") setLeaveHref(null);
-    },
-    send: async (next) => {
-      const response = await fetch(`${base}/draft`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(next),
-      });
-      return response.ok;
-    },
-  }));
+  // The revision the saved draft is at (#659); every save names it, so a stale save from another tab is refused.
+  const [conflict, setConflict] = useState(false);
+  const [queue] = useState(() => {
+    let revision = workspace.draft?.revision ?? 0;
+    let conflicted = false;
+    return createDraftSaveQueue<DraftState>({
+      onState: (state) => {
+        setSaveState(state);
+        if (state === "saved") setLeaveHref(null);
+      },
+      send: async (next) => {
+        // After a conflict nothing more is sent: the director reloads to see the other tab's work.
+        if (conflicted) return false;
+        const response = await fetch(`${base}/draft`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...next, baseRevision: revision }),
+        });
+        if (response.ok) {
+          const saved = await response.json().catch(() => null) as { revision?: number } | null;
+          if (typeof saved?.revision === "number") revision = saved.revision;
+          return true;
+        }
+        if (response.status === 409) {
+          const problem = await response.json().catch(() => null) as { error?: string } | null;
+          if (problem?.error === "DRAFT_CONFLICT") { conflicted = true; setConflict(true); }
+        }
+        return false;
+      },
+    });
+  });
 
   /** Saves the pending draft now; true when nothing is left unsaved. */
   const flush = useCallback(async (): Promise<boolean> => {
@@ -135,7 +157,23 @@ export function ClubRegistrationWorkspace({
     timer.current = setTimeout(() => { timer.current = null; void queue.flush(false); }, 1200);
   }, [queue]);
 
+  const setLocationId = (next: string) => {
+    setLocationNote(null);
+    setDraft((current) => {
+      const updated = { ...current, locationId: next };
+      queueSave(updated);
+      return updated;
+    });
+  };
+
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+
+  // Back online: send whatever failed while the connection was down (#659).
+  useEffect(() => {
+    const retry = () => { if (queue.hasPending()) void queue.flush(); };
+    window.addEventListener("online", retry);
+    return () => window.removeEventListener("online", retry);
+  }, [queue]);
 
   function toggle(memberId: string) {
     setDraft((current) => {
@@ -355,7 +393,14 @@ export function ClubRegistrationWorkspace({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, hasHonors, honorPicks, honorsProblem, honorAttendees, honorOfferings, base, onDraftChange, router, organizationId, workspace.event.id, queue]);
 
-  const saveLabel = saveState === "saving" ? "Saving draft…" : saveState === "saved" ? "Draft saved" : saveState === "error" ? "Draft not saved. Check your connection." : "";
+  const saveLabel = conflict
+    ? "This draft changed in another tab. Reload to see the latest version."
+    : saveState === "saving" ? "Saving draft…" : saveState === "saved" ? "Draft saved" : saveState === "error" ? "Draft not saved. Check your connection." : "";
+  const saveAction = conflict
+    ? <button className="text-button" onClick={() => window.location.reload()} type="button">Reload</button>
+    : saveState === "error"
+      ? <button className="text-button" onClick={() => void flush()} type="button">Retry</button>
+      : null;
 
   if (step === "form") {
     const { experience } = workspace;
@@ -366,7 +411,7 @@ export function ClubRegistrationWorkspace({
             <ArrowLeft aria-hidden="true" size={15} /> Change who’s going
           </button>
           <span className="public-registration-eyebrow">Step 2 of {totalSteps} · Each person&apos;s details{chosenLocation ? ` · ${chosenLocation.name}` : ""}</span>
-          <span className="field-help" role="status">{saveLabel}</span>
+          <span className="field-help" role="status">{saveLabel}{saveAction && <> {saveAction}</>}</span>
         </div>
         <PublicRegistrationForm
           choiceUsage={experience.choiceUsage}
@@ -390,6 +435,7 @@ export function ClubRegistrationWorkspace({
         </div>
         <span className="count-badge">{goingCount} chosen</span>
       </div>
+      {locationNote && <p className="field-help" role="status">{locationNote}</p>}
       <ClubLocationPicker allowWaitlist locations={locations} onChange={setLocationId} value={locationId} />
       <p>
         Tap everyone from your roster who is attending. Ages are as of the first day of the
@@ -407,7 +453,7 @@ export function ClubRegistrationWorkspace({
               {" · "}
               <button className="text-button" onClick={() => selectAll(false)} type="button">Clear</button>
             </span>
-            <span className="field-help" role="status">{saveLabel}</span>
+            <span className="field-help" role="status">{saveLabel}{saveAction && <> {saveAction}</>}</span>
           </div>
           <ul className="club-going-list">
             {workspace.roster.map((person) => (

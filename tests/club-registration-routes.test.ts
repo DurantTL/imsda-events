@@ -9,6 +9,11 @@ const mocks = vi.hoisted(() => ({
   eventFindFirst: vi.fn(),
   rosterFindMany: vi.fn(),
   draftUpsert: vi.fn(),
+  draftUpdateMany: vi.fn(),
+  draftFind: vi.fn(),
+  draftFindOrThrow: vi.fn(),
+  draftCreate: vi.fn(),
+  locationFindFirst: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -22,7 +27,14 @@ vi.mock("@/lib/prisma", () => ({
     platformSettings: { findUnique: async () => ({ passkeyRpId: null }) },
     event: { findFirst: mocks.eventFindFirst },
     clubRosterMember: { findMany: mocks.rosterFindMany },
-    clubRegistrationDraft: { upsert: mocks.draftUpsert },
+    clubRegistrationDraft: {
+      upsert: mocks.draftUpsert,
+      updateMany: mocks.draftUpdateMany,
+      findUnique: mocks.draftFind,
+      findUniqueOrThrow: mocks.draftFindOrThrow,
+      create: mocks.draftCreate,
+    },
+    eventLocation: { findFirst: mocks.locationFindFirst },
   }),
 }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.getCurrentAttendee }));
@@ -70,7 +82,12 @@ beforeEach(() => {
   });
   mocks.eventFindFirst.mockResolvedValue({ id: "event-1", startsAt: new Date("2026-12-05T15:00:00Z") });
   mocks.rosterFindMany.mockResolvedValue([{ id: "m1" }, { id: "m2" }]);
-  mocks.draftUpsert.mockResolvedValue({ updatedAt: new Date("2026-10-01T00:00:00Z") });
+  mocks.draftUpsert.mockResolvedValue({ updatedAt: new Date("2026-10-01T00:00:00Z"), revision: 1 });
+  mocks.draftUpdateMany.mockResolvedValue({ count: 1 });
+  mocks.draftFind.mockResolvedValue({ id: "draft-1" });
+  mocks.draftFindOrThrow.mockResolvedValue({ updatedAt: new Date("2026-10-01T00:00:00Z"), revision: 4 });
+  mocks.draftCreate.mockResolvedValue({ updatedAt: new Date("2026-10-01T00:00:00Z"), revision: 1 });
+  mocks.locationFindFirst.mockResolvedValue({ id: "loc-1" });
 });
 
 describe("club registration routes", () => {
@@ -183,6 +200,47 @@ describe("club registration routes", () => {
 
     await PUT_DRAFT(request("PUT", { selectedMemberIds: ["m1"], responses: { email: "x@example.test" }, attendeeResponses: { m1: { dietary_needs: "None" }, intruder: { note: "x" } } }), ctx("club-a"));
     expect(mocks.draftUpsert.mock.calls[0][0].update.attendeeResponses).toEqual({ m1: { dietary_needs: "None" } });
+  });
+
+  describe("draft revisions and location (#659)", () => {
+    const body = { selectedMemberIds: ["m1"], responses: {}, attendeeResponses: {} };
+
+    it("saves against the revision the page loaded and returns the new one", async () => {
+      const response = await PUT_DRAFT(request("PUT", { ...body, baseRevision: 3 }), ctx("club-a"));
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ revision: 4 });
+      expect(mocks.draftUpdateMany.mock.calls[0][0].where).toMatchObject({ eventId: "event-1", organizationId: "club-a", revision: 3 });
+      expect(mocks.draftUpdateMany.mock.calls[0][0].data.revision).toEqual({ increment: 1 });
+      expect(mocks.draftUpsert).not.toHaveBeenCalled();
+    });
+
+    it("refuses a stale save from a second tab without overwriting", async () => {
+      mocks.draftUpdateMany.mockResolvedValue({ count: 0 });
+      const response = await PUT_DRAFT(request("PUT", { ...body, baseRevision: 2 }), ctx("club-a"));
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({ error: "DRAFT_CONFLICT" });
+      expect(mocks.draftCreate).not.toHaveBeenCalled();
+    });
+
+    it("creates the first draft, and refuses the tab that loses a simultaneous first save", async () => {
+      mocks.draftUpdateMany.mockResolvedValue({ count: 0 });
+      mocks.draftFind.mockResolvedValue(null);
+      expect((await PUT_DRAFT(request("PUT", { ...body, baseRevision: 0 }), ctx("club-a"))).status).toBe(200);
+      expect(mocks.draftCreate.mock.calls[0][0].data.revision).toBe(1);
+      mocks.draftCreate.mockRejectedValue(Object.assign(new Error("unique"), { code: "P2002" }));
+      const response = await PUT_DRAFT(request("PUT", { ...body, baseRevision: 0 }), ctx("club-a"));
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({ error: "DRAFT_CONFLICT" });
+    });
+
+    it("keeps the chosen location only when it is an active location of this event", async () => {
+      await PUT_DRAFT(request("PUT", { ...body, baseRevision: 1, locationId: "loc-1" }), ctx("club-a"));
+      expect(mocks.locationFindFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "loc-1", eventId: "event-1", isActive: true } }));
+      expect(mocks.draftUpdateMany.mock.calls[0][0].data.locationId).toBe("loc-1");
+      mocks.locationFindFirst.mockResolvedValue(null);
+      await PUT_DRAFT(request("PUT", { ...body, baseRevision: 1, locationId: "elsewhere" }), ctx("club-a"));
+      expect(mocks.draftUpdateMany.mock.calls[1][0].data.locationId).toBeNull();
+    });
   });
 
   it("keeps typed-in ages in the draft only for going people with no birth date on file (#639)", async () => {
