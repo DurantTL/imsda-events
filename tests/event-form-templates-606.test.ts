@@ -30,7 +30,7 @@ const starterKeys = ["leadership_weekend", "tlt_retreat", "outdoor_school", "his
 const addOnKeys = ["tlt_opportunities", "pathfinder_of_the_year", "tlt_of_the_year", "tlt_application", "conference_patches_pins"] as const;
 const allKeys = [...starterKeys, ...addOnKeys];
 
-const directory = { clubs: ["Sample Trail Pathfinders", "Sample Creek Pathfinders"], churches: ["Sample Hills SDA Church"] };
+const directory = { clubs: ["Sample Trail Pathfinders", "Sample Creek Pathfinders"], churches: ["Sample Hills SDA Church"], schools: [] };
 const timeZone = "America/Chicago";
 
 function definitionOf(key: string) {

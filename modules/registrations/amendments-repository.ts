@@ -136,6 +136,12 @@ export type AmendmentServerOptions = {
    * location can never be moved to none. Only the club director path sets it.
    */
   locationId?: string | null;
+  /**
+   * Extra writes the caller needs to commit or roll back together with the
+   * amendment (the club path saves a typed-in age back to the roster, #639).
+   * Runs once, in the committing transaction only, never for a preview.
+   */
+  inTransaction?: (tx: Prisma.TransactionClient) => Promise<void>;
 };
 
 function allowedProfileMetadata(metadata: AmendmentProfileMetadata | undefined) {
@@ -1475,6 +1481,7 @@ export async function amendRegistration(
           });
         }
 
+        if (serverOptions.inTransaction) await serverOptions.inTransaction(tx);
         await tx.registration.update({
           where: { id: registrationId },
           data: {

@@ -7,7 +7,7 @@ import { listDirectoryReviewEntries } from "@/modules/forms/directory-review";
 
 export const metadata: Metadata = { title: "Directory review" };
 
-const sourceLabel = { CLUBS_DIRECTORY: "Club", CHURCHES_DIRECTORY: "Church" } as const;
+const sourceLabel = { CLUBS_DIRECTORY: "Club", CHURCHES_DIRECTORY: "Church", SCHOOLS_DIRECTORY: "School" } as const;
 
 export default async function DirectoryReviewPage({ searchParams }: { searchParams: Promise<{ event?: string }> }) {
   const { event: requested } = await searchParams;

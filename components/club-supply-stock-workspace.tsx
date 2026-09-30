@@ -24,10 +24,16 @@ export function ClubSupplyStockWorkspace({
   organizationId,
   initialStock,
   readOnly = false,
+  embedded = false,
+  onSaved,
 }: {
   organizationId: string;
   initialStock: ClubStockRow[];
   readOnly?: boolean;
+  /** Shown inside the Orders page (#654): a sub-section with its own smaller heading, not a panel. */
+  embedded?: boolean;
+  /** Called after a quantity saves, so the order list can recount what to order. */
+  onSaved?: () => void;
 }) {
   const [stock, setStock] = useState(initialStock);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -76,6 +82,7 @@ export function ClubSupplyStockWorkspace({
       setStock((current) => current.map((entry) => (entry.itemId === row.itemId ? { ...entry, quantityOnHand: savedQuantity } : entry)));
       setDrafts((current) => without(current, row.itemId));
       setSaved(row.itemId);
+      onSaved?.();
     } catch (caught) {
       setRowErrors((current) => ({ ...current, [row.itemId]: caught instanceof Error ? caught.message : "That quantity could not be saved." }));
     } finally {
@@ -84,11 +91,11 @@ export function ClubSupplyStockWorkspace({
   }
 
   return (
-    <section className="panel">
+    <section className={embedded ? undefined : "panel"}>
       <div className="section-heading">
         <div>
-          <p className="public-registration-eyebrow">Club supplies</p>
-          <h2>Supplies on hand</h2>
+          {!embedded && <p className="public-registration-eyebrow">Club supplies</p>}
+          {embedded ? <h3>Inventory: supplies on hand</h3> : <h2>Supplies on hand</h2>}
         </div>
         <span className="count-badge">{stock.filter((row) => row.quantityOnHand > 0).length} in stock</span>
       </div>
@@ -124,7 +131,7 @@ export function ClubSupplyStockWorkspace({
           {groups.length === 0 && <p className="quiet-copy">Nothing matches.</p>}
           {groups.map((group) => (
             <section className={styles.sectionBlock} key={group.section}>
-              <h3>{clubSupplySectionLabels[group.section]}</h3>
+              {embedded ? <h4>{clubSupplySectionLabels[group.section]}</h4> : <h3>{clubSupplySectionLabels[group.section]}</h3>}
               <ul className={styles.itemList}>
                 {group.rows.map((row) => {
                   const draft = drafts[row.itemId];
